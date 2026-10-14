@@ -125,6 +125,53 @@ ticket, federating Google behind Amazon Cognito is the usual way around it: see
 [SSO with Amazon Cognito](/operate/sso-cognito/), which also explains why the
 tenant pin works differently there.
 
+## Signing in from the CLI
+
+`dexaflow auth login` uses the same single sign-on. With no username or
+password given, it asks the server whether single sign-on is on
+(`GET /api/v2/auth/methods`) and, when it is, opens the browser on the
+server's sign-in:
+
+```bash
+dexaflow auth login --target dev
+# Opening your browser to sign in. If it does not open, visit:
+#   https://flow-dev.acme.dev/api/v2/auth/oidc/login?redirect_uri=http%3A%2F%2F127.0.0.1%3A53121%2Fcallback&...
+```
+
+The sign-in in the browser is the UI's: the same Google page, the same tenant
+pin, role mapping and just-in-time provisioning, and the same audit event
+(`oidc.login.success`, with `client: cli`). Instead of a session cookie, the
+server then shows a page that names the account and the port: **Sign in the
+Dexaflow CLI?** Approve it only if you just ran the command. A page you
+visited can open this sign-in too, and without that click the token could
+reach whatever program listens on that port. After **Sign in the CLI**, the
+server sends the browser back to the port the CLI listens on at `127.0.0.1`,
+with a one-time code that the CLI exchanges, with a PKCE verifier only it
+holds, for the token a password login would have saved for that server. The
+code expires after 60 seconds and works once per server replica; the
+approval page lasts five minutes. Both steps are audited (`oidc.cli_consent`,
+`oidc.cli_code`).
+
+Nothing changes at the IdP for this: the redirect URL Google calls is still
+`.../api/v2/auth/oidc/callback`, and the CLI never talks to Google.
+
+- `--no-browser` prints the URL instead of opening a browser, for a machine
+  whose browser is somewhere else. The browser must still be able to reach
+  `127.0.0.1` on the machine running the CLI, so on a remote host forward the
+  port (for example `ssh -L`) or use a password or an API token.
+- `--sso` asks for single sign-on explicitly and fails when the server does
+  not offer it. `--timeout` (default 5m) bounds the wait for the browser.
+  The command prints which method it chose and why.
+- `--username`, `--password` or `--password-stdin` (or `LEOFLOW_USERNAME` /
+  `LEOFLOW_PASSWORD`) sign in with a password instead, which is the
+  break-glass path when single sign-on is broken. A password is not sent
+  over plain `http://` to a server that is not on this machine unless you
+  pass `--allow-insecure-password`.
+- A refused sign-on ends the command with `single sign-on was refused`; the
+  reason is in the audit trail and the server log, as for the UI.
+- CI should not sign in as a person: use a scoped API token
+  (`dexaflow auth create-token --scope deploy`).
+
 ## When a login is denied
 
 The user is returned to the sign-in page, which says that single sign-on did not

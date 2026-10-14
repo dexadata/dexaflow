@@ -91,6 +91,7 @@ this page.
 - [ADR 0076: deploy reuses the image already in the registry under the content label](/project/adrs/0076-reuse-image-by-content-label/)
 - [ADR 0077: a pushed build splits into a dependency image and a code layer](/project/adrs/0077-dependency-image-and-code-layer/)
 - [ADR 0078: the dependency image is built from wheels without a daemon](/project/adrs/0078-dependency-image-from-wheels/)
+- [ADR 0079: the CLI signs in with single sign-on through the server, which stays the only OIDC client](/project/adrs/0079-cli-sso-through-the-server/)
 
 ## Template
 
