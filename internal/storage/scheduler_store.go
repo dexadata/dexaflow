@@ -174,6 +174,7 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 			TenantID:          uuidToString(run.TenantID),
 			State:             domain.DagRunState(run.State),
 			Held:              row.DagPaused,
+			MaxActiveRuns:     int(row.DagMaxActiveRuns),
 			Tasks:             spec.Tasks,
 			Graph:             graph,
 			States:            ts.states,
@@ -747,6 +748,27 @@ func (s *SchedulerStore) SetRunState(ctx context.Context, runID string, state do
 		ID:    rid,
 		State: queries.DagRunState(state),
 	})
+}
+
+// StartQueuedRun moves a queued run of the tenant to running, guarded on the
+// run still being queued (#1766). It reports false when no row moved: a user
+// marked or deleted the run after the tick read it, so it must not start.
+func (s *SchedulerStore) StartQueuedRun(ctx context.Context, runID, tenantID string) (bool, error) {
+	rid, err := parseUUID(runID)
+	if err != nil {
+		return false, err
+	}
+	tid, err := parseUUID(tenantID)
+	if err != nil {
+		return false, err
+	}
+	if _, err := s.q.StartQueuedRun(ctx, queries.StartQueuedRunParams{ID: rid, TenantID: tid}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("starting queued run: %w", err)
+	}
+	return true, nil
 }
 
 // ClaimAlertAttempt atomically claims one on-failure send attempt for a run

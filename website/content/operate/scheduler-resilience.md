@@ -721,6 +721,13 @@ A sustained non-zero rate on any of these is worth investigating — reapers
 are backstops, not the primary path; if they fire often, something upstream
 is broken.
 
+### Run start cap
+
+| Metric label | Meaning |
+|---|---|
+| `max_active_runs_start_cap` | A queued run the tick did not start because its DAG already has `max_active_runs` runs in `running` ([#1766](https://github.com/dexadata/dexaflow/issues/1766)). It counts once per held run on every tick, so ten runs waiting through 100 ticks add 1000: read it as a sign that runs wait, not as a number of runs. A queued run of a paused DAG is not counted. |
+| `start_run_superseded` | The tick admitted a queued run, but a user marked or deleted it before the start was written; the run was left as the user set it. |
+
 ### Loop and dispatch latency
 
 These collectors are written on every tick or dispatch (before 0.5.4 they were
