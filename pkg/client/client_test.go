@@ -164,7 +164,7 @@ func TestGetDeployDefaultsReadsTheClusterDefaults(t *testing.T) {
 	var gotAuth, gotPath, gotMethod, gotProbe string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth, gotPath, gotMethod, gotProbe = r.Header.Get("Authorization"), r.URL.Path, r.Method, r.Header.Get("X-Probe")
-		_, _ = w.Write([]byte(`{"registry":"ghcr.io/acme","platforms":["linux/arm64"],"base_image":"b:1"}`))
+		_, _ = w.Write([]byte(`{"registry":"ghcr.io/acme","platforms":["linux/arm64"],"base_image":"b:1","source_mode_image":"r@sha256:1"}`))
 	}))
 	defer srv.Close()
 	c, err := NewClient(srv.URL+"/", WithRequestEditorFn(bearerAuth("tok")))
@@ -187,6 +187,9 @@ func TestGetDeployDefaultsReadsTheClusterDefaults(t *testing.T) {
 	}
 	if d == nil || d.Registry != "ghcr.io/acme" || len(d.Platforms) != 1 || d.Platforms[0] != "linux/arm64" || d.BaseImage != "b:1" {
 		t.Errorf("defaults = %+v, want the answer decoded", d)
+	}
+	if d != nil && d.SourceModeImage != "r@sha256:1" {
+		t.Errorf("source_mode_image = %q, want the answer decoded (#1772)", d.SourceModeImage)
 	}
 }
 

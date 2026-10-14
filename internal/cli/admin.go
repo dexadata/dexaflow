@@ -59,7 +59,7 @@ func adminClient(cmd *cobra.Command, f adminFlags) (client *apiclient.ClientWith
 	if rerr != nil {
 		return nil, "", rerr
 	}
-	c, nerr := apiclient.New(serverURL, token)
+	c, nerr := cliAPIClient(serverURL, token)
 	if nerr != nil {
 		return nil, "", nerr
 	}

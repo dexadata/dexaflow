@@ -231,6 +231,9 @@ refused, as domain.CheckImageReference refuses them.
 {{- fail (printf "deploy.defaults.platforms: invalid platform %q: want os/arch or os/arch/variant, such as linux/amd64 or linux/arm64/v8. The server refuses to start with it." (toString .)) -}}
 {{- end -}}
 {{- end -}}
+{{- if and $deployDefaults.sourceMode (not ((.Values.execution | default dict).sourceMode | default dict).enabled) -}}
+{{- fail "deploy.defaults.sourceMode advertises the source mode runtime image, but execution.sourceMode.enabled is false. Turn source mode on or leave deploy.defaults.sourceMode off. The server refuses to start with it." -}}
+{{- end -}}
 {{- /*
 Digest-pinned images at register (#1703). The server refuses at boot any
 deploy.require_digest other than off, warn or enforce
