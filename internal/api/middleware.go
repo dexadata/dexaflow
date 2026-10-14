@@ -372,11 +372,11 @@ func RequireDeployPermission(viaIssuer bool) gin.HandlerFunc {
 // audience with dexaflow:deploy may call it, so no undeploy skips the
 // platform that owns deploys.
 func RequireUndeployPermission(viaIssuer bool) gin.HandlerFunc {
-	g := permissionGate{action: "write", resource: "dag", viaIssuer: viaIssuer}
+	scope := ""
 	if viaIssuer {
-		g.scope = auth.ScopeDeploy
+		scope = auth.ScopeDeploy
 	}
-	return g.check
+	return permissionGate{action: "write", resource: "dag", scope: scope, viaIssuer: viaIssuer}.check
 }
 
 // The header a deploy refused for not coming through the trusted issuer
