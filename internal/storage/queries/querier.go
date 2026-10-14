@@ -355,9 +355,16 @@ type Querier interface {
 	// advances so the tasks it started finish. The waiting run stays in the result
 	// because a clear on a running run puts it back in queued while other tasks of
 	// it still run, and those tasks must keep counting against max_active_runs,
-	// max_active_tasks and the pool caps. The scan stays on idx_dag_runs_state;
-	// dag_paused is one primary-key probe of dags per active run, which keeps the
-	// cost proportional to the active runs, not to the number of DAGs.
+	// max_active_tasks and the pool caps. dag_max_active_runs is the DAG's
+	// max_active_runs: the tick starts a queued run only while fewer than that
+	// many runs of the DAG are running, as Airflow does (#1766). Both come from one
+	// primary-key probe of dags per active run; a run whose DAG row is gone reads
+	// unpaused with 0, which the scheduler takes as unlimited. The probe is a
+	// LATERAL subquery with LIMIT 1 on purpose: a plain LEFT JOIN lets the planner
+	// hash every row of dags, a cost that grows with the number of DAGs (about 10
+	// ms against 2 ms for 500 active runs over 20000 DAGs), while the scan stays
+	// on idx_dag_runs_state and the probe keeps the cost proportional to the
+	// active runs.
 	ListActiveDagRuns(ctx context.Context) ([]ListActiveDagRunsRow, error)
 	// run_id is the dag_run's UUID (StagingClaimName uses it), so join on dag_runs.id,
 	// which is globally unique. run_state is NULL only when the run row is truly gone.
@@ -990,6 +997,12 @@ type Querier interface {
 	// show its duration: started_at on first entry into 'running', ended_at on a
 	// terminal state. Other timestamps are preserved (the scheduler may re-run).
 	StampDagRunState(ctx context.Context, arg StampDagRunStateParams) error
+	// Moves a queued run to running when the tick admits it (#1766), guarded on
+	// the run still being queued: a run a user marked success or failed, or
+	// deleted, after the tick read it is left alone, and no row comes back.
+	// started_at is stamped on the first start only, as StampDagRunState does; a
+	// clear resets it, so a re-queued run gets a new one.
+	StartQueuedRun(ctx context.Context, arg StartQueuedRunParams) (pgtype.UUID, error)
 	// Settle a task instance succeeded from its durable outcome record (ADR 0052),
 	// recovering a success whose report was lost. Guarded by id, try_number and
 	// attempt_epoch so a stale reconciler never marks a LIVE retry or re-place

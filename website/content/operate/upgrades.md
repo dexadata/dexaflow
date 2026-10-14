@@ -880,8 +880,8 @@ created it: a manual trigger (UI, `POST /api/v2/dags/{id}/dagRuns`,
 `dexaflow deploy --trigger`, `dexaflow runs trigger`) or a clear that
 re-queues the run. The API is unchanged and still answers with the queued
 run. Unpausing the DAG (UI switch or `dexaflow admin dags unpause <dag_id>`)
-starts the waiting runs on the next scheduler tick, all of them even when
-there are more than `max_active_runs`. Runs in `running` keep going when
+starts the waiting runs from the next scheduler tick, as `max_active_runs`
+allows (see the next item). Runs in `running` keep going when
 the DAG is paused. A run that a clear put back in `queued` waits like any
 queued run, even while some of its tasks run: those tasks finish, and nothing
 downstream or retried starts until the unpause. In 0.5.3 a manual trigger on a
@@ -889,6 +889,25 @@ paused DAG started at once, so a pipeline that deploys a new DAG and triggers
 it now has to unpause it too (or register it active, as above). Runs queued
 on a paused DAG at the moment of the upgrade wait from then on. Rolling back
 to 0.5.3 starts them.
+
+**Queued runs start under `max_active_runs`** (#1766). As in Airflow, the
+scheduler moves a queued run to `running` only while fewer than
+`max_active_runs` runs of its DAG are running, oldest logical date first
+(close to Airflow's `run_after` order); the rest stay `queued` with nothing
+dispatched until a slot frees. In 0.5.3 the cap applied only when the schedule
+or a trigger created a run, so every run re-queued by a clear ran at once,
+past the cap. A run that a clear re-queued now shows `running` again once it
+starts, with a new `start_date`; in 0.5.3 it stayed `queued`, with no start
+date, while its tasks ran.
+`PATCH /api/v2/dags/{dag_id}/dagRuns/{run_id}` with `"state": "running"` is
+still accepted but now stores `queued` (the response shows it, and the audit
+entry records `requested_state: running`), so the scheduler starts the run
+under the pause and the cap; on a run already `running` it still changes
+nothing. A PATCH to `queued` also clears the run's start date. Airflow 3.2 accepts only `queued`,
+`success` and `failed`; a script that sets `running` should send `queued`,
+since a later minor release may refuse `running`. Rolling back to 0.5.3 needs
+no migration, but 0.5.3 has no start cap and no paused hold: every queued run,
+the backlog the cap held included, starts on its first tick.
 
 **A new install's bootstrap admin is `admin@dexaflow.local`** (#1709). A first
 `dexaflow setup` records `admin_email: "admin@dexaflow.local"`, and a server

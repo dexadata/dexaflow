@@ -1065,15 +1065,20 @@ func (q *Queries) LatestRunsForDags(ctx context.Context, arg LatestRunsForDagsPa
 
 const listActiveDagRuns = `-- name: ListActiveDagRuns :many
 SELECT dag_runs.id, dag_runs.tenant_id, dag_runs.dag_id, dag_runs.dag_version_id, dag_runs.run_id, dag_runs.logical_date, dag_runs.data_interval_start, dag_runs.data_interval_end, dag_runs.state, dag_runs.trigger, dag_runs.conf, dag_runs.triggered_by, dag_runs.queued_at, dag_runs.started_at, dag_runs.ended_at, dag_runs.note, dag_runs.alerted_at, dag_runs.alert_attempts, dag_runs.next_alert_attempt_at,
-  COALESCE((SELECT d.is_paused FROM dags d WHERE d.id = dag_runs.dag_id), false)::boolean AS dag_paused
+  COALESCE(d.is_paused, false)::boolean AS dag_paused,
+  COALESCE(d.max_active_runs, 0)::integer AS dag_max_active_runs
 FROM dag_runs
-WHERE state IN ('queued', 'running')
-ORDER BY queued_at
+LEFT JOIN LATERAL (
+  SELECT dags.is_paused, dags.max_active_runs FROM dags WHERE dags.id = dag_runs.dag_id LIMIT 1
+) d ON true
+WHERE dag_runs.state IN ('queued', 'running')
+ORDER BY dag_runs.queued_at
 `
 
 type ListActiveDagRunsRow struct {
-	DagRun    DagRun `json:"dag_run"`
-	DagPaused bool   `json:"dag_paused"`
+	DagRun           DagRun `json:"dag_run"`
+	DagPaused        bool   `json:"dag_paused"`
+	DagMaxActiveRuns int32  `json:"dag_max_active_runs"`
 }
 
 // The runs the scheduler reads on a tick, and the warm-pool reconcile reads:
@@ -1085,9 +1090,16 @@ type ListActiveDagRunsRow struct {
 // advances so the tasks it started finish. The waiting run stays in the result
 // because a clear on a running run puts it back in queued while other tasks of
 // it still run, and those tasks must keep counting against max_active_runs,
-// max_active_tasks and the pool caps. The scan stays on idx_dag_runs_state;
-// dag_paused is one primary-key probe of dags per active run, which keeps the
-// cost proportional to the active runs, not to the number of DAGs.
+// max_active_tasks and the pool caps. dag_max_active_runs is the DAG's
+// max_active_runs: the tick starts a queued run only while fewer than that
+// many runs of the DAG are running, as Airflow does (#1766). Both come from one
+// primary-key probe of dags per active run; a run whose DAG row is gone reads
+// unpaused with 0, which the scheduler takes as unlimited. The probe is a
+// LATERAL subquery with LIMIT 1 on purpose: a plain LEFT JOIN lets the planner
+// hash every row of dags, a cost that grows with the number of DAGs (about 10
+// ms against 2 ms for 500 active runs over 20000 DAGs), while the scan stays
+// on idx_dag_runs_state and the probe keeps the cost proportional to the
+// active runs.
 func (q *Queries) ListActiveDagRuns(ctx context.Context) ([]ListActiveDagRunsRow, error) {
 	rows, err := q.db.Query(ctx, listActiveDagRuns)
 	if err != nil {
@@ -1118,6 +1130,7 @@ func (q *Queries) ListActiveDagRuns(ctx context.Context) ([]ListActiveDagRunsRow
 			&i.DagRun.AlertAttempts,
 			&i.DagRun.NextAlertAttemptAt,
 			&i.DagPaused,
+			&i.DagMaxActiveRuns,
 		); err != nil {
 			return nil, err
 		}
@@ -3620,6 +3633,30 @@ type StampDagRunStateParams struct {
 func (q *Queries) StampDagRunState(ctx context.Context, arg StampDagRunStateParams) error {
 	_, err := q.db.Exec(ctx, stampDagRunState, arg.State, arg.ID)
 	return err
+}
+
+const startQueuedRun = `-- name: StartQueuedRun :one
+UPDATE dag_runs
+SET state = 'running', started_at = COALESCE(started_at, now())
+WHERE id = $1 AND tenant_id = $2 AND state = 'queued'
+RETURNING id
+`
+
+type StartQueuedRunParams struct {
+	ID       pgtype.UUID `json:"id"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+}
+
+// Moves a queued run to running when the tick admits it (#1766), guarded on
+// the run still being queued: a run a user marked success or failed, or
+// deleted, after the tick read it is left alone, and no row comes back.
+// started_at is stamped on the first start only, as StampDagRunState does; a
+// clear resets it, so a re-queued run gets a new one.
+func (q *Queries) StartQueuedRun(ctx context.Context, arg StartQueuedRunParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, startQueuedRun, arg.ID, arg.TenantID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const succeedTaskInstanceIfActive = `-- name: SucceedTaskInstanceIfActive :execrows

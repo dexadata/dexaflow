@@ -29,6 +29,18 @@ OpenAPI-aware client (curl-with-schemas, Postman, an SDK generator) at it.
 See [ADR 0013](/project/adrs/0013-scalar-api-docs/) for why the API reference is
 Scalar embedded in the server binary.
 
+## Setting a run's state
+
+`PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}` with a `state` sets a run
+to `queued`, `success` or `failed`, as Airflow 3.2 does. Only the scheduler
+starts a run, under the DAG's pause and `max_active_runs`: a PATCH to
+`running`, which Dexaflow 0.5.3 accepted, still answers 200 but stores
+`queued`, and the response shows `queued`; the audit entry
+(`dagrun.mark.queued`) records `requested_state: running`. On a run that is
+already `running`, a PATCH to `running` changes nothing and answers with the
+run as it is. Setting `queued` also clears the run's start date, so the
+scheduler stamps a new one when it starts the run.
+
 ## Paging
 
 List endpoints page with `limit` and `offset`, as Airflow 3.2 does, and keep

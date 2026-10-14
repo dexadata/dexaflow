@@ -220,7 +220,7 @@ func dagState(ctx context.Context, api *apiclient.ClientWithResponses, dagID str
 
 // queuedRuns counts the DAG's runs in queued. On a paused DAG they are the
 // runs triggered or cleared while it was paused, which wait for the unpause
-// and all start once it happens.
+// and then start oldest first, no more at a time than max_active_runs allows.
 func queuedRuns(ctx context.Context, api *apiclient.ClientWithResponses, dagID string) (int, error) {
 	limit := 1
 	resp, err := api.ListDagRunsWithResponse(ctx, dagID, &apiclient.ListDagRunsParams{
@@ -252,7 +252,7 @@ func unpauseSummary(dagID, schedule string, catchup bool, queued int) string {
 	case queued == 1:
 		summary += " 1 queued run will start."
 	case queued > 1:
-		summary += fmt.Sprintf(" %d queued runs will start.", queued)
+		summary += fmt.Sprintf(" %d queued runs will start, oldest first, as max_active_runs allows.", queued)
 	}
 	return summary
 }

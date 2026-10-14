@@ -145,14 +145,25 @@ WHERE id = sqlc.arg(id)
 -- advances so the tasks it started finish. The waiting run stays in the result
 -- because a clear on a running run puts it back in queued while other tasks of
 -- it still run, and those tasks must keep counting against max_active_runs,
--- max_active_tasks and the pool caps. The scan stays on idx_dag_runs_state;
--- dag_paused is one primary-key probe of dags per active run, which keeps the
--- cost proportional to the active runs, not to the number of DAGs.
+-- max_active_tasks and the pool caps. dag_max_active_runs is the DAG's
+-- max_active_runs: the tick starts a queued run only while fewer than that
+-- many runs of the DAG are running, as Airflow does (#1766). Both come from one
+-- primary-key probe of dags per active run; a run whose DAG row is gone reads
+-- unpaused with 0, which the scheduler takes as unlimited. The probe is a
+-- LATERAL subquery with LIMIT 1 on purpose: a plain LEFT JOIN lets the planner
+-- hash every row of dags, a cost that grows with the number of DAGs (about 10
+-- ms against 2 ms for 500 active runs over 20000 DAGs), while the scan stays
+-- on idx_dag_runs_state and the probe keeps the cost proportional to the
+-- active runs.
 SELECT sqlc.embed(dag_runs),
-  COALESCE((SELECT d.is_paused FROM dags d WHERE d.id = dag_runs.dag_id), false)::boolean AS dag_paused
+  COALESCE(d.is_paused, false)::boolean AS dag_paused,
+  COALESCE(d.max_active_runs, 0)::integer AS dag_max_active_runs
 FROM dag_runs
-WHERE state IN ('queued', 'running')
-ORDER BY queued_at;
+LEFT JOIN LATERAL (
+  SELECT dags.is_paused, dags.max_active_runs FROM dags WHERE dags.id = dag_runs.dag_id LIMIT 1
+) d ON true
+WHERE dag_runs.state IN ('queued', 'running')
+ORDER BY dag_runs.queued_at;
 
 -- name: UpdateDagRunState :one
 UPDATE dag_runs
@@ -245,6 +256,17 @@ SET state = sqlc.arg(state)::dag_run_state,
     started_at = CASE WHEN sqlc.arg(state)::dag_run_state = 'running' AND started_at IS NULL THEN now() ELSE started_at END,
     ended_at = CASE WHEN sqlc.arg(state)::dag_run_state IN ('success', 'failed') THEN now() ELSE ended_at END
 WHERE id = sqlc.arg(id);
+
+-- name: StartQueuedRun :one
+-- Moves a queued run to running when the tick admits it (#1766), guarded on
+-- the run still being queued: a run a user marked success or failed, or
+-- deleted, after the tick read it is left alone, and no row comes back.
+-- started_at is stamped on the first start only, as StampDagRunState does; a
+-- clear resets it, so a re-queued run gets a new one.
+UPDATE dag_runs
+SET state = 'running', started_at = COALESCE(started_at, now())
+WHERE id = sqlc.arg(id) AND tenant_id = sqlc.arg(tenant_id) AND state = 'queued'
+RETURNING id;
 
 -- name: CreateTaskInstance :one
 -- try_number starts at 1 to match Airflow (1-based attempts): the first run's
