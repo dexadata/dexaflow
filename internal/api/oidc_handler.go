@@ -8,7 +8,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -150,8 +149,8 @@ func oidcLoginHandler(flow *oidc.Flow, logger *slog.Logger, insecureCookies bool
 // (issuer pin, audience, nonce, azp, clock skew, email_verified, tenant pin,
 // email-domain allowlist), resolves or JIT-provisions the user, mints the app's
 // _token session cookie, and redirects. A CLI login ends instead with a
-// one-time code on the CLI's loopback (see finish), and its refusals go back
-// there too. Every terminal path is audited; a
+// consent page that leads to a one-time code on the CLI's loopback (see
+// finish), and its refusals go back there. Every terminal path is audited; a
 // verification failure fails closed (see denyWithCause) and never falls back to
 // a default identity.
 func oidcCallbackHandler(deps oidcDeps) gin.HandlerFunc {
@@ -166,12 +165,6 @@ func oidcCallbackHandler(deps oidcDeps) gin.HandlerFunc {
 		// CSRF: the state query param must match the signed cookie.
 		if subtle.ConstantTimeCompare([]byte(c.Query("state")), []byte(payload.State)) != 1 {
 			deps.deny(c, auditOIDCLoginFailure, "", "", "", "state_mismatch")
-			return
-		}
-		// A CLI login answers its state once: a replayed callback would hand
-		// out a second code.
-		if payload.CLI != nil && !deps.cliCodes.claimState(payload.State) {
-			deps.deny(c, auditOIDCLoginFailure, "", "", "", "state_replayed")
 			return
 		}
 		// RFC 9207 issuer response param, when the IdP provides it, must be the
@@ -201,6 +194,14 @@ func oidcCallbackHandler(deps oidcDeps) gin.HandlerFunc {
 			deps.rejectVerify(c, err)
 			return
 		}
+		// A CLI login answers its state once, so a replayed callback cannot
+		// open a second consent. Only now, after the IdP's code was exchanged
+		// and the ID token verified: a callback that fails earlier uses up
+		// nothing, so forged callbacks cannot fill the set.
+		if payload.CLI != nil && !deps.cliCodes.claimState(payload.State) {
+			deps.deny(c, auditOIDCLoginFailure, identity.Tenant, "", identity.Email, "state_replayed")
+			return
+		}
 		user, err := deps.resolveUser(c, identity)
 		if err != nil {
 			return // resolveUser already audited + answered the rejection
@@ -215,9 +216,9 @@ func oidcCallbackHandler(deps oidcDeps) gin.HandlerFunc {
 }
 
 // finish hands a successful login its token: the browser session cookie and
-// the page it asked for, or, for a CLI login, a one-time code on the CLI's
-// loopback and no cookie at all. Both are audited as the same success, the
-// CLI one marked with its client.
+// the page it asked for, or, for a CLI login, the consent page and no session
+// cookie at all (the code reaches the CLI only after the person approves).
+// Both are audited as the same success, the CLI one marked with its client.
 func (d oidcDeps) finish(c *gin.Context, payload oidc.StatePayload, identity *oidc.VerifiedIdentity, user *auth.User, token string) {
 	extra := map[string]string{"subject": identity.Subject, "roles": strings.Join(user.Roles, ",")}
 	if payload.CLI == nil {
@@ -226,14 +227,9 @@ func (d oidcDeps) finish(c *gin.Context, payload oidc.StatePayload, identity *oi
 		c.Redirect(http.StatusFound, sanitizeNext(payload.Next))
 		return
 	}
-	code, err := d.cliCodes.seal(token, *payload.CLI)
-	if err != nil {
-		abortSSOServerFailure(c, d.logger, "sealing cli sign-in code", err)
-		return
-	}
 	extra["client"] = "cli"
 	d.record(c, auditOIDCLoginSuccess, identity.Tenant, user.ID, identity.Email, "success", extra)
-	c.Redirect(http.StatusFound, loopbackURL(payload.CLI, url.Values{"code": {code}}))
+	d.askCLIConsent(c, *payload.CLI, user, token)
 }
 
 // readState reads and verifies the signed state cookie. A missing or invalid

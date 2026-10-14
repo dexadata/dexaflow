@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -23,8 +24,9 @@ import (
 
 // Single sign-on for `dexaflow auth login` (#1704). The control plane stays
 // the only OIDC client: the CLI opens the server's own sign-in route in the
-// browser with a loopback redirect, waits there for a one-time code, and
-// exchanges it, with the PKCE verifier only it holds, for the token a
+// browser with a loopback redirect, the person approves the CLI sign-in on
+// the server's consent page, and the CLI waits on the loopback for the
+// one-time code that follows and exchanges it, with the PKCE verifier only it holds, for the token a
 // password login would have saved. The CLI never talks to the IdP, so it
 // needs no client ID, secret or IdP configuration of its own.
 
@@ -40,6 +42,11 @@ var openBrowser = systemOpenBrowser
 // systemOpenBrowser starts the platform's URL opener and does not wait for
 // the browser.
 func systemOpenBrowser(target string) error {
+	// Only a web URL reaches the opener: rundll32 and xdg-open would hand
+	// anything else (a file path, another scheme) to whatever handles it.
+	if !isWebURL(target) {
+		return fmt.Errorf("refusing to open %q: not an http or https URL", target)
+	}
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
@@ -54,6 +61,12 @@ func systemOpenBrowser(target string) error {
 	}
 	go func() { _ = cmd.Wait() }() //nolint:errcheck // the opener's exit says nothing about the sign-in
 	return nil
+}
+
+// isWebURL reports whether target is an absolute http or https URL.
+func isWebURL(target string) bool {
+	u, err := url.Parse(target)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 // ssoOptions are the flags of a browser sign-in.
@@ -143,41 +156,48 @@ func waitForCode(ctx context.Context, results <-chan loopbackResult, timeout tim
 	}
 }
 
-// loopbackHandler answers the browser's redirect. It accepts one redirect
-// only: the first that reaches the callback path decides the result, and a
-// state other than the CLI's own is a refusal, never a code to exchange.
+// loopbackHandler answers the browser's redirect. Only a request on the
+// callback path that carries the CLI's own state counts: anything else (a
+// port scan, a forged link, a stray local process) gets a 400 and the login
+// keeps waiting, so it cannot be aborted from outside. The first request with
+// the right state decides the result, exactly once however many arrive
+// together; later ones are told the sign-in already completed.
 func loopbackHandler(state string, results chan<- loopbackResult) http.Handler {
-	done := make(chan struct{})
+	var once sync.Once
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != ssoCallbackPath {
 			http.NotFound(w, r)
 			return
 		}
-		select {
-		case <-done:
-			http.Error(w, "This sign-in has already completed.", http.StatusBadRequest)
+		q := r.URL.Query()
+		if subtle.ConstantTimeCompare([]byte(q.Get("state")), []byte(state)) != 1 {
+			http.Error(w, "This is not the sign-in this dexaflow auth login is waiting for.", http.StatusBadRequest)
 			return
-		default:
-			close(done)
 		}
-		res := readLoopback(r.URL.Query(), state)
-		results <- res
+		first := false
+		var res loopbackResult
+		once.Do(func() {
+			first = true
+			res = readLoopback(q)
+			results <- res
+		})
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		if res.err != nil {
+		switch {
+		case !first:
+			http.Error(w, "This sign-in has already completed.", http.StatusBadRequest)
+		case res.err != nil:
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = io.WriteString(w, "Dexaflow sign-in did not complete. Return to the terminal for details.\n") //nolint:errcheck // best-effort page
-			return
+		default:
+			_, _ = io.WriteString(w, "Signed in to Dexaflow. You can close this window and return to the terminal.\n") //nolint:errcheck // best-effort page
 		}
-		_, _ = io.WriteString(w, "Signed in to Dexaflow. You can close this window and return to the terminal.\n") //nolint:errcheck // best-effort page
 	})
 }
 
-// readLoopback turns the redirect's query into a code or a refusal.
-func readLoopback(q url.Values, state string) loopbackResult {
-	if subtle.ConstantTimeCompare([]byte(q.Get("state")), []byte(state)) != 1 {
-		return loopbackResult{err: errors.New("single sign-on refused: the redirect carried a state this login did not issue")}
-	}
+// readLoopback turns the query of a redirect with the right state into a
+// code or a refusal.
+func readLoopback(q url.Values) loopbackResult {
 	switch q.Get("error") {
 	case "":
 	case "server_error":

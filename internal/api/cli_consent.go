@@ -1,0 +1,218 @@
+package api
+
+import (
+	"crypto/subtle"
+	"html/template"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"time"
+
+	"github.com/gin-gonic/gin"
+
+	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/oidc"
+)
+
+// The consent step of a CLI sign-in (ADR 0079 decision 3). The callback of a
+// CLI login does not send the browser to the loopback: it answers this page,
+// which names the account and the port, and seals the pending sign-in in a
+// SameSite=Strict cookie. Only the page's own form, a same-origin POST that
+// carries the CSRF token sealed in that cookie, issues the one-time code and
+// redirects to the loopback. A page that can only navigate the browser never
+// gets that far, and neither can a cross-site POST: it carries no Strict
+// cookie, cannot read the token, and fetch metadata names it.
+
+// cliConsentPath is the route the consent form posts to.
+const cliConsentPath = "/api/v2/auth/cli/consent"
+
+// cliConsentCookie carries the sealed pending sign-in between the consent
+// page and its form. It is scoped to the CLI routes and SameSite=Strict.
+const cliConsentCookie = "_oidc_cli_consent"
+
+// cliConsentCookiePath scopes the consent cookie; the write and the clear
+// share it so the browser matches the deletion.
+const cliConsentCookiePath = "/api/v2/auth/cli/"
+
+// cliConsentTTL bounds how long the consent page may wait for a click.
+const cliConsentTTL = 5 * time.Minute
+
+// The decisions the consent form posts.
+const (
+	consentApprove = "approve"
+	consentCancel  = "cancel"
+)
+
+// consentPageTemplate asks the person to approve the CLI sign-in. It shares
+// the sign-in page's look and carries no secret: the pending sign-in is in
+// the HttpOnly cookie, the form only the CSRF token.
+var consentPageTemplate = template.Must(template.New("consent").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dexaflow - Sign in the CLI</title>
+<style>
+{{ .CSS }}
+ .cancel{background:#334155}
+</style></head><body>
+<form method="post" action="{{ .Action }}">
+ <h1>Sign in the Dexaflow CLI?</h1>
+{{ if .Message }} <p class="ssoerr" role="alert">{{ .Message }}</p>
+{{ else }} <p class="hint">A <code>dexaflow auth login</code> on this computer asked to sign in as
+ <strong>{{ .Email }}</strong> (tenant <strong>{{ .Tenant }}</strong>). Its token goes to the program
+ listening on this computer at port <strong>{{ .Port }}</strong>.</p>
+ <p class="hint">Approve only if you started that command just now. If you did not, cancel:
+ a page you visited may have opened this sign-in for someone else.</p>
+ <input type="hidden" name="csrf" value="{{ .CSRF }}">
+ <button type="submit" name="decision" value="approve">Sign in the CLI</button>
+ <button type="submit" name="decision" value="cancel" class="cancel">Cancel</button>
+{{ end }}</form></body></html>`))
+
+// consentPage is what consentPageTemplate renders.
+type consentPage struct {
+	CSS     template.CSS
+	Action  string
+	Email   string
+	Tenant  string
+	Port    string
+	CSRF    string
+	Message string
+}
+
+// renderConsentPage writes the page with headers that keep it out of frames
+// and caches. form-action names the loopback too, because a browser applies
+// it to the redirect that follows the form.
+func renderConsentPage(c *gin.Context, status int, page consentPage, loopback string) {
+	page.CSS = template.CSS(signInPageCSS) //nolint:gosec // G203: a constant of this package, never request data
+	page.Action = cliConsentPath
+	formAction := "'self'"
+	if u, err := url.Parse(loopback); err == nil && u.Host != "" {
+		formAction += " http://" + u.Host
+	}
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.Header("Cache-Control", "no-store")
+	c.Header("X-Frame-Options", "DENY")
+	c.Header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action "+formAction+"; frame-ancestors 'none'")
+	c.Status(status)
+	if err := consentPageTemplate.Execute(c.Writer, page); err != nil {
+		c.Abort()
+	}
+}
+
+// askCLIConsent ends a verified CLI login with the consent page: it seals the
+// minted token with the account and the CLI binding into the consent cookie
+// and shows who and which port will be signed in.
+func (d oidcDeps) askCLIConsent(c *gin.Context, b oidc.CLIBinding, user *auth.User, token string) {
+	csrf, err := randomURLToken()
+	if err != nil {
+		abortSSOServerFailure(c, d.logger, "generating consent token", err)
+		return
+	}
+	pending := cliPending{
+		Token: token, TokenExpires: tokenExpiry(token, d.cliCodes.now().Add(d.tokenTTL)),
+		Redirect: b.Redirect, State: b.State, Challenge: b.Challenge, CSRF: csrf,
+		Tenant: user.TenantID, UserID: user.ID, Email: user.Email,
+	}
+	sealed, err := d.cliCodes.seal(pending, cliConsentAAD, cliConsentTTL)
+	if err != nil {
+		abortSSOServerFailure(c, d.logger, "sealing cli consent", err)
+		return
+	}
+	c.SetSameSite(http.SameSiteStrictMode)
+	c.SetCookie(cliConsentCookie, sealed, int(cliConsentTTL.Seconds()), cliConsentCookiePath, "", cookieSecure(d.session.insecure), true)
+	port := ""
+	if u, perr := url.Parse(b.Redirect); perr == nil {
+		port = u.Port()
+	}
+	renderConsentPage(c, http.StatusOK, consentPage{Email: user.Email, Tenant: user.TenantID, Port: port, CSRF: csrf}, b.Redirect)
+}
+
+// cliConsentDeps is what the consent handler needs.
+type cliConsentDeps struct {
+	codes    *cliCodes
+	audit    AuthAuditWriter
+	logger   *slog.Logger
+	insecure bool
+}
+
+// cliConsentHandler implements POST /api/v2/auth/cli/consent. It accepts only
+// a same-origin post (by fetch metadata, when the browser sends it) that
+// carries the consent cookie and the CSRF token sealed in it, each consent
+// once. Approve issues the one-time code and sends the browser to the CLI's
+// loopback; cancel sends it there with error=access_denied. Every other post
+// is refused on a page, and nothing reaches the loopback.
+func cliConsentHandler(d cliConsentDeps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !browserMaySetSession(c) {
+			d.refuse(c, http.StatusForbidden, cliPending{}, "cross_site")
+			return
+		}
+		cookie, err := c.Request.Cookie(cliConsentCookie)
+		if err != nil || cookie.Value == "" {
+			d.refuse(c, http.StatusBadRequest, cliPending{}, "missing_consent")
+			return
+		}
+		p, ok := d.codes.open(cookie.Value, cliConsentAAD)
+		if !ok {
+			d.refuse(c, http.StatusBadRequest, cliPending{}, "invalid_consent")
+			return
+		}
+		now := d.codes.now()
+		expires := time.Unix(0, p.Expires)
+		switch {
+		case !now.Before(expires):
+			d.refuse(c, http.StatusBadRequest, p, "consent_expired")
+			return
+		case subtle.ConstantTimeCompare([]byte(c.PostForm("csrf")), []byte(p.CSRF)) != 1:
+			d.refuse(c, http.StatusBadRequest, p, "csrf_mismatch")
+			return
+		case !d.codes.consents.claim(p.ID, expires, now):
+			d.refuse(c, http.StatusBadRequest, p, "consent_replayed")
+			return
+		}
+		d.clearCookie(c)
+		d.decide(c, p, c.PostForm("decision"))
+	}
+}
+
+// decide answers a genuine consent post: a code for approve, a refusal to the
+// CLI for anything else.
+func (d cliConsentDeps) decide(c *gin.Context, p cliPending, decision string) {
+	if decision != consentApprove {
+		reason := "declined"
+		if decision != consentCancel {
+			reason = "unknown_decision"
+		}
+		recordAuth(c, d.logger, d.audit, auditCLIConsent, p, "denied", map[string]string{"reason": reason})
+		c.Redirect(http.StatusSeeOther, loopbackURL(p.binding(), url.Values{"error": {"access_denied"}}))
+		return
+	}
+	code, err := d.codes.sealCode(p)
+	if err != nil {
+		if d.logger != nil {
+			d.logger.Error("oidc: sealing cli sign-in code", "error", err)
+		}
+		c.Redirect(http.StatusSeeOther, loopbackURL(p.binding(), url.Values{"error": {"server_error"}}))
+		return
+	}
+	recordAuth(c, d.logger, d.audit, auditCLIConsent, p, "success", nil)
+	c.Redirect(http.StatusSeeOther, loopbackURL(p.binding(), url.Values{"code": {code}}))
+}
+
+// refuse audits and logs a refused consent post and answers it with the
+// page, never a redirect.
+func (d cliConsentDeps) refuse(c *gin.Context, status int, p cliPending, reason string) {
+	if d.logger != nil {
+		d.logger.Warn("oidc: cli consent refused", "reason", reason, "tenant", p.Tenant, "user", p.UserID)
+	}
+	recordAuth(c, d.logger, d.audit, auditCLIConsent, p, "denied", map[string]string{"reason": reason})
+	renderConsentPage(c, status, consentPage{
+		Message: "This sign-in can no longer be approved here. Run dexaflow auth login again.",
+	}, "")
+	c.Abort()
+}
+
+// clearCookie expires the consent cookie with the attributes it was set with.
+func (d cliConsentDeps) clearCookie(c *gin.Context) {
+	c.SetSameSite(http.SameSiteStrictMode)
+	c.SetCookie(cliConsentCookie, "", -1, cliConsentCookiePath, "", cookieSecure(d.insecure), true)
+}

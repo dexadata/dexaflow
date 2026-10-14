@@ -13,7 +13,7 @@ Authenticate to a control plane (Pro) and store the token.
 
 Authenticate to a control plane and save the token for that server.
 
-When the server offers single sign-on and no username or password is given, login opens the browser on the server's sign-in and waits for it on a loopback address (127.0.0.1); --no-browser prints the URL instead. A username or a password (flags, LEOFLOW_USERNAME/LEOFLOW_PASSWORD or --password-stdin) signs in with a password, as does a server without single sign-on.
+When the server offers single sign-on and no username or password is given, login opens the browser on the server's sign-in, where you approve the CLI sign-in, and waits for it on a loopback address (127.0.0.1); --no-browser prints the URL instead. A username or a password (flags, LEOFLOW_USERNAME/LEOFLOW_PASSWORD or --password-stdin) signs in with a password, as does a server without single sign-on. A password is not sent over plain http to a server that is not on this machine without --allow-insecure-password.
 
 ```
 dexaflow auth login [flags]
@@ -22,14 +22,15 @@ dexaflow auth login [flags]
 ### Options
 
 ```
-  -h, --help               help for login
-      --no-browser         with single sign-on, print the sign-in URL instead of opening a browser (implies --sso)
-      --password string    password
-      --password-stdin     read the password from stdin instead of --password (avoids ps/shell-history exposure)
-      --server string      control plane base URL, over --target (default: the target in use, then server_url from the config file)
-      --sso                sign in with the server's single sign-on in a browser (the default when the server offers it and no username or password is given)
-      --timeout duration   how long to wait for the browser sign-in (default 5m0s)
-      --username string    username (signs in with a password)
+      --allow-insecure-password   send a password over plain http to a server that is not on this machine (it can be read on the way)
+  -h, --help                      help for login
+      --no-browser                with single sign-on, print the sign-in URL instead of opening a browser (implies --sso)
+      --password string           password
+      --password-stdin            read the password from stdin instead of --password (avoids ps/shell-history exposure)
+      --server string             control plane base URL, over --target (default: the target in use, then server_url from the config file)
+      --sso                       sign in with the server's single sign-on in a browser (the default when the server offers it and no username or password is given)
+      --timeout duration          how long to wait for the browser sign-in (default 5m0s)
+      --username string           username (signs in with a password)
 ```
 
 ### Options inherited from parent commands

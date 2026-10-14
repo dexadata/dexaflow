@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -19,27 +20,40 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/dexadata/dexaflow/internal/oidc"
 )
 
-// Single sign-on from the CLI (#1704). The server stays the only OIDC client:
-// `dexaflow auth login` opens the browser on GET /api/v2/auth/oidc/login with
-// a loopback redirect_uri, its own state and the S256 challenge of a PKCE
-// verifier it keeps. The browser round trip through the IdP is the UI's, the
-// same callback and the same user resolution, with one difference at the end:
-// instead of setting the session cookie, the callback redirects the browser
-// to the CLI's loopback with a one-time code. The CLI then posts the code and
-// its verifier to POST /api/v2/auth/cli/token and receives the token
-// /auth/token would have answered.
+// Single sign-on from the CLI (#1704, ADR 0079). The server stays the only
+// OIDC client: `dexaflow auth login` opens the browser on GET
+// /api/v2/auth/oidc/login with a loopback redirect_uri, its own state and the
+// S256 challenge of a PKCE verifier it keeps. The browser round trip through
+// the IdP is the UI's, the same callback and the same user resolution. Then,
+// instead of setting the session cookie, the callback shows a consent page
+// (cli_consent.go): only a click on it, a same-origin POST carrying the CSRF
+// token bound to the consent cookie, sends the browser to the CLI's loopback
+// with a one-time code. The CLI posts the code and its verifier to POST
+// /api/v2/auth/cli/token and receives the token /auth/token would have
+// answered.
 //
-// The code is the minted token sealed (AES-GCM) under a key derived from the
-// JWT secret, together with the challenge, the redirect it was issued for and
-// its expiry. It is stateless, so any replica can redeem it, and it is useless
-// without the verifier, which never leaves the CLI. Each replica remembers the
-// codes it redeemed until they expire; a second replica could redeem a code
-// once more, but only for whoever holds the verifier, which is the CLI that
-// already has the token.
+// Why the click matters: whoever starts a login picks the challenge, and so
+// holds the verifier. A page can navigate a victim's browser to a CLI login
+// with its own challenge, and an IdP that signs the victim in silently would
+// otherwise deliver the victim's code to the victim's loopback with no
+// interaction at all. Anything that can read that port or the request URL
+// (another local listener, a local service that logs URLs) would then hold
+// the code, and the code with the attacker's verifier is the victim's token.
+// The consent page names the account and the port, and nothing reaches the
+// loopback until the person approves (RFC 8252 section 8.6).
+//
+// The code is the minted token sealed (AES-GCM) under a key derived with HKDF
+// from the JWT secret, together with the challenge, the redirect it was issued
+// for and its expiry. It is stateless, so any replica can redeem it, and it is
+// useless without the verifier. Each replica remembers the codes it redeemed
+// until they expire; a second replica could redeem a code once more, but only
+// for whoever holds the verifier. Rotating the JWT secret invalidates every
+// outstanding code and consent, which costs at most one retried login.
 
 // cliTokenPath is the route the CLI exchanges its one-time code on.
 const cliTokenPath = "/api/v2/auth/cli/token"
@@ -48,35 +62,58 @@ const cliTokenPath = "/api/v2/auth/cli/token"
 // offers, read by the CLI before it chooses one.
 const authMethodsPath = "/api/v2/auth/methods"
 
-// cliCodeTTL bounds how long a one-time code may wait between the callback
+// cliCodeTTL bounds how long a one-time code may wait between the approval
 // and the exchange. The CLI exchanges it the moment its loopback receives it.
 const cliCodeTTL = 60 * time.Second
 
 // oidcRateLimitPerMinute is the per-IP budget the OIDC routes share: the
-// browser login and callback, and the CLI code exchange.
+// browser login and callback, the CLI consent and the CLI code exchange.
 const oidcRateLimitPerMinute = 30
 
-// cliCodeKeyLabel separates the code's encryption key from every other key
-// derived from the JWT secret.
-const cliCodeKeyLabel = "dexaflow-cli-login-code"
+// cliKeyInfo is the HKDF info of the key that seals codes and consents, so it
+// is never the key of anything else derived from the JWT secret.
+const cliKeyInfo = "dexaflow cli login sealing key"
+
+// The additional data each sealed value is bound to. A consent can never be
+// redeemed as a code, nor a code posted as a consent, and a later format gets
+// a new version.
+const (
+	cliCodeAAD    = "dexaflow cli code v1"
+	cliConsentAAD = "dexaflow cli consent v1"
+)
+
+// Audit actions of the CLI sign-in. The login itself is audited as
+// oidc.login.success with client=cli when the user is verified.
+const (
+	auditCLIConsent = "oidc.cli_consent"
+	auditCLICode    = "oidc.cli_code"
+)
 
 // cliCodeRefused is the one answer every refused exchange gets, so a caller
 // cannot tell an unknown code from an expired, used or mismatched one.
 const cliCodeRefused = "the sign-in code is invalid or expired; run dexaflow auth login again"
 
 // Limits on what a CLI may send. The challenge is the base64url SHA-256 of
-// the verifier (RFC 7636 section 4.2), so exactly 43 characters.
+// the verifier (RFC 7636 section 4.2), so exactly 43 characters, and the
+// verifier is 43 to 128 unreserved characters (section 4.1).
 const (
 	pkceChallengeLen = 43
+	pkceVerifierMin  = 43
+	pkceVerifierMax  = 128
 	cliStateMinLen   = 16
 	cliStateMaxLen   = 128
-	pkceVerifierMax  = 128
 	cliCodeMaxLen    = 8 << 10
 )
 
-// errCLICode is the reason recorded for a refused exchange; it never reaches
-// the caller.
-var errCLICode = errors.New("cli sign-in code")
+// Stable reasons a code is refused, for the audit row and the log.
+const (
+	reasonCodeMalformed        = "malformed_request"
+	reasonCodeNotAuthentic     = "not_authentic"
+	reasonCodeExpired          = "expired"
+	reasonCodeVerifierMismatch = "verifier_mismatch"
+	reasonCodeRedirectMismatch = "redirect_mismatch"
+	reasonCodeRedeemed         = "already_redeemed"
+)
 
 // authMethods is what GET /api/v2/auth/methods answers.
 type authMethods struct {
@@ -110,9 +147,11 @@ func parseCLIBinding(c *gin.Context) (*oidc.CLIBinding, error) {
 		State:     c.Query("state"),
 		Challenge: c.Query("code_challenge"),
 	}
-	if err := validateLoopbackRedirect(b.Redirect); err != nil {
+	canonical, err := canonicalLoopback(b.Redirect)
+	if err != nil {
 		return nil, err
 	}
+	b.Redirect = canonical
 	if c.Query("code_challenge_method") != "S256" {
 		return nil, errors.New("code_challenge_method must be S256")
 	}
@@ -125,25 +164,56 @@ func parseCLIBinding(c *gin.Context) (*oidc.CLIBinding, error) {
 	return b, nil
 }
 
-// validateLoopbackRedirect accepts only http://127.0.0.1:<port>/... or
-// http://[::1]:<port>/... with no user info, query or fragment (RFC 8252
-// section 7.3). "localhost" is refused because a name can resolve elsewhere.
-// This is what keeps a link crafted by someone else from sending a victim's
-// code anywhere but the victim's own machine.
-func validateLoopbackRedirect(raw string) error {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
-		return errors.New("redirect_uri must be http://127.0.0.1:<port>/<path>")
+// loopbackPathChars are the characters a loopback redirect path may use. The
+// CLI only ever sends /callback; dots, escapes and everything else are
+// refused so no two spellings can name the same redirect.
+func isLoopbackPath(p string) bool {
+	if p == "" || p[0] != '/' {
+		return false
 	}
-	ip := net.ParseIP(u.Hostname())
-	if ip == nil || !ip.IsLoopback() || (ip.To4() != nil && !ip.Equal(net.IPv4(127, 0, 0, 1))) {
-		return errors.New("redirect_uri must point at 127.0.0.1 or [::1]")
+	for _, r := range p {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '/', r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// canonicalLoopback accepts only http://127.0.0.1:<port>/<path> or
+// http://[::1]:<port>/<path> (RFC 8252 section 7.3) and returns it rebuilt
+// from its parsed parts. Anything that does not rebuild to itself is refused:
+// user info, a query or a bare "?", a fragment or a bare "#", an escaped or
+// dotted path, another case of the scheme, a port with a leading zero, and
+// IPv4-mapped IPv6. "localhost" is refused because a name can resolve
+// elsewhere.
+//
+// This keeps the code on the machine whose browser approved the sign-in. It
+// does not make the code harmless there: any local process that can read the
+// port or the request URL could take it, which is why nothing reaches the
+// loopback without the consent click (cli_consent.go).
+func canonicalLoopback(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "http" || u.User != nil || u.Opaque != "" {
+		return "", errors.New("redirect_uri must be http://127.0.0.1:<port>/<path>")
+	}
+	host := u.Hostname()
+	if host != "127.0.0.1" && host != "::1" {
+		return "", errors.New("redirect_uri must point at 127.0.0.1 or [::1]")
 	}
 	port, err := strconv.Atoi(u.Port())
 	if err != nil || port < 1 || port > 65535 {
-		return errors.New("redirect_uri must name a port")
+		return "", errors.New("redirect_uri must name a port")
 	}
-	return nil
+	if !isLoopbackPath(u.Path) {
+		return "", errors.New("redirect_uri path must be / and letters, digits, - or _")
+	}
+	canonical := "http://" + net.JoinHostPort(host, strconv.Itoa(port)) + u.Path
+	if canonical != raw {
+		return "", errors.New("redirect_uri must be written canonically, with no query or fragment")
+	}
+	return canonical, nil
 }
 
 // isURLSafe reports whether s holds only base64url characters.
@@ -158,27 +228,67 @@ func isURLSafe(s string) bool {
 	return true
 }
 
+// isPKCEVerifier reports whether v is a well-formed RFC 7636 verifier: 43 to
+// 128 characters of ALPHA, DIGIT, "-", ".", "_" and "~".
+func isPKCEVerifier(v string) bool {
+	if len(v) < pkceVerifierMin || len(v) > pkceVerifierMax {
+		return false
+	}
+	for _, r := range v {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '.', r == '_', r == '~':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // pkceS256 is the RFC 7636 S256 transform of a verifier.
 func pkceS256(verifier string) string {
 	sum := sha256.Sum256([]byte(verifier))
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
-// cliCodes seals and redeems the one-time codes, and remembers the IdP
-// states of CLI logins it has already answered.
+// cliPending is the plaintext of a sealed consent and of a sealed code: the
+// minted token, who it is for, and the CLI it goes to. A code carries no
+// CSRF token and no CLI state.
+type cliPending struct {
+	ID           string `json:"id"`
+	Token        string `json:"tok"`
+	TokenExpires int64  `json:"tokexp"`
+	Redirect     string `json:"redir"`
+	State        string `json:"state,omitempty"`
+	Challenge    string `json:"chal"`
+	CSRF         string `json:"csrf,omitempty"`
+	Tenant       string `json:"tenant"`
+	UserID       string `json:"user"`
+	Email        string `json:"email"`
+	Expires      int64  `json:"exp"`
+}
+
+// binding is the CLI side of a pending sign-in.
+func (p cliPending) binding() *oidc.CLIBinding {
+	return &oidc.CLIBinding{Redirect: p.Redirect, State: p.State, Challenge: p.Challenge}
+}
+
+// cliCodes seals and opens consents and codes, and keeps this process's
+// single-use records of them and of the IdP states of CLI logins.
 type cliCodes struct {
-	aead cipher.AEAD
-	now  func() time.Time
-	// redeemed and states are this process's single-use records, each kept
-	// until the code or the state cookie could no longer be used anyway.
+	aead     cipher.AEAD
+	now      func() time.Time
 	redeemed onceSet
+	consents onceSet
 	states   onceSet
 }
 
-// newCLICodes derives the code key from the JWT secret.
+// newCLICodes derives the sealing key from the JWT secret with HKDF.
 func newCLICodes(jwtSecret string) *cliCodes {
-	key := sha256.Sum256([]byte(jwtSecret + "|" + cliCodeKeyLabel))
-	block, err := aes.NewCipher(key[:])
+	key, err := hkdf.Key(sha256.New, []byte(jwtSecret), nil, cliKeyInfo, 32)
+	if err != nil {
+		panic(fmt.Sprintf("hkdf of a 32-byte key: %v", err)) // unreachable: 32 bytes is within the limit
+	}
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		panic(fmt.Sprintf("aes with a 32-byte key: %v", err)) // unreachable: the key is always 32 bytes
 	}
@@ -189,78 +299,85 @@ func newCLICodes(jwtSecret string) *cliCodes {
 	return &cliCodes{aead: aead, now: time.Now}
 }
 
-// sealedCode is the plaintext of a one-time code.
-type sealedCode struct {
-	ID        string `json:"id"`
-	Token     string `json:"tok"`
-	Challenge string `json:"chal"`
-	Redirect  string `json:"redir"`
-	Expires   int64  `json:"exp"`
-}
-
-// seal returns a one-time code carrying token for the CLI described by b.
-func (k *cliCodes) seal(token string, b oidc.CLIBinding) (string, error) {
+// seal encrypts p bound to aad, with a fresh id and an expiry ttl from now.
+func (k *cliCodes) seal(p cliPending, aad string, ttl time.Duration) (string, error) {
 	id, err := randomURLToken()
 	if err != nil {
-		return "", fmt.Errorf("generating code id: %w", err)
+		return "", fmt.Errorf("generating id: %w", err)
 	}
-	plain, err := json.Marshal(sealedCode{
-		ID: id, Token: token, Challenge: b.Challenge, Redirect: b.Redirect,
-		Expires: k.now().Add(cliCodeTTL).UnixNano(),
-	})
+	p.ID, p.Expires = id, k.now().Add(ttl).UnixNano()
+	plain, err := json.Marshal(p)
 	if err != nil {
-		return "", fmt.Errorf("encoding code: %w", err)
+		return "", fmt.Errorf("encoding: %w", err)
 	}
 	nonce := make([]byte, k.aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
-		return "", fmt.Errorf("generating code nonce: %w", err)
+		return "", fmt.Errorf("generating nonce: %w", err)
 	}
-	return base64.RawURLEncoding.EncodeToString(k.aead.Seal(nonce, nonce, plain, nil)), nil
+	return base64.RawURLEncoding.EncodeToString(k.aead.Seal(nonce, nonce, plain, []byte(aad))), nil
 }
 
-// redeem returns the token a code carries when the code is authentic, unexpired,
-// issued for redirect, bound to verifier, and not redeemed before on this
-// replica. The returned error names the failed check for the log only.
-func (k *cliCodes) redeem(code, verifier, redirect string) (string, error) {
-	raw, err := base64.RawURLEncoding.DecodeString(code)
+// open decrypts a value sealed for aad. ok is false for anything this server
+// did not seal for that purpose.
+func (k *cliCodes) open(sealed, aad string) (cliPending, bool) {
+	raw, err := base64.RawURLEncoding.DecodeString(sealed)
 	if err != nil || len(raw) < k.aead.NonceSize() {
-		return "", fmt.Errorf("%w: malformed", errCLICode)
+		return cliPending{}, false
 	}
-	plain, err := k.aead.Open(nil, raw[:k.aead.NonceSize()], raw[k.aead.NonceSize():], nil)
+	plain, err := k.aead.Open(nil, raw[:k.aead.NonceSize()], raw[k.aead.NonceSize():], []byte(aad))
 	if err != nil {
-		return "", fmt.Errorf("%w: not issued by this server", errCLICode)
+		return cliPending{}, false
 	}
-	var sc sealedCode
-	if err := json.Unmarshal(plain, &sc); err != nil {
-		return "", fmt.Errorf("%w: undecodable", errCLICode)
+	var p cliPending
+	if err := json.Unmarshal(plain, &p); err != nil {
+		return cliPending{}, false
+	}
+	return p, true
+}
+
+// sealCode returns the one-time code for an approved sign-in.
+func (k *cliCodes) sealCode(p cliPending) (string, error) {
+	p.CSRF, p.State = "", ""
+	return k.seal(p, cliCodeAAD, cliCodeTTL)
+}
+
+// redeem checks a code against the verifier and redirect the CLI presents.
+// It returns the code's contents whenever the code is authentic, so a refusal
+// can be audited against its user, and a stable reason when it refuses.
+func (k *cliCodes) redeem(code, verifier, redirect string) (p cliPending, authentic bool, reason string) {
+	p, ok := k.open(code, cliCodeAAD)
+	if !ok {
+		return cliPending{}, false, reasonCodeNotAuthentic
 	}
 	now := k.now()
-	expires := time.Unix(0, sc.Expires)
-	if !now.Before(expires) {
-		return "", fmt.Errorf("%w: expired", errCLICode)
-	}
-	if subtle.ConstantTimeCompare([]byte(pkceS256(verifier)), []byte(sc.Challenge)) != 1 {
-		return "", fmt.Errorf("%w: verifier does not match the challenge", errCLICode)
-	}
-	if subtle.ConstantTimeCompare([]byte(redirect), []byte(sc.Redirect)) != 1 {
-		return "", fmt.Errorf("%w: redirect_uri differs from the login's", errCLICode)
+	expires := time.Unix(0, p.Expires)
+	switch {
+	case !now.Before(expires):
+		return p, true, reasonCodeExpired
+	case subtle.ConstantTimeCompare([]byte(pkceS256(verifier)), []byte(p.Challenge)) != 1:
+		return p, true, reasonCodeVerifierMismatch
+	case subtle.ConstantTimeCompare([]byte(redirect), []byte(p.Redirect)) != 1:
+		return p, true, reasonCodeRedirectMismatch
 	}
 	// Last, so a refusal for any other reason does not use the code up.
-	if !k.redeemed.claim(sc.ID, expires, now) {
-		return "", fmt.Errorf("%w: already redeemed", errCLICode)
+	if !k.redeemed.claim(p.ID, expires, now) {
+		return p, true, reasonCodeRedeemed
 	}
-	return sc.Token, nil
+	return p, true, ""
 }
 
 // claimState records the IdP state of a CLI login as answered and reports
-// whether it was not answered before.
+// whether it was not answered before. The callback claims it only once the
+// IdP's code was exchanged and the ID token verified, so a state is used up
+// only by a sign-in that actually happened.
 func (k *cliCodes) claimState(state string) bool {
 	now := k.now()
 	return k.states.claim(state, now.Add(oidc.StateCookieTTL), now)
 }
 
 // onceSetMax caps a onceSet. Entries leave it when they expire; a full set
-// refuses new entries rather than forgetting live ones.
+// refuses new entries rather than forgetting live ones. Every entry is a
+// verified sign-in, so filling it takes 100k of them within their lifetime.
 const onceSetMax = 100_000
 
 // onceSet remembers ids until they expire, so each is accepted once per
@@ -294,6 +411,16 @@ func (u *onceSet) claim(id string, exp, now time.Time) bool {
 	return true
 }
 
+// tokenExpiry reads the exp of a token this server just minted, without
+// verifying it again, falling back to fallback.
+func tokenExpiry(token string, fallback time.Time) int64 {
+	var claims jwt.RegisteredClaims
+	if _, _, err := jwt.NewParser().ParseUnverified(token, &claims); err != nil || claims.ExpiresAt == nil {
+		return fallback.Unix()
+	}
+	return claims.ExpiresAt.Unix()
+}
+
 // contextKeyCLILogin holds the CLI binding of the callback being answered, so
 // a refusal goes back to the CLI rather than to the sign-in page.
 const contextKeyCLILogin = "dexaflow.cli_login"
@@ -319,7 +446,7 @@ func ssoRefusalTarget(c *gin.Context, marker string) string {
 }
 
 // loopbackURL is the CLI's redirect with q and the CLI's state as its query.
-// The redirect was validated to carry no query of its own.
+// The redirect was checked to be canonical, with no query of its own.
 func loopbackURL(b *oidc.CLIBinding, q url.Values) string {
 	q.Set("state", b.State)
 	return b.Redirect + "?" + q.Encode()
@@ -333,31 +460,52 @@ type cliTokenRequest struct {
 }
 
 // cliTokenHandler implements POST /api/v2/auth/cli/token: it redeems a
-// one-time code for the token the CLI login minted, answering exactly what
-// /auth/token answers. Every refusal is the same 400, whatever failed; the
-// reason goes to the log, and neither the code nor the token ever does.
-func cliTokenHandler(codes *cliCodes, ttlSeconds int, logger *slog.Logger) gin.HandlerFunc {
+// one-time code for the token the CLI login minted, answering what
+// /auth/token answers, with expires_in the token's remaining lifetime. Every
+// refusal is the same 400, whatever failed. Each outcome is audited, against
+// the code's tenant and user when the code is authentic; the log and the
+// audit row carry the reason, never the code or the token.
+func cliTokenHandler(codes *cliCodes, logger *slog.Logger, audit AuthAuditWriter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req cliTokenRequest
 		dec := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, cliCodeMaxLen))
-		if err := dec.Decode(&req); err != nil || req.Code == "" || req.CodeVerifier == "" ||
-			len(req.Code) > cliCodeMaxLen || len(req.CodeVerifier) > pkceVerifierMax {
-			refuseCLICode(c, logger, fmt.Errorf("%w: malformed request", errCLICode))
+		if err := dec.Decode(&req); err != nil || req.Code == "" || len(req.Code) > cliCodeMaxLen || !isPKCEVerifier(req.CodeVerifier) {
+			refuseCLICode(c, logger, audit, cliPending{}, reasonCodeMalformed)
 			return
 		}
-		token, err := codes.redeem(req.Code, req.CodeVerifier, req.RedirectURI)
-		if err != nil {
-			refuseCLICode(c, logger, err)
+		p, _, reason := codes.redeem(req.Code, req.CodeVerifier, req.RedirectURI)
+		if reason != "" {
+			refuseCLICode(c, logger, audit, p, reason)
 			return
 		}
-		c.JSON(http.StatusOK, tokenResponse{AccessToken: token, TokenType: "bearer", ExpiresIn: ttlSeconds})
+		recordAuth(c, logger, audit, auditCLICode, p, "success", nil)
+		remaining := max(p.TokenExpires-codes.now().Unix(), 0)
+		c.JSON(http.StatusOK, tokenResponse{AccessToken: p.Token, TokenType: "bearer", ExpiresIn: int(remaining)})
 	}
 }
 
-// refuseCLICode logs why an exchange was refused and answers the one refusal.
-func refuseCLICode(c *gin.Context, logger *slog.Logger, reason error) {
+// refuseCLICode audits and logs why an exchange was refused and answers the
+// one refusal.
+func refuseCLICode(c *gin.Context, logger *slog.Logger, audit AuthAuditWriter, p cliPending, reason string) {
 	if logger != nil {
-		logger.Warn("oidc: cli sign-in code refused", "reason", reason.Error())
+		logger.Warn("oidc: cli sign-in code refused", "reason", reason, "tenant", p.Tenant, "user", p.UserID)
 	}
+	recordAuth(c, logger, audit, auditCLICode, p, "denied", map[string]string{"reason": reason})
 	AbortProblem(c, http.StatusBadRequest, "bad request", cliCodeRefused)
+}
+
+// recordAuth writes one audit row for a CLI sign-in step, best-effort like
+// every other auth audit: a sink error is logged and never changes the
+// answer.
+func recordAuth(c *gin.Context, logger *slog.Logger, audit AuthAuditWriter, action string, p cliPending, outcome string, extra map[string]string) {
+	if audit == nil {
+		return
+	}
+	if extra == nil {
+		extra = map[string]string{}
+	}
+	extra["client"] = "cli"
+	if err := audit.RecordAuthEvent(c.Request.Context(), p.Tenant, p.UserID, action, p.Email, outcome, extra); err != nil && logger != nil {
+		logger.Error("oidc: recording audit event", "action", action, "error", err)
+	}
 }

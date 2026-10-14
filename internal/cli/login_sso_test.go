@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -216,9 +217,30 @@ func browserVisit(t *testing.T, target string) {
 		t.Errorf("browser: %v", err)
 		return
 	}
-	_, _ = io.Copy(io.Discard, resp.Body)
+	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
+	// The person clicks "Sign in the CLI" on the consent page.
+	if m := consentCSRF.FindSubmatch(body); m != nil {
+		form := url.Values{"csrf": {string(m[1])}, "decision": {"approve"}}
+		post, perr := http.NewRequestWithContext(context.Background(), http.MethodPost,
+			resp.Request.URL.ResolveReference(&url.URL{Path: "/api/v2/auth/cli/consent"}).String(), strings.NewReader(form.Encode()))
+		if perr != nil {
+			t.Error(perr)
+			return
+		}
+		post.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		post.Header.Set("Sec-Fetch-Site", "same-origin")
+		presp, derr := client.Do(post)
+		if derr != nil {
+			t.Errorf("browser: consent: %v", derr)
+			return
+		}
+		_, _ = io.Copy(io.Discard, presp.Body)
+		_ = presp.Body.Close()
+	}
 }
+
+var consentCSRF = regexp.MustCompile(`name="csrf" value="([^"]+)"`)
 
 // fakeBrowser replaces the system browser for one test and records the URLs
 // it was asked to open. visit runs in the background, as a real browser
@@ -379,20 +401,64 @@ func redirectWith(t *testing.T, q url.Values) func(string) {
 	}
 }
 
-func TestLoginSSORefusesAWrongState(t *testing.T) {
+// A redirect with another state is not the sign-in the CLI waits for: it is
+// answered 400 and ignored, and the genuine one that follows still signs in.
+func TestLoginSSOIgnoresAWrongStateAndKeepsWaiting(t *testing.T) {
+	srv, exchanges := fakeCLIServer(t, http.StatusOK)
+	fakeBrowser(t, func(signIn string) {
+		u, err := url.Parse(signIn)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		back := u.Query().Get("redirect_uri")
+		forged := httpGetStatus(t, back+"?"+url.Values{"code": {"forged"}, "state": {"forged-state-0123456789"}}.Encode())
+		if forged != http.StatusBadRequest {
+			t.Errorf("forged redirect = %d, want 400", forged)
+		}
+		aborting := httpGetStatus(t, back+"?"+url.Values{"error": {"access_denied"}, "state": {"forged-state-0123456789"}}.Encode())
+		if aborting != http.StatusBadRequest {
+			t.Errorf("forged error redirect = %d, want 400", aborting)
+		}
+		browserVisit(t, back+"?"+url.Values{"code": {"genuine"}, "state": {u.Query().Get("state")}}.Encode())
+	})
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+
+	if _, _, err := run(t, "auth", "login", "--server", srv.URL, "--config", cfgPath, "--timeout", "10s"); err != nil {
+		t.Fatalf("login after a forged redirect: %v", err)
+	}
+	if *exchanges != 1 || savedToken(t, cfgPath, srv.URL) != "jwt-sso" {
+		t.Errorf("exchanges = %d, token %q; want the genuine code exchanged once", *exchanges, savedToken(t, cfgPath, srv.URL))
+	}
+}
+
+func httpGetStatus(t *testing.T, target string) int {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, target, http.NoBody)
+	if err != nil {
+		t.Error(err)
+		return 0
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Error(err)
+		return 0
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode
+}
+
+func TestLoginSSOWithOnlyAForgedStateNeverExchanges(t *testing.T) {
 	srv, exchanges := fakeCLIServer(t, http.StatusOK)
 	fakeBrowser(t, redirectWith(t, url.Values{"code": {"c"}, "state": {"forged-state-0123456789"}}))
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 
-	_, _, err := run(t, "auth", "login", "--server", srv.URL, "--config", cfgPath)
-	if err == nil || !strings.Contains(err.Error(), "state") {
-		t.Fatalf("login with a forged state: err = %v, want a state refusal", err)
+	_, _, err := run(t, "auth", "login", "--server", srv.URL, "--config", cfgPath, "--timeout", "500ms")
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("login with only a forged state: err = %v, want it to keep waiting until the timeout", err)
 	}
-	if *exchanges != 0 {
-		t.Error("the CLI exchanged a code that arrived with the wrong state")
-	}
-	if savedToken(t, cfgPath, srv.URL) != "" {
-		t.Error("a token was saved")
+	if *exchanges != 0 || savedToken(t, cfgPath, srv.URL) != "" {
+		t.Error("the CLI exchanged or saved something from a forged redirect")
 	}
 }
 
@@ -541,5 +607,98 @@ func TestLoopbackAcceptsOneRedirect(t *testing.T) {
 	case r := <-results:
 		t.Errorf("a second result was delivered: %+v", r)
 	default:
+	}
+}
+
+// Concurrent redirects with the right state complete the login once: one is
+// answered as the sign-in, the others as already completed, and nothing
+// blocks or panics.
+func TestLoopbackCompletesOnceUnderConcurrentRedirects(t *testing.T) {
+	results := make(chan loopbackResult, 1)
+	h := loopbackHandler("the-state-0123456789", results)
+	const n = 32
+	codes := make(chan int, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet,
+				ssoCallbackPath+"?state=the-state-0123456789&code=c"+strconv.Itoa(i), http.NoBody))
+			codes <- rec.Code
+		}()
+	}
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent redirects blocked")
+	}
+	close(codes)
+	ok := 0
+	for c := range codes {
+		if c == http.StatusOK {
+			ok++
+		}
+	}
+	if ok != 1 || len(results) != 1 {
+		t.Errorf("%d answered as the sign-in, %d results; want exactly one", ok, len(results))
+	}
+}
+
+func TestLoginSaysWhichMethodAndWhy(t *testing.T) {
+	idp := newSSOIDP(t)
+	cp := newSSOControlPlane(t, idp)
+	fakeBrowser(t, nil)
+	out, _, err := run(t, "auth", "login", "--server", cp.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"))
+	if err != nil || !strings.Contains(out, "Signing in with single sign-on (the server offers it") {
+		t.Errorf("SSO login said %q (%v), want the method and why", out, err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/auth/token", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"jwt-password"}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	out, _, err = run(t, "auth", "login", "--server", srv.URL, "--username", "root@corp.example", "--password", "pw", "--config", filepath.Join(t.TempDir(), "c.yaml"))
+	if err != nil || !strings.Contains(out, "Signing in with a password") || !strings.Contains(out, "break-glass") {
+		t.Errorf("password login said %q (%v), want the method, why, and the break-glass note", out, err)
+	}
+}
+
+func TestLoginRefusesAPasswordOverPlainHTTPToAnotherHost(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "c.yaml")
+	_, _, err := run(t, "auth", "login", "--server", "http://dexaflow.example.invalid:8080", "--username", "a@b.c", "--password", "pw", "--config", cfgPath)
+	if err == nil || !strings.Contains(err.Error(), "--allow-insecure-password") {
+		t.Fatalf("err = %v, want a refusal naming --allow-insecure-password", err)
+	}
+	_, _, err = run(t, "auth", "login", "--server", "http://dexaflow.example.invalid:8080", "--username", "a@b.c", "--password", "pw", "--allow-insecure-password", "--config", cfgPath)
+	if err == nil || strings.Contains(err.Error(), "--allow-insecure-password") {
+		t.Fatalf("with the flag: err = %v, want the request attempted (and failing on the unknown host)", err)
+	}
+	for _, host := range []string{"localhost", "127.0.0.1", "[::1]", "dexaflow.localhost"} {
+		if err := checkPasswordTransport("http://"+host+":8080", false); err != nil {
+			t.Errorf("%s: %v, want a loopback server allowed", host, err)
+		}
+	}
+	if err := checkPasswordTransport("https://dexaflow.example.invalid", false); err != nil {
+		t.Errorf("https: %v", err)
+	}
+}
+
+func TestSystemOpenBrowserRefusesNonWebURLs(t *testing.T) {
+	for _, target := range []string{"file:///etc/passwd", `C:\Windows\System32\calc.exe`, "javascript:alert(1)", "http:///nohost"} {
+		if isWebURL(target) {
+			t.Errorf("isWebURL(%q) = true, want a refusal", target)
+		}
+		if err := systemOpenBrowser(target); err == nil {
+			t.Errorf("systemOpenBrowser(%q) = nil, want a refusal", target)
+		}
+	}
+	if !isWebURL("https://flow.example/api/v2/auth/oidc/login?x=1") {
+		t.Error("isWebURL refused a sign-in URL")
 	}
 }

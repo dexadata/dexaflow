@@ -22,14 +22,9 @@ import (
 // replace a live SSO session and a JWT-only deployment ran with a session cookie
 // any script could read.
 
-// loginPageTemplate is a self-contained login form. Its script posts to
-// /auth/token, whose response carries the session cookie, and navigates to next.
-var loginPageTemplate = template.Must(template.New("login").Parse(`<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dexaflow — Sign in</title>
-<style>
- body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;
+// signInPageCSS is the look of Dexaflow's own sign-in pages: the login form
+// and the CLI consent page (cli_consent.go) share it.
+const signInPageCSS = ` body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;
    min-height:100vh;align-items:center;justify-content:center;margin:0}
  form{background:#1e293b;padding:2rem;border-radius:12px;width:320px;box-shadow:0 10px 30px rgba(0,0,0,.4)}
  h1{font-size:1.25rem;margin:0 0 1rem}
@@ -46,7 +41,16 @@ var loginPageTemplate = template.Must(template.New("login").Parse(`<!doctype htm
  details{margin-top:1.1rem}
  summary{color:#94a3b8;font-size:.8rem;cursor:pointer}
  code{font-size:.72rem;color:#cbd5e1}
-</style></head><body>
+`
+
+// loginPageTemplate is a self-contained login form. Its script posts to
+// /auth/token, whose response carries the session cookie, and navigates to next.
+var loginPageTemplate = template.Must(template.New("login").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dexaflow — Sign in</title>
+<style>
+{{ .CSS }}</style></head><body>
 <form id="f" autocomplete="on">
  <h1>Sign in to Dexaflow</h1>
 {{ if .SSOFailed }} <p class="ssoerr" role="alert">Dexaflow could not complete the sign-in on its side, so you are
@@ -237,7 +241,9 @@ func loginPageHandler(o loginPageOpts) gin.HandlerFunc {
 			// the form only when it is a way in.
 			Collapse bool
 			Focus    bool
+			CSS      template.CSS
 		}{
+			CSS:        template.CSS(signInPageCSS),
 			Next:       template.JS("'" + template.JSEscapeString(next) + "'"),
 			NextQuery:  next,
 			SSO:        o.sso,

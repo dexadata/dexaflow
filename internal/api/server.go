@@ -351,7 +351,10 @@ func NewServer(deps Dependencies) *gin.Engine {
 		oidcLimiter := auth.NewRateLimiter(oidcRateLimitPerMinute, time.Minute)
 		codes := newCLICodes(deps.JWTSecret)
 		r.GET("/api/v2/auth/oidc/login", rateLimitByIP(oidcLimiter), oidcLoginHandler(deps.OIDCFlow, deps.Logger, deps.SessionCookieInsecure))
-		r.POST(cliTokenPath, rateLimitByIP(oidcLimiter), cliTokenHandler(codes, deps.TokenTTLSecs, deps.Logger))
+		r.POST(cliTokenPath, rateLimitByIP(oidcLimiter), cliTokenHandler(codes, deps.Logger, deps.AuthAudit))
+		r.POST(cliConsentPath, rateLimitByIP(oidcLimiter), cliConsentHandler(cliConsentDeps{
+			codes: codes, audit: deps.AuthAudit, logger: deps.Logger, insecure: deps.SessionCookieInsecure,
+		}))
 		r.GET("/api/v2/auth/oidc/callback", rateLimitByIP(oidcLimiter), oidcCallbackHandler(oidcDeps{
 			cliCodes:  codes,
 			flow:      deps.OIDCFlow,

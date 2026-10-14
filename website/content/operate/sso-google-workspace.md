@@ -141,10 +141,16 @@ dexaflow auth login --target dev
 The sign-in in the browser is the UI's: the same Google page, the same tenant
 pin, role mapping and just-in-time provisioning, and the same audit event
 (`oidc.login.success`, with `client: cli`). Instead of a session cookie, the
-server sends the browser back to a port the CLI listens on at `127.0.0.1`,
+server then shows a page that names the account and the port: **Sign in the
+Dexaflow CLI?** Approve it only if you just ran the command. A page you
+visited can open this sign-in too, and without that click the token could
+reach whatever program listens on that port. After **Sign in the CLI**, the
+server sends the browser back to the port the CLI listens on at `127.0.0.1`,
 with a one-time code that the CLI exchanges, with a PKCE verifier only it
 holds, for the token a password login would have saved for that server. The
-code expires after 60 seconds and works once.
+code expires after 60 seconds and works once per server replica; the
+approval page lasts five minutes. Both steps are audited (`oidc.cli_consent`,
+`oidc.cli_code`).
 
 Nothing changes at the IdP for this: the redirect URL Google calls is still
 `.../api/v2/auth/oidc/callback`, and the CLI never talks to Google.
@@ -155,9 +161,12 @@ Nothing changes at the IdP for this: the redirect URL Google calls is still
   port (for example `ssh -L`) or use a password or an API token.
 - `--sso` asks for single sign-on explicitly and fails when the server does
   not offer it. `--timeout` (default 5m) bounds the wait for the browser.
+  The command prints which method it chose and why.
 - `--username`, `--password` or `--password-stdin` (or `LEOFLOW_USERNAME` /
   `LEOFLOW_PASSWORD`) sign in with a password instead, which is the
-  break-glass path when single sign-on is broken.
+  break-glass path when single sign-on is broken. A password is not sent
+  over plain `http://` to a server that is not on this machine unless you
+  pass `--allow-insecure-password`.
 - A refused sign-on ends the command with `single sign-on was refused`; the
   reason is in the audit trail and the server log, as for the UI.
 - CI should not sign in as a person: use a scoped API token

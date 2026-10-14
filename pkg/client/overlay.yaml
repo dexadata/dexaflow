@@ -22,7 +22,7 @@ actions:
   - target: $.paths['/api/v2/deployDefaults']
     remove: true
   # The CLI sign-in routes (#1704) get no generated method either; use
-  # Client.GetAuthMethods and Client.ExchangeCLILoginCode in client.go.
+  # Client.GetAuthMethods and Client.ExchangeCLILoginCode in auth_cli.go.
   - target: $.paths['/api/v2/auth/methods']
     remove: true
   - target: $.paths['/api/v2/auth/cli/token']

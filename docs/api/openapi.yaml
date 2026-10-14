@@ -112,10 +112,14 @@ paths:
         (http://127.0.0.1:<port>/... or http://[::1]:<port>/...), its own
         state, and code_challenge with code_challenge_method S256. After the
         IdP round trip, the callback resolves the user exactly as for the UI
-        and redirects the browser to the loopback with a one-time code. This
-        route redeems that code, once and within 60 seconds, for the PKCE
-        verifier the challenge was derived from and the same redirect_uri,
-        and answers what POST /auth/token answers. Every refusal (unknown,
+        and shows a consent page; only its same-origin form (POST
+        /api/v2/auth/cli/consent, with the CSRF token bound to its
+        SameSite=Strict cookie) redirects the browser to the loopback with a
+        one-time code. This route redeems that code, once per replica and
+        within 60 seconds, for the PKCE verifier (43 to 128 unreserved
+        characters) the challenge was derived from and the same redirect_uri,
+        and answers what POST /auth/token answers, with expires_in the
+        token's remaining lifetime. Every refusal (unknown,
         expired, used, tampered, wrong verifier or redirect_uri) is the same
         400. Served only when single sign-on is configured, and rate limited
         per client address with the other OIDC routes.
