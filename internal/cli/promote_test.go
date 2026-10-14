@@ -60,7 +60,8 @@ func (s *promoteSource) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		for n := 3; n >= 1; n-- {
 			sp := s.spec(n)
 			versions = append(versions, map[string]any{"id": sp["dag_version"], "version_number": n, "dag_id": "etl",
-				"bundle_version": sp["dag_version"], "image": s.image, "is_current": n == 3})
+				"bundle_version": sp["dag_version"], "image": s.image, "is_current": n == 3,
+				"build_info": map[string]any{"commit": fmt.Sprintf("abcdef%d", n), "pipeline_url": "https://ci.example/run/" + fmt.Sprint(n)}})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"dag_versions": versions, "total_entries": len(versions)})
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v2/dags/etl/dagVersions/") && strings.HasSuffix(r.URL.Path, "/spec"):
@@ -222,6 +223,9 @@ func TestPromoteRegistersTheCurrentSourceVersionOnTheDestination(t *testing.T) {
 	}
 	if _, ok := got.query["is_paused"]; ok {
 		t.Errorf("register query = %v: a promote must not set is_paused", got.query)
+	}
+	if got.query["build_commit"] != "abcdef3" || got.query["build_pipeline_url"] != "https://ci.example/run/3" {
+		t.Errorf("register query = %v, want the source version's build info", got.query)
 	}
 	if len(e.dst.dryRuns) != 1 || e.dst.dryRuns[0].query["promoted_from"] != "dev" {
 		t.Errorf("dry runs = %+v, want one before the register", e.dst.dryRuns)

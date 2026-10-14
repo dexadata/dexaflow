@@ -334,6 +334,7 @@ type Querier interface {
 	InsertCLIDevice(ctx context.Context, arg InsertCLIDeviceParams) (InsertCLIDeviceRow, error)
 	// The row is inserted only under a dag of the given tenant (#508): a dag id of
 	// another tenant inserts nothing and the query returns no row.
+	// build_info is NULL when the register sent none (#1702).
 	InsertDagVersion(ctx context.Context, arg InsertDagVersionParams) (DagVersion, error)
 	// The implicit default pool every tenant needs (migration 023 seeds it for
 	// "default"), copied from default's so the slot count stays in step.
@@ -456,7 +457,8 @@ type Querier interface {
 	ListDagRunsByDagWithVersion(ctx context.Context, arg ListDagRunsByDagWithVersionParams) ([]ListDagRunsByDagWithVersionRow, error)
 	// created_by is the registering user's id (empty when the register had no
 	// user), not their email: any reader of the DAG sees it. is_current marks the
-	// version new runs are created with.
+	// version new runs are created with. build_info is where the version was
+	// built, NULL when its register sent none.
 	ListDagVersions(ctx context.Context, arg ListDagVersionsParams) ([]ListDagVersionsRow, error)
 	ListDags(ctx context.Context, arg ListDagsParams) ([]Dag, error)
 	// The newest run is looked up per listed DAG through idx_dag_runs_dag_logical,

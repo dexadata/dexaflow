@@ -690,6 +690,10 @@ func (d *deployRun) run() error {
 	origin := d.o.labelOrigin()
 	output := deployOutput(d.dir)
 	var built build.Result
+	ctx, out := cmdContext(d.cmd), d.cmd.OutOrStdout()
+	// Where this deploy builds the version (#1702); the build adds the
+	// builder and the base image.
+	provenance := collectBuildInfo(ctx, d.dir, os.Getenv)
 	co := compileOptions{
 		cluster:    d.cluster,
 		output:     output,
@@ -701,6 +705,7 @@ func (d *deployRun) run() error {
 		// deploySettings showed the platforms; the build pins its push.
 		settingsShown: true,
 		built:         &built,
+		provenance:    &provenance,
 	}
 	// Resolved here rather than inside runCompile because the digest lookup
 	// below needs the same reference; runCompile then takes both as given.
@@ -712,7 +717,6 @@ func (d *deployRun) run() error {
 	version := co.dagVersion
 	co.reuse = d.mayReuse(image, version, origin)
 	co.rebuild = d.o.rebuild
-	ctx, out := cmdContext(d.cmd), d.cmd.OutOrStdout()
 	if skip, werr := d.watchSkip(ctx, version); skip || werr != nil {
 		return werr
 	}
@@ -748,7 +752,8 @@ func (d *deployRun) run() error {
 	}
 	d.readStateBefore(ctx)
 	res, rerr := registerDeployedDAG(ctx, out, registerRequest{serverURL: d.serverURL, token: d.token, output: output,
-		digestRef: digestRef, version: version, origin: origin, paused: d.o.pausedOverride(), warn: d.cmd.ErrOrStderr()})
+		digestRef: digestRef, version: version, origin: origin, paused: d.o.pausedOverride(), warn: d.cmd.ErrOrStderr(),
+		build: provenance})
 	if rerr != nil {
 		return rerr
 	}
@@ -941,6 +946,9 @@ type registerRequest struct {
 	paused           *bool
 	// warn receives the warning that the server did not apply paused.
 	warn io.Writer
+	// build is where the version was built, sent with the register
+	// (#1702); its zero value sends nothing.
+	build domain.BuildInfo
 }
 
 // registerAnswer is the part of the register response the deploy reports.
@@ -988,10 +996,15 @@ func registerDeployedDAG(ctx context.Context, out io.Writer, r registerRequest) 
 	if jerr := json.Unmarshal(repinned, &spec); jerr != nil {
 		return deployResult{}, fmt.Errorf("parsing compiled dag.json: %w", jerr)
 	}
-	status, body, uerr := pushVersionPaused(ctx, r.serverURL, r.token, spec.DagID, repinned, r.paused)
+	post := versionPost{serverURL: r.serverURL, token: r.token, dagID: spec.DagID, spec: repinned, paused: r.paused}
+	if !r.build.IsZero() {
+		post.build = &r.build
+	}
+	status, _, raw, uerr := postVersion(ctx, post)
 	if uerr != nil {
 		return deployResult{}, uerr
 	}
+	body := string(raw)
 	if status >= http.StatusMultipleChoices {
 		return deployResult{}, versionConflictHint(apiStatusError(status, []byte(body)), r.version, r.origin)
 	}

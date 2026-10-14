@@ -1167,7 +1167,7 @@ func TestTaskInstanceDagVersionIsTheRunsVersion(t *testing.T) {
 		"id": "id-1", "version_number": float64(1), "dag_id": "etl", "bundle_name": "leoflow",
 		"bundle_version": "label-1", "created_at": "2026-10-14T00:41:33Z", "dag_display_name": "etl",
 		"bundle_url": nil, "image": "img@sha256:aa", "spec_hash": "h1", "is_current": true,
-		"created_by": "7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a",
+		"created_by": "7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a", "build_info": nil,
 	}
 	check := func(what, method, path, body string) {
 		t.Helper()

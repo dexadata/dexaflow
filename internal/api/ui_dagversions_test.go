@@ -172,8 +172,8 @@ func TestDagVersionsExposeProvenance(t *testing.T) {
 // TestDagDetailsLatestDagVersionIsComplete: after a rollback, the newest
 // version is still latest_dag_version, as in Airflow, and it carries every
 // field of its row, as the dagVersions listing serves it: bundle_version,
-// image, spec_hash, created_by and is_current (false, since the rollback made
-// an older version current).
+// image, spec_hash, created_by, build_info (null: none was sent) and
+// is_current (false, since the rollback made an older version current).
 func TestDagDetailsLatestDagVersionIsComplete(t *testing.T) {
 	at := time.Date(2026, 10, 14, 0, 41, 33, 0, time.UTC)
 	srv := versionsServer([]domain.DAG{{DagID: "etl", CurrentVersion: "label-1"}}, []domain.DagVersion{
@@ -194,7 +194,7 @@ func TestDagDetailsLatestDagVersionIsComplete(t *testing.T) {
 		"id": "id-2", "version_number": float64(2), "dag_id": "etl", "bundle_name": "leoflow",
 		"bundle_version": "label-2", "created_at": "2026-10-14T00:42:33Z", "dag_display_name": "etl",
 		"bundle_url": nil, "image": "img@sha256:bb", "spec_hash": "h2", "is_current": false,
-		"created_by": "7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a",
+		"created_by": "7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a", "build_info": nil,
 	}
 	if len(d.Latest) != len(want) {
 		t.Errorf("latest_dag_version has %d fields, want %d: %v", len(d.Latest), len(want), d.Latest)

@@ -199,7 +199,7 @@ func (p *promoteRun) apply(ctx context.Context, src sourceVersion, dest destImag
 		return errors.New("promote aborted")
 	}
 	post := versionPost{serverURL: p.to.target.Server, token: p.to.token, dagID: p.dagID, spec: spec,
-		promoted: &domain.DagPromotion{Target: p.from.target.Name, Server: p.from.target.Server}}
+		promoted: &domain.DagPromotion{Target: p.from.target.Name, Server: p.from.target.Server}, build: src.version.buildInfo}
 	if err := p.dryRunRegister(ctx, post, src.version.label); err != nil {
 		return err
 	}

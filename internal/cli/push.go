@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -40,12 +41,14 @@ func newPushCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			status, body, err := pushVersion(cmdContext(cmd), serverURL, token, spec.DagID, data)
+			ctx := cmdContext(cmd)
+			build := collectBuildInfo(ctx, filepath.Dir(args[0]), os.Getenv)
+			status, _, raw, err := postVersion(ctx, versionPost{serverURL: serverURL, token: token, dagID: spec.DagID, spec: data, build: &build})
 			if err != nil {
 				return err
 			}
 			if status >= http.StatusMultipleChoices {
-				return versionConflictHint(apiStatusError(status, []byte(body)), spec.DagVersion, labelUnknown)
+				return versionConflictHint(apiStatusError(status, raw), spec.DagVersion, labelUnknown)
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Registered %q with %s (HTTP %d)\n", spec.DagID, serverURL, status)
 			return err
@@ -58,13 +61,7 @@ func newPushCommand() *cobra.Command {
 
 // pushVersion POSTs a dag.json to the control plane's versions endpoint.
 func pushVersion(ctx context.Context, serverURL, token, dagID string, spec []byte) (status int, body string, err error) {
-	return pushVersionPaused(ctx, serverURL, token, dagID, spec, nil)
-}
-
-// pushVersionPaused is pushVersion that, when paused is set, asks the server
-// to leave the DAG in that state (the is_paused query parameter).
-func pushVersionPaused(ctx context.Context, serverURL, token, dagID string, spec []byte, paused *bool) (status int, body string, err error) {
-	status, _, raw, err := postVersion(ctx, versionPost{serverURL: serverURL, token: token, dagID: dagID, spec: spec, paused: paused})
+	status, _, raw, err := postVersion(ctx, versionPost{serverURL: serverURL, token: token, dagID: dagID, spec: spec})
 	return status, string(raw), err
 }
 
@@ -72,12 +69,15 @@ func pushVersionPaused(ctx context.Context, serverURL, token, dagID string, spec
 // register, or with dryRun the server's dry run of one, on its
 // /versions/dry_run route. promoted, set by `dexaflow promote`, names the
 // control plane the version comes from, for the register's audit entry.
+// build, when set, is where the version was built, sent as the build_*
+// parameters (#1702).
 type versionPost struct {
 	serverURL, token, dagID string
 	spec                    []byte
 	paused                  *bool
 	dryRun                  bool
 	promoted                *domain.DagPromotion
+	build                   *domain.BuildInfo
 }
 
 // query is the query string of p's POST, "" when it has none.
@@ -92,6 +92,7 @@ func (p versionPost) query() string {
 			q.Set("promoted_from_server", p.promoted.Server)
 		}
 	}
+	addBuildInfo(q, p.build)
 	if len(q) == 0 {
 		return ""
 	}

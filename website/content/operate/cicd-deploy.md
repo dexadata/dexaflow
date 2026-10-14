@@ -452,8 +452,9 @@ dexaflow rollback my_pipeline --to v1.4.0-3fa2c1   # or to a label (or a version
 
 `dexaflow dags versions` lists each version, newest first: its number, its
 label, a `*` on the current one, when it was registered, the id of the user
-who registered it (`dexaflow admin users list` maps ids to emails), and the
-short image digest. `--to` matches a label first, then a version number. `dexaflow rollback` prints the version it moved from and
+who registered it (`dexaflow admin users list` maps ids to emails), the
+commit it was built from (see [Where a version was built](#where-a-version-was-built))
+and the short image digest. `--to` matches a label first, then a version number. `dexaflow rollback` prints the version it moved from and
 the one it moved to, and takes `--server` and `--token` like the other
 commands. Both read and write through the API: the listing is
 `GET /api/v2/dags/{dag_id}/dagVersions`, and the rollback is
@@ -509,6 +510,39 @@ Two things that look like a rollback are not:
 `dexaflow deploy` of code that matches a version registered earlier (after a
 `git revert`, for example) stops before building and suggests the
 `dexaflow rollback <dag_id> --to <label>` command for that version.
+
+## Where a version was built
+
+Every `dexaflow deploy` and `dexaflow push` records where the version was
+built, and `GET /api/v2/dags/{dag_id}/dagVersions` returns it as `build_info`
+next to Airflow's fields (`null` for a version registered without it):
+
+| Field | Where the CLI reads it |
+|---|---|
+| `commit` | `git rev-parse HEAD` in the project directory, when it is in a git work tree. |
+| `repo` | The `origin` remote of that work tree, as an `https` URL: credentials and a trailing `.git` are dropped, and an ssh remote (`git@host:org/repo.git`) becomes `https://host/org/repo`. Outside git, `GITHUB_SERVER_URL`/`GITHUB_REPOSITORY` or GitLab's `CI_PROJECT_URL`. |
+| `pipeline_url` | The CI run: on GitHub Actions `GITHUB_SERVER_URL/GITHUB_REPOSITORY/actions/runs/GITHUB_RUN_ID`, else `CI_PIPELINE_URL` (GitLab), `BUILD_URL` (Jenkins), `BUILDKITE_BUILD_URL` or `CIRCLE_BUILD_URL`. |
+| `builder` | The builder that produced the image, as the deploy prints it (`code-layer`, `local-daemon (docker)`, ...). Absent with `--skip-build`. |
+| `base_image` | The base image of the generated Dockerfile, which carries the task agent. Absent when the project ships its own Dockerfile, and with `--skip-build`. |
+| `cli_version` | The version of the CLI that built and registered the version. |
+
+What cannot be read is left out; a deploy never fails for it. `dexaflow promote`
+forwards the source version's `build_info` to the destination.
+
+Build info is metadata of the register, not part of `dag.json`: it changes
+neither the spec, its hash nor the version label, so the same sources built by
+two pipelines still compile to one version. A version is immutable, so a
+re-push of content already registered creates nothing and keeps the build info
+of its first register. The CLI sends it as the `build_commit`, `build_repo`,
+`build_pipeline_url`, `build_builder`, `build_base_image` and
+`build_cli_version` query parameters of
+`POST /api/v2/dags/{dag_id}/versions`; another client can send them too. The
+server checks them as external input (a commit is 7 to 64 lower case hex
+characters, the two URLs are absolute `http` or `https` URLs without
+credentials of at most 2048 bytes, no field holds a control character) and
+refuses a bad value with `400`. The register's `dag.version.register` audit
+entry records the same `build_info`. It is the caller's claim, recorded as
+sent and not verified: a deploy token can write any commit there.
 
 ## Syncing a target with the workspace (GitOps)
 
@@ -810,7 +844,9 @@ dexaflow promote my_pipeline --from staging --to prod --version v1.4.0-3fa2c1   
 - **Audited, as claimed.** The register's `dag.version.register` audit entry
   carries `promoted_from` with the source target's name and server URL as the
   promoting CLI sent them (`promoted_from` and `promoted_from_server` on the
-  register). The destination records this claim; it does not verify it.
+  register). The destination records this claim; it does not verify it. The
+  source version's `build_info` (commit, pipeline, builder) is sent along, so
+  the destination lists where the version was built.
 - **A token for each control plane.** `--from-token` and `--to-token`, else
   the session saved for each server by `dexaflow auth login --target <name>`.
   `DEXAFLOW_TOKEN` is not read, so one token is never sent to two control

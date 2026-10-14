@@ -242,6 +242,27 @@ type APITokenCollection struct {
 	TotalEntries *int        `json:"total_entries,omitempty"`
 }
 
+// BuildInfo Dexaflow. Where a DAG version was built (#1702), as the register claimed it, not verified. Every field is optional and absent when it was not sent.
+type BuildInfo struct {
+	// BaseImage The base image the DAG image was built from; it carries the task agent.
+	BaseImage *string `json:"base_image,omitempty"`
+
+	// Builder The builder that produced the image.
+	Builder *string `json:"builder,omitempty"`
+
+	// CliVersion The version of the CLI that built and registered the version.
+	CliVersion *string `json:"cli_version,omitempty"`
+
+	// Commit The git commit of the sources.
+	Commit *string `json:"commit,omitempty"`
+
+	// PipelineUrl The CI pipeline run that built the version (http or https URL).
+	PipelineUrl *string `json:"pipeline_url,omitempty"`
+
+	// Repo The repository of the sources (http or https URL).
+	Repo *string `json:"repo,omitempty"`
+}
+
 // ClearTaskInstancesRequest defines model for ClearTaskInstancesRequest.
 type ClearTaskInstancesRequest struct {
 	DagRunId *string `json:"dag_run_id,omitempty"`
@@ -487,6 +508,8 @@ type DagSpec struct {
 
 // DagVersion defines model for DagVersion.
 type DagVersion struct {
+	// BuildInfo Dexaflow. Where the version was built, as its register sent it in the build_* parameters; null when it sent none.
+	BuildInfo     *BuildInfo `json:"build_info,omitempty"`
 	BundleName    *string    `json:"bundle_name,omitempty"`
 	BundleUrl     *string    `json:"bundle_url,omitempty"`
 	BundleVersion *string    `json:"bundle_version,omitempty"`
@@ -813,6 +836,24 @@ type RegisterDagVersionParams struct {
 
 	// PromotedFromServer The URL of the control plane the version was promoted from, as the caller claims it (not verified): an absolute http or https URL without credentials and with no control or format character, at most 2048 bytes. It needs promoted_from (400 otherwise).
 	PromotedFromServer *string `form:"promoted_from_server,omitempty" json:"promoted_from_server,omitempty"`
+
+	// BuildCommit Where the version was built (#1702), with the other build_* parameters: the git commit of its sources, 7 to 64 lower case hex characters. The build_* parameters are metadata of the register, not part of dag.json: they change neither the spec, its hash nor the version label. They are stored with the version the register creates (build_info in DagVersion) and recorded in its audit entry; a register of content already registered keeps the build info of its first register. They are the caller's claim, recorded as sent and not verified. A value that is empty or breaks its rule is refused with 400.
+	BuildCommit *string `form:"build_commit,omitempty" json:"build_commit,omitempty"`
+
+	// BuildRepo The repository of the sources: an absolute http or https URL without credentials and with no control or format character, at most 2048 bytes.
+	BuildRepo *string `form:"build_repo,omitempty" json:"build_repo,omitempty"`
+
+	// BuildPipelineUrl The CI pipeline run that built the version: an absolute http or https URL without credentials and with no control or format character, at most 2048 bytes.
+	BuildPipelineUrl *string `form:"build_pipeline_url,omitempty" json:"build_pipeline_url,omitempty"`
+
+	// BuildBuilder The builder that produced the image, at most 255 bytes, with no control or format character.
+	BuildBuilder *string `form:"build_builder,omitempty" json:"build_builder,omitempty"`
+
+	// BuildBaseImage The base image the DAG image was built from (it carries the task agent), at most 512 bytes, with no space, control or format character.
+	BuildBaseImage *string `form:"build_base_image,omitempty" json:"build_base_image,omitempty"`
+
+	// BuildCliVersion The version of the CLI that built and registered the version, at most 128 bytes, with no space, control or format character.
+	BuildCliVersion *string `form:"build_cli_version,omitempty" json:"build_cli_version,omitempty"`
 }
 
 // ListUsersParams defines parameters for ListUsers.
@@ -3874,6 +3915,78 @@ func NewRegisterDagVersionRequestWithBody(server string, dagId DagID, params *Re
 		if params.PromotedFromServer != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "promoted_from_server", *params.PromotedFromServer, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.BuildCommit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "build_commit", *params.BuildCommit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.BuildRepo != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "build_repo", *params.BuildRepo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.BuildPipelineUrl != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "build_pipeline_url", *params.BuildPipelineUrl, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.BuildBuilder != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "build_builder", *params.BuildBuilder, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.BuildBaseImage != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "build_base_image", *params.BuildBaseImage, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.BuildCliVersion != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "build_cli_version", *params.BuildCliVersion, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {

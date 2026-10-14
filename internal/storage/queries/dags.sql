@@ -82,9 +82,10 @@ WHERE dag_versions.dag_id = $1 AND dag_versions.spec_hash = $2
 -- name: InsertDagVersion :one
 -- The row is inserted only under a dag of the given tenant (#508): a dag id of
 -- another tenant inserts nothing and the query returns no row.
-INSERT INTO dag_versions (dag_id, version, image_reference, spec, spec_hash, created_by)
+-- build_info is NULL when the register sent none (#1702).
+INSERT INTO dag_versions (dag_id, version, image_reference, spec, spec_hash, created_by, build_info)
 SELECT d.id, sqlc.arg(version)::text, sqlc.arg(image_reference)::text, sqlc.arg(spec)::jsonb,
-       sqlc.arg(spec_hash)::text, sqlc.narg(created_by)::uuid
+       sqlc.arg(spec_hash)::text, sqlc.narg(created_by)::uuid, sqlc.narg(build_info)::jsonb
 FROM dags d
 WHERE d.id = sqlc.arg(dag_id) AND d.tenant_id = sqlc.arg(tenant_id)
 RETURNING *;
@@ -101,8 +102,9 @@ WHERE d.tenant_id = $1 AND d.dag_id = $2;
 -- name: ListDagVersions :many
 -- created_by is the registering user's id (empty when the register had no
 -- user), not their email: any reader of the DAG sees it. is_current marks the
--- version new runs are created with.
-SELECT v.id, v.version, v.created_at, v.image_reference, v.spec_hash,
+-- version new runs are created with. build_info is where the version was
+-- built, NULL when its register sent none.
+SELECT v.id, v.version, v.created_at, v.image_reference, v.spec_hash, v.build_info,
        COALESCE(v.id = d.current_version_id, false)::boolean AS is_current,
        COALESCE(v.created_by::text, '')::text AS created_by,
        row_number() OVER (ORDER BY v.created_at, v.version) AS version_number
