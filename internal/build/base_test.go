@@ -4,9 +4,13 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -323,5 +327,139 @@ func TestDistOfRefusesWhatIsNotANameAndAVersion(t *testing.T) {
 	}
 	if d, ok := distOf("Apache_Airflow_Task_SDK-1.3.1+local.dist-info"); !ok || d != "apache-airflow-task-sdk==1.3.1+local" {
 		t.Errorf("distOf = %q, %v", d, ok)
+	}
+}
+
+// pushBase pushes img under ref and returns what the registry says it names.
+func pushBase(t *testing.T, ref string, img v1.Image) Pinned {
+	t.Helper()
+	r, err := name.ParseReference(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if werr := remote.Write(r, img); werr != nil {
+		t.Fatal(werr)
+	}
+	pinned, err := Registry{}.Resolve(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pinned
+}
+
+// A base that tells pip where or what to install, by its environment or by
+// a pip configuration file in any place pip reads one, says so: the daemon's
+// pip honors it, the dependency layer cannot. A file a later layer deletes
+// is not there, and a variable that changes nothing pip installs is not
+// recorded.
+func TestRegistryRecordsThePipConfigurationOfTheBase(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	host := testRegistry(t)
+	cases := map[string]struct {
+		env    []string
+		layers []v1.Layer
+		want   []string
+	}{
+		"index variables": {[]string{"PYTHON_VERSION=3.11.9", "PIP_INDEX_URL=https://pypi.internal/simple", "PIP_FIND_LINKS=/wheels", "PIP_NO_CACHE_DIR=1", "PIP_DISABLE_PIP_VERSION_CHECK=1"},
+			nil, []string{"PIP_FIND_LINKS", "PIP_INDEX_URL"}},
+		"config files": {[]string{"PYTHON_VERSION=3.11.9", "PIP_CONSTRAINT=/c.txt"}, []v1.Layer{tarLayer(t,
+			[2]string{"etc/pip.conf", "[global]\nindex-url = https://pypi.internal/simple\n"},
+			[2]string{"etc/xdg/pip/pip.conf", "x"}, [2]string{"usr/local/pip.conf", "x"}, [2]string{"root/.config/pip/pip.conf", "x"},
+			[2]string{"root/.pip/pip.conf", "x"})},
+			[]string{"/etc/pip.conf", "/etc/xdg/pip/pip.conf", "/root/.config/pip/pip.conf", "/root/.pip/pip.conf", "/usr/local/pip.conf", "PIP_CONSTRAINT"}},
+		"deleted later": {[]string{"PYTHON_VERSION=3.11.9", "XDG_CONFIG_DIRS=/opt/conf"}, []v1.Layer{
+			tarLayer(t, [2]string{"etc/pip.conf", "x"}, [2]string{"root/.config/pip/pip.conf", "x"}),
+			tarLayer(t, [2]string{"etc/.wh.pip.conf", ""}, [2]string{"root/.config/.wh..wh..opq", ""})},
+			[]string{"XDG_CONFIG_DIRS"}},
+	}
+	for name, tc := range cases {
+		img := baseImage(t, tc.env, append(runtimeLayers(t), tc.layers...)...)
+		got, err := Registry{}.Base(context.Background(), pushBase(t, host+"/runtime:"+strings.ReplaceAll(name, " ", "-"), img), "linux/amd64")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(got.PipConfig, tc.want) {
+			t.Errorf("%s: pip configuration = %q, want %q", name, got.PipConfig, tc.want)
+		}
+	}
+}
+
+// A dpkg status a later layer deletes records no glibc.
+func TestRegistryHonorsAWhiteoutOfTheDpkgStatus(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	host := testRegistry(t)
+	for name, wh := range map[string]string{"file": "var/lib/dpkg/.wh.status", "opaque": "var/lib/dpkg/.wh..wh..opq"} {
+		img := baseImage(t, []string{"PYTHON_VERSION=3.11.9"}, append(runtimeLayers(t), tarLayer(t, [2]string{wh, ""}))...)
+		got, err := Registry{}.Base(context.Background(), pushBase(t, host+"/runtime:"+name, img), "linux/amd64")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Glibc != "" {
+			t.Errorf("%s: glibc = %q after the status was deleted", name, got.Glibc)
+		}
+	}
+}
+
+// A PYTHON_VERSION that is not X.Y.Z makes no runtime base.
+func TestRegistryRefusesAMalformedPythonVersion(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	host := testRegistry(t)
+	for i, v := range []string{"3.11", "3.11.9 --index-url x", "../3.11.9", "3.11.9rc1"} {
+		img := baseImage(t, []string{"PYTHON_VERSION=" + v}, runtimeLayers(t)...)
+		got, err := Registry{}.Base(context.Background(), pushBase(t, host+"/runtime:v"+fmt.Sprint(i), img), "linux/amd64")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := v == "3.11.9rc1"; (got.Python != "") != want {
+			t.Errorf("PYTHON_VERSION=%q: python = %q", v, got.Python)
+		}
+	}
+}
+
+// A cached listing is used only when it names the digest asked for and
+// holds nothing but name==version lines; otherwise the base is read again.
+func TestRegistryRereadsACachedListingItCannotTrust(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	host, reads := countingRegistry(t)
+	pinned := pushRuntimeBase(t, host+"/runtime:py3.11", "linux/amd64")
+	first, err := Registry{}.Base(context.Background(), pinned, "linux/amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := baseCacheFile(first.Digest)
+	tamper := map[string]func(b *BaseImage){
+		"digest": func(b *BaseImage) { b.Digest = "sha256:00" },
+		"dist":   func(b *BaseImage) { b.Dists = append(b.Dists, "x==1 --index-url=https://evil") },
+		"python": func(b *BaseImage) { b.Python = "3.11.9\n-e ." },
+	}
+	for name, edit := range tamper {
+		b := first
+		b.Dists = slices.Clone(first.Dists)
+		edit(&b)
+		data, merr := json.Marshal(b)
+		if merr != nil {
+			t.Fatal(merr)
+		}
+		if werr := os.WriteFile(file, data, 0o600); werr != nil {
+			t.Fatal(werr)
+		}
+		reads.Store(0)
+		got, err := Registry{}.Base(context.Background(), pinned, "linux/amd64")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reads.Load() == 0 || !slices.Equal(got.Dists, first.Dists) || got.Python != first.Python {
+			t.Errorf("%s: a tampered cache was used (%d blob reads): %+v", name, reads.Load(), got)
+		}
+	}
+	if left, _ := filepath.Glob(filepath.Join(cache, "dexaflow", "base", "*.tmp*")); len(left) != 0 {
+		t.Errorf("temporary cache files left: %v", left)
+	}
+}
+
+func TestParseGlibcWithAnEpoch(t *testing.T) {
+	if got := parseGlibc([]byte("Package: libc6\nStatus: install ok installed\nVersion: 1:2.36-9\n\n")); got != "2.36" {
+		t.Errorf("glibc = %q, want 2.36", got)
 	}
 }
