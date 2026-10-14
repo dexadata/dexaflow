@@ -97,8 +97,8 @@ type dryRunAnswer struct {
 
 // dryImage is the image a dry run is sent in the spec: ref, pinned by
 // digest, and whether it is the image the register will get (decides), so
-// that an answer the image decides (a label registered with other content)
-// is final.
+// that an answer the image decides (a refusal of the image itself, a label
+// registered with other content) is final.
 type dryImage struct {
 	ref     string
 	decides bool
@@ -107,8 +107,10 @@ type dryImage struct {
 // serverDryRun sends the compiled spec at specPath, its image replaced by
 // img.ref, to the server's register dry run, with is_paused as the deploy
 // will send it, and returns the refusal the register would give, labeled
-// for version and origin. A conflict when img does not decide it, and an
-// answer that is no dry run (an older replica's 404), are notes on warn. It
+// for version and origin. A refusal of the placeholder image or a conflict
+// when img does not decide them, an answer that is no dry run (an older
+// replica's 404), and one the server could not give (5xx, 429) are notes on
+// warn. It
 // prints what the register would do to out and the server's warnings to
 // warn.
 func serverDryRun(ctx context.Context, out, warn io.Writer, p versionPost, specPath string, img dryImage, version string, origin labelOrigin) error {
@@ -130,9 +132,14 @@ func serverDryRun(ctx context.Context, out, warn io.Writer, p versionPost, specP
 		return note("could not run the dry run of the register (%v); its checks run when it registers", err)
 	case header.Get(dryRunHeader) != "true":
 		return note("%s answered the dry run of the register with %d, no dry run (an older replica?); its checks run when it registers", p.serverURL, status)
+	case status >= http.StatusInternalServerError || status == http.StatusTooManyRequests:
+		return note("%s could not run the dry run of the register (%v); its checks run when it registers", p.serverURL, apiStatusError(status, body))
 	case status == http.StatusConflict && !img.decides:
 		return note("the server would refuse this register: %v\n  The image built now decides whether it is the content already registered under %s, so the deploy goes on",
 			apiStatusError(status, body), version)
+	case refusesThePlaceholder(status, body, img):
+		return note("the server would refuse this register: %v\n  The image built now decides whether the server accepts it (the dry run had a placeholder digest), so the deploy goes on",
+			apiStatusError(status, body))
 	case status >= http.StatusMultipleChoices:
 		return fmt.Errorf("preflight: the server would refuse this register: %w", versionConflictHint(apiStatusError(status, body), version, origin))
 	}
@@ -148,10 +155,19 @@ func serverDryRun(ctx context.Context, out, warn io.Writer, p versionPost, specP
 	return werr
 }
 
+// refusesThePlaceholder reports whether a dry run refused the image it was
+// sent when that image is the placeholder (img.decides false): the refusal
+// quotes it, as the image allowlist does for an image it does not list. An
+// allowlist that names one exact digest refuses every placeholder, and only
+// the image built decides.
+func refusesThePlaceholder(status int, body []byte, img dryImage) bool {
+	return !img.decides && status == http.StatusBadRequest && strings.Contains(string(body), placeholderDigest)
+}
+
 // dryRunOutcome says what a register would do, in the words of the deploy
 // output. Unchanged is reachable only when the dry run had the image the
-// register gets (--skip-build): content with a placeholder digest is never
-// registered.
+// register gets (nothing is built): content with a placeholder digest is
+// never registered.
 func dryRunOutcome(a dryRunAnswer) string {
 	state := "active"
 	if a.IsPaused {

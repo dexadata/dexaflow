@@ -56,6 +56,9 @@ type deployServer struct {
 	dryRunQueries   []string
 	registeredImage string
 	dryRunImages    []string
+	// allowedImage, when set, is the only image a dry run accepts, refused
+	// as the image allowlist refuses one (the image named in the detail).
+	allowedImage string
 }
 
 // detailsJSON is the details answer: the current label and the fields the
@@ -184,6 +187,11 @@ func (s *deployServer) serveDryRun(w http.ResponseWriter, r *http.Request, body 
 	s.dryRunImages = append(s.dryRunImages, spec.Image)
 	if s.dryRunStatus != 0 {
 		refuse(s.dryRunStatus)
+		return
+	}
+	if s.allowedImage != "" && spec.Image != s.allowedImage {
+		s.refusal = fmt.Sprintf("image %q is not in executor.defaults.execution_allowlist.images (%s)", spec.Image, s.allowedImage)
+		refuse(http.StatusBadRequest)
 		return
 	}
 	created := true

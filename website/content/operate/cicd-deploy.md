@@ -177,16 +177,21 @@ this order:
    and field allowlists, the resource unit, source mode, the tenant's limits,
    the declared connections and variables, the version label) and writes
    nothing. The register gets the image pinned by digest, which the build
-   makes later. With `--skip-build` the dry run is sent the digest the
-   registry holds for the tag, the very image the register gets; before a
-   build it is sent the repository at a placeholder digest, so an allowlist
-   of repositories or of `repo@*` decides as for the register. A refusal
-   stops the deploy with the server's reason, except a version label
-   registered with other content when the image is still to be built: the
-   built image decides that one, so it is a `note:` and the register answers
-   it. A
-   warning (a task that does not fit its size under
-   `executor.unit.enforce: warn`) prints on stderr and the deploy goes on.
+   makes later. When nothing is built (`--skip-build`, or the registry
+   already holds the image for the content label) the dry run is sent the
+   digest the registry holds for the tag, the very image the register gets,
+   so an allowlist that names that exact digest accepts it. Before a build
+   it is sent the repository at a placeholder digest, so an allowlist of
+   repositories or of `repo@*` decides as for the register. A refusal stops
+   the deploy with the server's reason, except two the built image decides
+   when it is still to be built: a refusal of the placeholder image itself
+   (an allowlist that names exact digests, which a reproducible build may
+   match) and a version label registered with other content. Each of those
+   is a `note:`, and the register answers it. So is a dry run the server
+   could not answer (`5xx`, or `429` under load): the deploy goes on and the
+   register runs the checks. A warning (a task that does not fit its size
+   under `executor.unit.enforce: warn`) prints on stderr and the deploy goes
+   on.
 
 Each check that passes prints a `preflight:` line (on stderr with
 `--output json`). A server from before the dry run route answers it with

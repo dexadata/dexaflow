@@ -348,3 +348,59 @@ func TestServerDryRunOfAnOlderReplicaIsANote(t *testing.T) {
 		t.Fatalf("err = %v, warn = %q; want a note naming the 404", err, warn.String())
 	}
 }
+
+// TestDeployDryRunOfAReusedImageHasItsDigest: on the skip path the registry
+// already holds the image for the content label and the register gets that
+// digest, so the dry run is sent it too, and an allowlist naming exactly that
+// digest lets the deploy through.
+func TestDeployDryRunOfAReusedImageHasItsDigest(t *testing.T) {
+	noDockerCredentials(t)
+	dir, reg := platformProjectWith(t, amd64Only, "")
+	builder, log := argvBuilder(t)
+	want := reg.host + "/team/etl@" + reg.digest
+	fake := &deployServer{allowedImage: want}
+	out, errOut, err := deployDir(t, fake, dir, builder)
+	if err != nil {
+		t.Fatalf("deploy of a reused image allowlisted by digest: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "registry already holds the image") || argvLines(t, log) != nil || fake.registers != 1 {
+		t.Fatalf("builder=%q registers=%d, want the skip path and one register:\n%s", argvLines(t, log), fake.registers, out)
+	}
+	if len(fake.dryRunImages) != 1 || fake.dryRunImages[0] != want || strings.Contains(errOut, "note: ") {
+		t.Errorf("dry run images %q, want the reused digest %s and no note:\n%s", fake.dryRunImages, want, errOut)
+	}
+}
+
+// TestDeployDryRunImageRefusalBeforeABuildIsANote: before a build the dry run
+// has a placeholder digest, so a refusal of that image (an allowlist naming
+// one exact digest, which a reproducible build may make) is left to the
+// register: a note, and the deploy builds.
+func TestDeployDryRunImageRefusalBeforeABuildIsANote(t *testing.T) {
+	noDockerCredentials(t)
+	reg := newFakeOCIRegistry(t, singleManifest)
+	dir, builder, log := deployFixtureAt(t, reg.host+"/team")
+	fake := &deployServer{allowedImage: reg.host + "/team/etl@" + reg.digest}
+	out, errOut, err := deployDir(t, fake, dir, builder, "--force")
+	if err != nil {
+		t.Fatalf("deploy: %v\n%s", err, out)
+	}
+	if !builderRan(log) || fake.registers != 1 || !strings.Contains(errOut, "note: the server would refuse this register") ||
+		!strings.Contains(errOut, "image built now decides") {
+		t.Errorf("built=%v registers=%d, stderr does not carry the image refusal as a note:\n%s", builderRan(log), fake.registers, errOut)
+	}
+}
+
+// TestDeployDryRunServerErrorIsANote: a dry run the server could not answer
+// (a 5xx, or 429 under load) says nothing about the register: a note.
+func TestDeployDryRunServerErrorIsANote(t *testing.T) {
+	noDockerCredentials(t)
+	for _, status := range []int{http.StatusInternalServerError, http.StatusServiceUnavailable, http.StatusTooManyRequests} {
+		reg := newFakeOCIRegistry(t, singleManifest)
+		dir, builder, _ := deployFixtureAt(t, reg.host+"/team")
+		fake := &deployServer{dryRunStatus: status, refusal: "busy"}
+		out, errOut, err := deployDir(t, fake, dir, builder, "--force")
+		if err != nil || fake.registers != 1 || !strings.Contains(errOut, "note: ") {
+			t.Errorf("%d: err=%v registers=%d, want a note and the deploy through\n%s\n%s", status, err, fake.registers, out, errOut)
+		}
+	}
+}

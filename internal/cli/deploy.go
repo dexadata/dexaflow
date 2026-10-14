@@ -573,7 +573,7 @@ func (d *deployRun) run() error {
 	}
 	if access.dryRun {
 		co.beforeBuild = func() error {
-			return d.dryRun(ctx, output, image, version, origin)
+			return d.dryRun(ctx, output, image, version, origin, co.reuse)
 		}
 	}
 	if cerr := runCompile(d.cmd, d.dir, co); cerr != nil {
@@ -619,22 +619,25 @@ func (d *deployRun) checkRegistry(ctx context.Context, image string, reuse bool)
 }
 
 // dryRun is the last step of the preflight: the server's dry run of the
-// compiled spec at output, before the build.
-func (d *deployRun) dryRun(ctx context.Context, output, image, version string, origin labelOrigin) error {
+// compiled spec at output, before the build. reuse says the compile takes
+// the skip path when the registry holds the image.
+func (d *deployRun) dryRun(ctx context.Context, output, image, version string, origin labelOrigin, reuse bool) error {
 	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
 	defer cancel()
 	return serverDryRun(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), versionPost{serverURL: d.serverURL, token: d.token,
-		dagID: d.cfg.DagID, paused: d.o.pausedOverride()}, output, d.dryRunImage(ctx, image), version, origin)
+		dagID: d.cfg.DagID, paused: d.o.pausedOverride()}, output, d.dryRunImage(ctx, image, reuse), version, origin)
 }
 
 // dryRunImage is the image the dry run is sent. The register gets the image
-// pinned by digest. With --skip-build that is the digest the registry holds
-// for the tag, read here, and it decides a conflict as for the register.
-// Before a build the digest does not exist yet: the repository at a
-// placeholder digest, so an allowlist of repositories or of repo@* decides
-// as for the register, and a conflict is left to the register.
-func (d *deployRun) dryRunImage(ctx context.Context, image string) dryImage {
-	if d.o.skipBuild {
+// pinned by digest. When nothing is built (--skip-build, or the skip path of
+// a reused content label the registry already holds), that is the digest the
+// registry holds for the tag, read here, and it decides the image checks and
+// a conflict as for the register. Before a build the digest does not exist
+// yet: the repository at a placeholder digest, so an allowlist of
+// repositories or of repo@* decides as for the register, and a refusal of
+// the image itself or a conflict is left to the register.
+func (d *deployRun) dryRunImage(ctx context.Context, image string, reuse bool) dryImage {
+	if d.o.skipBuild || reuse {
 		if p, err := (build.Registry{}).Resolve(ctx, image); err == nil {
 			return dryImage{ref: p.Ref, decides: true}
 		}

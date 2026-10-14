@@ -145,4 +145,12 @@ func TestDryRunRegisterSendsTheRegisterToTheDryRunRoute(t *testing.T) {
 	if gotPath != "/api/v2/dags/etl/versions" {
 		t.Errorf("a register went to %s", gotPath)
 	}
+	// A list of the versions has the same path: the editor refuses it.
+	get, gerr := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/api/v2/dags/etl/versions", http.NoBody)
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
+	if err := DryRunRegister(context.Background(), get); err == nil || get.URL.Path != "/api/v2/dags/etl/versions" {
+		t.Errorf("DryRunRegister on a GET: err=%v path=%s, want a refusal and the path untouched", err, get.URL.Path)
+	}
 }
