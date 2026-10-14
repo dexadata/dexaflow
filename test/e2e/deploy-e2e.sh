@@ -344,6 +344,27 @@ version_id() {
     | jq -er --arg v "$1" '[.dag_versions[] | select(.bundle_version == $v)][0].id'
 }
 
+# wait_version_drained LABEL: with warm pools on, once LABEL is no longer the
+# current version and its runs ended, the reconciler drains its pool (ADR 0082):
+# within two reconcile ticks no warm pod of it is left that is not terminating.
+wait_version_drained() {
+  [ "$WARM_POOLS" = on ] || return 0
+  local vid start live
+  vid="$(version_id "$1")" || fail "no registered version $1"
+  start=$(date +%s)
+  while :; do
+    live="$(kubectl get pods -n "$NS" -l "leoflow.io/warm-worker=true,leoflow.io/dag-version-id=$vid" -o json 2>/dev/null \
+      | jq '[.items[] | select(.metadata.deletionTimestamp == null and (.status.phase == "Running" or .status.phase == "Pending"))] | length')"
+    if [ "${live:-0}" -eq 0 ]; then
+      log "version $1: its warm pool drained $(( $(date +%s) - start ))s after its last run ended"
+      return 0
+    fi
+    [ $(( $(date +%s) - start )) -ge 90 ] \
+      && fail "version $1 is superseded and has no active run, yet $live warm pods of it are still live after 90s; the previous pool must drain (ADR 0082)"
+    sleep 3
+  done
+}
+
 # wait_warm_worker RUN LABEL: with warm pools on, once RUN's first task holds
 # the run open, a warm worker of the run's version must be Running before the
 # hold ends (HOLD_SECONDS minus 10s of margin), or the second task cannot be
@@ -487,26 +508,6 @@ assert_warm_run() {
     || fail "run $1: $served tasks were served by a warm worker, want at least $min, so this leg did not exercise warm pools (raise DEXAFLOW_E2E_HOLD_SECONDS)"
 }
 
-# wait_version_drained LABEL: with warm pools on, once LABEL is no longer the
-# current version and its runs ended, the reconciler drains its pool (ADR 0082):
-# within two reconcile ticks no warm pod of it is left that is not terminating.
-wait_version_drained() {
-  [ "$WARM_POOLS" = on ] || return 0
-  local vid start live
-  vid="$(version_id "$1")" || fail "no registered version $1"
-  start=$(date +%s)
-  while :; do
-    live="$(kubectl get pods -n "$NS" -l "leoflow.io/warm-worker=true,leoflow.io/dag-version-id=$vid" -o json 2>/dev/null \
-      | jq '[.items[] | select(.metadata.deletionTimestamp == null and (.status.phase == "Running" or .status.phase == "Pending"))] | length')"
-    if [ "${live:-0}" -eq 0 ]; then
-      log "version $1: its warm pool drained $(( $(date +%s) - start ))s after its last run ended"
-      return 0
-    fi
-    [ $(( $(date +%s) - start )) -ge 90 ] \
-      && fail "version $1 is superseded and has no active run, yet $live warm pods of it are still live after 90s; the previous pool must drain (ADR 0082)"
-    sleep 3
-  done
-}
 
 if [ "$WARM_POOLS" = on ]; then
   log "Warm pools on: every warm-served task ran on a warm worker of its own version"
