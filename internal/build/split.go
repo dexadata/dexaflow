@@ -26,6 +26,10 @@ type Split struct {
 	// NoWheels says why the dependency layer does not apply, for the
 	// builder line; empty when Wheels is set.
 	NoWheels string
+	// Note is said on the builder line after the reason, such as how long
+	// the resolution of the dependencies took; empty when there is nothing
+	// to say.
+	Note string
 }
 
 // codeRegistry is what the code layer needs from a registry: reading a

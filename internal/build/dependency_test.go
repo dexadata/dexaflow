@@ -308,3 +308,19 @@ func TestDependencyLayerMediaType(t *testing.T) {
 		t.Error("the layer media type does not follow the image")
 	}
 }
+
+// The note of a split (how long the resolution took) ends the builder line,
+// whatever builds the image.
+func TestSelectAddsTheNoteOfTheSplit(t *testing.T) {
+	host, split := splitFixture(t)
+	split.Note = "uv resolved the dependencies in 2.0s"
+	for _, rebuild := range []bool{false, true} {
+		if _, reason := Select(context.Background(), Options{Split: split, Rebuild: rebuild}, host+"/dags/etl:v1", []string{"linux/amd64"}); !strings.HasSuffix(reason, "; "+split.Note) {
+			t.Errorf("rebuild %v: reason %q does not end with the note", rebuild, reason)
+		}
+	}
+	pushIndexWithAttestation(t, split.DepsImage, "linux/amd64")
+	if _, reason := Select(context.Background(), Options{Split: split}, host+"/dags/etl:v1", []string{"linux/amd64"}); !strings.HasSuffix(reason, "; "+split.Note) {
+		t.Errorf("found: reason %q does not end with the note", reason)
+	}
+}

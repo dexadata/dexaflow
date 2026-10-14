@@ -84,7 +84,7 @@ func Select(ctx context.Context, o Options, image string, platforms []string) (b
 		how = fmt.Sprintf("the daemon builds and pushes it (no daemonless dependency layer: %s)", o.Split.NoWheels)
 	}
 	if o.Rebuild {
-		return split, fmt.Sprintf("--rebuild builds the dependency image %s again (%s), then the DAG code is appended to it", o.Split.DepsImage, how)
+		return split, withNote(fmt.Sprintf("--rebuild builds the dependency image %s again (%s), then the DAG code is appended to it", o.Split.DepsImage, how), o.Split.Note)
 	}
 	deps, depsWhy, err := reusable(ctx, reg, o.Split.DepsImage, platforms, "dependency image "+o.Split.DepsImage)
 	if err != nil {
@@ -94,11 +94,19 @@ func Select(ctx context.Context, o Options, image string, platforms []string) (b
 		return daemon, why + fmt.Sprintf("fallback: the registry could not be read for the dependency image %s (%v)", o.Split.DepsImage, unwrap(err))
 	}
 	if deps == nil {
-		return split, fmt.Sprintf("%s: %s, then the DAG code is appended to it", depsWhy, how)
+		return split, withNote(fmt.Sprintf("%s: %s, then the DAG code is appended to it", depsWhy, how), o.Split.Note)
 	}
 	split.Deps = deps
-	return split, fmt.Sprintf("the registry holds the dependency image %s for this build, so only the DAG code is pushed, "+
-		"as a layer on it (pass --rebuild to build the dependency image again)", o.Split.DepsImage)
+	return split, withNote(fmt.Sprintf("the registry holds the dependency image %s for this build, so only the DAG code is pushed, "+
+		"as a layer on it (pass --rebuild to build the dependency image again)", o.Split.DepsImage), o.Split.Note)
+}
+
+// withNote ends reason with note, when there is one.
+func withNote(reason, note string) string {
+	if note == "" {
+		return reason
+	}
+	return reason + "; " + note
 }
 
 // reusable returns what the registry holds under image when it serves every
