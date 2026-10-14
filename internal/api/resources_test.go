@@ -321,7 +321,7 @@ func TestMarkDagRunState(t *testing.T) {
 }
 
 func TestMarkTaskInstanceState(t *testing.T) {
-	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", RunID: "r1", State: domain.TaskStateFailed}}}
+	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", RunID: "r1", State: domain.TaskStateFailed, MapIndex: -1}}}
 	srv := NewServer(Dependencies{
 		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
 		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
@@ -751,7 +751,7 @@ func TestHandleRepoErrorClientCancel(t *testing.T) {
 
 func TestClearOnlyFailedForwarded(t *testing.T) {
 	admin := &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}
-	repo := &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", RunID: "r1", State: domain.TaskStateFailed}}}
+	repo := &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", RunID: "r1", State: domain.TaskStateFailed, MapIndex: -1}}}
 	srv := NewServer(Dependencies{
 		Logger:        discardLogger(),
 		Authenticator: &fakeAuthn{user: admin},
@@ -1004,18 +1004,17 @@ func TestDagDTOCarriesCurrentVersion(t *testing.T) {
 }
 
 // TestTaskInstanceDagVersionCarriesTheRunsPinnedLabel: the single-task clear
-// dialog — the ordinary "my task failed, clear it" path — gates its version
-// control on
+// dialog of the embedded Airflow 3.2 UI (the ordinary "my task failed, clear
+// it" path) decides whether to offer "Run with latest bundle version" in cQt,
+// which compares the DAG's details.bundle_version (the current label) with
+// the task instance's dag_version.bundle_version, and
+// details.latest_dag_version.version_number with dag_version.version_number.
+// The literal that built that nested object once omitted BundleVersion, so
+// the label comparison never fired.
 //
-//	he !== ge && ge !== null && ge !== ''
-//
-// where he is the DAG's current label and ge is the task instance's
-// dag_version.bundle_version. The literal that builds that nested object omitted
-// BundleVersion, so ge was null and the control never rendered.
-//
-// The label must come from the RUN's pinned version, not from the DAG's latest.
-// Filling it from the latest makes he === ge, so the control stays hidden — the
-// same invisible outcome as null, reached a different way, and the obvious fix.
+// The label must come from the RUN's pinned version, not from the DAG's
+// latest. Here the run's label no longer resolves to a version, the fallback
+// case, and it must still be the run's.
 func TestTaskInstanceDagVersionCarriesTheRunsPinnedLabel(t *testing.T) {
 	runs := &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1", Version: "v1-pinned"}}}
 	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{
@@ -1082,6 +1081,110 @@ func TestTaskInstanceDagVersionCarriesTheRunsPinnedLabel(t *testing.T) {
 	}
 	if *dv.BundleVersion != "v1-pinned" {
 		t.Errorf("clear payload dag_version.bundle_version = %q, want v1-pinned", *dv.BundleVersion)
+	}
+}
+
+// TestTaskInstanceDagVersionIsTheRunsVersion: a task instance's dag_version is
+// the version its run was created with, complete as the dagVersions listing
+// serves it, not the DAG's newest version. After a rollback the two differ, and
+// the Code tab of a task instance opens on this version_number.
+func TestTaskInstanceDagVersionIsTheRunsVersion(t *testing.T) {
+	at := time.Date(2026, 10, 14, 0, 41, 33, 0, time.UTC)
+	runs := &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1", Version: "label-1"}}}
+	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", RunID: "r1", State: domain.TaskStateFailed, MapIndex: -1}}}
+	srv := NewServer(Dependencies{
+		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
+		Tasks: tasks, DagRuns: runs,
+		DagVersions: &fakeVersionLister{versions: []domain.DagVersion{
+			{ID: "id-2", VersionNumber: 2, Version: "label-2", CreatedAt: at.Add(time.Minute), ImageReference: "img@sha256:bb", SpecHash: "h2"},
+			{ID: "id-1", VersionNumber: 1, Version: "label-1", CreatedAt: at, ImageReference: "img@sha256:aa", SpecHash: "h1", IsCurrent: true, CreatedBy: "7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a"},
+		}},
+	})
+	want := map[string]any{
+		"id": "id-1", "version_number": float64(1), "dag_id": "etl", "bundle_name": "leoflow",
+		"bundle_version": "label-1", "created_at": "2026-10-14T00:41:33Z", "dag_display_name": "etl",
+		"bundle_url": nil, "image": "img@sha256:aa", "spec_hash": "h1", "is_current": true,
+		"created_by": "7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a",
+	}
+	check := func(what, method, path, body string) {
+		t.Helper()
+		rec := authGet(srv, method, path, body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s = %d (%s)", what, rec.Code, rec.Body.String())
+		}
+		var got struct {
+			TaskInstances []struct {
+				DagVersion map[string]any `json:"dag_version"`
+			} `json:"task_instances"`
+			DagVersion map[string]any `json:"dag_version"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		dv := got.DagVersion
+		if len(got.TaskInstances) > 0 {
+			dv = got.TaskInstances[0].DagVersion
+		}
+		if len(dv) != len(want) {
+			t.Errorf("%s: dag_version has %d fields, want %d: %v", what, len(dv), len(want), dv)
+		}
+		for k, v := range want {
+			if g, ok := dv[k]; !ok || g != v {
+				t.Errorf("%s: dag_version.%s = %v, want %v", what, k, g, v)
+			}
+		}
+	}
+	check("taskInstances", http.MethodGet, "/api/v2/dags/etl/dagRuns/r1/taskInstances", "")
+	check("taskInstance", http.MethodGet, "/api/v2/dags/etl/dagRuns/r1/taskInstances/extract", "")
+	check("clear dry_run", http.MethodPost, "/api/v2/dags/etl/clearTaskInstances", `{"dag_run_id":"r1","task_ids":["extract"],"dry_run":true}`)
+}
+
+// TestTaskInstanceDagVersionTieBreak: when two versions carry the run's label,
+// the task instance's dag_version is the highest-numbered one, the version the
+// run's own dag_versions names, so the run and its task instances agree.
+func TestTaskInstanceDagVersionTieBreak(t *testing.T) {
+	at := time.Date(2026, 10, 14, 0, 41, 33, 0, time.UTC)
+	runs := &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1", Version: "dev"}}}
+	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", RunID: "r1", State: domain.TaskStateFailed, MapIndex: -1}}}
+	srv := NewServer(Dependencies{
+		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
+		Tasks: tasks, DagRuns: runs,
+		DagVersions: &fakeVersionLister{versions: []domain.DagVersion{
+			{ID: "id-4", VersionNumber: 4, Version: "other", CreatedAt: at.Add(3 * time.Minute)},
+			{ID: "id-3", VersionNumber: 3, Version: "dev", CreatedAt: at.Add(2 * time.Minute)},
+			{ID: "id-2", VersionNumber: 2, Version: "dev", CreatedAt: at.Add(time.Minute)},
+		}},
+	})
+	for _, path := range []string{"/api/v2/dags/etl/dagRuns/r1/taskInstances", "/api/v2/dags/etl/dagRuns/r1"} {
+		rec := authGet(srv, http.MethodGet, path, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s = %d (%s)", path, rec.Code, rec.Body.String())
+		}
+		var got struct {
+			TaskInstances []struct {
+				DagVersion struct {
+					ID string `json:"id"`
+				} `json:"dag_version"`
+			} `json:"task_instances"`
+			DagVersions []struct {
+				ID string `json:"id"`
+			} `json:"dag_versions"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		var id string
+		switch {
+		case len(got.TaskInstances) == 1:
+			id = got.TaskInstances[0].DagVersion.ID
+		case len(got.DagVersions) == 1:
+			id = got.DagVersions[0].ID
+		}
+		if id != "id-3" {
+			t.Errorf("%s names version %q, want id-3, the highest-numbered dev", path, id)
+		}
 	}
 }
 
