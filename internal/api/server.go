@@ -110,13 +110,16 @@ type Dependencies struct {
 	ExecutionPolicy *domain.ExecutionPolicy
 
 	// Resource repositories. Routes for nil repositories are not registered.
-	Dags           DagRepository
-	DagRuns        DagRunRepository
-	Tasks          TaskInstanceRepository
-	Versions       DagVersionRepository
-	Xcoms          XComReader
-	Logs           LogReader
-	Specs          DagSpecReader
+	Dags     DagRepository
+	DagRuns  DagRunRepository
+	Tasks    TaskInstanceRepository
+	Versions DagVersionRepository
+	Xcoms    XComReader
+	Logs     LogReader
+	Specs    DagSpecReader
+	// DagSources reads one version of a DAG with its spec, for the Code view
+	// (GET /api/v2/dagSources/{dag_id}). Nil leaves that route unregistered.
+	DagSources     DagSourceReader
 	LatestRuns     DagLatestRunsReader
 	TaskSummary    TaskSummaryReader
 	DagVersions    DagVersionLister
@@ -362,7 +365,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	registerUIStructure(r, deps.Specs)
 	registerUISummaries(r, deps.TaskSummary, deps.UIETagRevalidation)
 	registerUIGantt(r, deps.Tasks)
-	registerUITasks(r, deps.Specs)
+	registerUITasks(r, deps.Specs, deps.DagSources)
 	registerUIDashboard(r, deps.DashboardStats)
 	registerUIAudit(r, deps.AuditLog)
 	registerUIVariables(r, deps.Variables)

@@ -386,6 +386,27 @@ What a rollback changes, in one transaction:
 - **Pause state does not change.** A paused DAG stays paused, an unpaused one
   stays unpaused.
 
+What the UI shows after a rollback follows Airflow, which has no rollback and
+always runs its newest version:
+
+- **The DAG header's Latest Dag Version** and the version the **Code** tab
+  opens on are still the newest version, not the current one. The Code tab's
+  version picker shows the source registered with each version
+  (`GET /api/v2/dagSources/{dag_id}?version_number=<n>`; without
+  `version_number` or with `0`, the newest version's source).
+- **A run, and each of its task instances, shows the version it ran with**, so
+  a run created after the rollback shows the version made current, and its
+  Code tab opens on that version's source.
+- **The Clear dialog offers "Run with latest bundle version"** even on a run
+  that already uses the current version, because the UI compares the run's
+  version with the newest one. In Dexaflow that option re-pins the run to the
+  current version, so on such a run it changes nothing.
+- **Which version is current** is the `*` in `dexaflow dags versions`, and the
+  `is_current` field of each version in `GET /api/v2/dags/{dag_id}/dagVersions`
+  and of `latest_dag_version` in the DAG details. The MCP `dag://source`
+  resource serves the current version's source, as `dag://spec` serves its
+  spec.
+
 The version must still pass what a register of it would pass today: the
 operator's execution policy, the tenant limits, and its declared Variables and
 Connections. A version that no longer does is refused with `400` (or `403` for

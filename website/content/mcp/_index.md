@@ -76,7 +76,7 @@ transports.
 export DEXAFLOW_SERVER_URL=http://localhost:8088     # your Lite control plane
 export DEXAFLOW_TOKEN="$(dexaflow auth create-token \
   --server http://localhost:8088 \
-  --username admin@leoflow.local --password <your-admin-password>)"
+  --username admin@dexaflow.local --password <your-admin-password>)"
 dexaflow-mcp                                          # speaks MCP over stdin/stdout
 ```
 
@@ -170,7 +170,7 @@ The MCP **passes the caller's Dexaflow JWT through** to `/api/v2` and never mint
 ```bash
 dexaflow auth create-token \
   --server http://localhost:8088 \
-  --username admin@leoflow.local \
+  --username admin@dexaflow.local \
   --password <your-admin-password>
 ```
 
@@ -251,7 +251,7 @@ construction (untrusted content, ADR 0050 D10).
 | `run://detail/{dag_id}/{run_id}` | A DAG run's detail (state, type, timing). |
 | `task://instances/{dag_id}/{run_id}` | The task instances of a run (state, try, duration). |
 | `log://task/{dag_id}/{run_id}/{task_id}/{try_number}` | A task attempt's log, last lines only, sanitized. |
-| `dag://source/{dag_id}` | The DAG's `dag.py` source, sanitized and size-capped. |
+| `dag://source/{dag_id}` | The `dag.py` source of the DAG's current version (the one new runs use, also after a rollback), sanitized and size-capped. |
 | `dag://spec/{dag_id}` | The compiled `dag.json` artifact (the structured task graph). |
 | `health://control-plane` | Control-plane health: component status, executor capability, and version. |
 

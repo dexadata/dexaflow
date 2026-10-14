@@ -21,13 +21,13 @@ no container daemon on your machine.
 | Order | Builder | Used when | Status |
 |---|---|---|---|
 | 1 | `skip` | The whole DAG image for this content is already in the registry under its content label ([see below](#reusing-an-image-already-in-the-registry)) | Available for `deploy` |
-| 2 | `code-layer` | The image of your dependencies is already in the registry: only your DAG code is pushed, as one layer on it, through the registry ([see below](#pushing-only-the-dag-code)) | Available for pushed builds with pinned dependencies |
-| 3 | `dependency-layer` | Every dependency has a wheel for the target platform: they are installed for that platform and added as a layer on the runtime base, with no daemon and no emulation | Planned (#1706) |
+| 2 | `code-layer` | The image of your dependencies is already in the registry: only your DAG code is pushed, as one layer on it, through the registry ([see below](#pushing-only-the-dag-code)) | Available for pushed builds |
+| 3 | `dependency-layer` | The image of your dependencies is missing and every dependency has a wheel for the target platform: they are installed for that platform with `uv` and added as a layer on the runtime base, with no daemon and no emulation ([see below](#building-the-dependency-image-from-wheels)) | Available when `uv` is on `PATH` |
 | 4 | `remote` | A real build is needed (a package without wheels, `system_packages`, your own `Dockerfile`): a build pod in your cluster, or a cloud builder | Planned (#1706) |
 | 5 | `local-daemon` | None of the above applies: a local container tool builds and pushes the image | Available, the fallback |
 
-Until paths 3 and 4 land, a build that neither path 1 nor path 2 covers
-falls back to `local-daemon`, and the output says so before the build starts:
+Until path 4 lands, a build that no earlier path covers falls back to
+`local-daemon`, and the output says so before the build starts:
 
 ```console
 $ dexaflow deploy --server https://pro.example.com --yes
@@ -130,7 +130,8 @@ A pushed build of the Dockerfile Dexaflow generates is made of two images:
 The dependency image is stored in the DAG's own repository under a tag
 derived from what it contains, `deps-<key>`. The key covers the base image
 digest, `system_packages`, `dependencies` and `connectors`, and the
-platforms. When the registry already holds the dependency image for the
+platforms; when the image is built from wheels, it covers the versions and
+hashes uv resolved instead of the declared ones. When the registry already holds the dependency image for the
 key, no container daemon runs: the code layer is added to it through the
 registry API and pushed under the DAG image tag.
 
@@ -139,15 +140,18 @@ builder:    code-layer, the registry holds the dependency image ghcr.io/your-org
 ```
 
 The first build of a key, or a build with `--rebuild` (on `deploy`,
-`compile --push` and `build --push`), has the local daemon
-build and push the dependency image first, then adds the code layer:
+`compile --push` and `build --push`), builds and pushes the dependency image
+first, then adds the code layer. With `uv` on `PATH` it is built from wheels
+without a daemon ([see below](#building-the-dependency-image-from-wheels));
+otherwise the local daemon builds it, and the line says why the wheels could
+not:
 
 ```console
-builder:    local-daemon (docker) for the dependency image, then code-layer, no dependency image ghcr.io/your-org/etl:deps-4f1c... in the registry (...): the daemon builds and pushes it, then the DAG code is appended to it
+builder:    local-daemon (docker) for the dependency image, then code-layer, no dependency image ghcr.io/your-org/etl:deps-4f1c... in the registry (...): the daemon builds and pushes it (no daemonless dependency layer: uv is not on PATH), then the DAG code is appended to it
 ```
 
-The dependency image is built from an empty directory, so no project file
-reaches that build. Every later deploy that changes only DAG code, from any
+The daemon builds the dependency image from an empty directory, so no
+project file reaches that build. Every later deploy that changes only DAG code, from any
 machine or CI runner that can reach the registry, skips the daemon.
 
 ### When the build stays whole
@@ -155,9 +159,11 @@ machine or CI runner that can reach the registry, skips the daemon.
 The whole image is built by the local daemon, as before, and the `builder:`
 line says why, when:
 
-- a Python dependency is not pinned to one version. Pin each one
-  (`pandas==2.2.3`); a connector's provider package is pinned by listing it
-  pinned in `dependencies` too (`apache-airflow-providers-amazon==9.1.0`);
+- a Python dependency is not pinned to one version and the dependency image
+  cannot be built from wheels (the line says why, for example `uv is not on
+  PATH`). Install `uv`, or pin each dependency (`pandas==2.2.3`); a
+  connector's provider package is pinned by listing it pinned in
+  `dependencies` too (`apache-airflow-providers-amazon==9.1.0`);
 - the project ships its own Dockerfile;
 - `dag_source` is in a subdirectory;
 - the digest of the base image cannot be read (no network or no credentials
@@ -182,9 +188,12 @@ same layer and the non-root task user can read every file.
 
 ### Keeping dependency images current
 
-A dependency image is reused for as long as its key holds. Its transitive
-dependencies (the packages your pinned ones pull in) are the versions pip
-resolved when it was first built, and its `system_packages` the versions
+A dependency image is reused for as long as its key holds. One built from
+wheels has a key that covers every resolved version, so a new release of a
+dependency or of a transitive one gives a new dependency image on the next
+build. One the daemon built has transitive dependencies (the packages your
+pinned ones pull in) at the versions pip
+resolved when it was first built, and its `system_packages` at the versions
 apt installed then, so their security updates arrive only with a rebuild.
 Pass `--rebuild` to build the dependency image again, for example on a
 schedule in CI. A base image given by tag is read by digest on every build, so
@@ -199,6 +208,80 @@ that are already in the registry fails at the dependency push.
 
 The decision is recorded in
 [ADR 0077](/project/adrs/0077-dependency-image-and-code-layer/).
+
+## Building the dependency image from wheels
+
+When the dependency image is missing (or with `--rebuild`) and
+[uv](https://docs.astral.sh/uv/getting-started/installation/) is on `PATH`
+with a Python it can find (any version: uv needs one to run, even to install
+for another; `uv python find` shows which), the CLI builds it with no
+container daemon. uv never downloads a Python here; install one with your
+system's packages or `uv python install` if `uv python find` finds none.
+
+1. it reads the base image by digest, for each platform: its Python version,
+   its glibc, and the Python distributions it already holds. That listing is
+   cached in your user cache directory (`~/.cache/dexaflow/base/` on Linux),
+   so a redeploy downloads no base layer;
+2. uv resolves your `dependencies` and `connectors` for each platform, wheels
+   only, with every distribution of the base pinned;
+3. uv installs the wheels the base does not already hold into a temporary
+   directory on your machine, and the CLI packs it as one layer on the base
+   (`/usr/local/lib/pythonX.Y/site-packages` and `/usr/local/bin`), sets
+   `PYTHONPATH` and the non-root user as the generated Dockerfile does, and
+   pushes the dependency image through the registry.
+
+```console
+builder:    dependency-layer (uv 0.11.32), then code-layer, no dependency image ghcr.io/your-org/etl:deps-9b07... in the registry (...): it is built from wheels without a daemon and pushed, then the DAG code is appended to it
+```
+
+uv runs in an empty directory with `--no-config` and without your `UV_*`
+and `PIP_*` variables (the cache directory, proxies and certificate
+settings are kept; Python downloads are off), so your machine's uv or pip configuration never changes
+what ships. Packages come from PyPI. Because the key covers what uv
+resolved, dependencies with a range (`pandas>=2`) take this path too, and a
+new release that matches the range gives a new dependency image. The
+resolution runs on every pushed build; the builder line prints how long it
+took when that was a second or more.
+
+Wheels are chosen for glibc 2.36 at most (`manylinux_2_36`), which runs on
+the Debian 12 and Debian 13 runtime bases. `linux/arm64` is built on an
+`amd64` machine, and the reverse, without emulation.
+
+The dependency layer does not apply, and the daemon builds the dependency
+image (or the whole image, for dependencies that are not pinned), when:
+
+- `uv` is not on `PATH`, or it finds no Python on your machine;
+- the CLI runs on Windows (not supported on this path yet);
+- the project has `system_packages`, which need a real build;
+- a platform is not `linux/amd64` or `linux/arm64`;
+- a dependency is a URL, a local path or a VCS reference (`pkg @ https://...`,
+  `./lib`, `git+https://...`);
+- the base image is not a Dexaflow runtime base (its config sets no
+  `PYTHON_VERSION`, it has no `/usr/local/lib/pythonX.Y/site-packages`, or
+  it records no glibc), or `python_version` in `dexaflow.yaml` names another
+  Python than the base's;
+- the base image configures pip: a `PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL`,
+  `PIP_FIND_LINKS`, `PIP_CONSTRAINT` or other `PIP_*` variable that changes
+  where or what pip installs, or a `pip.conf` such as `/etc/pip.conf`. The
+  daemon's pip would honor it, and the dependency layer resolves from PyPI;
+- uv finds no set of wheels: a dependency has no wheel for a platform, it
+  conflicts with a package of the base image at another version, or PyPI
+  cannot be reached. The builder line carries uv's reason.
+
+Private package indexes are not supported on this path yet.
+
+If the install or the push of the dependency image fails after the path was
+chosen and every dependency is pinned, the dependency image the daemon path
+uses takes its place: the one already in the registry, or one the local
+daemon builds when the container tool is on `PATH`. The output says why;
+otherwise the build fails with uv's error.
+
+The layer holds no bytecode: uv does not compile it, and your machine's
+Python is another version than the image's. Each task process compiles the
+modules it imports in memory the first time, which adds about a second for a
+set like `pandas`, `requests` and `sqlalchemy`. The decision and its
+trade-offs are recorded in
+[ADR 0078](/project/adrs/0078-dependency-image-from-wheels/).
 
 ## Choosing the platform
 

@@ -194,7 +194,7 @@ func run() error {
 	// It runs AFTER bootstrapAdmin, and that order is the whole point. The break-glass
 	// check asks whether a listed address has a local password login, and the
 	// bootstrap admin is the only such account a fresh install has. Running first
-	// meant a first install with bootstrap.password set and admin@leoflow.local in
+	// meant a first install with bootstrap.password set and admin@dexaflow.local in
 	// break_glass_emails, which is the chart's own documented posture, warned that
 	// its escape hatch does not open when it does. It cleared on the next restart,
 	// which is worse than plainly wrong: wrong on the one boot an operator reads,
@@ -390,35 +390,64 @@ func configureSecretCipher(repo *storage.Repository, secretKey string, logger *s
 	return nil
 }
 
-func bootstrapAdmin(ctx context.Context, repo *storage.Repository, logger *slog.Logger) error {
-	email := os.Getenv("LEOFLOW_BOOTSTRAP_EMAIL")
-	if email == "" {
-		email = "admin@leoflow.local"
+// adminBootstrapper is what bootstrapAdmin needs from the user store.
+type adminBootstrapper interface {
+	AdminUserState(ctx context.Context, tenant, email string) (auth.AdminState, error)
+	BootstrapAdminHash(ctx context.Context, tenant, email, hash string) (bool, error)
+	BootstrapAdmin(ctx context.Context, tenant, email, password string) (bool, error)
+}
+
+// bootstrapAdmin creates or reconciles the bootstrap admin from
+// LEOFLOW_BOOTSTRAP_PASSWORD_HASH or LEOFLOW_BOOTSTRAP_PASSWORD, under
+// LEOFLOW_BOOTSTRAP_EMAIL (default auth.DefaultAdminEmail). The default address
+// resolves to the legacy admin@leoflow.local when that is the install's admin
+// (auth.ResolveAdminEmail), so an install created before the rename keeps one
+// admin.
+func bootstrapAdmin(ctx context.Context, repo adminBootstrapper, logger *slog.Logger) error {
+	hash := os.Getenv("LEOFLOW_BOOTSTRAP_PASSWORD_HASH")
+	pw := os.Getenv("LEOFLOW_BOOTSTRAP_PASSWORD")
+	if hash == "" && pw == "" {
+		return nil
+	}
+	email, err := resolveBootstrapEmail(ctx, repo, logger)
+	if err != nil {
+		return err
 	}
 	// Prefer a precomputed bcrypt hash (Dexaflow Lite never sends the plaintext to
 	// the control plane); fall back to a plaintext bootstrap password.
-	if hash := os.Getenv("LEOFLOW_BOOTSTRAP_PASSWORD_HASH"); hash != "" {
-		created, err := repo.BootstrapAdminHash(ctx, "default", email, hash)
+	var created bool
+	if hash != "" {
+		created, err = repo.BootstrapAdminHash(ctx, "default", email, hash)
 		if err != nil {
 			return fmt.Errorf("bootstrap admin (hash): %w", err)
 		}
-		if created {
-			logger.Info("bootstrapped admin user", "email", email)
-		}
-		return nil
-	}
-	pw := os.Getenv("LEOFLOW_BOOTSTRAP_PASSWORD")
-	if pw == "" {
-		return nil
-	}
-	created, err := repo.BootstrapAdmin(ctx, "default", email, pw)
-	if err != nil {
+	} else if created, err = repo.BootstrapAdmin(ctx, "default", email, pw); err != nil {
 		return fmt.Errorf("bootstrap admin: %w", err)
 	}
 	if created {
 		logger.Info("bootstrapped admin user", "email", email)
 	}
 	return nil
+}
+
+// resolveBootstrapEmail resolves LEOFLOW_BOOTSTRAP_EMAIL to the address the
+// bootstrap admin lives under, and says so when it is not the address asked for.
+func resolveBootstrapEmail(ctx context.Context, repo adminBootstrapper, logger *slog.Logger) (string, error) {
+	res, err := auth.ResolveAdminEmail(ctx, os.Getenv("LEOFLOW_BOOTSTRAP_EMAIL"),
+		func(ctx context.Context, email string) (auth.AdminState, error) {
+			return repo.AdminUserState(ctx, "default", email)
+		})
+	if err != nil {
+		return "", fmt.Errorf("bootstrap admin: %w", err)
+	}
+	if res.KeptLegacy {
+		logger.Info("bootstrap admin kept its pre-rename address", "email", res.Email)
+	}
+	if res.BothExist {
+		logger.Warn("users exist under both bootstrap admin addresses; only one is bootstrapped",
+			"email", res.Email, "new_email", auth.DefaultAdminEmail, "legacy_email", auth.LegacyAdminEmail)
+	}
+	return res.Email, nil
 }
 
 // attemptTokenTTL is the short per-attempt agent-token lifetime minted at
@@ -1474,6 +1503,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		Xcoms:           xcomReader,
 		Logs:            storage.NewLogReader(pg, logSink, logTailer),
 		Specs:           repo,
+		DagSources:      repo,
 		LatestRuns:      repo,
 		TaskSummary:     repo,
 		DagVersions:     repo,

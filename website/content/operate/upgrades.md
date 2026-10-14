@@ -382,6 +382,8 @@ holds, then re-run.
 | 031 (`fillfactor`), 038 (`attempt_epoch`) | 31, 38 | nothing: each runs in a transaction with a 5 s `lock_timeout`, so nothing changed | 30, 37; retry when the table is quiet |
 | 036, 039, 040 (columns) | 36, 39, 40 | nothing: `ADD COLUMN IF NOT EXISTS`, and 039's backfill, can be repeated | 35, 38, 39 |
 | 037 (role reconcile) | 37 | nothing: one transaction, rolled back, and the file is idempotent | 36 |
+| 043 (index build) | 43 | `DROP INDEX CONCURRENTLY IF EXISTS idx_dag_runs_tenant_settled_ended;` | 42 |
+| 044 (deployer role, API tokens) | 44 | nothing: one transaction, rolled back, and the file is idempotent | 43 |
 
 **How to run `migrate force`.** The hook image is the golang-migrate CLI plus
 the SQL files at `/migrations`, so the `version`, `force`, `goto` and `up`
@@ -749,9 +751,54 @@ The down drops the column and its check. No other data changes.
 
 ### Upgrading to 0.5.4
 
+0.5.4 applies two migrations.
+
+- **`043_dag_runs_settled_ended_index`** builds the index the retention janitor
+  reads, on `dag_runs (tenant_id, ended_at)` for runs in `success` or
+  `failed`. It is built `CONCURRENTLY`: reads and writes on `dag_runs` keep
+  going during the build, which took about 0.2 s on 100,000 runs. The build
+  first waits for every transaction already open in the database to finish,
+  whatever table it touches, with no time limit, and the hook waits with it
+  (see "Why the hook can take longer than usual" under
+  [What the 0.5.1 migrations do](#what-the-051-migrations-do), including
+  Helm's `--timeout`). During the build, autovacuum skips `dag_runs`, and a
+  manual `VACUUM`, `ANALYZE` or schema change on it waits. Upgrade when no long
+  transaction is open in the database. If the build is interrupted, recover it
+  as the table in [An interrupted migration](#an-interrupted-migration) says.
+- **`044_deployer_role_and_api_tokens`** runs in one transaction, which took
+  about 40 ms. It adds the `deploy:dag` permission, the built-in `deployer`
+  role in every tenant, and the `api_tokens` table. The role has no holders,
+  so no account gains anything on upgrade. A tenant that already has a custom
+  role named `deployer` keeps it as it is. Creating `api_tokens` briefly takes
+  a lock on `tenants` and `users` that blocks writes to them (not reads), with
+  no `lock_timeout`. Every statement can be repeated.
+
+**Rolling back 0.5.4 to 0.5.3.** On Pro, `helm rollback <release> <revision>`
+is supported and leaves the schema at 044: the 0.5.3 control plane boots
+against it with the warning `database schema is ahead of this binary;
+proceeding`. It ignores the new index, the `deployer` role and the API tokens,
+so tokens created on 0.5.4 stop authenticating until you move forward again.
+As with earlier patches, prefer it to a `helm upgrade` that points at chart
+0.5.3, whose migration Job fails with `no migration found for version 44`; if
+you must use that upgrade, pass `--set migrations.enabled=false` or run the
+down migrations first. On Lite, `dexaflow lite` 0.5.3 refuses a database above
+042, so the way back is the snapshot from
+[How to test an upgrade safely](#how-to-test-an-upgrade-safely-recommended),
+or the down migrations with the 0.5.4 CLI or migrate image:
+
+```sh
+migrate -path migrations -database "$DATABASE_URL" goto 42
+```
+
+The down of 044 drops `api_tokens`, which revokes every API token, deletes the
+built-in `deployer` roles with their user assignments, and deletes the
+`deploy:dag` permission, so a custom role granted it loses that grant. The down
+of 043 drops the index. No other data changes.
+
 **Encrypting Variables is opt-in** (#507). With the default
 `variable_encryption: off`, 0.5.4 stores Variables exactly as 0.5.3 does, so a
-rolling upgrade and a rollback need nothing for them. No migration is involved:
+rolling upgrade and a rollback need nothing for them. Encryption needs no
+migration:
 an encrypted value lives in the same `value` column, marked by the
 `dexaflow:enc:v1:` prefix, and every 0.5.4 mode reads both forms.
 
@@ -842,6 +889,42 @@ paused DAG started at once, so a pipeline that deploys a new DAG and triggers
 it now has to unpause it too (or register it active, as above). Runs queued
 on a paused DAG at the moment of the upgrade wait from then on. Rolling back
 to 0.5.3 starts them.
+
+**A new install's bootstrap admin is `admin@dexaflow.local`** (#1709). A first
+`dexaflow setup` records `admin_email: "admin@dexaflow.local"`, and a server
+started with a bootstrap password (`bootstrap.password` on Helm,
+`DEXAFLOW_BOOTSTRAP_PASSWORD` or `DEXAFLOW_BOOTSTRAP_PASSWORD_HASH`) and no
+`DEXAFLOW_BOOTSTRAP_EMAIL` creates `admin@dexaflow.local` on an empty database.
+An install created before keeps `admin@leoflow.local` and logs in as before. The
+user is never renamed and no second admin is created:
+
+- Lite keeps the `admin_email` its `config.yaml` records.
+- At every start, the server resolves the default address to
+  `admin@leoflow.local` when that user exists and `admin@dexaflow.local` does
+  not, or when only `admin@leoflow.local` holds the admin role, reconciles
+  that account's password as before, and logs `bootstrap admin kept its
+  pre-rename address`. When both addresses have a user it also logs a warning
+  naming both. This covers Helm and
+  docker-compose installs, which never set the email, and a Lite reinstall over
+  a kept datastore: `dexaflow setup` then prints `admin@dexaflow.local`, but
+  the account that logs in with the new password is `admin@leoflow.local`, and
+  the `dexaflow lite` ready banner names it. `dexaflow lite reset-password`
+  resets that account and records it in `config.yaml`.
+- Any other `DEXAFLOW_BOOTSTRAP_EMAIL` (or `LEOFLOW_BOOTSTRAP_EMAIL`) is used as
+  given.
+- `auth.oidc.breakGlassEmails` must keep naming the address your admin has. The
+  chart's [Google SSO example](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/examples/values-oidc-google.yaml)
+  now lists `admin@dexaflow.local`, which has no password login on an older
+  database: list `admin@leoflow.local` there instead.
+
+To move an existing install to the new address, create `admin@dexaflow.local`
+with the admin role (`dexaflow auth create-user --role admin`); from the next
+start the bootstrap reconciles that account, and `admin@leoflow.local` stays as
+an ordinary account. On Lite, also set `admin_email` in `config.yaml`. Rolling
+back to 0.5.3 needs nothing on an existing install or on Lite, whose
+`config.yaml` names the address. A server install created by 0.5.4 that sets no
+bootstrap email gets a second admin, `admin@leoflow.local`, from the same
+bootstrap password when it starts on 0.5.3.
 
 ## Related issues
 

@@ -392,8 +392,8 @@ PY
   # The login identity must be an email, because that is what the server looks
   # up. Cheap to assert, and a cluster to discover: FindUserByLogin passes
   # `username` straight to GetUserByEmail, so "admin" is a 401 and
-  # "admin@leoflow.local" is a token.
-  case "${WP_ADMIN_LOGIN:-admin@leoflow.local}" in
+  # "admin@dexaflow.local" is a token.
+  case "${WP_ADMIN_LOGIN:-admin@dexaflow.local}" in
     *@*) echo "  ok   the admin login is an email, which is what the server matches on" ;;
     *)   echo "  FAIL the admin login is not an email; FindUserByLogin looks up by email and this will 401"; fail=1 ;;
   esac
@@ -517,10 +517,11 @@ run_experiment() {
   # The login identity is an EMAIL, not a name. FindUserByLogin calls
   # GetUserByEmail with whatever `username` carries
   # (internal/storage/repository.go), and the bootstrap admin is created as
-  # LEOFLOW_BOOTSTRAP_EMAIL or admin@leoflow.local
-  # (cmd/dexaflow-server/main.go). This passed "admin" and got a 401 that the
-  # first real run spent a cluster to discover.
-  local admin_login="${WP_ADMIN_LOGIN:-admin@leoflow.local}"
+  # LEOFLOW_BOOTSTRAP_EMAIL or admin@dexaflow.local on the fresh stack this
+  # script installs (cmd/dexaflow-server/main.go; a database from before the
+  # rename keeps admin@leoflow.local, set WP_ADMIN_LOGIN for one). This passed
+  # "admin" and got a 401 that the first real run spent a cluster to discover.
+  local admin_login="${WP_ADMIN_LOGIN:-admin@dexaflow.local}"
   # Stderr is KEPT. It was sent to /dev/null on the one call whose failure is
   # fatal, so the run died saying "could not obtain an API token" and threw away
   # the sentence that said why. A diagnostic discarded on the fatal path is the

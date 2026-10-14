@@ -222,7 +222,8 @@ cd dexaflow
 
 ```bash
 docker compose --profile demo up --build
-# open http://localhost:8080 — log in as admin@leoflow.local / admin
+# open http://localhost:8080 and log in as admin@dexaflow.local / admin
+# (admin@leoflow.local on a volume created before the rename)
 # stop with: docker compose --profile demo down   (add -v to wipe data)
 ```
 

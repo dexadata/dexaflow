@@ -541,7 +541,7 @@ func TestBreakGlassWarningCatchesAnAddressThatCannotSignIn(t *testing.T) {
 // install exposed and every unit test missed.
 //
 // The break-glass check asks whether a listed address has a local password
-// login. bootstrapAdmin creates admin@leoflow.local, and it ran AFTER the check.
+// login. bootstrapAdmin creates admin@dexaflow.local, and it ran AFTER the check.
 // So on a first install with bootstrap.password set and that address in
 // break_glass_emails, which is the chart's own documented posture, the very
 // first boot warned that the escape hatch does not open, and it did open. The

@@ -19,6 +19,7 @@ type fakeConnStore struct {
 	conns    map[string]domain.Connection
 	writeErr error
 	getErr   error
+	writes   int
 }
 
 func (f *fakeConnStore) ListConnections(_ context.Context, _ string, _, _ int) ([]domain.Connection, int, error) {
@@ -43,6 +44,7 @@ func (f *fakeConnStore) GetConnection(_ context.Context, _, id string) (domain.C
 // mirroring the repository's COALESCE upsert: a nil field preserves the stored
 // value, a non-nil field overwrites it (an empty string clears).
 func (f *fakeConnStore) SetConnectionPatch(_ context.Context, _ string, p domain.ConnectionPatch) error {
+	f.writes++
 	if f.writeErr != nil {
 		return f.writeErr
 	}
@@ -490,9 +492,11 @@ func TestConnectionsEmptyStubWithoutStore(t *testing.T) {
 }
 
 // A connection whose extra no configured key opens (#1677) is listed with the
-// others, its extra masked and flagged extra_unreadable, so one bad row does not
-// fail GET /api/v2/connections for the whole tenant. Readable connections carry
-// no flag.
+// others, its extra withheld as null and flagged extra_unreadable, so one bad
+// row does not fail GET /api/v2/connections for the whole tenant. The extra is
+// null rather than the "***" mask because the Airflow edit form JSON.parses it
+// and a mask, which is not JSON, crashed the page. Readable connections carry no
+// flag.
 func TestConnectionListMarksAnUnreadableExtra(t *testing.T) {
 	store := &fakeConnStore{conns: map[string]domain.Connection{
 		"lost": {ConnID: "lost", ConnType: "http", Host: "api.example.com", ExtraUnreadable: true},
@@ -512,8 +516,12 @@ func TestConnectionListMarksAnUnreadableExtra(t *testing.T) {
 	for _, c := range out.Connections {
 		got[c["connection_id"].(string)] = c
 	}
-	if lost := got["lost"]; lost == nil || lost["extra"] != secretMask || lost["extra_unreadable"] != true || lost["host"] != "api.example.com" {
-		t.Errorf("unreadable connection = %v, want its fields, a masked extra and extra_unreadable true", lost)
+	lost := got["lost"]
+	if lost == nil || lost["extra_unreadable"] != true || lost["host"] != "api.example.com" {
+		t.Errorf("unreadable connection = %v, want its fields and extra_unreadable true", lost)
+	}
+	if extra, present := lost["extra"]; !present || extra != nil {
+		t.Errorf("unreadable connection extra = %#v (present %v), want JSON null", extra, present)
 	}
 	if pg := got["pg"]; pg == nil || pg["extra"] != `{"sslmode":"require"}` {
 		t.Errorf("readable connection = %v", pg)
@@ -532,5 +540,45 @@ func TestConnectionGetUnreadableExplainsTheError(t *testing.T) {
 	}
 	if body := rec.Body.String(); !strings.Contains(body, `connection \"lost\" is encrypted with a secret key this server does not have`) {
 		t.Errorf("body %s does not explain the failure", body)
+	}
+}
+
+// TestConnectionWriteNeverReplacesAnUnreadableExtra: the stored extra of an
+// unreadable connection (#1677) is the only copy of that credential, so no
+// write may replace it. The Airflow edit form opens such a connection with
+// "{}" (the listing serves extra null) and saves it with extra omitted; older
+// clients echo the "***" mask; a script may send null, "" or a new object.
+// Every one of them is refused with the message that names the connection,
+// before anything reaches the store, on PATCH and on the POST upsert alike.
+func TestConnectionWriteNeverReplacesAnUnreadableExtra(t *testing.T) {
+	unreadable := domain.Safef(domain.ErrValueUnreadable, "connection %q is encrypted with a secret key this server does not have", "lost")
+	bodies := map[string]string{
+		"edit form, extra omitted": `{"conn_type":"http","host":"new.example.com"}`,
+		"mask echoed":              `{"conn_type":"http","extra":"***"}`,
+		"extra null":               `{"conn_type":"http","extra":null}`,
+		"extra cleared":            `{"conn_type":"http","extra":""}`,
+		"empty object":             `{"conn_type":"http","extra":"{}"}`,
+		"new extra":                `{"conn_type":"http","extra":"{\"token\":\"t2\"}"}`,
+	}
+	for name, body := range bodies {
+		for _, method := range []string{http.MethodPatch, http.MethodPost} {
+			t.Run(method+" "+name, func(t *testing.T) {
+				store := &fakeConnStore{getErr: unreadable}
+				path, payload := "/api/v2/connections/lost", body
+				if method == http.MethodPost {
+					path, payload = "/api/v2/connections", `{"connection_id":"lost",`+strings.TrimPrefix(body, "{")
+				}
+				rec := authGet(connServer(store), method, path, payload)
+				if rec.Code != http.StatusInternalServerError {
+					t.Errorf("%s %s = %d (%s), want 500", method, path, rec.Code, rec.Body)
+				}
+				if !strings.Contains(rec.Body.String(), `connection \"lost\" is encrypted with a secret key this server does not have`) {
+					t.Errorf("body %s does not name the connection", rec.Body)
+				}
+				if store.writes != 0 {
+					t.Errorf("%s reached the store %d time(s), want none", method, store.writes)
+				}
+			})
+		}
 	}
 }

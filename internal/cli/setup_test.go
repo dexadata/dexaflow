@@ -236,3 +236,20 @@ func TestGatherLiteConfig(t *testing.T) {
 		}
 	})
 }
+
+// TestRunSetupDefaultsToTheDexaflowAdmin: a first setup proposes the new
+// bootstrap admin address.
+func TestRunSetupDefaultsToTheDexaflowAdmin(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cmd := newSetupCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dry-run"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("setup --dry-run err = %v", err)
+	}
+	if !strings.Contains(out.String(), "admin      admin@dexaflow.local\n") {
+		t.Errorf("first setup should default the admin to admin@dexaflow.local:\n%s", out.String())
+	}
+}

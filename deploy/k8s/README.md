@@ -106,7 +106,8 @@ Open the UI after install:
 ```bash
 kubectl -n leoflow port-forward svc/leoflow 8080:8080
 # http://127.0.0.1:8080/
-# login: admin@leoflow.local  (the bootstrap admin email — NOT "admin")
+# login: admin@dexaflow.local  (the bootstrap admin email, NOT "admin";
+#   admin@leoflow.local on a database created before the rename)
 # password: bootstrap.password in values.local.yaml
 ```
 

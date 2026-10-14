@@ -675,6 +675,9 @@ jobs:
           # `dexaflow setup` prints the admin password once; capture it.
           PW=$(dexaflow setup 2>&1 | tee /tmp/setup.log | grep -oiE 'password:[[:space:]]*[A-Za-z0-9]+' | head -1 | awk '{print $NF}')
           [ -n "$PW" ] || { echo "could not capture admin password"; cat /tmp/setup.log; exit 1; }
+          # The admin setup recorded (admin@dexaflow.local on a fresh runner).
+          ADMIN_EMAIL=$(sed -n 's/^admin_email:[[:space:]]*"\(.*\)"/\1/p' "$HOME/.dexaflow/config.yaml")
+          [ -n "$ADMIN_EMAIL" ] || { echo "setup recorded no admin_email"; cat "$HOME/.dexaflow/config.yaml"; exit 1; }
           # Register the typed-params fixture DAG alongside the scaffolded hello so
           # the trigger dialog has declared params to render its native form from.
           # It lands in the workspace dexaflow setup chose (~/dexaflow by default).
@@ -688,7 +691,7 @@ jobs:
             --server-bin "$PWD/bin/leoflow-server" --agent-bin "$PWD/bin/leoflow-agent" > /tmp/lite.log 2>&1 &
           for _ in $(seq 1 60); do curl -fsS http://localhost:18080/readyz >/dev/null 2>&1 && break; sleep 3; done
           curl -fsS http://localhost:18080/readyz >/dev/null || { echo "lite did not become ready"; tail -40 /tmp/lite.log; exit 1; }
-          TOK=$(leoflow auth create-token --server http://localhost:18080 --username admin@leoflow.local --password "$PW")
+          TOK=$(leoflow auth create-token --server http://localhost:18080 --username "$ADMIN_EMAIL" --password "$PW")
           # Wait for the scaffolded "hello" DAG to register (its venv installs first), then run it for log content.
           for _ in $(seq 1 40); do curl -fsS -H "Authorization: Bearer $TOK" http://localhost:18080/api/v2/dags/hello >/dev/null 2>&1 && break; sleep 3; done
           curl -fsS -X POST -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' -d '{}' \
@@ -711,7 +714,7 @@ jobs:
           # would skip the echo precisely when the timeout tripped, which is the
           # one case it was added for.
           t0=$SECONDS; rc=0
-          LEOFLOW_URL=http://localhost:18080 LEOFLOW_USER=admin@leoflow.local LEOFLOW_PASS="$PW" \
+          LEOFLOW_URL=http://localhost:18080 LEOFLOW_USER="$ADMIN_EMAIL" LEOFLOW_PASS="$PW" \
             timeout --kill-after=30 180 node test/e2e/ui-smoke.js || rc=$?
           echo "ui-smoke node run: $((SECONDS - t0))s (rc=$rc)"
           exit $rc
@@ -801,6 +804,11 @@ jobs:
         run: make build
       - name: Run the k3d operator e2e
         if: steps.gate.outputs.run == 'true'
+        env:
+          # The database is fresh here, so its bootstrap admin must be the new
+          # address. Pinning it turns admin_token's fallback to the pre-rename
+          # admin@leoflow.local (test/e2e/lib.sh) into a failure in CI.
+          DEXAFLOW_E2E_ADMIN_USER: admin@dexaflow.local
         run: bash test/e2e/e2e.sh
 
   # ─────────────────────────────────────────────────────────────────────

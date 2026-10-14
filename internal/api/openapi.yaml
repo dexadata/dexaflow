@@ -881,14 +881,31 @@ paths:
       - $ref: "#/components/parameters/DagID"
     get:
       summary: Get a DAG's source (the dag.py text)
+      description: >-
+        The source registered with one version of the DAG, as in Airflow 3.2:
+        version_number selects the version, and without it (or with 0) the
+        newest version is served. After a rollback the newest version is not
+        the current one. A version the DAG does not have is a 404, and a
+        version_number that is not an integer is a 400.
       operationId: getDagSource
       tags: [DAGs]
+      parameters:
+        - name: version_number
+          in: query
+          required: false
+          description: The version_number of a version from the dagVersions listing; 0 is the newest.
+          schema: { type: integer }
       responses:
         "200":
           description: DAG source
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DagSource" }
+        "400":
+          description: version_number is not an integer
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /api/v2/dags/{dag_id}/spec:
@@ -1220,8 +1237,10 @@ components:
           description: >-
             Present and true in a listing when the extra is encrypted with a
             secret key the server does not have (for example after a key
-            rotation that dropped the old key). The extra is then masked.
-            Reading the connection alone answers 500 with a message naming it.
+            rotation that dropped the old key). The extra is then null, so a
+            client that parses it as JSON still can. Reading the connection
+            alone, or updating it, answers 500 with a message naming it, and the
+            stored extra is kept.
 
     ConnectionBody:
       type: object
@@ -1415,7 +1434,7 @@ components:
       properties:
         content: { type: string, description: "The dag.py source text (compiled-spec JSON fallback for pre-source-capture versions)." }
         dag_id: { type: string }
-        version_number: { type: integer }
+        version_number: { type: integer, description: "The version whose source this is." }
         dag_display_name: { type: string }
 
     ComponentHealth:

@@ -87,6 +87,15 @@ func seedRun(t *testing.T, pool *pgxpool.Pool, ctx context.Context, tenant, dag,
 	return id
 }
 
+// seedNewerRun gives the DAG a recent run with a later logical date, so the
+// runs seeded before it are not the DAG's newest, which retention always keeps.
+func seedNewerRun(t *testing.T, pool *pgxpool.Pool, ctx context.Context, tenant, dag, version string) {
+	t.Helper()
+	recent := time.Hour
+	id := seedRun(t, pool, ctx, tenant, dag, version, "newer", "success", &recent, "success")
+	mustExec(t, pool, ctx, `UPDATE dag_runs SET logical_date = now() + interval '1 day' WHERE id = $1`, id)
+}
+
 func seedRetention(t *testing.T, pool *pgxpool.Pool, ctx context.Context) retentionFixture {
 	t.Helper()
 	suffix := time.Now().UnixNano()
@@ -270,12 +279,13 @@ func TestRetentionCountEligibleIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CountEligible: %v", err)
 	}
-	// old_success, old_failed and the other tenant's old run are eligible.
-	if d := after.DagRuns - before.DagRuns; d != 3 {
-		t.Errorf("eligible runs delta = %d, want 3", d)
+	// old_success and old_failed are eligible. The other tenant's old run is
+	// the only run of its DAG, so it is kept as the DAG's newest run.
+	if d := after.DagRuns - before.DagRuns; d != 2 {
+		t.Errorf("eligible runs delta = %d, want 2", d)
 	}
-	if d := after.TaskInstances - before.TaskInstances; d != 6 {
-		t.Errorf("eligible task instances delta = %d, want 6", d)
+	if d := after.TaskInstances - before.TaskInstances; d != 5 {
+		t.Errorf("eligible task instances delta = %d, want 5", d)
 	}
 	if d := after.AuditLog - before.AuditLog; d != 1 {
 		t.Errorf("eligible audit delta = %d, want 1", d)
@@ -303,5 +313,55 @@ func TestRetentionTenantIDsIntegration(t *testing.T) {
 	}
 	if !seen[f.tenant] || !seen[f.otherTenant] {
 		t.Fatalf("TenantIDs missing the seeded tenants: %v", ids)
+	}
+}
+
+// TestRetentionKeepsNewestRunOfEachDagIntegration: the newest run of a DAG
+// survives however old it is. The scheduler takes a DAG's last logical date
+// from its newest run, so deleting it would make a cron DAG run its latest
+// slot again, backfill its whole history with catchup, or fire an @once DAG
+// a second time. Older runs of the same DAG are deleted as usual.
+func TestRetentionKeepsNewestRunOfEachDagIntegration(t *testing.T) {
+	store, pool, ctx := openRetention(t)
+	cutoff := time.Now().Add(-30 * 24 * time.Hour)
+	baseline, err := store.CountEligible(ctx, &cutoff, nil)
+	if err != nil {
+		t.Fatalf("CountEligible: %v", err)
+	}
+	tenant, version, dag := seedTenant(t, pool, ctx, fmt.Sprintf("retention_newest_%d", time.Now().UnixNano()))
+	old := 400 * 24 * time.Hour
+	older := seedRun(t, pool, ctx, tenant, dag, version, "older", "success", &old, "success")
+	newest := seedRun(t, pool, ctx, tenant, dag, version, "newest", "success", &old, "success")
+	mustExec(t, pool, ctx, `UPDATE dag_runs SET logical_date = now() - interval '2 days' WHERE id = $1`, older)
+	mustExec(t, pool, ctx, `UPDATE dag_runs SET logical_date = now() - interval '1 day' WHERE id = $1`, newest)
+
+	before, err := store.CountEligible(ctx, &cutoff, nil)
+	if err != nil {
+		t.Fatalf("CountEligible: %v", err)
+	}
+	if before.DagRuns != baseline.DagRuns+1 {
+		t.Errorf("dry run counts %d new eligible runs, want 1: it must skip the newest run", before.DagRuns-baseline.DagRuns)
+	}
+	for i := 0; i < 10; i++ {
+		c, err := store.DeleteFinishedRuns(ctx, tenant, cutoff, 10, 1000)
+		if err != nil {
+			t.Fatalf("DeleteFinishedRuns: %v", err)
+		}
+		if c.Total() == 0 {
+			break
+		}
+	}
+	if runExists(t, pool, ctx, older) {
+		t.Error("the older run survived retention")
+	}
+	if !runExists(t, pool, ctx, newest) {
+		t.Fatal("the newest run of the DAG was deleted, want it kept")
+	}
+	after, err := store.CountEligible(ctx, &cutoff, nil)
+	if err != nil {
+		t.Fatalf("CountEligible: %v", err)
+	}
+	if after.DagRuns != baseline.DagRuns {
+		t.Errorf("dry run counts %d eligible runs after the purge, want the baseline %d: the newest run is not eligible", after.DagRuns, baseline.DagRuns)
 	}
 }
