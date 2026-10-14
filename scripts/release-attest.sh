@@ -16,7 +16,7 @@
 #       in .goreleaser.yaml fails here, so it cannot ship without its SBOM
 #       attestation (the workflow names the four platforms one step each).
 #   release-attest.sh images <tag> <subjects-file> <refs-file>
-#       Resolve the digest of every image the release published (server, mcp,
+#       Resolve the digest of every image the release published (server, mcp, cli,
 #       migrate, one runtime leg per Python line in the schema). Writes
 #       <subjects-file> in checksums format (`<hex>  <repository>`), which
 #       actions/attest takes as `subject-checksums`, and <refs-file> with one
@@ -51,7 +51,7 @@ runtime_pythons() {
 
 image_refs() { # <prefix> <tag>
 	local prefix="$1" tag="$2" py n=0
-	printf '%s\n' "$prefix/dexaflow-server:$tag" "$prefix/dexaflow-mcp:$tag" "$prefix/dexaflow-migrate:$tag"
+	printf '%s\n' "$prefix/dexaflow-server:$tag" "$prefix/dexaflow-mcp:$tag" "$prefix/dexaflow-cli:$tag" "$prefix/dexaflow-migrate:$tag"
 	for py in $(runtime_pythons); do
 		printf '%s\n' "$prefix/dexaflow-runtime:py$py-$tag"
 		n=$((n + 1))
@@ -186,10 +186,10 @@ SH
 	printf '{"properties":{"python_version":{"enum":["3.11","3.12"]}}}' >"$schema"
 
 	out="$(PATH="$bin:$PATH" RELEASE_ATTEST_SCHEMA="$schema" REGISTRY_PREFIX=ghcr.io/o cmd_images v1.2.3 "$tmp/subj" "$tmp/refs" 2>&1)" || { echo "  FAIL images: $out"; fail=1; }
-	_eq "$(awk '{print $2}' "$tmp/subj" | tr '\n' ' ')" "ghcr.io/o/dexaflow-server ghcr.io/o/dexaflow-mcp ghcr.io/o/dexaflow-migrate ghcr.io/o/dexaflow-runtime ghcr.io/o/dexaflow-runtime " "every published image is a subject, one runtime leg per schema Python"
+	_eq "$(awk '{print $2}' "$tmp/subj" | tr '\n' ' ')" "ghcr.io/o/dexaflow-server ghcr.io/o/dexaflow-mcp ghcr.io/o/dexaflow-cli ghcr.io/o/dexaflow-migrate ghcr.io/o/dexaflow-runtime ghcr.io/o/dexaflow-runtime " "every published image is a subject, one runtime leg per schema Python"
 	_eq "$(head -1 "$tmp/subj")" "1111111111111111111111111111111111111111111111111111111111111111  ghcr.io/o/dexaflow-server" "subjects file is in checksums format"
 	_eq "$(head -1 "$tmp/refs")" "ghcr.io/o/dexaflow-server@sha256:1111111111111111111111111111111111111111111111111111111111111111" "refs are pinned by digest"
-	_eq "$(sed -n 4p "$tmp/refs")" "ghcr.io/o/dexaflow-runtime@sha256:2222222222222222222222222222222222222222222222222222222222222222" "runtime refs drop the tag, keep the digest"
+	_eq "$(sed -n 5p "$tmp/refs")" "ghcr.io/o/dexaflow-runtime@sha256:2222222222222222222222222222222222222222222222222222222222222222" "runtime refs drop the tag, keep the digest"
 	_fails "an unresolvable digest fails" "not a sha256 digest" env PATH="$bin:$PATH" RELEASE_ATTEST_SCHEMA="$schema" REGISTRY_PREFIX=ghcr.io/o FAKE_DIGEST=null bash "$ROOT/scripts/release-attest.sh" images v1.2.3 "$tmp/s2" "$tmp/r2"
 	printf '{"properties":{"python_version":{"type":"string"}}}' >"$tmp/empty.json"
 	_fails "an empty schema enum fails" "no Python line" env PATH="$bin:$PATH" RELEASE_ATTEST_SCHEMA="$tmp/empty.json" REGISTRY_PREFIX=ghcr.io/o bash "$ROOT/scripts/release-attest.sh" images v1.2.3 "$tmp/s3" "$tmp/r3"
@@ -198,8 +198,8 @@ SH
 	export FAKE_LOG="$tmp/log"
 	: >"$FAKE_LOG"
 	out="$(PATH="$bin:$PATH" COSIGN_RETRY_ATTEMPTS=1 cmd_sbom "$tmp/refs" 2>&1)" || { echo "  FAIL sbom: $out"; fail=1; }
-	_eq "$(grep -c '^cosign attest --yes --type spdxjson --predicate ' "$FAKE_LOG")" "5" "one cosign spdxjson attestation per image"
-	_eq "$(grep -c '^syft scan registry:ghcr.io/o/[a-z-]*@sha256:[0-9a-f]\{64\} --platform linux/amd64 -o spdx-json=' "$FAKE_LOG")" "5" "syft scans each image by digest"
+	_eq "$(grep -c '^cosign attest --yes --type spdxjson --predicate ' "$FAKE_LOG")" "6" "one cosign spdxjson attestation per image"
+	_eq "$(grep -c '^syft scan registry:ghcr.io/o/[a-z-]*@sha256:[0-9a-f]\{64\} --platform linux/amd64 -o spdx-json=' "$FAKE_LOG")" "6" "syft scans each image by digest"
 	_eq "$(grep '^cosign' "$FAKE_LOG" | head -1 | awk '{print $NF}')" "ghcr.io/o/dexaflow-server@sha256:1111111111111111111111111111111111111111111111111111111111111111" "cosign attests the digest, not the tag"
 	printf 'ghcr.io/o/dexaflow-server:v1.2.3\n' >"$tmp/tagref"
 	_fails "a tag-only ref is refused" "not pinned by digest" env PATH="$bin:$PATH" bash "$ROOT/scripts/release-attest.sh" sbom "$tmp/tagref"

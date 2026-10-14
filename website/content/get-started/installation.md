@@ -567,7 +567,7 @@ for those.
 #### Build provenance and SBOMs
 
 From `v0.5.4` on, every release archive and every image the release workflow
-pushes (`dexaflow-server`, `dexaflow-mcp`, `dexaflow-migrate`, each
+pushes (`dexaflow-server`, `dexaflow-mcp`, `dexaflow-cli`, `dexaflow-migrate`, each
 `dexaflow-runtime:py3.N-<tag>`, and the `leoflow-*` names, which share their
 digests) carries a [SLSA build provenance](https://slsa.dev/spec/v1.0/provenance)
 attestation, and each archive's SPDX SBOM is attested against that archive.

@@ -217,12 +217,35 @@ that people follow without naming a version.
 
 | What | Who follows it | Moved by | rc | GA, newest minor | GA, older minor |
 |---|---|---|---|---|---|
-| Binaries, `dexaflow-server`, `dexaflow-mcp`, `dexaflow-migrate` at `vX.Y.Z` and `X.Y.Z`, `dexaflow-runtime:py3.N-vX.Y.Z` | pinned installs | `release`, `migrate-image`, `runtime-image` | yes | yes | yes |
+| Binaries, `dexaflow-server`, `dexaflow-mcp`, `dexaflow-cli`, `dexaflow-migrate` at `vX.Y.Z` and `X.Y.Z`, `dexaflow-runtime:py3.N-vX.Y.Z` | pinned installs, the `setup-dexaflow` action, pipelines | `release`, `migrate-image`, `runtime-image` | yes | yes | yes |
 | GitHub release, public, not Latest | pinned `install.sh`, the smokes | GoReleaser (`make_latest: false`) | prerelease | yes | yes |
 | Helm chart `X.Y.Z` (`charts/dexaflow`, `charts/leoflow`) | `helm install`, `helm upgrade` | `promote` | yes | yes | yes |
 | `dexaflow-runtime:py3.N`, `leoflow-runtime:py3.N` | development builds, the docs | `promote` | no | yes | no |
 | GitHub release marked Latest | `install.sh` without a pinned version, Renovate, Dependabot | `promote` | no | yes | no |
 | Docs root | the docs site | `cut-release.sh`, after PUBLISHED | no | yes | no |
+
+The `setup-dexaflow` action (`.github/actions/setup-dexaflow`) is used at a
+release tag of this repository (`dexadata/dexaflow/.github/actions/setup-dexaflow@vX.Y.Z`),
+so the tag publishes it and it needs no job of its own.
+`verify-server-signature` checks the `dexaflow-cli` signature, runs the image
+(`dexaflow version`, `python3`, `git`, `uv`) and checks that it pulls without
+credentials (`scripts/release-check-public.sh`: a warning on an rc, a failure
+on a GA) before the gate.
+
+### A new image
+
+GHCR can create a package private on its first push, and every check in
+`release.yaml` runs logged in. After the first release that publishes a new
+image (`dexaflow-cli` from `v0.5.4-rc.1` on), make its package public before
+the GA: the package's settings on GitHub, "Change visibility", Public. The
+GA's `verify-server-signature` fails while `dexaflow-cli` is not public.
+
+After an rc, as a follow-up and not a gate, check that the action resolves
+its version from its ref: dispatch a workflow that uses
+`dexadata/dexaflow/.github/actions/setup-dexaflow@vX.Y.Z-rc.N` with no
+`version` input and runs `dexaflow version`. The docs pass `version:`
+explicitly because `github.action_ref` is empty in some composite actions
+(actions/runner#2473).
 
 "Newest minor" means the tag is not older than any published GA
 (`scripts/release-promote-plan.sh`, the same rule the docs root uses).
