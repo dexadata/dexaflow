@@ -791,6 +791,16 @@ jobs:
             docker run --rm --entrypoint "$tool" "$IMAGE" --version
           done
 
+      # Every step above is logged in, so a private package passes them while
+      # every pipeline's anonymous pull is denied. A new GHCR package can start
+      # private, and the first rc is the run that creates it: an rc warns, a GA
+      # fails (RELEASING.md, "A new image").
+      - name: dexaflow-cli pulls without credentials (warns on an rc, fails a GA)
+        env:
+          REPO_IMAGE: ${{ github.repository_owner }}/dexaflow-cli
+          TAG: ${{ github.ref_name }}
+        run: bash scripts/release-check-public.sh "$REPO_IMAGE" "$TAG"
+
   # ── Release gate: if any of the smoke jobs OR the migrate-image build
   # failed, retract the release to a draft so a pinned `curl | sh` stops
   # handing users a broken build. Runs always() so it can act on any failure.

@@ -225,11 +225,27 @@ that people follow without naming a version.
 | Docs root | the docs site | `cut-release.sh`, after PUBLISHED | no | yes | no |
 
 The `setup-dexaflow` action (`.github/actions/setup-dexaflow`) is used at a
-release tag of this repository (`dexadata/dexaflow/.github/actions/setup-dexaflow@vX.Y.Z`)
-and installs that tag's archive, so it needs no step of its own: the tag
-publishes it. `verify-server-signature` checks the `dexaflow-cli` signature
-and runs the image (`dexaflow version`, `python3`, `git`, `uv`) before the
-gate.
+release tag of this repository (`dexadata/dexaflow/.github/actions/setup-dexaflow@vX.Y.Z`),
+so the tag publishes it and it needs no job of its own.
+`verify-server-signature` checks the `dexaflow-cli` signature, runs the image
+(`dexaflow version`, `python3`, `git`, `uv`) and checks that it pulls without
+credentials (`scripts/release-check-public.sh`: a warning on an rc, a failure
+on a GA) before the gate.
+
+### A new image
+
+GHCR can create a package private on its first push, and every check in
+`release.yaml` runs logged in. After the first release that publishes a new
+image (`dexaflow-cli` from `v0.5.4-rc.1` on), make its package public before
+the GA: the package's settings on GitHub, "Change visibility", Public. The
+GA's `verify-server-signature` fails while `dexaflow-cli` is not public.
+
+After an rc, as a follow-up and not a gate, check that the action resolves
+its version from its ref: dispatch a workflow that uses
+`dexadata/dexaflow/.github/actions/setup-dexaflow@vX.Y.Z-rc.N` with no
+`version` input and runs `dexaflow version`. The docs pass `version:`
+explicitly because `github.action_ref` is empty in some composite actions
+(actions/runner#2473).
 
 "Newest minor" means the tag is not older than any published GA
 (`scripts/release-promote-plan.sh`, the same rule the docs root uses).

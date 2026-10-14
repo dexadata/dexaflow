@@ -17,14 +17,16 @@
 #   setup-dexaflow.sh platform <runner.os> <runner.arch>
 #       Print the archive platform (linux_amd64, darwin_arm64, ...).
 #   setup-dexaflow.sh install <tag> <platform> <dir>
-#       Make <dir>/bin/dexaflow the CLI of <tag>. Downloads checksums.txt and
-#       the archive into <dir> unless they are already there (the action
-#       caches <dir> per version), verifies the cosign signature of
-#       checksums.txt when VERIFY_SIGNATURE=true, and checks the archive
-#       against checksums.txt on every run, cached or not.
+#       Make <dir>/bin/dexaflow the CLI of <tag>. Downloads checksums.txt,
+#       its signature and certificate, and the archive into <dir> unless they
+#       are already there (the action caches them per version), then, on
+#       every run, cached or not, verifies the cosign signature of
+#       checksums.txt (when VERIFY_SIGNATURE=true) and the archive against
+#       checksums.txt.
 #
 # Environment for `install`:
 #   VERIFY_SIGNATURE    true (default) or false.
+#   COSIGN              the cosign binary to run (default: cosign on PATH).
 #   DEXAFLOW_RELEASES   base URL of the release downloads
 #                       (default https://github.com/dexadata/dexaflow/releases/download).
 #   DEXAFLOW_SIGNER     repository whose release.yaml signed the release
@@ -82,25 +84,41 @@ download() { # <url> <file>
 	mv "$2.part" "$2"
 }
 
-# verify_signature <dir> <base url> <tag>: the identity is exact, workflow
-# file and tag included, as install.sh pins it, so a signature made by any
-# other workflow, branch or tag does not verify.
+# forget <dir>: drop everything in <dir> that a signature vouches for, so a
+# directory that failed a check is downloaded again rather than trusted.
+forget() {
+	rm -f "$1/checksums.txt" "$1/checksums.txt.sig" "$1/checksums.txt.pem" "$1/cosign.log"
+	rm -rf "${1:?}/bin"
+}
+
+# verify_signature <dir> <base url> <tag>: checks <dir>/checksums.txt against
+# its keyless signature, on every run: a cached or leftover checksums.txt is
+# only as trustworthy as whoever wrote the cache. The signature and the
+# certificate are downloaded when <dir> does not hold them. The identity is
+# exact, workflow file and v-prefixed tag included (the ref the release
+# workflow ran at), as install.sh pins it, so a signature made by any other
+# workflow, branch or tag does not verify. COSIGN names the binary to run
+# (the action passes the pinned one it installed); the default is cosign on
+# PATH.
 verify_signature() {
-	local dir="$1" base="$2" tag="$3" identity
-	command -v cosign >/dev/null 2>&1 || die "cosign is not on PATH, so the signature of checksums.txt cannot be checked (set verify-signature: false to skip it)"
-	download "$base/checksums.txt.sig" "$dir/checksums.txt.sig" || die "downloading checksums.txt.sig for $tag failed; not installing an unsigned release"
-	download "$base/checksums.txt.pem" "$dir/checksums.txt.pem" || die "downloading checksums.txt.pem for $tag failed; not installing an unsigned release"
+	local dir="$1" base="$2" tag="$3" cosign="${COSIGN:-cosign}" identity f
+	command -v "$cosign" >/dev/null 2>&1 || die "cosign ($cosign) is not installed, so the signature of checksums.txt cannot be checked (set verify-signature: false to skip it)"
+	for f in checksums.txt.sig checksums.txt.pem; do
+		[ -f "$dir/$f" ] && continue
+		download "$base/$f" "$dir/$f" || { forget "$dir"; die "downloading $f for $tag failed; not installing an unsigned release"; }
+	done
 	identity="https://github.com/${DEXAFLOW_SIGNER:-dexadata/dexaflow}/.github/workflows/release.yaml@refs/tags/${tag}"
-	if ! cosign verify-blob \
+	if ! "$cosign" verify-blob \
 		--certificate "$dir/checksums.txt.pem" \
 		--signature "$dir/checksums.txt.sig" \
 		--certificate-identity "$identity" \
 		--certificate-oidc-issuer https://token.actions.githubusercontent.com \
-		"$dir/checksums.txt.new" >"$dir/cosign.log" 2>&1; then
+		"$dir/checksums.txt" >"$dir/cosign.log" 2>&1; then
 		cat "$dir/cosign.log" >&2
-		rm -f "$dir/checksums.txt.new"
+		forget "$dir"
 		die "the signature of checksums.txt for $tag does not verify (expected signer $identity); nothing was installed"
 	fi
+	rm -f "$dir/cosign.log"
 	echo "signature of checksums.txt verified ($identity)"
 }
 
@@ -111,13 +129,12 @@ cmd_install() { # <tag> <platform> <dir>
 	archive="dexaflow_${tag#v}_${platform}.tar.gz"
 	mkdir -p "$dir"
 	if [ ! -f "$dir/checksums.txt" ]; then
-		download "$base/checksums.txt" "$dir/checksums.txt.new" || die "downloading checksums.txt for $tag failed (is $tag a published release?)"
-		if [ "${VERIFY_SIGNATURE:-true}" = true ]; then
-			verify_signature "$dir" "$base" "$tag"
-		else
-			echo "signature of checksums.txt not checked (verify-signature: false)"
-		fi
-		mv "$dir/checksums.txt.new" "$dir/checksums.txt"
+		download "$base/checksums.txt" "$dir/checksums.txt" || die "downloading checksums.txt for $tag failed (is $tag a published release?)"
+	fi
+	if [ "${VERIFY_SIGNATURE:-true}" = true ]; then
+		verify_signature "$dir" "$base" "$tag"
+	else
+		echo "signature of checksums.txt not checked (verify-signature: false)"
 	fi
 	want="$(awk -v a="$archive" '$2 == a {print $1}' "$dir/checksums.txt")"
 	[ -n "$want" ] || die "checksums.txt of $tag lists no $archive (the action supports releases from v0.5.0 on)"
@@ -212,7 +229,7 @@ SH
 	ln -s "$(command -v mkdir)" "$tmp/nocosign/mkdir"
 	ln -s "$(command -v rm)" "$tmp/nocosign/rm"
 	ln -s "$(command -v cat)" "$tmp/nocosign/cat"
-	_fails "a missing cosign is fatal while verify-signature is on" "cosign is not on PATH" env "$env_rel" PATH="$tmp/nocosign" "$(command -v bash)" "$self" install v1.2.3 linux_amd64 "$tmp/i4"
+	_fails "a missing cosign is fatal while verify-signature is on" "is not installed" env "$env_rel" PATH="$tmp/nocosign" "$(command -v bash)" "$self" install v1.2.3 linux_amd64 "$tmp/i4"
 
 	_fails "a platform the release does not list fails" "lists no dexaflow_1.2.3_darwin_arm64.tar.gz" env "$env_rel" VERIFY_SIGNATURE=false bash "$self" install v1.2.3 darwin_arm64 "$tmp/i5"
 	_fails "a release that does not exist fails" "downloading checksums.txt for v9.9.9 failed" env "$env_rel" VERIFY_SIGNATURE=false bash "$self" install v9.9.9 linux_amd64 "$tmp/i6"
@@ -224,6 +241,33 @@ SH
 	printf 'tampered' >>"$tmp/i1/dexaflow_1.2.3_linux_amd64.tar.gz"
 	_fails "a cached archive that changed is refused" "checksum mismatch" env DEXAFLOW_RELEASES=file:///nonexistent VERIFY_SIGNATURE=false bash "$self" install v1.2.3 linux_amd64 "$tmp/i1"
 	_eq "$([ -e "$tmp/i1/dexaflow_1.2.3_linux_amd64.tar.gz" ] || echo gone)" "gone" "a mismatching archive is removed, so the next run downloads it again"
+
+	# ── the signature is checked on every run, cached or not ──
+	# A cache entry or a leftover directory in the tool cache is not a
+	# verified release: whoever could write it could write checksums.txt.
+	: >"$FAKE_LOG"
+	out="$(env DEXAFLOW_RELEASES=file:///nonexistent PATH="$bin:$PATH" bash "$self" install v1.2.3 linux_amd64 "$tmp/i2" 2>&1)" || { echo "  FAIL cached verified install: $out"; fail=1; }
+	_eq "$(grep -c '^cosign verify-blob ' "$FAKE_LOG")" "1" "a cached directory has its signature checked again, from the cached .sig and .pem"
+	_fails "a cached checksums.txt with a bad signature is refused" "does not verify" env DEXAFLOW_RELEASES=file:///nonexistent PATH="$bin:$PATH" FAKE_COSIGN_EXIT=1 bash "$self" install v1.2.3 linux_amd64 "$tmp/i2"
+	_eq "$(n=0; for f in "$tmp"/i2/checksums.txt* "$tmp/i2/cosign.log" "$tmp/i2/bin"; do [ -e "$f" ] && n=$((n + 1)); done; echo "$n")" "0" "after a bad signature the checksums, signature, certificate, log and binary are removed"
+
+	out="$(env "$env_rel" VERIFY_SIGNATURE=false bash "$self" install v1.2.3 linux_amd64 "$tmp/i7" 2>&1)" || { echo "  FAIL unverified install: $out"; fail=1; }
+	_fails "an unverified leftover with no signature is refused by a verifying run" "checksums.txt.sig" env DEXAFLOW_RELEASES=file:///nonexistent PATH="$bin:$PATH" bash "$self" install v1.2.3 linux_amd64 "$tmp/i7"
+	: >"$FAKE_LOG"
+	out="$(env "$env_rel" VERIFY_SIGNATURE=false bash "$self" install v1.2.3 linux_amd64 "$tmp/i8" 2>&1)" || { echo "  FAIL unverified install: $out"; fail=1; }
+	out="$(env "$env_rel" PATH="$bin:$PATH" bash "$self" install v1.2.3 linux_amd64 "$tmp/i8" 2>&1)" || { echo "  FAIL verifying an unverified leftover: $out"; fail=1; }
+	_eq "$(grep -c '^cosign verify-blob ' "$FAKE_LOG")" "1" "an unverified leftover is verified before it is used"
+
+	# COSIGN names the binary the action installed; one on PATH is not used.
+	mkdir -p "$tmp/pinned"
+	cat >"$tmp/pinned/cosign" <<'SH'
+#!/bin/sh
+printf 'pinned %s\n' "$*" >>"$FAKE_LOG"
+SH
+	chmod +x "$tmp/pinned/cosign"
+	: >"$FAKE_LOG"
+	out="$(env "$env_rel" PATH="$bin:$PATH" COSIGN="$tmp/pinned/cosign" bash "$self" install v1.2.3 linux_amd64 "$tmp/i9" 2>&1)" || { echo "  FAIL install with COSIGN: $out"; fail=1; }
+	_eq "$(cut -d' ' -f1 "$FAKE_LOG" | sort -u | tr '\n' ' ')" "pinned " "COSIGN is the cosign that runs, not the one on PATH"
 
 	if [ "$fail" -eq 0 ]; then echo "setup-dexaflow self-test: PASS"; return 0; fi
 	echo "setup-dexaflow self-test: FAIL"

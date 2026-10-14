@@ -411,6 +411,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: dexadata/dexaflow/.github/actions/setup-dexaflow@<VERSION>
         with:
+          version: <VERSION>
           server-url: https://pro.example.com
       - name: Deploy the DAGs this push changed
         env:
@@ -1106,34 +1107,36 @@ every system that runs a job in a container.
 ```yaml
       - uses: dexadata/dexaflow/.github/actions/setup-dexaflow@<VERSION>
         with:
+          version: <VERSION>
           server-url: https://pro.example.com   # optional
 ```
 
-The action installs the release of the ref it is used at (`@v0.5.4` installs
-`v0.5.4`) for the runner's OS and architecture (Linux or macOS, amd64 or
-arm64), and puts `dexaflow` on `PATH` for the rest of the job. Before it
-installs anything, it verifies the keyless cosign signature of the release's
-`checksums.txt` against the release workflow at that tag (installing cosign
-for the check when the runner has none), and the archive against
-`checksums.txt`. The archive is cached with `actions/cache` per version and
-platform, so a later run downloads nothing, and its checksum is checked again
-on every run.
+The action installs the release named by `version` for the runner's OS and
+architecture (Linux or macOS, amd64 or arm64), and puts `dexaflow` on `PATH`
+for the rest of the job. On every run it installs cosign v2.4.3 (and uses
+that one, not a cosign already on the runner), verifies the keyless
+signature of the release's `checksums.txt` against the release workflow at
+the `v`-prefixed tag, and checks the archive against `checksums.txt`; only
+then is the binary extracted. The release files (`checksums.txt`, its
+signature and certificate, the archive) are cached with `actions/cache` per
+version, platform and `verify-signature` setting. A cache hit saves the
+downloads only: the cached files are verified again like downloaded ones.
 
 | Input | Default | What it does |
 |---|---|---|
-| `version` | the ref of the action | The release to install, `vX.Y.Z` or `vX.Y.Z-rc.N`. Required when the action is pinned by commit SHA or used from a branch. `latest` is refused. Any release from `v0.5.0` on. |
+| `version` | the ref of the action, only when it is a release tag | The release to install, `vX.Y.Z` or `vX.Y.Z-rc.N`, any release from `v0.5.0` on. Set it: with a commit SHA, a branch or a local path the action fails without it, and `latest` is refused. |
 | `server-url` | none | Exported as `DEXAFLOW_SERVER_URL` for the later steps. |
-| `verify-signature` | `true` | `false` skips the signature check (the checksum is still checked), for a runner that cannot reach Sigstore. |
+| `verify-signature` | `true` | `false` skips the signature check and the cosign install (the checksum is still checked), for a runner that cannot reach Sigstore. |
 
 | Output | Value |
 |---|---|
 | `version` | The installed tag (`v0.5.4`). |
 | `path` | The absolute path of the `dexaflow` binary. |
-| `cache-hit` | `true` when the archive came from the cache. |
+| `cache-hit` | `true` when the release files came from the cache (they were verified all the same). |
 
-To pin the action by commit, as for any third-party action, name the version
-too: `uses: dexadata/dexaflow/.github/actions/setup-dexaflow@<sha> # v0.5.4`
-with `version: v0.5.4`.
+To pin the action by commit, as for any third-party action:
+`uses: dexadata/dexaflow/.github/actions/setup-dexaflow@<sha> # v0.5.4` with
+`version: v0.5.4`.
 
 The action installs only the CLI. `compile` still needs a Python 3.11 to 3.13
 on `PATH` ([Python on the runner](#python-on-the-runner)), which GitHub's
@@ -1154,7 +1157,8 @@ recipe under [Examples](#examples)). The Cloud Build remote builder runs
 `gcloud`, which the image does not carry.
 
 The entrypoint is `dexaflow`, and the image runs as UID 65532 with
-`HOME=/home/dexaflow`. It is signed like the other images:
+`HOME=/home/dexaflow`. It is signed like the other images; the identity
+names the `v`-prefixed tag, the ref the release workflow ran at:
 
 ```bash
 cosign verify ghcr.io/dexadata/dexaflow-cli:<VERSION> \
@@ -1221,9 +1225,9 @@ spec:
               valueFrom: { secretKeyRef: { name: dexaflow-deploy-token, key: token } }
 ```
 
-Flux has no hooks: apply the same Job (with a fixed `name` instead of
-`generateName`) from a `Kustomization` with `force: true`, so each revision
-replaces the finished Job with a new one.
+Flux has no hooks, and it does not run a finished Job again while its spec is
+unchanged. Run the same container from a Kubernetes `CronJob`, or from the
+pipeline that pushes to the repository.
 
 ## Examples
 
@@ -1256,6 +1260,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: dexadata/dexaflow/.github/actions/setup-dexaflow@<VERSION>
         with:
+          version: <VERSION>
           server-url: https://pro.example.com   # exported as DEXAFLOW_SERVER_URL
       - name: Deploy
         env:
@@ -1263,8 +1268,8 @@ jobs:
         run: dexaflow deploy dags/my_pipeline --yes
 ```
 
-[`setup-dexaflow`](#the-setup-dexaflow-action) installs the release of its
-ref, checks its signature and checksum, and caches it per version.
+[`setup-dexaflow`](#the-setup-dexaflow-action) installs the release named by
+`version`, checks its signature and checksum, and caches it per version.
 
 GHCR refuses image names with upper-case letters, so keep `registry.url` and
 `registry.image_name` lower case. If you build the name from
