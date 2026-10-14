@@ -46,8 +46,8 @@ func TestWarmAckBeforeQueuedKeepsBindingIntegration(t *testing.T) {
 	if err := sched.MaterializeTasks(ctx, runUUID, tasks); err != nil {
 		t.Fatalf("MaterializeTasks: %v", err)
 	}
-	if err := sched.ApplyTransitions(ctx, runUUID, []string{"load"}, domain.TaskStateScheduled); err != nil {
-		t.Fatalf("ApplyTransitions scheduled: %v", err)
+	if applied, err := sched.ApplyTransitions(ctx, runUUID, []string{"load"}, domain.TaskStateNone, domain.TaskStateScheduled); err != nil || len(applied) != 1 {
+		t.Fatalf("ApplyTransitions scheduled: applied=%v err=%v", applied, err)
 	}
 
 	// Dispatch: ResolveTask claims the epoch, the warm placer assigns the attempt.
