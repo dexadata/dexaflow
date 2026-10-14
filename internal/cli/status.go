@@ -267,21 +267,37 @@ func statusOfTarget(cmd *cobra.Command, name string, projects []statusProject, o
 			"name one with --target <name> or --server <url>, or add a target with `dexaflow target add <name> <url>`"
 		return t
 	}
-	ctx := cmdContext(cmd)
-	remote, err := readTargetState(ctx, choice.URL, token, projects)
+	dags, err := dagStatuses(cmd, choice.URL, token, projects, o.dockerfile, true)
 	if err != nil {
 		t.Error = err.Error() + signInHint(err, t.Target, choice.URL, token, o.allTargets)
 		return t
 	}
-	cluster, cerr := clusterLayer(ctx, choice.URL, token)
+	t.Dags = dags
+	return t
+}
+
+// dagStatuses reads the projects' DAGs from the control plane at serverURL
+// and compares each with the content label a deploy would register there,
+// in order. An error is a target that could not be read at all
+// (targetUnreadable); a DAG that could not be read is in state error.
+// lastRun also reads each DAG's last run, a read a deploy token is refused.
+// `dexaflow status` and `dexaflow sync` both decide with it.
+func dagStatuses(cmd *cobra.Command, serverURL, token string, projects []statusProject, dockerfile string, lastRun bool) ([]dagStatus, error) {
+	ctx := cmdContext(cmd)
+	remote, err := readTargetState(ctx, serverURL, token, projects, lastRun)
+	if err != nil {
+		return nil, err
+	}
+	cluster, cerr := clusterLayer(ctx, serverURL, token)
 	if cerr != nil {
 		//nolint:errcheck // advisory: a deploy ignores them the same way
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: ignoring the deploy defaults of %s: %v; a deploy ignores them too, so the labels are computed with the local settings only\n", choice.URL, cerr)
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: ignoring the deploy defaults of %s: %v; a deploy ignores them too, so the labels are computed with the local settings only\n", serverURL, cerr)
 	}
+	out := make([]dagStatus, 0, len(projects))
 	for i, p := range projects {
-		t.Dags = append(t.Dags, dagStatusOf(cmd, p, remote[i], cluster, o))
+		out = append(out, dagStatusOf(cmd, p, remote[i], cluster, dockerfile))
 	}
-	return t
+	return out, nil
 }
 
 // signInHint is the line a 401 of the target gets: how to sign in to that
@@ -322,9 +338,9 @@ func useTargetFlag(cmd *cobra.Command, name string) (func(), error) {
 
 // dagStatusOf settles the project for the target as a deploy does, computes
 // its content label and compares it with what the server holds.
-func dagStatusOf(cmd *cobra.Command, p statusProject, remote remoteDag, cluster *defaultsLayer, o statusOptions) dagStatus {
+func dagStatusOf(cmd *cobra.Command, p statusProject, remote remoteDag, cluster *defaultsLayer, dockerfile string) dagStatus {
 	ds := dagStatus{DagID: p.dagID, Path: p.dir}
-	label, err := localLabel(cmd, p.dir, cluster, o.dockerfile)
+	label, err := localLabel(cmd, p.dir, cluster, dockerfile)
 	if err == nil {
 		err = remote.err
 	}
@@ -412,15 +428,15 @@ func (e *targetUnreadable) Error() string { return e.err.Error() }
 func (e *targetUnreadable) Unwrap() error { return e.err }
 
 // readTargetState reads every project's DAG from the control plane at
-// serverURL, in order. An unreachable server or a refused token (401) stops
+// serverURL, in order, with its last run when lastRun is set. An unreachable server or a refused token (401) stops
 // the reads with an error for the whole target; any other failure, a 403
 // included, is recorded on its DAG.
-func readTargetState(ctx context.Context, serverURL, token string, projects []statusProject) ([]remoteDag, error) {
+func readTargetState(ctx context.Context, serverURL, token string, projects []statusProject, lastRun bool) ([]remoteDag, error) {
 	c, err := apiclient.New(serverURL, token, apiclient.WithHTTPClient(&http.Client{Timeout: statusReadTimeout}))
 	if err != nil {
 		return nil, fmt.Errorf("building the API client: %w", err)
 	}
-	rd := remoteReader{c: c, serverURL: serverURL, token: token}
+	rd := remoteReader{c: c, serverURL: serverURL, token: token, lastRun: lastRun}
 	out := make([]remoteDag, len(projects))
 	for i, p := range projects {
 		r, rerr := rd.read(ctx, p.dagID)
@@ -439,12 +455,15 @@ type remoteReader struct {
 	c         *apiclient.ClientWithResponses
 	serverURL string
 	token     string
+	// lastRun also reads each DAG's run with the latest logical date.
+	lastRun bool
 }
 
 // read reads one DAG with the reads deploy's pre-check makes
 // (checkDeployed): GET /api/v2/dags/{dag_id}/details for the current label
 // and is_paused (a 404 for a DAG never deployed), every page of its
-// versions (listRegisteredVersions), then its run with the latest logical date.
+// versions (listRegisteredVersions), then, with rd.lastRun, its run with the
+// latest logical date.
 func (rd remoteReader) read(ctx context.Context, dagID string) (remoteDag, error) {
 	base := strings.TrimRight(rd.serverURL, "/") + "/api/v2/dags/" + url.PathEscape(dagID)
 	var details struct {
@@ -466,6 +485,9 @@ func (rd remoteReader) read(ctx context.Context, dagID string) (remoteDag, error
 		r.versions = append(r.versions, statusVersion{Label: v.Label, VersionNumber: v.Number, CreatedAt: v.CreatedAt})
 	}
 	r.current = currentVersion(r.currentLabel, versions)
+	if !rd.lastRun {
+		return r, nil
+	}
 	if r.lastRun, err = readLastRun(ctx, rd.c, dagID); err != nil {
 		return remoteDag{}, err
 	}

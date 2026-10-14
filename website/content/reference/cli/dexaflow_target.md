@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_target/
 title: "dexaflow target"
 linkTitle: "target"
-weight: 60
+weight: 61
 ---
 
 Manage named control planes (targets) to deploy to and query.
