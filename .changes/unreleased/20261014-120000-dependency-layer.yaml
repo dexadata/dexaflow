@@ -1,0 +1,16 @@
+kind: Added
+body: |-
+  **The dependency image is built from wheels, with no container daemon,
+  when `uv` is on `PATH`.** When a split build (ADR 0077) finds no dependency
+  image for its key, the CLI resolves the Python dependencies with uv for
+  each target platform, installs the wheels on the host, packs them as one
+  deterministic layer on the runtime base and pushes the dependency image
+  through the registry; the output says `builder: dependency-layer (uv
+  <version>), then code-layer`. The key covers the resolved versions and
+  hashes, so dependencies with a range (`pandas>=2`) take the split too, and
+  a new release that matches the range gives a new dependency image.
+  `system_packages`, a platform other than `linux/amd64` or `linux/arm64`, a
+  URL, path or VCS dependency, a base that is not a Dexaflow runtime base and
+  a dependency without a wheel keep the daemon, and the builder line says why
+  (#1706, ADR 0078).
+time: 2026-10-14T12:00:00.000000000-03:00
