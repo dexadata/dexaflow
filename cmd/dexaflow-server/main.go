@@ -1499,6 +1499,9 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		SourceModeImage:              cfg.Execution.SourceMode.RuntimeImage(),
 		ExecutionPolicy:              executionPolicy(cfg.Executor.Defaults),
 		DeployDefaults:               cfg.Deploy.Defaults,
+		WarmPolicy:                   warmPolicy(cfg),
+		WarmPools:                    cfg.Execution,
+		WarmWorkersAbsent:            warmWorkersAbsent(cfg, executorInfo.PodDispatchEnabled),
 
 		Dags:            repo,
 		DagRuns:         repo,
@@ -2850,6 +2853,86 @@ func setWarmPlacer(d *dispatch.Dispatcher, reg *agentrpc.WorkerRegistry) {
 	}
 }
 
+// configureSubprocessDispatcher applies cfg to the dev-only subprocess
+// dispatcher. warmPolicy describes what it makes of a task, for the register
+// response.
+func configureSubprocessDispatcher(dispatcher *dispatch.Dispatcher, cfg *config.ServerConfig, warmPools *agentrpc.WorkerRegistry) {
+	dispatcher.SetPlatformDefaults(platformDefaults(cfg.Executor.Defaults))
+	setWarmPlacer(dispatcher, warmPools)
+}
+
+// configureK8sDispatcher applies cfg to the pod-path dispatcher. warmPolicy
+// describes what it makes of a task, for the register response.
+func configureK8sDispatcher(dispatcher *dispatch.Dispatcher, cfg *config.ServerConfig, warmPools *agentrpc.WorkerRegistry, metrics *observability.Metrics) {
+	dispatcher.SetAgentTLSCAConfigMap(cfg.Executor.AgentTLSCAConfigMap)
+	dispatcher.SetTaskSecret(cfg.Executor.TaskSecretName, cfg.Executor.TaskSecretMountPath)
+	dispatcher.SetDefaultTaskServiceAccount(cfg.Executor.TaskServiceAccount)
+	// Agent-token transport (ADR 0055 Fix #3). Under the exchange transport the
+	// executor projects a ServiceAccount token instead of the plaintext one; the
+	// default (envvar) leaves the pod spec unchanged. The audience is the shared
+	// const the control-plane TokenReviewer validates against; expiration floors in
+	// BuildPod.
+	dispatcher.SetAgentTokenTransport(cfg.Auth.AgentTokenTransport, executor.DefaultAgentTokenAudience, 0)
+	k8sDefaults := platformDefaults(cfg.Executor.Defaults)
+	k8sDefaults.Unit = resourceUnit(cfg)
+	dispatcher.SetPlatformDefaults(k8sDefaults)
+	if metrics != nil {
+		dispatcher.SetUnitMisfitRecorder(metrics)
+	}
+	// Deadline floor for task pods that declare no execution timeout: the agent's
+	// reports retry for as long as the control plane is unreachable, so a pod
+	// with no deadline of its own would outlive a total outage indefinitely. The
+	// credential ceiling is the natural bound (past it the pod cannot renew its
+	// bearer), and it is the same knob the warm worker's attempt watchdog uses.
+	dispatcher.SetAttemptLifetimeCeiling(cfg.Auth.MaxAttemptCredentialLifetime)
+	// External secrets backend (ADR 0060, Pro pod path): deliver the operator config
+	// to task pods as LEOFLOW_SECRETS_* env. Empty backend → podEnv skips it (chain
+	// stays vault-only). The D6 registration relaxation is wired separately in run()
+	// where the Repository is in scope.
+	dispatcher.SetSecretsBackend(cfg.Secrets.Backend, secretsKwargsJSON(cfg.Secrets))
+	// Pro source mode (ADR 0067 §3): a version on the runtime image runs from
+	// its registered dag.py. "" (the default) keeps it off.
+	dispatcher.SetSourceModeImage(cfg.Execution.SourceMode.RuntimeImage())
+	// Warm placement seam (ADR 0058 N1b1-place): the dispatcher Assign()s onto the
+	// SAME registry the gRPC handler serves. nil when warm pools are off.
+	setWarmPlacer(dispatcher, warmPools)
+}
+
+// warmPolicy is the warm placement decision the dispatcher that cfg selects
+// applies (configureK8sDispatcher or configureSubprocessDispatcher), built
+// from the same settings: the register response reports each task's
+// execution mode with it (#1707), and warm_policy_test.go holds the two
+// together. The warm registry, and so the placer, exists exactly when
+// execution.warm_pools_enabled is on.
+func warmPolicy(cfg *config.ServerConfig) domain.WarmPolicy {
+	policy := domain.WarmPolicy{Enabled: cfg.Execution.WarmPoolsEnabled, Limits: defaultLimits(cfg.Executor.Defaults)}
+	if cfg.Executor.Type == "subprocess" {
+		return policy
+	}
+	policy.ServiceAccount = cfg.Executor.TaskServiceAccount
+	policy.Unit = resourceUnit(cfg)
+	policy.SourceModeImage = cfg.Execution.SourceMode.RuntimeImage()
+	return policy
+}
+
+// warmWorkersAbsent says why no warm worker runs although warm pools are on,
+// "" when they run or warm pools are off. Only the pod path starts the warm
+// pool reconciler (setupK8sDispatch): the subprocess executor never does, and
+// a server whose Kubernetes client failed has pod dispatch disabled. There the
+// dispatcher's warm offer always misses, so the register response reports
+// every task on a dedicated pod. podDispatch is ExecutorInfo.PodDispatchEnabled.
+func warmWorkersAbsent(cfg *config.ServerConfig, podDispatch bool) string {
+	switch {
+	case !cfg.Execution.WarmPoolsEnabled:
+		return ""
+	case cfg.Executor.Type == "subprocess":
+		return "the subprocess executor runs no warm workers"
+	case !podDispatch:
+		return "pod dispatch is disabled on this server"
+	}
+	return ""
+}
+
 // resolveAgentControlAddr returns the address task agents dial back, defaulting
 // to the server's own gRPC address.
 func resolveAgentControlAddr(cfg *config.ServerConfig) string {
@@ -2867,8 +2950,7 @@ func setupSubprocessDispatch(ctx context.Context, cfg *config.ServerConfig, sche
 	subExec := executor.NewSubprocessExecutor(cfg.Executor.AgentPath, logger)
 	subExec.SetWorkDir(cfg.Executor.SubprocessWorkDir)
 	dispatcher := dispatch.NewDispatcher(subExec, execStore, authn, resolveAgentControlAddr(cfg), attemptTokenTTL)
-	dispatcher.SetPlatformDefaults(platformDefaults(cfg.Executor.Defaults))
-	setWarmPlacer(dispatcher, warmPools)
+	configureSubprocessDispatcher(dispatcher, cfg, warmPools)
 	disp, closer := wrapBuffered(dispatcher, store, logger, metrics, cfg.Scheduler.Dispatch) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 	sched.SetDispatcher(disp)
 	var markers logs.MarkerSink
@@ -2953,38 +3035,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 		podExec.SetPodMetrics(metrics)
 	}
 	dispatcher := dispatch.NewDispatcher(podExec, execStore, authn, controlAddr, attemptTokenTTL)
-	dispatcher.SetAgentTLSCAConfigMap(cfg.Executor.AgentTLSCAConfigMap)
-	dispatcher.SetTaskSecret(cfg.Executor.TaskSecretName, cfg.Executor.TaskSecretMountPath)
-	dispatcher.SetDefaultTaskServiceAccount(cfg.Executor.TaskServiceAccount)
-	// Agent-token transport (ADR 0055 Fix #3). Under the exchange transport the
-	// executor projects a ServiceAccount token instead of the plaintext one; the
-	// default (envvar) leaves the pod spec unchanged. The audience is the shared
-	// const the control-plane TokenReviewer validates against; expiration floors in
-	// BuildPod.
-	dispatcher.SetAgentTokenTransport(cfg.Auth.AgentTokenTransport, executor.DefaultAgentTokenAudience, 0)
-	k8sDefaults := platformDefaults(cfg.Executor.Defaults)
-	k8sDefaults.Unit = resourceUnit(cfg)
-	dispatcher.SetPlatformDefaults(k8sDefaults)
-	if metrics != nil {
-		dispatcher.SetUnitMisfitRecorder(metrics)
-	}
-	// Deadline floor for task pods that declare no execution timeout: the agent's
-	// reports retry for as long as the control plane is unreachable, so a pod
-	// with no deadline of its own would outlive a total outage indefinitely. The
-	// credential ceiling is the natural bound — past it the pod cannot renew its
-	// bearer — and it is the same knob the warm worker's attempt watchdog uses.
-	dispatcher.SetAttemptLifetimeCeiling(cfg.Auth.MaxAttemptCredentialLifetime)
-	// External secrets backend (ADR 0060, Pro pod path): deliver the operator config
-	// to task pods as LEOFLOW_SECRETS_* env. Empty backend → podEnv skips it (chain
-	// stays vault-only). The D6 registration relaxation is wired separately in run()
-	// where the Repository is in scope.
-	dispatcher.SetSecretsBackend(cfg.Secrets.Backend, secretsKwargsJSON(cfg.Secrets))
-	// Pro source mode (ADR 0067 §3): a version on the runtime image runs from
-	// its registered dag.py. "" (the default) keeps it off.
-	dispatcher.SetSourceModeImage(cfg.Execution.SourceMode.RuntimeImage())
-	// Warm placement seam (ADR 0058 N1b1-place): the dispatcher Assign()s onto the
-	// SAME registry the gRPC handler serves. nil when warm pools are off.
-	setWarmPlacer(dispatcher, warmPools)
+	configureK8sDispatcher(dispatcher, cfg, warmPools, metrics)
 	disp, closer := wrapBuffered(dispatcher, store, logger, metrics, cfg.Scheduler.Dispatch) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 	sched.SetDispatcher(disp)
 	// Shared informer read-path (PR-10): one long-lived watch replaces the

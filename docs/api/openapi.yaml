@@ -1679,6 +1679,66 @@ components:
           type: array
           items: { type: string }
           description: What the register would let through with a warning (a task that does not fit its size under executor.unit.enforce=warn). Sent by the dry run route.
+        execution: { $ref: "#/components/schemas/ExecutionReport" }
+
+    ExecutionReport:
+      type: object
+      description: >-
+        Where the version's tasks run (Dexaflow), from the same decision
+        dispatch places an attempt with: on a warm worker of the version
+        (warm pools, ADR 0058) or on a dedicated pod. Sent by the register and
+        its dry run. A task is warm-eligible; it still takes a dedicated pod
+        when no warm worker is free. A task the dispatcher would offer to a
+        warm worker is reported dedicated when no warm worker of its version
+        can exist (no idle worker kept, or a server that runs none).
+      required: [warm_pools, tasks, pool]
+      properties:
+        warm_pools: { type: boolean, description: "execution.warm_pools_enabled on the server." }
+        tasks:
+          type: array
+          items: { $ref: "#/components/schemas/TaskExecution" }
+        pool: { $ref: "#/components/schemas/WarmPoolReport" }
+
+    TaskExecution:
+      type: object
+      required: [task_id, mode]
+      properties:
+        task_id: { type: string }
+        mode:
+          type: string
+          enum: [warm, dedicated]
+          x-enum-varnames: [TaskExecutionModeWarm, TaskExecutionModeDedicated]
+        reason:
+          type: string
+          description: >-
+            Why the task takes a dedicated pod, absent when warm-eligible: warm
+            pools off, staging enabled, source mode, service_account set, a
+            placement field set (node_selector set, tolerations set, ...), a
+            size larger than a warm pod, no idle warm workers kept for this
+            DAG, or a server that runs no warm workers.
+
+    WarmPoolReport:
+      type: object
+      required: [state, detail]
+      properties:
+        state:
+          type: string
+          enum: ["off", none, "on"]
+          description: >-
+            off: warm pools are off. none: this version gets no warm worker
+            (staging, source mode, no idle worker kept, or a server that runs
+            no warm workers: the subprocess executor, or pod dispatch
+            disabled). on: the version
+            keeps min_idle_workers idle warm workers, up to max_pool_size,
+            while it has an active run; they start with its first run.
+        detail: { type: string, description: The state in a sentence for a person. }
+        min_idle_workers: { type: integer }
+        max_pool_size: { type: integer }
+        previous_pool:
+          type: string
+          enum: [draining]
+          x-enum-varnames: [WarmPoolReportPreviousPoolDraining]
+          description: draining for a new version of an existing DAG when this server keeps warm workers; the previous version's warm workers, if it has any, keep serving its active runs and are removed once its last one ends.
 
     DagVersionCollection:
       type: object
