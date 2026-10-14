@@ -31,6 +31,15 @@ func TestDeployReusesTheImageForItsContentLabel(t *testing.T) {
 	if want := reg.host + "/team/etl:" + labelOf(t, dir); !slices.Contains(reg.readList(), strings.TrimPrefix(want, reg.host+"/")) {
 		t.Errorf("registry reads %v, want the content-label tag %s", reg.readList(), want)
 	}
+	// This deploy built nothing: the image came from an earlier build this
+	// CLI knows nothing of, so the register names no builder and no base
+	// image (#1702), and still sends what it does know.
+	if len(fake.regBuilds) != 1 {
+		t.Fatalf("registers = %d, want 1", len(fake.regBuilds))
+	}
+	if b := fake.regBuilds[0]; b.Has("build_builder") || b.Has("build_base_image") || !b.Has("build_cli_version") {
+		t.Errorf("build info of a reused image = %v, want no builder or base image, and the CLI version", b)
+	}
 }
 
 // --rebuild, --force and an explicit --dag-version build even when the

@@ -508,7 +508,7 @@ type DagSpec struct {
 
 // DagVersion defines model for DagVersion.
 type DagVersion struct {
-	// BuildInfo Dexaflow. Where the version was built, as its register sent it in the build_* parameters; null when it sent none.
+	// BuildInfo Dexaflow. Where the version was built, as its register sent it in the build_* parameters; null when it sent none. Served by the dagVersions routes and the currentVersion answer; the dag_version copies embedded in task instance, run and DAG details answers leave it out.
 	BuildInfo     *BuildInfo `json:"build_info,omitempty"`
 	BundleName    *string    `json:"bundle_name,omitempty"`
 	BundleUrl     *string    `json:"bundle_url,omitempty"`
@@ -840,10 +840,10 @@ type RegisterDagVersionParams struct {
 	// BuildCommit Where the version was built (#1702), with the other build_* parameters: the git commit of its sources, 7 to 64 lower case hex characters. The build_* parameters are metadata of the register, not part of dag.json: they change neither the spec, its hash nor the version label. They are stored with the version the register creates (build_info in DagVersion) and recorded in its audit entry; a register of content already registered keeps the build info of its first register. They are the caller's claim, recorded as sent and not verified. A value that is empty or breaks its rule is refused with 400.
 	BuildCommit *string `form:"build_commit,omitempty" json:"build_commit,omitempty"`
 
-	// BuildRepo The repository of the sources: an absolute http or https URL without credentials and with no control or format character, at most 2048 bytes.
+	// BuildRepo The repository of the sources: an absolute http or https URL without credentials, query string or fragment, valid UTF-8 with no control or format character, at most 2048 bytes.
 	BuildRepo *string `form:"build_repo,omitempty" json:"build_repo,omitempty"`
 
-	// BuildPipelineUrl The CI pipeline run that built the version: an absolute http or https URL without credentials and with no control or format character, at most 2048 bytes.
+	// BuildPipelineUrl The CI pipeline run that built the version: an absolute http or https URL without credentials, query string or fragment, valid UTF-8 with no control or format character, at most 2048 bytes.
 	BuildPipelineUrl *string `form:"build_pipeline_url,omitempty" json:"build_pipeline_url,omitempty"`
 
 	// BuildBuilder The builder that produced the image, at most 255 bytes, with no control or format character.

@@ -78,6 +78,8 @@ func TestCollectBuildInfoOutsideGit(t *testing.T) {
 		{"gitlab", map[string]string{"GITLAB_CI": "true", "CI_PROJECT_URL": "https://gitlab.example/acme/etl", "CI_PIPELINE_URL": "https://gitlab.example/acme/etl/-/pipelines/7"},
 			"https://gitlab.example/acme/etl", "https://gitlab.example/acme/etl/-/pipelines/7"},
 		{"jenkins", map[string]string{"BUILD_URL": "https://jenkins.example/job/etl/9/"}, "", "https://jenkins.example/job/etl/9/"},
+		{"query and fragment stripped", map[string]string{"CI_PROJECT_URL": "https://gitlab.example/acme/etl?ref=main", "BUILD_URL": "https://jenkins.example/job/etl/9/?token=x#console"},
+			"https://gitlab.example/acme/etl", "https://jenkins.example/job/etl/9/"},
 		{"bad URL dropped", map[string]string{"BUILD_URL": "file:///etc/passwd"}, "", ""},
 		{"no CI", map[string]string{}, "", ""},
 	} {

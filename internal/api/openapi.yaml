@@ -713,16 +713,16 @@ paths:
           required: false
           description: >-
             The repository of the sources: an absolute http or https URL
-            without credentials and with no control or format character, at
-            most 2048 bytes.
+            without credentials, query string or fragment, valid UTF-8 with no
+            control or format character, at most 2048 bytes.
           schema: { type: string, maxLength: 2048 }
         - name: build_pipeline_url
           in: query
           required: false
           description: >-
             The CI pipeline run that built the version: an absolute http or
-            https URL without credentials and with no control or format
-            character, at most 2048 bytes.
+            https URL without credentials, query string or fragment, valid
+            UTF-8 with no control or format character, at most 2048 bytes.
           schema: { type: string, maxLength: 2048 }
         - name: build_builder
           in: query
@@ -1820,7 +1820,7 @@ components:
           nullable: true
           description: Dexaflow. Id of the user who registered the version (not an email, since every reader of the DAG sees it); null when none was recorded.
         build_info:
-          description: Dexaflow. Where the version was built, as its register sent it in the build_* parameters; null when it sent none.
+          description: Dexaflow. Where the version was built, as its register sent it in the build_* parameters; null when it sent none. Served by the dagVersions routes and the currentVersion answer; the dag_version copies embedded in task instance, run and DAG details answers leave it out.
           type: object
           nullable: true
           allOf: [{ $ref: "#/components/schemas/BuildInfo" }]

@@ -522,16 +522,18 @@ Two things that look like a rollback are not:
 ## Where a version was built
 
 Every `dexaflow deploy` and `dexaflow push` records where the version was
-built, and `GET /api/v2/dags/{dag_id}/dagVersions` returns it as `build_info`
-next to Airflow's fields (`null` for a version registered without it):
+built. `GET /api/v2/dags/{dag_id}/dagVersions` (and `.../dagVersions/{n}`, and
+the answer of a rollback) returns it as `build_info` next to Airflow's fields,
+`null` for a version registered without it; the `dag_version` embedded in task
+instance, run and DAG details answers leaves it out:
 
 | Field | Where the CLI reads it |
 |---|---|
 | `commit` | `git rev-parse HEAD` in the project directory, when it is in a git work tree. |
 | `repo` | The `origin` remote of that work tree, as an `https` URL: credentials and a trailing `.git` are dropped, and an ssh remote (`git@host:org/repo.git`) becomes `https://host/org/repo`. Outside git, `GITHUB_SERVER_URL`/`GITHUB_REPOSITORY` or GitLab's `CI_PROJECT_URL`. |
-| `pipeline_url` | The CI run: on GitHub Actions `GITHUB_SERVER_URL/GITHUB_REPOSITORY/actions/runs/GITHUB_RUN_ID`, else `CI_PIPELINE_URL` (GitLab), `BUILD_URL` (Jenkins), `BUILDKITE_BUILD_URL` or `CIRCLE_BUILD_URL`. |
-| `builder` | The builder that produced the image, as the deploy prints it (`code-layer`, `local-daemon (docker)`, ...). Absent with `--skip-build`. |
-| `base_image` | The base image of the generated Dockerfile, which carries the task agent. Absent when the project ships its own Dockerfile, and with `--skip-build`. |
+| `pipeline_url` | The CI run: on GitHub Actions `GITHUB_SERVER_URL/GITHUB_REPOSITORY/actions/runs/GITHUB_RUN_ID`, else `CI_PIPELINE_URL` (GitLab), `BUILD_URL` (Jenkins), `BUILDKITE_BUILD_URL` or `CIRCLE_BUILD_URL`, without a query string or fragment. |
+| `builder` | The builder that produced the image, as the deploy prints it (`code-layer`, `local-daemon (docker)`, ...). Absent when the deploy built nothing: with `--skip-build`, and when it reused an image the registry already held for this content label. |
+| `base_image` | The base image of the generated Dockerfile, which carries the task agent. Absent when the project ships its own Dockerfile, and when the deploy built nothing (`--skip-build`, or a reused image). |
 | `cli_version` | The version of the CLI that built and registered the version. |
 
 What cannot be read is left out; a deploy never fails for it. `dexaflow promote`
@@ -546,8 +548,9 @@ of its first register. The CLI sends it as the `build_commit`, `build_repo`,
 `build_cli_version` query parameters of
 `POST /api/v2/dags/{dag_id}/versions`; another client can send them too. The
 server checks them as external input (a commit is 7 to 64 lower case hex
-characters, the two URLs are absolute `http` or `https` URLs without
-credentials of at most 2048 bytes, no field holds a control character) and
+characters, the two URLs are absolute `http` or `https` URLs of at most 2048
+bytes without credentials, query string or fragment, every field is valid
+UTF-8 without control characters) and
 refuses a bad value with `400`. The register's `dag.version.register` audit
 entry records the same `build_info`. It is the caller's claim, recorded as
 sent and not verified: a deploy token can write any commit there.

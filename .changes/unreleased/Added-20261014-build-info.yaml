@@ -11,8 +11,8 @@ body: |-
   credentials, no control characters), stores them with the version it
   creates (migration 046 adds the nullable `dag_versions.build_info`) and
   records them in the `dag.version.register` audit entry.
-  `GET /api/v2/dags/{dag_id}/dagVersions` returns them as `build_info`, next
-  to Airflow's fields, `dexaflow dags versions` shows the commit, and
+  `GET /api/v2/dags/{dag_id}/dagVersions`, `.../dagVersions/{n}` and the
+  rollback answer return them as `build_info`, next to Airflow's fields, `dexaflow dags versions` shows the commit, and
   `dexaflow promote` forwards them to the destination. Build info is not part
   of `dag.json`: it changes neither the spec hash nor the version label, and a
   re-push of registered content keeps the first build info. (#1702)

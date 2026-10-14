@@ -64,7 +64,8 @@ type compileOptions struct {
 	built *build.Result
 	// provenance, when set, receives the builder that produced the image
 	// and, for a generated Dockerfile, the base image it builds FROM: the
-	// build half of the version's build info (#1702).
+	// build half of the version's build info (#1702). A reused image (the
+	// skip path) sets neither.
 	provenance *domain.BuildInfo
 	// reuse allows the skip path: the image tag is the default content label,
 	// so an image the registry holds under it can be pinned instead of built
@@ -691,7 +692,10 @@ func buildImage(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.Le
 	if o.built != nil {
 		*o.built = res
 	}
-	if o.provenance != nil {
+	// A reused image (the skip path) was built earlier by a build this CLI
+	// knows nothing of: naming "skip" or the base it would use now would be
+	// a guess, so it records neither.
+	if o.provenance != nil && res.Path != build.PathSkip {
 		o.provenance.Builder = b.Describe()
 		if !ownDockerfile {
 			o.provenance.BaseImage = resolveBaseImage(cfg)

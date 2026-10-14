@@ -21,11 +21,11 @@ func collectBuildInfo(ctx context.Context, dir string, getenv func(string) strin
 	b := domain.BuildInfo{
 		Commit:      gitOutput(ctx, dir, "rev-parse", "HEAD"),
 		Repo:        browsableRemote(gitOutput(ctx, dir, "remote", "get-url", "origin")),
-		PipelineURL: ciPipelineURL(getenv),
+		PipelineURL: withoutQuery(ciPipelineURL(getenv)),
 		CLIVersion:  version.Get().Version,
 	}
 	if b.Repo == "" {
-		b.Repo = ciRepoURL(getenv)
+		b.Repo = withoutQuery(ciRepoURL(getenv))
 	}
 	return b.Sanitized()
 }
@@ -52,6 +52,16 @@ func ciPipelineURL(getenv func(string) string) string {
 		}
 	}
 	return ""
+}
+
+// withoutQuery is v without its query string and fragment: a CI variable can
+// carry one (a token in a Jenkins URL), which the server refuses and which
+// does not name the run or the repository.
+func withoutQuery(v string) string {
+	if i := strings.IndexAny(v, "?#"); i >= 0 {
+		return v[:i]
+	}
+	return v
 }
 
 // browsableRemote turns a git remote URL into the http or https URL of the

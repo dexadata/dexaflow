@@ -112,3 +112,50 @@ func TestDagVersionsExposeBuildInfo(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildInfoOnlyOnVersionRoutes: build_info is served by the routes about
+// versions (one version by number, and the from and to of a rollback), and
+// left out of the dag_version copies embedded in other answers (a DAG's
+// latest_dag_version here; task instances in
+// TestTaskInstanceDagVersionIsTheRunsVersion), which stay Airflow's shape.
+func TestBuildInfoOnlyOnVersionRoutes(t *testing.T) {
+	info := &domain.BuildInfo{Commit: "abc1234"}
+	srv := versionsServer([]domain.DAG{{DagID: "etl"}}, []domain.DagVersion{{ID: "v1", VersionNumber: 1, Version: "a", BuildInfo: info}})
+	field := func(path string, pick func(map[string]json.RawMessage) map[string]json.RawMessage) (json.RawMessage, bool) {
+		t.Helper()
+		rec := authGet(srv, http.MethodGet, path, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s = %d (%s)", path, rec.Code, rec.Body.String())
+		}
+		var body map[string]json.RawMessage
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		v, ok := pick(body)["build_info"]
+		return v, ok
+	}
+	if v, ok := field("/api/v2/dags/etl/dagVersions/1", func(b map[string]json.RawMessage) map[string]json.RawMessage { return b }); !ok || !strings.Contains(string(v), "abc1234") {
+		t.Errorf("dagVersions/1 build_info = %s (present %v)", v, ok)
+	}
+	if v, ok := field("/api/v2/dags/etl/details", func(b map[string]json.RawMessage) map[string]json.RawMessage {
+		var latest map[string]json.RawMessage
+		_ = json.Unmarshal(b["latest_dag_version"], &latest)
+		return latest
+	}); ok {
+		t.Errorf("latest_dag_version carries build_info %s", v)
+	}
+
+	change := rollbackChange()
+	change.To.BuildInfo, change.From.BuildInfo = info, nil
+	rec := authGet(versionServer(&fakeVersionRepo{change: change}), http.MethodPut, "/api/v2/dags/etl/currentVersion", `{"version":"v1"}`)
+	var resp struct {
+		From map[string]json.RawMessage `json:"from"`
+		To   map[string]json.RawMessage `json:"to"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(resp.To["build_info"]), "abc1234") || string(resp.From["build_info"]) != "null" {
+		t.Errorf("rollback to.build_info = %s, from.build_info = %s", resp.To["build_info"], resp.From["build_info"])
+	}
+}

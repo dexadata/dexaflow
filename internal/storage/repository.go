@@ -1264,19 +1264,24 @@ func dagVersionOf(row queries.ListDagVersionsRow) domain.DagVersion {
 		SpecHash:       row.SpecHash,
 		IsCurrent:      row.IsCurrent,
 		CreatedBy:      row.CreatedBy,
-		BuildInfo:      buildInfoOf(row.BuildInfo),
+		BuildInfo:      buildInfoOf(uuidToString(row.ID), row.BuildInfo),
 	}
 }
 
-// buildInfoOf decodes a version's build_info column: nil when it is NULL,
-// and nil too for a value that does not decode, since provenance is shown
-// beside the version and must not make it unlistable.
-func buildInfoOf(raw []byte) *domain.BuildInfo {
+// buildInfoOf decodes the build_info column of version versionID: nil when
+// it is NULL. A value that does not decode is logged and read as nil, since
+// provenance is shown beside the version and must not make it unlistable.
+func buildInfoOf(versionID string, raw []byte) *domain.BuildInfo {
 	if len(raw) == 0 {
 		return nil
 	}
 	var b domain.BuildInfo
-	if err := json.Unmarshal(raw, &b); err != nil || b.IsZero() {
+	if err := json.Unmarshal(raw, &b); err != nil {
+		slog.Warn("listing a dag version without its build info: the stored value does not decode",
+			"dag_version_id", versionID, "error", err)
+		return nil
+	}
+	if b.IsZero() {
 		return nil
 	}
 	return &b

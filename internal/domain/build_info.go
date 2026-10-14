@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // BuildInfo is where a DAG version was built (#1702): the git commit and
@@ -67,7 +69,8 @@ func (b BuildInfo) IsZero() bool {
 // Validate returns the first field of b that breaks its rule, named in the
 // error: commit is a lower case hex git object id of 7 to 64 characters;
 // repo and pipeline_url are absolute http or https URLs without credentials,
-// at most 2048 bytes; builder (at most 255 bytes), base_image (512) and
+// query string or fragment, at most 2048 bytes; every field is valid UTF-8;
+// builder (at most 255 bytes), base_image (512) and
 // cli_version (128) hold no control or format character, and base_image and
 // cli_version no space either. An empty field is always valid.
 func (b BuildInfo) Validate() error {
@@ -130,6 +133,9 @@ func checkBuildURL(v string) error {
 	if u.User != nil {
 		return errors.New("must not carry credentials")
 	}
+	if strings.ContainsAny(v, "?#") {
+		return errors.New("must not carry a query string or a fragment")
+	}
 	return nil
 }
 
@@ -139,6 +145,9 @@ func boundedText(limit int, spaces bool) func(string) error {
 	return func(v string) error {
 		if len(v) > limit {
 			return fmt.Errorf("must be at most %d bytes", limit)
+		}
+		if !utf8.ValidString(v) {
+			return errors.New("must be valid UTF-8")
 		}
 		for _, r := range v {
 			if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
