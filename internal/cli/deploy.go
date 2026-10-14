@@ -472,7 +472,21 @@ func requireRegistry(cfg *domain.LeoflowConfig) error {
       this deploy:                --registry ghcr.io/<your-org>  (or DEXAFLOW_REGISTRY)
       the whole cluster:          deploy.defaults.registry in the server's Helm values
 
-  The image name defaults to the dag_id. Then authenticate your builder once:  docker login ghcr.io`)
+  The image name defaults to the dag_id. Then give the CLI a credential for the registry:
+%s`, registryLoginHints())
+}
+
+// registryLoginHints lists the credential each kind of registry takes
+// (ADR 0080): the cloud CLI's session for Artifact Registry, GCR, ECR and
+// ACR, the docker config for any other. With no registry configured there is
+// no host to name the exact command for, as the preflight does.
+func registryLoginHints() string {
+	session := func(p string) string { return build.CloudRegistry{Provider: p}.SessionCommand() }
+	return "      Artifact Registry, GCR: " + session(build.ProviderGoogle) + "\n" +
+		"      ECR: " + session(build.ProviderAWS) + "\n" +
+		"      ACR: " + session(build.ProviderAzure) + "\n" +
+		"      any other registry: docker login <registry>\n" +
+		"  A build by a local container tool pushes with that tool's own login; the deploy preflight names it."
 }
 
 // repinImageInSpec rewrites the compiled dag.json's image field to the
