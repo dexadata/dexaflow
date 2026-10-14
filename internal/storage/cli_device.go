@@ -21,33 +21,51 @@ const (
 )
 
 // CreateCLIDeviceAuthorization starts a device sign-in of the CLI (ADR 0081)
-// that expires ttl from now on the database's clock and may be polled every
-// interval. It stores only the two hashes. It first forgets sign-ins that
-// expired a while ago, then refuses with domain.ErrLimitExceeded when maxLive
-// sign-ins are already live, so an unauthenticated caller cannot fill the
-// table. A user code hash already in use is domain.ErrConflict: the caller
-// draws another code.
-func (r *Repository) CreateCLIDeviceAuthorization(ctx context.Context, deviceCodeHash, userCodeHash string, ttl, interval time.Duration, maxLive int) (auth.DeviceAuthorization, error) {
-	if err := r.q.DeleteExpiredCLIDevices(ctx); err != nil {
+// that expires req.TTL from now on the database's clock and may be polled
+// every req.Interval. It stores only the hashes and the requester's address.
+// In one transaction serialized with every other start, it forgets sign-ins
+// that expired a while ago and refuses with auth.ErrDeviceSignInsFull when
+// req.MaxLive are live, or auth.ErrDeviceSignInsFromRequester when the
+// requester holds req.MaxLivePerRequester, so the caps hold exactly. A user
+// code hash already in use is domain.ErrConflict: the caller draws another.
+func (r *Repository) CreateCLIDeviceAuthorization(ctx context.Context, req auth.DeviceAuthorizationRequest) (auth.DeviceAuthorization, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return auth.DeviceAuthorization{}, fmt.Errorf("beginning device start tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
+	q := r.q.WithTx(tx)
+	if err = q.LockCLIDeviceStarts(ctx); err != nil {
+		return auth.DeviceAuthorization{}, fmt.Errorf("serializing device starts: %w", err)
+	}
+	if err = q.DeleteExpiredCLIDevices(ctx); err != nil {
 		return auth.DeviceAuthorization{}, fmt.Errorf("deleting expired device sign-ins: %w", err)
 	}
-	live, err := r.q.CountLiveCLIDevices(ctx)
+	live, err := q.CountLiveCLIDevices(ctx, req.RequesterHash)
 	if err != nil {
 		return auth.DeviceAuthorization{}, fmt.Errorf("counting live device sign-ins: %w", err)
 	}
-	if live >= int64(maxLive) {
-		return auth.DeviceAuthorization{}, domain.Safef(domain.ErrLimitExceeded, "too many device sign-ins are in progress; try again in a few minutes")
+	switch {
+	case live.Live >= int64(req.MaxLive):
+		return auth.DeviceAuthorization{}, auth.ErrDeviceSignInsFull
+	case live.FromRequester >= int64(req.MaxLivePerRequester):
+		return auth.DeviceAuthorization{}, auth.ErrDeviceSignInsFromRequester
 	}
-	row, err := r.q.InsertCLIDevice(ctx, queries.InsertCLIDeviceParams{
-		DeviceCodeHash:      deviceCodeHash,
-		UserCodeHash:        userCodeHash,
-		TtlSeconds:          ttl.Seconds(),
-		PollIntervalSeconds: int32(interval / time.Second), //nolint:gosec // G115: the caller passes seconds well within int32
+	row, err := q.InsertCLIDevice(ctx, queries.InsertCLIDeviceParams{
+		DeviceCodeHash:      req.DeviceCodeHash,
+		UserCodeHash:        req.UserCodeHash,
+		TtlSeconds:          req.TTL.Seconds(),
+		PollIntervalSeconds: int32(req.Interval / time.Second), //nolint:gosec // G115: the caller passes seconds well within int32
+		RequesterHash:       req.RequesterHash,
+		RequesterAddr:       req.RequesterAddr,
 	})
 	if err != nil {
 		return auth.DeviceAuthorization{}, fmt.Errorf("inserting device sign-in: %w", mapConflict(err))
 	}
-	return auth.DeviceAuthorization{ID: uuidToString(row.ID), CreatedAt: row.CreatedAt.Time, ExpiresAt: row.ExpiresAt.Time}, nil
+	if err := tx.Commit(ctx); err != nil {
+		return auth.DeviceAuthorization{}, fmt.Errorf("committing device start: %w", err)
+	}
+	return auth.DeviceAuthorization{ID: uuidToString(row.ID), CreatedAt: row.CreatedAt.Time, ExpiresAt: row.ExpiresAt.Time, RequesterAddr: req.RequesterAddr}, nil
 }
 
 // FindCLIDeviceByUserCode returns the pending, unexpired device sign-in whose
@@ -60,7 +78,7 @@ func (r *Repository) FindCLIDeviceByUserCode(ctx context.Context, userCodeHash s
 	if err != nil {
 		return auth.DeviceAuthorization{}, fmt.Errorf("finding device sign-in: %w", err)
 	}
-	return auth.DeviceAuthorization{ID: uuidToString(row.ID), CreatedAt: row.CreatedAt.Time, ExpiresAt: row.ExpiresAt.Time}, nil
+	return auth.DeviceAuthorization{ID: uuidToString(row.ID), CreatedAt: row.CreatedAt.Time, ExpiresAt: row.ExpiresAt.Time, RequesterAddr: row.RequesterAddr}, nil
 }
 
 // DecideCLIDeviceAuthorization records the person's answer to a pending,

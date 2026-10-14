@@ -185,6 +185,8 @@ type CliDeviceAuthorization struct {
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
 	PollIntervalSeconds int32              `json:"poll_interval_seconds"`
+	RequesterHash       string             `json:"requester_hash"`
+	RequesterAddr       string             `json:"requester_addr"`
 	LastPolledAt        pgtype.Timestamptz `json:"last_polled_at"`
 	DecidedAt           pgtype.Timestamptz `json:"decided_at"`
 	TenantID            pgtype.UUID        `json:"tenant_id"`

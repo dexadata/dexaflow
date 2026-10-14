@@ -67,22 +67,46 @@ const (
 )
 
 // cliDeviceMaxLive caps the device sign-ins in progress across the cluster,
-// so the unauthenticated start route cannot fill the table.
-const cliDeviceMaxLive = 10_000
-
-// Per-address budgets of the device sign-in. A wrong user code costs one of
-// deviceVerifyRateLimitPerMinute attempts; polls get a budget of their own,
-// generous enough for several CLIs behind one address polling every five
-// seconds, because the interval of each sign-in is enforced by slow_down.
+// so the unauthenticated start route cannot fill the table, and
+// cliDeviceMaxLivePerRequester those started from one address (its /64 for
+// IPv6), so one address cannot fill the cluster's cap: reaching it takes
+// 2,000 such addresses.
 const (
+	cliDeviceMaxLive             = 10_000
+	cliDeviceMaxLivePerRequester = 5
+)
+
+// The budgets of the device sign-in, per address (by /64 for IPv6, see
+// auth.AddressBucket) unless named otherwise.
+//
+//   - A start costs one of deviceStartRateLimitPerMinute.
+//   - A wrong user code costs one of deviceVerifyRateLimitPerMinute, and one
+//     of deviceVerifyFailuresPerMinute shared by every address this process
+//     serves. A code that is found costs nothing.
+//   - Polls get a budget of their own, generous enough for several CLIs
+//     behind one address polling every five seconds, because the interval of
+//     each sign-in is enforced by slow_down.
+const (
+	deviceStartRateLimitPerMinute  = 3
 	deviceVerifyRateLimitPerMinute = 10
+	deviceVerifyFailuresPerMinute  = 300
 	devicePollRateLimitPerMinute   = 120
 )
 
-// The user code: eight letters from twenty consonants, about 34.6 bits.
-// With ten guesses a minute per address and a ten-minute life, guessing a
-// live code takes on the order of a billion addresses. No vowels, so no
-// words, and no letters that read like digits (RFC 8628 section 6.1).
+// deviceVerifyFailureKey is the one key of the process-wide budget of
+// failed verifies.
+const deviceVerifyFailureKey = "*"
+
+// The user code: eight letters from twenty consonants, 20^8 = 2.56e10
+// codes, about 34.6 bits. No vowels, so no words, and no letters that read
+// like digits (RFC 8628 section 6.1). Addresses are not scarce (an IPv6
+// /48 holds 65,536 /64s), so the bound on guessing is the process-wide
+// budget of failed verifies: 300 a minute is 3,000 guesses over a code's ten
+// minutes, which with the cluster's cap of 10,000 live codes finds one with
+// probability about 3000 * 10000 / 2.56e10, roughly 1 in 850, per replica
+// and per ten minutes of an attacker spending the whole budget, while every
+// person on that replica is refused for the same minutes. A found code only
+// lets the guesser sign the stranger's CLI in as the guesser.
 const (
 	userCodeAlphabet = "BCDFGHJKLMNPQRSTVWXZ"
 	userCodeLen      = 8
@@ -106,10 +130,36 @@ const cliDeviceHashInfo = "dexaflow cli device code key"
 const (
 	hashDeviceCode = "device_code"
 	hashUserCode   = "user_code"
+	hashRequester  = "requester"
 )
 
-// auditCLIDeviceVerify records a user code the verification page refused.
-const auditCLIDeviceVerify = "oidc.cli_device_verify"
+// requesterAddrMax bounds the address stored with a sign-in.
+const requesterAddrMax = 64
+
+// clientAddress is the caller's address as the router resolves it (trusted
+// proxies applied), bounded for storage and display.
+func clientAddress(c *gin.Context) string {
+	ip := logSafe(c.ClientIP())
+	if ip == "" {
+		return "unknown"
+	}
+	if len(ip) > requesterAddrMax {
+		return ip[:requesterAddrMax]
+	}
+	return ip
+}
+
+// rateLimitByAddress is rateLimitByIP keyed by auth.AddressBucket, so an
+// IPv6 caller cannot rotate addresses within its /64 for a fresh budget.
+func rateLimitByAddress(limiter *auth.RateLimiter) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !spendRateBudget(c, limiter) {
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
 
 // deviceCodeMaxLen bounds the device code a poll may send.
 const deviceCodeMaxLen = 128
@@ -118,10 +168,10 @@ const deviceCodeMaxLen = 128
 // implements it. Every method decides on the database's clock and keys a
 // sign-in by the HMAC of its codes, never the codes.
 type CLIDeviceStore interface {
-	// CreateCLIDeviceAuthorization starts a sign-in that expires ttl from
-	// now, polled every interval. It is domain.ErrLimitExceeded when maxLive
-	// are in progress, and domain.ErrConflict when the user code is taken.
-	CreateCLIDeviceAuthorization(ctx context.Context, deviceCodeHash, userCodeHash string, ttl, interval time.Duration, maxLive int) (auth.DeviceAuthorization, error)
+	// CreateCLIDeviceAuthorization starts a sign-in as req describes. It is
+	// auth.ErrDeviceSignInsFull or auth.ErrDeviceSignInsFromRequester over a
+	// cap, and domain.ErrConflict when the user code is taken.
+	CreateCLIDeviceAuthorization(ctx context.Context, req auth.DeviceAuthorizationRequest) (auth.DeviceAuthorization, error)
 	// FindCLIDeviceByUserCode returns the pending, unexpired sign-in of a
 	// user code, or domain.ErrNotFound.
 	FindCLIDeviceByUserCode(ctx context.Context, userCodeHash string) (auth.DeviceAuthorization, error)
@@ -159,6 +209,10 @@ type cliDeviceDeps struct {
 	jwtSecret   string
 	tokenTTL    time.Duration
 	pollLimiter *auth.RateLimiter
+	// verifyFailures is the per-address and failedVerifies the process-wide
+	// budget of failed verifies.
+	verifyFailures *auth.RateLimiter
+	failedVerifies *auth.RateLimiter
 }
 
 // newCLIDeviceDeps builds the device sign-in when it can be served: single
@@ -188,17 +242,20 @@ func newCLIDeviceDeps(deps Dependencies) *cliDeviceDeps {
 		jwtSecret:   deps.JWTSecret,
 		tokenTTL:    time.Duration(deps.TokenTTLSecs) * time.Second,
 		pollLimiter: auth.NewRateLimiter(devicePollRateLimitPerMinute, time.Minute),
+
+		verifyFailures: auth.NewRateLimiter(deviceVerifyRateLimitPerMinute, time.Minute),
+		failedVerifies: auth.NewRateLimiter(deviceVerifyFailuresPerMinute, time.Minute),
 	}
 }
 
-// registerCLIDevice registers the device routes. The start and the consent
-// spend the OIDC routes' budget; the verification form has its own, smaller
-// one, so guessing user codes is slow.
+// registerCLIDevice registers the device routes. The start has a small
+// budget of its own; the verification form spends its budgets only on
+// failures (verifyHandler); the consent spends the OIDC routes' budget.
 func registerCLIDevice(r *gin.Engine, d *cliDeviceDeps, oidcLimiter *auth.RateLimiter) {
-	verifyLimiter := auth.NewRateLimiter(deviceVerifyRateLimitPerMinute, time.Minute)
-	r.POST(cliDevicePath, rateLimitByIP(oidcLimiter), d.startHandler())
+	startLimiter := auth.NewRateLimiter(deviceStartRateLimitPerMinute, time.Minute)
+	r.POST(cliDevicePath, rateLimitByAddress(startLimiter), d.startHandler())
 	r.GET(deviceVerifyPath, d.verifyPageHandler())
-	r.POST(deviceVerifyPath, rateLimitByIPWith(verifyLimiter, d.verifyRateLimited), d.verifyHandler())
+	r.POST(deviceVerifyPath, d.verifyHandler())
 	r.POST(cliDeviceConsentPath, rateLimitByIP(oidcLimiter), d.consentHandler())
 }
 
@@ -304,6 +361,7 @@ func (d *cliDeviceDeps) startHandler() gin.HandlerFunc {
 			d.startFailed(c, "generating device code", err)
 			return
 		}
+		requester := clientAddress(c)
 		// A user code already live is drawn again; three collisions in a
 		// row mean the space is crowded, which the cap answers below.
 		for range 3 {
@@ -312,7 +370,14 @@ func (d *cliDeviceDeps) startHandler() gin.HandlerFunc {
 				d.startFailed(c, "generating user code", uerr)
 				return
 			}
-			_, err = d.store.CreateCLIDeviceAuthorization(c.Request.Context(), d.hash(hashDeviceCode, deviceCode), d.hash(hashUserCode, userCode), cliDeviceTTL, cliDeviceInterval, cliDeviceMaxLive)
+			_, err = d.store.CreateCLIDeviceAuthorization(c.Request.Context(), auth.DeviceAuthorizationRequest{
+				DeviceCodeHash: d.hash(hashDeviceCode, deviceCode),
+				UserCodeHash:   d.hash(hashUserCode, userCode),
+				RequesterHash:  d.hash(hashRequester, auth.AddressBucket(requester)),
+				RequesterAddr:  requester,
+				TTL:            cliDeviceTTL, Interval: cliDeviceInterval,
+				MaxLive: cliDeviceMaxLive, MaxLivePerRequester: cliDeviceMaxLivePerRequester,
+			})
 			if errors.Is(err, domain.ErrConflict) {
 				continue
 			}
@@ -330,7 +395,11 @@ func (d *cliDeviceDeps) startHandler() gin.HandlerFunc {
 			})
 			return
 		}
-		if err == nil || errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrLimitExceeded) {
+		switch {
+		case errors.Is(err, auth.ErrDeviceSignInsFromRequester):
+			AbortProblem(c, http.StatusTooManyRequests, "rate limited", "too many device sign-ins from this address are in progress; finish one, or wait ten minutes")
+			return
+		case err == nil || errors.Is(err, domain.ErrConflict) || errors.Is(err, auth.ErrDeviceSignInsFull):
 			AbortProblem(c, http.StatusServiceUnavailable, "service unavailable", "too many device sign-ins are in progress; try again in a few minutes")
 			return
 		}
@@ -437,6 +506,11 @@ func (d *cliDeviceDeps) verifyHandler() gin.HandlerFunc {
 			d.renderVerifyPage(c, http.StatusForbidden, deviceVerifyPage{Message: deviceMsgCrossSite})
 			return
 		}
+		bucket := auth.AddressBucket(c.ClientIP())
+		if d.verifyFailures.Blocked(bucket) || d.failedVerifies.Blocked(deviceVerifyFailureKey) {
+			d.verifyRateLimited(c)
+			return
+		}
 		code := normalizeUserCode(c.PostForm("user_code"))
 		var found auth.DeviceAuthorization
 		err := domain.ErrNotFound
@@ -445,10 +519,13 @@ func (d *cliDeviceDeps) verifyHandler() gin.HandlerFunc {
 		}
 		switch {
 		case errors.Is(err, domain.ErrNotFound):
+			// Tied to no sign-in, so logged and never audited: anonymous
+			// guesses must not be able to flood the audit trail.
+			d.verifyFailures.Allow(bucket)
+			d.failedVerifies.Allow(deviceVerifyFailureKey)
 			if d.logger != nil {
-				d.logger.Warn("oidc: cli device user code refused", "reason", "unknown_code")
+				d.logger.Warn("oidc: cli device user code refused", "reason", "unknown_code", "client", logSafe(c.ClientIP()))
 			}
-			recordAuth(c, d.logger, d.audit, auditCLIDeviceVerify, cliPending{}, "denied", map[string]string{"reason": "unknown_code", "grant": deviceGrantType})
 			d.renderVerifyPage(c, http.StatusBadRequest, deviceVerifyPage{Message: deviceMsgUnknownCode})
 			return
 		case err != nil:
@@ -460,8 +537,11 @@ func (d *cliDeviceDeps) verifyHandler() gin.HandlerFunc {
 		}
 		c.Set(contextKeyDeviceLogin, true)
 		beginOIDCLogin(c, d.flow, d.logger, d.insecure, oidc.StatePayload{
-			Next:   "/",
-			Device: &oidc.DeviceBinding{ID: found.ID, UserCode: formatUserCode(code)},
+			Next: "/",
+			Device: &oidc.DeviceBinding{
+				ID: found.ID, UserCode: formatUserCode(code),
+				RequesterAddr: found.RequesterAddr, StartedAt: found.CreatedAt.Unix(),
+			},
 		}, http.StatusSeeOther)
 	}
 }
@@ -487,6 +567,8 @@ var deviceConsentTemplate = template.Must(template.New("device-consent").Parse(`
 {{ else }} <p class="hint">A <code>dexaflow auth login --device</code> asked to sign in as
  <strong>{{ .Email }}</strong> (tenant <strong>{{ .Tenant }}</strong>). Its terminal shows this code:</p>
  <p class="usercode">{{ .UserCode }}</p>
+ <p class="hint">It was started {{ .Age }} from <strong>{{ .RequesterAddr }}</strong>.
+ This browser is at <strong>{{ .BrowserAddr }}</strong>.</p>
  <p class="hint">Approve only if you started that command yourself just now and its terminal shows this exact code.
  If someone sent you this link or this code, cancel: approving would give them your access.</p>
  <label class="confirm"><input type="checkbox" name="confirm" value="yes" required>
@@ -509,6 +591,12 @@ type deviceConsentPage struct {
 	Notice   string
 	Armed    bool
 	Script   template.JS
+	// Age, RequesterAddr and BrowserAddr say when and from where the
+	// sign-in was started, next to where this browser is (RFC 8628 section
+	// 5.4), so a person sent someone else's code can tell.
+	Age           string
+	RequesterAddr string
+	BrowserAddr   string
 }
 
 // The messages of the device consent.
@@ -554,7 +642,24 @@ func (d oidcDeps) askDeviceConsent(c *gin.Context, b oidc.DeviceBinding, user *a
 	}
 	c.SetSameSite(http.SameSiteStrictMode)
 	c.SetCookie(cliDeviceConsentCookie, sealed, int(cliConsentTTL.Seconds()), cliConsentCookiePath, "", cookieSecure(d.session.insecure), true)
-	renderDeviceConsent(c, http.StatusOK, deviceConsentPage{Email: user.Email, Tenant: user.TenantID, UserCode: b.UserCode, CSRF: csrf})
+	renderDeviceConsent(c, http.StatusOK, deviceConsentPage{
+		Email: user.Email, Tenant: user.TenantID, UserCode: b.UserCode, CSRF: csrf,
+		Age:           deviceAge(time.Since(time.Unix(b.StartedAt, 0))),
+		RequesterAddr: b.RequesterAddr,
+		BrowserAddr:   clientAddress(c),
+	})
+}
+
+// deviceAge says how long ago a sign-in started, in whole minutes.
+func deviceAge(d time.Duration) string {
+	switch m := int(d / time.Minute); {
+	case m < 1:
+		return "less than a minute ago"
+	case m == 1:
+		return "1 minute ago"
+	default:
+		return fmt.Sprintf("%d minutes ago", m)
+	}
 }
 
 // consentHandler implements POST /api/v2/auth/cli/device/consent. It
@@ -694,12 +799,13 @@ func (d *cliDeviceDeps) redeem(c *gin.Context, user auth.User) {
 	c.JSON(http.StatusOK, tokenResponse{AccessToken: token, TokenType: "bearer", ExpiresIn: int(d.tokenTTL.Seconds())})
 }
 
-// refusePoll audits, logs and answers a device code that is not live.
+// refusePoll logs and answers a device code that is not live. It is tied to
+// no sign-in, so it is not audited: anonymous polls must not be able to
+// flood the audit trail.
 func (d *cliDeviceDeps) refusePoll(c *gin.Context, reason string) {
 	if d.logger != nil {
-		d.logger.Warn("oidc: cli device code refused", "reason", reason)
+		d.logger.Warn("oidc: cli device code refused", "reason", reason, "client", logSafe(c.ClientIP()))
 	}
-	recordAuth(c, d.logger, d.audit, auditCLICode, cliPending{}, "denied", map[string]string{"reason": reason, "grant": deviceGrantType})
 	abortTokenError(c, "invalid_grant", cliCodeRefused)
 }
 
@@ -720,11 +826,11 @@ func abortTokenError(c *gin.Context, oauthErr, detail string) {
 	})
 }
 
-// spendRateBudget spends one request of limiter for the caller's address, or
-// answers 429 and returns false when it is spent, as rateLimitByIP does for
-// a whole route.
+// spendRateBudget spends one request of limiter for the caller's address
+// (by /64 for IPv6), or answers 429 and returns false when it is spent, as
+// rateLimitByIP does for a whole route.
 func spendRateBudget(c *gin.Context, limiter *auth.RateLimiter) bool {
-	ip := c.ClientIP()
+	ip := auth.AddressBucket(c.ClientIP())
 	if limiter.Blocked(ip) {
 		AbortProblem(c, http.StatusTooManyRequests, "rate limited", rateLimitedDetail)
 		return false

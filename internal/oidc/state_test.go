@@ -107,7 +107,7 @@ func TestStateCodecRoundTripsDeviceBinding(t *testing.T) {
 	c := NewStateCodec("app-secret")
 	in := StatePayload{
 		State: "st", Nonce: "n", Verifier: "v", Next: "/",
-		Device: &DeviceBinding{ID: "0b6c9a52-3f0e-4c55-9d6f-0d9a3c1f2e11", UserCode: "BCDF-GHJK"},
+		Device: &DeviceBinding{ID: "0b6c9a52-3f0e-4c55-9d6f-0d9a3c1f2e11", UserCode: "BCDF-GHJK", RequesterAddr: "2001:db8::1", StartedAt: 1_700_000_000},
 	}
 	tok, err := c.Encode(in, time.Minute)
 	if err != nil {

@@ -12,8 +12,11 @@ body: |-
   needs no device endpoint and no change. With no flag, `auth login` picks it
   by itself when the server serves it and the session has no browser
   (`SSH_CONNECTION`, or Linux with no display); `--sso` keeps the browser
-  sign-in. Codes are stored only as keyed hashes in a new table (migration 045)
-  shared by every replica, codes are rate limited, approved once and redeemed
-  once, and no token is stored. `GET /api/v2/auth/methods` gains `device`, and
+  sign-in. The approval page shows when and from which address the sign-in
+  started. Codes are stored only as keyed hashes in a new table (migration
+  045) shared by every replica; starts, wrong codes and polls are rate limited
+  per address (IPv6 by /64) and wrong codes per replica, an address holds at
+  most five sign-ins in progress, each is approved once and redeemed once, and
+  no token is stored. `GET /api/v2/auth/methods` gains `device`, and
   `pkg/client` gains `StartCLIDeviceLogin` and `PollCLIDeviceLogin`. (#1704)
 time: 2026-10-14T23:00:00.000000000-03:00

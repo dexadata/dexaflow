@@ -33,7 +33,8 @@ type memDevice struct {
 	user                 auth.User
 }
 
-func (m *memDevices) CreateCLIDeviceAuthorization(_ context.Context, deviceHash, userHash string, ttl, _ time.Duration, _ int) (auth.DeviceAuthorization, error) {
+func (m *memDevices) CreateCLIDeviceAuthorization(_ context.Context, req auth.DeviceAuthorizationRequest) (auth.DeviceAuthorization, error) {
+	deviceHash, userHash, ttl := req.DeviceCodeHash, req.UserCodeHash, req.TTL
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.rows == nil {
@@ -106,9 +107,11 @@ func fastDevicePolls(t *testing.T) *[]time.Duration {
 	return waits
 }
 
-// headless makes the session look like one with no browser, or not.
+// headless makes the session look like one with no browser, or not, and its
+// output a terminal.
 func headless(t *testing.T, yes bool) {
 	t.Helper()
+	interactive(t, true)
 	prev := sessionHeadless
 	sessionHeadless = func() (bool, string) {
 		if yes {
@@ -117,6 +120,14 @@ func headless(t *testing.T, yes bool) {
 		return false, ""
 	}
 	t.Cleanup(func() { sessionHeadless = prev })
+}
+
+// interactive makes the command's output look like a terminal, or not.
+func interactive(t *testing.T, yes bool) {
+	t.Helper()
+	prev := outputIsTerminal
+	outputIsTerminal = func(io.Writer) bool { return yes }
+	t.Cleanup(func() { outputIsTerminal = prev })
 }
 
 var (
@@ -302,6 +313,34 @@ func TestLoginChoosesTheDeviceSignInWithoutABrowser(t *testing.T) {
 	}
 }
 
+// Output that is not a terminal (a script, a pipe) never gets the device
+// sign-in by itself: nobody may be reading the code.
+func TestLoginDoesNotPickTheDeviceSignInWithoutATerminal(t *testing.T) {
+	headless(t, true)
+	interactive(t, false)
+	srv, started := deviceCLIServer(t, true)
+	opened := fakeBrowser(t, func(string) {})
+	_, _, _ = run(t, "auth", "login", "--server", srv.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"), "--timeout", "100ms")
+	if *started != 0 || len(*opened) != 1 {
+		t.Errorf("device sign-ins %d, browsers opened %v; want the browser sign-in", *started, *opened)
+	}
+}
+
+// A verification page on another host than the server is printed with a
+// warning: the server's public address may be misconfigured, or the answer
+// is not from the server the person meant.
+func TestLoginDeviceWarnsWhenThePageIsOnAnotherHost(t *testing.T) {
+	fastDevicePolls(t)
+	srv, _ := deviceCLIServer(t, true, tokenAnswer)
+	out, _, err := run(t, "auth", "login", "--device", "--server", srv.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"), "--timeout", "5s")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if !strings.Contains(out, "warning: the sign-in page is on flow.example") {
+		t.Errorf("output does not warn about the other host:\n%s", out)
+	}
+}
+
 // A machine with a browser keeps the browser sign-in, and so does a server
 // that does not serve the device sign-in.
 func TestLoginKeepsTheBrowserSignInWhenItCanWork(t *testing.T) {
@@ -398,13 +437,15 @@ func TestSessionHeadlessDetection(t *testing.T) {
 		goos string
 		want bool
 	}{
-		"ssh":                   {map[string]string{"SSH_CONNECTION": "10.0.0.1 22 10.0.0.2 51000"}, "darwin", true},
-		"ssh tty":               {map[string]string{"SSH_TTY": "/dev/pts/1", "DISPLAY": "localhost:10.0"}, "linux", true},
-		"linux with x11":        {map[string]string{"DISPLAY": ":0"}, "linux", false},
-		"linux with wayland":    {map[string]string{"WAYLAND_DISPLAY": "wayland-0"}, "linux", false},
-		"linux without display": {map[string]string{}, "linux", true},
-		"mac desktop":           {map[string]string{}, "darwin", false},
-		"windows desktop":       {map[string]string{}, "windows", false},
+		"ssh":                    {map[string]string{"SSH_CONNECTION": "10.0.0.1 22 10.0.0.2 51000"}, "darwin", true},
+		"ssh tty":                {map[string]string{"SSH_TTY": "/dev/pts/1", "DISPLAY": "localhost:10.0"}, "linux", true},
+		"linux with x11":         {map[string]string{"DISPLAY": ":0"}, "linux", false},
+		"linux with wayland":     {map[string]string{"WAYLAND_DISPLAY": "wayland-0"}, "linux", false},
+		"linux without display":  {map[string]string{}, "linux", true},
+		"mac desktop":            {map[string]string{}, "darwin", false},
+		"ssh with BROWSER":       {map[string]string{"SSH_CONNECTION": "x", "BROWSER": "wslview"}, "linux", false},
+		"container with BROWSER": {map[string]string{"BROWSER": "/usr/local/bin/open-on-host"}, "linux", false},
+		"windows desktop":        {map[string]string{}, "windows", false},
 	} {
 		got, reason := headlessSession(func(k string) string { return tc.env[k] }, tc.goos)
 		if got != tc.want || (got && reason == "") {

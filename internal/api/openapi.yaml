@@ -120,8 +120,9 @@ paths:
         UI's, and ends on a consent page that shows the code and asks the
         person to confirm it matches the terminal before approving. Only
         hashes of the codes are stored. The body is ignored. Served only when
-        single sign-on is configured; rate limited per client address with
-        the other OIDC routes; 503 when too many sign-ins are in progress.
+        single sign-on is configured. Rate limited to three starts a minute
+        per client address (IPv6 by /64); 429 also when the address holds
+        five sign-ins in progress, 503 when the cluster holds its cap.
       operationId: startCLIDeviceLogin
       tags: [Auth]
       security: []
@@ -132,7 +133,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/CLIDeviceAuthorization" }
         "429":
-          description: Too many requests from this address
+          description: Too many starts, or sign-ins in progress, from this address
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Error" }
         "503":
           description: Too many device sign-ins are in progress
           content:

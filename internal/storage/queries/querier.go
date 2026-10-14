@@ -108,7 +108,8 @@ type Querier interface {
 	// Audit rows of one tenant older than the cutoff, at most max_rows.
 	CountExpiredTenantAuditLog(ctx context.Context, arg CountExpiredTenantAuditLogParams) (int64, error)
 	CountLiveAPITokens(ctx context.Context, arg CountLiveAPITokensParams) (int64, error)
-	CountLiveCLIDevices(ctx context.Context) (int64, error)
+	// The live sign-ins, in all and from one requester.
+	CountLiveCLIDevices(ctx context.Context, requesterHash string) (CountLiveCLIDevicesRow, error)
 	// Does this address have a usable LOCAL password login in the tenant? The boot
 	// check on auth.oidc.break_glass_emails asks it: an address on that allowlist
 	// with no password row is an escape hatch that does not open, which is worse
@@ -628,6 +629,10 @@ type Querier interface {
 	// it expired, and whether this poll came sooner than the interval allows
 	// (with a fifth of it as slack for network jitter).
 	LockCLIDeviceForPoll(ctx context.Context, deviceCodeHash string) (LockCLIDeviceForPollRow, error)
+	// Serializes starts for the rest of the transaction, so the caps the count
+	// below checks hold exactly under concurrent starts on any replica. The key
+	// is this table's own; nothing else takes it.
+	LockCLIDeviceStarts(ctx context.Context) error
 	// Locks the DAG's row for the rest of the transaction, so registers of the same
 	// DAG are serialized: the spec-hash check of one register sees the version the
 	// previous one committed. FOR NO KEY UPDATE, not FOR UPDATE: it still excludes

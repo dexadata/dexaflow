@@ -46,11 +46,14 @@ type StatePayload struct {
 
 // DeviceBinding is what a device sign-in carries through the IdP round trip,
 // signed with the rest of the state: the pending device authorization the
-// person entered the user code of, and that code as the CLI printed it, so
-// the consent page can show it for the person to compare.
+// person entered the user code of, that code as the CLI printed it, and the
+// address and time (Unix seconds) it was started from, so the consent page
+// can show them for the person to compare.
 type DeviceBinding struct {
-	ID       string `json:"id"`
-	UserCode string `json:"user_code"`
+	ID            string `json:"id"`
+	UserCode      string `json:"user_code"`
+	RequesterAddr string `json:"from,omitempty"`
+	StartedAt     int64  `json:"at,omitempty"`
 }
 
 // CLIBinding is what a CLI-started login carries through the IdP round trip,

@@ -1,6 +1,9 @@
 package auth
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // DeviceAuthorization is a device sign-in of the CLI waiting for a person to
 // approve it (`dexaflow auth login --device`, ADR 0081), as storage returns
@@ -13,7 +16,38 @@ type DeviceAuthorization struct {
 	CreatedAt time.Time
 	// ExpiresAt is when the sign-in can no longer be approved or redeemed.
 	ExpiresAt time.Time
+	// RequesterAddr is the address that started the sign-in, as the server
+	// saw it, shown on the consent page.
+	RequesterAddr string
 }
+
+// DeviceAuthorizationRequest is what starting a device sign-in stores: the
+// keyed hashes of its codes and of the address that started it, that
+// address for the consent page, and the limits it starts under.
+type DeviceAuthorizationRequest struct {
+	DeviceCodeHash string
+	UserCodeHash   string
+	// RequesterHash is the keyed hash of the starting address (its /64 for
+	// IPv6), which MaxLivePerRequester counts by.
+	RequesterHash string
+	RequesterAddr string
+	TTL           time.Duration
+	Interval      time.Duration
+	// MaxLive caps the sign-ins in progress in all, and
+	// MaxLivePerRequester those from one requester.
+	MaxLive             int
+	MaxLivePerRequester int
+}
+
+// The refusals of a start over a cap.
+var (
+	// ErrDeviceSignInsFull: the cluster holds as many sign-ins in progress
+	// as it allows.
+	ErrDeviceSignInsFull = errors.New("too many device sign-ins are in progress")
+	// ErrDeviceSignInsFromRequester: the starting address holds as many
+	// sign-ins in progress as one address may.
+	ErrDeviceSignInsFromRequester = errors.New("too many device sign-ins are in progress from this address")
+)
 
 // DevicePollOutcome is what one poll of a device sign-in found.
 type DevicePollOutcome int

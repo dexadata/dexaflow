@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -33,35 +34,50 @@ type fakeDeviceStore struct {
 	outcome *auth.DevicePollOutcome
 	hashes  []string
 	seq     int
+	// lastStart is the request of the last start.
+	lastStart auth.DeviceAuthorizationRequest
 }
 
 type fakeDevice struct {
 	id, deviceHash, userHash string
+	requesterHash, addr      string
 	status                   string
 	user                     auth.User
-	expires                  time.Time
+	created, expires         time.Time
 }
 
 func newFakeDeviceStore() *fakeDeviceStore {
 	return &fakeDeviceStore{byID: map[string]*fakeDevice{}}
 }
 
-func (s *fakeDeviceStore) CreateCLIDeviceAuthorization(_ context.Context, deviceHash, userHash string, ttl, _ time.Duration, maxLive int) (auth.DeviceAuthorization, error) {
+func (s *fakeDeviceStore) CreateCLIDeviceAuthorization(_ context.Context, req auth.DeviceAuthorizationRequest) (auth.DeviceAuthorization, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.byID) >= maxLive {
-		return auth.DeviceAuthorization{}, domain.ErrLimitExceeded
+	s.lastStart = req
+	if len(s.byID) >= req.MaxLive {
+		return auth.DeviceAuthorization{}, auth.ErrDeviceSignInsFull
 	}
+	fromRequester := 0
 	for _, d := range s.byID {
-		if d.userHash == userHash {
+		if d.userHash == req.UserCodeHash {
 			return auth.DeviceAuthorization{}, domain.ErrConflict
 		}
+		if d.requesterHash == req.RequesterHash {
+			fromRequester++
+		}
+	}
+	if fromRequester >= req.MaxLivePerRequester {
+		return auth.DeviceAuthorization{}, auth.ErrDeviceSignInsFromRequester
 	}
 	s.seq++
 	id := fmt.Sprintf("0b6c9a52-3f0e-4c55-9d6f-%012d", s.seq)
-	s.byID[id] = &fakeDevice{id: id, deviceHash: deviceHash, userHash: userHash, status: "pending", expires: time.Now().Add(ttl)}
-	s.hashes = append(s.hashes, deviceHash, userHash)
-	return auth.DeviceAuthorization{ID: id, CreatedAt: time.Now(), ExpiresAt: time.Now().Add(ttl)}, nil
+	now := time.Now()
+	s.byID[id] = &fakeDevice{
+		id: id, deviceHash: req.DeviceCodeHash, userHash: req.UserCodeHash, requesterHash: req.RequesterHash, addr: req.RequesterAddr,
+		status: "pending", created: now, expires: now.Add(req.TTL),
+	}
+	s.hashes = append(s.hashes, req.DeviceCodeHash, req.UserCodeHash, req.RequesterHash)
+	return auth.DeviceAuthorization{ID: id, CreatedAt: now, ExpiresAt: now.Add(req.TTL), RequesterAddr: req.RequesterAddr}, nil
 }
 
 func (s *fakeDeviceStore) FindCLIDeviceByUserCode(_ context.Context, userHash string) (auth.DeviceAuthorization, error) {
@@ -69,7 +85,7 @@ func (s *fakeDeviceStore) FindCLIDeviceByUserCode(_ context.Context, userHash st
 	defer s.mu.Unlock()
 	for _, d := range s.byID {
 		if d.userHash == userHash && d.status == "pending" && time.Now().Before(d.expires) {
-			return auth.DeviceAuthorization{ID: d.id, ExpiresAt: d.expires}, nil
+			return auth.DeviceAuthorization{ID: d.id, CreatedAt: d.created, ExpiresAt: d.expires, RequesterAddr: d.addr}, nil
 		}
 	}
 	return auth.DeviceAuthorization{}, domain.ErrNotFound
@@ -195,11 +211,25 @@ type deviceStart struct {
 	Interval                int    `json:"interval"`
 }
 
-func startDevice(t *testing.T, srv http.Handler) deviceStart {
-	t.Helper()
+// startFrom posts a start from addr ("" keeps httptest's 192.0.2.1).
+func startFrom(srv http.Handler, addr string) *httptest.ResponseRecorder {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, cliDevicePath, http.NoBody)
+	if addr != "" {
+		req.RemoteAddr = net.JoinHostPort(addr, "40000")
+	}
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
+	return rec
+}
+
+func startDevice(t *testing.T, srv http.Handler) deviceStart {
+	t.Helper()
+	return startDeviceFrom(t, srv, "")
+}
+
+func startDeviceFrom(t *testing.T, srv http.Handler, addr string) deviceStart {
+	t.Helper()
+	rec := startFrom(srv, addr)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("%s = %d %s, want 200", cliDevicePath, rec.Code, rec.Body.String())
 	}
@@ -236,8 +266,16 @@ func tokenError(t *testing.T, rec *httptest.ResponseRecorder) string {
 
 // submitUserCode posts the verification form as the browser would.
 func submitUserCode(srv http.Handler, code, fetchSite string) *httptest.ResponseRecorder {
+	return submitUserCodeFrom(srv, code, fetchSite, "")
+}
+
+// submitUserCodeFrom is submitUserCode from addr ("" keeps 192.0.2.1).
+func submitUserCodeFrom(srv http.Handler, code, fetchSite, addr string) *httptest.ResponseRecorder {
 	form := url.Values{"user_code": {code}}
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, deviceVerifyPath, strings.NewReader(form.Encode()))
+	if addr != "" {
+		req.RemoteAddr = net.JoinHostPort(addr, "40000")
+	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if fetchSite != "" {
 		req.Header.Set("Sec-Fetch-Site", fetchSite)
@@ -518,8 +556,10 @@ func TestCLIDeviceUnknownUserCodesLookAlike(t *testing.T) {
 	if strings.Contains(malformed.Body.String(), "<script>") {
 		t.Error("the page echoes the submitted text unescaped")
 	}
-	if !fx.audit.hasReason(auditCLIDeviceVerify, "unknown_code") {
-		t.Errorf("audit = %+v, want the refused code", fx.audit.events)
+	// An unknown code is tied to no sign-in: it is logged, never audited,
+	// so anonymous guesses cannot flood the audit trail.
+	if len(fx.audit.events) != 0 {
+		t.Errorf("audit = %+v, want no rows for unknown codes", fx.audit.events)
 	}
 }
 
@@ -725,5 +765,119 @@ func TestUserCodeIsUniform(t *testing.T) {
 		if n < 9550 || n > 10450 {
 			t.Errorf("letter %c appears %d times, want about 10000", r, n)
 		}
+	}
+}
+
+// Starts have a small budget per address of their own, counted by /64 for
+// IPv6, so one address cannot fill the cluster's cap.
+func TestCLIDeviceStartHasItsOwnBudget(t *testing.T) {
+	fx := newDeviceFixture(t)
+	for i := range deviceStartRateLimitPerMinute {
+		startDeviceFrom(t, fx.srv, fmt.Sprintf("2001:db8:1:2::%x", i+1))
+	}
+	if rec := startFrom(fx.srv, "2001:db8:1:2:ffff::1"); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("start %d from one /64 = %d, want 429", deviceStartRateLimitPerMinute+1, rec.Code)
+	}
+	startDeviceFrom(t, fx.srv, "2001:db8:1:3::1")
+	if rec := exchangeCLICode(fx.srv, "x", "y", testCLIRedirect); rec.Code == http.StatusTooManyRequests {
+		t.Error("starts spent the OIDC routes' budget")
+	}
+}
+
+// The store caps live sign-ins per requester, keyed by a hash of the /64.
+func TestCLIDeviceStartIsCappedPerRequester(t *testing.T) {
+	fx := newDeviceFixture(t)
+	startDeviceFrom(t, fx.srv, "2001:db8:1:2::1")
+	first := fx.devices.lastStart
+	if first.MaxLivePerRequester != cliDeviceMaxLivePerRequester || first.RequesterAddr != "2001:db8:1:2::1" || len(first.RequesterHash) != 64 {
+		t.Fatalf("start = %+v, want the requester's address, its hash and the per-requester cap", first)
+	}
+	startDeviceFrom(t, fx.srv, "2001:db8:1:2::2")
+	if fx.devices.lastStart.RequesterHash != first.RequesterHash {
+		t.Error("two addresses of one /64 got different requester hashes")
+	}
+	startDeviceFrom(t, fx.srv, "2001:db8:1:3::1")
+	if fx.devices.lastStart.RequesterHash == first.RequesterHash {
+		t.Error("two /64s got the same requester hash")
+	}
+	if strings.Contains(first.RequesterHash, "2001") {
+		t.Errorf("the requester hash %q holds the address", first.RequesterHash)
+	}
+	fx.devices.mu.Lock()
+	for i := range cliDeviceMaxLivePerRequester {
+		fx.devices.byID[fmt.Sprint("x", i)] = &fakeDevice{requesterHash: first.RequesterHash, status: "pending", expires: time.Now().Add(time.Minute)}
+	}
+	fx.devices.mu.Unlock()
+	if rec := startFrom(fx.srv, "2001:db8:1:2::3"); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("start over the per-requester cap = %d %s, want 429", rec.Code, rec.Body.String())
+	}
+}
+
+// Only failed verifies spend the per-address budget.
+func TestCLIDeviceVerifySuccessesSpendNoBudget(t *testing.T) {
+	fx := newDeviceFixture(t)
+	d := startDevice(t, fx.srv)
+	for range deviceVerifyRateLimitPerMinute + 2 {
+		if rec := submitUserCode(fx.srv, d.UserCode, "same-origin"); rec.Code != http.StatusSeeOther {
+			t.Fatalf("verify of a live code = %d, want 303", rec.Code)
+		}
+	}
+	if rec := submitUserCode(fx.srv, "BBBB-BBBB", "same-origin"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("a wrong code after successes = %d, want 400 (not rate limited)", rec.Code)
+	}
+}
+
+// Failed verifies are counted by /64, and across all addresses the process
+// allows deviceVerifyFailuresPerMinute, so many addresses cannot guess fast.
+func TestCLIDeviceFailedVerifiesHaveAProcessWideBudget(t *testing.T) {
+	fx := newDeviceFixture(t)
+	for i := range deviceVerifyRateLimitPerMinute {
+		submitUserCodeFrom(fx.srv, "BBBB-BBBB", "same-origin", fmt.Sprintf("2001:db8:9:9::%x", i+1))
+	}
+	if rec := submitUserCodeFrom(fx.srv, "BBBB-BBBB", "same-origin", "2001:db8:9:9:ffff::1"); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("a failure past the budget of one /64 = %d, want 429", rec.Code)
+	}
+	for i := range deviceVerifyFailuresPerMinute {
+		submitUserCodeFrom(fx.srv, "BBBB-BBBB", "same-origin", fmt.Sprintf("10.%d.%d.1", i/250, i%250))
+	}
+	rec := submitUserCodeFrom(fx.srv, "BBBB-BBBB", "same-origin", "203.0.113.200")
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("a failure from a fresh address past the process budget = %d, want 429", rec.Code)
+	}
+}
+
+// RFC 8628 section 5.4: the consent page says where and when the sign-in
+// started, next to where this browser is.
+func TestCLIDeviceConsentShowsWhereTheSignInStarted(t *testing.T) {
+	fx := newDeviceFixture(t)
+	d := startDeviceFrom(t, fx.srv, "198.51.100.7")
+	body := fx.signInForDevice(t, d.UserCode, nil).Body.String()
+	for _, want := range []string{"less than a minute ago from <strong>198.51.100.7</strong>", "This browser is at <strong>192.0.2.1</strong>"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the consent page does not say %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestDeviceAge(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		10 * time.Second: "less than a minute ago",
+		70 * time.Second: "1 minute ago",
+		9 * time.Minute:  "9 minutes ago",
+	} {
+		if got := deviceAge(d); got != want {
+			t.Errorf("deviceAge(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+// A poll with an unknown device code is tied to no sign-in: logged, not
+// audited.
+func TestCLIDeviceUnknownPollsAreNotAudited(t *testing.T) {
+	fx := newDeviceFixture(t)
+	pollDevice(fx.srv, "an-unknown-device-code-of-a-plausible-length-012")
+	pollDevice(fx.srv, "")
+	if len(fx.audit.events) != 0 {
+		t.Errorf("audit = %+v, want none for unknown device codes", fx.audit.events)
 	}
 }

@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
+	"strings"
 	"time"
+
+	"golang.org/x/term"
 
 	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
@@ -35,11 +39,23 @@ var devicePollWait = time.After
 // to open, and why. Tests replace it.
 var sessionHeadless = func() (bool, string) { return headlessSession(os.Getenv, runtime.GOOS) }
 
+// outputIsTerminal reports whether the command's output is a terminal, where
+// a person can read a printed code. Tests replace it.
+var outputIsTerminal = func(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	return ok && term.IsTerminal(int(f.Fd()))
+}
+
 // headlessSession decides from the environment whether a browser opened here
 // would be seen by the person: not over SSH, where it would open on the
 // remote machine if at all, and not on Linux or a BSD with no X11 or Wayland
-// display, as in a container. macOS and Windows always have one.
+// display, as in a container. macOS and Windows always have one, and so does
+// a session that names one in BROWSER, the variable openers such as
+// xdg-open honor.
 func headlessSession(getenv func(string) string, goos string) (headless bool, why string) {
+	if getenv("BROWSER") != "" {
+		return false, ""
+	}
 	if getenv("SSH_CONNECTION") != "" || getenv("SSH_TTY") != "" {
 		return true, "an SSH session"
 	}
@@ -75,11 +91,25 @@ func deviceLogin(ctx context.Context, out io.Writer, serverURL string, timeout t
 	if life > 0 && life < timeout {
 		timeout = life
 	}
+	warnOtherHost(out, serverURL, d.VerificationURI)
 	devPrintf(out, "To sign in, open this page in a browser on any device:\n\n  %s\n\nand enter the code:\n\n  %s\n\n"+
 		"Or open %s, which fills in the code.\n"+
 		"Approve only a page that shows this same code. Waiting up to %s...\n",
 		d.VerificationURI, d.UserCode, d.VerificationURIComplete, timeout.Round(time.Second))
 	return pollDeviceLogin(ctx, c, serverURL, d, timeout)
+}
+
+// warnOtherHost warns when the page to open is not on the server's host: the
+// server's public address (its OIDC redirect URL) may be misconfigured, and
+// the person should know which site they are about to sign in to.
+func warnOtherHost(out io.Writer, serverURL, page string) {
+	s, serr := url.Parse(serverURL)
+	p, perr := url.Parse(page)
+	if serr != nil || perr != nil || strings.EqualFold(s.Hostname(), p.Hostname()) {
+		return
+	}
+	devPrintf(out, "warning: the sign-in page is on %s, not on %s, the server this login talks to; "+
+		"open it only if %s is this Dexaflow's public address\n", p.Hostname(), s.Hostname(), p.Hostname())
 }
 
 // pollDeviceLogin polls until the sign-in is approved, refused or expired,

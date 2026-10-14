@@ -2,6 +2,7 @@
 -- sign-in is lost, which costs at most one retried `dexaflow auth login
 -- --device`; no token lives here.
 BEGIN;
+SET LOCAL lock_timeout = '5s';
 
 DROP TABLE IF EXISTS cli_device_authorizations;
 

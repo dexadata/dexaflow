@@ -144,8 +144,9 @@ func obtainLoginToken(cmd *cobra.Command, serverURL string, f loginFlags) (strin
 // neither combines with a password flag. Otherwise any username or password,
 // from a flag or the environment, means a password login, and with neither
 // the server's answer decides: single sign-on when it offers it, on another
-// device when this session has no browser and the server serves that, and a
-// password otherwise.
+// device when this session has no browser, its output is a terminal someone
+// can read the code on, and the server serves that, and a password
+// otherwise.
 func chooseLoginMethod(cmd *cobra.Command, serverURL string, f loginFlags) (loginMethod, error) {
 	out := cmd.OutOrStdout()
 	if f.device {
@@ -171,7 +172,7 @@ func chooseLoginMethod(cmd *cobra.Command, serverURL string, f loginFlags) (logi
 		devPrintf(out, "Signing in with a password (the server does not offer single sign-on)\n")
 		return methodPassword, nil
 	}
-	if headless, why := sessionHeadless(); headless && m.Device {
+	if headless, why := sessionHeadless(); headless && m.Device && outputIsTerminal(out) {
 		devPrintf(out, "Signing in with single sign-on on another device (the server offers it and this session has no browser: %s; "+
 			"pass --sso to use a browser on this machine)\n", why)
 		return methodDevice, nil

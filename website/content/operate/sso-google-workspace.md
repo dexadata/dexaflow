@@ -194,28 +194,36 @@ Open the page, type the code, and sign in with Google as for the UI: the
 same tenant pin, role mapping, just-in-time provisioning and audit event
 (`oidc.login.success` with `client: cli` and the device `grant`). The server
 then shows **Sign in the Dexaflow CLI on another device?** with the account,
-the tenant and the code. Check that the code is the one your terminal shows,
+the tenant, the code, and when and from which address the sign-in was
+started, next to the address of your browser. Check that the code is the one your terminal shows,
 tick the box that says so, and approve; the command finishes on its own and
 saves the token as any other login does. Cancel if you did not start the
 command yourself: a link or a code someone sent you is how a device
 sign-in is phished, and approving it would sign their CLI in as you.
 
 With no flag, `auth login` picks the device sign-in by itself when the
-server serves it and the session has no browser to open (an SSH session, or
-Linux with neither `DISPLAY` nor `WAYLAND_DISPLAY`), and says so; `--sso`
-keeps the browser sign-in on this machine.
+server serves it, its output is a terminal, and the session has no browser
+to open (an SSH session, or Linux with neither `DISPLAY` nor
+`WAYLAND_DISPLAY`, and no `BROWSER` set), and says so; `--sso` keeps the
+browser sign-in on this machine. It warns when the page is on another host
+than the server it talks to, which usually means the OIDC `redirectUrl`
+does not name the public address.
 
 What the server enforces:
 
 - The code is eight letters from twenty consonants (about 34.6 bits) and a
-  sign-in lasts 10 minutes. Each address may submit ten codes a minute, and
-  an unknown code and a malformed one get the same page
-  (`oidc.cli_device_verify` records each refusal).
+  sign-in lasts 10 minutes. Each address may submit ten wrong codes a
+  minute, and each replica 300 in all; an unknown code and a malformed one
+  get the same page, and are logged but not audited.
+- Each address may start three sign-ins a minute and hold five in progress;
+  the cluster holds at most 10,000. IPv6 addresses count by their /64.
 - The CLI polls every 5 seconds; a faster poll is told `slow_down` and the
   interval grows. The approved sign-in is redeemed once, and the server
   keeps only keyed hashes of the codes, never a token: the token is minted
   when the CLI redeems the approval. Both steps are audited
   (`oidc.cli_consent`, `oidc.cli_code`, with the device `grant`).
+- The token carries the roles the sign-in resolved when you approved it,
+  as any token carries the roles of its login.
 - The pending sign-ins live in the database (migration 045,
   `cli_device_authorizations`), so the poll and the approval may reach
   different replicas. Rotating the JWT secret invalidates the ones in
@@ -223,6 +231,12 @@ What the server enforces:
 - The page's address comes from the configured OIDC `redirectUrl`, the
   server's public origin; nothing changes at the IdP, which does not need a
   device endpoint of its own.
+- The link that fills in the code carries it as `?user_code=`, so ingress
+  and proxy access logs may record it. It is useless without your sign-in
+  and expires in 10 minutes; leave it out of shared logs if you can.
+- The start, the verification form and the token route are public. Expect
+  503 from the start when the cluster is at its cap, and 429 from an address
+  over its budgets; heavy abuse is for the ingress to rate limit.
 
 ## When a login is denied
 

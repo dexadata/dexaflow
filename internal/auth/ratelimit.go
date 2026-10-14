@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"net"
 	"sync"
 	"time"
 )
@@ -13,6 +14,11 @@ type RateLimiter struct {
 	window  time.Duration
 	buckets map[string]*windowState
 	now     func() time.Time
+	// swept is when expired buckets were last dropped. On routes anyone can
+	// call, the keys are addresses the caller picks, so a bucket whose
+	// window ended is dropped at most one window later and the map holds
+	// only what one window can.
+	swept time.Time
 }
 
 type windowState struct {
@@ -50,6 +56,7 @@ func (r *RateLimiter) Allow(key string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := r.now()
+	r.sweep(now)
 	st, ok := r.buckets[key]
 	if !ok || now.After(st.resetAt) {
 		r.buckets[key] = &windowState{count: 1, resetAt: now.Add(r.window)}
@@ -60,4 +67,41 @@ func (r *RateLimiter) Allow(key string) bool {
 	}
 	st.count++
 	return true
+}
+
+// sweep drops the buckets whose window ended, at most once a window, so it
+// costs nothing per event on average. The caller holds the lock.
+func (r *RateLimiter) sweep(now time.Time) {
+	if now.Sub(r.swept) < r.window {
+		return
+	}
+	for k, st := range r.buckets {
+		if now.After(st.resetAt) {
+			delete(r.buckets, k)
+		}
+	}
+	r.swept = now
+}
+
+// size is how many buckets the limiter holds.
+func (r *RateLimiter) size() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.buckets)
+}
+
+// AddressBucket is the rate-limit key of a client address: an IPv4 address
+// (or an IPv4-mapped IPv6 one) as is, and an IPv6 address by its /64, the
+// smallest block one subscriber is usually given, so rotating addresses
+// within it does not buy a fresh budget. Anything that does not parse is its
+// own key.
+func AddressBucket(ip string) string {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return ip
+	}
+	if v4 := parsed.To4(); v4 != nil {
+		return v4.String()
+	}
+	return (&net.IPNet{IP: parsed.Mask(net.CIDRMask(64, 128)), Mask: net.CIDRMask(64, 128)}).String()
 }

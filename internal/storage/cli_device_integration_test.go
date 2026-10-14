@@ -4,8 +4,10 @@ package storage_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,10 +23,21 @@ func deviceHashes() (device, user string) {
 	return fmt.Sprintf("%064x", n), fmt.Sprintf("%064x", n+1)
 }
 
+// deviceRequest is a start from requester with generous caps.
+func deviceRequest(requester string, ttl, interval time.Duration) auth.DeviceAuthorizationRequest {
+	deviceHash, userHash := deviceHashes()
+	return auth.DeviceAuthorizationRequest{
+		DeviceCodeHash: deviceHash, UserCodeHash: userHash,
+		RequesterHash: fmt.Sprintf("%x", sha256.Sum256([]byte(requester))), RequesterAddr: requester,
+		TTL: ttl, Interval: interval, MaxLive: 100_000, MaxLivePerRequester: 100_000,
+	}
+}
+
 func newDeviceAuthorization(t *testing.T, ctx context.Context, repo *storage.Repository, ttl, interval time.Duration) (deviceHash, userHash string, d auth.DeviceAuthorization) {
 	t.Helper()
-	deviceHash, userHash = deviceHashes()
-	d, err := repo.CreateCLIDeviceAuthorization(ctx, deviceHash, userHash, ttl, interval, 10_000)
+	req := deviceRequest("198.51.100.7", ttl, interval)
+	deviceHash, userHash = req.DeviceCodeHash, req.UserCodeHash
+	d, err := repo.CreateCLIDeviceAuthorization(ctx, req)
 	if err != nil {
 		t.Fatalf("CreateCLIDeviceAuthorization: %v", err)
 	}
@@ -50,8 +63,8 @@ func TestCLIDeviceApprovedOnceRedeemedOnceIntegration(t *testing.T) {
 	deviceHash, userHash, created := newDeviceAuthorization(t, ctx, repo, 10*time.Minute, time.Second)
 
 	found, err := repo.FindCLIDeviceByUserCode(ctx, userHash)
-	if err != nil || found.ID != created.ID {
-		t.Fatalf("FindCLIDeviceByUserCode = %+v, %v; want %s", found, err, created.ID)
+	if err != nil || found.ID != created.ID || found.RequesterAddr != "198.51.100.7" || found.CreatedAt.IsZero() {
+		t.Fatalf("FindCLIDeviceByUserCode = %+v, %v; want %s started from 198.51.100.7", found, err, created.ID)
 	}
 	if got := poll(t, ctx, repo, deviceHash); got.Outcome != auth.DevicePollPending {
 		t.Fatalf("poll before approval = %v, want pending", got.Outcome)
@@ -204,17 +217,95 @@ func TestCLIDeviceApprovalCarriesItsTenantIntegration(t *testing.T) {
 }
 
 // TestCLIDeviceCreateIsCappedAndUniqueIntegration: a create over the cap of
-// live sign-ins is ErrLimitExceeded, and a user code already live is
-// ErrConflict.
+// live sign-ins, or over the cap of one requester, is refused with the
+// matching error, and a user code already live is ErrConflict.
 func TestCLIDeviceCreateIsCappedAndUniqueIntegration(t *testing.T) {
 	repo, _, ctx := openRepo(t)
-	d, u := deviceHashes()
-	if _, err := repo.CreateCLIDeviceAuthorization(ctx, d, u, time.Minute, time.Second, 0); !errors.Is(err, domain.ErrLimitExceeded) {
-		t.Fatalf("create over the cap err = %v, want ErrLimitExceeded", err)
+	full := deviceRequest("198.51.100.7", time.Minute, time.Second)
+	full.MaxLive = 0
+	if _, err := repo.CreateCLIDeviceAuthorization(ctx, full); !errors.Is(err, auth.ErrDeviceSignInsFull) {
+		t.Fatalf("create over the cap err = %v, want ErrDeviceSignInsFull", err)
+	}
+	requester := fmt.Sprintf("2001:db8:%x::1", time.Now().UnixNano()&0xffff)
+	for i := range 3 {
+		req := deviceRequest(requester, time.Minute, time.Second)
+		req.RequesterHash = strings.Repeat("a", 64)
+		req.MaxLivePerRequester = 2
+		_, err := repo.CreateCLIDeviceAuthorization(ctx, req)
+		switch {
+		case i < 2 && err != nil:
+			t.Fatalf("create %d from one requester: %v", i+1, err)
+		case i == 2 && !errors.Is(err, auth.ErrDeviceSignInsFromRequester):
+			t.Fatalf("third create from one requester err = %v, want ErrDeviceSignInsFromRequester", err)
+		}
+	}
+	other := deviceRequest(requester, time.Minute, time.Second)
+	other.RequesterHash, other.MaxLivePerRequester = strings.Repeat("b", 64), 2
+	if _, err := repo.CreateCLIDeviceAuthorization(ctx, other); err != nil {
+		t.Fatalf("create from another requester: %v", err)
 	}
 	_, userHash, _ := newDeviceAuthorization(t, ctx, repo, time.Minute, time.Second)
-	d2, _ := deviceHashes()
-	if _, err := repo.CreateCLIDeviceAuthorization(ctx, d2, userHash, time.Minute, time.Second, 10_000); !errors.Is(err, domain.ErrConflict) {
+	dup := deviceRequest("198.51.100.7", time.Minute, time.Second)
+	dup.UserCodeHash = userHash
+	if _, err := repo.CreateCLIDeviceAuthorization(ctx, dup); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("create with a live user code err = %v, want ErrConflict", err)
+	}
+	pg := openPG(t)
+	if _, err := pg.Pool.Exec(ctx, `DELETE FROM cli_device_authorizations WHERE requester_hash IN ($1, $2)`, strings.Repeat("a", 64), strings.Repeat("b", 64)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCLIDeviceCapHoldsUnderConcurrentStartsIntegration: concurrent starts
+// never overshoot the cap of live sign-ins.
+func TestCLIDeviceCapHoldsUnderConcurrentStartsIntegration(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	pg := openPG(t)
+	var live int
+	if err := pg.Pool.QueryRow(ctx, `SELECT count(*) FROM cli_device_authorizations WHERE expires_at > now()`).Scan(&live); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	created := 0
+	start := make(chan struct{})
+	for i := range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req := deviceRequest("198.51.100.9", time.Minute, time.Second)
+			req.DeviceCodeHash = fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("d-%d-%d", time.Now().UnixNano(), i))))
+			req.UserCodeHash = fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("u-%d-%d", time.Now().UnixNano(), i))))
+			req.MaxLive = live + 5
+			<-start
+			if _, err := repo.CreateCLIDeviceAuthorization(ctx, req); err == nil {
+				mu.Lock()
+				created++
+				mu.Unlock()
+			} else if !errors.Is(err, auth.ErrDeviceSignInsFull) {
+				t.Errorf("create: %v", err)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if created != 5 {
+		t.Fatalf("%d concurrent starts were created under a cap with room for 5", created)
+	}
+}
+
+// TestCLIDeviceApprovedInASecondTenantIntegration: a sign-in approved by a
+// user of another tenant redeems for that user and tenant.
+func TestCLIDeviceApprovedInASecondTenantIntegration(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	other := secondTenant(t, ctx, repo)
+	userID, email := apiTokenOwner(t, ctx, repo, other, "viewer")
+	deviceHash, _, created := newDeviceAuthorization(t, ctx, repo, 10*time.Minute, time.Second)
+	if err := repo.DecideCLIDeviceAuthorization(ctx, created.ID, true, auth.User{ID: userID, TenantID: other, Email: email, Roles: []string{"viewer"}}); err != nil {
+		t.Fatalf("approve in %s: %v", other, err)
+	}
+	got := poll(t, ctx, repo, deviceHash)
+	if got.Outcome != auth.DevicePollApproved || got.User.TenantID != other || got.User.ID != userID {
+		t.Fatalf("poll = %+v, want approved for %s in %s", got, userID, other)
 	}
 }

@@ -5,15 +5,22 @@
 -- sign-in is shared here.
 --
 -- Neither code is stored: device_code_hash and user_code_hash are the hex
--- HMAC-SHA256 of the codes under a key derived from the JWT secret. A row has
+-- HMAC-SHA256 of the codes under a key derived from the JWT secret.
+-- requester_hash is the same HMAC of the address that started the sign-in
+-- (its /64 for IPv6), so one address can hold only a few sign-ins at once;
+-- requester_addr is that address as the server saw it, shown on the consent
+-- page so the person can tell a sign-in someone else started. A row has
 -- no tenant until it is approved: the device code is the only credential of
 -- a pending sign-in, and the approval names the approver's tenant and user,
 -- checked against users in the same statement. Rows are short lived and
 -- deleted some minutes after they expire; no token is ever kept, it is minted
 -- when the approved sign-in is redeemed.
 --
--- Applying this again is a no-op.
+-- Applying this again is a no-op. The table is new, so the lock_timeout
+-- only bounds the wait for the tenants and users rows the foreign keys
+-- reference.
 BEGIN;
+SET LOCAL lock_timeout = '5s';
 
 CREATE TABLE IF NOT EXISTS cli_device_authorizations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -23,6 +30,8 @@ CREATE TABLE IF NOT EXISTS cli_device_authorizations (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at TIMESTAMPTZ NOT NULL,
     poll_interval_seconds INTEGER NOT NULL,
+    requester_hash TEXT NOT NULL,
+    requester_addr TEXT NOT NULL,
     last_polled_at TIMESTAMPTZ,
     decided_at TIMESTAMPTZ,
     tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
@@ -31,7 +40,10 @@ CREATE TABLE IF NOT EXISTS cli_device_authorizations (
     roles TEXT[],
     CONSTRAINT cli_device_device_code_unique UNIQUE (device_code_hash),
     CONSTRAINT cli_device_user_code_unique UNIQUE (user_code_hash),
-    CONSTRAINT cli_device_hash_form CHECK (device_code_hash ~ '^[0-9a-f]{64}$' AND user_code_hash ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT cli_device_hash_form CHECK (
+        device_code_hash ~ '^[0-9a-f]{64}$' AND user_code_hash ~ '^[0-9a-f]{64}$' AND requester_hash ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT cli_device_requester_addr_length CHECK (char_length(requester_addr) BETWEEN 1 AND 64),
     CONSTRAINT cli_device_status CHECK (status IN ('pending', 'approved', 'denied')),
     CONSTRAINT cli_device_interval CHECK (poll_interval_seconds BETWEEN 1 AND 600),
     CONSTRAINT cli_device_expiry CHECK (expires_at > created_at),
@@ -41,5 +53,6 @@ CREATE TABLE IF NOT EXISTS cli_device_authorizations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_cli_device_expires ON cli_device_authorizations (expires_at);
+CREATE INDEX IF NOT EXISTS idx_cli_device_requester ON cli_device_authorizations (requester_hash, expires_at);
 
 COMMIT;

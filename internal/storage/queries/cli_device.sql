@@ -4,21 +4,31 @@
 -- polling a just-expired sign-in still hears expired_token).
 DELETE FROM cli_device_authorizations WHERE expires_at < now() - interval '10 minutes';
 
+-- name: LockCLIDeviceStarts :exec
+-- Serializes starts for the rest of the transaction, so the caps the count
+-- below checks hold exactly under concurrent starts on any replica. The key
+-- is this table's own; nothing else takes it.
+SELECT pg_advisory_xact_lock(1704081);
+
 -- name: CountLiveCLIDevices :one
-SELECT count(*) FROM cli_device_authorizations WHERE expires_at > now();
+-- The live sign-ins, in all and from one requester.
+SELECT count(*) AS live,
+       count(*) FILTER (WHERE requester_hash = sqlc.arg(requester_hash)) AS from_requester
+FROM cli_device_authorizations WHERE expires_at > now();
 
 -- name: InsertCLIDevice :one
 -- Starts a device sign-in. The expiry is the database's clock, the one every
 -- other statement here compares against.
-INSERT INTO cli_device_authorizations (device_code_hash, user_code_hash, expires_at, poll_interval_seconds)
+INSERT INTO cli_device_authorizations (device_code_hash, user_code_hash, expires_at, poll_interval_seconds, requester_hash, requester_addr)
 VALUES (sqlc.arg(device_code_hash), sqlc.arg(user_code_hash),
-        now() + make_interval(secs => sqlc.arg(ttl_seconds)::double precision), sqlc.arg(poll_interval_seconds))
+        now() + make_interval(secs => sqlc.arg(ttl_seconds)::double precision), sqlc.arg(poll_interval_seconds),
+        sqlc.arg(requester_hash), sqlc.arg(requester_addr))
 RETURNING id, created_at, expires_at;
 
 -- name: FindPendingCLIDeviceByUserCode :one
 -- The sign-in a person typed the user code of, while it can still be
 -- approved.
-SELECT id, created_at, expires_at FROM cli_device_authorizations
+SELECT id, created_at, expires_at, requester_addr FROM cli_device_authorizations
 WHERE user_code_hash = $1 AND status = 'pending' AND expires_at > now();
 
 -- name: ApproveCLIDevice :execrows

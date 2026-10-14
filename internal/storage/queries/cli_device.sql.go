@@ -48,14 +48,22 @@ func (q *Queries) ApproveCLIDevice(ctx context.Context, arg ApproveCLIDevicePara
 }
 
 const countLiveCLIDevices = `-- name: CountLiveCLIDevices :one
-SELECT count(*) FROM cli_device_authorizations WHERE expires_at > now()
+SELECT count(*) AS live,
+       count(*) FILTER (WHERE requester_hash = $1) AS from_requester
+FROM cli_device_authorizations WHERE expires_at > now()
 `
 
-func (q *Queries) CountLiveCLIDevices(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, countLiveCLIDevices)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+type CountLiveCLIDevicesRow struct {
+	Live          int64 `json:"live"`
+	FromRequester int64 `json:"from_requester"`
+}
+
+// The live sign-ins, in all and from one requester.
+func (q *Queries) CountLiveCLIDevices(ctx context.Context, requesterHash string) (CountLiveCLIDevicesRow, error) {
+	row := q.db.QueryRow(ctx, countLiveCLIDevices, requesterHash)
+	var i CountLiveCLIDevicesRow
+	err := row.Scan(&i.Live, &i.FromRequester)
+	return i, err
 }
 
 const deleteCLIDevice = `-- name: DeleteCLIDevice :execrows
@@ -101,14 +109,15 @@ func (q *Queries) DenyCLIDevice(ctx context.Context, id pgtype.UUID) (int64, err
 }
 
 const findPendingCLIDeviceByUserCode = `-- name: FindPendingCLIDeviceByUserCode :one
-SELECT id, created_at, expires_at FROM cli_device_authorizations
+SELECT id, created_at, expires_at, requester_addr FROM cli_device_authorizations
 WHERE user_code_hash = $1 AND status = 'pending' AND expires_at > now()
 `
 
 type FindPendingCLIDeviceByUserCodeRow struct {
-	ID        pgtype.UUID        `json:"id"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	ID            pgtype.UUID        `json:"id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	RequesterAddr string             `json:"requester_addr"`
 }
 
 // The sign-in a person typed the user code of, while it can still be
@@ -116,14 +125,20 @@ type FindPendingCLIDeviceByUserCodeRow struct {
 func (q *Queries) FindPendingCLIDeviceByUserCode(ctx context.Context, userCodeHash string) (FindPendingCLIDeviceByUserCodeRow, error) {
 	row := q.db.QueryRow(ctx, findPendingCLIDeviceByUserCode, userCodeHash)
 	var i FindPendingCLIDeviceByUserCodeRow
-	err := row.Scan(&i.ID, &i.CreatedAt, &i.ExpiresAt)
+	err := row.Scan(
+		&i.ID,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.RequesterAddr,
+	)
 	return i, err
 }
 
 const insertCLIDevice = `-- name: InsertCLIDevice :one
-INSERT INTO cli_device_authorizations (device_code_hash, user_code_hash, expires_at, poll_interval_seconds)
+INSERT INTO cli_device_authorizations (device_code_hash, user_code_hash, expires_at, poll_interval_seconds, requester_hash, requester_addr)
 VALUES ($1, $2,
-        now() + make_interval(secs => $3::double precision), $4)
+        now() + make_interval(secs => $3::double precision), $4,
+        $5, $6)
 RETURNING id, created_at, expires_at
 `
 
@@ -132,6 +147,8 @@ type InsertCLIDeviceParams struct {
 	UserCodeHash        string  `json:"user_code_hash"`
 	TtlSeconds          float64 `json:"ttl_seconds"`
 	PollIntervalSeconds int32   `json:"poll_interval_seconds"`
+	RequesterHash       string  `json:"requester_hash"`
+	RequesterAddr       string  `json:"requester_addr"`
 }
 
 type InsertCLIDeviceRow struct {
@@ -148,6 +165,8 @@ func (q *Queries) InsertCLIDevice(ctx context.Context, arg InsertCLIDeviceParams
 		arg.UserCodeHash,
 		arg.TtlSeconds,
 		arg.PollIntervalSeconds,
+		arg.RequesterHash,
+		arg.RequesterAddr,
 	)
 	var i InsertCLIDeviceRow
 	err := row.Scan(&i.ID, &i.CreatedAt, &i.ExpiresAt)
@@ -196,6 +215,18 @@ func (q *Queries) LockCLIDeviceForPoll(ctx context.Context, deviceCodeHash strin
 		&i.Tenant,
 	)
 	return i, err
+}
+
+const lockCLIDeviceStarts = `-- name: LockCLIDeviceStarts :exec
+SELECT pg_advisory_xact_lock(1704081)
+`
+
+// Serializes starts for the rest of the transaction, so the caps the count
+// below checks hold exactly under concurrent starts on any replica. The key
+// is this table's own; nothing else takes it.
+func (q *Queries) LockCLIDeviceStarts(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, lockCLIDeviceStarts)
+	return err
 }
 
 const markCLIDevicePolled = `-- name: MarkCLIDevicePolled :exec
