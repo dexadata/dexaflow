@@ -32,6 +32,21 @@ type StatePayload struct {
 	Nonce    string
 	Verifier string
 	Next     string
+	// CLI is set when the login was started by `dexaflow auth login` rather
+	// than by the browser's own sign-in: the callback then hands the CLI a
+	// one-time code on its loopback redirect instead of setting a session
+	// cookie. Nil for a browser login.
+	CLI *CLIBinding
+}
+
+// CLIBinding is what a CLI-started login carries through the IdP round trip,
+// signed with the rest of the state so the callback can trust it: where the
+// CLI listens, the CLI's own state to echo back, and the S256 challenge of the
+// PKCE verifier only the CLI holds, which the one-time code is bound to.
+type CLIBinding struct {
+	Redirect  string `json:"redirect"`
+	State     string `json:"state"`
+	Challenge string `json:"challenge"`
 }
 
 // StateCodec signs and verifies the state cookie with a key derived from the
@@ -51,9 +66,10 @@ func NewStateCodec(hs256Secret string) *StateCodec {
 
 // stateClaims is the signed cookie payload.
 type stateClaims struct {
-	Nonce    string `json:"nonce"`
-	Verifier string `json:"vfy"`
-	Next     string `json:"next"`
+	Nonce    string      `json:"nonce"`
+	Verifier string      `json:"vfy"`
+	Next     string      `json:"next"`
+	CLI      *CLIBinding `json:"cli,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -66,6 +82,7 @@ func (c *StateCodec) Encode(p StatePayload, ttl time.Duration) (string, error) {
 		Nonce:    p.Nonce,
 		Verifier: p.Verifier,
 		Next:     p.Next,
+		CLI:      p.CLI,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        p.State,
 			Issuer:    stateIssuer,
@@ -96,5 +113,6 @@ func (c *StateCodec) Decode(token string) (StatePayload, error) {
 		Nonce:    claims.Nonce,
 		Verifier: claims.Verifier,
 		Next:     claims.Next,
+		CLI:      claims.CLI,
 	}, nil
 }
