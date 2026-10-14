@@ -324,3 +324,103 @@ func TestSelectAddsTheNoteOfTheSplit(t *testing.T) {
 		t.Errorf("found: reason %q does not end with the note", reason)
 	}
 }
+
+// The dependency layer names itself in its temporary file and its errors,
+// never as the code layer.
+func TestDependencyLayerNamesItself(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	_, _, err := packLayer(kindDependency, dependencyRoot, []LayerFile{{Path: "lib/python3.11/site-packages/.wh.x", Dir: true}}, types.OCILayer)
+	if err == nil || strings.Contains(err.Error(), "code") || !strings.Contains(err.Error(), "installed file") {
+		t.Errorf("err = %v, want a refusal naming an installed file", err)
+	}
+	layer, remove, err := packLayer(kindDependency, dependencyRoot, codeFixture(t), types.OCILayer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer remove()
+	if left, _ := filepath.Glob(filepath.Join(tmp, "dexaflow-dependency-*.tar")); len(left) != 1 || layer == nil {
+		t.Errorf("temporary files = %v, want the dependency layer's", left)
+	}
+}
+
+// Every script of bin/ is executable in the image, as pip makes it, whatever
+// mode the host gave it; uv's /bin/sh trampoline for a long interpreter
+// path becomes a plain shebang naming the image's Python.
+func TestDependencyFilesNormalizeScripts(t *testing.T) {
+	dir := t.TempDir()
+	trampoline := "#!/bin/sh\n'''exec' '/home/u/a very long path/bin/python3' \"$0\" \"$@\"\n' '''\nimport sys\nsys.exit(0)\n"
+	if err := writeTree(dir, map[string]string{"bin/plain": "#!/usr/bin/python\nimport sys\n", "bin/long*": trampoline,
+		"bin/shell": "#!/bin/sh\necho hi\necho there\nexit 0\n"}); err != nil {
+		t.Fatal(err)
+	}
+	files, err := dependencyFiles(dir, "3.11")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if !f.Exec {
+			t.Errorf("%s is not executable", f.Path)
+		}
+	}
+	if got := readFile(t, filepath.Join(dir, "bin", "long")); got != "#!/usr/local/bin/python3.11\nimport sys\nsys.exit(0)\n" {
+		t.Errorf("trampoline script = %q", got)
+	}
+	if got := readFile(t, filepath.Join(dir, "bin", "shell")); got != "#!/bin/sh\necho hi\necho there\nexit 0\n" {
+		t.Errorf("a shell script was rewritten: %q", got)
+	}
+}
+
+// When the wheel install fails before anything is pushed, the daemon builds
+// the dependency image under its own key (the format the daemon's builds
+// use), the output says why, and the code is appended to it.
+func TestTheDaemonBuildsTheDependencyImageWhenTheWheelsFail(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	host, split := splitFixture(t)
+	d := depsLayer(t, host, &fakeInstaller{fail: errors.New("uv: connection refused")}, "linux/amd64")
+	split.Wheels, split.DaemonDepsImage = &d, host+"/dags/etl:deps-daemon"
+	tool, log := fakeTool(t, "")
+	b, _ := Select(context.Background(), Options{Tool: tool, Split: split}, host+"/dags/etl:v1", []string{"linux/amd64"})
+	pushImage(t, split.DaemonDepsImage) // what the daemon's push leaves in the registry
+	req := codeRequest(t, host+"/dags/etl:v1", "linux/amd64")
+	var errOut bytes.Buffer
+	req.Stderr = &errOut
+	res, err := b.Build(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := calls(t, log)
+	if len(got) != 2 || !strings.Contains(got[0], "-t "+split.DaemonDepsImage+" ") || got[1] != "push "+split.DaemonDepsImage {
+		t.Fatalf("daemon calls = %q, want a build and a push of %s", got, split.DaemonDepsImage)
+	}
+	if !strings.Contains(errOut.String(), "uv: connection refused") || !strings.Contains(errOut.String(), "the daemon builds the dependency image") {
+		t.Errorf("output does not say why the daemon builds: %q", errOut.String())
+	}
+	if res.Path != PathLocalDaemon {
+		t.Errorf("result path = %s, want %s", res.Path, PathLocalDaemon)
+	}
+	if _, rerr := (Registry{}).Resolve(context.Background(), split.DepsImage); rerr == nil {
+		t.Error("the wheel key's tag was pushed")
+	}
+}
+
+// With no daemon to fall back on, or for dependencies the daemon's key
+// cannot cover (DaemonDepsImage empty), the wheel failure is the error.
+func TestTheWheelFailureStandsWithoutAFallback(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	host, split := splitFixture(t)
+	d := depsLayer(t, host, &fakeInstaller{fail: errors.New("uv: connection refused")}, "linux/amd64")
+	split.Wheels = &d
+	tool, _ := fakeTool(t, "")
+	for name, tc := range map[string]struct{ tool, daemonImage string }{
+		"no daemon":  {filepath.Join(t.TempDir(), "docker"), host + "/dags/etl:deps-daemon"},
+		"not pinned": {tool, ""},
+	} {
+		s := *split
+		s.DaemonDepsImage = tc.daemonImage
+		b, _ := Select(context.Background(), Options{Tool: tc.tool, Split: &s}, host+"/dags/etl:v1", []string{"linux/amd64"})
+		if _, err := b.Build(context.Background(), codeRequest(t, host+"/dags/etl:v1", "linux/amd64")); err == nil || !strings.Contains(err.Error(), "uv: connection refused") {
+			t.Errorf("%s: err = %v, want the uv error", name, err)
+		}
+	}
+}

@@ -189,7 +189,7 @@ func (b *depsBuild) image(ctx context.Context, base v1.Image, platform string) (
 		if merr != nil {
 			return nil, fmt.Errorf("reading the media type of the base image: %w", merr)
 		}
-		layer, remove, perr := packLayer(dependencyRoot, files, layerTypeFor(mt))
+		layer, remove, perr := packLayer(kindDependency, dependencyRoot, files, layerTypeFor(mt))
 		if perr != nil {
 			return nil, perr
 		}
@@ -282,13 +282,17 @@ func dependencyFiles(dir, python string) ([]LayerFile, error) {
 			return nil
 		}
 		dst := sp + rel
+		script := false
 		if s, ok := strings.CutPrefix(rel, scriptsDir+"/"); ok {
-			dst = scriptsDir + "/" + s
+			dst, script = scriptsDir+"/"+s, true
 		}
 		f, ferr := layerFileOf(file, dst, d)
 		if ferr != nil || f == nil {
 			return ferr
 		}
+		// pip makes every script executable; the host's mode bits (a
+		// filesystem without them, a umask) decide nothing.
+		f.Exec = f.Exec || (script && f.Source != "")
 		files = append(files, *f)
 		return nil
 	})
@@ -363,13 +367,29 @@ func rewriteScripts(bin, python string) (map[string]scriptRecord, error) {
 }
 
 // withShebang returns body with its first line replaced by shebang when
-// that line is a shebang naming a Python interpreter.
+// that line is a shebang naming a Python interpreter. uv's /bin/sh
+// trampoline, which it writes when the interpreter path is too long or has
+// spaces (`#!/bin/sh`, `”'exec' <python> "$0" "$@"`, `' ”'`), is replaced as
+// a whole.
 func withShebang(body []byte, shebang string) ([]byte, bool) {
+	if rest, ok := trampolineBody(body); ok {
+		return append([]byte(shebang+"\n"), rest...), true
+	}
 	first, rest, _ := bytes.Cut(body, []byte("\n"))
 	if !bytes.HasPrefix(first, []byte("#!")) || !bytes.Contains(first, []byte("python")) {
 		return nil, false
 	}
 	return append([]byte(shebang+"\n"), rest...), true
+}
+
+// trampolineBody returns what follows uv's three-line /bin/sh trampoline,
+// when body starts with one.
+func trampolineBody(body []byte) ([]byte, bool) {
+	lines := bytes.SplitN(body, []byte("\n"), 4)
+	if len(lines) < 4 || string(lines[0]) != "#!/bin/sh" || !bytes.HasPrefix(lines[1], []byte("'''exec' ")) || string(lines[2]) != "' '''" {
+		return nil, false
+	}
+	return lines[3], true
 }
 
 // rewriteRecords rewrites the lines of every RECORD of dir that list a

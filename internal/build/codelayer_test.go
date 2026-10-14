@@ -339,7 +339,7 @@ func TestAppendCodeRefusesAnIndexWithNoPlatformImage(t *testing.T) {
 // with their own modes and owners, so the layer never carries them.
 func TestPackLayerPlacesEntriesUnderItsRoot(t *testing.T) {
 	files := codeFixture(t)
-	layer, remove, err := packLayer("/usr/local", files, types.OCILayer)
+	layer, remove, err := packLayer(kindCode, "/usr/local", files, types.OCILayer)
 	if err != nil {
 		t.Fatal(err)
 	}
