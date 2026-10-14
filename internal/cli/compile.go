@@ -66,8 +66,9 @@ type compileOptions struct {
 	// source (deploy does, before it asks to confirm), so the build does not
 	// print them twice.
 	settingsShown bool
-	// built, when set, receives the builder's result, and asks the builder to
-	// pin the pushed image by digest (deploy registers that pin).
+	// built, when set, receives the builder's result. A push always asks
+	// the builder for the pushed image's digest, which the compile writes
+	// into dag.json (#1703); deploy registers that pin.
 	built *build.Result
 	// provenance, when set, receives the builder that produced the image
 	// and, for a generated Dockerfile, the base image it builds FROM: the
@@ -117,7 +118,7 @@ func newCompileCommand() *cobra.Command {
 	cmd.Flags().StringVar(&o.parserCmd, "parser-cmd", "", "override the parser command (default from config)")
 	cmd.Flags().StringVar(&o.dagVersion, "dag-version", "", "DAG version label (default: git describe of the project directory, or dev outside git, plus a hash of the DAG's content)")
 	cmd.Flags().BoolVar(&o.build, "build", false, "build the DAG container image (requires --image)")
-	cmd.Flags().BoolVar(&o.push, "push", false, "push the built image to its registry (requires --build)")
+	cmd.Flags().BoolVar(&o.push, "push", false, "push the built image to its registry and write its digest into dag.json (requires --build)")
 	cmd.Flags().BoolVar(&o.rebuild, "rebuild", false, "build the dependency image again even when the registry holds one for its key (with --push)")
 	cmd.Flags().StringVar(&o.builder, "builder", "docker", "image build tool to shell out to (e.g. docker, podman, nerdctl)")
 	cmd.Flags().StringVar(&o.dockerfile, "dockerfile", "Dockerfile", "Dockerfile path relative to the DAG directory")
@@ -252,6 +253,9 @@ func runCompile(cmd *cobra.Command, dir string, o compileOptions) error {
 	// filepath.Join, and a compileOptions literal that forgot it reached a write
 	// with an empty path.
 	o.output = defaultOutputPath(dir, o.output)
+	if o.built == nil {
+		o.built = &build.Result{}
+	}
 	cfg, err := prepareCompile(cmd, dir, &o)
 	if err != nil {
 		return err
@@ -309,7 +313,7 @@ func runCompile(cmd *cobra.Command, dir string, o compileOptions) error {
 	if o.build {
 		remindDeprecatedPythonAfterBuild(cmd.ErrOrStderr(), cfg)
 	}
-	_, werr := fmt.Fprint(cmd.OutOrStdout(), compileSummary(dagSourcePath(dir, cfg), o.output, image, o.dagVersion))
+	_, werr := fmt.Fprint(cmd.OutOrStdout(), compileSummary(dagSourcePath(dir, cfg), o.output, compiledImageRef(image, *o.built), o.dagVersion))
 	return werr
 }
 
@@ -394,7 +398,7 @@ func runDbtCompile(cmd *cobra.Command, dir string, o compileOptions, cfg *domain
 	if o.build {
 		remindDeprecatedPythonAfterBuild(cmd.ErrOrStderr(), cfg)
 	}
-	_, werr := fmt.Fprint(cmd.OutOrStdout(), compileSummary(filepath.Join(dir, cfg.Dbt.Project), o.output, image, o.dagVersion))
+	_, werr := fmt.Fprint(cmd.OutOrStdout(), compileSummary(filepath.Join(dir, cfg.Dbt.Project), o.output, compiledImageRef(image, *o.built), o.dagVersion))
 	return werr
 }
 
@@ -689,7 +693,7 @@ func buildImage(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.Le
 		ContextDir:   dir,
 		Platforms:    buildPlatforms(cfg),
 		Push:         o.push,
-		Pin:          o.push && o.built != nil,
+		Pin:          o.push,
 		Code:         code,
 		ContextFiles: contextFiles,
 		Stdout:       cmd.OutOrStdout(),
@@ -698,8 +702,8 @@ func buildImage(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.Le
 	if berr != nil {
 		return berr
 	}
-	if o.built != nil {
-		*o.built = res
+	if perr := recordBuild(o, res); perr != nil {
+		return perr
 	}
 	// A reused image (the skip path) was built earlier by a build this CLI
 	// knows nothing of: naming "skip" or the base it would use now would be
@@ -717,6 +721,45 @@ func buildImage(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.Le
 		remindBakedSecretsAfterBuild(cmd.ErrOrStderr(), baked)
 	}
 	return nil
+}
+
+// recordBuild hands res to the caller that asked for it (o.built) and, for a
+// pushed image, writes its digest-pinned reference into dag.json
+// (pinCompiledImage).
+func recordBuild(o compileOptions, res build.Result) error {
+	if o.built != nil {
+		*o.built = res
+	}
+	if res.Ref == "" {
+		return nil
+	}
+	return pinCompiledImage(o.output, res.Ref)
+}
+
+// pinCompiledImage writes ref, the pushed image's digest-pinned reference,
+// as the image of the compiled dag.json at path, so the artifact `dexaflow
+// push` registers names the bytes that were pushed (#1703), as deploy's does.
+// The file keeps the layout the compile gives it.
+func pinCompiledImage(path, ref string) error {
+	data, err := os.ReadFile(path) //nolint:gosec // G304: output path is operator-supplied on the CLI.
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", path, err)
+	}
+	var spec domain.DAGSpec
+	if uerr := json.Unmarshal(data, &spec); uerr != nil {
+		return fmt.Errorf("parsing %s: %w", path, uerr)
+	}
+	spec.Image = ref
+	return writeDAGFile(path, &spec)
+}
+
+// compiledImageRef is the image the compiled dag.json names: the pinned
+// reference of a pushed build, else image as resolved.
+func compiledImageRef(image string, built build.Result) string {
+	if built.Ref != "" {
+		return built.Ref
+	}
+	return image
 }
 
 // resolveDockerfileName picks the Dockerfile name to look for in the DAG

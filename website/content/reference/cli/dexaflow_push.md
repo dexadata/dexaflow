@@ -9,6 +9,12 @@ weight: 50
 
 Register a compiled dag.json with the control plane.
 
+### Synopsis
+
+Register a compiled dag.json with the control plane.
+
+The image is registered by digest: an image given as a tag, in dag.json or with --image, is resolved in its registry first, with the credentials `dexaflow deploy` reads. When the registry cannot be read, the tag is registered as written, with a warning that says why.
+
 ```
 dexaflow push <dag.json> [flags]
 ```
@@ -17,6 +23,7 @@ dexaflow push <dag.json> [flags]
 
 ```
   -h, --help            help for push
+      --image string    image to register instead of the one in dag.json; a tag is resolved to its digest, a <repository>@sha256:<digest> is used as given
       --server string   control plane base URL, over --target (default: the target in use, then server_url from the config file)
       --token string    JWT bearer token (default: the session saved for the server)
 ```

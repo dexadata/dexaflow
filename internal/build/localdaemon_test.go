@@ -122,7 +122,7 @@ func TestLocalDaemonBuildsPushesAndPins(t *testing.T) {
 	}
 }
 
-// compile --build --push asks for no pin: the registry is not read, and the
+// A push that asks for no pin reads no registry, and the
 // result carries no digest.
 func TestLocalDaemonPushWithoutPinDoesNotReadTheRegistry(t *testing.T) {
 	tool, log := fakeTool(t, "")

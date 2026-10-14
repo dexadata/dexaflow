@@ -68,24 +68,28 @@ before registering, so a version registered by `deploy` never resolves a tag at
 pull time: there is no `:latest` drift and no way to point that version at a
 moving target. This is automatic; there is nothing to configure.
 
-Only `deploy` does this. `compile --build --push` followed by `push` registers
-the image reference exactly as `dag.json` holds it, which is the **tag** that was
-pushed, and the control plane accepts it: that version then follows whatever the
-tag points at when a node pulls it. Use `deploy` when the registered artifact has
-to be pinned (see [CI/CD & deploy examples](/operate/cicd-deploy/)).
+`compile --build --push` does the same: it writes the digest of the image it
+pushed into `dag.json`, and `push` registers that file. `push` also resolves an
+image `dag.json` names by tag (a file from an older CLI, or an image another
+tool pushed) to its digest before registering it, and `push --image <ref>`
+registers another image, a tag resolved the same way or a
+`<repository>@sha256:<digest>` used as given.
 
 An operator can make the control plane check this with
 `deploy.require_digest` (Helm `deploy.requireDigest`): `warn` registers a tag
-with a warning, and `enforce` refuses it, which today refuses the
-`compile --build --push` and `push` path:
+with a warning, and `enforce` refuses it. A push that could not read the
+registry registers the tag, so under `enforce` it fails, and the error says
+why the image could not be pinned:
 
 ```text
 Error: server returned 400: {..."detail":"image \"ghcr.io/acme/etl:v1\" is not pinned by digest (<repository>@sha256:<64 hex>), and this server refuses it (deploy.require_digest=enforce). ..."}
+  the push could not pin the image by digest: reading "ghcr.io/acme/etl:v1" from its registry ...: UNAUTHORIZED ...
+  fix: make the registry readable from here (`docker login <registry>`, or the session of the cloud CLI that owns it), or pass --image <repository>@sha256:<digest>
 ```
 
-**Fix:** register with `dexaflow deploy`, which pins the pushed image by
-digest, or set `image` in `dag.json` to `<repository>@sha256:<digest>` (sha256
-only) before `dexaflow push`. See
+**Fix:** give the CLI a credential that can read the registry, register with
+`dexaflow deploy`, or pass `--image <repository>@sha256:<digest>` (sha256
+only) to `dexaflow push`. See
 [Require images pinned by digest](/operate/cicd-deploy/#require-images-pinned-by-digest).
 
 ### 3. Supported task types only

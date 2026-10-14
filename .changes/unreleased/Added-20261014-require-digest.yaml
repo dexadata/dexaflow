@@ -10,8 +10,8 @@ body: |-
   in `dexaflow_unpinned_image_total` and `require_digest` and `image_pinned`
   in the audit entry; `enforce` refuses it with a 400 that names the setting
   and the way out. The dry run of a register answers the same and records
-  nothing. `dexaflow compile --build --push` followed by `dexaflow push`
-  registers a tag, so it is refused under `enforce` until that path pins by
-  digest; start with `warn`. A register and a rollback now also return the
-  warnings they give, in a `warnings` field. (#1703)
+  nothing. A CLI that registers a tag, such as one that predates digest
+  pinning on `dexaflow compile --build --push` followed by `dexaflow push`, is
+  refused under `enforce`; start with `warn`. A register and a rollback now
+  also return the warnings they give, in a `warnings` field. (#1703)
 time: 2026-10-14T16:50:00.000000000-03:00

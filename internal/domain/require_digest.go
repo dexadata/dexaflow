@@ -25,8 +25,10 @@ const (
 )
 
 // pinHint is how to pin an image, shared by the warning and the refusal.
-const pinHint = "`dexaflow deploy` registers the pushed image by digest; " +
-	"after `dexaflow compile --build --push`, set image in dag.json to <repository>@sha256:<digest> before `dexaflow push`"
+// Before #1703 the compile and push path registered a tag; push --image
+// pins an image by hand.
+const pinHint = "`dexaflow deploy`, and `dexaflow compile --build --push` followed by `dexaflow push`, " +
+	"register the image by digest; to pin it by hand, run `dexaflow push --image <repository>@sha256:<digest>`"
 
 // ParseDigestRequirement reads a configured deploy.require_digest: "" is
 // DigestRequireOff, and any value other than off, warn or enforce is an

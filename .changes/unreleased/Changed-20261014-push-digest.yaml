@@ -1,0 +1,16 @@
+kind: Changed
+body: |-
+  **`dexaflow compile --build --push` and `dexaflow push` register the image
+  by digest.** `compile --build --push` now writes the pushed image as
+  `<repository>@sha256:<digest>` into `dag.json`, from the read of the pushed
+  digest that `dexaflow deploy` already makes, and prints it in its summary.
+  `dexaflow push` resolves an image `dag.json` names by tag to its digest in
+  the registry before registering it, with the credentials `deploy` reads, and
+  takes `--image <ref>` to register another image (a tag resolved the same
+  way, or a pinned reference used as given). When the registry cannot be read,
+  `push` registers the tag with a warning that says why, and a server under
+  `deploy.require_digest: enforce` refuses it with an error naming the reason
+  and the fix. A `compile --build --push` whose pushed digest cannot be read
+  now fails, as `deploy` does. The split pipeline therefore passes `enforce`
+  and its versions can be promoted. (#1703)
+time: 2026-10-14T20:00:00.000000000-03:00
