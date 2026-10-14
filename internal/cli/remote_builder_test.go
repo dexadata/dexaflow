@@ -246,7 +246,8 @@ func TestDeployPreflightRefusalStaysAnErrorWhenThisMachinePushes(t *testing.T) {
 			var deny atomic.Bool
 			argvLog, _ := fakeGcloudOnPath(t)
 			if tc.noGcloud {
-				t.Setenv("PATH", "/usr/bin:/bin")
+				// CI runners ship a real gcloud, so drop every PATH entry that has one.
+				t.Setenv("PATH", pathWithout(t, "gcloud"))
 			}
 			dir, host, deps := splitProjectWith(t, cloudBuildYAML, &deny)
 			if tc.dockerfile {
@@ -378,4 +379,18 @@ func TestUploadedSecretsWarningNamesTheSourceBucket(t *testing.T) {
 	if got := w.String(); !strings.Contains(got, "gs://example_com_acme-ci_cloudbuild/source") || strings.Contains(got, "dag.py") {
 		t.Errorf("warning = %q, want .env and gcloud's bucket name only", got)
 	}
+}
+
+// pathWithout returns PATH without the entries that hold an executable named
+// tool, so a test can run with that tool missing whatever the host installed.
+func pathWithout(t *testing.T, tool string) string {
+	t.Helper()
+	var kept []string
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if info, err := os.Stat(filepath.Join(dir, tool)); err == nil && !info.IsDir() {
+			continue
+		}
+		kept = append(kept, dir)
+	}
+	return strings.Join(kept, string(os.PathListSeparator))
 }
