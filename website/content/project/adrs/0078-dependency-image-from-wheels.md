@@ -29,13 +29,17 @@ how, and where it departs from ADR 0073 section 4.
 1. **The dependency layer applies** when a build splits (ADR 0077 decision
    1), every platform is `linux/amd64` or `linux/arm64`, the project has no
    `system_packages`, every dependency is a requirement by name (no URL,
-   path, VCS reference or inline option), `uv` is on `PATH`, and the base
-   image is a Dexaflow runtime base for every platform: its config sets
-   `PYTHON_VERSION`, it has `/usr/local/lib/pythonX.Y/site-packages`, and its
-   dpkg database lists glibc. A `python_version` set in `dexaflow.yaml` must
+   path, VCS reference or inline option), the CLI does not run on Windows,
+   `uv` is on `PATH` and finds a Python on the machine (`uv python find`; any
+   version, uv needs one to run its resolver and installer, and the CLI runs
+   it with `UV_PYTHON_DOWNLOADS=never`, so it never downloads one), and the
+   base image is a Dexaflow runtime base for every platform: its config sets
+   `PYTHON_VERSION` (X.Y.Z), it has `/usr/local/lib/pythonX.Y/site-packages`,
+   its dpkg database lists glibc, and nothing in it tells pip where or what
+   to install (decision 8). A `python_version` set in `dexaflow.yaml` must
    name the base's X.Y. Otherwise the daemon builds the dependency image as
    ADR 0077 says, and the builder line says why the dependency layer does
-   not apply.
+   not apply, starting with the cause.
 2. **Resolution, per platform.** The CLI reads the base by digest, per
    platform image of its index, and lists the distributions of its
    site-packages from the `*.dist-info` names in the layer tar headers,
@@ -96,14 +100,34 @@ how, and where it departs from ADR 0073 section 4.
    code layer is then appended as ADR 0077 decisions 3 and 7 say. The builder
    line says `dependency-layer (uv <version>), then code-layer`, and how long
    the resolution took when that was a second or more.
+8. **A base that configures pip declines.** The daemon's `pip install` in
+   the generated Dockerfile honors the pip configuration of the base: a
+   `PIP_*` variable of its config that changes where or what pip installs
+   (`PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL`, `PIP_FIND_LINKS`,
+   `PIP_CONSTRAINT`, ..., every `PIP_*` but a short list that only changes
+   how pip runs, such as `PIP_NO_CACHE_DIR`), `XDG_CONFIG_DIRS` or
+   `XDG_CONFIG_HOME`, and a `pip.conf` (or `pip.ini`) in any place pip reads
+   one (`/etc/pip.conf`, `/etc/xdg/pip/pip.conf`, `/usr/local/pip.conf`,
+   `/root/.config/pip/pip.conf`, `/root/.pip/pip.conf`; any file of that
+   name outside site-packages counts). The dependency layer resolves from
+   PyPI and would ship packages of the same name from another index, so the
+   base listing records these and the dependency layer declines such a base.
+   A `uv.toml` in the image changes nothing: uv runs on the host, never in
+   the image, and with `--no-config`.
+9. **When the wheels fail after the decision** (the install or the push of
+   the dependency image fails, before the DAG image is written), the daemon
+   builds the dependency image under the format 1 key of ADR 0077, when the
+   dependencies are all pinned (that key cannot cover a range) and the
+   daemon's tool is on `PATH`; the output says why. Otherwise the build
+   fails with uv's error.
 
 ## Where this departs from ADR 0073 section 4
 
 - **Locks are not read yet.** Every build resolves; a project with a lock
   gets no faster path.
 - **uv only.** uv resolves and installs for a target platform and Python
-  version without an interpreter of either, fast enough to run on every
-  build; an installer choice is left for later.
+  version other than those of the Python it runs with, fast enough to run
+  on every build; an installer choice is left for later.
 - **The glibc tag is a ceiling** (decision 3), not the exact glibc of the
   base, so one wheel set serves the Debian 12 and Debian 13 bases.
 - **No bytecode.** uv compiles nothing, and the host's Python is another
@@ -121,12 +145,18 @@ how, and where it departs from ADR 0073 section 4.
   and `/usr/local/share`. On the measured set the file lists of a pip
   install into `/usr/local` and of this layer were the same but for one C
   header of `greenlet`.
+- **What else differs from pip in the image:** `INSTALLER` says `uv`, every
+  distribution has a `REQUESTED` file (all are installed by name with
+  `--no-deps`), the console scripts are uv's (their shebang is rewritten to
+  `/usr/local/bin/pythonX.Y`, so their hashes differ from pip's), and the
+  data files and headers are under site-packages as said above.
 
 ## Consequences
 
 - The first build of a key needs no daemon either: a deploy from a machine
-  or CI runner without docker builds and pushes everything, given uv and
-  PyPI, and builds `linux/arm64` on an `amd64` host without emulation.
+  or CI runner without docker builds and pushes everything, given uv, a
+  Python on that machine and PyPI, and builds `linux/arm64` on an `amd64`
+  host without emulation.
 - Every pushed build with uv runs a resolution, even when only DAG code
   changed, since the key needs it. It is a metadata request per package that
   uv's cache does not hold; the builder line prints its time from one second.

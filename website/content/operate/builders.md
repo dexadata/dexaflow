@@ -212,8 +212,11 @@ The decision is recorded in
 ## Building the dependency image from wheels
 
 When the dependency image is missing (or with `--rebuild`) and
-[uv](https://docs.astral.sh/uv/getting-started/installation/) is on `PATH`,
-the CLI builds it with no container daemon:
+[uv](https://docs.astral.sh/uv/getting-started/installation/) is on `PATH`
+with a Python it can find (any version: uv needs one to run, even to install
+for another; `uv python find` shows which), the CLI builds it with no
+container daemon. uv never downloads a Python here; install one with your
+system's packages or `uv python install` if `uv python find` finds none.
 
 1. it reads the base image by digest, for each platform: its Python version,
    its glibc, and the Python distributions it already holds. That listing is
@@ -233,7 +236,7 @@ builder:    dependency-layer (uv 0.11.32), then code-layer, no dependency image 
 
 uv runs in an empty directory with `--no-config` and without your `UV_*`
 and `PIP_*` variables (the cache directory, proxies and certificate
-settings are kept), so your machine's uv or pip configuration never changes
+settings are kept; Python downloads are off), so your machine's uv or pip configuration never changes
 what ships. Packages come from PyPI. Because the key covers what uv
 resolved, dependencies with a range (`pandas>=2`) take this path too, and a
 new release that matches the range gives a new dependency image. The
@@ -247,7 +250,8 @@ the Debian 12 and Debian 13 runtime bases. `linux/arm64` is built on an
 The dependency layer does not apply, and the daemon builds the dependency
 image (or the whole image, for dependencies that are not pinned), when:
 
-- `uv` is not on `PATH`;
+- `uv` is not on `PATH`, or it finds no Python on your machine;
+- the CLI runs on Windows (not supported on this path yet);
 - the project has `system_packages`, which need a real build;
 - a platform is not `linux/amd64` or `linux/arm64`;
 - a dependency is a URL, a local path or a VCS reference (`pkg @ https://...`,
@@ -256,11 +260,20 @@ image (or the whole image, for dependencies that are not pinned), when:
   `PYTHON_VERSION`, it has no `/usr/local/lib/pythonX.Y/site-packages`, or
   it records no glibc), or `python_version` in `dexaflow.yaml` names another
   Python than the base's;
+- the base image configures pip: a `PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL`,
+  `PIP_FIND_LINKS`, `PIP_CONSTRAINT` or other `PIP_*` variable that changes
+  where or what pip installs, or a `pip.conf` such as `/etc/pip.conf`. The
+  daemon's pip would honor it, and the dependency layer resolves from PyPI;
 - uv finds no set of wheels: a dependency has no wheel for a platform, it
   conflicts with a package of the base image at another version, or PyPI
   cannot be reached. The builder line carries uv's reason.
 
 Private package indexes are not supported on this path yet.
+
+If the install or the push of the dependency image fails after the path was
+chosen, the local daemon builds the dependency image instead, when every
+dependency is pinned and the container tool is on `PATH`, and the output says
+why; otherwise the build fails with uv's error.
 
 The layer holds no bytecode: uv does not compile it, and your machine's
 Python is another version than the image's. Each task process compiles the
