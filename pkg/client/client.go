@@ -102,6 +102,9 @@ type DeployDefaults struct {
 	Platforms []string `json:"platforms"`
 	// BaseImage is the base image for projects that set none.
 	BaseImage string `json:"base_image"`
+	// SourceModeImage is the runtime image of source mode (#1772); not
+	// decoded yet.
+	SourceModeImage string `json:"-"`
 }
 
 // GetDeployDefaults reads GET /api/v2/deployDefaults through the client's

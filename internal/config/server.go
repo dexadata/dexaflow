@@ -87,7 +87,19 @@ type DeploySection struct {
 	// its workspace, its target and the person's config leave unset. Served
 	// on GET /api/v2/deployDefaults; unset (the default) advertises nothing,
 	// so every deploy resolves as it did before. None of them is a secret.
-	Defaults domain.DeployDefaults `mapstructure:"defaults"`
+	Defaults DeployDefaultsSection `mapstructure:"defaults"`
+}
+
+// DeployDefaultsSection is deploy.defaults.
+type DeployDefaultsSection struct {
+	domain.DeployDefaults `mapstructure:",squash"`
+	// SourceMode is deploy.defaults.source_mode (#1772); not read yet.
+	SourceMode bool `mapstructure:"-"`
+}
+
+// AdvertisedDeployDefaults are the deploy defaults the server serves.
+func (c *ServerConfig) AdvertisedDeployDefaults() domain.DeployDefaults {
+	return c.Deploy.Defaults.DeployDefaults
 }
 
 // Variable encryption modes (variable_encryption, #507).

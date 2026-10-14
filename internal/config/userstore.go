@@ -48,6 +48,9 @@ type UserTarget struct {
 	Registry  string   `yaml:"registry,omitempty"`
 	Platforms []string `yaml:"platforms,omitempty"`
 	BaseImage string   `yaml:"base_image,omitempty"`
+	// SourceModeImage is the runtime image of source mode (#1772); not
+	// read yet.
+	SourceModeImage string `yaml:"-"`
 }
 
 // Session is a token saved for one control plane.

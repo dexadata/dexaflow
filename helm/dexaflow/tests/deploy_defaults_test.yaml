@@ -159,3 +159,30 @@ tests:
           content:
             name: LEOFLOW_DEPLOY_DEFAULTS_BASE_IMAGE
             value: python:3.12-slim@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+  # Source mode advertised (#1772): the server serves its own
+  # execution.source_mode.image, so the chart renders only the switch.
+  - it: renders no source mode default by default
+    template: deployment.yaml
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_SOURCE_MODE")]
+  - it: renders the source mode default when source mode is on
+    template: deployment.yaml
+    set:
+      deploy.defaults.sourceMode: true
+      execution.sourceMode.enabled: true
+      execution.sourceMode.image: ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_DEFAULTS_SOURCE_MODE
+            value: "true"
+  - it: refuses the source mode default while source mode is off
+    template: deployment.yaml
+    set:
+      deploy.defaults.sourceMode: true
+    asserts:
+      - failedTemplate:
+          errorPattern: deploy.defaults.sourceMode

@@ -61,6 +61,9 @@ type deployDefaults struct {
 	Platforms []string `yaml:"platforms,omitempty"`
 	// BaseImage replaces base_image for projects that set none.
 	BaseImage string `yaml:"base_image,omitempty"`
+	// SourceModeImage is the runtime image of source mode (#1772); not
+	// read yet.
+	SourceModeImage string `yaml:"-"`
 }
 
 // workspaceTarget is one named control plane in a workspace file.

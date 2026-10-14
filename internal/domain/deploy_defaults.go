@@ -20,6 +20,9 @@ type DeployDefaults struct {
 	Platforms []string `json:"platforms" mapstructure:"platforms"`
 	// BaseImage replaces base_image for projects that set none.
 	BaseImage string `json:"base_image" mapstructure:"base_image"`
+	// SourceModeImage is the runtime image of source mode (#1772); not
+	// served yet.
+	SourceModeImage string `json:"-" mapstructure:"-"`
 }
 
 // platformPattern is the os/arch[/variant] form a platform takes, the one
