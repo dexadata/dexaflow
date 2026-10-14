@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // syncServer is statusServer that also answers what `dexaflow sync` writes
@@ -246,7 +249,7 @@ func (f *syncFixture) sync(t *testing.T, args ...string) (stdout, stderr string,
 // the projects.
 func TestSyncDryRunReportsEveryDAGAndWritesNothing(t *testing.T) {
 	f := newSyncFixture(t)
-	out, _, err := f.sync(t, "--dry-run", "--prune")
+	out, _, err := f.sync(t, "--dry-run", "--prune", "--rollback")
 	if code := exitCodeOf(err); code != syncExitDrift {
 		t.Fatalf("exit %d (err %v), want %d for drift\n%s", code, err, syncExitDrift, out)
 	}
@@ -322,7 +325,7 @@ func TestSyncDryRunWithoutPruneOnlyReportsAbsentDAGs(t *testing.T) {
 // alone. A second sync then finds nothing to change.
 func TestSyncAppliesThroughDeploy(t *testing.T) {
 	f := newSyncFixture(t)
-	out, stderr, err := f.sync(t, "--prune", "--yes")
+	out, stderr, err := f.sync(t, "--prune", "--rollback", "--yes")
 	if err != nil {
 		t.Fatalf("sync: %v\n%s\n%s", err, out, stderr)
 	}
@@ -372,7 +375,7 @@ func TestSyncAppliesThroughDeploy(t *testing.T) {
 // TestSyncJSONDryRun locks the machine-readable shape of a dry run.
 func TestSyncJSONDryRun(t *testing.T) {
 	f := newSyncFixture(t)
-	out, stderr, err := f.sync(t, "--dry-run", "--prune", "--output", "json")
+	out, stderr, err := f.sync(t, "--dry-run", "--prune", "--rollback", "--output", "json")
 	if exitCodeOf(err) != syncExitDrift {
 		t.Fatalf("exit %d (err %v)\n%s", exitCodeOf(err), err, stderr)
 	}
@@ -411,7 +414,7 @@ func TestSyncJSONDryRun(t *testing.T) {
 // change applied, the deploy's own result, and the deploy lines on stderr.
 func TestSyncJSONApplied(t *testing.T) {
 	f := newSyncFixture(t)
-	out, stderr, err := f.sync(t, "--prune", "--yes", "--output", "json")
+	out, stderr, err := f.sync(t, "--prune", "--rollback", "--yes", "--output", "json")
 	if err != nil {
 		t.Fatalf("sync --output json: %v\n%s", err, stderr)
 	}
@@ -478,7 +481,7 @@ func TestSyncFailedChangeExitsTwo(t *testing.T) {
 	f := newSyncFixture(t)
 	f.fake.failPatch = true
 	f.fake.failRegister = map[string]bool{"fresh": true}
-	out, _, err := f.sync(t, "--prune", "--yes")
+	out, _, err := f.sync(t, "--prune", "--rollback", "--yes")
 	if exitCodeOf(err) != syncExitError {
 		t.Fatalf("exit %d (err %v), want %d\n%s", exitCodeOf(err), err, syncExitError, out)
 	}
@@ -521,7 +524,8 @@ func TestSyncUsesTheTargetAndTheWorkspaceOfDir(t *testing.T) {
 	root, dirs := statusWorkspace(t, []string{"dev=" + devURL, "prod=" + prodURL}, "alpha")
 	prod.st.dags["alpha"] = &statusDagFake{versions: []statusVersionFake{{labelOf(t, dirs["alpha"]), 1, "2026-10-01T12:00:00Z", true}}}
 	cfg := sessionsConfig(t, []string{devURL, prodURL}, []string{"dev-tok", "prod-tok"})
-	t.Chdir(t.TempDir())
+	elsewhere := t.TempDir()
+	t.Chdir(elsewhere)
 	out, _, err := run(t, "sync", root, "--dry-run", "--target", "prod", "--config", cfg)
 	if err != nil {
 		t.Fatalf("sync --target prod: %v\n%s", err, out)
@@ -537,9 +541,27 @@ func TestSyncUsesTheTargetAndTheWorkspaceOfDir(t *testing.T) {
 			t.Errorf("prod got Authorization %q, want its own token", a)
 		}
 	}
-	out, _, err = run(t, "sync", root, "--dry-run", "--config", cfg)
+	if wd, _ := os.Getwd(); wd != elsewhere {
+		t.Errorf("sync changed the working directory to %s", wd)
+	}
+	// A relative --config and a relative <dir> name what they name from the
+	// folder sync runs in.
+	t.Chdir(filepath.Dir(cfg))
+	rel, rerr := filepath.Rel(filepath.Dir(cfg), root)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	out, _, err = run(t, "sync", rel, "--dry-run", "--config", filepath.Base(cfg))
 	if exitCodeOf(err) != syncExitDrift || !strings.Contains(out, "target dev: "+devURL) {
 		t.Errorf("without --target, the workspace's default target: err = %v\n%s", err, out)
+	}
+	for _, a := range dev.st.auth {
+		if a != "Bearer dev-tok" {
+			t.Errorf("dev got Authorization %q, want the token the relative --config saves for it", a)
+		}
+	}
+	if wd, _ := os.Getwd(); wd != filepath.Dir(cfg) {
+		t.Errorf("sync changed the working directory to %s", wd)
 	}
 }
 
@@ -592,5 +614,231 @@ func TestSyncWorksWithADeployToken(t *testing.T) {
 	}
 	if !strings.Contains(lineOf(out, "synced "), "in sync") {
 		t.Errorf("synced: %q\n%s", lineOf(out, "synced "), out)
+	}
+}
+
+// TestSyncLeavesABehindDAGWithoutRollback: a DAG whose content is an older
+// registered version is reported and left alone unless --rollback is given;
+// it still counts as drift, in a dry run and after an apply.
+func TestSyncLeavesABehindDAGWithoutRollback(t *testing.T) {
+	f := newSyncFixture(t)
+	out, _, err := f.sync(t, "--dry-run")
+	if exitCodeOf(err) != syncExitDrift {
+		t.Fatalf("exit %d (err %v), want 1\n%s", exitCodeOf(err), err, out)
+	}
+	want := "none: registered content is newer than the workspace; run with --rollback to make " + f.labels["older"] + " current"
+	if l := lineOf(out, "older "); !strings.Contains(l, "behind") || !strings.Contains(l, want) {
+		t.Errorf("older: %q, want %q\n%s", l, want, out)
+	}
+	out, _, err = f.sync(t, "--yes")
+	if exitCodeOf(err) != syncExitDrift {
+		t.Errorf("a behind DAG left alone: exit %d (err %v), want 1\n%s", exitCodeOf(err), err, out)
+	}
+	for _, w := range f.fake.writesOf() {
+		if strings.Contains(w, "currentVersion") {
+			t.Errorf("rolled back without --rollback: %s", w)
+		}
+	}
+	if !strings.Contains(lineOf(out, "edited "), "deployed") {
+		t.Errorf("the deploys still go through:\n%s", out)
+	}
+}
+
+// brokenProject adds to the fixture a project whose dexaflow.yaml does not
+// parse, in folder dir of dags/, for a DAG registered and active as dagID.
+func (f *syncFixture) brokenProject(t *testing.T, dir, dagID string, withDagPy bool) {
+	t.Helper()
+	p := filepath.Join(f.root, "dags", dir)
+	if withDagPy {
+		writeProjectFile(t, p, "dag.py", "# "+dagID+"\n")
+	}
+	writeProjectFile(t, p, "dexaflow.yaml", "dag_id: "+dagID+"\ndbt: {project_dir: .\n")
+	f.fake.st.dags[dagID] = &statusDagFake{versions: []statusVersionFake{{"v-1", 1, "2026-08-01T00:00:00Z", true}}}
+}
+
+// TestSyncPruneRefusesWhenAConfigDoesNotParse: a dexaflow.yaml that does not
+// parse hides the project's dag_id (a project with a dag.py is discovered
+// under its folder name, a dbt project not at all), so its DAG would read as
+// absent and be paused. With --prune nothing at all is applied.
+func TestSyncPruneRefusesWhenAConfigDoesNotParse(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		withDag  bool
+		dir, dag string
+	}{
+		{"a project with dag.py", true, "billing_dir", "billing"},
+		{"a dbt project", false, "marts", "marts"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSyncFixture(t)
+			f.brokenProject(t, tc.dir, tc.dag, tc.withDag)
+			out, _, err := f.sync(t, "--prune", "--rollback", "--yes")
+			if exitCodeOf(err) != syncExitError {
+				t.Fatalf("exit %d (err %v), want 2\n%s", exitCodeOf(err), err, out)
+			}
+			if w := f.fake.writesOf(); len(w) != 0 {
+				t.Errorf("sync applied with a project it cannot read: %v", w)
+			}
+			if !strings.Contains(out, filepath.Join(f.root, "dags", tc.dir)) || !strings.Contains(out, "nothing was changed") {
+				t.Errorf("the report must name the broken project and say nothing changed:\n%s", out)
+			}
+			if !strings.Contains(out, "--prune") {
+				t.Errorf("the refusal must say why (--prune):\n%s", out)
+			}
+			out, _, err = f.sync(t, "--prune", "--dry-run")
+			if exitCodeOf(err) != syncExitError {
+				t.Errorf("dry run: exit %d (err %v), want 2\n%s", exitCodeOf(err), err, out)
+			}
+			// Without --prune the project is an error row of its own, and
+			// the exit code says so.
+			out, _, err = f.sync(t, "--dry-run", "--rollback")
+			row := lineOf(out, tc.dir+" ") // discovered under its folder name
+			if !tc.withDag {
+				row = lineOf(out, "("+filepath.Join(f.root, "dags", tc.dir)+")")
+			}
+			if exitCodeOf(err) != syncExitError || !strings.Contains(row, "error") {
+				t.Errorf("without --prune: exit %d, row %q, want exit 2 and an error row\n%s", exitCodeOf(err), row, out)
+			}
+		})
+	}
+}
+
+// TestSyncPruneRefusesWhenADAGIsInError: a project whose DAG cannot be read
+// blocks --prune too.
+func TestSyncPruneRefusesWhenADAGIsInError(t *testing.T) {
+	f := newSyncFixture(t)
+	writeProjectFile(t, f.dirs["edited"], "dexaflow.yaml", "dag_id: edited\n") // no registry: no label
+	out, _, err := f.sync(t, "--prune", "--rollback", "--yes")
+	if exitCodeOf(err) != syncExitError || len(f.fake.writesOf()) != 0 {
+		t.Errorf("exit %d (err %v), writes %v; want exit 2 and no writes\n%s", exitCodeOf(err), err, f.fake.writesOf(), out)
+	}
+	out, _, err = f.sync(t, "--rollback", "--yes")
+	if exitCodeOf(err) != syncExitError || !strings.Contains(lineOf(out, "fresh "), "deployed") {
+		t.Errorf("without --prune the other changes go through: exit %d\n%s", exitCodeOf(err), out)
+	}
+}
+
+// TestSyncPruneNeedsYesWithoutATerminal: in CI there is no prompt, so a
+// prune must be asked for with --yes.
+func TestSyncPruneNeedsYesWithoutATerminal(t *testing.T) {
+	f := newSyncFixture(t)
+	_, _, err := f.sync(t, "--prune")
+	if exitCodeOf(err) != syncExitError || !strings.Contains(err.Error(), "--yes") {
+		t.Errorf("err = %v (exit %d), want exit 2 asking for --yes", err, exitCodeOf(err))
+	}
+	if w := f.fake.writesOf(); len(w) != 0 {
+		t.Errorf("wrote %v", w)
+	}
+	if _, _, err := f.sync(t, "--prune", "--dry-run", "--rollback"); exitCodeOf(err) != syncExitDrift {
+		t.Errorf("a dry run needs no --yes: %v", err)
+	}
+}
+
+// TestSyncMaxPrune: more pauses than the workspace has projects (or than
+// --max-prune) refuse the whole apply.
+func TestSyncMaxPrune(t *testing.T) {
+	f := newSyncFixture(t)
+	for i := range 4 {
+		f.fake.st.dags[fmt.Sprintf("stray%d", i)] = &statusDagFake{versions: []statusVersionFake{{"v", 1, "2026-08-01T00:00:00Z", true}}}
+	}
+	out, _, err := f.sync(t, "--prune", "--rollback", "--yes")
+	if exitCodeOf(err) != syncExitError || !strings.Contains(out, "--max-prune") || len(f.fake.writesOf()) != 0 {
+		t.Fatalf("5 pauses for 4 projects: exit %d (err %v), writes %v\n%s", exitCodeOf(err), err, f.fake.writesOf(), out)
+	}
+	out, _, err = f.sync(t, "--prune", "--rollback", "--yes", "--max-prune", "5")
+	if err != nil {
+		t.Fatalf("--max-prune 5: %v\n%s", err, out)
+	}
+	n := 0
+	for _, w := range f.fake.writesOf() {
+		if strings.HasPrefix(w, "PATCH ") {
+			n++
+		}
+	}
+	if n != 5 {
+		t.Errorf("paused %d DAGs, want 5", n)
+	}
+}
+
+// TestSyncListFailureWithoutPruneIsAWarning: without --prune the DAG list
+// only names the absent DAGs, so a failed list is a warning and the deploys
+// and rollbacks still go through.
+func TestSyncListFailureWithoutPruneIsAWarning(t *testing.T) {
+	f := newSyncFixture(t)
+	f.fake.failList = true
+	out, stderr, err := f.sync(t, "--rollback", "--yes")
+	if err != nil {
+		t.Fatalf("err = %v, want exit 0\n%s\n%s", err, out, stderr)
+	}
+	if !strings.Contains(stderr, "warning: could not list the DAGs of") {
+		t.Errorf("want a warning on stderr:\n%s", stderr)
+	}
+	if !strings.Contains(lineOf(out, "edited "), "deployed") || !strings.Contains(lineOf(out, "older "), "rolled back") {
+		t.Errorf("deploys and rollbacks must go through:\n%s", out)
+	}
+}
+
+// TestSyncReadsTheTokenVariable: DEXAFLOW_TOKEN is sent as for deploy.
+func TestSyncReadsTheTokenVariable(t *testing.T) {
+	f := newSyncFixture(t)
+	t.Setenv("DEXAFLOW_TOKEN", "env-tok")
+	if _, _, err := run(t, "sync", f.root, "--dry-run", "--config", emptyConfig(t)); exitCodeOf(err) != syncExitDrift {
+		t.Fatalf("err = %v", err)
+	}
+	for _, a := range f.fake.st.auth {
+		if a != "Bearer env-tok" {
+			t.Errorf("Authorization %q, want DEXAFLOW_TOKEN", a)
+		}
+	}
+}
+
+// runSyncInteractive runs the command tree with a sync that prompts, as for
+// a person at a terminal deploying to a remote server (the fakes listen on
+// loopback, which never prompts).
+func runSyncInteractive(t *testing.T, stdin string, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	root := NewRootCommand()
+	old, _, ferr := root.Find([]string{"sync"})
+	if ferr != nil {
+		t.Fatal(ferr)
+	}
+	root.RemoveCommand(old)
+	interactive := newSyncCommandWith(func(*cobra.Command, string) bool { return true })
+	interactive.GroupID = old.GroupID
+	root.AddCommand(interactive)
+	var out, errb bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errb)
+	root.SetIn(strings.NewReader(stdin))
+	root.SetArgs(args)
+	err = root.Execute()
+	return out.String(), errb.String(), err
+}
+
+// TestSyncAsksBeforeApplying: at a terminal, sync shows the plan, asks
+// naming what it will do, and applies only on yes.
+func TestSyncAsksBeforeApplying(t *testing.T) {
+	f := newSyncFixture(t)
+	args := []string{"sync", f.root, "--config", f.cfg, "--builder", f.builder, "--prune", "--rollback"}
+	out, _, err := runSyncInteractive(t, "n\n", args...)
+	if exitCodeOf(err) != syncExitError || !strings.Contains(err.Error(), "aborted") {
+		t.Errorf("declined: err = %v (exit %d), want exit 2, aborted\n%s", err, exitCodeOf(err), out)
+	}
+	if !strings.Contains(out, "Apply 2 deploys, 1 rollback and 1 pause on "+f.url+"? [y/N]") {
+		t.Errorf("the prompt must name what will happen:\n%s", out)
+	}
+	if !strings.Contains(lineOf(out, "orphan "), "pause") {
+		t.Errorf("the plan comes before the prompt:\n%s", out)
+	}
+	if w := f.fake.writesOf(); len(w) != 0 {
+		t.Errorf("declined, yet wrote %v", w)
+	}
+	out, _, err = runSyncInteractive(t, "y\n", args...)
+	_, after, asked := strings.Cut(out, "? [y/N]")
+	if err != nil || !asked || len(f.fake.writesOf()) != 4 || !strings.Contains(lineOf(after, "orphan "), "paused") {
+		t.Errorf("accepted: err = %v, writes %v\n%s", err, f.fake.writesOf(), out)
+	}
+	if _, _, err := runSyncInteractive(t, "y\n", append(args, "--output", "json")...); exitCodeOf(err) != syncExitError || !strings.Contains(err.Error(), "--yes") {
+		t.Errorf("--output json at a prompt: err = %v, want exit 2 asking for --yes", err)
 	}
 }

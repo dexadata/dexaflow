@@ -34,17 +34,18 @@ type activeTarget struct {
 }
 
 // targetContext is everything target resolution reads: the workspace around
-// the current directory and the user's config file.
+// the command's work dir (findWorkspaceFor) and the user's config file.
 type targetContext struct {
 	ws        *workspaceLocation
 	store     *config.UserStore
 	storePath string
 }
 
-// loadTargetContext reads the workspace around the current directory and the
-// config file the command uses.
+// loadTargetContext reads the workspace around the command's work dir (the
+// current directory unless withWorkDir set another) and the config file the
+// command uses.
 func loadTargetContext(cmd *cobra.Command) (*targetContext, error) {
-	ws, err := findWorkspaceFromCwd()
+	ws, err := findWorkspaceFor(cmd)
 	if err != nil {
 		return nil, err
 	}

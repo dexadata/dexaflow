@@ -50,15 +50,20 @@ type syncReport struct {
 	DryRun bool   `json:"dry_run"`
 	Prune  bool   `json:"prune"`
 	// Error is why the target could not be read; nothing was changed.
-	Error   string      `json:"error,omitempty"`
+	Error string `json:"error,omitempty"`
+	// Refused is why sync applied nothing although it could read the
+	// target: a --prune with a project it cannot read, or more pauses than
+	// --max-prune.
+	Refused string      `json:"refused,omitempty"`
 	Dags    []syncDag   `json:"dags"`
 	Summary syncSummary `json:"summary"`
 	// ExitCode is the exit code of the command.
 	ExitCode int `json:"exit_code"`
 }
 
-// syncDag is one DAG of the report: a project of the workspace, or a DAG of
-// the target no project defines (no path, no local version).
+// syncDag is one DAG of the report: a project of the workspace, a DAG of
+// the target no project defines (no path, no local version), or a project
+// folder whose dexaflow.yaml does not parse (no dag_id, state error).
 type syncDag struct {
 	DagID string `json:"dag_id"`
 	Path  string `json:"path,omitempty"`
@@ -84,7 +89,9 @@ type syncDag struct {
 // those in sync and not in the workspace. Errors counts the DAGs that could
 // not be read, the changes that failed and a target that could not be read.
 type syncSummary struct {
-	InSync         int `json:"in_sync"`
+	InSync int `json:"in_sync"`
+	// Behind counts the behind DAGs left alone (no --rollback).
+	Behind         int `json:"behind"`
 	Deploy         int `json:"deploy"`
 	Rollback       int `json:"rollback"`
 	Pause          int `json:"pause"`
@@ -106,7 +113,7 @@ func (r *syncReport) changes() int {
 // tally fills the summary, each planned result and the exit code.
 func (r *syncReport) tally() {
 	s := syncSummary{}
-	if r.Error != "" {
+	if r.Error != "" || r.Refused != "" {
 		s.Errors++
 	}
 	for i := range r.Dags {
@@ -120,7 +127,7 @@ func (r *syncReport) tally() {
 	switch {
 	case s.Errors > 0:
 		r.ExitCode = syncExitError
-	case r.DryRun && r.changes() > 0:
+	case (r.DryRun && r.changes() > 0) || s.Behind > 0:
 		r.ExitCode = syncExitDrift
 	default:
 		r.ExitCode = 0
@@ -132,6 +139,10 @@ func (s *syncSummary) add(d syncDag) {
 	switch d.State {
 	case stateInSync:
 		s.InSync++
+	case stateBehind:
+		if d.Action == syncActionNone {
+			s.Behind++
+		}
 	case stateNotInWorkspace:
 		s.NotInWorkspace++
 	case stateError:
@@ -156,8 +167,11 @@ func (r *syncReport) exitError() error {
 	case 0:
 		return nil
 	case syncExitDrift:
-		return &exitCodeError{code: syncExitDrift, err: fmt.Errorf("the target does not match the workspace: %d change(s) would be made (%s)",
-			r.changes(), r.Summary.changeWords())}
+		if !r.DryRun {
+			return &exitCodeError{code: syncExitDrift, err: fmt.Errorf("the target does not match the workspace: %d behind DAG(s) left as they are; pass --rollback to make their workspace version current",
+				r.Summary.Behind)}
+		}
+		return &exitCodeError{code: syncExitDrift, err: fmt.Errorf("the target does not match the workspace: %s", r.closingLine())}
 	}
 	return &exitCodeError{code: syncExitError, err: fmt.Errorf("sync did not complete: %d error(s)", r.Summary.Errors)}
 }
@@ -176,12 +190,33 @@ func (s syncSummary) changeWords() string {
 	return strings.Join(parts, ", ")
 }
 
+// promptWords is the changes as the confirmation names them, such as "2
+// deploys, 1 rollback and 1 pause".
+func (s syncSummary) promptWords() string {
+	var parts []string
+	for _, c := range []struct {
+		n    int
+		what string
+	}{{s.Deploy, "deploy"}, {s.Rollback, "rollback"}, {s.Pause, "pause"}} {
+		switch {
+		case c.n == 1:
+			parts = append(parts, "1 "+c.what)
+		case c.n > 1:
+			parts = append(parts, fmt.Sprintf("%d %ss", c.n, c.what))
+		}
+	}
+	if len(parts) < 2 {
+		return strings.Join(parts, "")
+	}
+	return strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1]
+}
+
 // closingLine is the last line of the text report.
 func (r *syncReport) closingLine() string {
 	n := r.changes()
 	var line string
 	switch {
-	case r.Error != "":
+	case r.Error != "" || r.Refused != "":
 		line = "nothing was changed"
 	case n == 0:
 		line = "in sync, nothing to change"
@@ -192,6 +227,9 @@ func (r *syncReport) closingLine() string {
 	}
 	if r.DryRun {
 		line = "dry run: " + line
+	}
+	if r.Summary.Behind > 0 {
+		line += fmt.Sprintf("; %d behind, left as is (pass --rollback)", r.Summary.Behind)
 	}
 	if r.Summary.Errors > 0 {
 		line += fmt.Sprintf("; %d error(s)", r.Summary.Errors)
@@ -223,7 +261,11 @@ func (r *syncReport) writeText(w io.Writer) error {
 			if d.CurrentVersion != nil {
 				cur = fmt.Sprintf("%s (#%d)", d.CurrentVersion.Label, d.CurrentVersion.VersionNumber)
 			}
-			if _, err := fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\n", d.DagID, syncStateWords(d.State), cur, pausedWord(d.IsPaused), d.actionWords(r.Prune)); err != nil {
+			name := d.DagID
+			if name == "" {
+				name = "(" + d.Path + ")"
+			}
+			if _, err := fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\n", name, syncStateWords(d.State), cur, pausedWord(d.IsPaused), d.actionWords(r.Prune)); err != nil {
 				return err
 			}
 		}
@@ -231,8 +273,11 @@ func (r *syncReport) writeText(w io.Writer) error {
 			return err
 		}
 	}
-	if r.Error != "" {
-		if _, err := fmt.Fprintf(w, "  error: %s\n", r.Error); err != nil {
+	for _, l := range []struct{ what, why string }{{"error", r.Error}, {"refused", r.Refused}} {
+		if l.why == "" {
+			continue
+		}
+		if _, err := fmt.Fprintf(w, "  %s: %s\n", l.what, l.why); err != nil {
 			return err
 		}
 	}
@@ -281,6 +326,8 @@ func (d syncDag) actionWords(prune bool) string {
 	switch {
 	case d.State == stateError:
 		return "none: error: " + d.Error
+	case d.State == stateBehind:
+		return "none: registered content is newer than the workspace; run with --rollback to make " + d.LocalVersion + " current"
 	case d.State != stateNotInWorkspace:
 		return "none"
 	case valueOf(d.IsPaused):
