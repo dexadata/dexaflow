@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_deploy/
 title: "dexaflow deploy"
 linkTitle: "deploy"
-weight: 38
+weight: 40
 ---
 
 Build, push, and register a DAG to a control plane (Pro).
