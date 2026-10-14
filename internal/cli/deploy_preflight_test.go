@@ -57,6 +57,9 @@ func TestDeployPreflightStopsBeforeTheCompile(t *testing.T) {
 			[]string{"may not deploy", "missing scope dexaflow:deploy", "dexaflow auth create-token --scope deploy"}},
 		{"token without deploy, --paused", &deployServer{probeStatus: http.StatusForbidden, refusal: "missing scope dexaflow:deploy"}, "", []string{"--paused"},
 			[]string{"may not deploy", "--paused", "dexaflow:run"}},
+		{"deploys through the trusted issuer", &deployServer{probeStatus: http.StatusForbidden, viaIssuer: true,
+			refusal: "deploys go through the trusted issuer: use its deploy token"}, "", nil,
+			[]string{"takes deploys only through its trusted issuer", "deploys go through the trusted issuer", "deploy audience"}},
 		{"unreachable server", &deployServer{}, "http://127.0.0.1:1", nil,
 			[]string{"cannot reach the control plane at http://127.0.0.1:1"}},
 	} {

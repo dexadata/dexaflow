@@ -382,6 +382,7 @@ roadmap item.
 | `build.context` | `"."` | **Not implemented.** Declared and defaulted, but the build always uses the DAG directory. Tracked in [#1062](https://github.com/dexadata/dexaflow/issues/1062). |
 | `build.dockerfile` | *unset* | A Dockerfile the project ships, used as-is instead of the generated one when the file exists (a missing file falls back to the generated Dockerfile). It is relative to the directory holding `dexaflow.yaml` and must stay inside it: an absolute path, or one escaping the project (`../x`), is refused by `dexaflow validate` and `compile`, and `compile --build` refuses one that a symlink leads out of the project. A Dockerfile outside the project is not reviewed with it, and it skips every check described in [Values that reach the generated Dockerfile](#values-that-reach-the-generated-dockerfile). The `--dockerfile` flag is not confined: it is the operator's own choice on the command line, and it wins over this field. |
 | `build.platforms` | `["linux/amd64"]` | The platforms the image is built for, `os/arch[/variant]`. `--platform` on `compile`, `build` and `deploy` overrides it, and a target or the workspace defaults fill it when the project sets none. A malformed value is refused before the build, with its source named. Several platforms need a tool that pushes one image per platform under one manifest list, such as docker with the containerd image store; the manifest the registry holds for the push is checked to list every platform, and when the tool cannot build it or the check cannot confirm it, the build fails with a hint (see [Builders](/operate/builders/#choosing-the-platform)). |
+| `build.labels` | *unset* | **Not implemented.** Accepted and ignored: no label is set on the image, whichever builder runs. The map is still part of the `dexaflow.yaml` the content label hashes, so changing it gives the DAG a new version label. |
 | `build.remote_builder.cloud_build.project` | *unset* | Builds no daemonless path covers (a package without wheels, `system_packages`, a project `Dockerfile`, the dependency image of a split build the wheels cannot build) run on Google Cloud Build in this project, through the `gcloud` CLI signed in on your machine, instead of a local container daemon. `linux/amd64` only. A target's or the workspace's `remote_builder` fills it when the project sets none. Not part of the content label. See [Builders](/operate/builders/#building-on-cloud-build). |
 | `build.remote_builder.cloud_build.region` | *unset* | Cloud Build region, such as `us-central1`; gcloud's `builds/region`, else global, when unset. |
 | `build.remote_builder.cloud_build.worker_pool` | *unset* | A private pool, `projects/<project>/locations/<region>/workerPools/<name>`. |
@@ -508,6 +509,7 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS` | _(empty)_ | both | Comma-separated origins (`scheme://host[:port]`, no path) whose pages may post a handoff, typically your portal. A post with any other `Origin`, or none, is refused with `403`, so another site cannot sign a visitor in as someone else. Required when the issuer is set. Helm: `auth.trustedIssuer.allowedOrigins`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_BEARER_AUDIENCES` | _(empty)_ | both | Comma-separated audiences whose tokens from the trusted issuer are accepted as the bearer of any `/api/v2` request, reused until they expire: the [bearer mode](#trusted-issuer-bearer-tokens), for remote MCP clients behind your platform (`leoflow-mcp` is the conventional audience). Each must differ from `DEXAFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE`. Empty leaves the mode off. Helm: `auth.trustedIssuer.bearerAudiences`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS` | `0` | both | Longest `exp - iat` a bearer token may have. `0` uses 900 seconds; at most 3600. Helm: `auth.trustedIssuer.bearerMaxLifetimeSeconds`. |
+| `DEXAFLOW_AUTH_TRUSTED_ISSUER_DEPLOY_AUDIENCE` | _(empty)_ | both | Makes the trusted issuer the only way to deploy: registering a DAG version, its dry run, setting the current version and deleting a DAG then take only a bearer the issuer minted for this audience alone with the `dexaflow:deploy` scope. See [Deploys through the issuer only](#deploys-through-the-issuer-only). Must differ from `DEXAFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE` and every bearer audience; boot fails otherwise, or when the issuer is not set. Empty changes nothing. Helm: `auth.trustedIssuer.deployAudience`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_HOST_PATTERN` | _(empty)_ | both | Binds every browser session to its tenant's host, for an operator that serves each tenant on its own host in front of one Dexaflow, for example `{tenant}.example.com`. A handoff for a tenant is accepted only on that tenant's host, and a session cookie only on the host of the session's tenant. See [Binding sessions to tenant hosts](#binding-sessions-to-tenant-hosts). A host and optional port with exactly one `{tenant}`; boot fails otherwise, or when the issuer is not set. Empty binds nothing. Helm: `auth.trustedIssuer.hostPattern`. |
 | `DEXAFLOW_AUTH_EXTERNAL_SIGNIN_URL` | _(empty)_ | both | Sends UI visitors without a session to your own sign-in instead of Dexaflow's page, for a Dexaflow served from a larger platform. The page they asked for travels in a `next` query parameter (a same-origin path, `/` when the request carried anything else), added to whatever query your URL already has; your flow is expected to return them with a Dexaflow session. A refused [trusted-issuer handoff](#trusted-issuer-handoff) is also sent back here, with an `error` code. API calls without a session still get `401`. `/api/v2/auth/login?local=1` and a refused single sign-on still render Dexaflow's page, so break-glass access survives an outage of your sign-in. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSigninUrl`. |
 | `DEXAFLOW_AUTH_EXTERNAL_SIGNOUT_URL` | _(empty)_ | both | Where `/api/v2/auth/logout` lands after clearing the session cookie, so your platform can end its own session too. Empty returns to Dexaflow's sign-in page. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSignoutUrl`. |
@@ -1045,6 +1047,60 @@ so a user can grant a client less than their own rights:
 
 Dexaflow tokens and the sessions the browser handoff opens carry no scopes;
 only their roles decide.
+
+#### Deploys through the issuer only
+
+An operator whose deployments belong to a platform (a CD system, a
+review-and-approve service) can make that platform the only way to deploy, so
+nobody skips its checks and audit by calling the API directly. Set a deploy
+audience, minted by the issuer for that platform only:
+
+```yaml
+auth:
+  trusted_issuer:
+    # ... the handoff keys above ...
+    deploy_audience: dexaflow-deploy
+```
+
+Then `POST /api/v2/dags/{id}/versions`, its dry run
+(`POST /api/v2/dags/{id}/versions/dry_run`),
+`PUT /api/v2/dags/{id}/currentVersion` (rollback) and
+`DELETE /api/v2/dags/{id}` (an undeploy) accept only a bearer of the trusted
+issuer whose `aud` is `deploy_audience` alone and that carries
+`dexaflow:deploy`, and the linked user's roles must still allow it (`deploy`
+or `write` on dags; `write` on dags to delete). Every other credential is refused with `403`,
+a detail saying that deploys go through the trusted issuer and the header
+`Dexaflow-Deploy-Via: trusted-issuer`, whatever its roles and scopes: a UI
+session, a password login token, an API token (`dexaflow auth create-token
+--scope deploy` included), a bearer of one of the `bearer_audiences`, a token
+whose `aud` names the deploy audience next to another audience, the session a
+handoff opens, and the `auth.dev_no_auth` principal. `dexaflow deploy` turns
+that `403` into a message that says so. Reads, run control and every other
+route are unchanged. Pausing and unpausing a DAG (`PATCH /api/v2/dags/{id}`)
+stays under roles and the `dexaflow:run` scope on purpose: it is run control,
+not a deploy, so an operator can still stop a DAG without the platform.
+
+- The deploy audience is a bearer audience of its own: it turns the bearer
+  checks above on even with no `bearer_audiences`, and its tokens follow the
+  same rules (lifetime, linked user, tenant, no `jti` rule).
+- A deploy-audience token gets the scopes it carries, like any bearer. Mint
+  it with `dexaflow:deploy` alone, so it reaches only the deploy routes and
+  the reads a deploy makes; with more scopes it can do more, as any bearer can.
+- A deploy token's `aud` is the deploy audience alone (a string, or an array
+  of that one entry). A token minted for the deploy audience and another
+  bearer audience, such as `[leoflow-mcp, dexaflow-deploy]`, is an ordinary
+  bearer of that other audience and is refused on these routes, so the
+  client it was minted for cannot deploy with it. Audiences are compared
+  exactly, case included.
+- `deploy_audience` must differ from `audience` and from every
+  `bearer_audiences` entry, so neither a handoff token nor another client's
+  bearer is ever a deploy token, and has no surrounding spaces. The server
+  refuses to start otherwise, and when the trusted issuer itself is not
+  configured. The Helm chart refuses to render `deployAudience` without
+  `issuer`.
+- Nothing else registers a version or changes the current version: the UI's
+  version screens only read, and the MCP server has no deploy tool (it reads
+  and controls runs through the same API with its client's token).
 
 ### Operator service API
 

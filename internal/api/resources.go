@@ -1385,7 +1385,7 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 		// Pause and unpause are run control (ADR 0067). A change that lets this
 		// route set more than is_paused must revisit its scope.
 		g.PATCH("/:dag_id", RequireScopedPermission("write", "dag", auth.ScopeRun), patchDagHandler(deps.Dags))
-		g.DELETE("/:dag_id", RequirePermission("write", "dag"), deleteDagHandler(deps.Dags))
+		g.DELETE("/:dag_id", RequireUndeployPermission(deps.DeployViaIssuer), deleteDagHandler(deps.Dags))
 	}
 	if deps.DagRuns != nil {
 		g := r.Group("/api/v2/dags/:dag_id/dagRuns")
@@ -1428,13 +1428,13 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 	if deps.Versions != nil {
 		admission := specAdmission{unitGate{deps.ResourceUnit, deps.UnitMisfits, deps.Logger}, deps.SourceModeImage, deps.ExecutionPolicy}
 		execution := executionReporter{policy: deps.WarmPolicy, pools: deps.WarmPools, absent: deps.WarmWorkersAbsent}
-		r.POST("/api/v2/dags/:dag_id/versions", RequireDeployPermission(), registerVersionHandler(deps.Versions, admission, execution))
+		r.POST("/api/v2/dags/:dag_id/versions", RequireDeployPermission(deps.DeployViaIssuer), registerVersionHandler(deps.Versions, admission, execution))
 		// The dry run of a register (#1705): the same permission and scope,
 		// so it answers a deploy what the register would.
-		r.POST("/api/v2/dags/:dag_id/versions/dry_run", RequireDeployPermission(), dryRunVersionHandler(deps.Versions, admission, execution))
+		r.POST("/api/v2/dags/:dag_id/versions/dry_run", RequireDeployPermission(deps.DeployViaIssuer), dryRunVersionHandler(deps.Versions, admission, execution))
 		// Making a registered version live again is a deploy decision: the same
 		// permission and scope as registering one (#1702).
-		r.PUT("/api/v2/dags/:dag_id/currentVersion", RequireDeployPermission(), setCurrentVersionHandler(deps.Versions, admission))
+		r.PUT("/api/v2/dags/:dag_id/currentVersion", RequireDeployPermission(deps.DeployViaIssuer), setCurrentVersionHandler(deps.Versions, admission))
 	}
 	if deps.Xcoms != nil {
 		r.GET("/api/v2/xcoms/:dag_id/:dag_run_id/:task_id/:key", RequirePermission("read", "xcom"), xcomHandler(deps.Xcoms))

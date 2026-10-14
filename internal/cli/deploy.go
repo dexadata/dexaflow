@@ -472,7 +472,21 @@ func requireRegistry(cfg *domain.LeoflowConfig) error {
       this deploy:                --registry ghcr.io/<your-org>  (or DEXAFLOW_REGISTRY)
       the whole cluster:          deploy.defaults.registry in the server's Helm values
 
-  The image name defaults to the dag_id. Then authenticate your builder once:  docker login ghcr.io`)
+  The image name defaults to the dag_id. Then give the CLI a credential for the registry:
+%s`, registryLoginHints())
+}
+
+// registryLoginHints lists the credential each kind of registry takes
+// (ADR 0080): the cloud CLI's session for Artifact Registry, GCR, ECR and
+// ACR, the docker config for any other. With no registry configured there is
+// no host to name the exact command for, as the preflight does.
+func registryLoginHints() string {
+	session := func(p string) string { return build.CloudRegistry{Provider: p}.SessionCommand() }
+	return "      Artifact Registry, GCR: " + session(build.ProviderGoogle) + "\n" +
+		"      ECR: " + session(build.ProviderAWS) + "\n" +
+		"      ACR: " + session(build.ProviderAzure) + "\n" +
+		"      any other registry: docker login <registry>\n" +
+		"  A build by a local container tool pushes with that tool's own login; the deploy preflight names it."
 }
 
 // repinImageInSpec rewrites the compiled dag.json's image field to the
@@ -997,15 +1011,18 @@ func registerDeployedDAG(ctx context.Context, out io.Writer, r registerRequest) 
 	if jerr := json.Unmarshal(repinned, &spec); jerr != nil {
 		return deployResult{}, fmt.Errorf("parsing compiled dag.json: %w", jerr)
 	}
-	status, body, uerr := pushVersionPaused(ctx, r.serverURL, r.token, spec.DagID, repinned, r.paused)
+	status, header, raw, uerr := postVersion(ctx, versionPost{serverURL: r.serverURL, token: r.token, dagID: spec.DagID, spec: repinned, paused: r.paused})
 	if uerr != nil {
 		return deployResult{}, uerr
 	}
+	if err := deployViaIssuerError(r.serverURL, status, header, raw); err != nil {
+		return deployResult{}, err
+	}
 	if status >= http.StatusMultipleChoices {
-		return deployResult{}, versionConflictHint(apiStatusError(status, []byte(body)), r.version, r.origin)
+		return deployResult{}, versionConflictHint(apiStatusError(status, raw), r.version, r.origin)
 	}
 	var answer registerAnswer
-	_ = json.Unmarshal([]byte(body), &answer) //nolint:errcheck // an older server's body may say less; the register itself succeeded
+	_ = json.Unmarshal(raw, &answer) //nolint:errcheck // an older server's body may say less; the register itself succeeded
 	warnPausedIgnored(r.warn, r.paused, answer.IsPaused)
 	res := deployResult{DagID: spec.DagID, Version: r.version, Image: r.digestRef, Digest: digestOf(r.digestRef),
 		SpecHash: answer.SpecHash, IsPaused: answer.IsPaused, Created: status == http.StatusCreated,
