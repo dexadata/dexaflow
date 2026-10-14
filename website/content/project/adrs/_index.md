@@ -92,6 +92,7 @@ this page.
 - [ADR 0077: a pushed build splits into a dependency image and a code layer](/project/adrs/0077-dependency-image-and-code-layer/)
 - [ADR 0078: the dependency image is built from wheels without a daemon](/project/adrs/0078-dependency-image-from-wheels/)
 - [ADR 0079: the CLI signs in with single sign-on through the server, which stays the only OIDC client](/project/adrs/0079-cli-sso-through-the-server/)
+- [ADR 0080: registry credentials from the cloud CLI session, after the docker config](/project/adrs/0080-registry-credentials-from-cloud-cli-sessions/)
 - [ADR 0081: the CLI signs in from a machine with no browser through a device sign-in served by Dexaflow](/project/adrs/0081-cli-device-sign-in/)
 
 ## Template

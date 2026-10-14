@@ -38,6 +38,8 @@ type planInput struct {
 	// would: whether the registry already holds the image for this label.
 	reuse     bool
 	platforms []string
+	// registry reads the registry with the project's credentials.
+	registry build.Registry
 }
 
 // serverDag is what the plan learns about the DAG from the server's details:
@@ -115,7 +117,7 @@ func planReuse(ctx context.Context, p *deployPlan, in planInput) {
 	if !p.Build || !in.reuse {
 		return
 	}
-	if b, _ := build.Select(ctx, build.Options{Reuse: true}, in.image, in.platforms); b.Path() != build.PathSkip {
+	if b, _ := build.Select(ctx, build.Options{Reuse: true, Registry: in.registry}, in.image, in.platforms); b.Path() != build.PathSkip {
 		return
 	}
 	p.Build, p.Push = false, false

@@ -66,7 +66,9 @@ type wheelPlatform struct {
 
 // wheelPlan is how the dependency image of a split is built from wheels.
 type wheelPlan struct {
-	uv        *uvTool
+	uv *uvTool
+	// reader reads the base image with the project's credentials.
+	reader    baseReader
 	base      build.Pinned
 	python    string
 	platforms []wheelPlatform
@@ -79,14 +81,14 @@ type wheelPlan struct {
 // without a daemon (ADR 0078) and resolves the dependencies for every
 // platform when it can; otherwise it returns nil and why not, for the
 // builder line.
-func planWheels(ctx context.Context, u *uvTool, cfg *domain.LeoflowConfig, deps []string, base build.Pinned, platforms []string) (plan *wheelPlan, why string) {
+func planWheels(ctx context.Context, u *uvTool, cfg *domain.LeoflowConfig, deps []string, reader baseReader, base build.Pinned, platforms []string) (plan *wheelPlan, why string) {
 	if why := wheelBlocker(cfg, deps, platforms); why != "" {
 		return nil, why
 	}
 	if err := u.findPython(ctx); err != nil {
 		return nil, fmt.Sprintf("uv finds no Python on this machine, which it needs even for another version (%v)", err)
 	}
-	p := &wheelPlan{uv: u, base: base}
+	p := &wheelPlan{uv: u, reader: reader, base: base}
 	if cfg.Dbt == nil {
 		p.env = []string{"PYTHONPATH=" + build.Workdir}
 	}
@@ -147,7 +149,7 @@ func normalizedPlatforms(platforms []string) []string {
 // resolve reads the base image for one platform, checks that it is a
 // Dexaflow runtime base, and resolves the dependencies for it.
 func (p *wheelPlan) resolve(ctx context.Context, cfg *domain.LeoflowConfig, deps []string, platform string) (wp wheelPlatform, why string) {
-	bi, err := baseRegistry.Base(ctx, p.base, platform)
+	bi, err := p.reader.Base(ctx, p.base, platform)
 	if err != nil {
 		return wheelPlatform{}, fmt.Sprintf("the base image could not be read for %s (%v)", platform, unwrapped(err))
 	}

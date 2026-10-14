@@ -80,7 +80,7 @@ days", which described a versioning shape the project does not have.
 
 ## Recognition
 
-We maintain a Security Hall of Fame acknowledging researchers who have responsibly disclosed vulnerabilities. With your permission, we credit you publicly when we publish the fix.
+With your permission, we credit researchers who responsibly disclose vulnerabilities in the GitHub Security Advisory and in the release notes for the fix. There is no separate Hall of Fame page.
 
 ## Out of Scope
 

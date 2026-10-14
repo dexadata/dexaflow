@@ -26,10 +26,18 @@ type baseReader interface {
 	Base(ctx context.Context, base build.Pinned, platform string) (build.BaseImage, error)
 }
 
-// baseRegistry reads the base image for the dependency key. It is a
-// variable only so the tests of this package keep the CLI off the network
-// (split_seam_test.go); nothing else assigns it.
-var baseRegistry baseReader = build.Registry{}
+// baseReaderFor reads the base image of cfg's project, for the dependency
+// key and the dependency layer, with the project's registry credentials
+// (registryFor, registry.auth_method).
+func baseReaderFor(cfg *domain.LeoflowConfig) baseReader {
+	return wrapBaseReader(registryFor(cfg))
+}
+
+// wrapBaseReader turns the registry client into the base reader. It is a
+// variable only so the tests of this package keep the CLI off public
+// registries (split_seam_test.go) while still reading through the
+// project's client; nothing else assigns it.
+var wrapBaseReader = func(r build.Registry) baseReader { return r }
 
 // depsKeyFormat versions the layout of the dependency image and of the code
 // layer. Bumping it gives every project a new dependency key.
@@ -76,7 +84,8 @@ func splitFor(ctx context.Context, dir, dockerfile string, o compileOptions, cfg
 		return nil, looseReason(loose, noWheels)
 	}
 	base := resolveBaseImage(cfg)
-	pinned, err := baseRegistry.Resolve(ctx, base)
+	reader := baseReaderFor(cfg)
+	pinned, err := reader.Resolve(ctx, base)
 	if err != nil {
 		return nil, fmt.Sprintf("the digest of the base image %s could not be read (%v)", base, unwrapped(err))
 	}
@@ -86,8 +95,10 @@ func splitFor(ctx context.Context, dir, dockerfile string, o compileOptions, cfg
 	}
 	if uv != nil {
 		var plan *wheelPlan
-		if plan, noWheels = planWheels(ctx, uv, cfg, deps, pinned, platforms); plan != nil {
-			split := &build.Split{DepsImage: depsImage(image, plan.key()), Dockerfile: content, Wheels: plan.layer(), Note: plan.note()}
+		if plan, noWheels = planWheels(ctx, uv, cfg, deps, reader, pinned, platforms); plan != nil {
+			wheels := plan.layer()
+			wheels.Registry = registryFor(cfg)
+			split := &build.Split{DepsImage: depsImage(image, plan.key()), Dockerfile: content, Wheels: wheels, Note: plan.note()}
 			if len(loose) == 0 {
 				split.DaemonDepsImage = depsImage(image, depsKey(content, platforms))
 			}

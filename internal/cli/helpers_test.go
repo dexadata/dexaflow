@@ -42,7 +42,7 @@ func TestLoadProjectConfigAppliesDefaults(t *testing.T) {
 	if cfg.Build == nil || cfg.Build.Context != "." {
 		t.Errorf("Build.Context default not applied: got %+v", cfg.Build)
 	}
-	if cfg.Registry == nil || cfg.Registry.AuthMethod != "docker_config" {
+	if cfg.Registry == nil || cfg.Registry.AuthMethod != "auto" {
 		t.Errorf("Registry default not applied: got %+v", cfg.Registry)
 	}
 }
