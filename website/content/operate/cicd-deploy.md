@@ -333,8 +333,9 @@ How the comparison works:
 - **A project removed since the ref** (its `dexaflow.yaml` or `dag.py` deleted)
   is reported with its `dag_id`, and nothing is deployed or deregistered for
   it: its DAG stays registered and scheduled until you pause it with
-  `dexaflow admin dags pause <dag_id>` or remove it with
-  `dexaflow dags delete <dag_id> --deregister`. A project moved to another
+  `dexaflow admin dags pause <dag_id>` (or every such DAG at once with
+  [`dexaflow sync <dir> --prune`](#syncing-a-target-with-the-workspace-gitops))
+  or remove it with `dexaflow dags delete <dag_id> --deregister`. A project moved to another
   folder keeps its `dag_id`: it is reported as moved, with no removal advice,
   and deployed from its new folder. A `dag_id` changed in place is not reported:
   the project is deployed under its new id, and the DAG under the old id stays
@@ -490,6 +491,177 @@ Two things that look like a rollback are not:
 `dexaflow deploy` of code that matches a version registered earlier (after a
 `git revert`, for example) stops before building and suggests the
 `dexaflow rollback <dag_id> --to <label>` command for that version.
+
+## Syncing a target with the workspace (GitOps)
+
+`dexaflow sync <dir>` makes the target in use run what a folder of DAG
+projects holds, the way Argo CD or Flux make a cluster match a repository. It
+compares every project under `<dir>` with the DAGs registered on the target,
+says per DAG what it does, and does it:
+
+```bash
+dexaflow sync ./dags --dry-run --prune     # what would change; exit 1 if anything would
+dexaflow sync ./dags --prune --yes         # make the target match
+```
+
+```text
+workspace: /repo/dags
+target prod: https://pro.example.com (target prod, from --target)
+
+  DAG      STATE             CURRENT VERSION       PAUSED  ACTION
+  billing  drift             v1.3.0-77aa01 (#4)    no      deploy v1.4.0-3fa2c1
+  intake   not deployed      -                     -       deploy v1.4.0-9b0e12
+  orders   behind            v1.4.0-c41d2e (#7)    no      rollback to v1.3.0-0d11f9 (#6)
+  reports  in sync           v1.4.0-5e6f70 (#2)    no      none
+  legacy   not in workspace  -                     no      pause
+  old_etl  not in workspace  -                     yes     none: already paused
+
+dry run: 4 change(s) would be made (2 deploy, 1 rollback, 1 pause)
+```
+
+| State | What it means | What sync does |
+|---|---|---|
+| `in sync` | The local content label is the current version. | Nothing. |
+| `drift` | The content is no registered version. | Deploys it. |
+| `not deployed` | The server does not know the DAG, or holds no current version of it. | Deploys it. |
+| `behind` | The content equals an older registered version (after a `git revert`, say). | Makes that version current again, as `dexaflow rollback --to <label>` does. Nothing is built. |
+| `not in workspace` | The target holds a DAG no project under `<dir>` defines. | Reports it; with `--prune`, pauses it. |
+| `error` | The DAG could not be read or its label computed. | Nothing; the exit code is 2. |
+
+The comparison is the one [`dexaflow status`](/operate/workspaces-and-targets/)
+makes, and the label is the one `dexaflow deploy` computes, with the target's,
+the workspace's and the cluster's deploy defaults, so "in sync" means a deploy
+would build and register nothing. Pass `sync` the `--registry`, `--platform`
+and `--dockerfile` a deploy is given, since they are part of the label. The
+label starts with `git describe` of the project, so a new commit moves it even
+for a DAG whose files did not change: after each commit, `sync` deploys every
+DAG once, exactly as `deploy --all` would, and run anywhere else (a hook, a
+second clone) it must see the same history and tags as the job that deployed,
+or every DAG reads as `drift`.
+
+How each change is made:
+
+- **Deploys** go through the same code as `dexaflow deploy --all`: compile,
+  build and push (or reuse the image the registry already holds for the
+  content label), pin the digest, register. A new DAG is paused or active as
+  the server decides for new DAGs (`is_paused_upon_creation`, then
+  `dags_are_paused_at_creation`); a redeploy never changes `is_paused`.
+- **Rollbacks** make the matching version current with
+  `PUT /api/v2/dags/{dag_id}/currentVersion`, as in [Rolling back](#rolling-back).
+- **`--prune` pauses**, it never deletes: `PATCH /api/v2/dags/{dag_id}` with
+  `is_paused: true`, undone with `dexaflow admin dags unpause <dag_id>`. A DAG
+  that comes back to the workspace later is deployed again but stays paused,
+  since a deploy never changes `is_paused`: unpause it yourself. To remove a
+  DAG for good, use `dexaflow dags delete <dag_id> --deregister`.
+- A change that fails is reported on its DAG and the other changes still go
+  through. When the list of the target's DAGs cannot be read, nothing at all
+  is changed, since the plan would be incomplete.
+
+What sync compares with:
+
+- **The target holds only this workspace's DAGs.** Every DAG the token can see
+  on the target and no project under `<dir>` defines is `not in workspace`,
+  so with `--prune` a DAG deployed to the same target from another repository
+  is paused. Sync one folder per target (or per tenant), the folder that holds
+  all of that target's DAGs.
+- **A folder with no DAG project is refused**, so a wrong path never reads as
+  "nothing should run" and pauses everything.
+- **Targets resolve as for a command run in `<dir>`**: `--server`, `--target`,
+  `DEXAFLOW_TARGET`, `DEXAFLOW_SERVER_URL`, the target selected for the
+  workspace around `<dir>` (`dexaflow target use`), its `default_target`, then
+  `server_url` in the config file. The token is the one saved for that server
+  unless `--token` or `DEXAFLOW_TOKEN` is set, and the token decides the
+  tenant. Like a deploy, sync refuses to guess the built-in
+  `http://localhost:8080`.
+- **Credentials.** A [deploy token](#credentials-for-the-control-plane) can
+  read, deploy and roll back, so it is enough for `sync` and
+  `sync --dry-run --prune`. Pausing needs `write` on DAGs (and the
+  `dexaflow:run` scope for a scoped token), which the `deployer` role and a
+  deploy token do not have: `sync --prune` with one reports each pause as
+  failed (`403`) and exits 2.
+
+Exit codes, for a CI check or a hook:
+
+| Code | Meaning |
+|---|---|
+| `0` | The target matches the workspace (`--dry-run`), or every change was applied. |
+| `1` | `--dry-run` found something to change. |
+| `2` | The target or a DAG could not be read, a change failed, or the command was used wrongly. |
+
+A DAG that is `not in workspace` counts as a change only with `--prune`, and
+only while it is not paused, so `sync --dry-run` without `--prune` passes on a
+target that also runs DAGs from elsewhere.
+
+`--output json` prints one JSON document on stdout (the deploy lines go to
+stderr): `workspace`, `target`, `server`, `source`, `dry_run`, `prune`, an
+`error` when the target could not be read, `dags` (each with `dag_id`, `path`
+for a project, `state`, `local_version`, `current_version`,
+`matched_version` for `behind`, `is_paused`, `action` (`none`, `deploy`,
+`rollback` or `pause`), `result` (`planned`, `applied` or `failed`), the
+`deploy` result of a deployed DAG, and `error`), a `summary` (`in_sync`,
+`deploy`, `rollback`, `pause`, `not_in_workspace`, `errors`) and the
+`exit_code`. Fields are only ever added.
+
+**As a CI check.** Run the dry run on a schedule, or after the deploy job, to
+catch a target changed by hand or a deploy that did not finish:
+
+```yaml
+      - name: Is prod running what main holds
+        env:
+          DEXAFLOW_SERVER_URL: https://pro.example.com
+          DEXAFLOW_TOKEN: ${{ secrets.DEXAFLOW_TOKEN }}   # a deploy token
+        run: dexaflow sync ./dags --dry-run --prune
+```
+
+**As an Argo CD hook.** Argo CD runs a `Job` annotated as a hook after each
+sync of the Application. The control plane never reads git (the DAGs are
+built and registered from outside it), so the Job checks out the revision and
+runs `dexaflow sync` itself, from a full clone (history and tags, so the
+labels match the ones CI registered). A pod usually has no image builder: let CI build
+and push the images (`dexaflow deploy --all`, or `compile --build --push`),
+and the hook's deploys then reuse the image the registry holds for each
+content label. A DAG whose image is missing fails with exit 2, which fails
+the hook. There is no published CLI image yet: build one with the release
+binary, `git` and Python 3.11 to 3.13 (the compile parses `dag.py`).
+
+```yaml title="dags-sync-hook.yaml"
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: dexaflow-sync-
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: sync
+          image: registry.example.com/tools/dexaflow-cli:<VERSION>   # your image with the CLI, git and Python
+          env:
+            - name: DEXAFLOW_SERVER_URL
+              value: https://pro.example.com
+            - name: DEXAFLOW_TOKEN
+              valueFrom: { secretKeyRef: { name: dexaflow-sync, key: token } }
+            - name: REVISION
+              value: main            # or the commit your Application tracks
+          command: [sh, -c]
+          args:
+            - git clone https://github.com/acme/dags /work &&
+              git -C /work checkout --quiet "$REVISION" &&
+              dexaflow sync /work/dags --prune --yes
+```
+
+`--prune` needs a token that may pause DAGs (see Credentials above); with a
+deploy token, drop it and run `dexaflow sync /work/dags --dry-run --prune` as a
+separate check that reports the DAGs to retire.
+
+**With Flux**, which has no hooks, put the same `Job` in the Kustomization
+that tracks the repository, with `spec.force: true` so Flux replaces the Job
+when it changes, or run `dexaflow sync <dir> --dry-run --prune` from a
+`CronJob` that alerts on exit 1.
 
 ## Prerequisites
 

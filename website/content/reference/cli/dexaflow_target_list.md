@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_target_list/
 title: "dexaflow target list"
 linkTitle: "target list"
-weight: 61
+weight: 62
 ---
 
 List the targets, marking the one in use.

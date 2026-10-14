@@ -40,6 +40,7 @@ Dexaflow is a GitOps-first, container-native workflow orchestrator.
 * [dexaflow server](/reference/cli/dexaflow_server/)	 - Information about running the control plane.
 * [dexaflow setup](/reference/cli/dexaflow_setup/)	 - Bootstrap the managed Dexaflow runtime (Python, parser, workspace).
 * [dexaflow status](/reference/cli/dexaflow_status/)	 - Show per DAG the version current on a target, its last run, and drift from the workspace.
+* [dexaflow sync](/reference/cli/dexaflow_sync/)	 - Make the target run the DAGs of a workspace: deploy what changed, report or pause what is gone (Pro).
 * [dexaflow target](/reference/cli/dexaflow_target/)	 - Manage named control planes (targets) to deploy to and query.
 * [dexaflow uninstall](/reference/cli/dexaflow_uninstall/)	 - Remove the Dexaflow installation (~/.dexaflow).
 * [dexaflow validate](/reference/cli/dexaflow_validate/)	 - Validate dexaflow.yaml and the DAG source against the schema.

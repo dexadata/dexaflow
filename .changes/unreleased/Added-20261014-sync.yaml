@@ -1,0 +1,18 @@
+kind: Added
+body: |-
+  **`dexaflow sync <dir>` makes a target run the DAGs of a workspace folder.**
+  It compares every DAG project under `<dir>` with the DAGs registered on the
+  target in use (`--target`, `--server` and the workspace's targets resolve
+  as for a command run in `<dir>`) and, per DAG, does nothing when it is in
+  sync, deploys it through the same code as `dexaflow deploy --all` when its
+  content is new or changed, and makes the matching older version current
+  again when the content equals one (after a `git revert`). DAGs the target
+  holds and the workspace does not are reported, and with `--prune` paused;
+  nothing is ever deleted. The comparison is the one `dexaflow status` makes,
+  with the same content label as `deploy`. `--dry-run` builds, pushes and
+  changes nothing, so it works as a CI check or an Argo CD or Flux hook. The
+  exit code is 0 when the target matches (or every change was applied), 1
+  when a dry run found something to change, and 2 when something could not be
+  read or a change failed. `--output json` prints one stable JSON document.
+  A folder with no DAG project is refused. (#1708)
+time: 2026-10-14T22:00:00.000000000-03:00

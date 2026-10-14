@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_target_remove/
 title: "dexaflow target remove"
 linkTitle: "target remove"
-weight: 62
+weight: 63
 ---
 
 Remove a target (from the workspace file, or your config with --global).
