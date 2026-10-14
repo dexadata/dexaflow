@@ -3,7 +3,9 @@ package cli
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -261,4 +263,131 @@ func lineWith(out, prefix string) string {
 		}
 	}
 	return ""
+}
+
+// clusterPlatformsBody advertises linux/arm64 and a base image, no registry.
+const clusterPlatformsBody = `{"registry":"","platforms":["linux/arm64"],"base_image":"ghcr.io/acme/base:2"}`
+
+// builtTag returns the -t value of the first build call in the argv log.
+func builtTag(t *testing.T, log string) string {
+	t.Helper()
+	for _, call := range argvLines(t, log) {
+		f := strings.Fields(call)
+		if len(f) == 0 || f[0] != "build" {
+			continue
+		}
+		for i := 0; i+1 < len(f); i++ {
+			if f[i] == "-t" {
+				return f[i+1]
+			}
+		}
+	}
+	t.Fatalf("no build call with -t in %q", argvLines(t, log))
+	return ""
+}
+
+// TestBuildPushAndDeploySkipBuildAgreeOnTheLabel: the label hashes the
+// resolved config, so `build --push` must apply the cluster's platforms and
+// base image as deploy does, or `deploy --skip-build` looks up a tag the
+// build never pushed.
+func TestBuildPushAndDeploySkipBuildAgreeOnTheLabel(t *testing.T) {
+	isolateCLIEnv(t)
+	reg := newFakeOCIRegistry(t, amd64AndArm64)
+	ws := t.TempDir()
+	dir := filepath.Join(ws, "etl")
+	writeTree(t, filepath.Join(dir, projectConfigFile), "dag_id: etl\nregistry:\n  url: "+reg.host+"/team\n  image_name: etl\n")
+	writeTree(t, filepath.Join(dir, "dag.py"), "# dag\n")
+	t.Setenv("LEOFLOW_PARSER_CMD", recordingParser(t, filepath.Join(t.TempDir(), "parser.log")))
+	fake := &clusterServer{deployServer: &deployServer{}, body: clusterPlatformsBody}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	t.Setenv("DEXAFLOW_SERVER_URL", srv.URL)
+	t.Setenv("DEXAFLOW_TOKEN", "tok")
+	cfg := emptyConfig(t)
+	builder, log := argvBuilder(t)
+
+	if out, _, err := run(t, "build", ws, "--push", "--builder", builder, "--config", cfg); err != nil {
+		t.Fatalf("build --push: %v\n%s", err, out)
+	}
+	tag := builtTag(t, log)
+	if !strings.Contains(strings.Join(argvLines(t, log), "\n"), "--platform linux/arm64") {
+		t.Errorf("build --push did not build for the cluster's platform: %q", argvLines(t, log))
+	}
+	out, _, err := run(t, "deploy", dir, "--skip-build", "--yes", "--builder", builder, "--config", cfg)
+	if err != nil {
+		t.Fatalf("deploy --skip-build: %v\n%s", err, out)
+	}
+	if want := strings.TrimPrefix(tag, reg.host+"/"); !slices.Contains(reg.readList(), want) {
+		t.Errorf("deploy --skip-build read %v, want the tag build pushed (%s)", reg.readList(), want)
+	}
+}
+
+// TestBuildWithoutPushNeverAsksTheServer: a local build stays offline.
+func TestBuildWithoutPushNeverAsksTheServer(t *testing.T) {
+	isolateCLIEnv(t)
+	ws := t.TempDir()
+	writeBuildProject(t, ws, "alpha", "alpha-img")
+	bin := t.TempDir()
+	t.Setenv("LEOFLOW_PARSER_CMD", stubParser(t, bin))
+	fake := &clusterServer{deployServer: &deployServer{}, body: clusterPlatformsBody}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	t.Setenv("DEXAFLOW_SERVER_URL", srv.URL)
+	if _, err := runBuildCmd(t, "build", ws, "--builder", stubBuilder(t, bin, filepath.Join(bin, "argv.log"), ""), "--config", emptyConfig(t)); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if fake.asked != 0 {
+		t.Errorf("a build without --push asked the server %d times", fake.asked)
+	}
+}
+
+// TestDeployBuildsWithTheClusterPlatformAndBaseImage: past the plan, the
+// cluster's platform reaches the builder and its base image the generated
+// Dockerfile.
+func TestDeployBuildsWithTheClusterPlatformAndBaseImage(t *testing.T) {
+	isolateCLIEnv(t)
+	dir, _ := platformProjectWith(t, amd64AndArm64, "")
+	builder, log := argvBuilder(t)
+	// The generated Dockerfile is removed after the build: the stub keeps a
+	// copy of what it was handed with -f.
+	seen := filepath.Join(t.TempDir(), "Dockerfile.seen")
+	writeTree(t, builder, "#!/bin/sh\necho \"$*\" >> \""+log+"\"\n"+
+		"while [ $# -gt 0 ]; do if [ \"$1\" = -f ]; then cp \"$2\" \""+seen+"\"; fi; shift; done\nexit 0\n")
+	if err := os.Chmod(builder, 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
+		t.Fatal(err)
+	}
+	fake := &clusterServer{deployServer: &deployServer{}, body: clusterPlatformsBody}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	out, _, err := run(t, "deploy", dir, "--server", srv.URL, "--token", "tok", "--yes", "--rebuild", "--builder", builder, "--config", emptyConfig(t))
+	if err != nil {
+		t.Fatalf("deploy: %v\n%s", err, out)
+	}
+	calls := argvLines(t, log)
+	if len(calls) == 0 || !strings.HasPrefix(calls[0], "build --platform linux/arm64 ") {
+		t.Errorf("builder calls = %q, want a build for linux/arm64", calls)
+	}
+	if df := readProjectFile(t, filepath.Dir(seen), filepath.Base(seen)); !strings.Contains(df, "FROM ghcr.io/acme/base:2") {
+		t.Errorf("generated Dockerfile does not use the cluster's base image:\n%s", df)
+	}
+	if fake.registers != 1 {
+		t.Errorf("registers = %d, want 1", fake.registers)
+	}
+}
+
+// TestDoctorChecksTheClusterRegistry: doctor checks the push to the registry
+// a deploy would use, the cluster's included.
+func TestDoctorChecksTheClusterRegistry(t *testing.T) {
+	isolateCLIEnv(t)
+	noDockerCredentials(t)
+	reg := newFakeOCIRegistry(t, singleManifest)
+	dir := versionProject(t, "")
+	t.Chdir(dir)
+	fake := &clusterServer{deployServer: &deployServer{}, body: `{"registry":"` + reg.host + `/team","platforms":[],"base_image":""}`}
+	srv := httptest.NewServer(fake)
+	t.Cleanup(srv.Close)
+	out := doctorAgainst(t, srv.URL, "tok")
+	if want := "registry      " + reg.host + "/team/etl accepts a push"; !strings.Contains(out, want) || reg.uploadCount() != 1 {
+		t.Errorf("uploads=%d, doctor does not say %q:\n%s", reg.uploadCount(), want, out)
+	}
 }

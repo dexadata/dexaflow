@@ -178,7 +178,9 @@ who may read DAGs, and to an API token with the `dexaflow:read` or
 same for every tenant of the cluster and are not secrets: registry credentials
 never go there. The chart and the server refuse a value no deploy could use (a
 registry with a scheme, credentials or a tag, a platform that is not
-`os/arch`), so a typo fails the install instead of every deploy. Every key is
+`os/arch`, platforms given as a string instead of a list, a base image with
+whitespace, a quote, a backslash or `$`), so a typo fails the install instead
+of every deploy. Every key is
 listed under [`deploy.defaults.*`](/reference/configuration/#cluster-deploy-defaults-deploydefaults).
 
 `dexaflow deploy` reads them from the server it deploys to, once per command,
@@ -206,8 +208,15 @@ base image: ghcr.io/acme/base:1 (from the deploy defaults of https://flow-dev.ac
 A server from before this endpoint answers 404, and the deploy then resolves
 exactly as it did before, without a message. Any other failure to read the
 defaults (an error status, an answer that is not usable) prints a warning and
-the deploy goes on with the local settings only. `compile` and `build` never
-ask a server: they use the local sources alone.
+the deploy goes on with the local settings only.
+
+`build --push` reads them too, from the server a deploy would go to (the
+target in use, `DEXAFLOW_SERVER_URL` or `server_url`), the same way, because
+the content label hashes the resolved platforms and base image: an image it
+pushes then carries the label `deploy --skip-build` to that server looks up.
+With no server configured it uses the local sources alone. `compile` and a
+`build` without `--push` never ask a server, so on a cluster that advertises
+platforms or a base image their label can differ from the deploy's.
 
 ## The workspace file
 

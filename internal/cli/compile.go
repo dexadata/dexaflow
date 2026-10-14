@@ -72,6 +72,10 @@ type compileOptions struct {
 	// beforeBuild, when set, runs once dag.json is compiled and validated and
 	// before anything is built: deploy's dry run of the register (#1705).
 	beforeBuild func() error
+	// cluster is the deploy defaults layer the caller resolved (deploy, and
+	// build --push), nil for none. The compile applies it again after the
+	// local sources, so what is built is what the caller labeled and showed.
+	cluster *defaultsLayer
 }
 
 func newCompileCommand() *cobra.Command {
@@ -132,15 +136,15 @@ func defaultOutputPath(dir, explicit string) string {
 
 // loadCompileConfig is resolveCompileTarget plus the workspace and target
 // defaults (applyWorkspaceDefaults) that deploy applies too, so a compile and a
-// deploy of the same project build the same image. Only deploy also reads the
-// deploy defaults a cluster advertises, for what every local source leaves
-// unset; a compile works offline and never asks a server.
+// deploy of the same project build the same image. The deploy defaults a
+// cluster advertises apply only when the caller read them (o.cluster: deploy,
+// build --push); `compile` itself works offline and never asks a server.
 func loadCompileConfig(cmd *cobra.Command, dir string, o compileOptions) (*domain.LeoflowConfig, defaultsProvenance, error) {
 	cfg, err := resolveCompileTarget(dir, o.output)
 	if err != nil {
 		return nil, defaultsProvenance{}, err
 	}
-	prov, derr := applyWorkspaceDefaults(cmd, dir, cfg, !o.lite)
+	prov, derr := applyDefaults(cmd, dir, cfg, !o.lite, o.cluster)
 	if derr != nil {
 		return nil, defaultsProvenance{}, derr
 	}

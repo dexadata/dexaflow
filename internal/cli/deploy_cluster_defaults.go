@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/dexadata/dexaflow/internal/domain"
 	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
@@ -40,6 +42,20 @@ func (c *clusterDefaultsCache) layer(ctx context.Context, warn io.Writer, server
 	}
 	c.layers[serverURL] = l
 	return l
+}
+
+// buildClusterLayer is the cluster layer of `build --push`: the deploy
+// defaults of the server a deploy would go to, read as a deploy reads them
+// (404 silent, other failures warned), so the image it pushes carries the
+// label a later `deploy --skip-build` to that server looks up. It is nil
+// when no server is configured (the built-in localhost is not assumed) or
+// the server cannot be resolved; the build then uses the local sources only.
+func buildClusterLayer(cmd *cobra.Command) *defaultsLayer {
+	choice, token, err := resolveServerChoiceToken(cmd, "", "")
+	if err != nil || choice.Implicit {
+		return nil
+	}
+	return readClusterLayer(cmdContext(cmd), cmd.ErrOrStderr(), choice.URL, token)
 }
 
 // readClusterLayer reads and checks the server's deploy defaults.

@@ -105,3 +105,50 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: deploy.defaults.platforms
+  - it: refuses a platforms value that is not a list
+    template: deployment.yaml
+    set:
+      deploy.defaults.platforms: linux/amd64
+    asserts:
+      - failedTemplate:
+          errorPattern: deploy.defaults.platforms must be a list
+  # FROM has no quoting and its operand lexer rewrites these, so the server
+  # refuses them in base_image (domain.CheckImageReference); so does the chart.
+  - it: refuses a base image with a dollar sign
+    template: deployment.yaml
+    set:
+      deploy.defaults.baseImage: python:$TAG
+    asserts:
+      - failedTemplate:
+          errorPattern: deploy.defaults.baseImage
+  - it: refuses a base image with a quote
+    template: deployment.yaml
+    set:
+      deploy.defaults.baseImage: python:3.1'2'
+    asserts:
+      - failedTemplate:
+          errorPattern: deploy.defaults.baseImage
+  - it: refuses a base image with a backslash
+    template: deployment.yaml
+    set:
+      deploy.defaults.baseImage: python:3.1\2
+    asserts:
+      - failedTemplate:
+          errorPattern: deploy.defaults.baseImage
+  - it: refuses a base image with whitespace
+    template: deployment.yaml
+    set:
+      deploy.defaults.baseImage: python:3.12 AS x
+    asserts:
+      - failedTemplate:
+          errorPattern: deploy.defaults.baseImage
+  - it: accepts a digest-pinned base image
+    template: deployment.yaml
+    set:
+      deploy.defaults.baseImage: python:3.12-slim@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_DEFAULTS_BASE_IMAGE
+            value: python:3.12-slim@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef

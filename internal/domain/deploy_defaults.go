@@ -23,7 +23,8 @@ type DeployDefaults struct {
 }
 
 // platformPattern is the os/arch[/variant] form a platform takes, the one
-// build.ParsePlatforms accepts.
+// build.ParsePlatforms accepts (build.PlatformPattern; a test keeps the two
+// equal, as domain cannot import build).
 var platformPattern = regexp.MustCompile(`^[A-Za-z0-9]+/[A-Za-z0-9_]+(/[A-Za-z0-9]+)?$`)
 
 // IsEmpty reports whether d sets nothing.
@@ -51,8 +52,8 @@ func (d DeployDefaults) Validate(prefix string) error {
 	return nil
 }
 
-// CheckRegistryPrefix refuses a registry prefix (registry.url, a workspace's
-// registry) that cannot start an image reference: a scheme, credentials or a
+// CheckRegistryPrefix refuses a registry prefix that cannot start an image
+// reference: a scheme, credentials or a
 // digest (`@`), a tag on its last path segment, capitals, a trailing slash or
 // anything CheckImageReference refuses. A host alone, with or without a port,
 // is valid. Empty is valid: no prefix is set.

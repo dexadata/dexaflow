@@ -3,6 +3,8 @@ package domain
 import (
 	"strings"
 	"testing"
+
+	"github.com/dexadata/dexaflow/internal/build"
 )
 
 func TestDeployDefaultsValidateAcceptsUsableValues(t *testing.T) {
@@ -61,5 +63,13 @@ func TestDeployDefaultsIsEmpty(t *testing.T) {
 		if d.IsEmpty() {
 			t.Errorf("%+v reported empty", d)
 		}
+	}
+}
+
+// TestPlatformPatternMatchesTheBuilder: the server refuses at boot exactly the
+// platforms a build would refuse, so the two expressions stay equal.
+func TestPlatformPatternMatchesTheBuilder(t *testing.T) {
+	if got, want := platformPattern.String(), build.PlatformPattern; got != want {
+		t.Errorf("domain platformPattern = %q, build.PlatformPattern = %q; keep them equal", got, want)
 	}
 }

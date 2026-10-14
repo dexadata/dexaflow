@@ -607,7 +607,9 @@ spec:
               value: {{ .ctx.Values.execution.warmPoolEventRefill | quote }}
             {{- end }}
             {{- end }}
-            {{- with (.ctx.Values.deploy | default dict).defaults }}
+            {{- $deployDefaults := (.ctx.Values.deploy | default dict).defaults | default dict }}
+            {{- if or $deployDefaults.registry $deployDefaults.platforms $deployDefaults.baseImage }}
+            {{- with $deployDefaults }}
             # Cluster deploy defaults (#1704), served on /api/v2/deployDefaults.
             # Each is stamped only when set, so an install that sets none renders
             # the env it had before. deployment.yaml has already refused a value
@@ -623,6 +625,7 @@ spec:
             {{- if .baseImage }}
             - name: LEOFLOW_DEPLOY_DEFAULTS_BASE_IMAGE
               value: {{ .baseImage | quote }}
+            {{- end }}
             {{- end }}
             {{- end }}
             {{- if (.ctx.Values.execution.sourceMode | default dict).enabled }}

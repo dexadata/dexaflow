@@ -17,7 +17,12 @@ body: |-
   cluster advertises nothing and every deploy resolves as before. A server
   without the route answers 404 and the deploy proceeds silently with its
   local settings; any other failure to read them prints a warning and does
-  the same. `compile` and `build` never read them. `pkg/client` gains
+  the same. `build --push` reads them the same way from the server a
+  deploy would go to, so it pushes the content label `deploy --skip-build`
+  looks up; `compile` and a `build` without `--push` never ask a server.
+  With `deploy --output json`, a missing registry or an invalid workspace
+  file is now reported under the DAG's `dag_id` instead of an empty one.
+  `pkg/client` gains
   `Client.GetDeployDefaults` and `ErrDeployDefaultsNotServed` for the route
   (#1704).
 time: 2026-10-14T15:00:00.000000000-03:00

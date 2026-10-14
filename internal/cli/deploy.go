@@ -597,7 +597,7 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) (err error) {
 		!confirmDeploy(cmd.InOrStdin(), cmd.OutOrStdout(), dir, serverURL) {
 		return fmt.Errorf("deploy aborted")
 	}
-	d := &deployRun{cmd: cmd, dir: dir, o: o, cfg: cfg, serverURL: serverURL, token: token}
+	d := &deployRun{cmd: cmd, dir: dir, o: o, cfg: cfg, serverURL: serverURL, token: token, cluster: cluster}
 	return d.run()
 }
 
@@ -608,6 +608,9 @@ type deployRun struct {
 	o                deployOptions
 	cfg              *domain.LeoflowConfig
 	serverURL, token string
+	// cluster is the deploy defaults layer cfg was settled with, nil for
+	// none; the compile applies it again so it builds what was labeled.
+	cluster *defaultsLayer
 	// wasPaused is the DAG's is_paused before an --active deploy, so the
 	// summary can describe the backlog it releases.
 	wasPaused bool
@@ -635,6 +638,7 @@ func (d *deployRun) run() error {
 	output := filepath.Join(d.dir, "dag.json")
 	var built build.Result
 	co := compileOptions{
+		cluster:    d.cluster,
 		output:     output,
 		builder:    d.o.builder,
 		dockerfile: d.o.dockerfile,
