@@ -25,7 +25,9 @@ type fakeVersionRepo struct {
 	dryRuns    []bool                 // the dry_run of each register
 	promoted   []*domain.DagPromotion // the promoted_from of each register
 	builds     []*domain.BuildInfo    // the build_info of each register
-	err        error
+	// requireDigest is the deploy.require_digest of each register.
+	requireDigest []domain.DigestRequirement
+	err           error
 
 	// The set-current side: the specs by label the fake holds, the change it
 	// answers, and what the handler asked for.
@@ -35,6 +37,8 @@ type fakeVersionRepo struct {
 	selections []domain.DagVersionSelector
 	setTenants []string
 	admitErr   error
+	// setRequireDigest is the deploy.require_digest of each set-current.
+	setRequireDigest []domain.DigestRequirement
 }
 
 func (f *fakeVersionRepo) RegisterDagVersionAs(_ context.Context, _ string, reg domain.DagRegistration) (domain.DagRegistered, error) {
@@ -44,6 +48,7 @@ func (f *fakeVersionRepo) RegisterDagVersionAs(_ context.Context, _ string, reg 
 	f.dryRuns = append(f.dryRuns, reg.DryRun)
 	f.promoted = append(f.promoted, reg.PromotedFrom)
 	f.builds = append(f.builds, reg.BuildInfo)
+	f.requireDigest = append(f.requireDigest, reg.RequireDigest)
 	if f.err != nil {
 		return domain.DagRegistered{}, f.err
 	}
@@ -54,7 +59,9 @@ func (f *fakeVersionRepo) RegisterDagVersionAs(_ context.Context, _ string, reg 
 	return domain.DagRegistered{Created: f.created, DagCreated: f.dagCreated, IsPaused: paused}, nil
 }
 
-func (f *fakeVersionRepo) SetCurrentDagVersion(_ context.Context, tenant, _ string, sel domain.DagVersionSelector, actor string, admit func(domain.DAGSpec) error) (domain.CurrentVersionChange, error) {
+func (f *fakeVersionRepo) SetCurrentDagVersionAs(_ context.Context, tenant string, req domain.DagSetCurrent) (domain.CurrentVersionChange, error) {
+	sel, actor, admit := req.Selector, req.ActorUserID, req.Admit
+	f.setRequireDigest = append(f.setRequireDigest, req.RequireDigest)
 	f.selections = append(f.selections, sel)
 	f.setTenants = append(f.setTenants, tenant)
 	f.actors = append(f.actors, actor)

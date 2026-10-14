@@ -51,16 +51,18 @@ type deployServer struct {
 	// label is registered with: a dry run of another image is a 409, of
 	// that one an unchanged register. dryRunImages records the image of
 	// each dry run.
-	probes          int
-	dryRuns         int
-	noDryRun        bool
-	probeStatus     int
-	dryRunStatus    int
-	refusal         string
-	dryRunWarnings  []string
-	dryRunQueries   []string
-	registeredImage string
-	dryRunImages    []string
+	probes         int
+	dryRuns        int
+	noDryRun       bool
+	probeStatus    int
+	dryRunStatus   int
+	refusal        string
+	dryRunWarnings []string
+	// registerWarnings are the warnings of the register's answer (#1703).
+	registerWarnings []string
+	dryRunQueries    []string
+	registeredImage  string
+	dryRunImages     []string
 	// policy, when set, is the operator's execution allowlist a dry run
 	// checks the spec against, refusing with its own message as the
 	// register does.
@@ -171,8 +173,9 @@ func (s *deployServer) serveRegister(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"dag_id":"etl","version":"v","spec_hash":"abc123","created":true}`)
 		return
 	}
-	_, _ = fmt.Fprintf(w, `{"dag_id":"etl","version":"v","spec_hash":"abc123","created":true,"dag_created":%v,"is_paused":%v}`,
-		s.dagCreated, s.paused)
+	warnings, _ := json.Marshal(append([]string{}, s.registerWarnings...))
+	_, _ = fmt.Fprintf(w, `{"dag_id":"etl","version":"v","spec_hash":"abc123","created":true,"dag_created":%v,"is_paused":%v,"warnings":%s}`,
+		s.dagCreated, s.paused, warnings)
 }
 
 // serveDryRun answers a register dry run: the probe of the preflight, or a

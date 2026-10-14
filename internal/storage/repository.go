@@ -1379,7 +1379,7 @@ func (r *Repository) RegisterDagVersionAs(ctx context.Context, tenant string, re
 	got, err := registerDagVersionTx(ctx, r.q.WithTx(tx), tid, registration{
 		spec: spec, specHash: reg.SpecHash, specJSON: specJSON,
 		paused: paused, pausedOverride: reg.IsPaused != nil, actor: actorUUID(reg.ActorUserID),
-		promotedFrom: reg.PromotedFrom, buildInfo: reg.BuildInfo,
+		promotedFrom: reg.PromotedFrom, buildInfo: reg.BuildInfo, requireDigest: reg.RequireDigest,
 	})
 	if err != nil {
 		return domain.DagRegistered{}, err
@@ -1486,8 +1486,9 @@ func setPausedByRegister(ctx context.Context, qtx *queries.Queries, tid, actor p
 // registration is what one register writes: the spec, its hash and encoding,
 // is_paused for a DAG it creates (or for any DAG with pausedOverride), the
 // registering user (null when none), for a promoted version the control
-// plane it came from (nil otherwise) and where the version was built (nil
-// when the register sent none).
+// plane it came from (nil otherwise), where the version was built (nil
+// when the register sent none) and the deploy.require_digest it was
+// admitted under.
 type registration struct {
 	spec           domain.DAGSpec
 	specHash       string
@@ -1497,6 +1498,7 @@ type registration struct {
 	actor          pgtype.UUID
 	promotedFrom   *domain.DagPromotion
 	buildInfo      *domain.BuildInfo
+	requireDigest  domain.DigestRequirement
 }
 
 // buildInfoJSON encodes the build info of a register for its column: nil
@@ -1525,6 +1527,10 @@ func (reg registration) auditFields() map[string]any {
 	}
 	if b := reg.buildInfo; b != nil && !b.IsZero() {
 		fields["build_info"] = *b
+	}
+	if reg.requireDigest.Active() {
+		fields["require_digest"] = string(reg.requireDigest)
+		fields["image_pinned"] = domain.IsDigestPinned(spec.Image)
 	}
 	return fields
 }
