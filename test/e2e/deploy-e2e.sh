@@ -21,10 +21,13 @@
 #                  and no warm worker pod may appear.
 #   on             execution.warm_pools_enabled with the token exchange and
 #                  liveness enforcement its boot check requires (ADR 0058 D2)
-#                  and one idle worker per active version. Each run must have a
+#                  and one idle worker per active version. Run 2 must have a
 #                  task served by a warm worker (task_instances.warm_worker_id),
 #                  and every warm-served task must have run on a warm pod of its
 #                  own run's version and image, so no v1 pod serves v2 work.
+#                  v1's pool drains once v2 is current (ADR 0082): run 1's
+#                  later task may take a dedicated pod, and once run 1 ends no
+#                  live warm pod of v1 may be left.
 #
 # Requirements: k3d, kubectl, docker, jq, curl, the leoflow binaries
 # (`make build`), and a running dev database (`make dev-up`); with warm pools on,
@@ -431,6 +434,8 @@ api "/api/v2/dags/$DAG_ID/dagVersions" \
 log "Waiting for run 1 to finish on v1 (its second task is dispatched after v2 became current)"
 wait_run_success "$RUN1"
 assert_run_on "$RUN1" v1 "$V1" "$IMG1"
+# v1 is superseded and its run ended: its warm pool drains (ADR 0082).
+wait_version_drained "$V1"
 
 log "Triggering run 2, which must run v2"
 RUN2="$(trigger_run)"
@@ -455,11 +460,11 @@ ORDER BY ti.task_id, ti.try_number
 SQL
 }
 
-# assert_warm_run RUN IMAGE checks that a warm worker served at least one task of
-# RUN, and that every warm-served task ran on a warm pod of the run's own version
-# and image, as sampled while the pod was live.
+# assert_warm_run RUN IMAGE [MIN] checks that a warm worker served at least MIN
+# (default 1) tasks of RUN, and that every warm-served task ran on a warm pod of
+# the run's own version and image, as sampled while the pod was live.
 assert_warm_run() {
-  local rows served=0 task ver img pod seen
+  local rows served=0 task ver img pod seen min="${3:-1}"
   rows="$(warm_bindings "$1")" || fail "reading the warm bindings of run $1 failed"
   [ -n "$rows" ] || fail "no task instance of run $1 in $DB_URL; is it the server's database?"
   while IFS='|' read -r task ver img pod; do
@@ -478,13 +483,36 @@ assert_warm_run() {
       || fail "run $1: $task ran on warm pod $pod on image $(printf '%s' "$seen" | cut -f3), not the run's image $img"
     log "run $1: $task ran on warm pod $pod, of its own version"
   done <<<"$rows"
-  [ "$served" -gt 0 ] \
-    || fail "run $1: no task was served by a warm worker, so this leg did not exercise warm pools (raise DEXAFLOW_E2E_HOLD_SECONDS)"
+  [ "$served" -ge "$min" ] \
+    || fail "run $1: $served tasks were served by a warm worker, want at least $min, so this leg did not exercise warm pools (raise DEXAFLOW_E2E_HOLD_SECONDS)"
+}
+
+# wait_version_drained LABEL: with warm pools on, once LABEL is no longer the
+# current version and its runs ended, the reconciler drains its pool (ADR 0082):
+# within two reconcile ticks no warm pod of it is left that is not terminating.
+wait_version_drained() {
+  [ "$WARM_POOLS" = on ] || return 0
+  local vid start live
+  vid="$(version_id "$1")" || fail "no registered version $1"
+  start=$(date +%s)
+  while :; do
+    live="$(kubectl get pods -n "$NS" -l "leoflow.io/warm-worker=true,leoflow.io/dag-version-id=$vid" -o json 2>/dev/null \
+      | jq '[.items[] | select(.metadata.deletionTimestamp == null and (.status.phase == "Running" or .status.phase == "Pending"))] | length')"
+    if [ "${live:-0}" -eq 0 ]; then
+      log "version $1: its warm pool drained $(( $(date +%s) - start ))s after its last run ended"
+      return 0
+    fi
+    [ $(( $(date +%s) - start )) -ge 90 ] \
+      && fail "version $1 is superseded and has no active run, yet $live warm pods of it are still live after 90s; the previous pool must drain (ADR 0082)"
+    sleep 3
+  done
 }
 
 if [ "$WARM_POOLS" = on ]; then
-  log "Warm pools on: each run had a task on a warm worker of its own version"
-  assert_warm_run "$RUN1" "$IMG1"
+  log "Warm pools on: every warm-served task ran on a warm worker of its own version"
+  # Run 1's version is superseded mid-run, so its pool drains at once (ADR
+  # 0082) and its second task may take a dedicated pod: no warm hit required.
+  assert_warm_run "$RUN1" "$IMG1" 0
   assert_warm_run "$RUN2" "$IMG2"
 else
   # Off is the shipped default: a dedicated pod per attempt, and no warm pod.

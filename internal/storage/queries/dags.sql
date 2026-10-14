@@ -158,15 +158,26 @@ DELETE FROM dag_runs WHERE tenant_id = $1 AND dag_id = $2;
 SELECT id FROM users WHERE id = $1 AND tenant_id = $2;
 
 -- name: ListWarmCurrentVersions :many
--- The current version of the DAGs the warm-pool reconcile looks at (#1707):
--- with prewarm, every active unpaused DAG, whose current version gets its pool
--- before its first run; and every DAG in dag_ids (the DAGs of the active runs),
--- whose current version tells which versions of those runs were superseded by
--- a register, a rollback or a promote and so drain. prewarm is true for the
--- first kind. A cross-tenant read like ListActiveDagRuns: the reconcile serves
--- every tenant, and each row carries its tenant_id.
-SELECT id, tenant_id, dag_id, current_version_id::uuid AS current_version_id,
-  (@prewarm::boolean AND is_active AND NOT is_paused)::boolean AS prewarm
-FROM dags
-WHERE current_version_id IS NOT NULL
-  AND ((@prewarm::boolean AND is_active AND NOT is_paused) OR id = ANY(@dag_ids::uuid[]));
+-- The current version of the DAGs the warm-pool reconcile looks at (#1707,
+-- ADR 0082): with prewarm, every active unpaused DAG whose current version
+-- declares min_idle_workers, which gets its pool before its first run; and
+-- every DAG in dag_ids (the DAGs of the active runs), whose current version
+-- tells which versions of those runs were superseded by a register, a
+-- rollback or a promote and so drain. prewarm is true for the first kind. The
+-- declared value is read from the spec here, so the reconcile loads no spec
+-- of a DAG it will not prewarm. The version is a LATERAL primary-key probe
+-- with LIMIT 1, and the first predicate repeats the dags-only half of the
+-- second, so the scan is of dags and each probe reads one spec: the cost
+-- follows the unpaused DAGs and the DAGs of active runs, never the number of
+-- versions (a plain join hashes every row of dag_versions). A cross-tenant
+-- read like ListActiveDagRuns: the reconcile serves every tenant, and each
+-- row carries its tenant_id.
+SELECT d.id, d.tenant_id, d.dag_id, d.current_version_id::uuid AS current_version_id,
+  (@prewarm::boolean AND d.is_active AND NOT d.is_paused AND m.min_idle > 0)::boolean AS prewarm
+FROM dags d
+CROSS JOIN LATERAL (
+  SELECT COALESCE((v.spec->>'min_idle_workers')::integer, 0) AS min_idle
+  FROM dag_versions v WHERE v.id = d.current_version_id LIMIT 1
+) m
+WHERE ((@prewarm::boolean AND d.is_active AND NOT d.is_paused) OR d.id = ANY(@dag_ids::uuid[]))
+  AND ((@prewarm::boolean AND d.is_active AND NOT d.is_paused AND m.min_idle > 0) OR d.id = ANY(@dag_ids::uuid[]));

@@ -711,14 +711,14 @@ type WarmPoolReport struct {
 	// PreviousPool draining for a new version of an existing DAG when this server keeps warm workers; the previous version's idle warm workers, if it has any, are removed, and each busy one once its attempt ends.
 	PreviousPool *WarmPoolReportPreviousPool `json:"previous_pool,omitempty"`
 
-	// State off: warm pools are off. none: this version gets no warm worker (staging, source mode, no idle worker kept, or a server that runs no warm workers: the subprocess executor, or pod dispatch disabled). on: the version keeps min_idle_workers idle warm workers, up to max_pool_size, while it is the DAG's current version; they start at the next reconcile, or when a paused DAG is unpaused.
+	// State off: warm pools are off. none: this version gets no warm worker (staging, source mode, no idle worker kept, or a server that runs no warm workers: the subprocess executor, or pod dispatch disabled). on: the version keeps min_idle_workers idle warm workers, up to max_pool_size, while it is the DAG's current version; for a DAG that declares min_idle_workers they start at the next reconcile (when a paused DAG is unpaused), else with the version's first run.
 	State WarmPoolReportState `json:"state"`
 }
 
 // WarmPoolReportPreviousPool draining for a new version of an existing DAG when this server keeps warm workers; the previous version's idle warm workers, if it has any, are removed, and each busy one once its attempt ends.
 type WarmPoolReportPreviousPool string
 
-// WarmPoolReportState off: warm pools are off. none: this version gets no warm worker (staging, source mode, no idle worker kept, or a server that runs no warm workers: the subprocess executor, or pod dispatch disabled). on: the version keeps min_idle_workers idle warm workers, up to max_pool_size, while it is the DAG's current version; they start at the next reconcile, or when a paused DAG is unpaused.
+// WarmPoolReportState off: warm pools are off. none: this version gets no warm worker (staging, source mode, no idle worker kept, or a server that runs no warm workers: the subprocess executor, or pod dispatch disabled). on: the version keeps min_idle_workers idle warm workers, up to max_pool_size, while it is the DAG's current version; for a DAG that declares min_idle_workers they start at the next reconcile (when a paused DAG is unpaused), else with the version's first run.
 type WarmPoolReportState string
 
 // XComEntry defines model for XComEntry.

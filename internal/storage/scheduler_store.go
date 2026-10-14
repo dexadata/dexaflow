@@ -302,7 +302,8 @@ type activeWarmVersion struct {
 	// (ADR 0067 §3): a warm pod cannot carry the task's source.
 	hasSource bool
 	// prewarm marks a version held only as its DAG's current version, with no
-	// active run (ADR 0082). It gets a target only when it keeps idle workers.
+	// active run (ADR 0082). It gets a target only when the DAG declares
+	// min_idle_workers and the resolved idle target is above 0.
 	prewarm bool
 }
 
@@ -311,7 +312,7 @@ type activeWarmVersion struct {
 // operator's clamp/fallback/flag gate (config.ExecutionSection.EffectiveMinIdle).
 // A version whose image the operator's execution allowlist refuses gets no
 // target (issue #537 C2), and a prewarm version (current, no active run) gets
-// one only when it keeps idle workers (ADR 0082). The result is the
+// one only when its DAG declares min_idle_workers (ADR 0082 D3). The result is the
 // executor.WarmTargetSource contract: one entry per distinct dag_version kept.
 func warmTargets(versions []activeWarmVersion, exec config.ExecutionSection, policy *domain.ExecutionPolicy) []executor.WarmTarget {
 	seen := make(map[string]bool, len(versions))
@@ -335,9 +336,11 @@ func warmTargets(versions []activeWarmVersion, exec config.ExecutionSection, pol
 			continue
 		}
 		minIdle := exec.EffectiveMinIdle(v.dagMinIdle)
-		if v.prewarm && minIdle == 0 {
-			// ADR 0082: nothing to prewarm, and a target of 0 would only keep
-			// an empty pool's anchor alive.
+		if v.prewarm && (v.dagMinIdle <= 0 || minIdle == 0) {
+			// ADR 0082 D3: only a DAG that declares min_idle_workers is
+			// prewarmed; the operator floor alone keeps no pool for a DAG
+			// without a run, and a target of 0 would only keep an empty
+			// pool's anchor alive.
 			continue
 		}
 		out = append(out, executor.WarmTarget{
@@ -359,9 +362,9 @@ func warmTargets(versions []activeWarmVersion, exec config.ExecutionSection, pol
 
 // ActiveWarmTargets returns one warm target per dag_version the warm pool keeps
 // (ADR 0058 N1b2b, ADR 0082), the read side of a warm-pool reconcile tick: the
-// current version of every active, unpaused DAG, prewarmed before its first run
-// (#1707), and the version of every active run that is still its DAG's current
-// version. A run whose version a register, a rollback or a promote superseded
+// current version of every active, unpaused DAG that declares min_idle_workers,
+// prewarmed before its first run (#1707), and the version of every active run
+// that is still its DAG's current version. A run whose version a register, a rollback or a promote superseded
 // keeps running on it, but the version is no longer a target, so its pool
 // drains: idle workers are deleted and busy ones finish their attempt first,
 // and the run's later attempts take dedicated pods. A run of a DAG with no
@@ -399,6 +402,14 @@ func (s *SchedulerStore) ActiveWarmTargets(ctx context.Context) ([]executor.Warm
 		return nil, fmt.Errorf("listing current dag versions: %w", err)
 	}
 	cands := warmCandidates(refs, currents)
+	ids := make([]pgtype.UUID, 0, len(cands))
+	for _, c := range cands {
+		ids = append(ids, c.versionID)
+	}
+	// One query for every cold version, not one per prewarmed DAG (#1707).
+	if err := s.specs.prefetch(ctx, s.q, ids); err != nil {
+		return nil, err
+	}
 	versions := make([]activeWarmVersion, 0, len(cands))
 	for _, c := range cands {
 		spec, err := s.candidateSpec(ctx, c)

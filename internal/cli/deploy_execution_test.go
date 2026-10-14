@@ -30,7 +30,7 @@ func (registerRepo) SetCurrentDagVersion(context.Context, string, string, domain
 	return domain.CurrentVersionChange{}, nil
 }
 
-const mixedDeploySpec = `{"schema_version":"1.0","dag_id":"etl","dag_version":"v2","image":"img:v2","tasks":[` +
+const mixedDeploySpec = `{"schema_version":"1.0","dag_id":"etl","dag_version":"v2","image":"img:v2","min_idle_workers":2,"tasks":[` +
 	`{"task_id":"extract","type":"python","entrypoint":"dag:extract"},` +
 	`{"task_id":"transform","type":"python","entrypoint":"dag:transform"},` +
 	`{"task_id":"load","type":"python","entrypoint":"dag:load","execution":{"node_selector":{"pool":"db"}}}]}`

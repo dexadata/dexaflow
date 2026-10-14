@@ -2,7 +2,7 @@
 title: "ADR 0082: a warm pool follows the DAG's current version, started when it becomes current and drained when it stops being current"
 linkTitle: "0082 · Warm pool follows the current version"
 weight: 820
-description: "ADR 0082: with warm pools on, the reconciler keeps a pool for the current version of every unpaused DAG from the moment it becomes current, and for an active run's version only while it is still current. A superseded version keeps no idle buffer: its idle workers are deleted and busy ones finish their attempt first. Replaces the version bump paragraph of ADR 0058 D1."
+description: "ADR 0082: with warm pools on, the reconciler keeps a pool for the current version of every unpaused DAG that declares min_idle_workers from the moment it becomes current, and for an active run's version only while it is still current. A superseded version keeps no idle buffer: its idle workers are deleted and busy ones finish their attempt first. Replaces the version bump paragraph of ADR 0058 D1."
 ---
 
 **Status:** Proposed
@@ -32,8 +32,9 @@ warm.
 
 1. **The target set is computed from the current version.** A
    `dag_version` is a warm target when it is the current version of an
-   active, unpaused DAG (prewarm), or when an active run that needs warm
-   workers uses it and it is still its DAG's current version. A run of a DAG
+   active, unpaused DAG that declares `min_idle_workers` (prewarm, D3), or
+   when an active run that needs warm workers uses it and it is still its
+   DAG's current version. A run of a DAG
    with no current version keeps its version's target, as before. The
    computation is `warmCandidates` in `internal/storage`, read by the
    reconciler through `executor.WarmTargetSource`; no new state is stored.
@@ -43,12 +44,16 @@ warm.
    There is no push from the API to the reconciler: the reconciler runs on
    the leader only, is idempotent, and converges within one tick (30 s by
    default), so any replica can serve the register.
-3. **A prewarm target needs an idle target.** The current version gets a
-   target only when its `EffectiveMinIdle` (the DAG's `min_idle_workers`, else
-   the operator floor `execution.min_idle_workers`, clamped to
-   `max_pool_size`) is above 0, so a server with the default floor of 0 keeps
-   no pool for a DAG that declares none. A paused DAG is not prewarmed; its
-   running runs keep the target as before.
+3. **Only a DAG that declares `min_idle_workers` is prewarmed.** The
+   current version of a DAG with no active run gets a target only when the
+   DAG itself declares `min_idle_workers` above 0 (clamped to
+   `max_pool_size`). The operator floor `execution.min_idle_workers` prewarms
+   nothing: it still applies to a version an active run holds, as before, so
+   a DAG that declares none gets its workers with its first run. The
+   declared value is read from the spec in SQL (`ListWarmCurrentVersions`),
+   so no spec of a DAG that is not prewarmed is loaded. A paused DAG is not
+   prewarmed; its running runs keep the target as before. The drain of D4
+   applies to every superseded version, declared or not.
 4. **A superseded version drains at once, never by killing an attempt.** It
    is no longer a target, so the reconciler's existing drain applies: idle
    workers are deleted (each delete re-reads the busy set first, #1601), a
@@ -64,7 +69,8 @@ warm.
    each drain start once per leader
    (`dexaflow_scheduler_decisions_total`, `warm_pool_prewarm_started`,
    `warm_pool_drain_started`), and logs when a drained pool's anchor is
-   deleted.
+   deleted. A new leader starts without that memory, so it logs and counts
+   each prewarmed or draining pool it finds once more.
 
 ## Alternatives considered
 
@@ -76,20 +82,38 @@ warm.
   replica, the reconciler only on the leader; a push would need a channel
   between replicas and would miss rollbacks and direct database changes. The
   reconciler reading the current version covers every path.
-- **A setting to opt into prewarm.** A pool exists only when the operator
-  turned warm pools on and asked for idle workers; keeping them for the
-  version that will run is what that request means. The per-tenant cap
-  (`max_warm_pods_per_tenant`) still bounds the total.
+- **Prewarm under the operator floor too.** With a floor of N, every
+  unpaused DAG would hold N idle pods with no run, and the per-tenant cap
+  would not bound it (it never starves a promised idle floor, below). The
+  DAG's own declaration is the opt in: the author asks for warmth for this
+  DAG, the operator caps how much.
+- **A separate setting to opt into prewarm.** The declaration already is one,
+  per DAG, and the operator keeps `warm_pools_enabled` and `max_pool_size`.
 
 ## Consequences
 
-- With `execution.min_idle_workers` above 0, every unpaused DAG keeps that
-  many idle warm workers even with no run: the standing cost is per unpaused
-  DAG, not per active version. An idle worker is still recycled after
-  `worker_idle_ttl` and replaced at the next reconcile.
-- Each reconcile tick reads one more query (`ListWarmCurrentVersions`, over
-  the unpaused DAGs and the DAGs of active runs) and the current versions'
-  specs through the spec cache, where current versions are pinned.
+- **Cost.** Each unpaused DAG that declares `min_idle_workers: N` keeps N
+  idle warm pods (at most `max_pool_size`) even with no run, from the moment
+  its version is current. `max_warm_pods_per_tenant` does not bound this:
+  the reconciler raises a tenant's budget to the sum of its promised idle
+  floors (ADR 0058, the per-tenant cap) so a declared floor is never
+  starved, and only growth past the floors is capped. An idle worker is
+  still recycled after `worker_idle_ttl` and replaced at the next reconcile.
+  The operator floor alone adds no standing cost. Today the parser does not
+  emit `min_idle_workers` (it is not in the authoring schema), so only a
+  `dag.json` registered with it is prewarmed until the authoring side
+  exposes it.
+- **Reads per tick.** One more query, `ListWarmCurrentVersions`, which scans
+  `dags` for the unpaused ones and the DAGs of active runs and probes each
+  one's current version by primary key (about 60 ms with 100k DAGs, 3,000 of
+  them unpaused, on a laptop Postgres 16; the cost follows the unpaused DAGs,
+  not the versions). The specs of the targets are read through the spec
+  cache in one batch query on a cold cache (`GetDagVersionsByIDs`).
+- **Leader memory.** The leader pins in its spec cache the decoded current
+  spec of each prewarmed DAG, as every reader of a current version does
+  (`spec_cache.go`: current versions are pinned outside the LRU bound), so
+  its heap grows with the number of DAGs it prewarms; the soak's leak check
+  watches it.
 - A deploy's image pull moves from the first run to the deploy. Pools keyed
   by environment, which would survive a code-only deploy, are a separate
   decision (#1707).

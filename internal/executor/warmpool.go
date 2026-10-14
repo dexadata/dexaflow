@@ -46,8 +46,9 @@ type WarmTarget struct {
 }
 
 // WarmTargetSource yields the dag_versions to keep warm and their effective warm
-// target: the current version of each DAG that may run, and the versions of
-// active runs that are still current (ADR 0082). A version absent from it
+// target: the current version of each unpaused DAG that declares
+// min_idle_workers, and the versions of active runs that are still current
+// (ADR 0082). A version absent from it
 // drains. It is implemented on the storage/scheduler side (it reads active runs,
 // the DAGs' current versions and their cached specs and applies the operator's
 // clamp/fallback), and is defined HERE so the executor's reconciler depends on a

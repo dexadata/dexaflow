@@ -12,13 +12,15 @@ import (
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/executor"
 	"github.com/dexadata/dexaflow/internal/storage"
+	"github.com/dexadata/dexaflow/internal/storage/queries"
 )
 
-// registerWarmVersion registers version of a one-task DAG on image.
-func registerWarmVersion(t *testing.T, repo *storage.Repository, ctx context.Context, dagID, version, image string) {
+// registerWarmVersion registers version of a one-task DAG on image, declaring
+// minIdle min_idle_workers (0: none).
+func registerWarmVersion(t *testing.T, repo *storage.Repository, ctx context.Context, dagID, version, image string, minIdle int) {
 	t.Helper()
 	spec := domain.DAGSpec{
-		SchemaVersion: "1.0", DagID: dagID, DagVersion: version, Image: image,
+		SchemaVersion: "1.0", DagID: dagID, DagVersion: version, Image: image, MinIdleWorkers: minIdle,
 		Tasks: []domain.TaskSpec{{TaskID: "load", Type: domain.TaskTypePython}},
 	}
 	hash, err := spec.CanonicalHash()
@@ -69,8 +71,8 @@ func (o ownTargets) ActiveWarmTargets(ctx context.Context) ([]executor.WarmTarge
 
 // TestPrewarmFollowsTheCurrentVersionIntegration drives the warm-pool
 // reconciler over the real target and busy sources through a deploy and a
-// rollback (#1707, ADR 0082): an unpaused DAG's current version is a target
-// before any run; a register makes the new version the target and drops the
+// rollback (#1707, ADR 0082): the current version of an unpaused DAG that
+// declares min_idle_workers is a target before any run; a register makes the new version the target and drops the
 // previous one, whose idle worker is deleted at once while the worker bound
 // to its in-flight attempt is kept until that attempt ends; a rollback makes
 // the previous version the target again.
@@ -81,7 +83,7 @@ func TestPrewarmFollowsTheCurrentVersionIntegration(t *testing.T) {
 	dagID := fmt.Sprintf("warm_prewarm_%d", stamp)
 	img1, img2 := fmt.Sprintf("prewarm-%d:v1", stamp), fmt.Sprintf("prewarm-%d:v2", stamp)
 
-	registerWarmVersion(t, repo, ctx, dagID, "v1", img1)
+	registerWarmVersion(t, repo, ctx, dagID, "v1", img1, 1)
 	if _, err := repo.SetPaused(ctx, "default", dagID, true); err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +124,7 @@ func TestPrewarmFollowsTheCurrentVersionIntegration(t *testing.T) {
 	}
 
 	// Deploy v2 while the attempt runs.
-	registerWarmVersion(t, repo, ctx, dagID, "v2", img2)
+	registerWarmVersion(t, repo, ctx, dagID, "v2", img2, 1)
 	if got, present := targetByImage(t, sched, ctx, img1); present {
 		t.Fatalf("superseded v1 is still a target %+v; its pool must drain", got)
 	}
@@ -170,5 +172,68 @@ func TestPrewarmFollowsTheCurrentVersionIntegration(t *testing.T) {
 	}
 	if got, ok := targetByImage(t, sched, ctx, img2); ok {
 		t.Errorf("v2 after the rollback is still a target %+v", got)
+	}
+}
+
+// TestPrewarmNeedsADeclaredMinIdleIntegration: with the operator floor set,
+// the current version of an unpaused DAG that declares no min_idle_workers is
+// neither a row of ListWarmCurrentVersions marked prewarm nor a target (ADR
+// 0082 D3), while one that declares it is both. The filter runs in SQL, so
+// the undeclared DAG's spec is never loaded.
+func TestPrewarmNeedsADeclaredMinIdleIntegration(t *testing.T) {
+	pg, repo, sched, _, ctx := openExecPG(t)
+	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 2, MaxPoolSize: 4}, nil)
+	stamp := time.Now().UnixNano()
+	plainDag, plainImg := fmt.Sprintf("warm_plain_%d", stamp), fmt.Sprintf("plain-%d:v1", stamp)
+	declDag, declImg := fmt.Sprintf("warm_decl_%d", stamp), fmt.Sprintf("decl-%d:v1", stamp)
+	registerWarmVersion(t, repo, ctx, plainDag, "v1", plainImg, 0)
+	registerWarmVersion(t, repo, ctx, declDag, "v1", declImg, 3)
+	for _, d := range []string{plainDag, declDag} {
+		if _, err := repo.SetPaused(ctx, "default", d, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := pg.Queries.ListWarmCurrentVersions(ctx, queries.ListWarmCurrentVersionsParams{Prewarm: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prewarm := map[string]bool{}
+	for _, r := range rows {
+		prewarm[r.DagID] = r.Prewarm
+	}
+	if _, ok := prewarm[plainDag]; ok {
+		t.Errorf("DAG %s with no declared min_idle_workers is a ListWarmCurrentVersions row", plainDag)
+	}
+	if !prewarm[declDag] {
+		t.Errorf("DAG %s declaring min_idle_workers is not a prewarm row", declDag)
+	}
+	if got, ok := targetByImage(t, sched, ctx, plainImg); ok {
+		t.Errorf("undeclared DAG under the operator floor has a target %+v, want none", got)
+	}
+	if got, ok := targetByImage(t, sched, ctx, declImg); !ok || !got.Prewarm || got.EffectiveMinIdle != 3 {
+		t.Errorf("declared DAG: target = %+v (present %v), want a Prewarm target of 3", got, ok)
+	}
+}
+
+// TestPausedDagRunningRunKeepsItsTargetIntegration: a paused DAG is not
+// prewarmed, but a running run on its current version keeps that version's
+// target (from the run, not prewarm), as before ADR 0082.
+func TestPausedDagRunningRunKeepsItsTargetIntegration(t *testing.T) {
+	repo, sched, _, ctx := openExec(t)
+	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 1, MaxPoolSize: 4}, nil)
+	stamp := time.Now().UnixNano()
+	dagID, img := fmt.Sprintf("warm_paused_run_%d", stamp), fmt.Sprintf("paused-run-%d:v1", stamp)
+	registerWarmVersion(t, repo, ctx, dagID, "v1", img, 1)
+	if _, err := repo.CreateDagRun(ctx, "default", dagID, domain.DagRun{
+		RunID: "r1", State: domain.DagRunStateRunning, RunType: "manual", LogicalDate: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.SetPaused(ctx, "default", dagID, true); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := targetByImage(t, sched, ctx, img)
+	if !ok || got.Prewarm || got.EffectiveMinIdle != 1 {
+		t.Fatalf("paused DAG with a running run: target = %+v (present %v), want a run target of 1", got, ok)
 	}
 }

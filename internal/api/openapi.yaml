@@ -1801,8 +1801,9 @@ components:
             no warm workers: the subprocess executor, or pod dispatch
             disabled). on: the version
             keeps min_idle_workers idle warm workers, up to max_pool_size,
-            while it is the DAG's current version; they start at the next
-            reconcile, or when a paused DAG is unpaused.
+            while it is the DAG's current version; for a DAG that declares
+            min_idle_workers they start at the next reconcile (when a paused
+            DAG is unpaused), else with the version's first run.
         detail: { type: string, description: The state in a sentence for a person. }
         min_idle_workers: { type: integer }
         max_pool_size: { type: integer }

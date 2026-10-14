@@ -258,8 +258,9 @@ still printed, so the pipeline sees which DAGs went through.
 `execution` is the server's answer on where each task runs: `mode` is `warm`
 (warm-eligible) or `dedicated`, with the `reason` for a dedicated pod, and
 `pool.state` is `off`, `none` or `on`, with `previous_pool: "draining"` for a
-new version of an existing DAG on a server that keeps warm workers: the new
-version's pool starts at the next reconcile and the previous one drains (see
+new version of an existing DAG on a server that keeps warm workers: the
+previous version's pool drains, and the new one starts at the next reconcile
+when the DAG declares `min_idle_workers`, else with its first run (see
 [Prewarm and drain on deploy](/operate/warm-pools/#prewarm-and-drain-on-deploy)). The human output
 prints it as an `execution` line and, unless every task takes a dedicated pod
 for one reason, a `warm pool` line; see

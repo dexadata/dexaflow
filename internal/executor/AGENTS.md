@@ -18,8 +18,9 @@ first-time contributors without a discussion issue first.
 - **A warm pool belongs to one DAG version.** It is keyed by
   `dag_version_id`, so a pod on an old image never runs new code, and an
   inactive version's pods are removed (ADR 0058 D1, `warmpool_test.go`).
-  The versions kept are the current version of each unpaused DAG and the
-  versions of active runs that are still current (ADR 0082,
+  The versions kept are the current version of each unpaused DAG that
+  declares `min_idle_workers` and the versions of active runs that are
+  still current (ADR 0082,
   `warmCandidates` in `internal/storage`), so a deploy, a promote or a
   rollback starts the new pool and drains the old one; the drain never
   deletes a busy worker (`warm_prewarm_integration_test.go`).

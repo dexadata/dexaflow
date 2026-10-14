@@ -14,7 +14,8 @@ const (
 	// poolStateNone: warm pools are on, but this version gets no warm worker.
 	poolStateNone = "none"
 	// poolStateOn: this version keeps idle warm workers while it is the DAG's
-	// current version, from the register on for an unpaused DAG (ADR 0082).
+	// current version: from the register on for an unpaused DAG that declares
+	// min_idle_workers, else from its first run (ADR 0082).
 	poolStateOn = "on"
 )
 
@@ -109,8 +110,7 @@ func (e executionReporter) couldKeepWorkers(spec *domain.DAGSpec) bool {
 // excluded as a whole, on a server that runs no warm workers, or when no
 // idle worker is kept for it; else the idle workers it keeps
 // (EffectiveMinIdle, the reconciler's target) up to max_pool_size while it is
-// the DAG's current version: the reconciler starts them at its next tick for
-// an unpaused DAG, and at the unpause for a paused one (ADR 0082).
+// the DAG's current version, starting when poolStart says (ADR 0082).
 func (e executionReporter) pool(spec *domain.DAGSpec, version domain.WarmVersion, paused bool) (p poolReport, noWorker string) {
 	if !e.policy.Enabled {
 		return poolReport{State: poolStateOff, Detail: "warm pools off: every task runs on a dedicated pod"}, ""
@@ -126,11 +126,23 @@ func (e executionReporter) pool(spec *domain.DAGSpec, version domain.WarmVersion
 		return poolReport{State: poolStateNone,
 			Detail: "no idle warm worker is kept for this version (min_idle_workers 0), so its tasks run on dedicated pods"}, noIdleWorkersReason
 	}
-	start := "warming now"
-	if paused {
-		start = "start when the DAG is unpaused"
-	}
 	return poolReport{State: poolStateOn, MinIdleWorkers: idle, MaxPoolSize: e.pools.MaxPoolSize,
-		Detail: fmt.Sprintf("%d idle warm workers (up to %d) %s, kept while this version is the DAG's current version",
-			idle, e.pools.MaxPoolSize, start)}, ""
+		Detail: fmt.Sprintf("%d idle warm workers (up to %d) %s", idle, e.pools.MaxPoolSize, poolStart(spec, paused))}, ""
+}
+
+// poolStart says when the idle workers of a version that keeps some start
+// and how long they stay (ADR 0082): a DAG that declares min_idle_workers is
+// prewarmed once the version is current, or once the DAG is unpaused; one
+// that does not gets its workers from the operator floor with its first run.
+func poolStart(spec *domain.DAGSpec, paused bool) string {
+	const kept = ", kept while this version is the DAG's current version"
+	switch {
+	case spec.MinIdleWorkers <= 0:
+		return "start with this version's first run (the DAG declares no min_idle_workers, so it is not prewarmed)" +
+			" and stay while it has an active run and is the DAG's current version"
+	case paused:
+		return "start when the DAG is unpaused" + kept
+	default:
+		return "warming now" + kept
+	}
 }

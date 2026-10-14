@@ -81,29 +81,31 @@ func TestWarmCandidatesRunOnCurrentVersionIsNotPrewarm(t *testing.T) {
 	}
 }
 
-// TestWarmTargetsPrewarmNeedsAnIdleTarget: a prewarm-only version (current,
-// no active run) becomes a target only when it keeps idle workers, and is
-// marked Prewarm; with an idle target of 0 it is left out, so a pool nobody
-// asked for never holds an anchor. A run version keeps its target at 0, as
-// before.
-func TestWarmTargetsPrewarmNeedsAnIdleTarget(t *testing.T) {
+// TestWarmTargetsPrewarmNeedsADeclaredMinIdle: a prewarm-only version
+// (current, no active run) becomes a target only when the DAG itself declares
+// min_idle_workers (ADR 0082 D3), and is marked Prewarm. The operator floor
+// alone prewarms nothing, so it never costs a pool per unpaused DAG; a version
+// an active run holds keeps the floor, as before.
+func TestWarmTargetsPrewarmNeedsADeclaredMinIdle(t *testing.T) {
 	floor := config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 2, MaxPoolSize: 8}
 	got := warmTargets([]activeWarmVersion{{dagVersionID: "dv1", image: "i", prewarm: true}}, floor, nil)
-	if len(got) != 1 || !got[0].Prewarm || got[0].EffectiveMinIdle != 2 {
-		t.Fatalf("operator floor 2: targets = %+v, want one Prewarm target of 2", got)
+	if len(got) != 0 {
+		t.Fatalf("operator floor 2, DAG declares none: targets = %+v, want no prewarm target", got)
 	}
 
-	declared := config.ExecutionSection{WarmPoolsEnabled: true, MaxPoolSize: 8}
-	got = warmTargets([]activeWarmVersion{{dagVersionID: "dv1", image: "i", dagMinIdle: 3, prewarm: true}}, declared, nil)
-	if len(got) != 1 || got[0].EffectiveMinIdle != 3 {
-		t.Fatalf("declared min_idle_workers 3: targets = %+v, want one target of 3", got)
+	got = warmTargets([]activeWarmVersion{{dagVersionID: "dv1", image: "i", dagMinIdle: 3, prewarm: true}}, floor, nil)
+	if len(got) != 1 || !got[0].Prewarm || got[0].EffectiveMinIdle != 3 {
+		t.Fatalf("declared min_idle_workers 3: targets = %+v, want one Prewarm target of 3", got)
 	}
 
-	got = warmTargets([]activeWarmVersion{
-		{dagVersionID: "dv1", image: "i", prewarm: true},
-		{dagVersionID: "dv2", image: "i"},
-	}, declared, nil)
-	if len(got) != 1 || got[0].DagVersionID != "dv2" || got[0].Prewarm {
-		t.Fatalf("idle target 0: targets = %+v, want only the run version dv2", got)
+	got = warmTargets([]activeWarmVersion{{dagVersionID: "dv2", image: "i"}}, floor, nil)
+	if len(got) != 1 || got[0].Prewarm || got[0].EffectiveMinIdle != 2 {
+		t.Fatalf("run version, DAG declares none: targets = %+v, want the operator floor 2", got)
+	}
+
+	off := config.ExecutionSection{WarmPoolsEnabled: false, MaxPoolSize: 8}
+	got = warmTargets([]activeWarmVersion{{dagVersionID: "dv1", image: "i", dagMinIdle: 3, prewarm: true}}, off, nil)
+	if len(got) != 0 {
+		t.Fatalf("warm pools off: targets = %+v, want no prewarm target", got)
 	}
 }
