@@ -186,6 +186,10 @@ func TestClearRetryBudgetFollowsTheVersionThatWillRun(t *testing.T) {
 // then keeps max_tries but never below the attempts already made; here that is
 // never below the cleared attempt, so the UI cannot show an attempt past its
 // budget.
+//
+// A clear no longer re-binds a run onto a version without one of its tasks
+// (#1702), so the case is the run a re-bind moved there before that guard: it
+// is pinned to v2 and keeps the task instance of the task v2 dropped.
 func TestClearRetryBudgetForATaskTheVersionNoLongerHas(t *testing.T) {
 	repo, sched, pg, ctx := openInfra(t)
 	dagID := fmt.Sprintf("clear_budget_gone_%d", time.Now().UnixNano())
@@ -201,14 +205,30 @@ func TestClearRetryBudgetForATaskTheVersionNoLongerHas(t *testing.T) {
 		DagID: dagID, DagVersion: "v2", Image: "img:v2",
 		Tasks: []domain.TaskSpec{{TaskID: "other", Type: domain.TaskTypePython}},
 	})
+	pinRunToCurrentVersion(t, pg, ctx, runUUID)
 
-	opts := domain.ClearOptions{ResetDagRun: true, RunOnLatestVersion: true}
+	opts := domain.ClearOptions{ResetDagRun: true}
 	if _, err := repo.ClearTaskInstances(ctx, "default", dagID, "r1", []string{"t"}, true, opts); err != nil {
 		t.Fatalf("ClearTaskInstances: %v", err)
 	}
 	try, maxTries := tryBudget(t, pg, ctx, runUUID)
 	if try != 6 || maxTries != 6 {
 		t.Errorf("try_number/max_tries = %d/%d, want 6/6 (the cleared attempt is inside the budget, no retries invented)", try, maxTries)
+	}
+}
+
+// pinRunToCurrentVersion moves the run to its DAG's current version the way a
+// run_on_latest_version clear did before #1702 refused a re-bind that changes
+// the task set, leaving the run with a task instance its version lacks.
+func pinRunToCurrentVersion(t *testing.T, pg *storage.Postgres, ctx context.Context, runUUID string) {
+	t.Helper()
+	tag, err := pg.Pool.Exec(ctx, `UPDATE dag_runs r SET dag_version_id = d.current_version_id
+		FROM dags d WHERE d.id = r.dag_id AND r.id = $1::uuid AND r.dag_version_id IS DISTINCT FROM d.current_version_id`, runUUID)
+	if err != nil {
+		t.Fatalf("pin run to the current version: %v", err)
+	}
+	if tag.RowsAffected() != 1 {
+		t.Fatalf("pin run to the current version moved %d runs, want 1", tag.RowsAffected())
 	}
 }
 
@@ -313,20 +333,22 @@ func TestClearedAttemptSpecCarriesTheRestoredBudget(t *testing.T) {
 // the admission gate charges it, so the pools API keeps agreeing with the gate
 // after a run_on_latest_version clear re-binds the run to a version that
 // resized the task. A pinned clear keeps the run's own size, and a task the
-// executing version no longer declares keeps the size it had. Proven on all
-// three reset statements.
+// executing version no longer declares keeps the size it had (a run a re-bind
+// moved there before #1702, see pinRunToCurrentVersion). Proven on all three
+// reset statements.
 func TestClearPoolSlotsFollowTheVersionThatWillRun(t *testing.T) {
 	cases := []struct {
-		name   string
-		latest bool
-		v2     []domain.TaskSpec
-		want   int
+		name    string
+		latest  bool
+		rebound bool
+		v2      []domain.TaskSpec
+		want    int
 	}{
 		{name: "pinned keeps the run's version", latest: false,
 			v2: []domain.TaskSpec{{TaskID: "t", Type: domain.TaskTypePython, PoolSlots: 4}}, want: 2},
 		{name: "run_on_latest_version takes the current version", latest: true,
 			v2: []domain.TaskSpec{{TaskID: "t", Type: domain.TaskTypePython, PoolSlots: 4}}, want: 4},
-		{name: "a task the current version dropped keeps its size", latest: true,
+		{name: "a task the current version dropped keeps its size", rebound: true,
 			v2: []domain.TaskSpec{{TaskID: "other", Type: domain.TaskTypePython, PoolSlots: 4}}, want: 2},
 	}
 	for _, c := range cases {
@@ -341,6 +363,9 @@ func TestClearPoolSlotsFollowTheVersionThatWillRun(t *testing.T) {
 					t.Fatalf("precondition: materialized pool_slots = %d, want 2", got)
 				}
 				registerClearSpec(t, repo, ctx, domain.DAGSpec{DagID: dagID, DagVersion: "v2", Image: "img:v2", Tasks: c.v2})
+				if c.rebound {
+					pinRunToCurrentVersion(t, pg, ctx, runUUID)
+				}
 
 				opts := domain.ClearOptions{ResetDagRun: true, RunOnLatestVersion: c.latest}
 				if _, err := repo.ClearTaskInstances(ctx, "default", dagID, "r1", mode.taskIDs, mode.onlyFailed, opts); err != nil {
@@ -371,15 +396,17 @@ func taskPoolSlots(t *testing.T, pg *storage.Postgres, ctx context.Context, runU
 // charged to its old pool after a run_on_latest_version clear, so the pools API
 // counted it in a pool the admission gate no longer charged. A pinned clear
 // keeps the run's pool, a task moved back to the implicit default pool stores
-// NULL, and a task the executing version no longer declares keeps its pool.
+// NULL, and a task the executing version no longer declares keeps its pool
+// (a run a re-bind moved there before #1702, see pinRunToCurrentVersion).
 // Proven on all three reset statements.
 func TestClearPoolFollowsTheVersionThatWillRun(t *testing.T) {
 	cases := []struct {
-		name   string
-		latest bool
-		v1Pool string
-		v2     []domain.TaskSpec
-		want   *string
+		name    string
+		latest  bool
+		rebound bool
+		v1Pool  string
+		v2      []domain.TaskSpec
+		want    *string
 	}{
 		{name: "pinned keeps the run's pool", latest: false, v1Pool: "etl",
 			v2: []domain.TaskSpec{{TaskID: "t", Type: domain.TaskTypePython, Pool: "gpu"}}, want: strPtr("etl")},
@@ -387,7 +414,7 @@ func TestClearPoolFollowsTheVersionThatWillRun(t *testing.T) {
 			v2: []domain.TaskSpec{{TaskID: "t", Type: domain.TaskTypePython, Pool: "gpu"}}, want: strPtr("gpu")},
 		{name: "moving back to the default pool stores NULL", latest: true, v1Pool: "etl",
 			v2: []domain.TaskSpec{{TaskID: "t", Type: domain.TaskTypePython}}, want: nil},
-		{name: "a task the current version dropped keeps its pool", latest: true, v1Pool: "etl",
+		{name: "a task the current version dropped keeps its pool", rebound: true, v1Pool: "etl",
 			v2: []domain.TaskSpec{{TaskID: "other", Type: domain.TaskTypePython, Pool: "gpu"}}, want: strPtr("etl")},
 	}
 	for _, c := range cases {
@@ -402,6 +429,9 @@ func TestClearPoolFollowsTheVersionThatWillRun(t *testing.T) {
 					t.Fatalf("precondition: materialized pool is not %q", c.v1Pool)
 				}
 				registerClearSpec(t, repo, ctx, domain.DAGSpec{DagID: dagID, DagVersion: "v2", Image: "img:v2", Tasks: c.v2})
+				if c.rebound {
+					pinRunToCurrentVersion(t, pg, ctx, runUUID)
+				}
 
 				opts := domain.ClearOptions{ResetDagRun: true, RunOnLatestVersion: c.latest}
 				if _, err := repo.ClearTaskInstances(ctx, "default", dagID, "r1", mode.taskIDs, mode.onlyFailed, opts); err != nil {
