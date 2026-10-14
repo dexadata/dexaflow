@@ -1,0 +1,7 @@
+go test fuzz v1
+string("0 , * * 0")
+int64(1760256000)
+int64(3535)
+int64(86413)
+bool(true)
+int(5)
