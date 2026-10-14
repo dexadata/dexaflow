@@ -21,7 +21,12 @@ decision logic on the scheduler's hot path.
 - **Warm placement degrades, it never strands.** A warm worker exists before
   any task is known, so a task that declares its own placement or pod metadata
   (node selector, tolerations, runtime class and the rest listed in
-  `warm_placement_test.go`) takes the dedicated pod path instead.
+  `internal/domain/warm_placement_test.go`) takes the dedicated pod path
+  instead. The rule lives in `domain.WarmPolicy.DedicatedReason`, the one
+  decision both `Dispatch` and the register response (#1707) use: change it
+  there, never with a check of its own in dispatch, and keep
+  `Dispatcher.WarmPolicy` and the server's `warmPolicy(cfg)` equal
+  (`warm_policy_test.go` here and in `cmd/dexaflow-server`).
 - **A refusal is permanent.** A task that may not run here (it does not fit
   the size ADR 0066 charges it) fails on its first attempt with the reason,
   and spends neither dispatch retries nor its own retries

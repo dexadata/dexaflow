@@ -949,6 +949,8 @@ type registerAnswer struct {
 	SpecHash   string `json:"spec_hash"`
 	IsPaused   *bool  `json:"is_paused"`
 	DagCreated *bool  `json:"dag_created"`
+	// Execution is where each task runs (#1707); nil from an older server.
+	Execution *executionSummary `json:"execution"`
 }
 
 // warnPausedIgnored warns when --paused or --active was asked and the answer
@@ -998,19 +1000,19 @@ func registerDeployedDAG(ctx context.Context, out io.Writer, r registerRequest) 
 	warnPausedIgnored(r.warn, r.paused, answer.IsPaused)
 	res := deployResult{DagID: spec.DagID, Version: r.version, Image: r.digestRef, Digest: digestOf(r.digestRef),
 		SpecHash: answer.SpecHash, IsPaused: answer.IsPaused, Created: status == http.StatusCreated,
-		DagCreated: answer.DagCreated != nil && *answer.DagCreated, Status: deployStatusRegistered}
+		DagCreated: answer.DagCreated != nil && *answer.DagCreated, Status: deployStatusRegistered, Execution: answer.Execution}
 	if status == http.StatusOK {
 		// 200 rather than 201: the server already had this exact spec and made
 		// no version. Reached when the pre-check was skipped (--force) or could
 		// not be made, so the label may not be the current version.
 		res.Status = deployStatusUnchanged
 		_, werr := fmt.Fprintf(out,
-			"warning: %s was already registered as version %s with this exact content; nothing new was registered, and it may not be the current version\n",
-			spec.DagID, r.version)
+			"warning: %s was already registered as version %s with this exact content; nothing new was registered, and it may not be the current version\n%s",
+			spec.DagID, r.version, executionLines(answer.Execution))
 		return res, werr
 	}
 	_, werr := fmt.Fprintf(out,
-		"Deployed %s -> %s\n  image %s\n  registered version %s\n", spec.DagID, r.serverURL, r.digestRef, r.version)
+		"Deployed %s -> %s\n  image %s\n  registered version %s\n%s", spec.DagID, r.serverURL, r.digestRef, r.version, executionLines(answer.Execution))
 	return res, werr
 }
 

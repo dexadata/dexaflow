@@ -122,7 +122,7 @@ type PlatformDefaults struct {
 	// Limits fills an empty CPU or memory limit on every task pod, after the task
 	// and L0 resources above are chosen (executor.defaults.limits_*, #537). Nil:
 	// no default limit. Not applied with a unit, which always sets both limits.
-	// Without a unit the same limits also size the warm pods (see warmEligible).
+	// Without a unit the same limits also size the warm pods (see WarmPolicy).
 	Limits *domain.DefaultLimits
 	// PodSecurity carries the task-pod hardening choices. It lives here, not in
 	// the DAG spec, on purpose: whether untrusted task code may run as root is a
@@ -223,18 +223,6 @@ func (d *Dispatcher) SetSecretsBackend(class, kwargs string) {
 	d.secretsBackend, d.secretsBackendKwargs = class, kwargs
 }
 
-// warmSACompatible reports whether a task can run on a warm worker, whose
-// ServiceAccount is the operator default fixed at pod creation. A task that pins a
-// different execution.service_account is incompatible (the warm pod cannot adopt
-// it) and must take the dedicated path; a task with no SA (uses the default) or one
-// equal to the default is compatible.
-func warmSACompatible(task domain.TaskSpec, warmSA string) bool {
-	if task.Execution == nil || task.Execution.ServiceAccount == "" {
-		return true
-	}
-	return task.Execution.ServiceAccount == warmSA
-}
-
 // SetDefaultTaskServiceAccount sets the ServiceAccount task pods run as when a
 // DAG's task does not specify execution.service_account. Empty leaves pods on the
 // namespace default SA (today's behavior). Wiring the chart's task ServiceAccount
@@ -329,22 +317,15 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	// defer-at-max belong to N1b2/N1d, where real pool accounting (registered
 	// workers + in-flight pods) exists; there is no admission cap here.
 	//
-	// Staging is excluded from warm reuse (ADR 0058 D5): a warm worker carries no
-	// per-run /staging mount, so a staging attempt placed on one would silently
-	// lose the run's shared volume. Staging attempts always take the dedicated
-	// path below, which provisions the StagingClaim.
-	// A warm worker is pre-created with the operator's default task ServiceAccount,
-	// fixed for its lifetime, so a task that pins a DIFFERENT execution.service_account
-	// cannot run on it (it would silently run as the wrong identity and break keyless
-	// resolution). Such a task takes the dedicated path below, which sets its own SA —
-	// the same degrade-not-strand exclusion as staging (ADR 0058 D5).
-	// With a resource unit a warm pod is one unit, so only a task of size 1
-	// that declares no resources fits on it (ADR 0066 §3). A task that declares
-	// its own placement or pod metadata (node selector, runtime class, labels,
-	// ...) takes the dedicated path too (warmPlacementCompatible).
-	// A source-mode attempt never goes warm either (ADR 0067 §3): a warm pod is
-	// built before its task is known, so it cannot carry the task's dag.py.
-	if d.placer != nil && !sourceMode && d.warmEligible(r, task) {
+	// Which attempts may go warm is domain.WarmPolicy.DedicatedReason, the
+	// decision the register response reports per task: warm pools on; no
+	// staging (a warm worker has no per-run /staging mount, ADR 0058 D5); no
+	// source mode (a warm pod cannot carry the task's dag.py, ADR 0067 §3);
+	// the warm workers' ServiceAccount; none of the task's own placement or pod
+	// metadata; and a size that fits a warm pod (one unit, ADR 0066 §3, or the
+	// default limits, #537). Any other attempt takes the dedicated path below.
+	version := domain.WarmVersion{Image: r.Image, HasSource: r.Source != "", Staging: r.Staging}
+	if d.placer != nil && d.WarmPolicy().DedicatedReason(version, task) == "" {
 		wa := &agentv1.WorkAssignment{
 			AssignmentId: uuid.NewString(),
 			AttemptToken: token,
@@ -472,39 +453,19 @@ func (d *Dispatcher) checkUnit(runID, dagID string, task domain.TaskSpec) error 
 	return refused
 }
 
-// warmEligible reports whether an attempt may go to a warm worker: no
-// staging, the warm ServiceAccount, none of its own placement or pod metadata,
-// and, with a resource unit, a size-1 task without resources, since a warm pod
-// is one unit. Without a unit, warm pods are sized by the default limits
-// (#537), so a task that would get a larger limit on a dedicated pod takes one.
-func (d *Dispatcher) warmEligible(r Resolved, task domain.TaskSpec) bool {
-	return (r.Staging == nil || !r.Staging.Enabled) &&
-		warmSACompatible(task, d.defaultTaskServiceAccount) &&
-		warmPlacementCompatible(task) &&
-		d.defaults.Unit.WarmEligible(task) &&
-		(d.defaults.Unit != nil || d.defaults.Limits.WarmEligible(task))
-}
-
-// warmPlacementCompatible reports whether a task can run on a warm worker as it
-// would on its dedicated pod. A warm worker is created before any task is known,
-// so it carries none of the placement fields and pod metadata BuildPod applies
-// from a task's execution block: node selector, tolerations, affinity, topology
-// spread, priority and runtime class, termination grace, DRA claims, labels and
-// annotations. Placed on a warm worker, such a task would run on the wrong
-// node, outside the sandbox its runtime class asks for (gVisor), without its
-// device, or outside the NetworkPolicy its labels select, with no error. It
-// takes the dedicated path instead, like staging and a pinned ServiceAccount.
-// The image pull policy is the one field left out: it only matters before the
-// container starts, and the warm image is the dag_version's.
-func warmPlacementCompatible(task domain.TaskSpec) bool {
-	e := task.Execution
-	if e == nil {
-		return true
+// WarmPolicy is the warm placement decision this dispatcher applies (ADR
+// 0058): warm pools are on when a placer is wired, and a warm pod has the
+// default task ServiceAccount, the resource unit or default limits, and no
+// source. The register response reports each task's execution mode from the
+// same policy, built from the same configuration (#1707).
+func (d *Dispatcher) WarmPolicy() domain.WarmPolicy {
+	return domain.WarmPolicy{
+		Enabled:         d.placer != nil,
+		ServiceAccount:  d.defaultTaskServiceAccount,
+		Unit:            d.defaults.Unit,
+		Limits:          d.defaults.Limits,
+		SourceModeImage: d.sourceModeImage,
 	}
-	return len(e.NodeSelector) == 0 && len(e.Tolerations) == 0 && len(e.Affinity) == 0 &&
-		len(e.TopologySpreadConstraints) == 0 && e.PriorityClassName == "" &&
-		e.RuntimeClassName == nil && e.TerminationGracePeriodSeconds == nil &&
-		len(e.ResourceClaims) == 0 && len(e.Labels) == 0 && len(e.Annotations) == 0
 }
 
 // taskResources picks the task pod's resources. With a resource unit the unit
