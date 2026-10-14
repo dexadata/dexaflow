@@ -41,7 +41,12 @@ error: deploy requires a container registry, but none is configured.
       this deploy:                --registry ghcr.io/<your-org>  (or DEXAFLOW_REGISTRY)
       the whole cluster:          deploy.defaults.registry in the server's Helm values
 
-  The image name defaults to the dag_id. Then authenticate your builder once:  docker login ghcr.io
+  The image name defaults to the dag_id. Then give the CLI a credential for the registry:
+      Artifact Registry, GCR: gcloud auth login
+      ECR: aws sso login, aws configure, environment credentials or an instance role
+      ACR: az login
+      any other registry: docker login <registry>
+  A build by a local container tool pushes with that tool's own login; the deploy preflight names it.
 ```
 
 **Fix:** set a registry in one of those places (the order is in
@@ -141,9 +146,10 @@ call) requires the **`write:dag`** permission on the caller's token:
 | `401` — `"unauthorized" / "no authenticated user"` | No token, or an invalid/expired one | `dexaflow auth login --server <pro>` once; `deploy` then needs no auth flags |
 | `403` — `"forbidden" / "missing permission write:dag"` | A valid token whose role does not grant `write:dag` | Log in as (or ask an admin to grant) a role with `write:dag` — Admin → Users/Roles on the control plane |
 
-Registry auth (`docker login`, step 1) and control-plane auth (`dexaflow auth
-login`) are **two separate credentials** — a push failing with `denied`/
-`unauthorized` is the *registry* rejecting the builder, not the control plane.
+Registry auth (the cloud CLI session or `docker login`, gate 1) and
+control-plane auth (`dexaflow auth login`) are **two separate credentials**: a
+push failing with `denied`/`unauthorized` is the *registry* rejecting the
+credential, not the control plane.
 
 ### 6. Private-registry pull (the cluster's half, not just the push)
 
