@@ -190,6 +190,10 @@ type Dependencies struct {
 	ExternalSignOutURL string
 	// OIDCUsers resolves and JIT-provisions OIDC identities (the storage repo).
 	OIDCUsers OIDCUserStore
+	// CLIDevices keeps the device sign-ins of the CLI (ADR 0081, the storage
+	// repo). With single sign-on configured it serves `dexaflow auth login
+	// --device`; nil leaves the device sign-in unserved.
+	CLIDevices CLIDeviceStore
 	// AuthAudit records authentication events (login, tenant-pin rejection, JIT,
 	// break-glass, logout) to the audit sink.
 	AuthAudit AuthAuditWriter
@@ -323,7 +327,8 @@ func NewServer(deps Dependencies) *gin.Engine {
 	r.GET("/api/v2/auth/login", loginPageHandler(pageOpts))
 	// What the CLI reads before it chooses how to sign in (#1704): the same
 	// facts the sign-in page renders from.
-	r.GET(authMethodsPath, authMethodsHandler(pageOpts, deps.OIDCEnabled))
+	device := newCLIDeviceDeps(deps)
+	r.GET(authMethodsPath, authMethodsHandler(pageOpts, deps.OIDCEnabled, device != nil))
 	// Operator service API (#1283): registered only when a service token is
 	// configured. /api/v2/service/ is outside the user-session middleware's
 	// scope (alwaysPublic) because the group authenticates its own callers.
@@ -359,7 +364,14 @@ func NewServer(deps Dependencies) *gin.Engine {
 		oidcLimiter := auth.NewRateLimiter(oidcRateLimitPerMinute, time.Minute)
 		codes := newCLICodes(deps.JWTSecret)
 		r.GET("/api/v2/auth/oidc/login", rateLimitByIP(oidcLimiter), oidcLoginHandler(deps.OIDCFlow, deps.Logger, deps.SessionCookieInsecure))
-		r.POST(cliTokenPath, rateLimitByIP(oidcLimiter), cliTokenHandler(codes, deps.Logger, deps.AuthAudit))
+		// The token route spends the OIDC budget on a code exchange and the
+		// device sign-in's own poll budget on a device poll, so it picks the
+		// limiter once it has read the grant.
+		if device != nil {
+			device.codes = codes
+			registerCLIDevice(r, device, oidcLimiter)
+		}
+		r.POST(cliTokenPath, cliTokenHandler(cliTokenDeps{codes: codes, logger: deps.Logger, audit: deps.AuthAudit, limiter: oidcLimiter, device: device}))
 		r.POST(cliConsentPath, rateLimitByIP(oidcLimiter), cliConsentHandler(cliConsentDeps{
 			codes: codes, audit: deps.AuthAudit, logger: deps.Logger, insecure: deps.SessionCookieInsecure,
 		}))

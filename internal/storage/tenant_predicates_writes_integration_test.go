@@ -232,3 +232,28 @@ func TestAPITokenRetireNeedsTheOwningTenantIntegration(t *testing.T) {
 		t.Errorf("RetireExpiredAPITokenName as the owner = %d rows, %v; want 1", len(rows), err)
 	}
 }
+
+// TestCLIDeviceApprovalNeedsTheUsersTenantIntegration (ADR 0081): approving
+// a device sign-in as a user while naming another tenant approves nothing;
+// naming the user's own tenant approves it.
+func TestCLIDeviceApprovalNeedsTheUsersTenantIntegration(t *testing.T) {
+	f, repo, ctx := newTenantPredicateFixture(t)
+	userID, email := apiTokenOwner(t, ctx, repo, "default", "viewer")
+	_, _, created := newDeviceAuthorization(t, ctx, repo, 10*time.Minute, time.Second)
+	var id, uid pgtype.UUID
+	if err := id.Scan(created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := uid.Scan(userID); err != nil {
+		t.Fatal(err)
+	}
+	approve := func(tenant string) (int64, error) {
+		return f.q.ApproveCLIDevice(ctx, queries.ApproveCLIDeviceParams{ID: id, UserID: uid, Tenant: tenant, Email: &email, Roles: []string{"viewer"}})
+	}
+	if n, err := approve(f.otherNm); err != nil || n != 0 {
+		t.Errorf("ApproveCLIDevice naming another tenant = %d rows, %v; want 0", n, err)
+	}
+	if n, err := approve("default"); err != nil || n != 1 {
+		t.Errorf("ApproveCLIDevice naming the user's tenant = %d rows, %v; want 1", n, err)
+	}
+}
