@@ -9,7 +9,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/dexadata/dexaflow/internal/config"
-	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
 
 // absoluteRenewWindow is the fallback near-expiry window used when a token carries
@@ -83,7 +82,7 @@ func nearExpiry(iat, exp, now time.Time) bool {
 // D8) rather than hand-rolling HTTP. A non-200 (notably 401 past max_lifetime)
 // is an error, so the caller falls back to the current token.
 func renewToken(ctx context.Context, serverURL, token string) (string, error) {
-	c, err := apiclient.New(serverURL, token)
+	c, err := cliAPIClient(serverURL, token)
 	if err != nil {
 		return "", err
 	}

@@ -636,6 +636,13 @@ spec:
             {{- end }}
             {{- end }}
             {{- end }}
+            {{- if $deployDefaults.sourceMode }}
+            # Advertise the source mode runtime image on /api/v2/deployDefaults
+            # (#1772). The server serves execution.source_mode.image itself;
+            # deployment.yaml has already refused this while source mode is off.
+            - name: LEOFLOW_DEPLOY_DEFAULTS_SOURCE_MODE
+              value: "true"
+            {{- end }}
             {{- $requireDigest := (.ctx.Values.deploy | default dict).requireDigest | default "off" | toString }}
             {{- if ne $requireDigest "off" }}
             # Digest-pinned images at register (#1703). Stamped only when warn

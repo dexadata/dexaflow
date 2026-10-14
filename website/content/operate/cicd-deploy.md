@@ -236,7 +236,7 @@ checks for the target in use, refreshing a saved session as a deploy does.
 | Flag | What it does |
 |---|---|
 | `--paused` / `--active` | Leaves the DAG paused or active after this deploy, new or not, instead of the creation rule above. The register sets it in its own transaction, audited as `dag.pause` or `dag.unpause`; for content that is already current, nothing is registered and the DAG is paused or unpaused with the Airflow `PATCH /api/v2/dags/{dag_id}`. Pausing is a run-state write: these flags need `write:dag` (the `deployer` role alone is refused with `403`), and a scoped token needs `dexaflow:run` as well as `dexaflow:deploy`, so a deploy-only token is refused with `403`. |
-| `--plan` | Says per DAG what a deploy would build, push and register, and why (content changed, already current, an older version, a new DAG), without running the parser, the builder or the register. Works with `--all`. |
+| `--plan` | Says per DAG what a deploy would build, push and register, and why (content changed, already current, an older version, a new DAG), without running the parser, the builder or the register. Works with `--all`, and in [source mode](/operate/source-mode/#deploying-in-source-mode), where nothing is built or pushed. |
 | `--changed-since <ref>` | With `--all`, deploys only the projects whose files changed since a git ref, and lists the others as skipped. See [Deploying only what changed](#deploying-only-what-changed). |
 | `--output json` | Prints one JSON document on stdout for the pipeline to read; the human lines and the builder's output go to stderr. |
 
@@ -277,8 +277,12 @@ this exact content), `current` (the content label is the current version, so
 nothing was built), `skipped` (unchanged since the `--changed-since` ref, with
 `reason`), or `failed` (one DAG of `--all`, with `error`). With
 `--plan` it is `planned` or `refused`, and a `plan` object carries `build`,
-`push`, `register` and `reason`. After a failure of `--all` the document is
-still printed, so the pipeline sees which DAGs went through.
+`push`, `register` and `reason`, and `source_mode: true` for a deploy in
+[source mode](/operate/source-mode/#deploying-in-source-mode). `links` and
+`checks` carry what the server added to the register's answer, when it added
+any ([Links and checks from the server](#links-and-checks-from-the-server)).
+After a failure of `--all` the document is still printed, so the pipeline
+sees which DAGs went through.
 
 `execution` is the server's answer on where each task runs: `mode` is `warm`
 (warm-eligible) or `dedicated`, with the `reason` for a dedicated pod, and
@@ -292,6 +296,42 @@ for one reason, a `warm pool` line; see
 [Where a deploy's tasks run](/operate/warm-pools/#where-a-deploys-tasks-run).
 A server from before the field sends none, and the entry has no `execution`.
 `--plan` does not run the parser, so it has no tasks to report on.
+
+#### Links and checks from the server
+
+A server, or a platform in front of it, may add two optional fields to the
+answer of the register and of its dry run: a `links` object (a name for each
+URL, such as the page of the new version in its own UI) and a `checks` list
+(what it checked, and the result). Each check is an object with a `name`, a
+`status` and an optional `detail`, or a plain string. The engine sends
+neither; `deploy` prints whatever it gets, the links sorted by name and the
+checks in the order given, under the `preflight:` line of the dry run and
+under the `Deployed` line of the register:
+
+```text
+Deployed my_pipeline -> https://pro.example.com
+  image ghcr.io/acme/my_pipeline@sha256:4e1f...
+  registered version v1.4.0-3f9c2a1b7d4e
+  link     console: https://console.example.com/dags/my_pipeline
+  check    lint: passed (0 findings)
+```
+
+Only `http` and `https` links are kept; any other (a `javascript:`, `file:`
+or relative URL) is dropped. Before printing, control characters (C0 and C1)
+are removed, and so are format characters (bidirectional overrides, zero-width
+characters) and line and paragraph separators, so a server cannot drive the
+terminal or disguise a link. With `--output json`, the register's `links` and
+`checks` are fields of the DAG's entry, absent when the server sent none.
+
+#### How the server recognizes the CLI
+
+Every request the CLI sends to a control plane, from any command (each HTTP
+client it builds sets the headers in its transport), carries
+`User-Agent: dexaflow-cli/<version>`, and `X-Dexaflow-CI: true` when one of
+the usual CI variables is set (`CI`, `GITHUB_ACTIONS` or `GITLAB_CI`, to
+anything but empty, `false` or `0`), so a server can tell an interactive
+deploy from a pipeline's. Neither header grants anything: authorization
+still comes from the token alone.
 
 {{% alert title="Building several DAGs at once: `dexaflow build`" color="info" %}}
 The pipeline `dexaflow ci init` writes stays the recommendation: it deploys
