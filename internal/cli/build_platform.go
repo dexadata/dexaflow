@@ -84,8 +84,8 @@ func buildPlatforms(cfg *domain.LeoflowConfig) []string {
 // (splitFor, ADR 0077).
 func selectBuilder(ctx context.Context, dir, dockerfile string, o compileOptions, cfg *domain.LeoflowConfig, image string) (b build.Builder, reason string) {
 	split, noSplit := splitFor(ctx, dir, dockerfile, o, cfg, image)
-	return build.Select(ctx, build.Options{Tool: o.builder, Reuse: o.reuse, Split: split, NoSplit: noSplit, Rebuild: o.rebuild},
-		image, buildPlatforms(cfg))
+	return build.Select(ctx, build.Options{Tool: o.builder, Reuse: o.reuse, Split: split, NoSplit: noSplit, Rebuild: o.rebuild,
+		Registry: registryFor(cfg)}, image, buildPlatforms(cfg))
 }
 
 // printBuildSettings says what a build is about to do: the platforms and

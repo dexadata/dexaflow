@@ -243,7 +243,7 @@ the latest run.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `deploy requires a container registry…` | no `registry:` in `dexaflow.yaml`, and the cluster advertises none | add the `registry:` block (Step 1) and `docker login <registry>` |
-| `denied` / `unauthorized` on push | builder not logged in to the registry | `docker login ghcr.io` (registry auth ≠ control-plane auth) |
+| `denied` / `unauthorized` on push | no credential for the registry, or one that may not push there | the command the preflight names for your registry: `docker login ghcr.io`, or for Artifact Registry, ECR and ACR a sign-in to that cloud's CLI ([Registry credentials](/operate/builders/#registry-credentials)); registry auth ≠ control-plane auth |
 | Task pod: `exec format error` | image arch ≠ cluster arch | build for the cluster's architecture: `dexaflow deploy --platform linux/arm64` on a Graviton cluster, or `build: {platforms: [linux/arm64]}` in `dexaflow.yaml`. The `platforms:` line of the output names where the value came from |
 | DAG runs but a task fails on a missing `conn_id` | connections live in the control plane, **not** in the image | deploy prints `note: this DAG expects connection(s): …`; create them on Pro (UI/API) first. See [Variables & Connections](/author-dags/variables-connections/) |
 

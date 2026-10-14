@@ -48,8 +48,10 @@ error: deploy requires a container registry, but none is configured.
 [Workspaces and targets](/operate/workspaces-and-targets/#registry-platforms-and-base-image)),
 or ask the platform team to advertise one for the whole cluster
 ([Cluster deploy defaults](/operate/workspaces-and-targets/#cluster-deploy-defaults)),
-then `docker login <registry>` once (builder
-auth is separate from the control-plane login — see [gate 5](#5-auth--writedag-rbac-scope)).
+then make sure the CLI has a credential for the registry: `docker login
+<registry>` once, or, for Artifact Registry, GCR, ECR and ACR, just be signed
+in to that cloud's CLI ([Registry credentials](/operate/builders/#registry-credentials)).
+Registry auth is separate from the control-plane login, see [gate 5](#5-auth--writedag-rbac-scope).
 See [ADR 0041](/project/adrs/0041-leoflow-deploy-pipelineless/).
 
 ### 2. Digest-pinned, immutable artifact — no `:latest`
