@@ -265,6 +265,66 @@ folder, else the git repository around it. To keep many DAGs in one repository
 with named control planes (`--target dev`, `--target prod`) and one shared
 registry, see [Workspaces and targets](/operate/workspaces-and-targets/).
 
+## Redeploy on save
+
+`dexaflow deploy --watch` deploys once, then keeps running and redeploys a
+project each time you save one of its files, the cluster counterpart of the
+hot reload of `dexaflow lite`. It takes the same targets as a deploy: the
+project in the current folder, a path, a `dag_id`, or `--all` for every DAG of
+the workspace, where a save redeploys only the project it belongs to.
+
+```console
+$ dexaflow deploy --watch
+…
+Deployed first_pro_dag -> https://pro.example.com
+  image ghcr.io/your-org/first-pro-dag@sha256:9f2c…
+  registered version 1a2b3c4
+watching .: save a file to redeploy what changed (Ctrl-C to stop)
+[10:42:07] first_pro_dag: saved, deploying version 5d6e7f8
+preflight:  control plane https://pro.example.com answers, the token may deploy
+…
+Deployed first_pro_dag -> https://pro.example.com
+[10:43:15] first_pro_dag: saved, no deployable change: version 5d6e7f8 is the current version; nothing registered
+^C
+stopped watching
+```
+
+- **Each redeploy is a normal deploy**: the preflight, the server's dry run,
+  the content label, the cluster's deploy defaults, and the reuse of an image
+  the registry already holds for that label. A save that leaves the label as
+  it is (a file saved with no change, or an edit undone before the save)
+  prints one line and registers nothing, once the server confirms that label
+  is still its current version. When it is not (a rollback or a teammate's
+  deploy moved it), the save is deployed like any other.
+- **Undoing a deployed save is a rollback**: going back to content an earlier
+  save already registered (version A, then B, then back to A) is refused as
+  for any deploy, since the server already has that version; the error names
+  `dexaflow rollback <dag_id> --to <label>`, which makes it current again.
+- **The files watched** are `dexaflow.yaml`, the DAG source, the workspace
+  file, and every file the content label covers (the files the image copies,
+  or the whole project with your own Dockerfile). Files a deploy writes, such
+  as `dag.json` and the output of `dbt parse`, are not watched. Nor is
+  `.dockerignore`, which the build rewrites: an edit to it alone is picked
+  up with the next save of another file.
+- **Saves close together are one redeploy**: the watch polls every 0.75
+  seconds and redeploys on the first poll at least half a second after it last
+  saw a file move, so the redeploy starts about 0.75 to 1.5 seconds after the
+  last save, and a "save all" or a formatter on save deploys once.
+- **A failed deploy does not stop the watch**: a config that does not load, a
+  compile or build error, or a register the server refuses prints the error,
+  and the next save tries again. Ctrl-C stops the watch with exit code `0`.
+- **It asks once**: the confirmation for a remote server comes before the
+  first deploy, never on a save; `--yes` skips it.
+- **The pause state is yours**: `--paused` or `--active` apply to the first
+  deploy only, and a redeploy never changes `is_paused`, so a DAG you pause in
+  the UI while watching stays paused.
+
+`--watch` refuses the flags that make no sense on every save: `--trigger` and
+`--follow` with its `--timeout` (trigger a run when you want one with `dexaflow runs trigger
+<dag_id>`), `--output json`, `--plan`, `--changed-since`, `--dag-version`,
+`--skip-build` and `--force`. The deploy defaults of the cluster are read once,
+when the watch starts.
+
 ## See versions and roll back
 
 Every deploy that registers new content adds a version; the newest becomes
