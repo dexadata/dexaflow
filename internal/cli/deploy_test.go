@@ -77,6 +77,27 @@ func TestRegisterDeployedDAGSurfacesServerError(t *testing.T) {
 	}
 }
 
+// TestRegisterDeployedDAGExplainsTheTrustedIssuerRefusal: a register the
+// server refuses because deploys go through its trusted issuer (#1773) says
+// so, rather than a bare 403.
+func TestRegisterDeployedDAGExplainsTheTrustedIssuerRefusal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Dexaflow-Deploy-Via", "trusted-issuer")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"detail":"deploys go through the trusted issuer"}`)
+	}))
+	defer srv.Close()
+
+	out := filepath.Join(t.TempDir(), "dag.json")
+	if err := os.WriteFile(out, []byte(pushSpec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := registerDeployedDAG(context.Background(), io.Discard, registerRequest{serverURL: srv.URL, token: "tok", output: out, digestRef: "r@sha256:x", version: "v1", origin: labelDefault})
+	if err == nil || !strings.Contains(err.Error(), "takes deploys only through its trusted issuer") {
+		t.Errorf("err = %v, want it to say deploys go through the trusted issuer", err)
+	}
+}
+
 func TestTriggerDeployRunPostsToDagRuns(t *testing.T) {
 	var gotPath, gotAuth, gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -332,6 +353,34 @@ func TestRequireRegistryRejectsUnconfigured(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error message missing %q; got:\n%s", want, msg)
 		}
+	}
+}
+
+// TestRequireRegistryNamesTheRegistryLogins checks that the error names the
+// credential each kind of registry takes (ADR 0080): the cloud CLI session for
+// Artifact Registry, ECR and ACR, docker login for the others, and no longer
+// tells every user to run docker login for ghcr.io.
+func TestRequireRegistryNamesTheRegistryLogins(t *testing.T) {
+	cfg := &domain.LeoflowConfig{}
+	cfg.ApplyDefaults()
+	err := requireRegistry(cfg)
+	if err == nil {
+		t.Fatal("expected requireRegistry to reject a config with no registry URL")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"Artifact Registry, GCR: gcloud auth login",
+		"ECR: aws sso login, aws configure, environment credentials or an instance role",
+		"ACR: az login",
+		"any other registry: docker login <registry>",
+		"the deploy preflight names it",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error message missing %q; got:\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "authenticate your builder once") {
+		t.Errorf("error message still tells everyone to docker login ghcr.io:\n%s", msg)
 	}
 }
 

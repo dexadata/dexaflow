@@ -55,6 +55,7 @@ type deployServer struct {
 	dryRuns         int
 	noDryRun        bool
 	probeStatus     int
+	viaIssuer       bool // the probe's refusal says deploys go through the trusted issuer (#1773)
 	dryRunStatus    int
 	refusal         string
 	dryRunWarnings  []string
@@ -188,6 +189,9 @@ func (s *deployServer) serveDryRun(w http.ResponseWriter, r *http.Request, body 
 		s.probes++
 		if s.probeStatus != 0 {
 			w.Header().Del("Dexaflow-Dry-Run")
+			if s.viaIssuer {
+				w.Header().Set("Dexaflow-Deploy-Via", "trusted-issuer")
+			}
 			refuse(s.probeStatus)
 			return
 		}

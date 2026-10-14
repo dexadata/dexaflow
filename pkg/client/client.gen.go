@@ -731,17 +731,17 @@ type WarmPoolReport struct {
 	MaxPoolSize    *int   `json:"max_pool_size,omitempty"`
 	MinIdleWorkers *int   `json:"min_idle_workers,omitempty"`
 
-	// PreviousPool draining for a new version of an existing DAG when this server keeps warm workers; the previous version's warm workers, if it has any, keep serving its active runs and are removed once its last one ends.
+	// PreviousPool draining for a new version of an existing DAG when this server keeps warm workers; the previous version's idle warm workers, if it has any, are removed, and each busy one once its attempt ends.
 	PreviousPool *WarmPoolReportPreviousPool `json:"previous_pool,omitempty"`
 
-	// State off: warm pools are off. none: this version gets no warm worker (staging, source mode, no idle worker kept, or a server that runs no warm workers: the subprocess executor, or pod dispatch disabled). on: the version keeps min_idle_workers idle warm workers, up to max_pool_size, while it has an active run; they start with its first run.
+	// State off: warm pools are off. none: this version gets no warm worker (staging, source mode, no idle worker kept, or a server that runs no warm workers: the subprocess executor, or pod dispatch disabled). on: the version keeps min_idle_workers idle warm workers, up to max_pool_size, while it is the DAG's current version; for a DAG that declares min_idle_workers they start at the next reconcile (when a paused DAG is unpaused), else with the version's first run.
 	State WarmPoolReportState `json:"state"`
 }
 
-// WarmPoolReportPreviousPool draining for a new version of an existing DAG when this server keeps warm workers; the previous version's warm workers, if it has any, keep serving its active runs and are removed once its last one ends.
+// WarmPoolReportPreviousPool draining for a new version of an existing DAG when this server keeps warm workers; the previous version's idle warm workers, if it has any, are removed, and each busy one once its attempt ends.
 type WarmPoolReportPreviousPool string
 
-// WarmPoolReportState off: warm pools are off. none: this version gets no warm worker (staging, source mode, no idle worker kept, or a server that runs no warm workers: the subprocess executor, or pod dispatch disabled). on: the version keeps min_idle_workers idle warm workers, up to max_pool_size, while it has an active run; they start with its first run.
+// WarmPoolReportState off: warm pools are off. none: this version gets no warm worker (staging, source mode, no idle worker kept, or a server that runs no warm workers: the subprocess executor, or pod dispatch disabled). on: the version keeps min_idle_workers idle warm workers, up to max_pool_size, while it is the DAG's current version; for a DAG that declares min_idle_workers they start at the next reconcile (when a paused DAG is unpaused), else with the version's first run.
 type WarmPoolReportState string
 
 // XComEntry defines model for XComEntry.
@@ -5769,6 +5769,11 @@ func (r ClearTaskInstancesResponse) ContentType() string {
 	return ""
 }
 
+// SetDagCurrentVersionResponse403Headers the declared response headers of an HTTP 403 response for SetDagCurrentVersion
+type SetDagCurrentVersionResponse403Headers struct {
+	DexaflowDeployVia *string
+}
+
 type SetDagCurrentVersionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5782,6 +5787,8 @@ type SetDagCurrentVersionResponse struct {
 	JSON403 *Error
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *SetDagCurrentVersionResponse403Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -6393,6 +6400,11 @@ func (r GetDagSpecResponse) ContentType() string {
 	return ""
 }
 
+// RegisterDagVersionResponse403Headers the declared response headers of an HTTP 403 response for RegisterDagVersion
+type RegisterDagVersionResponse403Headers struct {
+	DexaflowDeployVia *string
+}
+
 type RegisterDagVersionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6408,6 +6420,8 @@ type RegisterDagVersionResponse struct {
 	JSON403 *Error
 	// JSON409 the response for an HTTP 409 `application/json` response
 	JSON409 *Error
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *RegisterDagVersionResponse403Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -8458,6 +8472,19 @@ func ParseSetDagCurrentVersionResponse(rsp *http.Response) (*SetDagCurrentVersio
 
 	}
 
+	switch {
+	case rsp.StatusCode == 403:
+		var headers SetDagCurrentVersionResponse403Headers
+		if values := rsp.Header.Values("Dexaflow-Deploy-Via"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Dexaflow-Deploy-Via", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.DexaflowDeployVia = &value
+		}
+		response.Headers403 = &headers
+	}
+
 	return response, nil
 }
 
@@ -8889,6 +8916,19 @@ func ParseRegisterDagVersionResponse(rsp *http.Response) (*RegisterDagVersionRes
 		}
 		response.JSON409 = &dest
 
+	}
+
+	switch {
+	case rsp.StatusCode == 403:
+		var headers RegisterDagVersionResponse403Headers
+		if values := rsp.Header.Values("Dexaflow-Deploy-Via"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Dexaflow-Deploy-Via", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.DexaflowDeployVia = &value
+		}
+		response.Headers403 = &headers
 	}
 
 	return response, nil

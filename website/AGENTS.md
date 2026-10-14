@@ -11,6 +11,13 @@ in [build the docs](content/contribute/build-docs.md).
   line in its description.
 - **Accepted ADRs are immutable.** A new decision gets a new ADR that names the
   one it replaces. Pick the next free number, checking open PRs as well.
+- **A dated note may be appended to an accepted ADR** when a statement in it no
+  longer matches the system as built: a blockquote starting
+  `**Note (YYYY-MM, #issue).**` placed next to the passage it corrects, saying
+  what is true now and linking the page or ADR that has the detail. The
+  decision text itself is never edited, and an earlier note is never rewritten:
+  a later change gets a note of its own. A note records facts; a changed
+  decision still needs a new ADR. Examples: ADR 0003, 0014 and 0041.
 - **New names first.** Examples use `dexaflow`, `DEXAFLOW_*` and
   `dexaflow.yaml`; the names from before the rename appear only where the page
   explains that they still work.

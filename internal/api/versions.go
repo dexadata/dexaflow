@@ -263,7 +263,7 @@ func registerVersion(c *gin.Context, repo DagVersionRepository, admission specAd
 		return
 	}
 	resp := versionResponse{DagID: spec.DagID, Version: spec.DagVersion, SpecHash: hash, Created: got.Created, DagCreated: got.DagCreated, IsPaused: got.IsPaused,
-		Execution: execution.report(&spec, got.Created && !got.DagCreated)}
+		Execution: execution.report(&spec, got.Created && !got.DagCreated, got.IsPaused)}
 	if dryRun {
 		c.JSON(http.StatusOK, dryRunResponse{versionResponse: resp, DryRun: true, Warnings: warnings})
 		return

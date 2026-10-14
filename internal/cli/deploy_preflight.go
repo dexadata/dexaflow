@@ -27,6 +27,28 @@ import (
 // dry run route past its permission check, refusals included (internal/api).
 const dryRunHeader = "Dexaflow-Dry-Run"
 
+// deployViaHeader is the header of a deploy the server refuses because it
+// takes deploys only through its trusted issuer (#1773), with the value
+// deployViaIssuer.
+const (
+	deployViaHeader = "Dexaflow-Deploy-Via"
+	deployViaIssuer = "trusted-issuer"
+)
+
+// deployViaIssuerError explains a 403 that says the control plane takes
+// deploys only through its trusted issuer (auth.trusted_issuer.deploy_audience,
+// #1773): no role, scope or API token of this CLI can deploy there. It returns
+// nil for any other answer.
+func deployViaIssuerError(serverURL string, status int, header http.Header, body []byte) error {
+	if status != http.StatusForbidden || header.Get(deployViaHeader) != deployViaIssuer {
+		return nil
+	}
+	return fmt.Errorf("the control plane at %s takes deploys only through its trusted issuer: %w\n"+
+		"  A session, a password login or an API token cannot deploy there, whatever its roles and scopes.\n"+
+		"  Deploy through the platform that owns deployments, or pass (--token or DEXAFLOW_TOKEN) a bearer token\n"+
+		"  the issuer minted for the server's deploy audience with the dexaflow:deploy scope", serverURL, apiStatusError(status, body))
+}
+
 // preflightTimeout bounds each preflight check of a deploy.
 const preflightTimeout = 30 * time.Second
 
@@ -62,6 +84,9 @@ func checkServerAccess(ctx context.Context, warn io.Writer, serverURL, token, da
 	hint := ""
 	if paused != nil {
 		hint = pausedScopeHint
+	}
+	if err := deployViaIssuerError(serverURL, status, header, body); err != nil {
+		return serverAccess{}, fmt.Errorf("preflight: %w", err)
 	}
 	switch {
 	case status == http.StatusUnauthorized:
