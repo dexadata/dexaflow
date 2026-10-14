@@ -45,7 +45,7 @@ func TestSetCurrentDagVersionTxRefusesAChangedTarget(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = setCurrentDagVersionTx(ctx, repo.q.WithTx(tx), tid, dagID, domain.DagVersionSelector{Version: "v1"}, stale, actorUUID(""))
+		_, err = setCurrentDagVersionTx(ctx, repo.q.WithTx(tx), tid, domain.DagSetCurrent{DagID: dagID, Selector: domain.DagVersionSelector{Version: "v1"}}, stale)
 		_ = tx.Rollback(ctx) //nolint:errcheck // test cleanup
 		if !errors.Is(err, domain.ErrConflict) {
 			t.Errorf("%s: err = %v, want ErrConflict", name, err)

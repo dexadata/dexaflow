@@ -1500,6 +1500,8 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		SourceModeImage:              cfg.Execution.SourceMode.RuntimeImage(),
 		ExecutionPolicy:              executionPolicy(cfg.Executor.Defaults),
 		DeployDefaults:               cfg.Deploy.Defaults,
+		RequireDigest:                cfg.Deploy.RequireDigest,
+		UnpinnedImages:               unpinnedImages(tel.Metrics),
 		WarmPolicy:                   warmPolicy(cfg),
 		WarmPools:                    cfg.Execution,
 		WarmWorkersAbsent:            warmWorkersAbsent(cfg, executorInfo.PodDispatchEnabled),
@@ -3215,6 +3217,16 @@ func executionPolicy(c config.PlatformDefaultsSection) *domain.ExecutionPolicy {
 // unitMisfits is the API's misfit counter, nil (not a typed nil) without
 // metrics so the handler's nil check holds.
 func unitMisfits(m *observability.Metrics) api.UnitMisfitRecorder {
+	if m == nil {
+		return nil
+	}
+	return m
+}
+
+// unpinnedImages is the API's count of images deploy.require_digest warned
+// about or refused, nil (not a typed nil) without metrics so the handler's
+// nil check holds.
+func unpinnedImages(m *observability.Metrics) api.UnpinnedImageRecorder {
 	if m == nil {
 		return nil
 	}

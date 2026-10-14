@@ -209,6 +209,26 @@ func TestDeployPreflightPassesAndSaysSo(t *testing.T) {
 	}
 }
 
+// TestDeployPrintsEachServerWarningOnce: the register's answer repeats what
+// the preflight's dry run warned about and may add more (#1703); the deploy
+// prints each warning once on stderr.
+func TestDeployPrintsEachServerWarningOnce(t *testing.T) {
+	noDockerCredentials(t)
+	reg := newFakeOCIRegistry(t, singleManifest)
+	dir, builder, _ := deployFixtureAt(t, reg.host+"/team")
+	const misfit, unpinned = `task "train" asks for 2 CPU, more than size 1`, `image "x" is not pinned by digest`
+	fake := &deployServer{dryRunWarnings: []string{misfit}, registerWarnings: []string{misfit, unpinned}}
+	out, errOut, err := deployDir(t, fake, dir, builder, "--force")
+	if err != nil {
+		t.Fatalf("deploy: %v\n%s", err, out)
+	}
+	for _, w := range []string{misfit, unpinned} {
+		if n := strings.Count(errOut, "warning: the server: "+w); n != 1 {
+			t.Errorf("stderr carries %q %d times, want once:\n%s", w, n, errOut)
+		}
+	}
+}
+
 // TestDeployAgainstAServerWithoutDryRun: a server that predates the dry run
 // route answers it 404 and registers nothing; the deploy goes on, says its
 // checks run at register time, and registers once.
@@ -347,7 +367,7 @@ func TestServerDryRunOfAnOlderReplicaIsANote(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, warn strings.Builder
-	err := serverDryRun(t.Context(), &out, &warn, versionPost{serverURL: srv.URL, dagID: "etl"}, spec, dryImage{ref: "r/etl@sha256:" + strings.Repeat("0", 64)}, "v1", labelDefault)
+	_, err := serverDryRun(t.Context(), &out, &warn, versionPost{serverURL: srv.URL, dagID: "etl"}, spec, dryImage{ref: "r/etl@sha256:" + strings.Repeat("0", 64)}, "v1", labelDefault)
 	if err != nil || !strings.Contains(warn.String(), "note: ") || !strings.Contains(warn.String(), "404") {
 		t.Fatalf("err = %v, warn = %q; want a note naming the 404", err, warn.String())
 	}

@@ -63,6 +63,19 @@ type DagVersionSelector struct {
 	Number  int
 }
 
+// DagSetCurrent is one request to make a registered version of DagID current
+// again (#1702): the version Selector names, on behalf of ActorUserID (empty
+// when none), after Admit accepts its spec. RequireDigest is the
+// deploy.require_digest it was admitted under (#1703); while it is warn or
+// enforce, the audit entry records it and whether the image is pinned.
+type DagSetCurrent struct {
+	DagID         string
+	Selector      DagVersionSelector
+	ActorUserID   string
+	Admit         func(DAGSpec) error
+	RequireDigest DigestRequirement
+}
+
 // CurrentVersionChange is the outcome of making a version current: the
 // version that was current before (From), the one that is current now (To),
 // and whether anything changed (false when To was already current).
@@ -86,14 +99,18 @@ type CurrentVersionChange struct {
 // the register creates and recorded in its audit entry; a register that
 // creates no version (the content is already registered) changes no build
 // info.
+// RequireDigest is the deploy.require_digest the register was admitted under
+// (#1703); while it is warn or enforce, the audit entry records it and
+// whether the image is pinned by digest.
 type DagRegistration struct {
-	Spec         DAGSpec
-	SpecHash     string
-	ActorUserID  string
-	IsPaused     *bool
-	DryRun       bool
-	PromotedFrom *DagPromotion
-	BuildInfo    *BuildInfo
+	Spec          DAGSpec
+	SpecHash      string
+	ActorUserID   string
+	IsPaused      *bool
+	DryRun        bool
+	PromotedFrom  *DagPromotion
+	BuildInfo     *BuildInfo
+	RequireDigest DigestRequirement
 }
 
 // DagPromotion names where a promoted version came from: the source target's

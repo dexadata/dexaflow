@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -684,6 +685,9 @@ type deployRun struct {
 	wasPaused bool
 	// settings is what deploySettings says about this deploy.
 	settings string
+	// preflightWarnings is what the dry run of the register warned about,
+	// already printed.
+	preflightWarnings []string
 }
 
 // readStateBefore records, for --active, whether the DAG was paused before
@@ -768,7 +772,7 @@ func (d *deployRun) run() error {
 	}
 	d.readStateBefore(ctx)
 	res, rerr := registerDeployedDAG(ctx, out, registerRequest{serverURL: d.serverURL, token: d.token, output: output,
-		digestRef: digestRef, version: version, origin: origin, paused: d.o.pausedOverride(), warn: d.cmd.ErrOrStderr(),
+		digestRef: digestRef, version: version, origin: origin, paused: d.o.pausedOverride(), warn: d.cmd.ErrOrStderr(), shown: d.preflightWarnings,
 		build: provenance})
 	if rerr != nil {
 		return rerr
@@ -844,8 +848,10 @@ func (d *deployRun) checkRegistry(ctx context.Context, image string, reuse bool)
 func (d *deployRun) dryRun(ctx context.Context, output, image, version string, origin labelOrigin, reuse bool) error {
 	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
 	defer cancel()
-	return serverDryRun(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), versionPost{serverURL: d.serverURL, token: d.token,
+	warned, err := serverDryRun(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), versionPost{serverURL: d.serverURL, token: d.token,
 		dagID: d.cfg.DagID, paused: d.o.pausedOverride()}, output, d.dryRunImage(ctx, image, reuse), version, origin)
+	d.preflightWarnings = warned
+	return err
 }
 
 // dryRunImage is the image the dry run is sent. The register gets the image
@@ -967,8 +973,12 @@ type registerRequest struct {
 	version          string
 	origin           labelOrigin
 	paused           *bool
-	// warn receives the warning that the server did not apply paused.
+	// warn receives the warning that the server did not apply paused, and
+	// the register's own warnings.
 	warn io.Writer
+	// shown is the warnings the preflight's dry run already printed, which
+	// the register's answer repeats and the deploy does not print again.
+	shown []string
 	// build is where the version was built, sent with the register
 	// (#1702); its zero value sends nothing.
 	build domain.BuildInfo
@@ -982,6 +992,22 @@ type registerAnswer struct {
 	DagCreated *bool  `json:"dag_created"`
 	// Execution is where each task runs (#1707); nil from an older server.
 	Execution *executionSummary `json:"execution"`
+	// Warnings is what the register let through with a warning (#1703).
+	Warnings []string `json:"warnings"`
+}
+
+// printNewWarnings prints on w each of the server's warnings that is not in
+// shown, the ones already printed.
+func printNewWarnings(w io.Writer, warnings, shown []string) {
+	if w == nil {
+		return
+	}
+	for _, msg := range warnings {
+		if !slices.Contains(shown, msg) {
+			//nolint:errcheck // advisory: the register succeeded
+			fmt.Fprintf(w, "warning: the server: %s\n", msg)
+		}
+	}
 }
 
 // warnPausedIgnored warns when --paused or --active was asked and the answer
@@ -1036,6 +1062,7 @@ func registerDeployedDAG(ctx context.Context, out io.Writer, r registerRequest) 
 	var answer registerAnswer
 	_ = json.Unmarshal(raw, &answer) //nolint:errcheck // an older server's body may say less; the register itself succeeded
 	warnPausedIgnored(r.warn, r.paused, answer.IsPaused)
+	printNewWarnings(r.warn, answer.Warnings, r.shown)
 	res := deployResult{DagID: spec.DagID, Version: r.version, Image: r.digestRef, Digest: digestOf(r.digestRef),
 		SpecHash: answer.SpecHash, IsPaused: answer.IsPaused, Created: status == http.StatusCreated,
 		DagCreated: answer.DagCreated != nil && *answer.DagCreated, Status: deployStatusRegistered, Execution: answer.Execution}
