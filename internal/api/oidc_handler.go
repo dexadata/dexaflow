@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -70,6 +71,9 @@ type oidcDeps struct {
 	jwtSecret string
 	tokenTTL  time.Duration
 	logger    *slog.Logger
+	// cliCodes seals the one-time codes of CLI logins and remembers the
+	// states it answered.
+	cliCodes *cliCodes
 	// session names the session cookie, and its insecure drops Secure from the
 	// session and state cookies (see cookieSecure). Its zero value is the safe one.
 	session sessionCookieSpec
@@ -103,7 +107,10 @@ func clearStateCookie(c *gin.Context, insecure bool) {
 // oidcLoginHandler implements GET /api/v2/auth/oidc/login: it starts the
 // Authorization Code + PKCE flow. It generates the CSRF state, the nonce, and
 // the PKCE verifier, seals them (plus the sanitized post-login target) in a
-// signed HttpOnly state cookie, and redirects the browser to the IdP.
+// signed HttpOnly state cookie, and redirects the browser to the IdP. A login
+// started by `dexaflow auth login` also carries the CLI's loopback
+// redirect_uri, state and S256 code_challenge (parseCLIBinding), which are
+// sealed in the same cookie; an unacceptable set is a 400 before the IdP.
 func oidcLoginHandler(flow *oidc.Flow, logger *slog.Logger, insecureCookies bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		state, serr := randomURLToken()
@@ -112,10 +119,22 @@ func oidcLoginHandler(flow *oidc.Flow, logger *slog.Logger, insecureCookies bool
 			abortSSOServerFailure(c, logger, "generating login tokens", errors.Join(serr, nerr))
 			return
 		}
+		// A login started by `dexaflow auth login` names its loopback, its own
+		// state and its PKCE challenge. They are checked before anything is
+		// sent to the IdP and sealed in the state cookie with the rest.
+		var cli *oidc.CLIBinding
+		if isCLILogin(c) {
+			b, berr := parseCLIBinding(c)
+			if berr != nil {
+				AbortProblem(c, http.StatusBadRequest, "bad request", berr.Error())
+				return
+			}
+			cli = b
+		}
 		verifier := oidc.GenerateCodeVerifier()
 		next := sanitizeNext(c.Query("next"))
 		cookie, err := flow.Codec().Encode(oidc.StatePayload{
-			State: state, Nonce: nonce, Verifier: verifier, Next: next,
+			State: state, Nonce: nonce, Verifier: verifier, Next: next, CLI: cli,
 		}, oidc.StateCookieTTL)
 		if err != nil {
 			abortSSOServerFailure(c, logger, "encoding state cookie", err)
@@ -130,7 +149,9 @@ func oidcLoginHandler(flow *oidc.Flow, logger *slog.Logger, insecureCookies bool
 // CSRF state, exchanges the code (PKCE + client secret), verifies the ID token
 // (issuer pin, audience, nonce, azp, clock skew, email_verified, tenant pin,
 // email-domain allowlist), resolves or JIT-provisions the user, mints the app's
-// _token session cookie, and redirects. Every terminal path is audited; a
+// _token session cookie, and redirects. A CLI login ends instead with a
+// one-time code on the CLI's loopback (see finish), and its refusals go back
+// there too. Every terminal path is audited; a
 // verification failure fails closed (see denyWithCause) and never falls back to
 // a default identity.
 func oidcCallbackHandler(deps oidcDeps) gin.HandlerFunc {
@@ -139,9 +160,18 @@ func oidcCallbackHandler(deps oidcDeps) gin.HandlerFunc {
 		if !ok {
 			return
 		}
+		if payload.CLI != nil {
+			c.Set(contextKeyCLILogin, payload.CLI)
+		}
 		// CSRF: the state query param must match the signed cookie.
 		if subtle.ConstantTimeCompare([]byte(c.Query("state")), []byte(payload.State)) != 1 {
 			deps.deny(c, auditOIDCLoginFailure, "", "", "", "state_mismatch")
+			return
+		}
+		// A CLI login answers its state once: a replayed callback would hand
+		// out a second code.
+		if payload.CLI != nil && !deps.cliCodes.claimState(payload.State) {
+			deps.deny(c, auditOIDCLoginFailure, "", "", "", "state_replayed")
 			return
 		}
 		// RFC 9207 issuer response param, when the IdP provides it, must be the
@@ -180,11 +210,30 @@ func oidcCallbackHandler(deps oidcDeps) gin.HandlerFunc {
 			abortSSOServerFailure(c, deps.logger, "minting session token", terr)
 			return
 		}
-		setSessionCookie(c, token, deps.tokenTTL, deps.session)
-		deps.record(c, auditOIDCLoginSuccess, identity.Tenant, user.ID, identity.Email, "success",
-			map[string]string{"subject": identity.Subject, "roles": strings.Join(user.Roles, ",")})
-		c.Redirect(http.StatusFound, sanitizeNext(payload.Next))
+		deps.finish(c, payload, identity, user, token)
 	}
+}
+
+// finish hands a successful login its token: the browser session cookie and
+// the page it asked for, or, for a CLI login, a one-time code on the CLI's
+// loopback and no cookie at all. Both are audited as the same success, the
+// CLI one marked with its client.
+func (d oidcDeps) finish(c *gin.Context, payload oidc.StatePayload, identity *oidc.VerifiedIdentity, user *auth.User, token string) {
+	extra := map[string]string{"subject": identity.Subject, "roles": strings.Join(user.Roles, ",")}
+	if payload.CLI == nil {
+		setSessionCookie(c, token, d.tokenTTL, d.session)
+		d.record(c, auditOIDCLoginSuccess, identity.Tenant, user.ID, identity.Email, "success", extra)
+		c.Redirect(http.StatusFound, sanitizeNext(payload.Next))
+		return
+	}
+	code, err := d.cliCodes.seal(token, *payload.CLI)
+	if err != nil {
+		abortSSOServerFailure(c, d.logger, "sealing cli sign-in code", err)
+		return
+	}
+	extra["client"] = "cli"
+	d.record(c, auditOIDCLoginSuccess, identity.Tenant, user.ID, identity.Email, "success", extra)
+	c.Redirect(http.StatusFound, loopbackURL(payload.CLI, url.Values{"code": {code}}))
 }
 
 // readState reads and verifies the signed state cookie. A missing or invalid
@@ -421,7 +470,7 @@ func (d oidcDeps) denyWithCause(c *gin.Context, action, tenant, userID, email, r
 	// information an attacker probing the deployment is after), and the cause is
 	// already in the audit row and the WARN above, which is where an operator
 	// reads it.
-	c.Redirect(http.StatusFound, loginPageWithSSOError)
+	c.Redirect(http.StatusFound, ssoRefusalTarget(c, ssoErrorRefused))
 	c.Abort()
 }
 
@@ -455,7 +504,7 @@ func abortSSOServerFailure(c *gin.Context, logger *slog.Logger, what string, cau
 	if logger != nil {
 		logger.Error("oidc: "+what, "error", cause)
 	}
-	c.Redirect(http.StatusFound, loginPageWithSSOServerFailure)
+	c.Redirect(http.StatusFound, ssoRefusalTarget(c, ssoErrorServer))
 	c.Abort()
 }
 

@@ -83,6 +83,65 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v2/auth/methods:
+    get:
+      summary: Sign-in methods this server offers (Dexaflow)
+      description: >-
+        What dexaflow auth login reads before it chooses how to sign in. sso
+        is true when the OIDC single sign-on flow is served; password is true
+        when a password login can succeed for someone (always without SSO,
+        and only for break-glass accounts with it). The values come from the
+        same settings the sign-in page renders from. Public. A server without
+        this route answers 404, and the CLI then uses a password.
+      operationId: getAuthMethods
+      tags: [Auth]
+      security: []
+      responses:
+        "200":
+          description: The sign-in methods
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthMethods" }
+
+  /api/v2/auth/cli/token:
+    post:
+      summary: Exchange a CLI single sign-on code for a token (Dexaflow)
+      description: >-
+        The last step of dexaflow auth login with single sign-on. The CLI
+        opens GET /api/v2/auth/oidc/login with a loopback redirect_uri
+        (http://127.0.0.1:<port>/... or http://[::1]:<port>/...), its own
+        state, and code_challenge with code_challenge_method S256. After the
+        IdP round trip, the callback resolves the user exactly as for the UI
+        and redirects the browser to the loopback with a one-time code. This
+        route redeems that code, once and within 60 seconds, for the PKCE
+        verifier the challenge was derived from and the same redirect_uri,
+        and answers what POST /auth/token answers. Every refusal (unknown,
+        expired, used, tampered, wrong verifier or redirect_uri) is the same
+        400. Served only when single sign-on is configured, and rate limited
+        per client address with the other OIDC routes.
+      operationId: exchangeCLILoginCode
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CLITokenRequest" }
+      responses:
+        "200":
+          description: The sign-in completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          description: The code was refused
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: Too many requests from this address
+
   /api/v2/users:
     get:
       summary: List users
@@ -1180,6 +1239,21 @@ components:
         access_token: { type: string }
         token_type: { type: string, example: "bearer" }
         expires_in: { type: integer, example: 3600 }
+
+    AuthMethods:
+      type: object
+      required: [password, sso]
+      properties:
+        password: { type: boolean }
+        sso: { type: boolean }
+
+    CLITokenRequest:
+      type: object
+      required: [code, code_verifier, redirect_uri]
+      properties:
+        code: { type: string, description: The one-time code the loopback received }
+        code_verifier: { type: string, description: The PKCE verifier of the login's code_challenge }
+        redirect_uri: { type: string, description: The redirect_uri the login was started with }
 
     CreateUserRequest:
       type: object

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -22,12 +23,18 @@ import (
 // Dexaflow never handles. It is a sibling of `auth create-token`, which prints a
 // token for CI rather than persisting an interactive session.
 func newLoginCommand() *cobra.Command {
-	var serverURL, username, password string
-	var passwordStdin bool
+	var serverURL string
+	var f loginFlags
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Authenticate to a control plane (Pro) and store the token.",
-		Args:  cobra.NoArgs,
+		Long: "Authenticate to a control plane and save the token for that server.\n\n" +
+			"When the server offers single sign-on and no username or password is given, " +
+			"login opens the browser on the server's sign-in and waits for it on a loopback " +
+			"address (127.0.0.1); --no-browser prints the URL instead. A username or a " +
+			"password (flags, LEOFLOW_USERNAME/LEOFLOW_PASSWORD or --password-stdin) " +
+			"signs in with a password, as does a server without single sign-on.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			choice, rerr := resolveServer(cmd, serverURL)
 			if rerr != nil {
@@ -39,17 +46,9 @@ func newLoginCommand() *cobra.Command {
 			if _, werr := fmt.Fprintf(cmd.OutOrStdout(), "Logging in to %s (%s)\n", serverURL, choice.Source); werr != nil {
 				return werr
 			}
-			var cerr error
-			if password, cerr = resolvePassword(cmd, password, passwordStdin); cerr != nil {
-				return cerr
-			}
-			username, password, cerr = resolveCredentials(cmd, username, password)
-			if cerr != nil {
-				return cerr
-			}
-			token, err := requestToken(cmdContext(cmd), serverURL, username, password)
+			token, err := obtainLoginToken(cmd, serverURL, f)
 			if err != nil {
-				return hintEmailUsername(username, err)
+				return err
 			}
 			path, perr := sessionConfigPath(cmd)
 			if perr != nil {
@@ -67,10 +66,69 @@ func newLoginCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&serverURL, "server", "", "control plane base URL, over --target (default: the target in use, then server_url from the config file)")
-	cmd.Flags().StringVar(&username, "username", os.Getenv("LEOFLOW_USERNAME"), "username")
-	cmd.Flags().StringVar(&password, "password", os.Getenv("LEOFLOW_PASSWORD"), "password")
-	cmd.Flags().BoolVar(&passwordStdin, "password-stdin", false, "read the password from stdin instead of --password (avoids ps/shell-history exposure)")
+	cmd.Flags().StringVar(&f.username, "username", os.Getenv("LEOFLOW_USERNAME"), "username (signs in with a password)")
+	cmd.Flags().StringVar(&f.password, "password", os.Getenv("LEOFLOW_PASSWORD"), "password")
+	cmd.Flags().BoolVar(&f.passwordStdin, "password-stdin", false, "read the password from stdin instead of --password (avoids ps/shell-history exposure)")
+	cmd.Flags().BoolVar(&f.sso, "sso", false, "sign in with the server's single sign-on in a browser (the default when the server offers it and no username or password is given)")
+	cmd.Flags().BoolVar(&f.noBrowser, "no-browser", false, "with single sign-on, print the sign-in URL instead of opening a browser (implies --sso)")
+	cmd.Flags().DurationVar(&f.timeout, "timeout", defaultSSOTimeout, "how long to wait for the browser sign-in")
 	return cmd
+}
+
+// loginFlags are the flags of `dexaflow auth login`.
+type loginFlags struct {
+	username, password string
+	passwordStdin      bool
+	sso, noBrowser     bool
+	timeout            time.Duration
+}
+
+// obtainLoginToken signs in with single sign-on or with a password, as
+// chooseSSO decides, and returns the Dexaflow token.
+func obtainLoginToken(cmd *cobra.Command, serverURL string, f loginFlags) (string, error) {
+	useSSO, err := chooseSSO(cmd, serverURL, f)
+	if err != nil {
+		return "", err
+	}
+	if useSSO {
+		return ssoLogin(cmdContext(cmd), cmd.OutOrStdout(), serverURL, ssoOptions{noBrowser: f.noBrowser, timeout: f.timeout})
+	}
+	password, err := resolvePassword(cmd, f.password, f.passwordStdin)
+	if err != nil {
+		return "", err
+	}
+	username, password, err := resolveCredentials(cmd, f.username, password)
+	if err != nil {
+		return "", err
+	}
+	token, err := requestToken(cmdContext(cmd), serverURL, username, password)
+	if err != nil {
+		return "", hintEmailUsername(username, err)
+	}
+	return token, nil
+}
+
+// chooseSSO decides how login signs in. --sso (or --no-browser) asks for
+// single sign-on, which the server must offer, and cannot be combined with a
+// password flag. Otherwise any username or password, from a flag or the
+// environment, means a password login, and with neither the server's answer
+// decides: single sign-on when it offers it, a password otherwise.
+func chooseSSO(cmd *cobra.Command, serverURL string, f loginFlags) (bool, error) {
+	if f.sso || f.noBrowser {
+		for _, name := range []string{"username", "password", "password-stdin"} {
+			if cmd.Flags().Changed(name) {
+				return false, fmt.Errorf("--sso and --no-browser sign in through the browser; drop --%s, or drop --sso to sign in with a password", name)
+			}
+		}
+		if !serverOffersSSO(cmdContext(cmd), serverURL) {
+			return false, fmt.Errorf("%s does not offer single sign-on; sign in with --username and a password", serverURL)
+		}
+		return true, nil
+	}
+	if f.username != "" || f.password != "" || f.passwordStdin {
+		return false, nil
+	}
+	return serverOffersSSO(cmdContext(cmd), serverURL), nil
 }
 
 // persistLogin saves a fresh login. The token is always saved for its server,
