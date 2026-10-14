@@ -90,6 +90,11 @@ type versionGetter interface {
 	GetDagVersionByID(ctx context.Context, id pgtype.UUID) (queries.DagVersion, error)
 }
 
+// batchVersionGetter reads many dag_versions rows in one query, for prefetch.
+type batchVersionGetter interface {
+	GetDagVersionsByIDs(ctx context.Context, ids []pgtype.UUID) ([]queries.DagVersion, error)
+}
+
 // newSpecCache builds an empty spec cache ready for concurrent use.
 func newSpecCache() *specCache { return newSpecCacheWithLimit(defaultSpecCacheEntries) }
 
@@ -196,6 +201,52 @@ func (c *specCache) loadEntry(ctx context.Context, q versionGetter, versionID pg
 	c.touch(e, pin, inTick)
 	c.evict()
 	return e, nil
+}
+
+// prefetch fills the cache with every version of ids it does not hold yet, in
+// one query, so a caller about to read many versions (the warm pool reconcile,
+// over the current version of each prewarmed DAG) pays one round trip on a
+// cold cache instead of one per version. The entries join the LRU marked as
+// read by the current tick; prefetch evicts nothing, so the reads that follow
+// find them, and the next cold fill trims the cache back to its bound.
+func (c *specCache) prefetch(ctx context.Context, q batchVersionGetter, ids []pgtype.UUID) error {
+	c.mu.Lock()
+	missing := make([]pgtype.UUID, 0, len(ids))
+	seen := make(map[pgtype.UUID]bool, len(ids))
+	for _, id := range ids {
+		if _, ok := c.entries[id]; !ok && !seen[id] {
+			seen[id] = true
+			missing = append(missing, id)
+		}
+	}
+	c.mu.Unlock()
+	if len(missing) == 0 {
+		return nil
+	}
+	rows, err := q.GetDagVersionsByIDs(ctx, missing)
+	if err != nil {
+		return fmt.Errorf("loading dag versions: %w", err)
+	}
+	decoded := make([]*cachedSpec, 0, len(rows))
+	for _, version := range rows {
+		var spec domain.DAGSpec
+		if uerr := json.Unmarshal(version.Spec, &spec); uerr != nil {
+			return fmt.Errorf("decoding spec: %w", uerr)
+		}
+		version.Spec = nil
+		decoded = append(decoded, &cachedSpec{id: version.ID, version: version, spec: spec})
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, e := range decoded {
+		if _, ok := c.entries[e.id]; ok {
+			continue
+		}
+		e.tick = c.tick
+		e.elem = c.lru.PushFront(e)
+		c.entries[e.id] = e
+	}
+	return nil
 }
 
 // touch marks e as just used (and read by the current tick when inTick) and
