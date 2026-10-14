@@ -306,12 +306,16 @@ func NewServer(deps Dependencies) *gin.Engine {
 	}
 	// The Airflow UI redirects unauthenticated users to GET /api/v2/auth/login.
 	r.GET("/api/v2/auth/logout", logoutHandler(deps.sessionCookie(), deps.ExternalSignOutURL))
-	r.GET("/api/v2/auth/login", loginPageHandler(loginPageOpts{
+	pageOpts := loginPageOpts{
 		sso:            deps.OIDCFlow != nil,
 		breakGlass:     len(deps.OIDCSettings.BreakGlassEmails) > 0,
 		autoRedirect:   deps.OIDCSettings.AutoRedirect,
 		externalSignIn: deps.ExternalSignInURL,
-	}))
+	}
+	r.GET("/api/v2/auth/login", loginPageHandler(pageOpts))
+	// What the CLI reads before it chooses how to sign in (#1704): the same
+	// facts the sign-in page renders from.
+	r.GET(authMethodsPath, authMethodsHandler(pageOpts, deps.OIDCEnabled))
 	// Operator service API (#1283): registered only when a service token is
 	// configured. /api/v2/service/ is outside the user-session middleware's
 	// scope (alwaysPublic) because the group authenticates its own callers.
@@ -343,9 +347,16 @@ func NewServer(deps Dependencies) *gin.Engine {
 	if deps.OIDCFlow != nil {
 		// Rate-limit the OIDC endpoints on their own per-IP limiter (separate from
 		// the /auth/token budget), bounding state-generation / callback spam.
-		oidcLimiter := auth.NewRateLimiter(30, time.Minute)
+		// The CLI code exchange (#1704) spends the same budget.
+		oidcLimiter := auth.NewRateLimiter(oidcRateLimitPerMinute, time.Minute)
+		codes := newCLICodes(deps.JWTSecret)
 		r.GET("/api/v2/auth/oidc/login", rateLimitByIP(oidcLimiter), oidcLoginHandler(deps.OIDCFlow, deps.Logger, deps.SessionCookieInsecure))
+		r.POST(cliTokenPath, rateLimitByIP(oidcLimiter), cliTokenHandler(codes, deps.Logger, deps.AuthAudit))
+		r.POST(cliConsentPath, rateLimitByIP(oidcLimiter), cliConsentHandler(cliConsentDeps{
+			codes: codes, audit: deps.AuthAudit, logger: deps.Logger, insecure: deps.SessionCookieInsecure,
+		}))
 		r.GET("/api/v2/auth/oidc/callback", rateLimitByIP(oidcLimiter), oidcCallbackHandler(oidcDeps{
+			cliCodes:  codes,
 			flow:      deps.OIDCFlow,
 			users:     deps.OIDCUsers,
 			audit:     deps.AuthAudit,

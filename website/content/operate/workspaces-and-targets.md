@@ -119,7 +119,11 @@ image it uses, each with its source, before it builds.
 
 ### Credentials
 
-Tokens are never written to the workspace file. `dexaflow auth login` saves
+Tokens are never written to the workspace file. `dexaflow auth login` signs
+in with the server's single sign-on in a browser when the server offers it
+and no username or password is given, and with a password otherwise
+([Signing in from the CLI](/operate/sso-google-workspace/#signing-in-from-the-cli)).
+Either way it saves
 one token per server URL in your config file, which is rewritten atomically at
 `0600`, and every command sends a server only the token saved for it. The
 token a command sends is, in order: `--token`, `DEXAFLOW_TOKEN` (or
