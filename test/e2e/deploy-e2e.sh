@@ -33,10 +33,10 @@
 # Environment:
 #   DEXAFLOW_E2E_WARM_POOLS     off (default) or on, see above
 #   DEXAFLOW_E2E_HOLD_SECONDS   how long the first task of each run holds it open
-#                               (default 60): long enough for the redeploy to land
-#                               inside the run and for the warm pool reconciler
-#                               (a 30s tick) to start a worker before the second
-#                               task is dispatched
+#                               (default 30, 60 with warm pools on): long enough
+#                               for the redeploy to land inside the run and, with
+#                               warm pools on, for the reconciler (a 30s tick) to
+#                               start a worker before the second task
 #   DEXAFLOW_E2E_DATABASE_URL   the database the server uses, read with psql in
 #                               warm mode (default: the server's default URL)
 #
@@ -70,7 +70,12 @@ HOST_ADDR="${LEOFLOW_E2E_HOST_ADDR:-$([ "$(uname -s)" = Linux ] && echo host.k3d
 CFG="${WORKDIR}/leoflow-config.yaml"   # login persists token+server here
 SERVER_PID=""
 WARM_POOLS="${DEXAFLOW_E2E_WARM_POOLS:-off}"
-HOLD_SECONDS="${DEXAFLOW_E2E_HOLD_SECONDS:-60}"
+# The warm leg needs the longer hold: its worker has to be up before `after`.
+if [ "${DEXAFLOW_E2E_WARM_POOLS:-off}" = on ]; then
+  HOLD_SECONDS="${DEXAFLOW_E2E_HOLD_SECONDS:-60}"
+else
+  HOLD_SECONDS="${DEXAFLOW_E2E_HOLD_SECONDS:-30}"
+fi
 DB_URL="${DEXAFLOW_E2E_DATABASE_URL:-postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable}"
 NS="leoflow"
 # Every warm worker pod seen while the runs were live, one "name<TAB>version
@@ -263,7 +268,7 @@ trigger_run() {
 }
 
 # wait_task_running RUN TASK waits until TASK of RUN runs, and fails if it is
-# already over: the redeploy has to land while the run is in flight.
+# already over: the run must still be held open when the caller goes on.
 wait_task_running() {
   local deadline state
   deadline=$(( $(date +%s) + 300 ))
@@ -274,7 +279,7 @@ wait_task_running() {
     case "$state" in
       running) return 0 ;;
       success|failed|upstream_failed|skipped)
-        fail "$2 of run $1 is already $state before the redeploy (raise DEXAFLOW_E2E_HOLD_SECONDS)" ;;
+        fail "$2 of run $1 is already $state, so the run was not held open (raise DEXAFLOW_E2E_HOLD_SECONDS)" ;;
     esac
     [ "$(date +%s)" -gt "$deadline" ] && fail "$2 of run $1 never ran; last state: ${state:-<none>}"
     sleep 2
@@ -303,20 +308,23 @@ task_log() {
   local body try
   for try in 1 0 2; do
     body="$(api "/api/v2/dags/$DAG_ID/dagRuns/$1/taskInstances/$2/logs/$try" 2>/dev/null || true)"
-    if echo "$body" | grep -q "E2E_CODE="; then printf '%s' "$body"; return 0; fi
+    if grep -q "E2E_CODE=" <<<"$body"; then printf '%s' "$body"; return 0; fi
   done
   fail "run $1: no log of $2 carries an E2E_CODE line; the deployed image did not run"
 }
 
 # assert_run_on RUN CODE LABEL IMAGE checks that every task of RUN ran code CODE
-# (its log) and reports version LABEL on IMAGE (the API).
+# and that the run is pinned to version LABEL on IMAGE. The API resolves
+# dag_version once per run, not per task, so it proves the run's pin only; the
+# per-task proof is the E2E_CODE line each task logs from its own image (and,
+# with warm pools on, the version label of the warm pod that served it).
 assert_run_on() {
   local task body other
   other=v1; [ "$2" = v1 ] && other=v2
   for task in hold after; do
     body="$(task_log "$1" "$task")"
-    echo "$body" | grep -q "E2E_CODE=$2 task=$task" || fail "run $1: $task did not run code $2"
-    if echo "$body" | grep -q "E2E_CODE=$other"; then fail "run $1: $task ran code $other, want $2"; fi
+    grep -q "E2E_CODE=$2 task=$task" <<<"$body" || fail "run $1: $task did not run code $2"
+    if grep -q "E2E_CODE=$other" <<<"$body"; then fail "run $1: $task ran code $other, want $2"; fi
   done
   api "/api/v2/dags/$DAG_ID/dagRuns/$1/taskInstances" > "$WORKDIR/tis.json"
   jq -e --arg v "$3" --arg img "$4" \
@@ -326,6 +334,37 @@ assert_run_on() {
   log "run $1 ran code $2 and its task instances report $3"
 }
 
+# version_id LABEL prints the id of the registered version LABEL, the value
+# warm pods carry in their leoflow.io/dag-version-id label.
+version_id() {
+  api "/api/v2/dags/$DAG_ID/dagVersions" \
+    | jq -er --arg v "$1" '[.dag_versions[] | select(.bundle_version == $v)][0].id'
+}
+
+# wait_warm_worker RUN LABEL: with warm pools on, once RUN's first task holds
+# the run open, a warm worker of the run's version must be Running before the
+# hold ends (HOLD_SECONDS minus 10s of margin), or the second task cannot be
+# served warm. Failing here says why, instead of a later "no warm hit".
+wait_warm_worker() {
+  [ "$WARM_POOLS" = on ] || return 0
+  local vid start budget phases
+  vid="$(version_id "$2")" || fail "no registered version $2"
+  start=$(date +%s)
+  budget=$(( HOLD_SECONDS - 10 ))
+  while :; do
+    sample_warm
+    phases="$(kubectl get pods -n "$NS" -l "leoflow.io/warm-worker=true,leoflow.io/dag-version-id=$vid" \
+      -o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}' 2>/dev/null || true)"
+    if grep -qx Running <<<"$phases"; then
+      log "run $1: a warm worker of version $2 is Running after $(( $(date +%s) - start ))s"
+      return 0
+    fi
+    [ $(( $(date +%s) - start )) -ge "$budget" ] \
+      && fail "run $1: no warm worker of version $2 ($vid) was Running $(( $(date +%s) - start ))s after its first task started (budget ${budget}s) (phases: [$(tr '\n' ' ' <<<"$phases")]); raise DEXAFLOW_E2E_HOLD_SECONDS or look at the warm pool reconciler"
+    sleep 2
+  done
+}
+
 # New DAGs are paused at creation, and a manual run of a paused DAG waits
 # until the DAG is unpaused.
 unpause_dag "$API" "$DAG_ID" "$TOKEN" || fail "unpausing $DAG_ID failed"
@@ -333,6 +372,7 @@ log "Triggering run 1 on v1 (the cluster must pull the digest-pinned image from 
 RUN1="$(trigger_run)"
 log "run 1 = $RUN1"
 wait_task_running "$RUN1" hold
+wait_warm_worker "$RUN1" "$V1"
 
 log "dexaflow deploy v2 ($V2) while run 1 is in flight"
 write_dag v2
@@ -345,6 +385,12 @@ log "registered v2 image: $IMG2"
 RUN1_STATE="$(api "/api/v2/dags/$DAG_ID/dagRuns/$RUN1" | jq -r '.state')"
 [ "$RUN1_STATE" = running ] \
   || fail "run 1 is '$RUN1_STATE' once v2 is registered, so the redeploy did not land in flight (raise DEXAFLOW_E2E_HOLD_SECONDS)"
+# And its first task is still holding: `after` is dispatched only when `hold`
+# ends, so this is what proves `after` was dispatched after v2 became current.
+HOLD1_STATE="$(api "/api/v2/dags/$DAG_ID/dagRuns/$RUN1/taskInstances" \
+  | jq -r '.task_instances[] | select(.task_id == "hold") | .state')"
+[ "$HOLD1_STATE" = running ] \
+  || fail "run 1's hold is '$HOLD1_STATE' once v2 is registered, so its after may have been dispatched before v2 (raise DEXAFLOW_E2E_HOLD_SECONDS)"
 api "/api/v2/dags/$DAG_ID/dagVersions" \
   | jq -e --arg v "$V2" '[.dag_versions[] | select(.is_current)] | length == 1 and .[0].bundle_version == $v' >/dev/null \
   || fail "v2 is not the current version after its deploy"
@@ -356,6 +402,8 @@ assert_run_on "$RUN1" v1 "$V1" "$IMG1"
 log "Triggering run 2, which must run v2"
 RUN2="$(trigger_run)"
 log "run 2 = $RUN2"
+wait_task_running "$RUN2" hold
+wait_warm_worker "$RUN2" "$V2"
 wait_run_success "$RUN2"
 assert_run_on "$RUN2" v2 "$V2" "$IMG2"
 sample_warm

@@ -90,9 +90,11 @@ digest-pinned image and runs it. It binds the API on `:18080` by default
 
 To run the warm pools leg, set `DEXAFLOW_E2E_WARM_POOLS=on` (it needs `psql`,
 and `DEXAFLOW_E2E_DATABASE_URL` when the server does not use the default
-database). `DEXAFLOW_E2E_HOLD_SECONDS` (default 60) is how long the first task
+database). `DEXAFLOW_E2E_HOLD_SECONDS` (default 30, and 60 with warm pools on) is how long the first task
 of each run holds it open, so the redeploy lands in flight and the warm pool
-reconciler starts a worker before the second task.
+reconciler starts a worker before the second task; with warm pools on, the
+script fails early when no warm worker of the run's version is Running 10s
+before the hold ends.
 
 !!! note "Docker Desktop on macOS"
     The host `docker push` to the k3d registry can be intermittently routed

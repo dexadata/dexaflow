@@ -56,7 +56,11 @@ decide() {
 	if [ -z "${files//[[:space:]]/}" ]; then
 		echo run; return
 	fi
-	if printf '%s\n' "$files" | grep -qvE "$SKIP_RE"; then
+	# Filtered into a variable, never `| grep -q`: under pipefail an early exit
+	# of grep -q sends SIGPIPE to the writer, the pipeline returns 141 and a
+	# large diff read as skip.
+	local code; code="$(printf '%s\n' "$files" | grep -vE "$SKIP_RE" || true)"
+	if [ -n "$code" ]; then
 		echo run
 	else
 		echo skip
@@ -65,14 +69,16 @@ decide() {
 
 # WARM_RE: the paths the warm pools leg runs on: warm placement and the warm
 # worker (dispatch, executor, agent, agentrpc, the token exchange, the agent
-# binary and protocol), the scheduler that picks the version a task is
-# dispatched for, the storage files that resolve that version and its warm
-# targets, the deploy command and the image build, and the leg itself.
-# Deliberately left out: cmd/dexaflow-server/, internal/config/, the shared
-# runs.sql, go.mod and ci.yaml, which together would run the leg on most pull
-# requests (57 of the last 100 merges with them, 31 without). Documented in
-# test/README.md (`warm-paths`) and checked against it by the self-test.
-WARM_RE='^(internal/dispatch/|internal/executor/|internal/agentrpc/|internal/agent/|internal/kubeexchange/|internal/scheduler/|internal/storage/scheduler_store\.go|internal/storage/agent_store\.go|internal/cli/deploy|internal/build/|cmd/dexaflow-agent/|proto/|test/e2e/deploy-e2e\.sh|test/e2e/lib\.sh|scripts/ci-heavy-gate\.sh)'
+# binary and protocol, the agent token), the scheduler that picks the version
+# a task is dispatched for, the storage that resolves that version, its warm
+# targets and the warm binding (BindWarmAttempt in runs.sql and its generated
+# runs.sql.go), the warm eligibility rules (resource unit, default limits), the
+# deploy command and the image build, and the leg itself. Deliberately left
+# out: cmd/dexaflow-server/, internal/config/, go.mod and ci.yaml, which would
+# run the leg on most pull requests (57 of 100 merges with them; 37 of the last
+# 100 with this list). Documented in test/README.md (`warm-paths`) and checked
+# against it by the self-test.
+WARM_RE='^(internal/dispatch/|internal/executor/|internal/agentrpc/|internal/agent/|internal/kubeexchange/|internal/scheduler/|internal/storage/scheduler_store\.go|internal/storage/agent_store\.go|internal/storage/queries/runs\.sql|internal/domain/resource_unit\.go|internal/domain/default_limits\.go|internal/auth/agent_token\.go|internal/cli/deploy|internal/build/|cmd/dexaflow-agent/|proto/|test/e2e/deploy-e2e\.sh|test/e2e/lib\.sh|scripts/ci-heavy-gate\.sh)'
 
 # decide_warm: like decide, for the warm-pools scope. A file the default scope
 # skips (prose, docs) never runs the leg, even under a warm path; otherwise one
@@ -82,7 +88,9 @@ decide_warm() {
 	if [ -z "${files//[[:space:]]/}" ]; then
 		echo run; return
 	fi
-	if printf '%s\n' "$files" | grep -vE "$SKIP_RE" | grep -qE "$WARM_RE"; then
+	# Into a variable first, for the SIGPIPE reason decide gives.
+	local warm; warm="$(printf '%s\n' "$files" | grep -vE "$SKIP_RE" | grep -E "$WARM_RE" || true)"
+	if [ -n "$warm" ]; then
 		echo run
 	else
 		echo skip
@@ -143,9 +151,20 @@ self_test() {
 	_eq "$(printf '%s\n' 'internal/config/server.go' 'cmd/dexaflow-server/main.go' | decide_warm)" "skip" "warm: config and server wiring alone skip"
 	_eq "$(printf '%s\n' 'internal/api/dags.go' 'website/x.md' | decide_warm)" "skip" "warm: an API-only change skips"
 	_eq "$(printf '%s\n' 'internal/storage/repository.go' | decide_warm)" "skip" "warm: other storage files skip"
+	_eq "$(printf '%s\n' 'internal/storage/queries/runs.sql.go' | decide_warm)" "run" "warm: the warm binding query runs"
+	_eq "$(printf '%s\n' 'internal/domain/resource_unit.go' | decide_warm)" "run" "warm: the warm eligibility rules run"
+	_eq "$(printf '%s\n' 'internal/auth/agent_token.go' | decide_warm)" "run" "warm: the agent token runs"
+	_eq "$(printf '%s\n' 'internal/domain/dag.go' | decide_warm)" "skip" "warm: other domain files skip"
 	_eq "$(printf '%s\n' 'internal/dispatch/README.md' | decide_warm)" "skip" "warm: prose under a warm path still skips"
 	_eq "$(printf '%s\n' 'internal/api/dags.go' 'internal/agent/warm.go' | decide_warm)" "run" "warm: one warm file anywhere runs"
 	_eq "$(printf '' | decide_warm)" "run" "warm: an empty file list runs, it does not skip"
+
+	# A large diff: `printf | grep -q` under pipefail returned 141 once grep -q
+	# exited early and the writer took SIGPIPE, and the gate read that as skip.
+	local big; big="$(seq 1 5000 | sed 's#^#internal/api/some/longer/path/file#; s#$#.go#')"
+	_eq "$(printf '%s\n' "$big" | decide)" "run" "a 5000-file code diff runs"
+	_eq "$(printf '%s\n' 'internal/dispatch/dispatch.go' "$big" | decide_warm)" "run" "warm: a 5000-file diff with a warm file first runs"
+	_eq "$(printf '%s\n' "$big" | decide_warm)" "skip" "warm: a 5000-file diff with no warm file skips"
 	local documented_warm; documented_warm="$(documented_block warm-paths | awk 'NF' | sort)"
 	local actual_warm; actual_warm="$(printf '%s\n' "$WARM_RE" | sed -E 's/^\^\(//; s/\)$//' | tr '|' '\n' | awk 'NF' | sort)"
 	_eq "$documented_warm" "$actual_warm" "test/README.md documents exactly the paths the warm scope runs on"
@@ -176,7 +195,14 @@ emit() { # <run|skip>
 	[ -n "${GITHUB_OUTPUT:-}" ] && echo "run=$run" >> "$GITHUB_OUTPUT"
 	if [ "$scope" = warm-pools ]; then
 		if [ "$run" = true ]; then echo "A warm placement or deploy path changed, running the warm pools leg."
-		else echo "Nothing on the warm placement or deploy path changed, skipping the warm pools leg."; fi
+		else
+			echo "Nothing on the warm placement or deploy path changed, skipping the warm pools leg."
+			# A skipped leg still reports green, so say on the run page that it
+			# did not run rather than leave a green check that tested nothing.
+			if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+				echo "Warm pools leg skipped: no file on the warm placement or deploy path changed (\`warm-paths\` in test/README.md)." >> "$GITHUB_STEP_SUMMARY"
+			fi
+		fi
 		return
 	fi
 	if [ "$run" = true ]; then echo "Code change detected, running the heavy k3d E2E."
