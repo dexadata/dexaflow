@@ -77,13 +77,23 @@ type CurrentVersionChange struct {
 // IsPaused set is the DAG's state after the register, created or not.
 // DryRun runs every check and step of the register and then undoes it, so
 // the outcome says what the register would do and nothing is written, audit
-// included.
+// included. PromotedFrom, when set, names the control plane the version was
+// promoted from (`dexaflow promote`), recorded in the register's audit entry.
 type DagRegistration struct {
-	Spec        DAGSpec
-	SpecHash    string
-	ActorUserID string
-	IsPaused    *bool
-	DryRun      bool
+	Spec         DAGSpec
+	SpecHash     string
+	ActorUserID  string
+	IsPaused     *bool
+	DryRun       bool
+	PromotedFrom *DagPromotion
+}
+
+// DagPromotion names where a promoted version came from: the source target's
+// name as the promoting CLI knows it, and the source control plane's URL
+// (empty when not sent).
+type DagPromotion struct {
+	Target string
+	Server string
 }
 
 // DagRegistered is the outcome of a register: whether a new version was

@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_status/
 title: "dexaflow status"
 linkTitle: "status"
-weight: 58
+weight: 59
 ---
 
 Show per DAG the version current on a target, its last run, and drift from the workspace.

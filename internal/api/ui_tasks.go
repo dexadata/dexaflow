@@ -314,11 +314,39 @@ func sourceVersionNumber(c *gin.Context) (int, bool) {
 	return number, true
 }
 
+// dagVersionSpecHandler implements GET
+// /api/v2/dags/{dag_id}/dagVersions/{version_number}/spec: the dag.json
+// registered with that version, current or not, as dagSpecHandler serves the
+// current one. `dexaflow promote` reads it to register the same version on
+// another control plane (#1708). A number that is not an integer is a 400;
+// one that names no version of the caller's tenant, 0 and negatives
+// included, is a 404 (0 is not the newest version here, unlike dagSources).
+func dagVersionSpecHandler(sources DagSourceReader) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		number, err := strconv.Atoi(c.Param("version_number"))
+		if err != nil {
+			AbortProblem(c, http.StatusBadRequest, "bad request", "version_number must be an integer")
+			return
+		}
+		if number <= 0 {
+			AbortProblem(c, http.StatusNotFound, "not found", "version not found")
+			return
+		}
+		_, spec, err := sources.GetDagVersionSpec(c.Request.Context(), tenantOf(c), c.Param("dag_id"), number)
+		if err != nil {
+			handleRepoError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, spec)
+	}
+}
+
 // registerUITasks mounts the task and spec endpoints when a spec reader is
 // set, and the source endpoint when a source reader is.
 func registerUITasks(r gin.IRouter, specs DagSpecReader, sources DagSourceReader) {
 	if sources != nil {
 		r.GET("/api/v2/dagSources/:dag_id", RequirePermission("read", "dag"), dagSourceHandler(sources))
+		r.GET("/api/v2/dags/:dag_id/dagVersions/:version_number/spec", RequirePermission("read", "dag"), dagVersionSpecHandler(sources))
 	}
 	if specs == nil {
 		return

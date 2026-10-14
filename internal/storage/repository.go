@@ -1359,6 +1359,7 @@ func (r *Repository) RegisterDagVersionAs(ctx context.Context, tenant string, re
 	got, err := registerDagVersionTx(ctx, r.q.WithTx(tx), tid, registration{
 		spec: spec, specHash: reg.SpecHash, specJSON: specJSON,
 		paused: paused, pausedOverride: reg.IsPaused != nil, actor: actorUUID(reg.ActorUserID),
+		promotedFrom: reg.PromotedFrom,
 	})
 	if err != nil {
 		return domain.DagRegistered{}, err
@@ -1443,6 +1444,9 @@ func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.
 	if reg.pausedOverride {
 		fields["is_paused"] = reg.paused
 	}
+	if p := reg.promotedFrom; p != nil {
+		fields["promoted_from"] = map[string]string{"target": p.Target, "server": p.Server}
+	}
 	if err := writeDagAudit(ctx, qtx, tid, actor, "dag.version.register", spec.DagID, fields); err != nil {
 		return registerOutcome{}, err
 	}
@@ -1462,8 +1466,9 @@ func setPausedByRegister(ctx context.Context, qtx *queries.Queries, tid, actor p
 }
 
 // registration is what one register writes: the spec, its hash and encoding,
-// is_paused for a DAG it creates (or for any DAG with pausedOverride), and the
-// registering user (null when none).
+// is_paused for a DAG it creates (or for any DAG with pausedOverride), the
+// registering user (null when none) and, for a promoted version, the control
+// plane it came from (nil otherwise).
 type registration struct {
 	spec           domain.DAGSpec
 	specHash       string
@@ -1471,6 +1476,7 @@ type registration struct {
 	paused         bool
 	pausedOverride bool
 	actor          pgtype.UUID
+	promotedFrom   *domain.DagPromotion
 }
 
 // actorUUID is the user id of an acting principal, or a null UUID when the

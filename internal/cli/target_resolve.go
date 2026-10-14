@@ -232,6 +232,14 @@ func pickTokenFor(choice *serverChoice, tokenFlag string, ownOnly bool) (string,
 	if v, ok := envcompat.Lookup("TOKEN"); ok {
 		return v, tokenExternal
 	}
+	return savedTokenFor(choice, ownOnly)
+}
+
+// savedTokenFor is the token saved in the config file for choice's server:
+// the session saved for it, else the single-server session under the rules
+// of pickTokenFor. It never reads a flag or a variable, so `dexaflow
+// promote`, which calls two control planes, cannot send one token to both.
+func savedTokenFor(choice *serverChoice, ownOnly bool) (string, tokenSource) {
 	store := choice.tc.store
 	if tok, ok := store.Session(choice.URL); ok {
 		return tok, tokenSession

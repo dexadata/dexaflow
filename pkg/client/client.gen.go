@@ -807,6 +807,12 @@ type ClearDagRun200JSONResponseBody struct {
 type RegisterDagVersionParams struct {
 	// IsPaused Sets the DAG's is_paused for this register (true or false). Any other value is refused with 400. Sending it needs write on dags, and a scoped token also needs the dexaflow:run scope (403 otherwise).
 	IsPaused *bool `form:"is_paused,omitempty" json:"is_paused,omitempty"`
+
+	// PromotedFrom Marks the register as a promotion (`dexaflow promote`): the name of the target the version was read from, recorded with promoted_from_server under promoted_from in the register's audit entry. It is the caller's claim, recorded as sent and not verified. A target name: lower case letters, digits, _ and -, starting with a letter or digit, at most 63 characters; anything else is refused with 400.
+	PromotedFrom *string `form:"promoted_from,omitempty" json:"promoted_from,omitempty"`
+
+	// PromotedFromServer The URL of the control plane the version was promoted from, as the caller claims it (not verified): an absolute http or https URL without credentials and with no control or format character, at most 2048 bytes. It needs promoted_from (400 otherwise).
+	PromotedFromServer *string `form:"promoted_from_server,omitempty" json:"promoted_from_server,omitempty"`
 }
 
 // ListUsersParams defines parameters for ListUsers.
@@ -3844,6 +3850,30 @@ func NewRegisterDagVersionRequestWithBody(server string, dagId DagID, params *Re
 		if params.IsPaused != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "is_paused", *params.IsPaused, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.PromotedFrom != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "promoted_from", *params.PromotedFrom, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.PromotedFromServer != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "promoted_from_server", *params.PromotedFromServer, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
