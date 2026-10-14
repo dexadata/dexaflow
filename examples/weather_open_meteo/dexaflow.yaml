@@ -7,3 +7,10 @@ tags:
 python_version: "3.11"
 dependencies:
   - requests==2.32.3
+
+# A Pro deploy pushes the DAG image to a registry your cluster can pull from.
+# Leave this commented out when the target or the cluster already names one
+# (dexaflow target add --registry, or the cluster's deploy defaults).
+# registry:
+#   url: ghcr.io/your-org        # Docker Hub, ECR, Artifact Registry, ACR, GHCR or private
+#   image_name: weather_open_meteo   # optional: defaults to the dag_id
