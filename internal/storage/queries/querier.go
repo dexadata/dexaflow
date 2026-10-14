@@ -67,6 +67,8 @@ type Querier interface {
 	// superseded attempt, or a second one, is a no-op.
 	ConfirmInfraFailure(ctx context.Context, arg ConfirmInfraFailureParams) (int64, error)
 	// Grant each copied built-in role the same permissions as its "default" twin.
+	// Only the tenant's built-in roles: a custom role that shares a built-in's
+	// name (one created before a migration added that built-in) keeps its grants.
 	CopyDefaultRolePermissions(ctx context.Context, tenantID pgtype.UUID) error
 	// Give a tenant the built-in roles the migrations seed for "default". Copying
 	// keeps every tenant's ladder equal to default's as later migrations change it.

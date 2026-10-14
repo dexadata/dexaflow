@@ -17,12 +17,14 @@ ON CONFLICT (tenant_id, name) DO NOTHING;
 
 -- name: CopyDefaultRolePermissions :exec
 -- Grant each copied built-in role the same permissions as its "default" twin.
+-- Only the tenant's built-in roles: a custom role that shares a built-in's
+-- name (one created before a migration added that built-in) keeps its grants.
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT nr.id, rp.permission_id
 FROM roles dr
 JOIN tenants d ON d.id = dr.tenant_id AND d.name = 'default'
 JOIN role_permissions rp ON rp.role_id = dr.id
-JOIN roles nr ON nr.tenant_id = sqlc.arg(tenant_id)::uuid AND nr.name = dr.name
+JOIN roles nr ON nr.tenant_id = sqlc.arg(tenant_id)::uuid AND nr.name = dr.name AND nr.is_system
 WHERE dr.is_system
 ON CONFLICT DO NOTHING;
 
