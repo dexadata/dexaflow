@@ -620,6 +620,10 @@ func buildAndPush(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.
 	if !o.build {
 		return nil
 	}
+	if o.push && !o.settingsShown {
+		// deploy warned with its settings.
+		warnAuthMethod(cmd.ErrOrStderr(), cfg)
+	}
 	name, _ := resolveDockerfileName(cmd, o, cfg)
 	b, reason := selectBuilder(cmdContext(cmd), dir, name, o, cfg, image)
 	return buildImage(cmd, dir, o, cfg, image, b, reason)

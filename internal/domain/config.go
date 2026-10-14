@@ -143,7 +143,10 @@ type BuildConfig struct {
 
 // RegistryConfig describes where the built image is pushed and how it is tagged.
 type RegistryConfig struct {
-	URL         string `json:"url,omitempty" yaml:"url,omitempty"`
+	URL string `json:"url,omitempty" yaml:"url,omitempty"`
+	// AuthMethod is where the CLI reads the registry credential: auto (the
+	// default), docker_config or cloud; env and iam still load, deprecated
+	// (build.ParseAuthMethod, ADR 0080).
 	AuthMethod  string `json:"auth_method,omitempty" yaml:"auth_method,omitempty"`
 	ImageName   string `json:"image_name,omitempty" yaml:"image_name,omitempty"`
 	TagStrategy string `json:"tag_strategy,omitempty" yaml:"tag_strategy,omitempty"`
@@ -232,7 +235,7 @@ func (c *LeoflowConfig) ApplyDefaults() {
 		c.Registry = &RegistryConfig{}
 	}
 	if c.Registry.AuthMethod == "" {
-		c.Registry.AuthMethod = "docker_config"
+		c.Registry.AuthMethod = "auto"
 	}
 	if c.Registry.TagStrategy == "" {
 		c.Registry.TagStrategy = "version"

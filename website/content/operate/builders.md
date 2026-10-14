@@ -335,11 +335,53 @@ registry, not from the tool
 
 ## Registry credentials
 
-The tool pushes with its own credentials, and the CLI reads the registry with
-the same ones: those `docker login ghcr.io` or your cloud's helper writes to
-`~/.docker/config.json` (`gcloud auth configure-docker`,
-`aws ecr get-login-password | docker login ...`, `az acr login`), credential
-helpers included. Dexaflow never stores a registry credential.
+The CLI reads and pushes to the registry in process, so it needs a credential
+for it, and finds one in this order
+([ADR 0080](/project/adrs/0080-registry-credentials-from-cloud-cli-sessions/)):
+
+1. The docker config, `~/.docker/config.json` (or `$DOCKER_CONFIG`), with its
+   `credsStore` and `credHelpers`: what `docker login`, `gcloud auth
+   configure-docker`, `az acr login` or a helper such as
+   `docker-credential-ecr-login` on `PATH` wrote.
+2. When the docker config holds nothing for the registry, and the registry
+   belongs to a cloud, the session of that cloud's CLI. You need no
+   `docker login` and no helper, only to be signed in to the cloud:
+
+   | Registry host | Signed in with | The CLI runs |
+   |---|---|---|
+   | `gcr.io`, `*.gcr.io`, `<location>-docker.pkg.dev` | `gcloud auth login` | `gcloud auth print-access-token` |
+   | `<account>.dkr.ecr.<region>.amazonaws.com` | `aws sso login`, `aws configure`, a profile or an instance role | `aws ecr get-login-password --region <region>` |
+   | `<name>.azurecr.io` | `az login` | `az acr login --name <name> --expose-token` |
+
+   The token stays in memory for ten minutes at most. Dexaflow never stores a
+   registry credential.
+
+`registry.auth_method` in `dexaflow.yaml` picks the sources: `auto` (the
+default) is the order above, `docker_config` reads only the docker config,
+and `cloud` reads only the cloud CLI, which helps when the docker config keeps
+an expired entry for the registry (an ECR login lasts twelve hours) that would
+otherwise be sent first:
+
+```yaml
+registry:
+  url: 123456789012.dkr.ecr.eu-west-1.amazonaws.com/dags
+  auth_method: cloud
+```
+
+`env` and `iam`, accepted by older files, still load and print a warning:
+`env` reads as `auto` and `iam` as `cloud`.
+
+`local-daemon` is different: `docker`, `podman` and `nerdctl` push with
+their own credentials, which a cloud session alone does not give them. When
+the daemon builds, sign the tool in once with the command the deploy
+preflight, `dexaflow doctor` and a refused push name for your registry:
+
+| Registry | docker | another tool (`podman` shown) |
+|---|---|---|
+| Artifact Registry, GCR | `gcloud auth configure-docker <host>` | `gcloud auth print-access-token \| podman login --username oauth2accesstoken --password-stdin <host>` |
+| ECR | `aws ecr get-login-password --region <region> \| docker login --username AWS --password-stdin <host>` | the same, piped to `podman login` |
+| ACR | `az acr login --name <name>` | `az acr login --name <name> --expose-token --output tsv --query accessToken \| podman login --username 00000000-0000-0000-0000-000000000000 --password-stdin <host>` |
+| any other | `docker login <host>` | `podman login <host>` |
 
 Only a registry on `localhost`, a `*.localhost` name (as k3d names its
 registries) or a loopback address may answer over plain HTTP; every other

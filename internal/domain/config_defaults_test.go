@@ -48,8 +48,8 @@ func TestApplyDefaults_AllZeroValuesGetSchemaDefaults(t *testing.T) {
 	if c.Registry == nil {
 		t.Fatal("Registry: nil, want non-nil with defaults")
 	}
-	if c.Registry.AuthMethod != "docker_config" {
-		t.Errorf("Registry.AuthMethod: got %q, want %q", c.Registry.AuthMethod, "docker_config")
+	if c.Registry.AuthMethod != "auto" {
+		t.Errorf("Registry.AuthMethod: got %q, want %q", c.Registry.AuthMethod, "auto")
 	}
 	if c.Registry.TagStrategy != "version" {
 		t.Errorf("Registry.TagStrategy: got %q, want %q", c.Registry.TagStrategy, "version")
@@ -118,8 +118,8 @@ func TestApplyDefaults_PartialSubStructGetsRemainingDefaulted(t *testing.T) {
 	if c.Registry.URL != "registry.example.com/team" {
 		t.Errorf("Registry.URL: got %q", c.Registry.URL)
 	}
-	if c.Registry.AuthMethod != "docker_config" {
-		t.Errorf("Registry.AuthMethod: got %q, want docker_config", c.Registry.AuthMethod)
+	if c.Registry.AuthMethod != "auto" {
+		t.Errorf("Registry.AuthMethod: got %q, want auto", c.Registry.AuthMethod)
 	}
 	if c.Registry.TagStrategy != "version" {
 		t.Errorf("Registry.TagStrategy: got %q, want version", c.Registry.TagStrategy)
@@ -136,5 +136,21 @@ func TestApplyDefaults_IsIdempotent(t *testing.T) {
 	c.ApplyDefaults()
 	if !reflect.DeepEqual(snapshot, *c) {
 		t.Errorf("ApplyDefaults not idempotent:\n first:  %+v\n second: %+v", snapshot, *c)
+	}
+}
+
+// registry.auth_method takes auto, docker_config and cloud, and still
+// takes env and iam, which older dexaflow.yaml and leoflow.yaml files may
+// carry; anything else is refused at load.
+func TestRegistryAuthMethodValues(t *testing.T) {
+	for _, v := range []string{"auto", "docker_config", "cloud", "env", "iam"} {
+		c := &LeoflowConfig{DagID: "sales", Registry: &RegistryConfig{URL: "reg.io/team", AuthMethod: v}}
+		if err := c.Validate(); err != nil {
+			t.Errorf("auth_method %q refused: %v", v, err)
+		}
+	}
+	c := &LeoflowConfig{DagID: "sales", Registry: &RegistryConfig{URL: "reg.io/team", AuthMethod: "vault"}}
+	if err := c.Validate(); err == nil {
+		t.Error("auth_method vault accepted")
 	}
 }

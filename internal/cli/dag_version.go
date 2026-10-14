@@ -168,7 +168,7 @@ func isTagChar(c byte) bool {
 // digest is not an input: it does not exist before the build.
 func contentHash(dir string, cfg *domain.LeoflowConfig, dockerfile, output string) (string, error) {
 	h := sha256.New()
-	cfgJSON, err := json.Marshal(cfg)
+	cfgJSON, err := json.Marshal(labelConfig(cfg))
 	if err != nil {
 		return "", fmt.Errorf("encoding project config for the version label: %w", err)
 	}
@@ -178,6 +178,25 @@ func contentHash(dir string, cfg *domain.LeoflowConfig, dockerfile, output strin
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// labelAuthMethod is the registry.auth_method every content label hashes:
+// the value ApplyDefaults filled in before auto existed, so that no label
+// moved when the default changed.
+const labelAuthMethod = "docker_config"
+
+// labelConfig is cfg as the content label hashes it: where the CLI reads the
+// registry credential (registry.auth_method) is not an input of the image,
+// so it is the same constant for every project.
+func labelConfig(cfg *domain.LeoflowConfig) *domain.LeoflowConfig {
+	if cfg == nil || cfg.Registry == nil {
+		return cfg
+	}
+	c := *cfg
+	reg := *cfg.Registry
+	reg.AuthMethod = labelAuthMethod
+	c.Registry = &reg
+	return &c
 }
 
 // walkLabelInputs hashes into h every file contentHash reads from the project

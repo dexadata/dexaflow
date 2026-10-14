@@ -10,8 +10,8 @@ import (
 // registry, for `deploy --skip-build`, which builds nothing and so has no
 // builder result to read it from. It asks the registry, not a local image
 // store, so an image any tool pushed can be deployed (ADR 0075).
-func imageDigest(cmd *cobra.Command, image string) (string, error) {
-	pinned, err := build.Registry{}.Resolve(cmdContext(cmd), image)
+func imageDigest(cmd *cobra.Command, reg build.Registry, image string) (string, error) {
+	pinned, err := reg.Resolve(cmdContext(cmd), image)
 	if err != nil {
 		return "", err
 	}
@@ -21,9 +21,9 @@ func imageDigest(cmd *cobra.Command, image string) (string, error) {
 // deployedDigest returns the pinned reference deploy registers: the one the
 // builder's result carries when this deploy built and pushed the image, else
 // the digest of the image already in the registry.
-func deployedDigest(cmd *cobra.Command, image string, built build.Result) (string, error) {
+func deployedDigest(cmd *cobra.Command, reg build.Registry, image string, built build.Result) (string, error) {
 	if built.Ref != "" {
 		return built.Ref, nil
 	}
-	return imageDigest(cmd, image)
+	return imageDigest(cmd, reg, image)
 }

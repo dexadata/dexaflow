@@ -24,12 +24,19 @@ type PushAccess struct {
 	// Repository is the repository a push goes to, <registry>/<path>.
 	Repository string
 	// Anonymous is true when no credential was found for the registry, in
-	// the docker config or its credential helpers.
+	// the docker config, its credential helpers or the cloud session, as
+	// the auth method reads them.
 	Anonymous bool
+	// Source names where the credential came from (SourceDockerConfig, or
+	// the cloud CLI's session); empty when Anonymous.
+	Source string
+	// CloudError says why the cloud session gave no credential, when it was
+	// asked and could not (the CLI is not installed or not signed in).
+	CloudError error
 }
 
 // CheckPush asks the registry of image whether a push to its repository is
-// allowed, with the credentials a push would use (authn.DefaultKeychain),
+// allowed, with the credentials a push would use (resolveAuth),
 // before anything is built (#1705). It starts a blob upload, which a registry
 // authorizes like a push, and cancels it, best effort (cancelUpload): a
 // registry that refuses the DELETE (ECR and Harbor may) keeps an empty
@@ -37,18 +44,19 @@ type PushAccess struct {
 // is ErrPushDenied; any other failure says nothing about the right to push
 // and is returned as it is. Plain HTTP is spoken only to the loopback, as for
 // Resolve.
-func (Registry) CheckPush(ctx context.Context, image string) (PushAccess, error) {
+func (r Registry) CheckPush(ctx context.Context, image string) (PushAccess, error) {
 	ref, err := name.ParseReference(image)
 	if err != nil {
 		return PushAccess{}, fmt.Errorf("image %q is not a valid reference: %w", image, err)
 	}
 	repo := ref.Context()
-	auth, err := authn.Resolve(ctx, authn.DefaultKeychain, repo)
+	cred, err := r.resolveAuth(ctx, repo)
 	if err != nil {
-		return PushAccess{}, fmt.Errorf("reading the credential for %s: %w", repo.RegistryStr(), err)
+		return PushAccess{}, err
 	}
-	access := PushAccess{Registry: repo.RegistryStr(), Repository: repo.Name(), Anonymous: auth == authn.Anonymous}
-	rt, err := gtransport.NewWithContext(ctx, repo.Registry, auth, transport(remote.DefaultTransport),
+	access := PushAccess{Registry: repo.RegistryStr(), Repository: repo.Name(), Anonymous: cred.auth == authn.Anonymous,
+		Source: cred.source, CloudError: cred.cloudErr}
+	rt, err := gtransport.NewWithContext(ctx, repo.Registry, cred.auth, transport(remote.DefaultTransport),
 		[]string{repo.Scope(gtransport.PushScope)})
 	if err != nil {
 		return access, pushCheckError(access, err)

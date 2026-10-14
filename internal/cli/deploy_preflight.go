@@ -222,10 +222,11 @@ func dryRunOutcome(a dryRunAnswer) string {
 }
 
 // checkRegistryPush asks the registry of image whether this machine's
-// credentials may push to its repository, before the build. A refusal stops
-// the deploy with the login command; a check that cannot decide is a note.
-func checkRegistryPush(ctx context.Context, out, warn io.Writer, image, builder string) error {
-	res, err := registryPushCheck(ctx, image, builder)
+// credentials, as reg reads them, may push to its repository, before the
+// build. A refusal stops the deploy with the login command; a check that
+// cannot decide is a note.
+func checkRegistryPush(ctx context.Context, out, warn io.Writer, reg build.Registry, image, builder string) error {
+	res, err := registryPushCheck(ctx, reg, image, builder)
 	if err != nil {
 		return err
 	}
@@ -242,29 +243,21 @@ func checkRegistryPush(ctx context.Context, out, warn io.Writer, image, builder 
 type checkResult struct{ ok, note string }
 
 // registryPushCheck is the push check of checkRegistryPush, for deploy and
-// doctor. The check reads the docker config and its credential helpers
-// (build.Registry.CheckPush), which is what the docker builder and the
-// daemonless paths push with, so a refusal there is an error naming
-// `docker login`. With no credential found, or with another builder, which
-// keeps credentials of its own (podman's auth.json, for one), a refusal
-// says nothing certain about the push: it is a note naming
-// `<builder> login`.
-func registryPushCheck(ctx context.Context, image, builder string) (checkResult, error) {
-	access, err := build.Registry{}.CheckPush(ctx, image)
-	tool := filepath.Base(builder)
+// doctor. The check reads the credentials reg reads (build.Registry.CheckPush:
+// the docker config and its credential helpers, then the cloud CLI's
+// session, by registry.auth_method), which is what the daemonless paths
+// push with; pushRefusal words a refusal.
+func registryPushCheck(ctx context.Context, reg build.Registry, image, builder string) (checkResult, error) {
+	access, err := reg.CheckPush(ctx, image)
 	switch {
 	case err == nil:
-		return checkResult{ok: access.Repository + " accepts a push"}, nil
-	case errors.Is(err, build.ErrPushDenied) && access.Anonymous:
-		return checkResult{note: fmt.Sprintf("the registry %s refused a push to %s, and the docker config holds no credential for it; "+
-			"if the push fails, sign in once:  %s login %s  (%v)", access.Registry, access.Repository, tool, access.Registry, err)}, nil
-	case errors.Is(err, build.ErrPushDenied) && tool != "docker":
-		return checkResult{note: fmt.Sprintf("the registry %s refused a push to %s with the credential of the docker config; "+
-			"%s may push with credentials of its own; if the push fails, sign in:  %s login %s  (%v)", access.Registry, access.Repository, tool, tool, access.Registry, err)}, nil
+		ok := access.Repository + " accepts a push"
+		if access.Source != "" {
+			ok += " (credential from " + access.Source + ")"
+		}
+		return checkResult{ok: ok}, nil
 	case errors.Is(err, build.ErrPushDenied):
-		return checkResult{}, fmt.Errorf("preflight: the registry %s refused a push to %s with the credential in the docker config.\n"+
-			"  Sign in with an account that may push there:  docker login %s\n  (%w)",
-			access.Registry, access.Repository, access.Registry, err)
+		return pushRefusal(access, err, builder, reg.Auth)
 	}
 	target := access.Repository
 	if target == "" {
@@ -273,9 +266,60 @@ func registryPushCheck(ctx context.Context, image, builder string) (checkResult,
 	return checkResult{note: fmt.Sprintf("could not check push access to %s (%v); the push will tell", target, err)}, nil
 }
 
+// pushRefusal words the registry's refusal err of a push to access, naming
+// the command that signs builder in to that registry (build.LoginCommand).
+// A refusal of the docker builder's credential is an error. With no
+// credential found, or with another builder, which keeps credentials of its
+// own (podman's auth.json, for one), a refusal says nothing certain about
+// the push: it is a note.
+func pushRefusal(access build.PushAccess, err error, builder string, method build.AuthMethod) (checkResult, error) {
+	tool := filepath.Base(builder)
+	if tool == "" || tool == "." {
+		tool = "docker"
+	}
+	login := build.LoginCommand(access.Registry, tool)
+	cloud, isCloud := build.DetectCloudRegistry(access.Registry)
+	session := ""
+	if isCloud && method != build.AuthDockerConfig {
+		session = fmt.Sprintf("; or sign in to %s (%s), whose session the daemonless builds read", cloud.Provider, cloud.SessionCommand())
+	}
+	switch {
+	case access.Anonymous:
+		why := ""
+		if access.CloudError != nil {
+			why = " (" + access.CloudError.Error() + ")"
+		}
+		return checkResult{note: fmt.Sprintf("the registry %s refused a push to %s, and no credential was found for it in %s%s; "+
+			"if the push fails, sign in once:  %s%s  (%v)", access.Registry, access.Repository, credentialPlaces(method), why, login, session, err)}, nil
+	case tool != "docker":
+		return checkResult{note: fmt.Sprintf("the registry %s refused a push to %s with the credential from %s; "+
+			"%s may push with credentials of its own; if the push fails, sign in:  %s  (%v)", access.Registry, access.Repository, access.Source, tool, login, err)}, nil
+	}
+	instead := ""
+	if isCloud && access.Source == build.SourceDockerConfig && method == build.AuthAuto {
+		instead = fmt.Sprintf("\n  Or, to push with your %s session instead of the docker config (an expired entry there is sent first), "+
+			"set registry.auth_method: cloud in dexaflow.yaml", cloud.Provider)
+	}
+	return checkResult{}, fmt.Errorf("preflight: the registry %s refused a push to %s with the credential from %s.\n"+
+		"  Sign in with an account that may push there:  %s%s\n  (%w)",
+		access.Registry, access.Repository, access.Source, login, instead, err)
+}
+
+// credentialPlaces says where method looks for a registry credential.
+func credentialPlaces(method build.AuthMethod) string {
+	switch method {
+	case build.AuthDockerConfig:
+		return "the docker config or its credential helpers"
+	case build.AuthCloud:
+		return "a cloud CLI session"
+	case build.AuthAuto:
+	}
+	return "the docker config, its credential helpers or a cloud CLI session"
+}
+
 // registryHolds reports whether the registry already holds image, so a
 // deploy that may reuse it pushes nothing and needs no push check.
-func registryHolds(ctx context.Context, image string) bool {
-	_, err := build.Registry{}.Resolve(ctx, image)
+func registryHolds(ctx context.Context, reg build.Registry, image string) bool {
+	_, err := reg.Resolve(ctx, image)
 	return err == nil
 }

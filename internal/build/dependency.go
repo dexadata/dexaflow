@@ -61,6 +61,9 @@ type DependencyLayer struct {
 	User string
 	// Installer installs the dependencies of each platform.
 	Installer Installer
+	// Registry is the registry client that reads the base and pushes the
+	// image, with its credentials (registry.auth_method).
+	Registry Registry
 }
 
 // Push builds the dependency image for platforms and pushes it under image:
@@ -82,7 +85,7 @@ func (d DependencyLayer) Push(ctx context.Context, image string, platforms []str
 	b := depsBuild{d: d, tmp: tmp}
 	defer b.cleanup()
 	if !isIndex(d.Base.Manifest) {
-		opts := remoteOptions(ctx)
+		opts := d.Registry.remoteOptions(ctx)
 		if len(platforms) != 1 {
 			return fmt.Errorf("the base image %s is one image, so it serves one platform, not %s", d.Base.Ref, strings.Join(platforms, ","))
 		}
@@ -121,7 +124,7 @@ func (b *depsBuild) cleanup() {
 // index builds the image of every platform the base index lists among
 // platforms, in the order of the index, and pushes the new index to dst.
 func (b *depsBuild) index(ctx context.Context, src, dst name.Reference, platforms []string) error {
-	opts := remoteOptions(ctx)
+	opts := b.d.Registry.remoteOptions(ctx)
 	idx, err := remote.Index(src, opts...)
 	if err != nil {
 		return fmt.Errorf("reading the base image %s: %w", src, err)

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/types"
@@ -64,25 +63,33 @@ type Resolver interface {
 }
 
 // Registry is the CLI's registry client (ADR 0073, section 3). It speaks the
-// registry API in process with the credentials `docker login` and its
-// credential helpers wrote (authn.DefaultKeychain), never through a local
-// image store, so an image any tool pushed can be pinned (ADR 0075).
-type Registry struct{}
+// registry API in process, never through a local image store, so an image
+// any tool pushed can be pinned (ADR 0075). Its credentials are those
+// `docker login` and its credential helpers wrote (authn.DefaultKeychain)
+// and, for a registry a cloud owns, that cloud CLI's session, as Auth says
+// (ADR 0080). The zero value reads both, the default of registry.auth_method.
+type Registry struct {
+	// Auth is registry.auth_method; empty is AuthAuto.
+	Auth AuthMethod
+	// Cloud reads the cloud session; the cloud CLIs on PATH when nil.
+	Cloud CloudKeychain
+}
 
 // Resolve reads the digest and the manifest that image names. Only a
 // registry on localhost, a *.localhost name or a loopback address may answer
 // over plain HTTP (plainHTTPOnLoopback); every other one is spoken to over
 // verified TLS. Only an OCI or Docker v2 manifest or index is accepted, so
 // the digest is always the one computed from the manifest returned.
-func (Registry) Resolve(ctx context.Context, image string) (Pinned, error) {
+func (r Registry) Resolve(ctx context.Context, image string) (Pinned, error) {
 	ref, err := name.ParseReference(image)
 	if err != nil {
 		return Pinned{}, fmt.Errorf("image %q is not a valid reference: %w", image, err)
 	}
-	desc, err := remote.Get(ref, remoteOptions(ctx)...)
+	desc, err := remote.Get(ref, r.remoteOptions(ctx)...)
 	if err != nil {
 		return Pinned{}, fmt.Errorf("reading %q from its registry (credentials come from `docker login` "+
-			"or its credential helpers, in ~/.docker/config.json): %w", image, err)
+			"or its credential helpers, in ~/.docker/config.json, or from the session of the cloud CLI that owns the registry): %w",
+			image, err)
 	}
 	if !acceptedMediaTypes[desc.MediaType] {
 		return Pinned{}, fmt.Errorf("reading %q from its registry: media type %q is not an OCI or Docker v2 manifest or index", image, desc.MediaType)
@@ -94,12 +101,12 @@ func (Registry) Resolve(ctx context.Context, image string) (Pinned, error) {
 // names (a pinned reference), or "" when the config names no platform. It is
 // a second request, made only by the skip path, which must know what a
 // single image was built for.
-func (Registry) Platform(ctx context.Context, ref string) (string, error) {
-	r, err := name.ParseReference(ref)
+func (r Registry) Platform(ctx context.Context, ref string) (string, error) {
+	pr, err := name.ParseReference(ref)
 	if err != nil {
 		return "", fmt.Errorf("image %q is not a valid reference: %w", ref, err)
 	}
-	img, err := remote.Image(r, remoteOptions(ctx)...)
+	img, err := remote.Image(pr, r.remoteOptions(ctx)...)
 	if err != nil {
 		return "", fmt.Errorf("reading %q from its registry: %w", ref, err)
 	}
@@ -118,10 +125,10 @@ func (Registry) Platform(ctx context.Context, ref string) (string, error) {
 }
 
 // remoteOptions are the options of every registry request: the credentials
-// of authn.DefaultKeychain and the transport that allows plain HTTP only on
-// the loopback.
-func remoteOptions(ctx context.Context) []remote.Option {
-	return []remote.Option{remote.WithContext(ctx), remote.WithAuthFromKeychain(authn.DefaultKeychain),
+// r.Auth reads (resolveAuth) and the transport that allows plain HTTP only
+// on the loopback.
+func (r Registry) remoteOptions(ctx context.Context) []remote.Option {
+	return []remote.Option{remote.WithContext(ctx), remote.WithAuthFromKeychain(keychain{r: r}),
 		remote.WithTransport(transport(remote.DefaultTransport))}
 }
 
