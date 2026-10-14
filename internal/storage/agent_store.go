@@ -62,11 +62,18 @@ func (s *ExecutionStore) TaskSpec(ctx context.Context, id auth.AgentIdentity) (a
 	if run.DataIntervalEnd.Valid {
 		dataIntervalEnd = run.DataIntervalEnd.Time.UTC().Format(time.RFC3339)
 	}
-	// The DagRun's params/conf JSON, for the runtime's context['params'] (#148). Empty
-	// when the run carried no conf, so the agent leaves LEOFLOW_PARAMS unset (params={}).
+	// The task's params for the runtime's context['params'] (#148): the DAG's param
+	// defaults, then the task's own params, then the run conf (#1841). Layered here,
+	// not at trigger time, so a run created without conf (a scheduled run) still
+	// gets the DAG defaults (#1844). Empty when nothing applies, so the agent leaves
+	// LEOFLOW_PARAMS unset (params={}).
+	params, err := spec.RunParams(task, json.RawMessage(run.Conf))
+	if err != nil {
+		return agentrpc.TaskSpec{}, fmt.Errorf("resolving task params: %w", err)
+	}
 	var paramsJSON string
-	if len(run.Conf) > 0 {
-		paramsJSON = string(run.Conf)
+	if len(params) > 0 {
+		paramsJSON = string(params)
 	}
 	// When a reschedule-mode sensor is re-dispatched, deliver the time it first
 	// entered reschedule so its get_first_reschedule_date returns the real value and
