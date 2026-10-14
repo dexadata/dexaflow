@@ -28,6 +28,7 @@ const (
 	deployStatusPlanned    = "planned"    // --plan: what a deploy would do
 	deployStatusRefused    = "refused"    // --plan: a deploy would be refused
 	deployStatusFailed     = "failed"     // --all: this DAG's deploy failed
+	deployStatusSkipped    = "skipped"    // --changed-since: unchanged since the ref, not deployed
 )
 
 // deployReport is the --output json document: where the deploy went and one
@@ -36,6 +37,8 @@ type deployReport struct {
 	Server string         `json:"server"`
 	Target string         `json:"target,omitempty"`
 	DAGs   []deployResult `json:"dags"`
+	// Removed lists the projects --changed-since found removed since the ref.
+	Removed []removedProject `json:"removed,omitempty"`
 }
 
 // deployResult is what one DAG's deploy did, or with --plan would do.
@@ -52,6 +55,8 @@ type deployResult struct {
 	Next       string      `json:"next,omitempty"`
 	Plan       *deployPlan `json:"plan,omitempty"`
 	Error      string      `json:"error,omitempty"`
+	// Reason says why a skipped DAG was not deployed.
+	Reason string `json:"reason,omitempty"`
 }
 
 // setServer records the control plane the deploy goes to. A nil report (text
@@ -70,6 +75,14 @@ func (r *deployReport) setServer(choice *serverChoice) {
 func (r *deployReport) add(res deployResult) {
 	if r != nil {
 		r.DAGs = append(r.DAGs, res)
+	}
+}
+
+// addRemoved records a project removed since the --changed-since ref. A nil
+// report records nothing.
+func (r *deployReport) addRemoved(p removedProject) {
+	if r != nil {
+		r.Removed = append(r.Removed, p)
 	}
 }
 

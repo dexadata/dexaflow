@@ -173,17 +173,31 @@ func contentHash(dir string, cfg *domain.LeoflowConfig, dockerfile, output strin
 	}
 	hashField(h, "config", cfgJSON)
 	hashField(h, "cli", []byte(version.Get().Version))
+	if _, err := walkLabelInputs(dir, cfg, dockerfile, output, h, nil); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// walkLabelInputs hashes into h every file contentHash reads from the project
+// directory, calling seen (when not nil) with the path of each one, and
+// returns the roots it walked, as project-relative names. It is the one
+// definition of which files a DAG's image and version label come from, shared
+// by the label and by deploy --changed-since.
+func walkLabelInputs(dir string, cfg *domain.LeoflowConfig, dockerfile, output string, h hash.Hash, seen func(string)) ([]hashRootSpec, error) {
 	own := projectDockerfile(dir, cfg, dockerfile)
 	w, err := newContentWalker(dir, cfg, output, own != "", h)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	for _, root := range w.roots(own) {
+	w.seen = seen
+	roots := w.roots(own)
+	for _, root := range roots {
 		if werr := w.hashRoot(root); werr != nil {
-			return "", werr
+			return nil, werr
 		}
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return roots, nil
 }
 
 // hashField writes a length-prefixed field, so two fields can never run
@@ -225,6 +239,8 @@ type contentWalker struct {
 	// (codeLayerFiles).
 	layer bool
 	files []build.LayerFile
+	// seen, when set, receives the path of every entry the walk keeps.
+	seen func(file string)
 }
 
 // hashRootSpec is one root of the hash: a project-relative path.
@@ -388,6 +404,9 @@ func (w *contentWalker) visit(r hashRootSpec, file, rel string, d fs.DirEntry) e
 			return filepath.SkipDir
 		}
 		return nil
+	}
+	if w.seen != nil {
+		w.seen(file)
 	}
 	if w.layer {
 		return w.collect(file, slash, d)
