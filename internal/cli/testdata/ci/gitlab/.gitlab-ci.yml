@@ -1,0 +1,59 @@
+# Deploys the DAGs a push to the default branch changed to Dexaflow.
+# Written by `dexaflow ci init gitlab` for dexaflow v0.6.0; the deploy
+# itself is in ci/dexaflow-deploy.sh. To add it to an existing .gitlab-ci.yml, copy
+# the dexaflow-deploy job into that file by hand.
+#
+# Set up once, in Settings, CI/CD, Variables:
+#   - DEXAFLOW_SERVER_URL: the control plane URL;
+#   - DEXAFLOW_TOKEN, masked and protected: a deploy token, created with
+#     `dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d`
+#   - DEXAFLOW_GITLAB_API_TOKEN, masked and protected (recommended): a project
+#     access token with the read_api scope, see below.
+# The job pushes to the project's container registry with the job token
+# ($CI_REGISTRY_USER and $CI_REGISTRY_PASSWORD).
+#
+# What a run deploys: with DEXAFLOW_GITLAB_API_TOKEN, what changed since the
+# commit of the last successful push pipeline on the branch, so a failed or
+# cancelled pipeline is caught up by the next one. The job token cannot read
+# the pipelines API, so without that variable a run deploys what changed since
+# the previous commit of its push ($CI_COMMIT_BEFORE_SHA), and the changes of a
+# failed, cancelled or skipped pipeline wait for the next change to the same
+# DAG: rerun that pipeline, or run one by hand (Build, Pipelines, Run
+# pipeline), which deploys every DAG. Turn off "Auto-cancel redundant
+# pipelines" for the branch, and set the process mode of the resource group
+# dexaflow-deploy to oldest_first (PUT /projects/:id/resource_groups/dexaflow-deploy
+# with process_mode=oldest_first), so pipelines deploy in push order.
+#
+# No container daemon is needed: the CLI pushes the DAG code as a layer on the
+# dependency image, and builds that image from wheels with uv.
+dexaflow-deploy:
+  image: python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+  resource_group: dexaflow-deploy
+  variables:
+    GIT_DEPTH: "0" # --changed-since and the version label need the history
+    DEXAFLOW_SUMMARY_FILE: $CI_PROJECT_DIR/dexaflow-deploy.md
+    DEXAFLOW_REPORT_FILE: $CI_PROJECT_DIR/dexaflow-deploy.json
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web")
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git curl ca-certificates >/dev/null
+  script:
+    - |
+      mkdir -p "$HOME/.docker"
+      b64() { printf '%s:%s' "$1" "$2" | base64 | tr -d '\n'; }
+      printf '{"auths":{"%s":{"auth":"%s"}}}\n' \
+        "$CI_REGISTRY" "$(b64 "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD")" \
+        >"$HOME/.docker/config.json"
+    - |
+      DEXAFLOW_BASE_REF="$CI_COMMIT_BEFORE_SHA"
+      if [ -n "${DEXAFLOW_GITLAB_API_TOKEN:-}" ]; then
+        DEXAFLOW_BASE_REF="$(curl -fsS --header "PRIVATE-TOKEN: $DEXAFLOW_GITLAB_API_TOKEN" \
+          "$CI_API_V4_URL/projects/$CI_PROJECT_ID/pipelines?ref=$CI_COMMIT_BRANCH&source=push&status=success&per_page=1" |
+          python3 -c 'import json, sys; p = json.load(sys.stdin); print(p[0]["sha"] if p else "")')" || DEXAFLOW_BASE_REF=""
+      fi
+      export DEXAFLOW_BASE_REF
+    - sh ci/dexaflow-deploy.sh
+  artifacts:
+    when: always
+    paths: [dexaflow-deploy.md, dexaflow-deploy.json]
+    expire_in: 30 days

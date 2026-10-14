@@ -112,7 +112,13 @@ func planWheels(ctx context.Context, u *uvTool, cfg *domain.LeoflowConfig, deps 
 // anything is read: a platform with no wheel tag, system packages, a
 // dependency that is not a plain requirement by name.
 func wheelBlocker(cfg *domain.LeoflowConfig, deps []string, platforms []string) string {
-	if hostOS == "windows" {
+	return wheelBlockerOn(hostOS, cfg, deps, platforms)
+}
+
+// wheelBlockerOn is wheelBlocker for a CLI running on goos, such as the
+// Linux runner of a pipeline that `ci init` writes from another machine.
+func wheelBlockerOn(goos string, cfg *domain.LeoflowConfig, deps []string, platforms []string) string {
+	if goos == "windows" {
 		return "the dependency layer does not run on Windows yet"
 	}
 	for _, p := range platforms {
