@@ -7,10 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"path"
-	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/spf13/cobra"
@@ -326,24 +325,35 @@ func pickPromoted(dagID, target string, versions []listedVersion, sel string) (l
 	return listedVersion{}, fmt.Errorf("%s has no current version on %s; pass --version (see `dexaflow dags versions %s --target %s`)", dagID, target, dagID, target)
 }
 
-// readVersionSpec reads the dag.json registered with version v from GET
-// /api/v2/dags/{dag_id}/dagVersions/{n}/spec, and checks it is that
+// readVersionSpec reads the dag.json registered with version v with the
+// public client (apiclient.Client.GetDagVersionSpec, GET
+// /api/v2/dags/{dag_id}/dagVersions/{n}/spec), and checks it is that
 // version's (its dag_id, label and image), so nothing but that version is
 // ever promoted.
 func readVersionSpec(ctx context.Context, serverURL, token, dagID string, v listedVersion) ([]byte, error) {
-	u := strings.TrimRight(serverURL, "/") + "/api/v2/dags/" + url.PathEscape(dagID) + "/dagVersions/" + strconv.Itoa(v.number) + "/spec"
-	status, body, err := getOnce(ctx, u, token)
+	c, err := apiclient.NewClient(serverURL, apiclient.WithHTTPClient(&http.Client{Timeout: 30 * time.Second}))
 	if err != nil {
-		return nil, fmt.Errorf("reading the spec of %s version %s: %w", dagID, v.label, err)
+		return nil, fmt.Errorf("building the client: %w", err)
 	}
-	if status == http.StatusNotFound {
+	var editors []apiclient.RequestEditorFn
+	if token != "" {
+		editors = append(editors, func(_ context.Context, req *http.Request) error {
+			req.Header.Set("Authorization", "Bearer "+token)
+			return nil
+		})
+	}
+	body, err := c.GetDagVersionSpec(ctx, dagID, v.number, editors...)
+	var se *apiclient.StatusError
+	switch {
+	case errors.As(err, &se) && se.StatusCode == http.StatusNotFound:
 		// The version was just listed: either it was deleted since, or the
 		// server predates the route.
 		return nil, fmt.Errorf("reading the spec of %s version %s: %w\n  The source may predate serving a version's spec "+
-			"(GET /api/v2/dags/{dag_id}/dagVersions/{n}/spec); upgrade it to promote from it", dagID, v.label, apiStatusError(status, body))
-	}
-	if status != http.StatusOK {
-		return nil, fmt.Errorf("reading the spec of %s version %s: %w", dagID, v.label, apiStatusError(status, body))
+			"(GET /api/v2/dags/{dag_id}/dagVersions/{n}/spec); upgrade it to promote from it", dagID, v.label, apiStatusError(se.StatusCode, se.Body))
+	case errors.As(err, &se):
+		return nil, fmt.Errorf("reading the spec of %s version %s: %w", dagID, v.label, apiStatusError(se.StatusCode, se.Body))
+	case err != nil:
+		return nil, fmt.Errorf("reading the spec of %s version %s: %w", dagID, v.label, err)
 	}
 	var spec domain.DAGSpec
 	if jerr := json.Unmarshal(body, &spec); jerr != nil {
