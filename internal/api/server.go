@@ -111,6 +111,19 @@ type Dependencies struct {
 	// priority class) outside it answers 400 naming the task and the field.
 	// Nil: everything allowed.
 	ExecutionPolicy *domain.ExecutionPolicy
+	// WarmPolicy is the warm placement decision the dispatcher applies
+	// (dispatch.Dispatcher.WarmPolicy, built from the same configuration). The
+	// register response reports each task's execution mode with it (#1707).
+	// The zero value reports warm pools off.
+	WarmPolicy domain.WarmPolicy
+	// WarmPools is the operator's execution section (warm pool sizes), read
+	// for the pool state of the register response.
+	WarmPools config.ExecutionSection
+	// WarmWorkersAbsent says why no warm worker runs although warm pools are
+	// on (the subprocess executor starts no warm pool reconciler; neither does
+	// a server whose pod dispatch is disabled), "" when they run. The register
+	// response then reports every task on a dedicated pod, with this reason.
+	WarmWorkersAbsent string
 
 	// Resource repositories. Routes for nil repositories are not registered.
 	Dags     DagRepository

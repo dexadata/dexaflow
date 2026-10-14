@@ -127,6 +127,7 @@ builder:    local-daemon (docker), fallback: no daemonless or remote builder is 
 Deployed first_pro_dag -> https://pro.example.com
   image ghcr.io/your-org/first-pro-dag@sha256:9f2c…
   registered version 1a2b3c4
+  execution  every task runs on a dedicated pod: warm pools off
 ```
 
 That one command crossed every boundary:
@@ -147,6 +148,11 @@ That one command crossed every boundary:
 4. **re-pin + register**: captured the image **digest**, wrote
    `…@sha256:…` into `dag.json`, and registered that with the control plane. Pro
    now pulls **exactly** the bytes you built, with no `:latest` drift.
+5. **execution**: the server said where each task runs. Every task runs on a
+   dedicated pod of its own unless the operator turned on
+   [warm pools](/operate/warm-pools/#where-a-deploys-tasks-run); then the line
+   counts the warm-eligible tasks, names each task that takes a dedicated pod
+   and why, and a `warm pool` line follows.
 
 {{% alert title="It registers, it doesn't run, by default" color="info" %}}
 `deploy` publishes the artifact. A DAG deployed for the first time starts

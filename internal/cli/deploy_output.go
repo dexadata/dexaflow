@@ -57,7 +57,10 @@ type deployResult struct {
 	IsPaused   *bool       `json:"is_paused,omitempty"`
 	Next       string      `json:"next,omitempty"`
 	Plan       *deployPlan `json:"plan,omitempty"`
-	Error      string      `json:"error,omitempty"`
+	// Execution is the server's report of where each task runs and what the
+	// version's warm pool does (#1707), absent from an older server.
+	Execution *executionSummary `json:"execution,omitempty"`
+	Error     string            `json:"error,omitempty"`
 	// Reason says why a skipped DAG was not deployed.
 	Reason string `json:"reason,omitempty"`
 }
