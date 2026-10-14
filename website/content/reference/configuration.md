@@ -720,8 +720,11 @@ deletes a row. It runs on the scheduler leader only and rechecks leadership
 before every batch. A run is eligible once it settled (`success` or `failed`)
 more than `dag_runs_days` ago, every task instance of it is settled
 (`success`, `failed`, `skipped` or `upstream_failed`; a task in `none` is
-waiting to be scheduled, for example after a clear, so its run is kept), and
-no staging volume of it is still live. It goes with its task instances, state
+waiting to be scheduled, for example after a clear, so its run is kept), no
+staging volume of it is still live, and it is not the newest run of its DAG.
+The newest run (by logical date) is always kept, however old: the scheduler
+reads a DAG's last logical date from it, and without it a scheduled DAG would
+run its latest slot again, or its whole history with `catchup`. It goes with its task instances, state
 history, attempt history and XCom index rows, children first. Every batch is
 one short transaction of at most `batch_size` rows, run rows included; a run
 with more rows than that is finished by later batches, each of which checks
@@ -753,7 +756,7 @@ keys; set them through `extraEnv`.
 
 | Variable | Default | Edition | Purpose |
 |---|---|---|---|
-| `DEXAFLOW_RETENTION_DAG_RUNS_DAYS` | `0` (off) | both | Delete settled runs, with their task instances and history, that ended more than this many days ago. `0` keeps every run. |
+| `DEXAFLOW_RETENTION_DAG_RUNS_DAYS` | `0` (off) | both | Delete settled runs, with their task instances and history, that ended more than this many days ago. The newest run of each DAG is always kept. `0` keeps every run. |
 | `DEXAFLOW_RETENTION_AUDIT_LOG_DAYS` | `0` (off) | both | Delete audit log entries older than this many days, per tenant and for the tenant-less system entries. `0` keeps the whole audit log. |
 | `DEXAFLOW_RETENTION_DRY_RUN` | `false` | both | Only count what a cycle would delete; delete nothing. |
 | `DEXAFLOW_RETENTION_INTERVAL` | `1h` | both | How often a cycle runs. Must be greater than zero when a class is on. |

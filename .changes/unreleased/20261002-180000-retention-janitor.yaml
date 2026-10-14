@@ -14,7 +14,8 @@ body: |-
   with part of its tasks missing. Active runs, runs with a task instance that
   is not settled (including one a clear just reset, even while the batch is
   running: the batch locks and re-checks the task instances before it deletes)
-  and runs with a live staging volume are never touched. The janitor uses the
+  runs with a live staging volume and the newest run of each DAG, which the
+  scheduler reads its last logical date from, are never touched. The janitor uses the
   scheduler's database pool (`database.scheduler_max_conns`) when one is set,
   not the API pool.
   Each audit purge writes a `retention.purge` audit entry. `retention.dry_run`
