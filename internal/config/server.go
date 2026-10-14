@@ -90,16 +90,27 @@ type DeploySection struct {
 	Defaults DeployDefaultsSection `mapstructure:"defaults"`
 }
 
-// DeployDefaultsSection is deploy.defaults.
+// DeployDefaultsSection is deploy.defaults: the values served as they are,
+// and the switch that adds the source mode runtime image to them.
 type DeployDefaultsSection struct {
 	domain.DeployDefaults `mapstructure:",squash"`
-	// SourceMode is deploy.defaults.source_mode (#1772); not read yet.
-	SourceMode bool `mapstructure:"-"`
+	// SourceMode (deploy.defaults.source_mode, default false) advertises
+	// execution.source_mode.image as source_mode_image, so a deploy to this
+	// cluster that names no runtime image of its own registers dag.py on it
+	// with no build (#1772). It requires execution.source_mode.enabled.
+	SourceMode bool `mapstructure:"source_mode"`
 }
 
-// AdvertisedDeployDefaults are the deploy defaults the server serves.
+// AdvertisedDeployDefaults are the deploy defaults GET /api/v2/deployDefaults
+// serves: deploy.defaults, with the runtime image of source mode when
+// deploy.defaults.source_mode asks for it and the mode is on.
 func (c *ServerConfig) AdvertisedDeployDefaults() domain.DeployDefaults {
-	return c.Deploy.Defaults.DeployDefaults
+	d := c.Deploy.Defaults.DeployDefaults
+	d.SourceModeImage = ""
+	if c.Deploy.Defaults.SourceMode {
+		d.SourceModeImage = c.Execution.SourceMode.RuntimeImage()
+	}
+	return d
 }
 
 // Variable encryption modes (variable_encryption, #507).
@@ -1417,6 +1428,8 @@ var serverDefaults = map[string]any{
 	"deploy.defaults.registry":   "",
 	"deploy.defaults.platforms":  []string{},
 	"deploy.defaults.base_image": "",
+	// Off: no runtime image is advertised for source mode (#1772).
+	"deploy.defaults.source_mode": false,
 	// Retention (the leader-only janitor). Every class ships off: nothing is
 	// deleted until an operator sets a window. The pacing values apply once one is.
 	"retention.dag_runs_days":      0,
@@ -1604,6 +1617,9 @@ func (c *ServerConfig) Validate() error {
 // validateDeployDefaults refuses a deploy.defaults value no deploy could
 // use, so it fails at boot instead of in every deploy to the cluster.
 func (c *ServerConfig) validateDeployDefaults() error {
+	if c.Deploy.Defaults.SourceMode && !c.Execution.SourceMode.Enabled {
+		return errors.New("deploy.defaults.source_mode advertises the source mode runtime image, but execution.source_mode.enabled is false; turn source mode on or leave deploy.defaults.source_mode off")
+	}
 	return c.Deploy.Defaults.Validate("deploy.defaults")
 }
 

@@ -636,6 +636,13 @@ spec:
             {{- end }}
             {{- end }}
             {{- end }}
+            {{- if $deployDefaults.sourceMode }}
+            # Advertise the source mode runtime image on /api/v2/deployDefaults
+            # (#1772). The server serves execution.source_mode.image itself;
+            # deployment.yaml has already refused this while source mode is off.
+            - name: LEOFLOW_DEPLOY_DEFAULTS_SOURCE_MODE
+              value: "true"
+            {{- end }}
             {{- if (.ctx.Values.execution.sourceMode | default dict).enabled }}
             # Pro source mode (ADR 0067). Stamped only when on, so an install that
             # never turns it on renders the env it had before (the server default

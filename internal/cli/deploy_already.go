@@ -191,6 +191,7 @@ func getOnce(ctx context.Context, u, token string) (status int, body []byte, err
 	if err != nil {
 		return 0, nil, fmt.Errorf("building request: %w", err)
 	}
+	setClientHeaders(req.Header)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

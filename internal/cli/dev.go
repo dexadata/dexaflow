@@ -1910,6 +1910,7 @@ func devReadyOnce(ctx context.Context, baseURL string) bool {
 	if err != nil {
 		return false
 	}
+	setClientHeaders(req.Header)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return false
@@ -2151,6 +2152,7 @@ func devImportErrorRequest(ctx context.Context, method, reqURL, token string, bo
 	if err != nil {
 		return fmt.Errorf("building request: %w", err)
 	}
+	setClientHeaders(req.Header)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

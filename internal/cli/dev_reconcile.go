@@ -22,6 +22,7 @@ func devGetJSON(serverURL, pathQuery, token string, out any) error {
 	if err != nil {
 		return fmt.Errorf("building request: %w", err)
 	}
+	setClientHeaders(req.Header)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

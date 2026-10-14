@@ -29,6 +29,10 @@ type defaultsProvenance struct {
 	// workspace defaults; "" means the built-in default.
 	platformsSource string
 	baseImageSource string
+	// sourceMode is the runtime image of source mode and where it came
+	// from: a target, the workspace defaults or the cluster (#1772); empty
+	// when nothing sets one.
+	sourceMode sourceModeChoice
 }
 
 // applyWorkspaceDefaults fills what the project's dexaflow.yaml leaves unset
@@ -76,6 +80,7 @@ func applyDefaults(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, wi
 		layers = append(layers, *cluster)
 	}
 	prov.platformsSource, prov.baseImageSource = applyBuildDefaults(dir, cfg, layers)
+	prov.sourceMode = pickSourceMode(layers)
 	if prov.platformsSource, err = applyPlatformFlag(cmd, cfg, prov.platformsSource); err != nil {
 		return defaultsProvenance{}, err
 	}
@@ -209,6 +214,17 @@ func applyBuildDefaults(dir string, cfg *domain.LeoflowConfig, layers []defaults
 		}
 	}
 	return platforms, ""
+}
+
+// pickSourceMode returns the first layer's source_mode_image, most specific
+// first, and the layer it came from; the zero value when none sets one.
+func pickSourceMode(layers []defaultsLayer) sourceModeChoice {
+	for _, l := range layers {
+		if l.values.SourceModeImage != "" {
+			return sourceModeChoice{image: l.values.SourceModeImage, source: l.name}
+		}
+	}
+	return sourceModeChoice{}
 }
 
 // projectSetsPlatforms reports whether the project's own file declares

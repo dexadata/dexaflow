@@ -20,9 +20,12 @@ type DeployDefaults struct {
 	Platforms []string `json:"platforms" mapstructure:"platforms"`
 	// BaseImage replaces base_image for projects that set none.
 	BaseImage string `json:"base_image" mapstructure:"base_image"`
-	// SourceModeImage is the runtime image of source mode (#1772); not
-	// served yet.
-	SourceModeImage string `json:"-" mapstructure:"-"`
+	// SourceModeImage is the runtime image a deploy registers a DAG's
+	// dag.py on, with no build, when nothing local names one (source mode,
+	// ADR 0067, #1772). The server fills it from execution.source_mode.image
+	// when deploy.defaults.source_mode is on; it is never set by hand, so
+	// it cannot drift from the image the server runs.
+	SourceModeImage string `json:"source_mode_image" mapstructure:"-"`
 }
 
 // platformPattern is the os/arch[/variant] form a platform takes, the one
@@ -32,7 +35,7 @@ var platformPattern = regexp.MustCompile(`^[A-Za-z0-9]+/[A-Za-z0-9_]+(/[A-Za-z0-
 
 // IsEmpty reports whether d sets nothing.
 func (d DeployDefaults) IsEmpty() bool {
-	return d.Registry == "" && len(d.Platforms) == 0 && d.BaseImage == ""
+	return d.Registry == "" && len(d.Platforms) == 0 && d.BaseImage == "" && d.SourceModeImage == ""
 }
 
 // Validate refuses a value a deploy could not use, naming the field under
@@ -51,6 +54,9 @@ func (d DeployDefaults) Validate(prefix string) error {
 		if err := CheckImageReference(prefix+".base_image", d.BaseImage); err != nil {
 			return err
 		}
+	}
+	if d.SourceModeImage != "" && !IsDigestPinned(d.SourceModeImage) {
+		return fmt.Errorf("%s.source_mode_image %q is not pinned by a full digest (image@sha256:<64 hex>), the only form source mode runs (ADR 0067)", prefix, d.SourceModeImage)
 	}
 	return nil
 }

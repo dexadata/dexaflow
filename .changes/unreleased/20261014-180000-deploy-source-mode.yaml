@@ -1,0 +1,26 @@
+kind: Added
+body: |-
+  **`dexaflow deploy` in source mode, with no build.** A target in
+  `dexaflow.workspace.yaml` or in the CLI config file may set
+  `source_mode_image` (`dexaflow target add --source-mode-image`), and an
+  operator can advertise the cluster's own runtime image with the Helm value
+  `deploy.defaults.sourceMode` (server key `deploy.defaults.source_mode`,
+  `DEXAFLOW_DEPLOY_DEFAULTS_SOURCE_MODE`, which requires source mode on), served
+  as `source_mode_image` on `GET /api/v2/deployDefaults`. The target wins over
+  the workspace defaults, which win over the cluster, and the deploy prints
+  where the image came from. With one set, `dexaflow deploy <dag_id>`
+  compiles `dag.json` with exactly that image, checks that it carries
+  `source` of at most 131072 bytes, and registers it with no build, no push
+  and no registry; `--plan` says so. A DAG that needs a build (a
+  `requirements.txt`, a `Dockerfile`, other Python modules beside `dag.py`,
+  or `dependencies`, `connectors`, `system_packages`, `include_paths`,
+  `base_image`, `build.dockerfile` or dbt in `dexaflow.yaml`) is refused with
+  every reason, before any network call when the setting is local, and an
+  image not pinned by a full digest is refused too. The CLI now sends
+  `User-Agent: dexaflow-cli/<version>` to the control plane, and
+  `X-Dexaflow-CI: true` when `CI`, `GITHUB_ACTIONS` or `GITLAB_CI` is set, and
+  `deploy` prints any `links` object and `checks` list a server or a platform
+  in front of it adds to the register or dry run answer (also in
+  `--output json`). `pkg/client.DeployDefaults` gains `SourceModeImage`
+  (#1772).
+time: 2026-10-14T18:00:00.000000000-03:00

@@ -41,7 +41,9 @@ The legacy `LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED` and
 set, the `DEXAFLOW_` one wins. The same keys can go in the server config file
 as `execution.source_mode.enabled` and `execution.source_mode.image`.
 
-With the Helm chart, set the two values under `execution.sourceMode`:
+With the Helm chart, set the two values under `execution.sourceMode`
+(and `deploy.defaults.sourceMode` to advertise the image to deploys, see
+[Deploying in source mode](#deploying-in-source-mode)):
 
 ```yaml
 execution:
@@ -64,10 +66,76 @@ short digest, so every source-mode task runs the exact image you vetted. Use
 the runtime image your release ships, or your own image built on it with the
 packages your teams need.
 
-## Registering a source-mode version
+## Deploying in source mode
 
-`dexaflow deploy` always builds or pins a DAG image, so a source-mode version
-is registered with `dexaflow compile` and `dexaflow push` instead (ADR 0067 §4):
+`dexaflow deploy` registers a source-mode version when the target it deploys
+to names the runtime image as `source_mode_image`. Set it on the target in
+`dexaflow.workspace.yaml`:
+
+```yaml
+targets:
+  dev:
+    server: https://pro.example.com
+    source_mode_image: ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:<digest>
+```
+
+or on a target of your config file (`dexaflow target add dev
+https://pro.example.com --source-mode-image <image>`, with `--global` inside
+a workspace). The value must be `execution.source_mode.image` byte for byte;
+`deploy` and `target add` refuse an image that is not pinned by a full
+digest, since the server never runs one in source mode.
+
+The platform team can instead advertise the runtime image for the whole
+cluster, so no repository has to copy it:
+
+```yaml
+deploy:
+  defaults:
+    sourceMode: true    # requires execution.sourceMode.enabled
+```
+
+The server then serves its own `execution.source_mode.image` as
+`source_mode_image` on `GET /api/v2/deployDefaults`
+([cluster deploy defaults](/operate/workspaces-and-targets/#cluster-deploy-defaults)).
+The precedence is that of the other deploy defaults: the target's
+`source_mode_image`, then `defaults.source_mode_image` in the workspace file,
+then the cluster. Before anything else the deploy prints the image and where
+it came from:
+
+```text
+server:     https://pro.example.com (target dev, from default_target in /work/dags/dexaflow.workspace.yaml)
+image:      ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:<digest> (source mode, from target "dev" in /work/dags/dexaflow.workspace.yaml): dag.py runs on this runtime image, nothing is built or pushed
+```
+
+`dexaflow deploy <dag_id>` then:
+
+1. refuses a DAG that needs a build, before any network call when the
+   setting is local (after reading the cluster's defaults when it comes from
+   there), and names every reason: a `requirements.txt` or a `Dockerfile`
+   beside `dag.py`, other Python modules beside it, or `dependencies`,
+   `connectors`, `system_packages`, `include_paths`, `base_image`,
+   `build.dockerfile`, `dbt` or `dbt_groups` in `dexaflow.yaml`;
+2. runs the usual [preflight](/operate/cicd-deploy/#checks-before-the-build-preflight)
+   of the control plane and the token (there is no registry to check);
+3. compiles `dag.json` with exactly the runtime image, and checks that it
+   carries `source` and that the source is at most 131072 bytes, the check
+   the register makes;
+4. sends it to the server's dry run (when the server offers one), then
+   registers it. Nothing is built or pushed, and no registry is needed.
+
+`--plan` works the same way: it says `build no (source mode)` and
+`push no (source mode)`, and `--output json` marks the plan with
+`"source_mode": true`. The content label and the check that a label is
+already the current version work as for any deploy.
+
+To deploy one DAG that needs a build to a target that sets
+`source_mode_image`, use another target; a cluster that advertises source
+mode applies it to every deploy that names no runtime image of its own.
+
+### By hand
+
+Any deploy flow of your own can register the same version without
+`dexaflow deploy` (ADR 0067 §4):
 
 1. Compile the DAG with the runtime image and no build:
 
@@ -88,9 +156,9 @@ is registered with `dexaflow compile` and `dexaflow push` instead (ADR 0067 §4)
    dexaflow push dag.json --server https://pro.example.com
    ```
 
-   `push` sends the file as it is to `POST /api/v2/dags/{dag_id}/versions`,
-   so any deploy flow of your own can make the same call. The token must be
-   allowed to write the DAG (with a scoped issuer token, `dexaflow:deploy`).
+   `push` sends the file as it is to `POST /api/v2/dags/{dag_id}/versions`.
+   The token must be allowed to write the DAG (with a scoped issuer token,
+   `dexaflow:deploy`).
 
 A `400` names the problem: no source, or a source over the cap.
 

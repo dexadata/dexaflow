@@ -76,6 +76,9 @@ type compileOptions struct {
 	// build --push), nil for none. The compile applies it again after the
 	// local sources, so what is built is what the caller labeled and showed.
 	cluster *defaultsLayer
+	// sourceMode marks deploy's compile in source mode (#1772): image is the
+	// runtime image, which is never built.
+	sourceMode bool
 }
 
 func newCompileCommand() *cobra.Command {
@@ -262,7 +265,7 @@ func runCompile(cmd *cobra.Command, dir string, o compileOptions) error {
 	if err != nil {
 		return err
 	}
-	if ierr := checkImageFlags(cmd, o.build, o.push, image); ierr != nil {
+	if ierr := checkImageFlags(cmd, o, image); ierr != nil {
 		return ierr
 	}
 	if rerr := runParser(cmd, command, parserArgs{
@@ -316,7 +319,7 @@ func checkThenBuild(cmd *cobra.Command, dir string, o compileOptions, cfg *domai
 // into a dag.json via the dbt package, overlays the dexaflow.yaml, validates, and
 // optionally builds/pushes the image — reusing the same tail as the parser path.
 func runDbtCompile(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.LeoflowConfig, image string) error {
-	if ierr := checkImageFlags(cmd, o.build, o.push, image); ierr != nil {
+	if ierr := checkImageFlags(cmd, o, image); ierr != nil {
 		return ierr
 	}
 	manifest, err := loadDbtManifest(cmd, dir, cfg.Dbt, o.local, cfg.DagID)
@@ -760,16 +763,18 @@ func compileSummary(src, out, image, version string) string {
 	return fmt.Sprintf("Compiled %s -> %s (%s, version %s)\n", src, out, imageField, version)
 }
 
-// checkImageFlags enforces the --build/--image relationship and notes when an
-// image is recorded without being built.
-func checkImageFlags(cmd *cobra.Command, building, push bool, image string) error {
+// checkImageFlags enforces the --build/--image relationship of o and notes
+// when an image is recorded without being built, except in source mode,
+// where no image is ever built.
+func checkImageFlags(cmd *cobra.Command, o compileOptions, image string) error {
+	building, push := o.build, o.push
 	if push && !building {
 		return errors.New("--push requires --build")
 	}
 	if building && image == "" {
 		return errors.New("--build needs an image reference: pass --image, or set registry.url + registry.image_name in dexaflow.yaml")
 	}
-	if !building && image != "" {
+	if !building && image != "" && !o.sourceMode {
 		_, werr := fmt.Fprintf(cmd.ErrOrStderr(), "note: recording image %q without building it; pass --build to build the DAG image\n", image)
 		return werr
 	}

@@ -385,6 +385,7 @@ func newAPIRequest(ctx context.Context, method, url, token string, body []byte) 
 	if err != nil {
 		return nil, fmt.Errorf("building request: %w", err)
 	}
+	setClientHeaders(req.Header)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

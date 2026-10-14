@@ -529,6 +529,8 @@ deploy:
     platforms: []
     # -- Base image of the generated Dockerfile for projects that set no `base_image`. Empty (the default) leaves the built-in one. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_BASE_IMAGE` only when set. The chart refuses whitespace, quotes, a backslash or `$`, which `FROM` cannot carry, as the server does at boot.
     baseImage: ""
+    # -- Advertise `execution.sourceMode.image` to `dexaflow deploy` as the runtime image for source mode (#1772): a deploy to this cluster that names no runtime image of its own then registers the DAG's `dag.py` on it, with no build and no push, and refuses a DAG that needs a build. The value served is the server's own runtime image, so nothing is copied by hand. Off (the default) advertises none. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_SOURCE_MODE` only when on. Requires `execution.sourceMode.enabled`; the chart fails the render otherwise, as the server refuses to start.
+    sourceMode: false
 
 # -- Extra environment variables appended to the control-plane container, for
 # server settings this chart does not model as a first-class value (see

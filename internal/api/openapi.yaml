@@ -1229,7 +1229,8 @@ paths:
       summary: Cluster deploy defaults (Dexaflow)
       description: >-
         The registry prefix, build platforms and base image the operator set
-        in the server's deploy.defaults. dexaflow deploy applies them to
+        in the server's deploy.defaults, and the source mode runtime image when
+        deploy.defaults.source_mode advertises it. dexaflow deploy applies them to
         whatever the project, its workspace, its target and the CLI config
         leave unset. The values are the cluster's, the same for every tenant,
         and none is a secret. Every field is always present; an unset one is
@@ -1886,6 +1887,14 @@ components:
         base_image:
           type: string
           description: Base image for projects that set none; empty when unset.
+        source_mode_image:
+          type: string
+          description: >-
+            Runtime image, pinned by digest, a deploy registers a DAG's dag.py on
+            with no build (source mode, ADR 0067), for deploys that name none of
+            their own. It is the server's execution.source_mode.image, served
+            only when deploy.defaults.source_mode is on; empty otherwise. Absent
+            from servers that predate it.
 
     VersionInfo:
       type: object

@@ -149,6 +149,7 @@ func deleteDag(ctx context.Context, serverURL, token, dagID string, deregister b
 	if err != nil {
 		return 0, "", fmt.Errorf("building request: %w", err)
 	}
+	setClientHeaders(req.Header)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

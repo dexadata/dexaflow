@@ -111,6 +111,7 @@ func postVersion(ctx context.Context, p versionPost) (status int, header http.He
 	if err != nil {
 		return 0, nil, nil, fmt.Errorf("building request: %w", err)
 	}
+	setClientHeaders(req.Header)
 	req.Header.Set("Content-Type", "application/json")
 	if p.token != "" {
 		req.Header.Set("Authorization", "Bearer "+p.token)

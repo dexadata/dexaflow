@@ -82,7 +82,7 @@ func clusterLayer(ctx context.Context, serverURL, token string) (*defaultsLayer,
 		return nil, nil //nolint:nilnil // no defaults advertised is a normal outcome, not an error.
 	}
 	return &defaultsLayer{
-		values: deployDefaults{Registry: d.Registry, Platforms: d.Platforms, BaseImage: d.BaseImage},
+		values: deployDefaults{Registry: d.Registry, Platforms: d.Platforms, BaseImage: d.BaseImage, SourceModeImage: d.SourceModeImage},
 		name:   "the deploy defaults of " + serverURL,
 	}, nil
 }
@@ -97,13 +97,13 @@ func fetchClusterDefaults(ctx context.Context, serverURL, token string) (d domai
 	if err != nil {
 		return d, false, fmt.Errorf("building the client: %w", err)
 	}
-	var editors []apiclient.RequestEditorFn
-	if token != "" {
-		editors = append(editors, func(_ context.Context, req *http.Request) error {
+	editors := []apiclient.RequestEditorFn{func(_ context.Context, req *http.Request) error {
+		setClientHeaders(req.Header)
+		if token != "" {
 			req.Header.Set("Authorization", "Bearer "+token)
-			return nil
-		})
-	}
+		}
+		return nil
+	}}
 	got, err := c.GetDeployDefaults(ctx, editors...)
 	if errors.Is(err, apiclient.ErrDeployDefaultsNotServed) {
 		return d, false, nil
@@ -111,7 +111,7 @@ func fetchClusterDefaults(ctx context.Context, serverURL, token string) (d domai
 	if err != nil {
 		return d, false, err
 	}
-	d = domain.DeployDefaults{Registry: got.Registry, Platforms: got.Platforms, BaseImage: got.BaseImage}
+	d = domain.DeployDefaults{Registry: got.Registry, Platforms: got.Platforms, BaseImage: got.BaseImage, SourceModeImage: got.SourceModeImage}
 	if verr := d.Validate("deploy.defaults"); verr != nil {
 		return domain.DeployDefaults{}, false, verr
 	}
