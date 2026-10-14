@@ -93,12 +93,11 @@ func clusterLayer(ctx context.Context, serverURL, token string) (*defaultsLayer,
 // should never send (an error status, a body that is not the documented
 // object, a value no deploy could use) is an error.
 func fetchClusterDefaults(ctx context.Context, serverURL, token string) (d domain.DeployDefaults, found bool, err error) {
-	c, err := apiclient.NewClient(serverURL, apiclient.WithHTTPClient(&http.Client{Timeout: 15 * time.Second}))
+	c, err := cliBareAPIClient(serverURL, 15*time.Second)
 	if err != nil {
 		return d, false, fmt.Errorf("building the client: %w", err)
 	}
 	editors := []apiclient.RequestEditorFn{func(_ context.Context, req *http.Request) error {
-		setClientHeaders(req.Header)
 		if token != "" {
 			req.Header.Set("Authorization", "Bearer "+token)
 		}

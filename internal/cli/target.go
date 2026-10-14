@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dexadata/dexaflow/internal/config"
-	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // newTargetCommand builds `dexaflow target`: named control planes, so moving
@@ -59,7 +58,7 @@ func newTargetAddCommand() *cobra.Command {
 	cmd.Flags().StringVar(&o.defaults.Registry, "registry", "", "image registry prefix deploys to this target push to (e.g. ghcr.io/acme)")
 	cmd.Flags().StringSliceVar(&o.defaults.Platforms, "platform", nil, "image platform for deploys to this target (repeatable, e.g. linux/amd64)")
 	cmd.Flags().StringVar(&o.defaults.BaseImage, "base-image", "", "base image for DAGs that set none, when deploying to this target")
-	cmd.Flags().StringVar(&o.defaults.SourceModeImage, "source-mode-image", "", "runtime image, pinned by digest, deploys to this target register dag.py on with no build (the server's execution.source_mode.image)")
+	cmd.Flags().StringVar(&o.defaults.SourceModeImage, "source-mode-image", "", "runtime image, pinned by digest, deploys to this target register dag.py on with no build (the server's execution.source_mode.image), or none to build even where the workspace defaults or the cluster set one")
 	cmd.Flags().BoolVar(&o.global, "global", false, "keep the target in your config file even inside a workspace")
 	cmd.Flags().BoolVar(&o.force, "force", false, "replace a target of the same name")
 	return cmd
@@ -74,9 +73,11 @@ func validateTargetAdd(name, server string, o targetAddOptions) error {
 	if err := validateServerURL(server); err != nil {
 		return err
 	}
-	if img := o.defaults.SourceModeImage; img != "" && !domain.IsDigestPinned(img) {
-		return fmt.Errorf("--source-mode-image %q is not pinned by a full digest (image@sha256:<64 hex>); "+
-			"give the server's execution.source_mode.image byte for byte", img)
+	if img := o.defaults.SourceModeImage; img != "" && img != sourceModeNone {
+		if err := checkSourceModeImage(img); err != nil {
+			return fmt.Errorf("--source-mode-image %q %v; give the server's execution.source_mode.image byte for byte, "+
+				"or none to build even where the workspace defaults or the cluster set one", printable(img), err)
+		}
 	}
 	return nil
 }

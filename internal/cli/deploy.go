@@ -109,6 +109,7 @@ func newDeployCommand() *cobra.Command {
 	cmd.Flags().StringVar(&o.serverURL, "server", "", "control plane base URL, over --target (default: the target in use, then server_url from the config file)")
 	cmd.Flags().StringVar(&o.token, "token", os.Getenv("LEOFLOW_TOKEN"), "JWT bearer token (default: config token)")
 	cmd.Flags().String("registry", "", deployRegistryFlagUsage)
+	cmd.Flags().Bool(noSourceModeFlag, false, "build and push an image even when a target, the workspace defaults or the cluster set source_mode_image")
 	cmd.Flags().StringVar(&o.builder, "builder", "docker", "image build tool to shell out to (e.g. docker, podman, nerdctl)")
 	cmd.Flags().StringVar(&o.dockerfile, "dockerfile", "Dockerfile", "Dockerfile path relative to the DAG directory")
 	cmd.Flags().StringVar(&o.dagVersion, "dag-version", "", "DAG version label (default: git describe of the project directory, or dev outside git, plus a hash of the DAG's content)")
@@ -635,8 +636,8 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) (err error) {
 	// Read from the project's own config, before any default fills it in,
 	// and checked against a local source mode setting before the server is
 	// asked anything.
-	needs := sourceModeNeeds(dir, cfg)
-	if lerr := localSourceMode(cmd, dir).check(dir, needs); lerr != nil {
+	scan := scanSourceMode(dir, cfg)
+	if lerr := localSourceMode(cmd, dir).check(dir, scan.needs); lerr != nil {
 		return lerr
 	}
 	choice, token, serr := deployServerChoice(cmd, o)
@@ -653,9 +654,12 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) (err error) {
 	if perr != nil {
 		return perr
 	}
-	if merr := prov.sourceMode.check(dir, needs); merr != nil {
+	if merr := prov.sourceMode.check(dir, scan.needs); merr != nil {
 		// The cluster's setting: read with the deploy defaults.
 		return merr
+	}
+	if ferr := prov.sourceMode.checkFlags(cmd, scan, !o.watching.redeploy()); ferr != nil {
+		return ferr
 	}
 	o.report.setServer(choice)
 	serverURL := choice.URL
@@ -822,7 +826,7 @@ func (d *deployRun) registeredImage(image string, built build.Result) (string, e
 // image reference (resolveVersionAndImage).
 func (d *deployRun) labelAndImage(co *compileOptions) (string, error) {
 	if co.dagVersion == "" {
-		label, err := deployContentLabel(d.cmd, d.dir, d.cfg, d.o.dockerfile)
+		label, err := deployContentLabel(d.cmd, d.dir, d.cfg, d.o.dockerfile, d.sourceMode.image)
 		if err != nil {
 			return "", err
 		}
@@ -839,10 +843,13 @@ func deployOutput(dir string) string {
 // deployContentLabel is the default content label a deploy of the project at
 // dir registers: cfg is its config settled for the server deployed to
 // (settleDeployConfig, the cluster's deploy defaults included), and
-// dockerfile is the --dockerfile flag. `dexaflow status` computes the local
-// label with it too, so status and deploy cannot disagree on a DAG's label.
-func deployContentLabel(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, dockerfile string) (string, error) {
-	return contentLabel(cmd, dir, compileOptions{output: deployOutput(dir), dockerfile: dockerfile}, cfg)
+// dockerfile is the --dockerfile flag, and sourceModeImage the runtime image
+// of a source mode deploy ("" for a build), which the label hashes.
+// `dexaflow status` computes the local label with it too, so status and
+// deploy cannot disagree on a DAG's label.
+func deployContentLabel(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, dockerfile, sourceModeImage string) (string, error) {
+	return contentLabel(cmd, dir, compileOptions{output: deployOutput(dir), dockerfile: dockerfile,
+		sourceMode: sourceModeImage != "", image: sourceModeImage}, cfg)
 }
 
 // checkServer is the first step of the preflight (#1705): the control plane
@@ -1102,12 +1109,11 @@ func triggerDeployRun(ctx context.Context, out io.Writer, serverURL, token, dagI
 	if err != nil {
 		return "", fmt.Errorf("building trigger request: %w", err)
 	}
-	setClientHeaders(req.Header)
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	resp, err := cliHTTPClient(30 * time.Second).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("triggering run for %q: %w", dagID, err)
 	}

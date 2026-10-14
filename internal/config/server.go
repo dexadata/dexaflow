@@ -16,6 +16,7 @@ import (
 
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/egress"
+	"github.com/dexadata/dexaflow/internal/envcompat"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
@@ -99,6 +100,27 @@ type DeployDefaultsSection struct {
 	// cluster that names no runtime image of its own registers dag.py on it
 	// with no build (#1772). It requires execution.source_mode.enabled.
 	SourceMode bool `mapstructure:"source_mode"`
+}
+
+// sourceModeImageKey is the deploy.defaults key the server refuses: the
+// runtime image it advertises is always execution.source_mode.image, turned
+// on by deploy.defaults.source_mode.
+const sourceModeImageKey = "deploy.defaults.source_mode_image"
+
+// refuseAdvertisedSourceModeImage refuses deploy.defaults.source_mode_image,
+// from the config file or from either variable prefix: nothing reads it
+// (DeployDefaults.SourceModeImage is never decoded), and an operator who set
+// it would believe the cluster advertises an image it does not.
+func refuseAdvertisedSourceModeImage(v *viper.Viper) error {
+	suffix := "DEPLOY_DEFAULTS_SOURCE_MODE_IMAGE"
+	if err := v.BindEnv(sourceModeImageKey, envcompat.NewPrefix+suffix, envcompat.LegacyPrefix+suffix); err != nil {
+		return fmt.Errorf("binding environment for %q: %w", sourceModeImageKey, err)
+	}
+	if !v.IsSet(sourceModeImageKey) {
+		return nil
+	}
+	return fmt.Errorf("%s is not a setting: the cluster advertises its runtime image only as execution.source_mode.image, "+
+		"so set deploy.defaults.source_mode: true (with execution.source_mode.enabled and execution.source_mode.image) instead", sourceModeImageKey)
 }
 
 // AdvertisedDeployDefaults are the deploy defaults GET /api/v2/deployDefaults
@@ -1464,6 +1486,9 @@ func LoadServer(configFile string, flags *pflag.FlagSet) (*ServerConfig, error) 
 		}
 	}
 	if err := bindBothPrefixes(v, strings.NewReplacer(".", "_", "-", "_")); err != nil {
+		return nil, err
+	}
+	if err := refuseAdvertisedSourceModeImage(v); err != nil {
 		return nil, err
 	}
 

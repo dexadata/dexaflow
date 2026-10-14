@@ -99,8 +99,29 @@ The server then serves its own `execution.source_mode.image` as
 ([cluster deploy defaults](/operate/workspaces-and-targets/#cluster-deploy-defaults)).
 The precedence is that of the other deploy defaults: the target's
 `source_mode_image`, then `defaults.source_mode_image` in the workspace file,
-then the cluster. Before anything else the deploy prints the image and where
-it came from:
+then the cluster, with two rules of its own:
+
+* The cluster's image applies only when no local source chose a registry
+  (`--registry`, `DEXAFLOW_REGISTRY`, `registry.url` in `dexaflow.yaml`, a
+  target, the workspace defaults or the config file): a registry you set
+  means you build, so a cluster that starts advertising source mode does not
+  turn your deploy into another one.
+* A local `source_mode_image` that differs from the cluster's is refused,
+  naming both values and where each came from: the server runs a
+  source-mode version only on its own runtime image, so that deploy could
+  never run.
+
+To build anyway, set `source_mode_image: none` on a target or in the
+workspace defaults, which clears the image a less specific layer or the
+cluster sets, or pass `--no-source-mode` to one `deploy` (and to `status`,
+so it computes the same label). `target add --source-mode-image none`
+writes that value.
+
+The value must also be an image reference by the usual grammar (lowercase
+repository, no whitespace or control characters); the deploy prints it with
+control and format characters removed.
+
+Before anything else the deploy prints the image and where it came from:
 
 ```text
 server:     https://pro.example.com (target dev, from default_target in /work/dags/dexaflow.workspace.yaml)
@@ -112,9 +133,18 @@ image:      ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:<digest> (source mode
 1. refuses a DAG that needs a build, before any network call when the
    setting is local (after reading the cluster's defaults when it comes from
    there), and names every reason: a `requirements.txt` or a `Dockerfile`
-   beside `dag.py`, other Python modules beside it, or `dependencies`,
-   `connectors`, `system_packages`, `include_paths`, `base_image`,
-   `build.dockerfile`, `dbt` or `dbt_groups` in `dexaflow.yaml`;
+   beside `dag.py`, other Python modules beside it, a subdirectory with
+   Python files (a package), or `dependencies`, `connectors`,
+   `system_packages`, `include_paths`, `base_image`, `build.dockerfile`,
+   a `build.context` other than `.`, `dbt` or `dbt_groups` in
+   `dexaflow.yaml`. The project is walked as the content label walks it, so
+   `exclude_paths` and the `.dockerignore` apply; Python test files
+   (`test_*.py`, `*_test.py`, `conftest.py`) and an empty top-level
+   `__init__.py` do not count. Other files a build would have copied (data,
+   SQL, templates) do not refuse the deploy, but a warning names them, since
+   the task will not see them. `--dockerfile` is refused, and `--registry`,
+   `--platform`, `--rebuild` and `--builder` print a note that they change
+   nothing;
 2. runs the usual [preflight](/operate/cicd-deploy/#checks-before-the-build-preflight)
    of the control plane and the token (there is no registry to check);
 3. compiles `dag.json` with exactly the runtime image, and checks that it
@@ -125,12 +155,13 @@ image:      ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:<digest> (source mode
 
 `--plan` works the same way: it says `build no (source mode)` and
 `push no (source mode)`, and `--output json` marks the plan with
-`"source_mode": true`. The content label and the check that a label is
-already the current version work as for any deploy.
+`"source_mode": true`. The content label hashes the runtime image too, so
+a new runtime image is a new version, and the check that a label is already
+the current version works as for any deploy; `dexaflow status` computes the
+same label. `deploy --watch` registers each saved `dag.py` the same way.
 
 To deploy one DAG that needs a build to a target that sets
-`source_mode_image`, use another target; a cluster that advertises source
-mode applies it to every deploy that names no runtime image of its own.
+`source_mode_image`, pass `--no-source-mode` or use another target.
 
 ### By hand
 

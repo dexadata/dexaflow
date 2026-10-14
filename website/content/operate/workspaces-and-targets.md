@@ -206,7 +206,7 @@ order, first match wins:
 | registry | `--registry`, `DEXAFLOW_REGISTRY`, the project's `registry.url`, the target, the workspace `defaults`, `registry:` in your config file, **the cluster**, none (deploy stops and says how to set one) |
 | platforms | `--platform`, the project's `build.platforms`, the target, the workspace `defaults`, **the cluster**, `linux/amd64` |
 | base image | the project's `base_image`, the target, the workspace `defaults`, **the cluster**, the built-in base image |
-| source mode runtime image | the target's `source_mode_image`, the workspace `defaults`, **the cluster** (`deploy.defaults.sourceMode`), none (the deploy builds) |
+| source mode runtime image | `--no-source-mode` (builds), the target's `source_mode_image`, the workspace `defaults` (`none` clears it: the deploy builds), **the cluster** (`deploy.defaults.sourceMode`, only when no local source set a registry; a local image that differs is refused), none (the deploy builds) |
 
 The cluster comes after every local source on purpose: each of those is a
 choice of the person deploying, so a cluster that starts advertising defaults
@@ -222,7 +222,8 @@ base image: ghcr.io/acme/base:1 (from the deploy defaults of https://flow-dev.ac
 
 With `deploy.defaults.sourceMode: true` (which needs source mode on), the
 cluster also advertises its runtime image as `source_mode_image`, and a deploy
-that names none of its own registers `dag.py` on it with no build or push
+that names none of its own and resolves no registry locally registers
+`dag.py` on it with no build or push
 ([Deploying in source mode](/operate/source-mode/#deploying-in-source-mode)).
 
 A server from before this endpoint answers 404, and the deploy then resolves

@@ -31,7 +31,8 @@ type defaultsProvenance struct {
 	baseImageSource string
 	// sourceMode is the runtime image of source mode and where it came
 	// from: a target, the workspace defaults or the cluster (#1772); empty
-	// when nothing sets one.
+	// when nothing sets one, or when a local choice turns it off
+	// (resolveSourceMode).
 	sourceMode sourceModeChoice
 }
 
@@ -74,13 +75,15 @@ func applyDefaults(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, wi
 		return defaultsProvenance{}, err
 	}
 	prov := defaultsProvenance{registrySource: applyRegistry(cmd, dir, cfg, registrySources{layers: layers, store: store, storePath: configFilePath(cmd), cluster: cluster})}
+	if prov.sourceMode, err = resolveSourceMode(cmd, layers, cluster, prov.registrySource); err != nil {
+		return defaultsProvenance{}, err
+	}
 	if cluster != nil {
 		// The user's config file holds no platforms or base image, so the
 		// cluster is simply the last layer for those.
 		layers = append(layers, *cluster)
 	}
 	prov.platformsSource, prov.baseImageSource = applyBuildDefaults(dir, cfg, layers)
-	prov.sourceMode = pickSourceMode(layers)
 	if prov.platformsSource, err = applyPlatformFlag(cmd, cfg, prov.platformsSource); err != nil {
 		return defaultsProvenance{}, err
 	}
@@ -217,11 +220,17 @@ func applyBuildDefaults(dir string, cfg *domain.LeoflowConfig, layers []defaults
 }
 
 // pickSourceMode returns the first layer's source_mode_image, most specific
-// first, and the layer it came from; the zero value when none sets one.
+// first, and the layer it came from; the zero value when none sets one. A
+// layer that sets none (sourceModeNone) clears it: the choice is then off,
+// with cleared set.
 func pickSourceMode(layers []defaultsLayer) sourceModeChoice {
 	for _, l := range layers {
-		if l.values.SourceModeImage != "" {
-			return sourceModeChoice{image: l.values.SourceModeImage, source: l.name}
+		switch img := l.values.SourceModeImage; img {
+		case "":
+		case sourceModeNone:
+			return sourceModeChoice{source: l.name, cleared: true}
+		default:
+			return sourceModeChoice{image: img, source: l.name}
 		}
 	}
 	return sourceModeChoice{}

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dexadata/dexaflow/internal/version"
+	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
 
 // ciHeader is the header the CLI sets to "true" on its requests to a control
@@ -46,7 +47,38 @@ func setClientHeaders(h http.Header) {
 	}
 }
 
-// cliHTTPClient is the HTTP client the CLI talks to a control plane with.
+// cliTransport sets the headers that name the CLI (setClientHeaders) on a
+// copy of every request, then sends it with base. Every client the CLI
+// builds goes through it (cliHTTPClient), so no request can leave without
+// them.
+type cliTransport struct {
+	base http.RoundTripper
+}
+
+// RoundTrip sends a copy of req with the CLI's headers; req itself is left
+// as it is, as http.RoundTripper requires.
+func (t cliTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r := req.Clone(req.Context())
+	setClientHeaders(r.Header)
+	return t.base.RoundTrip(r)
+}
+
+// cliHTTPClient is the HTTP client of every request the CLI sends to a
+// control plane, with the given timeout (0 for none): http.DefaultTransport
+// behind cliTransport.
 func cliHTTPClient(timeout time.Duration) *http.Client {
-	return &http.Client{Timeout: timeout}
+	return &http.Client{Timeout: timeout, Transport: cliTransport{base: http.DefaultTransport}}
+}
+
+// cliAPIClient is apiclient.New on cliHTTPClient, with no timeout unless
+// opts give another cliHTTPClient.
+func cliAPIClient(baseURL, token string, opts ...apiclient.ClientOption) (*apiclient.ClientWithResponses, error) {
+	all := append([]apiclient.ClientOption{apiclient.WithHTTPClient(cliHTTPClient(0))}, opts...)
+	return apiclient.New(baseURL, token, all...)
+}
+
+// cliBareAPIClient is apiclient.NewClient, with no bearer token, on
+// cliHTTPClient with the given timeout.
+func cliBareAPIClient(serverURL string, timeout time.Duration) (*apiclient.Client, error) {
+	return apiclient.NewClient(serverURL, apiclient.WithHTTPClient(cliHTTPClient(timeout)))
 }

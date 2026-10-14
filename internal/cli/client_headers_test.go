@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -176,7 +177,7 @@ func TestPrintableDropsFormatCharacters(t *testing.T) {
 // an http or https URL.
 func TestServerLinksAreHTTPOnly(t *testing.T) {
 	e := readServerExtras([]byte(`{"links":{"js":"javascript:alert(1)","file":"file:///etc/passwd","up":"HTTPS://x.example/1",` +
-		`"plain":"http://y.example/2","bare":"not a url","data":"data:text/html,x","rel":"/dags/etl"}}`))
+		`"plain":"http://y.example/2","bare":"not a url","data":"data:text/html,x","rel":"/dags/etl","opaque":"https:x.example"}}`))
 	if len(e.Links) != 2 || e.Links["up"] != "HTTPS://x.example/1" || e.Links["plain"] != "http://y.example/2" {
 		t.Errorf("links = %v, want only the http and https ones", e.Links)
 	}
@@ -237,7 +238,7 @@ func TestCLITransportSetsTheHeaders(t *testing.T) {
 	var got http.Header
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { got = r.Header.Clone() }))
 	defer srv.Close()
-	req, _ := http.NewRequest(http.MethodGet, srv.URL, nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, http.NoBody)
 	resp, err := cliHTTPClient(5 * time.Second).Do(req)
 	if err != nil {
 		t.Fatal(err)

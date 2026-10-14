@@ -253,8 +253,11 @@ nothing was built), `skipped` (unchanged since the `--changed-since` ref, with
 `reason`), or `failed` (one DAG of `--all`, with `error`). With
 `--plan` it is `planned` or `refused`, and a `plan` object carries `build`,
 `push`, `register` and `reason`, and `source_mode: true` for a deploy in
-[source mode](/operate/source-mode/#deploying-in-source-mode). After a failure of `--all` the document is
-still printed, so the pipeline sees which DAGs went through.
+[source mode](/operate/source-mode/#deploying-in-source-mode). `links` and
+`checks` carry what the server added to the register's answer, when it added
+any ([Links and checks from the server](#links-and-checks-from-the-server)).
+After a failure of `--all` the document is still printed, so the pipeline
+sees which DAGs went through.
 
 `execution` is the server's answer on where each task runs: `mode` is `warm`
 (warm-eligible) or `dedicated`, with the `reason` for a dedicated pod, and
@@ -285,13 +288,17 @@ Deployed my_pipeline -> https://pro.example.com
   check    lint: passed (0 findings)
 ```
 
-Control characters are removed before printing. With `--output json`, the
-register's `links` and `checks` are fields of the DAG's entry, absent when the
-server sent none.
+Only `http` and `https` links are kept; any other (a `javascript:`, `file:`
+or relative URL) is dropped. Before printing, control characters (C0 and C1)
+are removed, and so are format characters (bidirectional overrides, zero-width
+characters) and line and paragraph separators, so a server cannot drive the
+terminal or disguise a link. With `--output json`, the register's `links` and
+`checks` are fields of the DAG's entry, absent when the server sent none.
 
 #### How the server recognizes the CLI
 
-Every request the CLI sends to a control plane carries
+Every request the CLI sends to a control plane, from any command (each HTTP
+client it builds sets the headers in its transport), carries
 `User-Agent: dexaflow-cli/<version>`, and `X-Dexaflow-CI: true` when one of
 the usual CI variables is set (`CI`, `GITHUB_ACTIONS` or `GITLAB_CI`, to
 anything but empty, `false` or `0`), so a server can tell an interactive

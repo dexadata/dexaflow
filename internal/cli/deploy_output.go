@@ -226,12 +226,11 @@ func patchDagPausedRaw(ctx context.Context, serverURL, token, dagID string, paus
 	if err != nil {
 		return fmt.Errorf("building the is_paused request: %w", err)
 	}
-	setClientHeaders(req.Header)
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	resp, err := cliHTTPClient(30 * time.Second).Do(req)
 	if err != nil {
 		return fmt.Errorf("setting is_paused of %s: %w", dagID, err)
 	}

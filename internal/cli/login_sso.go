@@ -213,7 +213,7 @@ func readLoopback(q url.Values) loopbackResult {
 
 // exchangeSSOCode redeems the one-time code for the Dexaflow token.
 func exchangeSSOCode(ctx context.Context, serverURL, code, verifier, redirect string) (string, error) {
-	c, err := apiclient.NewClient(serverURL, apiclient.WithHTTPClient(&http.Client{Timeout: 30 * time.Second}))
+	c, err := cliBareAPIClient(serverURL, 30*time.Second)
 	if err != nil {
 		return "", fmt.Errorf("building the client for %s: %w", serverURL, err)
 	}
@@ -232,7 +232,7 @@ func exchangeSSOCode(ctx context.Context, serverURL, code, verifier, redirect st
 // none but the password: the password login then runs, and reports its own
 // errors.
 func serverMethods(ctx context.Context, serverURL string) apiclient.AuthMethods {
-	c, err := apiclient.NewClient(serverURL, apiclient.WithHTTPClient(&http.Client{Timeout: 15 * time.Second}))
+	c, err := cliBareAPIClient(serverURL, 15*time.Second)
 	if err != nil {
 		return apiclient.AuthMethods{}
 	}

@@ -57,7 +57,7 @@ type recordingServer struct {
 func newTrackingServer(clusterBody string) *recordingServer {
 	s := newRecordingServer(clusterBody)
 	s.deployServer.status = 0
-	s.deployServer.nullCurrent = true
+	s.nullCurrent = true
 	s.track = true
 	return s
 }
@@ -86,6 +86,10 @@ func (s *recordingServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		registerStatus = http.StatusCreated
 	}
 	switch {
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/dagRuns"):
+		// The last run status reads: none yet.
+		_, _ = io.WriteString(w, `{"dag_runs":[],"total_entries":0}`)
+		return
 	case register && registerBody != "":
 		w.WriteHeader(registerStatus)
 		_, _ = io.WriteString(w, registerBody)
@@ -633,8 +637,8 @@ func TestDeployInSourceModeRefusesAMalformedImage(t *testing.T) {
 			if strings.ContainsRune(err.Error(), '\x1b') {
 				t.Errorf("the refusal carries an escape character: %q", err)
 			}
-			if len(fake.registered) != 0 {
-				t.Errorf("registered %d versions, want none", len(fake.registered))
+			if fake.requests != 0 {
+				t.Errorf("the refusal came after %d requests, want none: a local image is checked first", fake.requests)
 			}
 		})
 	}
@@ -659,21 +663,26 @@ func TestSourceModeScan(t *testing.T) {
 		files  map[string]string
 		refuse string // what the refusal names; "" for none
 		warn   string // what the warning names; "" for none
+		// noTopDag leaves out the top-level dag.py, for a dag_source elsewhere.
+		noTopDag bool
 	}{
-		{name: "package", files: map[string]string{"lib/util.py": "x = 1\n"}, refuse: "lib"},
+		{name: "package", files: map[string]string{"lib/util.py": "x = 1\n"}, refuse: "lib/ (Python packages"},
+		{name: "module", files: map[string]string{"helpers.py": "x = 1\n"}, refuse: "helpers.py beside the DAG source"},
 		{name: "test files", files: map[string]string{"test_dag.py": "x\n", "dag_test.py": "x\n", "conftest.py": "x\n", "tests/test_a.py": "x\n", "__init__.py": ""}},
 		{name: "a non-empty __init__.py", files: map[string]string{"__init__.py": "import os\n"}, refuse: "__init__.py"},
 		{name: "excluded", yaml: "exclude_paths: [scratch]\n", files: map[string]string{"scratch/x.py": "x\n"}},
 		{name: "other files", files: map[string]string{"README.md": "x\n", "data/seed.csv": "a,b\n"}, warn: "data/seed.csv"},
-		{name: "build context", yaml: "build:\n  context: sub\n", files: map[string]string{"sub/.keep": ""}, refuse: "build.context"},
-		{name: "include of the dag source", yaml: "dag_source: src/dag.py\ninclude_paths: [src/dag.py]\n", files: map[string]string{"src/dag.py": "x = 1\n"}},
+		{name: "build context", yaml: "build:\n  context: sub\n", refuse: "build.context"},
+		{name: "include of the dag source", yaml: "dag_source: src/dag.py\ninclude_paths: [src/dag.py]\n", files: map[string]string{"src/dag.py": "x = 1\n"}, noTopDag: true},
 		{name: "include of another dag.py", yaml: "include_paths: [lib/dag.py]\n", files: map[string]string{"lib/dag.py": "x = 1\n"}, refuse: "include_paths"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			writeProjectFile(t, dir, "dexaflow.yaml", "dag_id: etl\n"+tc.yaml)
-			writeProjectFile(t, dir, "dag.py", "x = 1\n")
+			if !tc.noTopDag {
+				writeProjectFile(t, dir, "dag.py", "x = 1\n")
+			}
 			for f, body := range tc.files {
 				writeProjectFile(t, dir, f, body)
 			}

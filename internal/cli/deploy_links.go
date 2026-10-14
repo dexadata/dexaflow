@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"unicode"
@@ -52,12 +53,32 @@ func readServerExtras(body []byte) serverExtras {
 	if json.Unmarshal(body, &e) != nil {
 		return serverExtras{}
 	}
+	for name, link := range e.Links {
+		if !webLink(link) {
+			delete(e.Links, name)
+		}
+	}
 	return e
 }
 
+// webLink reports whether link is an absolute http or https URL, the only
+// links the deploy prints or reports: a javascript:, file: or data: URL a
+// terminal or a pipeline page may open is dropped.
+func webLink(link string) bool {
+	u, err := url.Parse(link)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		return true
+	}
+	return false
+}
+
 // lines words the links, sorted by name, then the checks in the server's
-// order, one per line, with every control character the server sent
-// removed so it cannot drive the terminal.
+// order, one per line, through printable, so nothing the server sent can
+// drive the terminal or hide what it shows.
 func (e serverExtras) lines() string {
 	names := make([]string, 0, len(e.Links))
 	for name := range e.Links {
@@ -86,10 +107,13 @@ func (c serverCheck) words() string {
 	return s
 }
 
-// printable is s without control characters.
+// printable is s without the characters that drive a terminal or change
+// what it shows: control characters (C0 and C1, U+009B CSI among them),
+// format characters (Cf: bidi overrides and isolates, zero-width characters,
+// the byte order mark) and the line and paragraph separators (Zl, Zp).
 func printable(s string) string {
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
 			return -1
 		}
 		return r

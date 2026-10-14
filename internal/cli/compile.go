@@ -838,10 +838,15 @@ func resolveVersionAndImage(cmd *cobra.Command, dir string, o *compileOptions, c
 // contentLabel is the default version label of the project at dir, whose
 // settled config is cfg, for a compile with the options o: the Dockerfile
 // name o and dexaflow.yaml pick, and the compiled output o.output, which the
-// hash leaves out.
+// hash leaves out. In source mode (o.sourceMode) the label hashes the runtime
+// image o.image too.
 func contentLabel(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.LeoflowConfig) (string, error) {
 	dockerfile, _ := resolveDockerfileName(cmd, o, cfg)
-	return defaultDAGVersion(cmdContext(cmd), dir, cfg, dockerfile, o.output)
+	runtimeImage := ""
+	if o.sourceMode {
+		runtimeImage = o.image
+	}
+	return defaultDAGVersionOn(cmdContext(cmd), dir, cfg, dockerfile, o.output, runtimeImage)
 }
 
 // resolveParserCommand returns the explicit --parser-cmd value when set,
