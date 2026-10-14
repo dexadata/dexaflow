@@ -201,6 +201,26 @@ func walkLabelInputs(dir string, cfg *domain.LeoflowConfig, dockerfile, output s
 	return roots, nil
 }
 
+// labelInputFiles lists the files of the project directory the default
+// version label is computed from (walkLabelInputs), without reading them:
+// what deploy --watch polls. dockerfile is the --dockerfile flag.
+func labelInputFiles(dir string, cfg *domain.LeoflowConfig, dockerfile string) ([]string, error) {
+	own := projectDockerfile(dir, cfg, dockerfile)
+	w, err := newContentWalker(dir, cfg, "", own != "", sha256.New())
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	w.list = true
+	w.seen = func(file string) { files = append(files, file) }
+	for _, root := range w.roots(own) {
+		if werr := w.hashRoot(root); werr != nil {
+			return nil, werr
+		}
+	}
+	return files, nil
+}
+
 // hashField writes a length-prefixed field, so two fields can never run
 // together into the same byte stream.
 func hashField(h hash.Hash, name string, data []byte) {
@@ -242,6 +262,9 @@ type contentWalker struct {
 	files []build.LayerFile
 	// seen, when set, receives the path of every entry the walk keeps.
 	seen func(file string)
+	// list walks without reading: seen receives the path of every file the
+	// walk keeps, and nothing is hashed (labelInputFiles).
+	list bool
 }
 
 // hashRootSpec is one root of the hash: a project-relative path.
@@ -403,6 +426,12 @@ func (w *contentWalker) visit(r hashRootSpec, file, rel string, d fs.DirEntry) e
 	if !r.pinned && rel != "." && w.ignore.excluded(slash) {
 		if d.IsDir() && !w.ignore.mayReinclude(slash) {
 			return filepath.SkipDir
+		}
+		return nil
+	}
+	if w.list {
+		if !d.IsDir() {
+			w.seen(file)
 		}
 		return nil
 	}

@@ -1927,8 +1927,7 @@ func devWatchLoop(ctx context.Context, cmd *cobra.Command, ws *WorkspaceSpec, re
 	if rerr := reload(); rerr != nil {
 		devPrintf(cmd.ErrOrStderr(), "✗ %v\n", rerr)
 	}
-	watched := workspaceWatchPaths(ws)
-	snap := projectMtimes(watched)
+	snap := projectMtimes(workspaceWatchPaths(ws))
 	// lastSeenDagIDs holds the set of DAG IDs the watcher registered in the
 	// previous tick. On every tick we set-diff against the current workspace
 	// scan; any DAG in lastSeen but not in current was deleted from disk and
@@ -1943,53 +1942,46 @@ func devWatchLoop(ctx context.Context, cmd *cobra.Command, ws *WorkspaceSpec, re
 		lastSeenDagIDs = bootReconcile()
 	}
 	devPrintf(cmd.OutOrStdout(), "👀 watching %s — edit and save to reload (Ctrl-C to stop)\n", ws.Path)
-	ticker := time.NewTicker(devPollInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			devPrintln(cmd.OutOrStdout(), "\nstopping dev environment …")
-			return nil
-		case <-ticker.C:
-			// Re-resolve the workspace each tick so newly-added or removed
-			// projects are detected. Discovery errors (e.g. a fresh
-			// duplicate-dag_id collision) surface here so the user sees them
-			// immediately.
-			curWs, derr := ResolveWorkspace(ws.Path)
-			if derr != nil {
-				devPrintf(cmd.ErrOrStderr(), "✗ workspace discovery: %v\n", derr)
-				continue
+	// Re-resolve the workspace each tick so newly-added or removed projects
+	// are detected. Discovery errors (e.g. a fresh duplicate-dag_id
+	// collision) surface here so the user sees them immediately.
+	curWs := ws
+	scan := func() (map[string]time.Time, bool) {
+		resolved, derr := ResolveWorkspace(ws.Path)
+		if derr != nil {
+			devPrintf(cmd.ErrOrStderr(), "✗ workspace discovery: %v\n", derr)
+			return nil, false
+		}
+		curWs = resolved
+		return projectMtimes(workspaceWatchPaths(curWs)), true
+	}
+	onSave := func(_, _ map[string]time.Time) {
+		// Set-diff lastSeen vs current: any DAG present last tick but
+		// missing now was removed from disk and needs to be deregistered
+		// from the control plane (issue #345). Logged to stderr so the
+		// user sees what the watcher did.
+		if deleteDag != nil {
+			logf := func(format string, args ...any) {
+				devPrintf(cmd.OutOrStdout(), format+"\n", args...)
 			}
-			watched = workspaceWatchPaths(curWs)
-			cur := projectMtimes(watched)
-			if !mtimesChanged(snap, cur) {
-				continue
-			}
-			snap = cur
-			// Set-diff lastSeen vs current: any DAG present last tick but
-			// missing now was removed from disk and needs to be deregistered
-			// from the control plane (issue #345). Logged to stderr so the
-			// user sees what the watcher did.
-			if deleteDag != nil {
-				logf := func(format string, args ...any) {
-					devPrintf(cmd.OutOrStdout(), format+"\n", args...)
-				}
-				lastSeenDagIDs = removeMissingDags(lastSeenDagIDs, projectDagIDs(curWs), deleteDag, logf)
-			}
-			devPrintf(cmd.OutOrStdout(), "[%s] change detected → reloading …\n", time.Now().Format("15:04:05"))
-			// Time the reload — a broken DAG's reload should still finish in
-			// ~1s. Anything multi-second is a red flag (parser hang, lock
-			// contention with the running control plane, slow registration
-			// retry). Log it so the user can grep for slow reloads when they
-			// notice the UI freezing on save (#217 diagnostic).
-			reloadStart := time.Now()
-			rerr := reload()
-			devPrintf(cmd.OutOrStdout(), "[%s] reload finished in %s\n", time.Now().Format("15:04:05"), time.Since(reloadStart).Truncate(time.Millisecond))
-			if rerr != nil {
-				devPrintf(cmd.ErrOrStderr(), "✗ %v\n", rerr)
-			}
+			lastSeenDagIDs = removeMissingDags(lastSeenDagIDs, projectDagIDs(curWs), deleteDag, logf)
+		}
+		devPrintf(cmd.OutOrStdout(), "[%s] change detected → reloading …\n", time.Now().Format("15:04:05"))
+		// Time the reload: a broken DAG's reload should still finish in
+		// ~1s. Anything multi-second is a red flag (parser hang, lock
+		// contention with the running control plane, slow registration
+		// retry). Log it so the user can grep for slow reloads when they
+		// notice the UI freezing on save (#217 diagnostic).
+		reloadStart := time.Now()
+		rerr := reload()
+		devPrintf(cmd.OutOrStdout(), "[%s] reload finished in %s\n", time.Now().Format("15:04:05"), time.Since(reloadStart).Truncate(time.Millisecond))
+		if rerr != nil {
+			devPrintf(cmd.ErrOrStderr(), "✗ %v\n", rerr)
 		}
 	}
+	saveWatcher{interval: devPollInterval, scan: scan, onSave: onSave}.run(ctx, snap)
+	devPrintln(cmd.OutOrStdout(), "\nstopping dev environment …")
+	return nil
 }
 
 // projectDagIDs returns the set of DAG IDs the workspace currently exposes.

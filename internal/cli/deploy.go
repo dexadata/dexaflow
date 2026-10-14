@@ -53,6 +53,10 @@ type deployOptions struct {
 	cluster *clusterDefaultsCache
 	// report collects each DAG's result for --output json; nil for text.
 	report *deployReport
+	// watch is --watch: redeploy on every save until Ctrl-C.
+	watch bool
+	// watching is the state of a --watch session; nil without --watch.
+	watching *watchState
 }
 
 // pausedOverride is is_paused as --paused or --active set it, nil when
@@ -67,6 +71,15 @@ func (o deployOptions) pausedOverride() *bool {
 		return &v
 	}
 	return nil
+}
+
+// labelOrigin says where the deploy's version label comes from: the
+// --dag-version flag, or the default content label.
+func (o deployOptions) labelOrigin() labelOrigin {
+	if o.dagVersion != "" {
+		return labelExplicit
+	}
+	return labelDefault
 }
 
 // newDeployCommand builds `dexaflow deploy [path]`: the pipeline-less promotion of
@@ -104,67 +117,88 @@ func newDeployCommand() *cobra.Command {
 	cmd.MarkFlagsMutuallyExclusive("paused", "active")
 	cmd.Flags().BoolVar(&o.plan, "plan", false, "say per DAG what would be built, pushed and registered, and why, without doing any of it")
 	cmd.Flags().StringVar(&o.changedSince, "changed-since", "", "with --all, deploy only the projects whose image or version label inputs differ between this git ref and the working tree (uncommitted files included); the others are skipped and listed")
+	cmd.Flags().BoolVar(&o.watch, "watch", false, "keep running after the deploy and redeploy each project when one of its files is saved, until Ctrl-C (asks once, applies --paused or --active to the first deploy only)")
 	cmd.Flags().StringVar(&o.output, "output", outputText, "output format: text, or json for one JSON document on stdout (human lines go to stderr)")
 	addPlatformFlag(cmd)
 	return cmd
 }
 
-// runDeployTarget resolves what to deploy from the args and flags: --all (every
-// project in the workspace), a directory path, or a dag_id (resolved to its
-// subdir in the workspace). A bare invocation is deployHere.
+// runDeployTarget resolves what to deploy from the args and flags
+// (resolveDeployTarget) and deploys it.
 func runDeployTarget(cmd *cobra.Command, args []string, o deployOptions) error {
 	if err := checkDeployFollow(o); err != nil {
 		return err
 	}
-	if o.changedSince != "" && len(args) > 0 {
-		return fmt.Errorf("--changed-since selects among the workspace's projects, so it goes with --all; " +
-			"to deploy a named DAG or folder, drop --changed-since")
+	dir, all, err := resolveDeployTarget(cmd, args, o)
+	if err != nil {
+		return err
 	}
-	if o.all {
-		if len(args) > 0 {
-			return fmt.Errorf("--all deploys the whole workspace; do not also pass a path or dag_id")
-		}
+	return deploySelection(cmd, dir, all, o)
+}
+
+// deploySelection deploys what resolveDeployTarget chose: the workspace when
+// all is set, else the project at dir.
+func deploySelection(cmd *cobra.Command, dir string, all bool, o deployOptions) error {
+	if all {
 		return deployAll(cmd, o)
-	}
-	if len(args) == 0 {
-		return deployHere(cmd, o)
-	}
-	target := args[0]
-	if info, err := os.Stat(target); err == nil && info.IsDir() {
-		return runDeploy(cmd, target, o)
-	}
-	ws, werr := dagLookupWorkspace(cmd)
-	if werr != nil {
-		return werr
-	}
-	printWorkspace(cmd, ws)
-	dir, rerr := resolveProjectDir(ws.dir, target)
-	if rerr != nil {
-		return rerr
 	}
 	return runDeploy(cmd, dir, o)
 }
 
-// deployHere is a bare `dexaflow deploy`: the project in the current folder,
-// or, at a workspace root (which is not a project itself), every DAG of the
-// workspace. Any other folder that is not a project is an error that says
-// how to deploy one DAG or all of them.
-func deployHere(cmd *cobra.Command, o deployOptions) error {
+// resolveDeployTarget decides what a deploy deploys from the args and flags:
+// --all (every project in the workspace, all set), a directory path, or a
+// dag_id (resolved to its subdir in the workspace). A bare invocation is
+// deployHere's choice.
+func resolveDeployTarget(cmd *cobra.Command, args []string, o deployOptions) (dir string, all bool, err error) {
+	if o.changedSince != "" && len(args) > 0 {
+		return "", false, fmt.Errorf("--changed-since selects among the workspace's projects, so it goes with --all; " +
+			"to deploy a named DAG or folder, drop --changed-since")
+	}
+	if o.all {
+		if len(args) > 0 {
+			return "", false, fmt.Errorf("--all deploys the whole workspace; do not also pass a path or dag_id")
+		}
+		return "", true, nil
+	}
+	if len(args) == 0 {
+		return deployHere(o)
+	}
+	target := args[0]
+	if info, serr := os.Stat(target); serr == nil && info.IsDir() {
+		return target, false, nil
+	}
+	ws, werr := dagLookupWorkspace(cmd)
+	if werr != nil {
+		return "", false, werr
+	}
+	printWorkspace(cmd, ws)
+	dir, rerr := resolveProjectDir(ws.dir, target)
+	if rerr != nil {
+		return "", false, rerr
+	}
+	return dir, false, nil
+}
+
+// deployHere is what a bare `dexaflow deploy` deploys: the project in the
+// current folder, or, at a workspace root (which is not a project itself),
+// every DAG of the workspace (all set). Any other folder that is not a
+// project is an error that says how to deploy one DAG or all of them.
+func deployHere(o deployOptions) (dir string, all bool, err error) {
 	if isProjectDir(".") {
 		if o.changedSince != "" {
-			return fmt.Errorf("--changed-since selects among the workspace's projects: pass --all to deploy the changed ones, or drop --changed-since to deploy this project")
+			return "", false, fmt.Errorf("--changed-since selects among the workspace's projects: pass --all to deploy the changed ones, or drop --changed-since to deploy this project")
 		}
-		return runDeploy(cmd, ".", o)
+		return ".", false, nil
 	}
 	ws, err := findWorkspaceFromCwd()
 	if err != nil {
-		return err
+		return "", false, err
 	}
 	if ws != nil && sameDir(".", ws.Root) {
-		return deployAll(cmd, o)
+		return "", true, nil
 	}
 	wd, _ := os.Getwd() //nolint:errcheck // only names the folder in the message.
-	return fmt.Errorf("%s is not a DAG project (no %s or dag.py).\n"+
+	return "", false, fmt.Errorf("%s is not a DAG project (no %s or dag.py).\n"+
 		"  - deploy one DAG of the workspace:  dexaflow deploy <dag_id>\n"+
 		"  - deploy all of them:               dexaflow deploy --all\n"+
 		"  - deploy a project folder:          dexaflow deploy <path>", wd, projectConfigFile)
@@ -537,9 +571,9 @@ func settleDeployConfig(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfi
 	return prov, nil
 }
 
-// printDeploySettings says, before anything is built, where the deploy goes
-// and where each setting it did not get from the project came from.
-func printDeploySettings(out io.Writer, choice *serverChoice, cfg *domain.LeoflowConfig, prov defaultsProvenance) error {
+// deploySettings says, before anything is built, where the deploy goes and
+// where each setting it did not get from the project came from.
+func deploySettings(choice *serverChoice, cfg *domain.LeoflowConfig, prov defaultsProvenance) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "server:     %s (%s)\n", choice.URL, choice.Source)
 	fmt.Fprintf(&b, "registry:   %s/%s (from %s)\n", cfg.Registry.URL, cfg.Registry.ImageName, prov.registrySource)
@@ -547,8 +581,7 @@ func printDeploySettings(out io.Writer, choice *serverChoice, cfg *domain.Leoflo
 	if cfg.BaseImage != "" {
 		fmt.Fprintf(&b, "base image: %s (from %s)\n", cfg.BaseImage, prov.baseImageSource)
 	}
-	_, err := io.WriteString(out, b.String())
-	return err
+	return b.String()
 }
 
 // orDefault names a setting's source, or the built-in default.
@@ -590,14 +623,19 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) (err error) {
 	}
 	o.report.setServer(choice)
 	serverURL := choice.URL
-	if perr := printDeploySettings(cmd.OutOrStdout(), choice, cfg, prov); perr != nil {
-		return perr
+	settings := deploySettings(choice, cfg, prov)
+	if !o.watching.redeploy() {
+		// A redeploy of a watch prints them when it deploys (watchSkip).
+		o.watching.noteSettings(dir, settings)
+		if _, werr := io.WriteString(cmd.OutOrStdout(), settings); werr != nil {
+			return werr
+		}
 	}
 	if !o.plan && shouldConfirm(serverURL, o.yes, cmdInteractive(cmd)) &&
 		!confirmDeploy(cmd.InOrStdin(), cmd.OutOrStdout(), dir, serverURL) {
 		return fmt.Errorf("deploy aborted")
 	}
-	d := &deployRun{cmd: cmd, dir: dir, o: o, cfg: cfg, serverURL: serverURL, token: token, cluster: cluster}
+	d := &deployRun{cmd: cmd, dir: dir, o: o, cfg: cfg, serverURL: serverURL, token: token, cluster: cluster, settings: settings}
 	return d.run()
 }
 
@@ -614,6 +652,8 @@ type deployRun struct {
 	// wasPaused is the DAG's is_paused before an --active deploy, so the
 	// summary can describe the backlog it releases.
 	wasPaused bool
+	// settings is what deploySettings says about this deploy.
+	settings string
 }
 
 // readStateBefore records, for --active, whether the DAG was paused before
@@ -631,10 +671,7 @@ func (d *deployRun) readStateBefore(ctx context.Context) {
 // run resolves the label and image, then plans, or checks, builds, pushes
 // and registers.
 func (d *deployRun) run() error {
-	origin := labelDefault
-	if d.o.dagVersion != "" {
-		origin = labelExplicit
-	}
+	origin := d.o.labelOrigin()
 	output := filepath.Join(d.dir, "dag.json")
 	var built build.Result
 	co := compileOptions{
@@ -645,7 +682,7 @@ func (d *deployRun) run() error {
 		dagVersion: d.o.dagVersion,
 		build:      !d.o.skipBuild,
 		push:       !d.o.skipBuild,
-		// printDeploySettings showed the platforms; the build pins its push.
+		// deploySettings showed the platforms; the build pins its push.
 		settingsShown: true,
 		built:         &built,
 	}
@@ -660,6 +697,9 @@ func (d *deployRun) run() error {
 	co.reuse = d.mayReuse(image, version, origin)
 	co.rebuild = d.o.rebuild
 	ctx, out := cmdContext(d.cmd), d.cmd.OutOrStdout()
+	if skip, werr := d.watchSkip(version); skip || werr != nil {
+		return werr
+	}
 	if d.o.plan {
 		return d.plan(ctx, version, image, origin)
 	}
@@ -803,6 +843,7 @@ func (d *deployRun) finish(ctx context.Context, res deployResult) error {
 		return err
 	}
 	d.o.report.add(res)
+	d.o.watching.deployed(d.dir, res.Version)
 	if trigger := deployTrigger(ctx, out, d.serverURL, d.token, d.o); trigger != nil {
 		return trigger(res.DagID)
 	}

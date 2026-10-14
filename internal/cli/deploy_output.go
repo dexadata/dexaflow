@@ -132,6 +132,9 @@ func validateDeployOptions(o deployOptions) error {
 	if o.output != outputText && o.output != outputJSON {
 		return fmt.Errorf("--output must be %s or %s, not %q", outputText, outputJSON, o.output)
 	}
+	if err := checkDeployWatch(o); err != nil {
+		return err
+	}
 	if o.plan && o.trigger {
 		return fmt.Errorf("--plan builds, pushes and registers nothing, so it cannot --trigger a run; drop one of them")
 	}
@@ -147,6 +150,9 @@ func runDeployCommand(cmd *cobra.Command, args []string, o deployOptions) error 
 		return err
 	}
 	o.cluster = &clusterDefaultsCache{}
+	if o.watch {
+		return runDeployWatch(cmd, args, o)
+	}
 	if o.output != outputJSON {
 		return runDeployTarget(cmd, args, o)
 	}
