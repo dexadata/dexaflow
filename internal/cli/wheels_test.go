@@ -41,6 +41,7 @@ echo "$*" >> "$d/calls.log"
 env | grep -E '^(UV|PIP)_' >> "$d/env.log"
 if [ "$1" = "--version" ]; then echo "uv 0.11.32 (x86_64-unknown-linux-gnu)"; exit 0; fi
 if [ "$1" = "python" ]; then
+  pwd > "$d/python.pwd"
   if [ -f "$d/nopython" ]; then echo "error: No interpreter found in virtual environments, managed installations, or search path" >&2; exit 2; fi
   echo /usr/bin/python3; exit 0
 fi
@@ -108,7 +109,7 @@ func uvCalls(t *testing.T, dir string) []string {
 	}
 	var out []string
 	for _, l := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		if l != "--version" && l != "python find" {
+		if l != "--version" && !strings.HasPrefix(l, "python find") {
 			out = append(out, l)
 		}
 	}
@@ -699,5 +700,32 @@ func TestTheDaemonFallbackIsOnlyForPinnedDependencies(t *testing.T) {
 	editYAML(t, dir, "[pandas==2.2.3]", "[pandas>=2]")
 	if split, _ = splitOf(t, dir); split == nil || split.Wheels == nil || split.DaemonDepsImage != "" {
 		t.Errorf("unpinned: split = %+v, want wheels with no daemon fallback", split)
+	}
+}
+
+// uv looks for a Python with --no-config in an empty directory of its own,
+// so a .python-version or uv.toml where the CLI runs changes nothing.
+func TestUVFindsPythonInAnEmptyDirectory(t *testing.T) {
+	uv := fakeUV(t)
+	u, why := findUV(context.Background())
+	if u == nil {
+		t.Fatal(why)
+	}
+	if err := u.findPython(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls := readProjectFile(t, uv, "calls.log"); !strings.Contains(calls, "python find --no-config\n") {
+		t.Errorf("uv calls = %q, want python find --no-config", calls)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := strings.TrimSpace(readProjectFile(t, uv, "python.pwd"))
+	if dir == cwd || !strings.HasPrefix(filepath.Base(dir), "dexaflow-uv-") {
+		t.Errorf("uv ran in %s, want an empty temporary directory", dir)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("the directory %s is left behind (%v)", dir, err)
 	}
 }

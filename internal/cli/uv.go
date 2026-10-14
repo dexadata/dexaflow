@@ -73,9 +73,16 @@ func uvEnv() []string {
 
 // findPython checks that uv finds a Python on this machine. uv needs one to
 // resolve and install, even for another Python version and platform, and
-// never downloads one here (uvEnv).
+// never downloads one here (uvEnv). It runs with --no-config in an empty
+// directory, as the resolution and the install do, so no .python-version
+// or uv.toml where the CLI runs changes the answer.
 func (u *uvTool) findPython(ctx context.Context) error {
-	_, err := u.run(ctx, "", "python", "find")
+	dir, err := os.MkdirTemp("", "dexaflow-uv-")
+	if err != nil {
+		return fmt.Errorf("making the directory of the Python lookup: %w", err)
+	}
+	defer os.RemoveAll(dir) //nolint:errcheck // best-effort cleanup of a temporary directory
+	_, err = u.run(ctx, dir, "python", "find", "--no-config")
 	return err
 }
 

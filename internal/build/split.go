@@ -134,14 +134,34 @@ func (c CodeLayer) buildDeps(ctx context.Context, req Request) (Pinned, Path, er
 	if c.Split.DaemonDepsImage == "" {
 		return Pinned{}, "", err
 	}
+	if cerr := ctx.Err(); cerr != nil {
+		return Pinned{}, "", fmt.Errorf("%w (the build was stopped: %w)", err, cerr)
+	}
+	return c.daemonFallback(ctx, req, err)
+}
+
+// daemonFallback gets the dependency image of the daemon's key after the
+// wheels failed with why: the one the registry already holds, or one the
+// daemon builds when its tool is on PATH; otherwise why is the error.
+func (c CodeLayer) daemonFallback(ctx context.Context, req Request, why error) (Pinned, Path, error) {
+	image := c.Split.DaemonDepsImage
+	if found, _, _ := reusable(ctx, c.Registry, image, req.Platforms, "dependency image "+image); found != nil { //nolint:errcheck // any read failure means it is not reused
+		c.note(req, "%v\nthe registry already holds the dependency image %s, so the DAG code is appended to it\n", why, image)
+		return *found, PathCodeLayer, nil
+	}
 	if _, lerr := exec.LookPath(c.Daemon.tool()); lerr != nil {
-		return Pinned{}, "", err
+		return Pinned{}, "", why
 	}
-	if req.Stderr != nil {
-		fmt.Fprintf(req.Stderr, "%v\nthe daemon builds the dependency image %s instead\n", err, c.Split.DaemonDepsImage) //nolint:errcheck // a progress note
-	}
-	pinned, err = c.daemonDeps(ctx, req, c.Split.DaemonDepsImage)
+	c.note(req, "%v\nthe daemon builds the dependency image %s instead\n", why, image)
+	pinned, err := c.daemonDeps(ctx, req, image)
 	return pinned, PathLocalDaemon, err
+}
+
+// note writes a progress note to the build's standard error, if it has one.
+func (CodeLayer) note(req Request, format string, args ...any) {
+	if req.Stderr != nil {
+		fmt.Fprintf(req.Stderr, format, args...) //nolint:errcheck // a progress note
+	}
 }
 
 // wheelDeps pushes the dependency image built from wheels and reads it back.

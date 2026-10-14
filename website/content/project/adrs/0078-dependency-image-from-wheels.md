@@ -115,11 +115,12 @@ how, and where it departs from ADR 0073 section 4.
    A `uv.toml` in the image changes nothing: uv runs on the host, never in
    the image, and with `--no-config`.
 9. **When the wheels fail after the decision** (the install or the push of
-   the dependency image fails, before the DAG image is written), the daemon
-   builds the dependency image under the format 1 key of ADR 0077, when the
-   dependencies are all pinned (that key cannot cover a range) and the
-   daemon's tool is on `PATH`; the output says why. Otherwise the build
-   fails with uv's error.
+   the dependency image fails, before the DAG image is written) and the
+   dependencies are all pinned (the format 1 key of ADR 0077 cannot cover a
+   range), the dependency image under that key is used: the one the
+   registry already holds, or one the daemon builds when its tool is on
+   `PATH`. The output says why. Otherwise, and when the build was canceled,
+   the build fails with uv's error.
 
 ## Where this departs from ADR 0073 section 4
 

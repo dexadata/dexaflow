@@ -271,9 +271,10 @@ image (or the whole image, for dependencies that are not pinned), when:
 Private package indexes are not supported on this path yet.
 
 If the install or the push of the dependency image fails after the path was
-chosen, the local daemon builds the dependency image instead, when every
-dependency is pinned and the container tool is on `PATH`, and the output says
-why; otherwise the build fails with uv's error.
+chosen and every dependency is pinned, the dependency image the daemon path
+uses takes its place: the one already in the registry, or one the local
+daemon builds when the container tool is on `PATH`. The output says why;
+otherwise the build fails with uv's error.
 
 The layer holds no bytecode: uv does not compile it, and your machine's
 Python is another version than the image's. Each task process compiles the

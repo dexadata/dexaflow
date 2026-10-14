@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	ggcrtransport "github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 )
 
@@ -380,8 +381,10 @@ func TestTheDaemonBuildsTheDependencyImageWhenTheWheelsFail(t *testing.T) {
 	d := depsLayer(t, host, &fakeInstaller{fail: errors.New("uv: connection refused")}, "linux/amd64")
 	split.Wheels, split.DaemonDepsImage = &d, host+"/dags/etl:deps-daemon"
 	tool, log := fakeTool(t, "")
-	b, _ := Select(context.Background(), Options{Tool: tool, Split: split}, host+"/dags/etl:v1", []string{"linux/amd64"})
-	pushImage(t, split.DaemonDepsImage) // what the daemon's push leaves in the registry
+	// What the daemon's push leaves in the registry, unknown until it ran.
+	pushImage(t, split.DaemonDepsImage)
+	reg := &missingOnce{image: split.DaemonDepsImage}
+	b, _ := Select(context.Background(), Options{Tool: tool, Split: split, Registry: reg}, host+"/dags/etl:v1", []string{"linux/amd64"})
 	req := codeRequest(t, host+"/dags/etl:v1", "linux/amd64")
 	var errOut bytes.Buffer
 	req.Stderr = &errOut
@@ -423,4 +426,78 @@ func TestTheWheelFailureStandsWithoutAFallback(t *testing.T) {
 			t.Errorf("%s: err = %v, want the uv error", name, err)
 		}
 	}
+}
+
+// missingOnce is the registry client, except that the first read of image
+// answers that the tag is unknown.
+type missingOnce struct {
+	Registry
+	image string
+	seen  bool
+}
+
+func (m *missingOnce) Resolve(ctx context.Context, image string) (Pinned, error) {
+	if image == m.image && !m.seen {
+		m.seen = true
+		return Pinned{}, fmt.Errorf("reading %s: %w", image, &ggcrtransport.Error{StatusCode: 404})
+	}
+	return m.Registry.Resolve(ctx, image)
+}
+
+// When the wheels fail and the registry already holds the dependency image
+// of the daemon's key, it is reused: no daemon runs, and the code is
+// appended to it.
+func TestAFailedWheelBuildReusesTheDaemonsDependencyImage(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	host, split := splitFixture(t)
+	d := depsLayer(t, host, &fakeInstaller{fail: errors.New("uv: connection refused")}, "linux/amd64")
+	split.Wheels, split.DaemonDepsImage = &d, host+"/dags/etl:deps-daemon"
+	pushIndexWithAttestation(t, split.DaemonDepsImage, "linux/amd64")
+	tool, log := fakeTool(t, "")
+	b, _ := Select(context.Background(), Options{Tool: tool, Split: split}, host+"/dags/etl:v1", []string{"linux/amd64"})
+	req := codeRequest(t, host+"/dags/etl:v1", "linux/amd64")
+	var errOut bytes.Buffer
+	req.Stderr = &errOut
+	res, err := b.Build(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := calls(t, log); got != nil {
+		t.Errorf("the daemon ran %q", got)
+	}
+	if res.Path != PathCodeLayer || !strings.Contains(errOut.String(), "uv: connection refused") || !strings.Contains(errOut.String(), "already holds") {
+		t.Errorf("path = %s, output %q, want code-layer and why", res.Path, errOut.String())
+	}
+}
+
+// A canceled build does not start the fallback: the cancellation is the
+// error.
+func TestACanceledBuildDoesNotFallBack(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	host, split := splitFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d := depsLayer(t, host, cancellingInstaller{cancel}, "linux/amd64")
+	split.Wheels, split.DaemonDepsImage = &d, host+"/dags/etl:deps-daemon"
+	tool, log := fakeTool(t, "")
+	b, _ := Select(context.Background(), Options{Tool: tool, Split: split}, host+"/dags/etl:v1", []string{"linux/amd64"})
+	req := codeRequest(t, host+"/dags/etl:v1", "linux/amd64")
+	var errOut bytes.Buffer
+	req.Stderr = &errOut
+	if _, err := b.Build(ctx, req); !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "uv: interrupted") {
+		t.Errorf("err = %v, want the uv error and the cancellation", err)
+	}
+	if got := calls(t, log); got != nil || errOut.Len() != 0 {
+		t.Errorf("the fallback started: daemon calls %q, output %q", got, errOut.String())
+	}
+}
+
+// cancellingInstaller stops the build while it installs, as Ctrl-C does.
+type cancellingInstaller struct{ cancel context.CancelFunc }
+
+func (cancellingInstaller) Describe() string { return "uv 0.11.32" }
+
+func (c cancellingInstaller) Install(context.Context, string, string) error {
+	c.cancel()
+	return errors.New("uv: interrupted")
 }
