@@ -388,9 +388,9 @@ current.
 
 ```console
 $ dexaflow dags versions first_pro_dag
-VERSION  LABEL    CURRENT  CREATED           CREATOR ID                            IMAGE
-2        5d6e7f8  *        2026-10-02 09:12  7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a  sha256:4b1d0c9e2a7f
-1        1a2b3c4           2026-10-01 17:40  7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a  sha256:9f2c81d07a3e
+VERSION  LABEL    CURRENT  CREATED           CREATOR ID                            COMMIT        IMAGE
+2        5d6e7f8  *        2026-10-02 09:12  7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a  5d6e7f81a9c2  sha256:4b1d0c9e2a7f
+1        1a2b3c4           2026-10-01 17:40  7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a  1a2b3c4d5e6f  sha256:9f2c81d07a3e
 $ dexaflow rollback first_pro_dag
 first_pro_dag: current version changed from 5d6e7f8 (#2) to 1a2b3c4 (#1).
 New runs use 1a2b3c4 (#1) from the next scheduler tick; runs already created keep their version.

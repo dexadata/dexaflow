@@ -39,10 +39,10 @@ func (r setCurrentVersionRequest) selector() (domain.DagVersionSelector, error) 
 // currentVersionResponse reports a set-current: the version that was current
 // (null when none was), the one that is now, and whether anything changed.
 type currentVersionResponse struct {
-	DagID   string         `json:"dag_id"`
-	Changed bool           `json:"changed"`
-	From    *dagVersionDTO `json:"from"`
-	To      dagVersionDTO  `json:"to"`
+	DagID   string               `json:"dag_id"`
+	Changed bool                 `json:"changed"`
+	From    *listedDagVersionDTO `json:"from"`
+	To      listedDagVersionDTO  `json:"to"`
 }
 
 // admissionError is a refusal of the target spec by the register checks; it
@@ -84,9 +84,9 @@ func setCurrentVersionHandler(repo DagVersionRepository, admission specAdmission
 			handleRepoError(c, err)
 			return
 		}
-		out := currentVersionResponse{DagID: dagID, Changed: change.Changed, To: toDagVersionDTO(dagID, change.To)}
+		out := currentVersionResponse{DagID: dagID, Changed: change.Changed, To: toListedDagVersionDTO(dagID, change.To)}
 		if change.From.ID != "" {
-			from := toDagVersionDTO(dagID, change.From)
+			from := toListedDagVersionDTO(dagID, change.From)
 			out.From = &from
 		}
 		c.JSON(http.StatusOK, out)

@@ -270,6 +270,7 @@ type DagVersion struct {
 	SpecHash       string             `json:"spec_hash"`
 	CreatedBy      pgtype.UUID        `json:"created_by"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	BuildInfo      []byte             `json:"build_info"`
 }
 
 type ImportError struct {
