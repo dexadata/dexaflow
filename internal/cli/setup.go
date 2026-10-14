@@ -188,7 +188,7 @@ func runSetup(cmd *cobra.Command, workspaceFlag string, dryRun bool) error {
 		LookPath: exec.LookPath, Stat: os.Stat, Getwd: os.Getwd,
 	})
 
-	def := liteSettings{Workspace: workspaceFlag, Executor: "subprocess", AdminEmail: "admin@leoflow.local", Port: 8088}
+	def := liteSettings{Workspace: workspaceFlag, Executor: "subprocess", AdminEmail: auth.DefaultAdminEmail, Port: 8088}
 	if def.Workspace == "" {
 		def.Workspace = defaultWorkspaceIn(homeDir)
 	}

@@ -843,6 +843,42 @@ it now has to unpause it too (or register it active, as above). Runs queued
 on a paused DAG at the moment of the upgrade wait from then on. Rolling back
 to 0.5.3 starts them.
 
+**A new install's bootstrap admin is `admin@dexaflow.local`** (#1709). A first
+`dexaflow setup` records `admin_email: "admin@dexaflow.local"`, and a server
+started with a bootstrap password (`bootstrap.password` on Helm,
+`DEXAFLOW_BOOTSTRAP_PASSWORD` or `DEXAFLOW_BOOTSTRAP_PASSWORD_HASH`) and no
+`DEXAFLOW_BOOTSTRAP_EMAIL` creates `admin@dexaflow.local` on an empty database.
+An install created before keeps `admin@leoflow.local` and logs in as before. The
+user is never renamed and no second admin is created:
+
+- Lite keeps the `admin_email` its `config.yaml` records.
+- At every start, the server resolves the default address to
+  `admin@leoflow.local` when that user exists and `admin@dexaflow.local` does
+  not, or when only `admin@leoflow.local` holds the admin role, reconciles
+  that account's password as before, and logs `bootstrap admin kept its
+  pre-rename address`. When both addresses have a user it also logs a warning
+  naming both. This covers Helm and
+  docker-compose installs, which never set the email, and a Lite reinstall over
+  a kept datastore: `dexaflow setup` then prints `admin@dexaflow.local`, but
+  the account that logs in with the new password is `admin@leoflow.local`, and
+  the `dexaflow lite` ready banner names it. `dexaflow lite reset-password`
+  resets that account and records it in `config.yaml`.
+- Any other `DEXAFLOW_BOOTSTRAP_EMAIL` (or `LEOFLOW_BOOTSTRAP_EMAIL`) is used as
+  given.
+- `auth.oidc.breakGlassEmails` must keep naming the address your admin has. The
+  chart's [Google SSO example](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/examples/values-oidc-google.yaml)
+  now lists `admin@dexaflow.local`, which has no password login on an older
+  database: list `admin@leoflow.local` there instead.
+
+To move an existing install to the new address, create `admin@dexaflow.local`
+with the admin role (`dexaflow auth create-user --role admin`); from the next
+start the bootstrap reconciles that account, and `admin@leoflow.local` stays as
+an ordinary account. On Lite, also set `admin_email` in `config.yaml`. Rolling
+back to 0.5.3 needs nothing on an existing install or on Lite, whose
+`config.yaml` names the address. A server install created by 0.5.4 that sets no
+bootstrap email gets a second admin, `admin@leoflow.local`, from the same
+bootstrap password when it starts on 0.5.3.
+
 ## Related issues
 
 - #136 — this contract.

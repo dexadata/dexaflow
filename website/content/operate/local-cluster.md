@@ -152,7 +152,7 @@ curl -fsS http://127.0.0.1:8080/readyz
 ```
 
 Open [http://127.0.0.1:8080/](http://127.0.0.1:8080/) and sign in with
-**`admin@leoflow.local`** and the `bootstrap.password` from step 3
+**`admin@dexaflow.local`** and the `bootstrap.password` from step 3
 (`local-admin`). The username is an e-mail address: a bare `admin` is refused.
 
 A port-forward is the simplest way in and works on every local cluster. The
@@ -168,7 +168,7 @@ Log the CLI in to the control plane once. The token is saved in
 ```bash
 printf '%s' local-admin | dexaflow auth login \
   --server http://127.0.0.1:8080 \
-  --username admin@leoflow.local \
+  --username admin@dexaflow.local \
   --password-stdin
 ```
 
@@ -291,7 +291,7 @@ use the registry address it gives you as `registry.url` in `dexaflow.yaml`.
 | `helm install` fails because namespace `leoflow` is not found | `taskNamespace` left at its default | pass `--set taskNamespace=dexaflow`, as in step 3 |
 | The server pod crash-loops with "the Pro edition requires TLS on the agent gRPC channel" | `agentTLS.enabled=false` was set | leave `agentTLS` at its default |
 | The `dexaflow-migrate` Job fails on its first connection | Postgres was not accepting connections yet | wait with `pg_isready` (step 2), then `helm uninstall` and install again |
-| `dexaflow auth login` answers "invalid credentials" | the username is the e-mail address | `--username admin@leoflow.local` |
+| `dexaflow auth login` answers "invalid credentials" | the username is the e-mail address | `--username admin@dexaflow.local` |
 | `docker push` fails with `no such host` | your resolver does not map `*.localhost` | add `127.0.0.1 k3d-dexaflow-registry.localhost` to `/etc/hosts` |
 | The task pod is in `ErrImagePull` | the cluster was created without `--registry-use`, or the image reference does not name `k3d-dexaflow-registry.localhost:5050` | recreate the cluster as in step 1; check `registry.url` |
 | The task pod fails with `exec format error` | the DAG image was built for another architecture | remove `build.platforms` from `dexaflow.yaml` |
