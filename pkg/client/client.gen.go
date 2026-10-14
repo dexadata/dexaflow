@@ -228,7 +228,7 @@ type Connection struct {
 	Description  *string `json:"description,omitempty"`
 	Extra        *string `json:"extra,omitempty"`
 
-	// ExtraUnreadable Present and true in a listing when the extra is encrypted with a secret key the server does not have (for example after a key rotation that dropped the old key). The extra is then masked. Reading the connection alone answers 500 with a message naming it.
+	// ExtraUnreadable Present and true in a listing when the extra is encrypted with a secret key the server does not have (for example after a key rotation that dropped the old key). The extra is then null, so a client that parses it as JSON still can. Reading the connection alone, or updating it, answers 500 with a message naming it, and the stored extra is kept.
 	ExtraUnreadable *bool   `json:"extra_unreadable,omitempty"`
 	Host            *string `json:"host,omitempty"`
 	Login           *string `json:"login,omitempty"`

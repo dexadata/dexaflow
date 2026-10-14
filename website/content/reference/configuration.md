@@ -246,10 +246,11 @@ never overwrites or deletes it; put the missing key in the list and restart.
 Until then the server logs a warning naming the connection, and:
 
 - the connections list (`GET /api/v2/connections`) still returns every
-  connection of the tenant, and shows this one with its `extra` masked (`***`)
-  and `extra_unreadable: true`;
+  connection of the tenant, and shows this one with `extra` set to `null` and
+  `extra_unreadable: true`, so the Admin Connections page still opens it;
 - reading it alone (`GET /api/v2/connections/<connection_id>`), or updating
-  it, answers `500` with a message that names the connection;
+  it (saving it from the Admin page included), answers `500` with a message
+  that names the connection, and its stored `extra` is left as it is;
 - delivery to a task pod skips it with a warning, so only the tasks that use
   it fail.
 
