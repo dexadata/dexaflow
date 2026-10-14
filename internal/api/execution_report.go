@@ -13,14 +13,15 @@ const (
 	poolStateOff = "off"
 	// poolStateNone: warm pools are on, but this version gets no warm worker.
 	poolStateNone = "none"
-	// poolStateOn: this version keeps idle warm workers while it has an
-	// active run.
+	// poolStateOn: this version keeps idle warm workers while it is the DAG's
+	// current version: from the register on for an unpaused DAG that declares
+	// min_idle_workers, else from its first run (ADR 0082).
 	poolStateOn = "on"
 )
 
 // previousPoolDraining marks a new version of an existing DAG with warm pools
-// on: the previous version's warm workers keep serving its active runs and
-// are removed once its last one ends (ADR 0058 D1).
+// on: the previous version is no longer kept, so the reconciler deletes its
+// idle warm workers and each busy one once its attempt ends (ADR 0082).
 const previousPoolDraining = "draining"
 
 // executionReport is what a register (or its dry run) says about where the
@@ -65,12 +66,13 @@ type executionReporter struct {
 
 // report says where each task of spec runs and what its warm pool does.
 // newVersion is a new version of a DAG that already existed, whose previous
-// version's pool then drains. A task dispatch would offer to a warm worker
-// is reported dedicated when no warm worker of its version can exist, with
-// the reason, since the offer then always misses.
-func (e executionReporter) report(spec *domain.DAGSpec, newVersion bool) *executionReport {
+// version's pool then drains; paused is the DAG's is_paused after the
+// register, since a paused DAG is not prewarmed. A task dispatch would offer
+// to a warm worker is reported dedicated when no warm worker of its version
+// can exist, with the reason, since the offer then always misses.
+func (e executionReporter) report(spec *domain.DAGSpec, newVersion, paused bool) *executionReport {
 	version := domain.WarmVersion{Image: spec.Image, HasSource: spec.Source != "", Staging: spec.Staging}
-	pool, noWorker := e.pool(spec, version)
+	pool, noWorker := e.pool(spec, version, paused)
 	r := &executionReport{WarmPools: e.policy.Enabled, Tasks: make([]taskExecution, 0, len(spec.Tasks)), Pool: pool}
 	eligible := 0
 	for _, task := range spec.Tasks {
@@ -90,7 +92,7 @@ func (e executionReporter) report(spec *domain.DAGSpec, newVersion bool) *execut
 	}
 	if newVersion && e.couldKeepWorkers(spec) {
 		r.Pool.PreviousPool = previousPoolDraining
-		r.Pool.Detail += "; the previous version's warm workers, if it has any, drain once its last active run ends"
+		r.Pool.Detail += "; previous pool draining: its idle workers are removed now and busy ones finish their attempt first"
 	}
 	return r
 }
@@ -107,9 +109,9 @@ func (e executionReporter) couldKeepWorkers(spec *domain.DAGSpec) bool {
 // can exist ("" when one can): off with warm pools off; none for a version
 // excluded as a whole, on a server that runs no warm workers, or when no
 // idle worker is kept for it; else the idle workers it keeps
-// (EffectiveMinIdle, the reconciler's target) up to max_pool_size while it
-// has an active run.
-func (e executionReporter) pool(spec *domain.DAGSpec, version domain.WarmVersion) (p poolReport, noWorker string) {
+// (EffectiveMinIdle, the reconciler's target) up to max_pool_size while it is
+// the DAG's current version, starting when poolStart says (ADR 0082).
+func (e executionReporter) pool(spec *domain.DAGSpec, version domain.WarmVersion, paused bool) (p poolReport, noWorker string) {
 	if !e.policy.Enabled {
 		return poolReport{State: poolStateOff, Detail: "warm pools off: every task runs on a dedicated pod"}, ""
 	}
@@ -125,6 +127,22 @@ func (e executionReporter) pool(spec *domain.DAGSpec, version domain.WarmVersion
 			Detail: "no idle warm worker is kept for this version (min_idle_workers 0), so its tasks run on dedicated pods"}, noIdleWorkersReason
 	}
 	return poolReport{State: poolStateOn, MinIdleWorkers: idle, MaxPoolSize: e.pools.MaxPoolSize,
-		Detail: fmt.Sprintf("%d idle warm workers (up to %d) start with this version's first run and stay while it has an active run",
-			idle, e.pools.MaxPoolSize)}, ""
+		Detail: fmt.Sprintf("%d idle warm workers (up to %d) %s", idle, e.pools.MaxPoolSize, poolStart(spec, paused))}, ""
+}
+
+// poolStart says when the idle workers of a version that keeps some start
+// and how long they stay (ADR 0082): a DAG that declares min_idle_workers is
+// prewarmed once the version is current, or once the DAG is unpaused; one
+// that does not gets its workers from the operator floor with its first run.
+func poolStart(spec *domain.DAGSpec, paused bool) string {
+	const kept = ", kept while this version is the DAG's current version"
+	switch {
+	case spec.MinIdleWorkers <= 0:
+		return "start with this version's first run (the DAG declares no min_idle_workers, so it is not prewarmed)" +
+			" and stay while it has an active run and is the DAG's current version"
+	case paused:
+		return "start when the DAG is unpaused" + kept
+	default:
+		return "warming now" + kept
+	}
 }

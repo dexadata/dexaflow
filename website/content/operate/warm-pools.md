@@ -68,8 +68,10 @@ the work, and the same DAG version runs many attempts.
   the pool barely warms before it drains, and you approach pod-per-task economics
   anyway.
 - **CI/CD-heavy teams that push often.** The pool is keyed by DAG *version*
-  ([D1](#pool-key-dag-version)), so a version bump starts a fresh pool. Teams that
-  deploy on every commit keep thin, short-lived pools and see little benefit.
+  ([D1](#pool-key-dag-version)), so a version bump starts a fresh pool. It
+  starts at the deploy, not at the next run, but each new pool still pulls the
+  new image and each old one is torn down: teams that deploy on every commit
+  keep thin, short-lived pools and see little benefit.
 - **DAGs that use the [staging volume](/operate/staging-volume/).** A pod's volumes are
   fixed at creation, so a warm pod (which spans runs) cannot hot-mount a future
   run's per-run staging PVC. Any DAG that declares `staging.enabled: true`
@@ -113,7 +115,7 @@ Deployed etl -> https://pro.example.com
   image ghcr.io/acme/etl@sha256:4e1f…
   registered version v1.4.0-3f9c2a1b7d4e
   execution  2 tasks warm-eligible; load on a dedicated pod: node_selector set
-  warm pool  2 idle warm workers (up to 5) start with this version's first run and stay while it has an active run; the previous version's warm workers, if it has any, drain once its last active run ends
+  warm pool  2 idle warm workers (up to 5) warming now, kept while this version is the DAG's current version; previous pool draining: its idle workers are removed now and busy ones finish their attempt first
 ```
 
 With warm pools off, the default, the summary is one line:
@@ -142,19 +144,67 @@ version is free. The `warm pool` line says what the pool does: `off`, `none`
 or a server that runs no warm workers) or `on` (the idle workers kept and the
 cap). When the pool is `on`, the `warm pool` line is printed even if no task
 of the version is warm-eligible, since its idle workers then cost without
-serving it. A new version of an existing DAG, on a server that keeps warm
-workers, adds that the previous version's warm workers, if it has any, drain
-once its last active run ends; busy ones finish their attempts first. The pool of a new version
-starts with its first run: nothing is created at the register yet.
+serving it. `warming now` is said only for a DAG that declares
+`min_idle_workers`, the DAGs that are prewarmed. For a paused one the line
+says the workers start when the DAG is unpaused. For a DAG that declares
+none, whose idle workers come from `minIdleWorkers`, it says they start with
+the version's first run and stay while it has an active run. A
+new version of an existing DAG, on a server that keeps warm workers, adds
+`previous pool draining` (`previous_pool: "draining"` in the JSON): see
+[Prewarm and drain on deploy](#prewarm-and-drain-on-deploy).
 
 ### Pool key: DAG version
 
 A pool is keyed by **`dag_version_id`**, never by `dag_id`. A warm pod caches a
 specific image + dependency closure ([ADR 0003](/project/adrs/0003-dag-as-image/)); keying
 by `dag_id` would let a pod built on the *old* image serve attempts of *new* code —
-silent stale-code execution. When you push a new version, the old version's pool
-drains by idle-TTL and a fresh pool starts for the new version; attempts already
-in flight on the old version finish on the old pod.
+silent stale-code execution. When you push a new version, a fresh pool starts
+for the new version and the old version's pool drains; attempts already in
+flight on the old version finish on the old pod (see
+[Prewarm and drain on deploy](#prewarm-and-drain-on-deploy)).
+
+### Prewarm and drain on deploy
+
+The reconciler keeps a pool for the **current version** of every DAG that is
+not paused and declares `min_idle_workers`, whether or not it has a run, and
+for the version of an active run only while that version is still current
+([ADR 0082](/project/adrs/0082-warm-pool-follows-the-current-version/)). A
+version becomes current when it is registered (`dexaflow deploy`,
+`dexaflow promote`) or made current again (`dexaflow rollback`,
+`PUT /api/v2/dags/{dag_id}/currentVersion`). At the next reconcile (30 seconds
+at most by default):
+
+- **The new version's pool starts.** For a DAG that declares
+  `min_idle_workers`, the reconciler creates that many idle workers (clamped
+  to `maxPoolSize`), so its first run finds them warm. Nothing is created
+  for a paused DAG until it is unpaused. A DAG that declares none is not
+  prewarmed: the operator's `minIdleWorkers` gives its version idle workers
+  from its first run on, as before, so the floor alone never keeps a pool per
+  DAG. The server logs `prewarming the warm pool of a DAG's current version`
+  and counts
+  `dexaflow_scheduler_decisions_total{decision_type="warm_pool_prewarm_started"}`.
+- **The previous version's pool drains.** It keeps no idle buffer: its idle
+  workers are deleted, and a worker serving an attempt finishes that attempt
+  and is deleted once it is idle. The server logs `draining the warm pool`
+  and counts `warm_pool_drain_started`; once no worker is left it logs `warm
+  pool drained` and deletes the pool's anchor (`warm_pool_anchor_deleted`).
+- **In-flight runs keep their version.** A run started on the previous
+  version finishes on it ([ADR 0058](/project/adrs/0058-warm-worker-pools/)
+  D1, D2: each attempt keeps its own version and identity). Its attempts
+  that start after the switch find no idle warm worker of their version and
+  take a dedicated pod, as any warm miss does.
+
+Pausing a DAG drains its current version's pool once none of its runs is
+running; unpausing starts the pool again. The two counters count what one
+leader saw: after a leader change the new leader logs and counts each
+prewarmed or draining pool it finds once more.
+
+**Cost.** Each unpaused DAG that declares `min_idle_workers: N` keeps N idle
+warm pods (at most `maxPoolSize`) even with no run. `maxWarmPodsPerTenant`
+does not bound them: the [per-tenant cap](#per-tenant-cap) never starves a
+promised idle floor and raises the tenant's budget to the sum of the floors.
+`min_idle_workers` is not in the authoring schema yet, so today only a
+`dag.json` that carries it is prewarmed.
 
 The practical consequence: the benefit tracks **attempts per version**. A DAG that
 runs thousands of attempts on a stable version pools well; a DAG that ships a new
@@ -224,8 +274,10 @@ execution:
 `minIdleWorkers: 1` keeps a pod ready the instant an attempt arrives (no
 first-attempt provisioning wait), which is what you want when demonstrating or
 benchmarking the feature. It is not free: it keeps **one pod warm per DAG
-version** standing idle (multiplied across every active version), and — like
-turning warm pools on at all — it rides on the cluster-wide pod-auth change from
+version** an active run uses (multiplied across every active version), and it
+never prewarms: a version's pool starts with its first run (see
+[Prewarm and drain on deploy](#prewarm-and-drain-on-deploy)). Like
+turning warm pools on at all, it also rides on the cluster-wide pod-auth change from
 the `exchange` transport + `enforce` liveness prerequisite above, which alters
 how **every** task pod authenticates, warm or dedicated. Measure the win against
 that cost before raising it in production.
@@ -257,9 +309,12 @@ flowchart TB
   RECYCLE --> PROV
 ```
 
-1. **Provision.** The reconciler keeps `EffectiveMinIdle` warm pods per DAG version
-   ready (the DAG's declared warmth, clamped by the operator's floor and per-version
-   cap). With the default `minIdleWorkers: 0`, unless the DAG declares
+1. **Provision.** The reconciler keeps `EffectiveMinIdle` warm pods ready for the
+   current version of each DAG that is not paused and declares
+   `min_idle_workers`, from the deploy on
+   ([prewarm](#prewarm-and-drain-on-deploy)), and for a version an active run
+   still uses while it is current (the DAG's declared warmth, clamped by the
+   operator's floor and per-version cap). With the default `minIdleWorkers: 0`, unless the DAG declares
    `min_idle_workers`, that target is zero and no warm pod is created. By default the reconciler checks every 30 seconds. With
    `warmPoolEventRefill: true` it also reacts at once when a warm pod is deleted,
    fails, or is claimed by an attempt, reads the fleet from a pod informer instead
@@ -581,7 +636,7 @@ Fakes cannot show admission, the token exchange or placement on a real cluster, 
 3. **Workers register with a worker-scoped credential.** The server logs `exchanged projected token for a WORKER-scoped agent JWT` and then `warm worker registered` for the pod.
 4. **Attempts run on the warm worker.** Trigger a run whose task prints its container's UTS hostname, which Kubernetes sets to the pod name: `cat /proc/sys/kernel/hostname`. The task log must show a `leoflow-warm-<that dag_version>-…` name, not a dedicated task pod's. A worker may recycle between your first look and the attempt, so match the DAG version, not one pod name.
 5. **Each worker serves its own tenant.** Its `leoflow.io/dag-version-id` label is a version the tenant's own session lists, and its `leoflow.io/tenant-id` label is that tenant's.
-6. **Nothing is left after the idle TTL.** Once `workerIdleTtl` plus a reconcile has passed with no runs: no warm pod stays in `Succeeded` or `Failed`, and every `leoflow-pool-<dag_version>` anchor ConfigMap (`-l leoflow.io/warm-anchor=true`) belongs to a version that still has a live warm pod or is still active. Until [#1501](https://github.com/dexadata/dexaflow/pull/1501) (issue #1500) is released, this step can fail for a version whose warm pods were never created, for example because admission refused every create: its anchor ConfigMap is never deleted. Delete such an anchor by hand once the version has no warm pod and no active run.
+6. **Nothing is left after the idle TTL.** Once `workerIdleTtl` plus a reconcile has passed with no runs: no warm pod stays in `Succeeded` or `Failed`, and every `leoflow-pool-<dag_version>` anchor ConfigMap (`-l leoflow.io/warm-anchor=true`) belongs to a version that still has a live warm pod or is the current version of an unpaused DAG that declares `min_idle_workers`. Such a version keeps its idle workers by design ([prewarm](#prewarm-and-drain-on-deploy)): pause the DAG to check that its pool is torn down. Until [#1501](https://github.com/dexadata/dexaflow/pull/1501) (issue #1500) is released, this step can fail for a version whose warm pods were never created, for example because admission refused every create: its anchor ConfigMap is never deleted. Delete such an anchor by hand once the version has no warm pod and no active run.
 
 ## Configuration reference
 
