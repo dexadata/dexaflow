@@ -83,6 +83,24 @@ func (e DAGRunState) Valid() bool {
 	}
 }
 
+// Defines values for TaskExecutionMode.
+const (
+	TaskExecutionModeDedicated TaskExecutionMode = "dedicated"
+	TaskExecutionModeWarm      TaskExecutionMode = "warm"
+)
+
+// Valid indicates whether the value is a known member of the TaskExecutionMode enum.
+func (e TaskExecutionMode) Valid() bool {
+	switch e {
+	case TaskExecutionModeDedicated:
+		return true
+	case TaskExecutionModeWarm:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TaskInstanceState.
 const (
 	TaskInstanceStateFailed         TaskInstanceState = "failed"
@@ -137,6 +155,42 @@ func (e TaskInstanceStateUpdateNewState) Valid() bool {
 	case TaskInstanceStateUpdateNewStateSkipped:
 		return true
 	case TaskInstanceStateUpdateNewStateSuccess:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WarmPoolReportPreviousPool.
+const (
+	WarmPoolReportPreviousPoolDraining WarmPoolReportPreviousPool = "draining"
+)
+
+// Valid indicates whether the value is a known member of the WarmPoolReportPreviousPool enum.
+func (e WarmPoolReportPreviousPool) Valid() bool {
+	switch e {
+	case WarmPoolReportPreviousPoolDraining:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WarmPoolReportState.
+const (
+	WarmPoolReportStateNone WarmPoolReportState = "none"
+	WarmPoolReportStateOff  WarmPoolReportState = "off"
+	WarmPoolReportStateOn   WarmPoolReportState = "on"
+)
+
+// Valid indicates whether the value is a known member of the WarmPoolReportState enum.
+func (e WarmPoolReportState) Valid() bool {
+	switch e {
+	case WarmPoolReportStateNone:
+		return true
+	case WarmPoolReportStateOff:
+		return true
+	case WarmPoolReportStateOn:
 		return true
 	default:
 		return false
@@ -470,6 +524,15 @@ type Error struct {
 	Type     *string `json:"type,omitempty"`
 }
 
+// ExecutionReport Where the version's tasks run (Dexaflow), from the same decision dispatch places an attempt with: on a warm worker of the version (warm pools, ADR 0058) or on a dedicated pod. Sent by the register and its dry run. A task is warm-eligible; it still takes a dedicated pod when no warm worker is free. A task the dispatcher would offer to a warm worker is reported dedicated when no warm worker of its version can exist (no idle worker kept, or a server that runs none).
+type ExecutionReport struct {
+	Pool  WarmPoolReport  `json:"pool"`
+	Tasks []TaskExecution `json:"tasks"`
+
+	// WarmPools execution.warm_pools_enabled on the server.
+	WarmPools bool `json:"warm_pools"`
+}
+
 // ExecutorInfo defines model for ExecutorInfo.
 type ExecutorInfo struct {
 	AgentControlPlaneAddr *string   `json:"agent_control_plane_addr,omitempty"`
@@ -485,6 +548,18 @@ type HealthInfo struct {
 	Scheduler    *ComponentHealth `json:"scheduler,omitempty"`
 	Triggerer    *ComponentHealth `json:"triggerer,omitempty"`
 }
+
+// TaskExecution defines model for TaskExecution.
+type TaskExecution struct {
+	Mode TaskExecutionMode `json:"mode"`
+
+	// Reason Why the task takes a dedicated pod, absent when warm-eligible: warm pools off, staging enabled, source mode, service_account set, a placement field set (node_selector set, tolerations set, ...), a size larger than a warm pod, no idle warm workers kept for this DAG, or a server that runs no warm workers.
+	Reason *string `json:"reason,omitempty"`
+	TaskId string  `json:"task_id"`
+}
+
+// TaskExecutionMode defines model for TaskExecution.Mode.
+type TaskExecutionMode string
 
 // TaskInstance defines model for TaskInstance.
 type TaskInstance struct {
@@ -614,6 +689,9 @@ type VersionRegistration struct {
 	// DryRun True on an answer of the dry run route: nothing was written, and the other fields say what the register would do. Absent from a register.
 	DryRun *bool `json:"dry_run,omitempty"`
 
+	// Execution Where the version's tasks run (Dexaflow), from the same decision dispatch places an attempt with: on a warm worker of the version (warm pools, ADR 0058) or on a dedicated pod. Sent by the register and its dry run. A task is warm-eligible; it still takes a dedicated pod when no warm worker is free. A task the dispatcher would offer to a warm worker is reported dedicated when no warm worker of its version can exist (no idle worker kept, or a server that runs none).
+	Execution *ExecutionReport `json:"execution,omitempty"`
+
 	// IsPaused The DAG's is_paused after the register.
 	IsPaused *bool   `json:"is_paused,omitempty"`
 	SpecHash *string `json:"spec_hash,omitempty"`
@@ -622,6 +700,26 @@ type VersionRegistration struct {
 	// Warnings What the register would let through with a warning (a task that does not fit its size under executor.unit.enforce=warn). Sent by the dry run route.
 	Warnings *[]string `json:"warnings,omitempty"`
 }
+
+// WarmPoolReport defines model for WarmPoolReport.
+type WarmPoolReport struct {
+	// Detail The state in a sentence for a person.
+	Detail         string `json:"detail"`
+	MaxPoolSize    *int   `json:"max_pool_size,omitempty"`
+	MinIdleWorkers *int   `json:"min_idle_workers,omitempty"`
+
+	// PreviousPool draining for a new version of an existing DAG when this server keeps warm workers; the previous version's warm workers, if it has any, keep serving its active runs and are removed once its last one ends.
+	PreviousPool *WarmPoolReportPreviousPool `json:"previous_pool,omitempty"`
+
+	// State off: warm pools are off. none: this version gets no warm worker (staging, source mode, no idle worker kept, or a server that runs no warm workers: the subprocess executor, or pod dispatch disabled). on: the version keeps min_idle_workers idle warm workers, up to max_pool_size, while it has an active run; they start with its first run.
+	State WarmPoolReportState `json:"state"`
+}
+
+// WarmPoolReportPreviousPool draining for a new version of an existing DAG when this server keeps warm workers; the previous version's warm workers, if it has any, keep serving its active runs and are removed once its last one ends.
+type WarmPoolReportPreviousPool string
+
+// WarmPoolReportState off: warm pools are off. none: this version gets no warm worker (staging, source mode, no idle worker kept, or a server that runs no warm workers: the subprocess executor, or pod dispatch disabled). on: the version keeps min_idle_workers idle warm workers, up to max_pool_size, while it has an active run; they start with its first run.
+type WarmPoolReportState string
 
 // XComEntry defines model for XComEntry.
 type XComEntry struct {
