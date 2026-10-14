@@ -232,7 +232,15 @@ The JSON document has one entry per DAG:
       "created": true,
       "dag_created": true,
       "is_paused": true,
-      "next": "my_pipeline is paused, so nothing runs until ..."
+      "next": "my_pipeline is paused, so nothing runs until ...",
+      "execution": {
+        "warm_pools": true,
+        "tasks": [
+          { "task_id": "extract", "mode": "warm" },
+          { "task_id": "load", "mode": "dedicated", "reason": "node_selector set" }
+        ],
+        "pool": { "state": "on", "detail": "2 idle warm workers (up to 5) ...", "min_idle_workers": 2, "max_pool_size": 5 }
+      }
     }
   ]
 }
@@ -246,6 +254,16 @@ nothing was built), `skipped` (unchanged since the `--changed-since` ref, with
 `--plan` it is `planned` or `refused`, and a `plan` object carries `build`,
 `push`, `register` and `reason`. After a failure of `--all` the document is
 still printed, so the pipeline sees which DAGs went through.
+
+`execution` is the server's answer on where each task runs: `mode` is `warm`
+(warm-eligible) or `dedicated`, with the `reason` for a dedicated pod, and
+`pool.state` is `off`, `none` or `on`, with `previous_pool: "draining"` for a
+new version of an existing DAG while warm pools are on. The human output
+prints it as an `execution` line and, unless every task takes a dedicated pod
+for one reason, a `warm pool` line; see
+[Where a deploy's tasks run](/operate/warm-pools/#where-a-deploys-tasks-run).
+A server from before the field sends none, and the entry has no `execution`.
+`--plan` does not run the parser, so it has no tasks to report on.
 
 {{% alert title="Building several DAGs at once: `dexaflow build`" color="info" %}}
 The per-DAG pipeline above stays the recommendation, and the `paths:` filter is

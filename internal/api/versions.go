@@ -34,6 +34,9 @@ type versionResponse struct {
 	Created    bool   `json:"created"`
 	DagCreated bool   `json:"dag_created"`
 	IsPaused   bool   `json:"is_paused"`
+	// Execution says where each task runs and what the version's warm pool
+	// does (#1707), from the decision dispatch places with.
+	Execution *executionReport `json:"execution,omitempty"`
 }
 
 // dryRunResponse is the answer to a register dry run: what the register
@@ -187,9 +190,9 @@ func pauseRefusal(c *gin.Context, paused *bool) string {
 }
 
 // registerVersionHandler serves POST /api/v2/dags/{dag_id}/versions.
-func registerVersionHandler(repo DagVersionRepository, admission specAdmission) gin.HandlerFunc {
+func registerVersionHandler(repo DagVersionRepository, admission specAdmission, execution executionReporter) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		registerVersion(c, repo, admission, false)
+		registerVersion(c, repo, admission, execution, false)
 	}
 }
 
@@ -200,16 +203,16 @@ func registerVersionHandler(repo DagVersionRepository, admission specAdmission) 
 // dryRunHeader. A route of its own, not a parameter of the register, because
 // an older server answers it with 404 instead of registering. A dry run
 // writes no audit row, like the dry run of a clear: no state changed.
-func dryRunVersionHandler(repo DagVersionRepository, admission specAdmission) gin.HandlerFunc {
+func dryRunVersionHandler(repo DagVersionRepository, admission specAdmission, execution executionReporter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header(dryRunHeader, "true")
-		registerVersion(c, repo, admission, true)
+		registerVersion(c, repo, admission, execution, true)
 	}
 }
 
 // registerVersion registers the spec of the request body, or with dryRun
-// says what registering it would do.
-func registerVersion(c *gin.Context, repo DagVersionRepository, admission specAdmission, dryRun bool) {
+// says what registering it would do, and where its tasks run.
+func registerVersion(c *gin.Context, repo DagVersionRepository, admission specAdmission, execution executionReporter, dryRun bool) {
 	paused, perr := pausedQuery(c)
 	if perr != nil {
 		AbortProblem(c, http.StatusBadRequest, "bad request", perr.Error())
@@ -249,7 +252,8 @@ func registerVersion(c *gin.Context, repo DagVersionRepository, admission specAd
 		handleRepoError(c, err)
 		return
 	}
-	resp := versionResponse{DagID: spec.DagID, Version: spec.DagVersion, SpecHash: hash, Created: got.Created, DagCreated: got.DagCreated, IsPaused: got.IsPaused}
+	resp := versionResponse{DagID: spec.DagID, Version: spec.DagVersion, SpecHash: hash, Created: got.Created, DagCreated: got.DagCreated, IsPaused: got.IsPaused,
+		Execution: execution.report(&spec, got.Created && !got.DagCreated)}
 	if dryRun {
 		c.JSON(http.StatusOK, dryRunResponse{versionResponse: resp, DryRun: true, Warnings: warnings})
 		return
