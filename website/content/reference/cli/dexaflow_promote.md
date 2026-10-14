@@ -13,11 +13,11 @@ Register on one target the exact version another target runs (same digest, no bu
 
 Reads a registered version of the DAG from the --from target (its current version, or the one --version names: a label first, then a version number from `dexaflow dags versions`) and registers the same dag.json, with the same image digest, on the --to target. Nothing is built.
 
-The image must be pinned by digest. When the destination pulls from another registry (--registry, else the registry of the --to target, else the deploy defaults its control plane advertises), the image is copied to that registry by digest, byte for byte, and the version registered with the copy; otherwise the same reference is registered.
+The image must be pinned by digest. When the destination pulls from another registry (--registry, else the registry of the --to target, else the deploy defaults its control plane advertises), the image is copied to that registry by digest, byte for byte, keeping its repository path, and the version registered with the copy (a tag that already names another digest there is never moved); otherwise the same reference is registered.
 
 The destination runs the register's dry run first, so a refusal stops the promote before any copy. A DAG the promote creates starts paused as a deploy's would, and an existing DAG keeps is_paused. The register's audit entry records the source target and server.
 
-Each control plane gets its own token: --from-token and --to-token, else the session saved for its server by `dexaflow auth login --target <name>`. DEXAFLOW_TOKEN is not used, so one token never goes to two control planes.
+Each control plane gets its own token: --from-token and --to-token, else the session saved for its server by `dexaflow auth login --target <name>`. DEXAFLOW_TOKEN is not used, so one token never goes to two control planes. The source side reads each version's spec, which needs read on dags (an API token with the read scope); the destination side needs only what a deploy needs.
 
 ```
 dexaflow promote <dag_id> --from <target> --to <target> [flags]

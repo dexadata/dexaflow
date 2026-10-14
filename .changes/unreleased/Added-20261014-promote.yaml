@@ -14,8 +14,12 @@ body: |-
   keeps `is_paused`. `--dry-run` says what would be copied and registered,
   `--output json` prints one JSON document, and each control plane gets its
   own token (`--from-token`, `--to-token`, else the session saved for its
-  server). The register takes `promoted_from` and `promoted_from_server`,
-  recorded in its `dag.version.register` audit entry, and
+  server). The register takes `promoted_from` (a target name) and
+  `promoted_from_server`, recorded as the caller's claim in its
+  `dag.version.register` audit entry, and
   `GET /api/v2/dags/{dag_id}/dagVersions/{version_number}/spec` serves the
-  `dag.json` of any registered version, to a deploy token too. (#1708)
+  `dag.json` of any registered version to a caller with read on dags (an API
+  token with the `read` scope), which the source side of a promote needs; the
+  destination side needs only a deploy token. A copy keeps the repository
+  path under the destination registry and never moves an existing tag. (#1708)
 time: 2026-10-14T22:00:00.000000000-03:00

@@ -515,28 +515,44 @@ dexaflow promote my_pipeline --from staging --to prod --version v1.4.0-3fa2c1   
   else the `registry` of the `--to` target, else the
   `deploy.defaults.registry` its control plane advertises. When one is set and
   the image is not already in it, the image is copied there by digest, with
-  every layer and platform, byte for byte, and tagged with the version label;
-  the version is registered with the copy (`<registry>/<image name>@sha256:<same
-  digest>`), and only its `image` field differs from the source's `dag.json`.
-  Otherwise the same reference is registered, and the destination cluster must
-  be able to pull it. The copy uses the credentials of `docker login` and of a
-  cloud CLI session for both registries, as a deploy does.
+  every layer and platform, byte for byte (bytes that do not match their
+  digest are refused), and the copy is checked in the destination afterwards.
+  The repository path is kept: `ghcr.io/acme-dev/team-a/etl@sha256:…` promoted
+  to a target whose registry is `registry.acme.dev/prod` becomes
+  `registry.acme.dev/prod/acme-dev/team-a/etl@sha256:…` (same digest). The copy
+  is also tagged with the version label, unless that tag already names another
+  digest there, which refuses the promote: a promote never moves a tag. The
+  version is registered with the copy, and only its `image` field differs from
+  the source's `dag.json`. When the destination already holds this version,
+  nothing is copied. Without a destination registry the same reference is
+  registered, and the destination cluster must be able to pull it. The copy
+  reads and pushes with the credentials of `docker login` and of a cloud CLI
+  session, as a deploy does; a failure names the login command of each
+  registry.
 - **The normal register.** The destination gets the version through
   `POST /api/v2/dags/{dag_id}/versions`, after its dry run
   (`/versions/dry_run`): a refusal (the execution allowlist, the tenant
-  limits, a label already registered there with other content) stops the
-  promote before anything is copied. A DAG the promote creates starts paused
-  as a deploy's would (`is_paused_upon_creation`, else
-  `dags_are_paused_at_creation`), and an existing DAG keeps `is_paused`.
-  Content the destination already has answers that nothing changed.
-- **Audited.** The register's `dag.version.register` audit entry carries
-  `promoted_from` with the source target's name and server URL.
+  limits, a label already registered there with other content), or any answer
+  that is not a dry run other than an older server's `404` or `405`, stops
+  the promote before anything is copied. A DAG the promote creates starts
+  paused if the server or the DAG says so (`is_paused_upon_creation`, else
+  `dags_are_paused_at_creation`), as a deploy's would, and an existing DAG
+  keeps `is_paused`. Content the destination already has answers that nothing
+  changed. When both servers run the same Dexaflow version, the destination
+  records the same spec hash as the source when the image is not copied.
+- **Audited, as claimed.** The register's `dag.version.register` audit entry
+  carries `promoted_from` with the source target's name and server URL as the
+  promoting CLI sent them (`promoted_from` and `promoted_from_server` on the
+  register). The destination records this claim; it does not verify it.
 - **A token for each control plane.** `--from-token` and `--to-token`, else
   the session saved for each server by `dexaflow auth login --target <name>`.
   `DEXAFLOW_TOKEN` is not read, so one token is never sent to two control
-  planes. A `deployer` user, or a token with the `deploy` scope, may promote:
-  it reads the versions and their specs on the source and registers on the
-  destination.
+  planes. The source side reads each version's spec
+  (`GET /api/v2/dags/{dag_id}/dagVersions/{version_number}/spec`), which holds
+  the DAG's source, environment literals and params, so it needs read on dags
+  and, for an API token, the `read` scope: a deploy-only token is refused
+  there with `403`. The destination side needs only what a deploy needs: a
+  `deployer` user or a token with the `deploy` scope.
 - **For pipelines.** `--yes` skips the confirmation prompt, and
   `--output json` prints one JSON document on stdout (the source and
   destination targets, servers, version and images, whether the image was

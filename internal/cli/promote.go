@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path"
 	"strings"
 	"time"
 
@@ -44,14 +43,16 @@ func newPromoteCommand() *cobra.Command {
 			"the same dag.json, with the same image digest, on the --to target. Nothing is built.\n\n" +
 			"The image must be pinned by digest. When the destination pulls from another registry (--registry, " +
 			"else the registry of the --to target, else the deploy defaults its control plane advertises), the " +
-			"image is copied to that registry by digest, byte for byte, and the version registered with the copy; " +
+			"image is copied to that registry by digest, byte for byte, keeping its repository path, and the version " +
+			"registered with the copy (a tag that already names another digest there is never moved); " +
 			"otherwise the same reference is registered.\n\n" +
 			"The destination runs the register's dry run first, so a refusal stops the promote before any copy. " +
 			"A DAG the promote creates starts paused as a deploy's would, and an existing DAG keeps is_paused. " +
 			"The register's audit entry records the source target and server.\n\n" +
 			"Each control plane gets its own token: --from-token and --to-token, else the session saved for its " +
 			"server by `dexaflow auth login --target <name>`. DEXAFLOW_TOKEN is not used, so one token never " +
-			"goes to two control planes.",
+			"goes to two control planes. The source side reads each version's spec, which needs read on dags " +
+			"(an API token with the read scope); the destination side needs only what a deploy needs.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runPromoteCommand(cmd, args[0], o)
@@ -210,13 +211,28 @@ func (p *promoteRun) apply(ctx context.Context, src sourceVersion, dest destImag
 		devPrintf(out, "would register %s %s on %s; nothing was copied or registered (--dry-run)\n", p.dagID, src.version.label, p.to.target.Name)
 		return nil
 	}
-	if dest.copy {
-		if err := copyImage(ctx, out, src.version.image, dest, src.version.label); err != nil {
-			return err
-		}
-		p.rep.Copied = true
+	if err := p.copyIfNeeded(ctx, src, dest); err != nil {
+		return err
 	}
 	return p.register(ctx, post, src.version.label)
+}
+
+// copyIfNeeded copies the image when dest is a copy, unless the dry run said
+// the destination already holds this content (created false), whose image
+// is then already there.
+func (p *promoteRun) copyIfNeeded(ctx context.Context, src sourceVersion, dest destImage) error {
+	if !dest.copy {
+		return nil
+	}
+	if p.rep.DryRun != nil && !p.rep.DryRun.Created {
+		devPrintf(p.cmd.OutOrStdout(), "image:      not copied: %s already holds this version\n", p.to.target.Name)
+		return nil
+	}
+	if err := copyImage(ctx, p.cmd.OutOrStdout(), src.version.image, dest, src.version.label); err != nil {
+		return err
+	}
+	p.rep.Copied = true
+	return nil
 }
 
 // promoteEnds resolves --from and --to to targets, with the token of each.
@@ -350,6 +366,11 @@ func readVersionSpec(ctx context.Context, serverURL, token, dagID string, v list
 		// server predates the route.
 		return nil, fmt.Errorf("reading the spec of %s version %s: %w\n  The source may predate serving a version's spec "+
 			"(GET /api/v2/dags/{dag_id}/dagVersions/{n}/spec); upgrade it to promote from it", dagID, v.label, apiStatusError(se.StatusCode, se.Body))
+	case errors.As(err, &se) && se.StatusCode == http.StatusForbidden:
+		// The spec holds the DAG's source, env literals and params, so it is
+		// a read: a deploy-only token may not read it (ADR 0074).
+		return nil, fmt.Errorf("reading the spec of %s version %s: %w\n  Reading a version's spec needs read on dags on the source, and an API token the dexaflow:read scope "+
+			"(a deploy-only token cannot): pass --from-token with one, or sign in with `%s --target <from>`", dagID, v.label, apiStatusError(se.StatusCode, se.Body), loginCommandPath)
 	case errors.As(err, &se):
 		return nil, fmt.Errorf("reading the spec of %s version %s: %w", dagID, v.label, apiStatusError(se.StatusCode, se.Body))
 	case err != nil:
@@ -390,7 +411,13 @@ func (p *promoteRun) destinationImage(ctx context.Context, image string) (destIm
 	if strings.HasPrefix(repo, registry+"/") {
 		return destImage{ref: image, why: "already in " + registry + ", the registry " + p.to.target.Name + " pulls from"}, nil
 	}
-	dstRepo := registry + "/" + path.Base(repo)
+	// The repository path under the source registry host is kept, so
+	// team-a/etl and team-b/etl stay apart under the destination registry.
+	srcRef, err := name.ParseReference(image)
+	if err != nil {
+		return destImage{}, fmt.Errorf("image %q is not a valid reference: %w", image, err)
+	}
+	dstRepo := registry + "/" + srcRef.Context().RepositoryStr()
 	if _, err := name.NewRepository(dstRepo); err != nil {
 		return destImage{}, fmt.Errorf("the destination repository %s (registry %s, from %s) is not valid: %w", dstRepo, registry, source, err)
 	}
@@ -420,21 +447,41 @@ func (p *promoteRun) destinationRegistry(ctx context.Context) (registry, source 
 }
 
 // copyImage copies image to dest's repository by digest, tagged with label
-// when it is a valid tag.
+// when it is a valid tag, with the registry client deploy uses (credentials
+// as registry.auth_method auto reads them, ADR 0080). A failure names the
+// command that signs in to each registry.
 func copyImage(ctx context.Context, out io.Writer, image string, dest destImage, label string) error {
 	tag := label
 	if _, err := name.NewTag(dest.repo + ":" + label); err != nil {
 		tag = ""
 	}
-	got, err := build.Registry{}.Copy(ctx, image, dest.repo, tag)
+	got, err := registryFor(nil).Copy(ctx, image, dest.repo, tag)
 	if err != nil {
-		return fmt.Errorf("copying the image to %s (credentials for both registries come from `docker login` or a cloud CLI session): %w", dest.registry, err)
-	}
-	if got != dest.ref {
-		return fmt.Errorf("copying the image to %s gave %s, want %s", dest.registry, got, dest.ref)
+		return fmt.Errorf("copying the image to %s: %w\n%s", dest.registry, err, copyLoginHint(image, dest.repo))
 	}
 	devPrintf(out, "copied %s to %s\n", image, got)
 	return nil
+}
+
+// copyLoginHint names, for the source and the destination registry, the
+// command that signs in to it (build.LoginCommand) and, for a registry a
+// cloud owns, the session the client also reads.
+func copyLoginHint(src, dstRepo string) string {
+	var b strings.Builder
+	b.WriteString("  The copy reads the source and pushes to the destination with the credentials of `docker login` and of a cloud CLI session. Sign in to each:")
+	for _, ref := range []string{src, dstRepo} {
+		host := ref
+		if r, err := name.ParseReference(ref); err == nil {
+			host = r.Context().RegistryStr()
+		} else if repo, rerr := name.NewRepository(ref); rerr == nil {
+			host = repo.RegistryStr()
+		}
+		fmt.Fprintf(&b, "\n      %s", build.LoginCommand(host, ""))
+		if cloud, ok := build.DetectCloudRegistry(host); ok {
+			fmt.Fprintf(&b, "   (or sign in to %s: %s)", cloud.Provider, cloud.SessionCommand())
+		}
+	}
+	return b.String()
 }
 
 // dryRunRegister runs the destination's dry run of the register: a refusal
@@ -447,11 +494,15 @@ func (p *promoteRun) dryRunRegister(ctx context.Context, post versionPost, label
 		return fmt.Errorf("reaching %s at %s: %w", p.to.target.Name, p.to.target.Server, err)
 	}
 	if header.Get(dryRunHeader) != "true" {
-		if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		switch status {
+		case http.StatusNotFound, http.StatusMethodNotAllowed:
+			// A server from before the dry run route: the register checks.
+			devPrintf(p.cmd.ErrOrStderr(), "note: %s offers no dry run of the register (an older server); its checks run when it registers\n", p.to.target.Server)
+			return nil
+		case http.StatusUnauthorized, http.StatusForbidden:
 			return fmt.Errorf("%s refused the token: %w\n  Sign in (%s --target %s) or pass --to-token", p.to.target.Name, apiStatusError(status, body), loginCommandPath, p.to.target.Name)
 		}
-		devPrintf(p.cmd.ErrOrStderr(), "note: %s answered the dry run of the register with %d (an older server?); its checks run when it registers\n", p.to.target.Server, status)
-		return nil
+		return fmt.Errorf("%s answered the dry run of the register with %w; nothing was copied or registered", p.to.target.Name, apiStatusError(status, body))
 	}
 	if status >= http.StatusMultipleChoices {
 		return fmt.Errorf("%s would refuse this version: %w", p.to.target.Name, promoteConflictHint(apiStatusError(status, body), status, label))

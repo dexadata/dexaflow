@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -35,6 +36,8 @@ type promoteSource struct {
 	current bool
 	// missing answers the spec route 404, as a server before it does.
 	missing bool
+	// forbidSpec answers the spec route 403, as for a deploy-only token.
+	forbidSpec bool
 }
 
 func (s *promoteSource) spec(n int) map[string]any {
@@ -62,6 +65,11 @@ func (s *promoteSource) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"dag_versions": versions, "total_entries": len(versions)})
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v2/dags/etl/dagVersions/") && strings.HasSuffix(r.URL.Path, "/spec"):
 		n := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v2/dags/etl/dagVersions/"), "/spec")
+		if s.forbidSpec {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"detail":"missing scope dexaflow:read"}`))
+			return
+		}
 		s.specReads = append(s.specReads, n)
 		num := map[string]int{"1": 1, "2": 2, "3": 3}[n]
 		if s.current {
@@ -83,12 +91,18 @@ func (s *promoteSource) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // promoteDest is a fake destination control plane that records each
 // register and dry run.
 type promoteDest struct {
-	mu        sync.Mutex
-	registry  string // deploy.defaults.registry it advertises; "" for none
-	dryCode   int    // the dry run's status; 0 is 200
-	registers []promotePost
-	dryRuns   []promotePost
-	auth      []string
+	mu       sync.Mutex
+	registry string // deploy.defaults.registry it advertises; "" for none
+	dryCode  int    // the dry run's status; 0 is 200
+	// dryBare answers the dry run with this status and no dry-run header,
+	// as an older server (404) or a proxy in front of it does; 0 is off.
+	dryBare int
+	// dryUnchanged makes the dry run answer created false: the destination
+	// already holds this content.
+	dryUnchanged bool
+	registers    []promotePost
+	dryRuns      []promotePost
+	auth         []string
 }
 
 // promotePost is one POST the destination received.
@@ -120,13 +134,17 @@ func (d *promoteDest) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if strings.HasSuffix(r.URL.Path, "/dry_run") {
 			d.dryRuns = append(d.dryRuns, p)
+			if d.dryBare != 0 {
+				w.WriteHeader(d.dryBare)
+				return
+			}
 			w.Header().Set("Dexaflow-Dry-Run", "true")
 			if d.dryCode != 0 {
 				w.WriteHeader(d.dryCode)
 				_, _ = w.Write([]byte(`{"detail":"image not in the allowlist"}`))
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"dag_id": "etl", "created": true, "dag_created": true, "is_paused": true, "dry_run": true})
+			_ = json.NewEncoder(w).Encode(map[string]any{"dag_id": "etl", "created": !d.dryUnchanged, "dag_created": !d.dryUnchanged, "is_paused": true, "dry_run": true})
 			return
 		}
 		d.registers = append(d.registers, p)
@@ -293,8 +311,18 @@ func TestPromoteTokenFlags(t *testing.T) {
 	if _, _, err := e.promote(t, "--from", "dev", "--to", "prod", "--from-token", "a", "--to-token", "b"); err != nil {
 		t.Fatal(err)
 	}
-	if e.src.auth[0] != "Bearer a" || e.dst.auth[len(e.dst.auth)-1] != "Bearer b" {
-		t.Errorf("source auth %v, destination auth %v, want the flags' tokens", e.src.auth, e.dst.auth)
+	for _, a := range e.src.auth {
+		if a != "Bearer a" {
+			t.Errorf("source got Authorization %q, want --from-token's", a)
+		}
+	}
+	for _, a := range e.dst.auth {
+		if a != "Bearer b" {
+			t.Errorf("destination got Authorization %q, want --to-token's", a)
+		}
+	}
+	if len(e.src.auth) == 0 || len(e.dst.auth) == 0 {
+		t.Error("a control plane was not called")
 	}
 }
 
@@ -335,11 +363,13 @@ func TestPromoteCopiesTheImageToTheDestinationRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("promote: %v\n%s", err, out)
 	}
-	want := prodReg + "/prod/etl@" + digest
+	// The source repository path (dev/etl) is kept under the destination
+	// registry, so team-a/etl and team-b/etl never land on one repository.
+	want := prodReg + "/prod/dev/etl@" + digest
 	if len(e.dst.registers) != 1 || e.dst.registers[0].spec["image"] != want {
 		t.Fatalf("registered %+v, want image %s", e.dst.registers, want)
 	}
-	pinned, err := build.Registry{}.Resolve(context.Background(), prodReg+"/prod/etl:v1.2.0-ccc")
+	pinned, err := build.Registry{}.Resolve(context.Background(), prodReg+"/prod/dev/etl:v1.2.0-ccc")
 	if err != nil || pinned.Ref != want {
 		t.Errorf("destination registry holds %q (%v), want %s", pinned.Ref, err, want)
 	}
@@ -363,7 +393,7 @@ func TestPromoteReadsTheDestinationRegistryFromItsCluster(t *testing.T) {
 	if _, _, err := e.promote(t, "--from", "dev", "--to", "prod"); err != nil {
 		t.Fatalf("promote: %v", err)
 	}
-	if want := prodReg + "/cluster/etl@" + digest; len(e.dst.registers) != 1 || e.dst.registers[0].spec["image"] != want {
+	if want := prodReg + "/cluster/dev/etl@" + digest; len(e.dst.registers) != 1 || e.dst.registers[0].spec["image"] != want {
 		t.Errorf("registered %+v, want image %s", e.dst.registers, want)
 	}
 }
@@ -394,10 +424,10 @@ func TestPromoteDryRunRegistersAndCopiesNothing(t *testing.T) {
 	if len(e.dst.registers) != 0 {
 		t.Errorf("--dry-run registered %d versions", len(e.dst.registers))
 	}
-	if len(e.dst.dryRuns) != 1 || e.dst.dryRuns[0].spec["image"] != prodReg+"/prod/etl@"+digest {
+	if len(e.dst.dryRuns) != 1 || e.dst.dryRuns[0].spec["image"] != prodReg+"/prod/dev/etl@"+digest {
 		t.Errorf("dry runs = %+v, want one with the destination image", e.dst.dryRuns)
 	}
-	if _, rerr := (build.Registry{}).Resolve(context.Background(), prodReg+"/prod/etl@"+digest); rerr == nil {
+	if _, rerr := (build.Registry{}).Resolve(context.Background(), prodReg+"/prod/dev/etl@"+digest); rerr == nil {
 		t.Error("--dry-run copied the image")
 	}
 	if !strings.Contains(out, "would copy") || !strings.Contains(out, "would register") {
@@ -474,5 +504,68 @@ func TestPromoteNamesASourceWithoutTheSpecRoute(t *testing.T) {
 	_, _, err = e.promote(t, "--from", "dev", "--to", "prod")
 	if err == nil || !strings.Contains(err.Error(), "predate") {
 		t.Fatalf("err = %v, want one saying the source may predate the route", err)
+	}
+}
+
+// Reading a version's spec needs read on the source (a deploy-only token
+// cannot): a 403 there says which scope the --from token needs.
+func TestPromoteNamesTheReadScopeTheSourceNeeds(t *testing.T) {
+	e := newPromoteEnv(t, "registry.example/team/etl@"+promoteDigest, "", "")
+	e.src.forbidSpec = true
+	_, _, err := e.promote(t, "--from", "dev", "--to", "prod")
+	if err == nil || !strings.Contains(err.Error(), "--from-token") || !strings.Contains(err.Error(), "dexaflow:read") {
+		t.Fatalf("err = %v, want one naming the read scope and --from-token", err)
+	}
+	if len(e.dst.registers)+len(e.dst.dryRuns) != 0 {
+		t.Error("the destination was called")
+	}
+}
+
+// Only an older server's 404 or 405 lets the promote go on without a dry
+// run; any other answer without the dry-run header (a proxy's 502, a 500)
+// stops it before the copy and the register.
+func TestPromoteDryRunFailsClosed(t *testing.T) {
+	for code, wantRegister := range map[int]bool{
+		http.StatusNotFound: true, http.StatusMethodNotAllowed: true,
+		http.StatusBadGateway: false, http.StatusInternalServerError: false, http.StatusTeapot: false,
+	} {
+		e := newPromoteEnv(t, "registry.example/team/etl@"+promoteDigest, "", "")
+		e.dst.dryBare = code
+		_, _, err := e.promote(t, "--from", "dev", "--to", "prod")
+		if wantRegister && (err != nil || len(e.dst.registers) != 1) {
+			t.Errorf("dry run %d: err = %v, registers = %d; want the register to go on", code, err, len(e.dst.registers))
+		}
+		if !wantRegister && (err == nil || !strings.Contains(err.Error(), fmt.Sprint(code)) || len(e.dst.registers) != 0) {
+			t.Errorf("dry run %d: err = %v, registers = %d; want a stop naming the status", code, err, len(e.dst.registers))
+		}
+	}
+}
+
+// Content the destination already holds (the dry run says created false) is
+// not copied again; the register reports it unchanged.
+func TestPromoteSkipsTheCopyOfContentTheDestinationHolds(t *testing.T) {
+	devReg, prodReg := ociRegistry(t), ociRegistry(t)
+	digest := pushRandom(t, devReg+"/dev/etl:v1.2.0-ccc")
+	e := newPromoteEnv(t, devReg+"/dev/etl@"+digest, devReg+"/dev", prodReg+"/prod")
+	e.dst.dryUnchanged = true
+	if _, _, err := e.promote(t, "--from", "dev", "--to", "prod"); err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+	if _, rerr := (build.Registry{}).Resolve(context.Background(), prodReg+"/prod/dev/etl@"+digest); rerr == nil {
+		t.Error("the image was copied although the destination holds the content")
+	}
+}
+
+// A copy that fails names the command that signs in to each registry.
+func TestPromoteCopyFailureNamesTheLogins(t *testing.T) {
+	devReg := ociRegistry(t)
+	digest := pushRandom(t, devReg+"/dev/etl:v1.2.0-ccc")
+	e := newPromoteEnv(t, devReg+"/dev/etl@"+digest, devReg+"/dev", "127.0.0.1:1/prod")
+	_, _, err := e.promote(t, "--from", "dev", "--to", "prod")
+	if err == nil || !strings.Contains(err.Error(), "docker login 127.0.0.1:1") || !strings.Contains(err.Error(), "docker login "+devReg) {
+		t.Fatalf("err = %v, want the login command of both registries", err)
+	}
+	if len(e.dst.registers) != 0 {
+		t.Error("registered after a failed copy")
 	}
 }

@@ -346,7 +346,7 @@ func dagVersionSpecHandler(sources DagSourceReader) gin.HandlerFunc {
 func registerUITasks(r gin.IRouter, specs DagSpecReader, sources DagSourceReader) {
 	if sources != nil {
 		r.GET("/api/v2/dagSources/:dag_id", RequirePermission("read", "dag"), dagSourceHandler(sources))
-		r.GET("/api/v2/dags/:dag_id/dagVersions/:version_number/spec", RequireDeployRead(), dagVersionSpecHandler(sources))
+		r.GET("/api/v2/dags/:dag_id/dagVersions/:version_number/spec", RequirePermission("read", "dag"), dagVersionSpecHandler(sources))
 	}
 	if specs == nil {
 		return
