@@ -47,23 +47,28 @@ type codeRegistry interface {
 
 // CodeLayer builds the DAG image as Split says. With Deps set, the
 // dependency image is already in the registry and no daemon runs (the
-// code-layer path); without it, the dependency layer (Split.Wheels) or the
-// local daemon builds and pushes the dependency image first.
+// code-layer path); without it, the dependency layer (Split.Wheels), the
+// remote builder or the local daemon builds and pushes the dependency image
+// first.
 type CodeLayer struct {
 	// Split names the dependency image and its Dockerfile.
 	Split Split
-	// Deps is the dependency image found in the registry, or nil when the
-	// daemon builds it.
+	// Deps is the dependency image found in the registry, or nil when it is
+	// built first.
 	Deps *Pinned
-	// Daemon builds the dependency image when Deps is nil.
+	// Daemon builds the dependency image when Deps is nil and neither the
+	// wheels nor Remote do.
 	Daemon LocalDaemon
+	// Remote builds the dependency image in the daemon's place when it is
+	// set (path 4): when the wheels do not apply, or fail.
+	Remote Remote
 	// Registry reads digests and pushes the image.
 	Registry codeRegistry
 }
 
 // Path is PathCodeLayer when the dependency image is reused,
-// PathDependencyLayer when it is built from wheels, PathLocalDaemon when
-// the daemon builds it.
+// PathDependencyLayer when it is built from wheels, PathRemote when the
+// remote builder builds it, PathLocalDaemon when the daemon does.
 func (c CodeLayer) Path() Path {
 	switch {
 	case c.Deps != nil:
@@ -71,7 +76,16 @@ func (c CodeLayer) Path() Path {
 	case c.Split.Wheels != nil:
 		return PathDependencyLayer
 	}
-	return PathLocalDaemon
+	return c.depsBuilder().Path()
+}
+
+// depsBuilder is the builder of the dependency image when no wheels build
+// it: the remote builder when there is one, the daemon otherwise.
+func (c CodeLayer) depsBuilder() Builder {
+	if c.Remote != nil {
+		return c.Remote
+	}
+	return c.Daemon
 }
 
 // Describe names the path, and what builds the dependency image when it is
@@ -83,7 +97,7 @@ func (c CodeLayer) Describe() string {
 	case c.Split.Wheels != nil:
 		return fmt.Sprintf("%s (%s), then %s", PathDependencyLayer, c.Split.Wheels.Installer.Describe(), PathCodeLayer)
 	}
-	return c.Daemon.Describe() + " for the dependency image, then " + string(PathCodeLayer)
+	return c.depsBuilder().Describe() + " for the dependency image, then " + string(PathCodeLayer)
 }
 
 // Build pushes the DAG image: the dependency image, built first when Deps is
@@ -116,16 +130,17 @@ func (c CodeLayer) Build(ctx context.Context, req Request) (Result, error) {
 	return res, nil
 }
 
-// buildDeps builds and pushes the dependency image, from wheels or with the
-// daemon, reads back what the registry holds, and says which path built it.
-// When the wheels fail, the daemon builds the dependency image under
-// Split.DaemonDepsImage, if there is one and the daemon's tool is on PATH;
-// otherwise the wheel failure is the error.
+// buildDeps builds and pushes the dependency image, from wheels, with the
+// remote builder or with the daemon, reads back what the registry holds, and
+// says which path built it. When the wheels fail, the remote builder, or the
+// daemon when its tool is on PATH, builds the dependency image under
+// Split.DaemonDepsImage, if there is one; otherwise the wheel failure is the
+// error.
 func (c CodeLayer) buildDeps(ctx context.Context, req Request) (Pinned, Path, error) {
 	w := c.Split.Wheels
 	if w == nil {
 		pinned, err := c.daemonDeps(ctx, req, c.Split.DepsImage)
-		return pinned, PathLocalDaemon, err
+		return pinned, c.depsBuilder().Path(), err
 	}
 	pinned, err := c.wheelDeps(ctx, req, w)
 	if err == nil {
@@ -142,19 +157,23 @@ func (c CodeLayer) buildDeps(ctx context.Context, req Request) (Pinned, Path, er
 
 // daemonFallback gets the dependency image of the daemon's key after the
 // wheels failed with why: the one the registry already holds, or one the
-// daemon builds when its tool is on PATH; otherwise why is the error.
+// remote builder builds, or the daemon when its tool is on PATH; otherwise
+// why is the error.
 func (c CodeLayer) daemonFallback(ctx context.Context, req Request, why error) (Pinned, Path, error) {
 	image := c.Split.DaemonDepsImage
 	if found, _, _ := reusable(ctx, c.Registry, image, req.Platforms, "dependency image "+image); found != nil { //nolint:errcheck // any read failure means it is not reused
 		c.note(req, "%v\nthe registry already holds the dependency image %s, so the DAG code is appended to it\n", why, image)
 		return *found, PathCodeLayer, nil
 	}
-	if _, lerr := exec.LookPath(c.Daemon.tool()); lerr != nil {
+	by := "the daemon"
+	if c.Remote != nil {
+		by = "the remote builder"
+	} else if _, lerr := exec.LookPath(c.Daemon.tool()); lerr != nil {
 		return Pinned{}, "", why
 	}
-	c.note(req, "%v\nthe daemon builds the dependency image %s instead\n", why, image)
+	c.note(req, "%v\n%s builds the dependency image %s instead\n", why, by, image)
 	pinned, err := c.daemonDeps(ctx, req, image)
-	return pinned, PathLocalDaemon, err
+	return pinned, c.depsBuilder().Path(), err
 }
 
 // note writes a progress note to the build's standard error, if it has one.
@@ -176,8 +195,10 @@ func (c CodeLayer) wheelDeps(ctx context.Context, req Request, w *DependencyLaye
 	return pinned, nil
 }
 
-// daemonDeps has the daemon build and push the dependency image under
-// image, from its Dockerfile in an empty directory, and reads it back.
+// daemonDeps has the daemon, or the remote builder in its place, build and
+// push the dependency image under image, from its Dockerfile in an empty
+// directory (an empty listed context for the remote builder), and reads it
+// back.
 func (c CodeLayer) daemonDeps(ctx context.Context, req Request, image string) (Pinned, error) {
 	dir, err := os.MkdirTemp("", "dexaflow-deps-")
 	if err != nil {
@@ -188,8 +209,8 @@ func (c CodeLayer) daemonDeps(ctx context.Context, req Request, image string) (P
 	if werr := os.WriteFile(dockerfile, []byte(c.Split.Dockerfile), 0o600); werr != nil {
 		return Pinned{}, fmt.Errorf("writing the Dockerfile of the dependency image: %w", werr)
 	}
-	res, err := c.Daemon.Build(ctx, Request{
-		Image: image, Dockerfile: dockerfile, ContextDir: dir, Platforms: req.Platforms,
+	res, err := c.depsBuilder().Build(ctx, Request{
+		Image: image, Dockerfile: dockerfile, ContextDir: dir, ContextFiles: []LayerFile{}, Platforms: req.Platforms,
 		Push: true, Pin: true, Stdout: req.Stdout, Stderr: req.Stderr,
 	})
 	if err != nil {

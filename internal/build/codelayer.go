@@ -58,6 +58,10 @@ type layerKind string
 const (
 	kindCode       layerKind = "code"
 	kindDependency layerKind = "dependency"
+	// kindContext is the build context a remote builder receives: an
+	// archive, not an image layer, so its entries sit at the root and a
+	// .wh. name is only a name.
+	kindContext layerKind = "build context"
 )
 
 // codeLayer packs files as the code layer, under Workdir.
@@ -121,7 +125,7 @@ func writeEntry(tw *tar.Writer, kind layerKind, root string, f LayerFile) error 
 	if err != nil {
 		return err
 	}
-	h := &tar.Header{Name: strings.Trim(root, "/") + "/" + rel, ModTime: layerTime, Format: tar.FormatPAX}
+	h := &tar.Header{Name: path.Join(strings.Trim(root, "/"), rel), ModTime: layerTime, Format: tar.FormatPAX}
 	var body []byte
 	switch {
 	case f.Dir:
@@ -156,6 +160,9 @@ func layerPath(kind layerKind, root, p string) (string, error) {
 		return "", fmt.Errorf("the layer path %q is not under %s", p, root)
 	}
 	for _, seg := range strings.Split(clean, "/") {
+		if kind == kindContext {
+			break
+		}
 		if strings.HasPrefix(seg, ".wh.") && kind == kindCode {
 			return "", fmt.Errorf("the project file %q starts with .wh., which an image layer reads as a deletion; rename it or add it to exclude_paths", p)
 		}

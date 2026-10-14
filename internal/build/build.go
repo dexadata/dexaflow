@@ -5,12 +5,13 @@
 // builders are tried in (ResolutionOrder): skip the build when the dependency
 // image already exists, append a code layer, pack a daemonless dependency
 // layer, use a remote builder, and only then fall back to a local container
-// daemon. Three exist today: Existing, the skip path in its first form (the
+// daemon. Four exist today: Existing, the skip path in its first form (the
 // whole image for this content label is already in the registry, see Select);
 // CodeLayer, which appends the DAG code to a dependency image the registry
 // holds, or first builds that dependency image, from wheels without a daemon
-// (DependencyLayer, ADR 0078) or with the daemon (ADR 0077); and
-// LocalDaemon. Every builder returns a Result that carries the digest of the image it
+// (DependencyLayer, ADR 0078), with the remote builder or with the daemon
+// (ADR 0077); CloudBuild, the remote builder on Google Cloud Build (Remote,
+// ADR 0083); and LocalDaemon. Every builder returns a Result that carries the digest of the image it
 // pushed, so the caller pins dag.json to exactly those bytes (ADR 0003,
 // ADR 0041).
 //
@@ -75,6 +76,12 @@ type Request struct {
 	// Code is the DAG project files of the code layer, for a split build
 	// (Split); other builders read ContextDir.
 	Code []LayerFile
+	// ContextFiles is the build context as the build would read it, the
+	// files of ContextDir that the .dockerignore keeps, for a builder that
+	// sends the context to another machine (the remote path). nil means not
+	// listed: such a builder refuses to run rather than send the whole
+	// directory; an empty list is an empty context.
+	ContextFiles []LayerFile
 	// Stdout and Stderr receive the builder's own output.
 	Stdout io.Writer
 	Stderr io.Writer

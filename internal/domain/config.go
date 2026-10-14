@@ -139,6 +139,10 @@ type BuildConfig struct {
 	Context    string            `json:"context,omitempty" yaml:"context,omitempty"`
 	Platforms  []string          `json:"platforms,omitempty" yaml:"platforms,omitempty"`
 	Labels     map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
+	// RemoteBuilder is the remote builder for builds no daemonless path
+	// covers (ADR 0083); nil leaves those to the target's or workspace's
+	// remote_builder, then the local daemon.
+	RemoteBuilder *RemoteBuilderConfig `json:"remote_builder,omitempty" yaml:"remote_builder,omitempty"`
 }
 
 // RegistryConfig describes where the built image is pushed and how it is tagged.
@@ -289,6 +293,11 @@ func (c *LeoflowConfig) Validate() error {
 	}
 	if err := c.validateBuildDockerfile(); err != nil {
 		return err
+	}
+	if c.Build != nil {
+		if err := c.Build.RemoteBuilder.Validate("build.remote_builder"); err != nil {
+			return err
+		}
 	}
 	return c.ValidateDockerfileValues()
 }
