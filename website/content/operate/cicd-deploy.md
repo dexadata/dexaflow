@@ -1248,8 +1248,11 @@ the logic is the same on every system. On each push to the branch (`--branch`,
    when `cosign` is on the runner, requires its signature. Pass
    `--cli-version vX.Y.Z` to pin another release, `v0.5.0` or later (a CLI
    built from source must); `DEXAFLOW_CLI_VERSION` overrides it in the job. On
-   GitHub this is the step named `Install dexaflow`, the one step to replace
-   with a `setup-dexaflow` action once one is published;
+   GitHub the step named `Install dexaflow` uses the
+   [setup-dexaflow action](#the-setup-dexaflow-action) of the same release
+   instead, pinned by the commit of its tag, so the workflow needs `v0.5.4` or
+   later. The commit is this CLI's own, or for another `--cli-version` the one
+   `git ls-remote` finds for the tag on GitHub;
 2. installs [uv](/operate/builders/#building-the-dependency-image-from-wheels)
    when the runner has none, from PyPI with `--require-hashes` against the
    wheel hashes the script carries, so dependency images are built from wheels
@@ -1367,10 +1370,11 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      # Installs the pinned CLI. This is the one step to replace with the
-      # setup-dexaflow action once it is published.
+      # Installs the pinned CLI, after checking its signature and checksum.
       - name: Install dexaflow
-        run: sh ci/dexaflow-deploy.sh install
+        uses: dexadata/dexaflow/.github/actions/setup-dexaflow@<sha> # vX.Y.Z
+        with:
+          version: vX.Y.Z
       - name: Log in to ghcr.io
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:

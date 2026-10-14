@@ -2,17 +2,20 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"fmt"
 	"io"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -53,6 +56,78 @@ const (
 // variable the script sets (DEXAFLOW_VERSION, DEXAFLOW_NO_SETUP,
 // DEXAFLOW_NO_PATH, DEXAFLOW_INSTALL_DIR).
 const ciMinCLIVersion = "v0.5.0"
+
+// ciActionMinVersion is the first release that ships the setup-dexaflow
+// action the GitHub workflow installs the CLI with.
+const ciActionMinVersion = "v0.5.4"
+
+// ciReleaseRepo is the repository the releases, and the action, come from.
+const ciReleaseRepo = "https://github.com/dexadata/dexaflow.git"
+
+// ciCommitRe matches a full commit SHA.
+var ciCommitRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// ciTagCommit finds the commit release tag points to, for pinning the
+// setup-dexaflow action by commit. It is a variable only so the tests of
+// this package answer without the network; nothing else assigns it.
+var ciTagCommit = lookupTagCommit
+
+// lookupTagCommit asks the repository which commit tag points to, with
+// git ls-remote: the peeled entry of an annotated tag, else the tag itself.
+func lookupTagCommit(ctx context.Context, tag string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	//nolint:gosec // G204: fixed git binary; tag matched ciReleaseRe.
+	c := exec.CommandContext(ctx, "git", "ls-remote", "--tags", ciReleaseRepo, "refs/tags/"+tag, "refs/tags/"+tag+"^{}")
+	c.Env = gitEnv(os.Environ())
+	out, err := c.Output()
+	if err != nil {
+		return "", fmt.Errorf("git ls-remote %s: %w", ciReleaseRepo, err)
+	}
+	return tagCommitIn(string(out), tag)
+}
+
+// tagCommitIn reads the commit of tag from git ls-remote output: the peeled
+// entry (tag^{}) of an annotated tag, else the entry of a lightweight one.
+func tagCommitIn(out, tag string) (string, error) {
+	var plain, peeled string
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		sha, ref, ok := strings.Cut(line, "\t")
+		switch {
+		case !ok || !ciCommitRe.MatchString(sha):
+		case ref == "refs/tags/"+tag+"^{}":
+			peeled = sha
+		case ref == "refs/tags/"+tag:
+			plain = sha
+		}
+	}
+	if peeled != "" {
+		return peeled, nil
+	}
+	if plain == "" {
+		return "", fmt.Errorf("%s has no tag %s", ciReleaseRepo, tag)
+	}
+	return plain, nil
+}
+
+// ciActionCommit is the commit the workflow pins the setup-dexaflow action
+// to: this CLI's own commit when it is the release being pinned, else the
+// commit the release tag points to.
+func ciActionCommit(ctx context.Context, cliVersion string) (string, error) {
+	if semverLess(cliVersion, ciActionMinVersion) {
+		return "", fmt.Errorf("the GitHub workflow installs the CLI with the setup-dexaflow action, which ships from %s; "+
+			"pass --cli-version %s or later (%s is older)", ciActionMinVersion, ciActionMinVersion, cliVersion)
+	}
+	info := version.Get()
+	if "v"+strings.TrimPrefix(info.Version, "v") == cliVersion && ciCommitRe.MatchString(info.GitCommit) {
+		return info.GitCommit, nil
+	}
+	sha, err := ciTagCommit(ctx, cliVersion)
+	if err != nil {
+		return "", fmt.Errorf("finding the commit of %s, to pin the setup-dexaflow action by: %w", cliVersion, err)
+	}
+	return sha, nil
+}
 
 // ciPythonVersion is the Python the pipelines put on the runner for the
 // parser (3.11 to 3.13).
@@ -121,6 +196,9 @@ type ciPlan struct {
 	BranchSet bool
 	// Environment is the GitHub environment the job runs in.
 	Environment string
+	// CLICommit is the commit of CLIVersion, which the GitHub workflow pins
+	// the setup-dexaflow action to.
+	CLICommit string
 	// MinCLIVersion is ciMinCLIVersion, for the script's help.
 	MinCLIVersion string
 	// UVHashes are the hashes the script installs uv with.
@@ -242,6 +320,11 @@ func runCIInit(cmd *cobra.Command, system string, o ciInitOptions) error {
 	}
 	plan.BranchSet = cmd.Flags().Changed("branch")
 	plan.Environment = o.environment
+	if system == "github" {
+		if plan.CLICommit, err = ciActionCommit(cmdContext(cmd), cliVersion); err != nil {
+			return err
+		}
+	}
 	files, err := renderCI(plan)
 	if err != nil {
 		return err

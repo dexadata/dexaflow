@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"io/fs"
@@ -21,6 +22,28 @@ var updateCIGolden = flag.Bool("update-ci-golden", false, "rewrite the golden fi
 
 // ciGoldenVersion is the CLI version the golden files pin.
 const ciGoldenVersion = "v0.6.0"
+
+// ciGoldenCommit stands for the commit of ciGoldenVersion, which the
+// GitHub workflow pins the setup-dexaflow action to.
+const ciGoldenCommit = "0123456789abcdef0123456789abcdef01234567"
+
+// stubTagCommit makes the lookup of a release's commit answer
+// ciGoldenCommit for ciGoldenVersion, and fail for any other tag, without
+// the network.
+func stubTagCommit(t *testing.T) *[]string {
+	t.Helper()
+	var asked []string
+	saved := ciTagCommit
+	ciTagCommit = func(_ context.Context, tag string) (string, error) {
+		asked = append(asked, tag)
+		if tag == ciGoldenVersion {
+			return ciGoldenCommit, nil
+		}
+		return "", errors.New("no such tag")
+	}
+	t.Cleanup(func() { ciTagCommit = saved })
+	return &asked
+}
 
 // ciCase is one golden case: a workspace and the system it is generated for.
 type ciCase struct {
@@ -57,6 +80,7 @@ func ciWorkspace(t *testing.T, registry, orders string) string {
 // ciInit runs `dexaflow ci init` in root with the golden version pinned.
 func ciInit(t *testing.T, root string, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
+	stubTagCommit(t)
 	t.Chdir(root)
 	full := append([]string{"ci", "init"}, args...)
 	full = append(full, "--cli-version", ciGoldenVersion, "--config", emptyConfig(t))
@@ -394,8 +418,13 @@ func TestCIInitNeedsAReleaseVersion(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "v0.5.0") {
 		t.Errorf("err = %v, want a refusal of a release older than v0.5.0", err)
 	}
-	if _, _, err := run(t, "ci", "init", "github", "--cli-version", "v0.5.0", "--stdout", "--config", emptyConfig(t)); err != nil {
+	if _, _, err = run(t, "ci", "init", "generic", "--cli-version", "v0.5.0", "--stdout", "--config", emptyConfig(t)); err != nil {
 		t.Errorf("v0.5.0 must be accepted: %v", err)
+	}
+	// The setup-dexaflow action ships from v0.5.4.
+	_, _, err = run(t, "ci", "init", "github", "--cli-version", "v0.5.3", "--stdout", "--config", emptyConfig(t))
+	if err == nil || !strings.Contains(err.Error(), "v0.5.4") {
+		t.Errorf("err = %v, want a refusal of a release without the setup-dexaflow action", err)
 	}
 }
 
@@ -597,14 +626,14 @@ func TestCIRecipesMatchGenerated(t *testing.T) {
 			t.Errorf("block %s names an unknown case %q", path, name)
 			continue
 		}
-		want := strings.ReplaceAll(files[path], ciGoldenVersion, "vX.Y.Z")
+		want := strings.ReplaceAll(strings.ReplaceAll(files[path], ciGoldenVersion, "vX.Y.Z"), ciGoldenCommit, "<sha>")
 		if want == "" {
 			t.Errorf("case %s writes no %s", name, path)
 			continue
 		}
 		if body != want {
-			t.Errorf("the recipe %s (%s) in cicd-deploy.md is not what ci init writes; paste testdata/ci/%s/%s with %s as vX.Y.Z:\n%s",
-				path, name, name, path, ciGoldenVersion, body)
+			t.Errorf("the recipe %s (%s) in cicd-deploy.md is not what ci init writes; paste testdata/ci/%s/%s with %s as vX.Y.Z and %s as <sha>:\n%s",
+				path, name, name, path, ciGoldenVersion, ciGoldenCommit, body)
 		}
 		seen[name+"/"+path] = true
 	}
@@ -856,5 +885,57 @@ func TestCIGitLabBase(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestCIInitGitHubInstallsWithTheAction installs the CLI on GitHub with
+// the setup-dexaflow action of the same release, pinned by the commit of
+// its tag, and refuses when that commit cannot be found.
+func TestCIInitGitHubInstallsWithTheAction(t *testing.T) {
+	workflow := ciGolden(t)["github"][".github/workflows/dexaflow-deploy.yaml"]
+	for _, want := range []string{
+		"uses: dexadata/dexaflow/.github/actions/setup-dexaflow@" + ciGoldenCommit + " # " + ciGoldenVersion,
+		"version: " + ciGoldenVersion,
+	} {
+		if !strings.Contains(workflow, want) {
+			t.Errorf("the workflow lacks %q:\n%s", want, workflow)
+		}
+	}
+	if strings.Contains(workflow, ciScriptPath+" install") {
+		t.Errorf("the workflow still installs with the script:\n%s", workflow)
+	}
+	isolateCLIEnv(t)
+	root := ciWorkspace(t, "ghcr.io/acme/dags", "")
+	asked := stubTagCommit(t)
+	t.Chdir(root)
+	_, _, err := run(t, "ci", "init", "github", "--cli-version", "v0.7.0", "--stdout", "--config", emptyConfig(t))
+	if err == nil || !strings.Contains(err.Error(), "v0.7.0") {
+		t.Errorf("err = %v, want a refusal naming the release whose commit is unknown", err)
+	}
+	if !slices.Equal(*asked, []string{"v0.7.0"}) {
+		t.Errorf("looked up %v, want the commit of v0.7.0", *asked)
+	}
+	*asked = nil
+	if _, _, err := run(t, "ci", "init", "gitlab", "--cli-version", "v0.7.0", "--stdout", "--config", emptyConfig(t)); err != nil || len(*asked) > 0 {
+		t.Errorf("only the GitHub workflow pins a commit: err %v, looked up %v", err, *asked)
+	}
+}
+
+// TestTagCommitIn takes the commit an annotated tag points to, not the tag
+// object, and a lightweight tag's own entry.
+func TestTagCommitIn(t *testing.T) {
+	tagObj, commit := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	annotated := tagObj + "\trefs/tags/v0.6.0\n" + commit + "\trefs/tags/v0.6.0^{}\n"
+	if got, err := tagCommitIn(annotated, "v0.6.0"); err != nil || got != commit {
+		t.Errorf("annotated: %q, %v; want the peeled commit %s", got, err, commit)
+	}
+	if got, err := tagCommitIn(commit+"\trefs/tags/v0.6.0\n", "v0.6.0"); err != nil || got != commit {
+		t.Errorf("lightweight: %q, %v", got, err)
+	}
+	if _, err := tagCommitIn(commit+"\trefs/tags/v0.6.1\n", "v0.6.0"); err == nil {
+		t.Error("another tag's entry must not be taken")
+	}
+	if _, err := tagCommitIn("", "v0.6.0"); err == nil {
+		t.Error("no entry must be an error")
 	}
 }
