@@ -229,7 +229,7 @@ func (d cliConsentDeps) decide(c *gin.Context, p cliPending, decision string) {
 // page, never a redirect.
 func (d cliConsentDeps) refuse(c *gin.Context, status int, p cliPending, reason string) {
 	if d.logger != nil {
-		d.logger.Warn("oidc: cli consent refused", "reason", reason, "tenant", p.Tenant, "user", p.UserID)
+		d.logger.Warn("oidc: cli consent refused", "reason", reason, "tenant", logSafe(p.Tenant), "user", logSafe(p.UserID))
 	}
 	recordAuth(c, d.logger, d.audit, auditCLIConsent, p, "denied", map[string]string{"reason": reason})
 	renderConsentPage(c, status, consentPage{

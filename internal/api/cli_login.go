@@ -488,7 +488,7 @@ func cliTokenHandler(codes *cliCodes, logger *slog.Logger, audit AuthAuditWriter
 // one refusal.
 func refuseCLICode(c *gin.Context, logger *slog.Logger, audit AuthAuditWriter, p cliPending, reason string) {
 	if logger != nil {
-		logger.Warn("oidc: cli sign-in code refused", "reason", reason, "tenant", p.Tenant, "user", p.UserID)
+		logger.Warn("oidc: cli sign-in code refused", "reason", reason, "tenant", logSafe(p.Tenant), "user", logSafe(p.UserID))
 	}
 	recordAuth(c, logger, audit, auditCLICode, p, "denied", map[string]string{"reason": reason})
 	AbortProblem(c, http.StatusBadRequest, "bad request", cliCodeRefused)
