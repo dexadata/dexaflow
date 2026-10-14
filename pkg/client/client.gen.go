@@ -476,6 +476,9 @@ type DagCurrentVersionChange struct {
 	// From The version that was current before; null when none was.
 	From *DagVersion `json:"from"`
 	To   DagVersion  `json:"to"`
+
+	// Warnings What the change let through with a warning (a task that does not fit its size under executor.unit.enforce=warn, an image not pinned by digest under deploy.require_digest=warn). Absent when there is none.
+	Warnings *[]string `json:"warnings,omitempty"`
 }
 
 // DagCurrentVersionRequest Exactly one of version and version_number.
@@ -1311,7 +1314,7 @@ type ClientInterface interface {
 
 	// SetDagCurrentVersionWithBody Make a registered version current (Dexaflow)
 	//
-	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
+	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -1320,7 +1323,7 @@ type ClientInterface interface {
 
 	// SetDagCurrentVersion Make a registered version current (Dexaflow)
 	//
-	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
+	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -1910,7 +1913,7 @@ func (c *Client) ClearTaskInstances(ctx context.Context, dagId DagID, body Clear
 
 // SetDagCurrentVersionWithBody Make a registered version current (Dexaflow)
 //
-// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
+// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
 //
 // Takes any type of body and a specified content type.
 //
@@ -1929,7 +1932,7 @@ func (c *Client) SetDagCurrentVersionWithBody(ctx context.Context, dagId DagID, 
 
 // SetDagCurrentVersion Make a registered version current (Dexaflow)
 //
-// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
+// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -4733,7 +4736,7 @@ type ClientWithResponsesInterface interface {
 
 	// SetDagCurrentVersionWithBodyWithResponse Make a registered version current (Dexaflow)
 	//
-	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
+	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -4742,7 +4745,7 @@ type ClientWithResponsesInterface interface {
 
 	// SetDagCurrentVersionWithResponse Make a registered version current (Dexaflow)
 	//
-	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
+	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7376,7 +7379,7 @@ func (c *ClientWithResponses) ClearTaskInstancesWithResponse(ctx context.Context
 
 // SetDagCurrentVersionWithBodyWithResponse Make a registered version current (Dexaflow)
 //
-// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
+// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -7391,7 +7394,7 @@ func (c *ClientWithResponses) SetDagCurrentVersionWithBodyWithResponse(ctx conte
 
 // SetDagCurrentVersionWithResponse Make a registered version current (Dexaflow)
 //
-// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
+// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

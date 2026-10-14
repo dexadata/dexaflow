@@ -71,10 +71,7 @@ func printRegisterWarnings(w io.Writer, body []byte) {
 	if json.Unmarshal(body, &answer) != nil {
 		return
 	}
-	for _, msg := range answer.Warnings {
-		//nolint:errcheck // advisory: the register succeeded
-		fmt.Fprintf(w, "warning: the server: %s\n", msg)
-	}
+	printNewWarnings(w, answer.Warnings, nil)
 }
 
 // pushVersion POSTs a dag.json to the control plane's versions endpoint.

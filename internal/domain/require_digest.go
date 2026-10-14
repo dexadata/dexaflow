@@ -5,7 +5,8 @@ import (
 )
 
 // DigestRequirement is deploy.require_digest (#1703): what registering a
-// version does with an image that is not pinned by a full sha256 digest. A
+// version, or making one current again, does with an image that is not
+// pinned by a full sha256 digest. A
 // tag can name other bytes tomorrow, and nodes that pulled it at different
 // times can run different code for one version.
 type DigestRequirement string
@@ -60,4 +61,25 @@ func (r DigestRequirement) CheckImage(image string) (warning string, err error) 
 	}
 	return fmt.Sprintf("image %q is not pinned by digest (<repository>@sha256:<64 hex>); "+
 		"it is accepted under deploy.require_digest=warn, and refused once the server enforces it. %s", image, pinHint), nil
+}
+
+// currentHint is the way out for a version that cannot be made current
+// again: it is already registered, so pinning a new register does not help.
+const currentHint = "Redeploy its sources with `dexaflow deploy`, which registers the image by digest, " +
+	"or set deploy.require_digest=warn to make it current"
+
+// CheckCurrentImage is CheckImage for making a registered version current
+// again (a rollback): the same decision, with a way out that fits a version
+// already registered.
+func (r DigestRequirement) CheckCurrentImage(image string) (warning string, err error) {
+	if !r.Active() || IsDigestPinned(image) {
+		return "", nil
+	}
+	if r == DigestRequireEnforce {
+		return "", fmt.Errorf("this version's image %q is not pinned by digest (<repository>@sha256:<64 hex>), "+
+			"and this server refuses to make it current (deploy.require_digest=enforce). %s", image, currentHint)
+	}
+	return fmt.Sprintf("this version's image %q is not pinned by digest (<repository>@sha256:<64 hex>); "+
+		"it is made current under deploy.require_digest=warn, and refused once the server enforces it. "+
+		"Redeploy its sources with `dexaflow deploy` to register it by digest", image), nil
 }

@@ -142,7 +142,10 @@ func TestRequireDigestDryRunAnswersWithoutRecording(t *testing.T) {
 
 // Making a version current again applies the setting as a register would,
 // like every other register check, so enforcing is not bypassed by a
-// rollback to a version registered by tag before.
+// rollback to a version registered by tag before. The refusal names the way
+// out of a rollback (warn, or a deploy of the sources), not the register's
+// pinning steps; under warn the caller gets the warning, and the repository
+// the mode for the audit entry.
 func TestRequireDigestAppliesToSetCurrent(t *testing.T) {
 	tagged := domain.DAGSpec{
 		SchemaVersion: "1.0", DagID: "etl", DagVersion: "v1", Image: "ghcr.io/acme/etl:v1",
@@ -151,14 +154,40 @@ func TestRequireDigestAppliesToSetCurrent(t *testing.T) {
 	repo := &fakeVersionRepo{change: rollbackChange(), specs: map[string]domain.DAGSpec{"v1": tagged}}
 	counts, logs := &fakeUnpinned{}, &bytes.Buffer{}
 	rec := authGet(digestServer(repo, domain.DigestRequireEnforce, counts, logs), http.MethodPut, "/api/v2/dags/etl/currentVersion", `{"version":"v1"}`)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "deploy.require_digest") {
-		t.Errorf("rollback to a tag under enforce = %d %s, want 400 naming the setting", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "deploy.require_digest=warn") ||
+		!strings.Contains(rec.Body.String(), "dexaflow deploy") || strings.Contains(rec.Body.String(), "compile --build --push") {
+		t.Errorf("rollback to a tag under enforce = %d %s, want 400 naming warn and dexaflow deploy as the way out", rec.Code, rec.Body.String())
 	}
 	rec = authGet(digestServer(repo, domain.DigestRequireWarn, counts, logs), http.MethodPut, "/api/v2/dags/etl/currentVersion", `{"version":"v1"}`)
 	if rec.Code != http.StatusOK {
-		t.Errorf("rollback to a tag under warn = %d %s, want 200", rec.Code, rec.Body.String())
+		t.Fatalf("rollback to a tag under warn = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Warnings) != 1 || !strings.Contains(resp.Warnings[0], "deploy.require_digest=warn") || !strings.Contains(resp.Warnings[0], "ghcr.io/acme/etl:v1") {
+		t.Errorf("rollback warnings = %q, want one naming the setting and the image", resp.Warnings)
 	}
 	if !slices.Equal(counts.seen, []string{"set_current/refused", "set_current/warned"}) {
 		t.Errorf("counted %v, want [set_current/refused set_current/warned]", counts.seen)
+	}
+	if !slices.Equal(repo.setRequireDigest, []domain.DigestRequirement{domain.DigestRequireEnforce, domain.DigestRequireWarn}) {
+		t.Errorf("repository saw require_digest %v, want [enforce warn]", repo.setRequireDigest)
+	}
+}
+
+// A rollback under off answers as it always did: no warnings field.
+func TestRequireDigestOffSetCurrentHasNoWarnings(t *testing.T) {
+	tagged := domain.DAGSpec{
+		SchemaVersion: "1.0", DagID: "etl", DagVersion: "v1", Image: "ghcr.io/acme/etl:v1",
+		Tasks: []domain.TaskSpec{{TaskID: "a", Type: "python", Entrypoint: "dag:a"}},
+	}
+	repo := &fakeVersionRepo{change: rollbackChange(), specs: map[string]domain.DAGSpec{"v1": tagged}}
+	rec := authGet(digestServer(repo, domain.DigestRequireOff, &fakeUnpinned{}, &bytes.Buffer{}), http.MethodPut, "/api/v2/dags/etl/currentVersion", `{"version":"v1"}`)
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "warnings") {
+		t.Errorf("rollback under off = %d %s, want 200 without warnings", rec.Code, rec.Body.String())
 	}
 }

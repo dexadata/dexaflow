@@ -73,3 +73,36 @@ func TestParseDigestRequirement(t *testing.T) {
 		}
 	}
 }
+
+// Making a version current again is not a register: the way out of an
+// enforce refusal is a deploy of the version's sources or warn, never the
+// compile and push steps that register a new version (#1703).
+func TestDigestRequirementCurrentVersionMessages(t *testing.T) {
+	const img = "ghcr.io/acme/etl:v1"
+	warning, err := DigestRequireWarn.CheckCurrentImage(img)
+	if err != nil || warning == "" {
+		t.Fatalf("warn: warning %q, err %v; want a warning", warning, err)
+	}
+	_, err = DigestRequireEnforce.CheckCurrentImage(img)
+	if err == nil {
+		t.Fatal("enforce made a tag current")
+	}
+	for name, msg := range map[string]string{"warning": warning, "refusal": err.Error()} {
+		for _, want := range []string{"deploy.require_digest", img, "dexaflow deploy"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("%s %q does not name %q", name, msg, want)
+			}
+		}
+		if strings.Contains(msg, "compile --build --push") {
+			t.Errorf("%s %q gives the register hint", name, msg)
+		}
+	}
+	if !strings.Contains(err.Error(), "deploy.require_digest=warn") {
+		t.Errorf("refusal %q does not name warn as a way out", err)
+	}
+	for _, mode := range []DigestRequirement{DigestRequireOff, DigestRequireWarn, DigestRequireEnforce} {
+		if w, e := mode.CheckCurrentImage(pinnedImage); w != "" || e != nil {
+			t.Errorf("%s, pinned: %q, %v; want nothing", mode, w, e)
+		}
+	}
+}

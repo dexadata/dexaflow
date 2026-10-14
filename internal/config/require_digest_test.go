@@ -86,3 +86,30 @@ func TestRequireDigestInvalidEnvFailsBoot(t *testing.T) {
 		t.Errorf("boot with deploy.require_digest=strict = %v, want an error naming the key", err)
 	}
 }
+
+// A bare false in a config file is YAML for no, which reads as off, as the
+// chart reads it; true is refused at boot like any other value.
+func TestRequireDigestYAMLBoolInConfigFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.yaml")
+	if err := os.WriteFile(path, []byte("deploy:\n  require_digest: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := LoadServer(path, nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.Deploy.RequireDigest != domain.DigestRequireOff {
+		t.Errorf("require_digest: false = %q, want off", c.Deploy.RequireDigest)
+	}
+	if werr := os.WriteFile(path, []byte("deploy:\n  require_digest: true\n"), 0o600); werr != nil {
+		t.Fatal(werr)
+	}
+	c, err = LoadServer(path, nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	c.Auth.JWT.Secret = "set"
+	if verr := c.Validate(); verr == nil || !strings.Contains(verr.Error(), `deploy.require_digest "true"`) {
+		t.Errorf("require_digest: true Validate = %v, want a refusal naming the value true", verr)
+	}
+}

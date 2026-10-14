@@ -89,9 +89,9 @@ type DeploySection struct {
 	// so every deploy resolves as it did before. None of them is a secret.
 	Defaults domain.DeployDefaults `mapstructure:"defaults"`
 	// RequireDigest (deploy.require_digest, #1703) is what registering a
-	// version does with an image not pinned by a full sha256 digest: off (the
-	// default) accepts it, warn accepts it with a warning, a log line and a
-	// count, enforce refuses it. DEXAFLOW_DEPLOY_REQUIRE_DIGEST (legacy
+	// version, or making one current again, does with an image not pinned by
+	// a full sha256 digest: off (the default) accepts it, warn accepts it with
+	// a warning, a log line and a count, enforce refuses it. DEXAFLOW_DEPLOY_REQUIRE_DIGEST (legacy
 	// LEOFLOW_DEPLOY_REQUIRE_DIGEST).
 	RequireDigest domain.DigestRequirement `mapstructure:"require_digest"`
 }
@@ -1455,6 +1455,7 @@ func LoadServer(configFile string, flags *pflag.FlagSet) (*ServerConfig, error) 
 	if err := v.Unmarshal(&c); err != nil {
 		return nil, fmt.Errorf("unmarshaling server config: %w", err)
 	}
+	normalizeRequireDigest(v, &c)
 	// The OIDC role_mappings / tenant_claims maps are decoded straight from the
 	// raw YAML, bypassing viper's "." key-delimiter flattening that would split a
 	// dotted map key (a Google `hd` domain, a dotted IdP group) and fail (#826).
@@ -1603,6 +1604,19 @@ func (c *ServerConfig) Validate() error {
 // use, so it fails at boot instead of in every deploy to the cluster.
 func (c *ServerConfig) validateDeployDefaults() error {
 	return c.Deploy.Defaults.Validate("deploy.defaults")
+}
+
+// normalizeRequireDigest reads a YAML boolean deploy.require_digest as the
+// chart does: a bare off in a config file is YAML for false, which means off,
+// and true stays "true" (the weak decode would make it "1") so that Validate
+// names the value the operator wrote.
+func normalizeRequireDigest(v *viper.Viper, c *ServerConfig) {
+	if b, ok := v.Get("deploy.require_digest").(bool); ok {
+		c.Deploy.RequireDigest = domain.DigestRequireOff
+		if b {
+			c.Deploy.RequireDigest = "true"
+		}
+	}
 }
 
 // validateRequireDigest refuses a deploy.require_digest other than off, warn

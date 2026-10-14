@@ -21,10 +21,10 @@ type DagVersionRepository interface {
 	// idempotent) and the DAG's is_paused afterwards. reg.IsPaused, when set,
 	// is the DAG's state after the register.
 	RegisterDagVersionAs(ctx context.Context, tenant string, reg domain.DagRegistration) (domain.DagRegistered, error)
-	// SetCurrentDagVersion makes the version sel names current, after admit
-	// accepts its spec, on behalf of actorUserID. Runs that already exist keep
-	// their version; is_paused is never changed.
-	SetCurrentDagVersion(ctx context.Context, tenant, dagID string, sel domain.DagVersionSelector, actorUserID string, admit func(domain.DAGSpec) error) (domain.CurrentVersionChange, error)
+	// SetCurrentDagVersionAs makes the version req.Selector names current,
+	// after req.Admit accepts its spec, on behalf of req.ActorUserID. Runs
+	// that already exist keep their version; is_paused is never changed.
+	SetCurrentDagVersionAs(ctx context.Context, tenant string, req domain.DagSetCurrent) (domain.CurrentVersionChange, error)
 }
 
 type versionResponse struct {
@@ -130,7 +130,11 @@ type digestGate struct {
 // warn, the refusal under enforce. Each is logged (a warning) and counted,
 // except in a dry run, which records nothing.
 func (g digestGate) check(spec *domain.DAGSpec, stage string, dryRun bool) (string, error) {
-	warning, refused := g.mode.CheckImage(spec.Image)
+	check := g.mode.CheckImage
+	if stage == stageSetCurrent {
+		check = g.mode.CheckCurrentImage
+	}
+	warning, refused := check(spec.Image)
 	if dryRun || (warning == "" && refused == nil) {
 		return warning, refused
 	}
@@ -160,15 +164,10 @@ type specAdmission struct {
 	policy          *domain.ExecutionPolicy
 }
 
-// check returns the first refusal of spec; each one is the client's to fix.
-// stage is stageRegister or stageSetCurrent.
-func (a specAdmission) check(spec *domain.DAGSpec, stage string) error {
-	_, err := a.checkWarn(spec, stage, false)
-	return err
-}
-
-// checkWarn is check that also returns the warnings of an admitted spec. A
-// dry run (#1705) gets the same refusals and warnings, and records nothing.
+// checkWarn returns the first refusal of spec, each one the client's to fix,
+// or the warnings of an admitted spec. stage is stageRegister or
+// stageSetCurrent. A dry run (#1705) gets the same refusals and warnings, and
+// records nothing.
 func (a specAdmission) checkWarn(spec *domain.DAGSpec, stage string, dryRun bool) ([]string, error) {
 	if err := spec.Validate(); err != nil {
 		return nil, err

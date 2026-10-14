@@ -37,6 +37,8 @@ type fakeVersionRepo struct {
 	selections []domain.DagVersionSelector
 	setTenants []string
 	admitErr   error
+	// setRequireDigest is the deploy.require_digest of each set-current.
+	setRequireDigest []domain.DigestRequirement
 }
 
 func (f *fakeVersionRepo) RegisterDagVersionAs(_ context.Context, _ string, reg domain.DagRegistration) (domain.DagRegistered, error) {
@@ -57,7 +59,9 @@ func (f *fakeVersionRepo) RegisterDagVersionAs(_ context.Context, _ string, reg 
 	return domain.DagRegistered{Created: f.created, DagCreated: f.dagCreated, IsPaused: paused}, nil
 }
 
-func (f *fakeVersionRepo) SetCurrentDagVersion(_ context.Context, tenant, _ string, sel domain.DagVersionSelector, actor string, admit func(domain.DAGSpec) error) (domain.CurrentVersionChange, error) {
+func (f *fakeVersionRepo) SetCurrentDagVersionAs(_ context.Context, tenant string, req domain.DagSetCurrent) (domain.CurrentVersionChange, error) {
+	sel, actor, admit := req.Selector, req.ActorUserID, req.Admit
+	f.setRequireDigest = append(f.setRequireDigest, req.RequireDigest)
 	f.selections = append(f.selections, sel)
 	f.setTenants = append(f.setTenants, tenant)
 	f.actors = append(f.actors, actor)
