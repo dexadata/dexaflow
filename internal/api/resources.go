@@ -59,6 +59,9 @@ type TaskInstanceRepository interface {
 // view, with the acting user and the run/task in the entry.
 type AuditWriter interface {
 	RecordTaskActionAudit(ctx context.Context, tenant, userID, action, dagID, runID, taskID string, tryNumber int) error
+	// RecordRunActionAudit logs a run-level action with extra metadata
+	// fields, such as the state a PATCH asked for when it stored another.
+	RecordRunActionAudit(ctx context.Context, tenant, userID, action, dagID, runID string, metadata map[string]string) error
 }
 
 // recordTaskAudit writes a best-effort audit entry for a task action; an audit
@@ -391,14 +394,12 @@ func patchDagRunHandler(repo DagRunRepository, audit AuditWriter) gin.HandlerFun
 		runID := c.Param("dag_run_id")
 		if body.State != "" {
 			if !validRunState(body.State) {
-				AbortProblem(c, http.StatusBadRequest, "bad request", "state must be queued, running, success, or failed")
+				AbortProblem(c, http.StatusBadRequest, "bad request", "state must be queued, success, or failed")
 				return
 			}
-			if err := repo.SetDagRunState(c.Request.Context(), tenantOf(c), c.Param("dag_id"), runID, body.State); err != nil {
-				handleRepoError(c, err)
+			if !applyPatchedRunState(c, repo, audit, runID, body.State) {
 				return
 			}
-			recordTaskAudit(c, audit, "dagrun.mark."+body.State, runID, "", 0)
 		}
 		run, err := repo.GetDagRun(c.Request.Context(), tenantOf(c), c.Param("dag_id"), runID)
 		if err != nil {
@@ -409,7 +410,54 @@ func patchDagRunHandler(repo DagRunRepository, audit AuditWriter) gin.HandlerFun
 	}
 }
 
-// validRunState reports whether s is a state the UI may set a run to directly.
+// applyPatchedRunState stores the state a valid PATCH asked for and audits it,
+// reporting false when it already answered with an error. A PATCH to running
+// stores queued (see patchedRunState), except on a run already running, which
+// it leaves as is, as 0.5.3 did. When the stored state differs from the one
+// asked for, the audit entry carries requested_state.
+func applyPatchedRunState(c *gin.Context, repo DagRunRepository, audit AuditWriter, runID, requested string) bool {
+	ctx, tenant, dagID := c.Request.Context(), tenantOf(c), c.Param("dag_id")
+	state := requested
+	if domain.DagRunState(requested) == domain.DagRunStateRunning {
+		current, err := repo.GetDagRun(ctx, tenant, dagID, runID)
+		if err != nil {
+			handleRepoError(c, err)
+			return false
+		}
+		if current.State == domain.DagRunStateRunning {
+			recordTaskAudit(c, audit, "dagrun.mark."+requested, runID, "", 0)
+			return true
+		}
+		state = patchedRunState(requested)
+	}
+	if err := repo.SetDagRunState(ctx, tenant, dagID, runID, state); err != nil {
+		handleRepoError(c, err)
+		return false
+	}
+	if state == requested {
+		recordTaskAudit(c, audit, "dagrun.mark."+state, runID, "", 0)
+		return true
+	}
+	if audit == nil {
+		return true
+	}
+	userID := ""
+	if u, ok := UserFromContext(c); ok {
+		userID = u.ID
+	}
+	if err := audit.RecordRunActionAudit(ctx, tenant, userID, "dagrun.mark."+state, dagID, runID,
+		map[string]string{"requested_state": requested}); err != nil {
+		// The run id comes from the URL, so it stays out of the log line
+		// (go/log-injection); the action is built from a validated state.
+		slog.Warn("recording run audit", "action", "dagrun.mark."+state, "error", err)
+	}
+	return true
+}
+
+// validRunState reports whether s is a state the PATCH accepts: queued,
+// success or failed, Airflow 3.2's DAGRunPatchStates, plus running, which
+// 0.5.3 accepted and a patch release keeps accepting (ADR 0068); see
+// patchedRunState.
 func validRunState(s string) bool {
 	switch domain.DagRunState(s) {
 	case domain.DagRunStateQueued, domain.DagRunStateRunning, domain.DagRunStateSuccess, domain.DagRunStateFailed:
@@ -417,6 +465,17 @@ func validRunState(s string) bool {
 	default:
 		return false
 	}
+}
+
+// patchedRunState is the state a valid PATCH stores on a run that is not
+// running. Running is stored as queued: only the scheduler starts a run, under
+// the paused hold and the max_active_runs cap, so a PATCH cannot start one
+// past either (#1766).
+func patchedRunState(s string) string {
+	if domain.DagRunState(s) == domain.DagRunStateRunning {
+		return string(domain.DagRunStateQueued)
+	}
+	return s
 }
 
 func listDagRunsHandler(repo DagRunRepository, versions DagVersionLister) gin.HandlerFunc {

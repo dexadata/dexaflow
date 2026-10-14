@@ -22,10 +22,16 @@ type fakeAuditWriter struct {
 type recordedAudit struct {
 	tenant, userID, action, dagID, runID, taskID string
 	tryNumber                                    int
+	metadata                                     map[string]string
 }
 
 func (f *fakeAuditWriter) RecordTaskActionAudit(_ context.Context, tenant, userID, action, dagID, runID, taskID string, tryNumber int) error {
-	f.calls = append(f.calls, recordedAudit{tenant, userID, action, dagID, runID, taskID, tryNumber})
+	f.calls = append(f.calls, recordedAudit{tenant, userID, action, dagID, runID, taskID, tryNumber, nil})
+	return f.err
+}
+
+func (f *fakeAuditWriter) RecordRunActionAudit(_ context.Context, tenant, userID, action, dagID, runID string, metadata map[string]string) error {
+	f.calls = append(f.calls, recordedAudit{tenant, userID, action, dagID, runID, "", 0, metadata})
 	return f.err
 }
 

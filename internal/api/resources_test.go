@@ -80,7 +80,11 @@ func (f *fakeDagRepo) ClearDagHistory(_ context.Context, _, dagID string) error 
 	return ErrNotFound
 }
 
-type fakeRunRepo struct{ runs []domain.DagRun }
+type fakeRunRepo struct {
+	runs []domain.DagRun
+	// setCalls counts SetDagRunState writes.
+	setCalls int
+}
 
 func (f *fakeRunRepo) ListDagRuns(context.Context, string, string, int, int) ([]domain.DagRun, int, error) {
 	return f.runs, len(f.runs), nil
@@ -94,6 +98,7 @@ func (f *fakeRunRepo) GetDagRun(_ context.Context, _, _, runID string) (domain.D
 	return domain.DagRun{}, ErrNotFound
 }
 func (f *fakeRunRepo) SetDagRunState(_ context.Context, _, _, runID, state string) error {
+	f.setCalls++
 	for i := range f.runs {
 		if f.runs[i].RunID == runID {
 			f.runs[i].State = domain.DagRunState(state)
@@ -317,6 +322,63 @@ func TestMarkDagRunState(t *testing.T) {
 	}
 	if rec := authGet(srv, http.MethodPatch, "/api/v2/dags/etl/dagRuns/r1", `{"state":"banana"}`); rec.Code != http.StatusBadRequest {
 		t.Errorf("invalid run state = %d, want 400", rec.Code)
+	}
+}
+
+// TestMarkDagRunStateRunningQueuesTheRun: a PATCH to running, which 0.5.3
+// accepted, is kept for compatibility (ADR 0068) but stores queued, so only
+// the scheduler starts the run, under the paused hold and the max_active_runs
+// cap (#1766). Airflow 3.2 accepts queued, success and failed. The audit entry
+// records the stored state and the state the caller asked for.
+func TestMarkDagRunStateRunningQueuesTheRun(t *testing.T) {
+	runs := &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1", State: domain.DagRunStateSuccess}}}
+	audit := &fakeAuditWriter{}
+	srv := NewServer(Dependencies{
+		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
+		DagRuns: runs, Audit: audit,
+	})
+	rec := authGet(srv, http.MethodPatch, "/api/v2/dags/etl/dagRuns/r1", `{"state":"running"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH state running = %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	if runs.runs[0].State != domain.DagRunStateQueued {
+		t.Errorf("PATCH running stores %q, want queued for the scheduler to start", runs.runs[0].State)
+	}
+	if !strings.Contains(rec.Body.String(), `"state":"queued"`) {
+		t.Errorf("the response shows the stored state queued: %s", rec.Body.String())
+	}
+	if len(audit.calls) != 1 || audit.calls[0].action != "dagrun.mark.queued" || audit.calls[0].metadata["requested_state"] != "running" {
+		t.Errorf("audit = %+v, want one dagrun.mark.queued entry with requested_state running", audit.calls)
+	}
+}
+
+// TestMarkDagRunStateRunningOnRunningRunIsANoOp: a PATCH to running on a run
+// that is already running changes nothing, as in 0.5.3: the run is not put
+// back in queued, its start date is kept, and the response shows running.
+func TestMarkDagRunStateRunningOnRunningRunIsANoOp(t *testing.T) {
+	started := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	runs := &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1", State: domain.DagRunStateRunning, StartedAt: &started}}}
+	audit := &fakeAuditWriter{}
+	srv := NewServer(Dependencies{
+		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
+		DagRuns: runs, Audit: audit,
+	})
+	rec := authGet(srv, http.MethodPatch, "/api/v2/dags/etl/dagRuns/r1", `{"state":"running"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH state running = %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	if runs.setCalls != 0 || runs.runs[0].State != domain.DagRunStateRunning || runs.runs[0].StartedAt == nil {
+		t.Errorf("a running run is left alone: %d writes, state %q, started %v", runs.setCalls, runs.runs[0].State, runs.runs[0].StartedAt)
+	}
+	if !strings.Contains(rec.Body.String(), `"state":"running"`) {
+		t.Errorf("the response shows the current state running: %s", rec.Body.String())
+	}
+	for _, call := range audit.calls {
+		if _, ok := call.metadata["requested_state"]; ok {
+			t.Errorf("nothing differs from the request, so no requested_state: %+v", call)
+		}
 	}
 }
 

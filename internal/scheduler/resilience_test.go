@@ -125,6 +125,12 @@ func (f *flakyStore) SetRunState(_ context.Context, runID string, state domain.D
 	f.runStates[runID] = state
 	return nil
 }
+func (f *flakyStore) StartQueuedRun(_ context.Context, runID, _ string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.runStates[runID] = domain.DagRunStateRunning
+	return true, nil
+}
 func (f *flakyStore) ClaimAlertAttempt(context.Context, string, int, time.Duration) (int, error) {
 	return 1, nil
 }
