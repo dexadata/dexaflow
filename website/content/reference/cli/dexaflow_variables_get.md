@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_variables_get/
 title: "dexaflow variables get"
 linkTitle: "variables get"
-weight: 68
+weight: 69
 ---
 
 Show a variable (value masked when the key looks sensitive).

@@ -219,6 +219,11 @@ func registerVersion(c *gin.Context, repo DagVersionRepository, admission specAd
 		AbortProblem(c, http.StatusForbidden, "forbidden", msg)
 		return
 	}
+	promoted, prerr := promotedQuery(c)
+	if prerr != nil {
+		AbortProblem(c, http.StatusBadRequest, "bad request", prerr.Error())
+		return
+	}
 	var spec domain.DAGSpec
 	if err := c.ShouldBindJSON(&spec); err != nil {
 		AbortProblem(c, http.StatusBadRequest, "bad request", err.Error())
@@ -243,7 +248,7 @@ func registerVersion(c *gin.Context, repo DagVersionRepository, admission specAd
 		return
 	}
 	got, err := repo.RegisterDagVersionAs(c.Request.Context(), tenantOf(c), domain.DagRegistration{
-		Spec: spec, SpecHash: hash, ActorUserID: actorOf(c), IsPaused: paused, DryRun: dryRun,
+		Spec: spec, SpecHash: hash, ActorUserID: actorOf(c), IsPaused: paused, DryRun: dryRun, PromotedFrom: promoted,
 	})
 	if err != nil {
 		handleRepoError(c, err)

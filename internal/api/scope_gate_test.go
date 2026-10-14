@@ -103,6 +103,7 @@ func newFullScopeServer(t *testing.T) *gin.Engine {
 		LatestRuns:          &fakeLatestRuns{},
 		TaskSummary:         &fakeTaskSummary{},
 		DagVersions:         &fakeVersionLister{},
+		DagSources:          rolledBackSources(),
 		DashboardStats:      &fakeStatsReader{},
 		AuditLog:            &fakeAuditReader{},
 		Variables:           &fakeVariableStore{},
