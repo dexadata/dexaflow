@@ -447,7 +447,9 @@ func applyPatchedRunState(c *gin.Context, repo DagRunRepository, audit AuditWrit
 	}
 	if err := audit.RecordRunActionAudit(ctx, tenant, userID, "dagrun.mark."+state, dagID, runID,
 		map[string]string{"requested_state": requested}); err != nil {
-		slog.Warn("recording run audit", "action", "dagrun.mark."+state, "run", runID, "error", err)
+		// The run id comes from the URL, so it stays out of the log line
+		// (go/log-injection); the action is built from a validated state.
+		slog.Warn("recording run audit", "action", "dagrun.mark."+state, "error", err)
 	}
 	return true
 }
