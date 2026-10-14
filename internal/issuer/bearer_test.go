@@ -226,3 +226,86 @@ func TestVerifyBearerScopes(t *testing.T) {
 		t.Errorf("array scope claim: err = %v, want ErrInvalidToken", err)
 	}
 }
+
+// deployConfig is a verifier with a deploy audience (#1773) next to the
+// bearer audience leoflow-mcp.
+func deployConfig(f *fakeJWKS) Config {
+	cfg := bearerConfig(f)
+	cfg.DeployAudience = "dexaflow-deploy"
+	return cfg
+}
+
+// TestVerifyBearerMarksATokenOfTheDeployAudience: a token for the deploy
+// audience is a bearer like any other, carrying its scopes, and says it was
+// minted for deploys.
+func TestVerifyBearerMarksATokenOfTheDeployAudience(t *testing.T) {
+	f := newFakeJWKS(t)
+	v := newTestVerifier(f, deployConfig(f))
+	claims := bearerClaims()
+	claims["aud"] = "dexaflow-deploy"
+	claims["scope"] = "dexaflow:deploy"
+
+	id, err := v.VerifyBearer(context.Background(), f.sign(t, claims, f.key))
+
+	if err != nil {
+		t.Fatalf("VerifyBearer: %v", err)
+	}
+	want := Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme", Scopes: []string{"dexaflow:deploy"}, DeployAudience: true}
+	if !reflect.DeepEqual(*id, want) {
+		t.Errorf("identity = %+v, want %+v", *id, want)
+	}
+}
+
+// TestVerifyBearerOfAnotherAudienceIsNoDeployToken: with a deploy audience
+// configured, a bearer audience token, even one carrying dexaflow:deploy, is
+// not marked for deploys.
+func TestVerifyBearerOfAnotherAudienceIsNoDeployToken(t *testing.T) {
+	f := newFakeJWKS(t)
+	v := newTestVerifier(f, deployConfig(f))
+	claims := bearerClaims()
+	claims["scope"] = "dexaflow:deploy"
+
+	id, err := v.VerifyBearer(context.Background(), f.sign(t, claims, f.key))
+
+	if err != nil {
+		t.Fatalf("VerifyBearer: %v", err)
+	}
+	if id.DeployAudience {
+		t.Errorf("identity = %+v, want DeployAudience false for aud leoflow-mcp", *id)
+	}
+}
+
+// TestDeployAudienceAloneTurnsTheBearerVerifierOn: an operator who wants
+// deploys through the issuer needs no other bearer audience.
+func TestDeployAudienceAloneTurnsTheBearerVerifierOn(t *testing.T) {
+	f := newFakeJWKS(t)
+	cfg := testConfig(f)
+	cfg.DeployAudience = "dexaflow-deploy"
+	v := newTestVerifier(f, cfg)
+	claims := bearerClaims()
+	claims["aud"] = "dexaflow-deploy"
+
+	if !v.BearerEnabled() {
+		t.Fatal("BearerEnabled() = false with a deploy audience, want true")
+	}
+	if _, err := v.VerifyBearer(context.Background(), f.sign(t, claims, f.key)); err != nil {
+		t.Errorf("VerifyBearer(deploy audience) = %v, want accepted", err)
+	}
+	claims["aud"] = "leoflow-mcp"
+	if _, err := v.VerifyBearer(context.Background(), f.sign(t, claims, f.key)); !errors.Is(err, ErrInvalidToken) {
+		t.Errorf("VerifyBearer(unconfigured bearer audience) = %v, want ErrInvalidToken", err)
+	}
+}
+
+// TestVerifyBearerRefusesTheDeployAndHandoffAudienceTogether: a token for
+// the handoff audience is never a bearer, deploy audience or not.
+func TestVerifyBearerRefusesTheDeployAndHandoffAudienceTogether(t *testing.T) {
+	f := newFakeJWKS(t)
+	v := newTestVerifier(f, deployConfig(f))
+	claims := bearerClaims()
+	claims["aud"] = []string{"dexaflow-deploy", "leoflow-engine"}
+
+	if _, err := v.VerifyBearer(context.Background(), f.sign(t, claims, f.key)); !errors.Is(err, ErrInvalidToken) {
+		t.Errorf("VerifyBearer = %v, want ErrInvalidToken", err)
+	}
+}
