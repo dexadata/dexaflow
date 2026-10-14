@@ -357,3 +357,48 @@ func TestPoolsReadOnlyChargesUndefinedPoolUsageToDefaultPool(t *testing.T) {
 		t.Errorf("unlocked default_pool = %+v, want its own 1 occupied", p)
 	}
 }
+
+// TestPoolResponseCarriesNullTeamName: Airflow 3.2.1 PoolResponse has a
+// team_name field and the bundled Pools page renders it unless it is null, so a
+// pool without the field shows "(undefined)" after its name. Dexaflow has no
+// teams: the list and the single-pool responses carry "team_name": null.
+func TestPoolResponseCarriesNullTeamName(t *testing.T) {
+	store := &fakePoolStore{pools: map[string]domain.Pool{"etl": {Name: "etl", Slots: 8}}}
+	srv := poolServer(store, "pro")
+
+	rec := authGet(srv, http.MethodGet, "/api/v2/pools", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list = %d (%s)", rec.Code, rec.Body.String())
+	}
+	var col struct {
+		Pools []map[string]json.RawMessage `json:"pools"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &col); err != nil {
+		t.Fatal(err)
+	}
+	if len(col.Pools) != 1 {
+		t.Fatalf("got %d pools, want 1", len(col.Pools))
+	}
+	assertNullTeamName(t, "list", col.Pools[0])
+
+	rec = authGet(srv, http.MethodGet, "/api/v2/pools/etl", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get = %d (%s)", rec.Code, rec.Body.String())
+	}
+	var one map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &one); err != nil {
+		t.Fatal(err)
+	}
+	assertNullTeamName(t, "get", one)
+}
+
+func assertNullTeamName(t *testing.T, where string, pool map[string]json.RawMessage) {
+	t.Helper()
+	raw, ok := pool["team_name"]
+	if !ok {
+		t.Fatalf("%s: pool has no team_name field: %v", where, pool)
+	}
+	if string(raw) != "null" {
+		t.Errorf("%s: team_name = %s, want null", where, raw)
+	}
+}
