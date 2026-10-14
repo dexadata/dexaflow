@@ -105,6 +105,15 @@ func TestRollbackKeepsEachVersionsSourceAndDetailsIntegration(t *testing.T) {
 	if err := json.Unmarshal(listed.Body.Bytes(), &v2); err != nil || listed.Code != http.StatusOK {
 		t.Fatalf("dagVersions/2 = %d, %v (%s)", listed.Code, err, listed.Body.String())
 	}
+	// build_info is served by the version routes only (#1702): the embedded
+	// copy is the version's row without it.
+	if _, ok := v2["build_info"]; !ok {
+		t.Errorf("dagVersions/2 = %v, want a build_info field", v2)
+	}
+	if v, ok := details.Latest["build_info"]; ok {
+		t.Errorf("latest_dag_version carries build_info %v", v)
+	}
+	delete(v2, "build_info")
 	if len(details.Latest) != len(v2) {
 		t.Errorf("latest_dag_version has %d fields, dagVersions/2 %d: %v", len(details.Latest), len(v2), details.Latest)
 	}
