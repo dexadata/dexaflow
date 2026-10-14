@@ -236,7 +236,7 @@ func registerVersion(c *gin.Context, repo DagVersionRepository, admission specAd
 	hash, err := spec.CanonicalHash()
 	if err != nil {
 		// Hashing touches no storage, so this error carries nothing from the
-		// database — but a 500 detail is a constant here for the same reason
+		// database, but a 500 detail is a constant here for the same reason
 		// it is everywhere else: nobody re-audits a call site when the error
 		// source behind it changes.
 		AbortProblemCause(c, http.StatusInternalServerError, "internal error", detailInternal, err)
