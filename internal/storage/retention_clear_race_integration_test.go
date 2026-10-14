@@ -19,6 +19,7 @@ func TestRetentionKeepsARunClearedAfterItsLock(t *testing.T) {
 	tenant, version, dag := seedTenant(t, pool, ctx, fmt.Sprintf("retention_race_%d", time.Now().UnixNano()))
 	old := 400 * 24 * time.Hour
 	run := seedRun(t, pool, ctx, tenant, dag, version, "cleared_mid_batch", "success", &old, "success", "success")
+	seedNewerRun(t, pool, ctx, tenant, dag, version)
 
 	store.SetAfterRunLockHook(func() {
 		mustExec(t, pool, ctx, `UPDATE task_instances SET state = 'none' WHERE dag_run_id = $1 AND task_id = 't0'`, run)
@@ -50,6 +51,7 @@ func TestRetentionSkipsARunAClearIsWriting(t *testing.T) {
 	tenant, version, dag := seedTenant(t, pool, ctx, fmt.Sprintf("retention_lock_%d", time.Now().UnixNano()))
 	old := 400 * 24 * time.Hour
 	run := seedRun(t, pool, ctx, tenant, dag, version, "being_cleared", "success", &old, "success")
+	seedNewerRun(t, pool, ctx, tenant, dag, version)
 
 	clear, err := pool.Begin(ctx)
 	if err != nil {
@@ -117,6 +119,7 @@ func TestRetentionNeverLeavesARunWithPartOfItsTaskInstances(t *testing.T) {
 	tenant, version, dag := seedTenant(t, pool, ctx, fmt.Sprintf("retention_split_%d", time.Now().UnixNano()))
 	old := 400 * 24 * time.Hour
 	run := seedRun(t, pool, ctx, tenant, dag, version, "split", "success", &old, "success", "success", "success")
+	seedNewerRun(t, pool, ctx, tenant, dag, version)
 	cutoff := time.Now().Add(-24 * time.Hour)
 
 	// 3 task instances, each with 2 state history rows, 1 attempt row and 1 XCom
@@ -148,6 +151,7 @@ func TestRetentionDeletesARunLargerThanTheBatchInOneGo(t *testing.T) {
 	tenant, version, dag := seedTenant(t, pool, ctx, fmt.Sprintf("retention_large_%d", time.Now().UnixNano()))
 	old := 400 * 24 * time.Hour
 	run := seedRun(t, pool, ctx, tenant, dag, version, "large", "success", &old, "success", "success", "success")
+	seedNewerRun(t, pool, ctx, tenant, dag, version)
 	cutoff := time.Now().Add(-24 * time.Hour)
 
 	var total int64

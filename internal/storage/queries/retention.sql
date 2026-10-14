@@ -19,11 +19,21 @@ SELECT id FROM tenants ORDER BY id;
 -- a clear: a clear resets task_instances before it touches the run row, so the
 -- janitor then locks and re-checks the task instances
 -- (LockTaskInstancesOfRuns) before it deletes anything.
+--
+-- The newest run of each DAG (by logical date) is never selected: the
+-- scheduler takes a DAG's last logical date from it (ListScheduledDags), so
+-- deleting it would make a cron DAG run its latest slot again, a catchup DAG
+-- backfill its whole history, and an @once DAG fire a second time. Airflow's
+-- `db clean` likewise keeps each DAG's latest (non-manual) run. The probe is
+-- one step on idx_dag_runs_dag_logical.
 SELECT r.id
 FROM dag_runs r
 WHERE r.tenant_id = sqlc.arg(tenant_id)
   AND r.state IN ('success', 'failed')
   AND r.ended_at < sqlc.arg(cutoff)
+  AND EXISTS (
+    SELECT 1 FROM dag_runs newer
+    WHERE newer.dag_id = r.dag_id AND newer.logical_date > r.logical_date)
   AND NOT EXISTS (
     SELECT 1 FROM task_instances ti
     WHERE ti.dag_run_id = r.id
@@ -135,6 +145,9 @@ FROM (
   WHERE r.tenant_id = sqlc.arg(tenant_id)
     AND r.state IN ('success', 'failed')
     AND r.ended_at < sqlc.arg(cutoff)
+    AND EXISTS (
+      SELECT 1 FROM dag_runs newer
+      WHERE newer.dag_id = r.dag_id AND newer.logical_date > r.logical_date)
     AND NOT EXISTS (
       SELECT 1 FROM task_instances ti
       WHERE ti.dag_run_id = r.id

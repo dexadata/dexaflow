@@ -615,6 +615,13 @@ type Querier interface {
 	// a clear: a clear resets task_instances before it touches the run row, so the
 	// janitor then locks and re-checks the task instances
 	// (LockTaskInstancesOfRuns) before it deletes anything.
+	//
+	// The newest run of each DAG (by logical date) is never selected: the
+	// scheduler takes a DAG's last logical date from it (ListScheduledDags), so
+	// deleting it would make a cron DAG run its latest slot again, a catchup DAG
+	// backfill its whole history, and an @once DAG fire a second time. Airflow's
+	// `db clean` likewise keeps each DAG's latest (non-manual) run. The probe is
+	// one step on idx_dag_runs_dag_logical.
 	LockExpiredSettledRuns(ctx context.Context, arg LockExpiredSettledRunsParams) ([]pgtype.UUID, error)
 	// Share-locks every task instance of a run inside the reap transaction, before
 	// MarkRunOrphanedRun re-checks the orphan predicate, so the re-check (a fresh
