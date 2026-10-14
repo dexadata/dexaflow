@@ -611,7 +611,7 @@ type VersionRegistration struct {
 	DagCreated *bool   `json:"dag_created,omitempty"`
 	DagId      *string `json:"dag_id,omitempty"`
 
-	// DryRun True when this answers a dry run; nothing was written
+	// DryRun True on an answer of the dry run route: nothing was written, and the other fields say what the register would do. Absent from a register.
 	DryRun *bool `json:"dry_run,omitempty"`
 
 	// IsPaused The DAG's is_paused after the register.
@@ -619,7 +619,7 @@ type VersionRegistration struct {
 	SpecHash *string `json:"spec_hash,omitempty"`
 	Version  *string `json:"version,omitempty"`
 
-	// Warnings What the register would let through with a warning (a task that does not fit its size under executor.unit.enforce=warn). Sent with a dry run.
+	// Warnings What the register would let through with a warning (a task that does not fit its size under executor.unit.enforce=warn). Sent by the dry run route.
 	Warnings *[]string `json:"warnings,omitempty"`
 }
 
@@ -709,9 +709,6 @@ type ClearDagRun200JSONResponseBody struct {
 type RegisterDagVersionParams struct {
 	// IsPaused Sets the DAG's is_paused for this register (true or false). Any other value is refused with 400. Sending it needs write on dags, and a scoped token also needs the dexaflow:run scope (403 otherwise).
 	IsPaused *bool `form:"is_paused,omitempty" json:"is_paused,omitempty"`
-
-	// DryRun When true, checks the register and writes nothing (answered with 200 and dry_run true, or the register's refusal). False or absent registers. Any other value is refused with 400.
-	DryRun *bool `form:"dry_run,omitempty" json:"dry_run,omitempty"`
 }
 
 // ListUsersParams defines parameters for ListUsers.
@@ -1299,7 +1296,7 @@ type ClientInterface interface {
 	//
 	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
-	// With dry_run=true the register runs every check it runs for real (permission and scope, spec validation, the resource unit, source mode, the image, service account and field allowlists, the tenant's limits, the declared connections and variables, the version label) and writes nothing, audit included. It answers 200 with what the register would do (created, dag_created, is_paused), dry_run true and the warnings it would raise, or the same refusal the register would give. Every answer to a dry run that passed the permission check carries the header Dexaflow-Dry-Run: true, so a client can tell it from a server that predates the parameter.
+	// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -1310,7 +1307,7 @@ type ClientInterface interface {
 	//
 	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
-	// With dry_run=true the register runs every check it runs for real (permission and scope, spec validation, the resource unit, source mode, the image, service account and field allowlists, the tenant's limits, the declared connections and variables, the version label) and writes nothing, audit included. It answers 200 with what the register would do (created, dag_created, is_paused), dry_run true and the warnings it would raise, or the same refusal the register would give. Every answer to a dry run that passed the permission check carries the header Dexaflow-Dry-Run: true, so a client can tell it from a server that predates the parameter.
+	// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -2076,7 +2073,7 @@ func (c *Client) GetDagSpec(ctx context.Context, dagId DagID, reqEditors ...Requ
 //
 // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 // Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
-// With dry_run=true the register runs every check it runs for real (permission and scope, spec validation, the resource unit, source mode, the image, service account and field allowlists, the tenant's limits, the declared connections and variables, the version label) and writes nothing, audit included. It answers 200 with what the register would do (created, dag_created, is_paused), dry_run true and the warnings it would raise, or the same refusal the register would give. Every answer to a dry run that passed the permission check carries the header Dexaflow-Dry-Run: true, so a client can tell it from a server that predates the parameter.
+// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 //
 // Takes any type of body and a specified content type.
 //
@@ -2097,7 +2094,7 @@ func (c *Client) RegisterDagVersionWithBody(ctx context.Context, dagId DagID, pa
 //
 // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 // Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
-// With dry_run=true the register runs every check it runs for real (permission and scope, spec validation, the resource unit, source mode, the image, service account and field allowlists, the tenant's limits, the declared connections and variables, the version label) and writes nothing, audit included. It answers 200 with what the register would do (created, dag_created, is_paused), dry_run true and the warnings it would raise, or the same refusal the register would give. Every answer to a dry run that passed the permission check carries the header Dexaflow-Dry-Run: true, so a client can tell it from a server that predates the parameter.
+// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -3758,18 +3755,6 @@ func NewRegisterDagVersionRequestWithBody(server string, dagId DagID, params *Re
 
 		}
 
-		if params.DryRun != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "dry_run", *params.DryRun, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -4649,7 +4634,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
-	// With dry_run=true the register runs every check it runs for real (permission and scope, spec validation, the resource unit, source mode, the image, service account and field allowlists, the tenant's limits, the declared connections and variables, the version label) and writes nothing, audit included. It answers 200 with what the register would do (created, dag_created, is_paused), dry_run true and the warnings it would raise, or the same refusal the register would give. Every answer to a dry run that passed the permission check carries the header Dexaflow-Dry-Run: true, so a client can tell it from a server that predates the parameter.
+	// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -4660,7 +4645,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
-	// With dry_run=true the register runs every check it runs for real (permission and scope, spec validation, the resource unit, source mode, the image, service account and field allowlists, the tenant's limits, the declared connections and variables, the version label) and writes nothing, audit included. It answers 200 with what the register would do (created, dag_created, is_paused), dry_run true and the warnings it would raise, or the same refusal the register would give. Every answer to a dry run that passed the permission check carries the header Dexaflow-Dry-Run: true, so a client can tell it from a server that predates the parameter.
+	// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7384,7 +7369,7 @@ func (c *ClientWithResponses) GetDagSpecWithResponse(ctx context.Context, dagId 
 //
 // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 // Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
-// With dry_run=true the register runs every check it runs for real (permission and scope, spec validation, the resource unit, source mode, the image, service account and field allowlists, the tenant's limits, the declared connections and variables, the version label) and writes nothing, audit included. It answers 200 with what the register would do (created, dag_created, is_paused), dry_run true and the warnings it would raise, or the same refusal the register would give. Every answer to a dry run that passed the permission check carries the header Dexaflow-Dry-Run: true, so a client can tell it from a server that predates the parameter.
+// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -7401,7 +7386,7 @@ func (c *ClientWithResponses) RegisterDagVersionWithBodyWithResponse(ctx context
 //
 // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 // Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
-// With dry_run=true the register runs every check it runs for real (permission and scope, spec validation, the resource unit, source mode, the image, service account and field allowlists, the tenant's limits, the declared connections and variables, the version label) and writes nothing, audit included. It answers 200 with what the register would do (created, dag_created, is_paused), dry_run true and the warnings it would raise, or the same refusal the register would give. Every answer to a dry run that passed the permission check carries the header Dexaflow-Dry-Run: true, so a client can tell it from a server that predates the parameter.
+// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

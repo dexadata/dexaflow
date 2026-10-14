@@ -11,13 +11,13 @@ import (
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
-// TestRegisterVersionDryRunAnswersWhatWouldHappen: ?dry_run=true reaches the
-// repository as a dry run, answers 200 whatever the register would create,
-// says what it would do, and marks the answer as a dry run in its body and
-// in the Dexaflow-Dry-Run header (#1705).
+// TestRegisterVersionDryRunAnswersWhatWouldHappen: POST .../versions/dry_run
+// reaches the repository as a dry run, answers 200 whatever the register
+// would create, says what it would do, and marks the answer as a dry run in
+// its body and in the Dexaflow-Dry-Run header (#1705).
 func TestRegisterVersionDryRunAnswersWhatWouldHappen(t *testing.T) {
 	repo := &fakeVersionRepo{created: true, dagCreated: true, paused: true}
-	rec := authGet(versionServer(repo), http.MethodPost, "/api/v2/dags/etl/versions?dry_run=true", validSpecJSON)
+	rec := authGet(versionServer(repo), http.MethodPost, "/api/v2/dags/etl/versions/dry_run", validSpecJSON)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("dry run = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
@@ -41,10 +41,11 @@ func TestRegisterVersionDryRunAnswersWhatWouldHappen(t *testing.T) {
 	}
 }
 
-// TestRegisterVersionWithoutDryRunIsARegister: dry_run=false and no dry_run
-// both register for real, with no dry run marks.
-func TestRegisterVersionWithoutDryRunIsARegister(t *testing.T) {
-	for _, q := range []string{"", "?dry_run=false"} {
+// TestRegisterVersionIsNeverADryRun: the register route registers for real,
+// a dry_run query included (the dry run is a route of its own, which an
+// older server answers with 404), with no dry run marks.
+func TestRegisterVersionIsNeverADryRun(t *testing.T) {
+	for _, q := range []string{"", "?dry_run=true"} {
 		repo := &fakeVersionRepo{created: true}
 		rec := authGet(versionServer(repo), http.MethodPost, "/api/v2/dags/etl/versions"+q, validSpecJSON)
 		if rec.Code != http.StatusCreated {
@@ -55,21 +56,6 @@ func TestRegisterVersionWithoutDryRunIsARegister(t *testing.T) {
 		}
 		if rec.Header().Get(dryRunHeader) != "" || strings.Contains(rec.Body.String(), "dry_run") {
 			t.Errorf("%q: a register carries dry run marks: %v %s", q, rec.Header(), rec.Body.String())
-		}
-	}
-}
-
-// TestRegisterVersionDryRunRejectsABadValue: any value but true or false is
-// refused before anything else, and still says the server knows dry_run.
-func TestRegisterVersionDryRunRejectsABadValue(t *testing.T) {
-	for _, q := range []string{"?dry_run=yes", "?dry_run="} {
-		repo := &fakeVersionRepo{created: true}
-		rec := authGet(versionServer(repo), http.MethodPost, "/api/v2/dags/etl/versions"+q, validSpecJSON)
-		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "dry_run") {
-			t.Errorf("%q = %d %s, want 400 naming dry_run", q, rec.Code, rec.Body.String())
-		}
-		if len(repo.dryRuns) != 0 {
-			t.Errorf("%q: a refused query reached the repository", q)
 		}
 	}
 }
@@ -115,15 +101,16 @@ func TestRegisterVersionDryRunRefusesAsTheRegisterWould(t *testing.T) {
 					RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"},
 					Versions: &fakeVersionRepo{created: true, err: tc.err}, ExecutionPolicy: tc.pol,
 				})
-				q := tc.query
+				route := "/versions"
 				if dry {
-					q = strings.TrimPrefix(q+"&dry_run=true", "&")
+					route = "/versions/dry_run"
 				}
-				if q != "" {
-					q = "?" + q
+				q := ""
+				if tc.query != "" {
+					q = "?" + tc.query
 				}
-				rec := authGet(srv, http.MethodPost, "/api/v2/dags/"+tc.path+"/versions"+q, tc.body)
-				return rec.Code, rec.Body.String(), rec.Header().Get(dryRunHeader)
+				rec := authGet(srv, http.MethodPost, "/api/v2/dags/"+tc.path+route+q, tc.body)
+				return rec.Code, problemWithoutInstance(t, rec.Body.String()), rec.Header().Get(dryRunHeader)
 			}
 			realCode, realBody, _ := answer(false)
 			dryCode, dryBody, header := answer(true)
@@ -162,7 +149,7 @@ func TestRegisterVersionDryRunReportsAMisfitWithoutCountingIt(t *testing.T) {
 	})
 	big := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
 		`{"task_id":"train","type":"python","entrypoint":"dag:a","resources":{"limits":{"cpu":"2"}}}]}`
-	rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/versions?dry_run=true", big)
+	rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/versions/dry_run", big)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("dry run of a misfit under warn = %d %s, want 200", rec.Code, rec.Body.String())
 	}
@@ -178,4 +165,20 @@ func TestRegisterVersionDryRunReportsAMisfitWithoutCountingIt(t *testing.T) {
 	if len(misfits.stages) != 0 {
 		t.Errorf("a dry run counted misfits: %v", misfits.stages)
 	}
+}
+
+// problemWithoutInstance is a problem body without its instance, the path
+// that was called, so two routes' refusals compare.
+func problemWithoutInstance(t *testing.T, body string) string {
+	t.Helper()
+	var p map[string]any
+	if err := json.Unmarshal([]byte(body), &p); err != nil {
+		t.Fatalf("not a problem body: %v: %s", err, body)
+	}
+	delete(p, "instance")
+	out, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
 }

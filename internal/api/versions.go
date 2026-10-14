@@ -36,17 +36,17 @@ type versionResponse struct {
 	IsPaused   bool   `json:"is_paused"`
 }
 
-// dryRunResponse is the answer to a register with dry_run=true: what the
-// register would do, and the warnings it would raise.
+// dryRunResponse is the answer to a register dry run: what the register
+// would do, and the warnings it would raise.
 type dryRunResponse struct {
 	versionResponse
 	DryRun   bool     `json:"dry_run"`
 	Warnings []string `json:"warnings"`
 }
 
-// dryRunHeader marks every answer to a register with dry_run=true, refusals
-// included, so a client can tell a server that ran the dry run from one that
-// predates the parameter and would have registered for real.
+// dryRunHeader marks every answer of the register dry run route, refusals
+// included, so a client can tell them from an answer of something else (an
+// older server answers the route with 404).
 const dryRunHeader = "Dexaflow-Dry-Run"
 
 // UnitMisfitRecorder counts a task that does not fit the resource unit but is
@@ -168,21 +168,6 @@ func boolQuery(c *gin.Context, name string) (*bool, error) {
 	return nil, errors.New(name + " must be true or false")
 }
 
-// dryRunQuery reads the optional dry_run query parameter of a register and,
-// when it asks for a dry run, sets dryRunHeader on the answer, before any
-// refusal: from here on, every answer says the server knew the parameter.
-// An invalid value is refused with the header too, since it was read.
-func dryRunQuery(c *gin.Context) (bool, error) {
-	if raw, ok := c.GetQuery("dry_run"); ok && raw != "false" {
-		c.Header(dryRunHeader, "true")
-	}
-	v, err := boolQuery(c, "dry_run")
-	if err != nil {
-		return false, err
-	}
-	return v != nil && *v, nil
-}
-
 // pauseRefusal says why the caller may not set is_paused on a register, ""
 // when it may or did not ask. Pausing is a run-state write: PATCH
 // /dags/{dag_id} needs write:dag and, for a scoped token, dexaflow:run, so
@@ -201,66 +186,77 @@ func pauseRefusal(c *gin.Context, paused *bool) string {
 	return ""
 }
 
-// registerVersionHandler serves POST /api/v2/dags/{dag_id}/versions. With
-// dry_run=true it runs every check and step the register runs, as the same
-// caller in the same tenant, and the repository undoes it all: the answer is
-// 200 with what would happen, or the refusal the register would give. A dry
-// run writes no audit row, like the dry run of a clear: no state changed.
+// registerVersionHandler serves POST /api/v2/dags/{dag_id}/versions.
 func registerVersionHandler(repo DagVersionRepository, admission specAdmission) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		dryRun, derr := dryRunQuery(c)
-		if derr != nil {
-			AbortProblem(c, http.StatusBadRequest, "bad request", derr.Error())
-			return
-		}
-		paused, perr := pausedQuery(c)
-		if perr != nil {
-			AbortProblem(c, http.StatusBadRequest, "bad request", perr.Error())
-			return
-		}
-		if msg := pauseRefusal(c, paused); msg != "" {
-			AbortProblem(c, http.StatusForbidden, "forbidden", msg)
-			return
-		}
-		var spec domain.DAGSpec
-		if err := c.ShouldBindJSON(&spec); err != nil {
-			AbortProblem(c, http.StatusBadRequest, "bad request", err.Error())
-			return
-		}
-		if c.Param("dag_id") != spec.DagID {
-			AbortProblem(c, http.StatusBadRequest, "bad request", "dag_id in path does not match spec")
-			return
-		}
-		warnings, aerr := admission.checkWarn(&spec, stageRegister, dryRun)
-		if aerr != nil {
-			AbortProblem(c, http.StatusBadRequest, "invalid dag spec", aerr.Error())
-			return
-		}
-		hash, err := spec.CanonicalHash()
-		if err != nil {
-			// Hashing touches no storage, so this error carries nothing from the
-			// database — but a 500 detail is a constant here for the same reason
-			// it is everywhere else: nobody re-audits a call site when the error
-			// source behind it changes.
-			AbortProblemCause(c, http.StatusInternalServerError, "internal error", detailInternal, err)
-			return
-		}
-		got, err := repo.RegisterDagVersionAs(c.Request.Context(), tenantOf(c), domain.DagRegistration{
-			Spec: spec, SpecHash: hash, ActorUserID: actorOf(c), IsPaused: paused, DryRun: dryRun,
-		})
-		if err != nil {
-			handleRepoError(c, err)
-			return
-		}
-		resp := versionResponse{DagID: spec.DagID, Version: spec.DagVersion, SpecHash: hash, Created: got.Created, DagCreated: got.DagCreated, IsPaused: got.IsPaused}
-		if dryRun {
-			c.JSON(http.StatusOK, dryRunResponse{versionResponse: resp, DryRun: true, Warnings: warnings})
-			return
-		}
-		status := http.StatusOK
-		if got.Created {
-			status = http.StatusCreated
-		}
-		c.JSON(status, resp)
+		registerVersion(c, repo, admission, false)
 	}
+}
+
+// dryRunVersionHandler serves POST /api/v2/dags/{dag_id}/versions/dry_run
+// (#1705): every check and step the register runs, as the same caller in the
+// same tenant, and the repository undoes it all. The answer is 200 with what
+// would happen, or the refusal the register would give, each with
+// dryRunHeader. A route of its own, not a parameter of the register, because
+// an older server answers it with 404 instead of registering. A dry run
+// writes no audit row, like the dry run of a clear: no state changed.
+func dryRunVersionHandler(repo DagVersionRepository, admission specAdmission) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header(dryRunHeader, "true")
+		registerVersion(c, repo, admission, true)
+	}
+}
+
+// registerVersion registers the spec of the request body, or with dryRun
+// says what registering it would do.
+func registerVersion(c *gin.Context, repo DagVersionRepository, admission specAdmission, dryRun bool) {
+	paused, perr := pausedQuery(c)
+	if perr != nil {
+		AbortProblem(c, http.StatusBadRequest, "bad request", perr.Error())
+		return
+	}
+	if msg := pauseRefusal(c, paused); msg != "" {
+		AbortProblem(c, http.StatusForbidden, "forbidden", msg)
+		return
+	}
+	var spec domain.DAGSpec
+	if err := c.ShouldBindJSON(&spec); err != nil {
+		AbortProblem(c, http.StatusBadRequest, "bad request", err.Error())
+		return
+	}
+	if c.Param("dag_id") != spec.DagID {
+		AbortProblem(c, http.StatusBadRequest, "bad request", "dag_id in path does not match spec")
+		return
+	}
+	warnings, aerr := admission.checkWarn(&spec, stageRegister, dryRun)
+	if aerr != nil {
+		AbortProblem(c, http.StatusBadRequest, "invalid dag spec", aerr.Error())
+		return
+	}
+	hash, err := spec.CanonicalHash()
+	if err != nil {
+		// Hashing touches no storage, so this error carries nothing from the
+		// database — but a 500 detail is a constant here for the same reason
+		// it is everywhere else: nobody re-audits a call site when the error
+		// source behind it changes.
+		AbortProblemCause(c, http.StatusInternalServerError, "internal error", detailInternal, err)
+		return
+	}
+	got, err := repo.RegisterDagVersionAs(c.Request.Context(), tenantOf(c), domain.DagRegistration{
+		Spec: spec, SpecHash: hash, ActorUserID: actorOf(c), IsPaused: paused, DryRun: dryRun,
+	})
+	if err != nil {
+		handleRepoError(c, err)
+		return
+	}
+	resp := versionResponse{DagID: spec.DagID, Version: spec.DagVersion, SpecHash: hash, Created: got.Created, DagCreated: got.DagCreated, IsPaused: got.IsPaused}
+	if dryRun {
+		c.JSON(http.StatusOK, dryRunResponse{versionResponse: resp, DryRun: true, Warnings: warnings})
+		return
+	}
+	status := http.StatusOK
+	if got.Created {
+		status = http.StatusCreated
+	}
+	c.JSON(status, resp)
 }

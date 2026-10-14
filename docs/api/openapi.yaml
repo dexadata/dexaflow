@@ -539,16 +539,8 @@ paths:
         scoped token needs dexaflow:run as well as dexaflow:deploy, else the
         register is refused with 403.
 
-        With dry_run=true the register runs every check it runs for real
-        (permission and scope, spec validation, the resource unit, source
-        mode, the image, service account and field allowlists, the tenant's
-        limits, the declared connections and variables, the version label)
-        and writes nothing, audit included. It answers 200 with what the
-        register would do (created, dag_created, is_paused), dry_run true and
-        the warnings it would raise, or the same refusal the register would
-        give. Every answer to a dry run that passed the permission check carries the
-        header Dexaflow-Dry-Run: true, so a client can tell it from a server
-        that predates the parameter.
+        POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and
+        writes nothing.
       operationId: registerDagVersion
       tags: [DAGs]
       parameters:
@@ -561,14 +553,6 @@ paths:
             and a scoped token also needs the dexaflow:run scope (403
             otherwise).
           schema: { type: boolean }
-        - name: dry_run
-          in: query
-          required: false
-          description: >-
-            When true, checks the register and writes nothing (answered with
-            200 and dry_run true, or the register's refusal). False or absent
-            registers. Any other value is refused with 400.
-          schema: { type: boolean }
       requestBody:
         required: true
         content:
@@ -576,7 +560,7 @@ paths:
             schema: { $ref: "#/components/schemas/DagSpec" }
       responses:
         "200":
-          description: The content was already registered and nothing changed, or, for a dry run, what the register would do
+          description: The content was already registered; nothing changed
           content:
             application/json:
               schema: { $ref: "#/components/schemas/VersionRegistration" }
@@ -593,6 +577,66 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
           description: The caller may not register, or sent is_paused without write on dags or, with a scoped token, without dexaflow:run
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: The version label is registered with other content
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v2/dags/{dag_id}/versions/dry_run:
+    parameters:
+      - $ref: "#/components/parameters/DagID"
+    post:
+      summary: Check the register of a compiled DAG version without registering it (Dexaflow)
+      description: >-
+        Runs every check POST /api/v2/dags/{dag_id}/versions runs for this
+        spec, as the same caller in the same tenant (permission and scope,
+        spec validation, the resource unit, source mode, the image, service
+        account and field allowlists, the tenant's limits, the declared
+        connections and variables, the version label, is_paused), and writes
+        nothing, audit included. It answers 200 with what the register would
+        do (created, dag_created, is_paused), dry_run true and the warnings it
+        would raise, or the refusal the register would give. Every answer past
+        the permission check carries the header Dexaflow-Dry-Run: true. A
+        server that predates this route answers it with 404 and registers
+        nothing. Needs deploy or write on dags (scope dexaflow:deploy).
+      operationId: dryRunDagVersion
+      tags: [DAGs]
+      parameters:
+        - name: is_paused
+          in: query
+          required: false
+          description: >-
+            The is_paused the register would be sent, checked as the register
+            checks it (400 for a value other than true or false, 403 without
+            write on dags or, for a scoped token, dexaflow:run).
+          schema: { type: boolean }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DagSpec" }
+      responses:
+        "200":
+          description: What the register would do; nothing was written
+          headers:
+            Dexaflow-Dry-Run:
+              description: Always true on an answer of this route.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VersionRegistration" }
+        "400":
+          description: The register would refuse the spec as invalid or outside the operator's policy
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: The caller may not register, or the register would refuse is_paused or a tenant limit
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1439,11 +1483,11 @@ components:
         created: { type: boolean, description: False when the content was already registered. }
         dag_created: { type: boolean, description: True when this register created the DAG (its first version); false for a new version of an existing DAG. }
         is_paused: { type: boolean, description: The DAG's is_paused after the register. }
-        dry_run: { type: boolean, description: True when this answers a dry run; nothing was written, and the other fields say what the register would do. Absent from a register. }
+        dry_run: { type: boolean, description: "True on an answer of the dry run route: nothing was written, and the other fields say what the register would do. Absent from a register." }
         warnings:
           type: array
           items: { type: string }
-          description: What the register would let through with a warning (a task that does not fit its size under executor.unit.enforce=warn). Sent with a dry run.
+          description: What the register would let through with a warning (a task that does not fit its size under executor.unit.enforce=warn). Sent by the dry run route.
 
     DagVersionCollection:
       type: object

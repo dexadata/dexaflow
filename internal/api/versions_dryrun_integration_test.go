@@ -49,7 +49,7 @@ func TestRegisterVersionDryRunAgainstPostgres(t *testing.T) {
 		return fmt.Sprintf(`{"schema_version":"1.0","dag_id":%q,"dag_version":"dev","image":"img:dev","tasks":[{"task_id":%q,"type":"python","entrypoint":"dag:a"}]%s}`, dagID, task, conns)
 	}
 
-	if rec := authGet(srv, http.MethodPost, path+"?dry_run=true", spec("a", "")); rec.Code != http.StatusOK {
+	if rec := authGet(srv, http.MethodPost, path+"/dry_run", spec("a", "")); rec.Code != http.StatusOK {
 		t.Fatalf("dry run of a new DAG = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
 	if _, gerr := repo.GetDag(ctx, "default", dagID); gerr == nil {
@@ -62,13 +62,14 @@ func TestRegisterVersionDryRunAgainstPostgres(t *testing.T) {
 		"conflict":           spec("b", ""),
 		"unknown connection": spec("a", fmt.Sprintf("missing_%d", time.Now().UnixNano())),
 	} {
-		dry := authGet(srv, http.MethodPost, path+"?dry_run=true", body)
+		dry := authGet(srv, http.MethodPost, path+"/dry_run", body)
 		real := authGet(srv, http.MethodPost, path, body)
 		if real.Code < http.StatusBadRequest {
 			t.Fatalf("%s: register = %d, want a refusal", name, real.Code)
 		}
-		if dry.Code != real.Code || dry.Body.String() != real.Body.String() {
-			t.Errorf("%s: dry run = %d %s, want the register's %d %s", name, dry.Code, dry.Body.String(), real.Code, real.Body.String())
+		dryBody, realBody := problemWithoutInstance(t, dry.Body.String()), problemWithoutInstance(t, real.Body.String())
+		if dry.Code != real.Code || dryBody != realBody {
+			t.Errorf("%s: dry run = %d %s, want the register's %d %s", name, dry.Code, dryBody, real.Code, realBody)
 		}
 	}
 	versions, err := repo.ListDagVersions(ctx, "default", dagID)

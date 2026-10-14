@@ -110,3 +110,39 @@ func TestWithDagSourceVersionSetsTheQueryParameter(t *testing.T) {
 		t.Errorf("queries = %q, want [version_number=1, empty]", gotQuery)
 	}
 }
+
+// TestDryRunRegisterSendsTheRegisterToTheDryRunRoute: RegisterDagVersion
+// with the DryRunRegister editor posts the same body and query to
+// /api/v2/dags/{dag_id}/versions/dry_run, the route that registers nothing.
+func TestDryRunRegisterSendsTheRegisterToTheDryRunRoute(t *testing.T) {
+	var gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"dry_run":true,"created":true}`))
+	}))
+	defer srv.Close()
+	c, err := New(srv.URL, "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused := true
+	resp, err := c.RegisterDagVersionWithResponse(context.Background(), "etl", &RegisterDagVersionParams{IsPaused: &paused},
+		RegisterDagVersionJSONRequestBody{DagId: "etl"}, DryRunRegister)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/v2/dags/etl/versions/dry_run" || gotQuery != "is_paused=true" {
+		t.Errorf("request = %s?%s, want /api/v2/dags/etl/versions/dry_run?is_paused=true", gotPath, gotQuery)
+	}
+	if resp.JSON200 == nil || resp.JSON200.DryRun == nil || !*resp.JSON200.DryRun {
+		t.Errorf("answer = %s, want dry_run true decoded", resp.Body)
+	}
+	// Without the editor the register goes where it always did.
+	if _, err := c.RegisterDagVersionWithResponse(context.Background(), "etl", nil, RegisterDagVersionJSONRequestBody{DagId: "etl"}); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/v2/dags/etl/versions" {
+		t.Errorf("a register went to %s", gotPath)
+	}
+}
