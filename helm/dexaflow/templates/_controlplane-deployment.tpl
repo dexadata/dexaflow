@@ -436,6 +436,9 @@ spec:
               value: {{ . | quote }}
             {{- end }}
             {{- with .ctx.Values.auth.trustedIssuer }}
+            {{- if and .deployAudience (not .issuer) }}
+            {{- fail "auth.trustedIssuer.deployAudience needs auth.trustedIssuer.issuer" }}
+            {{- end }}
             {{- if .issuer }}
             # Trusted-issuer handoff (#1284). Rendered as a block only when an
             # issuer is set; the server validates the whole section at boot.
@@ -465,6 +468,11 @@ spec:
             {{- with .hostPattern }}
             # Host binding (#1463), off unless a pattern is set.
             - name: LEOFLOW_AUTH_TRUSTED_ISSUER_HOST_PATTERN
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .deployAudience }}
+            # Deploys through the issuer only (#1773), off unless an audience is set.
+            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_DEPLOY_AUDIENCE
               value: {{ . | quote }}
             {{- end }}
             {{- end }}

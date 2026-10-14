@@ -1051,6 +1051,23 @@ apart (`dexaflow compile --build --push`, then mint the token, then
 `dexaflow push`, which registers the digest `compile` wrote into `dag.json`).
 {{% /alert %}}
 
+### When deploys go through your platform's issuer
+
+A control plane with `auth.trusted_issuer.deploy_audience` set takes deploys
+only from its trusted issuer
+([deploys through the issuer only](/reference/configuration/#deploys-through-the-issuer-only)):
+a deploy token, a session token and a password login all get `403` on
+`dexaflow deploy`, `dexaflow push` and `dexaflow rollback`, and `deploy` says
+that the control plane takes deploys only through its trusted issuer. Deploy
+through the platform that owns deployments instead. When that platform runs
+`dexaflow deploy` itself, it passes a bearer its issuer minted for the deploy
+audience, with the `dexaflow:deploy` scope and a user linked to the issuer,
+as `DEXAFLOW_TOKEN` or `--token`, its `aud` being the deploy audience alone.
+With `--paused` or `--active`, which set `is_paused`, the token also needs
+the `dexaflow:run` scope (and the user `write` on dags). The token is
+short-lived (at most `auth.trusted_issuer.bearer_max_lifetime_seconds`), so
+mint it for each job. Deleting a DAG goes through the issuer the same way.
+
 ## Python on the runner
 
 The `dexaflow compile` step (which `deploy` runs) needs Python 3.11, 3.12, or

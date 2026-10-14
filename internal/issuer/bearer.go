@@ -23,15 +23,19 @@ var ErrBearerDisabled = errors.New("issuer: bearer tokens are not enabled")
 // still reloaded on every request.
 const DefaultBearerMaxLifetime = 15 * time.Minute
 
-// BearerEnabled reports whether any bearer audience is configured.
-func (v *Verifier) BearerEnabled() bool { return len(v.cfg.BearerAudiences) > 0 }
+// BearerEnabled reports whether any bearer audience, the deploy audience
+// included, is configured.
+func (v *Verifier) BearerEnabled() bool {
+	return len(v.cfg.BearerAudiences) > 0 || v.cfg.DeployAudience != ""
+}
 
 // VerifyBearer checks a token sent as a bearer on an API request, the way a
 // remote MCP client sends one on every call (ADR 0050 D9). It applies the
 // handoff's checks (signature, issuer, expiry, subject, bounded lifetime,
 // allowed tenant) with two differences: the audience must be one of
-// BearerAudiences and never the handoff Audience, and there is no one-use
-// rule, because the same token authenticates every request until it expires.
+// BearerAudiences or the DeployAudience and never the handoff Audience, and
+// there is no one-use rule, because the same token authenticates every
+// request until it expires.
 func (v *Verifier) VerifyBearer(ctx context.Context, raw string) (*Identity, error) {
 	if !v.BearerEnabled() {
 		return nil, ErrBearerDisabled
@@ -60,6 +64,10 @@ func (v *Verifier) VerifyBearer(ctx context.Context, raw string) (*Identity, err
 	if id.Scopes, err = bearerScopes(claims); err != nil {
 		return nil, err
 	}
+	// A deploy token names the deploy audience alone. One that also names a
+	// bearer audience was minted for that audience's client too (an MCP
+	// client, say), so it stays an ordinary bearer and cannot deploy.
+	id.DeployAudience = v.cfg.DeployAudience != "" && len(tok.Audience) == 1 && tok.Audience[0] == v.cfg.DeployAudience
 	return id, nil
 }
 
@@ -122,6 +130,8 @@ func audiences(raw json.RawMessage) []string {
 	return nil
 }
 
+// bearerAudience reports whether aud is one a bearer may carry: a bearer
+// audience or the deploy audience.
 func (v *Verifier) bearerAudience(aud string) bool {
-	return slices.Contains(v.cfg.BearerAudiences, aud)
+	return slices.Contains(v.cfg.BearerAudiences, aud) || (v.cfg.DeployAudience != "" && aud == v.cfg.DeployAudience)
 }
