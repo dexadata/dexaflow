@@ -204,7 +204,8 @@ warm pods (at most `maxPoolSize`) even with no run, within the tenant's
 `maxWarmPodsPerTenant`: prewarmed pools share what the
 [per-tenant cap](#per-tenant-cap) leaves after the idle floors of the
 tenant's versions with an active run, and the DAGs last by id get fewer
-workers when they do not all fit.
+workers when they do not all fit (a pool whose share drops shrinks with
+`workerIdleTtl`, not at once).
 
 **Declaring it.** `min_idle_workers` is a top-level key of `dexaflow.yaml`
 (an integer from 0 to 100; the server clamps it to `maxPoolSize`). The
@@ -563,12 +564,18 @@ It is a **reserve-then-ration budget, never a starvation lever**:
   [Prewarm and drain on deploy](#prewarm-and-drain-on-deploy)) does not raise the
   budget. The tenant's prewarm floors share what the cap leaves after the floors
   of its versions with an active run, served by DAG id: each takes its
-  `min_idle_workers` or what is left, and a pool above its share loses idle
-  workers. The order is stable, so the same DAGs keep their pools on every
-  reconcile. When they do not all fit, the server logs the versions that got less
-  and meters `warm_pool_tenant_cap_below_min_idle_sum`
-  ([ADR 0082](/project/adrs/0082-warm-pool-follows-the-current-version/) D7). A
-  starved version gets its full floor again once one of its runs is active.
+  `min_idle_workers` or what is left. The order is stable, so the same DAGs keep
+  their pools on every reconcile. When a version's share drops below the idle
+  workers it has (a DAG whose id sorts first is deployed, or a run of another
+  version needs its floor), no worker is deleted: the version stops creating,
+  its idle workers retire with `workerIdleTtl` and are not replaced, and the
+  room goes to the DAG that took it. When the floors do not all fit, the server
+  logs the versions that got less (at most 10, and how many more) and meters
+  `warm_pool_prewarm_rationed`, once each time that set changes
+  ([ADR 0082](/project/adrs/0082-warm-pool-follows-the-current-version/) D7).
+  A rationed version gets its full floor again once one of its runs is active,
+  and a version rationed to no worker logs its prewarm start when it later gets
+  a share.
 - The cap is enforced **only by refusing to create new** warm pods once a tenant is
   at its budget — **never** by deleting a busy worker.
 
