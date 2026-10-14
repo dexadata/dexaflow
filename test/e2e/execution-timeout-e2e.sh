@@ -404,8 +404,7 @@ $(tail -30 "$WORKDIR/server.log")"
 # the ~30s of compile and image import: a stale `running` task instance is
 # re-dispatched by this control plane, and the sooner its DAG is gone the smaller
 # that window is.
-TOKEN="$("$ROOT/bin/leoflow" auth create-token --server "$API" \
-  --username admin@leoflow.local --password admin)" || fail "minting an admin token failed"
+TOKEN="$(admin_token "$ROOT/bin/leoflow" "$API" admin)" || fail "minting an admin token failed"
 log "Sweeping DAGs left by earlier invocations (prefix '$DAG_PREFIX')"
 purge_stale_dags "$TOKEN"
 

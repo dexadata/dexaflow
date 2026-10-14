@@ -43,14 +43,15 @@ each `[default]`:
   no Docker, recommended) or `k8s` (real pod-per-task on a local mini-Kubernetes —
   mirrors Pro, needs Docker). The wizard also accepts the friendly aliases `local`
   (= `subprocess`) and `cluster` (= `k8s`).
-- **Admin email** — default `admin@leoflow.local`
+- **Admin email**: default `admin@dexaflow.local` (an install created before the
+  rename keeps `admin@leoflow.local`)
 
 It then fetches a managed Python + the editor, creates your workspace, and prints
 your **admin password once** (`dexaflow lite reset-password` resets it):
 
 ```
 ── Dexaflow Lite admin (save this — it is shown only once) ──
-  user:     admin@leoflow.local
+  user:     admin@dexaflow.local
   password: tiger98
 ```
 
@@ -74,7 +75,7 @@ That's it. With no arguments, `dexaflow lite`:
 ```
 ✓ Dexaflow Lite is ready
     open:    http://127.0.0.1:8088
-    login:   admin@leoflow.local
+    login:   admin@dexaflow.local
     project: /home/you/leoflow
 ```
 

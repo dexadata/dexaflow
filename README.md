@@ -342,7 +342,7 @@ example DAGs in `~/dexaflow/examples/`, and hot-reloads every save. Recover the
 admin password any time with `dexaflow lite reset-password`.
 
 > Lite is the primary local path. The legacy Docker-Compose demo profile
-> (`docker compose --profile demo up --build`, login `admin@leoflow.local` /
+> (`docker compose --profile demo up --build`, login `admin@dexaflow.local` /
 > `admin`) still works for CI / containerized-only environments — see
 > [docs/local-deploy.md](https://dexaflow.dexadata.ai/contribute/local-dev-loop/). The pinned Airflow 3.3 UI is a
 > tactical MVP choice; a purpose-built Dexaflow UI is the long-term direction
@@ -366,7 +366,7 @@ DEXAFLOW_AUTH_JWT_SECRET=dev DEXAFLOW_BOOTSTRAP_PASSWORD=admin123 ./bin/dexaflow
 # Author, compile, and register a DAG
 ./bin/dexaflow init my-dag
 ./bin/dexaflow compile my-dag --image my-dag:dev -o my-dag/dag.json
-TOKEN=$(./bin/dexaflow auth create-token --username admin@leoflow.local --password admin123)
+TOKEN=$(./bin/dexaflow auth create-token --username admin@dexaflow.local --password admin123)
 ./bin/dexaflow push my-dag/dag.json --token "$TOKEN"
 ```
 

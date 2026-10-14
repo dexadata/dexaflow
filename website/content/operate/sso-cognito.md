@@ -102,8 +102,11 @@ auth:
       - corp.example
 
     breakGlassEmails:
-      - admin@leoflow.local
+      - admin@dexaflow.local
 ```
+
+The bootstrap admin of an install whose database predates the rename is
+`admin@leoflow.local`; list that address instead on such an install.
 
 Cognito lets you create an app client with or without a secret. If yours has one
 it is a confidential client, so `clientSecret`/`existingSecret` is required:

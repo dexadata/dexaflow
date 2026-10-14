@@ -86,17 +86,19 @@ auth:
     #
     # The address must belong to an account that ALREADY EXISTS with a password:
     # the list is an allowlist, not an account. On a fresh install the only such
-    # account is the bootstrap admin, whose address is admin@leoflow.local (the
+    # account is the bootstrap admin, whose address is admin@dexaflow.local (the
     # chart does not set LEOFLOW_BOOTSTRAP_EMAIL), created by the bootstrap
-    # password at the bottom of this file. Listing an address with no user row
-    # leaves the escape hatch pointing at nothing while looking configured.
+    # password at the bottom of this file. An install whose database predates
+    # the rename keeps its admin@leoflow.local: list that address there instead.
+    # Listing an address with no user row leaves the escape hatch pointing at
+    # nothing while looking configured.
     #
     # Keep it OFF the domain your users sign in with: an address that has a local
     # password account cannot also be JIT-provisioned from Google. It collides on
     # the users table's unique (tenant, email) and the SSO login is denied
     # jit_failed.
     breakGlassEmails:
-      - "admin@leoflow.local"
+      - "admin@dexaflow.local"
 
     # Google emits no groups claim by default, so roleMappings would match nothing
     # and every user would resolve to zero roles, a successful login into a UI
@@ -113,7 +115,7 @@ auth:
     jitProvisioning: true
 
 # The break-glass account above has to exist before SSO becomes the only other
-# way in. On a first install this is what creates it, as admin@leoflow.local; on
+# way in. On a first install this is what creates it, as admin@dexaflow.local; on
 # an install that already has an admin, leave it empty.
 bootstrap:
   password: "CHANGEME-break-glass-admin-password"

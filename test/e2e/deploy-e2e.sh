@@ -137,8 +137,9 @@ registry:
 YAML
 
 log "dexaflow auth login (persists token to \$CFG)"
+ADMIN_USER="$(admin_user "$ROOT/bin/leoflow" "$API" admin)"
 "$ROOT/bin/leoflow" auth login --server "$API" \
-  --username admin@leoflow.local --password admin --config "$CFG"
+  --username "$ADMIN_USER" --password admin --config "$CFG"
 
 log "dexaflow deploy — compile → build($PLATFORM) → push($REG_HOST) → digest re-pin → register"
 # Unique version per run so a re-run against the shared dev DB does not collide
@@ -152,7 +153,7 @@ echo "$IMG" | grep -q "@sha256:" || fail "dag.json image not digest-pinned: $IMG
 echo "$IMG" | grep -q "^${REG_HOST}/${DAG_ID}@sha256:" || fail "unexpected image ref: $IMG"
 log "registered image: $IMG"
 
-TOKEN="$("$ROOT/bin/leoflow" auth create-token --server "$API" --username admin@leoflow.local --password admin)"
+TOKEN="$(admin_token "$ROOT/bin/leoflow" "$API" admin)"
 
 # New DAGs are paused at creation, and a manual run of a paused DAG waits
 # until the DAG is unpaused.

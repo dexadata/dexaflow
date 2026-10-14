@@ -178,7 +178,7 @@ jq -e '.tasks[] | select(.task_id=="mart") | .depends_on | index("stg")' "$PROJ/
 k3d_import "$CLUSTER" "$BASE_IMAGE" "$DAG_IMAGE"
 
 log "Pushing the DAG and triggering a run"
-TOKEN="$("$ROOT/bin/leoflow" auth create-token --server "$API" --username admin@leoflow.local --password admin)"
+TOKEN="$(admin_token "$ROOT/bin/leoflow" "$API" admin)"
 "$ROOT/bin/leoflow" push "$PROJ/dag.json" --server "$API" --token "$TOKEN"
 # New DAGs are paused at creation, and a manual run of a paused DAG waits
 # until the DAG is unpaused.
