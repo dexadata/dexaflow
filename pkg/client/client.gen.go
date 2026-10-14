@@ -283,7 +283,7 @@ type ClearTaskInstancesRequest struct {
 	// ResetDagRuns Re-open the run so the scheduler looks at it again. Without it a terminal run stays terminal and the cleared task instance is never scheduled.
 	ResetDagRuns *bool `json:"reset_dag_runs,omitempty"`
 
-	// RunOnLatestVersion Which version the re-run executes. false (the default, matching Apache Airflow) keeps the version the run was created with, so the re-run executes the image that produced the original attempt. true re-binds the run to the DAG's current registered version, so the re-run picks up the newest image and config — use it to re-run a failed task against a fix without creating a new run.
+	// RunOnLatestVersion Which version the re-run executes. false (the default, matching Apache Airflow) keeps the version the run was created with, so the re-run executes the image that produced the original attempt. true re-binds the run to the DAG's current registered version, so the re-run picks up the newest image and config. Use it to re-run a failed task against a fix without creating a new run. A re-bind onto a version that adds or removes a task is refused with 409 (the clear does not yet create or remove task instances), naming the tasks.
 	RunOnLatestVersion *bool     `json:"run_on_latest_version,omitempty"`
 	TaskIds            *[]string `json:"task_ids,omitempty"`
 }
@@ -438,7 +438,7 @@ type DAGRunClearRequest struct {
 	// OnlyNew Not supported. Sending true is refused with 400: Dexaflow cannot yet tell which tasks a newer DAG version added.
 	OnlyNew *bool `json:"only_new,omitempty"`
 
-	// RunOnLatestVersion Which version the re-run executes. Unset or false keeps the version the run was created with; true re-binds the run to the DAG's current registered version.
+	// RunOnLatestVersion Which version the re-run executes. Unset or false keeps the version the run was created with; true re-binds the run to the DAG's current registered version. A re-bind onto a version whose tasks differ from the run's task instances is refused with 409.
 	RunOnLatestVersion *bool `json:"run_on_latest_version,omitempty"`
 }
 
@@ -5742,11 +5742,18 @@ type ClearTaskInstancesResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *TaskInstanceCollection
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ClearTaskInstancesResponse) GetJSON200() *TaskInstanceCollection {
 	return r.JSON200
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ClearTaskInstancesResponse) GetJSON409() *Error {
+	return r.JSON409
 }
 
 // GetBody returns the raw response body bytes
@@ -5995,6 +6002,8 @@ type ClearDagRunResponse struct {
 	JSON403 *Error
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -6015,6 +6024,11 @@ func (r ClearDagRunResponse) GetJSON403() *Error {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r ClearDagRunResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ClearDagRunResponse) GetJSON409() *Error {
+	return r.JSON409
 }
 
 // GetBody returns the raw response body bytes
@@ -8427,6 +8441,13 @@ func ParseClearTaskInstancesResponse(rsp *http.Response) (*ClearTaskInstancesRes
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
 	}
 
 	return response, nil
@@ -8625,6 +8646,13 @@ func ParseClearDagRunResponse(rsp *http.Response) (*ClearDagRunResponse, error) 
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	}
 

@@ -52,6 +52,10 @@ type TaskInstanceRepository interface {
 	// /tries endpoint needs all attempts to render its navigable tabs.
 	ListTaskInstanceAttempts(ctx context.Context, tenant, dagID, runID, taskID string) ([]domain.TaskInstance, error)
 	ClearTaskInstances(ctx context.Context, tenant, dagID, runID string, taskIDs []string, onlyFailed bool, opts domain.ClearOptions) (int, error)
+	// CheckClearVersion answers, without writing, the refusal ClearTaskInstances
+	// would return for the run under opts (a conflict when a re-bind onto the
+	// current version would change the run's task set), or nil.
+	CheckClearVersion(ctx context.Context, tenant, dagID, runID string, opts domain.ClearOptions) error
 	SetTaskInstanceState(ctx context.Context, tenant, dagID, runID, taskID, state string) error
 }
 
@@ -914,16 +918,6 @@ func clearTaskInstancesHandler(repo TaskInstanceRepository, runs DagRunRepositor
 		// then fan the same set across the target runs (current + past/future).
 		taskIDs := expandClearTasks(c, specs, body)
 		targets := clearTargetRuns(c, runs, body.DagRunID, body.IncludePast, body.IncludeFuture)
-		affected := make([]taskInstanceDTO, 0)
-		for _, rid := range targets {
-			affected = append(affected, affectedTaskInstances(c, repo, runs, versions, rid, taskIDs, onlyFailed)...)
-		}
-		// The UI previews with dry_run=true before confirming; it expects the set of
-		// affected task instances back (TaskInstanceCollectionResponse), not a count.
-		if body.DryRun == nil || *body.DryRun {
-			c.JSON(http.StatusOK, taskInstanceCollectionDTO{TaskInstances: affected, TotalEntries: len(affected)})
-			return
-		}
 		// Defaults match Apache Airflow 3.x: a run keeps the version it was created
 		// with unless the caller asks for the current one. A clear then reproduces
 		// the attempt it is clearing, which is what makes clearing a week-old task
@@ -936,6 +930,19 @@ func clearTaskInstancesHandler(repo TaskInstanceRepository, runs DagRunRepositor
 		if body.RunOnLatestVersion != nil {
 			opts.RunOnLatestVersion = *body.RunOnLatestVersion
 		}
+		if !checkClearVersion(c, repo, targets, opts) {
+			return
+		}
+		affected := make([]taskInstanceDTO, 0)
+		for _, rid := range targets {
+			affected = append(affected, affectedTaskInstances(c, repo, runs, versions, rid, taskIDs, onlyFailed)...)
+		}
+		// The UI previews with dry_run=true before confirming; it expects the set of
+		// affected task instances back (TaskInstanceCollectionResponse), not a count.
+		if body.DryRun == nil || *body.DryRun {
+			c.JSON(http.StatusOK, taskInstanceCollectionDTO{TaskInstances: affected, TotalEntries: len(affected)})
+			return
+		}
 		for _, rid := range targets {
 			if _, err := repo.ClearTaskInstances(c.Request.Context(), tenantOf(c), c.Param("dag_id"), rid, taskIDs, onlyFailed, opts); err != nil {
 				handleRepoError(c, err)
@@ -947,6 +954,25 @@ func clearTaskInstancesHandler(repo TaskInstanceRepository, runs DagRunRepositor
 		}
 		c.JSON(http.StatusOK, taskInstanceCollectionDTO{TaskInstances: affected, TotalEntries: len(affected)})
 	}
+}
+
+// checkClearVersion asks the repository, for every target run before any is
+// previewed or cleared, whether a clear that re-binds the run to the DAG's
+// current version may apply (#1702). A dry run so reports the refusal the
+// clear would meet, and a clear over several runs clears none of them when
+// one is refused. It writes the error response and returns false on a
+// refusal; a clear that keeps the run's version is not checked.
+func checkClearVersion(c *gin.Context, repo TaskInstanceRepository, targets []string, opts domain.ClearOptions) bool {
+	if !opts.ResetDagRun || !opts.RunOnLatestVersion {
+		return true
+	}
+	for _, rid := range targets {
+		if err := repo.CheckClearVersion(c.Request.Context(), tenantOf(c), c.Param("dag_id"), rid, opts); err != nil {
+			handleRepoError(c, err)
+			return false
+		}
+	}
+	return true
 }
 
 // expandClearTasks expands the requested task_ids along the DAG topology when

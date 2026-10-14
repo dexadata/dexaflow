@@ -352,6 +352,17 @@ Known gaps the 3.3 UI exposes, none of them a crash:
   Clear dialog shows "run on latest version" as forced for it; the request it
   sends still keeps the run's own version. Every other run names its pinned
   version, in `GET .../dagRuns/{dag_run_id}` and in the run list alike.
+- "Run with latest bundle version" on a run whose tasks differ from the
+  current version's is refused. Airflow re-binds the run and then creates a
+  task instance for every task the new version adds and marks `removed` the
+  task instances of the tasks it dropped. Dexaflow does not create or remove
+  task instances on a clear yet, so when the current version adds or removes
+  a task, both Clear routes (`clearTaskInstances` and
+  `dagRuns/{dag_run_id}/clear`) answer `409` with a detail that names the
+  tasks, and the dialog's preview shows the same error before anything is
+  cleared. Clear without the option to re-run the version the run was created
+  with, or trigger a new run to run the current version. A clear onto a version
+  with the same tasks re-binds the run as before.
 - Deadline alerts and run duration stats answer empty.
 - The calls below are not served yet. Each one answers `501` with the detail
   "... is not available in Dexaflow yet", which the UI shows as an error toast,

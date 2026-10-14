@@ -500,7 +500,11 @@ always runs its newest version:
 - **The Clear dialog offers "Run with latest bundle version"** even on a run
   that already uses the current version, because the UI compares the run's
   version with the newest one. In Dexaflow that option re-pins the run to the
-  current version, so on such a run it changes nothing.
+  current version, so on such a run it changes nothing. When the current
+  version adds or removes a task compared with the run, the option is refused
+  with `409` and a message naming those tasks, before anything is cleared (the
+  preview shows it too): clear without the option, or trigger a new run
+  ([UI compatibility](/concepts/ui-compatibility/) has the detail).
 - **Which version is current** is the `*` in `dexaflow dags versions`, and the
   `is_current` field of each version in `GET /api/v2/dags/{dag_id}/dagVersions`
   and of `latest_dag_version` in the DAG details. The MCP `dag://source`

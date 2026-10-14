@@ -127,6 +127,12 @@ type fakeTaskRepo struct {
 	gotOnlyFailed bool
 	setState      string
 	setTaskID     string
+	// checkErr is what CheckClearVersion answers, for every run or, when
+	// checkErrRun is set, for that run only; checkedRuns records the runs it
+	// was asked about, in order.
+	checkErr    error
+	checkErrRun string
+	checkedRuns []string
 }
 
 func (f *fakeTaskRepo) ListTaskInstances(context.Context, string, string, string, int, int) ([]domain.TaskInstance, int, error) {
@@ -150,6 +156,13 @@ func (f *fakeTaskRepo) ClearTaskInstances(_ context.Context, _, _, _ string, _ [
 	f.clearCalled = true
 	f.gotOnlyFailed = onlyFailed
 	return len(f.tis), nil
+}
+func (f *fakeTaskRepo) CheckClearVersion(_ context.Context, _, _, runID string, _ domain.ClearOptions) error {
+	f.checkedRuns = append(f.checkedRuns, runID)
+	if f.checkErrRun != "" && f.checkErrRun != runID {
+		return nil
+	}
+	return f.checkErr
 }
 func (f *fakeTaskRepo) SetTaskInstanceState(_ context.Context, _, _, _, taskID, state string) error {
 	f.setTaskID, f.setState = taskID, state
