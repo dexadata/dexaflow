@@ -60,6 +60,10 @@ type Metrics struct {
 	// although they do not fit their size, by stage (register, dispatch;
 	// ADR 0066 §3).
 	UnitMisfits *prometheus.CounterVec
+	// UnpinnedImages counts images not pinned by digest that
+	// deploy.require_digest warned about or refused, by stage (register,
+	// set_current) and outcome (warned, refused) (#1703).
+	UnpinnedImages *prometheus.CounterVec
 
 	// Redis observability — port of the #311 step-down pattern for Redis (Pro
 	// only; Lite uses Postgres + in-process tailer per ADR 0026, so these
@@ -199,6 +203,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "dexaflow_unit_misfit_total",
 			Help: "Tasks accepted under executor.unit.enforce=warn although their resources exceed pool_slots x unit, by stage (register, set_current, dispatch).",
 		}, []string{"stage"}),
+		UnpinnedImages: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_unpinned_image_total",
+			Help: "Images not pinned by digest that deploy.require_digest warned about (outcome=warned) or refused (outcome=refused), by stage (register, set_current). Dry runs are not counted.",
+		}, []string{"stage", "outcome"}),
 
 		RedisCommandFailures: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_redis_command_failures_total",
@@ -404,3 +412,10 @@ func (m *Metrics) RecordDispatchInnerError() { m.DispatchInnerErrors.Inc() }
 // although it does not fit its size. It satisfies dispatch.UnitMisfitRecorder
 // and api.UnitMisfitRecorder.
 func (m *Metrics) RecordUnitMisfit(stage string) { m.UnitMisfits.WithLabelValues(stage).Inc() }
+
+// RecordUnpinnedImage counts one image not pinned by digest that
+// deploy.require_digest warned about or refused at stage. It satisfies
+// api.UnpinnedImageRecorder.
+func (m *Metrics) RecordUnpinnedImage(stage, outcome string) {
+	m.UnpinnedImages.WithLabelValues(stage, outcome).Inc()
+}

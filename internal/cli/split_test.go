@@ -6,11 +6,13 @@ import (
 	"errors"
 	"io"
 	"log"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -193,11 +195,20 @@ func TestCodeLayerFilesFailOnAMissingRoot(t *testing.T) {
 	}
 }
 
-// splitRegistry starts an in-memory registry holding a one-platform base
-// image and returns its host and the base reference.
-func splitRegistry(t *testing.T) (host, base string) {
+// splitRegistryWith starts an in-memory registry holding a one-platform
+// base image and returns its host and the base reference. Its blob uploads
+// are refused with a 401 while deny is set, as a registry refuses a
+// credential that may not push; nil never refuses.
+func splitRegistryWith(t *testing.T, deny *atomic.Bool) (host, base string) {
 	t.Helper()
-	srv := httptest.NewServer(registry.New(registry.Logger(log.New(io.Discard, "", 0))))
+	reg := registry.New(registry.Logger(log.New(io.Discard, "", 0)))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if deny != nil && deny.Load() && req.Method == http.MethodPost && strings.Contains(req.URL.Path, "/blobs/uploads/") {
+			http.Error(w, `{"errors":[{"code":"DENIED","message":"requested access to the resource is denied"}]}`, http.StatusUnauthorized)
+			return
+		}
+		reg.ServeHTTP(w, req)
+	}))
 	t.Cleanup(srv.Close)
 	host = strings.TrimPrefix(srv.URL, "http://")
 	base = host + "/runtime:py3.12"
@@ -233,7 +244,13 @@ func pushPlatformIndex(t *testing.T, ref string, platforms ...string) {
 // in-memory registry, and the dependency image its build uses.
 func splitProject(t *testing.T, extraYAML string) (dir, host, deps string) {
 	t.Helper()
-	host, base := splitRegistry(t)
+	return splitProjectWith(t, extraYAML, nil)
+}
+
+// splitProjectWith is splitProject on splitRegistryWith(deny).
+func splitProjectWith(t *testing.T, extraYAML string, deny *atomic.Bool) (dir, host, deps string) {
+	t.Helper()
+	host, base := splitRegistryWith(t, deny)
 	dir = versionProject(t, "base_image: "+base+"\ndependencies: [pandas==2.2.3]\nregistry:\n  url: "+host+"/team\n  image_name: etl\n"+
 		"build:\n  platforms: [linux/amd64]\n"+extraYAML)
 	t.Setenv("LEOFLOW_PARSER_CMD", recordingParser(t, filepath.Join(t.TempDir(), "parser.log")))

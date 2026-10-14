@@ -55,7 +55,8 @@ plane then pulls by tag, so a tag that is rebuilt later can run different bytes
 under the same version. `dexaflow deploy` is the only command that resolves the
 pushed image's digest and registers `registry/image@sha256:…`. Prefer `deploy`
 in CI; if you split the steps, tag by commit (`tag_strategy: git_sha`) and never
-reuse a tag.
+reuse a tag. An operator can make the control plane warn about, then refuse, a
+register by tag: see [Require images pinned by digest](#require-images-pinned-by-digest).
 {{% /alert %}}
 
 {{% alert title="The guardrails are your CI gate" color="success" %}}
@@ -106,9 +107,14 @@ reach the image, so ship one only if you want full control (see
 [your own Dockerfile](/operate/first-pro-dag/#advanced-your-own-dockerfile)).
 
 The built image is **your** artifact: push it wherever you like (Docker Hub, ECR,
-Artifact Registry, ACR, GHCR, a private registry), via the `registry:` block in
-`dexaflow.yaml`. `deploy` requires that block; it has no `--image` flag. The
-only image Dexaflow owns is the base your DAG layers on.
+Artifact Registry, ACR, GHCR, a private registry). `deploy` needs a registry
+prefix from one of `--registry`, `DEXAFLOW_REGISTRY`, the `registry:` block of
+`dexaflow.yaml`, the target, the workspace defaults, your config file or the
+cluster's deploy defaults
+([Registry, platforms and base image](/operate/workspaces-and-targets/#registry-platforms-and-base-image)),
+and names the image after the `dag_id` unless `registry.image_name` says
+otherwise; it has no `--image` flag. The only image Dexaflow owns is the base
+your DAG layers on.
 
 **The mental model:** a push that touches `dags/my_pipeline/**` triggers CI for
 *that* DAG only (the `paths:` filter), which compiles → builds (from yaml) →
@@ -262,7 +268,10 @@ sees which DAGs went through.
 `execution` is the server's answer on where each task runs: `mode` is `warm`
 (warm-eligible) or `dedicated`, with the `reason` for a dedicated pod, and
 `pool.state` is `off`, `none` or `on`, with `previous_pool: "draining"` for a
-new version of an existing DAG on a server that keeps warm workers. The human output
+new version of an existing DAG on a server that keeps warm workers: the
+previous version's pool drains, and the new one starts at the next reconcile
+when the DAG declares `min_idle_workers`, else with its first run (see
+[Prewarm and drain on deploy](/operate/warm-pools/#prewarm-and-drain-on-deploy)). The human output
 prints it as an `execution` line and, unless every task takes a dedicated pod
 for one reason, a `warm pool` line; see
 [Where a deploy's tasks run](/operate/warm-pools/#where-a-deploys-tasks-run).
@@ -430,8 +439,6 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     permissions: { contents: read, packages: write }
-    env:
-      DEXAFLOW_SERVER_URL: https://pro.example.com
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }          # the ref and git describe need history
@@ -442,8 +449,10 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install dexaflow
-        run: curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | DEXAFLOW_VERSION=<VERSION> DEXAFLOW_NO_SETUP=1 DEXAFLOW_INSTALL_DIR=/usr/local/bin sh
+      - uses: dexadata/dexaflow/.github/actions/setup-dexaflow@<VERSION>
+        with:
+          version: <VERSION>
+          server-url: https://pro.example.com
       - name: Deploy the DAGs this push changed
         env:
           DEXAFLOW_TOKEN: ${{ secrets.DEXAFLOW_TOKEN }}   # a deploy token
@@ -492,14 +501,21 @@ dexaflow rollback my_pipeline --to v1.4.0-3fa2c1   # or to a label (or a version
 
 `dexaflow dags versions` lists each version, newest first: its number, its
 label, a `*` on the current one, when it was registered, the id of the user
-who registered it (`dexaflow admin users list` maps ids to emails), and the
-short image digest. `--to` matches a label first, then a version number. `dexaflow rollback` prints the version it moved from and
+who registered it (`dexaflow admin users list` maps ids to emails), the
+commit it was built from (see [Where a version was built](#where-a-version-was-built))
+and the short image digest. `--to` matches a label first, then a version number. `dexaflow rollback` prints the version it moved from and
 the one it moved to, and takes `--server` and `--token` like the other
 commands. Both read and write through the API: the listing is
 `GET /api/v2/dags/{dag_id}/dagVersions`, and the rollback is
 `PUT /api/v2/dags/{dag_id}/currentVersion` with `{"version": "<label>"}` or
 `{"version_number": <n>}`, which needs the same permission as registering a
 version (scope `dexaflow:deploy` for a scoped token).
+
+A rollback passes the checks a register of the version would pass today.
+Under `deploy.require_digest: enforce`, a version registered with a tag
+cannot be made current again: redeploy its sources with `dexaflow deploy`, or
+set the setting to `warn` (see
+[Require images pinned by digest](#require-images-pinned-by-digest)).
 
 What a rollback changes, in one transaction:
 
@@ -549,6 +565,42 @@ Two things that look like a rollback are not:
 `dexaflow deploy` of code that matches a version registered earlier (after a
 `git revert`, for example) stops before building and suggests the
 `dexaflow rollback <dag_id> --to <label>` command for that version.
+
+## Where a version was built
+
+Every `dexaflow deploy` and `dexaflow push` records where the version was
+built. `GET /api/v2/dags/{dag_id}/dagVersions` (and `.../dagVersions/{n}`, and
+the answer of a rollback) returns it as `build_info` next to Airflow's fields,
+`null` for a version registered without it; the `dag_version` embedded in task
+instance, run and DAG details answers leaves it out:
+
+| Field | Where the CLI reads it |
+|---|---|
+| `commit` | `git rev-parse HEAD` in the project directory, when it is in a git work tree. |
+| `repo` | The `origin` remote of that work tree, as an `https` URL: credentials and a trailing `.git` are dropped, and an ssh remote (`git@host:org/repo.git`) becomes `https://host/org/repo`. Outside git, `GITHUB_SERVER_URL`/`GITHUB_REPOSITORY` or GitLab's `CI_PROJECT_URL`. |
+| `pipeline_url` | The CI run: on GitHub Actions `GITHUB_SERVER_URL/GITHUB_REPOSITORY/actions/runs/GITHUB_RUN_ID`, else `CI_PIPELINE_URL` (GitLab), `BUILD_URL` (Jenkins), `BUILDKITE_BUILD_URL` or `CIRCLE_BUILD_URL`, without a query string or fragment. |
+| `builder` | The builder that produced the image, as the deploy prints it (`code-layer`, `local-daemon (docker)`, ...). Absent when the deploy built nothing: with `--skip-build`, and when it reused an image the registry already held for this content label. |
+| `base_image` | The base image of the generated Dockerfile, which carries the task agent. Absent when the project ships its own Dockerfile, and when the deploy built nothing (`--skip-build`, or a reused image). |
+| `cli_version` | The version of the CLI that built and registered the version. |
+
+What cannot be read is left out; a deploy never fails for it. `dexaflow promote`
+forwards the source version's `build_info` to the destination.
+
+Build info is metadata of the register, not part of `dag.json`: it changes
+neither the spec, its hash nor the version label, so the same sources built by
+two pipelines still compile to one version. A version is immutable, so a
+re-push of content already registered creates nothing and keeps the build info
+of its first register. The CLI sends it as the `build_commit`, `build_repo`,
+`build_pipeline_url`, `build_builder`, `build_base_image` and
+`build_cli_version` query parameters of
+`POST /api/v2/dags/{dag_id}/versions`; another client can send them too. The
+server checks them as external input (a commit is 7 to 64 lower case hex
+characters, the two URLs are absolute `http` or `https` URLs of at most 2048
+bytes without credentials, query string or fragment, every field is valid
+UTF-8 without control characters) and
+refuses a bad value with `400`. The register's `dag.version.register` audit
+entry records the same `build_info`. It is the caller's claim, recorded as
+sent and not verified: a deploy token can write any commit there.
 
 ## Syncing a target with the workspace (GitOps)
 
@@ -850,7 +902,9 @@ dexaflow promote my_pipeline --from staging --to prod --version v1.4.0-3fa2c1   
 - **Audited, as claimed.** The register's `dag.version.register` audit entry
   carries `promoted_from` with the source target's name and server URL as the
   promoting CLI sent them (`promoted_from` and `promoted_from_server` on the
-  register). The destination records this claim; it does not verify it.
+  register). The destination records this claim; it does not verify it. The
+  source version's `build_info` (commit, pipeline, builder) is sent along, so
+  the destination lists where the version was built.
 - **A token for each control plane.** `--from-token` and `--to-token`, else
   the session saved for each server by `dexaflow auth login --target <name>`.
   `DEXAFLOW_TOKEN` is not read, so one token is never sent to two control
@@ -878,14 +932,67 @@ In a pipeline, a promotion job after the staging deploy:
             --from-token "$STAGING_TOKEN" --to-token "$PROD_TOKEN"
 ```
 
+## Require images pinned by digest
+
+A version registered with a tag (`ghcr.io/acme/etl:v1`) runs whatever the tag
+names when a node pulls it, so two nodes can run different bytes for one
+version. The server setting `deploy.require_digest`
+(`DEXAFLOW_DEPLOY_REQUIRE_DIGEST`, Helm `deploy.requireDigest`) decides what
+the control plane does with an image that is not pinned as
+`<repository>@sha256:<64 hex>` (sha256 only: another digest algorithm counts as
+not pinned):
+
+| Value | Register of an unpinned image | Making such a version current again |
+|---|---|---|
+| `off` (default) | Registered, as every release before the setting did. | Allowed, as before. |
+| `warn` | Registered, with a warning in the answer's `warnings`, which `dexaflow push` and `dexaflow deploy` print on stderr. | Allowed, with a warning that `dexaflow rollback` prints on stderr. |
+| `enforce` | Refused with a 400 that names the setting and how to pin. Nothing is registered. | Refused with a 400 that names the way out: redeploy the version's sources with `dexaflow deploy`, or set `warn`. |
+
+Under `warn` and `enforce` the server logs each image it warns about
+(`admitting an image not pinned by digest`, with the DAG, the version, the
+image and the stage) and counts each warning and refusal in
+`dexaflow_unpinned_image_total{stage="register|set_current",outcome="warned|refused"}`.
+The `dag.version.register` and `dag.version.set_current` audit entries record
+`require_digest` and `image_pinned`. The dry run of a register (the deploy
+preflight) answers with the same warning or refusal, and records nothing.
+
+**Today only `dexaflow deploy` and `dexaflow promote` register pinned images.**
+`dexaflow compile --build --push` followed by `dexaflow push` registers the tag
+it pushed, so under `enforce` that path is refused until it pins by digest
+(#1703). Use `warn` to find the pipelines that still register a tag, and move
+them to `dexaflow deploy` or pin the image yourself before `push`, for example
+with `docker buildx imagetools inspect` (a registry port such as
+`localhost:5000` is kept):
+
+```bash
+dexaflow compile dags/my_pipeline --build --push -o dag.json
+ref=$(jq -r .image dag.json)          # ghcr.io/acme/my_pipeline:v1
+repo=$ref
+case ${ref##*/} in *:*) repo=${ref%:*} ;; esac   # drop the tag, never a registry port
+digest=$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' | jq -r .digest)
+jq --arg img "$repo@$digest" '.image = $img' dag.json > dag.pinned.json
+dexaflow push dag.pinned.json
+```
+
+Set `enforce` only once nothing on the cluster registers a tag any more: no
+increase of `outcome="warned"` while every pipeline has run.
+
+A [source mode](/operate/source-mode/) version names the runtime image, which
+the server requires pinned by digest, so it passes every mode. Under
+`dexaflow lite`, the local dev loop registers a placeholder image: leave the
+setting `off` there.
+
 ## Prerequisites
 
 - The `dexaflow` CLI on the runner (download the release binary, or `go install`).
 - **Python 3.11 to 3.13 on the runner** (`dexaflow compile` invokes the
   stdlib-only parser shim, [ADR 0024](/project/adrs/0024-dag-parsing-structural-shim/),
   to turn `dag.py` into `dag.json`). See [Python on the runner](#python-on-the-runner) below.
-- A container registry your cluster can pull from, and the builder logged in to
-  it (`docker login`).
+- A container registry your cluster can pull from, and a credential for it on
+  the runner: the `gcloud`, `aws` or `az` session for Artifact Registry, ECR and
+  ACR, the docker config (`docker login`, or a login action) for the others,
+  and the container tool's own login when it builds
+  ([Registry credentials](/operate/builders/#registry-credentials)).
 - The control plane URL, passed as `--server` or exported as
   `DEXAFLOW_SERVER_URL` (the pre-rename `LEOFLOW_SERVER_URL` still works). The
   CLI reads no other variable for it: a pipeline that exports something else
@@ -1009,7 +1116,7 @@ The recommended path on each runner type:
 | Runner | Recipe |
 |---|---|
 | **GitHub Actions** | Add `actions/setup-python@v5` with `python-version: '3.12'` before installing dexaflow. Cached automatically. |
-| **GitLab CI** | Install `python3` in the job image (`apk add python3` on `docker:27`), or use an image that ships both Python and the Docker CLI. |
+| **GitLab CI, Argo CD, Flux, Tekton** | Run the job in the [`dexaflow-cli` image](#the-dexaflow-cli-image): it ships Python 3.13, git and uv next to the CLI. With a Docker daemon in the job, install `python3` in its image (`apk add python3` on `docker:27`). |
 | **Cloud Build / CodeBuild** | Run the step on a `python:3.12-slim` image and install the Docker CLI there (the recipe below). `gcr.io/cloud-builders/docker` is Ubuntu 20.04, whose `python3` is 3.8. |
 | **Self-hosted runners** | Pin Python via your image baseline (`apt install python3.12` or `pyenv`) and version-lock in your runner provisioning. |
 | **Generic Docker-in-Docker** | Base your build container on `python:3.12-slim` (gives you Python + a Debian userland for the `docker build` shell). |
@@ -1027,6 +1134,140 @@ datastore) and may download a managed Python, none of which a pipeline uses.
 
 Caching `~/.dexaflow/pysrc/` between runs is optional; the extraction takes a
 few seconds.
+
+## Installing the CLI in a pipeline
+
+A pipeline pins the CLI it runs, so a release does not change what the next
+run deploys. From `v0.5.4` on, the release ships two ways to do that without
+piping `install.sh` into a shell: a GitHub Action, and a container image for
+every system that runs a job in a container.
+
+### The setup-dexaflow action
+
+```yaml
+      - uses: dexadata/dexaflow/.github/actions/setup-dexaflow@<VERSION>
+        with:
+          version: <VERSION>
+          server-url: https://pro.example.com   # optional
+```
+
+The action installs the release named by `version` for the runner's OS and
+architecture (Linux or macOS, amd64 or arm64), and puts `dexaflow` on `PATH`
+for the rest of the job. On every run it installs cosign v2.4.3 (and uses
+that one, not a cosign already on the runner), verifies the keyless
+signature of the release's `checksums.txt` against the release workflow at
+the `v`-prefixed tag, and checks the archive against `checksums.txt`; only
+then is the binary extracted. The release files (`checksums.txt`, its
+signature and certificate, the archive) are cached with `actions/cache` per
+version, platform and `verify-signature` setting. A cache hit saves the
+downloads only: the cached files are verified again like downloaded ones.
+
+| Input | Default | What it does |
+|---|---|---|
+| `version` | the ref of the action, only when it is a release tag | The release to install, `vX.Y.Z` or `vX.Y.Z-rc.N`, any release from `v0.5.0` on. Set it: with a commit SHA, a branch or a local path the action fails without it, and `latest` is refused. |
+| `server-url` | none | Exported as `DEXAFLOW_SERVER_URL` for the later steps. |
+| `verify-signature` | `true` | `false` skips the signature check and the cosign install (the checksum is still checked), for a runner that cannot reach Sigstore. |
+
+| Output | Value |
+|---|---|
+| `version` | The installed tag (`v0.5.4`). |
+| `path` | The absolute path of the `dexaflow` binary. |
+| `cache-hit` | `true` when the release files came from the cache (they were verified all the same). |
+
+To pin the action by commit, as for any third-party action:
+`uses: dexadata/dexaflow/.github/actions/setup-dexaflow@<sha> # v0.5.4` with
+`version: v0.5.4`.
+
+The action installs only the CLI. `compile` still needs a Python 3.11 to 3.13
+on `PATH` ([Python on the runner](#python-on-the-runner)), which GitHub's
+hosted runners have; `actions/setup-python` pins one.
+
+### The dexaflow-cli image
+
+`ghcr.io/dexadata/dexaflow-cli:<VERSION>` (also tagged without the `v`) is
+the CLI of that release for `linux/amd64` and `linux/arm64`, with what
+`dexaflow deploy` runs next to it: Python 3.13 for `compile`, git for the
+version label and `--changed-since`, [uv](/operate/builders/#building-the-dependency-image-from-wheels)
+for the daemonless dependency layer, and the CA certificates. It has no
+Docker CLI: a deploy from it takes the `skip`, `code-layer`,
+`dependency-layer` or `remote` [builder](/operate/builders/), so a DAG whose
+image needs a real build (a package with no wheel, `system_packages`, its own
+`Dockerfile`) needs a remote builder or a job with a daemon (the GitLab
+recipe under [Examples](#examples)). The Cloud Build remote builder runs
+`gcloud`, which the image does not carry.
+
+The entrypoint is `dexaflow`, and the image runs as UID 65532 with
+`HOME=/home/dexaflow`. It is signed like the other images; the identity
+names the `v`-prefixed tag, the ref the release workflow ran at:
+
+```bash
+cosign verify ghcr.io/dexadata/dexaflow-cli:<VERSION> \
+  --certificate-identity "https://github.com/dexadata/dexaflow/.github/workflows/release.yaml@refs/tags/<VERSION>" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+The CLI reads registry credentials from the docker config
+([Registry credentials](/operate/builders/#registry-credentials)), so a job
+writes one from its CI variables. In GitLab CI, with no Docker daemon and no
+privileged runner:
+
+```yaml title=".gitlab-ci.yml"
+deploy_dags:
+  image:
+    name: ghcr.io/dexadata/dexaflow-cli:<VERSION>
+    entrypoint: [""]                   # GitLab runs the script in a shell
+  variables:
+    DEXAFLOW_SERVER_URL: https://pro.example.com
+    GIT_DEPTH: "0"                     # git describe needs history and tags
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  script:
+    - mkdir -p "$HOME/.docker"
+    - printf '{"auths":{"%s":{"auth":"%s"}}}' "$CI_REGISTRY" "$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 -w0)" > "$HOME/.docker/config.json"
+    - dexaflow deploy --all --yes      # DEXAFLOW_TOKEN is a masked CI/CD variable
+```
+
+The job writes the compiled artifacts under the checkout, which GitLab's
+Docker executor leaves writable for any user. The image trusts every
+checkout for git (`safe.directory`), since the CI system clones it as another
+user.
+
+As an Argo CD hook, the image checks a target against the repository after
+each sync; `--dry-run` exits 1 when something would change, which fails the
+hook and marks the sync. Drop `--dry-run` and add `--yes` to make the target
+match instead ([Syncing a target with the workspace](#syncing-a-target-with-the-workspace-gitops)):
+
+```yaml title="dexaflow-sync-hook.yaml"
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: dexaflow-sync-
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext: { runAsNonRoot: true }
+      containers:
+        - name: sync
+          image: ghcr.io/dexadata/dexaflow-cli:<VERSION>
+          command: ["sh", "-c"]
+          args:
+            - git clone https://github.com/your-org/dags /tmp/dags &&
+              dexaflow sync /tmp/dags --dry-run --prune
+          env:
+            - name: DEXAFLOW_SERVER_URL
+              value: https://pro.example.com
+            - name: DEXAFLOW_TOKEN
+              valueFrom: { secretKeyRef: { name: dexaflow-deploy-token, key: token } }
+```
+
+Flux has no hooks, and it does not run a finished Job again while its spec is
+unchanged. Run the same container from a Kubernetes `CronJob`, or from the
+pipeline that pushes to the repository.
 
 ## Examples
 
@@ -1047,8 +1288,6 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     permissions: { contents: read, packages: write }
-    env:
-      DEXAFLOW_SERVER_URL: https://pro.example.com
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }          # git describe needs history and tags
@@ -1059,13 +1298,18 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install dexaflow
-        run: curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | DEXAFLOW_VERSION=<VERSION> DEXAFLOW_NO_SETUP=1 DEXAFLOW_INSTALL_DIR=/usr/local/bin sh
+      - uses: dexadata/dexaflow/.github/actions/setup-dexaflow@<VERSION>
+        with:
+          version: <VERSION>
+          server-url: https://pro.example.com   # exported as DEXAFLOW_SERVER_URL
       - name: Deploy
         env:
           DEXAFLOW_TOKEN: ${{ secrets.DEXAFLOW_TOKEN }}   # a deploy token
         run: dexaflow deploy dags/my_pipeline --yes
 ```
+
+[`setup-dexaflow`](#the-setup-dexaflow-action) installs the release named by
+`version`, checks its signature and checksum, and caches it per version.
 
 GHCR refuses image names with upper-case letters, so keep `registry.url` and
 `registry.image_name` lower case. If you build the name from

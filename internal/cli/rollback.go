@@ -14,12 +14,13 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dexadata/dexaflow/internal/domain"
 	apiclient "github.com/dexadata/dexaflow/pkg/client"
 )
 
 // newDagsVersionsCommand lists a DAG's registered versions with their
-// provenance: who registered each, when, from which image, and which one new
-// runs use (#1702).
+// provenance: who registered each, when, from which commit and image, and
+// which one new runs use (#1702).
 func newDagsVersionsCommand() *cobra.Command {
 	var serverURL, token string
 	cmd := &cobra.Command{
@@ -27,7 +28,8 @@ func newDagsVersionsCommand() *cobra.Command {
 		Short: "List a DAG's registered versions, marking the current one.",
 		Long: "Lists the versions registered for a DAG, newest first: the version number, the label " +
 			"(bundle_version), a * on the current version (the one new runs use), when it was registered and " +
-			"the id of the user who registered it (`dexaflow admin users list` maps ids to emails), and " +
+			"the id of the user who registered it (`dexaflow admin users list` maps ids to emails), " +
+			"the git commit it was built from (when the deploy recorded one) and " +
 			"the image digest it runs. Make another version current with `dexaflow rollback`.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -75,7 +77,7 @@ func newRollbackCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return setCurrentVersion(ctx, cmd.OutOrStdout(), c, dagID, target)
+			return setCurrentVersion(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), c, dagID, target)
 		},
 	}
 	addServerFlags(cmd, &serverURL, &token)
@@ -112,6 +114,9 @@ type listedVersion struct {
 	createdAt *time.Time
 	createdBy string
 	image     string
+	// buildInfo is where the version was built (#1702); nil when the
+	// server recorded none or predates it. A promote forwards it.
+	buildInfo *domain.BuildInfo
 }
 
 // listVersions reads the DAG's versions, newest first.
@@ -131,6 +136,7 @@ func listVersions(ctx context.Context, c *apiclient.ClientWithResponses, dagID s
 		out = append(out, listedVersion{
 			number: valueOf(v.VersionNumber), label: valueOf(v.BundleVersion), current: valueOf(v.IsCurrent),
 			createdAt: v.CreatedAt, createdBy: valueOf(v.CreatedBy), image: valueOf(v.Image),
+			buildInfo: buildInfoOf(v.BuildInfo),
 		})
 	}
 	return out, nil
@@ -152,7 +158,7 @@ func printVersions(w io.Writer, versions []listedVersion) error {
 		return err
 	}
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "VERSION\tLABEL\tCURRENT\tCREATED\tCREATOR ID\tIMAGE"); err != nil {
+	if _, err := fmt.Fprintln(tw, "VERSION\tLABEL\tCURRENT\tCREATED\tCREATOR ID\tCOMMIT\tIMAGE"); err != nil {
 		return err
 	}
 	for _, v := range versions {
@@ -166,11 +172,42 @@ func printVersions(w io.Writer, versions []listedVersion) error {
 		if by == "" {
 			by = "-"
 		}
-		if _, err := fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n", v.number, v.label, marker, created, by, shortImage(v.image)); err != nil {
+		if _, err := fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n", v.number, v.label, marker, created, by, v.shortCommit(), shortImage(v.image)); err != nil {
 			return err
 		}
 	}
 	return tw.Flush()
+}
+
+// shortCommit is the first 12 characters of the commit the version was
+// built from, "-" when none was recorded.
+func (v listedVersion) shortCommit() string {
+	if v.buildInfo == nil || v.buildInfo.Commit == "" {
+		return "-"
+	}
+	c := v.buildInfo.Commit
+	if len(c) > 12 {
+		c = c[:12]
+	}
+	return c
+}
+
+// buildInfoOf maps the build info a server listed to the domain's, dropping
+// what this CLI would not send again (domain.BuildInfo.Sanitized): a
+// promote forwards it to another server as the caller's claim. Nil when
+// none was listed.
+func buildInfoOf(b *apiclient.BuildInfo) *domain.BuildInfo {
+	if b == nil {
+		return nil
+	}
+	out := domain.BuildInfo{
+		Commit: valueOf(b.Commit), Repo: valueOf(b.Repo), PipelineURL: valueOf(b.PipelineUrl),
+		Builder: valueOf(b.Builder), BaseImage: valueOf(b.BaseImage), CLIVersion: valueOf(b.CliVersion),
+	}.Sanitized()
+	if out.IsZero() {
+		return nil
+	}
+	return &out
 }
 
 // shortImage shortens a digest-pinned image to its first 12 digest characters
@@ -235,7 +272,7 @@ func findVersion(dagID string, versions []listedVersion, sel string) (listedVers
 
 // setCurrentVersion asks the control plane to make target current and prints
 // what changed.
-func setCurrentVersion(ctx context.Context, out io.Writer, c *apiclient.ClientWithResponses, dagID string, target listedVersion) error {
+func setCurrentVersion(ctx context.Context, out, warn io.Writer, c *apiclient.ClientWithResponses, dagID string, target listedVersion) error {
 	label := target.label
 	body := apiclient.DagCurrentVersionRequest{Version: &label}
 	if label == "" {
@@ -253,6 +290,9 @@ func setCurrentVersion(ctx context.Context, out io.Writer, c *apiclient.ClientWi
 		return errors.New("the control plane answered without a body")
 	}
 	change := resp.JSON200
+	if change.Warnings != nil {
+		printNewWarnings(warn, *change.Warnings, nil)
+	}
 	to := describeVersion(&change.To)
 	if !change.Changed {
 		_, werr := fmt.Fprintf(out, "%s already runs %s; nothing changed.\n", dagID, to)

@@ -1264,7 +1264,27 @@ func dagVersionOf(row queries.ListDagVersionsRow) domain.DagVersion {
 		SpecHash:       row.SpecHash,
 		IsCurrent:      row.IsCurrent,
 		CreatedBy:      row.CreatedBy,
+		BuildInfo:      buildInfoOf(uuidToString(row.ID), row.BuildInfo),
 	}
+}
+
+// buildInfoOf decodes the build_info column of version versionID: nil when
+// it is NULL. A value that does not decode is logged and read as nil, since
+// provenance is shown beside the version and must not make it unlistable.
+func buildInfoOf(versionID string, raw []byte) *domain.BuildInfo {
+	if len(raw) == 0 {
+		return nil
+	}
+	var b domain.BuildInfo
+	if err := json.Unmarshal(raw, &b); err != nil {
+		slog.Warn("listing a dag version without its build info: the stored value does not decode",
+			"dag_version_id", versionID, "error", err)
+		return nil
+	}
+	if b.IsZero() {
+		return nil
+	}
+	return &b
 }
 
 // GetCurrentSpec returns the parsed spec of the DAG's current version, or
@@ -1359,7 +1379,7 @@ func (r *Repository) RegisterDagVersionAs(ctx context.Context, tenant string, re
 	got, err := registerDagVersionTx(ctx, r.q.WithTx(tx), tid, registration{
 		spec: spec, specHash: reg.SpecHash, specJSON: specJSON,
 		paused: paused, pausedOverride: reg.IsPaused != nil, actor: actorUUID(reg.ActorUserID),
-		promotedFrom: reg.PromotedFrom,
+		promotedFrom: reg.PromotedFrom, buildInfo: reg.BuildInfo, requireDigest: reg.RequireDigest,
 	})
 	if err != nil {
 		return domain.DagRegistered{}, err
@@ -1414,6 +1434,10 @@ func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.
 	} else if !errors.Is(verr, pgx.ErrNoRows) {
 		return registerOutcome{}, fmt.Errorf("checking existing version: %w", verr)
 	}
+	buildInfo, err := reg.buildInfoJSON()
+	if err != nil {
+		return registerOutcome{}, err
+	}
 	version, err := qtx.InsertDagVersion(ctx, queries.InsertDagVersionParams{
 		DagID:          dag.ID,
 		TenantID:       tid,
@@ -1422,6 +1446,7 @@ func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.
 		Spec:           reg.specJSON,
 		SpecHash:       specHash,
 		CreatedBy:      actor,
+		BuildInfo:      buildInfo,
 	})
 	if err != nil {
 		// A collision on dag_versions_unique (dag_id, version) means the same
@@ -1440,14 +1465,7 @@ func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.
 	if err := qtx.SetCurrentDagVersion(ctx, queries.SetCurrentDagVersionParams{ID: dag.ID, CurrentVersionID: version.ID, TenantID: tid}); err != nil {
 		return registerOutcome{}, fmt.Errorf("setting current version: %w", err)
 	}
-	fields := map[string]any{"version": spec.DagVersion, "image": spec.Image, "spec_hash": specHash}
-	if reg.pausedOverride {
-		fields["is_paused"] = reg.paused
-	}
-	if p := reg.promotedFrom; p != nil {
-		fields["promoted_from"] = map[string]string{"target": p.Target, "server": p.Server}
-	}
-	if err := writeDagAudit(ctx, qtx, tid, actor, "dag.version.register", spec.DagID, fields); err != nil {
+	if err := writeDagAudit(ctx, qtx, tid, actor, "dag.version.register", spec.DagID, reg.auditFields()); err != nil {
 		return registerOutcome{}, err
 	}
 	out.Created, out.wrote = true, true
@@ -1467,8 +1485,10 @@ func setPausedByRegister(ctx context.Context, qtx *queries.Queries, tid, actor p
 
 // registration is what one register writes: the spec, its hash and encoding,
 // is_paused for a DAG it creates (or for any DAG with pausedOverride), the
-// registering user (null when none) and, for a promoted version, the control
-// plane it came from (nil otherwise).
+// registering user (null when none), for a promoted version the control
+// plane it came from (nil otherwise), where the version was built (nil
+// when the register sent none) and the deploy.require_digest it was
+// admitted under.
 type registration struct {
 	spec           domain.DAGSpec
 	specHash       string
@@ -1477,6 +1497,42 @@ type registration struct {
 	pausedOverride bool
 	actor          pgtype.UUID
 	promotedFrom   *domain.DagPromotion
+	buildInfo      *domain.BuildInfo
+	requireDigest  domain.DigestRequirement
+}
+
+// buildInfoJSON encodes the build info of a register for its column: nil
+// (NULL) when the register sent none or an empty one.
+func (reg registration) buildInfoJSON() ([]byte, error) {
+	if reg.buildInfo == nil || reg.buildInfo.IsZero() {
+		return nil, nil
+	}
+	out, err := json.Marshal(reg.buildInfo)
+	if err != nil {
+		return nil, fmt.Errorf("encoding build info: %w", err)
+	}
+	return out, nil
+}
+
+// auditFields is the metadata of the register's audit entry: the version,
+// image and hash, and what the register was sent beyond the spec.
+func (reg registration) auditFields() map[string]any {
+	spec := reg.spec
+	fields := map[string]any{"version": spec.DagVersion, "image": spec.Image, "spec_hash": reg.specHash}
+	if reg.pausedOverride {
+		fields["is_paused"] = reg.paused
+	}
+	if p := reg.promotedFrom; p != nil {
+		fields["promoted_from"] = map[string]string{"target": p.Target, "server": p.Server}
+	}
+	if b := reg.buildInfo; b != nil && !b.IsZero() {
+		fields["build_info"] = *b
+	}
+	if reg.requireDigest.Active() {
+		fields["require_digest"] = string(reg.requireDigest)
+		fields["image_pinned"] = domain.IsDigestPinned(spec.Image)
+	}
+	return fields
 }
 
 // actorUUID is the user id of an acting principal, or a null UUID when the

@@ -366,7 +366,7 @@ func applySync(cmd *cobra.Command, rep *syncReport, token string, projects []Pro
 			err = d.takeDeploy(results)
 		case syncActionRollback:
 			if err = cerr; err == nil {
-				err = setCurrentVersion(ctx, out, c, d.DagID, d.rollbackTo())
+				err = setCurrentVersion(ctx, out, cmd.ErrOrStderr(), c, d.DagID, d.rollbackTo())
 			}
 		case syncActionPause:
 			if err = cerr; err == nil {

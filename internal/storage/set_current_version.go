@@ -38,6 +38,14 @@ import (
 // tenant are domain.ErrNotFound. The change is audited as
 // dag.version.set_current by actorUserID, with the from and to versions.
 func (r *Repository) SetCurrentDagVersion(ctx context.Context, tenant, dagID string, sel domain.DagVersionSelector, actorUserID string, admit func(domain.DAGSpec) error) (domain.CurrentVersionChange, error) {
+	return r.SetCurrentDagVersionAs(ctx, tenant, domain.DagSetCurrent{DagID: dagID, Selector: sel, ActorUserID: actorUserID, Admit: admit})
+}
+
+// SetCurrentDagVersionAs is SetCurrentDagVersion for req, whose
+// RequireDigest, while warn or enforce, the audit entry records with whether
+// the target's image is pinned by digest (#1703).
+func (r *Repository) SetCurrentDagVersionAs(ctx context.Context, tenant string, req domain.DagSetCurrent) (domain.CurrentVersionChange, error) {
+	dagID, sel, admit := req.DagID, req.Selector, req.Admit
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
 		return domain.CurrentVersionChange{}, err
@@ -53,7 +61,7 @@ func (r *Repository) SetCurrentDagVersion(ctx context.Context, tenant, dagID str
 	// Rollback after a successful commit is a no-op; on any early return it
 	// undoes everything this call wrote.
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
-	change, err := setCurrentDagVersionTx(ctx, r.q.WithTx(tx), tid, dagID, sel, checked.To, actorUUID(actorUserID))
+	change, err := setCurrentDagVersionTx(ctx, r.q.WithTx(tx), tid, req, checked.To)
 	if err != nil || !change.Changed {
 		return change, err
 	}
@@ -92,7 +100,8 @@ func (r *Repository) checkSetCurrentTarget(ctx context.Context, tid pgtype.UUID,
 // setCurrentDagVersionTx is the write of SetCurrentDagVersion, run on a
 // transaction: lock the DAG, resolve the versions again, confirm the target is
 // the checked one, then point the DAG at it and apply its metadata.
-func setCurrentDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, dagID string, sel domain.DagVersionSelector, checked domain.DagVersion, actor pgtype.UUID) (domain.CurrentVersionChange, error) {
+func setCurrentDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.UUID, req domain.DagSetCurrent, checked domain.DagVersion) (domain.CurrentVersionChange, error) {
+	dagID, sel := req.DagID, req.Selector
 	dag, err := qtx.LockDagByDagID(ctx, queries.LockDagByDagIDParams{TenantID: tid, DagID: dagID})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -123,7 +132,7 @@ func setCurrentDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtyp
 	if err := qtx.SetCurrentDagVersion(ctx, queries.SetCurrentDagVersionParams{ID: dag.ID, CurrentVersionID: target, TenantID: tid}); err != nil {
 		return domain.CurrentVersionChange{}, fmt.Errorf("setting current version: %w", err)
 	}
-	if err := auditSetCurrent(ctx, qtx, tid, actor, dagID, change); err != nil {
+	if err := auditSetCurrent(ctx, qtx, tid, actorUUID(req.ActorUserID), dagID, change, req.RequireDigest); err != nil {
 		return domain.CurrentVersionChange{}, err
 	}
 	change.From.IsCurrent, change.To.IsCurrent = false, true
@@ -131,17 +140,23 @@ func setCurrentDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtyp
 }
 
 // auditSetCurrent records change as dag.version.set_current by actor (a user
-// of the tenant, else no user).
-func auditSetCurrent(ctx context.Context, qtx *queries.Queries, tid, actor pgtype.UUID, dagID string, change domain.CurrentVersionChange) error {
+// of the tenant, else no user), with the deploy.require_digest it was
+// admitted under while that is warn or enforce.
+func auditSetCurrent(ctx context.Context, qtx *queries.Queries, tid, actor pgtype.UUID, dagID string, change domain.CurrentVersionChange, requireDigest domain.DigestRequirement) error {
 	user, err := tenantActor(ctx, qtx, tid, actor)
 	if err != nil {
 		return err
 	}
-	return writeDagAudit(ctx, qtx, tid, user, "dag.version.set_current", dagID, map[string]any{
+	fields := map[string]any{
 		"from_version": change.From.Version, "from_version_number": change.From.VersionNumber,
 		"to_version": change.To.Version, "to_version_number": change.To.VersionNumber,
 		"image": change.To.ImageReference, "spec_hash": change.To.SpecHash,
-	})
+	}
+	if requireDigest.Active() {
+		fields["require_digest"] = string(requireDigest)
+		fields["image_pinned"] = domain.IsDigestPinned(change.To.ImageReference)
+	}
+	return writeDagAudit(ctx, qtx, tid, user, "dag.version.set_current", dagID, fields)
 }
 
 // resolveCurrentVersionChange lists the DAG's versions with q and picks the

@@ -172,6 +172,23 @@ but never a target's. With a target, the workspace is the one around the
 current folder (the one the target came from), and its defaults apply only to
 projects inside it.
 
+`remote_builder`, the [Cloud Build remote builder](/operate/builders/#building-on-cloud-build)
+for builds that need a real Dockerfile build, follows the same order: the
+project's `build.remote_builder`, then the target's `remote_builder`, then
+`defaults.remote_builder`. Targets saved in your config file
+(`dexaflow target add`) and the cluster's defaults carry none.
+
+```yaml
+targets:
+  prod:
+    server: https://flow.acme.dev
+    remote_builder:
+      cloud_build: {project: acme-prod-ci, region: europe-west1}
+defaults:
+  remote_builder:
+    cloud_build: {project: acme-ci}
+```
+
 ## Cluster deploy defaults
 
 The platform team can state the registry, the platforms and the base image

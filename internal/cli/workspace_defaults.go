@@ -34,6 +34,10 @@ type defaultsProvenance struct {
 	// when nothing sets one, or when a local choice turns it off
 	// (resolveSourceMode).
 	sourceMode sourceModeChoice
+	// remoteSource names where build.remote_builder came from: the
+	// project's file, a target or the workspace defaults; "" when none is
+	// set.
+	remoteSource string
 }
 
 // applyWorkspaceDefaults fills what the project's dexaflow.yaml leaves unset
@@ -84,6 +88,7 @@ func applyDefaults(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, wi
 		layers = append(layers, *cluster)
 	}
 	prov.platformsSource, prov.baseImageSource = applyBuildDefaults(dir, cfg, layers)
+	prov.remoteSource = applyRemoteBuilder(dir, cfg, layers)
 	if prov.platformsSource, err = applyPlatformFlag(cmd, cfg, prov.platformsSource); err != nil {
 		return defaultsProvenance{}, err
 	}
@@ -234,6 +239,23 @@ func pickSourceMode(layers []defaultsLayer) sourceModeChoice {
 		}
 	}
 	return sourceModeChoice{}
+}
+
+// applyRemoteBuilder fills build.remote_builder from the target or the
+// workspace defaults when the project sets none, and returns where it came
+// from, "" when nothing sets one. The cluster's defaults carry none.
+func applyRemoteBuilder(dir string, cfg *domain.LeoflowConfig, layers []defaultsLayer) string {
+	if cfg.Build.RemoteBuilder != nil {
+		return projectConfigPath(dir)
+	}
+	for _, l := range layers {
+		if l.values.RemoteBuilder != nil {
+			rb := *l.values.RemoteBuilder
+			cfg.Build.RemoteBuilder = &rb
+			return l.name
+		}
+	}
+	return ""
 }
 
 // projectSetsPlatforms reports whether the project's own file declares

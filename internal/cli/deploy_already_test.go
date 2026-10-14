@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -36,8 +37,11 @@ type deployServer struct {
 	dagCreated   bool   // dag_created of the register answer
 	ignorePaused bool   // an older server: no is_paused query, no is_paused in the answer
 	failTrigger  bool   // answer the trigger with 500
-	regQueries   []string
 	patches      []string
+	// regQueries is the is_paused part of each register's query, regBuilds
+	// its build_* parameters (#1702).
+	regQueries []string
+	regBuilds  []url.Values
 	// The register dry run (#1705): probes counts the empty-body probes of
 	// the preflight, dryRuns the dry runs of a compiled spec. noDryRun is a
 	// server that predates the dry run route and answers it 404;
@@ -47,17 +51,19 @@ type deployServer struct {
 	// label is registered with: a dry run of another image is a 409, of
 	// that one an unchanged register. dryRunImages records the image of
 	// each dry run.
-	probes          int
-	dryRuns         int
-	noDryRun        bool
-	probeStatus     int
-	viaIssuer       bool // the probe's refusal says deploys go through the trusted issuer (#1773)
-	dryRunStatus    int
-	refusal         string
-	dryRunWarnings  []string
-	dryRunQueries   []string
-	registeredImage string
-	dryRunImages    []string
+	probes         int
+	dryRuns        int
+	noDryRun       bool
+	probeStatus    int
+	viaIssuer      bool // the probe's refusal says deploys go through the trusted issuer (#1773)
+	dryRunStatus   int
+	refusal        string
+	dryRunWarnings []string
+	// registerWarnings are the warnings of the register's answer (#1703).
+	registerWarnings []string
+	dryRunQueries    []string
+	registeredImage  string
+	dryRunImages     []string
 	// policy, when set, is the operator's execution allowlist a dry run
 	// checks the spec against, refusing with its own message as the
 	// register does.
@@ -82,7 +88,16 @@ func (s *deployServer) detailsJSON(current string) string {
 // applyPausedQuery sets paused from a register's is_paused query, as the
 // server does.
 func (s *deployServer) applyPausedQuery(r *http.Request) {
-	s.regQueries = append(s.regQueries, r.URL.RawQuery)
+	paused, build := url.Values{}, url.Values{}
+	for k, v := range r.URL.Query() {
+		if k == "is_paused" {
+			paused[k] = v
+		} else if strings.HasPrefix(k, "build_") {
+			build[k] = v
+		}
+	}
+	s.regQueries = append(s.regQueries, paused.Encode())
+	s.regBuilds = append(s.regBuilds, build)
 	if v := r.URL.Query().Get("is_paused"); v != "" && !s.ignorePaused {
 		s.paused = v == "true"
 	}
@@ -159,8 +174,9 @@ func (s *deployServer) serveRegister(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"dag_id":"etl","version":"v","spec_hash":"abc123","created":true}`)
 		return
 	}
-	_, _ = fmt.Fprintf(w, `{"dag_id":"etl","version":"v","spec_hash":"abc123","created":true,"dag_created":%v,"is_paused":%v}`,
-		s.dagCreated, s.paused)
+	warnings, _ := json.Marshal(append([]string{}, s.registerWarnings...))
+	_, _ = fmt.Fprintf(w, `{"dag_id":"etl","version":"v","spec_hash":"abc123","created":true,"dag_created":%v,"is_paused":%v,"warnings":%s}`,
+		s.dagCreated, s.paused, warnings)
 }
 
 // serveDryRun answers a register dry run: the probe of the preflight, or a

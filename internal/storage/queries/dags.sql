@@ -82,9 +82,10 @@ WHERE dag_versions.dag_id = $1 AND dag_versions.spec_hash = $2
 -- name: InsertDagVersion :one
 -- The row is inserted only under a dag of the given tenant (#508): a dag id of
 -- another tenant inserts nothing and the query returns no row.
-INSERT INTO dag_versions (dag_id, version, image_reference, spec, spec_hash, created_by)
+-- build_info is NULL when the register sent none (#1702).
+INSERT INTO dag_versions (dag_id, version, image_reference, spec, spec_hash, created_by, build_info)
 SELECT d.id, sqlc.arg(version)::text, sqlc.arg(image_reference)::text, sqlc.arg(spec)::jsonb,
-       sqlc.arg(spec_hash)::text, sqlc.narg(created_by)::uuid
+       sqlc.arg(spec_hash)::text, sqlc.narg(created_by)::uuid, sqlc.narg(build_info)::jsonb
 FROM dags d
 WHERE d.id = sqlc.arg(dag_id) AND d.tenant_id = sqlc.arg(tenant_id)
 RETURNING *;
@@ -101,8 +102,9 @@ WHERE d.tenant_id = $1 AND d.dag_id = $2;
 -- name: ListDagVersions :many
 -- created_by is the registering user's id (empty when the register had no
 -- user), not their email: any reader of the DAG sees it. is_current marks the
--- version new runs are created with.
-SELECT v.id, v.version, v.created_at, v.image_reference, v.spec_hash,
+-- version new runs are created with. build_info is where the version was
+-- built, NULL when its register sent none.
+SELECT v.id, v.version, v.created_at, v.image_reference, v.spec_hash, v.build_info,
        COALESCE(v.id = d.current_version_id, false)::boolean AS is_current,
        COALESCE(v.created_by::text, '')::text AS created_by,
        row_number() OVER (ORDER BY v.created_at, v.version) AS version_number
@@ -156,3 +158,28 @@ DELETE FROM dag_runs WHERE tenant_id = $1 AND dag_id = $2;
 -- The id of a user of the tenant: no row when the user is gone or belongs to
 -- another tenant, so a stale token's subject records no creator.
 SELECT id FROM users WHERE id = $1 AND tenant_id = $2;
+
+-- name: ListWarmCurrentVersions :many
+-- The current version of the DAGs the warm-pool reconcile looks at (#1707,
+-- ADR 0082): with prewarm, every active unpaused DAG whose current version
+-- declares min_idle_workers, which gets its pool before its first run; and
+-- every DAG in dag_ids (the DAGs of the active runs), whose current version
+-- tells which versions of those runs were superseded by a register, a
+-- rollback or a promote and so drain. prewarm is true for the first kind. The
+-- declared value is read from the spec here, so the reconcile loads no spec
+-- of a DAG it will not prewarm. The version is a LATERAL primary-key probe
+-- with LIMIT 1, and the first predicate repeats the dags-only half of the
+-- second, so the scan is of dags and each probe reads one spec: the cost
+-- follows the unpaused DAGs and the DAGs of active runs, never the number of
+-- versions (a plain join hashes every row of dag_versions). A cross-tenant
+-- read like ListActiveDagRuns: the reconcile serves every tenant, and each
+-- row carries its tenant_id.
+SELECT d.id, d.tenant_id, d.dag_id, d.current_version_id::uuid AS current_version_id,
+  (@prewarm::boolean AND d.is_active AND NOT d.is_paused AND m.min_idle > 0)::boolean AS prewarm
+FROM dags d
+CROSS JOIN LATERAL (
+  SELECT COALESCE((v.spec->>'min_idle_workers')::integer, 0) AS min_idle
+  FROM dag_versions v WHERE v.id = d.current_version_id LIMIT 1
+) m
+WHERE ((@prewarm::boolean AND d.is_active AND NOT d.is_paused) OR d.id = ANY(@dag_ids::uuid[]))
+  AND ((@prewarm::boolean AND d.is_active AND NOT d.is_paused AND m.min_idle > 0) OR d.id = ANY(@dag_ids::uuid[]));

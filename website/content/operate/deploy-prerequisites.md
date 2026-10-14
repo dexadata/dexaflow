@@ -41,7 +41,12 @@ error: deploy requires a container registry, but none is configured.
       this deploy:                --registry ghcr.io/<your-org>  (or DEXAFLOW_REGISTRY)
       the whole cluster:          deploy.defaults.registry in the server's Helm values
 
-  The image name defaults to the dag_id. Then authenticate your builder once:  docker login ghcr.io
+  The image name defaults to the dag_id. Then give the CLI a credential for the registry:
+      Artifact Registry, GCR: gcloud auth login
+      ECR: aws sso login, aws configure, environment credentials or an instance role
+      ACR: az login
+      any other registry: docker login <registry>
+  A build by a local container tool pushes with that tool's own login; the deploy preflight names it.
 ```
 
 **Fix:** set a registry in one of those places (the order is in
@@ -68,6 +73,20 @@ the image reference exactly as `dag.json` holds it, which is the **tag** that wa
 pushed, and the control plane accepts it: that version then follows whatever the
 tag points at when a node pulls it. Use `deploy` when the registered artifact has
 to be pinned (see [CI/CD & deploy examples](/operate/cicd-deploy/)).
+
+An operator can make the control plane check this with
+`deploy.require_digest` (Helm `deploy.requireDigest`): `warn` registers a tag
+with a warning, and `enforce` refuses it, which today refuses the
+`compile --build --push` and `push` path:
+
+```text
+Error: server returned 400: {..."detail":"image \"ghcr.io/acme/etl:v1\" is not pinned by digest (<repository>@sha256:<64 hex>), and this server refuses it (deploy.require_digest=enforce). ..."}
+```
+
+**Fix:** register with `dexaflow deploy`, which pins the pushed image by
+digest, or set `image` in `dag.json` to `<repository>@sha256:<digest>` (sha256
+only) before `dexaflow push`. See
+[Require images pinned by digest](/operate/cicd-deploy/#require-images-pinned-by-digest).
 
 ### 3. Supported task types only
 
@@ -141,9 +160,10 @@ call) requires the **`write:dag`** permission on the caller's token:
 | `401` — `"unauthorized" / "no authenticated user"` | No token, or an invalid/expired one | `dexaflow auth login --server <pro>` once; `deploy` then needs no auth flags |
 | `403` — `"forbidden" / "missing permission write:dag"` | A valid token whose role does not grant `write:dag` | Log in as (or ask an admin to grant) a role with `write:dag` — Admin → Users/Roles on the control plane |
 
-Registry auth (`docker login`, step 1) and control-plane auth (`dexaflow auth
-login`) are **two separate credentials** — a push failing with `denied`/
-`unauthorized` is the *registry* rejecting the builder, not the control plane.
+Registry auth (the cloud CLI session or `docker login`, gate 1) and
+control-plane auth (`dexaflow auth login`) are **two separate credentials**: a
+push failing with `denied`/`unauthorized` is the *registry* rejecting the
+credential, not the control plane.
 
 ### 6. Private-registry pull (the cluster's half, not just the push)
 

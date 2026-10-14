@@ -103,6 +103,15 @@ type Dependencies struct {
 	// (ADR 0067 §3), "" when it is off. Registering a version on that image
 	// answers 400 when its source is empty or over domain.MaxSourceModeBytes.
 	SourceModeImage string
+	// RequireDigest is deploy.require_digest (#1703): what registering a
+	// version, or making one current again, does with an image not pinned by
+	// a full sha256 digest. Off (and the zero value) accepts it; warn accepts
+	// it with a warning in the answer, a log line and a count; enforce
+	// answers 400.
+	RequireDigest domain.DigestRequirement
+	// UnpinnedImages counts the unpinned images deploy.require_digest warned
+	// about or refused. Nil: not counted.
+	UnpinnedImages UnpinnedImageRecorder
 	// DeployDefaults are the server's deploy.defaults, served on
 	// GET /api/v2/deployDefaults (#1704). The zero value serves empty fields.
 	DeployDefaults domain.DeployDefaults

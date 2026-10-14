@@ -658,6 +658,11 @@ paths:
         scoped token needs dexaflow:run as well as dexaflow:deploy, else the
         register is refused with 403.
 
+        Under the server setting deploy.require_digest, an image that is not
+        pinned by a full digest (repository@sha256: and 64 hex characters)
+        is registered with a warning in warnings (warn), or refused with 400
+        (enforce). Off, the default, accepts any image.
+
         POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and
         writes nothing.
       operationId: registerDagVersion
@@ -693,6 +698,59 @@ paths:
             URL without credentials and with no control or format character,
             at most 2048 bytes. It needs promoted_from (400 otherwise).
           schema: { type: string, maxLength: 2048 }
+        - name: build_commit
+          in: query
+          required: false
+          description: >-
+            Where the version was built (#1702), with the other build_*
+            parameters: the git commit of its sources, 7 to 64 lower case hex
+            characters. The build_* parameters are metadata of the register,
+            not part of dag.json: they change neither the spec, its hash nor
+            the version label. They are stored with the version the register
+            creates (build_info in DagVersion) and recorded in its audit
+            entry; a register of content already registered keeps the build
+            info of its first register. They are the caller's claim, recorded
+            as sent and not verified. A value that is empty or breaks its rule
+            is refused with 400.
+          schema: { type: string, pattern: "^[0-9a-f]{7,64}$" }
+        - name: build_repo
+          in: query
+          required: false
+          description: >-
+            The repository of the sources: an absolute http or https URL
+            without credentials, query string or fragment, valid UTF-8 with no
+            control or format character, at most 2048 bytes.
+          schema: { type: string, maxLength: 2048 }
+        - name: build_pipeline_url
+          in: query
+          required: false
+          description: >-
+            The CI pipeline run that built the version: an absolute http or
+            https URL without credentials, query string or fragment, valid
+            UTF-8 with no control or format character, at most 2048 bytes.
+          schema: { type: string, maxLength: 2048 }
+        - name: build_builder
+          in: query
+          required: false
+          description: >-
+            The builder that produced the image, at most 255 bytes, with no
+            control or format character.
+          schema: { type: string, maxLength: 255 }
+        - name: build_base_image
+          in: query
+          required: false
+          description: >-
+            The base image the DAG image was built from (it carries the task
+            agent), at most 512 bytes, with no space, control or format
+            character.
+          schema: { type: string, maxLength: 512 }
+        - name: build_cli_version
+          in: query
+          required: false
+          description: >-
+            The version of the CLI that built and registered the version, at
+            most 128 bytes, with no space, control or format character.
+          schema: { type: string, maxLength: 128 }
       requestBody:
         required: true
         content:
@@ -775,6 +833,48 @@ paths:
             The promoted_from_server the register would be sent, checked as
             the register checks it.
           schema: { type: string, maxLength: 2048 }
+        - name: build_commit
+          in: query
+          required: false
+          description: >-
+            The build_commit the register would be sent, checked as the register
+            checks it (400 otherwise).
+          schema: { type: string, pattern: "^[0-9a-f]{7,64}$" }
+        - name: build_repo
+          in: query
+          required: false
+          description: >-
+            The build_repo the register would be sent, checked as the register
+            checks it (400 otherwise).
+          schema: { type: string, maxLength: 2048 }
+        - name: build_pipeline_url
+          in: query
+          required: false
+          description: >-
+            The build_pipeline_url the register would be sent, checked as the register
+            checks it (400 otherwise).
+          schema: { type: string, maxLength: 2048 }
+        - name: build_builder
+          in: query
+          required: false
+          description: >-
+            The build_builder the register would be sent, checked as the register
+            checks it (400 otherwise).
+          schema: { type: string, maxLength: 255 }
+        - name: build_base_image
+          in: query
+          required: false
+          description: >-
+            The build_base_image the register would be sent, checked as the register
+            checks it (400 otherwise).
+          schema: { type: string, maxLength: 512 }
+        - name: build_cli_version
+          in: query
+          required: false
+          description: >-
+            The build_cli_version the register would be sent, checked as the register
+            checks it (400 otherwise).
+          schema: { type: string, maxLength: 128 }
       requestBody:
         required: true
         content:
@@ -827,7 +927,10 @@ paths:
         is_paused is never changed. The version must pass the checks a
         register of it would pass today. Naming the current version changes
         nothing (changed false). Audited as dag.version.set_current. Needs
-        deploy or write on dags (scope dexaflow:deploy).
+        deploy or write on dags (scope dexaflow:deploy). Under the server
+        setting deploy.require_digest, a version whose image is not pinned by
+        a full sha256 digest is made current with a warning in warnings
+        (warn), or refused with 400 (enforce).
       operationId: setDagCurrentVersion
       tags: [DAGs]
       requestBody:
@@ -1725,6 +1828,25 @@ components:
           type: string
           nullable: true
           description: Dexaflow. Id of the user who registered the version (not an email, since every reader of the DAG sees it); null when none was recorded.
+        build_info:
+          description: Dexaflow. Where the version was built, as its register sent it in the build_* parameters; null when it sent none. Served by the dagVersions routes and the currentVersion answer; the dag_version copies embedded in task instance, run and DAG details answers leave it out.
+          type: object
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/BuildInfo" }]
+
+    BuildInfo:
+      type: object
+      description: >-
+        Dexaflow. Where a DAG version was built (#1702), as the register
+        claimed it, not verified. Every field is optional and absent when it
+        was not sent.
+      properties:
+        commit: { type: string, description: The git commit of the sources. }
+        repo: { type: string, description: The repository of the sources (http or https URL). }
+        pipeline_url: { type: string, description: The CI pipeline run that built the version (http or https URL). }
+        builder: { type: string, description: The builder that produced the image. }
+        base_image: { type: string, description: The base image the DAG image was built from; it carries the task agent. }
+        cli_version: { type: string, description: The version of the CLI that built and registered the version. }
 
     DagCurrentVersionRequest:
       type: object
@@ -1745,6 +1867,10 @@ components:
           nullable: true
           allOf: [{ $ref: "#/components/schemas/DagVersion" }]
         to: { $ref: "#/components/schemas/DagVersion" }
+        warnings:
+          type: array
+          items: { type: string }
+          description: What the change let through with a warning (a task that does not fit its size under executor.unit.enforce=warn, an image not pinned by digest under deploy.require_digest=warn). Absent when there is none.
 
     DagSpec:
       type: object
@@ -1771,7 +1897,7 @@ components:
         warnings:
           type: array
           items: { type: string }
-          description: What the register would let through with a warning (a task that does not fit its size under executor.unit.enforce=warn). Sent by the dry run route.
+          description: What the register lets through with a warning (a task that does not fit its size under executor.unit.enforce=warn, an image not pinned by digest under deploy.require_digest=warn). Always sent by the dry run route; sent by a register only when it has a warning to give.
         execution: { $ref: "#/components/schemas/ExecutionReport" }
 
     ExecutionReport:
@@ -1823,7 +1949,9 @@ components:
             no warm workers: the subprocess executor, or pod dispatch
             disabled). on: the version
             keeps min_idle_workers idle warm workers, up to max_pool_size,
-            while it has an active run; they start with its first run.
+            while it is the DAG's current version; for a DAG that declares
+            min_idle_workers they start at the next reconcile (when a paused
+            DAG is unpaused), else with the version's first run.
         detail: { type: string, description: The state in a sentence for a person. }
         min_idle_workers: { type: integer }
         max_pool_size: { type: integer }
@@ -1831,7 +1959,7 @@ components:
           type: string
           enum: [draining]
           x-enum-varnames: [WarmPoolReportPreviousPoolDraining]
-          description: draining for a new version of an existing DAG when this server keeps warm workers; the previous version's warm workers, if it has any, keep serving its active runs and are removed once its last one ends.
+          description: draining for a new version of an existing DAG when this server keeps warm workers; the previous version's idle warm workers, if it has any, are removed, and each busy one once its attempt ends.
 
     DagVersionCollection:
       type: object

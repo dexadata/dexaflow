@@ -138,14 +138,15 @@ type dryImage struct {
 // replica's 404), and one the server could not give (5xx, 429) are notes on
 // warn. It
 // prints what the register would do, with the links and checks the answer
-// carries, to out and the server's warnings to warn.
-func serverDryRun(ctx context.Context, out, warn io.Writer, p versionPost, specPath string, img dryImage, version string, origin labelOrigin) error {
+// carries, to out and the server's warnings to warn, and returns those
+// warnings.
+func serverDryRun(ctx context.Context, out, warn io.Writer, p versionPost, specPath string, img dryImage, version string, origin labelOrigin) ([]string, error) {
 	data, err := os.ReadFile(specPath) //nolint:gosec // the compiled dag.json of the DAG directory
 	if err != nil {
-		return fmt.Errorf("reading %s: %w", specPath, err)
+		return nil, fmt.Errorf("reading %s: %w", specPath, err)
 	}
 	if p.spec, err = repinImageInSpec(data, img.ref); err != nil {
-		return err
+		return nil, err
 	}
 	p.dryRun = true
 	status, header, body, err := postVersion(ctx, p)
@@ -155,23 +156,23 @@ func serverDryRun(ctx context.Context, out, warn io.Writer, p versionPost, specP
 	}
 	switch {
 	case err != nil:
-		return note("could not run the dry run of the register (%v); its checks run when it registers", err)
+		return nil, note("could not run the dry run of the register (%v); its checks run when it registers", err)
 	case header.Get(dryRunHeader) != "true":
-		return note("%s answered the dry run of the register with %d, no dry run (an older replica?); its checks run when it registers", p.serverURL, status)
+		return nil, note("%s answered the dry run of the register with %d, no dry run (an older replica?); its checks run when it registers", p.serverURL, status)
 	case status >= http.StatusInternalServerError || status == http.StatusTooManyRequests:
-		return note("%s could not run the dry run of the register (%v); its checks run when it registers", p.serverURL, apiStatusError(status, body))
+		return nil, note("%s could not run the dry run of the register (%v); its checks run when it registers", p.serverURL, apiStatusError(status, body))
 	case status == http.StatusConflict && !img.decides:
-		return note("the server would refuse this register: %v\n  The image built now decides whether it is the content already registered under %s, so the deploy goes on",
+		return nil, note("the server would refuse this register: %v\n  The image built now decides whether it is the content already registered under %s, so the deploy goes on",
 			apiStatusError(status, body), version)
 	case refusesThePlaceholder(status, body, img):
-		return note("the server would refuse this register: %v\n  The image built now decides whether the server accepts it (the dry run had a placeholder digest), so the deploy goes on",
+		return nil, note("the server would refuse this register: %v\n  The image built now decides whether the server accepts it (the dry run had a placeholder digest), so the deploy goes on",
 			apiStatusError(status, body))
 	case status >= http.StatusMultipleChoices:
-		return fmt.Errorf("preflight: the server would refuse this register: %w", versionConflictHint(apiStatusError(status, body), version, origin))
+		return nil, fmt.Errorf("preflight: the server would refuse this register: %w", versionConflictHint(apiStatusError(status, body), version, origin))
 	}
 	var answer dryRunAnswer
 	if jerr := json.Unmarshal(body, &answer); jerr != nil {
-		return fmt.Errorf("preflight: decoding the dry run answer: %w", jerr)
+		return nil, fmt.Errorf("preflight: decoding the dry run answer: %w", jerr)
 	}
 	for _, w := range answer.Warnings {
 		//nolint:errcheck // advisory
@@ -179,7 +180,7 @@ func serverDryRun(ctx context.Context, out, warn io.Writer, p versionPost, specP
 	}
 	_, werr := fmt.Fprintf(out, "preflight:  the server would register %s %s as %s\n%s", p.dagID, version, dryRunOutcome(answer),
 		readServerExtras(body).lines())
-	return werr
+	return answer.Warnings, werr
 }
 
 // imageAllowlistRefusal is the server's refusal of an image the operator's

@@ -292,6 +292,9 @@ type Querier interface {
 	// A version by id, only when its DAG belongs to the given tenant (#508).
 	// dag_versions has no tenant_id of its own; the tenant is its DAG's.
 	GetDagVersionInTenant(ctx context.Context, arg GetDagVersionInTenantParams) (DagVersion, error)
+	// Unscoped, like GetDagVersionByID: the spec cache's batch fill for a warm
+	// pool reconcile tick, which reads the versions of its own targets (#1707).
+	GetDagVersionsByIDs(ctx context.Context, ids []pgtype.UUID) ([]DagVersion, error)
 	// See ListDagsWithVersion.
 	GetDagWithVersion(ctx context.Context, arg GetDagWithVersionParams) (GetDagWithVersionRow, error)
 	GetDefaultTenant(ctx context.Context) (GetDefaultTenantRow, error)
@@ -334,6 +337,7 @@ type Querier interface {
 	InsertCLIDevice(ctx context.Context, arg InsertCLIDeviceParams) (InsertCLIDeviceRow, error)
 	// The row is inserted only under a dag of the given tenant (#508): a dag id of
 	// another tenant inserts nothing and the query returns no row.
+	// build_info is NULL when the register sent none (#1702).
 	InsertDagVersion(ctx context.Context, arg InsertDagVersionParams) (DagVersion, error)
 	// The implicit default pool every tenant needs (migration 023 seeds it for
 	// "default"), copied from default's so the slot count stays in step.
@@ -456,7 +460,8 @@ type Querier interface {
 	ListDagRunsByDagWithVersion(ctx context.Context, arg ListDagRunsByDagWithVersionParams) ([]ListDagRunsByDagWithVersionRow, error)
 	// created_by is the registering user's id (empty when the register had no
 	// user), not their email: any reader of the DAG sees it. is_current marks the
-	// version new runs are created with.
+	// version new runs are created with. build_info is where the version was
+	// built, NULL when its register sent none.
 	ListDagVersions(ctx context.Context, arg ListDagVersionsParams) ([]ListDagVersionsRow, error)
 	ListDags(ctx context.Context, arg ListDagsParams) ([]Dag, error)
 	// The newest run is looked up per listed DAG through idx_dag_runs_dag_logical,
@@ -619,6 +624,21 @@ type Querier interface {
 	// the reaper is inert. The LIMIT bounds a single tick's work after a large
 	// outage; the rest are picked up next tick.
 	ListWarmBoundRunningTIs(ctx context.Context) ([]ListWarmBoundRunningTIsRow, error)
+	// The current version of the DAGs the warm-pool reconcile looks at (#1707,
+	// ADR 0082): with prewarm, every active unpaused DAG whose current version
+	// declares min_idle_workers, which gets its pool before its first run; and
+	// every DAG in dag_ids (the DAGs of the active runs), whose current version
+	// tells which versions of those runs were superseded by a register, a
+	// rollback or a promote and so drain. prewarm is true for the first kind. The
+	// declared value is read from the spec here, so the reconcile loads no spec
+	// of a DAG it will not prewarm. The version is a LATERAL primary-key probe
+	// with LIMIT 1, and the first predicate repeats the dags-only half of the
+	// second, so the scan is of dags and each probe reads one spec: the cost
+	// follows the unpaused DAGs and the DAGs of active runs, never the number of
+	// versions (a plain join hashes every row of dag_versions). A cross-tenant
+	// read like ListActiveDagRuns: the reconcile serves every tenant, and each
+	// row carries its tenant_id.
+	ListWarmCurrentVersions(ctx context.Context, arg ListWarmCurrentVersionsParams) ([]ListWarmCurrentVersionsRow, error)
 	ListXComEntries(ctx context.Context, arg ListXComEntriesParams) ([]ListXComEntriesRow, error)
 	// Locks the user row a token is created for, so concurrent creates for one
 	// user run one at a time and the live-token cap holds (ADR 0074). FOR NO KEY

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -473,7 +474,21 @@ func requireRegistry(cfg *domain.LeoflowConfig) error {
       this deploy:                --registry ghcr.io/<your-org>  (or DEXAFLOW_REGISTRY)
       the whole cluster:          deploy.defaults.registry in the server's Helm values
 
-  The image name defaults to the dag_id. Then authenticate your builder once:  docker login ghcr.io`)
+  The image name defaults to the dag_id. Then give the CLI a credential for the registry:
+%s`, registryLoginHints())
+}
+
+// registryLoginHints lists the credential each kind of registry takes
+// (ADR 0080): the cloud CLI's session for Artifact Registry, GCR, ECR and
+// ACR, the docker config for any other. With no registry configured there is
+// no host to name the exact command for, as the preflight does.
+func registryLoginHints() string {
+	session := func(p string) string { return build.CloudRegistry{Provider: p}.SessionCommand() }
+	return "      Artifact Registry, GCR: " + session(build.ProviderGoogle) + "\n" +
+		"      ECR: " + session(build.ProviderAWS) + "\n" +
+		"      ACR: " + session(build.ProviderAzure) + "\n" +
+		"      any other registry: docker login <registry>\n" +
+		"  A build by a local container tool pushes with that tool's own login; the deploy preflight names it."
 }
 
 // repinImageInSpec rewrites the compiled dag.json's image field to the
@@ -699,6 +714,9 @@ type deployRun struct {
 	// sourceMode is the runtime image of a source mode deploy, which
 	// registers dag.py on it with no build or push; zero for a build.
 	sourceMode sourceModeChoice
+	// preflightWarnings is what the dry run of the register warned about,
+	// already printed.
+	preflightWarnings []string
 }
 
 // readStateBefore records, for --active, whether the DAG was paused before
@@ -719,7 +737,11 @@ func (d *deployRun) run() error {
 	origin := d.o.labelOrigin()
 	output := deployOutput(d.dir)
 	var built build.Result
-	co := d.compileOptions(output, &built)
+	ctx, out := cmdContext(d.cmd), d.cmd.OutOrStdout()
+	// Where this deploy builds the version (#1702); the build adds the
+	// builder and the base image.
+	provenance := collectBuildInfo(ctx, d.dir, os.Getenv)
+	co := d.compileOptions(output, &built, &provenance)
 	// Resolved here rather than inside runCompile because the digest lookup
 	// below needs the same reference; runCompile then takes both as given.
 	image, ierr := d.labelAndImage(&co)
@@ -730,7 +752,6 @@ func (d *deployRun) run() error {
 	version := co.dagVersion
 	co.reuse = d.mayReuse(image, version, origin)
 	co.rebuild = d.o.rebuild
-	ctx, out := cmdContext(d.cmd), d.cmd.OutOrStdout()
 	if skip, werr := d.watchSkip(ctx, version); skip || werr != nil {
 		return werr
 	}
@@ -749,9 +770,11 @@ func (d *deployRun) run() error {
 		}
 		return d.alreadyCurrent(ctx, version)
 	}
-	if rerr := d.checkRegistry(ctx, image, co.reuse); rerr != nil {
+	refused, rerr := d.checkRegistry(ctx, image, co.reuse)
+	if rerr != nil {
 		return rerr
 	}
+	co.pushRefused = refused
 	co.beforeBuild = d.beforeBuild(ctx, access, output, image, version, origin, co.reuse)
 	if cerr := runCompile(d.cmd, d.dir, co); cerr != nil {
 		return cerr
@@ -762,7 +785,8 @@ func (d *deployRun) run() error {
 	}
 	d.readStateBefore(ctx)
 	res, rerr := registerDeployedDAG(ctx, out, registerRequest{serverURL: d.serverURL, token: d.token, output: output,
-		digestRef: digestRef, version: version, origin: origin, paused: d.o.pausedOverride(), warn: d.cmd.ErrOrStderr()})
+		digestRef: digestRef, version: version, origin: origin, paused: d.o.pausedOverride(), warn: d.cmd.ErrOrStderr(), shown: d.preflightWarnings,
+		build: provenance})
 	if rerr != nil {
 		return rerr
 	}
@@ -771,9 +795,10 @@ func (d *deployRun) run() error {
 }
 
 // compileOptions are the options of this deploy's compile into output: a
-// build and push of the image (built receives the builder's result), none
-// with --skip-build, and in source mode a compile on the runtime image only.
-func (d *deployRun) compileOptions(output string, built *build.Result) compileOptions {
+// build and push of the image (built receives the builder's result, and
+// provenance says where it was built), none with --skip-build, and in source
+// mode a compile on the runtime image only.
+func (d *deployRun) compileOptions(output string, built *build.Result, provenance *domain.BuildInfo) compileOptions {
 	building := !d.o.skipBuild && !d.sourceMode.on()
 	return compileOptions{
 		cluster:    d.cluster,
@@ -788,6 +813,7 @@ func (d *deployRun) compileOptions(output string, built *build.Result) compileOp
 		// deploySettings showed the platforms; the build pins its push.
 		settingsShown: true,
 		built:         built,
+		provenance:    provenance,
 	}
 }
 
@@ -867,18 +893,25 @@ func (d *deployRun) checkServer(ctx context.Context) (serverAccess, error) {
 
 // checkRegistry is the push step of the preflight: the registry accepts a
 // push of image, checked unless nothing will be pushed (--skip-build, source
-// mode, or a reusable image the registry already holds).
-func (d *deployRun) checkRegistry(ctx context.Context, image string, reuse bool) error {
+// mode, or a reusable image the registry already holds). With a remote
+// builder configured, a refusal is not decided here: it is returned as
+// refused, and the build fails on it unless the builder it chooses pushes
+// nothing from this machine (checkLocalPush).
+func (d *deployRun) checkRegistry(ctx context.Context, image string, reuse bool) (refused, err error) {
 	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
 	defer cancel()
 	if d.o.skipBuild || d.sourceMode.on() {
-		return nil
+		return nil, nil
 	}
 	reg := registryFor(d.cfg)
 	if reuse && registryHolds(ctx, reg, image) {
-		return nil
+		return nil, nil
 	}
-	return checkRegistryPush(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), reg, image, d.o.builder)
+	err = checkRegistryPush(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), reg, image, d.o.builder)
+	if err == nil || remoteFor(d.cfg) == nil {
+		return nil, err
+	}
+	return err, nil
 }
 
 // dryRun is the last step of the preflight: the server's dry run of the
@@ -887,8 +920,10 @@ func (d *deployRun) checkRegistry(ctx context.Context, image string, reuse bool)
 func (d *deployRun) dryRun(ctx context.Context, output, image, version string, origin labelOrigin, reuse bool) error {
 	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
 	defer cancel()
-	return serverDryRun(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), versionPost{serverURL: d.serverURL, token: d.token,
+	warned, err := serverDryRun(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), versionPost{serverURL: d.serverURL, token: d.token,
 		dagID: d.cfg.DagID, paused: d.o.pausedOverride()}, output, d.dryRunImage(ctx, image, reuse), version, origin)
+	d.preflightWarnings = warned
+	return err
 }
 
 // dryRunImage is the image the dry run is sent. The register gets the image
@@ -1015,8 +1050,15 @@ type registerRequest struct {
 	version          string
 	origin           labelOrigin
 	paused           *bool
-	// warn receives the warning that the server did not apply paused.
+	// warn receives the warning that the server did not apply paused, and
+	// the register's own warnings.
 	warn io.Writer
+	// shown is the warnings the preflight's dry run already printed, which
+	// the register's answer repeats and the deploy does not print again.
+	shown []string
+	// build is where the version was built, sent with the register
+	// (#1702); its zero value sends nothing.
+	build domain.BuildInfo
 }
 
 // registerAnswer is the part of the register response the deploy reports.
@@ -1027,6 +1069,22 @@ type registerAnswer struct {
 	DagCreated *bool  `json:"dag_created"`
 	// Execution is where each task runs (#1707); nil from an older server.
 	Execution *executionSummary `json:"execution"`
+	// Warnings is what the register let through with a warning (#1703).
+	Warnings []string `json:"warnings"`
+}
+
+// printNewWarnings prints on w each of the server's warnings that is not in
+// shown, the ones already printed.
+func printNewWarnings(w io.Writer, warnings, shown []string) {
+	if w == nil {
+		return
+	}
+	for _, msg := range warnings {
+		if !slices.Contains(shown, msg) {
+			//nolint:errcheck // advisory: the register succeeded
+			fmt.Fprintf(w, "warning: the server: %s\n", msg)
+		}
+	}
 }
 
 // warnPausedIgnored warns when --paused or --active was asked and the answer
@@ -1064,7 +1122,11 @@ func registerDeployedDAG(ctx context.Context, out io.Writer, r registerRequest) 
 	if jerr := json.Unmarshal(repinned, &spec); jerr != nil {
 		return deployResult{}, fmt.Errorf("parsing compiled dag.json: %w", jerr)
 	}
-	status, header, raw, uerr := postVersion(ctx, versionPost{serverURL: r.serverURL, token: r.token, dagID: spec.DagID, spec: repinned, paused: r.paused})
+	post := versionPost{serverURL: r.serverURL, token: r.token, dagID: spec.DagID, spec: repinned, paused: r.paused}
+	if !r.build.IsZero() {
+		post.build = &r.build
+	}
+	status, header, raw, uerr := postVersion(ctx, post)
 	if uerr != nil {
 		return deployResult{}, uerr
 	}
@@ -1077,6 +1139,7 @@ func registerDeployedDAG(ctx context.Context, out io.Writer, r registerRequest) 
 	var answer registerAnswer
 	_ = json.Unmarshal(raw, &answer) //nolint:errcheck // an older server's body may say less; the register itself succeeded
 	warnPausedIgnored(r.warn, r.paused, answer.IsPaused)
+	printNewWarnings(r.warn, answer.Warnings, r.shown)
 	extras := readServerExtras(raw)
 	res := deployResult{DagID: spec.DagID, Version: r.version, Image: r.digestRef, Digest: digestOf(r.digestRef),
 		SpecHash: answer.SpecHash, IsPaused: answer.IsPaused, Created: status == http.StatusCreated,

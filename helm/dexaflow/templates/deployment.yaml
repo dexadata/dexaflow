@@ -235,6 +235,16 @@ refused, as domain.CheckImageReference refuses them.
 {{- fail "deploy.defaults.sourceMode advertises the source mode runtime image, but execution.sourceMode.enabled is false. Turn source mode on or leave deploy.defaults.sourceMode off. The server refuses to start with it." -}}
 {{- end -}}
 {{- /*
+Digest-pinned images at register (#1703). The server refuses at boot any
+deploy.require_digest other than off, warn or enforce
+(domain.ParseDigestRequirement); refuse the same here. A bare `off` in a
+values file is YAML 1.1 for false, so false (and unset) mean off.
+*/ -}}
+{{- $requireDigest := (.Values.deploy | default dict).requireDigest | default "off" | toString -}}
+{{- if not (has $requireDigest (list "off" "warn" "enforce")) -}}
+{{- fail (printf "deploy.requireDigest must be off, warn or enforce (got %q). The server refuses to start with any other value." $requireDigest) -}}
+{{- end -}}
+{{- /*
 Pro source mode (ADR 0067) runs every source-mode task on the runtime image the
 operator vetted, so the server refuses to boot unless that image is pinned by a
 full sha256 digest (internal/config validateSourceMode, domain.IsDigestPinned).

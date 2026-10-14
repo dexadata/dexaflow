@@ -89,6 +89,12 @@ type DeploySection struct {
 	// on GET /api/v2/deployDefaults; unset (the default) advertises nothing,
 	// so every deploy resolves as it did before. None of them is a secret.
 	Defaults DeployDefaultsSection `mapstructure:"defaults"`
+	// RequireDigest (deploy.require_digest, #1703) is what registering a
+	// version, or making one current again, does with an image not pinned by
+	// a full sha256 digest: off (the default) accepts it, warn accepts it with
+	// a warning, a log line and a count, enforce refuses it. DEXAFLOW_DEPLOY_REQUIRE_DIGEST (legacy
+	// LEOFLOW_DEPLOY_REQUIRE_DIGEST).
+	RequireDigest domain.DigestRequirement `mapstructure:"require_digest"`
 }
 
 // DeployDefaultsSection is deploy.defaults: the values served as they are,
@@ -1452,6 +1458,9 @@ var serverDefaults = map[string]any{
 	"deploy.defaults.base_image": "",
 	// Off: no runtime image is advertised for source mode (#1772).
 	"deploy.defaults.source_mode": false,
+	// Digest-pinned images at register (#1703). off keeps every register as
+	// it was.
+	"deploy.require_digest": string(domain.DigestRequireOff),
 	// Retention (the leader-only janitor). Every class ships off: nothing is
 	// deleted until an operator sets a window. The pacing values apply once one is.
 	"retention.dag_runs_days":      0,
@@ -1496,6 +1505,7 @@ func LoadServer(configFile string, flags *pflag.FlagSet) (*ServerConfig, error) 
 	if err := v.Unmarshal(&c); err != nil {
 		return nil, fmt.Errorf("unmarshaling server config: %w", err)
 	}
+	normalizeRequireDigest(v, &c)
 	// The OIDC role_mappings / tenant_claims maps are decoded straight from the
 	// raw YAML, bypassing viper's "." key-delimiter flattening that would split a
 	// dotted map key (a Google `hd` domain, a dotted IdP group) and fail (#826).
@@ -1617,6 +1627,7 @@ func (c *ServerConfig) Validate() error {
 		c.validateExecutorPolicies,
 		c.validatePlatformIntegration,
 		c.validateDeployDefaults,
+		c.validateRequireDigest,
 	} {
 		if err := check(); err != nil {
 			return err
@@ -1646,6 +1657,26 @@ func (c *ServerConfig) validateDeployDefaults() error {
 		return errors.New("deploy.defaults.source_mode advertises the source mode runtime image, but execution.source_mode.enabled is false; turn source mode on or leave deploy.defaults.source_mode off")
 	}
 	return c.Deploy.Defaults.Validate("deploy.defaults")
+}
+
+// normalizeRequireDigest reads a YAML boolean deploy.require_digest as the
+// chart does: a bare off in a config file is YAML for false, which means off,
+// and true stays "true" (the weak decode would make it "1") so that Validate
+// names the value the operator wrote.
+func normalizeRequireDigest(v *viper.Viper, c *ServerConfig) {
+	if b, ok := v.Get("deploy.require_digest").(bool); ok {
+		c.Deploy.RequireDigest = domain.DigestRequireOff
+		if b {
+			c.Deploy.RequireDigest = "true"
+		}
+	}
+}
+
+// validateRequireDigest refuses a deploy.require_digest other than off, warn
+// or enforce, so a typo fails at boot instead of registering unpinned images.
+func (c *ServerConfig) validateRequireDigest() error {
+	_, err := domain.ParseDigestRequirement(string(c.Deploy.RequireDigest))
+	return err
 }
 
 // isLoopbackListenAddr reports whether a listen address binds only to loopback,
