@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,6 +39,10 @@ const mixedSpecJSON = `{"schema_version":"1.0","dag_id":"etl","dag_version":"v2"
 	`{"task_id":"extract","type":"python","entrypoint":"dag:extract"},` +
 	`{"task_id":"load","type":"python","entrypoint":"dag:load","execution":{"node_selector":{"pool":"db"}}},` +
 	`{"task_id":"report","type":"python","entrypoint":"dag:report","execution":{"service_account":"reporting"}}]}`
+
+// mixedDeclaredSpecJSON is mixedSpecJSON with a declared min_idle_workers,
+// the only DAG a register prewarms (ADR 0082 D3).
+var mixedDeclaredSpecJSON = strings.Replace(mixedSpecJSON, `"image":"img:v2",`, `"image":"img:v2","min_idle_workers":2,`, 1)
 
 type reportAnswer struct {
 	Execution *struct {
@@ -79,7 +84,7 @@ func TestRegisterReportsExecutionModePerTask(t *testing.T) {
 	policy := domain.WarmPolicy{Enabled: true, ServiceAccount: "dexaflow-task"}
 	for _, path := range []string{"/api/v2/dags/etl/versions", "/api/v2/dags/etl/versions/dry_run"} {
 		repo := &fakeVersionRepo{created: true}
-		rec := authGet(warmVersionServer(repo, policy, warmOn), http.MethodPost, path, mixedSpecJSON)
+		rec := authGet(warmVersionServer(repo, policy, warmOn), http.MethodPost, path, mixedDeclaredSpecJSON)
 		if rec.Code >= http.StatusMultipleChoices {
 			t.Fatalf("%s = %d (%s)", path, rec.Code, rec.Body.String())
 		}
@@ -105,9 +110,27 @@ func TestRegisterReportsExecutionModePerTask(t *testing.T) {
 		if p.State != "on" || p.MinIdleWorkers != 2 || p.MaxPoolSize != 5 || p.PreviousPool != "draining" {
 			t.Errorf("%s: pool = %+v, want on, 2 idle, up to 5, previous draining", path, p)
 		}
-		if p.Detail == "" {
-			t.Errorf("%s: pool detail is empty", path)
+		for _, want := range []string{"2 idle warm workers (up to 5) warming now", "previous pool draining"} {
+			if !strings.Contains(p.Detail, want) {
+				t.Errorf("%s: pool detail %q lacks %q", path, p.Detail, want)
+			}
 		}
+		if strings.Contains(p.Detail, "first run") {
+			t.Errorf("%s: pool detail %q still waits for the first run", path, p.Detail)
+		}
+	}
+}
+
+// TestRegisterReportsPausedDagPoolWaitsForUnpause: a paused DAG is not
+// prewarmed (ADR 0082), so its pool is reported as starting at the unpause,
+// not as warming.
+func TestRegisterReportsPausedDagPoolWaitsForUnpause(t *testing.T) {
+	policy := domain.WarmPolicy{Enabled: true}
+	rec := authGet(warmVersionServer(&fakeVersionRepo{created: true, dagCreated: true, paused: true}, policy, warmOn),
+		http.MethodPost, "/api/v2/dags/etl/versions", mixedDeclaredSpecJSON)
+	p := decodeReport(t, rec.Body.Bytes()).Execution.Pool
+	if p.State != "on" || !strings.Contains(p.Detail, "start when the DAG is unpaused") || strings.Contains(p.Detail, "warming now") {
+		t.Errorf("paused DAG: pool = %+v, want on, starting when the DAG is unpaused", p)
 	}
 }
 
@@ -198,5 +221,23 @@ func TestRegisterReportsPreviousPoolOnlyWhenOneCouldExist(t *testing.T) {
 		if got := a.Execution.Pool.PreviousPool; got != c.want {
 			t.Errorf("%s: previous_pool = %q, want %q", c.name, got, c.want)
 		}
+	}
+}
+
+// TestRegisterReportsUndeclaredMinIdleWaitsForFirstRun: a DAG that declares
+// no min_idle_workers is not prewarmed (ADR 0082 D3): under the operator
+// floor its pool starts with its first run, and the report says so and why.
+func TestRegisterReportsUndeclaredMinIdleWaitsForFirstRun(t *testing.T) {
+	policy := domain.WarmPolicy{Enabled: true}
+	rec := authGet(warmVersionServer(&fakeVersionRepo{created: true}, policy, warmOn),
+		http.MethodPost, "/api/v2/dags/etl/versions", mixedSpecJSON)
+	p := decodeReport(t, rec.Body.Bytes()).Execution.Pool
+	for _, want := range []string{"2 idle warm workers (up to 5) start with this version's first run", "declares no min_idle_workers", "previous pool draining"} {
+		if !strings.Contains(p.Detail, want) {
+			t.Errorf("pool detail %q lacks %q", p.Detail, want)
+		}
+	}
+	if p.State != "on" || strings.Contains(p.Detail, "warming now") {
+		t.Errorf("undeclared DAG: pool = %+v, want on and not warming", p)
 	}
 }

@@ -437,6 +437,11 @@ SELECT EXISTS (
 -- GetDagVersionInTenant (#508).
 SELECT * FROM dag_versions WHERE id = $1;
 
+-- name: GetDagVersionsByIDs :many
+-- Unscoped, like GetDagVersionByID: the spec cache's batch fill for a warm
+-- pool reconcile tick, which reads the versions of its own targets (#1707).
+SELECT * FROM dag_versions WHERE id = ANY(@ids::uuid[]);
+
 -- name: GetDagVersionInTenant :one
 -- A version by id, only when its DAG belongs to the given tenant (#508).
 -- dag_versions has no tenant_id of its own; the tenant is its DAG's.
