@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -31,6 +32,23 @@ func New(baseURL, token string, opts ...ClientOption) (*ClientWithResponses, err
 func bearerAuth(token string) RequestEditorFn {
 	return func(_ context.Context, req *http.Request) error {
 		req.Header.Set("Authorization", "Bearer "+token)
+		return nil
+	}
+}
+
+// WithDagSourceVersion returns a request editor that asks GET
+// /api/v2/dagSources/{dag_id} for the source of the DAG version numbered n
+// (its version_number in the dagVersions listing) instead of the newest one:
+//
+//	c.GetDagSourceWithResponse(ctx, dagID, client.WithDagSourceVersion(n))
+//
+// The generated GetDagSource does not take the parameter itself, so that its
+// signature stays compatible (see overlay.yaml).
+func WithDagSourceVersion(n int) RequestEditorFn {
+	return func(_ context.Context, req *http.Request) error {
+		q := req.URL.Query()
+		q.Set("version_number", strconv.Itoa(n))
+		req.URL.RawQuery = q.Encode()
 		return nil
 	}
 }

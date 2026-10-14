@@ -41,7 +41,7 @@ func (h *handlers) registerResources(s *mcpsdk.Server) {
 	}, h.readTaskLog)
 	s.AddResourceTemplate(&mcpsdk.ResourceTemplate{
 		Name: "dag-source", URITemplate: "dag://source/{dag_id}", MIMEType: "text/plain",
-		Description: "A DAG's source (the dag.py text), sanitized and size-capped.",
+		Description: "A DAG's source (the dag.py text of its current version), sanitized and size-capped.",
 	}, h.readDagSource)
 	s.AddResourceTemplate(&mcpsdk.ResourceTemplate{
 		Name: "dag-spec", URITemplate: "dag://spec/{dag_id}", MIMEType: "application/json",
@@ -66,7 +66,11 @@ func (h *handlers) readDagSource(ctx context.Context, req *mcpsdk.ReadResourceRe
 	if err != nil {
 		return nil, err
 	}
-	resp, err := api.GetDagSourceWithResponse(ctx, p[0])
+	editors, err := currentSourceVersion(ctx, api, p[0])
+	if err != nil {
+		return nil, err
+	}
+	resp, err := api.GetDagSourceWithResponse(ctx, p[0], editors...)
 	if err != nil {
 		return nil, fmt.Errorf("fetching dag source: %w", err)
 	}
@@ -80,6 +84,27 @@ func (h *handlers) readDagSource(ctx context.Context, req *mcpsdk.ReadResourceRe
 	return &mcpsdk.ReadResourceResult{Contents: []*mcpsdk.ResourceContents{{
 		URI: req.Params.URI, MIMEType: "text/plain", Text: src,
 	}}}, nil
+}
+
+// currentSourceVersion returns the request editor that points a dagSources
+// read at the DAG's current version: the one its runs use, as dag://spec
+// serves. dagSources alone serves the newest version (Airflow), which after a
+// rollback is not the current one. With no version marked current it returns
+// no editor, and the newest version is read.
+func currentSourceVersion(ctx context.Context, api *apiclient.ClientWithResponses, dagID string) ([]apiclient.RequestEditorFn, error) {
+	resp, err := api.ListDagVersionsWithResponse(ctx, dagID)
+	if err != nil {
+		return nil, fmt.Errorf("listing dag versions: %w", err)
+	}
+	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
+		return nil, fmt.Errorf("control plane returned %d listing the versions of %s", resp.StatusCode(), dagID)
+	}
+	for _, v := range deref(resp.JSON200.DagVersions) {
+		if deref(v.IsCurrent) && v.VersionNumber != nil {
+			return []apiclient.RequestEditorFn{apiclient.WithDagSourceVersion(*v.VersionNumber)}, nil
+		}
+	}
+	return nil, nil
 }
 
 // maxSpecBytes guards a dag.json resource read; the compiled artifact is small

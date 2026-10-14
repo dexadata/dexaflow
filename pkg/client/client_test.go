@@ -78,3 +78,35 @@ func TestNewTrimsTrailingSlash(t *testing.T) {
 		t.Errorf("path = %q, want /healthz (no double slash)", gotPath)
 	}
 }
+
+// TestWithDagSourceVersionSetsTheQueryParameter: GetDagSource keeps its
+// signature (the overlay drops version_number from the generated client), and
+// WithDagSourceVersion sends it, so a caller can read a given version's source.
+// Without the editor no version_number is sent: the server serves the newest.
+func TestWithDagSourceVersionSetsTheQueryParameter(t *testing.T) {
+	var gotQuery []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = append(gotQuery, r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"content":"# v1","dag_id":"etl","version_number":1}`))
+	}))
+	defer srv.Close()
+
+	c, err := New(srv.URL, "")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	resp, err := c.GetDagSourceWithResponse(context.Background(), "etl", WithDagSourceVersion(1))
+	if err != nil {
+		t.Fatalf("GetDagSource: %v", err)
+	}
+	if resp.JSON200 == nil || resp.JSON200.VersionNumber == nil || *resp.JSON200.VersionNumber != 1 {
+		t.Errorf("response = %s", resp.Body)
+	}
+	if _, err = c.GetDagSourceWithResponse(context.Background(), "etl"); err != nil {
+		t.Fatalf("GetDagSource: %v", err)
+	}
+	if len(gotQuery) != 2 || gotQuery[0] != "version_number=1" || gotQuery[1] != "" {
+		t.Errorf("queries = %q, want [version_number=1, empty]", gotQuery)
+	}
+}

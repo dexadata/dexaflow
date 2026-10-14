@@ -558,6 +558,8 @@ func getDagRunHandler(repo DagRunRepository, versions DagVersionLister) gin.Hand
 type pinnedVersions struct {
 	dagID   string
 	byLabel map[string]domain.DagVersion
+	// newest is the DAG's newest version, nil when it lists none.
+	newest *domain.DagVersion
 }
 
 // pinnedDagVersions reads the DAG's versions once, for one run or a page of them.
@@ -571,6 +573,9 @@ func pinnedDagVersions(c *gin.Context, versions DagVersionLister) pinnedVersions
 		return p
 	}
 	p.byLabel = make(map[string]domain.DagVersion, len(vs))
+	if len(vs) > 0 {
+		p.newest = &vs[0] // ListDagVersions is newest-first.
+	}
 	for _, v := range vs {
 		if best, ok := p.byLabel[v.Version]; !ok || v.VersionNumber > best.VersionNumber {
 			p.byLabel[v.Version] = v
@@ -1141,37 +1146,6 @@ func findTaskInstanceDTO(c *gin.Context, repo TaskInstanceRepository, runs DagRu
 	return taskInstanceDTO{}, false
 }
 
-// resolveRunContextFor is resolveRunContext for an explicit run id (clear posts
-// the run in its body rather than the path).
-func resolveRunContextFor(c *gin.Context, runs DagRunRepository, versions DagVersionLister, runID string) (*time.Time, *dagVersionDTO) {
-	dagID := c.Param("dag_id")
-	var logical *time.Time
-	var pinned string
-	if runs != nil && runID != "" {
-		if run, err := runs.GetDagRun(c.Request.Context(), tenantOf(c), dagID, runID); err == nil {
-			logical = &run.LogicalDate
-			pinned = run.Version
-		}
-	}
-	var version *dagVersionDTO
-	if versions != nil {
-		if vs, err := versions.ListDagVersions(c.Request.Context(), tenantOf(c), dagID); err == nil && len(vs) > 0 {
-			version = &dagVersionDTO{
-				ID: vs[0].ID, VersionNumber: vs[0].VersionNumber, DagID: dagID,
-				BundleName: "leoflow", CreatedAt: vs[0].CreatedAt, DagDisplayName: dagID,
-			}
-			// The RUN's pinned label, not vs[0]'s. The single-task clear dialog
-			// gates its version control on
-			//   he !== ge && ge !== null && ge !== ''
-			// where he is the DAG's current label and ge is this one. Filling it
-			// from vs[0] makes the two equal and the control stays hidden — the
-			// same invisible result as leaving it null, reached a different way.
-			version.BundleVersion = strPtrOrNil(pinned)
-		}
-	}
-	return logical, version
-}
-
 // taskInstanceActionHandler dispatches the catch-all under
 // /taskInstances/{task_id}/* : "logs/{try}" streams the attempt's logs, while a
 // bare "{map_index}" returns the single task instance (TaskInstanceResponse).
@@ -1293,36 +1267,62 @@ func enrichTaskInstance(c *gin.Context, dto *taskInstanceDTO, runs DagRunReposit
 	dto.LogicalDate, dto.RunAfter, dto.DagVersion = logical, logical, version
 }
 
-// resolveRunContext looks up a run's logical date and the DAG's latest version
-// once, for sharing across the task instances of a single run. Either result is
+// resolveRunContext looks up a run's logical date and its DAG version once,
+// for sharing across the task instances of a single run. Either result is
 // nil when the source repository is absent or the lookup fails.
 func resolveRunContext(c *gin.Context, runs DagRunRepository, versions DagVersionLister) (*time.Time, *dagVersionDTO) {
-	dagID, runID := c.Param("dag_id"), c.Param("dag_run_id")
+	return resolveRunContextFor(c, runs, versions, c.Param("dag_run_id"))
+}
+
+// resolveRunContextFor is resolveRunContext for an explicit run id (clear posts
+// the run in its body rather than the path).
+func resolveRunContextFor(c *gin.Context, runs DagRunRepository, versions DagVersionLister, runID string) (*time.Time, *dagVersionDTO) {
+	dagID := c.Param("dag_id")
 	var logical *time.Time
 	var pinned string
-	if runs != nil {
+	if runs != nil && runID != "" {
 		if run, err := runs.GetDagRun(c.Request.Context(), tenantOf(c), dagID, runID); err == nil {
 			logical = &run.LogicalDate
 			pinned = run.Version
 		}
 	}
-	var version *dagVersionDTO
-	if versions != nil {
-		if vs, err := versions.ListDagVersions(c.Request.Context(), tenantOf(c), dagID); err == nil && len(vs) > 0 {
-			version = &dagVersionDTO{
-				ID: vs[0].ID, VersionNumber: vs[0].VersionNumber, DagID: dagID,
-				BundleName: "leoflow", CreatedAt: vs[0].CreatedAt, DagDisplayName: dagID,
-			}
-			// The RUN's pinned label, not vs[0]'s. The single-task clear dialog
-			// gates its version control on
-			//   he !== ge && ge !== null && ge !== ''
-			// where he is the DAG's current label and ge is this one. Filling it
-			// from vs[0] makes the two equal and the control stays hidden — the
-			// same invisible result as leaving it null, reached a different way.
-			version.BundleVersion = strPtrOrNil(pinned)
-		}
+	return logical, runDagVersion(c, versions, pinned)
+}
+
+// runDagVersion is the dag_version of a run's task instances: the version the
+// run is pinned to by label, complete as the dagVersions listing serves it.
+// After a rollback that is not the DAG's newest version, and the UI's Code tab
+// of a task instance opens on its version_number. A label that no longer
+// resolves keeps the DAG's newest id and number with the run's label as
+// bundle_version, and nil when the DAG lists no version.
+//
+// The bundle_version is always the RUN's pinned label, never the newest
+// version's. The single-task clear dialog of the embedded Airflow 3.2 UI
+// offers "Run with latest bundle version" when it computes (cQt) any of:
+//
+//	run.dag_versions is empty (the run's version is missing),
+//	latest_dag_version.version_number != dag_version.version_number
+//	  and details.bundle_version is set,
+//	details.bundle_version is set, dag_version.bundle_version is set,
+//	  and the two differ,
+//
+// where details is the DAG's (bundle_version is its current label in
+// Dexaflow) and dag_version is this one. A null bundle_version here hides
+// the last case, and the newest version's label would make it compare the
+// wrong version.
+func runDagVersion(c *gin.Context, versions DagVersionLister, pinned string) *dagVersionDTO {
+	p := pinnedDagVersions(c, versions)
+	if p.newest == nil {
+		return nil
 	}
-	return logical, version
+	if v, ok := p.byLabel[pinned]; ok && pinned != "" {
+		dto := toDagVersionDTO(p.dagID, v)
+		return &dto
+	}
+	return &dagVersionDTO{
+		ID: p.newest.ID, VersionNumber: p.newest.VersionNumber, DagID: p.dagID,
+		BundleName: "leoflow", BundleVersion: strPtrOrNil(pinned), CreatedAt: p.newest.CreatedAt, DagDisplayName: p.dagID,
+	}
 }
 
 // serveTaskTries answers the task try-history endpoints the UI's task Details

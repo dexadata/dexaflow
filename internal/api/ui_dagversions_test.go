@@ -168,3 +168,40 @@ func TestDagVersionsExposeProvenance(t *testing.T) {
 		t.Errorf("older version = %v, want created_by null and is_current false", old)
 	}
 }
+
+// TestDagDetailsLatestDagVersionIsComplete: after a rollback, the newest
+// version is still latest_dag_version, as in Airflow, and it carries every
+// field of its row, as the dagVersions listing serves it: bundle_version,
+// image, spec_hash, created_by and is_current (false, since the rollback made
+// an older version current).
+func TestDagDetailsLatestDagVersionIsComplete(t *testing.T) {
+	at := time.Date(2026, 10, 14, 0, 41, 33, 0, time.UTC)
+	srv := versionsServer([]domain.DAG{{DagID: "etl", CurrentVersion: "label-1"}}, []domain.DagVersion{
+		{ID: "id-2", VersionNumber: 2, Version: "label-2", CreatedAt: at.Add(time.Minute), ImageReference: "img@sha256:bb", SpecHash: "h2", CreatedBy: "7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a"},
+		{ID: "id-1", VersionNumber: 1, Version: "label-1", CreatedAt: at, ImageReference: "img@sha256:aa", SpecHash: "h1", IsCurrent: true},
+	})
+	rec := authGet(srv, http.MethodGet, "/api/v2/dags/etl/details", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/details = %d (%s)", rec.Code, rec.Body.String())
+	}
+	var d struct {
+		Latest map[string]any `json:"latest_dag_version"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &d); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"id": "id-2", "version_number": float64(2), "dag_id": "etl", "bundle_name": "leoflow",
+		"bundle_version": "label-2", "created_at": "2026-10-14T00:42:33Z", "dag_display_name": "etl",
+		"bundle_url": nil, "image": "img@sha256:bb", "spec_hash": "h2", "is_current": false,
+		"created_by": "7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a",
+	}
+	if len(d.Latest) != len(want) {
+		t.Errorf("latest_dag_version has %d fields, want %d: %v", len(d.Latest), len(want), d.Latest)
+	}
+	for k, v := range want {
+		if got, ok := d.Latest[k]; !ok || got != v {
+			t.Errorf("latest_dag_version.%s = %v, want %v", k, got, v)
+		}
+	}
+}

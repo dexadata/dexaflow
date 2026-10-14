@@ -1,0 +1,14 @@
+# OpenAPI Overlay applied by oapi-codegen when it generates this client (see
+# oapi-codegen.yaml). Each action keeps a generated signature compatible after
+# docs/api/openapi.yaml gained a parameter; the client reaches the parameter
+# through a hand-written request editor in client.go instead.
+overlay: 1.0.0
+info:
+  title: pkg/client compatibility overlay
+  version: 1.0.0
+actions:
+  # getDagSource gained the optional version_number query parameter (#1741).
+  # Removing it here keeps GetDagSource(ctx, dagId, ...RequestEditorFn); use
+  # WithDagSourceVersion to send it.
+  - target: $.paths['/api/v2/dagSources/{dag_id}'].get.parameters
+    remove: true
