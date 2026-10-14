@@ -1,7 +1,6 @@
 package build
 
 import (
-	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -13,6 +12,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
+
+	"github.com/google/go-containerregistry/pkg/name"
 )
 
 // The remote path of ADR 0073 (path 4) on Google Cloud Build (ADR 0083). The
@@ -67,6 +69,9 @@ type CloudBuild struct {
 	Tool string
 	// Registry reads the pushed digest; the registry client when nil.
 	Registry Resolver
+	// Poll is how often a build whose log cannot be streamed is described
+	// until it ends; cloudBuildPoll when zero.
+	Poll time.Duration
 }
 
 // tool returns the executable, gcloud by default.
@@ -160,8 +165,9 @@ func (b CloudBuild) config(req Request) cloudBuildConfig {
 }
 
 // Build packs the listed context with the Dockerfile, submits it to Cloud
-// Build and waits for the build, which pushes the image, then reads the
-// pushed image's digest from the registry when a pin is asked for.
+// Build, follows the build until it ends (it pushes the image), and, when a
+// pin is asked for, reads the pushed image's digest from the registry and
+// checks it is the one the build reports.
 func (b CloudBuild) Build(ctx context.Context, req Request) (Result, error) {
 	if !req.Push {
 		return Result{}, errors.New("the remote builder pushes the image it builds, so the build needs a push (--push)")
@@ -181,8 +187,10 @@ func (b CloudBuild) Build(ctx context.Context, req Request) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if serr := b.submit(ctx, req, archive, config); serr != nil {
-		return Result{}, serr
+	b.noteRegistry(req)
+	built, err := b.run(ctx, req, archive, config)
+	if err != nil {
+		return Result{}, err
 	}
 	res := Result{Path: PathRemote, Image: req.Image, Platforms: req.Platforms, Pushed: true}
 	if !req.Pin {
@@ -192,8 +200,28 @@ func (b CloudBuild) Build(ctx context.Context, req Request) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("reading the digest of the image %q Cloud Build pushed: %w", req.Image, err)
 	}
+	if err := built.checkDigest(req.Image, pinned); err != nil {
+		return Result{}, err
+	}
 	res.Ref = pinned.Ref
 	return res, nil
+}
+
+// noteRegistry says, for an image outside Google Cloud's registries, that
+// the push may be refused: Cloud Build pushes the images of a build with its
+// service account, which Artifact Registry and GCR accept and other
+// registries do not know.
+func (b CloudBuild) noteRegistry(req Request) {
+	ref, err := name.ParseReference(req.Image)
+	if err != nil || req.Stderr == nil {
+		return
+	}
+	host := ref.Context().RegistryStr()
+	if c, ok := DetectCloudRegistry(host); ok && c.Provider == ProviderGoogle {
+		return
+	}
+	fmt.Fprintf(req.Stderr, "note: Cloud Build pushes with its service account, which Artifact Registry and GCR accept; "+ //nolint:errcheck // a progress note
+		"%s is neither and may refuse the push\n", host)
 }
 
 // prepare writes the source archive and the build config of req into dir.
@@ -211,37 +239,6 @@ func (b CloudBuild) prepare(dir string, req Request) (archive, config string, er
 		return "", "", fmt.Errorf("writing the Cloud Build config: %w", err)
 	}
 	return archive, config, nil
-}
-
-// submit runs `gcloud builds submit` and waits for the build. Its output goes
-// to the request's writers; a failure keeps the last line gcloud wrote to
-// stderr and says what to check.
-func (b CloudBuild) submit(ctx context.Context, req Request, archive, config string) error {
-	args := []string{"builds", "submit", archive, "--config=" + config, "--project=" + b.Project}
-	if b.Region != "" {
-		args = append(args, "--region="+b.Region)
-	}
-	if b.WorkerPool != "" {
-		args = append(args, "--worker-pool="+b.WorkerPool)
-	}
-	if b.ServiceAccount != "" {
-		args = append(args, "--service-account="+b.ServiceAccount)
-	}
-	args = append(args, "--quiet")
-	//nolint:gosec // G204: gcloud with fixed subcommands; every value is validated config passed as --flag=value.
-	c := exec.CommandContext(ctx, b.tool(), args...)
-	var tail bytes.Buffer
-	c.Stdin = strings.NewReader("")
-	c.Stdout = orDiscard(req.Stdout)
-	c.Stderr = io.MultiWriter(orDiscard(req.Stderr), &tail)
-	if err := c.Run(); err != nil {
-		return fmt.Errorf("building %q on Cloud Build in project %s: gcloud builds submit: %w%s\n"+
-			"  check that gcloud is signed in (`gcloud auth login`, or a service account with `gcloud auth activate-service-account`), "+
-			"that the account has roles/cloudbuild.builds.editor on the project, "+
-			"and that the project's Cloud Build service account may push to the repository (roles/artifactregistry.writer)",
-			req.Image, b.Project, err, lastLine(tail.String()))
-	}
-	return nil
 }
 
 // orDiscard is w, or io.Discard when w is nil.
@@ -275,5 +272,13 @@ func writeContextArchive(path, dockerfile string, files []LayerFile) error {
 	if werr != nil {
 		return fmt.Errorf("writing the build context archive: %w", werr)
 	}
+	if info, serr := os.Stat(path); serr == nil && info.Size() > maxContextArchive {
+		return fmt.Errorf("the build context is %d MiB compressed, over the %d MiB the remote builder uploads; "+
+			"leave large files out with .dockerignore or exclude_paths", info.Size()>>20, maxContextArchive>>20)
+	}
 	return nil
 }
+
+// maxContextArchive is the largest compressed build context the remote
+// builder uploads. It is a variable only so a test can lower it.
+var maxContextArchive int64 = 2 << 30

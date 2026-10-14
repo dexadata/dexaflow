@@ -745,9 +745,11 @@ func (d *deployRun) run() error {
 		}
 		return d.alreadyCurrent(ctx, version)
 	}
-	if rerr := d.checkRegistry(ctx, image, co.reuse); rerr != nil {
+	refused, rerr := d.checkRegistry(ctx, image, co.reuse)
+	if rerr != nil {
 		return rerr
 	}
+	co.pushRefused = refused
 	if access.dryRun {
 		co.beforeBuild = func() error {
 			return d.dryRun(ctx, output, image, version, origin, co.reuse)
@@ -813,24 +815,22 @@ func (d *deployRun) checkServer(ctx context.Context) (serverAccess, error) {
 
 // checkRegistry is the push step of the preflight: the registry accepts a
 // push of image, checked unless nothing will be pushed (--skip-build, or a
-// reusable image the registry already holds).
-func (d *deployRun) checkRegistry(ctx context.Context, image string, reuse bool) error {
+// reusable image the registry already holds). With a remote builder
+// configured, a refusal is not decided here: it is returned as refused,
+// and the build fails on it unless the builder it chooses pushes nothing
+// from this machine (checkLocalPush).
+func (d *deployRun) checkRegistry(ctx context.Context, image string, reuse bool) (refused, err error) {
 	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
 	defer cancel()
 	reg := registryFor(d.cfg)
 	if d.o.skipBuild || (reuse && registryHolds(ctx, reg, image)) {
-		return nil
+		return nil, nil
 	}
-	err := checkRegistryPush(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), reg, image, d.o.builder)
+	err = checkRegistryPush(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), reg, image, d.o.builder)
 	if err == nil || remoteFor(d.cfg) == nil {
-		return err
+		return nil, err
 	}
-	// The remote builder pushes the image with its own credentials (Cloud
-	// Build's service account), so this machine's refusal decides nothing
-	// for a whole build; a code-layer push from here would still need it.
-	_, werr := fmt.Fprintf(d.cmd.ErrOrStderr(), "note: %v\n  the remote builder pushes with its own credentials, so the deploy goes on; "+
-		"a build that pushes from this machine (the code layer) still needs this one\n", err)
-	return werr
+	return err, nil
 }
 
 // dryRun is the last step of the preflight: the server's dry run of the

@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // RemoteBuilderConfig is build.remote_builder in dexaflow.yaml, and
@@ -63,8 +64,21 @@ func (r *RemoteBuilderConfig) Validate(prefix string) error {
 		return fmt.Errorf("%sregion %q is not a region name, such as us-central1", at, cb.Region)
 	case cb.WorkerPool != "" && !workerPool.MatchString(cb.WorkerPool):
 		return fmt.Errorf("%sworker_pool %q: want projects/<project>/locations/<region>/workerPools/<name>", at, cb.WorkerPool)
+	case cb.WorkerPool != "" && cb.Region == "":
+		return fmt.Errorf("%sregion is required with worker_pool: a build runs in the region of its pool", at)
+	case cb.WorkerPool != "" && poolRegion(cb.WorkerPool) != cb.Region:
+		return fmt.Errorf("%sworker_pool %q is in %s, not in region %s; a build runs in the region of its pool", at, cb.WorkerPool, poolRegion(cb.WorkerPool), cb.Region)
 	case cb.ServiceAccount != "" && !serviceAccount.MatchString(cb.ServiceAccount):
 		return fmt.Errorf("%sservice_account %q: want projects/<project>/serviceAccounts/<email>", at, cb.ServiceAccount)
 	}
 	return nil
+}
+
+// poolRegion is the location segment of a worker pool resource name.
+func poolRegion(pool string) string {
+	parts := strings.Split(pool, "/")
+	if len(parts) < 4 {
+		return ""
+	}
+	return parts[3]
 }

@@ -5,19 +5,23 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/dexadata/dexaflow/internal/build"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // cloudBuildYAML configures the Cloud Build remote builder in dexaflow.yaml.
 const cloudBuildYAML = "  remote_builder:\n    cloud_build: {project: acme-ci, region: us-central1}\n"
 
-// fakeGcloudOnPath puts a stand-in for gcloud first on PATH. It logs its
-// argv and the entries of the source archive it was given, and exits 0, as
-// a build Cloud Build ran and pushed would; the test pushes what the build
-// would have pushed.
+// fakeGcloudOnPath puts a stand-in for gcloud first on PATH. It logs the
+// argv of each `builds submit` and the entries of the source archive it was
+// given, and answers as a build Cloud Build ran and pushed would: a build
+// id, a log line, and a successful build reporting the digest in
+// FAKE_GCLOUD_DIGEST (cloudBuildPushes sets it, with the image).
 func fakeGcloudOnPath(t *testing.T) (argvLog, archiveLog string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -26,19 +30,41 @@ func fakeGcloudOnPath(t *testing.T) (argvLog, archiveLog string) {
 	dir := t.TempDir()
 	argvLog, archiveLog = filepath.Join(dir, "argv.log"), filepath.Join(dir, "archive.log")
 	script := `#!/bin/sh
-echo "$*" >> "` + argvLog + `"
-for a in "$@"; do
-  case "$a" in
-    *.tar.gz) tar -tzf "$a" | sort >> "` + archiveLog + `" ;;
-  esac
-done
+case "$1 $2" in
+"builds submit")
+  echo "$*" >> "` + argvLog + `"
+  for a in "$@"; do
+    case "$a" in
+      *.tar.gz) tar -tzf "$a" | sort >> "` + archiveLog + `" ;;
+    esac
+  done
+  echo '{"id": "b-1"}'
+  ;;
+"builds log") echo "Step #0: building" ;;
+"builds describe")
+  echo '{"id": "b-1", "status": "SUCCESS", "results": {"images": [{"name": "x", "digest": "'"$FAKE_GCLOUD_DIGEST"'"}]}}'
+  ;;
+esac
 exit 0
 `
 	if err := os.WriteFile(filepath.Join(dir, "gcloud"), []byte(script), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKE_GCLOUD_DIGEST", "")
 	return argvLog, archiveLog
+}
+
+// cloudBuildPushes pushes what a Cloud Build build of ref leaves in the
+// registry, and has the fake gcloud report its digest.
+func cloudBuildPushes(t *testing.T, ref string) {
+	t.Helper()
+	pushPlatformIndex(t, ref, "linux/amd64")
+	pinned, err := build.Registry{}.Resolve(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_GCLOUD_DIGEST", pinned.Ref[strings.LastIndex(pinned.Ref, "@")+1:])
 }
 
 // A project with its own Dockerfile needs a real build: with a cloud
@@ -50,15 +76,19 @@ func TestDeployBuildsAProjectDockerfileOnCloudBuild(t *testing.T) {
 	dir, host, _ := splitProject(t, cloudBuildYAML+"exclude_paths: [secret.txt]\n")
 	writeProjectFile(t, dir, "Dockerfile", "FROM scratch\nCOPY . /app\n")
 	writeProjectFile(t, dir, "secret.txt", "token\n")
+	writeProjectFile(t, dir, ".env", "TOKEN=x\n")
 	writeProjectFile(t, dir, "lib/util.py", "x = 1\n")
 	image := host + "/team/etl:v1"
-	pushPlatformIndex(t, image, "linux/amd64") // what Cloud Build pushes
+	cloudBuildPushes(t, image)
 	daemon, daemonLog := argvBuilder(t)
 	fake := &deployServer{}
 
-	out, _, err := deployDir(t, fake, dir, daemon, "--dag-version", "v1")
+	out, stderrOut, err := deployDir(t, fake, dir, daemon, "--dag-version", "v1")
 	if err != nil {
 		t.Fatalf("deploy: %v\n%s", err, out)
+	}
+	if !strings.Contains(stderrOut, "warning: .env is uploaded to Cloud Build") || !strings.Contains(stderrOut, "acme-ci_cloudbuild") {
+		t.Errorf("stderr does not warn that .env is uploaded and kept in the source bucket:\n%s", stderrOut)
 	}
 	if calls := argvLines(t, daemonLog); calls != nil {
 		t.Errorf("the daemon ran: %q", calls)
@@ -99,7 +129,7 @@ func TestDeployBuildsAProjectDockerfileOnCloudBuild(t *testing.T) {
 func TestDeployBuildsTheDependencyImageOnCloudBuild(t *testing.T) {
 	argvLog, archiveLog := fakeGcloudOnPath(t)
 	dir, _, deps := splitProject(t, cloudBuildYAML)
-	pushPlatformIndex(t, deps, "linux/amd64") // what Cloud Build pushes
+	cloudBuildPushes(t, deps)
 	daemon, daemonLog := argvBuilder(t)
 	out, _, err := deployDir(t, &deployServer{}, dir, daemon, "--rebuild")
 	if err != nil {
@@ -194,27 +224,146 @@ func TestCompileWithoutPushKeepsTheDaemon(t *testing.T) {
 	}
 }
 
-// A registry that refuses this machine's push does not stop a deploy whose
-// project configures a remote builder: Cloud Build pushes with its own
-// service account, so the refusal is a note that says so.
-func TestDeployPreflightRefusalIsANoteWithARemoteBuilder(t *testing.T) {
+// The push preflight is softened only when nothing is pushed from this
+// machine: a whole build the remote builder runs. Every other path with a
+// remote builder configured pushes with this machine's credential (the code
+// layer, the local daemon for arm64 or without gcloud), so a refusal stops
+// the deploy before anything is built or pushed, naming the builder.
+func TestDeployPreflightRefusalStaysAnErrorWhenThisMachinePushes(t *testing.T) {
+	cases := map[string]struct {
+		dockerfile bool
+		depsCached bool
+		args       []string
+		noGcloud   bool
+	}{
+		"code layer onto a cached dependency image":     {depsCached: true},
+		"dependency image remote, code layer from here": {},
+		"arm64 on the local daemon":                     {dockerfile: true, args: []string{"--platform", "linux/arm64"}},
+		"gcloud missing, docker present":                {dockerfile: true, noGcloud: true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var deny atomic.Bool
+			argvLog, _ := fakeGcloudOnPath(t)
+			if tc.noGcloud {
+				t.Setenv("PATH", "/usr/bin:/bin")
+			}
+			dir, host, deps := splitProjectWith(t, cloudBuildYAML, &deny)
+			if tc.dockerfile {
+				writeProjectFile(t, dir, "Dockerfile", "FROM scratch\n")
+			}
+			if tc.depsCached {
+				pushPlatformIndex(t, deps, "linux/amd64")
+			}
+			dockerCredentialsFor(t, host)
+			deny.Store(true)
+			daemon, daemonLog := argvBuilder(t)
+			fake := &deployServer{}
+			out, errOut, err := deployDir(t, fake, dir, daemon, append([]string{"--dag-version", "v1"}, tc.args...)...)
+			if err == nil || !strings.Contains(err.Error(), "preflight: the registry "+host) || !strings.Contains(err.Error(), "pushes from this machine") {
+				t.Fatalf("deploy = %v, want the preflight refusal naming the local push\n%s\n%s", err, out, errOut)
+			}
+			if calls := argvLines(t, daemonLog); calls != nil {
+				t.Errorf("the daemon ran: %q", calls)
+			}
+			if !tc.noGcloud {
+				if argv := argvLines(t, argvLog); argv != nil {
+					t.Errorf("gcloud ran: %q", argv)
+				}
+			}
+			if fake.registers != 0 {
+				t.Errorf("registers = %d, want none", fake.registers)
+			}
+		})
+	}
+}
+
+// A whole build on Cloud Build pushes nothing from here, so the same
+// refusal is a note and the deploy goes on.
+func TestDeployPreflightRefusalIsANoteForAWholeRemoteBuild(t *testing.T) {
+	var deny atomic.Bool
 	argvLog, _ := fakeGcloudOnPath(t)
-	reg := newFakeOCIRegistry(t, singleManifest)
-	reg.denyPush = true
-	dockerCredentialsFor(t, reg.host)
-	dir := versionProject(t, "registry:\n  url: "+reg.host+"/team\n  image_name: etl\nbuild:\n"+cloudBuildYAML)
+	dir, host, _ := splitProjectWith(t, cloudBuildYAML, &deny)
 	writeProjectFile(t, dir, "Dockerfile", "FROM scratch\n")
-	t.Setenv("LEOFLOW_PARSER_CMD", recordingParser(t, filepath.Join(t.TempDir(), "parser.log")))
+	cloudBuildPushes(t, host+"/team/etl:v1")
+	dockerCredentialsFor(t, host)
+	deny.Store(true)
 	daemon, _ := argvBuilder(t)
 	fake := &deployServer{}
-	out, errOut, err := deployDir(t, fake, dir, daemon, "--force")
+	out, errOut, err := deployDir(t, fake, dir, daemon, "--dag-version", "v1")
 	if err != nil {
 		t.Fatalf("deploy: %v\n%s\n%s", err, out, errOut)
 	}
-	if !strings.Contains(errOut, "note: ") || !strings.Contains(errOut, "the remote builder pushes with its own credentials") {
-		t.Errorf("stderr does not carry the refusal as a note about the remote builder:\n%s", errOut)
+	if !strings.Contains(errOut, "note: ") || !strings.Contains(errOut, "pushes with its own credentials") {
+		t.Errorf("stderr does not carry the refusal as a note:\n%s", errOut)
 	}
 	if argv := argvLines(t, argvLog); len(argv) != 1 || fake.registers != 1 {
 		t.Errorf("gcloud calls %q, registers %d, want the remote build and the register", argv, fake.registers)
+	}
+}
+
+// The context a remote build uploads is what a container daemon reads:
+// .dockerignore with Docker's rules (a `!` line re-includes under an
+// excluded directory), exclude_paths, symlinks kept as links, the
+// generated Dockerfile left out, and a <Dockerfile>.dockerignore next to a
+// project Dockerfile used in place of .dockerignore, as BuildKit does.
+func TestContextFilesListWhatADaemonReads(t *testing.T) {
+	cases := map[string]struct {
+		files      map[string]string
+		links      map[string]string
+		exclude    []string
+		dockerfile string
+		want       []string
+	}{
+		"dockerignore with a re-include": {
+			files: map[string]string{".dockerignore": "data/\n!data/keep.csv\n*.log\n", "dag.py": "", "data/big.bin": "", "data/keep.csv": "",
+				"run.log": "", "sub/run.log": "", generatedDockerfileName: ""},
+			want: []string{".dockerignore", "dag.py", "data/", "data/keep.csv", "sub/", "sub/run.log"},
+		},
+		"exclude_paths and links": {
+			files:   map[string]string{"dag.py": "", "secret.txt": "", "lib/a.py": ""},
+			links:   map[string]string{"lib/link.py": "a.py"},
+			exclude: []string{"secret.txt"},
+			want:    []string{".dockerignore", "dag.py", "lib/", "lib/a.py", "lib/link.py -> a.py"},
+		},
+		"Dockerfile.dockerignore wins": {
+			files: map[string]string{".dockerignore": "dag.py\n", "Dockerfile.dockerignore": "notes.md\n", "Dockerfile": "FROM scratch\n",
+				"dag.py": "", "notes.md": ""},
+			dockerfile: "Dockerfile",
+			want:       []string{".dockerignore", "Dockerfile", "Dockerfile.dockerignore", "dag.py"},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			for f, body := range tc.files {
+				writeProjectFile(t, dir, f, body)
+			}
+			for l, target := range tc.links {
+				if err := os.Symlink(target, filepath.Join(dir, l)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, ok := tc.files[".dockerignore"]; !ok {
+				writeProjectFile(t, dir, ".dockerignore", "")
+			}
+			dockerfile := filepath.Join(dir, generatedDockerfileName)
+			if tc.dockerfile != "" {
+				dockerfile = filepath.Join(dir, tc.dockerfile)
+			}
+			cfg := &domain.LeoflowConfig{DagID: "etl", DagSource: "dag.py", ExcludePaths: tc.exclude}
+			files, err := contextFiles(dir, cfg, dockerfile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := layerPaths(files); !slices.Equal(got, tc.want) {
+				t.Errorf("context = %q, want %q", got, tc.want)
+			}
+			for _, f := range files {
+				if f.Path == "lib/link.py" && f.Link != "a.py" {
+					t.Errorf("lib/link.py = %+v, want a link to a.py", f)
+				}
+			}
+		})
 	}
 }

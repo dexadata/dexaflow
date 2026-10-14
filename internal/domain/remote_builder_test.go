@@ -35,11 +35,14 @@ func TestValidateRefusesABadCloudBuildRemoteBuilder(t *testing.T) {
 		cb    *CloudBuildConfig
 		field string
 	}{
-		"no backend":         {nil, "build.remote_builder"},
-		"no project":         {&CloudBuildConfig{}, "build.remote_builder.cloud_build.project"},
-		"flag project":       {&CloudBuildConfig{Project: "--impersonate-service-account=x"}, "build.remote_builder.cloud_build.project"},
-		"bad region":         {&CloudBuildConfig{Project: "acme-ci", Region: "us central1"}, "build.remote_builder.cloud_build.region"},
-		"bad worker pool":    {&CloudBuildConfig{Project: "acme-ci", WorkerPool: "private"}, "build.remote_builder.cloud_build.worker_pool"},
+		"no backend":          {nil, "build.remote_builder"},
+		"no project":          {&CloudBuildConfig{}, "build.remote_builder.cloud_build.project"},
+		"flag project":        {&CloudBuildConfig{Project: "--impersonate-service-account=x"}, "build.remote_builder.cloud_build.project"},
+		"bad region":          {&CloudBuildConfig{Project: "acme-ci", Region: "us central1"}, "build.remote_builder.cloud_build.region"},
+		"bad worker pool":     {&CloudBuildConfig{Project: "acme-ci", WorkerPool: "private"}, "build.remote_builder.cloud_build.worker_pool"},
+		"pool without region": {&CloudBuildConfig{Project: "acme-ci", WorkerPool: "projects/acme-ci/locations/us-central1/workerPools/p"}, "build.remote_builder.cloud_build.region"},
+		"pool in another region": {&CloudBuildConfig{Project: "acme-ci", Region: "europe-west1",
+			WorkerPool: "projects/acme-ci/locations/us-central1/workerPools/p"}, "build.remote_builder.cloud_build.worker_pool"},
 		"bare email account": {&CloudBuildConfig{Project: "acme-ci", ServiceAccount: "builder@acme-ci.iam.gserviceaccount.com"}, "build.remote_builder.cloud_build.service_account"},
 	} {
 		err := remoteBuilderCfg(tc.cb).Validate()

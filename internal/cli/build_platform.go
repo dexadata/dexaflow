@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -116,4 +118,52 @@ func printBuildSettings(out io.Writer, o compileOptions, cfg *domain.LeoflowConf
 		return fmt.Errorf("writing the build settings: %w", err)
 	}
 	return nil
+}
+
+// pushesFromHere reports whether builder b pushes with this machine's
+// credential: every builder but a whole build on the remote builder, which
+// pushes with its own, and the skip path, which pushes nothing.
+func pushesFromHere(b build.Builder) bool {
+	if _, split := b.(build.CodeLayer); split {
+		return true
+	}
+	return b.Path() != build.PathRemote && b.Path() != build.PathSkip
+}
+
+// checkLocalPush decides the deploy preflight's refusal of this machine's
+// push credential once builder b is chosen: an error when b pushes from
+// here, before anything is built; a note when it does not. refused is nil
+// when there is nothing to decide.
+func checkLocalPush(warn io.Writer, refused error, b build.Builder) error {
+	if refused == nil {
+		return nil
+	}
+	if pushesFromHere(b) {
+		return fmt.Errorf("%w\n  the builder %s pushes from this machine, with this credential", refused, b.Describe())
+	}
+	if _, err := fmt.Fprintf(warn, "note: %v\n  the remote builder pushes with its own credentials, so the deploy goes on\n", refused); err != nil {
+		return fmt.Errorf("writing the preflight note: %w", err)
+	}
+	return nil
+}
+
+// warnUploadedSecrets warns about every secret-looking file or directory
+// (secretishNames, secretishDirs, .env.*) in the context a remote build
+// uploads: the archive leaves this machine and stays in the project's Cloud
+// Build source bucket, whatever the Dockerfile copies.
+func warnUploadedSecrets(w io.Writer, files []build.LayerFile, cfg *domain.LeoflowConfig) {
+	bucket := "the Cloud Build source bucket"
+	if cfg.Build != nil && cfg.Build.RemoteBuilder != nil && cfg.Build.RemoteBuilder.CloudBuild != nil {
+		bucket = "gs://" + cfg.Build.RemoteBuilder.CloudBuild.Project + "_cloudbuild/source"
+	}
+	for _, f := range files {
+		base := path.Base(f.Path)
+		secret := strings.HasPrefix(base, ".env.") || (!f.Dir && slices.Contains(secretishNames, base)) || (f.Dir && slices.Contains(secretishDirs, base))
+		if !secret {
+			continue
+		}
+		//nolint:errcheck // a warning that cannot be delivered must not fail the build
+		fmt.Fprintf(w, "warning: %s is uploaded to Cloud Build with the build context, and the archive stays in %s. "+
+			"If it holds credentials, add %q to exclude_paths in dexaflow.yaml.\n", f.Path, bucket, f.Path)
+	}
 }

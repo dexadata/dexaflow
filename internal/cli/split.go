@@ -296,26 +296,26 @@ func codeLayerFiles(dir string, cfg *domain.LeoflowConfig, output string) ([]bui
 // code layer of a split build, or the build context of a whole build the
 // remote builder runs, which leaves this machine and so is listed here, with
 // the .dockerignore applied, rather than sent as a directory.
-func buildFiles(dir string, cfg *domain.LeoflowConfig, output string, b build.Builder) (code, ctxFiles []build.LayerFile, err error) {
+func buildFiles(dir string, cfg *domain.LeoflowConfig, output, dockerfile string, b build.Builder) (code, ctxFiles []build.LayerFile, err error) {
 	if _, split := b.(build.CodeLayer); split {
 		code, err = codeLayerFiles(dir, cfg, output)
 		return code, nil, err
 	}
 	if b.Path() == build.PathRemote {
-		ctxFiles, err = contextFiles(dir, cfg)
+		ctxFiles, err = contextFiles(dir, cfg, dockerfile)
 		return nil, ctxFiles, err
 	}
 	return nil, nil, nil
 }
 
 // contextFiles lists the build context of dir as a container daemon reads
-// it: every entry the .dockerignore the build reads keeps (buildIgnore),
-// with Docker's rules, descending into an excluded directory only when a
-// `!` line may bring something under it back. Symlinks stay links, special
-// files are left out, and so is the generated Dockerfile, which the remote
-// builder adds under its own name.
-func contextFiles(dir string, cfg *domain.LeoflowConfig) ([]build.LayerFile, error) {
-	ignore, err := buildIgnore(dir, cfg)
+// it for dockerfile: every entry the ignore file the build reads keeps
+// (contextIgnore), with Docker's rules, descending into an excluded
+// directory only when a `!` line may bring something under it back.
+// Symlinks stay links, special files are left out, and so is the generated
+// Dockerfile, which the remote builder adds under its own name.
+func contextFiles(dir string, cfg *domain.LeoflowConfig, dockerfile string) ([]build.LayerFile, error) {
+	ignore, err := contextIgnore(dir, cfg, dockerfile)
 	if err != nil {
 		return nil, err
 	}
@@ -362,6 +362,23 @@ func contextEntry(files *[]build.LayerFile, file, slash string, d fs.DirEntry) e
 		*files = append(*files, build.LayerFile{Path: slash, Source: file, Exec: info.Mode()&0o111 != 0})
 	}
 	return nil
+}
+
+// contextIgnore is the ignore file a BuildKit build of dockerfile reads:
+// <dockerfile>.dockerignore when it exists next to the Dockerfile, which
+// BuildKit prefers to .dockerignore, merged with exclude_paths and the dbt
+// artifacts as ensureDockerignore merges .dockerignore; buildIgnore
+// otherwise.
+func contextIgnore(dir string, cfg *domain.LeoflowConfig, dockerfile string) (dockerignore, error) {
+	data, err := os.ReadFile(dockerfile + dockerignoreName) //nolint:gosec // G304: the ignore file next to the build's Dockerfile.
+	if errors.Is(err, fs.ErrNotExist) || dockerfile == "" {
+		return buildIgnore(dir, cfg)
+	}
+	if err != nil {
+		return dockerignore{}, fmt.Errorf("reading %s: %w", dockerfile+dockerignoreName, err)
+	}
+	merged, _ := mergeDockerignore(data, slices.Concat(cfg.ExcludePaths, dbtBuildArtifacts(cfg)))
+	return parseDockerignore(merged), nil
 }
 
 // buildIgnore parses the .dockerignore the build reads: the project's own

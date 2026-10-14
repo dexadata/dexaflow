@@ -58,6 +58,10 @@ type compileOptions struct {
 	// remoteSource names where build.remote_builder came from, for the
 	// builder line; runCompile sets it.
 	remoteSource string
+	// pushRefused is the deploy preflight's refusal of this machine's push
+	// credential, kept until the builder is chosen because a remote builder
+	// was configured (checkLocalPush); nil when the push was accepted.
+	pushRefused error
 	// settingsShown says the caller already printed the platforms and their
 	// source (deploy does, before it asks to confirm), so the build does not
 	// print them twice.
@@ -666,10 +670,14 @@ func buildImage(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.Le
 	if perr := printBuildSettings(cmd.OutOrStdout(), o, cfg, b, reason); perr != nil {
 		return perr
 	}
-	code, contextFiles, lerr := buildFiles(dir, cfg, o.output, b)
+	if lerr := checkLocalPush(cmd.ErrOrStderr(), o.pushRefused, b); lerr != nil {
+		return lerr
+	}
+	code, contextFiles, lerr := buildFiles(dir, cfg, o.output, dockerfile, b)
 	if lerr != nil {
 		return lerr
 	}
+	warnUploadedSecrets(cmd.ErrOrStderr(), contextFiles, cfg)
 	res, berr := b.Build(cmdContext(cmd), build.Request{
 		Image:        image,
 		Dockerfile:   dockerfile,

@@ -2,7 +2,7 @@
 title: "ADR 0083: the remote builder runs on Cloud Build first, through the gcloud CLI"
 linkTitle: "0083 · Remote builder on Cloud Build"
 weight: 830
-description: "ADR 0083: the remote path of ADR 0073. When a build needs a real Dockerfile build (a package without wheels, system_packages, a project Dockerfile) and build.remote_builder (or the target's or workspace's remote_builder) names a Cloud Build project, the CLI packs the build context itself with the .dockerignore applied, submits it with gcloud builds submit, lets Cloud Build push, and reads the digest from the registry. No cloud SDK is linked. The in-cluster build pod is the next backend behind the same seam."
+description: "ADR 0083: the remote path of ADR 0073. When a build needs a real Dockerfile build (a package without wheels, system_packages, a project Dockerfile) and build.remote_builder (or the target's or workspace's remote_builder) names a Cloud Build project, the CLI packs the build context itself with the .dockerignore applied, submits it with gcloud builds submit --async, follows it, lets Cloud Build push, and registers the digest the registry holds once it matches the one the build reports. No cloud SDK is linked. The in-cluster build pod is the next backend behind the same seam."
 ---
 
 **Status:** Accepted
@@ -46,27 +46,47 @@ and ADR 0080 already reads registry tokens from that same session.
    select Cloud Build: where the build runs is a cost and a trust decision.
    The block is not an input of the image, so it is left out of the content
    label, as `registry.auth_method` is (ADR 0080).
-3. **The gcloud CLI, no SDK.** The CLI runs `gcloud builds submit <archive>
-   --config=<file> --project=<p> [--region] [--worker-pool]
-   [--service-account] --quiet` with no input and streams its output. No
-   Google Cloud module is linked, so ADR 0073's list of allowed packages
-   stands. Every configured value is validated when the file loads and
+3. **The gcloud CLI, no SDK, GA commands only.** The CLI runs `gcloud builds
+   submit <archive> --config=<file> --project=<p> [--region] [--worker-pool]
+   [--service-account] --async --format=json --quiet` with no input, and
+   prints the build id and its console link. It then follows the build:
+   `gcloud builds log --stream` while the build logs to Cloud Storage (the
+   default), then `gcloud builds describe` for the outcome. A build with a
+   service account of its own must log to Cloud Logging only, which the GA
+   `builds log` and a synchronous `builds submit` cannot show; the beta
+   component that can is not installed with gcloud by default. For such a
+   build the CLI prints the `gcloud logging read` command of its log and
+   describes the build until it ends. A failed build names its id, its
+   status and that command. No Google Cloud module is linked, so ADR 0073's
+   list of allowed packages stands. Every configured value is validated when
+   the file loads (a worker pool must be in the configured region) and
    passed as `--flag=value`, so none can be read as another flag.
+   A stopped command sends gcloud SIGINT, not SIGKILL, then runs `gcloud
+   builds cancel`, so the build does not go on and push.
 4. **The CLI packs the context.** The context leaves the machine, so it is
    listed by the CLI with the `.dockerignore` the build reads (the project's
    own lines, `exclude_paths` and the dbt artifacts, with Docker's rules) and
    packed as a gzipped tar with fixed dates and normalized modes, plus the
-   Dockerfile under a name of its own. gcloud never walks the directory: its
+   Dockerfile under a name of its own; a `<Dockerfile>.dockerignore` next to
+   a project Dockerfile is read instead of `.dockerignore`, as BuildKit
+   does, and the archive is refused over 2 GiB. The archive stays in the
+   project's source bucket (`gs://<project>_cloudbuild/source/`), so a
+   secret-looking file in it is warned about whatever the Dockerfile copies.
+   gcloud never walks the directory: its
    `.gcloudignore` and `.gitignore` rules are not Docker's, and a directory
    upload would send what `exclude_paths` keeps out. A dependency image is
    built from its Dockerfile alone, so no project file is uploaded for it.
 5. **Cloud Build pushes; the registry gives the digest.** The build config
    has one step, `gcr.io/cloud-builders/docker` running `docker build
    --platform`, and lists the tag under `images`, so Cloud Build pushes with
-   its own service account. The digest is then read from the registry with
-   the client and credentials of ADR 0073 and ADR 0080, as for every other
-   path (ADR 0075). A build with a service account of its own sets
-   `CLOUD_LOGGING_ONLY`, which Cloud Build requires for one.
+   its own service account, which Artifact Registry and GCR accept; for any
+   other registry host the CLI notes that the push may be refused. The
+   digest is then read from the registry with the client and credentials of
+   ADR 0073 and ADR 0080, as for every other path (ADR 0075), and must equal
+   the digest the build reports for the image (`results.images`): a tag
+   pushed again in between (the race ADR 0075 records) stops the deploy
+   instead of registering the other image. A build with a service account
+   of its own sets `CLOUD_LOGGING_ONLY`, which Cloud Build requires for one.
 6. **One platform, linux/amd64.** Cloud Build's default workers are amd64,
    and this backend sets up no emulation. Another platform, or several, is
    declined with the reason on the builder line, and the build goes on to
@@ -79,9 +99,13 @@ and ADR 0080 already reads registry tokens from that same session.
    A failed submit keeps gcloud's last line and names the sign-in, the
    project and the roles to check (`roles/cloudbuild.builds.editor` for the
    account, push access for the Cloud Build service account).
-8. **The push preflight.** A refusal of this machine's push credential by
-   the registry is a note, not an error, when a remote builder is
-   configured: the build may not push from here at all.
+8. **The push preflight.** With a remote builder configured, a refusal of
+   this machine's push credential is decided once the builder is chosen:
+   a whole build on the remote builder pushes nothing from here, so the
+   refusal is a note; every other builder (the code layer, including after
+   a remote dependency image, and the local daemon) pushes from here, so
+   the refusal stops the deploy before anything is built, as without a
+   remote builder.
 
 ## Consequences
 
@@ -91,7 +115,14 @@ and ADR 0080 already reads registry tokens from that same session.
 - The build context of a whole build is uploaded to the project's Cloud
   Build source bucket; what reaches it is what a local `docker build` would
   read, so `.git` and other files go only when the `.dockerignore` keeps
-  them.
+  them, and it stays there until a lifecycle rule or a person deletes it.
+- The image must be in Artifact Registry or GCR, and the build's service
+  account needs pull access to a private base image. A split build still
+  pushes its code layer from the deploying machine, so that account needs
+  push access too; with Artifact Registry or GCR its gcloud session is the
+  credential (ADR 0080).
+- A build with its own service account shows no log in the terminal, only
+  the command that reads it.
 - The build step image is Google's `gcr.io/cloud-builders/docker` by tag.
   Pinning it, build arguments, build secrets and a private package index are
   follow-ups (#1706 item 6).

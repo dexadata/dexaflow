@@ -31,13 +31,13 @@ Every build prints the builder it took and why before it starts:
 ```console
 $ dexaflow deploy --server https://pro.example.com --yes
 server:     https://pro.example.com (--server)
-registry:   ghcr.io/your-org/first-pro-dag (from dexaflow.yaml)
+registry:   us-central1-docker.pkg.dev/acme/dags/first-pro-dag (from dexaflow.yaml)
 platforms:  linux/amd64 (from the default)
 ...
 builder:    remote (cloud-build, project acme-ci), the project ships its own Dockerfile, which needs a real build, so the remote builder from dexaflow.yaml builds the whole image
 ...
 Deployed first_pro_dag -> https://pro.example.com
-  image ghcr.io/your-org/first-pro-dag@sha256:9f2c...
+  image us-central1-docker.pkg.dev/acme/dags/first-pro-dag@sha256:9f2c...
 ```
 
 With no remote builder configured, a build that no earlier path covers falls
@@ -320,43 +320,80 @@ never selects Cloud Build: where the build runs, and who pays for it, is
 your choice. The block is not part of the content label, so adding it does
 not change the DAG version.
 
-What you need on the machine that deploys:
+The image must live in **Artifact Registry** (`<location>-docker.pkg.dev`)
+or **GCR**: Cloud Build pushes the images of a build with its service
+account, which other registries (`ghcr.io`, Docker Hub, ECR, Harbor) do not
+know. For any other registry the CLI prints a note before the build, and the
+push is likely to be refused.
 
-1. the [Google Cloud CLI](https://cloud.google.com/sdk/docs/install), signed
-   in with `gcloud auth login` (or a service account with
+What you need:
+
+1. on the machine that deploys, the
+   [Google Cloud CLI](https://cloud.google.com/sdk/docs/install), signed in
+   with `gcloud auth login` (or a service account with
    `gcloud auth activate-service-account`);
 2. an account with `roles/cloudbuild.builds.editor` on the project, and the
    Cloud Build API enabled;
-3. push access for the build's service account (the project's Cloud Build
-   service account, or `service_account`) to the image repository, for
-   example `roles/artifactregistry.writer`.
+3. for the build's service account (the project's Cloud Build service
+   account, or `service_account`): push access to the image repository
+   (`roles/artifactregistry.writer`), and pull access to the base image
+   when it is private (`base_image`, or the `FROM` of your Dockerfile).
 
-No container daemon is needed, and no `docker login`: Cloud Build pushes
-with its own service account, and the CLI reads the digest from the registry
-with your gcloud session ([registry credentials](#registry-credentials)).
-When the deploy preflight finds that your own credential may not push, it
-prints a note and goes on, since the push happens on Cloud Build.
+No container daemon is needed. For a whole build (your own `Dockerfile`),
+nothing is pushed from your machine: Cloud Build pushes, and the CLI only
+reads the digest. For a split build, the dependency image is pushed by Cloud
+Build and the code layer is then pushed **from your machine**, with your own
+credential: your account needs push access to the repository too. With an
+Artifact Registry or GCR image that credential is your gcloud session, so no
+`docker login` is needed either way
+([registry credentials](#registry-credentials)).
+
+The deploy preflight checks your own push credential as usual. When the
+registry refuses it, a whole build on Cloud Build goes on with a note; every
+other build (a split build, an arm64 build, a build that falls back to the
+local daemon) stops with the refusal before anything is built, as without a
+remote builder.
 
 What happens:
 
 1. the CLI lists the build context as `docker build` would read it: the
    project directory with your `.dockerignore`, `exclude_paths` and the dbt
-   artifacts left out, with Docker's rules. It packs that list and the
-   Dockerfile into one archive. gcloud never reads the directory itself, so
-   `.gcloudignore` does not apply, and a file `exclude_paths` keeps out never
-   leaves your machine. `.git` is sent only when your `.dockerignore` keeps
-   it, as with a local build;
-2. it runs `gcloud builds submit <archive> --config=<file> --project=<project>`
-   with the region, pool and service account you set, and streams the build
-   log. The build has one step, `gcr.io/cloud-builders/docker` running
-   `docker build --platform linux/amd64`, and Cloud Build pushes the tag;
-   builds are tagged `dexaflow` in Cloud Build's history
+   artifacts left out, with Docker's rules. A `<Dockerfile>.dockerignore`
+   next to your Dockerfile (`Dockerfile.dockerignore`) is read instead of
+   `.dockerignore`, as BuildKit does. It packs that list and the Dockerfile
+   into one archive, at most 2 GiB compressed. gcloud never reads the
+   directory itself, so `.gcloudignore` does not apply, and a file
+   `exclude_paths` keeps out never leaves your machine. `.git` is sent only
+   when your `.dockerignore` keeps it, as with a local build;
+2. it runs `gcloud builds submit <archive> --config=<file> --project=<project>
+   --async` with the region, pool and service account you set, and prints
+   the build id and its console link. The build has one step,
+   `gcr.io/cloud-builders/docker` running `docker build --platform
+   linux/amd64`, and Cloud Build pushes the tag. Builds are tagged
+   `dexaflow` in Cloud Build's history
    (`gcloud builds list --filter=tags=dexaflow`);
-3. the digest the deploy registers is read from the registry.
+3. it follows the build until it ends. Without `service_account`, the log is
+   streamed with `gcloud builds log --stream`. A build with its own service
+   account logs to Cloud Logging only, which gcloud does not stream: the CLI
+   prints the `gcloud logging read` command for its log and waits for the
+   build to end. Ctrl-C interrupts gcloud and cancels the build on Cloud
+   Build, so it does not go on and push;
+4. the digest the deploy registers is read from the registry, and must be
+   the digest Cloud Build reports for the image it pushed. When another push
+   of the same tag happened in between, the deploy stops instead of
+   registering the other image.
 
 ```console
-builder:    remote (cloud-build, project acme-ci, region us-central1) for the dependency image, then code-layer, no dependency image ghcr.io/your-org/etl:deps-4f1c... in the registry (...): the remote builder builds and pushes it (no daemonless dependency layer: the project has system_packages, which need a real build), then the DAG code is appended to it
+builder:    remote (cloud-build, project acme-ci, region us-central1) for the dependency image, then code-layer, no dependency image us-central1-docker.pkg.dev/acme/dags/etl:deps-4f1c... in the registry (...): the remote builder builds and pushes it (no daemonless dependency layer: the project has system_packages, which need a real build), then the DAG code is appended to it
 ```
+
+The archive leaves your machine: Cloud Build stores it in the project's
+source bucket, `gs://<project>_cloudbuild/source/`, and keeps it there until
+you delete it (a lifecycle rule on the bucket does this). Before the upload
+the CLI warns about any secret-looking file in the context (`.env`,
+`.netrc`, `credentials.json`, `.ssh/` and the like), whatever your
+Dockerfile copies. A dependency image is built from its Dockerfile alone, so
+no project file is uploaded for it.
 
 The remote builder is passed over, and the `builder:` line says why, when:
 
@@ -368,8 +405,9 @@ The remote builder is passed over, and the `builder:` line says why, when:
 - `gcloud` is not on `PATH` and the local daemon's tool is. With neither,
   the build fails with how to install gcloud.
 
-A failed build keeps gcloud's last line and names what to check: the
-sign-in, the project and the roles above.
+A refused submit keeps gcloud's last line and names what to check: the
+sign-in, the project and the roles above. A build that fails on Cloud Build
+names its id, its status and the command that prints its log.
 
 Build arguments, build secrets and a private package index are not
 supported on this path yet. The decision is recorded in
