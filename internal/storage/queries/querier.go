@@ -590,8 +590,9 @@ type Querier interface {
 	// Locks the user row a token is created for, so concurrent creates for one
 	// user run one at a time and the live-token cap holds (ADR 0074). FOR NO KEY
 	// UPDATE does not block the key-share locks that inserts referencing the user
-	// take. No row: the user is not in the tenant.
-	LockAPITokenOwner(ctx context.Context, arg LockAPITokenOwnerParams) (pgtype.UUID, error)
+	// take. No row: the user is not in the tenant. The email names the owner in
+	// the audit rows the create writes.
+	LockAPITokenOwner(ctx context.Context, arg LockAPITokenOwnerParams) (LockAPITokenOwnerRow, error)
 	// Locks the DAG's row for the rest of the transaction, so registers of the same
 	// DAG are serialized: the spec-hash check of one register sees the version the
 	// previous one committed. FOR NO KEY UPDATE, not FOR UPDATE: it still excludes
@@ -960,8 +961,10 @@ type Querier interface {
 	ResetTaskInstanceToNone(ctx context.Context, arg ResetTaskInstanceToNoneParams) error
 	ResolveRunRef(ctx context.Context, arg ResolveRunRefParams) (ResolveRunRefRow, error)
 	// Revokes the user's expired, unrevoked tokens with this name, so an expired
-	// token does not hold its name forever.
-	RetireExpiredAPITokenName(ctx context.Context, arg RetireExpiredAPITokenNameParams) error
+	// token does not hold its name forever, and returns them so the create audits
+	// each one as api_token.retire_expired rather than leaving it to read as a
+	// manual revoke (#1768).
+	RetireExpiredAPITokenName(ctx context.Context, arg RetireExpiredAPITokenNameParams) ([]RetireExpiredAPITokenNameRow, error)
 	// Revokes a live token of the tenant; owner_id NULL revokes any owner's. A
 	// revoked token matches no row, so it is not revoked or audited twice.
 	RevokeAPIToken(ctx context.Context, arg RevokeAPITokenParams) (RevokeAPITokenRow, error)
