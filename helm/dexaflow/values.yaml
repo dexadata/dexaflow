@@ -377,6 +377,8 @@ auth:
     bearerMaxLifetimeSeconds: 0
     # -- Binds every browser session to its tenant's host when each tenant is served on its own host, for example `{tenant}.example.com` (#1463). A handoff is then accepted only on the host of the token's tenant, and a session cookie only on the host of the session's tenant; the `Authorization` header is not bound. Behind an ingress that rewrites `Host`, list it in `config.trustedProxies` so its `X-Forwarded-Host` is used. Empty (the default) binds nothing.
     hostPattern: ""
+    # -- Makes the issuer the only way to deploy (#1773): registering a DAG version, its dry run, setting the current version and deleting a DAG then take only a bearer the issuer minted for this audience alone with the `dexaflow:deploy` scope, and a UI session, a password login, an API token or a bearer of another audience is refused with 403. Must differ from `audience` and every `bearerAudiences` entry, and needs `issuer` (the chart fails to render otherwise). Empty (the default) changes nothing.
+    deployAudience: ""
   # -- HMAC secret signing API + agent JWTs. Set inline OR reference an existing Secret via `existingSecret`. Generate with `openssl rand -base64 64`.
   jwtSecret: ""
   # -- Name of a Secret with key `jwtSecret` (takes precedence over `jwtSecret`).

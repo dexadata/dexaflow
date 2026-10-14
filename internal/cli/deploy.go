@@ -988,15 +988,18 @@ func registerDeployedDAG(ctx context.Context, out io.Writer, r registerRequest) 
 	if jerr := json.Unmarshal(repinned, &spec); jerr != nil {
 		return deployResult{}, fmt.Errorf("parsing compiled dag.json: %w", jerr)
 	}
-	status, body, uerr := pushVersionPaused(ctx, r.serverURL, r.token, spec.DagID, repinned, r.paused)
+	status, header, raw, uerr := postVersion(ctx, versionPost{serverURL: r.serverURL, token: r.token, dagID: spec.DagID, spec: repinned, paused: r.paused})
 	if uerr != nil {
 		return deployResult{}, uerr
 	}
+	if err := deployViaIssuerError(r.serverURL, status, header, raw); err != nil {
+		return deployResult{}, err
+	}
 	if status >= http.StatusMultipleChoices {
-		return deployResult{}, versionConflictHint(apiStatusError(status, []byte(body)), r.version, r.origin)
+		return deployResult{}, versionConflictHint(apiStatusError(status, raw), r.version, r.origin)
 	}
 	var answer registerAnswer
-	_ = json.Unmarshal([]byte(body), &answer) //nolint:errcheck // an older server's body may say less; the register itself succeeded
+	_ = json.Unmarshal(raw, &answer) //nolint:errcheck // an older server's body may say less; the register itself succeeded
 	warnPausedIgnored(r.warn, r.paused, answer.IsPaused)
 	res := deployResult{DagID: spec.DagID, Version: r.version, Image: r.digestRef, Digest: digestOf(r.digestRef),
 		SpecHash: answer.SpecHash, IsPaused: answer.IsPaused, Created: status == http.StatusCreated,
