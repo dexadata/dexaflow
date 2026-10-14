@@ -514,6 +514,10 @@ def run_operator(operator_class: str, args: dict) -> None:
     op = op_cls(task_id=task_id, **_merge_operator_xcom(dict(args)))
 
     context = _operator_context()
+    # Task-level params= sit on op.params; Airflow renders {{ params.x }} against
+    # context["params"], which merges them under the run conf (conf wins, as with
+    # dag_run_conf_overrides_params). Without this they render empty (#1841).
+    context["params"] = {**_task_params(op), **context["params"]}
     try:
         op.render_template_fields(context)
     except Exception as exc:  # noqa: BLE001 — templating is best-effort in Phase A
@@ -539,6 +543,16 @@ def run_operator(operator_class: str, args: dict) -> None:
     _write_return(result)
     _write_extra_links(op, context["ti"].pushed)
     _write_xcom_pushes(context["ti"].pushed)
+
+
+def _task_params(op) -> dict:
+    """Return the operator's task-level params as a plain dict. Airflow keeps them
+    in a ParamsDict, whose items resolve to their values; anything unreadable
+    yields {} so a param problem never hides the run conf."""
+    try:
+        return dict(getattr(op, "params", None) or {})
+    except Exception:  # noqa: BLE001 (e.g. a required Param with no value)
+        return {}
 
 
 def _ti_key():
