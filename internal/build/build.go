@@ -5,9 +5,11 @@
 // builders are tried in (ResolutionOrder): skip the build when the dependency
 // image already exists, append a code layer, pack a daemonless dependency
 // layer, use a remote builder, and only then fall back to a local container
-// daemon. Two exist today: Existing, the skip path in its first form (the
-// whole image for this content label is already in the registry, see Select),
-// and LocalDaemon. Every builder returns a Result that carries the digest of the image it
+// daemon. Three exist today: Existing, the skip path in its first form (the
+// whole image for this content label is already in the registry, see Select);
+// CodeLayer, which appends the DAG code to a dependency image the registry
+// holds, or has the daemon build that dependency image first (ADR 0077); and
+// LocalDaemon. Every builder returns a Result that carries the digest of the image it
 // pushed, so the caller pins dag.json to exactly those bytes (ADR 0003,
 // ADR 0041).
 //
@@ -27,9 +29,9 @@ type Path string
 
 // The builder resolution order of ADR 0073, first to last.
 const (
-	// PathSkip reuses an image already in the registry: today the whole
-	// image of the content label; once images are split, the dependency
-	// image of the dependency key (ADR 0073 section 4).
+	// PathSkip reuses the whole image of the content label already in the
+	// registry (ADR 0076). A cached dependency image is reused by
+	// PathCodeLayer (ADR 0077).
 	PathSkip Path = "skip"
 	// PathCodeLayer appends the DAG code as a layer to a cached dependency
 	// image through the registry API.
@@ -69,6 +71,9 @@ type Request struct {
 	// Pin asks for the digest of the pushed image in Result.Ref. It needs
 	// Push: an image that is not pushed has no registry digest.
 	Pin bool
+	// Code is the DAG project files of the code layer, for a split build
+	// (Split); other builders read ContextDir.
+	Code []LayerFile
 	// Stdout and Stderr receive the builder's own output.
 	Stdout io.Writer
 	Stderr io.Writer
