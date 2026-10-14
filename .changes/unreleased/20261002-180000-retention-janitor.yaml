@@ -13,11 +13,11 @@ body: |-
   together, so a run larger than a batch never ends up re-opened by a clear
   with part of its tasks missing. Active runs, runs with a task instance that
   is not settled (including one a clear just reset, even while the batch is
-  running: the batch locks and re-checks the task instances before it deletes)
-  runs with a live staging volume and the newest run of each DAG, which the
-  scheduler reads its last logical date from, are never touched. The janitor uses the
-  scheduler's database pool (`database.scheduler_max_conns`) when one is set,
-  not the API pool.
+  running: the batch locks and re-checks the task instances before it
+  deletes), runs with a live staging volume and the newest run of each DAG,
+  which the scheduler reads its last logical date from, are never touched. The
+  janitor uses the scheduler's database pool (`database.scheduler_max_conns`)
+  when one is set, not the API pool.
   Each audit purge writes a `retention.purge` audit entry. `retention.dry_run`
   only counts, at most 10000 runs and 10000 audit rows per tenant. New metrics:
   `dexaflow_retention_rows_deleted_total`, `dexaflow_retention_rows_eligible`

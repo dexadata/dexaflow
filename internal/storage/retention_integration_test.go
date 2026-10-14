@@ -323,17 +323,24 @@ func TestRetentionTenantIDsIntegration(t *testing.T) {
 // a second time. Older runs of the same DAG are deleted as usual.
 func TestRetentionKeepsNewestRunOfEachDagIntegration(t *testing.T) {
 	store, pool, ctx := openRetention(t)
+	cutoff := time.Now().Add(-30 * 24 * time.Hour)
+	baseline, err := store.CountEligible(ctx, &cutoff, nil)
+	if err != nil {
+		t.Fatalf("CountEligible: %v", err)
+	}
 	tenant, version, dag := seedTenant(t, pool, ctx, fmt.Sprintf("retention_newest_%d", time.Now().UnixNano()))
 	old := 400 * 24 * time.Hour
 	older := seedRun(t, pool, ctx, tenant, dag, version, "older", "success", &old, "success")
 	newest := seedRun(t, pool, ctx, tenant, dag, version, "newest", "success", &old, "success")
 	mustExec(t, pool, ctx, `UPDATE dag_runs SET logical_date = now() - interval '2 days' WHERE id = $1`, older)
 	mustExec(t, pool, ctx, `UPDATE dag_runs SET logical_date = now() - interval '1 day' WHERE id = $1`, newest)
-	cutoff := time.Now().Add(-30 * 24 * time.Hour)
 
 	before, err := store.CountEligible(ctx, &cutoff, nil)
 	if err != nil {
 		t.Fatalf("CountEligible: %v", err)
+	}
+	if before.DagRuns != baseline.DagRuns+1 {
+		t.Errorf("dry run counts %d new eligible runs, want 1: it must skip the newest run", before.DagRuns-baseline.DagRuns)
 	}
 	for i := 0; i < 10; i++ {
 		c, err := store.DeleteFinishedRuns(ctx, tenant, cutoff, 10, 1000)
@@ -354,7 +361,7 @@ func TestRetentionKeepsNewestRunOfEachDagIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CountEligible: %v", err)
 	}
-	if after.DagRuns != before.DagRuns-1 {
-		t.Errorf("eligible runs went from %d to %d, want one fewer: the dry run must skip the newest run too", before.DagRuns, after.DagRuns)
+	if after.DagRuns != baseline.DagRuns {
+		t.Errorf("dry run counts %d eligible runs after the purge, want the baseline %d: the newest run is not eligible", after.DagRuns, baseline.DagRuns)
 	}
 }

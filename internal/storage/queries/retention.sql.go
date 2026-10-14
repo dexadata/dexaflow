@@ -352,8 +352,8 @@ type LockExpiredSettledRunsParams struct {
 // scheduler takes a DAG's last logical date from it (ListScheduledDags), so
 // deleting it would make a cron DAG run its latest slot again, a catchup DAG
 // backfill its whole history, and an @once DAG fire a second time. Airflow's
-// `db clean` keeps the last run for the same reason. The probe is one step on
-// idx_dag_runs_dag_logical.
+// `db clean` likewise keeps each DAG's latest (non-manual) run. The probe is
+// one step on idx_dag_runs_dag_logical.
 func (q *Queries) LockExpiredSettledRuns(ctx context.Context, arg LockExpiredSettledRunsParams) ([]pgtype.UUID, error) {
 	rows, err := q.db.Query(ctx, lockExpiredSettledRuns, arg.TenantID, arg.Cutoff, arg.MaxRuns)
 	if err != nil {
