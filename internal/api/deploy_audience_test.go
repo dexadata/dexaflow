@@ -50,7 +50,9 @@ func (engineAndAPIToken) Authenticate(_ context.Context, token string) (*auth.Us
 	return nil, auth.ErrInvalidToken
 }
 
-func (engineAndAPIToken) IssueToken(context.Context, auth.Credentials) (string, error) { return "", nil }
+func (engineAndAPIToken) IssueToken(context.Context, auth.Credentials) (string, error) {
+	return "", nil
+}
 
 func newDeployAudienceServer(t *testing.T, viaIssuer bool) http.Handler {
 	t.Helper()

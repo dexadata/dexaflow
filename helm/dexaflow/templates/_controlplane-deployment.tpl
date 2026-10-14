@@ -467,6 +467,11 @@ spec:
             - name: LEOFLOW_AUTH_TRUSTED_ISSUER_HOST_PATTERN
               value: {{ . | quote }}
             {{- end }}
+            {{- with .deployAudience }}
+            # Deploys through the issuer only (#1773), off unless an audience is set.
+            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_DEPLOY_AUDIENCE
+              value: {{ . | quote }}
+            {{- end }}
             {{- end }}
             {{- end }}
             - name: LEOFLOW_OBSERVABILITY_LOG_FORMAT

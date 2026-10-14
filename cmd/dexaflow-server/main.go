@@ -1421,12 +1421,13 @@ func trustedIssuerConfig(s config.TrustedIssuerSection) issuer.Config {
 
 		BearerAudiences:   s.BearerAudiences,
 		BearerMaxLifetime: time.Duration(s.BearerMaxLifetimeSeconds) * time.Second,
+		DeployAudience:    s.DeployAudience,
 	}
 }
 
 // issuerBearer returns the trusted issuer as the verifier of request bearers
-// when auth.trusted_issuer.bearer_audiences is set (#1468), or nil, which
-// leaves the bearer mode off.
+// when auth.trusted_issuer.bearer_audiences (#1468) or deploy_audience
+// (#1773) is set, or nil, which leaves the bearer mode off.
 func issuerBearer(ti api.TrustedIssuer) api.TrustedIssuerBearer {
 	v, ok := ti.(*issuer.Verifier)
 	if !ok || !v.BearerEnabled() {
@@ -1552,6 +1553,9 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		TrustedIssuerHostPattern: cfg.Auth.TrustedIssuer.HostPattern,
 		// Trusted-issuer bearer (#1468): nil unless bearer audiences are set.
 		TrustedIssuerBearer: issuerBearer(trustedIssuer),
+		// Deploys through the issuer only (#1773): off unless
+		// auth.trusted_issuer.deploy_audience is set.
+		DeployViaIssuer: cfg.Auth.TrustedIssuer.DeployAudience != "",
 		// Operator service API (#1283): off unless auth.service_token is set.
 		ServiceToken:   cfg.Auth.ServiceToken,
 		ServiceTenants: repo,

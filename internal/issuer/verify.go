@@ -75,6 +75,12 @@ type Config struct {
 	// BearerMaxLifetime caps exp - iat of a bearer; zero means
 	// DefaultBearerMaxLifetime.
 	BearerMaxLifetime time.Duration
+	// DeployAudience is the `aud` of the bearers that may deploy when the
+	// operator makes the issuer the only way to deploy (#1773). It is a
+	// bearer audience of its own, accepted even when BearerAudiences is
+	// empty, and VerifyBearer marks its tokens (Identity.DeployAudience).
+	// Empty means no deploy audience.
+	DeployAudience string
 }
 
 // Identity is what a verified token says about the user.
@@ -85,6 +91,10 @@ type Identity struct {
 	// Scopes are a bearer token's OAuth scopes (ADR 0067); nil for a handoff
 	// token, whose session is not scoped.
 	Scopes []string
+	// DeployAudience is true for a bearer whose `aud` names
+	// Config.DeployAudience (#1773). It says where the token was minted for,
+	// not what it may do: its scopes still decide that.
+	DeployAudience bool
 }
 
 // Verifier checks tokens against one trusted issuer.

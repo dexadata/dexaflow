@@ -44,6 +44,11 @@ type User struct {
 	Scoped bool
 	// Scopes are the scopes a Scoped principal's token carries.
 	Scopes []string
+	// DeployAudience marks a principal authenticated by a trusted-issuer
+	// bearer minted for auth.trusted_issuer.deploy_audience (#1773). When that
+	// setting is on, only such a principal may deploy. Only the issuer bearer
+	// sets it; no other credential can.
+	DeployAudience bool
 }
 
 // The scopes a trusted-issuer bearer token may carry (ADR 0067). No scope
