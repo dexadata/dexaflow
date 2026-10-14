@@ -2,7 +2,10 @@ package client
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -76,4 +79,60 @@ func DryRunRegister(_ context.Context, req *http.Request) error {
 		req.URL.RawPath += dryRunSuffix
 	}
 	return nil
+}
+
+// deployDefaultsPath is the cluster deploy defaults route (#1704).
+const deployDefaultsPath = "/api/v2/deployDefaults"
+
+// deployDefaultsMaxBody bounds the answer GetDeployDefaults reads.
+const deployDefaultsMaxBody = 64 << 10
+
+// ErrDeployDefaultsNotServed is what GetDeployDefaults returns when the
+// server answers 404: it predates GET /api/v2/deployDefaults, and so
+// advertises no deploy defaults.
+var ErrDeployDefaultsNotServed = errors.New("the server does not serve " + deployDefaultsPath)
+
+// DeployDefaults are the cluster deploy defaults GET /api/v2/deployDefaults
+// serves: what a deploy uses for the registry prefix, the build platforms
+// and the base image when nothing local sets them. An unset field is empty.
+type DeployDefaults struct {
+	// Registry is the image prefix a deploy pushes to, such as ghcr.io/acme.
+	Registry string `json:"registry"`
+	// Platforms are the platforms a deploy builds for (os/arch[/variant]).
+	Platforms []string `json:"platforms"`
+	// BaseImage is the base image for projects that set none.
+	BaseImage string `json:"base_image"`
+}
+
+// GetDeployDefaults reads GET /api/v2/deployDefaults through the client's
+// Doer, server URL and request editors, then reqEditors. A server from
+// before the route answers 404, which returns ErrDeployDefaultsNotServed;
+// any other status but 200 is an error naming it. The route gets no generated method
+// (see overlay.yaml): a new method on ClientInterface would break every
+// implementation of it.
+func (c *Client) GetDeployDefaults(ctx context.Context, reqEditors ...RequestEditorFn) (*DeployDefaults, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.Server, "/")+deployDefaultsPath, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("building the %s request: %w", deployDefaultsPath, err)
+	}
+	if eerr := c.applyEditors(ctx, req, reqEditors); eerr != nil {
+		return nil, eerr
+	}
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", deployDefaultsPath, err)
+	}
+	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // read-only response
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return nil, ErrDeployDefaultsNotServed
+	default:
+		return nil, fmt.Errorf("%s returned %d", deployDefaultsPath, resp.StatusCode)
+	}
+	var d DeployDefaults
+	if derr := json.NewDecoder(io.LimitReader(resp.Body, deployDefaultsMaxBody)).Decode(&d); derr != nil {
+		return nil, fmt.Errorf("decoding %s: %w", deployDefaultsPath, derr)
+	}
+	return &d, nil
 }

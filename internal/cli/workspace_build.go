@@ -66,8 +66,10 @@ func hasRegistry(p Project) bool {
 // deploy` would label it alone: --dag-version when given, else the
 // content-derived default of that project; the git revision of the project's
 // own directory, with --sha overriding the commit. A tag strategy that falls
-// back is warned about per project.
-func resolveProjectLabels(cmd *cobra.Command, projects []Project, dagVersion, sha string) (map[string]projectLabel, error) {
+// back is warned about per project. cluster is the deploy defaults layer the
+// build applied (nil when none), so the label hashes the same resolved
+// config a deploy hashes.
+func resolveProjectLabels(cmd *cobra.Command, projects []Project, dagVersion, sha string, cluster *defaultsLayer) (map[string]projectLabel, error) {
 	ctx := cmdContext(cmd)
 	labels := make(map[string]projectLabel, len(projects))
 	for _, p := range projects {
@@ -84,8 +86,13 @@ func resolveProjectLabels(cmd *cobra.Command, projects []Project, dagVersion, sh
 			if err != nil {
 				return nil, fmt.Errorf("labeling %s: %w", p.DagID, err)
 			}
-			// Hashed as deploy hashes it, so both commands agree on the label.
-			if _, err = applyWorkspaceDefaults(cmd, p.Path, cfg, true); err != nil {
+			// Hashed with the same defaults the build applied: with --push
+			// that includes the cluster's, as a deploy to the same server
+			// applies them, so `build --push` and `deploy --skip-build` agree
+			// on the label. Without --push the cluster is not asked, and a
+			// cluster that advertises platforms or a base image gives the
+			// deploy a different label.
+			if _, err = applyDeployDefaults(cmd, p.Path, cfg, cluster); err != nil {
 				return nil, fmt.Errorf("labeling %s: %w", p.DagID, err)
 			}
 			version, err = defaultDAGVersion(ctx, p.Path, cfg, "Dockerfile", filepath.Join(p.Path, "dag.json"))
@@ -137,12 +144,19 @@ func newBuildCommand() *cobra.Command {
 			if derr != nil {
 				return derr
 			}
-			// The same registry, platforms and base image deploy would use.
+			// The registry, platforms and base image deploy would use. Only
+			// --push asks the server a deploy would go to for its deploy
+			// defaults (buildClusterLayer); a build that stays local never
+			// calls a server.
+			var cluster *defaultsLayer
+			if push {
+				cluster = buildClusterLayer(cmd)
+			}
 			for _, p := range spec {
 				if p.Config == nil {
 					continue
 				}
-				if _, aerr := applyWorkspaceDefaults(cmd, p.Path, p.Config, true); aerr != nil {
+				if _, aerr := applyDeployDefaults(cmd, p.Path, p.Config, cluster); aerr != nil {
 					return aerr
 				}
 			}
@@ -151,7 +165,7 @@ func newBuildCommand() *cobra.Command {
 			// default tag strategy resolves against two empty strings and emits
 			// `<url>/<name>:` — a reference docker refuses, from a command whose
 			// entire purpose is to stop references being got wrong by hand.
-			labels, lerr := resolveProjectLabels(cmd, spec, dagVersion, sha)
+			labels, lerr := resolveProjectLabels(cmd, spec, dagVersion, sha, cluster)
 			if lerr != nil {
 				return lerr
 			}
@@ -170,6 +184,7 @@ func newBuildCommand() *cobra.Command {
 				//nolint:errcheck // informational
 				fmt.Fprintf(out, "▸ %s → %s\n", t.dagID, t.image)
 				o := compileOptions{
+					cluster: cluster,
 					output:  filepath.Join(t.dir, "dag.json"),
 					image:   t.image,
 					build:   true,

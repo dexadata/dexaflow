@@ -39,6 +39,8 @@ var deployReads = map[string]bool{
 	"GET /api/v2/dags/:dag_id/details":                     true,
 	"GET /api/v2/dags/:dag_id/dagVersions":                 true,
 	"GET /api/v2/dags/:dag_id/dagVersions/:version_number": true,
+	// The cluster's deploy defaults, read before the build (#1704).
+	"GET /api/v2/deployDefaults": true,
 }
 
 // scopelessReads are the protected GET routes a scoped token cannot call at
