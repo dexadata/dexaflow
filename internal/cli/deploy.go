@@ -39,8 +39,11 @@ type deployOptions struct {
 	active     bool
 	plan       bool
 	output     string
-	follow     bool
-	timeout    time.Duration
+	// changedSince is the git ref of --changed-since: deploy only the
+	// workspace's projects whose image inputs differ from it.
+	changedSince string
+	follow       bool
+	timeout      time.Duration
 	// report collects each DAG's result for --output json; nil for text.
 	report *deployReport
 }
@@ -70,6 +73,9 @@ func newDeployCommand() *cobra.Command {
 		Short: "Build, push, and register a DAG to a control plane (Pro).",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("changed-since") && o.changedSince == "" {
+				return fmt.Errorf("--changed-since needs a git ref (a commit, branch or tag); it was given an empty value, as an unset CI variable gives")
+			}
 			return runDeployCommand(cmd, args, o)
 		},
 	}
@@ -90,6 +96,7 @@ func newDeployCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&o.active, "active", false, "leave the DAG active (unpaused) after this deploy, new or not")
 	cmd.MarkFlagsMutuallyExclusive("paused", "active")
 	cmd.Flags().BoolVar(&o.plan, "plan", false, "say per DAG what would be built, pushed and registered, and why, without doing any of it")
+	cmd.Flags().StringVar(&o.changedSince, "changed-since", "", "with --all, deploy only the projects whose image or version label inputs differ between this git ref and the working tree (uncommitted files included); the others are skipped and listed")
 	cmd.Flags().StringVar(&o.output, "output", outputText, "output format: text, or json for one JSON document on stdout (human lines go to stderr)")
 	addPlatformFlag(cmd)
 	return cmd
@@ -101,6 +108,10 @@ func newDeployCommand() *cobra.Command {
 func runDeployTarget(cmd *cobra.Command, args []string, o deployOptions) error {
 	if err := checkDeployFollow(o); err != nil {
 		return err
+	}
+	if o.changedSince != "" && len(args) > 0 {
+		return fmt.Errorf("--changed-since selects among the workspace's projects, so it goes with --all; " +
+			"to deploy a named DAG or folder, drop --changed-since")
 	}
 	if o.all {
 		if len(args) > 0 {
@@ -133,6 +144,9 @@ func runDeployTarget(cmd *cobra.Command, args []string, o deployOptions) error {
 // how to deploy one DAG or all of them.
 func deployHere(cmd *cobra.Command, o deployOptions) error {
 	if isProjectDir(".") {
+		if o.changedSince != "" {
+			return fmt.Errorf("--changed-since selects among the workspace's projects: pass --all to deploy the changed ones, or drop --changed-since to deploy this project")
+		}
 		return runDeploy(cmd, ".", o)
 	}
 	ws, err := findWorkspaceFromCwd()
@@ -270,7 +284,8 @@ func resolveProjectDir(workspaceDir, dagID string) (string, error) {
 // deployAll deploys every project in the workspace, best-effort: it builds,
 // pushes, and registers each, prints a per-DAG summary, and returns a non-zero
 // error if any failed (so CI catches it) — partial pushes are not rolled back
-// (content-addressed images make a re-deploy idempotent). ADR 0041.
+// (content-addressed images make a re-deploy idempotent). ADR 0041. With
+// --changed-since it deploys only the projects that changed since the ref.
 func deployAll(cmd *cobra.Command, o deployOptions) error {
 	where, err := deployAllWorkspace(cmd)
 	if err != nil {
@@ -290,8 +305,17 @@ func deployAll(cmd *cobra.Command, o deployOptions) error {
 	if cerr != nil {
 		return cerr
 	}
+	projects, skipped, serr := selectChanged(cmd, ws, o)
+	if serr != nil {
+		return serr
+	}
+	if len(projects) == 0 {
+		o.report.setServer(choice)
+		_, err = fmt.Fprintf(out, "No DAG project changed since %s; nothing to deploy (%d skipped)\n", o.changedSince, skipped)
+		return err
+	}
 	if !o.plan && shouldConfirm(choice.URL, o.yes, cmdInteractive(cmd)) {
-		target := fmt.Sprintf("%d DAG(s) from %s", len(ws.Projects), wsDir)
+		target := fmt.Sprintf("%d DAG(s) from %s", len(projects), wsDir)
 		if !confirmDeploy(cmd.InOrStdin(), out, target, choice.URL) {
 			return fmt.Errorf("deploy aborted")
 		}
@@ -302,7 +326,7 @@ func deployAll(cmd *cobra.Command, o deployOptions) error {
 		verb = "planning"
 	}
 	var failed []string
-	for _, p := range ws.Projects {
+	for _, p := range projects {
 		devPrintf(out, "==> %s %s (%s)\n", verb, p.DagID, p.Path)
 		if derr := runDeploy(cmd, p.Path, o); derr != nil {
 			failed = append(failed, p.DagID)
@@ -312,14 +336,70 @@ func deployAll(cmd *cobra.Command, o deployOptions) error {
 	}
 	if len(failed) > 0 {
 		return fmt.Errorf("%d of %d deploys failed: %s",
-			len(failed), len(ws.Projects), strings.Join(failed, ", "))
+			len(failed), len(projects), strings.Join(failed, ", "))
+	}
+	return printDeployAllSummary(out, o, len(projects), skipped, wsDir)
+}
+
+// printDeployAllSummary writes the closing line of deploy --all.
+func printDeployAllSummary(out io.Writer, o deployOptions, n, skipped int, wsDir string) error {
+	tail := ""
+	if o.changedSince != "" {
+		tail = fmt.Sprintf(" (%d unchanged since %s, skipped)", skipped, o.changedSince)
 	}
 	if o.plan {
-		_, err = io.WriteString(out, planSummary(len(ws.Projects), wsDir))
+		_, err := io.WriteString(out, strings.TrimSuffix(planSummary(n, wsDir), "\n")+tail+"\n")
 		return err
 	}
-	_, err = fmt.Fprintf(out, "Deployed %d DAG(s) from %s\n", len(ws.Projects), wsDir)
+	_, err := fmt.Fprintf(out, "Deployed %d DAG(s) from %s%s\n", n, wsDir, tail)
 	return err
+}
+
+// selectChanged returns the workspace's projects deploy --all deploys: every
+// one, or with --changed-since those that changed since the ref. It prints
+// and records each skipped project with its reason, and each project removed
+// since the ref, and returns how many were skipped.
+func selectChanged(cmd *cobra.Command, ws *WorkspaceSpec, o deployOptions) ([]Project, int, error) {
+	if o.changedSince == "" {
+		return ws.Projects, 0, nil
+	}
+	ctx, out := cmdContext(cmd), cmd.OutOrStdout()
+	cs, err := readChangeSet(ctx, ws.Path, o.changedSince)
+	if err != nil {
+		return nil, 0, err
+	}
+	shared := cs.sharedChange(ws.Path)
+	var keep []Project
+	for _, p := range ws.Projects {
+		verdict := projectChange{changed: true, reason: shared + " changed since " + cs.ref}
+		if shared == "" {
+			verdict = cs.projectChanged(ctx, p, o.dockerfile)
+		}
+		if verdict.changed {
+			devPrintf(out, "==> %s: %s\n", p.DagID, verdict.reason)
+			keep = append(keep, p)
+			continue
+		}
+		devPrintf(out, "==> skipping %s (%s)\n", p.DagID, verdict.reason)
+		o.report.add(deployResult{DagID: p.DagID, Status: deployStatusSkipped, Reason: verdict.reason})
+	}
+	current := map[string]string{}
+	for _, p := range ws.Projects {
+		if dir, derr := resolvedDir(p.Path); derr == nil {
+			current[p.DagID] = dir
+		}
+	}
+	removed, moved := cs.removedProjects(ctx, ws.Path, current)
+	for _, m := range moved {
+		devPrintf(out, "==> %s moved to %s since %s: %s is deployed from there when it changed\n", m.From, m.To, cs.ref, m.DagID)
+		o.report.addMoved(m)
+	}
+	for _, r := range removed {
+		devPrintf(out, "==> %s (%s) %s. If its DAG should go, remove it with `dexaflow dags delete %s --deregister`\n",
+			r.Path, r.DagID, r.Reason, r.DagID)
+		o.report.addRemoved(r)
+	}
+	return keep, len(ws.Projects) - len(keep), nil
 }
 
 // requireRegistry enforces ADR 0041's hard prerequisite: a Pro deploy pushes the
