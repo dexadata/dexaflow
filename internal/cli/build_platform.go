@@ -77,11 +77,15 @@ func buildPlatforms(cfg *domain.LeoflowConfig) []string {
 	return cfg.Build.Platforms
 }
 
-// selectBuilder resolves the builder for a compile that builds image, in the
-// order of ADR 0073, and says why. Only deploy allows the skip path
-// (compileOptions.reuse).
-func selectBuilder(ctx context.Context, o compileOptions, cfg *domain.LeoflowConfig, image string) (b build.Builder, reason string) {
-	return build.Select(ctx, build.Options{Tool: o.builder, Reuse: o.reuse}, image, buildPlatforms(cfg))
+// selectBuilder resolves the builder for a compile that builds image from
+// the project in dir, in the order of ADR 0073, and says why. Only deploy
+// allows the skip path (compileOptions.reuse); a pushed build of the
+// generated Dockerfile may split into a dependency image and a code layer
+// (splitFor, ADR 0077).
+func selectBuilder(ctx context.Context, dir, dockerfile string, o compileOptions, cfg *domain.LeoflowConfig, image string) (b build.Builder, reason string) {
+	split, noSplit := splitFor(ctx, dir, dockerfile, o, cfg, image)
+	return build.Select(ctx, build.Options{Tool: o.builder, Reuse: o.reuse, Split: split, NoSplit: noSplit, Rebuild: o.rebuild},
+		image, buildPlatforms(cfg))
 }
 
 // printBuildSettings says what a build is about to do: the platforms and

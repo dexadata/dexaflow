@@ -26,6 +26,7 @@ dexaflow compile [path] [flags]
       --parser-cmd string    override the parser command (default from config)
       --platform strings     image platform to build for, os/arch (repeatable or comma-separated), over build.platforms in dexaflow.yaml, the target and the workspace defaults (default linux/amd64)
       --push                 push the built image to its registry (requires --build)
+      --rebuild              build the dependency image again even when the registry holds one for its key (with --push)
       --registry string      image registry prefix to push to, over every other source (then DEXAFLOW_REGISTRY, dexaflow.yaml, the target, the workspace defaults, the config file)
 ```
 
