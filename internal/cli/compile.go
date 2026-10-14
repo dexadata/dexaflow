@@ -62,6 +62,11 @@ type compileOptions struct {
 	// built, when set, receives the builder's result, and asks the builder to
 	// pin the pushed image by digest (deploy registers that pin).
 	built *build.Result
+	// provenance, when set, receives the builder that produced the image
+	// and, for a generated Dockerfile, the base image it builds FROM: the
+	// build half of the version's build info (#1702). A reused image (the
+	// skip path) sets neither.
+	provenance *domain.BuildInfo
 	// reuse allows the skip path: the image tag is the default content label,
 	// so an image the registry holds under it can be pinned instead of built
 	// (ADR 0076). deploy sets it; --rebuild and --force clear it.
@@ -686,6 +691,16 @@ func buildImage(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.Le
 	}
 	if o.built != nil {
 		*o.built = res
+	}
+	// A reused image (the skip path) was built earlier by a build this CLI
+	// knows nothing of: naming "skip" or the base it would use now would be
+	// a guess, so it records neither.
+	if o.provenance != nil && res.Path != build.PathSkip {
+		o.provenance.Builder = b.Describe()
+		if !ownDockerfile {
+			o.provenance.BaseImage = resolveBaseImage(cfg)
+		}
+		*o.provenance = o.provenance.Sanitized()
 	}
 	// After the build, where the eye lands: the warning above is minutes of
 	// layer output away by now. A reused image printed no build output.

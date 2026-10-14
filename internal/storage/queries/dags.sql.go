@@ -190,7 +190,7 @@ func (q *Queries) GetDagByDagID(ctx context.Context, arg GetDagByDagIDParams) (D
 }
 
 const getDagVersionByHash = `-- name: GetDagVersionByHash :one
-SELECT id, dag_id, version, image_reference, spec, spec_hash, created_by, created_at FROM dag_versions
+SELECT id, dag_id, version, image_reference, spec, spec_hash, created_by, created_at, build_info FROM dag_versions
 WHERE dag_versions.dag_id = $1 AND dag_versions.spec_hash = $2
   AND EXISTS (SELECT 1 FROM dags d WHERE d.id = dag_versions.dag_id AND d.tenant_id = $3)
 `
@@ -214,6 +214,7 @@ func (q *Queries) GetDagVersionByHash(ctx context.Context, arg GetDagVersionByHa
 		&i.SpecHash,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.BuildInfo,
 	)
 	return i, err
 }
@@ -297,12 +298,12 @@ func (q *Queries) GetTenantUserID(ctx context.Context, arg GetTenantUserIDParams
 }
 
 const insertDagVersion = `-- name: InsertDagVersion :one
-INSERT INTO dag_versions (dag_id, version, image_reference, spec, spec_hash, created_by)
+INSERT INTO dag_versions (dag_id, version, image_reference, spec, spec_hash, created_by, build_info)
 SELECT d.id, $1::text, $2::text, $3::jsonb,
-       $4::text, $5::uuid
+       $4::text, $5::uuid, $6::jsonb
 FROM dags d
-WHERE d.id = $6 AND d.tenant_id = $7
-RETURNING id, dag_id, version, image_reference, spec, spec_hash, created_by, created_at
+WHERE d.id = $7 AND d.tenant_id = $8
+RETURNING id, dag_id, version, image_reference, spec, spec_hash, created_by, created_at, build_info
 `
 
 type InsertDagVersionParams struct {
@@ -311,12 +312,14 @@ type InsertDagVersionParams struct {
 	Spec           []byte      `json:"spec"`
 	SpecHash       string      `json:"spec_hash"`
 	CreatedBy      pgtype.UUID `json:"created_by"`
+	BuildInfo      []byte      `json:"build_info"`
 	DagID          pgtype.UUID `json:"dag_id"`
 	TenantID       pgtype.UUID `json:"tenant_id"`
 }
 
 // The row is inserted only under a dag of the given tenant (#508): a dag id of
 // another tenant inserts nothing and the query returns no row.
+// build_info is NULL when the register sent none (#1702).
 func (q *Queries) InsertDagVersion(ctx context.Context, arg InsertDagVersionParams) (DagVersion, error) {
 	row := q.db.QueryRow(ctx, insertDagVersion,
 		arg.Version,
@@ -324,6 +327,7 @@ func (q *Queries) InsertDagVersion(ctx context.Context, arg InsertDagVersionPara
 		arg.Spec,
 		arg.SpecHash,
 		arg.CreatedBy,
+		arg.BuildInfo,
 		arg.DagID,
 		arg.TenantID,
 	)
@@ -337,12 +341,13 @@ func (q *Queries) InsertDagVersion(ctx context.Context, arg InsertDagVersionPara
 		&i.SpecHash,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.BuildInfo,
 	)
 	return i, err
 }
 
 const listDagVersions = `-- name: ListDagVersions :many
-SELECT v.id, v.version, v.created_at, v.image_reference, v.spec_hash,
+SELECT v.id, v.version, v.created_at, v.image_reference, v.spec_hash, v.build_info,
        COALESCE(v.id = d.current_version_id, false)::boolean AS is_current,
        COALESCE(v.created_by::text, '')::text AS created_by,
        row_number() OVER (ORDER BY v.created_at, v.version) AS version_number
@@ -363,6 +368,7 @@ type ListDagVersionsRow struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	ImageReference string             `json:"image_reference"`
 	SpecHash       string             `json:"spec_hash"`
+	BuildInfo      []byte             `json:"build_info"`
 	IsCurrent      bool               `json:"is_current"`
 	CreatedBy      string             `json:"created_by"`
 	VersionNumber  int64              `json:"version_number"`
@@ -370,7 +376,8 @@ type ListDagVersionsRow struct {
 
 // created_by is the registering user's id (empty when the register had no
 // user), not their email: any reader of the DAG sees it. is_current marks the
-// version new runs are created with.
+// version new runs are created with. build_info is where the version was
+// built, NULL when its register sent none.
 func (q *Queries) ListDagVersions(ctx context.Context, arg ListDagVersionsParams) ([]ListDagVersionsRow, error) {
 	rows, err := q.db.Query(ctx, listDagVersions, arg.TenantID, arg.DagID)
 	if err != nil {
@@ -386,6 +393,7 @@ func (q *Queries) ListDagVersions(ctx context.Context, arg ListDagVersionsParams
 			&i.CreatedAt,
 			&i.ImageReference,
 			&i.SpecHash,
+			&i.BuildInfo,
 			&i.IsCurrent,
 			&i.CreatedBy,
 			&i.VersionNumber,

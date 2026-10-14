@@ -902,7 +902,7 @@ func (q *Queries) GetDagRunWithVersion(ctx context.Context, arg GetDagRunWithVer
 }
 
 const getDagVersionByID = `-- name: GetDagVersionByID :one
-SELECT id, dag_id, version, image_reference, spec, spec_hash, created_by, created_at FROM dag_versions WHERE id = $1
+SELECT id, dag_id, version, image_reference, spec, spec_hash, created_by, created_at, build_info FROM dag_versions WHERE id = $1
 `
 
 // Unscoped: for the spec cache the scheduler and the dispatcher share, which
@@ -920,12 +920,13 @@ func (q *Queries) GetDagVersionByID(ctx context.Context, id pgtype.UUID) (DagVer
 		&i.SpecHash,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.BuildInfo,
 	)
 	return i, err
 }
 
 const getDagVersionInTenant = `-- name: GetDagVersionInTenant :one
-SELECT id, dag_id, version, image_reference, spec, spec_hash, created_by, created_at FROM dag_versions
+SELECT id, dag_id, version, image_reference, spec, spec_hash, created_by, created_at, build_info FROM dag_versions
 WHERE dag_versions.id = $1
   AND EXISTS (SELECT 1 FROM dags d WHERE d.id = dag_versions.dag_id AND d.tenant_id = $2)
 `
@@ -949,6 +950,7 @@ func (q *Queries) GetDagVersionInTenant(ctx context.Context, arg GetDagVersionIn
 		&i.SpecHash,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.BuildInfo,
 	)
 	return i, err
 }

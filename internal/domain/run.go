@@ -51,6 +51,9 @@ type DagVersion struct {
 	// call, a deleted user). It is an id, not an email: every reader of the
 	// DAG sees it.
 	CreatedBy string
+	// BuildInfo is where the version was built, as its register sent it
+	// (#1702); nil when it sent none.
+	BuildInfo *BuildInfo
 }
 
 // DagVersionSelector names one registered version of a DAG, by its label
@@ -79,6 +82,10 @@ type CurrentVersionChange struct {
 // the outcome says what the register would do and nothing is written, audit
 // included. PromotedFrom, when set, names the control plane the version was
 // promoted from (`dexaflow promote`), recorded in the register's audit entry.
+// BuildInfo, when set, is where the version was built, stored with the version
+// the register creates and recorded in its audit entry; a register that
+// creates no version (the content is already registered) changes no build
+// info.
 type DagRegistration struct {
 	Spec         DAGSpec
 	SpecHash     string
@@ -86,6 +93,7 @@ type DagRegistration struct {
 	IsPaused     *bool
 	DryRun       bool
 	PromotedFrom *DagPromotion
+	BuildInfo    *BuildInfo
 }
 
 // DagPromotion names where a promoted version came from: the source target's

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -36,8 +37,11 @@ type deployServer struct {
 	dagCreated   bool   // dag_created of the register answer
 	ignorePaused bool   // an older server: no is_paused query, no is_paused in the answer
 	failTrigger  bool   // answer the trigger with 500
-	regQueries   []string
 	patches      []string
+	// regQueries is the is_paused part of each register's query, regBuilds
+	// its build_* parameters (#1702).
+	regQueries []string
+	regBuilds  []url.Values
 	// The register dry run (#1705): probes counts the empty-body probes of
 	// the preflight, dryRuns the dry runs of a compiled spec. noDryRun is a
 	// server that predates the dry run route and answers it 404;
@@ -82,7 +86,16 @@ func (s *deployServer) detailsJSON(current string) string {
 // applyPausedQuery sets paused from a register's is_paused query, as the
 // server does.
 func (s *deployServer) applyPausedQuery(r *http.Request) {
-	s.regQueries = append(s.regQueries, r.URL.RawQuery)
+	paused, build := url.Values{}, url.Values{}
+	for k, v := range r.URL.Query() {
+		if k == "is_paused" {
+			paused[k] = v
+		} else if strings.HasPrefix(k, "build_") {
+			build[k] = v
+		}
+	}
+	s.regQueries = append(s.regQueries, paused.Encode())
+	s.regBuilds = append(s.regBuilds, build)
 	if v := r.URL.Query().Get("is_paused"); v != "" && !s.ignorePaused {
 		s.paused = v == "true"
 	}
