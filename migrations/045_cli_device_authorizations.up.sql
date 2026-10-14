@@ -7,14 +7,16 @@
 -- Neither code is stored: device_code_hash and user_code_hash are the hex
 -- HMAC-SHA256 of the codes under a key derived from the JWT secret.
 -- requester_hash is the same HMAC of the address that started the sign-in
--- (its /64 for IPv6), so one address can hold only a few sign-ins at once;
+-- (its /56 for IPv6), so one requester can hold only a few sign-ins at once;
 -- requester_addr is that address as the server saw it, shown on the consent
 -- page so the person can tell a sign-in someone else started. A row has
 -- no tenant until it is approved: the device code is the only credential of
 -- a pending sign-in, and the approval names the approver's tenant and user,
--- checked against users in the same statement. Rows are short lived and
--- deleted some minutes after they expire; no token is ever kept, it is minted
--- when the approved sign-in is redeemed.
+-- checked against users in the same statement. Rows are short lived: each is
+-- deleted ten minutes after it expires, by the next start and by a sweep
+-- every minute on every server, so a row and its requester_addr are kept
+-- about 21 minutes after the start at the latest. No token is ever kept; it
+-- is minted when the approved sign-in is redeemed.
 --
 -- Applying this again is a no-op. The table is new, so the lock_timeout
 -- only bounds the wait for the tenants and users rows the foreign keys

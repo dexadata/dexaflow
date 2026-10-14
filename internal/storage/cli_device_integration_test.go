@@ -309,3 +309,69 @@ func TestCLIDeviceApprovedInASecondTenantIntegration(t *testing.T) {
 		t.Fatalf("poll = %+v, want approved for %s in %s", got, userID, other)
 	}
 }
+
+// TestCLIDeviceStartGivesUpOnABusyLockIntegration: a start that cannot take
+// the start lock within the lock timeout gives up with ErrDeviceStartsBusy
+// instead of queueing behind it.
+func TestCLIDeviceStartGivesUpOnABusyLockIntegration(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	pg := openPG(t)
+	holder, err := pg.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = holder.Rollback(ctx) }()
+	if _, err := holder.Exec(ctx, `SELECT pg_advisory_xact_lock(1704081)`); err != nil {
+		t.Fatal(err)
+	}
+	began := time.Now()
+	bounded, cancel := context.WithTimeout(ctx, 10*time.Second) // a start with no lock timeout would wait forever
+	defer cancel()
+	_, err = repo.CreateCLIDeviceAuthorization(bounded, deviceRequest("198.51.100.10", time.Minute, time.Second))
+	waited := time.Since(began)
+	if !errors.Is(err, auth.ErrDeviceStartsBusy) {
+		t.Fatalf("start behind a held lock = %v, want ErrDeviceStartsBusy", err)
+	}
+	if waited > 5*time.Second {
+		t.Errorf("the start waited %v for the lock, want about the 2s lock timeout", waited)
+	}
+	if err := holder.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateCLIDeviceAuthorization(ctx, deviceRequest("198.51.100.10", time.Minute, time.Second)); err != nil {
+		t.Fatalf("start once the lock is free: %v", err)
+	}
+}
+
+// TestCLIDeviceSweepForgetsExpiredSignInsIntegration: the sweep deletes
+// sign-ins ten minutes past their expiry, with the address they were
+// started from, and keeps the rest.
+func TestCLIDeviceSweepForgetsExpiredSignInsIntegration(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	pg := openPG(t)
+	_, _, old := newDeviceAuthorization(t, ctx, repo, time.Minute, time.Second)
+	_, _, recent := newDeviceAuthorization(t, ctx, repo, time.Minute, time.Second)
+	_, _, live := newDeviceAuthorization(t, ctx, repo, time.Minute, time.Second)
+	if _, err := pg.Pool.Exec(ctx, `UPDATE cli_device_authorizations SET created_at = now() - interval '25 minutes', expires_at = now() - interval '11 minutes' WHERE id = $1`, old.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.Pool.Exec(ctx, `UPDATE cli_device_authorizations SET created_at = now() - interval '15 minutes', expires_at = now() - interval '5 minutes' WHERE id = $1`, recent.ID); err != nil {
+		t.Fatal(err)
+	}
+	n, err := repo.DeleteExpiredCLIDeviceAuthorizations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n < 1 {
+		t.Errorf("swept %d rows, want at least the one past its grace", n)
+	}
+	for id, want := range map[string]bool{old.ID: false, recent.ID: true, live.ID: true} {
+		var exists bool
+		if err := pg.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM cli_device_authorizations WHERE id = $1)`, id).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if exists != want {
+			t.Errorf("row %s exists = %v after the sweep, want %v", id, exists, want)
+		}
+	}
+}

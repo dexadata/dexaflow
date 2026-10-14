@@ -185,18 +185,20 @@ dexaflow auth login --device --target dev
 #
 #   https://flow-dev.acme.dev/api/v2/auth/device
 #
-# and enter the code:
+# sign in, and enter the code:
 #
 #   BCDF-GHJK
 ```
 
-Open the page, type the code, and sign in with Google as for the UI: the
-same tenant pin, role mapping, just-in-time provisioning and audit event
-(`oidc.login.success` with `client: cli` and the device `grant`). The server
-then shows **Sign in the Dexaflow CLI on another device?** with the account,
-the tenant, the code, and when and from which address the sign-in was
-started, next to the address of your browser. Check that the code is the one your terminal shows,
-tick the box that says so, and approve; the command finishes on its own and
+Open the page and sign in with Google as for the UI: the same tenant pin,
+role mapping, just-in-time provisioning and audit event
+(`oidc.login.success` with `client: cli` and the device `grant`). Only then
+does the server ask for the code (filled in already when you opened the
+link that carries it). For a live code it shows **Sign in the Dexaflow CLI
+on another device?** with the account, the tenant, the code, and when and
+from which address the sign-in was started, next to the address of your
+browser. Check that the code is the one your terminal shows, tick the box
+that says so, and approve; the command finishes on its own and
 saves the token as any other login does. Cancel if you did not start the
 command yourself: a link or a code someone sent you is how a device
 sign-in is phished, and approving it would sign their CLI in as you.
@@ -212,11 +214,13 @@ does not name the public address.
 What the server enforces:
 
 - The code is eight letters from twenty consonants (about 34.6 bits) and a
-  sign-in lasts 10 minutes. Each address may submit ten wrong codes a
-  minute, and each replica 300 in all; an unknown code and a malformed one
-  get the same page, and are logged but not audited.
-- Each address may start three sign-ins a minute and hold five in progress;
-  the cluster holds at most 10,000. IPv6 addresses count by their /64.
+  sign-in lasts 10 minutes. It is asked for only after single sign-on, so
+  nobody can guess codes without an account. Each account may enter ten
+  wrong codes a minute on each replica; an unknown code and a malformed one get the same
+  page, and each is audited as the account (`oidc.cli_device_verify`).
+- Each address may open the sign-in page ten times a minute and start three
+  device sign-ins a minute (IPv6 by its /64), and hold five in progress
+  (IPv6 by its /56); the cluster holds at most 10,000.
 - The CLI polls every 5 seconds; a faster poll is told `slow_down` and the
   interval grows. The approved sign-in is redeemed once, and the server
   keeps only keyed hashes of the codes, never a token: the token is minted
@@ -227,16 +231,24 @@ What the server enforces:
 - The pending sign-ins live in the database (migration 045,
   `cli_device_authorizations`), so the poll and the approval may reach
   different replicas. Rotating the JWT secret invalidates the ones in
-  progress.
+  progress. A row, with the address it was started from, is deleted ten
+  minutes after it expires, by a sweep each minute: about 21 minutes after
+  the start at the latest.
+- The budgets and the consent page's addresses need the caller's real
+  address. Behind an ingress or a load balancer, list it in
+  `server.trusted_proxies`; without that every caller has the proxy's
+  address and shares its budgets, the consent page leaves the addresses out
+  when both are the same private one, and the server warns at startup.
 - The page's address comes from the configured OIDC `redirectUrl`, the
   server's public origin; nothing changes at the IdP, which does not need a
   device endpoint of its own.
 - The link that fills in the code carries it as `?user_code=`, so ingress
   and proxy access logs may record it. It is useless without your sign-in
   and expires in 10 minutes; leave it out of shared logs if you can.
-- The start, the verification form and the token route are public. Expect
-  503 from the start when the cluster is at its cap, and 429 from an address
-  over its budgets; heavy abuse is for the ingress to rate limit.
+- The start, the verification page and the token route are public. Expect
+  503 from the start when the cluster is at its cap or starts are busy, and
+  429 from an address over its budgets; heavy abuse of the start is for the
+  ingress to rate limit.
 
 ## When a login is denied
 

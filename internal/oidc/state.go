@@ -37,23 +37,20 @@ type StatePayload struct {
 	// one-time code on its loopback redirect instead of setting a session
 	// cookie. Nil for a browser login.
 	CLI *CLIBinding
-	// Device is set when the login approves a device sign-in of the CLI
-	// (`dexaflow auth login --device`, ADR 0081): the callback then asks the
-	// person to confirm the user code instead of setting a session cookie.
-	// Nil for any other login.
+	// Device is set when the login is the first step of a device sign-in of
+	// the CLI (`dexaflow auth login --device`, ADR 0081): the callback then
+	// asks for the user code instead of setting a session cookie. Nil for
+	// any other login.
 	Device *DeviceBinding
 }
 
 // DeviceBinding is what a device sign-in carries through the IdP round trip,
-// signed with the rest of the state: the pending device authorization the
-// person entered the user code of, that code as the CLI printed it, and the
-// address and time (Unix seconds) it was started from, so the consent page
-// can show them for the person to compare.
+// signed with the rest of the state: the user code of the link the person
+// opened (verification_uri_complete), well formed but not looked up, to fill
+// in on the page that asks for the code after the sign-in. It is "" when the
+// person opened the bare page.
 type DeviceBinding struct {
-	ID            string `json:"id"`
-	UserCode      string `json:"user_code"`
-	RequesterAddr string `json:"from,omitempty"`
-	StartedAt     int64  `json:"at,omitempty"`
+	UserCode string `json:"user_code,omitempty"`
 }
 
 // CLIBinding is what a CLI-started login carries through the IdP round trip,

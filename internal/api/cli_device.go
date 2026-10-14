@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html/template"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -31,11 +32,16 @@ import (
 //
 //  1. The CLI posts to /api/v2/auth/cli/device and receives a device code it
 //     keeps, a short user code it prints, and the verification page's URL.
-//  2. The person opens that page in any browser and enters the user code.
-//     That starts the server's own OIDC login, the UI's round trip: the same
-//     callback, tenant pin, role mapping and audit.
-//  3. The callback ends on a consent page that shows the user code and the
-//     account, and asks the person to confirm that the code is the one their
+//  2. The person opens that page in any browser, which starts the server's
+//     own OIDC login, the UI's round trip: the same callback, tenant pin,
+//     role mapping and audit. No code is looked up before that sign-in, so
+//     an anonymous caller can neither guess codes nor spend a budget that
+//     someone else needs.
+//  3. The callback asks the signed-in person for the user code (filled in
+//     from verification_uri_complete when they opened that link). Wrong
+//     codes are limited per user. A live code leads to a consent page that
+//     shows the code, the account, and where and when the sign-in started,
+//     and asks the person to confirm that the code is the one their
 //     terminal shows (RFC 8628 section 5.4: a phished person was sent a code
 //     they did not start). Only that same-origin form approves the sign-in.
 //  4. The CLI polls /api/v2/auth/cli/token with the device code and hears
@@ -48,11 +54,13 @@ import (
 // approved sign-in is redeemed, with the roles the sign-in resolved.
 
 // The routes of the device sign-in. The verification page sits directly
-// under /api/v2/auth/ so the URL a person types stays short; the consent
-// form posts under /api/v2/auth/cli/, where its cookie is scoped.
+// under /api/v2/auth/ so the URL a person types stays short; the code entry
+// and the consent form post under /api/v2/auth/cli/, where their cookies
+// are scoped.
 const (
 	cliDevicePath        = "/api/v2/auth/cli/device"
 	deviceVerifyPath     = "/api/v2/auth/device"
+	cliDeviceCodePath    = "/api/v2/auth/cli/device/code"
 	cliDeviceConsentPath = "/api/v2/auth/cli/device/consent"
 )
 
@@ -68,45 +76,49 @@ const (
 
 // cliDeviceMaxLive caps the device sign-ins in progress across the cluster,
 // so the unauthenticated start route cannot fill the table, and
-// cliDeviceMaxLivePerRequester those started from one address (its /64 for
-// IPv6), so one address cannot fill the cluster's cap: reaching it takes
-// 2,000 such addresses.
+// cliDeviceMaxLivePerRequester those started from one requester, so one
+// requester cannot fill the cluster's cap: reaching it takes 2,000 of them.
+// A requester is an IPv4 address or an IPv6 /56 (requesterV6Bits), the block
+// a subscriber is commonly given, so a /48 counts as 256 requesters and not
+// as 65,536.
 const (
 	cliDeviceMaxLive             = 10_000
 	cliDeviceMaxLivePerRequester = 5
+	requesterV6Bits              = 56
 )
 
-// The budgets of the device sign-in, per address (by /64 for IPv6, see
-// auth.AddressBucket) unless named otherwise.
+// The budgets of the device sign-in. Each is spent before the work it
+// bounds, with auth.RateLimiter.Allow, which checks and spends in one step,
+// so concurrent requests cannot overrun it.
 //
-//   - A start costs one of deviceStartRateLimitPerMinute.
-//   - A wrong user code costs one of deviceVerifyRateLimitPerMinute, and one
-//     of deviceVerifyFailuresPerMinute shared by every address this process
-//     serves. A code that is found costs nothing.
-//   - Polls get a budget of their own, generous enough for several CLIs
-//     behind one address polling every five seconds, because the interval of
-//     each sign-in is enforced by slow_down.
+//   - A start costs one of deviceStartRateLimitPerMinute per address (by
+//     /64 for IPv6, see auth.AddressBucket).
+//   - Opening the sign-in from the verification page costs one of
+//     deviceSignInRateLimitPerMinute per address (by /64); it looks nothing
+//     up.
+//   - A user code entered after the sign-in costs one of
+//     deviceCodeFailuresPerMinute of the signed-in user on this replica,
+//     given back when the code is live, so only wrong codes count. No budget is shared between
+//     users, so nobody can spend another person's.
+//   - Polls get a budget of their own per address (by /64), generous enough
+//     for several CLIs behind one address polling every five seconds,
+//     because the interval of each sign-in is enforced by slow_down.
 const (
 	deviceStartRateLimitPerMinute  = 3
-	deviceVerifyRateLimitPerMinute = 10
-	deviceVerifyFailuresPerMinute  = 300
+	deviceSignInRateLimitPerMinute = 10
+	deviceCodeFailuresPerMinute    = 10
 	devicePollRateLimitPerMinute   = 120
 )
 
-// deviceVerifyFailureKey is the one key of the process-wide budget of
-// failed verifies.
-const deviceVerifyFailureKey = "*"
-
 // The user code: eight letters from twenty consonants, 20^8 = 2.56e10
 // codes, about 34.6 bits. No vowels, so no words, and no letters that read
-// like digits (RFC 8628 section 6.1). Addresses are not scarce (an IPv6
-// /48 holds 65,536 /64s), so the bound on guessing is the process-wide
-// budget of failed verifies: 300 a minute is 3,000 guesses over a code's ten
-// minutes, which with the cluster's cap of 10,000 live codes finds one with
-// probability about 3000 * 10000 / 2.56e10, roughly 1 in 850, per replica
-// and per ten minutes of an attacker spending the whole budget, while every
-// person on that replica is refused for the same minutes. A found code only
-// lets the guesser sign the stranger's CLI in as the guesser.
+// like digits (RFC 8628 section 6.1). Codes are entered only after single
+// sign-on, so a guesser needs an account of the IdP that the tenant pin and
+// the role mapping accept, and each account gets ten wrong codes a minute on
+// each replica (the budget is in memory): 100 over a code's ten minutes,
+// which with the cluster's cap of 10,000 live codes finds one with
+// probability about 100 * 10000 / 2.56e10, roughly 1 in 25,600, per account,
+// replica and ten minutes, every guess audited as that account. A found code only signs the stranger's CLI in as the guesser.
 const (
 	userCodeAlphabet = "BCDFGHJKLMNPQRSTVWXZ"
 	userCodeLen      = 8
@@ -115,12 +127,25 @@ const (
 )
 
 // cliDeviceConsentCookie carries the sealed device consent between its page
-// and its form, scoped like the loopback consent cookie.
-const cliDeviceConsentCookie = "_oidc_cli_device"
+// and its form, and cliDeviceEntryCookie the signed-in account between the
+// page that asks for the code and its form, both scoped like the loopback
+// consent cookie.
+const (
+	cliDeviceConsentCookie = "_oidc_cli_device"
+	cliDeviceEntryCookie   = "_oidc_cli_device_entry"
+)
 
-// cliDeviceConsentAAD binds a sealed device consent, so neither a loopback
-// consent nor a code can be posted as one.
-const cliDeviceConsentAAD = "dexaflow cli device consent v1"
+// cliDeviceConsentAAD binds a sealed device consent and cliDeviceEntryAAD a
+// sealed code entry, so none of a loopback consent, a code, an entry and a
+// consent can be posted as another.
+const (
+	cliDeviceConsentAAD = "dexaflow cli device consent v1"
+	cliDeviceEntryAAD   = "dexaflow cli device entry v1"
+)
+
+// auditCLIDeviceVerify records a user code refused after the sign-in, as
+// the signed-in user.
+const auditCLIDeviceVerify = "oidc.cli_device_verify"
 
 // cliDeviceHashInfo is the HKDF info of the key the codes are hashed under.
 const cliDeviceHashInfo = "dexaflow cli device code key"
@@ -209,10 +234,10 @@ type cliDeviceDeps struct {
 	jwtSecret   string
 	tokenTTL    time.Duration
 	pollLimiter *auth.RateLimiter
-	// verifyFailures is the per-address and failedVerifies the process-wide
-	// budget of failed verifies.
-	verifyFailures *auth.RateLimiter
-	failedVerifies *auth.RateLimiter
+	// signInLimiter is the per-address budget of the verification page's
+	// post and codeFailures the per-user budget of wrong codes.
+	signInLimiter *auth.RateLimiter
+	codeFailures  *auth.RateLimiter
 }
 
 // newCLIDeviceDeps builds the device sign-in when it can be served: single
@@ -230,6 +255,10 @@ func newCLIDeviceDeps(deps Dependencies) *cliDeviceDeps {
 		}
 		return nil
 	}
+	if len(deps.TrustedProxies) == 0 && deps.Logger != nil {
+		deps.Logger.Warn("oidc: the device sign-in of the CLI is served with no server.trusted_proxies: " +
+			"behind a proxy or ingress every caller has its address, so they share its rate limits and the consent page cannot say where a sign-in started")
+	}
 	return &cliDeviceDeps{
 		store:       deps.CLIDevices,
 		hashKey:     newDeviceHashKey(deps.JWTSecret),
@@ -243,19 +272,21 @@ func newCLIDeviceDeps(deps Dependencies) *cliDeviceDeps {
 		tokenTTL:    time.Duration(deps.TokenTTLSecs) * time.Second,
 		pollLimiter: auth.NewRateLimiter(devicePollRateLimitPerMinute, time.Minute),
 
-		verifyFailures: auth.NewRateLimiter(deviceVerifyRateLimitPerMinute, time.Minute),
-		failedVerifies: auth.NewRateLimiter(deviceVerifyFailuresPerMinute, time.Minute),
+		signInLimiter: auth.NewRateLimiter(deviceSignInRateLimitPerMinute, time.Minute),
+		codeFailures:  auth.NewRateLimiter(deviceCodeFailuresPerMinute, time.Minute),
 	}
 }
 
 // registerCLIDevice registers the device routes. The start has a small
-// budget of its own; the verification form spends its budgets only on
-// failures (verifyHandler); the consent spends the OIDC routes' budget.
+// budget of its own; the verification form spends its own per address and
+// the code entry its own per user (verifyHandler, codeHandler); the consent
+// spends the OIDC routes' budget.
 func registerCLIDevice(r *gin.Engine, d *cliDeviceDeps, oidcLimiter *auth.RateLimiter) {
 	startLimiter := auth.NewRateLimiter(deviceStartRateLimitPerMinute, time.Minute)
 	r.POST(cliDevicePath, rateLimitByAddress(startLimiter), d.startHandler())
 	r.GET(deviceVerifyPath, d.verifyPageHandler())
 	r.POST(deviceVerifyPath, d.verifyHandler())
+	r.POST(cliDeviceCodePath, d.codeHandler())
 	r.POST(cliDeviceConsentPath, rateLimitByIP(oidcLimiter), d.consentHandler())
 }
 
@@ -373,7 +404,7 @@ func (d *cliDeviceDeps) startHandler() gin.HandlerFunc {
 			_, err = d.store.CreateCLIDeviceAuthorization(c.Request.Context(), auth.DeviceAuthorizationRequest{
 				DeviceCodeHash: d.hash(hashDeviceCode, deviceCode),
 				UserCodeHash:   d.hash(hashUserCode, userCode),
-				RequesterHash:  d.hash(hashRequester, auth.AddressBucket(requester)),
+				RequesterHash:  d.hash(hashRequester, auth.AddressBlock(requester, requesterV6Bits)),
 				RequesterAddr:  requester,
 				TTL:            cliDeviceTTL, Interval: cliDeviceInterval,
 				MaxLive: cliDeviceMaxLive, MaxLivePerRequester: cliDeviceMaxLivePerRequester,
@@ -399,7 +430,7 @@ func (d *cliDeviceDeps) startHandler() gin.HandlerFunc {
 		case errors.Is(err, auth.ErrDeviceSignInsFromRequester):
 			AbortProblem(c, http.StatusTooManyRequests, "rate limited", "too many device sign-ins from this address are in progress; finish one, or wait ten minutes")
 			return
-		case err == nil || errors.Is(err, domain.ErrConflict) || errors.Is(err, auth.ErrDeviceSignInsFull):
+		case err == nil || errors.Is(err, domain.ErrConflict) || errors.Is(err, auth.ErrDeviceSignInsFull) || errors.Is(err, auth.ErrDeviceStartsBusy):
 			AbortProblem(c, http.StatusServiceUnavailable, "service unavailable", "too many device sign-ins are in progress; try again in a few minutes")
 			return
 		}
@@ -416,24 +447,23 @@ func (d *cliDeviceDeps) startFailed(c *gin.Context, what string, err error) {
 	AbortProblem(c, http.StatusInternalServerError, "internal error", "the device sign-in could not start; try again")
 }
 
-// deviceVerifyTemplate is the page a person enters the user code on. It
-// carries no secret and posts the code to the same route.
+// deviceVerifyTemplate is the page the verification URI opens: it starts
+// the sign-in, carrying the code of verification_uri_complete when there is
+// one, and asks for the code only after it.
 var deviceVerifyTemplate = template.Must(template.New("device").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dexaflow - Sign in the CLI on another device</title>
 <style>
 {{ .CSS }}
- #user_code{font-size:1.2rem;letter-spacing:.15em;text-transform:uppercase;text-align:center}
 </style></head><body>
 <form method="post" action="{{ .Action }}">
  <h1>Sign in the Dexaflow CLI</h1>
 {{ if .Message }} <p class="ssoerr" role="alert">{{ .Message }}</p>
-{{ end }} <p class="hint">Enter the code that <code>dexaflow auth login --device</code> shows in your terminal.
- You sign in with single sign-on next, and confirm the code once more before the CLI is signed in.</p>
- <label for="user_code">Code</label>
- <input id="user_code" name="user_code" value="{{ .UserCode }}" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="32" required autofocus>
- <button type="submit">Continue</button>
+{{ end }} <p class="hint">Sign in with single sign-on first. You then enter the code that
+ <code>dexaflow auth login --device</code> shows in your terminal, and confirm it before the CLI is signed in.</p>
+ <input type="hidden" name="user_code" value="{{ .UserCode }}">
+ <button type="submit" autofocus>Continue with single sign-on</button>
 </form></body></html>`))
 
 // deviceVerifyPage is what deviceVerifyTemplate renders.
@@ -444,15 +474,48 @@ type deviceVerifyPage struct {
 	Message  string
 }
 
-// The messages of the verification page. None says why a sign-on was
-// refused; the audit trail and the server log do.
+// deviceEntryTemplate asks the signed-in person for the user code. It posts
+// the code with the sealed entry.
+var deviceEntryTemplate = template.Must(template.New("device-entry").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dexaflow - Sign in the CLI on another device</title>
+<style>
+{{ .CSS }}
+ #user_code{font-size:1.2rem;letter-spacing:.15em;text-transform:uppercase;text-align:center}
+</style></head><body>
+<form method="post" action="{{ .Action }}">
+ <h1>Sign in the Dexaflow CLI</h1>
+{{ if .Message }} <p class="ssoerr" role="alert">{{ .Message }}</p>
+{{ end }} <p class="hint">Signed in as <strong>{{ .Email }}</strong> (tenant <strong>{{ .Tenant }}</strong>).
+ Enter the code that <code>dexaflow auth login --device</code> shows in your terminal.</p>
+ <label for="user_code">Code</label>
+ <input id="user_code" name="user_code" value="{{ .UserCode }}" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="32" required autofocus>
+ <input type="hidden" name="csrf" value="{{ .CSRF }}">
+ <button type="submit">Continue</button>
+</form></body></html>`))
+
+// deviceEntryPage is what deviceEntryTemplate renders.
+type deviceEntryPage struct {
+	CSS      template.CSS
+	Action   string
+	Email    string
+	Tenant   string
+	UserCode string
+	CSRF     string
+	Message  string
+}
+
+// The messages of the verification and entry pages. None says why a
+// sign-on was refused; the audit trail and the server log do.
 const (
 	deviceMsgUnknownCode = "That code is not valid, or it expired. Check the code in your terminal, or run dexaflow auth login --device again."
-	deviceMsgRateLimited = "Too many attempts from this address. Wait a minute and try again."
+	deviceMsgRateLimited = "Too many attempts. Wait a minute and try again."
 	deviceMsgSSORefused  = "Single sign-on did not complete. Ask whoever administers this Dexaflow; the reason is in its audit trail."
 	deviceMsgSSOFailed   = "Single sign-on failed on the server. Try again; if it keeps failing, the server log has the cause."
-	deviceMsgCrossSite   = "This form was not sent from this page. Open the address your terminal shows and enter the code there."
+	deviceMsgCrossSite   = "This form was not sent from this page. Open the address your terminal shows and start again there."
 	deviceMsgServerError = "The code could not be checked. Try again in a moment."
+	deviceMsgEntryGone   = "This page can no longer take a code. Open the address your terminal shows and sign in again."
 )
 
 // renderVerifyPage writes the verification page. Its form may post to this
@@ -472,9 +535,9 @@ func (d *cliDeviceDeps) renderVerifyPage(c *gin.Context, status int, page device
 	}
 }
 
-// verifyPageHandler implements GET /api/v2/auth/device: the form, with the
-// code of verification_uri_complete filled in when it is well formed, and a
-// message after a refused sign-on.
+// verifyPageHandler implements GET /api/v2/auth/device: the button that
+// starts the sign-in, carrying the code of verification_uri_complete when it
+// is well formed, and a message after a refused sign-on.
 func (d *cliDeviceDeps) verifyPageHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		page := deviceVerifyPage{}
@@ -491,24 +554,77 @@ func (d *cliDeviceDeps) verifyPageHandler() gin.HandlerFunc {
 	}
 }
 
-// verifyRateLimited answers an address over its budget of attempts.
-func (d *cliDeviceDeps) verifyRateLimited(c *gin.Context) {
-	d.renderVerifyPage(c, http.StatusTooManyRequests, deviceVerifyPage{Message: deviceMsgRateLimited})
-	c.Abort()
-}
-
-// verifyHandler implements POST /api/v2/auth/device: a known, pending user
-// code starts the server's OIDC login bound to that sign-in; anything else
-// gets the same page and starts nothing.
+// verifyHandler implements POST /api/v2/auth/device: it starts the server's
+// OIDC login for a device sign-in, carrying a well-formed code to fill in
+// after it. It looks no code up.
 func (d *cliDeviceDeps) verifyHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !browserMaySetSession(c) {
 			d.renderVerifyPage(c, http.StatusForbidden, deviceVerifyPage{Message: deviceMsgCrossSite})
 			return
 		}
-		bucket := auth.AddressBucket(c.ClientIP())
-		if d.verifyFailures.Blocked(bucket) || d.failedVerifies.Blocked(deviceVerifyFailureKey) {
-			d.verifyRateLimited(c)
+		if !d.signInLimiter.Allow(auth.AddressBucket(c.ClientIP())) {
+			d.renderVerifyPage(c, http.StatusTooManyRequests, deviceVerifyPage{Message: deviceMsgRateLimited})
+			return
+		}
+		prefill := ""
+		if code := normalizeUserCode(c.PostForm("user_code")); code != "" {
+			prefill = formatUserCode(code)
+		}
+		c.Set(contextKeyDeviceLogin, true)
+		beginOIDCLogin(c, d.flow, d.logger, d.insecure, oidc.StatePayload{
+			Next: "/", Device: &oidc.DeviceBinding{UserCode: prefill},
+		}, http.StatusSeeOther)
+	}
+}
+
+// askDeviceCode ends the sign-in of a device sign-in with the page that asks
+// for the user code: it seals the account and its roles into the entry
+// cookie. No code has been looked up and no token is minted.
+func askDeviceCode(c *gin.Context, codes *cliCodes, insecure bool, logger *slog.Logger, user auth.User, prefill string, status int, message string) {
+	csrf, err := randomURLToken()
+	if err != nil {
+		abortSSOServerFailure(c, logger, "generating entry token", err)
+		return
+	}
+	entry := cliPending{CSRF: csrf, Roles: user.Roles, Tenant: user.TenantID, UserID: user.ID, Email: user.Email}
+	sealed, err := codes.seal(entry, cliDeviceEntryAAD, cliConsentTTL)
+	if err != nil {
+		abortSSOServerFailure(c, logger, "sealing cli device entry", err)
+		return
+	}
+	c.SetSameSite(http.SameSiteStrictMode)
+	c.SetCookie(cliDeviceEntryCookie, sealed, int(cliConsentTTL.Seconds()), cliConsentCookiePath, "", cookieSecure(insecure), true)
+	page := deviceEntryPage{
+		CSS:    template.CSS(signInPageCSS), //nolint:gosec // G203: a constant of this package, never request data
+		Action: cliDeviceCodePath, Email: user.Email, Tenant: user.TenantID,
+		UserCode: prefill, CSRF: csrf, Message: message,
+	}
+	writeSignInPageHeaders(c, "'self'")
+	c.Status(status)
+	if err := deviceEntryTemplate.Execute(c.Writer, page); err != nil {
+		c.Abort()
+	}
+}
+
+// codeHandler implements POST /api/v2/auth/cli/device/code: a signed-in
+// person's user code. The entry is checked as a consent is (openConsent).
+// The code costs one of the user's budget before it is looked up, given back
+// when it is live; a live code leads to the consent page, anything else to
+// the same page asking again.
+func (d *cliDeviceDeps) codeHandler() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		p, status, reason := openConsent(c, d.codes, cliDeviceEntryCookie, cliDeviceEntryAAD)
+		if reason != "" {
+			d.refuseEntry(c, status, p, reason)
+			return
+		}
+		d.clearEntryCookie(c)
+		user := auth.User{ID: p.UserID, TenantID: p.Tenant, Email: p.Email, Roles: p.Roles}
+		key := p.Tenant + "\x00" + p.UserID
+		if !d.codeFailures.Allow(key) {
+			d.auditCode(c, p, "rate_limited")
+			askDeviceCode(c, d.codes, d.insecure, d.logger, user, "", http.StatusTooManyRequests, deviceMsgRateLimited)
 			return
 		}
 		code := normalizeUserCode(c.PostForm("user_code"))
@@ -519,31 +635,56 @@ func (d *cliDeviceDeps) verifyHandler() gin.HandlerFunc {
 		}
 		switch {
 		case errors.Is(err, domain.ErrNotFound):
-			// Tied to no sign-in, so logged and never audited: anonymous
-			// guesses must not be able to flood the audit trail.
-			d.verifyFailures.Allow(bucket)
-			d.failedVerifies.Allow(deviceVerifyFailureKey)
-			if d.logger != nil {
-				d.logger.Warn("oidc: cli device user code refused", "reason", "unknown_code", "client", logSafe(c.ClientIP()))
-			}
-			d.renderVerifyPage(c, http.StatusBadRequest, deviceVerifyPage{Message: deviceMsgUnknownCode})
+			d.auditCode(c, p, "unknown_code")
+			askDeviceCode(c, d.codes, d.insecure, d.logger, user, "", http.StatusBadRequest, deviceMsgUnknownCode)
 			return
 		case err != nil:
+			d.codeFailures.Refund(key)
 			if d.logger != nil {
 				d.logger.Error("oidc: cli device: finding user code", "error", err)
 			}
-			d.renderVerifyPage(c, http.StatusInternalServerError, deviceVerifyPage{Message: deviceMsgServerError})
+			askDeviceCode(c, d.codes, d.insecure, d.logger, user, "", http.StatusInternalServerError, deviceMsgServerError)
 			return
 		}
-		c.Set(contextKeyDeviceLogin, true)
-		beginOIDCLogin(c, d.flow, d.logger, d.insecure, oidc.StatePayload{
-			Next: "/",
-			Device: &oidc.DeviceBinding{
-				ID: found.ID, UserCode: formatUserCode(code),
-				RequesterAddr: found.RequesterAddr, StartedAt: found.CreatedAt.Unix(),
-			},
-		}, http.StatusSeeOther)
+		d.codeFailures.Refund(key)
+		d.askDeviceConsent(c, deviceSignIn{
+			ID: found.ID, UserCode: formatUserCode(code),
+			RequesterAddr: found.RequesterAddr, StartedAt: found.CreatedAt,
+		}, user)
 	}
+}
+
+// auditCode audits and logs a user code refused to a signed-in user.
+func (d *cliDeviceDeps) auditCode(c *gin.Context, p cliPending, reason string) {
+	if d.logger != nil {
+		d.logger.Warn("oidc: cli device user code refused", "reason", reason, "tenant", logSafe(p.Tenant), "user", logSafe(p.UserID))
+	}
+	recordAuth(c, d.logger, d.audit, auditCLIDeviceVerify, p, "denied", map[string]string{"reason": reason, "grant": deviceGrantType})
+}
+
+// refuseEntry answers an entry post that cannot be used. One that names a
+// signed-in user (expired, a CSRF mismatch, replayed) is audited as that
+// user; one that names nobody (cross-site, no cookie, not sealed as an
+// entry) is only logged, so anonymous posts cannot flood the audit trail.
+func (d *cliDeviceDeps) refuseEntry(c *gin.Context, status int, p cliPending, reason string) {
+	if p.UserID != "" {
+		d.auditCode(c, p, reason)
+	} else if d.logger != nil {
+		d.logger.Warn("oidc: cli device entry refused", "reason", reason, "client", logSafe(c.ClientIP()))
+	}
+	message := deviceMsgEntryGone
+	if reason == "cross_site" {
+		message = deviceMsgCrossSite
+	}
+	d.renderVerifyPage(c, status, deviceVerifyPage{Message: message})
+	c.Abort()
+}
+
+// clearEntryCookie expires the entry cookie with the attributes it was set
+// with.
+func (d *cliDeviceDeps) clearEntryCookie(c *gin.Context) {
+	c.SetSameSite(http.SameSiteStrictMode)
+	c.SetCookie(cliDeviceEntryCookie, "", -1, cliConsentCookiePath, "", cookieSecure(d.insecure), true)
 }
 
 // deviceConsentTemplate asks the person to confirm the user code and
@@ -567,8 +708,8 @@ var deviceConsentTemplate = template.Must(template.New("device-consent").Parse(`
 {{ else }} <p class="hint">A <code>dexaflow auth login --device</code> asked to sign in as
  <strong>{{ .Email }}</strong> (tenant <strong>{{ .Tenant }}</strong>). Its terminal shows this code:</p>
  <p class="usercode">{{ .UserCode }}</p>
- <p class="hint">It was started {{ .Age }} from <strong>{{ .RequesterAddr }}</strong>.
- This browser is at <strong>{{ .BrowserAddr }}</strong>.</p>
+ <p class="hint">It was started {{ .Age }}{{ if .ShowAddresses }} from <strong>{{ .RequesterAddr }}</strong>.
+ This browser is at <strong>{{ .BrowserAddr }}</strong>{{ end }}.</p>
  <p class="hint">Approve only if you started that command yourself just now and its terminal shows this exact code.
  If someone sent you this link or this code, cancel: approving would give them your access.</p>
  <label class="confirm"><input type="checkbox" name="confirm" value="yes" required>
@@ -593,18 +734,41 @@ type deviceConsentPage struct {
 	Script   template.JS
 	// Age, RequesterAddr and BrowserAddr say when and from where the
 	// sign-in was started, next to where this browser is (RFC 8628 section
-	// 5.4), so a person sent someone else's code can tell.
+	// 5.4), so a person sent someone else's code can tell. The addresses
+	// are shown only when ShowAddresses (showDeviceAddresses).
 	Age           string
 	RequesterAddr string
 	BrowserAddr   string
+	ShowAddresses bool
+}
+
+// deviceSignIn is the pending sign-in a person entered the live code of, as
+// the consent page shows it.
+type deviceSignIn struct {
+	ID            string
+	UserCode      string
+	RequesterAddr string
+	StartedAt     time.Time
+}
+
+// showDeviceAddresses reports whether the consent page compares the
+// addresses. Two equal private, loopback or unknown addresses are most
+// likely a proxy that is not in server.trusted_proxies, seen on both sides,
+// so the comparison would say nothing and is left out.
+func showDeviceAddresses(requester, browser string) bool {
+	if requester != browser {
+		return true
+	}
+	ip := net.ParseIP(requester)
+	return ip != nil && !ip.IsPrivate() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast()
 }
 
 // The messages of the device consent.
 const (
-	deviceMsgConsentGone  = "This sign-in can no longer be approved here. Enter the code again, or run dexaflow auth login --device again."
-	deviceMsgNotConfirmed = "The code was not confirmed, so the CLI was not signed in. Enter the code again and check that it matches your terminal."
+	deviceMsgConsentGone  = "This sign-in can no longer be approved here. Open the address your terminal shows and sign in again."
+	deviceMsgNotConfirmed = "The code was not confirmed, so the CLI was not signed in. Open the address your terminal shows again and check that the code matches."
 	deviceMsgNotPending   = "This code can no longer be approved: it expired, or it was already approved or canceled. Run dexaflow auth login --device again."
-	deviceMsgDecideFailed = "The answer could not be recorded. Enter the code again in a moment."
+	deviceMsgDecideFailed = "The answer could not be recorded. Open the address your terminal shows again in a moment."
 	deviceMsgCanceled     = "Sign-in canceled. The CLI stops waiting and signs in nothing."
 )
 
@@ -622,31 +786,33 @@ func renderDeviceConsent(c *gin.Context, status int, page deviceConsentPage) {
 	}
 }
 
-// askDeviceConsent ends a verified device sign-in with the consent page: it
+// askDeviceConsent answers a live user code with the consent page: it
 // seals the account, its roles and the pending sign-in into the consent
 // cookie and shows the user code to confirm. No token is minted yet.
-func (d oidcDeps) askDeviceConsent(c *gin.Context, b oidc.DeviceBinding, user *auth.User) {
+func (d *cliDeviceDeps) askDeviceConsent(c *gin.Context, s deviceSignIn, user auth.User) {
 	csrf, err := randomURLToken()
 	if err != nil {
 		abortSSOServerFailure(c, d.logger, "generating consent token", err)
 		return
 	}
 	pending := cliPending{
-		Device: b.ID, UserCode: b.UserCode, CSRF: csrf, Roles: user.Roles,
+		Device: s.ID, UserCode: s.UserCode, CSRF: csrf, Roles: user.Roles,
 		Tenant: user.TenantID, UserID: user.ID, Email: user.Email,
 	}
-	sealed, err := d.cliCodes.seal(pending, cliDeviceConsentAAD, cliConsentTTL)
+	sealed, err := d.codes.seal(pending, cliDeviceConsentAAD, cliConsentTTL)
 	if err != nil {
 		abortSSOServerFailure(c, d.logger, "sealing cli device consent", err)
 		return
 	}
 	c.SetSameSite(http.SameSiteStrictMode)
-	c.SetCookie(cliDeviceConsentCookie, sealed, int(cliConsentTTL.Seconds()), cliConsentCookiePath, "", cookieSecure(d.session.insecure), true)
+	c.SetCookie(cliDeviceConsentCookie, sealed, int(cliConsentTTL.Seconds()), cliConsentCookiePath, "", cookieSecure(d.insecure), true)
+	browser := clientAddress(c)
 	renderDeviceConsent(c, http.StatusOK, deviceConsentPage{
-		Email: user.Email, Tenant: user.TenantID, UserCode: b.UserCode, CSRF: csrf,
-		Age:           deviceAge(time.Since(time.Unix(b.StartedAt, 0))),
-		RequesterAddr: b.RequesterAddr,
-		BrowserAddr:   clientAddress(c),
+		Email: user.Email, Tenant: user.TenantID, UserCode: s.UserCode, CSRF: csrf,
+		Age:           deviceAge(time.Since(s.StartedAt)),
+		RequesterAddr: s.RequesterAddr,
+		BrowserAddr:   browser,
+		ShowAddresses: showDeviceAddresses(s.RequesterAddr, browser),
 	})
 }
 
@@ -830,11 +996,9 @@ func abortTokenError(c *gin.Context, oauthErr, detail string) {
 // (by /64 for IPv6), or answers 429 and returns false when it is spent, as
 // rateLimitByIP does for a whole route.
 func spendRateBudget(c *gin.Context, limiter *auth.RateLimiter) bool {
-	ip := auth.AddressBucket(c.ClientIP())
-	if limiter.Blocked(ip) {
+	if !limiter.Allow(auth.AddressBucket(c.ClientIP())) {
 		AbortProblem(c, http.StatusTooManyRequests, "rate limited", rateLimitedDetail)
 		return false
 	}
-	limiter.Allow(ip)
 	return true
 }

@@ -92,7 +92,7 @@ func deviceLogin(ctx context.Context, out io.Writer, serverURL string, timeout t
 		timeout = life
 	}
 	warnOtherHost(out, serverURL, d.VerificationURI)
-	devPrintf(out, "To sign in, open this page in a browser on any device:\n\n  %s\n\nand enter the code:\n\n  %s\n\n"+
+	devPrintf(out, "To sign in, open this page in a browser on any device:\n\n  %s\n\nsign in, and enter the code:\n\n  %s\n\n"+
 		"Or open %s, which fills in the code.\n"+
 		"Approve only a page that shows this same code. Waiting up to %s...\n",
 		d.VerificationURI, d.UserCode, d.VerificationURIComplete, timeout.Round(time.Second))

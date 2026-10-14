@@ -47,6 +47,9 @@ var (
 	// ErrDeviceSignInsFromRequester: the starting address holds as many
 	// sign-ins in progress as one address may.
 	ErrDeviceSignInsFromRequester = errors.New("too many device sign-ins are in progress from this address")
+	// ErrDeviceStartsBusy: the start could not take its turn among
+	// concurrent starts in time, so it was not recorded.
+	ErrDeviceStartsBusy = errors.New("device sign-in starts are busy")
 )
 
 // DevicePollOutcome is what one poll of a device sign-in found.

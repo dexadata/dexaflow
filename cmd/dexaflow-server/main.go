@@ -1332,6 +1332,9 @@ func startAPISide(ctx context.Context, cfg *config.ServerConfig, tel *observabil
 		}
 		oidcFlow = flow
 	}
+	if oidcFlow != nil {
+		startCLIDeviceSweep(ctx, repo, tel.Logger)
+	}
 	//nolint:contextcheck // buildAPIServer wires per-request handlers; each request carries its own context
 	srv := buildAPIServer(cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, oidcFlow, newTrustedIssuer(ctx, cfg))
 	// Optional HTTPS on the API listener (#638); plain HTTP when unset.
@@ -2035,6 +2038,47 @@ func healthChecks(pg *storage.Postgres, redisHealth api.HealthChecker) map[strin
 		checks["redis"] = redisHealth
 	}
 	return checks
+}
+
+// cliDeviceSweepInterval is how often the server forgets device sign-ins
+// of the CLI ten minutes past their expiry (ADR 0081), so the address a
+// sign-in was started from is gone about 21 minutes after the start at the
+// latest, even when nobody starts another.
+const cliDeviceSweepInterval = time.Minute
+
+// cliDeviceSweeper deletes the expired device sign-ins; storage implements
+// it.
+type cliDeviceSweeper interface {
+	DeleteExpiredCLIDeviceAuthorizations(ctx context.Context) (int64, error)
+}
+
+// startCLIDeviceSweep runs runCLIDeviceSweep every cliDeviceSweepInterval
+// until ctx ends. Every replica runs it: the delete is idempotent and cheap.
+func startCLIDeviceSweep(ctx context.Context, store cliDeviceSweeper, logger *slog.Logger) {
+	t := time.NewTicker(cliDeviceSweepInterval)
+	go func() {
+		defer t.Stop()
+		runCLIDeviceSweep(ctx, t.C, store, logger)
+	}()
+}
+
+// runCLIDeviceSweep sweeps the expired device sign-ins at each tick until
+// ctx ends. A failed sweep is logged and retried at the next tick.
+func runCLIDeviceSweep(ctx context.Context, ticks <-chan time.Time, store cliDeviceSweeper, logger *slog.Logger) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticks:
+			safeCycle("cli-device-sweep", logger, func() {
+				if n, err := store.DeleteExpiredCLIDeviceAuthorizations(ctx); err != nil {
+					logger.Error("sweeping expired cli device sign-ins", "error", err)
+				} else if n > 0 {
+					logger.Debug("swept expired cli device sign-ins", "rows", n)
+				}
+			})
+		}
+	}
 }
 
 // startXComSweep periodically deletes expired rows from the embedded Postgres

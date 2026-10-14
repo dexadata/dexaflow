@@ -106,7 +106,9 @@ func TestStartCLIDeviceLoginPostsAndDecodes(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotMethod = r.URL.Path, r.Method
 		if status != http.StatusOK {
+			w.Header().Set("Content-Type", "application/problem+json")
 			w.WriteHeader(status)
+			_, _ = w.Write([]byte(`{"title":"service unavailable","status":503,"detail":"too many device sign-ins are in progress; try again in a few minutes"}`))
 			return
 		}
 		_, _ = w.Write([]byte(`{"device_code":"dc","user_code":"BCDF-GHJK","verification_uri":"https://x/api/v2/auth/device",` +
@@ -133,8 +135,9 @@ func TestStartCLIDeviceLoginPostsAndDecodes(t *testing.T) {
 		t.Errorf("404 err = %v, want ErrDeviceLoginNotServed", err)
 	}
 	status = http.StatusServiceUnavailable
-	if _, err := c.StartCLIDeviceLogin(context.Background()); err == nil || !strings.Contains(err.Error(), "503") {
-		t.Errorf("503 err = %v, want an error naming 503", err)
+	if _, err := c.StartCLIDeviceLogin(context.Background()); err == nil || !strings.Contains(err.Error(), "503") ||
+		!strings.Contains(err.Error(), "try again in a few minutes") {
+		t.Errorf("503 err = %v, want an error naming 503 and the server's detail", err)
 	}
 }
 

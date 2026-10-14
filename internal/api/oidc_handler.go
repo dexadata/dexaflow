@@ -233,15 +233,15 @@ func markCLILogin(c *gin.Context, payload oidc.StatePayload) {
 // finish hands a successful login its token: the browser session cookie and
 // the page it asked for, or, for a CLI login, the consent page and no session
 // cookie at all (the code reaches the CLI only after the person approves). A
-// device sign-in ends on its own consent page, which shows the user code to
-// confirm. All are audited as the same success, the CLI ones marked with
-// their client and the device one with its grant.
+// device sign-in ends on the page that asks for its user code. All are
+// audited as the same success, the CLI ones marked with their client and the
+// device one with its grant.
 func (d oidcDeps) finish(c *gin.Context, payload oidc.StatePayload, identity *oidc.VerifiedIdentity, user *auth.User, token string) {
 	extra := map[string]string{"subject": identity.Subject, "roles": strings.Join(user.Roles, ",")}
 	if payload.Device != nil {
 		extra["client"], extra["grant"] = "cli", deviceGrantType
 		d.record(c, auditOIDCLoginSuccess, identity.Tenant, user.ID, identity.Email, "success", extra)
-		d.askDeviceConsent(c, *payload.Device, user)
+		askDeviceCode(c, d.cliCodes, d.session.insecure, d.logger, *user, payload.Device.UserCode, http.StatusOK, "")
 		return
 	}
 	if payload.CLI == nil {

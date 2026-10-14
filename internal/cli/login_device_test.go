@@ -188,13 +188,23 @@ func approveOnAnotherDevice(t *testing.T, verifyURI, userCode string) {
 		body, _ := io.ReadAll(resp.Body)
 		return resp.Request.URL, string(body)
 	}
-	// Typing the code starts the sign-in; the redirects lead through the IdP
-	// to the consent page.
-	landed, page := post(verifyURI, url.Values{"user_code": {strings.ToLower(userCode)}})
+	// The page starts the sign-in; the redirects lead through the IdP to the
+	// page that asks for the code, and a live code to the consent page.
+	landed, page := post(verifyURI, url.Values{})
 	if landed == nil {
 		return
 	}
 	m := consentCSRF.FindStringSubmatch(page)
+	if m == nil || !strings.Contains(page, `name="user_code"`) {
+		t.Errorf("the sign-in did not end on the page that asks for the code:\n%s", page)
+		return
+	}
+	entry := landed.ResolveReference(&url.URL{Path: "/api/v2/auth/cli/device/code"}).String()
+	landed, page = post(entry, url.Values{"csrf": {m[1]}, "user_code": {strings.ToLower(userCode)}})
+	if landed == nil {
+		return
+	}
+	m = consentCSRF.FindStringSubmatch(page)
 	if m == nil || !strings.Contains(page, userCode) {
 		t.Errorf("the consent page does not show the code %s with a form:\n%s", userCode, page)
 		return

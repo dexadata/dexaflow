@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"unicode"
 )
 
 // The CLI sign-in routes (#1704). They get no generated method (see
@@ -157,6 +158,9 @@ func (c *Client) StartCLIDeviceLogin(ctx context.Context, reqEditors ...RequestE
 	case http.StatusNotFound:
 		return nil, ErrDeviceLoginNotServed
 	default:
+		if detail := problemDetail(resp.Body); detail != "" {
+			return nil, fmt.Errorf("%s returned %d: %s", cliDevicePath, resp.StatusCode, detail)
+		}
 		return nil, fmt.Errorf("%s returned %d", cliDevicePath, resp.StatusCode)
 	}
 	var d CLIDeviceAuthorization
@@ -233,4 +237,29 @@ func (c *Client) doAuth(ctx context.Context, method, path string, body []byte, r
 		return nil, fmt.Errorf("calling %s: %w", path, err)
 	}
 	return resp, nil
+}
+
+// problemDetailMax bounds the detail of a problem document quoted in an
+// error.
+const problemDetailMax = 200
+
+// problemDetail is the detail of the problem document in body (RFC 9457),
+// bounded and stripped of control characters, or "" when there is none.
+func problemDetail(body io.Reader) string {
+	var p struct {
+		Detail string `json:"detail"`
+	}
+	if json.NewDecoder(io.LimitReader(body, authAnswerMaxBody)).Decode(&p) != nil {
+		return ""
+	}
+	detail := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, p.Detail)
+	if len(detail) > problemDetailMax {
+		detail = strings.ToValidUTF8(detail[:problemDetailMax], "")
+	}
+	return detail
 }

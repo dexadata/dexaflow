@@ -7,11 +7,16 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/storage/queries"
 )
+
+// cliDeviceStartLockTimeout bounds how long a start waits for its turn
+// among concurrent starts (lock_timeout syntax).
+const cliDeviceStartLockTimeout = "2s"
 
 // cliDeviceSlowDownStep is what a slow_down adds to the interval (RFC 8628
 // section 3.5), and cliDeviceMaxInterval the longest interval it grows to.
@@ -26,8 +31,10 @@ const (
 // In one transaction serialized with every other start, it forgets sign-ins
 // that expired a while ago and refuses with auth.ErrDeviceSignInsFull when
 // req.MaxLive are live, or auth.ErrDeviceSignInsFromRequester when the
-// requester holds req.MaxLivePerRequester, so the caps hold exactly. A user
-// code hash already in use is domain.ErrConflict: the caller draws another.
+// requester holds req.MaxLivePerRequester, so the caps hold exactly. A start
+// that cannot take its turn within cliDeviceStartLockTimeout is
+// auth.ErrDeviceStartsBusy. A user code hash already in use is
+// domain.ErrConflict: the caller draws another.
 func (r *Repository) CreateCLIDeviceAuthorization(ctx context.Context, req auth.DeviceAuthorizationRequest) (auth.DeviceAuthorization, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -35,10 +42,19 @@ func (r *Repository) CreateCLIDeviceAuthorization(ctx context.Context, req auth.
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
 	q := r.q.WithTx(tx)
+	// A start waits for the start lock at most cliDeviceStartLockTimeout:
+	// past it, the start is refused as busy instead of queueing connections
+	// behind a slow one.
+	if _, err = tx.Exec(ctx, "SET LOCAL lock_timeout = '"+cliDeviceStartLockTimeout+"'"); err != nil {
+		return auth.DeviceAuthorization{}, fmt.Errorf("bounding the device start lock wait: %w", err)
+	}
 	if err = q.LockCLIDeviceStarts(ctx); err != nil {
+		if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) && pgErr.Code == pgLockNotAvailable {
+			return auth.DeviceAuthorization{}, auth.ErrDeviceStartsBusy
+		}
 		return auth.DeviceAuthorization{}, fmt.Errorf("serializing device starts: %w", err)
 	}
-	if err = q.DeleteExpiredCLIDevices(ctx); err != nil {
+	if _, err = q.DeleteExpiredCLIDevices(ctx); err != nil {
 		return auth.DeviceAuthorization{}, fmt.Errorf("deleting expired device sign-ins: %w", err)
 	}
 	live, err := q.CountLiveCLIDevices(ctx, req.RequesterHash)
@@ -192,4 +208,17 @@ func derefString(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// DeleteExpiredCLIDeviceAuthorizations forgets the device sign-ins that
+// expired more than ten minutes ago, with the addresses they were started
+// from, and reports how many. The server runs it every minute
+// (cmd/dexaflow-server), so no address outlives its sign-in by much more
+// than ten minutes even when nobody starts another.
+func (r *Repository) DeleteExpiredCLIDeviceAuthorizations(ctx context.Context) (int64, error) {
+	n, err := r.q.DeleteExpiredCLIDevices(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("deleting expired device sign-ins: %w", err)
+	}
+	return n, nil
 }

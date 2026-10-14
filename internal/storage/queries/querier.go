@@ -160,10 +160,11 @@ type Querier interface {
 	DeleteDagRun(ctx context.Context, arg DeleteDagRunParams) (int64, error)
 	// Removes the locked runs whose children are all gone, up to row_limit.
 	DeleteDagRunsByID(ctx context.Context, arg DeleteDagRunsByIDParams) (int64, error)
-	// Forgets device sign-ins that expired more than ten minutes ago. Run before
-	// each create, so the table holds only what is live or just expired (a CLI
+	// Forgets device sign-ins that expired more than ten minutes ago, with the
+	// address each was started from. Run before each create and by a sweep
+	// every minute, so the table holds only what is live or just expired (a CLI
 	// polling a just-expired sign-in still hears expired_token).
-	DeleteExpiredCLIDevices(ctx context.Context) error
+	DeleteExpiredCLIDevices(ctx context.Context) (int64, error)
 	DeleteExpiredXComIndex(ctx context.Context) error
 	DeleteImportError(ctx context.Context, arg DeleteImportErrorParams) error
 	// The implicit default pool is never deletable (Airflow parity): the guard is in

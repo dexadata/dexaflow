@@ -81,16 +81,20 @@ func (q *Queries) DeleteCLIDevice(ctx context.Context, id pgtype.UUID) (int64, e
 	return result.RowsAffected(), nil
 }
 
-const deleteExpiredCLIDevices = `-- name: DeleteExpiredCLIDevices :exec
+const deleteExpiredCLIDevices = `-- name: DeleteExpiredCLIDevices :execrows
 DELETE FROM cli_device_authorizations WHERE expires_at < now() - interval '10 minutes'
 `
 
-// Forgets device sign-ins that expired more than ten minutes ago. Run before
-// each create, so the table holds only what is live or just expired (a CLI
+// Forgets device sign-ins that expired more than ten minutes ago, with the
+// address each was started from. Run before each create and by a sweep
+// every minute, so the table holds only what is live or just expired (a CLI
 // polling a just-expired sign-in still hears expired_token).
-func (q *Queries) DeleteExpiredCLIDevices(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, deleteExpiredCLIDevices)
-	return err
+func (q *Queries) DeleteExpiredCLIDevices(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredCLIDevices)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const denyCLIDevice = `-- name: DenyCLIDevice :execrows

@@ -1,6 +1,7 @@
--- name: DeleteExpiredCLIDevices :exec
--- Forgets device sign-ins that expired more than ten minutes ago. Run before
--- each create, so the table holds only what is live or just expired (a CLI
+-- name: DeleteExpiredCLIDevices :execrows
+-- Forgets device sign-ins that expired more than ten minutes ago, with the
+-- address each was started from. Run before each create and by a sweep
+-- every minute, so the table holds only what is live or just expired (a CLI
 -- polling a just-expired sign-in still hears expired_token).
 DELETE FROM cli_device_authorizations WHERE expires_at < now() - interval '10 minutes';
 
