@@ -12,7 +12,7 @@ contributor can tell whether the suite that stayed silent was meant to speak.
 | Integration (`//go:build integration`) | the SQL and the storage layer against a real Postgres | anything about Kubernetes | every pull request |
 | `test/e2e/lite-*.sh` | Lite boots, serves, and runs a DAG on the subprocess executor | the Pro or Kubernetes paths | every pull request |
 | `test/e2e/e2e.sh`, `split-two-process.sh`, `dbt-e2e.sh`, `deploy-e2e.sh` | the Kubernetes paths on k3d: pod-per-task, the two-process split, dbt, and build-then-deploy against a registry | NetworkPolicy enforcement, ReadWriteMany, QoS, or anything k3d's CNI cannot show | every pull request, **unless the gate below skips them** |
-| `test/e2e/perf-gates-on.sh`, run by `lite-login.sh` and `e2e.sh` under `e2e-gates.yaml` | that every opt-in performance gate (`scheduler.dispatch.buffer_size`, `database.scheduler_max_conns` and `statement_timeout_ms`, `executor.collect_settled_run_pods`, `observability.metrics.drop_legacy_names`, `ui.etag_revalidation`, `logs.tail.publish=on_demand`, `logs.sink.layout=segmented`) takes effect in the running control plane, on the Lite and the k3d legs | the gates' behavior under load (that is `test/load/`), and warm pools, which no e2e leg runs | pushes to `main` and `release-*`, and on demand; not on pull requests, to spare the runner queue |
+| `test/e2e/perf-gates-on.sh`, run by `lite-login.sh` and `e2e.sh` under `e2e-gates.yaml` | that every opt-in performance gate (`scheduler.dispatch.buffer_size`, `database.scheduler_max_conns` and `statement_timeout_ms`, `executor.collect_settled_run_pods`, `observability.metrics.drop_legacy_names`, `ui.etag_revalidation`, `logs.tail.publish=on_demand`, `logs.sink.layout=segmented`) takes effect in the running control plane, on the Lite and the k3d legs | the gates' behavior under load (that is `test/load/`), and warm pools, which no gates leg runs (the warm pools leg of `deploy-e2e`, below, runs them on pull requests that touch their path) | pushes to `main` and `release-*`, and on demand; not on pull requests, to spare the runner queue |
 | `test/e2e/pro-netpol-rwx.sh` | real NetworkPolicy enforcement and a real RWX volume, on kind with Calico and NFS | cloud-specific behavior | on demand |
 | `test/soak/` | that a control plane dispatching for hours stays healthy, and that the cost of a tick does not track table growth | anything about a single request, and it is not an at-most-once proof (see `test/soak/README.md`) | a short harness smoke in CI; long runs are scheduled locally |
 | `test/load/` | one cost at one instant | behavior over time | on demand |
@@ -54,6 +54,54 @@ gate disagree. Editing one without the other turns the build red, which is the
 point: the same list living in prose and in code with nothing between them is
 how `.changes/` came to be missing from the gate for a whole release cycle
 (#1234).
+
+## The warm pools leg of the deploy job
+
+`deploy-e2e` runs twice, as a matrix: once at the shipped default and once with
+warm pools on (`DEXAFLOW_E2E_WARM_POOLS=on`, #1707). The default leg keeps the
+gate above. The warm pools leg costs as much again, so it runs only when a file
+on the warm placement or deploy path changed (`--scope warm-pools`), and on
+every event decides by that path: a pull request against its base branch, a
+merge queue run against the queue's base and a push against the commit before
+it. Prose under these paths does not count, as in the gate above.
+
+```warm-paths
+internal/dispatch/
+internal/executor/
+internal/agentrpc/
+internal/agent/
+internal/kubeexchange/
+internal/scheduler/
+internal/storage/scheduler_store\.go
+internal/storage/agent_store\.go
+internal/cli/deploy
+internal/build/
+cmd/dexaflow-agent/
+proto/
+test/e2e/deploy-e2e\.sh
+test/e2e/lib\.sh
+scripts/ci-heavy-gate\.sh
+```
+
+They are warm placement and the warm worker (dispatch, executor, the agent, its
+binary and its RPC side, the agent protocol, the token exchange warm pools
+require), the scheduler that picks the version a task is dispatched for, the
+storage that resolves that version and the warm targets, the deploy command and
+the image build, and the leg itself. The server wiring (`cmd/dexaflow-server/`),
+`internal/config/`, the shared `runs.sql`, `go.mod` and `ci.yaml` are left out
+on purpose: with them the leg ran on 57 of the last 100 merges, without them on
+31. A change confined to those paths that affects warm pools says in its pull
+request how warm pools were checked, for example with
+`DEXAFLOW_E2E_WARM_POOLS=on bash test/e2e/deploy-e2e.sh` on a local k3d.
+The same `--self-test` checks this block against the gate.
+
+```bash
+printf '%s\n' internal/api/dags.go | scripts/ci-heavy-gate.sh --decide-warm
+# skip
+
+printf '%s\n' internal/dispatch/dispatch.go | scripts/ci-heavy-gate.sh --decide-warm
+# run
+```
 
 ## Asking the gate a question
 
