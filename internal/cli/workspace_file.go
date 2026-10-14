@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/spf13/cobra"
 	yaml "go.yaml.in/yaml/v3"
 
 	"github.com/dexadata/dexaflow/internal/config"
@@ -227,6 +228,29 @@ func findWorkspaceFromCwd() (*workspaceLocation, error) {
 		return nil, fmt.Errorf("resolving the current directory: %w", err)
 	}
 	return findWorkspace(wd)
+}
+
+// workDirKey is the context key of a command's work dir (withWorkDir).
+type workDirKey struct{}
+
+// withWorkDir makes dir the folder cmd resolves its workspace (its targets,
+// its defaults and the target selected for it) from, in place of the process
+// working directory, until the returned func puts the previous context back.
+// `dexaflow sync <dir>` resolves as a command run in dir would, without
+// changing the process working directory.
+func withWorkDir(cmd *cobra.Command, dir string) func() {
+	prev := cmd.Context()
+	cmd.SetContext(context.WithValue(cmdContext(cmd), workDirKey{}, dir))
+	return func() { cmd.SetContext(prev) }
+}
+
+// findWorkspaceFor is findWorkspace from the command's work dir: the one
+// withWorkDir set, else the process working directory.
+func findWorkspaceFor(cmd *cobra.Command) (*workspaceLocation, error) {
+	if dir, ok := cmdContext(cmd).Value(workDirKey{}).(string); ok {
+		return findWorkspace(dir)
+	}
+	return findWorkspaceFromCwd()
 }
 
 // parseWorkspaceFile reads and validates the workspace file at path. Unknown

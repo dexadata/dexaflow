@@ -78,13 +78,44 @@ type Project struct {
 // loop refuses to compile any of them rather than silently letting the
 // latest tick clobber the previous one.
 func DiscoverProjects(workspace string) ([]Project, error) {
+	projects, _, err := discoverWorkspace(workspace)
+	return projects, err
+}
+
+// brokenConfig is a dexaflow.yaml discovery found and could not parse. Its
+// folder is either a project discovered under its folder name instead of
+// its dag_id (it has a dag.py), or not discovered at all (no dag.py: a dbt
+// project cannot be told apart without parsing).
+type brokenConfig struct {
+	// Path is the project folder.
+	Path string
+	// Discovered says the folder is in the projects, under its folder name.
+	Discovered bool
+	Err        error
+}
+
+// discoverWorkspace is DiscoverProjects that also returns every
+// dexaflow.yaml it could not parse, which DiscoverProjects leaves to the
+// compile step: `dexaflow sync --prune` must not take a DAG it cannot name
+// for one the workspace does not hold.
+func discoverWorkspace(workspace string) ([]Project, []brokenConfig, error) {
 	absWs, err := filepath.Abs(workspace)
 	if err != nil {
-		return nil, fmt.Errorf("resolving workspace path: %w", err)
+		return nil, nil, fmt.Errorf("resolving workspace path: %w", err)
 	}
 	rootDepth := pathDepth(absWs)
 
 	var projects []Project
+	var broken []brokenConfig
+	visit := func(path string) {
+		proj, ok := projectAt(path)
+		if ok {
+			projects = append(projects, proj)
+		}
+		if berr := configParseError(path); berr != nil {
+			broken = append(broken, brokenConfig{Path: path, Discovered: ok, Err: berr})
+		}
+	}
 	werr := filepath.WalkDir(absWs, func(path string, d fs.DirEntry, perr error) error {
 		if perr != nil {
 			return fmt.Errorf("walking %s: %w", path, perr)
@@ -103,24 +134,29 @@ func DiscoverProjects(workspace string) ([]Project, error) {
 		}
 		// Workspace root is depth 0; refuse to descend past MaxWorkspaceDepth.
 		depth := pathDepth(path) - rootDepth
+		visit(path)
 		if depth >= MaxWorkspaceDepth {
-			if proj, ok := projectAt(path); ok {
-				projects = append(projects, proj)
-			}
 			return fs.SkipDir
-		}
-		if proj, ok := projectAt(path); ok {
-			projects = append(projects, proj)
 		}
 		return nil
 	})
 	if werr != nil {
-		return nil, fmt.Errorf("walking workspace: %w", werr)
+		return nil, nil, fmt.Errorf("walking workspace: %w", werr)
 	}
 	if derr := checkDuplicateDagIDs(projects); derr != nil {
-		return nil, derr
+		return nil, nil, derr
 	}
-	return projects, nil
+	return projects, broken, nil
+}
+
+// configParseError is why the dexaflow.yaml (or leoflow.yaml) in path does
+// not parse, nil when it does or there is none.
+func configParseError(path string) error {
+	if !fileExists(projectConfigPath(path)) {
+		return nil
+	}
+	_, err := loadProjectConfigLenient(path)
+	return err
 }
 
 // pathDepth counts the number of path separators in a cleaned absolute path.
