@@ -1019,10 +1019,10 @@ func registerDeployedDAG(ctx context.Context, out io.Writer, r registerRequest) 
 		return deployResult{}, uerr
 	}
 	if status >= http.StatusMultipleChoices {
-		return deployResult{}, versionConflictHint(apiStatusError(status, []byte(body)), r.version, r.origin)
+		return deployResult{}, versionConflictHint(apiStatusError(status, body), r.version, r.origin)
 	}
 	var answer registerAnswer
-	_ = json.Unmarshal([]byte(body), &answer) //nolint:errcheck // an older server's body may say less; the register itself succeeded
+	_ = json.Unmarshal(body, &answer) //nolint:errcheck // an older server's body may say less; the register itself succeeded
 	warnPausedIgnored(r.warn, r.paused, answer.IsPaused)
 	res := deployResult{DagID: spec.DagID, Version: r.version, Image: r.digestRef, Digest: digestOf(r.digestRef),
 		SpecHash: answer.SpecHash, IsPaused: answer.IsPaused, Created: status == http.StatusCreated,
