@@ -36,6 +36,7 @@ dexaflow deploy [path | dag_id] [flags]
       --timeout duration       with --follow, stop following after this long (e.g. 30m) and exit 3; the run keeps going (default: no limit)
       --token string           JWT bearer token (default: config token)
       --trigger                trigger a run immediately after registering
+      --watch                  keep running after the deploy and redeploy each project when one of its files is saved, until Ctrl-C (asks once, applies --paused or --active to the first deploy only)
   -y, --yes                    skip the confirmation prompt (for automation)
 ```
 
