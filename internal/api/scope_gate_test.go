@@ -26,6 +26,7 @@ var scopedWrites = map[string]string{
 	"POST /api/v2/dags/:dag_id/clearTaskInstances":                                  auth.ScopeRun,
 	"POST /api/v2/dags/:dag_id/dagRuns/:dag_run_id/clear":                           auth.ScopeRun,
 	"POST /api/v2/dags/:dag_id/versions":                                            auth.ScopeDeploy,
+	"POST /api/v2/dags/:dag_id/versions/dry_run":                                    auth.ScopeDeploy,
 	"PUT /api/v2/dags/:dag_id/currentVersion":                                       auth.ScopeDeploy,
 }
 

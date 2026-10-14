@@ -636,6 +636,10 @@ func (d *deployRun) run() error {
 	if d.o.plan {
 		return d.plan(ctx, version, image, origin)
 	}
+	access, aerr := d.checkServer(ctx)
+	if aerr != nil {
+		return aerr
+	}
 	// Only a content label says anything about content; --force skips it.
 	if done, perr := preDeployCheck(ctx, d.cmd.ErrOrStderr(), out, d.serverURL, d.token, d.cfg.DagID, version,
 		origin == labelDefault && !d.o.force); done || perr != nil {
@@ -643,6 +647,14 @@ func (d *deployRun) run() error {
 			return perr
 		}
 		return d.alreadyCurrent(ctx, version)
+	}
+	if rerr := d.checkRegistry(ctx, image, co.reuse); rerr != nil {
+		return rerr
+	}
+	if access.dryRun {
+		co.beforeBuild = func() error {
+			return d.dryRun(ctx, output, image, version, origin, co.reuse)
+		}
 	}
 	if cerr := runCompile(d.cmd, d.dir, co); cerr != nil {
 		return cerr
@@ -659,6 +671,58 @@ func (d *deployRun) run() error {
 	}
 	surfaceConnections(out, output)
 	return d.finish(ctx, res)
+}
+
+// checkServer is the first step of the preflight (#1705): the control plane
+// answers, and the token may deploy, before anything is compiled.
+func (d *deployRun) checkServer(ctx context.Context) (serverAccess, error) {
+	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
+	defer cancel()
+	access, err := checkServerAccess(ctx, d.cmd.ErrOrStderr(), d.serverURL, d.token, d.cfg.DagID, d.o.pausedOverride())
+	if err != nil {
+		return serverAccess{}, err
+	}
+	_, werr := fmt.Fprintf(d.cmd.OutOrStdout(), "preflight:  control plane %s answers, the token may deploy\n", d.serverURL)
+	return access, werr
+}
+
+// checkRegistry is the push step of the preflight: the registry accepts a
+// push of image, checked unless nothing will be pushed (--skip-build, or a
+// reusable image the registry already holds).
+func (d *deployRun) checkRegistry(ctx context.Context, image string, reuse bool) error {
+	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
+	defer cancel()
+	if d.o.skipBuild || (reuse && registryHolds(ctx, image)) {
+		return nil
+	}
+	return checkRegistryPush(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), image, d.o.builder)
+}
+
+// dryRun is the last step of the preflight: the server's dry run of the
+// compiled spec at output, before the build. reuse says the compile takes
+// the skip path when the registry holds the image.
+func (d *deployRun) dryRun(ctx context.Context, output, image, version string, origin labelOrigin, reuse bool) error {
+	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
+	defer cancel()
+	return serverDryRun(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), versionPost{serverURL: d.serverURL, token: d.token,
+		dagID: d.cfg.DagID, paused: d.o.pausedOverride()}, output, d.dryRunImage(ctx, image, reuse), version, origin)
+}
+
+// dryRunImage is the image the dry run is sent. The register gets the image
+// pinned by digest. When nothing is built (--skip-build, or the skip path of
+// a reused content label the registry already holds), that is the digest the
+// registry holds for the tag, read here, and it decides the image checks and
+// a conflict as for the register. Before a build the digest does not exist
+// yet: the repository at a placeholder digest, so an allowlist of
+// repositories or of repo@* decides as for the register, and a refusal of
+// the image itself or a conflict is left to the register.
+func (d *deployRun) dryRunImage(ctx context.Context, image string, reuse bool) dryImage {
+	if d.o.skipBuild || reuse {
+		if p, err := (build.Registry{}).Resolve(ctx, image); err == nil {
+			return dryImage{ref: p.Ref, decides: true}
+		}
+	}
+	return dryImage{ref: build.PinnedRef(image, placeholderDigest)}
 }
 
 // mayReuse reports whether this deploy may take the skip path: the tag is the

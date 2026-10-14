@@ -75,17 +75,22 @@ type CurrentVersionChange struct {
 // register creates starts paused per its is_paused_upon_creation or the
 // server's dags_are_paused_at_creation, and an existing DAG keeps its state.
 // IsPaused set is the DAG's state after the register, created or not.
+// DryRun runs every check and step of the register and then undoes it, so
+// the outcome says what the register would do and nothing is written, audit
+// included.
 type DagRegistration struct {
 	Spec        DAGSpec
 	SpecHash    string
 	ActorUserID string
 	IsPaused    *bool
+	DryRun      bool
 }
 
 // DagRegistered is the outcome of a register: whether a new version was
 // created (false when the content was already registered), whether the
 // register created the DAG itself (its first version), and the DAG's
-// is_paused afterwards.
+// is_paused afterwards. For a dry run each field is what the register would
+// have done.
 type DagRegistered struct {
 	Created    bool
 	DagCreated bool
