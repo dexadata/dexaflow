@@ -502,9 +502,10 @@ always runs its newest version:
   version with the newest one. In Dexaflow that option re-pins the run to the
   current version, so on such a run it changes nothing. When the current
   version adds or removes a task compared with the run, the option is refused
-  with `409` and a message naming those tasks, before anything is cleared (the
-  preview shows it too): clear without the option, or trigger a new run
-  ([UI compatibility](/concepts/ui-compatibility/) has the detail).
+  with `409` before anything is cleared: clear without the option, or trigger
+  a new run. The dialog does not say why (its preview stays empty and Confirm
+  disabled); the `detail` of the API's `409` names the tasks, and
+  [UI compatibility](/concepts/ui-compatibility/) shows how to read it.
 - **Which version is current** is the `*` in `dexaflow dags versions`, and the
   `is_current` field of each version in `GET /api/v2/dags/{dag_id}/dagVersions`
   and of `latest_dag_version` in the DAG details. The MCP `dag://source`

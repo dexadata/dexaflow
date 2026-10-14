@@ -214,3 +214,20 @@ func TestClearGuardIsTenantScopedIntegration(t *testing.T) {
 	}
 	f.assertUntouched(t)
 }
+
+// An unknown dag_run_id answers 404 on both routes, as without
+// run_on_latest_version, before any version is compared.
+func TestClearGuardUnknownRunIsNotFoundIntegration(t *testing.T) {
+	f := newClearGuardFixture(t, []string{"a"}, []string{"a", "b"})
+	for _, req := range [][2]string{
+		{"/api/v2/dags/" + f.dagID + "/clearTaskInstances", `{"dag_run_id":"nope","run_on_latest_version":true,"dry_run":true}`},
+		{"/api/v2/dags/" + f.dagID + "/clearTaskInstances", `{"dag_run_id":"nope","run_on_latest_version":true,"dry_run":false}`},
+		{"/api/v2/dags/" + f.dagID + "/dagRuns/nope/clear", `{"run_on_latest_version":true,"dry_run":true}`},
+		{"/api/v2/dags/" + f.dagID + "/dagRuns/nope/clear", `{"run_on_latest_version":true,"dry_run":false}`},
+	} {
+		if rec := authGet(f.srv, http.MethodPost, req[0], req[1]); rec.Code != http.StatusNotFound {
+			t.Errorf("%s %s = %d (%s), want 404", req[0], req[1], rec.Code, rec.Body.String())
+		}
+	}
+	f.assertUntouched(t)
+}

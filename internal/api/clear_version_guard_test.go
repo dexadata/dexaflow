@@ -17,7 +17,9 @@ import (
 // instance behind (#1702), so the repository refuses it with a conflict. The
 // handlers ask before they preview or clear anything, so a dry run reports
 // the same refusal the clear would meet, and a clear over several runs
-// clears none of them when one is refused.
+// is refused as a whole, before any run is cleared, when one of them would
+// be (a version registered while the clear loops can still refuse a later
+// run after earlier ones cleared).
 
 const driftDetail = `version 2 of dag "etl" adds tasks [report]: clear without run_on_latest_version, or trigger a new run`
 
@@ -96,8 +98,9 @@ func TestClearWithoutRebindSkipsTheVersionCheck(t *testing.T) {
 	}
 }
 
-// include_future fans the clear across runs; every run is checked before any
-// is cleared, so a refusal on a later run leaves the first one untouched.
+// include_future fans the clear across runs; every run is checked, in one
+// call, before any is cleared, so a refusal on a later run leaves the first
+// one untouched.
 func TestClearAcrossRunsChecksEveryRunFirst(t *testing.T) {
 	now := time.Now().UTC()
 	runs := &fakeRunRepo{runs: []domain.DagRun{
@@ -116,7 +119,7 @@ func TestClearAcrossRunsChecksEveryRunFirst(t *testing.T) {
 	if tasks.clearCalled {
 		t.Error("a run was cleared before every run was checked")
 	}
-	if strings.Join(tasks.checkedRuns, ",") != "cur,future" {
-		t.Errorf("checked runs = %v, want [cur future]", tasks.checkedRuns)
+	if strings.Join(tasks.checkedRuns, ",") != "cur,future" || tasks.checkCalls != 1 {
+		t.Errorf("checked runs = %v in %d calls, want [cur future] in one", tasks.checkedRuns, tasks.checkCalls)
 	}
 }

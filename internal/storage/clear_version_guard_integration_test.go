@@ -106,7 +106,7 @@ var rebind = domain.ClearOptions{ResetDagRun: true, RunOnLatestVersion: true}
 func TestClearOntoAVersionThatAddsATaskIsRefusedIntegration(t *testing.T) {
 	f := seedDriftedRun(t, "drift_add", []string{"a"}, []string{"a", "b"})
 	ctx := t.Context()
-	assertDrift(t, f.repo.CheckClearVersion(ctx, "default", f.dagID, "r1", rebind),
+	assertDrift(t, f.repo.CheckClearVersion(ctx, "default", f.dagID, []string{"r1"}, rebind),
 		`adds tasks [b]`, "without run_on_latest_version", "trigger a new run")
 	f.unchanged(t)
 	_, err := f.repo.ClearTaskInstances(ctx, "default", f.dagID, "r1", nil, false, rebind)
@@ -119,7 +119,7 @@ func TestClearOntoAVersionThatAddsATaskIsRefusedIntegration(t *testing.T) {
 func TestClearOntoAVersionThatRemovesATaskIsRefusedIntegration(t *testing.T) {
 	f := seedDriftedRun(t, "drift_rm", []string{"a", "b", "c"}, []string{"a", "d"})
 	ctx := t.Context()
-	assertDrift(t, f.repo.CheckClearVersion(ctx, "default", f.dagID, "r1", rebind),
+	assertDrift(t, f.repo.CheckClearVersion(ctx, "default", f.dagID, []string{"r1"}, rebind),
 		`adds tasks [d]`, `removes tasks [b c]`)
 	_, err := f.repo.ClearTaskInstances(ctx, "default", f.dagID, "r1", nil, true, rebind)
 	assertDrift(t, err, `removes tasks [b c]`)
@@ -132,7 +132,7 @@ func TestClearWithoutRebindIgnoresTheTaskSetIntegration(t *testing.T) {
 	f := seedDriftedRun(t, "drift_pin", []string{"a"}, []string{"a", "b"})
 	ctx := t.Context()
 	pin := domain.ClearOptions{ResetDagRun: true}
-	if err := f.repo.CheckClearVersion(ctx, "default", f.dagID, "r1", pin); err != nil {
+	if err := f.repo.CheckClearVersion(ctx, "default", f.dagID, []string{"r1"}, pin); err != nil {
 		t.Fatalf("CheckClearVersion without re-bind: %v", err)
 	}
 	if n, err := f.repo.ClearTaskInstances(ctx, "default", f.dagID, "r1", nil, true, pin); err != nil || n != 1 {
@@ -147,7 +147,7 @@ func TestClearWithoutRebindIgnoresTheTaskSetIntegration(t *testing.T) {
 func TestClearOntoAVersionWithTheSameTasksRebindsIntegration(t *testing.T) {
 	f := seedDriftedRun(t, "drift_same", []string{"a", "b"}, []string{"b", "a"})
 	ctx := t.Context()
-	if err := f.repo.CheckClearVersion(ctx, "default", f.dagID, "r1", rebind); err != nil {
+	if err := f.repo.CheckClearVersion(ctx, "default", f.dagID, []string{"r1"}, rebind); err != nil {
 		t.Fatalf("CheckClearVersion: %v", err)
 	}
 	if n, err := f.repo.ClearTaskInstances(ctx, "default", f.dagID, "r1", nil, true, rebind); err != nil || n != 2 {
@@ -159,16 +159,30 @@ func TestClearOntoAVersionWithTheSameTasksRebindsIntegration(t *testing.T) {
 }
 
 // A run whose task instances were never materialized gets them from the
-// version it is bound to when the scheduler starts it, so re-binding it loses
-// nothing.
-func TestClearOfARunWithoutTaskInstancesRebindsIntegration(t *testing.T) {
+// version it is bound to, and the scheduler may already have read that
+// version's tasks when the clear re-binds the run. So such a run is compared
+// by the tasks of its own version: refused when the current version's differ,
+// re-bound when they match, and a materialization from the old version's
+// spec after the re-bind then still gives the run the current version's tasks.
+func TestClearOfARunWithoutTaskInstancesComparesItsVersionIntegration(t *testing.T) {
 	f := seedDriftedRun(t, "drift_empty", []string{"a"}, []string{"a", "b"})
 	ctx := t.Context()
 	if _, err := f.pg.Pool.Exec(ctx, `DELETE FROM task_instances WHERE dag_run_id = $1::uuid`, f.runUUID); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.repo.CheckClearVersion(ctx, "default", f.dagID, "r1", rebind); err != nil {
-		t.Errorf("CheckClearVersion of a run without task instances: %v", err)
+	assertDrift(t, f.repo.CheckClearVersion(ctx, "default", f.dagID, []string{"r1"}, rebind), "adds tasks [b]")
+	_, err := f.repo.ClearTaskInstances(ctx, "default", f.dagID, "r1", nil, true, rebind)
+	assertDrift(t, err, "adds tasks [b]")
+	if got := runImage(t, f.pg, ctx, f.runUUID); got == f.v2Image {
+		t.Errorf("run re-bound to %q although its version's tasks differ", got)
+	}
+}
+
+func TestClearOfARunWithoutTaskInstancesRebindsOnTheSameTasksIntegration(t *testing.T) {
+	f := seedDriftedRun(t, "drift_empty_same", []string{"a", "b"}, []string{"b", "a"})
+	ctx := t.Context()
+	if _, err := f.pg.Pool.Exec(ctx, `DELETE FROM task_instances WHERE dag_run_id = $1::uuid`, f.runUUID); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := f.repo.ClearTaskInstances(ctx, "default", f.dagID, "r1", nil, true, rebind); err != nil {
 		t.Fatalf("clear: %v", err)
@@ -176,6 +190,42 @@ func TestClearOfARunWithoutTaskInstancesRebindsIntegration(t *testing.T) {
 	if got := runImage(t, f.pg, ctx, f.runUUID); got != f.v2Image {
 		t.Errorf("run image = %q, want %q", got, f.v2Image)
 	}
+	// The scheduler read the run on v1 before the clear and materializes now.
+	v1 := []domain.TaskSpec{{TaskID: "a", Type: domain.TaskTypePython}, {TaskID: "b", Type: domain.TaskTypePython}}
+	if err := storage.NewSchedulerStore(f.pg).MaterializeTasks(ctx, f.runUUID, v1); err != nil {
+		t.Fatalf("materialize: %v", err)
+	}
+	var ids string
+	if err := f.pg.Pool.QueryRow(ctx, `SELECT string_agg(task_id, ',' ORDER BY task_id) FROM task_instances
+		WHERE dag_run_id = $1::uuid`, f.runUUID).Scan(&ids); err != nil {
+		t.Fatal(err)
+	}
+	if ids != "a,b" {
+		t.Errorf("task instances after a late materialization = %q, want the current version's a,b", ids)
+	}
+}
+
+// One request names several runs (include_past, include_future): the
+// version's spec is read once, every run is compared, and the refusal says
+// how many of the runs differ.
+func TestCheckClearVersionCountsTheRunsThatDifferIntegration(t *testing.T) {
+	f := seedDriftedRun(t, "drift_many", []string{"a"}, []string{"a", "b"})
+	ctx := t.Context()
+	if _, err := f.repo.CreateDagRun(ctx, "default", f.dagID, domain.DagRun{
+		RunID: "r2", State: domain.DagRunStateFailed, RunType: "manual", LogicalDate: time.Now().UTC().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("create r2: %v", err)
+	}
+	// r2 was created on v2, so only r1 differs.
+	assertDrift(t, f.repo.CheckClearVersion(ctx, "default", f.dagID, []string{"r1", "r2"}, rebind),
+		"1 of the 2 runs", `run "r1"`, "adds tasks [b]")
+	if err := f.repo.CheckClearVersion(ctx, "default", f.dagID, []string{"r2"}, rebind); err != nil {
+		t.Errorf("r2 is on the current version: %v", err)
+	}
+	if err := f.repo.CheckClearVersion(ctx, "default", f.dagID, []string{"r2", "nope"}, rebind); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("an unknown run: err = %v, want not found", err)
+	}
+	f.unchanged(t)
 }
 
 // Another tenant finds neither the DAG nor the run.
@@ -186,7 +236,7 @@ func TestCheckClearVersionIsTenantScopedIntegration(t *testing.T) {
 	if _, err := f.pg.Pool.Exec(ctx, `INSERT INTO tenants (name, display_name) VALUES ($1, $1)`, other); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.repo.CheckClearVersion(ctx, other, f.dagID, "r1", rebind); !errors.Is(err, domain.ErrNotFound) {
+	if err := f.repo.CheckClearVersion(ctx, other, f.dagID, []string{"r1"}, rebind); !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("CheckClearVersion as another tenant: err = %v, want not found", err)
 	}
 	f.unchanged(t)

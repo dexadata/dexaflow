@@ -8,9 +8,13 @@ body: |-
   behind it. Airflow creates the missing task instances and marks the dropped
   ones `removed`; until Dexaflow does the same, both Clear routes
   (`clearTaskInstances` and `dagRuns/{dag_run_id}/clear`) answer `409` when the
-  current version adds or removes a task, with a detail that names the tasks
+  current version adds or removes a task, with a `detail` that names the tasks
   and the ways out (clear without `run_on_latest_version`, or trigger a new
-  run). The dry run answers the same, nothing is cleared, and a clear across
-  several runs checks every run first. A version with the same tasks re-binds
-  as before. (#1702)
+  run). The dry run answers the same and nothing is cleared. The UI's Clear
+  dialog shows an empty preview for it, without the reason, which the API
+  response carries. A clear across several runs (`include_past`,
+  `include_future`) checks every run before clearing any and is refused as a
+  whole, saying how many runs differ; a version registered during that clear
+  can still refuse a later run. An unknown `dag_run_id` answers `404`. A
+  version with the same tasks re-binds as before. (#1702)
 time: 2026-10-14T12:00:00.000000000-03:00

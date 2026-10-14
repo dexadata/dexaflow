@@ -1229,13 +1229,12 @@ func TestClearRebindsRunToCurrentVersion(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
-	// v2: a new version with an extra task (simulates a code/yaml fix + re-deploy).
+	// v2: the same task, changed (simulates a code/yaml fix + re-deploy). A
+	// version that adds or removes a task is refused instead (#1702, see
+	// clear_version_guard_integration_test.go).
 	spec2 := domain.DAGSpec{
 		SchemaVersion: "1.0", DagID: dagID, DagVersion: "v2", Image: "img:v2",
-		Tasks: []domain.TaskSpec{
-			{TaskID: "extract", Type: domain.TaskTypePython},
-			{TaskID: "load", Type: domain.TaskTypePython, DependsOn: []string{"extract"}},
-		},
+		Tasks: []domain.TaskSpec{{TaskID: "extract", Type: domain.TaskTypePython, Retries: intPtr(3)}},
 	}
 	hash2, herr := spec2.CanonicalHash()
 	if herr != nil {
@@ -1246,32 +1245,26 @@ func TestClearRebindsRunToCurrentVersion(t *testing.T) {
 	}
 
 	// Clear with reset AND run_on_latest_version re-binds to the current version
-	// (v2). Reset alone no longer does — it only re-opens the run.
+	// (v2). Reset alone no longer does: it only re-opens the run.
 	if _, err := repo.ClearTaskInstances(ctx, "default", dagID, "r1", []string{"extract"}, false, domain.ClearOptions{ResetDagRun: true, RunOnLatestVersion: true}); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
 
-	// The (now queued) run resolves to v2's spec — proving the re-bind.
+	// The (now queued) run resolves to v2's spec, proving the re-bind.
 	active, err := store.ActiveRuns(ctx)
 	if err != nil {
 		t.Fatalf("active runs: %v", err)
 	}
-	var tasks []string
+	rebound := false
 	for _, r := range active {
-		if r.DagID == dagID && r.RunID != "" {
-			for _, ts := range r.Tasks {
-				tasks = append(tasks, ts.TaskID)
+		for _, ts := range r.Tasks {
+			if r.DagID == dagID && ts.TaskID == "extract" && ts.Retries != nil && *ts.Retries == 3 {
+				rebound = true
 			}
 		}
 	}
-	hasLoad := false
-	for _, id := range tasks {
-		if id == "load" {
-			hasLoad = true
-		}
-	}
-	if !hasLoad {
-		t.Errorf("after clear the run should re-bind to v2 (tasks include 'load'), got %v", tasks)
+	if !rebound {
+		t.Errorf("after clear the run should re-bind to v2 (extract with retries 3), got %+v", active)
 	}
 }
 
