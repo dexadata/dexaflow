@@ -58,21 +58,33 @@ func buildClusterLayer(cmd *cobra.Command) *defaultsLayer {
 	return readClusterLayer(cmdContext(cmd), cmd.ErrOrStderr(), choice.URL, token)
 }
 
-// readClusterLayer reads and checks the server's deploy defaults.
+// readClusterLayer reads and checks the server's deploy defaults
+// (clusterLayer), warning on warn and returning nil when they are unusable.
 func readClusterLayer(ctx context.Context, warn io.Writer, serverURL, token string) *defaultsLayer {
-	d, found, err := fetchClusterDefaults(ctx, serverURL, token)
+	l, err := clusterLayer(ctx, serverURL, token)
 	if err != nil {
 		//nolint:errcheck // advisory: the deploy goes on with its local settings
 		fmt.Fprintf(warn, "warning: ignoring the deploy defaults of %s: %v; deploying with the local settings only\n", serverURL, err)
 		return nil
 	}
+	return l
+}
+
+// clusterLayer reads and checks the server's deploy defaults as the last
+// layer of a deploy to serverURL: nil when it advertises none, an error when
+// what it advertises cannot be used (a deploy then ignores it).
+func clusterLayer(ctx context.Context, serverURL, token string) (*defaultsLayer, error) {
+	d, found, err := fetchClusterDefaults(ctx, serverURL, token)
+	if err != nil {
+		return nil, err
+	}
 	if !found || d.IsEmpty() {
-		return nil
+		return nil, nil //nolint:nilnil // no defaults advertised is a normal outcome, not an error.
 	}
 	return &defaultsLayer{
 		values: deployDefaults{Registry: d.Registry, Platforms: d.Platforms, BaseImage: d.BaseImage},
 		name:   "the deploy defaults of " + serverURL,
-	}
+	}, nil
 }
 
 // fetchClusterDefaults reads GET /api/v2/deployDefaults with the public
