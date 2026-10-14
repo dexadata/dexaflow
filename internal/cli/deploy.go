@@ -723,6 +723,7 @@ func (d *deployRun) run() error {
 		// deploySettings showed the platforms; the build pins its push.
 		settingsShown: true,
 		built:         &built,
+		requirePin:    true,
 		provenance:    &provenance,
 	}
 	// Resolved here rather than inside runCompile because the digest lookup

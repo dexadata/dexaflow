@@ -56,7 +56,10 @@ flowchart LR
 `compile --build --push` reads the digest of the image it pushed (the same read
 `deploy` makes, with the same [registry credentials](/operate/builders/#registry-credentials))
 and writes `registry/image@sha256:…` into `dag.json`, so `push` registers the
-bytes that were built. `push` pins too: when `dag.json` names a tag (a file
+bytes that were built. When only that read fails (the push succeeded), the
+compile keeps the tag in `dag.json` and warns with the reason, and `push`
+tries the read again; `deploy` stops instead, since it registers only a
+digest. `push` pins too: when `dag.json` names a tag (a file
 compiled by an older CLI, or an image another tool pushed), it resolves the tag
 in the registry and registers the digest it names at that moment. `push --image
 <ref>` registers another image than the one in `dag.json`, a tag resolved the
@@ -931,11 +934,20 @@ followed by `dexaflow push` register pinned images** (#1703). `push` resolves
 a tag in `dag.json` to its digest before registering it, so a file compiled by
 an older CLI is pinned too, as long as the registry can be read from where
 `push` runs. When it cannot, `push` registers the tag with a warning, and under
-`enforce` the refusal names why the image could not be pinned. Pin by hand
-with `--image`:
+`enforce` the refusal names why the image could not be pinned. Resolving a
+tag reads the registry (for up to 30 seconds), with the credentials of
+`registry.auth_method` in the project's `dexaflow.yaml`: the one next to
+`dag.json`, else the one in the working directory, else the one `--project
+<dir>` names. Pin by hand with `--image`, which skips that read when it is
+already a `<repository>@sha256:<digest>`; a tag given with `--image` must
+resolve, or the push fails:
 
 ```bash
-dexaflow push dag.json --image ghcr.io/acme/my_pipeline@sha256:<digest>
+ref=ghcr.io/acme/my_pipeline:v1
+digest=$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' | jq -r .digest)
+repo=$ref
+case ${ref##*/} in *:*) repo=${ref%:*} ;; esac   # drop the tag, never a registry port
+dexaflow push dag.json --image "$repo@$digest"
 ```
 
 A CLI from before #1703 registers the tag that `compile --build --push`

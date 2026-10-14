@@ -313,9 +313,29 @@ func TestLocalDaemonFailsWhenTheRegistryCannotPin(t *testing.T) {
 	tool, _ := fakeTool(t, "")
 	req := request()
 	req.Push, req.Pin = true, true
-	_, err := LocalDaemon{Tool: tool, Registry: &fakeRegistry{err: errors.New("manifest unknown")}}.Build(context.Background(), req)
+	res, err := LocalDaemon{Tool: tool, Registry: &fakeRegistry{err: errors.New("manifest unknown")}}.Build(context.Background(), req)
 	if err == nil || !strings.Contains(err.Error(), "manifest unknown") || !strings.Contains(err.Error(), "reg.io/team/etl:v1") {
 		t.Fatalf("err = %v, want the registry failure and the image named", err)
+	}
+	// The push happened: the error says only the read failed, and the
+	// result names what was pushed, for a caller that can keep the tag.
+	if !errors.Is(err, ErrPinRead) {
+		t.Errorf("err = %v, want ErrPinRead", err)
+	}
+	if !res.Pushed || res.Image != req.Image || res.Ref != "" {
+		t.Errorf("result = %+v, want the pushed tag, unpinned", res)
+	}
+}
+
+// A multi-platform push whose read fails cannot be verified, which is not a
+// pin read the caller may skip.
+func TestLocalDaemonUnverifiedMultiPlatformPushIsNotAPinRead(t *testing.T) {
+	tool, _ := fakeTool(t, "")
+	req := request("linux/amd64", "linux/arm64")
+	req.Push, req.Pin = true, true
+	_, err := LocalDaemon{Tool: tool, Registry: &fakeRegistry{err: errors.New("manifest unknown")}}.Build(context.Background(), req)
+	if err == nil || errors.Is(err, ErrPinRead) {
+		t.Fatalf("err = %v, want a failure that is not ErrPinRead", err)
 	}
 }
 

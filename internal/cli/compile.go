@@ -70,6 +70,10 @@ type compileOptions struct {
 	// the builder for the pushed image's digest, which the compile writes
 	// into dag.json (#1703); deploy registers that pin.
 	built *build.Result
+	// requirePin makes a pushed image whose digest cannot be read a failure
+	// (deploy registers only a digest). Without it the compile keeps the
+	// tag in dag.json and warns (warnPinRead).
+	requirePin bool
 	// provenance, when set, receives the builder that produced the image
 	// and, for a generated Dockerfile, the base image it builds FROM: the
 	// build half of the version's build info (#1702). A reused image (the
@@ -699,8 +703,8 @@ func buildImage(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.Le
 		Stdout:       cmd.OutOrStdout(),
 		Stderr:       cmd.ErrOrStderr(),
 	})
-	if berr != nil {
-		return berr
+	if werr := warnPinRead(cmd.ErrOrStderr(), o, res, berr); werr != nil {
+		return werr
 	}
 	if perr := recordBuild(o, res); perr != nil {
 		return perr
@@ -720,6 +724,23 @@ func buildImage(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.Le
 	if res.Path != build.PathSkip {
 		remindBakedSecretsAfterBuild(cmd.ErrOrStderr(), baked)
 	}
+	return nil
+}
+
+// warnPinRead turns err, a build's failure, into a warning on w when only
+// the read of the pushed image's digest failed (build.ErrPinRead) and the
+// caller does not require a pin: the image is in the registry, so the
+// compile keeps its tag in dag.json rather than fail after the push
+// (podman reading another auth file, a plain-HTTP registry off the loopback).
+// Any other failure, or any failure under o.requirePin, is returned.
+func warnPinRead(w io.Writer, o compileOptions, res build.Result, err error) error {
+	if err == nil || o.requirePin || !res.Pushed || !errors.Is(err, build.ErrPinRead) {
+		return err
+	}
+	//nolint:errcheck // advisory
+	fmt.Fprintf(w, "warning: %s was pushed, but dag.json keeps its tag: %v\n"+
+		"  `dexaflow push` reads the digest again before registering; or register it pinned with "+
+		"`dexaflow push --image <repository>@sha256:<digest>`\n", res.Image, err)
 	return nil
 }
 

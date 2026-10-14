@@ -534,7 +534,9 @@ proxy.
 podman users: the CLI reads `~/.docker/config.json`, and podman's
 `auth.json` only when that file does not exist. If you have both, run
 `docker login` for the registry too, or the push succeeds and the read is
-refused with a 401.
+refused with a 401. When that read fails after a push, `dexaflow deploy`
+stops, and `dexaflow compile --build --push` keeps the tag in `dag.json` with
+a warning (see [the explicit steps](/operate/cicd-deploy/)).
 
 On a machine whose architecture differs from the target platform (an Apple
 Silicon laptop building `linux/amd64`), the tool builds under emulation, which

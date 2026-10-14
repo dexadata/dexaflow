@@ -191,3 +191,153 @@ func TestPushUnresolvableTagSaysWhyAndTheFix(t *testing.T) {
 		t.Errorf("stderr = %q, want the warning naming the image", errOut)
 	}
 }
+
+// A push that succeeded is not undone by a failed read of its digest
+// (podman with both auth files, a plain-HTTP registry off the loopback):
+// compile keeps the tag in dag.json and warns with the reason and the fix.
+func TestCompilePushKeepsTheTagWhenTheDigestReadFails(t *testing.T) {
+	dir := versionProject(t, "registry:\n  url: "+missingRegistry(t)+"/team\n  image_name: etl\n")
+	t.Setenv("LEOFLOW_PARSER_CMD", recordingParser(t, filepath.Join(t.TempDir(), "parser.log")))
+	builder, log := argvBuilder(t)
+	out, errOut, err := run(t, "compile", dir, "--build", "--push", "--builder", builder)
+	if err != nil {
+		t.Fatalf("compile --build --push with an unreadable digest: %v\n%s", err, errOut)
+	}
+	if calls := argvLines(t, log); len(calls) != 2 || !strings.HasPrefix(calls[1], "push ") {
+		t.Fatalf("builder calls = %q, want a build and a push", calls)
+	}
+	got := compiledImage(t, filepath.Join(dir, "dag.json"))
+	if domain.IsDigestPinned(got) || !strings.Contains(got, "/team/etl:") {
+		t.Errorf("dag.json image = %q, want the pushed tag", got)
+	}
+	for _, want := range []string{"warning:", got, "MANIFEST_UNKNOWN", "dexaflow push", "--image <repository>@sha256:<digest>"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr does not name %q:\n%s", want, errOut)
+		}
+	}
+	if !strings.Contains(out, "image "+got) {
+		t.Errorf("summary does not name the tag:\n%s", out)
+	}
+}
+
+// deploy registers only a digest: a pushed image whose digest cannot be
+// read stops it before the register.
+func TestDeployStopsWhenThePushedDigestCannotBeRead(t *testing.T) {
+	dir, builder, _ := deployFixture(t)
+	fake := &deployServer{}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	_, errOut, err := run(t, "deploy", dir, "--server", srv.URL, "--token", "x", "--yes", "--force", "--builder", builder)
+	if err == nil || !strings.Contains(err.Error(), "digest") {
+		t.Fatalf("deploy = %v, want the digest read failure", err)
+	}
+	if fake.registers != 0 {
+		t.Errorf("registered %d time(s) without a digest", fake.registers)
+	}
+	if strings.Contains(errOut, "keeps its tag") {
+		t.Errorf("deploy warned that it keeps the tag, which it never registers:\n%s", errOut)
+	}
+}
+
+// --image is checked before anything is read or sent: an invalid reference,
+// an @ that is not a full sha256 pin and a value FROM cannot carry are
+// refused by name.
+func TestPushRefusesAnInvalidImageFlag(t *testing.T) {
+	f := writePushSpec(t, pushSpecImage)
+	repo := &recordingVersions{}
+	srv := httptest.NewServer(api.NewServer(api.Dependencies{Logger: discardTestLogger(), DevNoAuth: true, Versions: repo}))
+	defer srv.Close()
+	for bad, why := range map[string]string{
+		"ghcr.io/Acme/etl:v1":                                 "not a valid reference",
+		"ghcr.io/acme/etl@sha256:abc":                         "not a full sha256 pin",
+		"ghcr.io/acme/etl@sha512:" + strings.Repeat("a", 128): "not a full sha256 pin",
+		"ghcr.io/acme/$etl:v1":                                `contains "$"`,
+	} {
+		_, _, err := run(t, "push", f, "--image", bad, "--server", srv.URL, "--token", "x")
+		if err == nil || !strings.Contains(err.Error(), "--image") || !strings.Contains(err.Error(), why) ||
+			strings.Contains(err.Error(), "server returned") || strings.Contains(err.Error(), "could not be pinned") {
+			t.Errorf("push --image %q = %v, want the CLI's refusal naming --image and %q", bad, err, why)
+		}
+	}
+	if got := repo.registered(); len(got) != 0 {
+		t.Errorf("registered %q", got)
+	}
+}
+
+// An --image tag the operator named explicitly must resolve: falling back to
+// the tag would register something other than what was asked for.
+func TestPushImageFlagTagThatDoesNotResolveFails(t *testing.T) {
+	f := writePushSpec(t, pushSpecImage)
+	srv, repo := enforcingServer(t)
+	off := httptest.NewServer(api.NewServer(api.Dependencies{Logger: discardTestLogger(), DevNoAuth: true, Versions: repo}))
+	defer off.Close()
+	for _, s := range []*httptest.Server{srv, off} {
+		_, _, err := run(t, "push", f, "--image", missingRegistry(t)+"/team/etl:v9", "--server", s.URL, "--token", "x")
+		if err == nil || !strings.Contains(err.Error(), "MANIFEST_UNKNOWN") || !strings.Contains(err.Error(), "--image <repository>@sha256:<digest>") {
+			t.Errorf("push --image of a missing tag = %v, want the reason and the fix", err)
+		}
+	}
+	if got := repo.registered(); len(got) != 0 {
+		t.Errorf("registered %q", got)
+	}
+}
+
+// A refusal that is not deploy.require_digest's is returned as the server
+// gave it, even when the tag could not be pinned.
+func TestPushOtherRefusalOfAnUnpinnedTagIsNotExplainedAsADigest(t *testing.T) {
+	srv := conflictServer(t)
+	f := writePushSpec(t, missingRegistry(t)+"/team/etl:v1")
+	_, _, err := run(t, "push", f, "--server", srv.URL, "--token", "x")
+	if err == nil || !strings.Contains(err.Error(), "hint:") {
+		t.Fatalf("push on 409 = %v, want the conflict hint", err)
+	}
+	if strings.Contains(err.Error(), "could not pin") {
+		t.Errorf("a 409 was explained as a digest refusal: %v", err)
+	}
+}
+
+// The registry client of a push reads registry.auth_method from the project
+// --project names, then the dag.json's directory, then the working
+// directory; a project file that does not parse is warned about, not
+// silently replaced by the defaults, and a deprecated auth_method says so.
+func TestPushFindsTheProjectConfig(t *testing.T) {
+	reg := newFakeOCIRegistry(t, singleManifest)
+	srv, _ := enforcingServer(t)
+	project := t.TempDir()
+	writeProjectFile(t, project, "dexaflow.yaml", "dag_id: etl\nregistry:\n  auth_method: env\n")
+	f := writePushSpec(t, reg.host+"/team/etl:v1")
+	_, errOut, err := run(t, "push", f, "--project", project, "--server", srv.URL, "--token", "x")
+	if err != nil {
+		t.Fatalf("push --project: %v", err)
+	}
+	if !strings.Contains(errOut, "auth_method") {
+		t.Errorf("stderr = %q, want the auth_method deprecation note of the --project config", errOut)
+	}
+
+	broken := filepath.Dir(f)
+	writeProjectFile(t, broken, "dexaflow.yaml", "dag_id: [\n")
+	_, errOut, err = run(t, "push", f, "--server", srv.URL, "--token", "x")
+	if err != nil {
+		t.Fatalf("push next to a broken dexaflow.yaml: %v", err)
+	}
+	if !strings.Contains(errOut, "warning:") || !strings.Contains(errOut, "dexaflow.yaml") {
+		t.Errorf("stderr = %q, want a warning naming the file that does not parse", errOut)
+	}
+}
+
+// pushProjectDir picks --project, then the dag.json's directory when it has
+// a project file, then the working directory.
+func TestPushProjectDir(t *testing.T) {
+	withCfg := t.TempDir()
+	writeProjectFile(t, withCfg, "dexaflow.yaml", "dag_id: etl\n")
+	bare := t.TempDir()
+	if got := pushProjectDir("/explicit", filepath.Join(withCfg, "dag.json")); got != "/explicit" {
+		t.Errorf("with --project = %q", got)
+	}
+	if got := pushProjectDir("", filepath.Join(withCfg, "dag.json")); got != withCfg {
+		t.Errorf("dag.json next to a project = %q, want %q", got, withCfg)
+	}
+	if got := pushProjectDir("", filepath.Join(bare, "dag.json")); got != "." {
+		t.Errorf("dag.json alone = %q, want the working directory", got)
+	}
+}

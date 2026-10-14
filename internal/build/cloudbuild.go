@@ -210,7 +210,7 @@ func (b CloudBuild) Build(ctx context.Context, req Request) (Result, error) {
 	}
 	pinned, err := b.registry().Resolve(ctx, req.Image)
 	if err != nil {
-		return Result{}, fmt.Errorf("reading the digest of the image %q Cloud Build pushed: %w", req.Image, err)
+		return res, fmt.Errorf("%w: reading the digest of the image %q Cloud Build pushed: %w", ErrPinRead, req.Image, err)
 	}
 	if err := built.checkDigest(req.Image, pinned); err != nil {
 		return Result{}, err
