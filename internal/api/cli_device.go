@@ -267,7 +267,7 @@ func newCLIDeviceDeps(deps Dependencies) *cliDeviceDeps {
 		logger:      deps.Logger,
 		insecure:    deps.SessionCookieInsecure,
 		verifyURI:   verify,
-		idpOrigin:   originOf(deps.OIDCFlow.AuthCodeURL("s", "n", "v")),
+		idpOrigin:   originOf(deps.OIDCFlow.AuthEndpoint()),
 		jwtSecret:   deps.JWTSecret,
 		tokenTTL:    time.Duration(deps.TokenTTLSecs) * time.Second,
 		pollLimiter: auth.NewRateLimiter(devicePollRateLimitPerMinute, time.Minute),
