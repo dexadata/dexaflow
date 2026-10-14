@@ -215,9 +215,16 @@ const cloudFailureTTL = 30 * time.Second
 // cloudRunTimeout bounds one run of a cloud CLI.
 const cloudRunTimeout = 30 * time.Second
 
+// cloudWaitDelay bounds how long a run waits for its output pipes after the
+// CLI exits or is killed, so a child the CLI left holding stdout cannot keep
+// the run, and the lock of its host, open.
+const cloudWaitDelay = 2 * time.Second
+
 // hostEntry is what CloudCLI knows about one cache key. Its own lock is held
 // across the run, so one request per key runs the CLI and the others wait
-// for its answer, while other keys go on.
+// for its answer, while other keys go on. A waiter does not watch its own
+// context: it can wait for the whole run, at most cloudRunTimeout (plus
+// cloudWaitDelay).
 type hostEntry struct {
 	mu   sync.Mutex
 	cred Credential
@@ -284,7 +291,13 @@ func (c *CloudCLI) Credential(ctx context.Context, host string) (Credential, err
 			return Credential{}, e.err
 		}
 	}
-	e.cred, e.err = c.read(ctx, reg)
+	cred, err := c.read(ctx, reg)
+	if err != nil && ctx.Err() != nil {
+		// The caller gave up (canceled, or its own deadline): that says
+		// nothing about the CLI, so nothing is kept.
+		return Credential{}, err
+	}
+	e.cred, e.err = cred, err
 	e.at, e.read = c.now(), true
 	return e.cred, e.err
 }
@@ -317,6 +330,7 @@ func execRunner(ctx context.Context, argv []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	var stderr bytes.Buffer
 	cmd.Stdin = strings.NewReader("")
+	cmd.WaitDelay = cloudWaitDelay
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {

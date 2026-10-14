@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -488,5 +490,43 @@ func TestNoCloudIsAskedOffTheCloud(t *testing.T) {
 		if _, err := (Registry{Auth: m, Cloud: refuseCloud{t: t, ownsNothing: true}}).Resolve(context.Background(), host+"/runtime:py3.11"); err != nil {
 			t.Fatalf("%s: %v", m, err)
 		}
+	}
+}
+
+// A run cut short by the caller's context is not kept as a failure: the
+// next request with a live context runs the CLI again.
+func TestCloudCLIDoesNotKeepACanceledRun(t *testing.T) {
+	runs := 0
+	c := NewCloudCLI(func(ctx context.Context, _ []string) ([]byte, error) {
+		runs++
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return []byte("tok"), nil
+	})
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := c.Credential(canceled, "acmeprod.azurecr.io"); err == nil {
+		t.Fatal("a canceled run gave a credential")
+	}
+	got, err := c.Credential(context.Background(), "acmeprod.azurecr.io")
+	if err != nil || got.Password != "tok" || runs != 2 {
+		t.Errorf("credential %+v, err %v after %d runs; want the token from a second run", got, err, runs)
+	}
+}
+
+// A CLI that leaves a child holding its stdout does not keep the run, and
+// the lock of its host, past the exit.
+func TestExecRunnerDoesNotWaitOnAChildHoldingStdout(t *testing.T) {
+	dir := t.TempDir()
+	script := "#!/bin/sh\nsleep 30 &\necho tok\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "gcloud"), []byte(script), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	start := time.Now()
+	_, _ = execRunner(context.Background(), []string{"gcloud", "auth", "print-access-token"}) //nolint:errcheck // only the time matters
+	if took := time.Since(start); took > 10*time.Second {
+		t.Errorf("the run took %v, want it bounded by the wait delay", took)
 	}
 }

@@ -305,9 +305,13 @@ func pushRefusal(access build.PushAccess, err error, builder string, method buil
 		return checkResult{note: fmt.Sprintf("the registry %s refused a push to %s with the credential from %s; "+
 			"%s may push with credentials of its own; if the push fails, sign in:  %s  (%v)", access.Registry, access.Repository, access.Source, tool, login, err)}, nil
 	case isCloud && access.Source != build.SourceDockerConfig:
+		onlyCloud := ""
+		if method == build.AuthCloud {
+			onlyCloud = "\n  The docker config is not read with registry.auth_method: cloud; auth_method: auto would try its credential first"
+		}
 		return checkResult{}, fmt.Errorf("preflight: the registry %s refused a push to %s with the credential from %s.\n"+
-			"  Sign in to %s with an account that may push there (%s), and grant it %s\n  (%w)",
-			access.Registry, access.Repository, access.Source, cloud.Provider, cloud.SessionCommand(), cloud.PushRole(), err)
+			"  Sign in to %s with an account that may push there (%s), and grant it %s%s\n  (%w)",
+			access.Registry, access.Repository, access.Source, cloud.Provider, cloud.SessionCommand(), cloud.PushRole(), onlyCloud, err)
 	}
 	instead := ""
 	if isCloud && method != build.AuthCloud {
