@@ -757,16 +757,21 @@ The down drops the column and its check. No other data changes.
   reads, on `dag_runs (tenant_id, ended_at)` for runs in `success` or
   `failed`. It is built `CONCURRENTLY`: reads and writes on `dag_runs` keep
   going during the build, which took about 0.2 s on 100,000 runs. The build
-  first waits for every transaction already open on `dag_runs` to finish, with
-  no time limit, and the hook waits with it. During that wait, autovacuum and
-  other schema changes on `dag_runs` queue behind it. Upgrade when no long
-  transaction holds the table. If the build is interrupted, recover it as the
-  table in [An interrupted migration](#an-interrupted-migration) says.
+  first waits for every transaction already open in the database to finish,
+  whatever table it touches, with no time limit, and the hook waits with it
+  (see "Why the hook can take longer than usual" under
+  [What the 0.5.1 migrations do](#what-the-051-migrations-do), including
+  Helm's `--timeout`). During the build, autovacuum skips `dag_runs`, and a
+  manual `VACUUM`, `ANALYZE` or schema change on it waits. Upgrade when no long
+  transaction is open in the database. If the build is interrupted, recover it
+  as the table in [An interrupted migration](#an-interrupted-migration) says.
 - **`044_deployer_role_and_api_tokens`** runs in one transaction, which took
   about 40 ms. It adds the `deploy:dag` permission, the built-in `deployer`
   role in every tenant, and the `api_tokens` table. The role has no holders,
   so no account gains anything on upgrade. A tenant that already has a custom
-  role named `deployer` keeps it as it is. Every statement can be repeated.
+  role named `deployer` keeps it as it is. Creating `api_tokens` briefly takes
+  a lock on `tenants` and `users` that blocks writes to them (not reads), with
+  no `lock_timeout`. Every statement can be repeated.
 
 **Rolling back 0.5.4 to 0.5.3.** On Pro, `helm rollback <release> <revision>`
 is supported and leaves the schema at 044: the 0.5.3 control plane boots
@@ -792,7 +797,8 @@ of 043 drops the index. No other data changes.
 
 **Encrypting Variables is opt-in** (#507). With the default
 `variable_encryption: off`, 0.5.4 stores Variables exactly as 0.5.3 does, so a
-rolling upgrade and a rollback need nothing for them. No migration is involved:
+rolling upgrade and a rollback need nothing for them. Encryption needs no
+migration:
 an encrypted value lives in the same `value` column, marked by the
 `dexaflow:enc:v1:` prefix, and every 0.5.4 mode reads both forms.
 
