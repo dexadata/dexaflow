@@ -52,6 +52,12 @@ func TestDeployDefaultsWiringAgainstPostgres(t *testing.T) {
 	t.Setenv("DEXAFLOW_DEPLOY_DEFAULTS_REGISTRY", "ghcr.io/acme")
 	t.Setenv("DEXAFLOW_DEPLOY_DEFAULTS_PLATFORMS", "linux/amd64,linux/arm64")
 	t.Setenv("DEXAFLOW_DEPLOY_DEFAULTS_BASE_IMAGE", "ghcr.io/acme/base:1")
+	// Source mode advertised (#1772): the served image is the server's own
+	// execution.source_mode.image.
+	const runtime = "ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	t.Setenv("DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED", "true")
+	t.Setenv("DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE", runtime)
+	t.Setenv("DEXAFLOW_DEPLOY_DEFAULTS_SOURCE_MODE", "true")
 	cfg, err := config.LoadServer("", nil)
 	if err != nil {
 		t.Fatalf("LoadServer: %v", err)
@@ -105,6 +111,9 @@ func TestDeployDefaultsWiringAgainstPostgres(t *testing.T) {
 	if got.Registry != "ghcr.io/acme" || got.BaseImage != "ghcr.io/acme/base:1" ||
 		!slices.Equal(got.Platforms, []string{"linux/amd64", "linux/arm64"}) {
 		t.Errorf("deployDefaults = %+v, want the values from the environment", got)
+	}
+	if got.SourceModeImage != runtime {
+		t.Errorf("deployDefaults source_mode_image = %q, want the server's runtime image %q", got.SourceModeImage, runtime)
 	}
 	if rec := call(http.MethodGet, "/api/v2/deployDefaults", "", ""); rec.Code != http.StatusUnauthorized {
 		t.Errorf("anonymous deployDefaults = %d %s, want 401", rec.Code, rec.Body.String())

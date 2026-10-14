@@ -29,6 +29,11 @@ type defaultsProvenance struct {
 	// workspace defaults; "" means the built-in default.
 	platformsSource string
 	baseImageSource string
+	// sourceMode is the runtime image of source mode and where it came
+	// from: a target, the workspace defaults or the cluster (#1772); empty
+	// when nothing sets one, or when a local choice turns it off
+	// (resolveSourceMode).
+	sourceMode sourceModeChoice
 	// remoteSource names where build.remote_builder came from: the
 	// project's file, a target or the workspace defaults; "" when none is
 	// set.
@@ -74,6 +79,9 @@ func applyDefaults(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, wi
 		return defaultsProvenance{}, err
 	}
 	prov := defaultsProvenance{registrySource: applyRegistry(cmd, dir, cfg, registrySources{layers: layers, store: store, storePath: configFilePath(cmd), cluster: cluster})}
+	if prov.sourceMode, err = resolveSourceMode(cmd, layers, cluster, prov.registrySource); err != nil {
+		return defaultsProvenance{}, err
+	}
 	if cluster != nil {
 		// The user's config file holds no platforms or base image, so the
 		// cluster is simply the last layer for those.
@@ -214,6 +222,23 @@ func applyBuildDefaults(dir string, cfg *domain.LeoflowConfig, layers []defaults
 		}
 	}
 	return platforms, ""
+}
+
+// pickSourceMode returns the first layer's source_mode_image, most specific
+// first, and the layer it came from; the zero value when none sets one. A
+// layer that sets none (sourceModeNone) clears it: the choice is then off,
+// with cleared set.
+func pickSourceMode(layers []defaultsLayer) sourceModeChoice {
+	for _, l := range layers {
+		switch img := l.values.SourceModeImage; img {
+		case "":
+		case sourceModeNone:
+			return sourceModeChoice{source: l.name, cleared: true}
+		default:
+			return sourceModeChoice{image: img, source: l.name}
+		}
+	}
+	return sourceModeChoice{}
 }
 
 // applyRemoteBuilder fills build.remote_builder from the target or the

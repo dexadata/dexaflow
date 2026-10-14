@@ -303,7 +303,7 @@ type sourceVersion struct {
 // readSource picks the version on the source (--version, else the current
 // one) and reads its spec, refusing an image not pinned by digest.
 func (p *promoteRun) readSource(ctx context.Context) (sourceVersion, error) {
-	c, err := apiclient.New(p.from.target.Server, p.from.token)
+	c, err := cliAPIClient(p.from.target.Server, p.from.token)
 	if err != nil {
 		return sourceVersion{}, fmt.Errorf("building the API client: %w", err)
 	}
@@ -347,7 +347,7 @@ func pickPromoted(dagID, target string, versions []listedVersion, sel string) (l
 // version's (its dag_id, label and image), so nothing but that version is
 // ever promoted.
 func readVersionSpec(ctx context.Context, serverURL, token, dagID string, v listedVersion) ([]byte, error) {
-	c, err := apiclient.NewClient(serverURL, apiclient.WithHTTPClient(&http.Client{Timeout: 30 * time.Second}))
+	c, err := cliBareAPIClient(serverURL, 30*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("building the client: %w", err)
 	}
