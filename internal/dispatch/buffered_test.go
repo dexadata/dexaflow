@@ -436,12 +436,16 @@ type retrySink struct {
 	recordingSink
 	mu      sync.Mutex
 	handled []executor.Disposition
+	tasks   []string
+	causes  []error
 }
 
-func (r *retrySink) HandleDispatchFailure(_ context.Context, _, _ string, disp executor.Disposition, _ error) error {
+func (r *retrySink) HandleDispatchFailure(_ context.Context, _, taskID string, disp executor.Disposition, cause error) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.handled = append(r.handled, disp)
+	r.tasks = append(r.tasks, taskID)
+	r.causes = append(r.causes, cause)
 	return nil
 }
 
@@ -470,5 +474,63 @@ func TestBuffered_WorkerFailureIsReofferedThroughARetrySink(t *testing.T) {
 				t.Errorf("the task was failed outright: %v", got)
 			}
 		})
+	}
+}
+
+// TestBuffered_RequestPastMaxWaitIsReofferedNotDispatched: a request that
+// waited in the buffer longer than MaxWait is not dispatched. Its task has been
+// queued since the buffer accepted it, so a late dispatch races the
+// dispatch-lost reaper; it goes back to the RetrySink as backpressure (no
+// attempt charged) instead, and a request taken within the bound is dispatched
+// as usual (#1607).
+func TestBuffered_RequestPastMaxWaitIsReofferedNotDispatched(t *testing.T) {
+	inner := &recordingInner{delay: 300 * time.Millisecond}
+	sink := &retrySink{}
+	bd := dispatch.NewBuffered(inner, sink, discardLogger(), nil,
+		dispatch.BufferConfig{BufferSize: 4, Workers: 1, MaxWait: 100 * time.Millisecond})
+	for _, id := range []string{"head", "tail"} {
+		if _, err := bd.Dispatch(context.Background(), "r1", "etl", "v1", domain.TaskSpec{TaskID: id}); err != nil {
+			t.Fatalf("Dispatch %s: %v", id, err)
+		}
+	}
+	if err := bd.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := inner.seen(); len(got) != 1 || got[0] != "head" {
+		t.Errorf("inner dispatched %v, want only [head]: the tail waited past MaxWait behind it", got)
+	}
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if len(sink.tasks) != 1 || sink.tasks[0] != "tail" {
+		t.Fatalf("re-offered %v, want [tail]", sink.tasks)
+	}
+	if sink.handled[0] != executor.Backpressure {
+		t.Errorf("re-offer disposition = %v, want Backpressure (no dispatch attempt charged)", sink.handled[0])
+	}
+	if !errors.Is(sink.causes[0], dispatch.ErrBufferWaitExceeded) {
+		t.Errorf("re-offer cause = %v, want ErrBufferWaitExceeded", sink.causes[0])
+	}
+	if got := sink.snapshot(); len(got) != 0 {
+		t.Errorf("the task was failed outright: %v", got)
+	}
+}
+
+// TestBuffered_MaxWaitNegativeDisablesTheBound: a negative MaxWait dispatches
+// every request however long it waited, the behavior before the bound.
+func TestBuffered_MaxWaitNegativeDisablesTheBound(t *testing.T) {
+	inner := &recordingInner{delay: 100 * time.Millisecond}
+	sink := &retrySink{}
+	bd := dispatch.NewBuffered(inner, sink, discardLogger(), nil,
+		dispatch.BufferConfig{BufferSize: 4, Workers: 1, MaxWait: -1})
+	for _, id := range []string{"head", "tail"} {
+		if _, err := bd.Dispatch(context.Background(), "r1", "etl", "v1", domain.TaskSpec{TaskID: id}); err != nil {
+			t.Fatalf("Dispatch %s: %v", id, err)
+		}
+	}
+	if err := bd.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := inner.seen(); len(got) != 2 {
+		t.Errorf("inner dispatched %v, want both requests", got)
 	}
 }

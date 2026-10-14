@@ -1674,11 +1674,15 @@ WHERE dag_run_id = sqlc.arg(dag_run_id)
 -- the clear must happen here; a fresh try lands on a new row that is already NULL.
 -- last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
 -- ResetTaskInstanceToNone.
+-- queued_at is cleared for the reason given on RequeueDispatch: the re-dispatch
+-- starts a new queued episode, and a kept stamp would let the dispatch-lost
+-- reaper fail it as soon as it is queued again (#1604).
 UPDATE task_instances
 SET state = 'scheduled',
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
-    attempt_epoch = attempt_epoch + 1
+    attempt_epoch = attempt_epoch + 1,
+    queued_at = NULL
 WHERE dag_run_id = $1 AND task_id = $2 AND try_number = $3
   AND attempt_epoch = COALESCE(sqlc.narg(attempt_epoch)::int, 0)
   AND state = 'queued';

@@ -859,6 +859,9 @@ type Querier interface {
 	// the clear must happen here; a fresh try lands on a new row that is already NULL.
 	// last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
 	// ResetTaskInstanceToNone.
+	// queued_at is cleared for the reason given on RequeueDispatch: the re-dispatch
+	// starts a new queued episode, and a kept stamp would let the dispatch-lost
+	// reaper fail it as soon as it is queued again (#1604).
 	RequeueForRedispatch(ctx context.Context, arg RequeueForRedispatchParams) (int64, error)
 	// A reschedule-mode sensor (mode='reschedule') poked not-ready: park the active TI
 	// in up_for_reschedule with its next-poke time ($3) so the scheduler re-dispatches
