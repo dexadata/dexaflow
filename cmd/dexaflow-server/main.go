@@ -1474,6 +1474,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		Xcoms:           xcomReader,
 		Logs:            storage.NewLogReader(pg, logSink, logTailer),
 		Specs:           repo,
+		DagSources:      repo,
 		LatestRuns:      repo,
 		TaskSummary:     repo,
 		DagVersions:     repo,
