@@ -807,8 +807,7 @@ const parserConfigEnv = "LEOFLOW_PROJECT_CONFIG_JSON"
 func resolveVersionAndImage(cmd *cobra.Command, dir string, o *compileOptions, cfg *domain.LeoflowConfig) (string, error) {
 	ctx := cmdContext(cmd)
 	if o.dagVersion == "" {
-		dockerfile, _ := resolveDockerfileName(cmd, *o, cfg)
-		label, err := defaultDAGVersion(ctx, dir, cfg, dockerfile, o.output)
+		label, err := contentLabel(cmd, dir, *o, cfg)
 		if err != nil {
 			return "", err
 		}
@@ -825,6 +824,15 @@ func resolveVersionAndImage(cmd *cobra.Command, dir string, o *compileOptions, c
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", msg)
 	}
 	return resolveBuildImage("", cfg, o.dagVersion, rev), nil
+}
+
+// contentLabel is the default version label of the project at dir, whose
+// settled config is cfg, for a compile with the options o: the Dockerfile
+// name o and dexaflow.yaml pick, and the compiled output o.output, which the
+// hash leaves out.
+func contentLabel(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.LeoflowConfig) (string, error) {
+	dockerfile, _ := resolveDockerfileName(cmd, o, cfg)
+	return defaultDAGVersion(cmdContext(cmd), dir, cfg, dockerfile, o.output)
 }
 
 // resolveParserCommand returns the explicit --parser-cmd value when set,

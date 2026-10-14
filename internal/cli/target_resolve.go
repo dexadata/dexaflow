@@ -215,13 +215,16 @@ const (
 	tokenLegacy               // the single-server session from before targets
 )
 
-// pickToken applies the token precedence for server: --token, then
+// pickTokenFor applies the token precedence for server: --token, then
 // DEXAFLOW_TOKEN (LEOFLOW_TOKEN), then the session saved for that server, then
 // the single-server session. The single-server token is only sent to the
 // server it was saved with (or anywhere when it was saved with none): whatever
 // chose the server, a flag, a variable or a target name in a shared workspace
-// file, a token must never follow it to another control plane.
-func pickToken(choice *serverChoice, tokenFlag string) (string, tokenSource) {
+// file, a token must never follow it to another control plane. With ownOnly
+// a single-server token saved with no server_url is withheld too:
+// `status --all-targets` calls every target in turn, and that one token must
+// not go to all of them.
+func pickTokenFor(choice *serverChoice, tokenFlag string, ownOnly bool) (string, tokenSource) {
 	if tokenFlag != "" {
 		return tokenFlag, tokenExternal
 	}
@@ -235,7 +238,7 @@ func pickToken(choice *serverChoice, tokenFlag string) (string, tokenSource) {
 	if store.Token == "" {
 		return "", tokenNone
 	}
-	if store.ServerURL != "" && !sameServer(store.ServerURL, choice.URL) {
+	if (store.ServerURL == "" && ownOnly) || (store.ServerURL != "" && !sameServer(store.ServerURL, choice.URL)) {
 		return "", tokenNone
 	}
 	return store.Token, tokenLegacy

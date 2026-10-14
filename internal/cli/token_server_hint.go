@@ -40,7 +40,7 @@ const loginCommandPath = "dexaflow auth login"
 // minted a token for. It used to send that token to whatever server --server
 // named, and the user saw a 401 with no way to tell an expired token from a
 // token that belongs somewhere else (#1102). The token is now withheld from any
-// other server (pickToken), and the 401 that follows says why.
+// other server (pickTokenFor), and the 401 that follows says why.
 //
 // It stays silent in every case where a mismatch is not what happened: a non-401,
 // a token the user supplied explicitly, no config server to compare against, or
