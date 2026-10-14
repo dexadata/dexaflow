@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/base64"
 	"encoding/json"
+	"github.com/dexadata/dexaflow/internal/domain"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -358,7 +359,7 @@ func TestDeployDryRunOfAReusedImageHasItsDigest(t *testing.T) {
 	dir, reg := platformProjectWith(t, amd64Only, "")
 	builder, log := argvBuilder(t)
 	want := reg.host + "/team/etl@" + reg.digest
-	fake := &deployServer{allowedImage: want}
+	fake := &deployServer{policy: imagePolicy(t, want)}
 	out, errOut, err := deployDir(t, fake, dir, builder)
 	if err != nil {
 		t.Fatalf("deploy of a reused image allowlisted by digest: %v\n%s", err, out)
@@ -379,7 +380,7 @@ func TestDeployDryRunImageRefusalBeforeABuildIsANote(t *testing.T) {
 	noDockerCredentials(t)
 	reg := newFakeOCIRegistry(t, singleManifest)
 	dir, builder, log := deployFixtureAt(t, reg.host+"/team")
-	fake := &deployServer{allowedImage: reg.host + "/team/etl@" + reg.digest}
+	fake := &deployServer{policy: imagePolicy(t, reg.host+"/team/etl@"+reg.digest)}
 	out, errOut, err := deployDir(t, fake, dir, builder, "--force")
 	if err != nil {
 		t.Fatalf("deploy: %v\n%s", err, out)
@@ -388,6 +389,61 @@ func TestDeployDryRunImageRefusalBeforeABuildIsANote(t *testing.T) {
 		!strings.Contains(errOut, "image built now decides") {
 		t.Errorf("built=%v registers=%d, stderr does not carry the image refusal as a note:\n%s", builderRan(log), fake.registers, errOut)
 	}
+}
+
+// TestDeployDryRunImageRefusalTheDigestCannotChangeStops: before a build, an
+// image refusal stops the deploy unless the real digest could still turn it,
+// that is unless the allowlist names this repository at a digest and the
+// image is all the server refuses. A repository the allowlist does not cover,
+// or a refusal that comes with another one, fails the register whatever the
+// build makes.
+func TestDeployDryRunImageRefusalTheDigestCannotChangeStops(t *testing.T) {
+	noDockerCredentials(t)
+	for _, tc := range []struct {
+		name  string
+		extra string
+		cfg   func(host, digest string) domain.ExecutionPolicyConfig
+		want  string
+	}{
+		{"another repository", "", func(host, _ string) domain.ExecutionPolicyConfig {
+			return domain.ExecutionPolicyConfig{Images: []string{host + "/team-b/*"}}
+		}, "execution_allowlist.images"},
+		{"a digest of another repository", "", func(host, digest string) domain.ExecutionPolicyConfig {
+			return domain.ExecutionPolicyConfig{Images: []string{host + "/team/etl-old@" + digest}}
+		}, "execution_allowlist.images"},
+		{"with a field refusal", "defaults:\n  node_selector:\n    disktype: ssd\n", func(host, digest string) domain.ExecutionPolicyConfig {
+			return domain.ExecutionPolicyConfig{Images: []string{host + "/team/etl@" + digest}, Fields: []string{"none"}}
+		}, "execution.node_selector"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := newFakeOCIRegistry(t, singleManifest)
+			dir := versionProject(t, "registry:\n  url: "+reg.host+"/team\n  image_name: etl\n"+tc.extra)
+			t.Setenv("LEOFLOW_PARSER_CMD", recordingParser(t, filepath.Join(t.TempDir(), "parser.log")))
+			builder, log := argvBuilder(t)
+			policy, err := domain.ParseExecutionPolicy(tc.cfg(reg.host, reg.digest))
+			if err != nil {
+				t.Fatal(err)
+			}
+			fake := &deployServer{policy: policy}
+			_, errOut, err := deployDir(t, fake, dir, builder, "--force")
+			if err == nil || !strings.Contains(err.Error(), "preflight: the server would refuse this register") || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want the preflight to stop on %s\n%s", err, tc.want, errOut)
+			}
+			if fake.dryRuns != 1 || argvLines(t, log) != nil || fake.registers != 0 {
+				t.Errorf("dry runs=%d builder=%q registers=%d, want one dry run and nothing built or registered", fake.dryRuns, argvLines(t, log), fake.registers)
+			}
+		})
+	}
+}
+
+// imagePolicy is an execution allowlist of images only.
+func imagePolicy(t *testing.T, images ...string) *domain.ExecutionPolicy {
+	t.Helper()
+	p, err := domain.ParseExecutionPolicy(domain.ExecutionPolicyConfig{Images: images})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }
 
 // TestDeployDryRunServerErrorIsANote: a dry run the server could not answer

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -155,13 +156,51 @@ func serverDryRun(ctx context.Context, out, warn io.Writer, p versionPost, specP
 	return werr
 }
 
-// refusesThePlaceholder reports whether a dry run refused the image it was
-// sent when that image is the placeholder (img.decides false): the refusal
-// quotes it, as the image allowlist does for an image it does not list. An
-// allowlist that names one exact digest refuses every placeholder, and only
-// the image built decides.
+// imageAllowlistRefusal is the server's refusal of an image the operator's
+// execution allowlist does not cover (domain.ExecutionPolicy.CheckImage),
+// which ends with the allowlist in parentheses.
+const imageAllowlistRefusal = " is not in executor.defaults.execution_allowlist.images ("
+
+// refusesThePlaceholder reports whether a dry run's refusal is one the image
+// built may still turn, so that the register decides it: img is the
+// placeholder (img.decides false), and the body's only error is the image
+// allowlist refusing img.ref while the allowlist names img's repository at a
+// digest (repo@sha256:..., or a prefix of one). The real digest may be that
+// one; a placeholder never is. A refusal of a repository the allowlist does
+// not cover, or one joined with another refusal (CheckSpec joins them, one per
+// line), fails the register whatever the build makes, so it stops.
 func refusesThePlaceholder(status int, body []byte, img dryImage) bool {
-	return !img.decides && status == http.StatusBadRequest && strings.Contains(string(body), placeholderDigest)
+	if img.decides || status != http.StatusBadRequest {
+		return false
+	}
+	var problem struct {
+		Detail string `json:"detail"`
+	}
+	if json.Unmarshal(body, &problem) != nil {
+		return false
+	}
+	return allowlistMayTakeTheDigest(problem.Detail, img.ref)
+}
+
+// allowlistMayTakeTheDigest reports whether detail is exactly the image
+// allowlist refusal of ref and an entry of that allowlist names ref's
+// repository at a digest.
+func allowlistMayTakeTheDigest(detail, ref string) bool {
+	list, ok := strings.CutPrefix(detail, "image "+strconv.Quote(ref)+imageAllowlistRefusal)
+	if !ok || strings.Contains(list, "\n") {
+		return false
+	}
+	list, ok = strings.CutSuffix(list, ")")
+	if !ok {
+		return false
+	}
+	repo, _, _ := strings.Cut(ref, "@")
+	for _, entry := range strings.Split(list, ", ") {
+		if strings.HasPrefix(entry, repo+"@") {
+			return true
+		}
+	}
+	return false
 }
 
 // dryRunOutcome says what a register would do, in the words of the deploy

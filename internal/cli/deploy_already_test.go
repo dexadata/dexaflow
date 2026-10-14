@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/dexadata/dexaflow/internal/domain"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -56,9 +57,10 @@ type deployServer struct {
 	dryRunQueries   []string
 	registeredImage string
 	dryRunImages    []string
-	// allowedImage, when set, is the only image a dry run accepts, refused
-	// as the image allowlist refuses one (the image named in the detail).
-	allowedImage string
+	// policy, when set, is the operator's execution allowlist a dry run
+	// checks the spec against, refusing with its own message as the
+	// register does.
+	policy *domain.ExecutionPolicy
 }
 
 // detailsJSON is the details answer: the current label and the fields the
@@ -166,7 +168,8 @@ func (s *deployServer) serveDryRun(w http.ResponseWriter, r *http.Request, body 
 	w.Header().Set("Dexaflow-Dry-Run", "true")
 	refuse := func(status int) {
 		w.WriteHeader(status)
-		_, _ = fmt.Fprintf(w, `{"detail":%q}`, s.refusal)
+		detail, _ := json.Marshal(s.refusal)
+		_, _ = fmt.Fprintf(w, `{"title":"invalid dag spec","detail":%s}`, detail)
 	}
 	if strings.TrimSpace(string(body)) == "{}" {
 		s.probes++
@@ -180,17 +183,15 @@ func (s *deployServer) serveDryRun(w http.ResponseWriter, r *http.Request, body 
 	}
 	s.dryRuns++
 	s.dryRunQueries = append(s.dryRunQueries, r.URL.RawQuery)
-	var spec struct {
-		Image string `json:"image"`
-	}
+	var spec domain.DAGSpec
 	_ = json.Unmarshal(body, &spec)
 	s.dryRunImages = append(s.dryRunImages, spec.Image)
 	if s.dryRunStatus != 0 {
 		refuse(s.dryRunStatus)
 		return
 	}
-	if s.allowedImage != "" && spec.Image != s.allowedImage {
-		s.refusal = fmt.Sprintf("image %q is not in executor.defaults.execution_allowlist.images (%s)", spec.Image, s.allowedImage)
+	if err := s.policy.CheckSpec(&spec); err != nil {
+		s.refusal = err.Error()
 		refuse(http.StatusBadRequest)
 		return
 	}

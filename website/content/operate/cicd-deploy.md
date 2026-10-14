@@ -184,10 +184,12 @@ this order:
    it is sent the repository at a placeholder digest, so an allowlist of
    repositories or of `repo@*` decides as for the register. A refusal stops
    the deploy with the server's reason, except two the built image decides
-   when it is still to be built: a refusal of the placeholder image itself
-   (an allowlist that names exact digests, which a reproducible build may
-   match) and a version label registered with other content. Each of those
-   is a `note:`, and the register answers it. So is a dry run the server
+   when it is still to be built. One is a refusal of the placeholder image
+   when it is the only refusal and the allowlist names the image's
+   repository at a digest (`<repo>@sha256:...`), which a reproducible build
+   may match; a repository the allowlist does not cover still stops the
+   deploy. The other is a version label registered with other content. Each
+   of those is a `note:`, and the register answers it. So is a dry run the server
    could not answer (`5xx`, or `429` under load): the deploy goes on and the
    register runs the checks. A warning (a task that does not fit its size
    under `executor.unit.enforce: warn`) prints on stderr and the deploy goes
