@@ -1499,7 +1499,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		UnitMisfits:                  unitMisfits(tel.Metrics),
 		SourceModeImage:              cfg.Execution.SourceMode.RuntimeImage(),
 		ExecutionPolicy:              executionPolicy(cfg.Executor.Defaults),
-		DeployDefaults:               cfg.Deploy.Defaults,
+		DeployDefaults:               cfg.AdvertisedDeployDefaults(),
 		RequireDigest:                cfg.Deploy.RequireDigest,
 		UnpinnedImages:               unpinnedImages(tel.Metrics),
 		WarmPolicy:                   warmPolicy(cfg),

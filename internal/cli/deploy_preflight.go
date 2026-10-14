@@ -137,8 +137,9 @@ type dryImage struct {
 // when img does not decide them, an answer that is no dry run (an older
 // replica's 404), and one the server could not give (5xx, 429) are notes on
 // warn. It
-// prints what the register would do to out and the server's warnings to
-// warn.
+// prints what the register would do, with the links and checks the answer
+// carries, to out and the server's warnings to warn, and returns those
+// warnings.
 func serverDryRun(ctx context.Context, out, warn io.Writer, p versionPost, specPath string, img dryImage, version string, origin labelOrigin) ([]string, error) {
 	data, err := os.ReadFile(specPath) //nolint:gosec // the compiled dag.json of the DAG directory
 	if err != nil {
@@ -177,7 +178,8 @@ func serverDryRun(ctx context.Context, out, warn io.Writer, p versionPost, specP
 		//nolint:errcheck // advisory
 		fmt.Fprintf(warn, "warning: the server: %s\n", w)
 	}
-	_, werr := fmt.Fprintf(out, "preflight:  the server would register %s %s as %s\n", p.dagID, version, dryRunOutcome(answer))
+	_, werr := fmt.Fprintf(out, "preflight:  the server would register %s %s as %s\n%s", p.dagID, version, dryRunOutcome(answer),
+		readServerExtras(body).lines())
 	return answer.Warnings, werr
 }
 

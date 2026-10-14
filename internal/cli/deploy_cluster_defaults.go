@@ -82,7 +82,7 @@ func clusterLayer(ctx context.Context, serverURL, token string) (*defaultsLayer,
 		return nil, nil //nolint:nilnil // no defaults advertised is a normal outcome, not an error.
 	}
 	return &defaultsLayer{
-		values: deployDefaults{Registry: d.Registry, Platforms: d.Platforms, BaseImage: d.BaseImage},
+		values: deployDefaults{Registry: d.Registry, Platforms: d.Platforms, BaseImage: d.BaseImage, SourceModeImage: d.SourceModeImage},
 		name:   "the deploy defaults of " + serverURL,
 	}, nil
 }
@@ -93,17 +93,16 @@ func clusterLayer(ctx context.Context, serverURL, token string) (*defaultsLayer,
 // should never send (an error status, a body that is not the documented
 // object, a value no deploy could use) is an error.
 func fetchClusterDefaults(ctx context.Context, serverURL, token string) (d domain.DeployDefaults, found bool, err error) {
-	c, err := apiclient.NewClient(serverURL, apiclient.WithHTTPClient(&http.Client{Timeout: 15 * time.Second}))
+	c, err := cliBareAPIClient(serverURL, 15*time.Second)
 	if err != nil {
 		return d, false, fmt.Errorf("building the client: %w", err)
 	}
-	var editors []apiclient.RequestEditorFn
-	if token != "" {
-		editors = append(editors, func(_ context.Context, req *http.Request) error {
+	editors := []apiclient.RequestEditorFn{func(_ context.Context, req *http.Request) error {
+		if token != "" {
 			req.Header.Set("Authorization", "Bearer "+token)
-			return nil
-		})
-	}
+		}
+		return nil
+	}}
 	got, err := c.GetDeployDefaults(ctx, editors...)
 	if errors.Is(err, apiclient.ErrDeployDefaultsNotServed) {
 		return d, false, nil
@@ -111,7 +110,7 @@ func fetchClusterDefaults(ctx context.Context, serverURL, token string) (d domai
 	if err != nil {
 		return d, false, err
 	}
-	d = domain.DeployDefaults{Registry: got.Registry, Platforms: got.Platforms, BaseImage: got.BaseImage}
+	d = domain.DeployDefaults{Registry: got.Registry, Platforms: got.Platforms, BaseImage: got.BaseImage, SourceModeImage: got.SourceModeImage}
 	if verr := d.Validate("deploy.defaults"); verr != nil {
 		return domain.DeployDefaults{}, false, verr
 	}
