@@ -88,6 +88,13 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: deploy.defaults.registry
+  - it: refuses a registry with a character the image reference cannot carry
+    template: deployment.yaml
+    set:
+      deploy.defaults.registry: ghcr.io/acme$x
+    asserts:
+      - failedTemplate:
+          errorPattern: deploy.defaults.registry
   - it: accepts a registry host with a port
     template: deployment.yaml
     set:

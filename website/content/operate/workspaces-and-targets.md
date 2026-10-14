@@ -216,7 +216,9 @@ the content label hashes the resolved platforms and base image: an image it
 pushes then carries the label `deploy --skip-build` to that server looks up.
 With no server configured it uses the local sources alone. `compile` and a
 `build` without `--push` never ask a server, so on a cluster that advertises
-platforms or a base image their label can differ from the deploy's.
+platforms or a base image their label can differ from the deploy's. A deploy
+sent with another `--server` or `--target` than the one `build --push` used
+can resolve other cluster defaults, and then looks up another label.
 
 ## The workspace file
 

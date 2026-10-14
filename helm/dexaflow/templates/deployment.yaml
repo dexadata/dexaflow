@@ -212,8 +212,8 @@ refused, as domain.CheckImageReference refuses them.
 {{- $deployDefaults := (.Values.deploy | default dict).defaults | default dict -}}
 {{- with $deployDefaults.registry -}}
 {{- $registry := toString . -}}
-{{- if or (contains "://" $registry) (contains "@" $registry) (hasSuffix "/" $registry) (ne (lower $registry) $registry) (regexMatch "\\s" $registry) (and (contains "/" $registry) (regexMatch ":[^/]*$" $registry)) -}}
-{{- fail (printf "deploy.defaults.registry must be an image prefix such as ghcr.io/acme: a host, an optional port and a path, lowercase, with no scheme, credentials, tag, whitespace or trailing slash (got %q). The server refuses to start with it." $registry) -}}
+{{- if or (contains "://" $registry) (contains "@" $registry) (hasSuffix "/" $registry) (ne (lower $registry) $registry) (regexMatch "[\\s'\"\\\\$]" $registry) (and (contains "/" $registry) (regexMatch ":[^/]*$" $registry)) -}}
+{{- fail (printf "deploy.defaults.registry must be an image prefix such as ghcr.io/acme: a host, an optional port and a path, lowercase, with no scheme, credentials, tag, whitespace, quote, backslash, $ or trailing slash (got %q). The server refuses to start with it." $registry) -}}
 {{- end -}}
 {{- end -}}
 {{- with $deployDefaults.platforms -}}
