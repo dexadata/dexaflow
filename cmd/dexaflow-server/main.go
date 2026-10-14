@@ -1501,6 +1501,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		DeployDefaults:               cfg.Deploy.Defaults,
 		WarmPolicy:                   warmPolicy(cfg),
 		WarmPools:                    cfg.Execution,
+		WarmWorkersAbsent:            warmWorkersAbsent(cfg, executorInfo.PodDispatchEnabled),
 
 		Dags:            repo,
 		DagRuns:         repo,
@@ -2912,6 +2913,24 @@ func warmPolicy(cfg *config.ServerConfig) domain.WarmPolicy {
 	policy.Unit = resourceUnit(cfg)
 	policy.SourceModeImage = cfg.Execution.SourceMode.RuntimeImage()
 	return policy
+}
+
+// warmWorkersAbsent says why no warm worker runs although warm pools are on,
+// "" when they run or warm pools are off. Only the pod path starts the warm
+// pool reconciler (setupK8sDispatch): the subprocess executor never does, and
+// a server whose Kubernetes client failed has pod dispatch disabled. There the
+// dispatcher's warm offer always misses, so the register response reports
+// every task on a dedicated pod. podDispatch is ExecutorInfo.PodDispatchEnabled.
+func warmWorkersAbsent(cfg *config.ServerConfig, podDispatch bool) string {
+	switch {
+	case !cfg.Execution.WarmPoolsEnabled:
+		return ""
+	case cfg.Executor.Type == "subprocess":
+		return "the subprocess executor runs no warm workers"
+	case !podDispatch:
+		return "pod dispatch is disabled on this server"
+	}
+	return ""
 }
 
 // resolveAgentControlAddr returns the address task agents dial back, defaulting

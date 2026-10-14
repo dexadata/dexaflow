@@ -6,11 +6,12 @@ body: |-
   `execution` object: per task its `mode` (`warm` or `dedicated`) and, for a
   dedicated pod, the `reason` (`warm pools off`, `staging enabled`,
   `source mode`, `service_account set`, `node_selector set` and the other
-  placement fields, or a size larger than a warm pod), plus the state of the
+  placement fields, a size larger than a warm pod, no idle warm workers kept
+  for this DAG, or a server that runs no warm workers), plus the state of the
   version's warm pool (`off`, `none` or `on`, the idle workers kept and the
   cap, and the previous version's pool draining). The server decides it with
-  the same function dispatch places an attempt with, so the report cannot
-  disagree with where attempts run. `dexaflow deploy` prints it as one
+  the same function dispatch places an attempt with, from the same settings,
+  so a task reported dedicated is never placed on a warm worker. `dexaflow deploy` prints it as one
   `execution` line ("2 tasks warm-eligible; load on a dedicated pod:
   node_selector set", or "every task runs on a dedicated pod: warm pools off")
   and a `warm pool` line, and `--output json` carries the object.

@@ -119,6 +119,11 @@ type Dependencies struct {
 	// WarmPools is the operator's execution section (warm pool sizes), read
 	// for the pool state of the register response.
 	WarmPools config.ExecutionSection
+	// WarmWorkersAbsent says why no warm worker runs although warm pools are
+	// on (the subprocess executor starts no warm pool reconciler; neither does
+	// a server whose pod dispatch is disabled), "" when they run. The register
+	// response then reports every task on a dedicated pod, with this reason.
+	WarmWorkersAbsent string
 
 	// Resource repositories. Routes for nil repositories are not registered.
 	Dags     DagRepository

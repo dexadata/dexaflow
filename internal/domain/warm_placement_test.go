@@ -43,6 +43,26 @@ func TestWarmPlacementReasonExecutionFields(t *testing.T) {
 	}
 }
 
+// TestWarmPlacementReasonServiceAccount: with no default task ServiceAccount
+// the warm workers run as the namespace default, so a task that pins any
+// ServiceAccount takes a dedicated pod, and one that pins none stays eligible.
+func TestWarmPlacementReasonServiceAccount(t *testing.T) {
+	p := WarmPolicy{Enabled: true}
+	cases := []struct {
+		name string
+		exec *Execution
+		want string
+	}{
+		{"pinned SA, no warm default", &Execution{ServiceAccount: "custom-sa"}, "service_account set"},
+		{"no SA, no warm default", &Execution{}, ""},
+	}
+	for _, c := range cases {
+		if got := p.DedicatedReason(WarmVersion{Image: "etl:v1"}, TaskSpec{TaskID: "t", Execution: c.exec}); got != c.want {
+			t.Errorf("%s: DedicatedReason = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
 // TestWarmPlacementReasonVersion: what excludes a whole version comes first,
 // whatever the task declares: warm pools off, staging (ADR 0058 D5) and
 // source mode (ADR 0067 §3).

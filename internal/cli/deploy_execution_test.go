@@ -68,7 +68,7 @@ func TestDeployReportsExecutionModes(t *testing.T) {
 	for _, want := range []string{
 		"  execution  2 tasks warm-eligible; load on a dedicated pod: node_selector set\n",
 		"  warm pool  2 idle warm workers (up to 4) start with this version's first run",
-		"the previous version's warm workers drain once its last active run ends\n",
+		"the previous version's warm workers, if it has any, drain once its last active run ends\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("deploy output lacks %q:\n%s", want, out)
@@ -137,6 +137,12 @@ func TestExecutionSummaryLines(t *testing.T) {
 		{"one version reason", executionSummary{WarmPools: true, Tasks: []taskExecution{task("a", "staging enabled"), task("b", "staging enabled")},
 			Pool: executionPool{State: "none", Detail: "no warm pool for this version: staging enabled"}},
 			"  execution  every task runs on a dedicated pod: staging enabled\n"},
+		{"every task dedicated for one task reason while idle workers are kept", executionSummary{WarmPools: true,
+			Tasks: []taskExecution{task("a", "node_selector set"), task("b", "node_selector set")}, Pool: on},
+			"  execution  every task runs on a dedicated pod: node_selector set\n  warm pool  2 idle warm workers\n"},
+		{"no pool, mixed reasons", executionSummary{WarmPools: true, Tasks: []taskExecution{task("a", "no idle warm workers kept for this DAG"), task("b", "labels set")},
+			Pool: executionPool{State: "none", Detail: "no idle warm worker is kept"}},
+			"  execution  0 tasks warm-eligible; on a dedicated pod: a (no idle warm workers kept for this DAG), b (labels set)\n  warm pool  no idle warm worker is kept\n"},
 		{"none warm, mixed reasons", executionSummary{WarmPools: true, Tasks: []taskExecution{task("a", "labels set"), task("b", "annotations set")}, Pool: on},
 			"  execution  0 tasks warm-eligible; on a dedicated pod: a (labels set), b (annotations set)\n  warm pool  2 idle warm workers\n"},
 	}

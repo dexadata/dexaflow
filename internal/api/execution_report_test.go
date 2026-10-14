@@ -18,14 +18,19 @@ import (
 // dispatch places with (domain.WarmPolicy).
 
 func warmVersionServer(repo DagVersionRepository, policy domain.WarmPolicy, exec config.ExecutionSection) *gin.Engine {
+	return warmVersionServerAbsent(repo, policy, exec, "")
+}
+
+func warmVersionServerAbsent(repo DagVersionRepository, policy domain.WarmPolicy, exec config.ExecutionSection, absent string) *gin.Engine {
 	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Versions:      repo,
-		WarmPolicy:    policy,
-		WarmPools:     exec,
+		Logger:            discardLogger(),
+		Authenticator:     &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter:       auth.NewRateLimiter(100, time.Minute),
+		CORSOrigins:       []string{"*"},
+		Versions:          repo,
+		WarmPolicy:        policy,
+		WarmPools:         exec,
+		WarmWorkersAbsent: absent,
 	})
 }
 
@@ -129,32 +134,69 @@ func TestRegisterReportsWarmPoolsOff(t *testing.T) {
 }
 
 // TestRegisterReportsNoPool: a staging version gets no warm pool at all
-// (ADR 0058 D5), and with no idle worker kept (min_idle_workers 0) a pool
-// never starts; a new DAG has no previous pool.
+// (ADR 0058 D5); with no idle worker kept (min_idle_workers 0) the reconciler
+// creates none, and on a server that runs no warm workers (the subprocess
+// executor, or pod dispatch disabled) none exists either: a task otherwise
+// warm-eligible is reported dedicated with that reason, while a task with a
+// reason of its own keeps it. A new DAG has no previous pool.
 func TestRegisterReportsNoPool(t *testing.T) {
 	policy := domain.WarmPolicy{Enabled: true}
 	staging := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","staging":{"enabled":true},` +
 		`"tasks":[{"task_id":"a","type":"python","entrypoint":"dag:a"}]}`
+	twoTasks := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
+		`{"task_id":"a","type":"python","entrypoint":"dag:a"},` +
+		`{"task_id":"b","type":"python","entrypoint":"dag:b","execution":{"labels":{"team":"x"}}}]}`
 	cases := []struct {
 		name, spec string
 		exec       config.ExecutionSection
-		reason     string
+		absent     string
+		reasons    []string
 	}{
-		{"staging", staging, warmOn, "staging enabled"},
-		{"no idle workers", validSpecJSON, config.ExecutionSection{WarmPoolsEnabled: true, MaxPoolSize: 5}, ""},
+		{"staging", staging, warmOn, "", []string{"staging enabled"}},
+		{"no idle workers", twoTasks, config.ExecutionSection{WarmPoolsEnabled: true, MaxPoolSize: 5}, "",
+			[]string{"no idle warm workers kept for this DAG", "labels set"}},
+		{"no warm workers on the server", twoTasks, warmOn, "the subprocess executor runs no warm workers",
+			[]string{"the subprocess executor runs no warm workers", "labels set"}},
 	}
 	for _, c := range cases {
-		rec := authGet(warmVersionServer(&fakeVersionRepo{created: true, dagCreated: true}, policy, c.exec),
+		rec := authGet(warmVersionServerAbsent(&fakeVersionRepo{created: true, dagCreated: true}, policy, c.exec, c.absent),
 			http.MethodPost, "/api/v2/dags/etl/versions", c.spec)
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("%s: register = %d (%s)", c.name, rec.Code, rec.Body.String())
 		}
 		a := decodeReport(t, rec.Body.Bytes())
-		if got := a.Execution.Tasks[0].Reason; got != c.reason {
-			t.Errorf("%s: task reason = %q, want %q", c.name, got, c.reason)
+		for i, want := range c.reasons {
+			if got := a.Execution.Tasks[i]; got.Mode != "dedicated" || got.Reason != want {
+				t.Errorf("%s: task %d = %+v, want dedicated: %s", c.name, i, got, want)
+			}
 		}
 		if p := a.Execution.Pool; p.State != "none" || p.PreviousPool != "" {
 			t.Errorf("%s: pool = %+v, want none and no previous pool", c.name, p)
+		}
+	}
+}
+
+// TestRegisterReportsPreviousPoolOnlyWhenOneCouldExist: a new version of an
+// existing DAG says the previous pool drains only when this server could have
+// kept warm workers for it.
+func TestRegisterReportsPreviousPoolOnlyWhenOneCouldExist(t *testing.T) {
+	policy := domain.WarmPolicy{Enabled: true}
+	cases := []struct {
+		name   string
+		exec   config.ExecutionSection
+		absent string
+		want   string
+	}{
+		{"idle workers kept", warmOn, "", "draining"},
+		{"min idle 0", config.ExecutionSection{WarmPoolsEnabled: true, MaxPoolSize: 5}, "", ""},
+		{"no warm workers on the server", warmOn, "pod dispatch is disabled on this server", ""},
+	}
+	for _, c := range cases {
+		rec := authGet(warmVersionServerAbsent(&fakeVersionRepo{created: true}, policy, c.exec, c.absent),
+			http.MethodPost, "/api/v2/dags/etl/versions", validSpecJSON)
+		a := decodeReport(t, rec.Body.Bytes())
+		if got := a.Execution.Pool.PreviousPool; got != c.want {
+			t.Errorf("%s: previous_pool = %q, want %q", c.name, got, c.want)
 		}
 	}
 }

@@ -32,39 +32,52 @@ type executionPool struct {
 
 // executionLines words e for the deploy summary: how many tasks are
 // warm-eligible and which take a dedicated pod and why, then the pool. When
-// every task takes a dedicated pod for one reason (warm pools off, staging,
-// source mode), that is the one line. Nil (an older server) prints nothing.
+// every task takes a dedicated pod for one reason, that is said in one line;
+// the pool line still follows when idle warm workers are kept for the
+// version (they would then serve none of its tasks), and is left out only
+// when the pool is off or none. Nil (an older server) prints nothing.
 func executionLines(e *executionSummary) string {
 	if e == nil {
 		return ""
 	}
-	if reason, ok := oneDedicatedReason(e.Tasks); ok {
-		return "  execution  every task runs on a dedicated pod: " + reason + "\n"
+	var b strings.Builder
+	reason, one := oneDedicatedReason(e.Tasks)
+	if one {
+		b.WriteString("  execution  every task runs on a dedicated pod: " + reason + "\n")
+		if e.Pool.State == "off" || e.Pool.State == "none" {
+			return b.String()
+		}
+	} else {
+		b.WriteString(countLine(e.Tasks))
 	}
+	if e.Pool.Detail != "" {
+		b.WriteString("  warm pool  " + e.Pool.Detail + "\n")
+	}
+	return b.String()
+}
+
+// countLine is the execution line that counts the warm-eligible tasks and
+// names each dedicated one with its reason.
+func countLine(tasks []taskExecution) string {
 	var dedicated []taskExecution
-	for _, t := range e.Tasks {
+	for _, t := range tasks {
 		if t.Mode != "warm" {
 			dedicated = append(dedicated, t)
 		}
 	}
-	var b strings.Builder
-	b.WriteString("  execution  " + countTasks(len(e.Tasks)-len(dedicated)) + " warm-eligible")
+	line := "  execution  " + countTasks(len(tasks)-len(dedicated)) + " warm-eligible"
 	switch len(dedicated) {
 	case 0:
 	case 1:
-		b.WriteString("; " + dedicated[0].TaskID + " on a dedicated pod: " + dedicated[0].Reason)
+		line += "; " + dedicated[0].TaskID + " on a dedicated pod: " + dedicated[0].Reason
 	default:
 		parts := make([]string, 0, len(dedicated))
 		for _, t := range dedicated {
 			parts = append(parts, t.TaskID+" ("+t.Reason+")")
 		}
-		b.WriteString("; on a dedicated pod: " + strings.Join(parts, ", "))
+		line += "; on a dedicated pod: " + strings.Join(parts, ", ")
 	}
-	b.WriteString("\n")
-	if e.Pool.Detail != "" {
-		b.WriteString("  warm pool  " + e.Pool.Detail + "\n")
-	}
-	return b.String()
+	return line + "\n"
 }
 
 // oneDedicatedReason reports the reason when every task takes a dedicated pod
