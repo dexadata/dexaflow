@@ -63,29 +63,51 @@ func pushVersion(ctx context.Context, serverURL, token, dagID string, spec []byt
 // pushVersionPaused is pushVersion that, when paused is set, asks the server
 // to leave the DAG in that state (the is_paused query parameter).
 func pushVersionPaused(ctx context.Context, serverURL, token, dagID string, spec []byte, paused *bool) (status int, body string, err error) {
-	url := strings.TrimRight(serverURL, "/") + "/api/v2/dags/" + dagID + "/versions"
-	if paused != nil {
-		url += "?is_paused=" + strconv.FormatBool(*paused)
+	status, _, raw, err := postVersion(ctx, versionPost{serverURL: serverURL, token: token, dagID: dagID, spec: spec, paused: paused})
+	return status, string(raw), err
+}
+
+// versionPost is one POST of a spec to /api/v2/dags/{dag_id}/versions: a
+// register, or with dryRun the server's dry run of one.
+type versionPost struct {
+	serverURL, token, dagID string
+	spec                    []byte
+	paused                  *bool
+	dryRun                  bool
+}
+
+// postVersion sends p and returns the answer's status, headers and body.
+func postVersion(ctx context.Context, p versionPost) (status int, header http.Header, body []byte, err error) {
+	url := strings.TrimRight(p.serverURL, "/") + "/api/v2/dags/" + p.dagID + "/versions"
+	var query []string
+	if p.dryRun {
+		query = append(query, "dry_run=true")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(spec))
+	if p.paused != nil {
+		query = append(query, "is_paused="+strconv.FormatBool(*p.paused))
+	}
+	if len(query) > 0 {
+		url += "?" + strings.Join(query, "&")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(p.spec))
 	if err != nil {
-		return 0, "", fmt.Errorf("building request: %w", err)
+		return 0, nil, nil, fmt.Errorf("building request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	if p.token != "" {
+		req.Header.Set("Authorization", "Bearer "+p.token)
 	}
 	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
-		return 0, "", fmt.Errorf("posting to %s: %w", url, err)
+		return 0, nil, nil, fmt.Errorf("posting to %s: %w", url, err)
 	}
 	raw, readErr := io.ReadAll(resp.Body)
 	closeErr := resp.Body.Close()
 	if readErr != nil {
-		return resp.StatusCode, "", fmt.Errorf("reading response: %w", readErr)
+		return resp.StatusCode, resp.Header, nil, fmt.Errorf("reading response: %w", readErr)
 	}
 	if closeErr != nil {
-		return resp.StatusCode, "", fmt.Errorf("closing response: %w", closeErr)
+		return resp.StatusCode, resp.Header, nil, fmt.Errorf("closing response: %w", closeErr)
 	}
-	return resp.StatusCode, string(raw), nil
+	return resp.StatusCode, resp.Header, raw, nil
 }

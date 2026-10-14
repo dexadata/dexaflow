@@ -556,6 +556,10 @@ func (d *deployRun) run() error {
 	if d.o.plan {
 		return d.plan(ctx, version, image, origin)
 	}
+	access, aerr := d.checkServer(ctx)
+	if aerr != nil {
+		return aerr
+	}
 	// Only a content label says anything about content; --force skips it.
 	if done, perr := preDeployCheck(ctx, d.cmd.ErrOrStderr(), out, d.serverURL, d.token, d.cfg.DagID, version,
 		origin == labelDefault && !d.o.force); done || perr != nil {
@@ -563,6 +567,15 @@ func (d *deployRun) run() error {
 			return perr
 		}
 		return d.alreadyCurrent(ctx, version)
+	}
+	if rerr := d.checkRegistry(ctx, image, co.reuse); rerr != nil {
+		return rerr
+	}
+	if access.dryRun {
+		co.beforeBuild = func() error {
+			return serverDryRun(ctx, out, d.cmd.ErrOrStderr(), versionPost{serverURL: d.serverURL, token: d.token,
+				dagID: d.cfg.DagID, paused: d.o.pausedOverride()}, output, version, origin)
+		}
 	}
 	if cerr := runCompile(d.cmd, d.dir, co); cerr != nil {
 		return cerr
@@ -579,6 +592,27 @@ func (d *deployRun) run() error {
 	}
 	surfaceConnections(out, output)
 	return d.finish(ctx, res)
+}
+
+// checkServer is the first step of the preflight (#1705): the control plane
+// answers, and the token may deploy, before anything is compiled.
+func (d *deployRun) checkServer(ctx context.Context) (serverAccess, error) {
+	access, err := checkServerAccess(ctx, d.cmd.ErrOrStderr(), d.serverURL, d.token, d.cfg.DagID, d.o.pausedOverride())
+	if err != nil {
+		return serverAccess{}, err
+	}
+	_, werr := fmt.Fprintf(d.cmd.OutOrStdout(), "preflight:  control plane %s answers, the token may deploy\n", d.serverURL)
+	return access, werr
+}
+
+// checkRegistry is the push step of the preflight: the registry accepts a
+// push of image, checked unless nothing will be pushed (--skip-build, or a
+// reusable image the registry already holds).
+func (d *deployRun) checkRegistry(ctx context.Context, image string, reuse bool) error {
+	if d.o.skipBuild || (reuse && registryHolds(ctx, image)) {
+		return nil
+	}
+	return checkRegistryPush(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), image)
 }
 
 // mayReuse reports whether this deploy may take the skip path: the tag is the

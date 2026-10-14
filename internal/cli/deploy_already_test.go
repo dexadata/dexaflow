@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -36,6 +37,20 @@ type deployServer struct {
 	failTrigger  bool   // answer the trigger with 500
 	regQueries   []string
 	patches      []string
+	// The register dry run (#1705): probes counts the empty-body probes of
+	// the preflight, dryRuns the dry runs of a compiled spec. noDryRun is a
+	// server that predates dry_run and registers whatever it is sent;
+	// probeStatus and dryRunStatus, when set, refuse the probe or the dry
+	// run with that status and refusal; dryRunWarnings are the warnings of
+	// an accepted dry run.
+	probes         int
+	dryRuns        int
+	noDryRun       bool
+	probeStatus    int
+	dryRunStatus   int
+	refusal        string
+	dryRunWarnings []string
+	dryRunQueries  []string
 }
 
 // detailsJSON is the details answer: the current label and the fields the
@@ -114,8 +129,20 @@ func (s *deployServer) serveRead(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(w, `{"dag_versions":[`+strings.Join(parts, ",")+`]}`)
 }
 
-// serveRegister answers a register with 201 and the fields the deploy reads.
+// serveRegister answers a register with 201 and the fields the deploy reads,
+// and a dry run as the server does.
 func (s *deployServer) serveRegister(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	probe := strings.TrimSpace(string(body)) == "{}"
+	if r.URL.Query().Get("dry_run") == "true" && !s.noDryRun {
+		s.serveDryRun(w, r, probe)
+		return
+	}
+	if probe {
+		// The dag_id of the path does not match the empty spec's.
+		http.Error(w, `{"detail":"dag_id in path does not match spec"}`, http.StatusBadRequest)
+		return
+	}
 	s.registers++
 	s.applyPausedQuery(r)
 	w.WriteHeader(http.StatusCreated)
@@ -125,6 +152,35 @@ func (s *deployServer) serveRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _ = fmt.Fprintf(w, `{"dag_id":"etl","version":"v","spec_hash":"abc123","created":true,"dag_created":%v,"is_paused":%v}`,
 		s.dagCreated, s.paused)
+}
+
+// serveDryRun answers a register dry run: the probe of the preflight, or a
+// dry run of a compiled spec.
+func (s *deployServer) serveDryRun(w http.ResponseWriter, r *http.Request, probe bool) {
+	w.Header().Set("Dexaflow-Dry-Run", "true")
+	refuse := func(status int) {
+		w.WriteHeader(status)
+		_, _ = fmt.Fprintf(w, `{"detail":%q}`, s.refusal)
+	}
+	if probe {
+		s.probes++
+		if s.probeStatus != 0 {
+			w.Header().Del("Dexaflow-Dry-Run")
+			refuse(s.probeStatus)
+			return
+		}
+		http.Error(w, `{"detail":"dag_id in path does not match spec"}`, http.StatusBadRequest)
+		return
+	}
+	s.dryRuns++
+	s.dryRunQueries = append(s.dryRunQueries, r.URL.RawQuery)
+	if s.dryRunStatus != 0 {
+		refuse(s.dryRunStatus)
+		return
+	}
+	warnings, _ := json.Marshal(append([]string{}, s.dryRunWarnings...))
+	_, _ = fmt.Fprintf(w, `{"dag_id":"etl","version":"v","spec_hash":"abc","created":true,"dag_created":%v,"is_paused":true,"dry_run":true,"warnings":%s}`,
+		s.dagCreated, warnings)
 }
 
 func TestCheckDeployed(t *testing.T) {

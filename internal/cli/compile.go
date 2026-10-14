@@ -69,6 +69,9 @@ type compileOptions struct {
 	// rebuild builds the dependency image of a split build again even when
 	// the registry holds one for its key (--rebuild).
 	rebuild bool
+	// beforeBuild, when set, runs once dag.json is compiled and validated and
+	// before anything is built: deploy's dry run of the register (#1705).
+	beforeBuild func() error
 }
 
 func newCompileCommand() *cobra.Command {
@@ -281,7 +284,7 @@ func runCompile(cmd *cobra.Command, dir string, o compileOptions) error {
 	if perr := validateOperatorProvidersFile(o.output, cfg); perr != nil {
 		return perr
 	}
-	if berr := buildAndPush(cmd, dir, o, cfg, image); berr != nil {
+	if berr := checkThenBuild(cmd, dir, o, cfg, image); berr != nil {
 		return berr
 	}
 	if o.build {
@@ -289,6 +292,17 @@ func runCompile(cmd *cobra.Command, dir string, o compileOptions) error {
 	}
 	_, werr := fmt.Fprint(cmd.OutOrStdout(), compileSummary(dagSourcePath(dir, cfg), o.output, image, o.dagVersion))
 	return werr
+}
+
+// checkThenBuild runs o.beforeBuild on the compiled dag.json, then builds
+// and pushes as o asks.
+func checkThenBuild(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.LeoflowConfig, image string) error {
+	if o.beforeBuild != nil {
+		if err := o.beforeBuild(); err != nil {
+			return err
+		}
+	}
+	return buildAndPush(cmd, dir, o, cfg, image)
 }
 
 // runDbtCompile compiles a dbt project (ADR 0042) instead of a Python DAG: it
@@ -355,7 +369,7 @@ func runDbtCompile(cmd *cobra.Command, dir string, o compileOptions, cfg *domain
 	if verr := validateDAGFile(o.output); verr != nil {
 		return verr
 	}
-	if berr := buildAndPush(cmd, dir, o, cfg, image); berr != nil {
+	if berr := checkThenBuild(cmd, dir, o, cfg, image); berr != nil {
 		return berr
 	}
 	if o.build {
