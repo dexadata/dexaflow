@@ -99,7 +99,7 @@ func newAPIClient(cmd *cobra.Command, serverURL, token string) (*apiclient.Clien
 	if err != nil {
 		return nil, err
 	}
-	c, err := apiclient.New(base, bearer)
+	c, err := cliAPIClient(base, bearer)
 	if err != nil {
 		return nil, fmt.Errorf("building the API client: %w", err)
 	}

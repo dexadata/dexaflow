@@ -62,7 +62,7 @@ func TestDeployDefaultsUnsetServesEmptyFields(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d %s, want 200", rec.Code, rec.Body.String())
 	}
-	if got, want := rec.Body.String(), `{"registry":"","platforms":[],"base_image":""}`; got != want {
+	if got, want := rec.Body.String(), `{"registry":"","platforms":[],"base_image":"","source_mode_image":""}`; got != want {
 		t.Errorf("body = %s, want %s", got, want)
 	}
 }
@@ -77,5 +77,20 @@ func TestDeployDefaultsNeedsSignInAndReadDag(t *testing.T) {
 	noRoles := &auth.User{ID: "u2", TenantID: "default"}
 	if rec := getDeployDefaults(deployDefaultsServer(noRoles, d), "tok"); rec.Code != http.StatusForbidden {
 		t.Errorf("user without read:dag = %d %s, want 403", rec.Code, rec.Body.String())
+	}
+}
+
+// TestDeployDefaultsServesTheSourceModeImage (#1772): the runtime image the
+// cluster advertises for source mode is served as source_mode_image.
+func TestDeployDefaultsServesTheSourceModeImage(t *testing.T) {
+	const runtime = "ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	admin := &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}
+	rec := getDeployDefaults(deployDefaultsServer(admin, domain.DeployDefaults{SourceModeImage: runtime}), "tok")
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode %s: %v", rec.Body.String(), err)
+	}
+	if got["source_mode_image"] != runtime {
+		t.Errorf("source_mode_image = %v, want %q (body %s)", got["source_mode_image"], runtime, rec.Body.String())
 	}
 }

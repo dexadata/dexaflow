@@ -66,7 +66,7 @@ func (tc *targetContext) lookup(name string) (*activeTarget, bool) {
 	}
 	if t, ok := tc.store.Target(name); ok {
 		return &activeTarget{Name: name, Server: t.Server, Scope: scopeUser,
-			Defaults: deployDefaults{Registry: t.Registry, Platforms: t.Platforms, BaseImage: t.BaseImage}}, true
+			Defaults: deployDefaults{Registry: t.Registry, Platforms: t.Platforms, BaseImage: t.BaseImage, SourceModeImage: t.SourceModeImage}}, true
 	}
 	return nil, false
 }

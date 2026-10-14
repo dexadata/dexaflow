@@ -63,6 +63,10 @@ type deployResult struct {
 	Error     string            `json:"error,omitempty"`
 	// Reason says why a skipped DAG was not deployed.
 	Reason string `json:"reason,omitempty"`
+	// Links and Checks are what the server, or a platform in front of it,
+	// added to the register answer (#1772); absent when it added none.
+	Links  map[string]string `json:"links,omitempty"`
+	Checks []serverCheck     `json:"checks,omitempty"`
 }
 
 // setServer records the control plane the deploy goes to. A nil report (text
@@ -226,7 +230,7 @@ func patchDagPausedRaw(ctx context.Context, serverURL, token, dagID string, paus
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	resp, err := cliHTTPClient(30 * time.Second).Do(req)
 	if err != nil {
 		return fmt.Errorf("setting is_paused of %s: %w", dagID, err)
 	}

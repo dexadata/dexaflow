@@ -16,6 +16,7 @@ import (
 
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/egress"
+	"github.com/dexadata/dexaflow/internal/envcompat"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
@@ -87,13 +88,57 @@ type DeploySection struct {
 	// its workspace, its target and the person's config leave unset. Served
 	// on GET /api/v2/deployDefaults; unset (the default) advertises nothing,
 	// so every deploy resolves as it did before. None of them is a secret.
-	Defaults domain.DeployDefaults `mapstructure:"defaults"`
+	Defaults DeployDefaultsSection `mapstructure:"defaults"`
 	// RequireDigest (deploy.require_digest, #1703) is what registering a
 	// version, or making one current again, does with an image not pinned by
 	// a full sha256 digest: off (the default) accepts it, warn accepts it with
 	// a warning, a log line and a count, enforce refuses it. DEXAFLOW_DEPLOY_REQUIRE_DIGEST (legacy
 	// LEOFLOW_DEPLOY_REQUIRE_DIGEST).
 	RequireDigest domain.DigestRequirement `mapstructure:"require_digest"`
+}
+
+// DeployDefaultsSection is deploy.defaults: the values served as they are,
+// and the switch that adds the source mode runtime image to them.
+type DeployDefaultsSection struct {
+	domain.DeployDefaults `mapstructure:",squash"`
+	// SourceMode (deploy.defaults.source_mode, default false) advertises
+	// execution.source_mode.image as source_mode_image, so a deploy to this
+	// cluster that names no runtime image of its own registers dag.py on it
+	// with no build (#1772). It requires execution.source_mode.enabled.
+	SourceMode bool `mapstructure:"source_mode"`
+}
+
+// sourceModeImageKey is the deploy.defaults key the server refuses: the
+// runtime image it advertises is always execution.source_mode.image, turned
+// on by deploy.defaults.source_mode.
+const sourceModeImageKey = "deploy.defaults.source_mode_image"
+
+// refuseAdvertisedSourceModeImage refuses deploy.defaults.source_mode_image,
+// from the config file or from either variable prefix: nothing reads it
+// (DeployDefaults.SourceModeImage is never decoded), and an operator who set
+// it would believe the cluster advertises an image it does not.
+func refuseAdvertisedSourceModeImage(v *viper.Viper) error {
+	suffix := "DEPLOY_DEFAULTS_SOURCE_MODE_IMAGE"
+	if err := v.BindEnv(sourceModeImageKey, envcompat.NewPrefix+suffix, envcompat.LegacyPrefix+suffix); err != nil {
+		return fmt.Errorf("binding environment for %q: %w", sourceModeImageKey, err)
+	}
+	if !v.IsSet(sourceModeImageKey) {
+		return nil
+	}
+	return fmt.Errorf("%s is not a setting: the cluster advertises its runtime image only as execution.source_mode.image, "+
+		"so set deploy.defaults.source_mode: true (with execution.source_mode.enabled and execution.source_mode.image) instead", sourceModeImageKey)
+}
+
+// AdvertisedDeployDefaults are the deploy defaults GET /api/v2/deployDefaults
+// serves: deploy.defaults, with the runtime image of source mode when
+// deploy.defaults.source_mode asks for it and the mode is on.
+func (c *ServerConfig) AdvertisedDeployDefaults() domain.DeployDefaults {
+	d := c.Deploy.Defaults.DeployDefaults
+	d.SourceModeImage = ""
+	if c.Deploy.Defaults.SourceMode {
+		d.SourceModeImage = c.Execution.SourceMode.RuntimeImage()
+	}
+	return d
 }
 
 // Variable encryption modes (variable_encryption, #507).
@@ -1414,6 +1459,8 @@ var serverDefaults = map[string]any{
 	"deploy.defaults.registry":   "",
 	"deploy.defaults.platforms":  []string{},
 	"deploy.defaults.base_image": "",
+	// Off: no runtime image is advertised for source mode (#1772).
+	"deploy.defaults.source_mode": false,
 	// Digest-pinned images at register (#1703). off keeps every register as
 	// it was.
 	"deploy.require_digest": string(domain.DigestRequireOff),
@@ -1451,6 +1498,9 @@ func LoadServer(configFile string, flags *pflag.FlagSet) (*ServerConfig, error) 
 		}
 	}
 	if err := bindBothPrefixes(v, strings.NewReplacer(".", "_", "-", "_")); err != nil {
+		return nil, err
+	}
+	if err := refuseAdvertisedSourceModeImage(v); err != nil {
 		return nil, err
 	}
 
@@ -1606,6 +1656,9 @@ func (c *ServerConfig) Validate() error {
 // validateDeployDefaults refuses a deploy.defaults value no deploy could
 // use, so it fails at boot instead of in every deploy to the cluster.
 func (c *ServerConfig) validateDeployDefaults() error {
+	if c.Deploy.Defaults.SourceMode && !c.Execution.SourceMode.Enabled {
+		return errors.New("deploy.defaults.source_mode advertises the source mode runtime image, but execution.source_mode.enabled is false; turn source mode on or leave deploy.defaults.source_mode off")
+	}
 	return c.Deploy.Defaults.Validate("deploy.defaults")
 }
 

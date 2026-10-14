@@ -1,0 +1,34 @@
+kind: Added
+body: |-
+  **`dexaflow deploy` in source mode, with no build.** A target in
+  `dexaflow.workspace.yaml` or in the CLI config file may set
+  `source_mode_image` (`dexaflow target add --source-mode-image`), and an
+  operator can advertise the cluster's own runtime image with the Helm value
+  `deploy.defaults.sourceMode` (server key `deploy.defaults.source_mode`,
+  `DEXAFLOW_DEPLOY_DEFAULTS_SOURCE_MODE`, which requires source mode on), served
+  as `source_mode_image` on `GET /api/v2/deployDefaults`. The target wins over
+  the workspace defaults, which win over the cluster; the cluster's image
+  applies only when no local source set a registry, a local image that
+  differs from the cluster's is refused naming both, and
+  `source_mode_image: none` or `--no-source-mode` (on `deploy` and `status`)
+  builds instead. The server refuses `deploy.defaults.source_mode_image` at
+  boot. The deploy prints where the image came from. With one set, `dexaflow deploy <dag_id>`
+  compiles `dag.json` with exactly that image, checks that it carries
+  `source` of at most 131072 bytes, and registers it with no build, no push
+  and no registry, under a content label that hashes the runtime image;
+  `--plan` and `--watch` work too. A DAG that needs a build (a
+  `requirements.txt`, a `Dockerfile`, other Python modules or packages beside
+  `dag.py`, or `dependencies`, `connectors`, `system_packages`,
+  `include_paths`, `base_image`, `build.dockerfile`, a `build.context` other
+  than `.` or dbt in `dexaflow.yaml`) is refused with every reason, before
+  any network call when the setting is local; other files a build would have
+  copied get a warning; `--dockerfile` is refused, and an image not pinned by
+  a full digest or not a valid reference is refused too. Every request the
+  CLI sends to a control plane, from any command, now carries
+  `User-Agent: dexaflow-cli/<version>`, and `X-Dexaflow-CI: true` when `CI`,
+  `GITHUB_ACTIONS` or `GITLAB_CI` is set, and `deploy` prints any `links`
+  object (`http` and `https` only) and `checks` list a server or a platform
+  in front of it adds to the register or dry run answer, without control or
+  format characters (also in `--output json`). `pkg/client.DeployDefaults` gains `SourceModeImage`
+  (#1772).
+time: 2026-10-14T18:00:00.000000000-03:00
