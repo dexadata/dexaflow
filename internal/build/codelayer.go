@@ -32,9 +32,11 @@ var layerTime = time.Unix(0, 0).UTC()
 // codeLayerHistory is the history entry of a code layer in the image config.
 const codeLayerHistory = "dexaflow code layer: the DAG project files (ADR 0073)"
 
-// LayerFile is one entry of a code layer.
+// LayerFile is one entry of a layer the CLI packs: the code layer, or the
+// dependency layer of path 3.
 type LayerFile struct {
-	// Path is the slash-separated path under Workdir.
+	// Path is the slash-separated path under the root of the layer: Workdir
+	// for the code layer.
 	Path string
 	// Source is the file on disk whose bytes the entry carries; empty for a
 	// directory or a symlink.
@@ -48,13 +50,20 @@ type LayerFile struct {
 	Exec bool
 }
 
-// codeLayer packs files as a deterministic tar layer of mediaType: entries
-// sorted by path, owned by root, with a fixed modification time and modes
-// normalized to 0755 for directories and executables, 0644 for other files
-// (ADR 0073 section 2). Each source file is read once, here, into a
-// temporary tar file that remove deletes; the layer reads that file, so a
-// large project is streamed rather than held in memory.
+// codeLayer packs files as the code layer, under Workdir.
 func codeLayer(files []LayerFile, mediaType types.MediaType) (layer v1.Layer, remove func(), err error) {
+	return packLayer(Workdir, files, mediaType)
+}
+
+// packLayer packs files as a deterministic tar layer of mediaType, each
+// entry under root (an absolute directory of the image): entries sorted by
+// path, owned by root, with a fixed modification time and modes normalized
+// to 0755 for directories and executables, 0644 for other files (ADR 0073
+// section 2). Only the files listed are emitted, never root or its parents,
+// which the base image holds with their own modes. Each source file is read
+// once, here, into a temporary tar file that remove deletes; the layer reads
+// that file, so a large tree is streamed rather than held in memory.
+func packLayer(root string, files []LayerFile, mediaType types.MediaType) (layer v1.Layer, remove func(), err error) {
 	sorted := slices.Clone(files)
 	slices.SortFunc(sorted, func(a, b LayerFile) int { return strings.Compare(a.Path, b.Path) })
 	f, err := os.CreateTemp("", "dexaflow-code-*.tar")
@@ -62,7 +71,7 @@ func codeLayer(files []LayerFile, mediaType types.MediaType) (layer v1.Layer, re
 		return nil, nil, fmt.Errorf("making the code layer: %w", err)
 	}
 	remove = func() { _ = os.Remove(f.Name()) } //nolint:errcheck // best-effort cleanup of a temporary file
-	if werr := writeTar(f, sorted); werr != nil {
+	if werr := writeTar(f, root, sorted); werr != nil {
 		_ = f.Close() //nolint:errcheck // the write error is the one to report
 		remove()
 		return nil, nil, werr
@@ -82,11 +91,11 @@ func codeLayer(files []LayerFile, mediaType types.MediaType) (layer v1.Layer, re
 	return layer, remove, nil
 }
 
-// writeTar writes the sorted entries to w as a tar stream.
-func writeTar(w io.Writer, sorted []LayerFile) error {
+// writeTar writes the sorted entries to w as a tar stream, under root.
+func writeTar(w io.Writer, root string, sorted []LayerFile) error {
 	tw := tar.NewWriter(w)
 	for _, f := range sorted {
-		if err := writeEntry(tw, f); err != nil {
+		if err := writeEntry(tw, root, f); err != nil {
 			return err
 		}
 	}
@@ -96,13 +105,13 @@ func writeTar(w io.Writer, sorted []LayerFile) error {
 	return nil
 }
 
-// writeEntry writes one file of a code layer.
-func writeEntry(tw *tar.Writer, f LayerFile) error {
-	rel, err := layerPath(f.Path)
+// writeEntry writes one file of a layer, under root.
+func writeEntry(tw *tar.Writer, root string, f LayerFile) error {
+	rel, err := layerPath(root, f.Path)
 	if err != nil {
 		return err
 	}
-	h := &tar.Header{Name: strings.TrimPrefix(Workdir, "/") + "/" + rel, ModTime: layerTime, Format: tar.FormatPAX}
+	h := &tar.Header{Name: strings.Trim(root, "/") + "/" + rel, ModTime: layerTime, Format: tar.FormatPAX}
 	var body []byte
 	switch {
 	case f.Dir:
@@ -128,13 +137,13 @@ func writeEntry(tw *tar.Writer, f LayerFile) error {
 	return nil
 }
 
-// layerPath checks that p names a place under Workdir and returns it clean.
+// layerPath checks that p names a place under root and returns it clean.
 // A name starting with .wh. is refused: in a layer it is a whiteout, which
 // would delete a file of the image below instead of adding one.
-func layerPath(p string) (string, error) {
+func layerPath(root, p string) (string, error) {
 	clean := path.Clean(p)
 	if p == "" || clean == "." || path.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
-		return "", fmt.Errorf("the code layer path %q is not under %s", p, Workdir)
+		return "", fmt.Errorf("the layer path %q is not under %s", p, root)
 	}
 	for _, seg := range strings.Split(clean, "/") {
 		if strings.HasPrefix(seg, ".wh.") {
