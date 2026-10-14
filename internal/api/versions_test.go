@@ -21,8 +21,9 @@ type fakeVersionRepo struct {
 	paused     bool // is_paused the fake reports when no override is asked
 	seen       []string
 	actors     []string
-	asked      []*bool // the is_paused override of each register
-	dryRuns    []bool  // the dry_run of each register
+	asked      []*bool                // the is_paused override of each register
+	dryRuns    []bool                 // the dry_run of each register
+	promoted   []*domain.DagPromotion // the promoted_from of each register
 	err        error
 
 	// The set-current side: the specs by label the fake holds, the change it
@@ -40,6 +41,7 @@ func (f *fakeVersionRepo) RegisterDagVersionAs(_ context.Context, _ string, reg 
 	f.actors = append(f.actors, reg.ActorUserID)
 	f.asked = append(f.asked, reg.IsPaused)
 	f.dryRuns = append(f.dryRuns, reg.DryRun)
+	f.promoted = append(f.promoted, reg.PromotedFrom)
 	if f.err != nil {
 		return domain.DagRegistered{}, f.err
 	}
