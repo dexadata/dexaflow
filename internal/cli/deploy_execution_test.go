@@ -26,7 +26,7 @@ func (registerRepo) RegisterDagVersionAs(context.Context, string, domain.DagRegi
 	return domain.DagRegistered{Created: true}, nil
 }
 
-func (registerRepo) SetCurrentDagVersion(context.Context, string, string, domain.DagVersionSelector, string, func(domain.DAGSpec) error) (domain.CurrentVersionChange, error) {
+func (registerRepo) SetCurrentDagVersionAs(context.Context, string, domain.DagSetCurrent) (domain.CurrentVersionChange, error) {
 	return domain.CurrentVersionChange{}, nil
 }
 
@@ -156,5 +156,49 @@ func TestExecutionSummaryLines(t *testing.T) {
 	}
 	if got := executionLines(nil); got != "" {
 		t.Errorf("an older server's answer printed %q, want nothing", got)
+	}
+}
+
+// The register's own warnings reach the deploy's stderr (#1703), except
+// those the preflight already printed from its dry run, so a warning is
+// printed once.
+func TestDeployPrintsTheRegisterWarningsOnce(t *testing.T) {
+	unit, err := domain.ParseResourceUnit(domain.ResourceUnitConfig{CPU: "250m", Memory: "512Mi", Enforce: domain.UnitEnforceWarn})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(api.NewServer(api.Dependencies{
+		Logger: discardTestLogger(), DevNoAuth: true, Versions: registerRepo{}, ResourceUnit: unit,
+	}))
+	defer srv.Close()
+	spec := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v2","image":"img:v2","tasks":[` +
+		`{"task_id":"train","type":"python","entrypoint":"dag:a","resources":{"limits":{"cpu":"2"}}}]}`
+	for _, shown := range []bool{false, true} {
+		path := filepath.Join(t.TempDir(), "dag.json")
+		if err := os.WriteFile(path, []byte(spec), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var out, warn strings.Builder
+		req := registerRequest{serverURL: srv.URL, output: path, digestRef: "img@sha256:cafe", version: "v2", origin: labelDefault, warn: &warn}
+		if shown {
+			// The preflight printed the register's warning already.
+			var s domain.DAGSpec
+			if err := json.Unmarshal([]byte(spec), &s); err != nil {
+				t.Fatal(err)
+			}
+			warned, _ := unit.CheckSpec(&s)
+			req.shown = []string{warned[0].Error()}
+		}
+		if _, err := registerDeployedDAG(context.Background(), &out, req); err != nil {
+			t.Fatalf("registerDeployedDAG: %v", err)
+		}
+		got := strings.Count(warn.String(), "warning: the server: ")
+		want := 1
+		if shown {
+			want = 0
+		}
+		if got != want || (want == 1 && !strings.Contains(warn.String(), "train")) {
+			t.Errorf("preflight shown %v: stderr = %q, want %d server warning(s) naming the task", shown, warn.String(), want)
+		}
 	}
 }

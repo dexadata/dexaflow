@@ -50,6 +50,7 @@ func newPushCommand() *cobra.Command {
 			if status >= http.StatusMultipleChoices {
 				return versionConflictHint(apiStatusError(status, raw), spec.DagVersion, labelUnknown)
 			}
+			printRegisterWarnings(cmd.ErrOrStderr(), raw)
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Registered %q with %s (HTTP %d)\n", spec.DagID, serverURL, status)
 			return err
 		},
@@ -57,6 +58,20 @@ func newPushCommand() *cobra.Command {
 	cmd.Flags().StringVar(&serverURL, "server", "", "control plane base URL, over --target (default: the target in use, then server_url from the config file)")
 	cmd.Flags().StringVar(&token, "token", os.Getenv("LEOFLOW_TOKEN"), "JWT bearer token (default: the session saved for the server)")
 	return cmd
+}
+
+// printRegisterWarnings prints on w each warning of a register's answer,
+// such as an image not pinned by digest under deploy.require_digest=warn
+// (#1703). An answer without warnings, or one that is not JSON (an older
+// server), prints nothing.
+func printRegisterWarnings(w io.Writer, body []byte) {
+	var answer struct {
+		Warnings []string `json:"warnings"`
+	}
+	if json.Unmarshal(body, &answer) != nil {
+		return
+	}
+	printNewWarnings(w, answer.Warnings, nil)
 }
 
 // pushVersion POSTs a dag.json to the control plane's versions endpoint.
