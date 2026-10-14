@@ -1,0 +1,22 @@
+kind: Added
+body: |-
+  **Builds that need a real Dockerfile build run on Google Cloud Build.**
+  With `build.remote_builder.cloud_build.project` in `dexaflow.yaml` (or
+  `remote_builder` on a target or in the workspace `defaults`), a build no
+  daemonless path covers goes to Cloud Build instead of a local container
+  daemon: a project that ships its own `Dockerfile`, and the dependency image
+  of a split build that cannot come from wheels (`system_packages`, a package
+  without a wheel, uv missing), after which the DAG code is appended through
+  the registry as before. The CLI lists the build context with your
+  `.dockerignore` and `exclude_paths` applied, packs it with the Dockerfile,
+  and runs `gcloud builds submit` with the project, and the optional region,
+  private worker pool and service account; Cloud Build pushes the image and
+  the digest the deploy registers is read from the registry. No Docker and
+  no `docker login` are needed, only `gcloud auth login` and the roles the
+  builders page lists. `linux/amd64` only; another platform, a build that is
+  not pushed, or gcloud missing while the daemon's tool is on `PATH` keeps
+  the local daemon, and the `builder:` line says why. A deploy whose own
+  push credential is refused by the registry prints a note instead of
+  stopping when a remote builder is configured. The block is not part of the
+  content label (#1706, ADR 0083).
+time: 2026-10-14T23:30:00.000000000-03:00

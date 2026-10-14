@@ -122,7 +122,7 @@ Deploy first_pro_dag -> https://pro.example.com? [y/N] y
 preflight:  control plane https://pro.example.com answers, the token may deploy
 preflight:  ghcr.io/your-org/first-pro-dag accepts a push
 preflight:  the server would register first_pro_dag 1a2b3c4 as a new DAG, paused
-builder:    local-daemon (docker), fallback: no daemonless or remote builder is available yet
+builder:    local-daemon (docker), fallback: no daemonless path applies and no remote builder is configured (build.remote_builder)
 …  (compile → build for linux/amd64 → push → register)
 Deployed first_pro_dag -> https://pro.example.com
   image ghcr.io/your-org/first-pro-dag@sha256:9f2c…

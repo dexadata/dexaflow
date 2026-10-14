@@ -807,7 +807,16 @@ func (d *deployRun) checkRegistry(ctx context.Context, image string, reuse bool)
 	if d.o.skipBuild || (reuse && registryHolds(ctx, reg, image)) {
 		return nil
 	}
-	return checkRegistryPush(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), reg, image, d.o.builder)
+	err := checkRegistryPush(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), reg, image, d.o.builder)
+	if err == nil || remoteFor(d.cfg) == nil {
+		return err
+	}
+	// The remote builder pushes the image with its own credentials (Cloud
+	// Build's service account), so this machine's refusal decides nothing
+	// for a whole build; a code-layer push from here would still need it.
+	_, werr := fmt.Fprintf(d.cmd.ErrOrStderr(), "note: %v\n  the remote builder pushes with its own credentials, so the deploy goes on; "+
+		"a build that pushes from this machine (the code layer) still needs this one\n", err)
+	return werr
 }
 
 // dryRun is the last step of the preflight: the server's dry run of the

@@ -55,6 +55,9 @@ type compileOptions struct {
 	// platformsSource names where build.platforms came from, for the build
 	// output; runCompile sets it.
 	platformsSource string
+	// remoteSource names where build.remote_builder came from, for the
+	// builder line; runCompile sets it.
+	remoteSource string
 	// settingsShown says the caller already printed the platforms and their
 	// source (deploy does, before it asks to confirm), so the build does not
 	// print them twice.
@@ -225,6 +228,7 @@ func prepareCompile(cmd *cobra.Command, dir string, o *compileOptions) (*domain.
 		return nil, err
 	}
 	o.platformsSource = prov.platformsSource
+	o.remoteSource = prov.remoteSource
 	if perr := checkProjectPreconditions(cmd, dir, cfg); perr != nil {
 		return nil, perr
 	}
@@ -662,24 +666,21 @@ func buildImage(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.Le
 	if perr := printBuildSettings(cmd.OutOrStdout(), o, cfg, b, reason); perr != nil {
 		return perr
 	}
-	var code []build.LayerFile
-	if _, split := b.(build.CodeLayer); split {
-		files, cerr := codeLayerFiles(dir, cfg, o.output)
-		if cerr != nil {
-			return cerr
-		}
-		code = files
+	code, contextFiles, lerr := buildFiles(dir, cfg, o.output, b)
+	if lerr != nil {
+		return lerr
 	}
 	res, berr := b.Build(cmdContext(cmd), build.Request{
-		Image:      image,
-		Dockerfile: dockerfile,
-		ContextDir: dir,
-		Platforms:  buildPlatforms(cfg),
-		Push:       o.push,
-		Pin:        o.push && o.built != nil,
-		Code:       code,
-		Stdout:     cmd.OutOrStdout(),
-		Stderr:     cmd.ErrOrStderr(),
+		Image:        image,
+		Dockerfile:   dockerfile,
+		ContextDir:   dir,
+		Platforms:    buildPlatforms(cfg),
+		Push:         o.push,
+		Pin:          o.push && o.built != nil,
+		Code:         code,
+		ContextFiles: contextFiles,
+		Stdout:       cmd.OutOrStdout(),
+		Stderr:       cmd.ErrOrStderr(),
 	})
 	if berr != nil {
 		return berr

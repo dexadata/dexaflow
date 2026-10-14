@@ -2,7 +2,7 @@
 title: How deploy builds the DAG image
 linkTitle: Builders
 weight: 13
-description: The builders `dexaflow deploy`, `compile --build` and `build` choose from, in order, how the target platform is picked, and the local container daemon as the fallback.
+description: The builders `dexaflow deploy`, `compile --build` and `build` choose from, in order, the Cloud Build remote builder, how the target platform is picked, and the local container daemon as the fallback.
 ---
 
 A DAG version is a `dag.json` and a container image
@@ -23,11 +23,10 @@ no container daemon on your machine.
 | 1 | `skip` | The whole DAG image for this content is already in the registry under its content label ([see below](#reusing-an-image-already-in-the-registry)) | Available for `deploy` |
 | 2 | `code-layer` | The image of your dependencies is already in the registry: only your DAG code is pushed, as one layer on it, through the registry ([see below](#pushing-only-the-dag-code)) | Available for pushed builds |
 | 3 | `dependency-layer` | The image of your dependencies is missing and every dependency has a wheel for the target platform: they are installed for that platform with `uv` and added as a layer on the runtime base, with no daemon and no emulation ([see below](#building-the-dependency-image-from-wheels)) | Available when `uv` is on `PATH` |
-| 4 | `remote` | A real build is needed (a package without wheels, `system_packages`, your own `Dockerfile`): a build pod in your cluster, or a cloud builder | Planned (#1706) |
+| 4 | `remote` | A real build is needed (a package without wheels, `system_packages`, your own `Dockerfile`) and a remote builder is configured: Google Cloud Build ([see below](#building-on-cloud-build)) | Available for Cloud Build; a build pod in your cluster is planned (#1706) |
 | 5 | `local-daemon` | None of the above applies: a local container tool builds and pushes the image | Available, the fallback |
 
-Until path 4 lands, a build that no earlier path covers falls back to
-`local-daemon`, and the output says so before the build starts:
+Every build prints the builder it took and why before it starts:
 
 ```console
 $ dexaflow deploy --server https://pro.example.com --yes
@@ -35,11 +34,15 @@ server:     https://pro.example.com (--server)
 registry:   ghcr.io/your-org/first-pro-dag (from dexaflow.yaml)
 platforms:  linux/amd64 (from the default)
 ...
-builder:    local-daemon (docker), fallback: no daemonless or remote builder is available yet
+builder:    remote (cloud-build, project acme-ci), the project ships its own Dockerfile, which needs a real build, so the remote builder from dexaflow.yaml builds the whole image
 ...
 Deployed first_pro_dag -> https://pro.example.com
   image ghcr.io/your-org/first-pro-dag@sha256:9f2c...
 ```
+
+With no remote builder configured, a build that no earlier path covers falls
+back to `local-daemon`, and the line says why, for example
+`builder:    local-daemon (docker), fallback: the project ships its own Dockerfile, which needs a real build`.
 
 `compile --build` and `build` print the same two lines, `platforms:` with its
 source and `builder:`. With `deploy --skip-build` nothing is built and no
@@ -156,7 +159,8 @@ machine or CI runner that can reach the registry, skips the daemon.
 
 ### When the build stays whole
 
-The whole image is built by the local daemon, as before, and the `builder:`
+The whole image is built by the [remote builder](#building-on-cloud-build)
+when one is configured, otherwise by the local daemon, and the `builder:`
 line says why, when:
 
 - a Python dependency is not pinned to one version and the dependency image
@@ -283,6 +287,94 @@ set like `pandas`, `requests` and `sqlalchemy`. The decision and its
 trade-offs are recorded in
 [ADR 0078](/project/adrs/0078-dependency-image-from-wheels/).
 
+## Building on Cloud Build
+
+When a build needs a real Dockerfile build, the remote builder runs it on
+[Google Cloud Build](https://cloud.google.com/build/docs) instead of a
+container daemon on your machine. It takes:
+
+- a project that ships its own `Dockerfile`, and the other whole builds
+  listed under [When the build stays whole](#when-the-build-stays-whole);
+- the dependency image of a split build that cannot be built from wheels
+  (`system_packages`, a package without a wheel, uv not on `PATH`), or whose
+  wheel install failed. The code layer is then appended through the
+  registry as usual, and no project file is uploaded for that build.
+
+Configure it in `dexaflow.yaml`:
+
+```yaml
+build:
+  remote_builder:
+    cloud_build:
+      project: acme-ci                 # required: the project the build runs in
+      region: us-central1              # optional: default is gcloud's builds/region, else global
+      worker_pool: projects/acme-ci/locations/us-central1/workerPools/private   # optional
+      service_account: projects/acme-ci/serviceAccounts/builder@acme-ci.iam.gserviceaccount.com   # optional
+```
+
+or once for many projects, as `remote_builder` on a target or in the
+workspace `defaults` ([workspaces and targets](/operate/workspaces-and-targets/));
+the project's own block wins, then the target's, then the workspace's, and
+the `builder:` line names where it came from. A Google Cloud registry alone
+never selects Cloud Build: where the build runs, and who pays for it, is
+your choice. The block is not part of the content label, so adding it does
+not change the DAG version.
+
+What you need on the machine that deploys:
+
+1. the [Google Cloud CLI](https://cloud.google.com/sdk/docs/install), signed
+   in with `gcloud auth login` (or a service account with
+   `gcloud auth activate-service-account`);
+2. an account with `roles/cloudbuild.builds.editor` on the project, and the
+   Cloud Build API enabled;
+3. push access for the build's service account (the project's Cloud Build
+   service account, or `service_account`) to the image repository, for
+   example `roles/artifactregistry.writer`.
+
+No container daemon is needed, and no `docker login`: Cloud Build pushes
+with its own service account, and the CLI reads the digest from the registry
+with your gcloud session ([registry credentials](#registry-credentials)).
+When the deploy preflight finds that your own credential may not push, it
+prints a note and goes on, since the push happens on Cloud Build.
+
+What happens:
+
+1. the CLI lists the build context as `docker build` would read it: the
+   project directory with your `.dockerignore`, `exclude_paths` and the dbt
+   artifacts left out, with Docker's rules. It packs that list and the
+   Dockerfile into one archive. gcloud never reads the directory itself, so
+   `.gcloudignore` does not apply, and a file `exclude_paths` keeps out never
+   leaves your machine. `.git` is sent only when your `.dockerignore` keeps
+   it, as with a local build;
+2. it runs `gcloud builds submit <archive> --config=<file> --project=<project>`
+   with the region, pool and service account you set, and streams the build
+   log. The build has one step, `gcr.io/cloud-builders/docker` running
+   `docker build --platform linux/amd64`, and Cloud Build pushes the tag;
+   builds are tagged `dexaflow` in Cloud Build's history
+   (`gcloud builds list --filter=tags=dexaflow`);
+3. the digest the deploy registers is read from the registry.
+
+```console
+builder:    remote (cloud-build, project acme-ci, region us-central1) for the dependency image, then code-layer, no dependency image ghcr.io/your-org/etl:deps-4f1c... in the registry (...): the remote builder builds and pushes it (no daemonless dependency layer: the project has system_packages, which need a real build), then the DAG code is appended to it
+```
+
+The remote builder is passed over, and the `builder:` line says why, when:
+
+- the build is not pushed (`compile --build` without `--push`): Cloud Build
+  pushes what it builds;
+- the platform is not `linux/amd64`, or there are several. Cloud Build's
+  default workers are amd64 and the build sets up no emulation, so such a
+  build goes to the local daemon;
+- `gcloud` is not on `PATH` and the local daemon's tool is. With neither,
+  the build fails with how to install gcloud.
+
+A failed build keeps gcloud's last line and names what to check: the
+sign-in, the project and the roles above.
+
+Build arguments, build secrets and a private package index are not
+supported on this path yet. The decision is recorded in
+[ADR 0083](/project/adrs/0083-remote-builder-on-cloud-build/).
+
 ## Choosing the platform
 
 The image is built for the cluster's architecture, not your machine's. The
@@ -327,7 +419,8 @@ image and is not checked.
 
 ## The local daemon fallback
 
-`local-daemon` runs a container tool on your machine: `docker` by default, or
+`local-daemon` is the last path, for a build no earlier path covers and no
+remote builder takes. It runs a container tool on your machine: `docker` by default, or
 `podman` or `nerdctl` with `--builder`. It runs `<tool> build --platform ...`
 and `<tool> push`. The digest `deploy` registers is then read from the
 registry, not from the tool
@@ -408,5 +501,6 @@ whoever pushed it: a CI job, a cloud builder or another machine. It reads the
 digest from the registry and needs no container tool at all.
 
 A project that ships its own `Dockerfile` (or `build.dockerfile` in
-`dexaflow.yaml`) is built from it as-is. Once the `remote` builder lands it can
-build those too; until then they use the local daemon.
+`dexaflow.yaml`) is built from it as-is: on
+[Cloud Build](#building-on-cloud-build) when a remote builder is configured,
+otherwise by the local daemon.

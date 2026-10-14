@@ -292,6 +292,78 @@ func codeLayerFiles(dir string, cfg *domain.LeoflowConfig, output string) ([]bui
 	return withParents(w.files), nil
 }
 
+// buildFiles lists what builder b reads from dir besides the Dockerfile: the
+// code layer of a split build, or the build context of a whole build the
+// remote builder runs, which leaves this machine and so is listed here, with
+// the .dockerignore applied, rather than sent as a directory.
+func buildFiles(dir string, cfg *domain.LeoflowConfig, output string, b build.Builder) (code, ctxFiles []build.LayerFile, err error) {
+	if _, split := b.(build.CodeLayer); split {
+		code, err = codeLayerFiles(dir, cfg, output)
+		return code, nil, err
+	}
+	if b.Path() == build.PathRemote {
+		ctxFiles, err = contextFiles(dir, cfg)
+		return nil, ctxFiles, err
+	}
+	return nil, nil, nil
+}
+
+// contextFiles lists the build context of dir as a container daemon reads
+// it: every entry the .dockerignore the build reads keeps (buildIgnore),
+// with Docker's rules, descending into an excluded directory only when a
+// `!` line may bring something under it back. Symlinks stay links, special
+// files are left out, and so is the generated Dockerfile, which the remote
+// builder adds under its own name.
+func contextFiles(dir string, cfg *domain.LeoflowConfig) ([]build.LayerFile, error) {
+	ignore, err := buildIgnore(dir, cfg)
+	if err != nil {
+		return nil, err
+	}
+	files := []build.LayerFile{}
+	werr := filepath.WalkDir(dir, func(file string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("listing the build context: %w", err)
+		}
+		rel, rerr := filepath.Rel(dir, file)
+		if rerr != nil || rel == "." {
+			return rerr //nolint:wrapcheck // Rel of a path WalkDir found under dir
+		}
+		slash := filepath.ToSlash(rel)
+		if slash == generatedDockerfileName || ignore.excluded(slash) {
+			if d.IsDir() && !ignore.mayReinclude(slash) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		return contextEntry(&files, file, slash, d)
+	})
+	if werr != nil {
+		return nil, werr
+	}
+	return withParents(files), nil
+}
+
+// contextEntry adds one kept entry of the build context to files.
+func contextEntry(files *[]build.LayerFile, file, slash string, d fs.DirEntry) error {
+	switch {
+	case d.IsDir():
+		*files = append(*files, build.LayerFile{Path: slash, Dir: true})
+	case d.Type()&fs.ModeSymlink != 0:
+		target, err := os.Readlink(file)
+		if err != nil {
+			return fmt.Errorf("reading the link %s: %w", file, err)
+		}
+		*files = append(*files, build.LayerFile{Path: slash, Link: target})
+	case d.Type().IsRegular():
+		info, err := d.Info()
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", file, err)
+		}
+		*files = append(*files, build.LayerFile{Path: slash, Source: file, Exec: info.Mode()&0o111 != 0})
+	}
+	return nil
+}
+
 // buildIgnore parses the .dockerignore the build reads: the project's own
 // file, without a block an interrupted build left, merged with exclude_paths
 // and dbtBuildArtifacts as ensureDockerignore merges them.

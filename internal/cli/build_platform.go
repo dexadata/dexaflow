@@ -81,11 +81,25 @@ func buildPlatforms(cfg *domain.LeoflowConfig) []string {
 // the project in dir, in the order of ADR 0073, and says why. Only deploy
 // allows the skip path (compileOptions.reuse); a pushed build of the
 // generated Dockerfile may split into a dependency image and a code layer
-// (splitFor, ADR 0077).
+// (splitFor, ADR 0077); a build no daemonless path covers goes to the
+// remote builder the project or its target configured (remoteFor, ADR 0083).
 func selectBuilder(ctx context.Context, dir, dockerfile string, o compileOptions, cfg *domain.LeoflowConfig, image string) (b build.Builder, reason string) {
 	split, noSplit := splitFor(ctx, dir, dockerfile, o, cfg, image)
-	return build.Select(ctx, build.Options{Tool: o.builder, Reuse: o.reuse, Split: split, NoSplit: noSplit, Rebuild: o.rebuild,
-		Registry: registryFor(cfg)}, image, buildPlatforms(cfg))
+	opts := build.Options{Tool: o.builder, Reuse: o.reuse, Split: split, NoSplit: noSplit, Rebuild: o.rebuild,
+		Registry: registryFor(cfg), Push: o.push, Remote: remoteFor(cfg), RemoteSource: o.remoteSource}
+	return build.Select(ctx, opts, image, buildPlatforms(cfg))
+}
+
+// remoteFor is the remote builder build.remote_builder configures, reading
+// the pushed digest with the project's registry client, or nil when none is
+// configured.
+func remoteFor(cfg *domain.LeoflowConfig) build.Remote {
+	if cfg.Build == nil || cfg.Build.RemoteBuilder == nil || cfg.Build.RemoteBuilder.CloudBuild == nil {
+		return nil
+	}
+	cb := cfg.Build.RemoteBuilder.CloudBuild
+	return build.CloudBuild{Project: cb.Project, Region: cb.Region, WorkerPool: cb.WorkerPool, ServiceAccount: cb.ServiceAccount,
+		Registry: registryFor(cfg)}
 }
 
 // printBuildSettings says what a build is about to do: the platforms and
