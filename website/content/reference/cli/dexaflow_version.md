@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_version/
 title: "dexaflow version"
 linkTitle: "version"
-weight: 72
+weight: 73
 ---
 
 Print the version, git commit, and build date.

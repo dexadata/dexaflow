@@ -341,7 +341,7 @@ func deployAll(cmd *cobra.Command, o deployOptions) error {
 	if len(ws.Projects) == 0 {
 		return fmt.Errorf("no DAG projects found in workspace %s", wsDir)
 	}
-	out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
+	out := cmd.OutOrStdout()
 	choice, _, cerr := deployServerChoice(cmd, o)
 	if cerr != nil {
 		return cerr
@@ -362,6 +362,19 @@ func deployAll(cmd *cobra.Command, o deployOptions) error {
 		}
 	}
 	o.yes = true // confirmed once for the whole workspace; no per-project prompts
+	if failed := deployProjects(cmd, projects, o); len(failed) > 0 {
+		return fmt.Errorf("%d of %d deploys failed: %s",
+			len(failed), len(projects), strings.Join(failed, ", "))
+	}
+	return printDeployAllSummary(out, o, len(projects), skipped, wsDir)
+}
+
+// deployProjects deploys each project with runDeploy, in order and best
+// effort, as deploy --all does, and returns the dag_ids whose deploy failed;
+// each failure is also recorded in o.report. It prompts for nothing beyond
+// what runDeploy does with o.yes.
+func deployProjects(cmd *cobra.Command, projects []Project, o deployOptions) []string {
+	out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
 	verb := "deploying"
 	if o.plan {
 		verb = "planning"
@@ -375,11 +388,7 @@ func deployAll(cmd *cobra.Command, o deployOptions) error {
 			devPrintf(errOut, "    FAILED %s: %v\n", p.DagID, derr)
 		}
 	}
-	if len(failed) > 0 {
-		return fmt.Errorf("%d of %d deploys failed: %s",
-			len(failed), len(projects), strings.Join(failed, ", "))
-	}
-	return printDeployAllSummary(out, o, len(projects), skipped, wsDir)
+	return failed
 }
 
 // printDeployAllSummary writes the closing line of deploy --all.
