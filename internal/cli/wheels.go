@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -18,8 +19,16 @@ import (
 
 // wheelKeyFormat versions the dependency key of an image built from wheels
 // (ADR 0078). It differs from depsKeyFormat, so a dependency image built
-// from wheels and one the daemon built never share a tag.
+// from wheels and one the daemon built never share a tag. Bump it whenever
+// the layout of the dependency layer changes (where files land, their
+// modes, the script and RECORD rewrites, the image config), so no image of
+// the old layout is reused.
 const wheelKeyFormat = 2
+
+// hostOS is the operating system the CLI runs on. It is a variable only so
+// the tests of this package can stand on another one; nothing else assigns
+// it.
+var hostOS = runtime.GOOS
 
 // manylinuxTags are the glibc minors uv knows a manylinux tag for, newest
 // first, from the ceiling the dependency layer asks wheels for: Debian 12
@@ -74,6 +83,9 @@ func planWheels(ctx context.Context, u *uvTool, cfg *domain.LeoflowConfig, deps 
 	if why := wheelBlocker(cfg, deps, platforms); why != "" {
 		return nil, why
 	}
+	if err := u.findPython(ctx); err != nil {
+		return nil, fmt.Sprintf("uv finds no Python on this machine, which it needs even for another version (%v)", err)
+	}
 	p := &wheelPlan{uv: u, base: base}
 	if cfg.Dbt == nil {
 		p.env = []string{"PYTHONPATH=" + build.Workdir}
@@ -98,6 +110,9 @@ func planWheels(ctx context.Context, u *uvTool, cfg *domain.LeoflowConfig, deps 
 // anything is read: a platform with no wheel tag, system packages, a
 // dependency that is not a plain requirement by name.
 func wheelBlocker(cfg *domain.LeoflowConfig, deps []string, platforms []string) string {
+	if hostOS == "windows" {
+		return "the dependency layer does not run on Windows yet"
+	}
 	for _, p := range platforms {
 		if wheelArch[strings.ToLower(p)] == "" {
 			return fmt.Sprintf("the platform %s has no wheel tag the dependency layer knows (linux/amd64, linux/arm64)", p)
@@ -154,7 +169,7 @@ func (p *wheelPlan) resolve(ctx context.Context, cfg *domain.LeoflowConfig, deps
 	}
 	wp.resolved, err = p.uv.compile(ctx, wp.tag, bi.Python, bi.Dists, deps)
 	if err != nil {
-		return wheelPlatform{}, fmt.Sprintf("uv found no set of wheels for %s that fits the base image: %v", platform, err)
+		return wheelPlatform{}, fmt.Sprintf("uv could not resolve the dependencies for %s: %v", platform, err)
 	}
 	return wp, ""
 }
@@ -165,6 +180,10 @@ func runtimeBaseBlocker(cfg *domain.LeoflowConfig, bi build.BaseImage) string {
 	if bi.Python == "" || !bi.SitePackages {
 		return "the base image is not a Dexaflow runtime base (its config sets no PYTHON_VERSION, or it has no " +
 			"/usr/local/lib/pythonX.Y/site-packages)"
+	}
+	if len(bi.PipConfig) > 0 {
+		return fmt.Sprintf("the base image configures pip (%s), which the daemon's pip honors and the dependency layer cannot",
+			strings.Join(bi.PipConfig, ", "))
 	}
 	if !cfg.PythonVersionDefaulted && cfg.PythonVersion != "" && cfg.PythonVersion != bi.MinorPython() {
 		return fmt.Sprintf("python_version %s in dexaflow.yaml does not match Python %s of the base image", cfg.PythonVersion, bi.Python)
@@ -212,10 +231,10 @@ func (p *wheelPlan) key() string {
 		Python: p.python, Env: p.env, User: p.user}
 	for _, wp := range p.platforms {
 		pd := platformDoc{Platform: wp.platform, Tag: wp.tag, Resolved: []string{}}
+		// parseResolved sorted the resolution by name.
 		for _, d := range wp.resolved {
 			pd.Resolved = append(pd.Resolved, d.line())
 		}
-		slices.Sort(pd.Resolved)
 		doc.Platforms = append(doc.Platforms, pd)
 	}
 	slices.SortFunc(doc.Platforms, func(a, b platformDoc) int { return strings.Compare(a.Platform, b.Platform) })

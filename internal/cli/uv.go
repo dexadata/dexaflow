@@ -59,15 +59,24 @@ func findUV(ctx context.Context) (u *uvTool, why string) {
 	return u, ""
 }
 
-// uvEnv is the environment uv runs with (uvKeptEnv).
+// uvEnv is the environment uv runs with (uvKeptEnv), with Python downloads
+// off: uv uses a Python already on this machine and never fetches one.
 func uvEnv() []string {
-	var env []string
+	env := []string{"UV_PYTHON_DOWNLOADS=never"}
 	for _, k := range uvKeptEnv {
 		if v, ok := os.LookupEnv(k); ok {
 			env = append(env, k+"="+v)
 		}
 	}
 	return env
+}
+
+// findPython checks that uv finds a Python on this machine. uv needs one to
+// resolve and install, even for another Python version and platform, and
+// never downloads one here (uvEnv).
+func (u *uvTool) findPython(ctx context.Context) error {
+	_, err := u.run(ctx, "", "python", "find")
+	return err
 }
 
 // run runs uv with args in dir (the current directory when empty) and

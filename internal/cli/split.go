@@ -87,7 +87,11 @@ func splitFor(ctx context.Context, dir, dockerfile string, o compileOptions, cfg
 	if uv != nil {
 		var plan *wheelPlan
 		if plan, noWheels = planWheels(ctx, uv, cfg, deps, pinned, platforms); plan != nil {
-			return &build.Split{DepsImage: depsImage(image, plan.key()), Dockerfile: content, Wheels: plan.layer(), Note: plan.note()}, ""
+			split := &build.Split{DepsImage: depsImage(image, plan.key()), Dockerfile: content, Wheels: plan.layer(), Note: plan.note()}
+			if len(loose) == 0 {
+				split.DaemonDepsImage = depsImage(image, depsKey(content, platforms))
+			}
+			return split, ""
 		}
 	}
 	if len(loose) > 0 {

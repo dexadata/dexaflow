@@ -26,7 +26,9 @@ import (
 )
 
 // fakeUVScript stands in for uv. It logs every call to calls.log in its
-// directory and answers --version. `pip compile` pins every requirement of
+// directory, and the UV_* and PIP_* variables it runs with to env.log, and
+// answers --version and `python find` (failing with a nopython file).
+// `pip compile` pins every requirement of
 // its last argument to the version it names, or to the content of the
 // version file (1.0 without one), with a hash of the pin, and keeps a copy
 // of its constraints in constraints.txt; a fail file makes
@@ -36,7 +38,12 @@ import (
 const fakeUVScript = `#!/bin/sh
 d=DIR
 echo "$*" >> "$d/calls.log"
+env | grep -E '^(UV|PIP)_' >> "$d/env.log"
 if [ "$1" = "--version" ]; then echo "uv 0.11.32 (x86_64-unknown-linux-gnu)"; exit 0; fi
+if [ "$1" = "python" ]; then
+  if [ -f "$d/nopython" ]; then echo "error: No interpreter found in virtual environments, managed installations, or search path" >&2; exit 2; fi
+  echo /usr/bin/python3; exit 0
+fi
 if [ -f "$d/fail" ]; then cat "$d/fail" >&2; exit 2; fi
 sub="$2"; out=""; target=""; reqs=""; last=""
 while [ $# -gt 0 ]; do
@@ -89,7 +96,7 @@ func fakeUV(t *testing.T) string {
 	return dir
 }
 
-// uvCalls returns the logged uv calls, without --version.
+// uvCalls returns the logged uv calls, without --version and python find.
 func uvCalls(t *testing.T, dir string) []string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(dir, "calls.log")) //nolint:gosec // a path this test created
@@ -101,7 +108,7 @@ func uvCalls(t *testing.T, dir string) []string {
 	}
 	var out []string
 	for _, l := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		if l != "--version" {
+		if l != "--version" && l != "python find" {
 			out = append(out, l)
 		}
 	}
@@ -141,6 +148,13 @@ func runtimeBaseLayer(t *testing.T) v1.Layer {
 // platform under ref.
 func pushRuntimeBaseIndex(t *testing.T, ref string, platforms ...string) {
 	t.Helper()
+	pushRuntimeBaseWithEnv(t, ref, nil, platforms...)
+}
+
+// pushRuntimeBaseWithEnv is pushRuntimeBaseIndex with env added to the
+// config of every image.
+func pushRuntimeBaseWithEnv(t *testing.T, ref string, env []string, platforms ...string) {
+	t.Helper()
 	var idx v1.ImageIndex = empty.Index
 	for _, p := range platforms {
 		plat, err := v1.ParsePlatform(p)
@@ -157,7 +171,7 @@ func pushRuntimeBaseIndex(t *testing.T, ref string, platforms ...string) {
 		}
 		cf = cf.DeepCopy()
 		cf.OS, cf.Architecture = plat.OS, plat.Architecture
-		cf.Config.Env = []string{"PATH=/usr/local/bin:/usr/bin", "PYTHON_VERSION=3.11.9"}
+		cf.Config.Env = append([]string{"PATH=/usr/local/bin:/usr/bin", "PYTHON_VERSION=3.11.9"}, env...)
 		// No user, as a python image runs: the dependency image must set it.
 		cf.Config.User, cf.Config.WorkingDir = "", build.Workdir
 		if img, err = mutate.ConfigFile(img, cf); err != nil {
@@ -212,6 +226,8 @@ func depsTags(t *testing.T, host string) []string {
 // daemon; a second deploy that changed only dag.py appends the code to it.
 func TestDeployBuildsTheDependencyImageFromWheels(t *testing.T) {
 	dir, host, uv := wheelProject(t, "[pandas==2.2.3, six==1.16.0]")
+	t.Setenv("UV_INDEX_URL", "https://evil.example/simple")
+	t.Setenv("PIP_INDEX_URL", "https://evil.example/simple")
 	builder, argv := argvBuilder(t)
 	out, _, err := deployDir(t, &deployServer{}, dir, builder)
 	if err != nil {
@@ -235,6 +251,9 @@ func TestDeployBuildsTheDependencyImageFromWheels(t *testing.T) {
 	}
 	if c, rerr := os.ReadFile(filepath.Join(uv, "constraints.txt")); rerr != nil || string(c) != "six==1.16.0\n" { //nolint:gosec // a path this test created
 		t.Errorf("constraints = %q (%v), want the distributions of the base", c, rerr)
+	}
+	if env := readProjectFile(t, uv, "env.log"); strings.Contains(env, "INDEX_URL") || !strings.Contains(env, "UV_PYTHON_DOWNLOADS=never") {
+		t.Errorf("uv ran with:\n%s\nwant no index variable and Python downloads off", env)
 	}
 	deps := host + "/team/etl:" + tags[0]
 	if cfg := depsConfig(t, deps); !slices.Contains(cfg.Env, "PYTHONPATH=/home/leoflow") || cfg.User != "65532:65532" {
@@ -340,34 +359,48 @@ func TestTheDependencyLayerSaysWhyItDoesNotApply(t *testing.T) {
 	noWheel := "  × No solution found when resolving dependencies:\n  ╰─▶ Because pyyaml==5.3 has no usable wheels and you require pyyaml==5.3, we\n" +
 		"      can conclude that your requirements are unsatisfiable.\n\nhint: Wheels are required for `pyyaml`\n"
 	cases := map[string]struct {
-		edit func(t *testing.T, dir, uv string)
+		edit func(t *testing.T, dir, uv, host string)
 		want string
 	}{
-		"system packages": {func(t *testing.T, dir, _ string) {
+		"system packages": {func(t *testing.T, dir, _, _ string) {
 			editYAML(t, dir, "dependencies:", "system_packages: [libpq5]\ndependencies:")
 		}, "system_packages need a real build"},
-		"platform": {func(t *testing.T, dir, _ string) {
+		"platform": {func(t *testing.T, dir, _, _ string) {
 			editYAML(t, dir, "[linux/amd64]", "[linux/arm/v7]")
 		}, "the platform linux/arm/v7 has no wheel tag"},
-		"no uv": {func(*testing.T, string, string) {
+		"no uv": {func(*testing.T, string, string, string) {
 			lookUV = func() (string, error) { return "", os.ErrNotExist }
 		}, "uv is not on PATH"},
-		"not a runtime base": {func(t *testing.T, dir, _ string) {
+		"not a runtime base": {func(t *testing.T, dir, _, _ string) {
 			editYAML(t, dir, "runtime:py3.11", "runtime:py3.12")
 		}, "the base image is not a Dexaflow runtime base"},
-		"python version": {func(t *testing.T, dir, _ string) {
+		"python version": {func(t *testing.T, dir, _, _ string) {
 			editYAML(t, dir, "dependencies:", "python_version: \"3.12\"\ndependencies:")
 		}, "python_version 3.12 in dexaflow.yaml does not match Python 3.11.9 of the base image"},
-		"no wheel": {func(t *testing.T, _, uv string) {
+		"no python": {func(t *testing.T, _, uv, _ string) {
+			if err := os.WriteFile(filepath.Join(uv, "nopython"), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, "uv finds no Python on this machine"},
+		"pip configuration": {func(t *testing.T, dir, _, host string) {
+			pushRuntimeBaseWithEnv(t, host+"/runtime:pip", []string{"PIP_INDEX_URL=https://pypi.internal/simple"}, "linux/amd64")
+			editYAML(t, dir, "runtime:py3.11", "runtime:pip")
+		}, "the base image configures pip (PIP_INDEX_URL)"},
+		"windows": {func(t *testing.T, _, _, _ string) {
+			prev := hostOS
+			hostOS = "windows"
+			t.Cleanup(func() { hostOS = prev })
+		}, "the dependency layer does not run on Windows yet"},
+		"no wheel": {func(t *testing.T, _, uv, _ string) {
 			if err := os.WriteFile(filepath.Join(uv, "fail"), []byte(noWheel), 0o600); err != nil {
 				t.Fatal(err)
 			}
-		}, "uv found no set of wheels for linux/amd64 that fits the base image: Because pyyaml==5.3 has no usable wheels and you require pyyaml==5.3, we can conclude that your requirements are unsatisfiable."},
+		}, "uv could not resolve the dependencies for linux/amd64: Because pyyaml==5.3 has no usable wheels and you require pyyaml==5.3, we can conclude that your requirements are unsatisfiable."},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			dir, _, uv := wheelProject(t, "[pandas==2.2.3]")
-			tc.edit(t, dir, uv)
+			dir, host, uv := wheelProject(t, "[pandas==2.2.3]")
+			tc.edit(t, dir, uv, host)
 			split, why := splitOf(t, dir)
 			if split == nil || split.Wheels != nil || !strings.Contains(split.NoWheels, tc.want) {
 				t.Fatalf("pinned: split = %+v (%q), want the daemon's, saying %q", split, why, tc.want)
@@ -635,5 +668,36 @@ func TestTheDependencyLayerBuildsEveryPlatform(t *testing.T) {
 	idx, err := v1.ParseIndexManifest(bytes.NewReader(pinned.Manifest))
 	if err != nil || len(idx.Manifests) != 2 {
 		t.Fatalf("dependency index: %v, %+v", err, idx)
+	}
+}
+
+// A split built from wheels names the dependency image the daemon would
+// build when the wheels fail, under the daemon's key, only when the
+// dependencies are pinned: for a range, the daemon's key would keep the
+// first resolution.
+func TestTheDaemonFallbackIsOnlyForPinnedDependencies(t *testing.T) {
+	dir, _, _ := wheelProject(t, "[pandas==2.2.3]")
+	split, why := splitOf(t, dir)
+	if split == nil || split.Wheels == nil || !strings.Contains(split.DaemonDepsImage, ":deps-") || split.DaemonDepsImage == split.DepsImage {
+		t.Fatalf("pinned: split = %+v (%q), want a daemon fallback under its own tag", split, why)
+	}
+	cfg, err := loadProjectConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := baseRegistry.Resolve(context.Background(), cfg.BaseImage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := dependencyDockerfile(cfg, pinned.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := depsImage("127.0.0.1:1/team/etl:v1", depsKey(content, []string{"linux/amd64"})); split.DaemonDepsImage != want {
+		t.Errorf("daemon fallback = %s, want the format 1 image %s", split.DaemonDepsImage, want)
+	}
+	editYAML(t, dir, "[pandas==2.2.3]", "[pandas>=2]")
+	if split, _ = splitOf(t, dir); split == nil || split.Wheels == nil || split.DaemonDepsImage != "" {
+		t.Errorf("unpinned: split = %+v, want wheels with no daemon fallback", split)
 	}
 }
