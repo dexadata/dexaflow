@@ -279,14 +279,14 @@ func newCLIDeviceDeps(deps Dependencies) *cliDeviceDeps {
 
 // registerCLIDevice registers the device routes. The start has a small
 // budget of its own; the verification form spends its own per address and
-// the code entry its own per user (verifyHandler, codeHandler); the consent
-// spends the OIDC routes' budget.
+// the code entry its own per user (verifyHandler, codeHandler); the code
+// entry and the consent also spend the OIDC routes' per-address budget.
 func registerCLIDevice(r *gin.Engine, d *cliDeviceDeps, oidcLimiter *auth.RateLimiter) {
 	startLimiter := auth.NewRateLimiter(deviceStartRateLimitPerMinute, time.Minute)
 	r.POST(cliDevicePath, rateLimitByAddress(startLimiter), d.startHandler())
 	r.GET(deviceVerifyPath, d.verifyPageHandler())
 	r.POST(deviceVerifyPath, d.verifyHandler())
-	r.POST(cliDeviceCodePath, d.codeHandler())
+	r.POST(cliDeviceCodePath, rateLimitByIP(oidcLimiter), d.codeHandler())
 	r.POST(cliDeviceConsentPath, rateLimitByIP(oidcLimiter), d.consentHandler())
 }
 

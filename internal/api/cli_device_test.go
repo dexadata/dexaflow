@@ -1147,3 +1147,17 @@ func TestCLIDeviceUnknownPollsAreNotAudited(t *testing.T) {
 		t.Errorf("audit = %+v, want none for unknown device codes", fx.audit.events)
 	}
 }
+
+// Posts to the code entry that name no user still spend the OIDC routes'
+// per-address budget, so an anonymous caller cannot post them unbounded.
+func TestCLIDeviceCodeEntryIsRateLimitedPerAddress(t *testing.T) {
+	fx := newDeviceFixture(t)
+	for i := range oidcRateLimitPerMinute {
+		if rec := postCode(fx.srv, nil, "c", "BBBB-BBBB", "same-origin"); rec.Code != http.StatusBadRequest {
+			t.Fatalf("anonymous entry %d = %d, want 400", i+1, rec.Code)
+		}
+	}
+	if rec := postCode(fx.srv, nil, "c", "BBBB-BBBB", "same-origin"); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("anonymous entry %d = %d, want 429", oidcRateLimitPerMinute+1, rec.Code)
+	}
+}
