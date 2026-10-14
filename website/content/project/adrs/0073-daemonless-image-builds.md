@@ -231,6 +231,12 @@ layer; buildx, podman and nerdctl specifics in the fallback; the remote
 builder in the chart; build args, build secrets and private package indexes
 for paths 3 to 5. Each lands behind the same seam and changes no caller.
 
+> **Note (2026-10-14, #1706).** This section is replaced by
+> [ADR 0075](/project/adrs/0075-daemonless-builds-in-0-5-4/): the whole of
+> #1706 ships in 0.5.4, not v0.6. Path 4 lands in 0.5.4 too, its Cloud Build
+> backend first ([ADR 0083](/project/adrs/0083-remote-builder-on-cloud-build/));
+> the in-cluster build pod follows behind the same seam.
+
 ## Alternatives considered
 
 - **Keep the argv contract and document wrapper scripts.** This is how the
