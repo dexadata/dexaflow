@@ -92,8 +92,9 @@ type connectionDTO struct {
 	Port         *int    `json:"port"`
 	Extra        *string `json:"extra"`
 	// ExtraUnreadable marks a connection whose stored extra no configured
-	// secret key opens (#1677); its extra is masked. Omitted otherwise, so a
-	// readable connection renders exactly as Airflow's ConnectionResponse.
+	// secret key opens (#1677); its extra is then null, as for a connection
+	// with no extra. Omitted otherwise, so a readable connection renders
+	// exactly as Airflow's ConnectionResponse.
 	ExtraUnreadable bool `json:"extra_unreadable,omitempty"`
 }
 
@@ -102,11 +103,16 @@ type connectionCollectionDTO struct {
 	TotalEntries int             `json:"total_entries"`
 }
 
+// toConnectionDTO renders a connection for the read API with its extra
+// redacted. An unreadable extra (#1677) is served as null, not as the mask: the
+// Airflow edit form JSON.parses extra, and "***" is not JSON, so the mask
+// crashed the page. With null the form opens with "{}" and saves with extra
+// omitted, and a write to the connection is refused anyway while its extra
+// cannot be decrypted (the update reads the stored connection first).
 func toConnectionDTO(c domain.Connection) connectionDTO {
 	extra := strPtrOrNil(redactExtra(c.Extra))
 	if c.ExtraUnreadable {
-		mask := secretMask
-		extra = &mask
+		extra = nil
 	}
 	return connectionDTO{
 		ConnectionID:    c.ConnID,
