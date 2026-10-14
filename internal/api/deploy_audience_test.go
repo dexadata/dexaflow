@@ -2,7 +2,12 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/issuer"
@@ -180,5 +186,146 @@ func TestDeployAudienceOffChangesNothing(t *testing.T) {
 		if rec := sessionCall(srv, c, "engine"); !passed(rec) {
 			t.Errorf("%s with a session and the setting off = %d (%s), want past the gates", c.name, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// TestDeployAudienceGatesDeletingADag: deleting a DAG undeploys it, so with
+// the deploy audience on it goes through the issuer as well: every other
+// credential is refused with the same detail and header, and the issuer's
+// deploy-audience bearer with dexaflow:deploy deletes.
+func TestDeployAudienceGatesDeletingADag(t *testing.T) {
+	srv := newDeployAudienceServer(t, true)
+	refusedForIssuer(t, "password token", deleteDag, deleteDag.do(srv, "engine"))
+	refusedForIssuer(t, "session", deleteDag, sessionCall(srv, deleteDag, "engine"))
+	refusedForIssuer(t, "deploy API token", deleteDag, deleteDag.do(srv, "dxf_deploy"))
+	refusedForIssuer(t, "other bearer audience", deleteDag, deleteDag.do(srv, "scopes:dexaflow:read dexaflow:deploy"))
+	if rec := deleteDag.do(srv, "deploy:dexaflow:deploy"); !passed(rec) {
+		t.Errorf("delete dag with the deploy audience = %d (%s), want past the gates", rec.Code, rec.Body.String())
+	}
+	refusedForScope(t, deleteDag, deleteDag.do(srv, "deploy:dexaflow:read"), "dexaflow:deploy")
+}
+
+// TestDeployAudienceOffKeepsDeletingADagAsToday: without the setting a
+// password token deletes and a scoped token is refused, as before.
+func TestDeployAudienceOffKeepsDeletingADagAsToday(t *testing.T) {
+	srv := newDeployAudienceServer(t, false)
+	if rec := deleteDag.do(srv, "engine"); !passed(rec) {
+		t.Errorf("delete dag with a password token = %d (%s), want past the gates", rec.Code, rec.Body.String())
+	}
+	for _, token := range []string{"dxf_deploy", "deploy:dexaflow:deploy"} {
+		rec := deleteDag.do(srv, token)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), scopedRouteRefusal) {
+			t.Errorf("delete dag with %s = %d (%s), want 403 for a scoped token", token, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// TestDeployAudienceRefusesDevNoAuth: the dev bypass principal is no issuer
+// bearer, so it cannot deploy either.
+func TestDeployAudienceRefusesDevNoAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	srv := NewServer(Dependencies{
+		Logger: discardLogger(), Authenticator: engineAndAPIToken{}, RateLimiter: auth.NewRateLimiter(5, time.Minute),
+		TokenTTLSecs: 900, Dags: &fakeDagRepo{}, Versions: &fakeVersionRepo{}, DevNoAuth: true, DeployViaIssuer: true,
+	})
+	for _, c := range append([]scopeCall{deleteDag}, deployCalls...) {
+		refusedForIssuer(t, "dev no auth", c, c.do(srv, ""))
+	}
+}
+
+// TestDeployAudienceWithoutABearerVerifierFailsClosed: a wiring mistake that
+// sets DeployViaIssuer without the verifier refuses every deploy.
+func TestDeployAudienceWithoutABearerVerifierFailsClosed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	srv := NewServer(Dependencies{
+		Logger: discardLogger(), Authenticator: engineAndAPIToken{}, RateLimiter: auth.NewRateLimiter(5, time.Minute),
+		TokenTTLSecs: 900, Dags: &fakeDagRepo{}, Versions: &fakeVersionRepo{}, DeployViaIssuer: true,
+	})
+	for _, c := range deployCalls {
+		refusedForIssuer(t, "password token", c, c.do(srv, "engine"))
+		if rec := c.do(srv, "deploy:dexaflow:deploy"); passed(rec) {
+			t.Errorf("%s with an unverifiable bearer = %d (%s), want refused", c.name, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// TestDeployAudienceInvalidBearerDoesNotFallBackToADeploy: a bad header
+// bearer falls back to the session cookie, which is still no deploy token.
+func TestDeployAudienceInvalidBearerDoesNotFallBackToADeploy(t *testing.T) {
+	srv := newDeployAudienceServer(t, true)
+	for _, c := range deployCalls {
+		req := httptest.NewRequestWithContext(context.Background(), c.method, c.path, strings.NewReader(c.body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer forged")
+		req.AddCookie(&http.Cookie{Name: "_token", Value: "engine"})
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		refusedForIssuer(t, "bad bearer and a session", c, rec)
+	}
+}
+
+// realIssuerKeys serves an RSA key as a JWKS and signs bearers with it, so a
+// test drives the real issuer.Verifier behind the API.
+type realIssuerKeys struct {
+	key *rsa.PrivateKey
+	url string
+}
+
+func newRealIssuerKeys(t *testing.T) *realIssuerKeys {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]any{{
+			"kty": "RSA", "use": "sig", "alg": "RS256", "kid": "k1",
+			"n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
+			"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
+		}}})
+	}))
+	t.Cleanup(srv.Close)
+	return &realIssuerKeys{key: key, url: srv.URL}
+}
+
+func (k *realIssuerKeys) bearer(t *testing.T, aud any) string {
+	t.Helper()
+	now := time.Now()
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"iss": "https://portal.example.com", "aud": aud, "sub": "user-42", "tenant_id": "acme",
+		"scope": "dexaflow:deploy", "iat": now.Add(-10 * time.Second).Unix(), "exp": now.Add(5 * time.Minute).Unix(),
+	})
+	tok.Header["kid"] = "k1"
+	s, err := tok.SignedString(k.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// TestDeployAudienceMixedAudienceTokenCannotDeploy drives the real verifier:
+// a token for the deploy audience and the MCP audience is an MCP bearer, so
+// it gets the deploy 403, while one for the deploy audience alone deploys.
+func TestDeployAudienceMixedAudienceTokenCannotDeploy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	keys := newRealIssuerKeys(t)
+	verifier := issuer.New(context.Background(), issuer.Config{
+		Name: "portal", Issuer: "https://portal.example.com", JWKSURL: keys.url, Audience: "dexaflow-engine",
+		TenantClaim: "tenant_id", AllowedTenants: []string{"acme"}, BearerAudiences: []string{"leoflow-mcp"},
+		DeployAudience: "dexaflow-deploy",
+	})
+	srv := NewServer(Dependencies{
+		Logger: discardLogger(), Authenticator: engineAndAPIToken{}, RateLimiter: auth.NewRateLimiter(5, time.Minute),
+		TokenTTLSecs: 900, Dags: &fakeDagRepo{}, Versions: &fakeVersionRepo{}, TrustedIssuerBearer: verifier,
+		TrustedIssuerUsers: &fakeIssuerUsers{user: linkedAdmin(), active: true}, AuthAudit: &fakeAuthAudit{},
+		DeployViaIssuer: true,
+	})
+	mixed := keys.bearer(t, []string{"leoflow-mcp", "dexaflow-deploy"})
+	for _, c := range append([]scopeCall{deleteDag}, deployCalls...) {
+		refusedForIssuer(t, "mixed audience", c, c.do(srv, mixed))
+	}
+	if rec := register.do(srv, keys.bearer(t, "dexaflow-deploy")); !passed(rec) {
+		t.Errorf("register with the deploy audience alone = %d (%s), want past the gates", rec.Code, rec.Body.String())
 	}
 }

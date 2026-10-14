@@ -874,6 +874,8 @@ func TestValidateTrustedIssuer(t *testing.T) {
 			s.BearerAudiences = []string{"leoflow-mcp", "dexaflow-deploy"}
 			s.DeployAudience = "dexaflow-deploy"
 		}, []string{"auth.trusted_issuer.deploy_audience"}},
+		{"deploy audience with surrounding spaces", func(s *TrustedIssuerSection) { s.DeployAudience = " dexaflow-deploy" }, []string{"auth.trusted_issuer.deploy_audience"}},
+		{"deploy audience with a trailing newline", func(s *TrustedIssuerSection) { s.DeployAudience = "dexaflow-deploy\n" }, []string{"auth.trusted_issuer.deploy_audience"}},
 		{"deploy audience without an issuer", func(s *TrustedIssuerSection) {
 			*s = TrustedIssuerSection{TenantClaim: "tenant_id", DeployAudience: "dexaflow-deploy"}
 		}, []string{"auth.trusted_issuer.issuer", "auth.trusted_issuer.jwks_url"}},

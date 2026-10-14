@@ -309,3 +309,50 @@ func TestVerifyBearerRefusesTheDeployAndHandoffAudienceTogether(t *testing.T) {
 		t.Errorf("VerifyBearer = %v, want ErrInvalidToken", err)
 	}
 }
+
+// TestVerifyBearerOfAMixedAudienceIsNoDeployToken: a token for the deploy
+// audience and another bearer audience is an ordinary bearer, so the client
+// of the other audience (an MCP client) cannot deploy with it. Only a token
+// whose aud is the deploy audience alone is a deploy token.
+func TestVerifyBearerOfAMixedAudienceIsNoDeployToken(t *testing.T) {
+	f := newFakeJWKS(t)
+	v := newTestVerifier(f, deployConfig(f))
+	for _, aud := range []any{
+		[]string{"leoflow-mcp", "dexaflow-deploy"},
+		[]string{"dexaflow-deploy", "leoflow-mcp"},
+	} {
+		claims := bearerClaims()
+		claims["aud"] = aud
+		claims["scope"] = "dexaflow:deploy"
+
+		id, err := v.VerifyBearer(context.Background(), f.sign(t, claims, f.key))
+
+		if err != nil {
+			t.Fatalf("VerifyBearer(aud %v): %v", aud, err)
+		}
+		if id.DeployAudience {
+			t.Errorf("aud %v: DeployAudience = true, want false for a mixed audience", aud)
+		}
+	}
+	claims := bearerClaims()
+	claims["aud"] = []string{"dexaflow-deploy"}
+	id, err := v.VerifyBearer(context.Background(), f.sign(t, claims, f.key))
+	if err != nil || !id.DeployAudience {
+		t.Errorf("aud [dexaflow-deploy] = %+v, %v, want a deploy token", id, err)
+	}
+}
+
+// TestVerifyBearerDeployAudienceIsCaseSensitive: aud is compared exactly, so
+// another spelling of the deploy audience is no audience of ours.
+func TestVerifyBearerDeployAudienceIsCaseSensitive(t *testing.T) {
+	f := newFakeJWKS(t)
+	cfg := testConfig(f)
+	cfg.DeployAudience = "dexaflow-deploy"
+	v := newTestVerifier(f, cfg)
+	claims := bearerClaims()
+	claims["aud"] = "Dexaflow-Deploy"
+
+	if _, err := v.VerifyBearer(context.Background(), f.sign(t, claims, f.key)); !errors.Is(err, ErrInvalidToken) {
+		t.Errorf("VerifyBearer(aud Dexaflow-Deploy) = %v, want ErrInvalidToken", err)
+	}
+}
