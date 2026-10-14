@@ -24,6 +24,7 @@ Dexaflow is a GitOps-first, container-native workflow orchestrator.
 * [dexaflow admin](/reference/cli/dexaflow_admin/)	 - Operate a running control plane (health, pause, drain, runs).
 * [dexaflow auth](/reference/cli/dexaflow_auth/)	 - Manage authentication tokens.
 * [dexaflow build](/reference/cli/dexaflow_build/)	 - Build the container image of every DAG project in a workspace.
+* [dexaflow ci](/reference/cli/dexaflow_ci/)	 - Set up a CI pipeline that deploys the workspace.
 * [dexaflow compile](/reference/cli/dexaflow_compile/)	 - Compile a DAG project into dag.json via the Python parser.
 * [dexaflow completion](/reference/cli/dexaflow_completion/)	 - Generate the autocompletion script for the specified shell
 * [dexaflow connections](/reference/cli/dexaflow_connections/)	 - Manage control-plane connections.

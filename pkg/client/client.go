@@ -93,8 +93,9 @@ const deployDefaultsMaxBody = 64 << 10
 var ErrDeployDefaultsNotServed = errors.New("the server does not serve " + deployDefaultsPath)
 
 // DeployDefaults are the cluster deploy defaults GET /api/v2/deployDefaults
-// serves: what a deploy uses for the registry prefix, the build platforms
-// and the base image when nothing local sets them. An unset field is empty.
+// serves: what a deploy uses for the registry prefix, the build platforms,
+// the base image and the source mode runtime image when nothing local sets
+// them. An unset field is empty.
 type DeployDefaults struct {
 	// Registry is the image prefix a deploy pushes to, such as ghcr.io/acme.
 	Registry string `json:"registry"`
@@ -102,6 +103,11 @@ type DeployDefaults struct {
 	Platforms []string `json:"platforms"`
 	// BaseImage is the base image for projects that set none.
 	BaseImage string `json:"base_image"`
+	// SourceModeImage is the runtime image a deploy registers a DAG's
+	// dag.py on, with no build, when nothing local names one (source mode,
+	// #1772). Empty when the cluster advertises none, or from a server
+	// that predates the field.
+	SourceModeImage string `json:"source_mode_image,omitempty"`
 }
 
 // GetDeployDefaults reads GET /api/v2/deployDefaults through the client's

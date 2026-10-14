@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"runtime"
@@ -73,7 +72,7 @@ func headlessSession(getenv func(string) string, goos string) (headless bool, wh
 // Dexaflow token. It gives up after timeout or when the sign-in expires,
 // whichever comes first.
 func deviceLogin(ctx context.Context, out io.Writer, serverURL string, timeout time.Duration) (string, error) {
-	c, err := apiclient.NewClient(serverURL, apiclient.WithHTTPClient(&http.Client{Timeout: 30 * time.Second}))
+	c, err := cliBareAPIClient(serverURL, 30*time.Second)
 	if err != nil {
 		return "", fmt.Errorf("building the client for %s: %w", serverURL, err)
 	}

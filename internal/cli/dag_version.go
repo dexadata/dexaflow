@@ -95,7 +95,13 @@ func gitEnv(env []string) []string {
 // dag.json changed. The result is also a valid image tag, because
 // tag_strategy version tags the image with it.
 func defaultDAGVersion(ctx context.Context, dir string, cfg *domain.LeoflowConfig, dockerfile, output string) (string, error) {
-	sum, err := contentHash(dir, cfg, dockerfile, output)
+	return defaultDAGVersionOn(ctx, dir, cfg, dockerfile, output, "")
+}
+
+// defaultDAGVersionOn is defaultDAGVersion for a source mode deploy on
+// runtimeImage (contentHashOn); "" is a build, and gives the same label.
+func defaultDAGVersionOn(ctx context.Context, dir string, cfg *domain.LeoflowConfig, dockerfile, output, runtimeImage string) (string, error) {
+	sum, err := contentHashOn(dir, cfg, dockerfile, output, runtimeImage)
 	if err != nil {
 		return "", err
 	}
@@ -167,6 +173,15 @@ func isTagChar(c byte) bool {
 // logs/, .user.yml), except a dbt.manifest the project points at. The image
 // digest is not an input: it does not exist before the build.
 func contentHash(dir string, cfg *domain.LeoflowConfig, dockerfile, output string) (string, error) {
+	return contentHashOn(dir, cfg, dockerfile, output, "")
+}
+
+// contentHashOn is contentHash for a source mode deploy on runtimeImage
+// (#1772): the version's image is the runtime image, not one built from the
+// project, so the label hashes it too, and a new runtime image is a new
+// version. A build (runtimeImage "") hashes nothing more, so no build label
+// moves.
+func contentHashOn(dir string, cfg *domain.LeoflowConfig, dockerfile, output, runtimeImage string) (string, error) {
 	h := sha256.New()
 	cfgJSON, err := json.Marshal(labelConfig(cfg))
 	if err != nil {
@@ -174,6 +189,9 @@ func contentHash(dir string, cfg *domain.LeoflowConfig, dockerfile, output strin
 	}
 	hashField(h, "config", cfgJSON)
 	hashField(h, "cli", []byte(version.Get().Version))
+	if runtimeImage != "" {
+		hashField(h, "source_mode_image", []byte(runtimeImage))
+	}
 	if _, err := walkLabelInputs(dir, cfg, dockerfile, output, h, nil); err != nil {
 		return "", err
 	}

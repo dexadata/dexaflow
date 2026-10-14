@@ -73,3 +73,26 @@ func TestPlatformPatternMatchesTheBuilder(t *testing.T) {
 		t.Errorf("domain platformPattern = %q, build.PlatformPattern = %q; keep them equal", got, want)
 	}
 }
+
+// pinnedRuntime is a runtime image pinned by a full digest, the only form
+// source mode accepts (ADR 0067).
+const pinnedRuntime = "ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+// TestDeployDefaultsSourceModeImage (#1772): the runtime image a cluster
+// advertises for source mode counts as a default, and only a full digest
+// pin is usable, as the server's own execution.source_mode.image.
+func TestDeployDefaultsSourceModeImage(t *testing.T) {
+	d := DeployDefaults{SourceModeImage: pinnedRuntime}
+	if d.IsEmpty() {
+		t.Error("defaults with only a source mode image reported empty")
+	}
+	if err := d.Validate("deploy.defaults"); err != nil {
+		t.Errorf("Validate(pinned) = %v, want nil", err)
+	}
+	for _, bad := range []string{"ghcr.io/dexadata/dexaflow-runtime:0.5.3", "ghcr.io/dexadata/dexaflow-runtime@sha256:0123"} {
+		err := DeployDefaults{SourceModeImage: bad}.Validate("deploy.defaults")
+		if err == nil || !strings.Contains(err.Error(), "deploy.defaults.source_mode_image") {
+			t.Errorf("Validate(%q) = %v, want an error naming deploy.defaults.source_mode_image", bad, err)
+		}
+	}
+}
