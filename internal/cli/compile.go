@@ -55,6 +55,13 @@ type compileOptions struct {
 	// platformsSource names where build.platforms came from, for the build
 	// output; runCompile sets it.
 	platformsSource string
+	// remoteSource names where build.remote_builder came from, for the
+	// builder line; runCompile sets it.
+	remoteSource string
+	// pushRefused is the deploy preflight's refusal of this machine's push
+	// credential, kept until the builder is chosen because a remote builder
+	// was configured (checkLocalPush); nil when the push was accepted.
+	pushRefused error
 	// settingsShown says the caller already printed the platforms and their
 	// source (deploy does, before it asks to confirm), so the build does not
 	// print them twice.
@@ -230,6 +237,7 @@ func prepareCompile(cmd *cobra.Command, dir string, o *compileOptions) (*domain.
 		return nil, err
 	}
 	o.platformsSource = prov.platformsSource
+	o.remoteSource = prov.remoteSource
 	if perr := checkProjectPreconditions(cmd, dir, cfg); perr != nil {
 		return nil, perr
 	}
@@ -667,24 +675,25 @@ func buildImage(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.Le
 	if perr := printBuildSettings(cmd.OutOrStdout(), o, cfg, b, reason); perr != nil {
 		return perr
 	}
-	var code []build.LayerFile
-	if _, split := b.(build.CodeLayer); split {
-		files, cerr := codeLayerFiles(dir, cfg, o.output)
-		if cerr != nil {
-			return cerr
-		}
-		code = files
+	if lerr := checkLocalPush(cmd.ErrOrStderr(), o.pushRefused, b); lerr != nil {
+		return lerr
 	}
+	code, contextFiles, lerr := buildFiles(dir, cfg, o.output, dockerfile, b)
+	if lerr != nil {
+		return lerr
+	}
+	warnUploadedSecrets(cmd.ErrOrStderr(), contextFiles, cfg)
 	res, berr := b.Build(cmdContext(cmd), build.Request{
-		Image:      image,
-		Dockerfile: dockerfile,
-		ContextDir: dir,
-		Platforms:  buildPlatforms(cfg),
-		Push:       o.push,
-		Pin:        o.push && o.built != nil,
-		Code:       code,
-		Stdout:     cmd.OutOrStdout(),
-		Stderr:     cmd.ErrOrStderr(),
+		Image:        image,
+		Dockerfile:   dockerfile,
+		ContextDir:   dir,
+		Platforms:    buildPlatforms(cfg),
+		Push:         o.push,
+		Pin:          o.push && o.built != nil,
+		Code:         code,
+		ContextFiles: contextFiles,
+		Stdout:       cmd.OutOrStdout(),
+		Stderr:       cmd.ErrOrStderr(),
 	})
 	if berr != nil {
 		return berr

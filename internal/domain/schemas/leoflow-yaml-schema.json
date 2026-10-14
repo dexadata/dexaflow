@@ -106,6 +106,24 @@
         "labels": {
           "type": "object",
           "additionalProperties": { "type": "string" }
+        },
+        "remote_builder": {
+          "type": "object",
+          "description": "The remote builder for builds no daemonless path covers (a package without wheels, system_packages, a project Dockerfile). It builds and pushes the image instead of the local container daemon. Over the target's and the workspace's remote_builder.",
+          "properties": {
+            "cloud_build": {
+              "type": "object",
+              "description": "Build on Google Cloud Build through the gcloud CLI, signed in on this machine. linux/amd64 only.",
+              "properties": {
+                "project": { "type": "string", "description": "Required. The Google Cloud project the build runs in." },
+                "region": { "type": "string", "description": "Cloud Build region, such as us-central1. Default: gcloud's builds/region, else global." },
+                "worker_pool": { "type": "string", "description": "A private pool: projects/<project>/locations/<region>/workerPools/<name>." },
+                "service_account": { "type": "string", "description": "The account the build runs as: projects/<project>/serviceAccounts/<email>. Default: the project's Cloud Build service account." }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
