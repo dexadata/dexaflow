@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/config"
 )
 
@@ -130,7 +131,8 @@ func resolveCredentials(cmd *cobra.Command, username, password string) (user, pa
 // promptValue prints a label and reads a trimmed line of input.
 // hintEmailUsername appends a first-login hint when authentication fails (a 401)
 // with a username that is not an e-mail. The bootstrap admin is
-// admin@leoflow.local, and a bare "admin" returns a generic "invalid
+// admin@dexaflow.local (admin@leoflow.local on installs created before the
+// rename), and a bare "admin" returns a generic "invalid
 // credentials"; the hint saves the trip. It is safe: it reveals nothing about
 // which accounts exist, only the expected username format.
 func hintEmailUsername(username string, err error) error {
@@ -142,7 +144,8 @@ func hintEmailUsername(username string, err error) error {
 	if !strings.Contains(err.Error(), "server returned 401") {
 		return err
 	}
-	return fmt.Errorf("%w\nhint: the username is an e-mail address (the bootstrap admin is admin@leoflow.local)", err)
+	return fmt.Errorf("%w\nhint: the username is an e-mail address (the bootstrap admin is %s, or %s on installs created before the rename)",
+		err, auth.DefaultAdminEmail, auth.LegacyAdminEmail)
 }
 
 // readPasswordStdin reads one line — the password — from r. It backs the

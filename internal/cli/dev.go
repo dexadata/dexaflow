@@ -72,7 +72,7 @@ const (
 	// liteLoginRateLimit is the per-minute failed-login cap for Lite — generous,
 	// because locking out the single local user is pure friction, not security.
 	liteLoginRateLimit = 30
-	devAdminUser       = "admin@leoflow.local"
+	devAdminUser       = auth.DefaultAdminEmail
 	devPollInterval    = 750 * time.Millisecond
 	devReadyTimeout    = 30 * time.Second
 	// Dev uses ports distinct from the demo/production defaults (8080/9090/9091)
@@ -771,7 +771,7 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 		return firstErr(serverExited(), werr)
 	}
 	removePreRestoreAfterBoot(out, keySt)
-	announceReady(out, o.host, o.port, o.adminEmail, ws.Path, countRegisteredDags(ctx))
+	announceReady(out, o.host, o.port, liteLoginEmail(ctx, o.adminEmail, liteUserExists), ws.Path, countRegisteredDags(ctx))
 	// Mint an admin token in-process signed with the dev JWT secret; the control
 	// plane validates it by signature + claims, so no login or seeded user is
 	// needed. Re-minted per operation (signing is cheap) so a Lite left running
@@ -1833,7 +1833,7 @@ func loadLiteAdmin(cmd *cobra.Command) liteEnvParams {
 	}
 	email := c.AdminEmail
 	if email == "" {
-		email = "admin@leoflow.local"
+		email = auth.DefaultAdminEmail
 	}
 	return liteEnvParams{
 		adminHash:  c.AdminPasswordHash,
@@ -2350,6 +2350,42 @@ func devEnforcedPythonVersion(cmd *cobra.Command, cfg *domain.LeoflowConfig) str
 		return ""
 	}
 	return cfg.PythonVersion
+}
+
+// liteLoginEmail returns the address the ready banner names as the login. The
+// server resolves the default admin to an install's legacy admin@leoflow.local
+// (auth.ResolveAdminEmail), and the banner resolves it the same way so it names
+// the account that logs in. An empty address (no-auth) stays empty, and a
+// failed lookup keeps the configured address rather than guess.
+func liteLoginEmail(ctx context.Context, configured string, exists auth.UserExistsFunc) string {
+	if configured == "" {
+		return ""
+	}
+	email, err := auth.ResolveAdminEmail(ctx, configured, exists)
+	if err != nil {
+		return configured
+	}
+	return email
+}
+
+// liteUserExists reports whether the Lite database has a user with that email
+// in the default tenant. Like countRegisteredDags it reads Postgres directly,
+// bounded, because it runs at banner time.
+func liteUserExists(ctx context.Context, email string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	conn, err := pgx.Connect(ctx, devDSNs().database)
+	if err != nil {
+		return false, fmt.Errorf("connecting to the Lite database: %w", err)
+	}
+	defer func() { _ = conn.Close(ctx) }() //nolint:errcheck // best-effort close of a short-lived read connection
+	var found bool
+	if qerr := conn.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM users u JOIN tenants t ON t.id = u.tenant_id WHERE t.name = 'default' AND u.email = $1)`,
+		email).Scan(&found); qerr != nil {
+		return false, fmt.Errorf("looking up the Lite admin: %w", qerr)
+	}
+	return found, nil
 }
 
 // countRegisteredDags reports how many DAGs the local database already holds.

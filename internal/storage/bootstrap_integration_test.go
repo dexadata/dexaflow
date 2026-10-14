@@ -4,10 +4,12 @@ package storage_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // TestPasswordRecoveryLoginIntegration is the end-to-end recovery flow behind
@@ -152,5 +154,30 @@ func TestSetUserPasswordIntegration(t *testing.T) {
 	}
 	if got {
 		t.Error("SetUserPassword reported an update for a nonexistent user")
+	}
+}
+
+// TestUserExistsIntegration backs the bootstrap admin resolution
+// (auth.ResolveAdminEmail): it reports a user by exact email, within the named
+// tenant only, so a legacy admin in one tenant is never mistaken for another
+// tenant's.
+func TestUserExistsIntegration(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	email := fmt.Sprintf("exists-%d@dexaflow.local", time.Now().UnixNano())
+	if _, err := repo.CreateUser(ctx, "default", email, "pw-123456", nil); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if ok, err := repo.UserExists(ctx, "default", email); err != nil || !ok {
+		t.Errorf("UserExists(default, %s) = %v, %v; want true", email, ok, err)
+	}
+	if ok, err := repo.UserExists(ctx, "default", "nobody-"+email); err != nil || ok {
+		t.Errorf("UserExists(unknown) = %v, %v; want false", ok, err)
+	}
+	other := uniqueTenant("exists-b")
+	if _, err := repo.EnsureTenant(ctx, other, other, 0, domain.TenantLimitsUpdate{}); err != nil {
+		t.Fatalf("EnsureTenant: %v", err)
+	}
+	if ok, err := repo.UserExists(ctx, other, email); err != nil || ok {
+		t.Errorf("UserExists(%s, %s) = %v, %v; want false across tenants", other, email, ok, err)
 	}
 }

@@ -336,6 +336,20 @@ func (r *Repository) LocalPasswordUserExists(ctx context.Context, tenant, email 
 	return n > 0, nil
 }
 
+// UserExists reports whether a user with exactly this email exists in the
+// tenant, active or not and whatever its login. It backs the bootstrap admin
+// resolution (auth.ResolveAdminEmail): an install whose admin predates the
+// rename to Dexaflow keeps that admin instead of gaining a second one.
+func (r *Repository) UserExists(ctx context.Context, tenant, email string) (bool, error) {
+	if _, err := r.q.GetUserByEmail(ctx, queries.GetUserByEmailParams{Name: tenant, Email: email}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("looking up user: %w", err)
+	}
+	return true, nil
+}
+
 // RoleExists reports whether a role name exists for the tenant. The OIDC login
 // path uses it to fail closed on a misconfigured default_role before minting a
 // token for a returning user (the JIT path validates roles inside CreateOIDCUser).

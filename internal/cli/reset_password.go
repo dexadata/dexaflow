@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/storage"
 )
@@ -56,6 +57,9 @@ type openResetStore func(ctx context.Context) (resetPasswordStore, func(), error
 
 // resetPasswordStore is what reset-password needs from the Lite datastore.
 type resetPasswordStore interface {
+	// UserExists reports whether a user with that email exists, so the
+	// default admin resolves to an install's legacy admin (auth.ResolveAdminEmail).
+	UserExists(ctx context.Context, tenant, email string) (bool, error)
 	// SetUserPassword stores hash as the admin's password and reports whether
 	// an admin with that email existed.
 	SetUserPassword(ctx context.Context, tenant, email, hash string) (bool, error)
@@ -68,6 +72,15 @@ type resetPasswordStore interface {
 type liteResetStore struct {
 	repo *storage.Repository
 	pool storage.RowQueryer
+}
+
+// UserExists reports whether a user with that email exists.
+func (s liteResetStore) UserExists(ctx context.Context, tenant, email string) (bool, error) {
+	ok, err := s.repo.UserExists(ctx, tenant, email)
+	if err != nil {
+		return false, fmt.Errorf("looking up the admin: %w", err)
+	}
+	return ok, nil
 }
 
 // SetUserPassword stores the admin's new password hash.
@@ -116,7 +129,6 @@ func resetPassword(ctx context.Context, out io.Writer, home, userEmail string, o
 		}
 	}
 	cfg := loadUserConfig(home)
-	email := resolveAdminEmail(userEmail, cfg)
 
 	pw, hash, err := generateAdminCredential()
 	if err != nil {
@@ -127,6 +139,13 @@ func resetPassword(ctx context.Context, out io.Writer, home, userEmail string, o
 		return err
 	}
 	defer closeStore()
+	// The default admin is admin@leoflow.local on an install created before the
+	// rename; resetting that account keeps the install at one admin.
+	email, err := auth.ResolveAdminEmail(ctx, resolveAdminEmail(userEmail, cfg),
+		func(ctx context.Context, email string) (bool, error) { return store.UserExists(ctx, "default", email) })
+	if err != nil {
+		return fmt.Errorf("resetting password: %w", err)
+	}
 	ok, err := store.SetUserPassword(ctx, "default", email, hash)
 	if err != nil {
 		return fmt.Errorf("resetting password: %w", err)
@@ -217,7 +236,8 @@ func loadUserConfig(home string) *config.Config {
 }
 
 // resolveAdminEmail picks the email to reset: the --user flag, else the config
-// admin, else the Lite default.
+// admin, else the Lite default (auth.DefaultAdminEmail, which resetPassword
+// resolves to an install's legacy admin when that is the one it has).
 func resolveAdminEmail(flag string, cfg *config.Config) string {
 	if flag != "" {
 		return flag
@@ -225,5 +245,5 @@ func resolveAdminEmail(flag string, cfg *config.Config) string {
 	if cfg != nil && cfg.AdminEmail != "" {
 		return cfg.AdminEmail
 	}
-	return "admin@leoflow.local"
+	return auth.DefaultAdminEmail
 }

@@ -76,7 +76,7 @@ transports.
 export DEXAFLOW_SERVER_URL=http://localhost:8088     # your Lite control plane
 export DEXAFLOW_TOKEN="$(dexaflow auth create-token \
   --server http://localhost:8088 \
-  --username admin@leoflow.local --password <your-admin-password>)"
+  --username admin@dexaflow.local --password <your-admin-password>)"
 dexaflow-mcp                                          # speaks MCP over stdin/stdout
 ```
 
@@ -170,7 +170,7 @@ The MCP **passes the caller's Dexaflow JWT through** to `/api/v2` and never mint
 ```bash
 dexaflow auth create-token \
   --server http://localhost:8088 \
-  --username admin@leoflow.local \
+  --username admin@dexaflow.local \
   --password <your-admin-password>
 ```
 
