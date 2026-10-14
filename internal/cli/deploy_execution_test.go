@@ -30,7 +30,7 @@ func (registerRepo) SetCurrentDagVersion(context.Context, string, string, domain
 	return domain.CurrentVersionChange{}, nil
 }
 
-const mixedDeploySpec = `{"schema_version":"1.0","dag_id":"etl","dag_version":"v2","image":"img:v2","tasks":[` +
+const mixedDeploySpec = `{"schema_version":"1.0","dag_id":"etl","dag_version":"v2","image":"img:v2","min_idle_workers":2,"tasks":[` +
 	`{"task_id":"extract","type":"python","entrypoint":"dag:extract"},` +
 	`{"task_id":"transform","type":"python","entrypoint":"dag:transform"},` +
 	`{"task_id":"load","type":"python","entrypoint":"dag:load","execution":{"node_selector":{"pool":"db"}}}]}`
@@ -67,12 +67,15 @@ func TestDeployReportsExecutionModes(t *testing.T) {
 	res, out := registerAgainstAPI(t, domain.WarmPolicy{Enabled: true}, pools, mixedDeploySpec)
 	for _, want := range []string{
 		"  execution  2 tasks warm-eligible; load on a dedicated pod: node_selector set\n",
-		"  warm pool  2 idle warm workers (up to 4) start with this version's first run",
-		"the previous version's warm workers, if it has any, drain once its last active run ends\n",
+		"  warm pool  2 idle warm workers (up to 4) warming now, kept while this version is the DAG's current version",
+		"; previous pool draining: its idle workers are removed now and busy ones finish their attempt first\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("deploy output lacks %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "first run") {
+		t.Errorf("deploy output still says the pool waits for the first run:\n%s", out)
 	}
 	raw, err := json.Marshal(res)
 	if err != nil {
