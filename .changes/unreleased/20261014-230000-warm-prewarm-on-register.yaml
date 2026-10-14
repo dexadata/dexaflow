@@ -11,8 +11,11 @@ body: |-
   their version, and their later attempts take dedicated pods. The current
   version of an unpaused DAG that declares `min_idle_workers` gets that many
   idle workers (up to `execution.max_pool_size`) as soon as it is current,
-  even with no run; `execution.max_warm_pods_per_tenant` does not bound
-  them, since a declared idle floor is never starved. The operator floor
+  even with no run, within `execution.max_warm_pods_per_tenant`: prewarmed
+  pools share what the cap leaves after the idle floors of the tenant's
+  versions with an active run, by DAG id, and a tenant whose prewarm floors
+  do not fit is logged and counted as
+  `warm_pool_tenant_cap_below_min_idle_sum`. The operator floor
   `execution.min_idle_workers` prewarms nothing: it still applies from a
   version's first run, as before. The server
   logs each prewarm and drain and counts them in

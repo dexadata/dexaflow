@@ -34,10 +34,17 @@ import (
 //
 // Prewarm marks a target held only because the version is its DAG's current
 // version (#1707, ADR 0082): no active run needs it yet, and its pool is
-// started so the first run finds warm workers. The reconciler treats it like
-// any other target and only logs and meters when a prewarm pool starts.
+// started so the first run finds warm workers. Under a per-tenant cap its
+// floor shares what the cap leaves and never raises the budget (boundPrewarm);
+// otherwise the reconciler treats it like any other target and only logs and
+// meters when a prewarm pool starts.
+//
+// DagID is the DAG's id, which orders a tenant's prewarm targets when the
+// per-tenant cap cannot cover all of their floors, so the same DAGs keep
+// their pools from one reconcile to the next.
 type WarmTarget struct {
 	DagVersionID     string
+	DagID            string
 	Image            string
 	EffectiveMinIdle int
 	MaxPoolSize      int
@@ -307,6 +314,7 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	targets = r.boundPrewarm(ctx, targets)
 	existing, fromCache, err := r.listFleet(ctx)
 	if err != nil {
 		return err
@@ -535,6 +543,9 @@ func allowanceFor(allow map[string]int, dagVersionID string) int {
 //
 //   - min_idle is SACRED. The tenant's effective budget is
 //     max(max_warm_pods_per_tenant, Σ EffectiveMinIdle over its ACTIVE versions).
+//     A prewarm-only target's floor was already lowered to its share of the cap
+//     (boundPrewarm), so only the floors of versions with an active run can
+//     raise the budget.
 //     If the promised floors already exceed the cap it is a misconfiguration, not a
 //     reason to starve work: the budget is raised to the floor sum so every floor
 //     is still creatable, and warm_pool_tenant_cap_below_min_idle_sum is logged +
@@ -624,6 +635,73 @@ func (r *WarmPoolReconciler) countLiveByTenant(existing []WarmPodInfo, busy map[
 		}
 	}
 	return stat, tenantLive
+}
+
+// boundPrewarm keeps the prewarm-only targets (Prewarm: a DAG's current
+// version with no active run, ADR 0082) inside the per-tenant cap: their
+// floors share what max_warm_pods_per_tenant leaves after the floors of the
+// tenant's versions with an active run, and never raise the budget the way
+// those do. Within a tenant the prewarm targets are served by DAG id (then
+// version id), each taking min(its floor, what is left), so the same DAGs
+// keep their pools on every tick; a target's floor is lowered to its share,
+// so a pool above it is trimmed of idle workers like any excess. A tenant
+// whose prewarm floors do not all fit is logged with the starved versions
+// and metered as warm_pool_tenant_cap_below_min_idle_sum. With no cap
+// (maxWarmPodsPerTenant <= 0) the targets are returned unchanged.
+func (r *WarmPoolReconciler) boundPrewarm(ctx context.Context, targets []WarmTarget) []WarmTarget {
+	if r.maxWarmPodsPerTenant <= 0 {
+		return targets
+	}
+	left := make(map[string]int)
+	prewarm := make([]int, 0, len(targets))
+	for i, t := range targets {
+		if t.Prewarm {
+			prewarm = append(prewarm, i)
+			continue
+		}
+		left[t.TenantID] -= t.EffectiveMinIdle
+	}
+	if len(prewarm) == 0 {
+		return targets
+	}
+	out := append([]WarmTarget(nil), targets...)
+	sort.SliceStable(prewarm, func(a, b int) bool {
+		ta, tb := out[prewarm[a]], out[prewarm[b]]
+		if ta.DagID != tb.DagID {
+			return ta.DagID < tb.DagID
+		}
+		return ta.DagVersionID < tb.DagVersionID
+	})
+	starved := make(map[string][]string)
+	for _, i := range prewarm {
+		t := &out[i]
+		share := r.maxWarmPodsPerTenant + left[t.TenantID]
+		if share < 0 {
+			share = 0
+		}
+		if t.EffectiveMinIdle > share {
+			starved[t.TenantID] = append(starved[t.TenantID], t.DagVersionID)
+			t.EffectiveMinIdle = share
+		}
+		left[t.TenantID] -= t.EffectiveMinIdle
+	}
+	r.noteStarvedPrewarm(ctx, starved)
+	return out
+}
+
+// noteStarvedPrewarm logs and meters, per tenant, the prewarm targets whose
+// declared floor the per-tenant cap could not cover this tick.
+func (r *WarmPoolReconciler) noteStarvedPrewarm(ctx context.Context, starved map[string][]string) {
+	tenants := make([]string, 0, len(starved))
+	for tenant := range starved {
+		tenants = append(tenants, tenant)
+	}
+	sort.Strings(tenants)
+	for _, tenant := range tenants {
+		r.logger.WarnContext(ctx, "warm-pool per-tenant cap cannot cover the min_idle_workers of every prewarmed DAG; the DAGs first by id keep their pools and these versions get fewer idle workers until a run needs them (raise execution.max_warm_pods_per_tenant or lower the DAGs' min_idle_workers)",
+			"tenant", tenant, "max_warm_pods_per_tenant", r.maxWarmPodsPerTenant, "dag_versions", starved[tenant])
+		r.record("warm_pool_tenant_cap_below_min_idle_sum")
+	}
 }
 
 // tenantBudget is the tenant's effective aggregate budget: the operator's cap,

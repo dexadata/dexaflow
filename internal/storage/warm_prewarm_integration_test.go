@@ -94,8 +94,8 @@ func TestPrewarmFollowsTheCurrentVersionIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	v1, ok := targetByImage(t, sched, ctx, img1)
-	if !ok || !v1.Prewarm || v1.EffectiveMinIdle != 1 {
-		t.Fatalf("unpaused DAG, no run: target = %+v (present %v), want a Prewarm target of 1", v1, ok)
+	if !ok || !v1.Prewarm || v1.EffectiveMinIdle != 1 || v1.DagID != dagID {
+		t.Fatalf("unpaused DAG, no run: target = %+v (present %v), want a Prewarm target of 1 for %s", v1, ok, dagID)
 	}
 
 	// A run of v1 starts an attempt on a warm worker of v1.

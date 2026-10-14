@@ -6,7 +6,10 @@ body: |-
   where the warm pool reconciler reads it. With warm pools on, an unpaused DAG
   that declares it is prewarmed as soon as a version becomes current; the
   server clamps it to `execution.max_pool_size`, and with warm pools off it
-  does nothing. Before, the key was refused by the authoring schema, so only a
+  does nothing. Changing it changes the version label, so it makes a new
+  version whose pool replaces the previous one. A server older than 0.5.4
+  accepts the key but applies it only while a run of the version is active.
+  Before, the key was refused by the authoring schema, so only a
   hand-made `dag.json` could reach the prewarm. A DAG with `staging.enabled`
   cannot be warm, so the compile refuses the key on one. A legacy
   `leoflow.yaml` accepts it too. (#1707)

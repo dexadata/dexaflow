@@ -53,7 +53,23 @@ warm.
    declared value is read from the spec in SQL (`ListWarmCurrentVersions`),
    so no spec of a DAG that is not prewarmed is loaded. A paused DAG is not
    prewarmed; its running runs keep the target as before. The drain of D4
-   applies to every superseded version, declared or not.
+   applies to every superseded version, declared or not. The author declares
+   it as `min_idle_workers` in `dexaflow.yaml`; the compile copies it into
+   `dag.json` (the parser does not emit it), and refuses it on a DAG with
+   `staging.enabled`, which is never warm (ADR 0058 D5).
+7. **Prewarm is bounded by the per-tenant cap.** A prewarm-only target (the
+   current version, no active run) never raises a tenant's budget the way
+   the idle floor of a version with an active run does (ADR 0058, the
+   per-tenant cap). The prewarm floors of a tenant share what
+   `max_warm_pods_per_tenant` leaves after the floors of its versions with an
+   active run, served by DAG id (then version id), each taking the smaller of
+   its floor and what is left; a target's floor is lowered to its share, so a
+   pool above it loses idle workers. The order is stable, so the same DAGs
+   keep their pools on every tick. A tenant whose prewarm floors do not all
+   fit is logged with the versions that got less and counted as
+   `warm_pool_tenant_cap_below_min_idle_sum`. Once a run of a starved version
+   is active, its version is a run target again and its floor is honored as
+   before.
 4. **A superseded version drains at once, never by killing an attempt.** It
    is no longer a target, so the reconciler's existing drain applies: idle
    workers are deleted (each delete re-reads the busy set first, #1601), a
@@ -87,6 +103,11 @@ warm.
   would not bound it (it never starves a promised idle floor, below). The
   DAG's own declaration is the opt in: the author asks for warmth for this
   DAG, the operator caps how much.
+- **Let prewarm floors raise the tenant budget, as run floors do.** A tenant
+  could then pin `max_pool_size` idle pods per unpaused DAG with no run, and
+  `max_warm_pods_per_tenant` would bound nothing. A run floor raises the
+  budget because a run needs it now; a prewarm floor is an anticipation, so
+  it takes only what the cap leaves.
 - **A separate setting to opt into prewarm.** The declaration already is one,
   per DAG, and the operator keeps `warm_pools_enabled` and `max_pool_size`.
 
@@ -94,15 +115,19 @@ warm.
 
 - **Cost.** Each unpaused DAG that declares `min_idle_workers: N` keeps N
   idle warm pods (at most `max_pool_size`) even with no run, from the moment
-  its version is current. `max_warm_pods_per_tenant` does not bound this:
-  the reconciler raises a tenant's budget to the sum of its promised idle
-  floors (ADR 0058, the per-tenant cap) so a declared floor is never
-  starved, and only growth past the floors is capped. An idle worker is
-  still recycled after `worker_idle_ttl` and replaced at the next reconcile.
-  The operator floor alone adds no standing cost. Today the parser does not
-  emit `min_idle_workers` (it is not in the authoring schema), so only a
-  `dag.json` registered with it is prewarmed until the authoring side
-  exposes it.
+  its version is current, within `max_warm_pods_per_tenant` (D7): a tenant's
+  prewarmed pods never exceed what the cap leaves after the idle floors of
+  its versions with an active run, and the DAGs last by id get fewer idle
+  workers when the floors do not fit. An idle worker is still recycled after
+  `worker_idle_ttl` and replaced at the next reconcile. The operator floor
+  alone adds no standing cost.
+- **A new version per change.** `min_idle_workers` is part of
+  `dexaflow.yaml`, which the content label hashes, so changing it gives the
+  DAG a new version: a new image tag, and the previous version's pool
+  drains (D4).
+- **Older servers.** A server older than 0.5.4 accepts a `dag.json` carrying
+  `min_idle_workers` but applies it only while a run of the version is
+  active, with no prewarm.
 - **Reads per tick.** One more query, `ListWarmCurrentVersions`, which scans
   `dags` for the unpaused ones and the DAGs of active runs and probes each
   one's current version by primary key (about 60 ms with 100k DAGs, 3,000 of
