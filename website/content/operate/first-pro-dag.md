@@ -41,10 +41,12 @@ when the build is done.
   `PATH`**, so the image is built with no container daemon: your dependencies
   are installed from wheels for the cluster's platform and your DAG code is
   pushed as one layer on them, straight to the registry. `deploy` picks a
-  [builder](/operate/builders/) and says which one ran. A project uv cannot
-  build (`system_packages`, your own `Dockerfile`, a package with no wheel)
-  falls back to a local container tool: `docker`, or `podman`/`nerdctl` passed
-  with `--builder`.
+  [builder](/operate/builders/) and says which one ran. Without uv, or for a
+  project uv cannot build (`system_packages`, a package with no wheel), a
+  local container tool builds the dependency image: `docker`, or
+  `podman`/`nerdctl` passed with `--builder`. It builds the whole image when
+  a dependency is not pinned to one version and uv cannot build it, or when
+  the project ships its own `Dockerfile`.
 - **A container registry your cluster can pull from**: Docker Hub, GHCR,
   Amazon ECR, Google Artifact Registry, Azure ACR, or a private one. You push the
   DAG image there; the control plane pulls it. (Lite needs none; this is a Pro
@@ -106,9 +108,9 @@ The registry is a separate credential. The CLI reads and pushes to it itself
 | Registry | What the CLI needs |
 |---|---|
 | Artifact Registry, GCR | be signed in to `gcloud` (`gcloud auth login`) |
-| ECR | be signed in to `aws` (`aws sso login`, `aws configure`, a profile or an instance role) |
+| ECR | be signed in to `aws` (`aws sso login`, `aws configure`, environment credentials or an instance role) |
 | ACR | be signed in to `az` (`az login`) |
-| GHCR, Docker Hub, any other | `docker login <registry>` once, which writes `~/.docker/config.json` |
+| GHCR, Docker Hub, any other | `docker login <registry>` once, which stores the credential in `~/.docker/config.json` or in the credential helper it names |
 
 When a project falls back to the local container tool, the tool pushes with
 its own login, which a cloud session alone does not give it: the deploy
@@ -123,7 +125,8 @@ Created DAG "first_pro_dag" in dags/first_pro_dag
 …
 ```
 
-`new` writes `dags/first_pro_dag/dag.py` and `dexaflow.yaml`. Replace them with
+`new` writes `dags/first_pro_dag/dag.py`, `dexaflow.yaml` and a `.gitignore`.
+Replace the first two with
 a two-task DAG that has one dependency:
 
 ```python title="dags/first_pro_dag/dag.py"
@@ -181,7 +184,7 @@ Deploy /home/you/acme-dags/dags/first_pro_dag -> https://pro.example.com? [y/N] 
 preflight:  control plane https://pro.example.com answers, the token may deploy
 preflight:  ghcr.io/your-org/first_pro_dag accepts a push (credential from the docker config)
 preflight:  the server would register first_pro_dag 1a2b3c4 as a new DAG, active
-builder:    dependency-layer (uv 0.11.32), then code-layer, no dependency image ghcr.io/your-org/first_pro_dag:deps-9b07... in the registry (...): it is built from wheels without a daemon and pushed, then the DAG code is appended to it
+builder:    dependency-layer (uv 0.11.32), then code-layer, no dependency image ghcr.io/your-org/first_pro_dag:deps-9b07... in the registry (GET https://ghcr.io/v2/your-org/first_pro_dag/manifests/deps-9b07...: MANIFEST_UNKNOWN: ...): it is built from wheels without a daemon and pushed, then the DAG code is appended to it
 …  (compile → build for linux/amd64 → push → register)
 Deployed first_pro_dag -> https://pro.example.com
   image ghcr.io/your-org/first_pro_dag@sha256:9f2c…
@@ -217,8 +220,8 @@ That one command crossed every boundary:
 1. **compile**: parsed `dag.py`, overlaid `dexaflow.yaml`, ran the guardrails
    (unknown `task_id`, unsupported operator, duplicate keys), wrote `dag.json`.
 2. **build**: built the image **for the cluster's architecture**: `--platform`,
-   else `build.platforms` in `dexaflow.yaml`, the target's or the workspace's
-   platforms (`linux/amd64` when none is set), so a macOS/arm64 laptop
+   else `build.platforms` in `dexaflow.yaml`, the target's, the workspace's or
+   the cluster's deploy defaults (`linux/amd64` when none is set), so a macOS/arm64 laptop
    produces an image an amd64 cluster can run. The `builder:` line names how it
    was built: here uv installed the wheels for `linux/amd64` as a dependency
    image, and the DAG code went on top as one layer, with no container daemon.
@@ -295,7 +298,7 @@ the latest run.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `deploy requires a container registry…` | no registry from `--registry`, `dexaflow.yaml`, the target, the workspace defaults, your config file or the cluster | `--registry` on `dexaflow target add` (Step 1), or the `registry:` block in `dexaflow.yaml`; then the registry sign-in of Step 2 |
+| `deploy requires a container registry…` | no registry from `--registry`, `DEXAFLOW_REGISTRY`, `dexaflow.yaml`, the target, the workspace defaults, your config file or the cluster | `--registry` on `dexaflow target add` (Step 1), or the `registry:` block in `dexaflow.yaml`; then the registry sign-in of Step 2 |
 | `denied` / `unauthorized` on push | no credential for the registry, or one that may not push there | the command the preflight names for your registry: a sign-in to the cloud's CLI for Artifact Registry, ECR and ACR, `docker login <registry>` for the others, and the tool's own login when the local container tool builds ([Registry credentials](/operate/builders/#registry-credentials)); registry auth ≠ control-plane auth |
 | Task pod: `exec format error` | image arch ≠ cluster arch | build for the cluster's architecture: `dexaflow deploy --platform linux/arm64` on a Graviton cluster, or `build: {platforms: [linux/arm64]}` in `dexaflow.yaml`. The `platforms:` line of the output names where the value came from |
 | DAG runs but a task fails on a missing `conn_id` | connections live in the control plane, **not** in the image | deploy prints `note: this DAG expects connection(s): …`; create them on Pro (UI/API) first. See [Variables & Connections](/author-dags/variables-connections/) |

@@ -1,6 +1,6 @@
 ---
 title: From Lite to Pro
-weight: 12
+weight: 14
 description: What stays the same and what changes when a DAG you ran with dexaflow lite moves to a Pro control plane.
 ---
 
@@ -27,9 +27,9 @@ differences so none of them surprises you.
 |---|---|---|
 | Start | `dexaflow lite`, which watches the workspace and re-registers on save | `dexaflow deploy`, once per change, by hand or from CI ([Redeploy on save](/operate/first-pro-dag/#redeploy-on-save) with `--watch`) |
 | Server | on your machine, chosen for you | a target you add once: `dexaflow target add prod <url> --registry <prefix>` |
-| Sign-in | the bootstrap admin, `admin@dexaflow.local` | `dexaflow auth login --target prod`: the cluster's single sign-on, or a password |
+| Sign-in | the admin `dexaflow setup` created (its email from the config file, `admin@dexaflow.local` by default); with no setup, Lite runs without sign-in, bound to this machine | `dexaflow auth login --target prod`: the cluster's single sign-on, or a password |
 | Image | built into the local cluster (none with `--executor=subprocess`), never pushed | built for the cluster's platform (`linux/amd64` by default), pushed to your registry and registered by digest |
-| Registry | none | one your cluster can pull from, with a credential for the CLI: a `gcloud`, `aws` or `az` session for Artifact Registry, ECR and ACR, `docker login` for others ([Registry credentials](/operate/builders/#registry-credentials)) |
+| Registry | none | one your cluster can pull from, with a credential for the CLI: a `gcloud`, `aws` or `az` session for Artifact Registry, ECR and ACR, `docker login` for others, and the container tool's own login when it builds ([Registry credentials](/operate/builders/#registry-credentials)) |
 | A new DAG | registered active, so its schedule runs from the first save | registered **paused**, as in Airflow, until someone unpauses it; `deploy --active` does it on the first deploy ([New DAGs start paused](/concepts/core-concepts/#new-dags-start-paused)) |
 | Connections and variables | on the local server, seeded from `AIRFLOW_CONN_<ID>` in your environment when the DAG declares them | stored on the control plane: create them there before the first run, in the UI or with `dexaflow connections set --target prod` and `dexaflow variables set --target prod` ([Variables & Connections](/author-dags/variables-connections/)) |
 
@@ -46,8 +46,9 @@ differences so none of them surprises you.
    Lite or baked into the image. `deploy` prints
    `note: this DAG expects connection(s): …` for the ones the DAG declares.
 3. **Check the platform.** A laptop on arm64 still builds `linux/amd64` by
-   default. A cluster on arm64 nodes sets `--platform linux/arm64` on
-   `dexaflow target add`, or `build.platforms` in `dexaflow.yaml`
+   default. For a cluster on arm64 nodes, set `--platform linux/arm64` on
+   `dexaflow target add` or `build.platforms` in `dexaflow.yaml`, or let the
+   platform team set it in the cluster's deploy defaults
    ([Choosing the platform](/operate/builders/#choosing-the-platform)).
 
 Then deploy, start the DAG and watch its first run:
