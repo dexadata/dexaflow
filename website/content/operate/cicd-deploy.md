@@ -143,6 +143,43 @@ With no server set anywhere (no `--server`, `--target`, `DEXAFLOW_SERVER_URL`
 or `server_url`), `deploy` stops before building instead of going to
 `http://localhost:8080`; a machine set up for Lite keeps the local default.
 
+#### Checks before the build (preflight)
+
+A deploy that the server or the registry would refuse fails in seconds,
+before the build, with a message that names what to fix. `deploy` checks, in
+this order:
+
+1. **Before the compile: the control plane answers and the token may
+   deploy.** A token the server refuses (`401`) names `dexaflow auth login`;
+   a token without the `deployer` role, `deploy` or `write` on dags, or an API
+   token without the `deploy` scope (`403`) names
+   `dexaflow auth create-token --scope deploy`. With `--paused` or `--active`
+   the check also covers the `dexaflow:run` scope those flags need. A server
+   that cannot be reached stops the deploy here.
+2. **Before the build: the registry accepts a push** to the image's
+   repository with the credentials of the docker config
+   (`~/.docker/config.json` and its credential helpers, the ones the push
+   uses). The check starts an upload and cancels it, so nothing is written.
+   A refusal names `docker login <registry>`. Nothing is checked when nothing
+   is pushed: with `--skip-build`, or when the registry already holds the
+   image for the content label. A registry that cannot answer the check is a
+   `note:` and the push will tell.
+3. **After the compile, before the build: the server's dry run of the
+   register.** The compiled `dag.json` goes to
+   `POST /api/v2/dags/{dag_id}/versions?dry_run=true`, which runs every check
+   the register runs (spec validation, the operator's image, service account
+   and field allowlists, the resource unit, source mode, the tenant's limits,
+   the declared connections and variables, the version label) and writes
+   nothing. A refusal stops the deploy with the server's reason; a warning
+   (a task that does not fit its size under `executor.unit.enforce: warn`)
+   prints on stderr and the deploy goes on.
+
+Each check that passes prints a `preflight:` line (on stderr with
+`--output json`). A server from before the dry run is never sent the
+compiled spec with `dry_run`, which it would register: the deploy prints a
+`note:` and its policy checks run at the register, after the build, as
+before. `dexaflow doctor` runs the first two checks for the target in use.
+
 | Flag | What it does |
 |---|---|
 | `--paused` / `--active` | Leaves the DAG paused or active after this deploy, new or not, instead of the creation rule above. The register sets it in its own transaction, audited as `dag.pause` or `dag.unpause`; for content that is already current, nothing is registered and the DAG is paused or unpaused with the Airflow `PATCH /api/v2/dags/{dag_id}`. Pausing is a run-state write: these flags need `write:dag` (the `deployer` role alone is refused with `403`), and a scoped token needs `dexaflow:run` as well as `dexaflow:deploy`, so a deploy-only token is refused with `403`. |

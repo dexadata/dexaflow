@@ -141,19 +141,37 @@ func dryRunOutcome(a dryRunAnswer) string {
 // credentials may push to its repository, before the build. A refusal stops
 // the deploy with the login command; a check that cannot be made is a note.
 func checkRegistryPush(ctx context.Context, out, warn io.Writer, image string) error {
+	res, err := registryPushCheck(ctx, image)
+	if err != nil {
+		return err
+	}
+	if res.note != "" {
+		_, werr := fmt.Fprintf(warn, "note: %s\n", res.note)
+		return werr
+	}
+	_, werr := fmt.Fprintf(out, "preflight:  %s\n", res.ok)
+	return werr
+}
+
+// checkResult is a preflight check that did not refuse: what it found, or
+// a note on why it could not tell.
+type checkResult struct{ ok, note string }
+
+// registryPushCheck is the push check of checkRegistryPush, for deploy and
+// doctor: an error is a refusal, naming the login command.
+func registryPushCheck(ctx context.Context, image string) (checkResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
 	defer cancel()
 	access, err := build.Registry{}.CheckPush(ctx, image)
 	switch {
 	case err == nil:
-		_, werr := fmt.Fprintf(out, "preflight:  %s accepts a push\n", access.Repository)
-		return werr
+		return checkResult{ok: access.Repository + " accepts a push"}, nil
 	case errors.Is(err, build.ErrPushDenied) && access.Anonymous:
-		return fmt.Errorf("preflight: no credential for the registry %s, which refused a push to %s.\n"+
+		return checkResult{}, fmt.Errorf("preflight: no credential for the registry %s, which refused a push to %s.\n"+
 			"  Sign in once:  docker login %s   (or set its credential helper in the docker config, ~/.docker/config.json)\n  (%w)",
 			access.Registry, access.Repository, access.Registry, err)
 	case errors.Is(err, build.ErrPushDenied):
-		return fmt.Errorf("preflight: the registry %s refused a push to %s with the credential in the docker config.\n"+
+		return checkResult{}, fmt.Errorf("preflight: the registry %s refused a push to %s with the credential in the docker config.\n"+
 			"  Sign in with an account that may push there:  docker login %s\n  (%w)",
 			access.Registry, access.Repository, access.Registry, err)
 	}
@@ -161,9 +179,7 @@ func checkRegistryPush(ctx context.Context, out, warn io.Writer, image string) e
 	if target == "" {
 		target = image
 	}
-	//nolint:errcheck // advisory: the push will tell
-	fmt.Fprintf(warn, "note: could not check push access to %s (%v); the push will tell\n", target, err)
-	return nil
+	return checkResult{note: fmt.Sprintf("could not check push access to %s (%v); the push will tell", target, err)}, nil
 }
 
 // registryHolds reports whether the registry already holds image, so a
