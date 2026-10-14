@@ -538,6 +538,17 @@ paths:
         run-state write: sending is_paused also needs write on dags, and a
         scoped token needs dexaflow:run as well as dexaflow:deploy, else the
         register is refused with 403.
+
+        With dry_run=true the register runs every check it runs for real
+        (permission and scope, spec validation, the resource unit, source
+        mode, the image, service account and field allowlists, the tenant's
+        limits, the declared connections and variables, the version label)
+        and writes nothing, audit included. It answers 200 with what the
+        register would do (created, dag_created, is_paused), dry_run true and
+        the warnings it would raise, or the same refusal the register would
+        give. Every answer to a dry run that passed the permission check carries the
+        header Dexaflow-Dry-Run: true, so a client can tell it from a server
+        that predates the parameter.
       operationId: registerDagVersion
       tags: [DAGs]
       parameters:
@@ -550,6 +561,14 @@ paths:
             and a scoped token also needs the dexaflow:run scope (403
             otherwise).
           schema: { type: boolean }
+        - name: dry_run
+          in: query
+          required: false
+          description: >-
+            When true, checks the register and writes nothing (answered with
+            200 and dry_run true, or the register's refusal). False or absent
+            registers. Any other value is refused with 400.
+          schema: { type: boolean }
       requestBody:
         required: true
         content:
@@ -557,7 +576,7 @@ paths:
             schema: { $ref: "#/components/schemas/DagSpec" }
       responses:
         "200":
-          description: The content was already registered; nothing changed
+          description: The content was already registered and nothing changed, or, for a dry run, what the register would do
           content:
             application/json:
               schema: { $ref: "#/components/schemas/VersionRegistration" }
@@ -1420,6 +1439,11 @@ components:
         created: { type: boolean, description: False when the content was already registered. }
         dag_created: { type: boolean, description: True when this register created the DAG (its first version); false for a new version of an existing DAG. }
         is_paused: { type: boolean, description: The DAG's is_paused after the register. }
+        dry_run: { type: boolean, description: True when this answers a dry run; nothing was written, and the other fields say what the register would do. Absent from a register. }
+        warnings:
+          type: array
+          items: { type: string }
+          description: What the register would let through with a warning (a task that does not fit its size under executor.unit.enforce=warn). Sent with a dry run.
 
     DagVersionCollection:
       type: object

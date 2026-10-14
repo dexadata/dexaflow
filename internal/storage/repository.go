@@ -1338,7 +1338,10 @@ func (r *Repository) RegisterDagVersionAs(ctx context.Context, tenant string, re
 	if err != nil {
 		return domain.DagRegistered{}, err
 	}
-	if !got.wrote {
+	// A dry run (#1705) stops here, before the commit: the deferred rollback
+	// undoes every write, audit entries included, so its outcome and its
+	// errors are exactly the register's and nothing remains.
+	if !got.wrote || reg.DryRun {
 		return got.DagRegistered, nil
 	}
 	if cerr := tx.Commit(ctx); cerr != nil {
