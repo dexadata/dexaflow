@@ -70,8 +70,20 @@ type CloudBuild struct {
 	// Registry reads the pushed digest; the registry client when nil.
 	Registry Resolver
 	// Poll is how often a build whose log cannot be streamed is described
-	// until it ends; cloudBuildPoll when zero.
+	// until it ends, and the first wait before a failed describe is tried
+	// again; cloudBuildPoll when zero.
 	Poll time.Duration
+	// MaxContext is the largest compressed build context uploaded, in
+	// bytes; defaultMaxContext (2 GiB) when zero.
+	MaxContext int64
+}
+
+// maxContext returns the archive cap.
+func (b CloudBuild) maxContext() int64 {
+	if b.MaxContext > 0 {
+		return b.MaxContext
+	}
+	return defaultMaxContext
 }
 
 // tool returns the executable, gcloud by default.
@@ -227,7 +239,7 @@ func (b CloudBuild) noteRegistry(req Request) {
 // prepare writes the source archive and the build config of req into dir.
 func (b CloudBuild) prepare(dir string, req Request) (archive, config string, err error) {
 	archive = filepath.Join(dir, "context.tar.gz")
-	if werr := writeContextArchive(archive, req.Dockerfile, req.ContextFiles); werr != nil {
+	if werr := writeContextArchive(archive, req.Dockerfile, req.ContextFiles, b.maxContext()); werr != nil {
 		return "", "", werr
 	}
 	data, err := json.Marshal(b.config(req))
@@ -252,8 +264,9 @@ func orDiscard(w io.Writer) io.Writer {
 // writeContextArchive writes the build context as a gzipped tar at path:
 // the listed files, without any that would take the Dockerfile's name, and
 // the Dockerfile under remoteDockerfile, with the fixed dates and normalized
-// modes of every archive the CLI packs.
-func writeContextArchive(path, dockerfile string, files []LayerFile) error {
+// modes of every archive the CLI packs. It stops as soon as the archive
+// passes limit bytes.
+func writeContextArchive(path, dockerfile string, files []LayerFile, limit int64) error {
 	entries := slices.DeleteFunc(slices.Clone(files), func(f LayerFile) bool { return f.Path == remoteDockerfile })
 	entries = append(entries, LayerFile{Path: remoteDockerfile, Source: dockerfile})
 	slices.SortFunc(entries, func(a, b LayerFile) int { return strings.Compare(a.Path, b.Path) })
@@ -261,7 +274,8 @@ func writeContextArchive(path, dockerfile string, files []LayerFile) error {
 	if err != nil {
 		return fmt.Errorf("making the build context archive: %w", err)
 	}
-	zw := gzip.NewWriter(f)
+	capped := &cappedWriter{w: f, left: limit}
+	zw := gzip.NewWriter(capped)
 	werr := writeTar(zw, kindContext, "", entries)
 	if werr == nil {
 		werr = zw.Close()
@@ -269,16 +283,50 @@ func writeContextArchive(path, dockerfile string, files []LayerFile) error {
 	if cerr := f.Close(); werr == nil && cerr != nil {
 		werr = cerr
 	}
+	if capped.over {
+		return fmt.Errorf("the build context is over the %d MiB (compressed) the remote builder uploads; "+
+			"leave large files out with .dockerignore or exclude_paths", limit>>20)
+	}
 	if werr != nil {
 		return fmt.Errorf("writing the build context archive: %w", werr)
-	}
-	if info, serr := os.Stat(path); serr == nil && info.Size() > maxContextArchive {
-		return fmt.Errorf("the build context is %d MiB compressed, over the %d MiB the remote builder uploads; "+
-			"leave large files out with .dockerignore or exclude_paths", info.Size()>>20, maxContextArchive>>20)
 	}
 	return nil
 }
 
-// maxContextArchive is the largest compressed build context the remote
-// builder uploads. It is a variable only so a test can lower it.
-var maxContextArchive int64 = 2 << 30
+// defaultMaxContext is the largest compressed build context the remote
+// builder uploads when CloudBuild.MaxContext is zero.
+const defaultMaxContext int64 = 2 << 30
+
+// errContextTooLarge stops the archive at its cap.
+var errContextTooLarge = errors.New("the build context archive is over its cap")
+
+// cappedWriter writes to w until left bytes are written, then refuses.
+type cappedWriter struct {
+	w    io.Writer
+	left int64
+	over bool
+}
+
+// Write implements io.Writer.
+func (c *cappedWriter) Write(p []byte) (int, error) {
+	if int64(len(p)) > c.left {
+		c.over = true
+		return 0, errContextTooLarge
+	}
+	c.left -= int64(len(p))
+	n, err := c.w.Write(p)
+	if err != nil {
+		return n, fmt.Errorf("writing the build context archive: %w", err)
+	}
+	return n, nil
+}
+
+// CloudBuildSourceBucket is the bucket where gcloud builds submit stages the
+// source archive of a build in project, as gcloud names it: the project id
+// with ':' and '.' replaced by '_' and "google" by "elgoog", which bucket
+// names may not contain.
+func CloudBuildSourceBucket(project string) string {
+	safe := strings.NewReplacer(":", "_", ".", "_").Replace(project)
+	safe = strings.ReplaceAll(safe, "google", "elgoog")
+	return "gs://" + safe + "_cloudbuild/source"
+}

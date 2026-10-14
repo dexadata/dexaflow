@@ -376,8 +376,13 @@ What happens:
    streamed with `gcloud builds log --stream`. A build with its own service
    account logs to Cloud Logging only, which gcloud does not stream: the CLI
    prints the `gcloud logging read` command for its log and waits for the
-   build to end. Ctrl-C interrupts gcloud and cancels the build on Cloud
-   Build, so it does not go on and push;
+   build to end. A failed `gcloud builds describe` is retried a few times
+   with a growing wait; when it keeps failing, the CLI cancels the build and
+   prints its id and the cancel command. Ctrl-C interrupts gcloud and
+   cancels the build on Cloud Build, so it does not go on and push. A Ctrl-C
+   while gcloud is still submitting cannot know the build id: the CLI says a
+   build may have started and prints
+   `gcloud builds list --filter=tags=dexaflow --ongoing` to find it;
 4. the digest the deploy registers is read from the registry, and must be
    the digest Cloud Build reports for the image it pushed. When another push
    of the same tag happened in between, the deploy stops instead of
@@ -389,7 +394,9 @@ builder:    remote (cloud-build, project acme-ci, region us-central1) for the de
 
 The archive leaves your machine: Cloud Build stores it in the project's
 source bucket, `gs://<project>_cloudbuild/source/`, and keeps it there until
-you delete it (a lifecycle rule on the bucket does this). Before the upload
+you delete it (a lifecycle rule on the bucket does this). For a
+domain-scoped project such as `example.com:acme-ci`, gcloud names the bucket
+`gs://example_com_acme-ci_cloudbuild`, and the warning names that bucket. Before the upload
 the CLI warns about any secret-looking file in the context (`.env`,
 `.netrc`, `credentials.json`, `.ssh/` and the like), whatever your
 Dockerfile copies. A dependency image is built from its Dockerfile alone, so

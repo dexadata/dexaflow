@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -32,6 +33,10 @@ const cloudBuildWaitDelay = 10 * time.Second
 
 // cloudBuildCancelTimeout bounds `gcloud builds cancel` after a stop.
 const cloudBuildCancelTimeout = 30 * time.Second
+
+// buildID is the form of a Cloud Build build id, a UUID. An id is checked
+// against it before it reaches the argv of gcloud.
+var buildID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // cloudBuildRun is the build resource gcloud prints with --format=json,
 // the fields the CLI reads.
@@ -178,6 +183,13 @@ func (b CloudBuild) submit(ctx context.Context, req Request, archive, config str
 	args = append(args, "--async", "--format=json", "--quiet")
 	var out bytes.Buffer
 	tail, err := b.gcloud(ctx, &out, req.Stderr, args...)
+	if err != nil && ctx.Err() != nil {
+		// gcloud may have created the build before it was stopped, and the
+		// id it would have printed is lost.
+		return cloudBuildRun{}, fmt.Errorf("the build was stopped while gcloud submitted it (%w): a Cloud Build build may have started; "+
+			"find it with  gcloud builds list --filter=tags=dexaflow --ongoing %s  and stop it with  gcloud builds cancel <id> %s",
+			ctx.Err(), strings.Join(b.where(), " "), strings.Join(b.where(), " "))
+	}
 	if err != nil {
 		return cloudBuildRun{}, fmt.Errorf("building %q on Cloud Build in project %s: gcloud builds submit: %w%s\n"+
 			"  check that gcloud is signed in (`gcloud auth login`, or a service account with `gcloud auth activate-service-account`), "+
@@ -189,8 +201,9 @@ func (b CloudBuild) submit(ctx context.Context, req Request, archive, config str
 	if jerr := json.Unmarshal(out.Bytes(), &run); jerr != nil {
 		return cloudBuildRun{}, fmt.Errorf("building %q on Cloud Build: reading the build gcloud builds submit printed: %w", req.Image, jerr)
 	}
-	if run.ID == "" {
-		return cloudBuildRun{}, fmt.Errorf("building %q on Cloud Build: gcloud builds submit printed no build id", req.Image)
+	if !buildID.MatchString(run.ID) {
+		return cloudBuildRun{}, fmt.Errorf("building %q on Cloud Build: gcloud builds submit printed %q, which is not a build id; "+
+			"find the build with  gcloud builds list --filter=tags=dexaflow --ongoing %s", req.Image, run.ID, strings.Join(b.where(), " "))
 	}
 	return run, nil
 }
@@ -205,14 +218,14 @@ func (b CloudBuild) follow(ctx context.Context, req Request, id string) (cloudBu
 	}
 	for {
 		if ctx.Err() != nil {
-			return cloudBuildRun{}, b.cancel(ctx, id)
+			return cloudBuildRun{}, b.cancel(ctx, id, fmt.Errorf("the build was stopped: %w", ctx.Err()))
 		}
-		run, err := b.describe(ctx, id)
+		run, err := b.describeRetrying(ctx, id)
 		if ctx.Err() != nil {
-			return cloudBuildRun{}, b.cancel(ctx, id)
+			return cloudBuildRun{}, b.cancel(ctx, id, fmt.Errorf("the build was stopped: %w", ctx.Err()))
 		}
 		if err != nil {
-			return cloudBuildRun{}, err
+			return cloudBuildRun{}, b.cancel(ctx, id, err)
 		}
 		if run.done() {
 			return run, nil
@@ -221,6 +234,30 @@ func (b CloudBuild) follow(ctx context.Context, req Request, id string) (cloudBu
 		case <-ctx.Done():
 		case <-time.After(b.poll()):
 		}
+	}
+}
+
+// describeTries is how many times a build is described before a failure
+// to read it ends the follow.
+const describeTries = 4
+
+// describeRetrying describes build id, trying again after a failure (an
+// expired token, a network blip) up to describeTries times, waiting Poll,
+// then twice as long each time.
+func (b CloudBuild) describeRetrying(ctx context.Context, id string) (cloudBuildRun, error) {
+	wait := b.poll()
+	var err error
+	for try := 1; ; try++ {
+		var run cloudBuildRun
+		if run, err = b.describe(ctx, id); err == nil || try == describeTries || ctx.Err() != nil {
+			return run, err
+		}
+		select {
+		case <-ctx.Done():
+			return cloudBuildRun{}, err
+		case <-time.After(wait):
+		}
+		wait *= 2
 	}
 }
 
@@ -238,17 +275,18 @@ func (b CloudBuild) describe(ctx context.Context, id string) (cloudBuildRun, err
 	return run, nil
 }
 
-// cancel cancels build id after stopped was canceled, so the build does
-// not go on and push, and says so.
-func (b CloudBuild) cancel(stopped context.Context, id string) error {
-	why := stopped.Err()
-	ctx, stop := context.WithTimeout(context.WithoutCancel(stopped), cloudBuildCancelTimeout)
+// cancel cancels build id once following it ended with why (a stop, or a
+// build that could not be read), so the build does not go on and push
+// unwatched, and says so. It runs even when ctx is canceled, for at most
+// cloudBuildCancelTimeout.
+func (b CloudBuild) cancel(ctx context.Context, id string, why error) error {
+	ctx, stop := context.WithTimeout(context.WithoutCancel(ctx), cloudBuildCancelTimeout)
 	defer stop()
+	command := strings.Join(append([]string{"gcloud", "builds", "cancel", id}, b.where()...), " ")
 	if _, err := b.gcloud(ctx, nil, nil, append([]string{"builds", "cancel", id}, b.where()...)...); err != nil {
-		return fmt.Errorf("the build was stopped (%w), and canceling Cloud Build build %s failed (%w): cancel it with  gcloud builds cancel %s %s",
-			why, id, err, id, strings.Join(b.where(), " "))
+		return fmt.Errorf("%w; canceling Cloud Build build %s failed (%w): cancel it with  %s", why, id, err, command)
 	}
-	return fmt.Errorf("the build was stopped (%w): Cloud Build build %s was canceled", why, id)
+	return fmt.Errorf("%w; Cloud Build build %s was canceled (%s)", why, id, command)
 }
 
 // gcloud runs gcloud with args and no input, writing its stdout to stdout

@@ -154,7 +154,7 @@ func checkLocalPush(warn io.Writer, refused error, b build.Builder) error {
 func warnUploadedSecrets(w io.Writer, files []build.LayerFile, cfg *domain.LeoflowConfig) {
 	bucket := "the Cloud Build source bucket"
 	if cfg.Build != nil && cfg.Build.RemoteBuilder != nil && cfg.Build.RemoteBuilder.CloudBuild != nil {
-		bucket = "gs://" + cfg.Build.RemoteBuilder.CloudBuild.Project + "_cloudbuild/source"
+		bucket = build.CloudBuildSourceBucket(cfg.Build.RemoteBuilder.CloudBuild.Project)
 	}
 	for _, f := range files {
 		base := path.Base(f.Path)

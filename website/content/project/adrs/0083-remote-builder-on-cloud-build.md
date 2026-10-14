@@ -62,15 +62,21 @@ and ADR 0080 already reads registry tokens from that same session.
    the file loads (a worker pool must be in the configured region) and
    passed as `--flag=value`, so none can be read as another flag.
    A stopped command sends gcloud SIGINT, not SIGKILL, then runs `gcloud
-   builds cancel`, so the build does not go on and push.
+   builds cancel`, so the build does not go on and push. A failed describe
+   is retried a bounded number of times with a doubling wait, and a build
+   still not described is canceled the same way, its id and cancel command
+   in the error. The id gcloud prints must look like a build id (a UUID)
+   before it goes into another command, and a stop before gcloud printed it
+   points to `gcloud builds list --filter=tags=dexaflow --ongoing`.
 4. **The CLI packs the context.** The context leaves the machine, so it is
    listed by the CLI with the `.dockerignore` the build reads (the project's
    own lines, `exclude_paths` and the dbt artifacts, with Docker's rules) and
    packed as a gzipped tar with fixed dates and normalized modes, plus the
    Dockerfile under a name of its own; a `<Dockerfile>.dockerignore` next to
    a project Dockerfile is read instead of `.dockerignore`, as BuildKit
-   does, and the archive is refused over 2 GiB. The archive stays in the
-   project's source bucket (`gs://<project>_cloudbuild/source/`), so a
+   does, and the archive is refused once its written bytes pass 2 GiB. The archive stays in the
+   project's source bucket (`gs://<project>_cloudbuild/source/`, with ':'
+   and '.' of a domain-scoped project id turned into '_', as gcloud does), so a
    secret-looking file in it is warned about whatever the Dockerfile copies.
    gcloud never walks the directory: its
    `.gcloudignore` and `.gitignore` rules are not Docker's, and a directory

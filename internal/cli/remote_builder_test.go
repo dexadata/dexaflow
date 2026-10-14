@@ -38,11 +38,11 @@ case "$1 $2" in
       *.tar.gz) tar -tzf "$a" | sort >> "` + archiveLog + `" ;;
     esac
   done
-  echo '{"id": "b-1"}'
+  echo '{"id": "0f8b3c2a-1d4e-4f5a-9b6c-7d8e9f0a1b2c"}'
   ;;
 "builds log") echo "Step #0: building" ;;
 "builds describe")
-  echo '{"id": "b-1", "status": "SUCCESS", "results": {"images": [{"name": "x", "digest": "'"$FAKE_GCLOUD_DIGEST"'"}]}}'
+  echo '{"id": "0f8b3c2a-1d4e-4f5a-9b6c-7d8e9f0a1b2c", "status": "SUCCESS", "results": {"images": [{"name": "x", "digest": "'"$FAKE_GCLOUD_DIGEST"'"}]}}'
   ;;
 esac
 exit 0
@@ -365,5 +365,17 @@ func TestContextFilesListWhatADaemonReads(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The warning names the bucket gcloud really stages into, also for a
+// domain-scoped project.
+func TestUploadedSecretsWarningNamesTheSourceBucket(t *testing.T) {
+	cfg := &domain.LeoflowConfig{Build: &domain.BuildConfig{RemoteBuilder: &domain.RemoteBuilderConfig{
+		CloudBuild: &domain.CloudBuildConfig{Project: "example.com:acme-ci"}}}}
+	var w strings.Builder
+	warnUploadedSecrets(&w, []build.LayerFile{{Path: ".env", Source: "x"}, {Path: "dag.py", Source: "y"}}, cfg)
+	if got := w.String(); !strings.Contains(got, "gs://example_com_acme-ci_cloudbuild/source") || strings.Contains(got, "dag.py") {
+		t.Errorf("warning = %q, want .env and gcloud's bucket name only", got)
 	}
 }

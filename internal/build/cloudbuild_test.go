@@ -40,11 +40,18 @@ case "$1 $2" in
       *.tar.gz) tar -tzf "$a" | sort > "$d/archive.txt"; tar -xzOf "$a" ` + remoteDockerfile + ` > "$d/Dockerfile" 2>/dev/null ;;
     esac
   done
+  if [ -f "$d/submit-hangs" ]; then
+    trap 'echo INT >> "$d/signals"; exit 130' INT
+    : > "$d/submit-started"
+    while :; do sleep 0.05; done
+  fi
   if [ -f "$d/submit-fails" ]; then
     echo "ERROR: (gcloud.builds.submit) You do not currently have an active account selected." >&2
     exit 1
   fi
-  echo '{"id": "b-123", "logUrl": "https://console.cloud.google.com/cloud-build/builds/b-123", "status": "QUEUED"}'
+  id="0f8b3c2a-1d4e-4f5a-9b6c-7d8e9f0a1b2c"
+  if [ -f "$d/id" ]; then id=$(cat "$d/id"); fi
+  echo '{"id": "'"$id"'", "logUrl": "https://console.cloud.google.com/cloud-build/builds/0f8b3c2a-1d4e-4f5a-9b6c-7d8e9f0a1b2c", "status": "QUEUED"}'
   ;;
 "builds log")
   trap 'echo INT >> "$d/signals"; exit 130' INT
@@ -55,6 +62,14 @@ case "$1 $2" in
   fi
   ;;
 "builds describe")
+  if [ -f "$d/describe-fails" ]; then
+    n=$(cat "$d/describe-fails")
+    if [ "$n" -gt 0 ]; then
+      echo $((n - 1)) > "$d/describe-fails"
+      echo "ERROR: (gcloud.builds.describe) There was a problem refreshing your current auth tokens" >&2
+      exit 1
+    fi
+  fi
   cat "$d/describe.json"
   ;;
 esac
@@ -71,8 +86,8 @@ exit 0
 // image of request().
 func setDescribe(t *testing.T, dir, status, digest string) {
 	t.Helper()
-	doc := `{"id": "b-123", "status": "` + status + `", "statusDetail": "step 0 exited 1",
-		"logUrl": "https://console.cloud.google.com/cloud-build/builds/b-123",
+	doc := `{"id": "0f8b3c2a-1d4e-4f5a-9b6c-7d8e9f0a1b2c", "status": "` + status + `", "statusDetail": "step 0 exited 1",
+		"logUrl": "https://console.cloud.google.com/cloud-build/builds/0f8b3c2a-1d4e-4f5a-9b6c-7d8e9f0a1b2c",
 		"results": {"images": [{"name": "reg.io/team/etl:v1", "digest": "` + digest + `"}]}}`
 	if err := os.WriteFile(filepath.Join(dir, "describe.json"), []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
@@ -142,10 +157,10 @@ func TestCloudBuildSubmitsTheListedContextAndPinsFromTheRegistry(t *testing.T) {
 			t.Errorf("submit argv = %q, want %s", submit, want)
 		}
 	}
-	if got[1] != "builds log b-123 --stream --project=acme-ci --region=us-central1" {
+	if got[1] != "builds log 0f8b3c2a-1d4e-4f5a-9b6c-7d8e9f0a1b2c --stream --project=acme-ci --region=us-central1" {
 		t.Errorf("log call = %q, want the build's log streamed", got[1])
 	}
-	if got[2] != "builds describe b-123 --format=json --project=acme-ci --region=us-central1" {
+	if got[2] != "builds describe 0f8b3c2a-1d4e-4f5a-9b6c-7d8e9f0a1b2c --format=json --project=acme-ci --region=us-central1" {
 		t.Errorf("describe call = %q", got[2])
 	}
 	if a := readFile(t, filepath.Join(dir, "archive.txt")); a != remoteDockerfile+"\ndag.py\nlib/\n" {
@@ -171,7 +186,7 @@ func TestCloudBuildSubmitsTheListedContextAndPinsFromTheRegistry(t *testing.T) {
 	if out := outOf(req.Stdout); !strings.Contains(out, "Step #0: building the image") {
 		t.Errorf("stdout = %q, want the streamed log", out)
 	}
-	if e := outOf(req.Stderr); !strings.Contains(e, "build b-123") || !strings.Contains(e, "console.cloud.google.com") {
+	if e := outOf(req.Stderr); !strings.Contains(e, "build 0f8b3c2a-1d4e-4f5a-9b6c-7d8e9f0a1b2c") || !strings.Contains(e, "console.cloud.google.com") {
 		t.Errorf("stderr = %q, want the build id and its log link", e)
 	}
 }
@@ -248,7 +263,7 @@ func TestCloudBuildFailedBuildNamesItsLog(t *testing.T) {
 	tool, dir := fakeGcloud(t)
 	setDescribe(t, dir, "FAILURE", "")
 	_, err := CloudBuild{Project: "acme-ci", Region: "us-central1", Tool: tool, Registry: &fakeRegistry{}}.Build(context.Background(), cloudRequest(t))
-	for _, want := range []string{"b-123", "FAILURE", "step 0 exited 1", "gcloud builds log b-123 --project=acme-ci --region=us-central1"} {
+	for _, want := range []string{"0f8b3c2a-1d4e-4f5a-9b6c-7d8e9f0a1b2c", "FAILURE", "step 0 exited 1", "gcloud builds log 0f8b3c2a-1d4e-4f5a-9b6c-7d8e9f0a1b2c --project=acme-ci --region=us-central1"} {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %v, want it to name %q", err, want)
 		}
@@ -273,13 +288,13 @@ func TestCloudBuildStopsTheRemoteBuildWhenCanceled(t *testing.T) {
 		}
 	}()
 	_, err := CloudBuild{Project: "acme-ci", Tool: tool, Registry: &fakeRegistry{}}.Build(ctx, cloudRequest(t))
-	if err == nil || !strings.Contains(err.Error(), "b-123") || !strings.Contains(err.Error(), "canceled") {
+	if err == nil || !strings.Contains(err.Error(), "0f8b3c2a-1d4e-4f5a-9b6c-7d8e9f0a1b2c") || !strings.Contains(err.Error(), "canceled") {
 		t.Errorf("Build = %v, want the stop and the canceled build named", err)
 	}
 	if sig, rerr := os.ReadFile(filepath.Join(dir, "signals")); rerr != nil || strings.TrimSpace(string(sig)) != "INT" { //nolint:gosec // a path this test created
 		t.Errorf("signals = %q (%v), want gcloud interrupted with SIGINT", sig, rerr)
 	}
-	if got := gcloudCalls(t, dir); !slices.Contains(got, "builds cancel b-123 --project=acme-ci") {
+	if got := gcloudCalls(t, dir); !slices.Contains(got, "builds cancel 0f8b3c2a-1d4e-4f5a-9b6c-7d8e9f0a1b2c --project=acme-ci") {
 		t.Errorf("gcloud calls = %q, want the build canceled", got)
 	}
 }
@@ -302,9 +317,7 @@ func TestCloudBuildWarnsAboutARegistryOutsideGoogleCloud(t *testing.T) {
 // .dockerignore.
 func TestCloudBuildRefusesAnOversizedContext(t *testing.T) {
 	tool, dir := fakeGcloud(t)
-	defer func(n int64) { maxContextArchive = n }(maxContextArchive)
-	maxContextArchive = 16
-	_, err := CloudBuild{Project: "acme-ci", Tool: tool, Registry: &fakeRegistry{}}.Build(context.Background(), cloudRequest(t))
+	_, err := CloudBuild{Project: "acme-ci", Tool: tool, MaxContext: 16, Registry: &fakeRegistry{}}.Build(context.Background(), cloudRequest(t))
 	if err == nil || !strings.Contains(err.Error(), ".dockerignore") {
 		t.Errorf("Build = %v, want a size refusal naming .dockerignore", err)
 	}
@@ -366,5 +379,104 @@ func TestCloudBuildDescribe(t *testing.T) {
 	}
 	if got := (CloudBuild{Project: "acme-ci", Region: "europe-west1"}).Describe(); got != "remote (cloud-build, project acme-ci, region europe-west1)" {
 		t.Errorf("Describe = %q", got)
+	}
+}
+
+// whenFile runs f once the fake gcloud has written the file name in dir.
+func whenFile(dir, name string, f func()) {
+	go func() {
+		for {
+			if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+				f()
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+}
+
+func writeText(t *testing.T, p, body string) {
+	t.Helper()
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A describe that fails once (an expired token, a network blip) is retried,
+// and the build goes on.
+func TestCloudBuildRetriesAFailedDescribe(t *testing.T) {
+	tool, dir := fakeGcloud(t)
+	writeText(t, filepath.Join(dir, "describe-fails"), "2")
+	b := CloudBuild{Project: "acme-ci", Tool: tool, Poll: time.Millisecond,
+		Registry: &fakeRegistry{ref: "reg.io/team/etl@sha256:abc123", manifest: singleManifest}}
+	if _, err := b.Build(context.Background(), cloudRequest(t)); err != nil {
+		t.Fatalf("Build = %v, want the describe retried", err)
+	}
+}
+
+// A describe that keeps failing gives up after a bounded number of tries,
+// cancels the build, and names it and the cancel command.
+func TestCloudBuildGivesUpOnDescribeAndCancels(t *testing.T) {
+	tool, dir := fakeGcloud(t)
+	writeText(t, filepath.Join(dir, "describe-fails"), "1000")
+	b := CloudBuild{Project: "acme-ci", Tool: tool, Poll: time.Millisecond, Registry: &fakeRegistry{}}
+	_, err := b.Build(context.Background(), cloudRequest(t))
+	if err == nil || !strings.Contains(err.Error(), "0f8b3c2a-1d4e-4f5a-9b6c-7d8e9f0a1b2c") || !strings.Contains(err.Error(), "refreshing your current auth tokens") {
+		t.Fatalf("Build = %v, want the build and the describe failure named", err)
+	}
+	describes := 0
+	for _, c := range gcloudCalls(t, dir) {
+		if strings.HasPrefix(c, "builds describe") {
+			describes++
+		}
+	}
+	if describes != describeTries {
+		t.Errorf("describes = %d, want %d", describes, describeTries)
+	}
+	if !slices.Contains(gcloudCalls(t, dir), "builds cancel 0f8b3c2a-1d4e-4f5a-9b6c-7d8e9f0a1b2c --project=acme-ci") {
+		t.Errorf("gcloud calls = %q, want the build canceled", gcloudCalls(t, dir))
+	}
+}
+
+// A stop while gcloud submits loses the build id: the error says a build
+// may have started and how to find and cancel it.
+func TestCloudBuildStopDuringSubmitSaysHowToFindTheBuild(t *testing.T) {
+	tool, dir := fakeGcloud(t)
+	touch(t, filepath.Join(dir, "submit-hangs"))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	whenFile(dir, "submit-started", cancel)
+	_, err := CloudBuild{Project: "acme-ci", Tool: tool, Registry: &fakeRegistry{}}.Build(ctx, cloudRequest(t))
+	for _, want := range []string{"may have started", "gcloud builds list --filter=tags=dexaflow --ongoing --project=acme-ci", "gcloud builds cancel"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Build = %v, want it to say %q", err, want)
+		}
+	}
+}
+
+// A build id that is not one Cloud Build issues never reaches argv.
+func TestCloudBuildRefusesAnUnexpectedBuildID(t *testing.T) {
+	tool, dir := fakeGcloud(t)
+	writeText(t, filepath.Join(dir, "id"), "--impersonate-service-account=x")
+	_, err := CloudBuild{Project: "acme-ci", Tool: tool, Registry: &fakeRegistry{}}.Build(context.Background(), cloudRequest(t))
+	if err == nil || !strings.Contains(err.Error(), "build id") {
+		t.Fatalf("Build = %v, want the id refused", err)
+	}
+	if got := gcloudCalls(t, dir); len(got) != 1 {
+		t.Errorf("gcloud calls = %q, want the submit only", got)
+	}
+}
+
+// The source bucket is the one gcloud names: ':' and '.' of a domain-scoped
+// project become '_', and "google" becomes "elgoog".
+func TestCloudBuildSourceBucket(t *testing.T) {
+	for project, want := range map[string]string{
+		"acme-ci":                    "gs://acme-ci_cloudbuild/source",
+		"example.com:acme-ci":        "gs://example_com_acme-ci_cloudbuild/source",
+		"google.com:google-projects": "gs://elgoog_com_elgoog-projects_cloudbuild/source",
+	} {
+		if got := CloudBuildSourceBucket(project); got != want {
+			t.Errorf("CloudBuildSourceBucket(%q) = %q, want %q", project, got, want)
+		}
 	}
 }
