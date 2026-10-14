@@ -23,7 +23,7 @@ func newDoctorCommand() *cobra.Command {
 			"Docker, k3d, and kubectl, and reports which operating tier is achievable. " +
 			"With a target set it also runs the checks of the deploy preflight: the control plane " +
 			"answers and the token may deploy, and, in a DAG project, the registry accepts a push. " +
-			"It changes nothing; run `dexaflow setup` to bootstrap.",
+			"It changes nothing but a saved session it refreshes, as deploy does; run `dexaflow setup` to bootstrap.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			r := setup.Detect(setup.Probe{

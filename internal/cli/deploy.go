@@ -573,8 +573,7 @@ func (d *deployRun) run() error {
 	}
 	if access.dryRun {
 		co.beforeBuild = func() error {
-			return serverDryRun(ctx, out, d.cmd.ErrOrStderr(), versionPost{serverURL: d.serverURL, token: d.token,
-				dagID: d.cfg.DagID, paused: d.o.pausedOverride()}, output, version, origin)
+			return d.dryRun(ctx, output, image, version, origin)
 		}
 	}
 	if cerr := runCompile(d.cmd, d.dir, co); cerr != nil {
@@ -597,6 +596,8 @@ func (d *deployRun) run() error {
 // checkServer is the first step of the preflight (#1705): the control plane
 // answers, and the token may deploy, before anything is compiled.
 func (d *deployRun) checkServer(ctx context.Context) (serverAccess, error) {
+	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
+	defer cancel()
 	access, err := checkServerAccess(ctx, d.cmd.ErrOrStderr(), d.serverURL, d.token, d.cfg.DagID, d.o.pausedOverride())
 	if err != nil {
 		return serverAccess{}, err
@@ -609,10 +610,36 @@ func (d *deployRun) checkServer(ctx context.Context) (serverAccess, error) {
 // push of image, checked unless nothing will be pushed (--skip-build, or a
 // reusable image the registry already holds).
 func (d *deployRun) checkRegistry(ctx context.Context, image string, reuse bool) error {
+	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
+	defer cancel()
 	if d.o.skipBuild || (reuse && registryHolds(ctx, image)) {
 		return nil
 	}
-	return checkRegistryPush(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), image)
+	return checkRegistryPush(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), image, d.o.builder)
+}
+
+// dryRun is the last step of the preflight: the server's dry run of the
+// compiled spec at output, before the build.
+func (d *deployRun) dryRun(ctx context.Context, output, image, version string, origin labelOrigin) error {
+	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
+	defer cancel()
+	return serverDryRun(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), versionPost{serverURL: d.serverURL, token: d.token,
+		dagID: d.cfg.DagID, paused: d.o.pausedOverride()}, output, d.dryRunImage(ctx, image), version, origin)
+}
+
+// dryRunImage is the image the dry run is sent. The register gets the image
+// pinned by digest. With --skip-build that is the digest the registry holds
+// for the tag, read here, and it decides a conflict as for the register.
+// Before a build the digest does not exist yet: the repository at a
+// placeholder digest, so an allowlist of repositories or of repo@* decides
+// as for the register, and a conflict is left to the register.
+func (d *deployRun) dryRunImage(ctx context.Context, image string) dryImage {
+	if d.o.skipBuild {
+		if p, err := (build.Registry{}).Resolve(ctx, image); err == nil {
+			return dryImage{ref: p.Ref, decides: true}
+		}
+	}
+	return dryImage{ref: build.PinnedRef(image, placeholderDigest)}
 }
 
 // mayReuse reports whether this deploy may take the skip path: the tag is the

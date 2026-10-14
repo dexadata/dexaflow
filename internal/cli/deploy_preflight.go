@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/dexadata/dexaflow/internal/build"
@@ -20,35 +22,45 @@ import (
 // stops the deploy and names what to fix; what cannot be checked is a note
 // and the deploy goes on, as it did before the preflight.
 
-// dryRunHeader is the header a server sets on every answer to a register
-// dry run, refusals included (internal/api). Without it the server predates
-// the dry run and would have registered the spec for real.
+// dryRunHeader is the header a server sets on every answer of the register
+// dry run route past its permission check, refusals included (internal/api).
 const dryRunHeader = "Dexaflow-Dry-Run"
 
-// preflightTimeout bounds each preflight request.
+// preflightTimeout bounds each preflight check of a deploy.
 const preflightTimeout = 30 * time.Second
+
+// placeholderDigest stands in for the digest of an image not built yet, so
+// the dry run sees the image in the shape the register will:
+// <repository>@sha256:<digest>.
+var placeholderDigest = "sha256:" + strings.Repeat("0", 64)
 
 // serverAccess is what the access check found out about the control plane.
 type serverAccess struct {
-	// dryRun is true when the server runs a register dry run.
+	// dryRun is true when the server serves the register dry run.
 	dryRun bool
 }
 
+// pausedScopeHint is what a refusal adds when the deploy sends is_paused.
+const pausedScopeHint = "\n  --paused and --active set is_paused, which also needs write on dags and, for an API token, the dexaflow:run scope besides deploy:\n" +
+	"      dexaflow auth create-token --scope deploy,run --name <name>"
+
 // checkServerAccess asks the control plane whether this token may register
 // a version of dagID, with is_paused as the deploy will send it, by sending
-// the dry run of an empty spec: the permission and scope gates answer 401 or
-// 403 before the handler, and the handler refuses the empty spec with 400. A
-// server that predates the dry run refuses it the same way, without
-// dryRunHeader, and is not sent a compiled spec with dry_run, which it would
-// register. warn receives the notes on what could not be checked.
+// an empty spec to the register dry run route: the permission and scope
+// gates answer 401 or 403 first, and the handler refuses the empty spec with
+// 400 and dryRunHeader. A server that predates the route answers 404 and
+// registers nothing; the deploy goes on without a dry run. warn receives the
+// notes on what could not be checked.
 func checkServerAccess(ctx context.Context, warn io.Writer, serverURL, token, dagID string, paused *bool) (serverAccess, error) {
-	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
-	defer cancel()
 	status, header, body, err := postVersion(ctx, versionPost{serverURL: serverURL, token: token, dagID: dagID,
 		spec: []byte("{}"), paused: paused, dryRun: true})
 	if err != nil {
 		return serverAccess{}, fmt.Errorf("preflight: cannot reach the control plane at %s: %w\n"+
 			"  Check the server (--server, --target or DEXAFLOW_SERVER_URL) and that it is up", serverURL, err)
+	}
+	hint := ""
+	if paused != nil {
+		hint = pausedScopeHint
 	}
 	switch {
 	case status == http.StatusUnauthorized:
@@ -57,24 +69,21 @@ func checkServerAccess(ctx context.Context, warn io.Writer, serverURL, token, da
 	case status == http.StatusForbidden && header.Get(dryRunHeader) == "":
 		return serverAccess{}, fmt.Errorf("preflight: the token may not deploy to %s: %w\n"+
 			"  A deploy needs the deployer role (or deploy or write on dags), and an API token the deploy scope:\n"+
-			"      dexaflow auth create-token --scope deploy --name <name>", serverURL, apiStatusError(status, body))
+			"      dexaflow auth create-token --scope deploy --name <name>%s", serverURL, apiStatusError(status, body), hint)
 	case status == http.StatusForbidden:
 		// The handler's own refusal: is_paused without write on dags or the
 		// run scope.
-		return serverAccess{}, fmt.Errorf("preflight: the server would refuse this register: %w", apiStatusError(status, body))
+		return serverAccess{}, fmt.Errorf("preflight: the server would refuse this register: %w%s", apiStatusError(status, body), hint)
+	case status == http.StatusBadRequest && header.Get(dryRunHeader) == "true":
+		return serverAccess{dryRun: true}, nil
 	case status == http.StatusNotFound:
-		return serverAccess{}, fmt.Errorf("preflight: %s does not serve the register route (POST /api/v2/dags/{dag_id}/versions answered 404); is it a Dexaflow control plane?", serverURL)
-	case status != http.StatusBadRequest:
-		//nolint:errcheck // advisory: the deploy proceeds
-		fmt.Fprintf(warn, "note: could not check the control plane before the build (server returned %d); deploying\n", status)
-		return serverAccess{}, nil
-	}
-	access := serverAccess{dryRun: header.Get(dryRunHeader) == "true"}
-	if !access.dryRun {
 		//nolint:errcheck // advisory: the deploy proceeds
 		fmt.Fprintf(warn, "note: %s offers no dry run of the register (an older server); its policy checks run when it registers, after the build\n", serverURL)
+		return serverAccess{}, nil
 	}
-	return access, nil
+	//nolint:errcheck // advisory: the deploy proceeds
+	fmt.Fprintf(warn, "note: could not check the control plane before the build (server returned %d); deploying\n", status)
+	return serverAccess{}, nil
 }
 
 // dryRunAnswer is the part of a dry run answer the preflight reports.
@@ -86,27 +95,45 @@ type dryRunAnswer struct {
 	Warnings   []string `json:"warnings"`
 }
 
-// serverDryRun sends the compiled spec at specPath to the server's register
-// dry run, with is_paused as the deploy will send it, and returns the
-// refusal the register would give, labeled for version and origin. It
+// dryImage is the image a dry run is sent in the spec: ref, pinned by
+// digest, and whether it is the image the register will get (decides), so
+// that an answer the image decides (a label registered with other content)
+// is final.
+type dryImage struct {
+	ref     string
+	decides bool
+}
+
+// serverDryRun sends the compiled spec at specPath, its image replaced by
+// img.ref, to the server's register dry run, with is_paused as the deploy
+// will send it, and returns the refusal the register would give, labeled
+// for version and origin. A conflict when img does not decide it, and an
+// answer that is no dry run (an older replica's 404), are notes on warn. It
 // prints what the register would do to out and the server's warnings to
 // warn.
-func serverDryRun(ctx context.Context, out, warn io.Writer, p versionPost, specPath, version string, origin labelOrigin) error {
-	spec, err := os.ReadFile(specPath) //nolint:gosec // the compiled dag.json of the DAG directory
+func serverDryRun(ctx context.Context, out, warn io.Writer, p versionPost, specPath string, img dryImage, version string, origin labelOrigin) error {
+	data, err := os.ReadFile(specPath) //nolint:gosec // the compiled dag.json of the DAG directory
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", specPath, err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
-	defer cancel()
-	p.spec, p.dryRun = spec, true
+	if p.spec, err = repinImageInSpec(data, img.ref); err != nil {
+		return err
+	}
+	p.dryRun = true
 	status, header, body, err := postVersion(ctx, p)
-	if err != nil {
-		return fmt.Errorf("preflight: the dry run of the register: %w", err)
+	note := func(format string, a ...any) error {
+		_, werr := fmt.Fprintf(warn, "note: "+format+"\n", a...)
+		return werr
 	}
-	if header.Get(dryRunHeader) != "true" {
-		return fmt.Errorf("preflight: %s answered the dry run of the register with %d and no %s header; stopping, since it may have registered the spec", p.serverURL, status, dryRunHeader)
-	}
-	if status >= http.StatusMultipleChoices {
+	switch {
+	case err != nil:
+		return note("could not run the dry run of the register (%v); its checks run when it registers", err)
+	case header.Get(dryRunHeader) != "true":
+		return note("%s answered the dry run of the register with %d, no dry run (an older replica?); its checks run when it registers", p.serverURL, status)
+	case status == http.StatusConflict && !img.decides:
+		return note("the server would refuse this register: %v\n  The image built now decides whether it is the content already registered under %s, so the deploy goes on",
+			apiStatusError(status, body), version)
+	case status >= http.StatusMultipleChoices:
 		return fmt.Errorf("preflight: the server would refuse this register: %w", versionConflictHint(apiStatusError(status, body), version, origin))
 	}
 	var answer dryRunAnswer
@@ -122,7 +149,9 @@ func serverDryRun(ctx context.Context, out, warn io.Writer, p versionPost, specP
 }
 
 // dryRunOutcome says what a register would do, in the words of the deploy
-// output.
+// output. Unchanged is reachable only when the dry run had the image the
+// register gets (--skip-build): content with a placeholder digest is never
+// registered.
 func dryRunOutcome(a dryRunAnswer) string {
 	state := "active"
 	if a.IsPaused {
@@ -134,14 +163,14 @@ func dryRunOutcome(a dryRunAnswer) string {
 	case a.Created:
 		return "a new version, " + state
 	}
-	return "content it already holds, " + state
+	return "unchanged, " + state
 }
 
 // checkRegistryPush asks the registry of image whether this machine's
 // credentials may push to its repository, before the build. A refusal stops
-// the deploy with the login command; a check that cannot be made is a note.
-func checkRegistryPush(ctx context.Context, out, warn io.Writer, image string) error {
-	res, err := registryPushCheck(ctx, image)
+// the deploy with the login command; a check that cannot decide is a note.
+func checkRegistryPush(ctx context.Context, out, warn io.Writer, image, builder string) error {
+	res, err := registryPushCheck(ctx, image, builder)
 	if err != nil {
 		return err
 	}
@@ -158,18 +187,25 @@ func checkRegistryPush(ctx context.Context, out, warn io.Writer, image string) e
 type checkResult struct{ ok, note string }
 
 // registryPushCheck is the push check of checkRegistryPush, for deploy and
-// doctor: an error is a refusal, naming the login command.
-func registryPushCheck(ctx context.Context, image string) (checkResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
-	defer cancel()
+// doctor. The check reads the docker config and its credential helpers
+// (build.Registry.CheckPush), which is what the docker builder and the
+// daemonless paths push with, so a refusal there is an error naming
+// `docker login`. With no credential found, or with another builder, which
+// keeps credentials of its own (podman's auth.json, for one), a refusal
+// says nothing certain about the push: it is a note naming
+// `<builder> login`.
+func registryPushCheck(ctx context.Context, image, builder string) (checkResult, error) {
 	access, err := build.Registry{}.CheckPush(ctx, image)
+	tool := filepath.Base(builder)
 	switch {
 	case err == nil:
 		return checkResult{ok: access.Repository + " accepts a push"}, nil
 	case errors.Is(err, build.ErrPushDenied) && access.Anonymous:
-		return checkResult{}, fmt.Errorf("preflight: no credential for the registry %s, which refused a push to %s.\n"+
-			"  Sign in once:  docker login %s   (or set its credential helper in the docker config, ~/.docker/config.json)\n  (%w)",
-			access.Registry, access.Repository, access.Registry, err)
+		return checkResult{note: fmt.Sprintf("the registry %s refused a push to %s, and the docker config holds no credential for it; "+
+			"if the push fails, sign in once:  %s login %s  (%v)", access.Registry, access.Repository, tool, access.Registry, err)}, nil
+	case errors.Is(err, build.ErrPushDenied) && tool != "docker":
+		return checkResult{note: fmt.Sprintf("the registry %s refused a push to %s with the credential of the docker config; "+
+			"%s may push with credentials of its own; if the push fails, sign in:  %s login %s  (%v)", access.Registry, access.Repository, tool, tool, access.Registry, err)}, nil
 	case errors.Is(err, build.ErrPushDenied):
 		return checkResult{}, fmt.Errorf("preflight: the registry %s refused a push to %s with the credential in the docker config.\n"+
 			"  Sign in with an account that may push there:  docker login %s\n  (%w)",
@@ -185,8 +221,6 @@ func registryPushCheck(ctx context.Context, image string) (checkResult, error) {
 // registryHolds reports whether the registry already holds image, so a
 // deploy that may reuse it pushes nothing and needs no push check.
 func registryHolds(ctx context.Context, image string) bool {
-	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
-	defer cancel()
 	_, err := build.Registry{}.Resolve(ctx, image)
 	return err == nil
 }

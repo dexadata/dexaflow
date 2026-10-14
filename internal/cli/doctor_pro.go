@@ -2,9 +2,11 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -12,6 +14,14 @@ import (
 // doctorProbeDagID is the dag_id doctor's control plane check names: the
 // check sends an empty spec, refused before any DAG is looked up.
 const doctorProbeDagID = "dexaflow-doctor"
+
+// doctorCheckTimeout bounds each of doctor's network checks, shorter than a
+// deploy's, so doctor does not stall on a machine that is offline.
+const doctorCheckTimeout = 5 * time.Second
+
+// doctorBuilder is the builder whose credentials doctor's push check
+// judges: deploy's default.
+const doctorBuilder = "docker"
 
 // doctorLine is one line of doctor's Pro section: its label, what the check
 // found, and whether that is a refusal.
@@ -28,9 +38,9 @@ func failLine(label string, err error) doctorLine {
 // proDoctor runs the deploy preflight's checks for the control plane in use
 // (#1705): the server answers and the token may deploy, and, run in a DAG
 // project, the registry accepts a push to the project's repository. With no
-// control plane set (or only Lite's), it says how to set one. It writes
-// nothing: the token is not refreshed, and the push check cancels its
-// upload.
+// control plane set (or only Lite's), it says how to set one. The token is
+// the one a deploy sends, a saved session refreshed as deploy refreshes it
+// (the only write); the push check cancels its upload.
 func proDoctor(cmd *cobra.Command) []doctorLine {
 	choice, err := resolveServer(cmd, "")
 	if err != nil {
@@ -40,8 +50,12 @@ func proDoctor(cmd *cobra.Command) []doctorLine {
 		return []doctorLine{{label: "pro checks", text: "skipped: no target set (dexaflow target add <name> <url>, then dexaflow target use <name>)"}}
 	}
 	lines := []doctorLine{{label: "pro target", text: fmt.Sprintf("%s (%s)", choice.URL, choice.Source)}}
-	token, _ := pickToken(choice, "")
-	ctx := cmdContext(cmd)
+	ctx, cancel := context.WithTimeout(cmdContext(cmd), doctorCheckTimeout)
+	defer cancel()
+	_, token, err := resolveServerChoiceToken(cmd, "", "")
+	if err != nil {
+		return append(lines, failLine("control plane", err))
+	}
 	var notes bytes.Buffer
 	if _, aerr := checkServerAccess(ctx, &notes, choice.URL, token, doctorProbeDagID, nil); aerr != nil {
 		lines = append(lines, failLine("control plane", aerr))
@@ -64,7 +78,9 @@ func doctorRegistry(cmd *cobra.Command) doctorLine {
 	if err != nil {
 		return failLine("registry", err)
 	}
-	res, err := registryPushCheck(cmdContext(cmd), composeImageRef(cfg.Registry.URL, cfg.Registry.ImageName, "latest"))
+	ctx, cancel := context.WithTimeout(cmdContext(cmd), doctorCheckTimeout)
+	defer cancel()
+	res, err := registryPushCheck(ctx, composeImageRef(cfg.Registry.URL, cfg.Registry.ImageName, "latest"), doctorBuilder)
 	switch {
 	case err != nil:
 		return failLine("registry", err)

@@ -68,7 +68,8 @@ func pushVersionPaused(ctx context.Context, serverURL, token, dagID string, spec
 }
 
 // versionPost is one POST of a spec to /api/v2/dags/{dag_id}/versions: a
-// register, or with dryRun the server's dry run of one.
+// register, or with dryRun the server's dry run of one, on its
+// /versions/dry_run route.
 type versionPost struct {
 	serverURL, token, dagID string
 	spec                    []byte
@@ -79,15 +80,13 @@ type versionPost struct {
 // postVersion sends p and returns the answer's status, headers and body.
 func postVersion(ctx context.Context, p versionPost) (status int, header http.Header, body []byte, err error) {
 	url := strings.TrimRight(p.serverURL, "/") + "/api/v2/dags/" + p.dagID + "/versions"
-	var query []string
 	if p.dryRun {
-		query = append(query, "dry_run=true")
+		// A route of its own: an older server answers it 404, never
+		// registering what a dry run sends.
+		url += "/dry_run"
 	}
 	if p.paused != nil {
-		query = append(query, "is_paused="+strconv.FormatBool(*p.paused))
-	}
-	if len(query) > 0 {
-		url += "?" + strings.Join(query, "&")
+		url += "?is_paused=" + strconv.FormatBool(*p.paused)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(p.spec))
 	if err != nil {

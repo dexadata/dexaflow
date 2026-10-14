@@ -3,8 +3,12 @@ package cli
 import (
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
 // doctorAgainst runs `dexaflow doctor` from cwd against server ("" for
@@ -93,5 +97,62 @@ func TestDoctorChecksTheRegistryPushOfTheProject(t *testing.T) {
 		if !strings.Contains(out, want) || reg.uploadCount() != 1 {
 			t.Errorf("deny=%v: uploads=%d, doctor does not say %q:\n%s", deny, reg.uploadCount(), want, out)
 		}
+	}
+}
+
+// TestDoctorRefreshesAnExpiringSession: a saved session near its expiry is
+// renewed as deploy renews it, so doctor reports what a deploy would get,
+// not a FAIL for a token deploy would have refreshed.
+func TestDoctorRefreshesAnExpiringSession(t *testing.T) {
+	isolateCLIEnv(t)
+	now := time.Now()
+	old := testJWT(t, now.Add(-55*time.Minute), now.Add(5*time.Minute))
+	fake := &deployServer{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v2/auth/token/renew", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"renewed-jwt","token_type":"bearer","expires_in":3600}`))
+	})
+	mux.HandleFunc("/api/v2/dags/dexaflow-doctor/versions/dry_run", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer renewed-jwt" {
+			http.Error(w, `{"detail":"token expired"}`, http.StatusUnauthorized)
+			return
+		}
+		fake.ServeHTTP(w, r)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	cfg := filepath.Join(t.TempDir(), "config.yaml")
+	if err := config.PersistSession(cfg, srv.URL, old); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := run(t, "doctor", "--config", cfg)
+	if err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if !strings.Contains(out, "answers, the token may deploy") || fake.probes != 1 {
+		t.Errorf("probes=%d, doctor did not check with the renewed token:\n%s", fake.probes, out)
+	}
+}
+
+// TestDoctorDoesNotStallOnAServerThatHangs: each network check of doctor
+// gives up after doctorCheckTimeout.
+func TestDoctorDoesNotStallOnAServerThatHangs(t *testing.T) {
+	isolateCLIEnv(t)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() { close(release); srv.Close() })
+	start := time.Now()
+	out := doctorAgainst(t, srv.URL, "tok")
+	if took := time.Since(start); took > doctorCheckTimeout+3*time.Second {
+		t.Errorf("doctor took %v against a hung server, want about %v", took, doctorCheckTimeout)
+	}
+	if !strings.Contains(out, "cannot reach the control plane") {
+		t.Errorf("doctor does not say the server did not answer:\n%s", out)
 	}
 }

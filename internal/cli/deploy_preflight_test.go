@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,8 +15,19 @@ import (
 // config, so no credential of the machine running the tests is used.
 func noDockerCredentials(t *testing.T) {
 	t.Helper()
+	dockerCredentialsFor(t, "")
+}
+
+// dockerCredentialsFor points the registry keychain at a docker config with
+// a credential for host ("" for none).
+func dockerCredentialsFor(t *testing.T, host string) {
+	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"auths":{}}`), 0o600); err != nil {
+	cfg := `{"auths":{}}`
+	if host != "" {
+		cfg = `{"auths":{"` + host + `":{"auth":"` + base64.StdEncoding.EncodeToString([]byte("bot:secret")) + `"}}}`
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("DOCKER_CONFIG", dir)
@@ -35,13 +47,16 @@ func TestDeployPreflightStopsBeforeTheCompile(t *testing.T) {
 		name   string
 		fake   *deployServer
 		server string
+		args   []string
 		want   []string
 	}{
-		{"refused token", &deployServer{probeStatus: http.StatusUnauthorized, refusal: "invalid token"}, "",
+		{"refused token", &deployServer{probeStatus: http.StatusUnauthorized, refusal: "invalid token"}, "", nil,
 			[]string{"server returned 401", loginCommandPath}},
-		{"token without deploy", &deployServer{probeStatus: http.StatusForbidden, refusal: "missing scope dexaflow:deploy"}, "",
+		{"token without deploy", &deployServer{probeStatus: http.StatusForbidden, refusal: "missing scope dexaflow:deploy"}, "", nil,
 			[]string{"may not deploy", "missing scope dexaflow:deploy", "dexaflow auth create-token --scope deploy"}},
-		{"unreachable server", &deployServer{}, "http://127.0.0.1:1",
+		{"token without deploy, --paused", &deployServer{probeStatus: http.StatusForbidden, refusal: "missing scope dexaflow:deploy"}, "", []string{"--paused"},
+			[]string{"may not deploy", "--paused", "dexaflow:run"}},
+		{"unreachable server", &deployServer{}, "http://127.0.0.1:1", nil,
 			[]string{"cannot reach the control plane at http://127.0.0.1:1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -52,7 +67,8 @@ func TestDeployPreflightStopsBeforeTheCompile(t *testing.T) {
 				t.Cleanup(srv.Close)
 				server = srv.URL
 			}
-			out, _, err := run(t, "deploy", dir, "--server", server, "--token", "x", "--yes", "--builder", builder)
+			args := append([]string{"deploy", dir, "--server", server, "--token", "x", "--yes", "--builder", builder}, tc.args...)
+			out, _, err := run(t, args...)
 			if err == nil {
 				t.Fatalf("deploy succeeded:\n%s", out)
 			}
@@ -69,9 +85,8 @@ func TestDeployPreflightStopsBeforeTheCompile(t *testing.T) {
 }
 
 // TestDeployDryRunRefusalStopsBeforeTheBuild: after the compile, the server's
-// dry run of the spec refuses what the register would refuse, and the deploy
-// stops before the build with the server's reason; a conflict keeps its
-// hint.
+// dry run refuses what the register would refuse whatever the image built
+// next, and the deploy stops before the build with the server's reason.
 func TestDeployDryRunRefusalStopsBeforeTheBuild(t *testing.T) {
 	noDockerCredentials(t)
 	for _, tc := range []struct {
@@ -80,8 +95,8 @@ func TestDeployDryRunRefusalStopsBeforeTheBuild(t *testing.T) {
 		want    string
 	}{
 		{http.StatusBadRequest, "dag \"etl\" declares unknown connection(s) warehouse", "warehouse"},
-		{http.StatusBadRequest, "image img:v1 is not in the allowed images", "allowed images"},
-		{http.StatusConflict, "version already registered with other content", "--dag-version"},
+		{http.StatusBadRequest, "image is not in the allowed images", "allowed images"},
+		{http.StatusForbidden, "the limit max_dags of 1 is reached", "max_dags"},
 	} {
 		t.Run(tc.want, func(t *testing.T) {
 			dir, builder, log := deployFixture(t)
@@ -97,6 +112,67 @@ func TestDeployDryRunRefusalStopsBeforeTheBuild(t *testing.T) {
 				t.Errorf("compiled=%v built=%v registers=%d dryRuns=%d, want compiled, one dry run, no build", compiled(dir), builderRan(log), fake.registers, fake.dryRuns)
 			}
 		})
+	}
+}
+
+// TestDeployDryRunOfAnImageNotYetBuilt: before a build the digest is not
+// known, so the dry run is sent the repository pinned to a placeholder
+// digest (the shape the register gets), and a conflict, which the built
+// image decides, is a note: the deploy builds and registers.
+func TestDeployDryRunOfAnImageNotYetBuilt(t *testing.T) {
+	noDockerCredentials(t)
+	reg := newFakeOCIRegistry(t, singleManifest)
+	dir, builder, log := deployFixtureAt(t, reg.host+"/team")
+	fake := &deployServer{dryRunStatus: http.StatusConflict, refusal: "version already registered with other content"}
+	// --force builds although the registry holds an image under every tag.
+	out, errOut, err := deployDir(t, fake, dir, builder, "--force", "--dag-version", "v9")
+	if err != nil {
+		t.Fatalf("deploy: %v\n%s", err, out)
+	}
+	if !builderRan(log) || fake.registers != 1 {
+		t.Errorf("built=%v registers=%d, want a build and a register", builderRan(log), fake.registers)
+	}
+	if !strings.Contains(errOut, "note: the server would refuse this register") || !strings.Contains(errOut, "image built now decides") {
+		t.Errorf("stderr does not carry the conflict as a note:\n%s", errOut)
+	}
+	t.Run("placeholder digest", func(t *testing.T) {
+		// A registry with no image: nothing to resolve before the build (the
+		// deploy then fails to read the pushed digest, which is not checked).
+		dir, builder, _ := deployFixture(t)
+		fake := &deployServer{}
+		if out, _, _ := deployDir(t, fake, dir, builder); fake.dryRuns != 1 {
+			t.Fatalf("dryRuns=%d, want one\n%s", fake.dryRuns, out)
+		}
+		want := "/team/etl@sha256:" + strings.Repeat("0", 64)
+		if len(fake.dryRunImages) != 1 || !strings.HasSuffix(fake.dryRunImages[0], want) {
+			t.Errorf("dry run images = %q, want the repository at the placeholder digest", fake.dryRunImages)
+		}
+	})
+}
+
+// TestDeploySkipBuildOfARegisteredLabelDeploys: --skip-build registers the
+// image the registry holds, so its dry run is sent that digest: re-running
+// it for a label registered with that image answers unchanged, not 409, and
+// the deploy goes through; another image under the label still stops.
+func TestDeploySkipBuildOfARegisteredLabelDeploys(t *testing.T) {
+	noDockerCredentials(t)
+	reg := newFakeOCIRegistry(t, singleManifest)
+	dir, builder, log := deployFixtureAt(t, reg.host+"/team")
+	fake := &deployServer{registeredImage: reg.host + "/team/etl@" + reg.digest}
+	out, _, err := deployDir(t, fake, dir, builder, "--skip-build", "--dag-version", "v9")
+	if err != nil {
+		t.Fatalf("deploy --skip-build of a registered label: %v\n%s", err, out)
+	}
+	if fake.dryRuns != 1 || fake.registers != 1 || builderRan(log) {
+		t.Errorf("dryRuns=%d registers=%d built=%v, want one dry run, one register, no build", fake.dryRuns, fake.registers, builderRan(log))
+	}
+	if !strings.Contains(out, "the server would register etl v9 as unchanged") {
+		t.Errorf("output does not say the content is unchanged:\n%s", out)
+	}
+	other := &deployServer{registeredImage: reg.host + "/team/etl@sha256:" + strings.Repeat("1", 64)}
+	_, _, err = deployDir(t, other, dir, builder, "--skip-build", "--dag-version", "v9")
+	if err == nil || !strings.Contains(err.Error(), "--dag-version") || other.registers != 0 {
+		t.Errorf("err = %v registers=%d, want the conflict to stop a --skip-build deploy", err, other.registers)
 	}
 }
 
@@ -124,15 +200,14 @@ func TestDeployPreflightPassesAndSaysSo(t *testing.T) {
 	if fake.probes != 1 || fake.dryRuns != 1 || fake.registers != 1 || !builderRan(log) {
 		t.Errorf("probes=%d dryRuns=%d registers=%d built=%v, want one of each", fake.probes, fake.dryRuns, fake.registers, builderRan(log))
 	}
-	if len(fake.dryRunQueries) != 1 || !strings.Contains(fake.dryRunQueries[0], "dry_run=true") || !strings.Contains(fake.dryRunQueries[0], "is_paused=true") {
-		t.Errorf("dry run queries = %q, want dry_run=true and the deploy's is_paused", fake.dryRunQueries)
+	if len(fake.dryRunQueries) != 1 || fake.dryRunQueries[0] != "is_paused=true" {
+		t.Errorf("dry run queries = %q, want the deploy's is_paused", fake.dryRunQueries)
 	}
 }
 
 // TestDeployAgainstAServerWithoutDryRun: a server that predates the dry run
-// is never sent the compiled spec with dry_run, which it would register
-// with the tag instead of the digest; the deploy goes on, and says its
-// checks run at register time.
+// route answers it 404 and registers nothing; the deploy goes on, says its
+// checks run at register time, and registers once.
 func TestDeployAgainstAServerWithoutDryRun(t *testing.T) {
 	noDockerCredentials(t)
 	reg := newFakeOCIRegistry(t, singleManifest)
@@ -142,34 +217,69 @@ func TestDeployAgainstAServerWithoutDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("deploy: %v\n%s", err, out)
 	}
-	if fake.registers != 1 || len(fake.regQueries) != 1 || strings.Contains(fake.regQueries[0], "dry_run") {
-		t.Errorf("registers=%d queries=%q, want one register, no dry run", fake.registers, fake.regQueries)
+	if fake.registers != 1 || fake.dryRuns != 0 {
+		t.Errorf("registers=%d dryRuns=%d, want one register, no dry run", fake.registers, fake.dryRuns)
 	}
-	if !strings.Contains(errOut, "no dry run of the register") {
+	if !strings.Contains(errOut, "offers no dry run of the register") {
 		t.Errorf("stderr does not say the server offers no dry run:\n%s", errOut)
 	}
 }
 
 // TestDeployPreflightChecksTheRegistryPush: a registry that refuses a push
-// stops the deploy before the build, naming the login command; nothing is
-// checked when nothing is pushed (--skip-build), or when the registry
-// already holds the image for the content label (the skip path).
+// with the docker config's credential stops a docker deploy before the
+// build, naming the login command. With no credential, or another builder,
+// whose push may use credentials the docker config does not hold, the
+// refusal is a note. Nothing is checked when nothing is pushed
+// (--skip-build), or when the registry already holds the image for the
+// content label (the skip path).
 func TestDeployPreflightChecksTheRegistryPush(t *testing.T) {
-	noDockerCredentials(t)
-	t.Run("refused", func(t *testing.T) {
+	t.Run("refused, docker with a credential", func(t *testing.T) {
 		reg := newFakeOCIRegistry(t, singleManifest)
 		reg.denyPush = true
-		dir, builder, log := deployFixtureAt(t, reg.host+"/team")
+		dockerCredentialsFor(t, reg.host)
+		dir := versionProject(t, "registry:\n  url: "+reg.host+"/team\n  image_name: etl\n")
+		t.Setenv("LEOFLOW_PARSER_CMD", recordingParser(t, filepath.Join(t.TempDir(), "parser.log")))
+		builder, log := argvBuilder(t)
 		fake := &deployServer{}
 		_, _, err := deployDir(t, fake, dir, builder, "--force")
 		if err == nil || !strings.Contains(err.Error(), "docker login "+reg.host) || !strings.Contains(err.Error(), reg.host+"/team/etl") {
 			t.Fatalf("err = %v, want the refused repository and docker login %s", err, reg.host)
 		}
-		if compiled(dir) || builderRan(log) || fake.registers != 0 {
-			t.Errorf("compiled=%v built=%v registers=%d, want nothing done", compiled(dir), builderRan(log), fake.registers)
+		if compiled(dir) || argvLines(t, log) != nil || fake.registers != 0 {
+			t.Errorf("compiled=%v builder=%q registers=%d, want nothing done", compiled(dir), argvLines(t, log), fake.registers)
 		}
 	})
+	for _, tc := range []struct {
+		name, cred, login string
+	}{
+		{"refused, no credential", "", "docker login"},
+		{"refused, another builder", "cred", "builder.sh login"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := newFakeOCIRegistry(t, singleManifest)
+			reg.denyPush = true
+			if tc.cred != "" {
+				dockerCredentialsFor(t, reg.host)
+			} else {
+				noDockerCredentials(t)
+			}
+			dir, builder, _ := deployFixtureAt(t, reg.host+"/team")
+			if tc.cred == "" {
+				// The docker builder, with nothing in the docker config.
+				builder, _ = argvBuilder(t)
+			}
+			fake := &deployServer{}
+			out, errOut, err := deployDir(t, fake, dir, builder, "--force")
+			if err != nil {
+				t.Fatalf("deploy: %v\n%s", err, out)
+			}
+			if !strings.Contains(errOut, "note: ") || !strings.Contains(errOut, tc.login+" "+reg.host) || fake.registers != 1 {
+				t.Errorf("registers=%d, stderr does not carry the refusal as a note naming %q:\n%s", fake.registers, tc.login, errOut)
+			}
+		})
+	}
 	t.Run("allowed", func(t *testing.T) {
+		noDockerCredentials(t)
 		reg := newFakeOCIRegistry(t, singleManifest)
 		dir, builder, _ := deployFixtureAt(t, reg.host+"/team")
 		out, _, err := deployDir(t, &deployServer{}, dir, builder, "--force")
@@ -182,6 +292,7 @@ func TestDeployPreflightChecksTheRegistryPush(t *testing.T) {
 	})
 	for _, args := range [][]string{{"--skip-build"}, nil} {
 		t.Run(strings.Join(append([]string{"nothing to push"}, args...), " "), func(t *testing.T) {
+			noDockerCredentials(t)
 			reg := newFakeOCIRegistry(t, singleManifest)
 			reg.denyPush = true
 			dir, builder, _ := deployFixtureAt(t, reg.host+"/team")
@@ -216,22 +327,24 @@ func TestDeployPreflightFailureInTheJSONReport(t *testing.T) {
 	}
 }
 
-// TestServerDryRunRefusesAnAnswerWithoutTheHeader: an answer to a dry run
-// without the dry run header comes from a server that may have registered
-// the spec; the deploy stops rather than build on it.
-func TestServerDryRunRefusesAnAnswerWithoutTheHeader(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"created":true}`))
+// TestServerDryRunOfAnOlderReplicaIsANote: during a rolling upgrade the dry
+// run may reach a replica that predates the route; it answers 404 and
+// registers nothing, and the deploy goes on with a note.
+func TestServerDryRunOfAnOlderReplicaIsANote(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/versions/dry_run") {
+			t.Errorf("dry run sent to %s", r.URL.Path)
+		}
+		http.NotFound(w, r)
 	}))
 	t.Cleanup(srv.Close)
 	spec := filepath.Join(t.TempDir(), "dag.json")
-	if err := os.WriteFile(spec, []byte(`{"dag_id":"etl"}`), 0o600); err != nil {
+	if err := os.WriteFile(spec, []byte(`{"dag_id":"etl","image":"r/etl:v1"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var out, warn strings.Builder
-	err := serverDryRun(t.Context(), &out, &warn, versionPost{serverURL: srv.URL, dagID: "etl"}, spec, "v1", labelDefault)
-	if err == nil || !strings.Contains(err.Error(), "may have registered") {
-		t.Fatalf("err = %v, want a stop naming the missing header", err)
+	err := serverDryRun(t.Context(), &out, &warn, versionPost{serverURL: srv.URL, dagID: "etl"}, spec, dryImage{ref: "r/etl@sha256:" + strings.Repeat("0", 64)}, "v1", labelDefault)
+	if err != nil || !strings.Contains(warn.String(), "note: ") || !strings.Contains(warn.String(), "404") {
+		t.Fatalf("err = %v, warn = %q; want a note naming the 404", err, warn.String())
 	}
 }

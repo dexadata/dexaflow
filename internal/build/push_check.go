@@ -31,7 +31,9 @@ type PushAccess struct {
 // CheckPush asks the registry of image whether a push to its repository is
 // allowed, with the credentials a push would use (authn.DefaultKeychain),
 // before anything is built (#1705). It starts a blob upload, which a registry
-// authorizes like a push, and cancels it: nothing is written. A 401 or 403
+// authorizes like a push, and cancels it, best effort (cancelUpload): a
+// registry that refuses the DELETE (ECR and Harbor may) keeps an empty
+// upload until it expires it, and no blob or manifest is written. A 401 or 403
 // is ErrPushDenied; any other failure says nothing about the right to push
 // and is returned as it is. Plain HTTP is spoken only to the loopback, as for
 // Resolve.
@@ -71,8 +73,9 @@ func (Registry) CheckPush(ctx context.Context, image string) (PushAccess, error)
 	return access, nil
 }
 
-// cancelUpload deletes the upload a push check started, best effort: a
-// registry that keeps it expires it anyway.
+// cancelUpload deletes the upload a push check started, best effort: its
+// answer is ignored, and a registry that refuses the DELETE (ECR and Harbor
+// may) expires the empty upload on its own.
 func cancelUpload(ctx context.Context, client *http.Client, resp *http.Response) {
 	loc, err := resp.Location()
 	if err != nil {

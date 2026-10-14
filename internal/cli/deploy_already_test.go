@@ -39,18 +39,23 @@ type deployServer struct {
 	patches      []string
 	// The register dry run (#1705): probes counts the empty-body probes of
 	// the preflight, dryRuns the dry runs of a compiled spec. noDryRun is a
-	// server that predates dry_run and registers whatever it is sent;
+	// server that predates the dry run route and answers it 404;
 	// probeStatus and dryRunStatus, when set, refuse the probe or the dry
 	// run with that status and refusal; dryRunWarnings are the warnings of
-	// an accepted dry run.
-	probes         int
-	dryRuns        int
-	noDryRun       bool
-	probeStatus    int
-	dryRunStatus   int
-	refusal        string
-	dryRunWarnings []string
-	dryRunQueries  []string
+	// an accepted dry run. registeredImage, when set, is the image the
+	// label is registered with: a dry run of another image is a 409, of
+	// that one an unchanged register. dryRunImages records the image of
+	// each dry run.
+	probes          int
+	dryRuns         int
+	noDryRun        bool
+	probeStatus     int
+	dryRunStatus    int
+	refusal         string
+	dryRunWarnings  []string
+	dryRunQueries   []string
+	registeredImage string
+	dryRunImages    []string
 }
 
 // detailsJSON is the details answer: the current label and the fields the
@@ -85,6 +90,9 @@ func (s *deployServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.serveRead(w, r)
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/versions"):
 		s.serveRegister(w, r)
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/versions/dry_run") && !s.noDryRun:
+		body, _ := io.ReadAll(r.Body)
+		s.serveDryRun(w, r, body)
 	case r.Method == http.MethodPatch && r.URL.Path == "/api/v2/dags/etl":
 		b, _ := io.ReadAll(r.Body)
 		s.patches = append(s.patches, string(b))
@@ -133,12 +141,7 @@ func (s *deployServer) serveRead(w http.ResponseWriter, r *http.Request) {
 // and a dry run as the server does.
 func (s *deployServer) serveRegister(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
-	probe := strings.TrimSpace(string(body)) == "{}"
-	if r.URL.Query().Get("dry_run") == "true" && !s.noDryRun {
-		s.serveDryRun(w, r, probe)
-		return
-	}
-	if probe {
+	if strings.TrimSpace(string(body)) == "{}" {
 		// The dag_id of the path does not match the empty spec's.
 		http.Error(w, `{"detail":"dag_id in path does not match spec"}`, http.StatusBadRequest)
 		return
@@ -156,13 +159,13 @@ func (s *deployServer) serveRegister(w http.ResponseWriter, r *http.Request) {
 
 // serveDryRun answers a register dry run: the probe of the preflight, or a
 // dry run of a compiled spec.
-func (s *deployServer) serveDryRun(w http.ResponseWriter, r *http.Request, probe bool) {
+func (s *deployServer) serveDryRun(w http.ResponseWriter, r *http.Request, body []byte) {
 	w.Header().Set("Dexaflow-Dry-Run", "true")
 	refuse := func(status int) {
 		w.WriteHeader(status)
 		_, _ = fmt.Fprintf(w, `{"detail":%q}`, s.refusal)
 	}
-	if probe {
+	if strings.TrimSpace(string(body)) == "{}" {
 		s.probes++
 		if s.probeStatus != 0 {
 			w.Header().Del("Dexaflow-Dry-Run")
@@ -174,13 +177,27 @@ func (s *deployServer) serveDryRun(w http.ResponseWriter, r *http.Request, probe
 	}
 	s.dryRuns++
 	s.dryRunQueries = append(s.dryRunQueries, r.URL.RawQuery)
+	var spec struct {
+		Image string `json:"image"`
+	}
+	_ = json.Unmarshal(body, &spec)
+	s.dryRunImages = append(s.dryRunImages, spec.Image)
 	if s.dryRunStatus != 0 {
 		refuse(s.dryRunStatus)
 		return
 	}
+	created := true
+	if s.registeredImage != "" {
+		if spec.Image != s.registeredImage {
+			s.refusal = "version already registered with other content"
+			refuse(http.StatusConflict)
+			return
+		}
+		created = false
+	}
 	warnings, _ := json.Marshal(append([]string{}, s.dryRunWarnings...))
-	_, _ = fmt.Fprintf(w, `{"dag_id":"etl","version":"v","spec_hash":"abc","created":true,"dag_created":%v,"is_paused":true,"dry_run":true,"warnings":%s}`,
-		s.dagCreated, warnings)
+	_, _ = fmt.Fprintf(w, `{"dag_id":"etl","version":"v","spec_hash":"abc","created":%v,"dag_created":%v,"is_paused":true,"dry_run":true,"warnings":%s}`,
+		created, s.dagCreated && created, warnings)
 }
 
 func TestCheckDeployed(t *testing.T) {

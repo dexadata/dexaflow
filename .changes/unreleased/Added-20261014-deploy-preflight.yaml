@@ -6,14 +6,13 @@ body: |-
   to the image's repository with the credentials of the docker config, and,
   once `dag.json` is compiled, has the server run every check of the register
   on it without registering anything. A refusal (an expired token, a token
-  without the deploy scope, a missing registry credential, an unknown
-  connection or variable, an image outside the allowlist, a tenant limit, a
-  version label registered with other content) stops the deploy and names what
-  to fix; the server's warnings are printed. The register gains an optional
-  `dry_run` query parameter (`POST /api/v2/dags/{dag_id}/versions?dry_run=true`)
-  that runs those checks and writes nothing, audit included, answering 200
-  with what the register would do, or the register's own refusal. A server
-  without it is never sent a dry run of the spec, and its checks run at the
-  register as before. `dexaflow doctor` runs the control plane and registry
-  checks for the target in use. (#1705)
+  without the deploy scope, a registry that refuses the docker credential, an unknown
+  connection or variable, an image outside the allowlist, a tenant limit)
+  stops the deploy and names what to fix; the server's warnings are printed.
+  A new route, `POST /api/v2/dags/{dag_id}/versions/dry_run`, runs those
+  checks and writes nothing, audit included, answering 200 with what the
+  register would do, or the register's own refusal. A server that predates the
+  route answers it with 404 and registers nothing, so the deploy goes on with
+  a note and its checks run at the register as before. `dexaflow doctor` runs
+  the control plane and registry checks for the target in use. (#1705)
 time: 2026-10-14T03:00:00.000000000-03:00

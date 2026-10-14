@@ -154,31 +154,46 @@ this order:
    a token without the `deployer` role, `deploy` or `write` on dags, or an API
    token without the `deploy` scope (`403`) names
    `dexaflow auth create-token --scope deploy`. With `--paused` or `--active`
-   the check also covers the `dexaflow:run` scope those flags need. A server
+   the check also covers what those flags need (`write` on dags and, for an
+   API token, the `dexaflow:run` scope), and the refusal says so. A server
    that cannot be reached stops the deploy here.
 2. **Before the build: the registry accepts a push** to the image's
    repository with the credentials of the docker config
-   (`~/.docker/config.json` and its credential helpers, the ones the push
-   uses). The check starts an upload and cancels it, so nothing is written.
-   A refusal names `docker login <registry>`. Nothing is checked when nothing
-   is pushed: with `--skip-build`, or when the registry already holds the
-   image for the content label. A registry that cannot answer the check is a
-   `note:` and the push will tell.
+   (`~/.docker/config.json` and its credential helpers), which the `docker`
+   builder and the daemonless build paths push with. The check starts an
+   upload and cancels it (best effort: a registry that refuses the cancel
+   expires the empty upload), so no image is written. A refusal of the
+   credential found there stops a `docker` deploy, naming
+   `docker login <registry>`. With no credential found, or with another
+   `--builder` (podman, for one, keeps credentials of its own in
+   `auth.json`), a refusal is a `note:` naming `<builder> login <registry>`
+   and the push decides. Nothing is checked when nothing is pushed: with
+   `--skip-build`, or when the registry already holds the image for the
+   content label.
 3. **After the compile, before the build: the server's dry run of the
    register.** The compiled `dag.json` goes to
-   `POST /api/v2/dags/{dag_id}/versions?dry_run=true`, which runs every check
-   the register runs (spec validation, the operator's image, service account
+   `POST /api/v2/dags/{dag_id}/versions/dry_run`, which runs every check the
+   register runs (spec validation, the operator's image, service account
    and field allowlists, the resource unit, source mode, the tenant's limits,
    the declared connections and variables, the version label) and writes
-   nothing. A refusal stops the deploy with the server's reason; a warning
-   (a task that does not fit its size under `executor.unit.enforce: warn`)
-   prints on stderr and the deploy goes on.
+   nothing. The register gets the image pinned by digest, which the build
+   makes later. With `--skip-build` the dry run is sent the digest the
+   registry holds for the tag, the very image the register gets; before a
+   build it is sent the repository at a placeholder digest, so an allowlist
+   of repositories or of `repo@*` decides as for the register. A refusal
+   stops the deploy with the server's reason, except a version label
+   registered with other content when the image is still to be built: the
+   built image decides that one, so it is a `note:` and the register answers
+   it. A
+   warning (a task that does not fit its size under
+   `executor.unit.enforce: warn`) prints on stderr and the deploy goes on.
 
 Each check that passes prints a `preflight:` line (on stderr with
-`--output json`). A server from before the dry run is never sent the
-compiled spec with `dry_run`, which it would register: the deploy prints a
-`note:` and its policy checks run at the register, after the build, as
-before. `dexaflow doctor` runs the first two checks for the target in use.
+`--output json`). A server from before the dry run route answers it with
+`404` and registers nothing, also during a rolling upgrade when one replica
+is older: the deploy prints a `note:` and its policy checks run at the
+register, after the build, as before. `dexaflow doctor` runs the first two
+checks for the target in use, refreshing a saved session as a deploy does.
 
 | Flag | What it does |
 |---|---|
