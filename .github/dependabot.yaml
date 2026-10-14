@@ -14,9 +14,13 @@ updates:
     labels: ["dependencies", "go"]
     open-pull-requests-limit: 10
 
-  # GitHub Actions
+  # GitHub Actions. "/" covers .github/workflows only; the composite action
+  # users pin (setup-dexaflow) uses actions of its own, so its directory is
+  # listed too.
   - package-ecosystem: github-actions
-    directory: "/"
+    directories:
+      - "/"
+      - "/.github/actions/setup-dexaflow"
     schedule:
       interval: weekly
       day: monday

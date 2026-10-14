@@ -1,0 +1,56 @@
+# GoReleaser image for the dexaflow CLI (ghcr.io/dexadata/dexaflow-cli), for
+# pipelines that run a container per job (GitLab CI, Cloud Build, Tekton, an
+# Argo CD or Flux hook Job) instead of installing the CLI (#1708). Like
+# Dockerfile.server.release, it copies the binary GoReleaser already built and
+# stamped with its version; unlike it, it cannot be distroless, because
+# `dexaflow deploy` runs other programs:
+#
+#   - python3 (3.11 to 3.13): `compile` parses dag.py with the parser bundled in
+#     the binary (`python3 -m leoflow_parser`, extracted to ~/.dexaflow/pysrc on
+#     first use), so no `dexaflow setup` and no managed CPython download;
+#   - git: the default version label starts with `git describe`, and
+#     `--changed-since` diffs against a ref;
+#   - uv: the daemonless dependency layer (ADR 0078) resolves and installs the
+#     wheels with it, so a first deploy needs no container daemon either;
+#   - ca-certificates: the registry and the control plane are reached over TLS.
+#
+# No Docker CLI: a deploy from this image takes the skip, code-layer,
+# dependency-layer or remote builder, and a project that needs a real build
+# (packages without wheels, system_packages, its own Dockerfile) configures
+# the remote builder rather than a daemon in the job.
+#
+# The base is the python:<minor>-slim-trixie family the task runtime image
+# uses (runtime/Dockerfile), so it is Debian 13 like the distroless server
+# image, scanned in the same image-scan.yaml lane, and pulled through the same
+# mirror. 3.13 is the newest line the parser supports.
+FROM ghcr.io/astral-sh/uv:0.12.24@sha256:3af4716e991d6956a41e573eab705d0ee08500cd829ed30293eb8472f372c65a AS uv
+
+FROM python:3.13-slim-trixie
+
+LABEL org.opencontainers.image.description="Dexaflow CLI for CI/CD pipelines (dexaflow, python3, git, uv)"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+
+# safe.directory '*': a CI system clones the repository as another user than
+# the one this image runs as (GitLab's helper clones as root), and git then
+# refuses every command in the checkout as "dubious ownership", which turns
+# into a `dev` version label. The image runs one job in one checkout, which
+# is the case the setting exists for.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates git \
+ && rm -rf /var/lib/apt/lists/* \
+ && git config --system --add safe.directory '*'
+
+COPY --from=uv /uv /usr/local/bin/uv
+
+# The numeric non-root UID of the other images (65532), with a home the CLI
+# writes its state (~/.dexaflow) and caches (~/.cache/dexaflow) into.
+RUN groupadd --gid 65532 dexaflow \
+ && useradd --create-home --home-dir /home/dexaflow --uid 65532 --gid 65532 dexaflow
+
+COPY dexaflow /usr/local/bin/dexaflow
+
+ENV HOME=/home/dexaflow
+USER 65532:65532
+WORKDIR /home/dexaflow
+ENTRYPOINT ["dexaflow"]
+CMD ["--help"]

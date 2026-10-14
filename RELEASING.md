@@ -217,12 +217,19 @@ that people follow without naming a version.
 
 | What | Who follows it | Moved by | rc | GA, newest minor | GA, older minor |
 |---|---|---|---|---|---|
-| Binaries, `dexaflow-server`, `dexaflow-mcp`, `dexaflow-migrate` at `vX.Y.Z` and `X.Y.Z`, `dexaflow-runtime:py3.N-vX.Y.Z` | pinned installs | `release`, `migrate-image`, `runtime-image` | yes | yes | yes |
+| Binaries, `dexaflow-server`, `dexaflow-mcp`, `dexaflow-cli`, `dexaflow-migrate` at `vX.Y.Z` and `X.Y.Z`, `dexaflow-runtime:py3.N-vX.Y.Z` | pinned installs, the `setup-dexaflow` action, pipelines | `release`, `migrate-image`, `runtime-image` | yes | yes | yes |
 | GitHub release, public, not Latest | pinned `install.sh`, the smokes | GoReleaser (`make_latest: false`) | prerelease | yes | yes |
 | Helm chart `X.Y.Z` (`charts/dexaflow`, `charts/leoflow`) | `helm install`, `helm upgrade` | `promote` | yes | yes | yes |
 | `dexaflow-runtime:py3.N`, `leoflow-runtime:py3.N` | development builds, the docs | `promote` | no | yes | no |
 | GitHub release marked Latest | `install.sh` without a pinned version, Renovate, Dependabot | `promote` | no | yes | no |
 | Docs root | the docs site | `cut-release.sh`, after PUBLISHED | no | yes | no |
+
+The `setup-dexaflow` action (`.github/actions/setup-dexaflow`) is used at a
+release tag of this repository (`dexadata/dexaflow/.github/actions/setup-dexaflow@vX.Y.Z`)
+and installs that tag's archive, so it needs no step of its own: the tag
+publishes it. `verify-server-signature` checks the `dexaflow-cli` signature
+and runs the image (`dexaflow version`, `python3`, `git`, `uv`) before the
+gate.
 
 "Newest minor" means the tag is not older than any published GA
 (`scripts/release-promote-plan.sh`, the same rule the docs root uses).
