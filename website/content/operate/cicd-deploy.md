@@ -106,9 +106,14 @@ reach the image, so ship one only if you want full control (see
 [your own Dockerfile](/operate/first-pro-dag/#advanced-your-own-dockerfile)).
 
 The built image is **your** artifact: push it wherever you like (Docker Hub, ECR,
-Artifact Registry, ACR, GHCR, a private registry), via the `registry:` block in
-`dexaflow.yaml`. `deploy` requires that block; it has no `--image` flag. The
-only image Dexaflow owns is the base your DAG layers on.
+Artifact Registry, ACR, GHCR, a private registry). `deploy` needs a registry
+prefix from one of `--registry`, `DEXAFLOW_REGISTRY`, the `registry:` block of
+`dexaflow.yaml`, the target, the workspace defaults, your config file or the
+cluster's deploy defaults
+([Registry, platforms and base image](/operate/workspaces-and-targets/#registry-platforms-and-base-image)),
+and names the image after the `dag_id` unless `registry.image_name` says
+otherwise; it has no `--image` flag. The only image Dexaflow owns is the base
+your DAG layers on.
 
 **The mental model:** a push that touches `dags/my_pipeline/**` triggers CI for
 *that* DAG only (the `paths:` filter), which compiles → builds (from yaml) →
@@ -595,8 +600,11 @@ In a pipeline, a promotion job after the staging deploy:
 - **Python 3.11 to 3.13 on the runner** (`dexaflow compile` invokes the
   stdlib-only parser shim, [ADR 0024](/project/adrs/0024-dag-parsing-structural-shim/),
   to turn `dag.py` into `dag.json`). See [Python on the runner](#python-on-the-runner) below.
-- A container registry your cluster can pull from, and the builder logged in to
-  it (`docker login`).
+- A container registry your cluster can pull from, and a credential for it on
+  the runner: the `gcloud`, `aws` or `az` session for Artifact Registry, ECR and
+  ACR, the docker config (`docker login`, or a login action) for the others,
+  and the container tool's own login when it builds
+  ([Registry credentials](/operate/builders/#registry-credentials)).
 - The control plane URL, passed as `--server` or exported as
   `DEXAFLOW_SERVER_URL` (the pre-rename `LEOFLOW_SERVER_URL` still works). The
   CLI reads no other variable for it: a pipeline that exports something else
