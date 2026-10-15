@@ -215,3 +215,41 @@ func TestWarmPoolAbortedTickNotesNoRation(t *testing.T) {
 		t.Errorf("an aborted tick noted a ration:\n%s", logs.String())
 	}
 }
+
+// When a run of another version needs its floor while a prewarmed pool holds
+// the whole cap, the run floor is granted at once: the prewarmed version's
+// idle workers above its new share are not charged against it, so the cap is
+// exceeded by those idle workers until they retire with the worker idle TTL
+// (ADR 0082 D7). The prewarmed version deletes and creates nothing, and once
+// its workers retire it gets back only what the cap leaves.
+func TestWarmPoolRunFloorIsGrantedOverARationedPrewarmPool(t *testing.T) {
+	targets := &fakeWarmTargets{targets: []WarmTarget{
+		{DagVersionID: "dvZ", DagID: "zeta", TenantID: "T", EffectiveMinIdle: 3, MaxPoolSize: 8, Prewarm: true},
+	}}
+	pods := &fakeWarmPods{existing: warmPodsT("dvZ", "T", "z1", "z2", "z3")}
+	r, _, _ := logged(targets, pods, busySet(), 3)
+	tick(t, r)
+	if len(pods.created) != 0 || len(pods.deleted) != 0 {
+		t.Fatalf("steady tick created %v deleted %v", pods.created, pods.deleted)
+	}
+
+	// A run of DAG "run" (another version, floor 2) becomes active.
+	targets.targets = append(targets.targets, WarmTarget{DagVersionID: "dvR", DagID: "run", TenantID: "T", EffectiveMinIdle: 2, MaxPoolSize: 8})
+	tick(t, r)
+	if byV := createdByVersion(pods); byV["dvR"] != 2 || byV["dvZ"] != 0 || len(pods.deleted) != 0 {
+		t.Fatalf("created %v deleted %v, want the run floor of 2 at once and zeta's idle workers kept", byV, pods.deleted)
+	}
+
+	// zeta's workers retire with the idle TTL: zeta gets back its share of 1.
+	pods.created = nil
+	for i := range pods.existing {
+		if pods.existing[i].DagVersionID == "dvZ" {
+			pods.existing[i].Terminal = true
+		}
+	}
+	pods.existing = append(pods.existing, warmPodsT("dvR", "T", "r1", "r2")...)
+	tick(t, r)
+	if byV := createdByVersion(pods); byV["dvZ"] != 1 || byV["dvR"] != 0 {
+		t.Errorf("after the idle TTL created %v, want zeta's share of 1 and nothing for the run", byV)
+	}
+}

@@ -205,7 +205,8 @@ warm pods (at most `maxPoolSize`) even with no run, within the tenant's
 [per-tenant cap](#per-tenant-cap) leaves after the idle floors of the
 tenant's versions with an active run, and the DAGs last by id get fewer
 workers when they do not all fit (a pool whose share drops shrinks with
-`workerIdleTtl`, not at once).
+`workerIdleTtl`, not at once; a run's idle floor is created at once on top
+of it, so until then the tenant can hold more than the cap).
 
 **Declaring it.** `min_idle_workers` is a top-level key of `dexaflow.yaml`
 (an integer from 0 to 100; the server clamps it to `maxPoolSize`). The
@@ -568,8 +569,10 @@ It is a **reserve-then-ration budget, never a starvation lever**:
   their pools on every reconcile. When a version's share drops below the idle
   workers it has (a DAG whose id sorts first is deployed, or a run of another
   version needs its floor), no worker is deleted: the version stops creating,
-  its idle workers retire with `workerIdleTtl` and are not replaced, and the
-  room goes to the DAG that took it. When the floors do not all fit, the server
+  and its idle workers retire with `workerIdleTtl` and are not replaced. A
+  run's floor does not wait for them: it is created at once, so the tenant
+  exceeds the cap by those idle workers until they retire. A DAG whose id
+  sorts first gets the room once they have retired. When the floors do not all fit, the server
   logs the versions that got less (at most 10, and how many more) and meters
   `warm_pool_prewarm_rationed`, once each time that set changes
   ([ADR 0082](/project/adrs/0082-warm-pool-follows-the-current-version/) D7).

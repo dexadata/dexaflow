@@ -471,7 +471,8 @@ type ExecutionSection struct {
 	// to the floor sum and meters the misconfiguration). A prewarm-only version
 	// (ADR 0082) never raises it: the prewarm floors share what the cap leaves,
 	// by DAG id, and a prewarm pool above its share shrinks with the worker idle
-	// TTL. The cap is enforced only by refusing to CREATE new warm pods, never
+	// TTL (the floors of versions with an active run are created at once on top
+	// of it, so the tenant exceeds the cap until it has shrunk). The cap is enforced only by refusing to CREATE new warm pods, never
 	// by deleting a busy worker.
 	MaxWarmPodsPerTenant int `mapstructure:"max_warm_pods_per_tenant"`
 	// WarmReadOnlyRootFilesystem mounts every warm worker's root filesystem read

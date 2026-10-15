@@ -87,9 +87,12 @@ warm.
    only; when its share drops below the idle workers it has (a DAG that
    sorts first appears, or a run of another version needs its floor), its
    idle workers are not deleted: they retire with `worker_idle_ttl` and are
-   not replaced, so a share that moves between ticks does not churn pods,
-   and the cap can be exceeded by those idle workers for at most one idle
-   TTL. A busy worker is never deleted, as before. Once a run of a rationed
+   not replaced, so a share that moves between ticks does not churn pods.
+   They are not charged against the floor of a version with an active run,
+   which is created at once, so the cap can be exceeded by those idle
+   workers for at most one idle TTL; a prewarm target that took the share
+   waits for them to retire, so a prewarm target never creates past the
+   cap. A busy worker is never deleted, as before. Once a run of a rationed
    version is active, it is a run target again and its floor is honored.
    A tenant's rationed set is logged (at most 10 versions and a count of the
    rest) and counted as `warm_pool_prewarm_rationed` when it changes, not on
