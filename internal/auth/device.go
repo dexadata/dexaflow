@@ -27,7 +27,7 @@ type DeviceAuthorization struct {
 type DeviceAuthorizationRequest struct {
 	DeviceCodeHash string
 	UserCodeHash   string
-	// RequesterHash is the keyed hash of the starting address (its /64 for
+	// RequesterHash is the keyed hash of the starting address (its /56 for
 	// IPv6), which MaxLivePerRequester counts by.
 	RequesterHash string
 	RequesterAddr string
