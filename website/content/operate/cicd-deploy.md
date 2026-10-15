@@ -35,28 +35,40 @@ registers the artifact.
 recommended command in CI too**, and the recipes below use it.
 
 **The explicit steps** are still available when a pipeline wants the build and
-the register as separate stages:
+the register as separate stages. Both paths register the image by digest:
 
 ```mermaid
 flowchart LR
-  E[edit dag.py + dexaflow.yaml] --> C[dexaflow compile --build --push]
-  C --> R[dexaflow push dag.json → control plane]
+  E[edit dag.py + dexaflow.yaml] --> D[dexaflow deploy]
+  D --> R[control plane: registry/image@sha256:...]
+  E -.-> C[dexaflow compile --build --push]
+  C -.->|dag.json pinned| P[dexaflow push dag.json]
+  P -.-> R
 ```
 
 1. **`dexaflow compile --build --push`**: parse `dag.py`, overlay
    `dexaflow.yaml`, run the **guardrails** (unknown `task_id`, unsupported
-   operator, duplicate keys), build the DAG image and push it.
+   operator, duplicate keys), build the DAG image, push it, and write the
+   pushed image's digest into `dag.json` as `registry/image@sha256:…`.
 2. **`dexaflow push dag.json`**: register the artifact with the control plane.
 
-{{% alert title="Only `deploy` pins the digest" color="warning" %}}
-`compile --build --push` writes the image **tag** it pushed into `dag.json`
-(`registry/image:tag`), and `push` registers that file as it is. The control
-plane then pulls by tag, so a tag that is rebuilt later can run different bytes
-under the same version. `dexaflow deploy` is the only command that resolves the
-pushed image's digest and registers `registry/image@sha256:…`. Prefer `deploy`
-in CI; if you split the steps, tag by commit (`tag_strategy: git_sha`) and never
-reuse a tag. An operator can make the control plane warn about, then refuse, a
-register by tag: see [Require images pinned by digest](#require-images-pinned-by-digest).
+{{% alert title="Both paths pin the digest" color="info" %}}
+`compile --build --push` reads the digest of the image it pushed (the same read
+`deploy` makes, with the same [registry credentials](/operate/builders/#registry-credentials))
+and writes `registry/image@sha256:…` into `dag.json`, so `push` registers the
+bytes that were built. When only that read fails (the push succeeded), the
+compile keeps the tag in `dag.json` and warns with the reason, and `push`
+tries the read again; `deploy` stops instead, since it registers only a
+digest. `push` pins too: when `dag.json` names a tag (a file
+compiled by an older CLI, or an image another tool pushed), it resolves the tag
+in the registry and registers the digest it names at that moment. `push --image
+<ref>` registers another image than the one in `dag.json`, a tag resolved the
+same way or a `<repository>@sha256:<digest>` used as given. When the registry
+cannot be read, `push` registers the tag as written with a warning that says
+why, and a server under [`deploy.require_digest: enforce`](#require-images-pinned-by-digest)
+refuses it with an error that names the reason and the fix. `dexaflow deploy`
+remains the recommended command: it adds the preflight, the plan and the
+reuse of an image already built.
 {{% /alert %}}
 
 {{% alert title="The guardrails are your CI gate" color="success" %}}
@@ -852,9 +864,10 @@ dexaflow promote my_pipeline --from staging --to prod --version v1.4.0-3fa2c1   
   `--version` matches a label first, then a version number from
   `dexaflow dags versions my_pipeline --target staging`.
 - **Only images pinned by digest.** The version must run
-  `<repo>@sha256:<digest>`, as every version `dexaflow deploy` registers does.
-  A version registered with a tag (`dexaflow push` of a file compiled with
-  `compile --build --push`) is refused: a tag can name other bytes tomorrow.
+  `<repo>@sha256:<digest>`, as every version `dexaflow deploy`, and
+  `compile --build --push` followed by `push`, registers. A version registered
+  with a tag (by a CLI from before #1703, or by a push that could not read the
+  registry) is refused: a tag can name other bytes tomorrow.
 - **The image, copied when needed.** The destination registry is `--registry`,
   else the `registry` of the `--to` target, else the
   `deploy.defaults.registry` its control plane advertises. When one is set and
@@ -941,23 +954,30 @@ The `dag.version.register` and `dag.version.set_current` audit entries record
 `require_digest` and `image_pinned`. The dry run of a register (the deploy
 preflight) answers with the same warning or refusal, and records nothing.
 
-**Today only `dexaflow deploy` and `dexaflow promote` register pinned images.**
-`dexaflow compile --build --push` followed by `dexaflow push` registers the tag
-it pushed, so under `enforce` that path is refused until it pins by digest
-(#1703). Use `warn` to find the pipelines that still register a tag, and move
-them to `dexaflow deploy` or pin the image yourself before `push`, for example
-with `docker buildx imagetools inspect` (a registry port such as
-`localhost:5000` is kept):
+**`dexaflow deploy`, `dexaflow promote` and `dexaflow compile --build --push`
+followed by `dexaflow push` register pinned images** (#1703). `push` resolves
+a tag in `dag.json` to its digest before registering it, so a file compiled by
+an older CLI is pinned too, as long as the registry can be read from where
+`push` runs. When it cannot, `push` registers the tag with a warning, and under
+`enforce` the refusal names why the image could not be pinned. Resolving a
+tag reads the registry (for up to 30 seconds), with the credentials of
+`registry.auth_method` in the project's `dexaflow.yaml`: the one next to
+`dag.json`, else the one in the working directory, else the one `--project
+<dir>` names. Pin by hand with `--image`, which skips that read when it is
+already a `<repository>@sha256:<digest>`; a tag given with `--image` must
+resolve, or the push fails:
 
 ```bash
-dexaflow compile dags/my_pipeline --build --push -o dag.json
-ref=$(jq -r .image dag.json)          # ghcr.io/acme/my_pipeline:v1
+ref=ghcr.io/acme/my_pipeline:v1
+digest=$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' | jq -r .digest)
 repo=$ref
 case ${ref##*/} in *:*) repo=${ref%:*} ;; esac   # drop the tag, never a registry port
-digest=$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' | jq -r .digest)
-jq --arg img "$repo@$digest" '.image = $img' dag.json > dag.pinned.json
-dexaflow push dag.pinned.json
+dexaflow push dag.json --image "$repo@$digest"
 ```
+
+A CLI from before #1703 registers the tag that `compile --build --push`
+pushed: use `warn` to find the pipelines that still do, and upgrade their CLI
+or move them to `dexaflow deploy`.
 
 Set `enforce` only once nothing on the cluster registers a tag any more: no
 increase of `outcome="warned"` while every pipeline has run.
@@ -1068,7 +1088,7 @@ export DEXAFLOW_TOKEN
 
 That token lives one hour: a build that can take longer should run the steps
 apart (`dexaflow compile --build --push`, then mint the token, then
-`dexaflow push`, which registers the tag; see the warning at the top).
+`dexaflow push`, which registers the digest `compile` wrote into `dag.json`).
 {{% /alert %}}
 
 ### When deploys go through your platform's issuer

@@ -97,6 +97,16 @@ func (r Registry) Resolve(ctx context.Context, image string) (Pinned, error) {
 	return Pinned{Ref: PinnedRef(image, desc.Digest.String()), Manifest: desc.Manifest}, nil
 }
 
+// CheckReference refuses an image that is not a reference Resolve can read,
+// so a reference given on the command line is refused before anything is
+// read or sent.
+func CheckReference(image string) error {
+	if _, err := name.ParseReference(image); err != nil {
+		return fmt.Errorf("image %q is not a valid reference: %w", image, err)
+	}
+	return nil
+}
+
 // Platform reads os/arch[/variant] from the config of the single image ref
 // names (a pinned reference), or "" when the config names no platform. It is
 // a second request, made only by the skip path, which must know what a

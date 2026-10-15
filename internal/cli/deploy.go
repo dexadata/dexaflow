@@ -813,6 +813,7 @@ func (d *deployRun) compileOptions(output string, built *build.Result, provenanc
 		// deploySettings showed the platforms; the build pins its push.
 		settingsShown: true,
 		built:         built,
+		requirePin:    true,
 		provenance:    provenance,
 	}
 }

@@ -124,7 +124,7 @@ func (c CodeLayer) Build(ctx context.Context, req Request) (Result, error) {
 	}
 	pinned, err := c.Registry.Resolve(ctx, req.Image)
 	if err != nil {
-		return Result{}, fmt.Errorf("reading the digest of the pushed image %q: %w", req.Image, err)
+		return res, fmt.Errorf("%w: reading the digest of the pushed image %q: %w", ErrPinRead, req.Image, err)
 	}
 	res.Ref = pinned.Ref
 	return res, nil
