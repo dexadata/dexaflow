@@ -322,3 +322,17 @@ func TestRegistryReadsThePlatformOfASingleImage(t *testing.T) {
 		t.Errorf("Platform = %q, %v; want linux/arm64/v8", got, err)
 	}
 }
+
+// CheckReference accepts what Resolve can read and refuses the rest.
+func TestCheckReference(t *testing.T) {
+	for _, ok := range []string{"ghcr.io/acme/etl:v1", "localhost:5000/etl", "etl@sha256:" + strings.Repeat("a", 64)} {
+		if err := CheckReference(ok); err != nil {
+			t.Errorf("CheckReference(%q) = %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "Not A Reference", "ghcr.io/acme/etl@sha256:abc", "ghcr.io/Acme/etl:v1"} {
+		if err := CheckReference(bad); err == nil {
+			t.Errorf("CheckReference(%q) accepted it", bad)
+		}
+	}
+}

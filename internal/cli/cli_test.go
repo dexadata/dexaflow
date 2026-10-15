@@ -373,12 +373,16 @@ func TestCompilePushesImage(t *testing.T) {
 	if _, _, err := run(t, "init", dir); err != nil {
 		t.Fatal(err)
 	}
+	// The push is followed by a read of the pushed digest (#1703), so the
+	// image lives in a registry that answers it.
+	reg := newFakeOCIRegistry(t, singleManifest)
+	image := reg.host + "/test:v1"
 	parser := filepath.Join(t.TempDir(), "fake-parser.sh")
 	pscript := "#!/usr/bin/env bash\n" +
 		"out=\"\"\n" +
 		"while [ $# -gt 0 ]; do case \"$1\" in --output) out=\"$2\"; shift 2;; *) shift;; esac; done\n" +
 		"cat > \"$out\" <<'JSON'\n" +
-		"{\"schema_version\":\"1.0\",\"dag_id\":\"proj\",\"dag_version\":\"dev\",\"image\":\"test:v1\",\"tasks\":[{\"task_id\":\"hello\",\"type\":\"python\",\"entrypoint\":\"dag:hello\"}]}\n" +
+		"{\"schema_version\":\"1.0\",\"dag_id\":\"proj\",\"dag_version\":\"dev\",\"image\":\"" + image + "\",\"tasks\":[{\"task_id\":\"hello\",\"type\":\"python\",\"entrypoint\":\"dag:hello\"}]}\n" +
 		"JSON\n"
 	if err := os.WriteFile(parser, []byte(pscript), 0o755); err != nil {
 		t.Fatal(err)
@@ -389,7 +393,7 @@ func TestCompilePushesImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := filepath.Join(dir, "dag.json")
-	if _, _, err := run(t, "compile", dir, "--output", out, "--image", "test:v1",
+	if _, _, err := run(t, "compile", dir, "--output", out, "--image", image,
 		"--parser-cmd", parser, "--build", "--push", "--builder", builder); err != nil {
 		t.Fatalf("compile --build --push: %v", err)
 	}
@@ -397,8 +401,8 @@ func TestCompilePushesImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("builder not invoked: %v", err)
 	}
-	if !strings.Contains(string(got), "build") || !strings.Contains(string(got), "push test:v1") {
-		t.Errorf("builder calls = %q, want both build and push test:v1", got)
+	if !strings.Contains(string(got), "build") || !strings.Contains(string(got), "push "+image) {
+		t.Errorf("builder calls = %q, want both build and push %s", got, image)
 	}
 }
 

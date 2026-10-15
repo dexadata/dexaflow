@@ -58,6 +58,14 @@ func ResolutionOrder() []Path {
 // error wraps the builder's own failure and says how to build one platform.
 var ErrMultiPlatform = errors.New("the multi-platform build failed")
 
+// ErrPinRead marks a build whose push succeeded and whose read of the pushed
+// image's digest, asked for by Request.Pin, failed (#1703). The builder then
+// returns the Result of the push, Pushed and without Ref, with the error, so
+// a caller that may register a tag (compile) keeps it, and one that must
+// register a digest (deploy) stops. A read that verifies a multi-platform
+// push is not a pin read: its failure leaves the push unverified.
+var ErrPinRead = errors.New("the image was pushed, but its digest could not be read")
+
 // Request is one image to produce.
 type Request struct {
 	// Image is the tag reference to build, <registry>/<name>:<tag>.

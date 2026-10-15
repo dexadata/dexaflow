@@ -2,8 +2,6 @@ package cli
 
 import (
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,10 +14,10 @@ import (
 // the server's warning is printed on stderr; under enforce the push fails
 // with the server's refusal, which says how to pin.
 func TestPushPrintsTheDigestWarningAndRefusal(t *testing.T) {
-	f := filepath.Join(t.TempDir(), "dag.json")
-	if err := os.WriteFile(f, []byte(pushSpec), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	// A tag no registry holds: the push cannot pin it, so it registers
+	// the tag and the server's setting decides.
+	image := missingRegistry(t) + "/team/etl:v1"
+	f := writePushSpec(t, image)
 	serve := func(mode domain.DigestRequirement) *httptest.Server {
 		return httptest.NewServer(api.NewServer(api.Dependencies{
 			Logger: discardTestLogger(), DevNoAuth: true, Versions: registerRepo{}, RequireDigest: mode,
@@ -35,14 +33,14 @@ func TestPushPrintsTheDigestWarningAndRefusal(t *testing.T) {
 	if !strings.Contains(out, "Registered") {
 		t.Errorf("stdout = %q, want the register line", out)
 	}
-	if !strings.Contains(errOut, "warning: the server: ") || !strings.Contains(errOut, "deploy.require_digest=warn") || !strings.Contains(errOut, "img:v1") {
+	if !strings.Contains(errOut, "warning: the server: ") || !strings.Contains(errOut, "deploy.require_digest=warn") || !strings.Contains(errOut, image) {
 		t.Errorf("stderr = %q, want the server's warning naming the setting and the image", errOut)
 	}
 
 	enforce := serve(domain.DigestRequireEnforce)
 	defer enforce.Close()
 	_, _, err = run(t, "push", f, "--server", enforce.URL, "--token", "x")
-	if err == nil || !strings.Contains(err.Error(), "deploy.require_digest=enforce") || !strings.Contains(err.Error(), "dexaflow deploy") {
+	if err == nil || !strings.Contains(err.Error(), "deploy.require_digest=enforce") || !strings.Contains(err.Error(), "--image <repository>@sha256:<digest>") {
 		t.Errorf("push under enforce = %v, want the refusal naming the setting and how to pin", err)
 	}
 }
