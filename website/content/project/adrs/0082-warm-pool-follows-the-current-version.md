@@ -71,9 +71,9 @@ warm.
 6. **Observability.** The reconciler logs and counts each prewarm start and
    each drain start once per leader
    (`dexaflow_scheduler_decisions_total`, `warm_pool_prewarm_started`,
-   `warm_pool_drain_started`, and `warm_pool_prewarm_rationed` for the cap
-   of D7), and logs when a drained pool's anchor is
-   deleted. A new leader starts without that memory, so it logs and counts
+   `warm_pool_drain_started`, and `warm_pool_prewarm_rationed` and
+   `warm_pool_run_floor_over_retiring_prewarm` for the cap of D7), and logs
+   when a drained pool's anchor is deleted. A new leader starts without that memory, so it logs and counts
    each prewarmed or draining pool it finds once more.
 
 7. **Prewarm is bounded by the per-tenant cap.** A prewarm-only target (the
@@ -90,9 +90,17 @@ warm.
    not replaced, so a share that moves between ticks does not churn pods.
    They are not charged against the floor of a version with an active run,
    which is created at once, so the cap can be exceeded by those idle
-   workers for at most one idle TTL; a prewarm target that took the share
-   waits for them to retire, so a prewarm target never creates past the
-   cap. A busy worker is never deleted, as before. Once a run of a rationed
+   workers for at most one idle TTL after each share drop: a worker's idle
+   TTL runs from when it connected or finished its last attempt, so it has
+   retired one idle TTL after the drop at the latest. The bound holds per
+   drop, not overall. A run version with no prewarm of its own drains when
+   its run ends, the prewarmed pool gets its share back and refills, and
+   the next run of that version exceeds the cap again, each time for at
+   most the shorter of the run and one idle TTL. Each tick that grants such
+   creates logs them and counts `warm_pool_run_floor_over_retiring_prewarm`,
+   so the pods above `max_warm_pods_per_tenant` are explained. A prewarm
+   target that took the share waits for those workers to retire, so a
+   prewarm target never creates past the cap. A busy worker is never deleted, as before. Once a run of a rationed
    version is active, it is a run target again and its floor is honored.
    A tenant's rationed set is logged (at most 10 versions and a count of the
    rest) and counted as `warm_pool_prewarm_rationed` when it changes, not on

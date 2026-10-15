@@ -206,7 +206,8 @@ warm pods (at most `maxPoolSize`) even with no run, within the tenant's
 tenant's versions with an active run, and the DAGs last by id get fewer
 workers when they do not all fit (a pool whose share drops shrinks with
 `workerIdleTtl`, not at once; a run's idle floor is created at once on top
-of it, so until then the tenant can hold more than the cap).
+of it, so until then the tenant can hold more than the cap, see
+[Per-tenant cap](#per-tenant-cap)).
 
 **Declaring it.** `min_idle_workers` is a top-level key of `dexaflow.yaml`
 (an integer from 0 to 100; the server clamps it to `maxPoolSize`). The
@@ -571,11 +572,19 @@ It is a **reserve-then-ration budget, never a starvation lever**:
   version needs its floor), no worker is deleted: the version stops creating,
   and its idle workers retire with `workerIdleTtl` and are not replaced. A
   run's floor does not wait for them: it is created at once, so the tenant
-  exceeds the cap by those idle workers until they retire. A DAG whose id
-  sorts first gets the room once they have retired. When the floors do not all fit, the server
-  logs the versions that got less (at most 10, and how many more) and meters
-  `warm_pool_prewarm_rationed`, once each time that set changes
-  ([ADR 0082](/project/adrs/0082-warm-pool-follows-the-current-version/) D7).
+  exceeds the cap by those idle workers for at most one `workerIdleTtl` after
+  each share drop (a worker's idle TTL runs from when it connected or
+  finished its last attempt). The bound is per drop: a run version with no
+  prewarm of its own drains when its run ends, the prewarmed pool refills,
+  and the next run exceeds the cap again, each time for at most the shorter
+  of the run and one `workerIdleTtl`. Each reconcile that creates such
+  workers logs `creating a run's idle floor past the per-tenant cap` and
+  meters `warm_pool_run_floor_over_retiring_prewarm`. A DAG whose id sorts
+  first gets the room once they have retired. When the floors do not all
+  fit, the server logs the versions that got less (at most 10, and how many
+  more) and meters `warm_pool_prewarm_rationed`, once each time that set
+  changes ([ADR 0082](/project/adrs/0082-warm-pool-follows-the-current-version/)
+  D7).
   A rationed version gets its full floor again once one of its runs is active,
   and a version rationed to no worker logs its prewarm start when it later gets
   a share.

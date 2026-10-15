@@ -585,9 +585,10 @@ func allowanceFor(allow map[string]int, dagVersionID string) int {
 //     targets get no such credit and never create past the cap, so a prewarm
 //     share also waits for those workers to retire. Because the budget already
 //     covers Σ floors, every floor of a version with an active run is granted
-//     unless busy pods have legitimately consumed the budget; in that case the
-//     cap holds by refusing to create, never by deleting the busy workers (they
-//     are reaped on a later tick once idle).
+//     unless busy pods, or the idle pods of a draining version in the tick they
+//     are deleted, have consumed the budget; in that case the cap holds by
+//     refusing to create, never by deleting the busy workers (they are reaped
+//     on a later tick once idle).
 func (r *WarmPoolReconciler) createAllowances(ctx context.Context, targets []WarmTarget, existing []WarmPodInfo, busy map[string]bool) map[string]int {
 	if r.maxWarmPodsPerTenant <= 0 {
 		return nil
@@ -612,7 +613,7 @@ func (r *WarmPoolReconciler) createAllowances(ctx context.Context, targets []War
 	allow := make(map[string]int, len(targets))
 	for tenant, versions := range tenantVersions {
 		budget := r.tenantBudget(ctx, tenant, tenantFloors[tenant])
-		r.rationTenant(versions, stat, budget-tenantLive[tenant], retiring[tenant], allow)
+		r.rationTenant(ctx, versions, stat, budget-tenantLive[tenant], retiring[tenant], allow)
 	}
 	return allow
 }
@@ -779,12 +780,14 @@ func (r *WarmPoolReconciler) tenantBudget(ctx context.Context, tenant string, fl
 // headroom, remaining tenant headroom). A version with an active run also
 // counts the retiring idle workers of rationed prewarm targets
 // (retiringPrewarmIdle) as headroom, so those workers never hold back its
-// floor and the cap is exceeded by them until they retire; a prewarm target
-// does not, so it never creates past the cap. Because the budget already
-// covers the floor sum, every floor of a version with an active run is
-// granted unless busy pods have legitimately consumed the budget; then the
-// cap holds by granting less, never by deleting.
-func (r *WarmPoolReconciler) rationTenant(versions []WarmTarget, stat map[string]warmVerStat, headroom, retiring int, allow map[string]int) {
+// floor and the cap is exceeded by them until they retire
+// (noteRunFloorOverRetiring records each such grant); a prewarm target does
+// not, so it never creates past the cap. Because the budget already covers
+// the floor sum, every floor of a version with an active run is granted
+// unless busy pods, or the idle pods of a draining version in the tick they
+// are deleted, have consumed the budget; then the cap holds by granting
+// less, never by deleting, and the floor is granted on a later tick.
+func (r *WarmPoolReconciler) rationTenant(ctx context.Context, versions []WarmTarget, stat map[string]warmVerStat, headroom, retiring int, allow map[string]int) {
 	runHeadroom := headroom + retiring
 	sort.Slice(versions, func(i, j int) bool { return versions[i].DagVersionID < versions[j].DagVersionID })
 	for _, t := range versions {
@@ -805,10 +808,25 @@ func (r *WarmPoolReconciler) rationTenant(versions []WarmTarget, stat map[string
 			avail = runHeadroom
 		}
 		grant := min(want, max(avail, 0))
+		if over := grant - max(headroom, 0); over > 0 {
+			r.noteRunFloorOverRetiring(ctx, t, over)
+		}
 		allow[t.DagVersionID] = grant
 		headroom -= grant
 		runHeadroom -= grant
 	}
+}
+
+// noteRunFloorOverRetiring logs and meters
+// (warm_pool_run_floor_over_retiring_prewarm) a version with an active run
+// granted over creates past the tenant cap because rationed prewarm pools
+// hold idle workers that retire with the worker idle TTL. It is noted on
+// each tick that grants such creates, so an operator sees why the tenant
+// holds more warm pods than max_warm_pods_per_tenant.
+func (r *WarmPoolReconciler) noteRunFloorOverRetiring(ctx context.Context, t WarmTarget, over int) {
+	r.logger.InfoContext(ctx, "warm-pool creating a run's idle floor past the per-tenant cap while prewarmed pools above their share retire with the worker idle TTL",
+		"tenant", t.TenantID, "dag_version", t.DagVersionID, "max_warm_pods_per_tenant", r.maxWarmPodsPerTenant, "over_cap", over)
+	r.record("warm_pool_run_floor_over_retiring_prewarm")
 }
 
 // reconcileVersion brings one dag_version's IDLE warm-worker buffer to its target

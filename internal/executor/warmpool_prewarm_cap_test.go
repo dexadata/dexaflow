@@ -227,7 +227,7 @@ func TestWarmPoolRunFloorIsGrantedOverARationedPrewarmPool(t *testing.T) {
 		{DagVersionID: "dvZ", DagID: "zeta", TenantID: "T", EffectiveMinIdle: 3, MaxPoolSize: 8, Prewarm: true},
 	}}
 	pods := &fakeWarmPods{existing: warmPodsT("dvZ", "T", "z1", "z2", "z3")}
-	r, _, _ := logged(targets, pods, busySet(), 3)
+	r, logs, rec := logged(targets, pods, busySet(), 3)
 	tick(t, r)
 	if len(pods.created) != 0 || len(pods.deleted) != 0 {
 		t.Fatalf("steady tick created %v deleted %v", pods.created, pods.deleted)
@@ -238,6 +238,12 @@ func TestWarmPoolRunFloorIsGrantedOverARationedPrewarmPool(t *testing.T) {
 	tick(t, r)
 	if byV := createdByVersion(pods); byV["dvR"] != 2 || byV["dvZ"] != 0 || len(pods.deleted) != 0 {
 		t.Fatalf("created %v deleted %v, want the run floor of 2 at once and zeta's idle workers kept", byV, pods.deleted)
+	}
+	if n := rec.count("warm_pool_run_floor_over_retiring_prewarm"); n != 1 {
+		t.Errorf("warm_pool_run_floor_over_retiring_prewarm = %d, want 1 for the creates past the cap", n)
+	}
+	if !strings.Contains(logs.String(), "dag_version=dvR") || !strings.Contains(logs.String(), "over_cap=2") {
+		t.Errorf("the log does not name dvR and its 2 workers over the cap:\n%s", logs.String())
 	}
 
 	// zeta's workers retire with the idle TTL: zeta gets back its share of 1.
@@ -251,5 +257,43 @@ func TestWarmPoolRunFloorIsGrantedOverARationedPrewarmPool(t *testing.T) {
 	tick(t, r)
 	if byV := createdByVersion(pods); byV["dvZ"] != 1 || byV["dvR"] != 0 {
 		t.Errorf("after the idle TTL created %v, want zeta's share of 1 and nothing for the run", byV)
+	}
+}
+
+// A busy worker of a rationed prewarm target is not retiring: it serves an
+// attempt and legitimately holds the budget, so only the target's idle
+// workers above its share are credited to a run floor. Here zeta (share 1)
+// has one busy and two idle workers: one idle worker is above the share, so
+// the run version gets one create past the cap, not two.
+func TestWarmPoolBusyWorkerOfARationedPrewarmEarnsNoCredit(t *testing.T) {
+	targets := &fakeWarmTargets{targets: []WarmTarget{
+		{DagVersionID: "dvZ", DagID: "zeta", TenantID: "T", EffectiveMinIdle: 3, MaxPoolSize: 8, Prewarm: true},
+		{DagVersionID: "dvR", DagID: "run", TenantID: "T", EffectiveMinIdle: 2, MaxPoolSize: 8},
+	}}
+	pods := &fakeWarmPods{existing: warmPodsT("dvZ", "T", "z1", "z2", "z3")}
+	r, _, _ := logged(targets, pods, busySet("z1"), 3)
+	tick(t, r)
+	if byV := createdByVersion(pods); byV["dvR"] != 1 || byV["dvZ"] != 0 {
+		t.Errorf("created %v, want one run worker for zeta's one idle worker above its share", byV)
+	}
+}
+
+// A prewarm target within its share (not rationed) whose idle workers exceed
+// its floor deletes them this tick (trimIdle), and they are not credited to
+// a run floor: the run version creates only what the cap leaves, the rest on
+// a later tick, and no create past the cap is recorded.
+func TestWarmPoolIdleAboveAnUnrationedPrewarmFloorEarnsNoCredit(t *testing.T) {
+	targets := &fakeWarmTargets{targets: []WarmTarget{
+		{DagVersionID: "dvZ", DagID: "zeta", TenantID: "T", EffectiveMinIdle: 2, MaxPoolSize: 8, Prewarm: true},
+		{DagVersionID: "dvR", DagID: "run", TenantID: "T", EffectiveMinIdle: 2, MaxPoolSize: 8},
+	}}
+	pods := &fakeWarmPods{existing: warmPodsT("dvZ", "T", "z1", "z2", "z3", "z4")}
+	r, _, rec := logged(targets, pods, busySet(), 5)
+	tick(t, r)
+	if byV := createdByVersion(pods); byV["dvR"] != 1 || len(pods.deleted) != 2 {
+		t.Errorf("created %v deleted %v, want one run worker within the cap and zeta's 2 excess deleted", byV, pods.deleted)
+	}
+	if n := rec.count("warm_pool_run_floor_over_retiring_prewarm"); n != 0 {
+		t.Errorf("warm_pool_run_floor_over_retiring_prewarm = %d within the cap, want 0", n)
 	}
 }
