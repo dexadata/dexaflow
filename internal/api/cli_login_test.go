@@ -619,6 +619,16 @@ func TestCLILoginGETChainNeverReachesLoopback(t *testing.T) {
 	}
 }
 
+// forgedToken returns token with its first character replaced by a
+// different one, so the forgery never equals the real token.
+func forgedToken(token string) string {
+	first := byte('a')
+	if token[0] == first {
+		first = 'b'
+	}
+	return string(first) + token[1:]
+}
+
 func TestCLIConsentRefusesAForgedPost(t *testing.T) {
 	srv, f, cfg := seededCLIServer(t, &fakeAuthAudit{})
 	st := startCLILogin(t, srv, "cli-state-0123456789", newCLIPKCE())
@@ -626,7 +636,7 @@ func TestCLIConsentRefusesAForgedPost(t *testing.T) {
 
 	for name, rec := range map[string]*httptest.ResponseRecorder{
 		"no csrf":    postConsent(srv, cookie, "", "approve", "same-origin"),
-		"wrong csrf": postConsent(srv, cookie, "x"+csrf[1:], "approve", "same-origin"),
+		"wrong csrf": postConsent(srv, cookie, forgedToken(csrf), "approve", "same-origin"),
 		"no cookie":  postConsent(srv, nil, csrf, "approve", "same-origin"),
 		"cross-site": postConsent(srv, cookie, csrf, "approve", "cross-site"),
 		"same-site":  postConsent(srv, cookie, csrf, "approve", "same-site"),
