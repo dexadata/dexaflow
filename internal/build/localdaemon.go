@@ -89,11 +89,10 @@ func (b LocalDaemon) Build(ctx context.Context, req Request) (Result, error) {
 	}
 	pinned, err := b.registry().Resolve(ctx, req.Image)
 	if err != nil {
-		err = fmt.Errorf("reading the digest of the pushed image %q: %w", req.Image, err)
 		if len(req.Platforms) > 1 {
-			err = b.multiPlatformHint(req.Platforms, err)
+			return Result{}, b.multiPlatformHint(req.Platforms, fmt.Errorf("reading the digest of the pushed image %q: %w", req.Image, err))
 		}
-		return Result{}, err
+		return res, fmt.Errorf("%w: reading the digest of the pushed image %q: %w", ErrPinRead, req.Image, err)
 	}
 	if verr := b.verifyPlatforms(pinned, req.Platforms); verr != nil {
 		return Result{}, verr

@@ -50,10 +50,15 @@ func TestDigestRequirementMessagesNameSettingAndFix(t *testing.T) {
 		t.Fatal("enforce accepted a tag")
 	}
 	for name, msg := range map[string]string{"warning": warning, "refusal": err.Error()} {
-		for _, want := range []string{"deploy.require_digest", img, "@sha256:", "dexaflow deploy"} {
+		for _, want := range []string{"deploy.require_digest", img, "@sha256:", "dexaflow deploy", "dexaflow push --image <repository>@sha256:<digest>"} {
 			if !strings.Contains(msg, want) {
 				t.Errorf("%s %q does not name %q", name, msg, want)
 			}
+		}
+		// compile --build --push and push pin by digest now (#1703): the
+		// hint no longer asks for a hand edit of dag.json.
+		if strings.Contains(msg, "set image in dag.json") {
+			t.Errorf("%s %q still asks to edit dag.json by hand", name, msg)
 		}
 	}
 }
