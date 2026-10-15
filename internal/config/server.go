@@ -465,11 +465,14 @@ type ExecutionSection struct {
 	// dag_version's pool, this bounds a tenant's aggregate warm footprint so one
 	// tenant cannot pin unlimited idle pods and starve neighbors on a shared
 	// multi-team cluster. Default 100, operator-set. It is a RESERVE-then-RATION
-	// budget, never a starvation lever: a tenant's promised idle floors (the sum of
-	// its versions' EffectiveMinIdle) are honored even when they exceed this cap
-	// (the reconciler raises the effective budget to the floor sum and meters the
-	// misconfiguration), and the cap is enforced only by refusing to CREATE new
-	// warm pods — never by deleting a busy worker.
+	// budget, never a starvation lever: the promised idle floors of a tenant's
+	// versions with an active run (the sum of their EffectiveMinIdle) are honored
+	// even when they exceed this cap (the reconciler raises the effective budget
+	// to the floor sum and meters the misconfiguration). A prewarm-only version
+	// (ADR 0082) never raises it: the prewarm floors share what the cap leaves,
+	// by DAG id, and a prewarm pool above its share shrinks with the worker idle
+	// TTL. The cap is enforced only by refusing to CREATE new warm pods, never
+	// by deleting a busy worker.
 	MaxWarmPodsPerTenant int `mapstructure:"max_warm_pods_per_tenant"`
 	// WarmReadOnlyRootFilesystem mounts every warm worker's root filesystem read
 	// only and gives each attempt its own HOME and XDG dirs inside the scratch the

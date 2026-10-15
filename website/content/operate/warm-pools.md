@@ -200,11 +200,31 @@ leader saw: after a leader change the new leader logs and counts each
 prewarmed or draining pool it finds once more.
 
 **Cost.** Each unpaused DAG that declares `min_idle_workers: N` keeps N idle
-warm pods (at most `maxPoolSize`) even with no run. `maxWarmPodsPerTenant`
-does not bound them: the [per-tenant cap](#per-tenant-cap) never starves a
-promised idle floor and raises the tenant's budget to the sum of the floors.
-`min_idle_workers` is not in the authoring schema yet, so today only a
-`dag.json` that carries it is prewarmed.
+warm pods (at most `maxPoolSize`) even with no run, within the tenant's
+`maxWarmPodsPerTenant`: prewarmed pools share what the
+[per-tenant cap](#per-tenant-cap) leaves after the idle floors of the
+tenant's versions with an active run, and the DAGs last by id get fewer
+workers when they do not all fit (a pool whose share drops shrinks with
+`workerIdleTtl`, not at once).
+
+**Declaring it.** `min_idle_workers` is a top-level key of `dexaflow.yaml`
+(an integer from 0 to 100; the server clamps it to `maxPoolSize`). The
+compile copies it into `dag.json`, where the reconciler reads it:
+
+```yaml title="dexaflow.yaml"
+dag_id: orders
+min_idle_workers: 2
+```
+
+A DAG with `staging.enabled` cannot be warm, so the compile refuses the key
+on one. With warm pools off the key does nothing.
+
+`min_idle_workers` is part of `dexaflow.yaml`, which the
+[version label](/operate/deploy-prerequisites/#8-the-version-label-and-its-409)
+hashes, so changing it makes a new version: a new image tag, and the previous
+version's pool drains like on any deploy. A server older than 0.5.4 accepts
+the key but applies it only while a run of the version is active; it does not
+prewarm.
 
 The practical consequence: the benefit tracks **attempts per version**. A DAG that
 runs thousands of attempts on a stable version pools well; a DAG that ships a new
@@ -540,6 +560,22 @@ It is a **reserve-then-ration budget, never a starvation lever**:
   reconciler raises the effective budget to the floor sum and **meters the
   misconfiguration** (so you can see a tenant whose floors overcommit its cap)
   rather than silently starving a promised floor.
+- A **prewarmed** version (a DAG's current version with no active run, see
+  [Prewarm and drain on deploy](#prewarm-and-drain-on-deploy)) does not raise the
+  budget. The tenant's prewarm floors share what the cap leaves after the floors
+  of its versions with an active run, served by DAG id: each takes its
+  `min_idle_workers` or what is left. The order is stable, so the same DAGs keep
+  their pools on every reconcile. When a version's share drops below the idle
+  workers it has (a DAG whose id sorts first is deployed, or a run of another
+  version needs its floor), no worker is deleted: the version stops creating,
+  its idle workers retire with `workerIdleTtl` and are not replaced, and the
+  room goes to the DAG that took it. When the floors do not all fit, the server
+  logs the versions that got less (at most 10, and how many more) and meters
+  `warm_pool_prewarm_rationed`, once each time that set changes
+  ([ADR 0082](/project/adrs/0082-warm-pool-follows-the-current-version/) D7).
+  A rationed version gets its full floor again once one of its runs is active,
+  and a version rationed to no worker logs its prewarm start when it later gets
+  a share.
 - The cap is enforced **only by refusing to create new** warm pods once a tenant is
   at its budget — **never** by deleting a busy worker.
 
@@ -653,7 +689,7 @@ others is read — the deployment is byte-for-byte pod-per-task.
 | `maxAttemptsPerWorker` | `MAX_ATTEMPTS_PER_WORKER` | int (attempts) | `50` | Attempts a worker serves before it drains + recycles. Must be ≥ 1. Bounds stale-image / leaked-credential exposure. |
 | `maxWorkerLifetime` | `MAX_WORKER_LIFETIME` | duration | `1h` | Wall-clock ceiling on a worker before it drains + recycles, independent of attempt count. Must be > 0. |
 | `workerIdleTtl` | `WORKER_IDLE_TTL` | duration | `5m` | How long an idle worker is kept before recycle. Must be > 0. |
-| `maxWarmPodsPerTenant` | `MAX_WARM_PODS_PER_TENANT` | int (pods) | `100` | Cap on total warm pods a **single tenant** may hold across all its DAG versions (M4). Reserve-then-ration; promised idle floors are always honored. Must be ≥ 1. |
+| `maxWarmPodsPerTenant` | `MAX_WARM_PODS_PER_TENANT` | int (pods) | `100` | Cap on total warm pods a **single tenant** may hold across all its DAG versions (M4). Reserve-then-ration; the idle floors of versions with an active run are always honored, and prewarmed versions share what is left. Must be ≥ 1. |
 | `warmReadOnlyRootFilesystem` | `WARM_READ_ONLY_ROOT_FILESYSTEM` | bool | `false` | Read-only warm root, a per-attempt `$HOME` and XDG dirs, and `/tmp` and `/dev/shm` emptied around each attempt (see [isolation](#isolation-between-attempts)). Applies to warm pods created after it is turned on. Dedicated task pods are not affected. |
 | `warmPoolEventRefill` | `WARM_POOL_EVENT_REFILL` | bool | `false` | Event-driven refill from a warm-pod informer, with parallel creates (up to 4). Off = the 30s polling reconciler with a pod list per tick. |
 

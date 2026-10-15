@@ -33,6 +33,7 @@ chart's own values (image, replicas, ingress, Postgres/Redis wiring), see the
 | `build`, `registry` | object | Image build + push settings. |
 | `defaults` | object | DAG-level `retries`, `retry_delay_seconds`, `execution_timeout_seconds`, `size`, `resources`. |
 | `staging` | object | Opt-in per-run RWX volume: `enabled`, `size`, `storage_class` (ADR 0022). |
+| `min_idle_workers` | integer, 0 to 100 | Idle warm workers kept for the DAG's current version, so its tasks skip the cold pod start. With warm pools on, an unpaused DAG that declares it is prewarmed as soon as a version becomes current ([Prewarm and drain on deploy](/operate/warm-pools/#prewarm-and-drain-on-deploy)). The server clamps it to `execution.max_pool_size`; with warm pools off it does nothing. Refused with `staging.enabled`. |
 | `tasks.<task_id>` | object | Per-task overrides (ADR 0023): `retries`, `retry_delay_seconds`, `execution_timeout_seconds`, `size`, `env`, `resources`, `execution`. `size` is the task's pool slots, 1 to 1024 (ADR 0066, see [Task size](/author-dags/dag-authoring/#task-size-size-adr-0066)). |
 
 See [DAG authoring](/author-dags/dag-authoring/) for the override layers.
@@ -390,6 +391,7 @@ roadmap item.
 | `registry.auth_method` | `"auto"` | Where the CLI reads the registry credential for `deploy`, `compile --push` and every registry read. `auto`: the docker config and its credential helpers, then, for an Artifact Registry, GCR, ECR or ACR host, the session of the `gcloud`, `aws` or `az` CLI, so no separate `docker login` is needed. `docker_config`: the docker config and its credential helpers only. `cloud`: the cloud CLI's session only for a registry a cloud owns (for a docker config entry that has expired), the docker config for any other registry. `env` and `iam` are deprecated and still load, with a warning, and read as `auto`. Changing the value among `auto`, `docker_config` and `cloud` does not change the content label, and a project that sets `env` or `iam` keeps the label it had. See [Registry credentials](/operate/builders/#registry-credentials). |
 | `registry.tag_strategy` | `"version"` | How the image tag is picked. `version` and `custom`: the DAG version label, the `--dag-version` you pass or else the default `<git describe>-<content hash>` (see [the version label](/operate/deploy-prerequisites/#8-the-version-label-and-its-409)). `git_sha`: the short commit of the project directory. `git_tag`: the git tag on the project's `HEAD`. `git_sha` and `git_tag` fall back to the version label, with a warning, when there is no commit or no tag on `HEAD`. Characters an image tag cannot carry become `-`. |
 | `staging.enabled` | `false` | Opt-in per-run RWX volume — ADR 0022. |
+| `min_idle_workers` | `0` | No warm workers are kept for the DAG beyond the operator's `execution.min_idle_workers` floor, and the DAG is not prewarmed. |
 | `defaults.*` | *unset* | DAG-level task defaults; layered under task overrides — ADR 0023. |
 | `tasks.<id>` | *unset* | Per-task overrides; must reference a `task_id` present in the compiled DAG. |
 
