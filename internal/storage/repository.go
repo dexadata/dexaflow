@@ -779,6 +779,10 @@ func (r *Repository) ListTaskInstances(ctx context.Context, tenant, dagID, runID
 // opts carries the two independent run-level decisions — whether to re-open the
 // run, and which version the re-run executes (see domain.ClearOptions).
 //
+// A clear that re-binds the run to a version whose tasks differ from the
+// run's task instances is refused with a conflict before anything is written
+// (checkRebindTaskSet).
+//
 // Each cleared task instance gets its retry budget back and starts without the
 // XCom of the attempt it replaces (#1131). The whole clear is one transaction,
 // and the stored XCom values are deleted before it commits: a backend failure
@@ -803,6 +807,9 @@ func (r *Repository) ClearTaskInstances(ctx context.Context, tenant, dagID, runI
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
 	qtx := r.q.WithTx(tx)
+	if refused := checkRebindTaskSet(ctx, qtx, dag, run, opts); refused != nil {
+		return 0, refused
+	}
 	cleared, err := resetTaskInstances(ctx, qtx, run, taskIDs, onlyFailed, budget)
 	if err != nil {
 		return 0, err

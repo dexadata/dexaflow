@@ -22,7 +22,8 @@ type clearDagRunRequest struct {
 // clearDagRunHandler implements POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear,
 // the run page's Clear action. A dry run answers the task instances the clear
 // would reset (TaskInstanceCollectionResponse); the clear itself resets them,
-// re-queues the run and answers the run (DAGRunResponse).
+// re-queues the run and answers the run (DAGRunResponse). Both answer 409 when
+// run_on_latest_version would move the run to a version with other tasks.
 func clearDagRunHandler(tasks TaskInstanceRepository, runs DagRunRepository, versions DagVersionLister, audit AuditWriter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body clearDagRunRequest
@@ -42,16 +43,19 @@ func clearDagRunHandler(tasks TaskInstanceRepository, runs DagRunRepository, ver
 			handleRepoError(c, err)
 			return
 		}
-		affected := affectedTaskInstances(c, tasks, runs, versions, runID, nil, body.OnlyFailed)
-		if body.DryRun == nil || *body.DryRun {
-			c.JSON(http.StatusOK, taskInstanceCollectionDTO{TaskInstances: affected, TotalEntries: len(affected)})
-			return
-		}
 		// Same defaults as clearTaskInstances: the run is reset and keeps the
 		// version it was created with unless the caller asks for the current one.
 		opts := domain.ClearOptions{ResetDagRun: true}
 		if body.RunOnLatestVersion != nil {
 			opts.RunOnLatestVersion = *body.RunOnLatestVersion
+		}
+		if !checkClearVersion(c, tasks, []string{runID}, opts) {
+			return
+		}
+		affected := affectedTaskInstances(c, tasks, runs, versions, runID, nil, body.OnlyFailed)
+		if body.DryRun == nil || *body.DryRun {
+			c.JSON(http.StatusOK, taskInstanceCollectionDTO{TaskInstances: affected, TotalEntries: len(affected)})
+			return
 		}
 		if _, err := tasks.ClearTaskInstances(ctx, tenant, dagID, runID, nil, body.OnlyFailed, opts); err != nil {
 			handleRepoError(c, err)
