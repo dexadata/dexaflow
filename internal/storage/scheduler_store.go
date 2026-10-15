@@ -286,8 +286,11 @@ func (s *SchedulerStore) ConfirmInfraFailure(ctx context.Context, taskInstanceID
 // a database.
 type activeWarmVersion struct {
 	dagVersionID string
-	image        string
-	dagMinIdle   int
+	// dagID is the DAG's id from the spec; the reconciler orders a tenant's
+	// prewarm targets by it under the per-tenant cap (ADR 0082).
+	dagID      string
+	image      string
+	dagMinIdle int
 	// tenantID owns this dag_version; threaded onto the WarmTarget so the reconciler
 	// can enforce the per-tenant aggregate warm-pod cap (M4). Many active runs of a
 	// version share one tenant, so it dedupes with the version.
@@ -345,6 +348,7 @@ func warmTargets(versions []activeWarmVersion, exec config.ExecutionSection, pol
 		}
 		out = append(out, executor.WarmTarget{
 			DagVersionID:     v.dagVersionID,
+			DagID:            v.dagID,
 			Image:            v.image,
 			EffectiveMinIdle: minIdle,
 			Prewarm:          v.prewarm,
@@ -418,6 +422,7 @@ func (s *SchedulerStore) ActiveWarmTargets(ctx context.Context) ([]executor.Warm
 		}
 		versions = append(versions, activeWarmVersion{
 			dagVersionID: uuidToString(c.versionID),
+			dagID:        spec.DagID,
 			image:        spec.Image,
 			dagMinIdle:   spec.MinIdleWorkers,
 			tenantID:     uuidToString(c.tenantID),

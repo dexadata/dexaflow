@@ -61,6 +61,13 @@ type LeoflowConfig struct {
 	// Airflow DAG attribute), so it lives in dexaflow.yaml and the compiler overlays
 	// it onto the produced dag.json.
 	Alerts *AlertsConfig `json:"alerts,omitempty" yaml:"alerts,omitempty"`
+	// MinIdleWorkers is the number of idle warm workers the DAG asks to keep
+	// for its current version (ADR 0058, ADR 0082): with warm pools on, an
+	// unpaused DAG that declares it is prewarmed from the moment a version
+	// becomes current. The compiler overlays it onto dag.json; the server
+	// clamps it to execution.max_pool_size, and with warm pools off it does
+	// nothing. Zero declares none.
+	MinIdleWorkers int `json:"min_idle_workers,omitempty" yaml:"min_idle_workers,omitempty"`
 }
 
 // AlertsConfig groups alert rules by the lifecycle event that fires them. Only
@@ -294,10 +301,24 @@ func (c *LeoflowConfig) Validate() error {
 	if err := c.validateBuildDockerfile(); err != nil {
 		return err
 	}
+	if err := c.validateMinIdleWorkers(); err != nil {
+		return err
+	}
 	if c.Build != nil {
 		if err := c.Build.RemoteBuilder.Validate("build.remote_builder"); err != nil {
 			return err
 		}
 	}
 	return c.ValidateDockerfileValues()
+}
+
+// validateMinIdleWorkers refuses min_idle_workers on a DAG with staging
+// enabled: a staging version never gets a warm pool (ADR 0058 D5), so the
+// declaration would be accepted and do nothing.
+func (c *LeoflowConfig) validateMinIdleWorkers() error {
+	if c.MinIdleWorkers > 0 && c.Staging != nil && c.Staging.Enabled {
+		return fmt.Errorf("min_idle_workers %d has no effect with staging.enabled: "+
+			"a staging DAG's tasks always run on dedicated pods (ADR 0058); remove one of the two", c.MinIdleWorkers)
+	}
+	return nil
 }

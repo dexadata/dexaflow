@@ -78,7 +78,7 @@
     "min_idle_workers": {
       "type": "integer",
       "minimum": 0,
-      "description": "DORMANT seam, not author-settable today: warm workers an author would want kept ready for this DAG version so its tasks skip cold-pod startup (ADR 0058, warm pools). It is absent from the authoring schema (dexaflow.yaml) and the parser never emits it, so a compiled artifact always carries 0. The downstream (EffectiveMinIdle clamp, scheduler store) is intentionally pre-wired, so exposing it to authors later is a schema+parser change only. Would be operator-capped at execution.max_pool_size and inert unless the operator enabled warm pools; 0 (default) means no warmth."
+      "description": "Idle warm workers kept for this DAG version so its tasks skip the cold pod start (ADR 0058, ADR 0082). Declared as min_idle_workers in dexaflow.yaml, which the compiler copies here. With warm pools on, an unpaused DAG whose current version carries it is prewarmed before its first run; the server clamps it to execution.max_pool_size, and with warm pools off it does nothing. 0 (default) declares none."
     },
     "catchup": {
       "type": "boolean",

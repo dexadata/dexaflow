@@ -976,13 +976,14 @@ func parserErrorSummary(stderr string) string {
 }
 
 // overlayProject writes the dexaflow.yaml Dexaflow-specific config (staging,
-// on-failure alerts, and per-task overrides) onto the produced dag.json. These
+// on-failure alerts, min_idle_workers and per-task overrides) onto the
+// produced dag.json. These
 // are deployment concerns, not Airflow DAG attributes, so the parser does not
 // emit them (ADR 0022, 0023; #424).
 // Per-task overrides are bound by task_id; an entry naming a task absent from the
 // DAG is a hard error (no silent drop). No-op when nothing is configured.
 func overlayProject(dagJSONPath string, cfg *domain.LeoflowConfig) error {
-	if cfg.Staging == nil && cfg.Alerts == nil && len(cfg.Tasks) == 0 && !hasDAGDefaults(cfg.Defaults) {
+	if !hasProjectOverlay(cfg) {
 		return nil
 	}
 	data, err := os.ReadFile(dagJSONPath) //nolint:gosec // G304: output path is operator-supplied on the CLI.
@@ -993,12 +994,7 @@ func overlayProject(dagJSONPath string, cfg *domain.LeoflowConfig) error {
 	if uerr := json.Unmarshal(data, &spec); uerr != nil {
 		return fmt.Errorf("parsing %s: %w", dagJSONPath, uerr)
 	}
-	if cfg.Staging != nil {
-		spec.Staging = cfg.Staging
-	}
-	if cfg.Alerts != nil {
-		spec.Alerts = cfg.Alerts
-	}
+	overlayDAGFields(&spec, cfg)
 	if verr := validateTaskBindings(cfg.Tasks, spec.Tasks); verr != nil {
 		return verr
 	}
@@ -1026,6 +1022,27 @@ func overlayProject(dagJSONPath string, cfg *domain.LeoflowConfig) error {
 		return fmt.Errorf("writing %s: %w", dagJSONPath, werr)
 	}
 	return nil
+}
+
+// hasProjectOverlay reports whether cfg declares anything overlayProject
+// writes onto dag.json.
+func hasProjectOverlay(cfg *domain.LeoflowConfig) bool {
+	return cfg.Staging != nil || cfg.Alerts != nil || cfg.MinIdleWorkers > 0 ||
+		len(cfg.Tasks) > 0 || hasDAGDefaults(cfg.Defaults)
+}
+
+// overlayDAGFields copies the DAG-level fields of cfg the parser does not
+// emit onto spec: staging, alerts and min_idle_workers.
+func overlayDAGFields(spec *domain.DAGSpec, cfg *domain.LeoflowConfig) {
+	if cfg.Staging != nil {
+		spec.Staging = cfg.Staging
+	}
+	if cfg.Alerts != nil {
+		spec.Alerts = cfg.Alerts
+	}
+	if cfg.MinIdleWorkers > 0 {
+		spec.MinIdleWorkers = cfg.MinIdleWorkers
+	}
 }
 
 // validateTaskBindings guards the YAML↔task binding: every key in the dexaflow.yaml

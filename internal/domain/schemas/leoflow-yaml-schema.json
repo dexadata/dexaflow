@@ -175,6 +175,12 @@
       },
       "additionalProperties": false
     },
+    "min_idle_workers": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Idle warm workers to keep for the DAG's current version, so its tasks skip the cold pod start (ADR 0058, ADR 0082). With warm pools on (execution.warm_pools_enabled), an unpaused DAG that declares it is prewarmed from the moment a version becomes current, before its first run. The server clamps it to execution.max_pool_size; with warm pools off it does nothing. Refused with staging.enabled, whose tasks always run on dedicated pods. 0 (default) declares none."
+    },
     "staging": {
       "type": "object",
       "description": "Opt-in per-DAG-run shared RWX volume mounted at /staging (ADR 0022).",
