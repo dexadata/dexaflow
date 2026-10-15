@@ -11,11 +11,14 @@ body: |-
   their version, and their later attempts take dedicated pods. The current
   version of an unpaused DAG that declares `min_idle_workers` gets that many
   idle workers (up to `execution.max_pool_size`) as soon as it is current,
-  even with no run; `execution.max_warm_pods_per_tenant` does not bound
-  them, since a declared idle floor is never starved. The operator floor
+  even with no run, within `execution.max_warm_pods_per_tenant`: prewarmed
+  pools share what the cap leaves after the idle floors of the tenant's
+  versions with an active run, by DAG id; a pool whose share drops shrinks
+  with `execution.worker_idle_ttl`, and a tenant whose prewarm floors do not
+  fit is logged and counted as `warm_pool_prewarm_rationed` when that set
+  changes. The operator floor
   `execution.min_idle_workers` prewarms nothing: it still applies from a
-  version's first run, as before. `min_idle_workers` is not in the authoring
-  schema yet, so only a `dag.json` that carries it is prewarmed. The server
+  version's first run, as before. The server
   logs each prewarm and drain and counts them in
   `dexaflow_scheduler_decisions_total` (`warm_pool_prewarm_started`,
   `warm_pool_drain_started`). The deploy's `warm pool` line now says the
