@@ -1,3 +1,0 @@
-kind: Added
-body: '**The Helm chart turns on Pro source mode.** `execution.sourceMode.enabled` and `execution.sourceMode.image` render `LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED` and `LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE` on every control-plane Deployment, so source mode no longer needs `extraEnv`. Off by default, and an install that leaves it off renders exactly what it did before. The chart refuses to render source mode on with an image that is not pinned by a full sha256 digest, the same check the server makes at boot. See Source mode. (#1540)'
-time: 2026-10-12T18:00:00.000000+00:00
