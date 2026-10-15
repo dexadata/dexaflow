@@ -384,6 +384,8 @@ holds, then re-run.
 | 037 (role reconcile) | 37 | nothing: one transaction, rolled back, and the file is idempotent | 36 |
 | 043 (index build) | 43 | `DROP INDEX CONCURRENTLY IF EXISTS idx_dag_runs_tenant_settled_ended;` | 42 |
 | 044 (deployer role, API tokens) | 44 | nothing: one transaction, rolled back, and the file is idempotent | 43 |
+| 045 (device sign-ins) | 45 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and the file is idempotent | 44 |
+| 046 (`build_info`) | 46 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the column is not there yet | 45; retry when the table is quiet |
 
 **How to run `migrate force`.** The hook image is the golang-migrate CLI plus
 the SQL files at `/migrations`, so the `version`, `force`, `goto` and `up`
@@ -751,7 +753,7 @@ The down drops the column and its check. No other data changes.
 
 ### Upgrading to 0.5.4
 
-0.5.4 applies two migrations.
+0.5.4 applies four migrations, 043 to 046.
 
 - **`043_dag_runs_settled_ended_index`** builds the index the retention janitor
   reads, on `dag_runs (tenant_id, ended_at)` for runs in `success` or
@@ -772,14 +774,39 @@ The down drops the column and its check. No other data changes.
   role named `deployer` keeps it as it is. Creating `api_tokens` briefly takes
   a lock on `tenants` and `users` that blocks writes to them (not reads), with
   no `lock_timeout`. Every statement can be repeated.
+- **`045_cli_device_authorizations`** runs in one transaction, which took
+  about 20 ms. It creates the `cli_device_authorizations` table, where the
+  device sign-ins of `dexaflow auth login --device` wait for approval
+  ([From a machine with no browser](/operate/sso-google-workspace/#from-a-machine-with-no-browser)).
+  The table is new, so no existing row changes. Its foreign keys briefly take
+  a lock on `tenants` and `users` that blocks writes to them (not reads); the
+  migration waits at most 5 seconds for it. If it waits longer, the
+  transaction rolls back, golang-migrate marks version 45 dirty and nothing
+  changed: run `migrate force 44` and retry. Every statement can be repeated.
+- **`046_dag_versions_build_info`** runs in one transaction, which took about
+  10 ms. It adds the nullable `dag_versions.build_info` column, where the
+  register records where a version was built
+  ([Where a version was built](/operate/cicd-deploy/#where-a-version-was-built)).
+  The column has no default, so Postgres adds it to the catalog without
+  rewriting or scanning `dag_versions`, and every version registered before
+  the upgrade reads as having no build info. Adding it takes an `ACCESS
+  EXCLUSIVE` lock on `dag_versions`, which waits for every open transaction
+  that touched the table, and queries on the table queue behind it while it
+  waits. The migration waits at most 5 seconds for it. If it waits longer,
+  the transaction rolls back, golang-migrate marks version 46 dirty and
+  nothing changed: run `migrate force 45` and retry when the table is quiet.
+  The statement can be repeated.
 
 **Rolling back 0.5.4 to 0.5.3.** On Pro, `helm rollback <release> <revision>`
-is supported and leaves the schema at 044: the 0.5.3 control plane boots
+is supported and leaves the schema at 046: the 0.5.3 control plane boots
 against it with the warning `database schema is ahead of this binary;
-proceeding`. It ignores the new index, the `deployer` role and the API tokens,
-so tokens created on 0.5.4 stop authenticating until you move forward again.
+proceeding`. It ignores the new index, the `deployer` role, the API tokens,
+the device sign-ins and the `build_info` column, so tokens created on 0.5.4
+stop authenticating until you move forward again, a device sign-in in
+progress cannot finish, and the versions it registers record no build info
+(its inserts leave the column out and get `NULL`).
 As with earlier patches, prefer it to a `helm upgrade` that points at chart
-0.5.3, whose migration Job fails with `no migration found for version 44`; if
+0.5.3, whose migration Job fails with `no migration found for version 46`; if
 you must use that upgrade, pass `--set migrations.enabled=false` or run the
 down migrations first. On Lite, `dexaflow lite` 0.5.3 refuses a database above
 042, so the way back is the snapshot from
@@ -790,10 +817,15 @@ or the down migrations with the 0.5.4 CLI or migrate image:
 migrate -path migrations -database "$DATABASE_URL" goto 42
 ```
 
-The down of 044 drops `api_tokens`, which revokes every API token, deletes the
-built-in `deployer` roles with their user assignments, and deletes the
-`deploy:dag` permission, so a custom role granted it loses that grant. The down
-of 043 drops the index. No other data changes.
+The downs run from 046 to 043. The down of 046 drops `dag_versions.build_info`,
+so the build info recorded for every version is lost; the register audit
+entries keep a copy. The down of 045 drops `cli_device_authorizations`, so
+every device sign-in in progress is lost and has to be started again with
+`dexaflow auth login --device`; no token is kept there. The down of 044 drops
+`api_tokens`, which revokes every API token, deletes the built-in `deployer`
+roles with their user assignments, and deletes the `deploy:dag` permission, so
+a custom role granted it loses that grant. The down of 043 drops the index. No
+other data changes.
 
 **Encrypting Variables is opt-in** (#507). With the default
 `variable_encryption: off`, 0.5.4 stores Variables exactly as 0.5.3 does, so a
