@@ -102,7 +102,10 @@ def post():
     print("post")
 
 
-with DAG("mix", schedule="@daily"):
+# schedule=None: the script triggers exactly ONE run. Under a real schedule the
+# scheduler adds a run of its own on unpause, and the two runs build the same
+# dbt models into the same schema at once, so one of them can fail.
+with DAG("mix", schedule=None, catchup=False):
     before = PythonOperator(task_id="pre", python_callable=pre)
     models = dbt_group("transform")
     after = PythonOperator(task_id="post", python_callable=post)
