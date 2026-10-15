@@ -241,3 +241,47 @@ func TestCheckClearVersionIsTenantScopedIntegration(t *testing.T) {
 	}
 	f.unchanged(t)
 }
+
+// run_on_latest_version re-binds only together with reset_dag_runs, as in
+// Airflow 3.2, where the re-bind happens while the run is reset. A clear of
+// task instances alone keeps the run on its version, so a drifted current
+// version does not refuse it.
+func TestClearWithoutResetDagRunDoesNotRebindIntegration(t *testing.T) {
+	f := seedDriftedRun(t, "drift_noreset", []string{"a"}, []string{"a", "b"})
+	ctx := t.Context()
+	tasksOnly := domain.ClearOptions{ResetDagRun: false, RunOnLatestVersion: true}
+	if err := f.repo.CheckClearVersion(ctx, "default", f.dagID, []string{"r1"}, tasksOnly); err != nil {
+		t.Fatalf("CheckClearVersion without reset_dag_runs: %v", err)
+	}
+	if n, err := f.repo.ClearTaskInstances(ctx, "default", f.dagID, "r1", nil, true, tasksOnly); err != nil || n != 1 {
+		t.Fatalf("clear without reset_dag_runs: n=%d err=%v", n, err)
+	}
+	if got := runImage(t, f.pg, ctx, f.runUUID); got == f.v2Image {
+		t.Errorf("run re-bound to %q without reset_dag_runs", got)
+	}
+}
+
+// Every run of a request is compared, not only up to the first that differs:
+// with r1 and r3 on v1 and r2 on the current version, the refusal counts two.
+func TestCheckClearVersionCountsEveryRunThatDiffersIntegration(t *testing.T) {
+	f := seedDriftedRun(t, "drift_two", []string{"a"}, []string{"a", "b"})
+	ctx := t.Context()
+	for i, id := range []string{"r2", "r3"} {
+		if _, err := f.repo.CreateDagRun(ctx, "default", f.dagID, domain.DagRun{
+			RunID: id, State: domain.DagRunStateFailed, RunType: "manual",
+			LogicalDate: time.Now().UTC().Add(time.Duration(i+1) * time.Hour),
+		}); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+	}
+	// r3 has no task instances, so it is compared by the version it is bound
+	// to: move it back to r1's v1.
+	if _, err := f.pg.Pool.Exec(ctx, `UPDATE dag_runs r3 SET dag_version_id = r1.dag_version_id
+		  FROM dag_runs r1
+		 WHERE r1.id = $1::uuid AND r3.dag_id = r1.dag_id AND r3.run_id = 'r3'`, f.runUUID); err != nil {
+		t.Fatal(err)
+	}
+	assertDrift(t, f.repo.CheckClearVersion(ctx, "default", f.dagID, []string{"r1", "r2", "r3"}, rebind),
+		"2 of the 3 runs", `run "r1"`, "adds tasks [b]")
+	f.unchanged(t)
+}
