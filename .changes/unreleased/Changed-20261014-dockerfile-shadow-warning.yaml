@@ -1,0 +1,12 @@
+kind: Changed
+body: |-
+  **`compile --build` and `deploy` warn when a project Dockerfile shadows
+  `dexaflow.yaml`.** A project Dockerfile is built as-is (ADR 0003), so
+  `base_image`, `dependencies`, `connectors`, `system_packages` and
+  `include_paths` do not reach the image. The build now prints a warning naming
+  each of them the project's own `dexaflow.yaml` (or legacy `leoflow.yaml`)
+  sets, instead of building an image without them in
+  silence. `build.context` (other than `.`) and `build.labels`, accepted and
+  applied by nothing, now earn a warning from `validate`, `compile` and
+  `deploy`, and the JSON schema describes both as ignored. (#1709)
+time: 2026-10-14T23:31:00.000000000-03:00

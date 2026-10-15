@@ -91,12 +91,12 @@
       "properties": {
         "dockerfile": {
           "type": "string",
-          "description": "Path to a custom Dockerfile, relative to the directory holding dexaflow.yaml. If the file exists, autogeneration is skipped. An absolute path, or one that leaves the project (through `..` or, at build time, a symlink), is refused."
+          "description": "Path to a custom Dockerfile, relative to the directory holding dexaflow.yaml. If the file exists, autogeneration is skipped, and base_image, dependencies, connectors, system_packages and include_paths are not applied (the build warns when they are set; ADR 0003). An absolute path, or one that leaves the project (through `..` or, at build time, a symlink), is refused."
         },
         "context": {
           "type": "string",
           "default": ".",
-          "description": "Build context directory."
+          "description": "Ignored: the build always uses the directory holding dexaflow.yaml, and a value other than '.' earns a warning (#1062)."
         },
         "platforms": {
           "type": "array",
@@ -105,7 +105,8 @@
         },
         "labels": {
           "type": "object",
-          "additionalProperties": { "type": "string" }
+          "additionalProperties": { "type": "string" },
+          "description": "Ignored: no label is set on the image, whichever builder runs, and a project that sets one earns a warning."
         },
         "remote_builder": {
           "type": "object",
