@@ -1040,6 +1040,16 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: >-
+            run_on_latest_version would re-bind the run to a current version
+            whose tasks differ from the run's task instances (a task added or
+            removed). The detail names the tasks and the ways out: clear without
+            run_on_latest_version, or trigger a new run. A dry run answers the
+            same refusal.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances:
     parameters:
@@ -1174,6 +1184,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaskInstanceCollection"
+        "409":
+          description: >-
+            run_on_latest_version would re-bind the run to a current version
+            whose tasks differ from the run's task instances (a task added or
+            removed). The detail names the tasks and the ways out: clear without
+            run_on_latest_version, or trigger a new run. A dry run answers the
+            same refusal.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/v2/xcoms/{dag_id}/{dag_run_id}/{task_id}/{key}:
     parameters:
@@ -2147,7 +2167,8 @@ components:
           description: >-
             Which version the re-run executes. Unset or false keeps the version
             the run was created with; true re-binds the run to the DAG's current
-            registered version.
+            registered version. A re-bind onto a version whose tasks differ from
+            the run's task instances is refused with 409.
         note:
           type: string
           nullable: true
@@ -2191,8 +2212,10 @@ components:
             Airflow) keeps the version the run was created with, so the re-run
             executes the image that produced the original attempt. true re-binds
             the run to the DAG's current registered version, so the re-run picks up
-            the newest image and config — use it to re-run a failed task against a
-            fix without creating a new run.
+            the newest image and config. Use it to re-run a failed task against a
+            fix without creating a new run. A re-bind onto a version that adds or removes a
+            task is refused with 409 (the clear does not yet create or remove task
+            instances), naming the tasks.
         dry_run:
           type: boolean
           default: true
