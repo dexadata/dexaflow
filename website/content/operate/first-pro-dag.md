@@ -447,9 +447,17 @@ A hand-written Dockerfile is an escape hatch, not the default
 a file named `Dockerfile` (or the file named by `build.dockerfile` in
 `dexaflow.yaml`, or by `--dockerfile`), `deploy` and `compile --build` build it
 **verbatim** and generate nothing. That means `dependencies:`,
-`system_packages:`, `connectors:` and `base_image:` in `dexaflow.yaml` no longer
-reach the image: the Dockerfile has to install them itself. Use it only for what
-the yaml cannot express, and start from the published base:
+`system_packages:`, `connectors:`, `base_image:` and `include_paths:` in
+`dexaflow.yaml` no longer reach the image: the Dockerfile has to install them
+itself. The build says so when the yaml sets any of them, naming each one (a
+`base_image` that comes from the workspace, a target or the cluster defaults
+is not the project's, so it is not named):
+
+```text
+warning: the project builds from its own Dockerfile (Dockerfile), so dependencies, connectors in dexaflow.yaml are ignored: only the generated Dockerfile applies them. Install them in your Dockerfile, or remove the Dockerfile to build from dexaflow.yaml (a project Dockerfile is the escape hatch of ADR 0003)
+```
+
+Use it only for what the yaml cannot express, and start from the published base:
 
 ```dockerfile title="Dockerfile"
 FROM ghcr.io/dexadata/dexaflow-runtime:py3.11

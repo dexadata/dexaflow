@@ -58,6 +58,10 @@ type compileOptions struct {
 	// remoteSource names where build.remote_builder came from, for the
 	// builder line; runCompile sets it.
 	remoteSource string
+	// baseImageSource names where base_image came from: the project's own
+	// config file, or the workspace, target or cluster defaults that filled
+	// it; runCompile sets it.
+	baseImageSource string
 	// pushRefused is the deploy preflight's refusal of this machine's push
 	// credential, kept until the builder is chosen because a remote builder
 	// was configured (checkLocalPush); nil when the push was accepted.
@@ -209,9 +213,9 @@ func checkOutputWritable(output string) error {
 // checkProjectPreconditions runs the checks that apply to every project before
 // the dag.py and dbt paths diverge: the dexaflow.yaml must validate, it must not
 // declare a dbt: block alongside a dag.py (#1015), and a deprecated Python line
-// earns a warning the author can still act on.
+// or a build field nothing applies earns a warning the author can still act on.
 //
-// Grouped rather than inlined so every entry point gets all three by
+// Grouped rather than inlined so every entry point gets all of them by
 // construction. warnDeprecatedPython landing on only the dag.py branch would
 // leave every dbt project silently on a base image that stops being rebuilt,
 // and `dexaflow validate` open-coding the first two checks is how it spent this
@@ -228,6 +232,7 @@ func checkProjectPreconditions(cmd *cobra.Command, dir string, cfg *domain.Leofl
 	// Stderr, not stdout: the compile summary and any piped output stay clean.
 	// Advisory only — a write failure here must not fail an otherwise good run.
 	warnDeprecatedPython(cmd.ErrOrStderr(), cfg)
+	warnIgnoredBuildFields(cmd.ErrOrStderr(), filepath.Base(projectConfigPath(dir)), cfg)
 	return nil
 }
 
@@ -241,6 +246,7 @@ func prepareCompile(cmd *cobra.Command, dir string, o *compileOptions) (*domain.
 	}
 	o.platformsSource = prov.platformsSource
 	o.remoteSource = prov.remoteSource
+	o.baseImageSource = prov.baseImageSource
 	if perr := checkProjectPreconditions(cmd, dir, cfg); perr != nil {
 		return nil, perr
 	}
@@ -667,6 +673,9 @@ func buildImage(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.Le
 	// we cannot read its COPY lines, so the secret warning softens rather
 	// than claiming what ships.
 	ownDockerfile := dockerfile != filepath.Join(dir, generatedDockerfileName)
+	warnShadowedByDockerfile(cmd.ErrOrStderr(), dockerfileShadow{
+		own: ownDockerfile, dockerfile: name, configFile: projectConfigPath(dir), baseImageSource: o.baseImageSource,
+	}, cfg)
 	// Applies whether or not the project ships its own Dockerfile: exclude_paths
 	// is a statement about what may enter the image, and it does not become
 	// less true because the author wrote the Dockerfile themselves.
