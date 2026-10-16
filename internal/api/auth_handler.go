@@ -223,7 +223,7 @@ func renewTokenHandler(renewer TokenRenewer, ttlSeconds, maxLifetimeSeconds int)
 			// call as an auth incident — the same conflation JWTAuth carried (#1087).
 			// Either way the renewal is refused; the cause goes to the log, never to
 			// the body, and Retry-After tells the client how long to wait (#1100).
-			if !errors.Is(err, auth.ErrInvalidToken) {
+			if authUnavailable(err) {
 				abortAuthUnavailable(c, err)
 				return
 			}

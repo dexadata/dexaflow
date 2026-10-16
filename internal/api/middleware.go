@@ -239,7 +239,7 @@ func jwtAuth(authn auth.Authenticator, bearer *issuerBearerAuth, session session
 				c.Next()
 				return
 			}
-			if !errors.Is(err, auth.ErrInvalidToken) {
+			if authUnavailable(err) {
 				unavailable = err
 			}
 		}

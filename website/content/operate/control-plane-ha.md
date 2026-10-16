@@ -665,8 +665,18 @@ no longer answers. Two settings bound how long that lasts:
   and no replica can lead in the meantime. The settings are sent with `SET`
   (not as startup parameters, which PgBouncer refuses), apply to the leader
   session only, and are skipped with a warning where the server refuses one.
+- **On the API and the UI.** While the user store cannot be reached, a
+  credential cannot be checked, which says nothing about the credential. The
+  API answers `503` with `Retry-After: 5` instead of `401`, on protected
+  routes, on `POST /auth/token` and on `POST /api/v2/auth/token/renew`, so
+  clients wait and retry instead of signing in again. A browser that opens the
+  UI with a session it could not check gets a static page saying Dexaflow is
+  temporarily unavailable (also `503`), not the sign-in page; it keeps its
+  session cookie, so reloading once the database is back opens the UI. A
+  browser without a session is still sent to the sign-in page. The UI is never
+  served for a session that was not verified.
 
-Nothing needs configuring: both apply to every install.
+Nothing needs configuring: all of this applies to every install.
 
 ## Related
 
