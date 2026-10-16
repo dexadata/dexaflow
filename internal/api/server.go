@@ -133,6 +133,11 @@ type Dependencies struct {
 	// a server whose pod dispatch is disabled), "" when they run. The register
 	// response then reports every task on a dedicated pod, with this reason.
 	WarmWorkersAbsent string
+	// TaskPods is how this server starts task pods, which the register dry
+	// run reports (#1889): whether they refuse an image that runs as root,
+	// and the ServiceAccount each task would run as, looked up. The zero
+	// value reports a server that starts no task pods.
+	TaskPods TaskPodSettings
 
 	// Resource repositories. Routes for nil repositories are not registered.
 	Dags     DagRepository

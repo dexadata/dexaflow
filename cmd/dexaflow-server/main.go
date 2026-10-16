@@ -1509,6 +1509,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		WarmPolicy:                   warmPolicy(cfg),
 		WarmPools:                    cfg.Execution,
 		WarmWorkersAbsent:            warmWorkersAbsent(cfg, executorInfo.PodDispatchEnabled),
+		TaskPods:                     taskPodSettings(cfg, executorInfo.PodDispatchEnabled),
 
 		Dags:            repo,
 		DagRuns:         repo,
@@ -2991,6 +2992,18 @@ func warmWorkersAbsent(cfg *config.ServerConfig, podDispatch bool) string {
 		return "pod dispatch is disabled on this server"
 	}
 	return ""
+}
+
+// taskPodSettings is how the dispatcher starts task pods, which the
+// register dry run reports (#1889): podDispatch is
+// ExecutorInfo.PodDispatchEnabled.
+func taskPodSettings(cfg *config.ServerConfig, podDispatch bool) api.TaskPodSettings {
+	return api.TaskPodSettings{
+		Enabled:               podDispatch,
+		RunAsNonRoot:          cfg.Executor.Defaults.RunTasksAsNonRoot,
+		DefaultServiceAccount: cfg.Executor.TaskServiceAccount,
+		Unread:                "this server does not look up ServiceAccounts",
+	}
 }
 
 // resolveAgentControlAddr returns the address task agents dial back, defaulting

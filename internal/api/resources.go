@@ -1463,7 +1463,8 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 		r.POST("/api/v2/dags/:dag_id/versions", RequireDeployPermission(deps.DeployViaIssuer), registerVersionHandler(deps.Versions, admission, execution))
 		// The dry run of a register (#1705): the same permission and scope,
 		// so it answers a deploy what the register would.
-		r.POST("/api/v2/dags/:dag_id/versions/dry_run", RequireDeployPermission(deps.DeployViaIssuer), dryRunVersionHandler(deps.Versions, admission, execution))
+		r.POST("/api/v2/dags/:dag_id/versions/dry_run", RequireDeployPermission(deps.DeployViaIssuer), dryRunVersionHandler(deps.Versions, admission, execution,
+			taskPodReporter{settings: deps.TaskPods, logger: deps.Logger}))
 		// Making a registered version live again is a deploy decision: the same
 		// permission and scope as registering one (#1702).
 		r.PUT("/api/v2/dags/:dag_id/currentVersion", RequireDeployPermission(deps.DeployViaIssuer), setCurrentVersionHandler(deps.Versions, admission))

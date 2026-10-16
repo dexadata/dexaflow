@@ -1919,6 +1919,44 @@ components:
           items: { type: string }
           description: What the register lets through with a warning (a task that does not fit its size under executor.unit.enforce=warn, an image not pinned by digest under deploy.require_digest=warn). Always sent by the dry run route; sent by a register only when it has a warning to give.
         execution: { $ref: "#/components/schemas/ExecutionReport" }
+        task_pods: { $ref: "#/components/schemas/TaskPodsReport" }
+
+    TaskPodsReport:
+      type: object
+      description: >-
+        What the version's task pods would run as (Dexaflow), sent by the dry
+        run route only, absent from a register. A server that starts no task
+        pods sends run_as_non_root false and no service account.
+      required: [run_as_non_root, service_accounts]
+      properties:
+        run_as_non_root:
+          type: boolean
+          description: >-
+            True when task pods refuse an image that runs as root or as a user
+            name rather than a number (executor.run_tasks_as_non_root).
+        service_accounts:
+          type: array
+          description: >-
+            Each ServiceAccount a task pod of the version would run as (the
+            task's execution.service_account, else executor.task_service_account,
+            else the namespace's default), sorted by name. A dry run looks up at
+            most 8.
+          items: { $ref: "#/components/schemas/TaskServiceAccountCheck" }
+
+    TaskServiceAccountCheck:
+      type: object
+      required: [name, tasks, state]
+      properties:
+        name: { type: string }
+        tasks: { type: array, items: { type: string }, description: The tasks whose pods run as it. }
+        state:
+          type: string
+          description: >-
+            One of found, missing or unchecked. found: it exists in the task namespace. missing: it does not, and
+            the pods of these tasks would not be created. unchecked: the server
+            could not look it up (detail says why).
+        image_pull_secrets: { type: integer, description: "How many imagePullSecrets it carries; sent with state found." }
+        detail: { type: string, description: Why it is unchecked. }
 
     ExecutionReport:
       type: object
