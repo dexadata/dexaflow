@@ -1234,6 +1234,7 @@ func (s *SchedulerStore) ListStaleQueuedCandidates(ctx context.Context, threshol
 		out = append(out, executor.StaleQueuedCandidate{
 			TaskInstanceID: uuidToString(r.TaskInstanceID),
 			DagRunID:       uuidToString(r.DagRunID),
+			TenantID:       uuidToString(r.TenantID),
 			DagID:          r.DagIDText,
 			TaskID:         r.TaskID,
 			TryNumber:      int(r.TryNumber),
@@ -1309,6 +1310,26 @@ func (s *SchedulerStore) MarkTaskDispatchLost(ctx context.Context, taskInstanceI
 	})
 	if err != nil {
 		return false, fmt.Errorf("marking task dispatch-lost: %w", err)
+	}
+	return n > 0, nil
+}
+
+// MarkTaskStartExpired fails one queued TI whose task pod never started before
+// its attempt credential ran out, as an infra failure the planner re-places
+// off the retry budget with a fresh credential (#1126). Same guards as
+// MarkTaskDispatchLost: state='queued' and the listed (tryNumber,
+// attemptEpoch). It returns whether a row was actually updated.
+func (s *SchedulerStore) MarkTaskStartExpired(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error) {
+	tid, err := parseUUID(taskInstanceID)
+	if err != nil {
+		return false, err
+	}
+	n, err := s.q.MarkTaskStartExpired(ctx, queries.MarkTaskStartExpiredParams{
+		Provisional: s.provisionalInfraMarks,
+		ID:          tid, TryNumber: toInt32(tryNumber), AttemptEpoch: toInt32(attemptEpoch),
+	})
+	if err != nil {
+		return false, fmt.Errorf("marking task start-expired: %w", err)
 	}
 	return n > 0, nil
 }

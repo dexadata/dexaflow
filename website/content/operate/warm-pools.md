@@ -585,6 +585,10 @@ It is a **reserve-then-ration budget, never a starvation lever**:
   more) and meters `warm_pool_prewarm_rationed`, once each time that set
   changes ([ADR 0082](/project/adrs/0082-warm-pool-follows-the-current-version/)
   D7).
+  When busy workers already hold the tenant's budget, the floors of versions
+  with an active run take the room that is left before any prewarmed version,
+  whatever their version ids, and what they miss is created on a later
+  reconcile.
   A rationed version gets its full floor again once one of its runs is active,
   and a version rationed to no worker logs its prewarm start when it later gets
   a share.

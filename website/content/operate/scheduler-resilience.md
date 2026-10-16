@@ -29,6 +29,7 @@ see [Lite: which reapers run](#lite-which-reapers-run).
 | **Task code wedged past its declared `execution_timeout_seconds`** | **Agent itself** ([#194](https://github.com/dexadata/dexaflow/issues/194)) | **`execution_timeout_seconds`** (per-task) | **TI failed with `execution_timeout: task exceeded N`. Retries kick in if budget remains.** |
 | Agent process crashed mid-task (TI in `running`, no heartbeat) | TI heartbeat reaper ([#128](https://github.com/dexadata/dexaflow/issues/128)) | **90 s** | TI failed with `agent_lost`; the TI's pod is deleted so a partitioned-but-alive container stops — unless it has already reached a terminal phase, in which case it is left for the reconciler (see teardown below). Retries kick in if budget remains. |
 | Scheduler crashed before dispatching (TI stuck in `queued`) | Dispatch-lost reaper ([#202](https://github.com/dexadata/dexaflow/issues/202)) | **3 min** | TI failed with `dispatch_lost` — but only if no live pod for it exists (see below); any pod still Pending/Running for the attempt is torn down, a finished one is left for the reconciler. Frees the run for the orphan reaper on the next maintenance cycle. |
+| Task pod still `Pending` as its attempt credential nears its end (TI in `queued`; env-var transport only) | Dispatch-lost reaper ([#1126](https://github.com/dexadata/dexaflow/issues/1126)) | **8 min** after `queued_at` (the 10 min attempt token TTL less a 2 min margin) | TI failed with `start_expired`, an infra mark: the Pending pod is deleted, `killed: start_expired …` is appended to the attempt's log, and the planner re-places the task with a fresh credential **without spending a retry**. A pod already `Running` is left alone. |
 | Task pod vanished (TI in `running`, no pod at all for its attempt) | Pod-lost reaper | **60 s** after the running transition, then a live pod read | TI failed with `pod_lost`, and a final `killed: pod_lost (...)` line is appended to the attempt's log. Only when the apiserver holds no pod for the attempt: a pod that is still there in a terminal phase is left for the reconciler to settle from its termination log (`pod_lost_terminal_pod_defer`). |
 | Warm worker died holding attempts (warm pools only) | Warm-worker-lost reaper | next maintenance cycle | Each attempt bound to the dead worker is failed `pod_lost`, and its log ends with a `killed: pod_lost (warm worker <name> is gone or terminated)` line. When the worker is still listed and its container terminated `OOMKilled` (on cgroup v2 an OOM in a task kills the whole worker), the failure message and the log line name the OOM kill instead; the attempt still counts as an infra failure; refill of the pool is the warm-pool reconciler's job, not the reaper's. |
 | Cluster stopped the task pod (graceful node shutdown on a spot or preemptible reclaim, node-pressure eviction, preemption, admission refusal) | Pod reconciler | next reconcile sweep (30 s) | TI failed with `pod_disrupted` on the infra rail: re-placed on the infra budget without spending a task retry. See [A pod the cluster stopped is an infra failure](#a-pod-the-cluster-stopped-is-an-infra-failure). |
@@ -122,9 +123,13 @@ which the control plane still presumes healthy startup and defers reaping, so
 the kubelet should not be spending the author's execution budget inside it. Note
 what the threshold is **not** — a bound on how long startup may take. The
 dispatch-lost reaper checks the pod before failing anything and defers while it
-is `Pending` or `Running`, so a pod pulling an image for twenty minutes is never
-reaped for being slow; the threshold is where the control plane stops assuming a
-dispatch landed and starts looking.
+is `Pending` or `Running`, so a slow image pull is not reaped as a lost
+dispatch; the threshold is where the control plane stops assuming a dispatch
+landed and starts looking. The one bound on a slow start is the attempt
+credential: under the env-var transport it is minted at dispatch with a 10 min
+TTL, so a pod still `Pending` 8 min after it was queued is re-placed with a
+fresh credential as `start_expired` rather than left to start with a dead one
+([#1126](https://github.com/dexadata/dexaflow/issues/1126)).
 
 The termination grace is added on top rather than folded in — it covers the
 shutdown tail (stopping the child, delivering the report), not the startup head.
@@ -263,7 +268,7 @@ SUCCESS record, and the reconciler reads it on its next sweep. While the mark
 is still provisional and inside the valve, on a run that is still running, the
 reconciler settles the task `success` instead and clears the infra kind. It
 appends `outcome recovered from the durable record over agent_lost` (or
-`pod_lost`, `dispatch_lost`) to the attempt's log and counts it in
+`pod_lost`, `dispatch_lost`, `start_expired`) to the attempt's log and counts it in
 `dexaflow_reconcile_infra_override_total{mark}`. The task does not run again,
 and its downstream tasks run as they would have.
 
@@ -531,6 +536,14 @@ anything:
   positive, [#461](https://github.com/dexadata/dexaflow/issues/461)) — the
   reaper defers. If pod liveness can't be determined (K8s API error), it also
   defers. A TI without a `queued_at` stamp is too poorly observed to reap.
+  The one exception is a pod still `Pending` once the attempt credential
+  minted at dispatch is within 2 min of running out (env-var transport only):
+  its agent could only start with a credential about to lapse, be refused,
+  stream no log and fail the attempt against the user's retries. The reaper
+  reads the pod live (the presence cache cannot tell `Pending` from
+  `Running`), and only for a `Pending` pod with no `Running` one marks the TI
+  `start_expired`, an infra failure re-placed off the retry budget, and
+  deletes the pod. A read error defers, as above.
 - **Pod-lost reaper** — requires a `running` TI past its 60 s liveness floor
   AND a live read confirming no Pending/Running pod exists for exactly that
   attempt. A cached "pod present" defers without an API call; a cache miss is

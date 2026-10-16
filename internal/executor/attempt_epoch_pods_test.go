@@ -214,6 +214,11 @@ func (f *epochMarkStore) MarkTaskDispatchLost(_ context.Context, _ string, try, 
 	return !f.stale, nil
 }
 
+func (f *epochMarkStore) MarkTaskStartExpired(_ context.Context, _ string, try, epoch int) (bool, error) {
+	f.marks = append(f.marks, Attempt{TryNumber: try, AttemptEpoch: epoch})
+	return !f.stale, nil
+}
+
 // TestPodLostReaperIsPinnedToTheCandidateEpoch: a live pod of a superseded
 // epoch neither defers the reap of the current attempt nor is deleted by it,
 // and the mark names the listed (try, epoch).

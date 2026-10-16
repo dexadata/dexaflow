@@ -1873,6 +1873,7 @@ func (q *Queries) ListSettledRunIDs(ctx context.Context, arg ListSettledRunIDsPa
 const listStaleQueuedTaskInstances = `-- name: ListStaleQueuedTaskInstances :many
 SELECT ti.id AS task_instance_id,
        ti.dag_run_id,
+       ti.tenant_id,
        d.dag_id AS dag_id_text,
        ti.task_id,
        ti.try_number,
@@ -1899,6 +1900,7 @@ type ListStaleQueuedTaskInstancesParams struct {
 type ListStaleQueuedTaskInstancesRow struct {
 	TaskInstanceID pgtype.UUID        `json:"task_instance_id"`
 	DagRunID       pgtype.UUID        `json:"dag_run_id"`
+	TenantID       pgtype.UUID        `json:"tenant_id"`
 	DagIDText      string             `json:"dag_id_text"`
 	TaskID         string             `json:"task_id"`
 	TryNumber      int32              `json:"try_number"`
@@ -1925,6 +1927,8 @@ type ListStaleQueuedTaskInstancesRow struct {
 // gate unchanged.
 // attempt_epoch rides along (ADR 0051 amendment) so the mark and the pod
 // teardown name exactly the attempt that was listed.
+// tenant_id rides along so a start_expired reap can append its marker to the
+// attempt's log (#1126).
 func (q *Queries) ListStaleQueuedTaskInstances(ctx context.Context, arg ListStaleQueuedTaskInstancesParams) ([]ListStaleQueuedTaskInstancesRow, error) {
 	rows, err := q.db.Query(ctx, listStaleQueuedTaskInstances,
 		arg.ThresholdSeconds,
@@ -1942,6 +1946,7 @@ func (q *Queries) ListStaleQueuedTaskInstances(ctx context.Context, arg ListStal
 		if err := rows.Scan(
 			&i.TaskInstanceID,
 			&i.DagRunID,
+			&i.TenantID,
 			&i.DagIDText,
 			&i.TaskID,
 			&i.TryNumber,
@@ -2607,6 +2612,47 @@ func (q *Queries) MarkTaskPodLost(ctx context.Context, arg MarkTaskPodLostParams
 	result, err := q.db.Exec(ctx, markTaskPodLost,
 		arg.Provisional,
 		arg.ErrorMessage,
+		arg.ID,
+		arg.TryNumber,
+		arg.AttemptEpoch,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markTaskStartExpired = `-- name: MarkTaskStartExpired :execrows
+UPDATE task_instances
+SET state = 'failed',
+    ended_at = now(),
+    last_failure_kind = 'infra',
+    infra_confirmed_at = CASE WHEN $1::bool THEN NULL ELSE now() END,
+    error_message = 'start_expired: the task pod did not start before its attempt credential ran out (slow image pull, node provisioning or init containers); will be re-placed with a fresh credential'
+WHERE id = $2
+  AND try_number = $3
+  AND attempt_epoch = $4
+  AND state = 'queued'
+`
+
+type MarkTaskStartExpiredParams struct {
+	Provisional  bool        `json:"provisional"`
+	ID           pgtype.UUID `json:"id"`
+	TryNumber    int32       `json:"try_number"`
+	AttemptEpoch int32       `json:"attempt_epoch"`
+}
+
+// Fails one queued TI whose task pod is still Pending (image pull, node
+// provisioning, init containers) when the attempt credential minted at dispatch
+// is about to run out (#1126). The agent has not started, so it could only
+// start with a dead credential: it would be refused at Register, stream no log
+// and fail the attempt against the user's retry budget. Marked infra instead,
+// so the planner re-places it off-budget with a fresh credential. Same guards
+// and provisional rule as MarkTaskDispatchLost: state='queued' (an agent that
+// reported RUNNING wins) and the listed attempt, (try_number, attempt_epoch).
+func (q *Queries) MarkTaskStartExpired(ctx context.Context, arg MarkTaskStartExpiredParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markTaskStartExpired,
+		arg.Provisional,
 		arg.ID,
 		arg.TryNumber,
 		arg.AttemptEpoch,

@@ -16,6 +16,8 @@ import (
 //	longest infra re-place delay  <  orphan threshold
 //	task termination grace + 2 × maintenance interval  <  infra confirmation valve  <  orphan threshold
 //	attempt token TTL  <  max attempt credential lifetime   (when the ceiling is enabled)
+//	dispatch-lost threshold  <  attempt token TTL - start credential margin
+//	2 × maintenance interval + heartbeat interval  <  start credential margin
 //
 // Why each rung matters:
 //   - heartbeat < threshold: a healthy agent must beat well inside the silence
@@ -55,6 +57,15 @@ import (
 //     lapses at the TTL, and every task longer than one TTL is unreapable AND
 //     unable to report — the restart recovery is silently disabled. This is the
 //     ONLY operator-tunable rung; every other value is a build-time constant.
+//   - dispatch-lost threshold < token TTL - start margin (#1126): a pod still
+//     Pending as its dispatch-minted credential nears its end is re-placed by
+//     the dispatch-lost reaper, which only considers attempts queued past its
+//     threshold; a threshold past the start deadline would leave the pod to
+//     start with a dead credential and spend a user retry.
+//   - 2×maintenance + heartbeat < start margin: a pod that starts just after a
+//     reaper pass saw it inside the deadline is not re-placed, so its agent
+//     must register and reach its first heartbeat, which renews the credential,
+//     before the credential lapses.
 //
 // Warm pools share the same ladder: a warm worker's per-attempt bearer is renewed
 // by the same heartbeat under the same ceiling, and the warm-worker-lost reaper
@@ -90,6 +101,9 @@ type ResilienceLadder struct {
 	// (scheduler.InfraConfirmMaxWait), passed in for the same reason as
 	// InfraReplaceMaxDelay.
 	InfraConfirmMaxWait time.Duration
+	// DispatchLostThreshold is how long an attempt may sit queued before the
+	// dispatch-lost reaper looks at it (ReaperConfig.DispatchLostThreshold).
+	DispatchLostThreshold time.Duration
 }
 
 // maxAttemptCredentialLifetimeKey is the config key of the one operator-tunable
@@ -130,8 +144,9 @@ func ValidateResilienceLadder(l ResilienceLadder) error {
 	replace := ladderRung{"longest infra re-place delay", l.InfraReplaceMaxDelay}
 	termGrace := ladderRung{"task termination grace", l.TaskTerminationGrace}
 	valve := ladderRung{"infra confirmation valve", l.InfraConfirmMaxWait}
+	dispatchLost := ladderRung{"dispatch-lost threshold", l.DispatchLostThreshold}
 
-	for _, r := range []ladderRung{hb, thr, grace, ttl, rec, orphan, replace, termGrace, valve} {
+	for _, r := range []ladderRung{hb, thr, grace, ttl, rec, orphan, replace, termGrace, valve, dispatchLost} {
 		if r.d <= 0 {
 			return fmt.Errorf("resilience ladder: %s (%v) must be positive", r.name, r.d)
 		}
@@ -149,6 +164,16 @@ func ValidateResilienceLadder(l ResilienceLadder) error {
 			why: "a stopped task pod's container must exit and a reconcile sweep must read its record before the planner may act on the infra guess",
 		},
 		{lo: valve, hi: orphan, why: "a run whose only live task is a provisional infra mark must not be reaped as orphaned while the mark awaits confirmation"},
+		{
+			lo:  dispatchLost,
+			hi:  ladderRung{"attempt token TTL - start credential margin", l.AttemptTokenTTL - StartCredentialMargin},
+			why: "a pod still Pending as its dispatch-minted credential nears its end must be re-placed before it can start with a dead credential",
+		},
+		{
+			lo:  ladderRung{"2 × maintenance interval + heartbeat interval", 2*l.ReconcileInterval + l.HeartbeatInterval},
+			hi:  ladderRung{"start credential margin", StartCredentialMargin},
+			why: "an agent that starts just inside the start deadline must reach the heartbeat that renews its credential before the credential lapses",
+		},
 	}
 	if l.MaxAttemptCredentialLifetime > 0 {
 		ceiling := ladderRung{maxAttemptCredentialLifetimeKey, l.MaxAttemptCredentialLifetime}
