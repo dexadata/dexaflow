@@ -178,7 +178,7 @@ func runDeployCommand(cmd *cobra.Command, args []string, o deployOptions) error 
 // deployServerChoice resolves where a deploy goes and its token, refusing the
 // built-in localhost default unless the machine is set up for Lite: with no
 // server set anywhere, a deploy used to go to http://localhost:8080 without a
-// prompt (#1705).
+// prompt (#1705). On Lite the implicit server is the Lite port (#1912).
 func deployServerChoice(cmd *cobra.Command, o deployOptions) (*serverChoice, string, error) {
 	choice, token, err := resolveServerChoiceToken(cmd, o.serverURL, o.token)
 	if err != nil {
@@ -192,7 +192,7 @@ func deployServerChoice(cmd *cobra.Command, o deployOptions) (*serverChoice, str
       this shell or CI job:    export DEXAFLOW_SERVER_URL=https://dexaflow.example.com
       a named target:          dexaflow target add prod https://dexaflow.example.com && dexaflow target use prod
 
-  For the local Lite server, pass --server %s`, choice.URL, choice.URL)
+  For the local Lite server, pass --server %s`, choice.URL, devURL(devDefaultPort))
 	}
 	return choice, token, nil
 }
