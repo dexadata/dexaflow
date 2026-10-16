@@ -6,6 +6,1212 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-10-16
+
+### Added
+
+- **Event-driven warm-pool refill.** With `execution.warm_pool_event_refill`
+  (Helm: `execution.warmPoolEventRefill`) on, the warm-pool reconciler reads the
+  warm fleet from a dedicated pod informer instead of listing pods every 30
+  seconds, reacts at once when a warm pod is deleted, fails, or is claimed by an
+  attempt (at most once a second), and creates replacement pods in parallel
+  (up to 4 at a time). Creates the informer has not shown yet count against
+  the version's target and the tenant's `max_warm_pods_per_tenant`, and the
+  fleet is re-read live when a create is never observed and every 5 minutes,
+  then kept live until the informer holds every pod that read returned, so a
+  hung watch cannot drive extra creates. The 30-second tick stays as a backstop,
+  and the failover reapers and every GC anchor delete still read the cluster
+  live. The informer uses the maintenance Kubernetes client, like the warm-pod
+  client. Off by default: today's polling refill is unchanged.
+- **An opt-in retention janitor for finished runs and the audit log.** Set
+  `retention.dag_runs_days` to delete settled runs, with their task instances,
+  state and attempt history and XCom index rows, that ended more than that many
+  days ago, and `retention.audit_log_days` to delete older audit entries. Both
+  are `0` (off) by default, so nothing is deleted unless configured. The janitor
+  runs on the scheduler leader only, per tenant, in batches of
+  `retention.batch_size` rows (default 1000) with a `retention.batch_pause`
+  (default 100ms) between them and at most `retention.max_rows_per_cycle`
+  (default 100000) rows per `retention.interval` (default 1h), with tenants
+  and the audit log taking turns. A run's task instances are deleted all
+  together, so a run larger than a batch never ends up re-opened by a clear
+  with part of its tasks missing. Active runs, runs with a task instance that
+  is not settled (including one a clear just reset, even while the batch is
+  running: the batch locks and re-checks the task instances before it
+  deletes), runs with a live staging volume and the newest run of each DAG,
+  which the scheduler reads its last logical date from, are never touched. The
+  janitor uses the scheduler's database pool (`database.scheduler_max_conns`)
+  when one is set, not the API pool.
+  Each audit purge writes a `retention.purge` audit entry. `retention.dry_run`
+  only counts, at most 10000 runs and 10000 audit rows per tenant. New metrics:
+  `dexaflow_retention_rows_deleted_total`, `dexaflow_retention_rows_eligible`
+  and `dexaflow_retention_cycle_duration_seconds`. See
+  [Retention](https://dexaflow.dexadata.ai/reference/configuration/#retention-retention).
+- **Opt-in eager promotion for the scheduler (`scheduler.eager_promotion`).**
+  By default a task that becomes ready is scheduled on one tick and queued on
+  the next, and the scheduler only looks again when its interval elapses, so
+  each hop of a DAG costs up to two loop intervals after its upstream finishes.
+  With `DEXAFLOW_SCHEDULER_EAGER_PROMOTION=true` (or `LEOFLOW_...`, or
+  `scheduler.eager_promotion: true` in `dexaflow.yaml`), a ready task is queued
+  in the same tick, skips and upstream failures cascade down the DAG within the
+  tick (a bounded number of passes per run), and a task's final state report
+  triggers an early tick on the replica that receives it, spaced at least
+  100 ms, or twice the previous tick's duration when that is longer, from the
+  previous tick; `dexaflow_scheduler_woken_ticks_total` counts them. The loop
+  interval stays the upper bound, max active tasks and pool limits still
+  apply, and only the leader schedules. A chain of five instant
+  tasks at the default 1 s interval finishes in about 1.5 s instead of 11 s.
+  Off by default. See [Configuration
+  settings](https://dexaflow.dexadata.ai/reference/configuration/).
+- **Operators can restrict which task placement fields DAG authors may set
+  (#629).** The new `executor.defaults.execution_allowlist` (Helm
+  `executor.defaults.executionAllowlist`) lists the `execution` fields a DAG may
+  set (`priority_class_name`, `node_selector`, `affinity`, `tolerations`,
+  `topology_spread_constraints`, `runtime_class_name`, `resource_claims`,
+  `termination_grace_period_seconds`, `labels`, `annotations`) and, optionally,
+  the only priority classes it may use. A DAG that goes outside the list is
+  refused at push with a 400 naming the task and the field, and a DAG registered
+  before the list changed fails that task once at dispatch, without creating a
+  pod. An explicitly empty `fields` list allows no field, in a server config
+  file as in Helm. The default allows everything, so existing installs are
+  unchanged. See the Placement allowlist page.
+- **The session cookie can be renamed, with `__Host-` support.** Set
+  `auth.session_cookie_name` (Helm: `auth.sessionCookieName`) to a name such as
+  `__Host-dexaflow` on a deployment that serves several hosts under one parent
+  domain: the browser then refuses a session cookie that a page on a sibling
+  host tries to plant, which closes a session fixation path. Sign-in, sign-out,
+  the API and the UI shell all use the configured name. Boot fails on a name a
+  browser would not accept, and on a `__Host-` or `__Secure-` name together with
+  `auth.session_cookie_insecure`. The default stays `_token`; changing it signs
+  every browser out once. (#1405)
+- **Operators can restrict which ServiceAccounts and images DAGs may use
+  (#537).** `executor.defaults.execution_allowlist` gains `service_accounts`
+  and `images` (Helm `serviceAccounts` and `images`). With `service_accounts`
+  set, a task may only name a listed `execution.service_account` (a task that
+  names none still runs as the operator's task ServiceAccount). With `images`
+  set, a DAG may only use a listed image, given as an exact reference or a
+  prefix ending in `*`. A DAG outside either list is refused at push with a 400
+  naming the value, and at dispatch for a DAG registered earlier; a version on
+  a disallowed image also gets no warm workers. Both are empty by default, so
+  existing installs are unchanged.
+- **Browser sessions can be bound to their tenant's host.** For an operator
+  that serves each tenant on its own host in front of one Dexaflow, set
+  `auth.trusted_issuer.host_pattern` (Helm: `auth.trustedIssuer.hostPattern`),
+  for example `{tenant}.example.com`. A trusted-issuer handoff is then accepted
+  only on the host of the token's tenant (`403` and an `issuer.login.failure`
+  audit event with reason `host_tenant_mismatch` otherwise), and a session
+  cookie only on the host of the session's tenant (`401` and the cookie
+  cleared otherwise). A token in the `Authorization` header is not bound. The
+  host comes from `X-Forwarded-Host` only when the peer is in
+  `server.trusted_proxies`. Off by default. (#1463)
+- **Guidance: keep secrets out of bash command strings.** ADR 0070 (proposed)
+  records that a secret reaches task code by environment reference
+  (`$AIRFLOW_VAR_*`, `$AIRFLOW_CONN_*`, a `secretKeyRef`) and is never rendered
+  into a command line, where `ps`, `/proc/<pid>/cmdline` and logs can expose it.
+  The DAG authoring and Variables and Connections pages now show the
+  environment variable form for bash tasks. No behavior changes. See [DAG
+  authoring](https://dexaflow.dexadata.ai/author-dags/dag-authoring/).
+- **Default CPU and memory limits for task pods.** `executor.defaults.limits_cpu`
+  and `executor.defaults.limits_memory` (Helm: `executor.defaults.limits.cpu` and
+  `.memory`) fill the limit of each dimension on every task pod whose resources
+  leave it empty, including a task that declares requests only, which until now
+  ran with no limit. A declared limit is never changed, and a request above the
+  default raises the filled limit to that request. Where the request is empty
+  too, Kubernetes sets it to the limit, as a `LimitRange` default does. With
+  warm pools on and no `executor.unit`, the same limits size the warm worker
+  pods, and a task whose own limit would be larger takes a dedicated pod. Both are
+  empty by default, so nothing changes until an operator sets them, and they are
+  not used together with `executor.unit`, which already sets both limits.
+- **Optional HTTPS on the API listener.** With `server.http_tls_cert` and
+  `server.http_tls_key` (`DEXAFLOW_SERVER_HTTP_TLS_CERT`/`_KEY`; Helm:
+  `httpTLS.enabled` and `httpTLS.secretName`), the API and UI port serves TLS
+  with your own certificate, so a load balancer can re-encrypt the hop to the pod
+  (ALB or GKE HTTPS backends). The certificate is re-read when its files change,
+  setting only one of the two fails boot, and the chart probes over HTTPS. Plain
+  HTTP stays the default. The chart also gains `networkPolicy.grpcFrom`, which
+  gives the agent gRPC port its own allowed sources (empty keeps today's single
+  rule). See [In-transit
+  encryption](https://dexaflow.dexadata.ai/operate/in-transit-encryption/), which
+  also covers the service mesh mTLS path and the create-user password on the wire.
+- **`dexaflow validate --parse` imports `dag.py` the way `compile` does.**
+  `validate` checks `dexaflow.yaml` and the syntax of `dag.py` without importing
+  it, so a DAG that is valid Python but raises when it runs (an
+  `AttributeError`, a missing import) was reported as valid and only failed at
+  `compile` (#1680). With `--parse`, `validate` runs the DAG through the parser
+  into a scratch file and applies compile's checks to the result, failing with
+  the interpreter's error. It needs the parser and the DAG's dependencies on the
+  host, so it is opt-in: plain `validate` keeps its static checks and exit codes,
+  and its help now says what it does not check. `--parser-cmd` overrides the
+  parser command, as on `compile`.
+- **The Helm chart turns on Pro source mode.** `execution.sourceMode.enabled` and `execution.sourceMode.image` render `LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED` and `LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE` on every control-plane Deployment, so source mode no longer needs `extraEnv`. Off by default, and an install that leaves it off renders exactly what it did before. The chart refuses to render source mode on with an image that is not pinned by a full sha256 digest, the same check the server makes at boot. See Source mode. (#1540)
+- **Releases carry SLSA build provenance and attested SBOMs.** From this release on, every archive and every image the release workflow pushes (`dexaflow-server`, `dexaflow-mcp`, `dexaflow-migrate`, each `dexaflow-runtime:py3.N-<tag>`, and the `leoflow-*` names sharing their digests) has a GitHub build provenance attestation, checkable with `gh attestation verify ... --repo dexadata/dexaflow`. Each archive's SPDX SBOM is attested against that archive, each image carries an SPDX SBOM as a cosign attestation (`cosign verify-attestation --type spdxjson`), and the archive provenance is published on the release as `dexaflow_<version>.intoto.jsonl` for offline checks. The installation page shows the commands, and the image signature example now uses the exact signer identity. (#1562)
+- **Roll a DAG back to a registered version, and see who registered each
+  version.** `dexaflow rollback <dag_id>` makes the version before the current
+  one current again, and `--to` takes a label or a version number; nothing is
+  rebuilt, the version runs the image digest it was registered with. New runs
+  use it from the next scheduler tick, its schedule and DAG settings apply in
+  the same transaction, runs already created keep their version, and the pause
+  state does not change. The version must still pass the checks a register of
+  it would pass today (execution policy, tenant limits, declared Variables and
+  Connections). `dexaflow dags versions <dag_id>` lists the versions with a
+  marker on the current one, when each was registered, the id of the user
+  who registered it, and its short image digest. Behind them, `PUT /api/v2/dags/{dag_id}/currentVersion`
+  (same permission and `dexaflow:deploy` scope as registering a version,
+  audited as `dag.version.set_current` with the user and the from and to
+  versions) is new, and `GET /api/v2/dags/{dag_id}/dagVersions` gains the
+  additive fields `image`, `spec_hash`, `is_current` and `created_by` (a
+  user id, not an email). A
+  register now records the authenticated user as the version's creator (none
+  when the user no longer exists in the tenant) and
+  puts the version, image and spec hash in its audit entry. `deploy` of code
+  that matches an earlier version now suggests the `dexaflow rollback`
+  command instead of saying rollback is unsupported. The OpenAPI spec and
+  `pkg/client` now also describe `POST /api/v2/dags/{dag_id}/versions`.
+  (#1702)
+- **Workspaces and named targets in the CLI.** `dexaflow workspace init [dir]`
+  creates a workspace (`dexaflow.workspace.yaml`, `dags/`, `.gitignore`, and
+  `git init` with `--git`; git is optional), and `dexaflow new <dag_id>`
+  scaffolds a DAG under its `dags/` without ever overwriting a file unless
+  `--force` is given; its next steps name the target a deploy would go to.
+  `dexaflow init` is unchanged. `dexaflow target add|use|list|remove` names
+  control planes: inside a workspace they are shared in the workspace file,
+  outside one (or with `--global`) they live in `~/.dexaflow/config.yaml`.
+  Every server command takes the global `--target` flag and
+  `DEXAFLOW_TARGET` (or `LEOFLOW_TARGET`). `dexaflow auth login --target
+  <name>` saves one token per server URL in the config file, and a token is
+  only ever sent to the server it was issued for; the existing `server_url`
+  and `token` keys keep working. A workspace or a target can supply the
+  registry (the image name then defaults to the `dag_id`), platforms and base
+  image a project leaves unset, with the order `--registry`,
+  `DEXAFLOW_REGISTRY`, `dexaflow.yaml`, the target, the workspace defaults,
+  then the config file; `deploy` prints the registry and where it came from.
+  `deploy <dag_id>` now looks the id up in the workspace around the current
+  folder (else its git repository) instead of failing with `lstat ~/dexaflow`
+  inside a repository; `deploy --all` reads the workspace, or the current
+  project, and refuses inside a repository with no workspace file rather than
+  deploy all of it; a bare `deploy` at a workspace root deploys its DAGs; and
+  `dexaflow lite` serves the workspace around the current folder, keeping
+  `~/dexaflow` only when there is none. A workspace file owned by another user
+  is ignored with a warning, unless its folder is listed in
+  `DEXAFLOW_TRUSTED_WORKSPACES` (or `*`, for CI containers) or in
+  `trusted_workspaces` in the config file. `--registry` is accepted by `compile`, `build` and
+  `deploy`, and deploy prints the server, registry, platforms and base image
+  it uses with their sources; `auth login` prints the server before it reads a
+  password.
+  `leoflow.workspace.yaml` is read like `dexaflow.workspace.yaml` (#1704,
+  #1102).
+- **Follow a run from the CLI.** `dexaflow deploy --trigger --follow` and
+  `dexaflow runs trigger <dag_id> --follow` follow the run they start: they
+  print the link to the run in the UI, each task state change, and the logs of
+  each attempt as it finishes, then exit with the run's result: 0 when it
+  succeeded, 2 when it failed (the error names the failed tasks and those left
+  `upstream_failed`), 3 when `--timeout` elapsed first, 130 after Ctrl-C.
+  Ctrl-C and `--timeout` stop following and never cancel the run. When the DAG
+  is paused, `deploy --trigger` and `runs trigger`, with or without
+  `--follow`, say that the run waits in `queued` until you unpause the DAG and
+  print `dexaflow admin dags unpause <dag_id>`. A run still queued after two
+  minutes gets a note: the pause when the DAG is paused, otherwise where to
+  look. `dexaflow runs logs <dag_id>` now prints the logs of every
+  task of the latest run, `runs logs <dag_id> <run_id>` every task of that run,
+  and `-f` without a task follows the run; with a task_id the command behaves
+  as before. A command error that carries no run result still exits 1.
+  Task logs printed by these commands no longer carry terminal control
+  characters (escape sequences, carriage returns), which a task could use to
+  rewrite the terminal or its clipboard (#1705).
+- **Deploy tokens and a deployer role for CI.** `dexaflow auth create-token
+  --scope deploy --name <name> --ttl 90d` creates a long-lived API token
+  (`dxf_...`) owned by the signed-in user: it registers DAG versions, sets the
+  current version and reads DAGs and their versions, and is refused everything
+  else, other reads included (it carries `dexaflow:deploy` alone, which now
+  also opens the DAG list, a DAG, its details and its versions, for any
+  token that carries it, trusted-issuer tokens included). The token is
+  shown once; the server stores only its SHA-256 hash. Tokens expire (90 days
+  by default, one hour to 365 days), record when they were last used, and are
+  listed and revoked with `dexaflow auth tokens list` and `dexaflow auth tokens
+  revoke <id>` (an admin sees and revokes every token of the tenant), or
+  through `POST`, `GET /api/v2/apiTokens` and `DELETE
+  /api/v2/apiTokens/{token_id}`. A token never does more than its owner's
+  current roles allow, stops working when its owner is deactivated, cannot
+  create, list or revoke tokens, and works only from the `Authorization`
+  header, never as a session cookie. A new built-in `deployer` role, created in
+  every tenant and assigned to no one, grants `read:dag` and the new
+  `deploy:dag` permission: it registers versions and rolls back, and cannot
+  delete, pause or trigger a DAG. Registering a version and setting the
+  current version accept `deploy:dag` or `write:dag`, so existing roles keep
+  deploying. `dexaflow auth create-token` without `--scope` is unchanged.
+  Migration `044_deployer_role_and_api_tokens` adds the `api_tokens` table, the
+  permission and the role; its down drops the table, which revokes every
+  token. The CI/CD guide now uses a deploy token. ADR 0074. (#1708)
+- `dexaflow deploy` says where it goes and what happens next, and gains
+  `--paused`, `--active`, `--plan` and `--output json`. Every deploy prints its
+  server (and target) and ends with a line that says whether the DAG is active,
+  with its next run, or paused, with what unpausing does (the catchup runs
+  since `start_date`, or one run for the latest tick). `--paused` and
+  `--active` leave the DAG in that state after this deploy, new or not; the
+  register endpoint takes a new optional `is_paused` query parameter
+  (`POST /api/v2/dags/{dag_id}/versions?is_paused=true|false`) and sets it in
+  the same transaction (it needs `write:dag`, and a scoped token
+  `dexaflow:run`, as for the PATCH), and its answer now reports `dag_created` and `is_paused`. A change of
+  `is_paused`, by a register or by the Airflow `PATCH /api/v2/dags/{dag_id}`
+  (the UI switch, `dexaflow admin dags pause`), is now audited as `dag.pause`
+  or `dag.unpause` with the acting user. `--plan` says per DAG what would be
+  built, pushed and registered and why, from the content label and the
+  server's current version, without running the parser, the builder or the
+  register. `--output json` prints one JSON document on stdout (dag_id,
+  status, version, image, digest, spec_hash, created, is_paused, server and
+  target) and moves the human lines to stderr. (#1705)
+- **`--platform` on `deploy`, `compile` and `build`, and the builder named in
+  the output.** `--platform linux/arm64` (repeatable or comma-separated)
+  chooses the image platform over `build.platforms` in `dexaflow.yaml`, the
+  target and the workspace defaults. `compile --build` and `build` now print
+  `platforms:` with the value's source, as `deploy` already did, and every
+  build prints a `builder:` line naming how the image is built. Today that is
+  always the local container daemon (`docker`, or `podman`/`nerdctl` with
+  `--builder`), as before, and the line says it is the fallback: ADR 0073
+  decides the daemonless builders that come first. A malformed platform, from
+  the flag, `dexaflow.yaml`, a target or the workspace defaults, is refused
+  with its source named before anything is parsed, built or sent to the
+  control plane, and `build` checks every project before it builds any. This
+  also applies to `compile` without `--build` and to `dexaflow lite`: a
+  malformed `build.platforms` that used to be ignored there now fails early.
+  A list of platforms still reaches the tool as before, but the push is now
+  checked with `<tool> manifest inspect` to be a manifest list holding every
+  requested platform, so a tool that pushes a partial image (podman without
+  `--manifest`) fails the build instead of having a digest registered that
+  does not cover the platforms; a tool without `manifest inspect` can no
+  longer push several platforms. A failed multi-platform build says how to
+  build one platform (#1706).
+- **deploy reuses an image already in the registry for the same content.**
+  When the image tag is the default content label (`tag_strategy: version`)
+  and the registry already holds an image under it for every requested
+  platform, `dexaflow deploy` pins and registers that image without building
+  or pushing, and prints `builder: skip`. This covers a deploy to a second
+  target that shares the registry, an image a CI job already pushed, and a
+  retry after a failed register. `--rebuild` builds anyway; an explicit
+  `--dag-version`, a git-based tag (unless it fell back to the version label)
+  or `--force` never reuses. `deploy --plan`
+  reads the registry and says when the image would be reused. Because the
+  tag is predictable, push access to the image repository decides what a
+  reusing deploy registers: limit it to the deploy identity and enable tag
+  immutability (#1706, ADR 0076).
+- **A redeploy that changed only DAG code pushes one layer, with no container
+  daemon.** A pushed build of the generated Dockerfile is now a dependency
+  image (base, `system_packages`, Python dependencies) stored as
+  `<repo>:deps-<key>` in the DAG's repository, plus one deterministic layer
+  with the DAG code. When the registry holds the dependency image for the
+  key, the code layer is appended through the registry API and the output
+  says `builder: code-layer`; otherwise the local daemon builds and pushes the
+  dependency image first, from an empty directory. `--rebuild` (on `deploy`,
+  and new on `compile` and `build`) builds the dependency image again. The path needs every Python dependency pinned
+  (`name==version`; a connector's package can be pinned in `dependencies`),
+  the generated Dockerfile and a push; any other build stays whole, and the
+  builder line says why (#1706, ADR 0077).
+- **A deploy the server or the registry would refuse now fails in seconds,
+  before the build.** `dexaflow deploy` checks first that the control plane
+  answers and that the token may deploy, then that the registry accepts a push
+  to the image's repository with the credentials of the docker config, and,
+  once `dag.json` is compiled, has the server run every check of the register
+  on it without registering anything. A refusal (an expired token, a token
+  without the deploy scope, a registry that refuses the docker credential, an unknown
+  connection or variable, an image outside the allowlist, a tenant limit)
+  stops the deploy and names what to fix; the server's warnings are printed.
+  A new route, `POST /api/v2/dags/{dag_id}/versions/dry_run`, runs those
+  checks and writes nothing, audit included, answering 200 with what the
+  register would do, or the register's own refusal. A server that predates the
+  route answers it with 404 and registers nothing, so the deploy goes on with
+  a note and its checks run at the register as before. `dexaflow doctor` runs
+  the control plane and registry checks for the target in use. (#1705)
+- **The dependency image is built from wheels, with no container daemon,
+  when `uv` is on `PATH` with a Python it can find.** When a split build (ADR 0077) finds no dependency
+  image for its key, the CLI resolves the Python dependencies with uv for
+  each target platform, installs the wheels on the host, packs them as one
+  deterministic layer on the runtime base and pushes the dependency image
+  through the registry; the output says `builder: dependency-layer (uv
+  <version>), then code-layer`. The key covers the resolved versions and
+  hashes, so dependencies with a range (`pandas>=2`) take the split too, and
+  a new release that matches the range gives a new dependency image.
+  `system_packages`, a platform other than `linux/amd64` or `linux/arm64`, a
+  URL, path or VCS dependency, a base that is not a Dexaflow runtime base or
+  that configures pip (`PIP_INDEX_URL`, `/etc/pip.conf`, ...), Windows and a
+  dependency without a wheel keep the daemon, and the builder line says why;
+  a wheel install that fails falls back to the daemon for pinned
+  dependencies (#1706, ADR 0078).
+- **`deploy --all --changed-since <ref>` deploys only the DAG projects that
+  changed.** A project counts as changed when a file its image or its version
+  label is built from differs between the git ref and the working tree
+  (uncommitted and untracked files included): the DAG source,
+  `include_paths`, dbt directories, `dexaflow.yaml`, `.dockerignore` or its
+  own Dockerfile. A change to the workspace file counts for every project,
+  and a project built from a file git ignores always counts as changed.
+  The other projects are skipped before they are compiled and listed with
+  the reason (`status: skipped` in `--output json`); a project removed since
+  the ref is reported under `removed`, not deregistered, and a moved one
+  is reported as moved (`moved` in `--output json`). A ref missing from a
+  shallow clone stops the deploy with a message to fetch the history
+  (`fetch-depth: 0`). The flag is refused with a `dag_id` or a path (#1708).
+- **Registry credentials from your cloud CLI, with no separate `docker login`.**
+  `deploy`, `compile --push` and `doctor` read the registry credential from the
+  docker config and its credential helpers first and then, for an Artifact
+  Registry, GCR, ECR or ACR host the docker config holds nothing for, from the
+  session of the `gcloud`, `aws` or `az` CLI (`gcloud auth print-access-token`,
+  `aws ecr get-login-password`, `az acr login --expose-token`). No cloud SDK is
+  linked and nothing is stored (ADR 0080). `registry.auth_method` is now read:
+  `auto` (the new default) is that order, `docker_config` keeps the previous
+  behavior, and `cloud` reads only the cloud CLI for a registry a cloud owns
+  (the docker config for any other). `env` and `iam` still load, with a
+  warning, and read as `auto`. No content label moves. The deploy preflight, `doctor` and a refused push
+  of the local daemon name the login command of the detected registry
+  (`gcloud auth configure-docker <host>`, `aws ecr get-login-password --region
+  <region> | docker login ...`, `az acr login --name <name>`,
+  `docker login <host>`) and say where a credential came from. Refs #1704,
+  #1705.
+- **Cluster deploy defaults.** An operator can set the registry prefix,
+  build platforms and base image once for the whole cluster, in the Helm
+  values `deploy.defaults.registry`, `deploy.defaults.platforms` and
+  `deploy.defaults.baseImage` (server keys `deploy.defaults.*`,
+  `DEXAFLOW_DEPLOY_DEFAULTS_*`). The server serves them on the new
+  Dexaflow route `GET /api/v2/deployDefaults` to users who may read DAGs and
+  to tokens with the `dexaflow:read` or `dexaflow:deploy` scope; they are the
+  same for every tenant and are not secrets. The chart and the server refuse
+  a value no deploy could use. `dexaflow deploy` reads them once per command
+  from the server it deploys to and uses each one only for what the flags,
+  the environment, the project's `dexaflow.yaml`, the target, the workspace
+  defaults and the CLI config file leave unset, so a repository needs no
+  `registry:` block when the cluster advertises one; the deploy prints each
+  value with its source (`from the deploy defaults of <server>`). Unset, the
+  cluster advertises nothing and every deploy resolves as before. A server
+  without the route answers 404 and the deploy proceeds silently with its
+  local settings; any other failure to read them prints a warning and does
+  the same. `build --push` reads them the same way from the server a
+  deploy would go to, so it pushes the content label `deploy --skip-build`
+  looks up; `compile` and a `build` without `--push` never ask a server.
+  With `deploy --output json`, a missing registry or an invalid workspace
+  file is now reported under the DAG's `dag_id` instead of an empty one.
+  `pkg/client` gains
+  `Client.GetDeployDefaults` and `ErrDeployDefaultsNotServed` for the route
+  (#1704).
+- **The server can require images pinned by digest.** The new setting
+  `deploy.require_digest` (`DEXAFLOW_DEPLOY_REQUIRE_DIGEST`, Helm
+  `deploy.requireDigest`) decides what the control plane does with an image
+  that is not `<repository>@sha256:<64 hex>`, when a DAG version is registered
+  and when one is made current again: `off`, the default, accepts it as
+  before; `warn` accepts it with a warning in the answer, which `dexaflow
+  push`, `dexaflow deploy` and `dexaflow rollback` print, a log line, a count
+  in `dexaflow_unpinned_image_total` and `require_digest` and `image_pinned`
+  in the audit entry; `enforce` refuses it with a 400 that names the setting
+  and the way out. The dry run of a register answers the same and records
+  nothing. A CLI that registers a tag, such as one that predates digest
+  pinning on `dexaflow compile --build --push` followed by `dexaflow push`, is
+  refused under `enforce`; start with `warn`. A register and a rollback now
+  also return the warnings they give, in a `warnings` field. (#1703)
+- **`dexaflow deploy --watch` redeploys on save.** After the first deploy the
+  command keeps running and, each time a file of a project is saved (its
+  `dexaflow.yaml`, its DAG source, the workspace file, or any file its content
+  label covers), redeploys that project and no other, through the same
+  preflight, dry run, content label, cluster deploy defaults and image reuse
+  as any deploy. A burst of saves is one redeploy; a save that leaves the
+  content label as it is prints one line and registers nothing once the
+  server confirms that label is still its current version. Going back to
+  content an earlier save registered is refused as for any deploy, with
+  `dexaflow rollback <dag_id> --to <label>` as the way out. A failed
+  deploy prints its error and the watch goes on; Ctrl-C stops it with exit
+  code 0. The confirmation for a remote server is asked once, before the
+  first deploy. `--paused` and `--active` apply to the first deploy only, so a
+  redeploy never changes `is_paused`. `--watch` refuses `--trigger`,
+  `--follow`, `--timeout`, `--output json`, `--plan`, `--changed-since`, `--dag-version`,
+  `--skip-build` and `--force`. The watch loop is the one `dexaflow lite`
+  uses, whose behavior is unchanged. (#1705)
+- **`dexaflow status` shows what a target runs and whether the workspace
+  matches it.** For each DAG of the workspace (or the DAGs named by `dag_id`
+  or project folder) on the target in use, it reports the current version
+  (label, number and when it was registered), whether the local content
+  label is that version (`in sync`), an older registered version
+  (`behind: local equals <label>`) or neither
+  (`drift: local changes not deployed`), `is_paused`, and the last run, or
+  `not deployed` for a DAG the server does not know. The local label is
+  computed by the same code as `dexaflow deploy`, with the target's,
+  workspace's and cluster's deploy defaults, so right after a deploy the DAG
+  is in sync. `--all-targets` reports every target of the workspace, each
+  with its own server and saved token, and an unreachable target is an error
+  line while the others are still reported. `--output json` prints one
+  stable JSON document. The exit code is 0 when every DAG is in sync, 1 when
+  one drifted, is behind or is not deployed, and 2 when something could not
+  be read. It only uses Airflow-compatible reads and never builds, pushes,
+  registers or prompts. (#1704)
+- **`dexaflow auth login` signs in with the cluster's single sign-on.** With
+  no username or password given, it asks the server whether single sign-on is
+  on (`GET /api/v2/auth/methods`) and, when it is, opens the browser on the
+  server's own sign-in, or prints the URL with `--no-browser`. The server runs
+  the same OIDC flow, tenant pin and role mapping as the UI, then asks
+  "Sign in the Dexaflow CLI?" on a page naming the account and the port.
+  Only that click sends the browser back to a loopback port the CLI listens
+  on (`127.0.0.1` or `[::1]` only) with a one-time code. The CLI exchanges it, with a PKCE (S256)
+  verifier only it holds, on `POST /api/v2/auth/cli/token` for the same token
+  a password login saves for that server. The code works once per replica
+  and expires after 60 seconds, every refusal is the same 400, the consent
+  and the exchange are audited, and both share the rate limit of the OIDC
+  routes. No IdP configuration changes. `--sso`
+  asks for single sign-on explicitly and `--timeout` bounds the wait; the
+  command says which method it chose and why. A username or password, or a
+  server without single sign-on, keeps the password login, which now refuses
+  plain `http://` to a host that is not loopback unless
+  `--allow-insecure-password` is given. `pkg/client` gains `GetAuthMethods` and
+  `ExchangeCLILoginCode`. (#1704)
+- **A deploy says which tasks run on a warm worker and which on a dedicated
+  pod, and why.** The register answer and its dry run
+  (`POST /api/v2/dags/{dag_id}/versions` and `.../versions/dry_run`) carry an
+  `execution` object: per task its `mode` (`warm` or `dedicated`) and, for a
+  dedicated pod, the `reason` (`warm pools off`, `staging enabled`,
+  `source mode`, `service_account set`, `node_selector set` and the other
+  placement fields, a size larger than a warm pod, no idle warm workers kept
+  for this DAG, or a server that runs no warm workers), plus the state of the
+  version's warm pool (`off`, `none` or `on`, the idle workers kept and the
+  cap, and the previous version's pool draining). The server decides it with
+  the same function dispatch places an attempt with, from the same settings,
+  so a task reported dedicated is never placed on a warm worker. `dexaflow deploy` prints it as one
+  `execution` line ("2 tasks warm-eligible; load on a dedicated pod:
+  node_selector set", or "every task runs on a dedicated pod: warm pools off")
+  and a `warm pool` line, and `--output json` carries the object.
+  `pkg/client` gains `ExecutionReport`, `TaskExecution` and `WarmPoolReport`.
+  The warm pools page no longer says that `minIdleWorkers: 0` provisions a pod
+  on demand: with it no warm worker is created. (#1707)
+- **`dexaflow sync <dir>` makes a target run the DAGs of a workspace folder.**
+  It compares every DAG project under `<dir>` with the DAGs registered on the
+  target in use (`--target`, `--server` and the workspace's targets resolve
+  as for a command run in `<dir>`) and, per DAG, does nothing when it is in
+  sync, and deploys it through the same code as `dexaflow deploy --all` when
+  its content label is not registered. A DAG whose label is an older
+  registered version (the target was deployed from a newer commit) is
+  reported as `behind` and left alone; `--rollback` makes that version
+  current again. DAGs the target holds and the workspace does not are
+  reported, and with `--prune` paused; nothing is ever deleted. `--prune`
+  applies nothing while a project cannot be read (a `dexaflow.yaml` that does
+  not parse hides its `dag_id`) or when it would pause more DAGs than
+  `--max-prune` (by default the number of projects), and needs `--yes`
+  without a terminal. The comparison is the one `dexaflow status` makes, with
+  the same content label as `deploy`. `--dry-run` builds, pushes and changes
+  nothing, so it works as a CI check or an Argo CD hook. The exit code is 0
+  when the target matches (or every change was applied), 1 when a dry run
+  found something to change or a behind DAG was left alone, and 2 when
+  something could not be read, a change failed or was refused.
+  `--output json` prints one stable JSON document. (#1708)
+- **`dexaflow promote` moves a version between targets without a build.**
+  `dexaflow promote <dag_id> --from <target> --to <target> [--version <v>]`
+  reads the source's current version (or the one `--version` names, a label
+  first, then a version number) and registers the same `dag.json`, with the
+  same image digest, on the destination. An image that is not pinned by digest
+  is refused. When the destination pulls from another registry (`--registry`,
+  the `--to` target's registry, or its cluster's `deploy.defaults.registry`),
+  the image is copied there by digest, layers and platforms included, before
+  the register. The destination registers it through the same
+  `POST /api/v2/dags/{dag_id}/versions` as a deploy, after its dry run, so its
+  admission checks and the paused-at-creation rule apply and an existing DAG
+  keeps `is_paused`. `--dry-run` says what would be copied and registered,
+  `--output json` prints one JSON document, and each control plane gets its
+  own token (`--from-token`, `--to-token`, else the session saved for its
+  server). The register takes `promoted_from` (a target name) and
+  `promoted_from_server`, recorded as the caller's claim in its
+  `dag.version.register` audit entry, and
+  `GET /api/v2/dags/{dag_id}/dagVersions/{version_number}/spec` serves the
+  `dag.json` of any registered version to a caller with read on dags (an API
+  token with the `read` scope), which the source side of a promote needs; the
+  destination side needs only a deploy token. A copy keeps the repository
+  path under the destination registry and never moves an existing tag. (#1708)
+- **`dexaflow auth login --device` signs in with single sign-on from a machine
+  with no browser**, such as an SSH session or a container. The command prints
+  a page and a short code; you open the page in a browser on any device, sign
+  in through the cluster's own OIDC flow (the same tenant pin, role mapping and
+  audit as the UI), then enter the code and approve on a page that shows it
+  and asks you to confirm it matches your terminal. The CLI polls
+  `POST /api/v2/auth/cli/token` with the device grant (`authorization_pending`,
+  `slow_down`, `access_denied`, `expired_token`, as in RFC 8628) and saves the
+  same token as any other login. The flow is served by Dexaflow, so the IdP
+  needs no device endpoint and no change. With no flag, `auth login` picks it
+  by itself when the server serves it and the session has no browser
+  (`SSH_CONNECTION`, or Linux with no display); `--sso` keeps the browser
+  sign-in. The approval page shows when and from which address the sign-in
+  started. Codes are stored only as keyed hashes in a new table (migration
+  045) shared by every replica and are swept about 20 minutes after they
+  start; codes are entered only after the sign-in and wrong ones are limited
+  per account, starts and polls are rate limited per address (IPv6 by /64),
+  an address holds at most five sign-ins in progress, each is approved once
+  and redeemed once, and no token is stored. `GET /api/v2/auth/methods` gains `device`, and
+  `pkg/client` gains `StartCLIDeviceLogin` and `PollCLIDeviceLogin`. (#1704)
+- **A DAG version records where it was built.** `dexaflow deploy` and
+  `dexaflow push` send the git commit and repository of the project, the CI
+  pipeline run (GitHub Actions, GitLab CI, Jenkins, Buildkite, CircleCI), the
+  builder, the base image and the CLI version with the register, as the new
+  optional `build_commit`, `build_repo`, `build_pipeline_url`,
+  `build_builder`, `build_base_image` and `build_cli_version` query
+  parameters of `POST /api/v2/dags/{dag_id}/versions` (and its dry run). The
+  server validates them (bounded sizes, http or https URLs without
+  credentials, no control characters), stores them with the version it
+  creates (migration 046 adds the nullable `dag_versions.build_info`) and
+  records them in the `dag.version.register` audit entry.
+  `GET /api/v2/dags/{dag_id}/dagVersions`, `.../dagVersions/{n}` and the
+  rollback answer return them as `build_info`, next to Airflow's fields, `dexaflow dags versions` shows the commit, and
+  `dexaflow promote` forwards them to the destination. Build info is not part
+  of `dag.json`: it changes neither the spec hash nor the version label, and a
+  re-push of registered content keeps the first build info. (#1702)
+- **`dexaflow ci init <github|gitlab|cloudbuild|generic>` writes a deploy
+  pipeline for the workspace.** It writes `.github/workflows/dexaflow-deploy.yaml`,
+  `.gitlab-ci.yml` or `cloudbuild.yaml` at the top of the repository, and
+  `ci/dexaflow-deploy.sh`, which every pipeline runs (`generic` writes the
+  script alone). On each push to `--branch` (`main` by default) the pipeline
+  installs this CLI's release (or `--cli-version`) with `install.sh`, and uv
+  so dependency images are built from wheels, logs in to the workspace's
+  registries the way the CI system does natively, and runs
+  `dexaflow deploy --all --changed-since <base> --yes --output json`, or
+  every DAG when there is no base. On GitHub the base is the commit of the
+  workflow's last successful run on the branch, so a failed or cancelled run
+  is caught up by the next one; on GitLab it is the last successful push
+  pipeline when the job has a `read_api` token (`DEXAFLOW_GITLAB_API_TOKEN`),
+  else the commit before the push. The GitHub job runs in an environment
+  (`--environment`, `production` by default), only from the deploy branch,
+  installs the CLI with the setup-dexaflow action of the same release, and
+  pins every action by commit SHA; the GitLab and Cloud Build images
+  are pinned by digest, and uv is installed with `--require-hashes`. The control plane comes from
+  `DEXAFLOW_SERVER_URL`, or from the workspace target (`--target`, else
+  `default_target`), and the token from the CI secret `DEXAFLOW_TOKEN`, a
+  deploy token from `dexaflow auth create-token --scope deploy`. A Markdown
+  summary of the deploy goes to the GitHub job summary, to GitLab artifacts,
+  or to the log. Docker is used only when a project needs a real build and
+  no remote builder is configured: the GitLab job then runs Docker in Docker,
+  and says which projects need it. An existing file is never overwritten
+  without `--force`; `--stdout` prints the files instead. The CI recipes of
+  the CI/CD page are now the files this command writes, checked by a test.
+  (#1708, #1709)
+- **Builds that need a real Dockerfile build run on Google Cloud Build.**
+  With `build.remote_builder.cloud_build.project` in `dexaflow.yaml` (or
+  `remote_builder` on a target or in the workspace `defaults`), a build no
+  daemonless path covers goes to Cloud Build instead of a local container
+  daemon: a project that ships its own `Dockerfile`, and the dependency image
+  of a split build that cannot come from wheels (`system_packages`, a package
+  without a wheel, uv missing), after which the DAG code is appended through
+  the registry as before. The CLI lists the build context with your
+  `.dockerignore` and `exclude_paths` applied, packs it with the Dockerfile,
+  and runs `gcloud builds submit --async` with the project, and the optional
+  region, private worker pool and service account, streams the build log
+  (or names the `gcloud logging read` command for a build with its own
+  service account), and cancels the build on Ctrl-C. Cloud Build pushes the
+  image to Artifact Registry or GCR; the digest the deploy registers is read
+  from the registry and must match the one the build reports. No Docker and
+  no `docker login` are needed, only `gcloud auth login` and the roles the
+  builders page lists. The archive stays in the project's Cloud Build source
+  bucket, and secret-looking files in it are warned about. `linux/amd64`
+  only; another platform, a build that is not pushed, or gcloud missing
+  while the daemon's tool is on `PATH` keeps the local daemon, and the
+  `builder:` line says why. When the registry refuses this machine's push
+  credential, only a whole build on Cloud Build goes on, with a note. The
+  block is not part of the content label (#1706, ADR 0083).
+- **`min_idle_workers` in `dexaflow.yaml`.** A DAG declares the idle warm
+  workers it wants kept for its current version with a top-level
+  `min_idle_workers: N` (0 to 100), and the compile copies it into `dag.json`,
+  where the warm pool reconciler reads it. With warm pools on, an unpaused DAG
+  that declares it is prewarmed as soon as a version becomes current; the
+  server clamps it to `execution.max_pool_size`, and with warm pools off it
+  does nothing. Changing it changes the version label, so it makes a new
+  version whose pool replaces the previous one. A server older than 0.5.4
+  accepts the key but applies it only while a run of the version is active.
+  Before, the key was refused by the authoring schema, so only a
+  hand-made `dag.json` could reach the prewarm. A DAG with `staging.enabled`
+  cannot be warm, so the compile refuses the key on one. A legacy
+  `leoflow.yaml` accepts it too. (#1707)
+- **A `setup-dexaflow` GitHub Action and a `dexaflow-cli` image install the CLI
+  in a pipeline without piping `install.sh` into a shell.**
+  `uses: dexadata/dexaflow/.github/actions/setup-dexaflow@v0.5.4` with
+  `version: v0.5.4` (`latest` is refused) installs that release for the
+  runner's OS and architecture. On every run, cached or not, it verifies the
+  cosign signature of `checksums.txt` against the release workflow at that
+  tag with a pinned cosign, and the archive against `checksums.txt`; it
+  caches the release files per version, puts `dexaflow` on `PATH`, exports
+  `server-url` as `DEXAFLOW_SERVER_URL` and outputs the installed version. Every release now also publishes
+  `ghcr.io/dexadata/dexaflow-cli:<tag>` for `linux/amd64` and `linux/arm64`,
+  signed like the other images: the CLI with Python 3.13, git and uv, and no
+  Docker, so GitLab CI, an Argo CD hook or a Flux Job runs `dexaflow deploy`
+  or `dexaflow sync` with the daemonless builders and no install step. The
+  CI/CD page uses the action in its GitHub recipes and documents the image.
+  (#1708)
+
+### Changed
+
+- **The split `api` pods no longer mount a ServiceAccount token.** The api role
+  never calls the Kubernetes API and its ServiceAccount was already bound to no
+  Role, so the Helm chart now sets `automountServiceAccountToken: false` on the
+  `api` Deployment. The `scheduler` Deployment, and the single Deployment when
+  split mode is off, keep the token because they create the task pods. Cloud
+  identity for the object log sink (IRSA, EKS Pod Identity, GKE Workload
+  Identity) does not use this mount. A sidecar that reads the default token mount
+  can get it back with `split.api.automountServiceAccountToken: true`.
+- **The task base image runs pip 26.2.1 on every Python line.** The 3.10, 3.11
+  and 3.12 images used to keep the pip their slim base shipped with (23.0.1,
+  24.0 and 25.0.1), which carried six or seven fixable findings each, including
+  CVE-2025-8869; all four lines now upgrade to the same pinned pip before
+  installing anything. A DAG image installs its `requirements:` with this pip, so
+  builds on 3.10 to 3.12 now resolve with pip 26, as 3.13 already did. The
+  urllib3, msgpack and setuptools copies that pip vendors are still at versions
+  Trivy flags as HIGH (no pip release vendors fixed ones yet); they are reachable
+  only while pip runs at image build time and are accepted in `.trivyignore.yaml`
+  until the end of 2026, scoped to those vendored versions (#1299).
+- **Helm: `taskNamespace` now defaults to the release namespace (#1682).** The
+  chart used to default it to the literal `leoflow`, so `helm install -n dexaflow`
+  without `--set taskNamespace=...` rendered the executor Role, RoleBinding and
+  agent CA ConfigMap into a `leoflow` namespace (failing the install when it did
+  not exist) and sent task pods there. An unset value now means the release
+  namespace on a fresh install. On `helm upgrade` an unset value keeps the
+  namespace the running control plane already uses, read from its Deployment,
+  so existing installs that relied on the old default keep their task pods and
+  RBAC in `leoflow`. An explicit `taskNamespace` always wins. `helm template`,
+  ArgoCD and Flux cannot read the live release: if task pods run in `leoflow`
+  today under a different release namespace, set `taskNamespace: leoflow` before
+  upgrading. The server's own `executor.task_namespace` default is unchanged.
+  See "Upgrading to 0.5.4: the task namespace default" in the upgrade guide.
+- **A task pod the cluster stopped no longer spends the task's retries.** When the
+  kubelet shut a node down gracefully (a spot or preemptible reclaim), evicted a
+  pod under node pressure, the scheduler preempted it, or the kubelet refused it
+  at admission, the pod reconciler settled the task as a task failure, so it
+  consumed one of the task's `retries` and a task with `retries: 0` failed its
+  run. A pod that vanished with its node was already an infra failure, so the
+  outcome depended on how the node died. The reconciler now reads the pod's
+  `DisruptionTarget` condition and its reason (`Evicted`, `Shutdown`,
+  `NodeShutdown`, `Terminated`, `OutOfcpu`, `OutOfmemory`,
+  `UnexpectedAdmissionError`) and settles such a pod on the infra rail of ADR
+  0051, with an `error_message` starting `pod_disrupted:`: the task is re-placed
+  on the infra budget without spending a retry. A durable SUCCESS or RESCHEDULE
+  record still wins, and an `OOMKilled` task container is still a task failure,
+  as is a pod evicted for exceeding a limit of its own (a container or pod
+  ephemeral-storage limit, or an emptyDir `sizeLimit`); only a node-pressure
+  eviction counts as infra (#1595).
+- **A release moves its public pointers only after it passed every check.** The
+  Helm chart used to be pushed about 30 seconds after the tag, before any image
+  it references existed, and a GA became the Latest GitHub release (what
+  `install.sh` installs without a pinned version) before the install and upgrade
+  smokes ran; on v0.5.3 `helm upgrade` failed on `ImagePullBackOff` for over an
+  hour. A tag now publishes only versioned artifacts and a release that is not
+  Latest. A final promote step, which runs once the smokes, image builds and
+  signature checks are green, verifies with cosign that every referenced image
+  exists and is signed, then pushes the chart, re-points the moving
+  `dexaflow-runtime:py3.N` tags and marks the release Latest. A release
+  candidate gets its chart but never moves `py3.N` or Latest, and neither does a
+  patch of an older minor. Pinned versions (`vX.Y.Z`, `py3.N-vX.Y.Z`) can still
+  be pulled as soon as they are built. (#1684)
+- **The embedded web UI is now the Apache Airflow 3.3.2 UI (was 3.2.1).** The
+  bundle is still the unmodified upstream SPA, rebranded nav links only. The
+  control plane serves what the 3.3 UI reads: `GET .../dagRuns` and `GET
+  .../dagRuns/{dag_run_id}/taskInstances` name `next_cursor` and
+  `previous_cursor` in the body when the request carries `cursor` (the 3.3 runs
+  and task instance tables page that way and send no offset; requests without
+  `cursor` get the same body as before); the task instance Mark-as PATCH and its
+  `dry_run` answer the `TaskInstanceCollectionResponse` Airflow declares (the
+  bare instance crashed the 3.3 Mark-as dialog); `POST
+  .../dagRuns/{dag_run_id}/clear` clears a whole run (`only_new` is refused with
+  400); `GET /ui/gantt/{dag_id}/{run_id}` serves every attempt of the run;
+  `GET .../dagRuns` and `GET .../dagRuns/{dag_run_id}` name each run's pinned
+  version in `dag_versions`, so the Clear dialogs no longer force "run with
+  latest bundle version"; and grid runs carry `has_note`, runs `partition_date` (null), the
+  dashboard counts `awaiting_input` and the lower-bound flags. The 3.3 calls
+  Dexaflow does not serve yet (the runs table bulk Clear, Mark and Delete, task
+  group marking, partition clearing, the asset and task state stores, pending
+  partitioned runs) answer `501` "not available in Dexaflow yet" instead of
+  `404`, and their list reads answer empty; a state store PATCH no longer
+  reaches the task instance Mark-as handler. Mark as failed
+  and Clear were re-verified in a browser against the new bundle: the state
+  badge updates without a reload and the page stays responsive
+  (apache/airflow#67883, #67884), and each attempt tab after a Clear loads its
+  own log (#241). (#835)
+- **One wide fan-out no longer stalls scheduling for every tenant.** With
+  synchronous dispatch (the default) and the default Kubernetes client limit of
+  5 requests a second, a run with thousands of ready tasks spent every tick's
+  30 s step timeout creating pods: no other run of any tenant advanced and no
+  cron run was created, so with `catchup: false` those slots were lost. A tick
+  now spends at most `scheduler.dispatch.tick_budget` (default `5s`) on
+  dispatch; the remaining ready tasks stay `scheduled` with no dispatch attempt
+  charged, and the next tick starts at the run after the one that was cut. Due
+  cron runs are created before the tick dispatches. A pod create the client
+  rate limiter refuses before sending it is now treated like a full dispatch
+  buffer (offered again next tick) instead of a failed dispatch, so it no longer
+  counts toward the attempts that end in `dispatch_failed`. The new
+  `scheduler.dispatch.max_per_tenant_per_tick` (default `0`, no cap) bounds how
+  many tasks one tenant dispatches in a tick. Set `tick_budget` to `0s` for the
+  previous behavior.
+- **A short control plane, Postgres or Redis outage no longer fails a task as
+  the user's failure.** The agent used to read its task spec once and push its
+  return value once, and the control plane answered every store error with gRPC
+  `Internal`, which the agent did not retry. A Postgres failover, a Redis
+  restart or a rolling restart of a single control-plane replica therefore
+  failed every task that started or finished inside it, spending the task's
+  retries (none by default). The agent now retries `GetTaskSpec`, the variable,
+  connection and XCom reads and `PushXCom` with jittered backoff for up to 2
+  minutes of wall time per phase (all the reads before the task runs share one
+  budget, all the output pushes another, and the time inside each try counts),
+  retries an `Internal` answer to its state report for up to 2 minutes of
+  backoff, and the control plane answers a store outage with `Unavailable`.
+  The status message the task sees is unchanged and still redacted. An outage
+  longer than 2 minutes fails the attempt as before. Refs #1594.
+- **The agent notices a silent control plane in seconds instead of minutes.**
+  The agent's gRPC channel had no keepalive and its calls had no deadline, so a
+  control plane that stopped answering without closing the connection (a lost
+  node, a hung process, a partition) froze the agent: one heartbeat never
+  returned, the heartbeat loop stopped and the healthy task was reaped as
+  `agent_lost` after 90 seconds, and a warm worker waiting for work held its
+  pod until the kernel gave up on the socket. The agent now pings an idle
+  channel after 20 seconds and drops it when a ping goes unanswered for 10
+  seconds, and every unary call has a deadline (10 seconds for a heartbeat, 30
+  seconds for the rest). The control plane's keepalive enforcement already
+  permits these pings and still sends none of its own. Fixes #946.
+- **The default DAG version label follows the DAG's content.** Without
+  `--dag-version`, `dexaflow compile`, `deploy` and `build` now label a DAG
+  `<git describe --tags --always>-<hash>`, or `dev-<hash>` outside git, where
+  the hash covers the DAG source, `include_paths`, the dbt project and
+  `dbt.manifest`, a project Dockerfile and its `.dockerignore`, the resolved
+  `dexaflow.yaml` and the CLI version. Deploying edited code again, from a
+  dirty tree or from a folder outside git, no longer fails with `409` after a
+  full build and push, and each DAG of a workspace gets its own label. Before
+  building, `deploy` now asks the control plane for the DAG's versions: when
+  the label is the current version it prints `already deployed as <label>` and
+  skips the build, push and register (`--trigger` still runs), so re-running a
+  CI job on unchanged sources succeeds; when the label belongs to an older
+  version it stops before building, since rolling back is not supported yet
+  (#1702). A `401` on that check stops the deploy, a `403`, a network error or
+  a `5xx` after one retry lets it proceed, and the new `--force` flag skips the
+  check. A deploy that registers content the server already holds now warns
+  that nothing new was registered. The label is a valid image tag, so a git tag like
+  `release/v1` or `v1+build` no longer breaks `tag_strategy: version`. With
+  that default strategy a tagged release is now pushed as `:v1.2.3-<hash>`
+  instead of `:v1.2.3`; set `tag_strategy: git_tag` to keep the plain release
+  tag. `git_tag` now tags with the git tag on the project's `HEAD` and `custom`
+  with the version label; both used to act as `git_sha`. A `409` on `deploy` or
+  `push` now explains which way out applies. An explicit `--dag-version` is
+  used unchanged and never checked. (#1703)
+- Behavior change: **New DAGs are now paused at creation, as in Airflow.** A DAG registered for
+  the first time starts paused, so its schedule creates no run, catchup
+  included, until someone unpauses it (UI switch or `dexaflow admin dags
+  unpause <dag_id>`); a manual trigger is accepted and its run waits in
+  `queued` until the unpause. Until now a new DAG started
+  active and a scheduled one began creating runs right after its first deploy.
+  The server setting `dags_are_paused_at_creation`
+  (`DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION`; on Helm the chart value
+  `config.dagsArePausedAtCreation`)
+  defaults to `true`; set it to `false` to register new DAGs active as before.
+  A DAG can decide for itself with Airflow's `is_paused_upon_creation`
+  argument, which the parser now compiles into `dag.json` and which wins over
+  the setting. Both apply only on creation: a redeploy never pauses or
+  unpauses an existing DAG, so DAGs that exist before the upgrade keep their
+  state; a DAG deleted and deployed again comes back paused. A DAG that
+  already passes `is_paused_upon_creation` now compiles into a different
+  `dag.json`, so its spec hash changes: redeploy it under a new
+  `--dag-version`, since the same version label is refused with 409.
+  `dexaflow lite` registers new DAGs active, so a DAG run locally keeps
+  its schedule from the first save. The DAG details API now reports the DAG's
+  real `is_paused_upon_creation` (null when unset) instead of a constant
+  `false`. (#1705)
+- Behavior change: **a run of a paused DAG now waits in `queued` until the DAG
+  is unpaused, as in Airflow 3.** Until now only scheduled run creation
+  checked the pause: a manual trigger (UI, `POST /api/v2/dags/{id}/dagRuns`,
+  `dexaflow runs trigger`, `dexaflow deploy --trigger`) or a cleared run of a
+  paused DAG started at once. The scheduler now leaves a queued run of a
+  paused DAG alone: no task instance is created and nothing is dispatched.
+  The API is unchanged and still answers with the queued run. A waiting run
+  still counts toward `max_active_runs`, and when a clear puts a running run
+  back in `queued`, its tasks that are still running keep counting toward
+  `max_active_tasks` and their pool's slots. Unpausing the DAG (UI switch or
+  `dexaflow admin dags unpause <dag_id>`) starts the waiting runs on the next
+  scheduler tick; the unpause does not hold back queued runs past
+  `max_active_runs`. Runs in `running` keep going when their DAG is paused.
+  A run that a clear put back in `queued` waits like any queued run, even
+  while some of its tasks run: those tasks finish, and nothing downstream or
+  retried starts until the unpause. Since new DAGs are paused at creation, a first
+  `dexaflow deploy --trigger` now leaves its run queued until you unpause the
+  DAG. `dexaflow lite` registers new DAGs active, so the local loop is
+  unaffected. (#1705)
+- The MCP `unpause_dag` tool now plans first whenever the paused DAG has
+  queued runs waiting for the unpause (runs triggered or cleared while it was
+  paused), even when the DAG has no schedule, and the plan says how many
+  queued runs will start. `apply_plan` refuses an unpause plan when more runs
+  are queued than the plan showed. The `clear_task` description says that a
+  clear on a paused DAG waits until the unpause. (#1705)
+- **`pkg/client`: `ClientInterface` and `ClientWithResponsesInterface` gain
+  the API token methods.** `CreateAPIToken`, `CreateAPITokenWithBody`,
+  `ListAPITokens` and `RevokeAPIToken` (and their `WithResponse` variants) are
+  new methods of the generated interfaces. Code that only calls the client is
+  unaffected; a type of your own that implements one of these interfaces (a
+  hand-written mock, for example) must add the new methods, or embed the
+  interface, to keep compiling. (#1708)
+- Behavior change: `dexaflow deploy` no longer goes to `http://localhost:8080`
+  when no server is set anywhere (no `--server`, `--target`,
+  `DEXAFLOW_SERVER_URL` or `server_url`). It stops before building and says
+  how to set one; a pipeline that relied on the default passes
+  `--server http://localhost:8080`. A machine set up for Lite (`dexaflow
+  setup`) keeps the local default. Other commands are unchanged. (#1705)
+- Breaking change in the Go client `pkg/client`: the register operation gained
+  the optional `is_paused` query parameter, so `RegisterDagVersion`,
+  `RegisterDagVersionWithBody`, their `WithResponse` variants, the matching
+  `ClientInterface` and `ClientWithResponsesInterface` methods, and
+  `NewRegisterDagVersionRequest` / `NewRegisterDagVersionRequestWithBody` now
+  take a `*RegisterDagVersionParams` argument. Callers pass `nil` to keep
+  today's behavior. The HTTP API itself is unchanged for existing callers:
+  the parameter is optional, and the answer only gains the `dag_created` and
+  `is_paused` fields. (#1705)
+- **Task logs print `[dexaflow]` lifecycle lines, and the scaffold and first
+  tutorial start from a workspace.** The lines the task runtime writes around
+  your code (`loading`, `pulled`, `returned`, `running on_failure_callback`)
+  now start with `[dexaflow]` instead of `[leoflow]`; a log search or alert
+  that matches the old prefix needs the new one for images built with this
+  release. The `dag.py` that `dexaflow init` and `dexaflow new` scaffold has a
+  plain docstring, and "Build your first DAG" now starts with
+  `dexaflow workspace init` and `dexaflow new`, the layout you deploy from
+  (#1709).
+- **deploy reads the image digest from the registry.** After the container
+  tool builds and pushes, `dexaflow deploy` (and `compile --build --push`
+  for a multi-platform build) reads what the tag names from the registry
+  itself, with the credentials `docker login` or your cloud's credential
+  helper already wrote, instead of asking the tool with `inspect` and
+  `manifest inspect`. `deploy --skip-build` therefore registers an image any
+  tool pushed (a CI job, a cloud builder, another machine) without a container
+  tool or a local copy of the image, so the `docker pull` the split pipeline
+  recipe needed is gone. Only a registry on `localhost`, a `*.localhost` name
+  (as k3d names its registries) or a loopback address may answer over plain
+  HTTP; every other one, private addresses included, is read over verified
+  TLS. `*.localhost` names are never sent through a proxy (#1706, ADR 0075).
+- **`dexaflow deploy` with no registry names the right sign-in for each kind of
+  registry.** The error used to end with `docker login ghcr.io` for everyone. It
+  now lists the cloud CLI session the CLI reads for Artifact Registry and GCR
+  (`gcloud auth login`), ECR (`aws sso login`, `aws configure`, environment
+  credentials or an instance role) and ACR (`az login`), `docker login
+  <registry>` for any other registry, and that a build by a local container
+  tool pushes with that tool's own login, which the deploy preflight names.
+- **A new install's bootstrap admin is `admin@dexaflow.local`.** A first
+  `dexaflow setup` proposes it, and a server started with a bootstrap password
+  and no `DEXAFLOW_BOOTSTRAP_EMAIL` creates it. An existing install keeps
+  `admin@leoflow.local` and logs in as before: the server resolves the default
+  address to that admin when it exists and the new one does not (or when only
+  the old one holds the admin role), and logs that it kept it, so no second
+  admin is created and the user is never renamed. The same resolution covers a
+  Lite reinstall over a kept datastore, the `dexaflow lite` ready banner,
+  `dexaflow lite reset-password` and the login hint. The Google SSO Helm example
+  now lists `admin@dexaflow.local` in `breakGlassEmails`; an older install keeps
+  listing `admin@leoflow.local`. (#1709)
+- **`dexaflow compile --build --push` and `dexaflow push` register the image
+  by digest.** `compile --build --push` now writes the pushed image as
+  `<repository>@sha256:<digest>` into `dag.json`, from the read of the pushed
+  digest that `dexaflow deploy` already makes, and prints it in its summary.
+  When only that read fails (the push succeeded), the compile keeps the tag
+  and warns with the reason and the fix; `deploy` still stops there.
+  `dexaflow push` resolves an image `dag.json` names by tag to its digest in
+  the registry before registering it, with the credentials `deploy` reads and
+  the `registry.auth_method` of the project (the dag.json's directory, the
+  working directory, or the new `--project <dir>`), and takes `--image <ref>`
+  to register another image: a tag that must resolve, or a pinned reference
+  used as given; an invalid reference is refused before anything is read.
+  When the registry cannot be read for a tag from `dag.json`, `push`
+  registers the tag with a warning that says why, and a server under
+  `deploy.require_digest: enforce` refuses it with an error naming the reason
+  and the fix. The split pipeline therefore passes `enforce` and its versions
+  can be promoted. (#1703)
+- **With warm pools on, a deploy drains the previous version's warm pool, and
+  a DAG that declares `min_idle_workers` gets the new version's pool before its
+  first run.** The warm pool reconciler keeps a pool for the version of an
+  active run only while that version is its DAG's current one. When another
+  version becomes current (`dexaflow deploy`, `dexaflow promote`,
+  `dexaflow rollback` or `PUT /api/v2/dags/{dag_id}/currentVersion`), the
+  previous version's idle workers are deleted at the next reconcile, and a
+  worker serving an attempt finishes it first; runs already in flight keep
+  their version, and their later attempts take dedicated pods. The current
+  version of an unpaused DAG that declares `min_idle_workers` gets that many
+  idle workers (up to `execution.max_pool_size`) as soon as it is current,
+  even with no run, within `execution.max_warm_pods_per_tenant`: prewarmed
+  pools share what the cap leaves after the idle floors of the tenant's
+  versions with an active run, by DAG id; a pool whose share drops shrinks
+  with `execution.worker_idle_ttl`, and a run's idle floor is created at
+  once on top of those workers until they retire (counted as
+  `warm_pool_run_floor_over_retiring_prewarm`); a tenant whose prewarm
+  floors do not fit is logged and counted as `warm_pool_prewarm_rationed`
+  when that set changes. The operator floor `execution.min_idle_workers`
+  prewarms nothing: it still applies from a version's first run, as before.
+  The server
+  logs each prewarm and drain and counts them in
+  `dexaflow_scheduler_decisions_total` (`warm_pool_prewarm_started`,
+  `warm_pool_drain_started`). The deploy's `warm pool` line now says the
+  workers are warming, start when the DAG is unpaused, or start with the
+  version's first run, and that the previous pool is draining. Warm pools
+  stay off by default. (#1707)
+- **`compile --build` and `deploy` warn when a project Dockerfile shadows
+  `dexaflow.yaml`.** A project Dockerfile is built as-is (ADR 0003), so
+  `base_image`, `dependencies`, `connectors`, `system_packages` and
+  `include_paths` do not reach the image. The build now prints a warning naming
+  each of them the project's own `dexaflow.yaml` (or legacy `leoflow.yaml`)
+  sets, instead of building an image without them in
+  silence. `build.context` (other than `.`) and `build.labels`, accepted and
+  applied by nothing, now earn a warning from `validate`, `compile` and
+  `deploy`, and the JSON schema describes both as ignored. (#1709)
+
+### Fixed
+
+- **A trusted-issuer outage no longer reads as failed browser sign-ins.** When
+  the issuer's JWKS cannot be downloaded, the handoff at `POST
+  /api/v2/auth/session` now answers `503` (or sends the browser to the
+  external sign-in with `error=server_error`) and writes no
+  `issuer.login.failure` audit row, as the bearer path already did. A request
+  waiting for another request's JWKS download now gives up when its own
+  deadline or cancellation arrives instead of waiting for the download's
+  timeout. (#1588)
+- **`@task(...).override(...)` compiles.** A DAG that names its fanned-out
+  TaskFlow tasks with `estimate.override(task_id=f"estimate_{n:02d}")(n)`, the
+  standard Airflow 3 spelling, failed `dexaflow compile` and Lite with
+  `AttributeError: 'function' object has no attribute 'override'`. The parser now
+  supports `.override(**kwargs)` with Airflow's semantics: the arguments are the
+  ones `@task(...)` takes (`task_id`, `retries`, `retry_delay`,
+  `execution_timeout`, `trigger_rule`, `pool_slots`, ...), merged over the
+  decorator's, the original task is left unchanged, and the call can be chained.
+  Each overridden task runs the decorated function under its own task_id.
+  `on_failure_callback` in `.override(...)` is refused with a clear error (the
+  runtime reads it from the decorator), and `.override(...).expand(...)` stays
+  refused like any dynamic task mapping. (#1681)
+- **Lite accepts a workspace whose DAGs pin different versions of the same
+  package.** `dexaflow lite` refused to start when two projects pinned, for
+  example, `pandas==1.5.3` and `pandas==2.2.3`, with "a shared venv cannot host
+  conflicting versions". That check was left over from the single shared venv:
+  Lite already provisions one venv per DAG under
+  `~/.dexaflow/dev/venvs/<dag_id>/` and runs each task with its own DAG's
+  interpreter, so the pins never meet. The workspace now resolves and each DAG
+  installs its own pins, as the local dev loop docs describe. A dependency entry
+  that is not a pip specifier is still reported with its project before any venv
+  is built (#1679).
+- **A lost task attempt is no longer hidden behind 100 live ones.** The pod-lost
+  and dispatch-lost reapers always listed the 100 oldest candidates and deferred
+  every one whose pod was alive, so with 100 or more older attempts running or
+  Pending (long tasks, or a capacity shortage) a newer attempt whose pod vanished
+  before its first heartbeat, or whose create never happened, was never examined:
+  it kept its pool slot and its `max_active_tasks` charge and its run never
+  finished. Both lists now page by keyset and keep their place across reaper
+  cycles, so such an attempt is reaped within one extra 30 s cycle per 100
+  candidates ahead of it. The dispatch-lost threshold is now applied in the query,
+  like the pod-lost grace, so rows inside it never take a slot. The Lite passes
+  over running attempts page the same way (#1597).
+- **Task ids that differ only by case, `_` or `.` no longer share a pod
+  teardown.** The `leoflow.io/task-id` pod label is lowercased and maps `_` and
+  `.` to `-`, so two tasks of one run such as `load_a` and `load-a` got the same
+  label. Tearing down one stopped the other's live pod, and the presence read of
+  a task with no pod saw its sibling's pod, so its pod-lost and dispatch-lost
+  reaps deferred forever. Task pods now carry their exact task id in a
+  `leoflow.io/raw-task-id` annotation, and the teardown, the pod-presence check
+  (live and cached) and the reconciler's infra confirmation filter on it. Pods
+  created before this release have no annotation and keep matching on their
+  labels (#1598).
+- **A scheduler leader cut off from its database now steps down.** The leadership check and the campaign attempt ran with no deadline on a session with no statement timeout, so when the database host disappeared without a TCP reset (a failover that moved its address, a partition, a lost node) the leader waited on the dead socket for about 15 minutes without stepping down, while a follower on the new primary could take the lock: two schedulers at once. Each check and attempt now runs under a deadline of one check interval (5 s), a check that cannot confirm the lock in time counts as failed, and the leader steps down after 3 of them. The leader session also asks Postgres for TCP keepalives and a 60 s `tcp_user_timeout`, so the server frees the lock of a vanished leader within about a minute instead of about two hours. (#1599)
+- **One connection no key can decrypt no longer empties the connections list.** A connection whose `extra` no configured secret key opens (after a key rotation that dropped the old key, for example) made `GET /api/v2/connections` answer 500 for every connection of the tenant, so the Admin Connections page showed nothing. The list now returns every connection and shows that one with its `extra` set to `null` and `extra_unreadable: true`, logging a warning, so the Admin page can still open it; reading or updating it alone answers 500 with a message that names the connection and how to recover (add the old key back as a later `DEXAFLOW_SECRET_KEY` entry, or delete the connection and set it again). Variables got the same treatment in 0.5.4. (#1677)
+- **A clear moves a task to the pool its new version names, and task instances
+  report their real pool and size.** A clear that re-runs a task on a newer
+  version (`run_on_latest_version`) took the task's `pool_slots` from that
+  version but kept the pool the task had before, so a task the new version
+  moved to another pool was still charged to the old one: the pools API counted
+  it there while the admission gate charged the new pool. The clear now
+  re-binds the pool together with the size; a task moved back to the default
+  pool is charged to `default_pool`, and a task the version no longer declares
+  keeps its pool. Task instance responses (the list, the single instance and
+  its tries) reported `pool: default_pool` and `pool_slots: 1` for every task;
+  they now report the pool and size the instance is charged, and the task
+  definition endpoints report the pool and size the spec declares. (#1589)
+- **A reclaimed warm attempt is no longer failed as `dispatch_lost` the moment
+  it is re-dispatched.** With warm pools on, an attempt a warm worker was
+  handed but will not run is moved back to scheduled and dispatched again. That
+  re-place kept the first episode's `queued_at`, so when the attempt had already
+  waited past the 3 minute dispatch-lost threshold the reaper failed it as
+  soon as it was queued again, spending an infra attempt. The re-place now
+  clears `queued_at`, the way a buffered re-offer already did, so the
+  re-dispatched attempt starts a fresh dispatch-lost clock.
+- **A slow dispatch buffer no longer has its tail failed as `dispatch_lost`.**
+  With buffered dispatch on (`scheduler.dispatch.buffer_size` above 0), a task
+  is recorded `queued` when the buffer accepts it, so the 3 minute
+  dispatch-lost clock ran while the request still waited in memory. A buffer
+  that took longer than that to drain (512 requests at the default client QPS
+  with garbage collection sharing it) had its tail reaped although nothing was
+  lost, spending infra attempts and wasting pods. A request that waited in the
+  buffer more than half the dispatch-lost threshold (90 s) is now not
+  dispatched: its task goes back to scheduled with no dispatch attempt charged
+  and a fresh `queued_at`, and is offered again on a later tick. The warning
+  `dispatch request waited in the buffer past its bound` is logged for each.
+- **Scheduler loop and dispatch metrics are now written.**
+  `dexaflow_scheduler_loop_duration_seconds` was registered and scraped but
+  nothing in the loop observed it, so every dashboard built on it showed an
+  empty histogram that read as healthy. Every leader tick now observes it. The
+  scheduler also counts released retries in `dexaflow_task_retries_total`,
+  buffered dispatch observes `dexaflow_dispatch_latency_seconds`, the
+  `dexaflow_dispatch_queue_depth` gauge falls back to 0 as workers drain the
+  queue (it used to keep its last high value), and every task pod create is
+  counted in `dexaflow_pods_created_total` with its latency in
+  `dexaflow_task_pod_creation_duration_seconds`. The legacy `leoflow_*` names
+  carry the same values.
+- **Operators built on the Task SDK's resumable jobs run without `durable=False`.**
+  `BigQueryInsertJobOperator` and any other operator using `ResumableJobMixin`
+  (Airflow 3.3) read `ti.stats_tags` before submitting their job, and the task
+  instance the runtime hands operators had no such attribute, so the task failed
+  before doing any work unless the DAG passed `durable=False`. The task instance
+  now carries `stats_tags` (`dag_id` and `task_id`). The job is still submitted
+  fresh on each attempt, as with `durable=False`: Dexaflow does not keep the task
+  state store yet, and the operator logs that crash recovery is disabled. (#1710)
+- **A running warm-pool attempt is no longer failed as `pod_lost` because its
+  binding was missed.** A warm attempt whose worker binding did not land ran
+  unbound, so the pod-lost reaper failed it as `pod_lost` 60 s after it started
+  and killed the running task, and the reconciler could scale its worker down.
+  The binding was missed when the worker acked before the tick recorded the task
+  `queued` (the default synchronous dispatch), when the write hit a database
+  error, or when the ack arrived after the 30 s lease. An ack now binds while the
+  task is still `scheduled`, a failed binding write is retried with backoff, and
+  a late ack still binds the attempt for up to 5 minutes after its lease expired.
+  A worker whose lease expired is also no longer offered a second assignment
+  while its ack can still arrive. (#1600)
+- **The warm-pool reconciler no longer deletes a worker that took an attempt
+  during its check.** The reconciler read which warm workers were busy once, at
+  the start of a check, and then issued its creates and deletes at the
+  Kubernetes client's rate limit, which takes minutes on a large pool. A worker
+  that was assigned an attempt in the meantime still counted as idle and could
+  be deleted as excess, killing the attempt. Every delete of a check now runs
+  before any create, and the reconciler re-reads the busy workers right before
+  each delete and keeps any worker that is busy, or every worker when that read
+  fails. (#1601)
+- **Version and image tags come from the project's own git repository.** The
+  `git describe` and commit sha behind the default version label and
+  `tag_strategy: git_sha` ran in the directory the CLI was started from, so
+  `dexaflow deploy ../etl` labeled the DAG with another repository's commit.
+  They now run in the project directory. `tag_strategy: git_sha` outside git
+  tagged the image `repo:` with an empty tag; it now falls back to the version
+  label with a warning. (#1703)
+- **Registering a DAG version is one transaction, and a refused or no-op
+  register no longer changes the live schedule.** Register used to rewrite the
+  DAG's schedule, catchup, start date, max active runs, description, owner and
+  tags before deciding whether the version was accepted, outside a
+  transaction. A push refused with 409, a re-push of an older `dag.json` that
+  is already registered, or a failure between statements left the rejected
+  spec's schedule live while the previous version stayed current, and
+  concurrent pushes of one DAG could interleave. Register now runs in one
+  transaction that locks the DAG's row, decides on the version first and
+  updates the DAG's settings only when the new version becomes current. A
+  re-push of already registered content writes nothing; the same content
+  pushed concurrently registers once and the other pushes answer
+  `created: false`. (#1702)
+- **The examples deploy from any builder.** Every example shipped a `Dockerfile`
+  `FROM leoflow-base:py3.11`, an image that exists only on a host that ran
+  `dexaflow lite`, and a shipped Dockerfile is built verbatim, so `dexaflow
+  deploy examples/<name>` failed on CI runners and cluster builders, and the
+  provider packages that `connectors:` declares never reached the images of the
+  Google Cloud examples. The examples now ship `dag.py` and `dexaflow.yaml`
+  only, and the image is generated from the yaml on the published runtime base.
+  The deploy and CI/CD pages now match the CLI: the Dockerfile-free build is the
+  main path, the platform comes from `build.platforms` (there is no `deploy
+  --platform`), the server variable is `DEXAFLOW_SERVER_URL`, CI mints a token per
+  job because tokens expire after an hour, only `deploy` pins the image by
+  digest, and rollback is documented as it works today. A test now fails when a
+  `dexaflow ...` command written in a code block or inline code span of the docs
+  or examples uses a flag or subcommand the CLI does not have (#1709).
+- **Reusing the name of an expired API token is now recorded in the audit log.**
+  `dexaflow auth create-token --name` with the name of an expired token retires
+  that token by revoking it, and wrote no audit record, so the old token read as
+  revoked with no trace of who or what revoked it. The create now writes an
+  `api_token.retire_expired` audit record in the same transaction, with the old
+  token's id and name, when it expired and the id of the token that took its
+  name. (#1768)
+- **The UI's Code tab shows the source of the version it names after a
+  rollback.** `GET /api/v2/dagSources/{dag_id}` ignored `version_number` and
+  always served the current version's source labelled as version 1, so after
+  `dexaflow rollback` the Code tab showed the rolled-back source under the newer
+  version's label. It now follows Airflow 3.2: `version_number` selects the
+  version, without it (or with 0) the newest version is served, and an unknown
+  version is a 404. The Go client reaches a given version with
+  `client.WithDagSourceVersion(n)`, and the MCP `dag://source` resource keeps
+  serving the current version's source. The DAG details' `latest_dag_version`
+  now carries every field of that version (`bundle_version`, `image`,
+  `spec_hash`, `is_current`, `created_by`) as the versions listing does, and a
+  task instance's `dag_version` is the version its run was created with instead
+  of the DAG's newest one. (#1741)
+- **The Pools page no longer shows "(undefined)" after each pool name.** The
+  pool responses of `/api/v2/pools` now carry `"team_name": null`, as Airflow
+  3.2.1's `PoolResponse` does. The bundled Airflow UI appends the team in
+  parentheses unless the field is `null`, so a response without it rendered
+  "etl_pool (undefined)". Dexaflow has no teams, so the value is always `null`,
+  like the one variables already carry.
+- **Queued runs start under `max_active_runs`, as in Airflow.** The scheduler
+  now moves a queued run to `running` only while fewer than `max_active_runs`
+  runs of its DAG are running, oldest logical date first (close to Airflow's
+  `run_after` order); the others stay `queued`, with nothing dispatched, until
+  a slot frees. Until now the cap applied only when a run was created, so runs
+  re-queued by clears all ran at once, and unpausing a DAG started every run
+  waiting for it. A run that a clear re-queued now goes back to `running`, with
+  a new start date, when it starts, instead of staying `queued` while its tasks
+  ran. The start is written only if the run is still queued, so a run a user
+  marks in the meantime keeps the user's state. `PATCH
+  /api/v2/dags/{dag_id}/dagRuns/{run_id}` with `"state": "running"`, which let
+  a run skip the pause and the cap, now stores `queued` (and answers with it;
+  the audit entry records `requested_state: running`), except on a run already
+  running, which it leaves as is; a PATCH to `queued` clears the run's start
+  date. The new scheduler
+  decision `max_active_runs_start_cap` counts each queued run the cap holds,
+  once per tick. Rolling back to 0.5.3 starts every queued run at once. (#1766)
+- **A clear onto a version with other tasks is refused instead of leaving the
+  run half re-bound.** Clearing with `run_on_latest_version` re-binds the run to
+  the DAG's current version, but kept only the task instances the run already
+  had: a task that version added got no task instance, so the run finished
+  without running it, and a task it removed kept its task instance with no task
+  behind it. Airflow creates the missing task instances and marks the dropped
+  ones `removed`; until Dexaflow does the same, both Clear routes
+  (`clearTaskInstances` and `dagRuns/{dag_run_id}/clear`) answer `409` when the
+  current version adds or removes a task, with a `detail` that names the tasks
+  and the ways out (clear without `run_on_latest_version`, or trigger a new
+  run). The dry run answers the same and nothing is cleared. The UI's Clear
+  dialog shows an empty preview for it, without the reason, which the API
+  response carries. A clear across several runs (`include_past`,
+  `include_future`) checks every run before clearing any and is refused as a
+  whole, saying how many runs differ; a version registered during that clear
+  can still refuse a later run. An unknown `dag_run_id` answers `404`. A
+  version with the same tasks re-binds as before. (#1702)
+
+### Security
+
+- **Variables can be encrypted at rest** (#507). Set
+  `DEXAFLOW_VARIABLE_ENCRYPTION=on` (`variable_encryption: on`) to encrypt every
+  Variable value with `DEXAFLOW_SECRET_KEY`, the AES-256-GCM key connections
+  already use; the server also encrypts the Variables stored in plaintext at
+  startup, and key rotation and `dexaflow lite migrate-key` move encrypted
+  Variables with the connection secrets. The API reports `is_encrypted` for
+  each Variable. The default stays `off`, so 0.5.4 stores Variables exactly as
+  0.5.3 does: turn it on once every replica runs 0.5.4, and before rolling back
+  to 0.5.3 set it to `decrypt` and restart, which restores the plaintext. `on`
+  and `decrypt` refuse to start without a usable key. A Variable value can no
+  longer start with `dexaflow:enc:v1:`, the tag of an encrypted value. A
+  Variable no configured key opens is listed with its value masked and
+  `value_unreadable: true` instead of failing the whole list.
+- **Run, task instance, XCom and log reads check the tenant in SQL.** The
+  queries behind the run list and detail, the task instance list and its
+  attempts, the XCom lookup, the log reader's attempt range and the run delete
+  now carry a `tenant_id` predicate of their own. Until now they trusted the
+  caller to have resolved the internal DAG or run id inside the right tenant
+  first, so tenant isolation rested on a convention that every code path had to
+  follow. With a single tenant nothing changes. The remaining queries keyed by
+  internal ids are tracked in #508.
+- **Agent calls check the token's tenant in SQL.** The task spec read, the
+  heartbeat, the state report, the reschedule and the liveness check behind a
+  task's secret reads used to find the task instance by the run id in the agent
+  token alone. They now also filter on the token's `tenant_id`, so a token can
+  only reach task instances of its own tenant. Every task token already carries
+  the tenant, so running tasks are unaffected. Part of #508.
+- **Run, task instance and DAG version writes check the tenant in SQL.** Marking
+  a run or a task's state, clearing tasks (with their XCom), re-opening a run,
+  clearing a DAG's history, and registering a DAG version wrote by internal ids
+  that the caller had resolved inside its tenant. Each of those writes now
+  carries a `tenant_id` predicate of its own; a DAG version, which has no tenant
+  column, is checked through its DAG. With a single tenant nothing changes.
+  Completes #508.
+- **`install.sh` verifies the release signature when cosign is installed.** Before, it only checked the archive against `checksums.txt` from the same release, so a tampered release passed. With cosign v2 or later on `PATH`, it now verifies the keyless signature of `checksums.txt` against the exact release workflow and tag (`dexadata/dexaflow`, or `neochaotic/leoflow` for releases before v0.5.0) and refuses to install on any failure. Without cosign it installs as before and prints one line saying the signature was not checked. `DEXAFLOW_INSTALL_REQUIRE_SIGNATURE=1` makes a missing cosign fatal, and `DEXAFLOW_INSTALL_SKIP_SIGNATURE=1` skips the check for a machine that cannot reach Sigstore (both also as `LEOFLOW_*`). The installation docs now give the exact signer identity instead of a pattern that matched any workflow on any ref. (#1563)
+- **The saved token is only sent to the server it was saved for.** The token
+  `dexaflow auth login` stored next to `server_url` in `~/.dexaflow/config.yaml`
+  was sent to whatever control plane `--server`, `--server-url` or
+  `DEXAFLOW_SERVER_URL` named, so pointing a command at another server handed
+  it your token. It is now withheld from any other server; the call then fails
+  with a `401` that names both servers and the login command to run. A token
+  saved without a `server_url`, and tokens given with `--token` or
+  `DEXAFLOW_TOKEN`, are unchanged. The config file is also rewritten
+  atomically at `0600`, keeping the order and comments of its other keys
+  (#1102).
+
 ## [0.5.3] - 2026-10-12
 
 ### Added

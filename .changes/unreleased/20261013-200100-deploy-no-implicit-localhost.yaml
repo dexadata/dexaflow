@@ -1,9 +1,0 @@
-kind: Changed
-body: |-
-  Behavior change: `dexaflow deploy` no longer goes to `http://localhost:8080`
-  when no server is set anywhere (no `--server`, `--target`,
-  `DEXAFLOW_SERVER_URL` or `server_url`). It stops before building and says
-  how to set one; a pipeline that relied on the default passes
-  `--server http://localhost:8080`. A machine set up for Lite (`dexaflow
-  setup`) keeps the local default. Other commands are unchanged. (#1705)
-time: 2026-10-13T20:01:00.000000000-03:00
