@@ -148,6 +148,16 @@ a security boundary: `params` is the run's `conf`, which anyone who can
 *trigger* the DAG supplies (`execute:dag`, a lower bar than authoring it), so an
 un-quoted value would let a trigger inject arbitrary shell (issue #489).
 
+A command whose template cannot render (an undefined name such as
+`{{ nope.x }}`, a syntax error, or an expression the sandbox refuses) fails the
+attempt without running, and the task log names `bash_command` and the Jinja
+error. The raw `{{ ... }}` text is never run
+([ADR 0084](/project/adrs/0084-template-render-errors-fail-the-task/)).
+
+Braces meant for another tool, such as `docker ps --format '{{.Names}}'`, are
+read as Jinja too and fail to parse. Wrap them in a raw block, as on Airflow:
+`docker ps --format '{% raw %}{{.Names}}{% endraw %}'`.
+
 Practical consequence — **write interpolations unquoted**, and do not wrap them
 in your own quotes:
 
@@ -265,9 +275,14 @@ How it works, and the Phase-A limits:
   condition is met), or `mode="reschedule"` (ADR 0040 Phase B, #380/#389) — the
   pod is released between pokes and the scheduler re-dispatches the sensor,
   preserving its `try_number`, once its next-poke time passes.
-- **Jinja templating** is best-effort (`render_template_fields` runs with a
-  minimal context); for rich macros (`{{ ds }}`, `{{ ti }}`, custom params),
-  compute the value in a `@task` and pass it in.
+- **Jinja templating** renders the operator's `template_fields` with the run
+  context (`{{ ds }}`, `{{ logical_date }}`, `{{ macros.ds_add(ds, 1) }}`,
+  `{{ params.x }}`, `{{ var.value.x }}`). A field that fails to render fails
+  the task attempt before `execute()`, with the field and the Jinja error in the
+  task log, as on Airflow
+  ([ADR 0084](/project/adrs/0084-template-render-errors-fail-the-task/)). For a
+  context key Dexaflow does not provide yet, compute the value in a `@task` and
+  pass it in.
 - A native task type (`bash`/`python`) always wins when it matches, so
   `BashOperator`/`HttpOperator`/`PythonOperator` keep their fast path.
 

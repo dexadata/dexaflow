@@ -2,6 +2,9 @@
 
 import itertools
 import json
+import sys
+import types
+from datetime import datetime, timezone
 
 import pytest
 
@@ -99,20 +102,99 @@ def test_render_bash_no_template_is_unchanged():
     assert runner._render_bash("echo hello", {"ds": "x"}) == "echo hello"
 
 
-def test_render_bash_bad_template_falls_back_to_raw():
-    # A broken/undefined template must never fail the task — fall back to the raw command
-    # (the env vars $LEOFLOW_DS/$AIRFLOW_VAR_* still reach it).
-    raw = "echo {{ nope.bad }}"
-    assert runner._render_bash(raw, {}) == raw
+def test_render_bash_undefined_template_fails_with_field_and_error():
+    # A template that cannot render must fail the attempt, never run the raw
+    # "{{ ... }}" text (#1845). The error names the field and keeps Jinja's message.
+    with pytest.raises(runner.TemplateRenderError) as info:
+        runner._render_bash("echo {{ nope.bad }}", {})
+    assert info.value.field == "bash_command"
+    assert "'nope' is undefined" in str(info.value)
+    assert "'bash_command'" in str(info.value)
+
+
+def test_render_bash_syntax_error_fails():
+    with pytest.raises(runner.TemplateRenderError) as info:
+        runner._render_bash("echo {{ ds", {"ds": "2026-06-14"})
+    assert info.value.field == "bash_command"
+
+
+def test_render_bash_literal_braces_need_a_raw_block():
+    # A command that carries literal braces for another tool (docker --format, a Go
+    # template) is a Jinja syntax error now that render errors fail; a raw block,
+    # as on Airflow, passes the braces through untouched and unquoted.
+    with pytest.raises(runner.TemplateRenderError):
+        runner._render_bash("docker ps --format '{{.Names}}'", {})
+    out = runner._render_bash(
+        "docker ps --format '{% raw %}{{.Names}}{% endraw %}' {{ ds }}", {"ds": "2026-06-14"})
+    assert out == "docker ps --format '{{.Names}}' 2026-06-14"
 
 
 def test_render_bash_sandbox_blocks_template_injection():
     # The bash command is rendered with a SandboxedEnvironment (Airflow parity), so a
     # server-side template-injection payload that reaches for Python internals is refused
-    # at render time. The render fails closed → fall back to the raw command, never
-    # executing the injection nor leaking the resolved attribute.
+    # at render time. The render fails closed: the attempt fails, nothing is executed
+    # and the resolved attribute never reaches the shell.
     raw = "echo {{ ''.__class__.__mro__[1].__subclasses__() }}"
-    assert runner._render_bash(raw, {}) == raw
+    with pytest.raises(runner.TemplateRenderError) as info:
+        runner._render_bash(raw, {})
+    assert "SecurityError" in str(info.value)
+
+
+def test_render_bash_without_jinja_fails_instead_of_running_raw(monkeypatch):
+    # No jinja2 in the image means the template cannot render: fail, do not run the
+    # raw template text (#1845). The Task SDK in the base image brings jinja2.
+    monkeypatch.setitem(sys.modules, "jinja2.sandbox", None)
+    with pytest.raises(runner.TemplateRenderError) as info:
+        runner._render_bash("echo {{ ds }}", {"ds": "2026-06-14"})
+    assert "jinja2" in str(info.value)
+
+
+def test_run_bash_render_error_never_execs(monkeypatch, capsys):
+    execs = []
+    monkeypatch.setattr(runner.os, "execvp", lambda *a: execs.append(a))
+    with pytest.raises(runner.TemplateRenderError):
+        runner.run_bash("echo {{ ds }} {{ nope.x }}")
+    assert execs == []
+    out = capsys.readouterr().out
+    assert "'bash_command'" in out
+    assert "'nope' is undefined" in out
+
+
+def test_run_bash_renders_macros_and_logical_date(monkeypatch):
+    # The two keys common templates use that the context lacked (#1843):
+    # macros.ds_add raised UndefinedError and logical_date rendered empty.
+    execs = []
+    monkeypatch.setattr(runner.os, "execvp", lambda *a: execs.append(a))
+    monkeypatch.setenv("LEOFLOW_DS", "2026-06-14")
+    monkeypatch.setenv("LEOFLOW_TS", "2026-06-14T05:30:00Z")
+    runner.run_bash("echo {{ macros.ds_add(ds, 1) }} {{ logical_date.strftime('%Y%m%dT%H%M') }}")
+    assert execs == [("bash", ["bash", "-c", "echo 2026-06-15 20260614T0530"])]
+
+
+def test_operator_context_logical_date(monkeypatch):
+    monkeypatch.setenv("LEOFLOW_TS", "2026-06-14T05:30:00Z")
+    assert runner._operator_context()["logical_date"] == datetime(
+        2026, 6, 14, 5, 30, tzinfo=timezone.utc)
+    monkeypatch.delenv("LEOFLOW_TS")
+    ctx = runner._operator_context()
+    assert "logical_date" in ctx
+    assert ctx["logical_date"] is None
+
+
+def test_operator_context_macros_prefer_the_task_sdk(monkeypatch):
+    # When the Task SDK is installed (the base image), macros are its own module, so
+    # templates behave as on Airflow; the built-in subset is only the fallback.
+    fake = types.ModuleType("airflow.sdk.execution_time.macros")
+    fake.ds_add = lambda ds, days: f"sdk:{ds}:{days}"
+    monkeypatch.setitem(sys.modules, "airflow.sdk.execution_time.macros", fake)
+    assert runner._operator_context()["macros"].ds_add("2026-06-14", 1) == "sdk:2026-06-14:1"
+
+
+def test_operator_context_macros_fall_back_without_the_sdk(monkeypatch):
+    monkeypatch.setitem(sys.modules, "airflow.sdk.execution_time.macros", None)
+    macros = runner._operator_context()["macros"]
+    assert macros.ds_add("2026-06-14", -14) == "2026-05-31"
+    assert macros.ds_format("2026-06-14", "%Y-%m-%d", "%d/%m/%Y") == "14/06/2026"
 
 
 def test_run_without_return_writes_no_file(tmp_path, monkeypatch):
@@ -389,6 +471,36 @@ def test_run_operator_executes_captured_provider_operator(tmp_path, monkeypatch)
         {"bash_command": "echo generic-op-ran"},
     )
     assert json.loads((tmp_path / "ret.json").read_text()) == "generic-op-ran"
+
+
+def test_run_operator_real_operator_renders_sdk_macros(tmp_path, monkeypatch):
+    """With the real Task SDK, macros resolve to its own module (#1843)."""
+    pytest.importorskip("airflow.providers.standard.operators.bash")
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(tmp_path / "ret.json"))
+    monkeypatch.setenv("LEOFLOW_TASK_ID", "t")
+    monkeypatch.setenv("LEOFLOW_DS", "2026-06-14")
+    monkeypatch.setenv("LEOFLOW_TS", "2026-06-14T05:30:00Z")
+    runner.run_operator(
+        "airflow.providers.standard.operators.bash.BashOperator",
+        {"bash_command": "echo {{ macros.ds_add(ds, 1) }} {{ logical_date.year }}"},
+    )
+    assert json.loads((tmp_path / "ret.json").read_text()) == "2026-06-15 2026"
+
+
+def test_run_operator_real_operator_render_error_names_field(tmp_path, monkeypatch, capsys):
+    """With the real Task SDK templater, a field that cannot render fails the
+    attempt before execute(), naming the field (#1845)."""
+    pytest.importorskip("airflow.providers.standard.operators.bash")
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(tmp_path / "ret.json"))
+    monkeypatch.setenv("LEOFLOW_TASK_ID", "t")
+    with pytest.raises(runner.TemplateRenderError) as info:
+        runner.run_operator(
+            "airflow.providers.standard.operators.bash.BashOperator",
+            {"bash_command": "echo {{ nope.x }}"},
+        )
+    assert info.value.field == "bash_command"
+    assert not (tmp_path / "ret.json").exists()
+    assert "'nope' is undefined" in capsys.readouterr().out
 
 
 def test_merge_operator_xcom_injects_upstream_values(monkeypatch):

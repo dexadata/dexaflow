@@ -5,6 +5,7 @@ fake operator class (no real Airflow), so the operator execution path is covered
 in CI where ``apache-airflow`` is intentionally absent.
 """
 
+import importlib
 import itertools
 import json
 import sys
@@ -73,6 +74,41 @@ class ReadyRescheduleSensor(EchoOperator):
 class RenderBoomOperator(EchoOperator):
     def render_template_fields(self, context):
         raise ValueError("cannot render")
+
+
+# Records the context each on_failure_callback received, for the render-failure test.
+FAILURES = []
+
+
+def _record_failure(context):
+    FAILURES.append(context["ti"].task_id)
+
+
+class TemplatedOperator(EchoOperator):
+    """Renders its template_fields the way Airflow's Templater does: in order, in
+    place, with a sandboxed Jinja environment, re-raising the first field that fails
+    (so the fields before it are already rendered when the error surfaces)."""
+    template_fields = ("label", "sql")
+    on_failure_callback = [_record_failure]
+
+    def __init__(self, task_id, label="", sql="", **kwargs):
+        super().__init__(task_id, **kwargs)
+        self.label = label
+        self.sql = sql
+
+    def render_template(self, content, context):
+        from jinja2.sandbox import SandboxedEnvironment
+
+        return SandboxedEnvironment().from_string(content).render(**context)
+
+    def render_template_fields(self, context):
+        for name in self.template_fields:
+            value = getattr(self, name)
+            if value:
+                setattr(self, name, self.render_template(value, context))
+
+    def execute(self, context):
+        return {"label": self.label, "sql": self.sql}
 
 
 class NonJsonOperator(EchoOperator):
@@ -285,16 +321,65 @@ def test_run_operator_reschedule_mode_ready_succeeds(tmp_path, monkeypatch):
     assert out.exists()
 
 
-def test_run_operator_render_template_fields_is_best_effort(tmp_path, monkeypatch, capsys):
+def test_run_operator_render_error_fails_before_execute(tmp_path, monkeypatch, capsys):
+    # A template field that cannot render fails the attempt before execute(), with
+    # the field name and the Jinja error in the task log, as on Airflow (#1845).
     out = tmp_path / "rv.json"
     monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(out))
     mod = _write_operator_module(tmp_path, monkeypatch)
 
-    # A render failure must not fail the task — execute still runs.
-    runner.run_operator(f"{mod}.RenderBoomOperator", {})
+    with pytest.raises(runner.TemplateRenderError) as info:
+        runner.run_operator(f"{mod}.TemplatedOperator",
+                            {"label": "{{ ds }}", "sql": "select {{ nope.x }}"})
 
-    assert out.exists()
-    assert "render_template_fields skipped" in capsys.readouterr().out
+    assert info.value.field == "sql"
+    assert not out.exists()  # execute() never ran
+    log = capsys.readouterr().out
+    assert "template field 'sql' of TemplatedOperator failed to render" in log
+    assert "'nope' is undefined" in log
+
+
+def test_run_operator_render_error_without_template_fields(tmp_path, monkeypatch):
+    # An operator whose failing field cannot be identified still fails, with the error.
+    out = tmp_path / "rv.json"
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(out))
+    mod = _write_operator_module(tmp_path, monkeypatch)
+
+    with pytest.raises(runner.TemplateRenderError) as info:
+        runner.run_operator(f"{mod}.RenderBoomOperator", {})
+
+    assert info.value.field is None
+    assert "cannot render" in str(info.value)
+    assert not out.exists()
+
+
+def test_run_operator_render_error_runs_on_failure_callback(tmp_path, monkeypatch):
+    # A render failure is a task failure: on the terminal attempt the task's
+    # on_failure_callback runs, as for an execute() failure.
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(tmp_path / "rv.json"))
+    monkeypatch.setenv("LEOFLOW_ON_FAILURE_CALLBACK", "1")
+    monkeypatch.setenv("LEOFLOW_TASK_ID", "load")
+    monkeypatch.setenv("LEOFLOW_TRY_NUMBER", "2")
+    monkeypatch.setenv("LEOFLOW_MAX_TRIES", "2")
+    mod = _write_operator_module(tmp_path, monkeypatch)
+
+    with pytest.raises(runner.TemplateRenderError):
+        runner.run_operator(f"{mod}.TemplatedOperator", {"sql": "{{ nope.x }}"})
+
+    assert importlib.import_module(mod).FAILURES == ["load"]
+
+
+def test_run_operator_renders_macros_and_logical_date(tmp_path, monkeypatch):
+    out = tmp_path / "rv.json"
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(out))
+    monkeypatch.setenv("LEOFLOW_DS", "2026-06-14")
+    monkeypatch.setenv("LEOFLOW_TS", "2026-06-14T05:30:00Z")
+    mod = _write_operator_module(tmp_path, monkeypatch)
+
+    runner.run_operator(f"{mod}.TemplatedOperator",
+                        {"sql": "{{ macros.ds_add(ds, 1) }} {{ logical_date.hour }}"})
+
+    assert json.loads(out.read_text())["sql"] == "2026-06-15 5"
 
 
 def test_run_operator_reschedule_signals_when_wired(tmp_path, monkeypatch):
