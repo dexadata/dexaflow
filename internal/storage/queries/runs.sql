@@ -488,22 +488,27 @@ SET state = sqlc.arg(state)::task_state,
     infra_confirmed_at = now()
 WHERE tenant_id = sqlc.arg(tenant_id) AND dag_run_id = sqlc.arg(dag_run_id) AND task_id = sqlc.arg(task_id);
 
--- name: UpdateTaskInstanceStatesByRunTasks :exec
+-- name: UpdateTaskInstanceStatesByRunTasks :many
 -- Batched form of UpdateTaskInstanceStateByRunTask: applies ONE target state to
 -- every listed task of a run in a single statement. The per-row stamping is
 -- identical (scheduled_at/queued_at/started_at set on first entry only), as is
--- the task_state cast, so a batch of R same-target transitions is byte-identical
--- to R single-row updates — only the statement count changes (R UPDATEs → 1 per
--- distinct target state). The scheduler groups a tick's plain state-set
--- transitions (scheduled/skipped/upstream_failed/up_for_retry) by target state
--- and flushes each group through this query. task_id = ANY keeps every row's CASE
--- self-referential, so an already-stamped row is never re-stamped.
+-- the task_state cast. The scheduler groups a tick's plain state-set transitions
+-- (scheduled/skipped/upstream_failed from none, up_for_retry from failed) by
+-- source and target state and flushes each group through this query.
+-- The write is guarded on the source state the tick's snapshot read
+-- (from_state), so a row a concurrent writer moved after the snapshot (a user's
+-- mark or clear, an agent's RUNNING report under an overlapping leader) is left
+-- alone instead of being overwritten (#1605, ADR 0031 leader-overlap
+-- correctness). The ids it returns are the rows that actually moved, so the
+-- tick records only those.
 UPDATE task_instances
 SET state = sqlc.arg(state)::task_state,
     scheduled_at = CASE WHEN sqlc.arg(state)::task_state = 'scheduled' AND scheduled_at IS NULL THEN now() ELSE scheduled_at END,
     queued_at = CASE WHEN sqlc.arg(state)::task_state = 'queued' AND queued_at IS NULL THEN now() ELSE queued_at END,
     started_at = CASE WHEN sqlc.arg(state)::task_state = 'running' AND started_at IS NULL THEN now() ELSE started_at END
-WHERE dag_run_id = sqlc.arg(dag_run_id) AND task_id = ANY(sqlc.arg(task_ids)::text[]);
+WHERE dag_run_id = sqlc.arg(dag_run_id) AND task_id = ANY(sqlc.arg(task_ids)::text[])
+  AND state = sqlc.arg(from_state)::task_state
+RETURNING task_id;
 
 -- name: ResetTaskInstanceToNone :exec
 -- Resets a TI for retry: snapshot the current per-attempt state into
