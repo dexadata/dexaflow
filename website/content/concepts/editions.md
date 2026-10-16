@@ -99,6 +99,14 @@ downloaded under `~/.dexaflow`, on a local Unix socket) — so `dexaflow lite` r
 a **Docker-free host with nothing to install**. (Force either with
 `--postgres docker|managed`.)
 
+Lite **owns its database**: it runs only on the Postgres it starts, and it does
+not read `DEXAFLOW_DATABASE_URL` (or `LEOFLOW_DATABASE_URL`). One exported in
+your shell is not passed to the Lite server, and `dexaflow lite` prints a note
+when it names another database. `--no-up` only skips starting the Docker
+Postgres when Lite's own is already running; it does not point Lite at another
+database. `dexaflow db reset` refuses, dropping nothing, while either variable
+names a database other than Lite's. To run on a Postgres of your own, use Pro.
+
 Either way Lite needs **no Redis** — scheduler locks use Postgres advisory locks and
 XCom is stored in Postgres. The Postgres-backed XCom is *durable* (it survives a
 restart), which suits light production, and a single datastore is simpler to

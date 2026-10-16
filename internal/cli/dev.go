@@ -530,7 +530,7 @@ func newLiteCommand() *cobra.Command {
 	cmd.Flags().StringVar(&o.runtimeSrc, "runtime-src", "runtime/python", "source of the leoflow_runtime package installed into the dev venv")
 	cmd.Flags().StringVar(&o.serverBin, "server-bin", "", "dexaflow-server binary (default: PATH, then ./bin)")
 	cmd.Flags().StringVar(&o.agentBin, "agent-bin", "", "dexaflow-agent binary (default: PATH, then ./bin)")
-	cmd.Flags().BoolVar(&o.noUp, "no-up", false, "skip docker compose (Postgres already running); the dev DB + venv are still provisioned")
+	cmd.Flags().BoolVar(&o.noUp, "no-up", false, "skip docker compose (Lite's own Postgres is already running; this does not point Lite at another database); the dev DB + venv are still provisioned")
 	cmd.Flags().BoolVar(&o.fresh, "fresh", false, "drop the local dev database first, so the session starts with nothing registered (DESTRUCTIVE: registered DAGs, runs and history)")
 	cmd.Flags().StringVar(&o.postgres, "postgres", datastoreAuto, "Postgres backend: 'auto' (default; the Docker postgres:16 when Docker is present, else a managed relocatable PG under ~/.dexaflow on a Unix socket, no Docker), 'docker', or 'managed' (best on full distros; minimal hosts may lack its system libs)")
 	cmd.AddCommand(newLiteProvisionCommand())
@@ -725,6 +725,7 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 		return uerr
 	}
 	defer cleanupDeps() // stops managed Postgres on exit if this run started it; no-op for the Docker path
+	noteForeignDatabaseURL(out, "Lite runs on its own database and ignores the variable")
 	// Provision the database, take the key-migration lock and read the keys,
 	// in that order and under the config lock (ADR 0065 section 3). The lock
 	// session is held until this process exits.
@@ -1016,7 +1017,7 @@ func devComposeUp(ctx context.Context, cmd *cobra.Command, o devOptions, service
 func composeUpError(err error, output string) error {
 	low := strings.ToLower(output)
 	if strings.Contains(low, "already allocated") || strings.Contains(low, "address already in use") || strings.Contains(low, "port is already") {
-		return fmt.Errorf("the Postgres port 5432 is already in use — another Postgres is bound to it. Stop it, run `dexaflow lite --postgres managed` (a private, socket-only Postgres), or `dexaflow lite --no-up` to point at your own (LEOFLOW_DATABASE_URL): %w", err)
+		return fmt.Errorf("the Postgres port 5432 is already in use: another Postgres is bound to it. Lite owns its database and does not run on another Postgres, so stop that one, or run `dexaflow lite --postgres managed` (a private, socket-only Postgres that needs no port): %w", err)
 	}
 	if strings.Contains(low, "unknown command") || strings.Contains(low, "is not a docker command") || strings.Contains(low, "compose") && strings.Contains(low, "not found") {
 		return fmt.Errorf("the Docker Compose v2 plugin is not installed (the `docker compose` subcommand is missing). Install it, or run `dexaflow lite --postgres managed` for a Docker-free Postgres: %w", err)

@@ -389,8 +389,9 @@ export SOAK_DATABASE_URL="$DB_URL"
 #
 # `leoflow db reset --yes` always drops the database named `leoflow_dev` on the
 # port in <HOME>/.dexaflow/dev/db-port (internal/cli/db.go dropDevDatabase ->
-# devDSNs -> devDBPort), and it ignores LEOFLOW_DATABASE_URL entirely (#1185).
-# So the only thing standing between this harness and the developer's own
+# devDSNs -> devDBPort). It never drops the database LEOFLOW_DATABASE_URL names:
+# since #1185 it refuses while that variable names another one, and this script
+# does not set it. So the only thing standing between this harness and the developer's own
 # database is that file, under a HOME that is not the developer's. Re-reading
 # the file the script just wrote proves nothing; these four checks are the ones
 # that can actually fail, and they run before the drop, not after it.
