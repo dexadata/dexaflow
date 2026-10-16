@@ -998,11 +998,13 @@ func (r *Runner) writeOutcome(rec taskoutcome.Record) {
 
 // reportRetryMaxDelay caps the pause between two attempts to deliver a report.
 // It equals the heartbeat interval on purpose: the heartbeat is the agent's
-// other channel to the control plane, and once the server is back a report
-// retry lands within about one heartbeat plus the gRPC channel's own reconnect
-// backoff (the channel re-dials on its own schedule, independent of this cap) —
-// the same posture the kubelet's status manager takes toward an unreachable
-// apiserver (keep trying at a bounded cadence, never abandon the status).
+// other channel to the control plane. The gRPC channel redials on its own
+// schedule (a fail-fast RPC on a channel in TRANSIENT_FAILURE does not start a
+// connect), so Dial caps that schedule at this same value (reconnectBackoff):
+// once the server is back the channel is up within about one heartbeat and the
+// next report retry lands by the following one. It is the same posture the
+// kubelet's status manager takes toward an unreachable apiserver (keep trying
+// at a bounded cadence, never abandon the status).
 const reportRetryMaxDelay = DefaultHeartbeatInterval
 
 // reportBackoff returns the delay before report retry attempt n (1-based): an
@@ -1040,7 +1042,11 @@ func jitterDelay(d time.Duration) time.Duration {
 // Unavailable, a deadline) is retried until it lands, with the delay between
 // attempts following reportBackoff, jittered (jitterDelay). Retrying is safe: the server's ReportState
 // is idempotent (a report that already applied comes back as a stale ack, not a
-// double-apply). A logical rejection or a credential rejection (Unauthenticated,
+// double-apply). A terminal report also retries the transport-class Unknown and
+// Internal errors an outage produces behind a load balancer or a mesh
+// (retryableTerminalReportErr) without a budget; the RUNNING report does not.
+// Any other Internal is retried only within transientRetryBudget. A logical
+// rejection or a credential rejection (Unauthenticated,
 // PermissionDenied) is returned immediately, and a canceled context (parent
 // shutdown, SIGTERM, pod deletion, execution timeout) aborts the loop at once
 // with the context error.
@@ -1073,11 +1079,15 @@ func jitterDelay(d time.Duration) time.Duration {
 // reaped for it.
 func (r *Runner) reportRequest(ctx context.Context, req *agentv1.ReportStateRequest) error {
 	// internalSpent is the backoff spent on Internal answers, which (unlike the
-	// codes retryableReportErr names) are retried only within
-	// transientRetryBudget: Internal is what the control plane answered for a
-	// store error before it learned to say Unavailable, and still answers for a
-	// failure that repeats on every attempt.
+	// codes retryable names) are retried only within transientRetryBudget:
+	// Internal is what the control plane answered for a store error before it
+	// learned to say Unavailable, and still answers for a failure that repeats
+	// on every attempt.
 	var internalSpent time.Duration
+	retryable := retryableReportErr
+	if req.GetState() != agentv1.TaskState_TASK_STATE_RUNNING {
+		retryable = retryableTerminalReportErr
+	}
 	for attempt := 1; ; attempt++ {
 		resp, err := r.Client.ReportState(ctx, req)
 		if err == nil {
@@ -1095,7 +1105,7 @@ func (r *Runner) reportRequest(ctx context.Context, req *agentv1.ReportStateRequ
 			return nil
 		}
 		delay := jitterDelay(reportBackoff(attempt))
-		if !retryableReportErr(err) {
+		if !retryable(err) {
 			if status.Code(err) != codes.Internal || internalSpent+delay > transientRetryBudget {
 				return fmt.Errorf("reporting state %v: %w", req.GetState(), err)
 			}
@@ -1232,6 +1242,54 @@ func (f retryingFetcher) FetchXCom(ctx context.Context, in *agentv1.FetchXComReq
 		return cerr
 	})
 	return resp, err
+}
+
+// retryableTerminalReportErr is retryableReportErr for a terminal report (the
+// attempt's last word: SUCCESS, FAILED, UP_FOR_RESCHEDULE). It also retries the
+// transport-class subset of Unknown and Internal (transportClassErr), which is
+// how a control-plane outage reaches the agent behind an L7 load balancer or a
+// service mesh: an HTTP 500 from the proxy, a stream reset or cut mid-call
+// (#908). Giving up there sends the task to the reconciler's slower recovery
+// from the durable outcome record. The retry stays bounded by the context, and
+// the task pod's ActiveDeadlineSeconds floor bounds that, so even a
+// misclassified error cannot keep a pod alive forever.
+func retryableTerminalReportErr(err error) bool {
+	return retryableReportErr(err) || transportClassErr(err)
+}
+
+// transportMarkers are the lowercase fragments grpc-go and the network stack
+// put in a status message when the transport, not the handler, failed. The
+// control plane's own Unknown and Internal statuses carry only the operation
+// name (agentrpc redacts the cause), so they never match.
+var transportMarkers = []string{
+	"rst_stream", // stream terminated by RST_STREAM (proxy reset)
+	"server closed the stream without sending trailers",
+	"unexpected eof",
+	"connection reset",
+	"broken pipe",
+	"transport is closing",
+	"unexpected http status code received from server: 5", // LB/proxy 500 (grpc-go maps it to Unknown)
+}
+
+// transportClassErr reports whether an Unknown or Internal error is the
+// transport-class kind: the stream or connection broke, or a proxy answered
+// in the backend's place. Any other code, and an Unknown or Internal the
+// handler itself returned, is not.
+func transportClassErr(err error) bool {
+	st, ok := status.FromError(err)
+	if !ok || (st.Code() != codes.Unknown && st.Code() != codes.Internal) {
+		return false
+	}
+	msg := strings.ToLower(st.Message())
+	if msg == "eof" || strings.HasSuffix(msg, ": eof") {
+		return true
+	}
+	for _, m := range transportMarkers {
+		if strings.Contains(msg, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // reschedule reads the next-poke time a reschedule-mode sensor wrote to
