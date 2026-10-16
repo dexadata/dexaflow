@@ -1,0 +1,16 @@
+kind: Fixed
+body: |-
+  **Rotating the agent gRPC certificate or CA no longer needs a restart, and a
+  CA rotation no longer kills running tasks.** The control plane read the agent
+  gRPC server certificate once at boot, so a cert-manager renewal was served
+  only after the pod restarted; it now re-reads the pair on the next handshake
+  after either file changes. Agents read `ca.crt` once at startup, so a task
+  that reconnected after the CA changed failed verification and was reaped as
+  agent lost; the agent now re-reads the CA bundle on every connection, and the
+  bundle may hold the old and the new CA at once during a rotation. On both
+  sides a file that fails to load keeps the last good certificate or bundle in
+  use and is logged; on the server it is also counted on the new
+  `dexaflow_tls_reload_failures_total{listener}` metric (which also covers the
+  API listener). See
+  [Rotate agent certificates](/operate/rotate-agent-certificates/). (#637)
+time: 2026-10-12T20:00:00.000000000-03:00
