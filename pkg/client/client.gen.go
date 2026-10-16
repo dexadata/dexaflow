@@ -642,14 +642,14 @@ type TaskPodsReport struct {
 
 // TaskServiceAccountCheck defines model for TaskServiceAccountCheck.
 type TaskServiceAccountCheck struct {
-	// Detail Why it is unchecked.
+	// Detail Why it is unchecked, or why a missing name is not valid.
 	Detail *string `json:"detail,omitempty"`
 
 	// ImagePullSecrets How many imagePullSecrets it carries; sent with state found.
 	ImagePullSecrets *int   `json:"image_pull_secrets,omitempty"`
 	Name             string `json:"name"`
 
-	// State One of found, missing or unchecked. found: it exists in the task namespace. missing: it does not, and the pods of these tasks would not be created. unchecked: the server could not look it up (detail says why).
+	// State One of found, missing or unchecked. found: it exists in the task namespace. missing: it does not, and the pods of these tasks would not be created; when its name is not a valid ServiceAccount name (a DNS-1123 subdomain), it is not looked up and detail says so. unchecked: the server could not look it up (detail says why).
 	State string `json:"state"`
 
 	// Tasks The tasks whose pods run as it.

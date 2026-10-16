@@ -1953,10 +1953,11 @@ components:
           type: string
           description: >-
             One of found, missing or unchecked. found: it exists in the task namespace. missing: it does not, and
-            the pods of these tasks would not be created. unchecked: the server
+            the pods of these tasks would not be created; when its name is not a valid ServiceAccount name (a
+            DNS-1123 subdomain), it is not looked up and detail says so. unchecked: the server
             could not look it up (detail says why).
         image_pull_secrets: { type: integer, description: "How many imagePullSecrets it carries; sent with state found." }
-        detail: { type: string, description: Why it is unchecked. }
+        detail: { type: string, description: "Why it is unchecked, or why a missing name is not valid." }
 
     ExecutionReport:
       type: object

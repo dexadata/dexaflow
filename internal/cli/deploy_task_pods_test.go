@@ -50,6 +50,52 @@ func TestDeployStopsOnAMissingTaskServiceAccount(t *testing.T) {
 	}
 }
 
+// TestDeployNotesAMissingDefaultServiceAccount: the namespace's default
+// ServiceAccount, which Kubernetes creates in every namespace a moment
+// after the namespace itself, is a note when the dry run reports it
+// missing, not a stop; a missing named account next to it still stops.
+func TestDeployNotesAMissingDefaultServiceAccount(t *testing.T) {
+	fake, built, out, errOut, err := deployWithTaskPods(t, "", taskPodsJSON(true,
+		`{"name":"default","tasks":["after","hold"],"state":"missing"}`))
+	if err != nil {
+		t.Fatalf("deploy: %v\n%s", err, out)
+	}
+	if !built || fake.registers != 1 {
+		t.Errorf("built=%v registers=%d, want a build and a register", built, fake.registers)
+	}
+	if want := `note: the namespace's default ServiceAccount "default" (tasks after, hold) was not found`; !strings.Contains(errOut, want) {
+		t.Errorf("stderr does not say %q:\n%s", want, errOut)
+	}
+
+	_, _, out, _, err = deployWithTaskPods(t, "", taskPodsJSON(true,
+		`{"name":"default","tasks":["a"],"state":"missing"},{"name":"etl-sa","tasks":["b"],"state":"missing"}`))
+	if err == nil || !strings.Contains(err.Error(), `"etl-sa" (tasks b)`) || strings.Contains(err.Error(), `"default"`) {
+		t.Errorf("deploy = %v, want a stop naming etl-sa only\n%s", err, out)
+	}
+}
+
+// TestDeployStopsOnAnInvalidTaskServiceAccountName: a ServiceAccount the
+// dry run reports missing with a detail, such as a name that is not valid,
+// stops the deploy with that detail and the fix.
+func TestDeployStopsOnAnInvalidTaskServiceAccountName(t *testing.T) {
+	_, built, out, _, err := deployWithTaskPods(t, "", taskPodsJSON(true,
+		`{"name":"Bad_Name","tasks":["extract"],"state":"missing","detail":"not a valid \u001b[31mServiceAccount name"}`))
+	if err == nil {
+		t.Fatalf("deploy succeeded:\n%s", out)
+	}
+	for _, want := range []string{`ServiceAccount "Bad_Name" (tasks extract): not a valid [31mServiceAccount name`, "execution.service_account"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not say %q:\n%v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "\u001b") {
+		t.Errorf("error carries a control character the server sent:\n%q", err)
+	}
+	if built {
+		t.Error("built, want a stop before the build")
+	}
+}
+
 // TestDeployReportsTaskServiceAccounts: a ServiceAccount with pull secrets
 // is a preflight line, one without any is a note naming both ways a
 // private registry is pulled from, and one the server could not look up is

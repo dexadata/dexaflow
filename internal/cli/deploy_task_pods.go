@@ -32,6 +32,10 @@ type taskServiceAccount struct {
 	Detail           string   `json:"detail"`
 }
 
+// namespaceDefaultServiceAccount is the ServiceAccount Kubernetes creates
+// in every namespace, shortly after the namespace itself.
+const namespaceDefaultServiceAccount = "default"
+
 // maxTasksNamed bounds the tasks a line names for one ServiceAccount.
 const maxTasksNamed = 5
 
@@ -40,8 +44,10 @@ const maxTasksNamed = 5
 const nonRootUserExample = "USER 65532:65532"
 
 // checkTaskServiceAccounts reports each ServiceAccount of pods: one that
-// does not exist stops the deploy, since the pods of its tasks would not
-// be created; one with no pull secret, or one the server could not look
+// does not exist, or whose name no ServiceAccount can carry (the server's
+// detail says so), stops the deploy, since the pods of its tasks would not
+// be created; the namespace's default, which Kubernetes creates a moment
+// after the namespace, is a note when it is missing; one with no pull secret, or one the server could not look
 // up, is a note on warn; one with pull secrets is a line on out. Everything
 // the server sent is printed through printable.
 func checkTaskServiceAccounts(out, warn io.Writer, pods *taskPodsAnswer) error {
@@ -53,6 +59,11 @@ func checkTaskServiceAccounts(out, warn io.Writer, pods *taskPodsAnswer) error {
 		name, tasks := printable(sa.Name), namedTasks(sa.Tasks)
 		var werr error
 		switch {
+		case sa.State == "missing" && sa.Name == namespaceDefaultServiceAccount:
+			_, werr = fmt.Fprintf(warn, "note: the namespace's default ServiceAccount %q (tasks %s) was not found; Kubernetes creates it in every "+
+				"namespace shortly after the namespace, so this is expected only right after the task namespace was created\n", name, tasks)
+		case sa.State == "missing" && sa.Detail != "":
+			missing = append(missing, fmt.Sprintf("%q (tasks %s): %s", name, tasks, printable(sa.Detail)))
 		case sa.State == "missing":
 			missing = append(missing, fmt.Sprintf("%q (tasks %s)", name, tasks))
 		case sa.State == "found" && sa.ImagePullSecrets != nil && *sa.ImagePullSecrets > 0:

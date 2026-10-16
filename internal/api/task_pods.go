@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"log/slog"
+	"regexp"
 	"slices"
 	"strconv"
 	"time"
@@ -67,6 +68,22 @@ const serviceAccountLookupTimeout = 5 * time.Second
 const (
 	serviceAccountLookupFailed = "the control plane could not read it; its log has the cause"
 )
+
+// serviceAccountInvalidName is the detail of a missing account whose name
+// is not a DNS-1123 subdomain, so no ServiceAccount can carry it.
+const serviceAccountInvalidName = "not a valid ServiceAccount name: lower case letters, digits, '-' and '.', starting and ending with a letter or digit, at most 253 characters"
+
+// dns1123Subdomain is a DNS-1123 subdomain, the form of a ServiceAccount
+// name, short of its length bound.
+var dns1123Subdomain = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
+
+// validServiceAccountName reports whether name can name a ServiceAccount:
+// a DNS-1123 subdomain of at most 253 characters. It is checked here, not
+// with the Kubernetes validation package, so the API imports no Kubernetes
+// package (ADR 0085).
+func validServiceAccountName(name string) bool {
+	return len(name) <= 253 && dns1123Subdomain.MatchString(name)
+}
 
 // serviceAccountTooMany is the detail of an account past
 // maxServiceAccountLookups.
@@ -141,10 +158,15 @@ func (r taskPodReporter) accountOf(task domain.TaskSpec) string {
 	return namespaceDefaultServiceAccount
 }
 
-// lookUp fills check with what the reader finds, when allowed.
+// lookUp fills check with what the reader finds, when allowed. A name no
+// ServiceAccount can carry is missing without a lookup.
 func (r taskPodReporter) lookUp(ctx context.Context, check *serviceAccountCheck, allowed bool) {
 	check.State = serviceAccountUnchecked
 	switch {
+	case !validServiceAccountName(check.Name):
+		check.State = serviceAccountMissing
+		check.Detail = serviceAccountInvalidName
+		return
 	case r.settings.ServiceAccounts == nil:
 		check.Detail = r.settings.Unread
 		return
@@ -155,7 +177,7 @@ func (r taskPodReporter) lookUp(ctx context.Context, check *serviceAccountCheck,
 	n, found, err := r.settings.ServiceAccounts.ImagePullSecrets(ctx, check.Name)
 	switch {
 	case err != nil:
-		r.logger.WarnContext(ctx, "dry run: reading a task ServiceAccount", "service_account", check.Name, "error", err)
+		r.logger.WarnContext(ctx, "dry run: reading a task ServiceAccount", "service_account", logSafe(check.Name), "error", logSafe(err.Error()))
 		check.Detail = serviceAccountLookupFailed
 	case !found:
 		check.State = serviceAccountMissing

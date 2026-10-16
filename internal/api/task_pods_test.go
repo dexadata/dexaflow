@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -192,5 +193,86 @@ func TestRegisterCarriesNoTaskPods(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "task_pods") || len(reader.asked) != 0 {
 		t.Errorf("register reports task pods (%s) or looked up %v", rec.Body.String(), reader.asked)
+	}
+}
+
+// TestDryRunTaskPodsInvalidName: an account name that is not a DNS-1123
+// subdomain can name no ServiceAccount, so it is reported missing with a
+// fixed detail that says why, and never looked up, whether or not the
+// server reads ServiceAccounts.
+func TestDryRunTaskPodsInvalidName(t *testing.T) {
+	spec := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
+		`{"task_id":"a","type":"python","entrypoint":"dag:a"},` +
+		`{"task_id":"b","type":"python","entrypoint":"dag:b","execution":{"service_account":"Bad_Name"}}]}`
+	want := `[{"name":"Bad_Name","tasks":["b"],"state":"missing","detail":"` + serviceAccountInvalidName + `"},` +
+		`{"name":"default","tasks":["a"],"state":"found","image_pull_secrets":0}]`
+	reader := &fakeServiceAccounts{accounts: map[string]int{"default": 0, "Bad_Name": 1}}
+	_, body := dryRunTaskPods(t, taskPodsServer(TaskPodSettings{Enabled: true, ServiceAccounts: reader}), spec)
+	if got := rawAccounts(t, body); got != want {
+		t.Errorf("service_accounts = %s\nwant %s", got, want)
+	}
+	if len(reader.asked) != 1 || reader.asked[0] != "default" {
+		t.Errorf("lookups = %v, want only default", reader.asked)
+	}
+
+	_, body = dryRunTaskPods(t, taskPodsServer(TaskPodSettings{Enabled: true, Unread: "no reader here"}), spec)
+	want = `[{"name":"Bad_Name","tasks":["b"],"state":"missing","detail":"` + serviceAccountInvalidName + `"},` +
+		`{"name":"default","tasks":["a"],"state":"unchecked","detail":"no reader here"}]`
+	if got := rawAccounts(t, body); got != want {
+		t.Errorf("no reader: service_accounts = %s\nwant %s", got, want)
+	}
+}
+
+// TestValidServiceAccountName: a ServiceAccount name is a DNS-1123
+// subdomain of at most 253 characters.
+func TestValidServiceAccountName(t *testing.T) {
+	long := strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 61)
+	for name, want := range map[string]bool{
+		"a": true, "etl-sa": true, "team.etl-sa": true, "0sa9": true, long: true,
+		long + "e": false, "": false, "Bad_Name": false, "bad_name": false, "Upper": false, "-sa": false, "sa-": false,
+		"a..b": false, ".a": false, "a.": false, ".": false, "..": false, "a/b": false, "a%2Fb": false, "sa\n": false,
+	} {
+		if got := validServiceAccountName(name); got != want {
+			t.Errorf("validServiceAccountName(%q) = %v, want %v", name, got, want)
+		}
+	}
+	if len(long) != 253 {
+		t.Fatalf("long is %d characters, want 253", len(long))
+	}
+}
+
+// recordingHandler is a slog handler that keeps the string value of every
+// attribute it is given.
+type recordingHandler struct{ values *[]string }
+
+func (h recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h recordingHandler) Handle(_ context.Context, r slog.Record) error {
+	r.Attrs(func(a slog.Attr) bool {
+		*h.values = append(*h.values, a.Value.String())
+		return true
+	})
+	return nil
+}
+func (h recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h recordingHandler) WithGroup(string) slog.Handler      { return h }
+
+// TestTaskPodsLookupErrorLogIsSafe: the log line of a failed lookup
+// carries no line break of the account name or of the error, so neither
+// can forge a log line.
+func TestTaskPodsLookupErrorLogIsSafe(t *testing.T) {
+	var values []string
+	r := taskPodReporter{
+		settings: TaskPodSettings{Enabled: true, ServiceAccounts: &fakeServiceAccounts{err: errors.New("boom\r\nlevel=ERROR forged")}},
+		logger:   slog.New(recordingHandler{values: &values}),
+	}
+	check := &serviceAccountCheck{Name: "etl-sa"}
+	r.lookUp(context.Background(), check, true)
+	if len(values) == 0 {
+		t.Fatal("the failed lookup logged nothing")
+	}
+	for _, v := range values {
+		if strings.ContainsAny(v, "\r\n") {
+			t.Errorf("a logged value carries a line break: %q", v)
+		}
 	}
 }

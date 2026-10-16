@@ -235,7 +235,10 @@ this order:
    - A ServiceAccount that does not exist stops the deploy, naming it and
      its tasks: the pods of those tasks would not be created. Set
      `execution.service_account` to one that exists, or have the operator
-     create it (`taskServiceAccount.create` in the Helm values).
+     create it (`taskServiceAccount.create` in the Helm values). The
+     namespace's `default` ServiceAccount is the exception: Kubernetes
+     creates it in every namespace a moment after the namespace, so a
+     missing `default` is a `note:` and the deploy goes on.
    - A ServiceAccount with no `imagePullSecrets` is a `note:`: a private
      registry is then pulled only with the nodes' own credentials (IRSA,
      Workload Identity, a credential helper), which the server cannot see.
