@@ -6,6 +6,8 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-10-16
+
 ### Added
 
 - **Event-driven warm-pool refill.** With `execution.warm_pool_event_refill`
