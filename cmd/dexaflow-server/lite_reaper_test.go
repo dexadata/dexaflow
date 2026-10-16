@@ -57,6 +57,10 @@ func (s *liteReapStore) MarkTaskDispatchLost(_ context.Context, id string, _, _ 
 	s.queuedMarked = append(s.queuedMarked, id)
 	return true, nil
 }
+
+func (s *liteReapStore) MarkTaskStartExpired(context.Context, string, int, int) (bool, error) {
+	return false, nil
+}
 func (s *liteReapStore) ListRunningTasks(context.Context, time.Duration, executor.ReapCursor) ([]executor.PodLostCandidate, error) {
 	return []executor.PodLostCandidate{{TaskInstanceID: "no-pod", DagRunID: "r3", TaskID: "t", TryNumber: 1, AttemptEpoch: 3, RunningSince: time.Now().Add(-time.Hour)}}, nil
 }

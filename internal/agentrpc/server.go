@@ -204,6 +204,11 @@ type Server struct {
 	// legacyTokens meters task tokens without an attempt_epoch claim (unset or
 	// nil recorder: off). Atomic because it is attached after Serve starts.
 	legacyTokens atomic.Pointer[legacyRecorderBox]
+	// rejectionMeter counts refused bearers by reason (unset or nil recorder:
+	// off). Atomic because it is attached after Serve starts.
+	rejectionMeter atomic.Pointer[rejectionRecorderBox]
+	// rejections rate limits the refused-bearer log line per reason.
+	rejections rejectionLimiter
 	// attemptSpecs caches each live attempt's XCom spec fields (attemptSpec) so
 	// PushXCom and FetchXCom do not reload the full task spec on every call.
 	attemptSpecs *attemptSpecCache
@@ -745,14 +750,22 @@ func toXComUpstreamsMap(in map[string][]string) map[string]*agentv1.XComUpstream
 	return out
 }
 
-// identify extracts and verifies the agent token from the request metadata.
+// identify extracts and verifies the agent token from the request metadata. A
+// refusal is metered and logged with its reason (#1125); the agent is told only
+// that its token was missing or invalid.
 func (s *Server) identify(ctx context.Context) (*auth.AgentIdentity, error) {
 	token, ok := bearerFromContext(ctx)
 	if !ok {
+		s.rejectToken(ctx, &auth.AgentTokenRejection{Reason: tokenMissing})
 		return nil, status.Error(codes.Unauthenticated, "missing authorization token")
 	}
 	id, err := s.auth.AuthenticateAgent(token)
 	if err != nil {
+		var rej *auth.AgentTokenRejection
+		if !errors.As(err, &rej) {
+			rej = &auth.AgentTokenRejection{Reason: auth.AgentTokenInvalid}
+		}
+		s.rejectToken(ctx, rej)
 		return nil, status.Error(codes.Unauthenticated, "invalid agent token")
 	}
 	return id, nil

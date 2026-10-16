@@ -24,6 +24,7 @@ func (noTaskPods) DeleteRunPods(context.Context, string) error           { retur
 func (noTaskPods) TaskPodPresence(context.Context, executor.Attempt) (executor.PodPresence, error) {
 	return executor.PodPresenceAbsent, nil
 }
+func (noTaskPods) TaskPodPending(context.Context, executor.Attempt) (bool, error) { return false, nil }
 
 // TestWarmAckBeforeQueuedKeepsBindingIntegration (#1600) drives the synchronous
 // dispatch order with warm pools on: Dispatch claims the epoch and the warm
