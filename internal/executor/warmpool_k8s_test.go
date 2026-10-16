@@ -318,3 +318,27 @@ func TestKubernetesWarmPodsListWarmAnchors(t *testing.T) {
 		t.Errorf("ListWarmAnchors = %v, want %v (only this namespace's anchors)", got, want)
 	}
 }
+
+// TestKubernetesWarmPodsRemembersTerminationReason: a terminal warm worker the
+// LIST returned keeps its terminated reason on the client after the pod is
+// deleted, so the warm-worker-lost reaper can still name an OOM kill once the
+// reconciler has removed the pod (#1835). A live pod records nothing.
+func TestKubernetesWarmPodsRemembersTerminationReason(t *testing.T) {
+	cs := fake.NewSimpleClientset(oomKilledWarmPod("oom"), warmInformerPod("live", "dv-1", corev1.PodRunning))
+	k := NewKubernetesWarmPods(cs, "leoflow", nil)
+	if got := k.LastTerminationReason("oom"); got != "" {
+		t.Fatalf("reason before any LIST = %q, want empty", got)
+	}
+	if _, err := k.ListWarmPods(context.Background()); err != nil {
+		t.Fatalf("ListWarmPods: %v", err)
+	}
+	if err := cs.CoreV1().Pods("leoflow").Delete(context.Background(), "oom", metav1.DeleteOptions{}); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if got := k.LastTerminationReason("oom"); got != "OOMKilled" {
+		t.Errorf("reason after delete = %q, want OOMKilled", got)
+	}
+	if got := k.LastTerminationReason("live"); got != "" {
+		t.Errorf("live pod reason = %q, want empty", got)
+	}
+}

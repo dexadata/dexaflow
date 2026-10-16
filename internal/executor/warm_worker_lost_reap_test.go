@@ -6,6 +6,10 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 // fakeWarmLister serves a canned warm fleet and can inject a LIST error. It
@@ -336,5 +340,102 @@ func TestWarmWorkerLostReaper_NamesOOMKill(t *testing.T) {
 		if len(evs) != 1 || strings.Contains(evs[0].Message, "OOMKilled") {
 			t.Errorf("%s marker = %v, want today's text with no OOM claim", key, evs)
 		}
+	}
+}
+
+// oomKilledWarmPod is a terminal warm worker whose warm-worker container the
+// kubelet reported OOMKilled, as a cgroup v2 OOM in a task leaves it.
+func oomKilledWarmPod(name string) *corev1.Pod {
+	p := warmInformerPod(name, "dv-1", corev1.PodFailed)
+	p.Status.ContainerStatuses = []corev1.ContainerStatus{{
+		Name: warmContainerName,
+		State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+			Reason: "OOMKilled", ExitCode: 137,
+		}},
+	}}
+	return p
+}
+
+// TestWarmWorkerLostReaper_NamesOOMKillOfDeletedWorker: the common case after a
+// cgroup v2 OOM is that the warm worker is already gone when the reaper runs, so
+// its container status cannot be listed (#1835). The informer saw the pod's final
+// state on its delete and recorded it on the warm-pod client, so the reaper still
+// marks the attempt through the OOMKilled variant and the marker names the OOM
+// kill. A deleted worker with no recorded terminal state keeps the plain
+// pod_lost text.
+func TestWarmWorkerLostReaper_NamesOOMKillOfDeletedWorker(t *testing.T) {
+	cs := fake.NewClientset(oomKilledWarmPod("pod-oom"), warmInformerPod("pod-plain", "dv-1", corev1.PodRunning))
+	warmPods := NewKubernetesWarmPods(cs, "leoflow", nil)
+	wi, err := NewWarmPodInformer(cs, "leoflow")
+	if err != nil {
+		t.Fatalf("NewWarmPodInformer: %v", err)
+	}
+	wi.RecordTerminationsTo(warmPods)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	wi.Start(ctx)
+	if !wi.WaitForCacheSync(ctx) {
+		t.Fatal("warm pod cache did not sync")
+	}
+	for _, name := range []string{"pod-oom", "pod-plain"} {
+		if err := cs.CoreV1().Pods("leoflow").Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+			t.Fatalf("delete %s: %v", name, err)
+		}
+	}
+	if !waitFor(t, func() bool { _, ok := wi.CachedWarmPods(); return ok && len(wi.listCachedNames()) == 0 }) {
+		t.Fatal("the informer did not observe both deletes")
+	}
+
+	bound := func(id, worker string) WarmBoundTI {
+		return WarmBoundTI{TaskInstanceID: id, TenantID: "t1", DagID: "d", DagRunID: "run-" + id, TaskID: "load", TryNumber: 1, WarmWorkerID: worker}
+	}
+	store := &fakeWarmBoundStore{bound: []WarmBoundTI{bound("oom", "pod-oom"), bound("plain", "pod-plain")}}
+	sink := &fakeLogSink{}
+	r := newWarmReaper(store, warmPods)
+	r.sink = sink
+	if err := r.run(ctx); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !reflect.DeepEqual(store.oomMarked, []string{"oom"}) {
+		t.Errorf("OOMKilled marks = %v, want [oom]", store.oomMarked)
+	}
+	if !reflect.DeepEqual(store.marked, []string{"plain"}) {
+		t.Errorf("plain pod_lost marks = %v, want [plain]", store.marked)
+	}
+	if evs := sink.events["t1/d/run-oom/load/1"]; len(evs) != 1 || !strings.Contains(evs[0].Message, "OOMKilled") {
+		t.Errorf("OOM marker = %v, want one killed: pod_lost line naming OOMKilled", evs)
+	}
+	if evs := sink.events["t1/d/run-plain/load/1"]; len(evs) != 1 || strings.Contains(evs[0].Message, "OOMKilled") {
+		t.Errorf("plain marker = %v, want today's text with no OOM claim", evs)
+	}
+}
+
+// recordingWarmLister is a fake lister that also remembers terminal reasons,
+// like KubernetesWarmPods does.
+type recordingWarmLister struct {
+	fakeWarmLister
+	reasons map[string]string
+}
+
+func (f *recordingWarmLister) LastTerminationReason(name string) string { return f.reasons[name] }
+
+// TestWarmWorkerLostReaper_ListedReasonWins: a worker still listed is named
+// from its listed container status; the remembered reason is only read for a
+// worker the LIST no longer returns (#1835).
+func TestWarmWorkerLostReaper_ListedReasonWins(t *testing.T) {
+	store := &fakeWarmBoundStore{bound: []WarmBoundTI{
+		{TaskInstanceID: "listed", WarmWorkerID: "pod-error", TryNumber: 1},
+		{TaskInstanceID: "gone", WarmWorkerID: "pod-gone", TryNumber: 1},
+	}}
+	lister := &recordingWarmLister{
+		fakeWarmLister: fakeWarmLister{pods: []WarmPodInfo{{Name: "pod-error", Terminal: true, TerminationReason: "Error"}}},
+		reasons:        map[string]string{"pod-error": "OOMKilled", "pod-gone": "OOMKilled"},
+	}
+	r := newWarmReaper(store, lister)
+	if err := r.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !reflect.DeepEqual(store.oomMarked, []string{"gone"}) || !reflect.DeepEqual(store.marked, []string{"listed"}) {
+		t.Errorf("oom marks = %v, plain marks = %v; want [gone] and [listed]", store.oomMarked, store.marked)
 	}
 }
