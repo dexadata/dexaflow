@@ -956,7 +956,7 @@ func (q *Queries) GetDagVersionInTenant(ctx context.Context, arg GetDagVersionIn
 }
 
 const getDagVersionsByIDs = `-- name: GetDagVersionsByIDs :many
-SELECT id, dag_id, version, image_reference, spec, spec_hash, created_by, created_at FROM dag_versions WHERE id = ANY($1::uuid[])
+SELECT id, dag_id, version, image_reference, spec, spec_hash, created_by, created_at, build_info FROM dag_versions WHERE id = ANY($1::uuid[])
 `
 
 // Unscoped, like GetDagVersionByID: the spec cache's batch fill for a warm
@@ -979,6 +979,7 @@ func (q *Queries) GetDagVersionsByIDs(ctx context.Context, ids []pgtype.UUID) ([
 			&i.SpecHash,
 			&i.CreatedBy,
 			&i.CreatedAt,
+			&i.BuildInfo,
 		); err != nil {
 			return nil, err
 		}
