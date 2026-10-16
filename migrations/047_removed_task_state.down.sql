@@ -1,0 +1,8 @@
+-- 047_removed_task_state.down.sql
+-- No-op. PostgreSQL cannot remove an enum value without rebuilding the type
+-- and rewriting every column that uses it, task_instances included. As with
+-- 006_reserve_deferred_state and 017_reschedule_state, the value stays; the
+-- up migration is idempotent (ADD VALUE IF NOT EXISTS), so down/up cycles are
+-- safe. The previous release never writes 'removed' and plans only the tasks
+-- of a run's version, so a task instance left in that state is shown as is
+-- and never scheduled.

@@ -106,6 +106,7 @@ const (
 	TaskInstanceStateFailed         TaskInstanceState = "failed"
 	TaskInstanceStateNone           TaskInstanceState = "none"
 	TaskInstanceStateQueued         TaskInstanceState = "queued"
+	TaskInstanceStateRemoved        TaskInstanceState = "removed"
 	TaskInstanceStateRunning        TaskInstanceState = "running"
 	TaskInstanceStateScheduled      TaskInstanceState = "scheduled"
 	TaskInstanceStateSkipped        TaskInstanceState = "skipped"
@@ -122,6 +123,8 @@ func (e TaskInstanceState) Valid() bool {
 	case TaskInstanceStateNone:
 		return true
 	case TaskInstanceStateQueued:
+		return true
+	case TaskInstanceStateRemoved:
 		return true
 	case TaskInstanceStateRunning:
 		return true

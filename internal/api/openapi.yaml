@@ -2116,7 +2116,7 @@ components:
         state:
           type: string
           nullable: true
-          enum: [scheduled, queued, running, success, failed, skipped, upstream_failed, up_for_retry, none]
+          enum: [scheduled, queued, running, success, failed, skipped, upstream_failed, up_for_retry, removed, none]
         operator: { type: string }
         start_date: { type: string, format: date-time, nullable: true }
         end_date: { type: string, format: date-time, nullable: true }
