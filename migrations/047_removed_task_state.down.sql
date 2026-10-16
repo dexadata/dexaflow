@@ -1,0 +1,18 @@
+-- 047_removed_task_state.down.sql
+-- No-op. PostgreSQL cannot remove an enum value without rebuilding the type
+-- and rewriting every column that uses it, task_instances included. As with
+-- 006_reserve_deferred_state and 017_reschedule_state, the value stays; the
+-- up migration is idempotent (ADD VALUE IF NOT EXISTS), so down/up cycles are
+-- safe.
+--
+-- What a rollback does to a task instance left 'removed' (ADR 0086): the
+-- previous release never writes the value and plans only the tasks of a
+-- run's version, so it shows the task instance as is and never schedules it.
+-- Its settled predicates (retention and the settled-run pod collection) list
+-- only success, failed, skipped and upstream_failed, so a run holding a
+-- removed task instance counts as unsettled there: retention never deletes
+-- it and its pods are never collected while that release runs. Its orphan
+-- reaper counts 'removed' as live, so such a run, once cleared again and
+-- orphaned, is never reaped. Upgrading again restores all three. To let the
+-- previous release settle those runs, set their removed task instances to
+-- 'skipped' before rolling back; the upgrade does not set them back.

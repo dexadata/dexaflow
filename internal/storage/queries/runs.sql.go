@@ -787,6 +787,57 @@ func (q *Queries) GetDagRunByID(ctx context.Context, id pgtype.UUID) (DagRun, er
 	return i, err
 }
 
+const getDagRunForUpdate = `-- name: GetDagRunForUpdate :one
+SELECT id, tenant_id, dag_id, dag_version_id, run_id, logical_date, data_interval_start, data_interval_end, state, trigger, conf, triggered_by, queued_at, started_at, ended_at, note, alerted_at, alert_attempts, next_alert_attempt_at FROM dag_runs
+ WHERE id = $1 AND tenant_id = $2 AND state IN ('success', 'failed')
+   FOR NO KEY UPDATE
+`
+
+type GetDagRunForUpdateParams struct {
+	ID       pgtype.UUID `json:"id"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+}
+
+// A finished run a clear may move to the DAG's current version, read and
+// locked inside the clear's transaction before any of its task instances is
+// written (ADR 0086). The move depends on the run's state, so it is decided
+// on the locked row: a second clear of the same run waits for the first
+// instead of deciding from the same state. Only a finished run is locked:
+// the state predicate is checked again after a wait, so a run another clear
+// re-opened meanwhile is not returned and not held. The orphan reaper
+// share-locks a running run's task instances and then updates the run row,
+// the opposite order. NO KEY UPDATE is enough, since no key changes, and it
+// lets through the key-share lock an XCom insert of a live attempt takes on
+// the run. The retention janitor locks finished runs with SKIP LOCKED and
+// their task instances with NOWAIT, so it skips or gives way and never waits
+// on a clear.
+func (q *Queries) GetDagRunForUpdate(ctx context.Context, arg GetDagRunForUpdateParams) (DagRun, error) {
+	row := q.db.QueryRow(ctx, getDagRunForUpdate, arg.ID, arg.TenantID)
+	var i DagRun
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.DagID,
+		&i.DagVersionID,
+		&i.RunID,
+		&i.LogicalDate,
+		&i.DataIntervalStart,
+		&i.DataIntervalEnd,
+		&i.State,
+		&i.Trigger,
+		&i.Conf,
+		&i.TriggeredBy,
+		&i.QueuedAt,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.Note,
+		&i.AlertedAt,
+		&i.AlertAttempts,
+		&i.NextAlertAttemptAt,
+	)
+	return i, err
+}
+
 const getDagRunInTenant = `-- name: GetDagRunInTenant :one
 SELECT id, tenant_id, dag_id, dag_version_id, run_id, logical_date, data_interval_start, data_interval_end, state, trigger, conf, triggered_by, queued_at, started_at, ended_at, note, alerted_at, alert_attempts, next_alert_attempt_at FROM dag_runs WHERE tenant_id = $1 AND id = $2
 `
@@ -1557,7 +1608,7 @@ WHERE dr.state = 'running'
   AND NOT EXISTS (
       SELECT 1 FROM task_instances ti2
       WHERE ti2.dag_run_id = dr.id
-        AND ti2.state NOT IN ('none', 'success', 'failed', 'skipped', 'upstream_failed')
+        AND ti2.state NOT IN ('none', 'success', 'failed', 'skipped', 'upstream_failed', 'removed')
   )
 GROUP BY dr.id, d.dag_id, dr.started_at, dr.queued_at
 ORDER BY dr.queued_at
@@ -1571,7 +1622,7 @@ type ListOrphanCandidatesRow struct {
 }
 
 // Lists dag_runs currently in 'running' whose task instances are ALL terminal
-// or never-started (every TI in none/success/failed/skipped/upstream_failed),
+// or never-started (every TI in none/success/failed/skipped/upstream_failed/removed),
 // alongside the timestamp of their most recent observable activity. The "no
 // live TI" filter is the critical safety guarantee: a run that is still
 // progressing stays out of the candidate set, so the reaper can never kill a
@@ -1830,7 +1881,7 @@ WHERE (r.tenant_id, r.id) IN (
   AND NOT EXISTS (
     SELECT 1 FROM task_instances ti
     WHERE ti.dag_run_id = r.id
-      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed'))
+      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed', 'removed'))
 `
 
 type ListSettledRunIDsParams struct {
@@ -1844,7 +1895,8 @@ type ListSettledRunIDsRow struct {
 }
 
 // Of the given (tenant, run) pairs, the settled runs: run in success or failed
-// and no task instance outside success, failed, skipped and upstream_failed.
+// and no task instance outside success, failed, skipped, upstream_failed and
+// removed.
 // This is the same "settled" the retention janitor's LockExpiredSettledRuns
 // uses (duplicated there on purpose, keep the two identical). A run marked
 // failed while a task still runs is not settled, so the reconciler never
@@ -2343,7 +2395,7 @@ WHERE dr.id = $1
   AND NOT EXISTS (
       SELECT 1 FROM task_instances ti2
       WHERE ti2.dag_run_id = dr.id
-        AND ti2.state NOT IN ('none', 'success', 'failed', 'skipped', 'upstream_failed')
+        AND ti2.state NOT IN ('none', 'success', 'failed', 'skipped', 'upstream_failed', 'removed')
   )
   AND GREATEST(
           COALESCE((SELECT GREATEST(MAX(ti.ended_at), MAX(ti.started_at), MAX(ti.released_at))
@@ -2565,6 +2617,30 @@ func (q *Queries) MarkTaskInstanceQueued(ctx context.Context, arg MarkTaskInstan
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const markTaskInstancesRemoved = `-- name: MarkTaskInstancesRemoved :exec
+UPDATE task_instances
+SET state = 'removed'
+WHERE tenant_id = $1 AND dag_run_id = $2
+  AND task_id = ANY($3::text[])
+  AND state NOT IN ('queued', 'running', 'removed')
+`
+
+type MarkTaskInstancesRemovedParams struct {
+	TenantID pgtype.UUID `json:"tenant_id"`
+	DagRunID pgtype.UUID `json:"dag_run_id"`
+	TaskIds  []string    `json:"task_ids"`
+}
+
+// A clear that moves a finished run to a version that no longer declares
+// these tasks marks their task instances removed (ADR 0086), as Airflow's
+// verify_integrity does. Their history, logs and XCom stay. A queued or
+// running task instance is never marked: the clear does not move a run that
+// has one, and the guard keeps a racing attempt's row as it is.
+func (q *Queries) MarkTaskInstancesRemoved(ctx context.Context, arg MarkTaskInstancesRemovedParams) error {
+	_, err := q.db.Exec(ctx, markTaskInstancesRemoved, arg.TenantID, arg.DagRunID, arg.TaskIds)
+	return err
 }
 
 const markTaskPodLost = `-- name: MarkTaskPodLost :execrows
@@ -3217,7 +3293,8 @@ type ResetDagRunToVersionParams struct {
 }
 
 // Clear with run_on_latest_version re-binds the run to the DAG's current
-// registered version (ADR 0020; opt-in since the 2026-09-15 amendment): a
+// registered version (ADR 0020; opt-in since the 2026-09-15 amendment; only a
+// finished run with no queued or running task instance, ADR 0086): a
 // re-run after a code/yaml fix picks up the newest image and config — in dev that
 // is the last hot-reload, in prod the last deploy — while everything within a
 // version stays reproducible. Clearing the alert bookkeeping (#431) makes the clear

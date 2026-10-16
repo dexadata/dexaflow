@@ -352,48 +352,20 @@ Known gaps the 3.3 UI exposes, none of them a crash:
   Clear dialog shows "run on latest version" as forced for it; the request it
   sends still keeps the run's own version. Every other run names its pinned
   version, in `GET .../dagRuns/{dag_run_id}` and in the run list alike.
-- "Run with latest bundle version" on a run whose tasks differ from the
-  current version's is refused ([ADR 0020](/project/adrs/0020-delete-vs-clear-dag/)
-  covers the clear and its version). Airflow 3.2 re-binds the run and then
-  creates a task instance for every task the new version adds and marks
-  `removed` the task instances of the tasks it dropped. Dexaflow does not
-  create or remove task instances on a clear yet, so when the current version
-  adds or removes a task, both Clear routes (`clearTaskInstances` and
-  `dagRuns/{dag_run_id}/clear`) answer `409` and clear nothing, the dry run
-  included. A clear onto a version with the same tasks re-binds the run as
-  before. A run with no task instances yet is compared by the tasks of the
-  version it is bound to.
-  - **The UI does not show why.** The 3.3.2 Clear dialogs read only the data
-    of the dry run, so the refused preview shows an empty list of task
-    instances, Confirm stays disabled, and no message appears. If the
-    current version changes between the preview and Confirm, the toast of the
-    task instance dialog says only "Conflict", and the run dialog's toast
-    prints the raw response.
-  - **The API names the tasks.** The `detail` of the `409` says which tasks
-    the version adds or removes, and the two ways out: clear without the
-    option to re-run the version the run was created with, or trigger a new
-    run to run the current version. Read it with the same dry run the dialog
-    sends (there is no CLI clear yet; the MCP `clear_task` tool reports the
-    same detail):
-
-    ```bash
-    curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-      "$DEXAFLOW_URL/api/v2/dags/my_pipeline/dagRuns/$RUN_ID/clear" \
-      -d '{"dry_run": true, "run_on_latest_version": true}' | jq -r .detail
-    ```
-
-  - **Several runs are refused together.** With `include_past` or
-    `include_future`, every run the clear spans is checked before any is
-    cleared, and one run whose tasks differ refuses the whole request; the
-    detail says how many of the runs differ and names the tasks of the first.
-    The check is not a lock: a version registered while the clear goes
-    through the runs can still refuse a later run after earlier ones cleared.
-  - **Runs that have not finished are re-bound too.** Airflow 3.2 re-binds
-    only a run that has finished (success or failed); Dexaflow also re-binds a
-    queued or running run. A task instance already running finishes in the
-    pod started from the old version's image, and its XCom checks keep using
-    the old version's task spec until it ends; the tasks that start after the
-    clear use the current version.
+- "Run with latest bundle version" follows Airflow 3.2
+  ([ADR 0086](/project/adrs/0086-clear-rebinds-a-finished-run-with-its-task-set/)):
+  a finished run with no task queued or running moves to the current version,
+  which creates the task instances of the tasks that version adds and marks
+  `removed` the ones of the tasks it dropped. A run that has not finished keeps
+  its version and the clear applies on it.
+  - **The UI does not say when the option was not applied.** Both Clear routes
+    (`clearTaskInstances` and `dagRuns/{dag_run_id}/clear`), dry run included,
+    name such a run in the added field `run_on_latest_version_not_applied`,
+    with the reason. The 3.3.2 Clear dialogs read only the fields Airflow
+    defines, so they show the usual preview and no message; the run keeps
+    showing the version it had. [Clearing a run that is still
+    running](/author-dags/dag-authoring/#clearing-a-run-that-is-still-running)
+    shows how to read the field and how to move the run once it has finished.
 - Deadline alerts and run duration stats answer empty.
 - The calls below are not served yet. Each one answers `501` with the detail
   "... is not available in Dexaflow yet", which the UI shows as an error toast,

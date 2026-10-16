@@ -779,9 +779,15 @@ func (r *Repository) ListTaskInstances(ctx context.Context, tenant, dagID, runID
 // opts carries the two independent run-level decisions — whether to re-open the
 // run, and which version the re-run executes (see domain.ClearOptions).
 //
-// A clear that re-binds the run to a version whose tasks differ from the
-// run's task instances is refused with a conflict before anything is written
-// (checkRebindTaskSet).
+// A clear that asks for the current version (opts.RunOnLatestVersion with
+// opts.ResetDagRun) moves the run to it only when the run has finished and
+// none of its task instances is queued or running, decided inside the
+// clear's transaction on the locked run (decideMove, ADR 0086). The move
+// brings the run's task instances to that version's tasks
+// (alignTaskInstances). Any other run keeps its version, and the clear
+// applies on it; RunsKeepingVersion reports why. Either way the clear resets
+// only tasks the version the re-run executes declares, so a task instance
+// left removed by an earlier move stays removed.
 //
 // Each cleared task instance gets its retry budget back and starts without the
 // XCom of the attempt it replaces (#1131). The whole clear is one transaction,
@@ -797,30 +803,15 @@ func (r *Repository) ClearTaskInstances(ctx context.Context, tenant, dagID, runI
 	if err != nil {
 		return 0, mapNotFound(err)
 	}
-	budget, err := r.loadClearRetryBudget(ctx, dag, run, opts)
-	if err != nil {
-		return 0, err
-	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("beginning clear tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
 	qtx := r.q.WithTx(tx)
-	if refused := checkRebindTaskSet(ctx, qtx, dag, run, opts); refused != nil {
-		return 0, refused
-	}
-	cleared, err := resetTaskInstances(ctx, qtx, run, taskIDs, onlyFailed, budget)
+	cleared, err := r.clearInTx(ctx, qtx, dag, run, taskIDs, onlyFailed, opts)
 	if err != nil {
 		return 0, err
-	}
-	if err := r.deleteClearedXCom(ctx, qtx, run, cleared); err != nil {
-		return 0, err
-	}
-	if opts.ResetDagRun {
-		if err := reopenClearedRun(ctx, qtx, dag, run, opts); err != nil {
-			return 0, err
-		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("committing clear tx: %w", err)
@@ -828,10 +819,60 @@ func (r *Repository) ClearTaskInstances(ctx context.Context, tenant, dagID, runI
 	return len(cleared), nil
 }
 
+// clearInTx is ClearTaskInstances on run, inside the clear's transaction q.
+// It returns the ids of the task instances it reset.
+func (r *Repository) clearInTx(ctx context.Context, q *queries.Queries, dag queries.Dag, run queries.DagRun, taskIDs []string, onlyFailed bool, opts domain.ClearOptions) ([]string, error) {
+	run, tis, moves, err := decideMove(ctx, q, dag, run, opts)
+	if err != nil {
+		return nil, err
+	}
+	versionID := run.DagVersionID
+	if moves {
+		versionID = dag.CurrentVersionID
+	}
+	budget, err := loadClearRetryBudget(ctx, q, dag.TenantID, versionID)
+	if err != nil {
+		return nil, err
+	}
+	var restored []string
+	if moves {
+		if restored, err = alignTaskInstances(ctx, q, run, tis, budget); err != nil {
+			return nil, err
+		}
+	}
+	if versionID.Valid {
+		// Only a task the version the re-run executes declares is reset,
+		// whether or not the run moves: a task instance a past move left
+		// removed, reset to none, would never be planned and the finished
+		// run would never settle again (ADR 0086).
+		named := len(taskIDs) > 0
+		taskIDs = declaredOnly(taskIDs, budget, restored)
+		if named && len(taskIDs) == 0 {
+			// Every named task was dropped or already brought back: an
+			// empty list would mean "every failed task" below.
+			onlyFailed = false
+		}
+	}
+	cleared, err := resetTaskInstances(ctx, q, run, taskIDs, onlyFailed, budget)
+	if err != nil {
+		return nil, err
+	}
+	cleared = append(cleared, restored...)
+	if err := r.deleteClearedXCom(ctx, q, run, cleared); err != nil {
+		return nil, err
+	}
+	if opts.ResetDagRun {
+		if err := reopenClearedRun(ctx, q, dag, run, moves); err != nil {
+			return nil, err
+		}
+	}
+	return cleared, nil
+}
+
 // reopenClearedRun re-opens a cleared run so the scheduler looks at it again,
-// re-binding it to the DAG's current version when opts asks for that.
-func reopenClearedRun(ctx context.Context, q *queries.Queries, dag queries.Dag, run queries.DagRun, opts domain.ClearOptions) error {
-	if opts.RunOnLatestVersion {
+// re-binding it to the DAG's current version when moves is set.
+func reopenClearedRun(ctx context.Context, q *queries.Queries, dag queries.Dag, run queries.DagRun, moves bool) error {
+	if moves {
 		// Re-bind the run to the DAG's current version so a clear after a
 		// code/yaml fix re-runs against the newest image + config (ADR 0020).
 		// In dev the current version is the last hot-reload; in prod, the last
@@ -911,9 +952,7 @@ func resetTaskInstances(ctx context.Context, q *queries.Queries, run queries.Dag
 			}
 			continue
 		}
-		if err := q.ResetTaskInstanceToNone(ctx, queries.ResetTaskInstanceToNoneParams{
-			TenantID: run.TenantID, DagRunID: run.ID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots, SpecPools: budget.pools,
-		}); err != nil {
+		if err := q.ResetTaskInstanceToNone(ctx, budget.resetToNone(run, taskID)); err != nil {
 			return nil, fmt.Errorf("clearing task %q: %w", taskID, err)
 		}
 		cleared = append(cleared, taskID)
