@@ -33,7 +33,7 @@ retries, and the same message register gives.
 
 ```bash
 DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED=true
-DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE=ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:<digest>
+DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE=ghcr.io/dexadata/dexaflow-runtime:py3.11-{{< latest-version v >}}@sha256:<digest>
 ```
 
 The legacy `LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED` and
@@ -47,7 +47,7 @@ With the Helm chart, set the two values under `execution.sourceMode`:
 execution:
   sourceMode:
     enabled: true
-    image: ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:<digest>
+    image: ghcr.io/dexadata/dexaflow-runtime:py3.11-{{< latest-version v >}}@sha256:<digest>
 ```
 
 The chart renders `LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED` and
