@@ -935,9 +935,10 @@ func clearTaskInstancesHandler(repo TaskInstanceRepository, runs DagRunRepositor
 		if !ok {
 			return
 		}
+		scope := newClearScope(c, specs, opts, kept)
 		affected := make([]taskInstanceDTO, 0)
 		for _, rid := range targets {
-			affected = append(affected, affectedTaskInstances(c, repo, runs, versions, rid, taskIDs, onlyFailed)...)
+			affected = append(affected, affectedTaskInstances(c, repo, runs, versions, rid, taskIDs, onlyFailed, scope.declared(rid))...)
 		}
 		// The UI previews with dry_run=true before confirming; it expects the set of
 		// affected task instances back (TaskInstanceCollectionResponse), not a count.
@@ -1059,10 +1060,57 @@ func expandTaskIDs(tasks []domain.TaskSpec, seeds []string, includeUpstream, inc
 	return out
 }
 
+// clearScope tells, for each run a clear targets, which tasks the version
+// the re-run executes declares, so the preview and the audit list only the
+// task instances the clear resets (ADR 0086).
+type clearScope struct {
+	// current is the tasks of the DAG's current version when the clear asks
+	// to move its runs there, nil otherwise or when that version is unknown.
+	current map[string]bool
+	// kept names the runs that keep their own version.
+	kept map[string]bool
+}
+
+// newClearScope reads the current version's tasks when the clear with opts
+// moves runs to it. kept lists the runs that keep their own version.
+func newClearScope(c *gin.Context, specs DagSpecReader, opts domain.ClearOptions, kept []domain.ClearVersionKept) clearScope {
+	scope := clearScope{kept: make(map[string]bool, len(kept))}
+	for _, k := range kept {
+		scope.kept[k.RunID] = true
+	}
+	if specs == nil || !opts.ResetDagRun || !opts.RunOnLatestVersion {
+		return scope
+	}
+	spec, err := specs.GetCurrentSpec(c.Request.Context(), tenantOf(c), c.Param("dag_id"))
+	if err != nil {
+		slog.Warn("reading the current version a clear moves runs to", "dag_id", c.Param("dag_id"), "error", err)
+		return scope
+	}
+	scope.current = make(map[string]bool, len(spec.Tasks))
+	for _, t := range spec.Tasks {
+		scope.current[t.TaskID] = true
+	}
+	return scope
+}
+
+// declared returns the tasks the re-run of runID executes when the run moves
+// to the current version, or nil when it keeps its own: the clear then skips
+// only the task instances a past move left removed, the tasks its version
+// does not declare.
+func (s clearScope) declared(runID string) map[string]bool {
+	if s.kept[runID] {
+		return nil
+	}
+	return s.current
+}
+
 // affectedTaskInstances returns the task instances a clear would touch: the named
 // tasks (or all when none named), restricted to failed ones when onlyFailed.
+// A task the version the re-run executes does not declare is left out, since
+// the clear does not reset it: outside declared when the run moves (declared
+// is not nil), a removed task instance otherwise.
 func affectedTaskInstances(c *gin.Context, repo TaskInstanceRepository, runs DagRunRepository, versions DagVersionLister,
-	runID string, taskIDs []string, onlyFailed bool) []taskInstanceDTO {
+	runID string, taskIDs []string, onlyFailed bool, declared map[string]bool) []taskInstanceDTO {
 	tis, _, err := repo.ListTaskInstances(c.Request.Context(), tenantOf(c), c.Param("dag_id"), runID, 1000, 0)
 	if err != nil {
 		return []taskInstanceDTO{}
@@ -1075,6 +1123,9 @@ func affectedTaskInstances(c *gin.Context, repo TaskInstanceRepository, runs Dag
 	out := make([]taskInstanceDTO, 0, len(tis))
 	for _, ti := range tis {
 		if len(want) > 0 && !want[ti.TaskID] {
+			continue
+		}
+		if (declared != nil && !declared[ti.TaskID]) || (declared == nil && ti.State == domain.TaskStateRemoved) {
 			continue
 		}
 		if onlyFailed && ti.State != domain.TaskStateFailed && ti.State != domain.TaskStateUpstreamFailed {
@@ -1450,7 +1501,7 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 			RequireScopedPermission("write", "task_instance", auth.ScopeRun), clearTaskInstancesHandler(deps.Tasks, deps.DagRuns, deps.DagVersions, deps.Specs, deps.Audit))
 		if deps.DagRuns != nil {
 			r.POST("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/clear",
-				RequireScopedPermission("write", "task_instance", auth.ScopeRun), clearDagRunHandler(deps.Tasks, deps.DagRuns, deps.DagVersions, deps.Audit))
+				RequireScopedPermission("write", "task_instance", auth.ScopeRun), clearDagRunHandler(deps.Tasks, deps.DagRuns, deps.DagVersions, deps.Specs, deps.Audit))
 		}
 	}
 	if deps.Versions != nil {

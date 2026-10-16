@@ -425,3 +425,31 @@ func TestRunsKeepingVersionIsTenantScopedIntegration(t *testing.T) {
 		t.Errorf("another tenant's clear changed the run: on v2=%v states=%q", f.onV2(t), f.states(t))
 	}
 }
+
+// A task instance a re-bind left removed stays removed when a later clear
+// without run_on_latest_version names it: the run's version does not declare
+// the task, so a reset to none would leave a task instance nothing ever plans
+// on a finished run, and the run would never count as settled again (never
+// retained, never collected). With only_failed the empty list left after
+// dropping it must not turn into "every failed task" (a stays failed).
+func TestClearWithoutRebindLeavesARemovedTaskRemovedIntegration(t *testing.T) {
+	for _, onlyFailed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("only_failed=%v", onlyFailed), func(t *testing.T) {
+			f := seedDriftedRun(t, "stay_removed", []string{"a", "b"}, pythonTasks([]string{"a"}))
+			ctx := t.Context()
+			if _, err := f.repo.ClearTaskInstances(ctx, "default", f.dagID, "r1", []string{"a"}, true, rebind); err != nil {
+				t.Fatalf("re-binding clear: %v", err)
+			}
+			f.setTask(t, "a", "failed")
+			f.setRun(t, "failed")
+			pin := domain.ClearOptions{ResetDagRun: true}
+			n, err := f.repo.ClearTaskInstances(ctx, "default", f.dagID, "r1", []string{"b"}, onlyFailed, pin)
+			if err != nil || n != 0 {
+				t.Fatalf("clear of the removed b: n=%d err=%v, want nothing reset", n, err)
+			}
+			if got := f.states(t); got != "a=failed b=removed" {
+				t.Errorf("task states = %q, want a=failed b=removed", got)
+			}
+		})
+	}
+}

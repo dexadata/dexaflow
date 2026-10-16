@@ -43,7 +43,8 @@ attempt.
 
 A clear with `reset_dag_runs` and `run_on_latest_version` re-binds the run
 only when both of these hold, read inside the clear's transaction with the run
-row locked:
+row locked (`FOR NO KEY UPDATE`, and only while the run is finished, so an
+unfinished run is never held):
 
 - the run is `success` or `failed`;
 - none of its task instances is `queued` or `running`.
@@ -69,16 +70,24 @@ In the same transaction as the re-bind:
    clear applies, so it runs again in the re-bound run.
 
 The clear's own resets then apply to the tasks of the current version only. A
-named task the version dropped is not reset. It stays `removed`.
+named task the version dropped is not reset. It stays `removed`, also under a
+later clear that keeps the run's version: every clear resets only tasks the
+version the re-run executes declares, so a finished run never ends with a
+task instance in `none` that nothing will plan. The dry run and the audit
+log list only the task instances the clear resets.
 
 ### D3. `removed` is a terminal task state
 
 Migration 047 adds `removed` to the `task_state` enum. The down migration does
 nothing: Postgres cannot drop an enum value without rebuilding the type, and
 `ADD VALUE IF NOT EXISTS` makes the up safe to apply again (as for 006 and
-017). The previous release reads the value without trouble: the scheduler
-plans and finalizes from the spec's tasks, never from a task instance whose
-task the spec lacks.
+017). The previous release reads the value and never schedules it: the
+scheduler plans and finalizes from the spec's tasks, never from a task
+instance whose task the spec lacks. Its settled predicates do not list
+`removed`, though, so after a rollback a run holding a removed task instance
+is never deleted by retention and its pods are never collected, and its
+orphan reaper counts `removed` as live. Upgrading again restores both. The
+down file says so, and how to settle such runs before a rollback.
 
 `removed` is terminal (`TaskState.IsTerminal`), as in Airflow, where it is a
 finished state. It is never counted in the run's outcome, because
@@ -99,7 +108,9 @@ and `dagRuns/{dag_run_id}/clear`), dry run included, add the field
 `run_on_latest_version_not_applied` to their response. It lists each such run
 with the reason, for example "the run is running". The reason is read before
 the clear, and the clear decides again inside its transaction, so a run that
-finishes in between can be re-bound although the response listed it. To move
+finishes in between can be re-bound although the response listed it, and a
+run another clear re-opens in between keeps its version although the
+response does not list it. To move
 such a run to the current version: wait for it to finish, or mark it failed or
 success, then clear again. The user docs explain this in
 [Clearing a run that is still running](/author-dags/dag-authoring/#clearing-a-run-that-is-still-running).

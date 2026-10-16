@@ -271,11 +271,15 @@ type Querier interface {
 	// locked inside the clear's transaction before any of its task instances is
 	// written (ADR 0086). The move depends on the run's state, so it is decided
 	// on the locked row: a second clear of the same run waits for the first
-	// instead of deciding from the same state. Only a finished run is locked
-	// here: the orphan reaper share-locks a running run's task instances and
-	// then updates the run row, the opposite order. The retention janitor locks
-	// finished runs with SKIP LOCKED and their task instances with NOWAIT, so it
-	// skips or gives way and never waits on a clear.
+	// instead of deciding from the same state. Only a finished run is locked:
+	// the state predicate is checked again after a wait, so a run another clear
+	// re-opened meanwhile is not returned and not held. The orphan reaper
+	// share-locks a running run's task instances and then updates the run row,
+	// the opposite order. NO KEY UPDATE is enough, since no key changes, and it
+	// lets through the key-share lock an XCom insert of a live attempt takes on
+	// the run. The retention janitor locks finished runs with SKIP LOCKED and
+	// their task instances with NOWAIT, so it skips or gives way and never waits
+	// on a clear.
 	GetDagRunForUpdate(ctx context.Context, arg GetDagRunForUpdateParams) (DagRun, error)
 	// A run by id, only inside the given tenant: the agent RPC reads the run its
 	// token names with the token's tenant, so a token of one tenant never loads

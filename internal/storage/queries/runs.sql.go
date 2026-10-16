@@ -788,7 +788,9 @@ func (q *Queries) GetDagRunByID(ctx context.Context, id pgtype.UUID) (DagRun, er
 }
 
 const getDagRunForUpdate = `-- name: GetDagRunForUpdate :one
-SELECT id, tenant_id, dag_id, dag_version_id, run_id, logical_date, data_interval_start, data_interval_end, state, trigger, conf, triggered_by, queued_at, started_at, ended_at, note, alerted_at, alert_attempts, next_alert_attempt_at FROM dag_runs WHERE id = $1 AND tenant_id = $2 FOR UPDATE
+SELECT id, tenant_id, dag_id, dag_version_id, run_id, logical_date, data_interval_start, data_interval_end, state, trigger, conf, triggered_by, queued_at, started_at, ended_at, note, alerted_at, alert_attempts, next_alert_attempt_at FROM dag_runs
+ WHERE id = $1 AND tenant_id = $2 AND state IN ('success', 'failed')
+   FOR NO KEY UPDATE
 `
 
 type GetDagRunForUpdateParams struct {
@@ -800,11 +802,15 @@ type GetDagRunForUpdateParams struct {
 // locked inside the clear's transaction before any of its task instances is
 // written (ADR 0086). The move depends on the run's state, so it is decided
 // on the locked row: a second clear of the same run waits for the first
-// instead of deciding from the same state. Only a finished run is locked
-// here: the orphan reaper share-locks a running run's task instances and
-// then updates the run row, the opposite order. The retention janitor locks
-// finished runs with SKIP LOCKED and their task instances with NOWAIT, so it
-// skips or gives way and never waits on a clear.
+// instead of deciding from the same state. Only a finished run is locked:
+// the state predicate is checked again after a wait, so a run another clear
+// re-opened meanwhile is not returned and not held. The orphan reaper
+// share-locks a running run's task instances and then updates the run row,
+// the opposite order. NO KEY UPDATE is enough, since no key changes, and it
+// lets through the key-share lock an XCom insert of a live attempt takes on
+// the run. The retention janitor locks finished runs with SKIP LOCKED and
+// their task instances with NOWAIT, so it skips or gives way and never waits
+// on a clear.
 func (q *Queries) GetDagRunForUpdate(ctx context.Context, arg GetDagRunForUpdateParams) (DagRun, error) {
 	row := q.db.QueryRow(ctx, getDagRunForUpdate, arg.ID, arg.TenantID)
 	var i DagRun
@@ -1001,7 +1007,7 @@ func (q *Queries) GetDagVersionInTenant(ctx context.Context, arg GetDagVersionIn
 }
 
 const getDagVersionsByIDs = `-- name: GetDagVersionsByIDs :many
-SELECT id, dag_id, version, image_reference, spec, spec_hash, created_by, created_at FROM dag_versions WHERE id = ANY($1::uuid[])
+SELECT id, dag_id, version, image_reference, spec, spec_hash, created_by, created_at, build_info FROM dag_versions WHERE id = ANY($1::uuid[])
 `
 
 // Unscoped, like GetDagVersionByID: the spec cache's batch fill for a warm
@@ -1024,6 +1030,7 @@ func (q *Queries) GetDagVersionsByIDs(ctx context.Context, ids []pgtype.UUID) ([
 			&i.SpecHash,
 			&i.CreatedBy,
 			&i.CreatedAt,
+			&i.BuildInfo,
 		); err != nil {
 			return nil, err
 		}

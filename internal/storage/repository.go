@@ -784,9 +784,10 @@ func (r *Repository) ListTaskInstances(ctx context.Context, tenant, dagID, runID
 // none of its task instances is queued or running, decided inside the
 // clear's transaction on the locked run (decideMove, ADR 0086). The move
 // brings the run's task instances to that version's tasks
-// (alignTaskInstances), and the clear then resets only tasks the version
-// declares. Any other run keeps its version, and the clear applies on it;
-// RunsKeepingVersion reports why.
+// (alignTaskInstances). Any other run keeps its version, and the clear
+// applies on it; RunsKeepingVersion reports why. Either way the clear resets
+// only tasks the version the re-run executes declares, so a task instance
+// left removed by an earlier move stays removed.
 //
 // Each cleared task instance gets its retry budget back and starts without the
 // XCom of the attempt it replaces (#1131). The whole clear is one transaction,
@@ -838,6 +839,12 @@ func (r *Repository) clearInTx(ctx context.Context, q *queries.Queries, dag quer
 		if restored, err = alignTaskInstances(ctx, q, run, tis, budget); err != nil {
 			return nil, err
 		}
+	}
+	if versionID.Valid {
+		// Only a task the version the re-run executes declares is reset,
+		// whether or not the run moves: a task instance a past move left
+		// removed, reset to none, would never be planned and the finished
+		// run would never settle again (ADR 0086).
 		named := len(taskIDs) > 0
 		taskIDs = declaredOnly(taskIDs, budget, restored)
 		if named && len(taskIDs) == 0 {

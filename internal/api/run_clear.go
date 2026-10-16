@@ -26,7 +26,7 @@ type clearDagRunRequest struct {
 // re-queues the run and answers the run (DAGRunResponse). Both add
 // run_on_latest_version_not_applied when the run keeps its version although
 // the request asked for the current one (ADR 0086).
-func clearDagRunHandler(tasks TaskInstanceRepository, runs DagRunRepository, versions DagVersionLister, audit AuditWriter) gin.HandlerFunc {
+func clearDagRunHandler(tasks TaskInstanceRepository, runs DagRunRepository, versions DagVersionLister, specs DagSpecReader, audit AuditWriter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body clearDagRunRequest
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -55,7 +55,8 @@ func clearDagRunHandler(tasks TaskInstanceRepository, runs DagRunRepository, ver
 		if !ok {
 			return
 		}
-		affected := affectedTaskInstances(c, tasks, runs, versions, runID, nil, body.OnlyFailed)
+		scope := newClearScope(c, specs, opts, kept)
+		affected := affectedTaskInstances(c, tasks, runs, versions, runID, nil, body.OnlyFailed, scope.declared(runID))
 		if body.DryRun == nil || *body.DryRun {
 			c.JSON(http.StatusOK, clearCollectionOf(affected, kept))
 			return

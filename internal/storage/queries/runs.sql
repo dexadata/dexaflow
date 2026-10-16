@@ -219,12 +219,18 @@ WHERE id = $1 AND tenant_id = $2;
 -- locked inside the clear's transaction before any of its task instances is
 -- written (ADR 0086). The move depends on the run's state, so it is decided
 -- on the locked row: a second clear of the same run waits for the first
--- instead of deciding from the same state. Only a finished run is locked
--- here: the orphan reaper share-locks a running run's task instances and
--- then updates the run row, the opposite order. The retention janitor locks
--- finished runs with SKIP LOCKED and their task instances with NOWAIT, so it
--- skips or gives way and never waits on a clear.
-SELECT * FROM dag_runs WHERE id = $1 AND tenant_id = $2 FOR UPDATE;
+-- instead of deciding from the same state. Only a finished run is locked:
+-- the state predicate is checked again after a wait, so a run another clear
+-- re-opened meanwhile is not returned and not held. The orphan reaper
+-- share-locks a running run's task instances and then updates the run row,
+-- the opposite order. NO KEY UPDATE is enough, since no key changes, and it
+-- lets through the key-share lock an XCom insert of a live attempt takes on
+-- the run. The retention janitor locks finished runs with SKIP LOCKED and
+-- their task instances with NOWAIT, so it skips or gives way and never waits
+-- on a clear.
+SELECT * FROM dag_runs
+ WHERE id = $1 AND tenant_id = $2 AND state IN ('success', 'failed')
+   FOR NO KEY UPDATE;
 
 -- name: MarkTaskInstancesRemoved :exec
 -- A clear that moves a finished run to a version that no longer declares

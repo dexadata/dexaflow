@@ -2,7 +2,10 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/storage/queries"
@@ -18,7 +21,8 @@ import (
 //
 // The answer is read before the clear. ClearTaskInstances decides again
 // inside its transaction, so a run that finishes in between moves although
-// it is listed here.
+// it is listed here, and a run another clear re-opens in between keeps its
+// version although it is not.
 func (r *Repository) RunsKeepingVersion(ctx context.Context, tenant, dagID string, runIDs []string, opts domain.ClearOptions) ([]domain.ClearVersionKept, error) {
 	dag, err := r.resolveDag(ctx, tenant, dagID)
 	if err != nil {
@@ -53,21 +57,26 @@ func (r *Repository) RunsKeepingVersion(ctx context.Context, tenant, dagID strin
 
 // decideMove decides, inside the clear's transaction q, whether the clear
 // moves run to the DAG's current version (ADR 0086). Only a run that looked
-// finished is locked and read again: the decision is then taken on the locked
-// row and its task instances, so two clears of the same finished run do not
-// both move it. A run that is not finished is never locked here: the orphan
-// reaper share-locks a running run's task instances before it updates the
-// run row, and a clear holding that row while it resets those task instances
-// would form a cycle with it. Such a run keeps its version anyway. It returns
-// the run as read, its task instances when the move was considered, and the
-// decision.
+// finished is locked and read again, and the lock itself holds only a run
+// that is still finished: the decision is then taken on the locked row and
+// its task instances, so two clears of the same finished run do not both
+// move it. A run that is not finished, including one another clear re-opened
+// after run was read, is never locked here: the orphan reaper share-locks a
+// running run's task instances before it updates the run row, and a clear
+// holding that row while it resets those task instances would form a cycle
+// with it. Such a run keeps its version. It returns the run as read, its task
+// instances when the move was considered, and the decision.
 func decideMove(ctx context.Context, q *queries.Queries, dag queries.Dag, run queries.DagRun, opts domain.ClearOptions) (queries.DagRun, []queries.TaskInstance, bool, error) {
 	if !rebinds(dag, opts) || !finished(run) {
 		return run, nil, false, nil
 	}
 	locked, err := q.GetDagRunForUpdate(ctx, queries.GetDagRunForUpdateParams{ID: run.ID, TenantID: run.TenantID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		// No longer finished (or gone): the run keeps its version.
+		return run, nil, false, nil
+	}
 	if err != nil {
-		return run, nil, false, mapNotFound(err)
+		return run, nil, false, fmt.Errorf("locking the cleared run: %w", err)
 	}
 	tis, err := q.ListTaskInstancesByRun(ctx, queries.ListTaskInstancesByRunParams{TenantID: locked.TenantID, DagRunID: locked.ID})
 	if err != nil {
@@ -162,9 +171,9 @@ func alignTaskInstances(ctx context.Context, q *queries.Queries, run queries.Dag
 }
 
 // declaredOnly keeps the task ids the version of budget declares, in order:
-// a clear that moves a run to that version resets nothing for a task it
-// dropped, whose task instance alignTaskInstances marked removed. skip names
-// task ids already reset.
+// a clear resets nothing for a task the version the re-run executes does not
+// declare, such as one whose task instance alignTaskInstances marked removed
+// in this clear or an earlier one. skip names task ids already reset.
 func declaredOnly(taskIDs []string, budget clearRetryBudget, skip []string) []string {
 	declared := make(map[string]bool, len(budget.tasks))
 	for _, t := range budget.tasks {

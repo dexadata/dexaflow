@@ -194,7 +194,8 @@ func TestClearRetryBudgetFollowsTheVersionThatWillRun(t *testing.T) {
 // A clear that moves a run onto a version without one of its tasks marks
 // that task instance removed (ADR 0086), so the case is a run a re-bind moved
 // there before #1702: it is pinned to v2 and keeps the task instance of the
-// task v2 dropped.
+// task v2 dropped. A clear that names the task resets nothing (the version
+// does not declare it), so the case is the clear of every failed task.
 func TestClearRetryBudgetForATaskTheVersionNoLongerHas(t *testing.T) {
 	repo, sched, pg, ctx := openInfra(t)
 	dagID := fmt.Sprintf("clear_budget_gone_%d", time.Now().UnixNano())
@@ -213,7 +214,7 @@ func TestClearRetryBudgetForATaskTheVersionNoLongerHas(t *testing.T) {
 	pinRunToCurrentVersion(t, pg, ctx, runUUID)
 
 	opts := domain.ClearOptions{ResetDagRun: true}
-	if _, err := repo.ClearTaskInstances(ctx, "default", dagID, "r1", []string{"t"}, true, opts); err != nil {
+	if _, err := repo.ClearTaskInstances(ctx, "default", dagID, "r1", nil, true, opts); err != nil {
 		t.Fatalf("ClearTaskInstances: %v", err)
 	}
 	try, maxTries := tryBudget(t, pg, ctx, runUUID)
