@@ -10,5 +10,9 @@ body: |-
   cookie is kept, so reloading after the outage opens the UI. The gate tells an
   unreachable store apart from a missing or invalid session with the same rule
   the API uses since #1097, and still serves the UI only for a session it
-  verified: no session or an invalid one is sent to sign in as before. (#1099)
+  verified: no session or an invalid one is sent to sign in as before. The
+  sign-in page itself no longer reads an outage as a wrong password: when
+  `POST /auth/token` answers `503` it says sign-in is temporarily unavailable
+  and to try again shortly, instead of "Invalid credentials" (a `401` still
+  says "Invalid credentials"). (#1099)
 time: 2026-10-16T12:30:00.000000000-03:00

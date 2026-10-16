@@ -673,8 +673,9 @@ no longer answers. Two settings bound how long that lasts:
   UI with a session it could not check gets a static page saying Dexaflow is
   temporarily unavailable (also `503`), not the sign-in page; it keeps its
   session cookie, so reloading once the database is back opens the UI. A
-  browser without a session is still sent to the sign-in page. The UI is never
-  served for a session that was not verified.
+  browser without a session is still sent to the sign-in page, which says
+  sign-in is temporarily unavailable rather than that the password is wrong.
+  The UI is never served for a session that was not verified.
 
 Nothing needs configuring: all of this applies to every install.
 
