@@ -57,6 +57,13 @@ type PodManager interface {
 	// re-placed TI's liveness gate asks about the attempt it is about to fail,
 	// not any older attempt whose pod may still linger (#723).
 	TaskPodPresence(ctx context.Context, a Attempt) (PodPresence, error)
+	// TaskPodPending reports whether exactly the (run, task, try, epoch)
+	// attempt has a Pending pod and no Running one: its agent has not started
+	// (image pull, node provisioning, init containers). The dispatch-lost
+	// reaper asks it only for a live pod past the start deadline, to tell an
+	// agent that can no longer start with a live credential from one that
+	// already did (#1126).
+	TaskPodPending(ctx context.Context, a Attempt) (bool, error)
 }
 
 // PodPresence is the three-way answer to "what does the apiserver hold for this

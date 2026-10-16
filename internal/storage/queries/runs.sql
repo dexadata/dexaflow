@@ -97,8 +97,11 @@ WHERE tenant_id = $1 AND dag_id = $2 AND state IN ('queued', 'running');
 -- gate unchanged.
 -- attempt_epoch rides along (ADR 0051 amendment) so the mark and the pod
 -- teardown name exactly the attempt that was listed.
+-- tenant_id rides along so a start_expired reap can append its marker to the
+-- attempt's log (#1126).
 SELECT ti.id AS task_instance_id,
        ti.dag_run_id,
+       ti.tenant_id,
        d.dag_id AS dag_id_text,
        ti.task_id,
        ti.try_number,
@@ -130,6 +133,26 @@ SET state = 'failed',
     -- once on Lite (ADR 0052 amendment, part 2).
     infra_confirmed_at = CASE WHEN sqlc.arg(provisional)::bool THEN NULL ELSE now() END,
     error_message = 'dispatch_lost: scheduler crashed before dispatch landed; will be retried by the run reaper'
+WHERE id = sqlc.arg(id)
+  AND try_number = sqlc.arg(try_number)
+  AND attempt_epoch = sqlc.arg(attempt_epoch)
+  AND state = 'queued';
+
+-- name: MarkTaskStartExpired :execrows
+-- Fails one queued TI whose task pod is still Pending (image pull, node
+-- provisioning, init containers) when the attempt credential minted at dispatch
+-- is about to run out (#1126). The agent has not started, so it could only
+-- start with a dead credential: it would be refused at Register, stream no log
+-- and fail the attempt against the user's retry budget. Marked infra instead,
+-- so the planner re-places it off-budget with a fresh credential. Same guards
+-- and provisional rule as MarkTaskDispatchLost: state='queued' (an agent that
+-- reported RUNNING wins) and the listed attempt, (try_number, attempt_epoch).
+UPDATE task_instances
+SET state = 'failed',
+    ended_at = now(),
+    last_failure_kind = 'infra',
+    infra_confirmed_at = CASE WHEN sqlc.arg(provisional)::bool THEN NULL ELSE now() END,
+    error_message = 'start_expired: the task pod did not start before its attempt credential ran out (slow image pull, node provisioning or init containers); will be re-placed with a fresh credential'
 WHERE id = sqlc.arg(id)
   AND try_number = sqlc.arg(try_number)
   AND attempt_epoch = sqlc.arg(attempt_epoch)

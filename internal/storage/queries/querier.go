@@ -573,6 +573,8 @@ type Querier interface {
 	// gate unchanged.
 	// attempt_epoch rides along (ADR 0051 amendment) so the mark and the pod
 	// teardown name exactly the attempt that was listed.
+	// tenant_id rides along so a start_expired reap can append its marker to the
+	// attempt's log (#1126).
 	ListStaleQueuedTaskInstances(ctx context.Context, arg ListStaleQueuedTaskInstancesParams) ([]ListStaleQueuedTaskInstancesRow, error)
 	// Returns every attempt for (run, task), oldest first. UNIONs the current
 	// task_instances row with all archived task_instance_history rows so the UI's
@@ -777,6 +779,15 @@ type Querier interface {
 	// listed attempt, (try_number, attempt_epoch) (ADR 0051 amendment), so a mark
 	// computed for a superseded attempt never fails its replacement.
 	MarkTaskPodLost(ctx context.Context, arg MarkTaskPodLostParams) (int64, error)
+	// Fails one queued TI whose task pod is still Pending (image pull, node
+	// provisioning, init containers) when the attempt credential minted at dispatch
+	// is about to run out (#1126). The agent has not started, so it could only
+	// start with a dead credential: it would be refused at Register, stream no log
+	// and fail the attempt against the user's retry budget. Marked infra instead,
+	// so the planner re-places it off-budget with a fresh credential. Same guards
+	// and provisional rule as MarkTaskDispatchLost: state='queued' (an agent that
+	// reported RUNNING wins) and the listed attempt, (try_number, attempt_epoch).
+	MarkTaskStartExpired(ctx context.Context, arg MarkTaskStartExpiredParams) (int64, error)
 	// Every named pool's slot cap across all tenants, for the scheduler's per-tick
 	// cross-DAG admission budget (ADR 0053 Stage 3). Keyed by (tenant_id, name) so a
 	// pool name is scoped to its tenant. Pro-only: Lite never calls this.

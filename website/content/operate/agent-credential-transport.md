@@ -37,6 +37,17 @@ The in-pod agent reads the variable; an agent-only environment strip removes it 
 every other `LEOFLOW_`-prefixed variable outside a tiny allowlist) before user code
 runs, so **task code cannot read the token from its own process environment**.
 
+Because the token is minted at dispatch, its 10 minute TTL runs while the pod is
+still `Pending` (node provisioning, a large image pull on a cold node, init
+containers). The TTL is not stretched for that: a longer one, or a grace for an
+expired token, would also keep a token read from the `Pod` object usable for
+longer. Instead, a pod still `Pending` 8 minutes after its task was queued is
+re-placed with a fresh credential, as an infra failure that spends no retry, and
+the attempt's log says `killed: start_expired`
+([#1126](https://github.com/dexadata/dexaflow/issues/1126)). If your pods
+routinely take that long to start, pre-pull the image or keep warm nodes, or use
+the `exchange` transport, whose credential is minted when the agent starts.
+
 The residual exposure this transport cannot close: the token sits **in plaintext on
 the `Pod` object in etcd**. Any principal with `get pods` in the task namespace can
 read it (`kubectl get pod -o yaml`, the Kubernetes API, any controller or audit sink
