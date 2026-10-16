@@ -230,6 +230,26 @@ change to `proto/`, the OpenAPI document or `pkg/client`, or the
 truth. Push fixes until everything is green, then a maintainer reviews — we aim
 for three business days.
 
+### Fuzz targets
+
+The parsers that read untrusted or hand-written input (`dexaflow.yaml`,
+`dag.json` and its schedule, the agent's credential and termination message,
+the API's paging parameters) have native Go fuzz targets, the `FuzzXxx`
+functions in their packages' `*_test.go` files. `make test` replays their seeds
+and every committed failing input under `testdata/fuzz/`, so they guard every
+PR as ordinary tests. The open-ended run is not on PRs: the Fuzz workflow runs
+every target nightly, and you can run them yourself:
+
+```bash
+make fuzz                                # every target, 30s each
+make fuzz FUZZTIME=5m FUZZ=FuzzSchedule  # one target, longer
+```
+
+When a run finds a failing input, fix the code in its own commit and keep the
+input file it wrote under the package's `testdata/fuzz/<Target>/`, so the
+regular test run replays it from then on. A new parser of untrusted input gets
+a fuzz target next to its tests; `scripts/fuzz.sh` finds it by its name.
+
 ---
 
 By contributing you agree your work is licensed under
