@@ -151,18 +151,29 @@ func (w *watchRun) stop(t *testing.T) error {
 	}
 }
 
-// save writes body to rel in dir and moves its mtime forward, so the poller
-// sees a save even within the file system's time resolution.
+// save writes body to rel in dir as one move of the file: the content goes
+// to a temporary file whose mtime is set a second ahead (so the poller sees
+// a save even within the file system's time resolution), then a rename puts
+// it in place. Writing in place and moving the mtime after is two moves, and
+// a poll that falls between them on a loaded machine sees two saves.
 func save(t *testing.T, dir, rel, body string) {
 	t.Helper()
-	writeProjectFile(t, dir, rel, body)
 	p := filepath.Join(dir, rel)
-	st, err := os.Stat(p)
-	if err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	next := st.ModTime().Add(time.Second)
-	if err := os.Chtimes(p, next, next); err != nil {
+	next := time.Now().Add(time.Second)
+	if st, err := os.Stat(p); err == nil && !st.ModTime().Before(next) {
+		next = st.ModTime().Add(time.Second)
+	}
+	tmp := filepath.Join(t.TempDir(), filepath.Base(rel))
+	if err := os.WriteFile(tmp, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(tmp, next, next); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, p); err != nil {
 		t.Fatal(err)
 	}
 }
