@@ -257,19 +257,26 @@ func TestRecordDispatchUnavailableHold(t *testing.T) {
 		t.Errorf("a running task must not be re-offered: applied=%v err=%v", applied, err)
 	}
 	// A clear starts a new dispatch episode: the window is reset with the
-	// dispatch-attempt counter.
-	f.setState(t, "failed")
-	if _, err := f.repo.ClearTaskInstances(f.ctx, "default", f.dagID, f.runID, []string{"t"}, false, domain.ClearOptions{}); err != nil {
-		t.Fatalf("clear: %v", err)
-	}
-	var since *time.Time
-	if err := f.pg.Pool.QueryRow(f.ctx,
-		`SELECT dispatch_unavailable_since FROM task_instances WHERE dag_run_id = $1::uuid AND task_id = 't' ORDER BY try_number DESC LIMIT 1`,
-		f.runUUID).Scan(&since); err != nil {
-		t.Fatal(err)
-	}
-	if since != nil {
-		t.Errorf("a clear must reset the outage window, got %v", *since)
+	// dispatch-attempt counter, by "clear failed" (ResetFailedTaskInstance)
+	// and by a clear of named tasks (ResetTaskInstanceToNone).
+	for _, onlyFailed := range []bool{true, false} {
+		f.setState(t, "scheduled")
+		if _, _, applied, err := f.sched.RecordDispatchUnavailable(f.ctx, f.runUUID, "t", t0, 5*time.Second, time.Minute); err != nil || !applied {
+			t.Fatalf("RecordDispatchUnavailable applied=%v err=%v", applied, err)
+		}
+		f.setState(t, "failed")
+		if _, err := f.repo.ClearTaskInstances(f.ctx, "default", f.dagID, f.runID, []string{"t"}, onlyFailed, domain.ClearOptions{}); err != nil {
+			t.Fatalf("clear (only failed %v): %v", onlyFailed, err)
+		}
+		var since *time.Time
+		if err := f.pg.Pool.QueryRow(f.ctx,
+			`SELECT dispatch_unavailable_since FROM task_instances WHERE dag_run_id = $1::uuid AND task_id = 't' ORDER BY try_number DESC LIMIT 1`,
+			f.runUUID).Scan(&since); err != nil {
+			t.Fatal(err)
+		}
+		if since != nil {
+			t.Errorf("a clear (only failed %v) must reset the outage window, got %v", onlyFailed, *since)
+		}
 	}
 }
 
