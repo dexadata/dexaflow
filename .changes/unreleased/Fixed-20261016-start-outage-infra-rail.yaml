@@ -1,0 +1,16 @@
+kind: Fixed
+body: |-
+  **A control-plane outage that outlasts the agent's start retries no longer
+  spends the task's retries.** When the control plane, its Postgres or its
+  Redis stayed unavailable past the agent's 2-minute retry budget at task start
+  (registering, reading the task spec or upstream XComs, or reporting
+  `running`), the attempt was settled as the task's own failure although the
+  task's code never ran, so a task with the default `retries: 0` failed. On a
+  dedicated Kubernetes pod the agent now writes an outcome record marked as
+  infra, with no exit code and a fixed reason, and reports nothing; the pod
+  reconciler settles it on the infra rail as `control_plane_unavailable`, and
+  the task is re-placed on the infra budget without spending a retry. On Lite
+  the unreported attempt is settled as `dispatch_lost`, on the same rail. A
+  refusal from the control plane, an external secret backend failure and a
+  warm-pool attempt keep their previous settle. (#1594)
+time: 2026-10-16T12:00:00.000000000-03:00

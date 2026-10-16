@@ -33,6 +33,7 @@ see [Lite: which reapers run](#lite-which-reapers-run).
 | Task pod vanished (TI in `running`, no pod at all for its attempt) | Pod-lost reaper | **60 s** after the running transition, then a live pod read | TI failed with `pod_lost`. Only when the apiserver holds no pod for the attempt: a pod that is still there in a terminal phase is left for the reconciler to settle from its termination log (`pod_lost_terminal_pod_defer`). |
 | Warm worker died holding attempts (warm pools only) | Warm-worker-lost reaper | next maintenance cycle | Each attempt bound to the dead worker is failed `pod_lost`; refill of the pool is the warm-pool reconciler's job, not the reaper's. |
 | Cluster stopped the task pod (graceful node shutdown on a spot or preemptible reclaim, node-pressure eviction, preemption, admission refusal) | Pod reconciler | next reconcile sweep (30 s) | TI failed with `pod_disrupted` on the infra rail: re-placed on the infra budget without spending a task retry. See [A pod the cluster stopped is an infra failure](#a-pod-the-cluster-stopped-is-an-infra-failure). |
+| Control plane, its database or its Redis did not answer the agent before the task's code ran (Kubernetes, dedicated pods) | Pod reconciler, from the agent's outcome record | next reconcile sweep (30 s) after the agent gives up (2 minutes of retries for the spec and input reads) | TI failed with `control_plane_unavailable` on the infra rail: re-placed on the infra budget without spending a task retry. See [A start the control plane never answered is an infra failure](#a-start-the-control-plane-never-answered-is-an-infra-failure). |
 | Run stuck `running` with no live TIs (post-crash limbo) | Orphan-run reaper ([#120](https://github.com/dexadata/dexaflow/issues/120)) | **5 min** | Run failed with `orphaned`; any remaining active TIs flipped to `failed` and every still-live pod of the run is deleted (its finished pods keep their outcome records for the reconciler). |
 
 Every SLA above is a floor: the reapers run every **30 s**, so detection lands
@@ -329,6 +330,38 @@ vanished with its node instead is still the pod-lost reaper's `pod_lost`; both
 end on the same infra rail. The infra budget bounds the re-places, so a task
 that keeps landing on reclaimed nodes ends in a terminal infra failure instead
 of looping.
+
+## A start the control plane never answered is an infra failure
+
+The agent retries the calls it makes before the task's code runs (registering,
+reading the task spec, upstream XComs, variables and connections, and the
+`running` report) through a control-plane restart, a Postgres failover or a
+Redis restart, for up to 2 minutes
+([control-plane HA](/operate/control-plane-ha/)). When the outage outlasts that,
+the attempt ends before the task's code ran, so the task is not at fault
+([ADR 0051](/project/adrs/0051-separate-orchestration-and-execution-state-machines/),
+an unexecutable attempt). On a dedicated pod the agent then writes an outcome
+record marked as infra, with no exit code and a fixed reason, reports nothing,
+and exits. The pod reconciler settles that record on the infra rail: the task
+instance is `failed` with `last_failure_kind = infra` and an `error_message`
+that starts with `control_plane_unavailable:`, confirmed at once like a
+disrupted pod, and the planner re-places it on the infra budget. A task with
+`retries: 0` therefore survives an outage that lands on its start.
+
+Only an answer that never came counts: `Unavailable`, `DeadlineExceeded`,
+`Aborted`, or `Internal` from an older control plane. A refusal (for example
+`PermissionDenied` on the spec read of a superseded attempt) and a failure of
+an external secret backend keep their task-failure settle. The reconciler
+honors the infra marker only on a record with an agent-authored reason and no
+exit code, the shape the agent writes. A task can write its termination
+message too, so a forged marker could at most buy a re-place on the infra
+budget, which a task can already get by killing its agent (`agent_lost`), and
+the infra budget bounds it.
+
+On Lite the agent writes no record and reports nothing, so the attempt stays
+`queued` until the dispatch-lost reaper settles it as `dispatch_lost`, on the
+same infra rail. A warm-pool attempt keeps reporting `failed`: its pod serves
+other attempts, so no reconciler reads a record for it.
 
 ## Lite: which reapers run
 
