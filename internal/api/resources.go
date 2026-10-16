@@ -52,10 +52,11 @@ type TaskInstanceRepository interface {
 	// /tries endpoint needs all attempts to render its navigable tabs.
 	ListTaskInstanceAttempts(ctx context.Context, tenant, dagID, runID, taskID string) ([]domain.TaskInstance, error)
 	ClearTaskInstances(ctx context.Context, tenant, dagID, runID string, taskIDs []string, onlyFailed bool, opts domain.ClearOptions) (int, error)
-	// CheckClearVersion answers, without writing, the refusal ClearTaskInstances
-	// would return for one of the runs under opts (a conflict when a re-bind
-	// onto the current version would change a run's task set), or nil.
-	CheckClearVersion(ctx context.Context, tenant, dagID string, runIDs []string, opts domain.ClearOptions) error
+	// RunsKeepingVersion lists, without writing, the runs among runIDs that a
+	// clear with opts asks to move to the DAG's current version and that keep
+	// their own, with the reason (ADR 0086); domain.ErrNotFound for a run the
+	// tenant does not have.
+	RunsKeepingVersion(ctx context.Context, tenant, dagID string, runIDs []string, opts domain.ClearOptions) ([]domain.ClearVersionKept, error)
 	SetTaskInstanceState(ctx context.Context, tenant, dagID, runID, taskID, state string) error
 }
 
@@ -930,7 +931,8 @@ func clearTaskInstancesHandler(repo TaskInstanceRepository, runs DagRunRepositor
 		if body.RunOnLatestVersion != nil {
 			opts.RunOnLatestVersion = *body.RunOnLatestVersion
 		}
-		if !checkClearVersion(c, repo, targets, opts) {
+		kept, ok := checkClearVersion(c, repo, targets, opts)
+		if !ok {
 			return
 		}
 		affected := make([]taskInstanceDTO, 0)
@@ -940,7 +942,7 @@ func clearTaskInstancesHandler(repo TaskInstanceRepository, runs DagRunRepositor
 		// The UI previews with dry_run=true before confirming; it expects the set of
 		// affected task instances back (TaskInstanceCollectionResponse), not a count.
 		if body.DryRun == nil || *body.DryRun {
-			c.JSON(http.StatusOK, taskInstanceCollectionDTO{TaskInstances: affected, TotalEntries: len(affected)})
+			c.JSON(http.StatusOK, clearCollectionOf(affected, kept))
 			return
 		}
 		for _, rid := range targets {
@@ -952,28 +954,27 @@ func clearTaskInstancesHandler(repo TaskInstanceRepository, runs DagRunRepositor
 		for _, ti := range affected {
 			recordTaskAudit(c, audit, "taskinstance.clear", ti.DagRunID, ti.TaskID, ti.TryNumber)
 		}
-		c.JSON(http.StatusOK, taskInstanceCollectionDTO{TaskInstances: affected, TotalEntries: len(affected)})
+		logKeptVersions(c.Param("dag_id"), kept)
+		c.JSON(http.StatusOK, clearCollectionOf(affected, kept))
 	}
 }
 
 // checkClearVersion asks the repository, once for all the target runs and
-// before any is previewed or cleared, whether a clear that re-binds them to
-// the DAG's current version may apply (#1702). A dry run so reports the
-// refusal the clear would meet, and a clear over several runs (include_past,
-// include_future) is refused as a whole when one run would change its tasks.
-// The check is not a lock: a version registered while the clear loops over
-// the runs can still refuse a later run after earlier ones cleared. It writes
-// the error response and returns false on a refusal; a clear that keeps the
-// runs' version is not checked.
-func checkClearVersion(c *gin.Context, repo TaskInstanceRepository, targets []string, opts domain.ClearOptions) bool {
+// before any is previewed or cleared, which of them keep their own version
+// although the clear asks for the DAG's current one (ADR 0086). An unknown
+// run is answered 404 here, so nothing is cleared. It writes the error
+// response and returns false on an error; a clear that does not ask for the
+// current version is not looked up.
+func checkClearVersion(c *gin.Context, repo TaskInstanceRepository, targets []string, opts domain.ClearOptions) ([]domain.ClearVersionKept, bool) {
 	if !opts.ResetDagRun || !opts.RunOnLatestVersion {
-		return true
+		return nil, true
 	}
-	if err := repo.CheckClearVersion(c.Request.Context(), tenantOf(c), c.Param("dag_id"), targets, opts); err != nil {
+	kept, err := repo.RunsKeepingVersion(c.Request.Context(), tenantOf(c), c.Param("dag_id"), targets, opts)
+	if err != nil {
 		handleRepoError(c, err)
-		return false
+		return nil, false
 	}
-	return true
+	return kept, true
 }
 
 // expandClearTasks expands the requested task_ids along the DAG topology when

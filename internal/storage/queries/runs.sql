@@ -214,9 +214,34 @@ SET state = 'queued', started_at = NULL, ended_at = NULL, alerted_at = NULL,
     alert_attempts = 0, next_alert_attempt_at = NULL
 WHERE id = $1 AND tenant_id = $2;
 
+-- name: GetDagRunForUpdate :one
+-- A finished run a clear may move to the DAG's current version, read and
+-- locked inside the clear's transaction before any of its task instances is
+-- written (ADR 0086). The move depends on the run's state, so it is decided
+-- on the locked row: a second clear of the same run waits for the first
+-- instead of deciding from the same state. Only a finished run is locked
+-- here: the orphan reaper share-locks a running run's task instances and
+-- then updates the run row, the opposite order. The retention janitor locks
+-- finished runs with SKIP LOCKED and their task instances with NOWAIT, so it
+-- skips or gives way and never waits on a clear.
+SELECT * FROM dag_runs WHERE id = $1 AND tenant_id = $2 FOR UPDATE;
+
+-- name: MarkTaskInstancesRemoved :exec
+-- A clear that moves a finished run to a version that no longer declares
+-- these tasks marks their task instances removed (ADR 0086), as Airflow's
+-- verify_integrity does. Their history, logs and XCom stay. A queued or
+-- running task instance is never marked: the clear does not move a run that
+-- has one, and the guard keeps a racing attempt's row as it is.
+UPDATE task_instances
+SET state = 'removed'
+WHERE tenant_id = sqlc.arg(tenant_id) AND dag_run_id = sqlc.arg(dag_run_id)
+  AND task_id = ANY(sqlc.arg(task_ids)::text[])
+  AND state NOT IN ('queued', 'running', 'removed');
+
 -- name: ResetDagRunToVersion :exec
 -- Clear with run_on_latest_version re-binds the run to the DAG's current
--- registered version (ADR 0020; opt-in since the 2026-09-15 amendment): a
+-- registered version (ADR 0020; opt-in since the 2026-09-15 amendment; only a
+-- finished run with no queued or running task instance, ADR 0086): a
 -- re-run after a code/yaml fix picks up the newest image and config — in dev that
 -- is the last hot-reload, in prod the last deploy — while everything within a
 -- version stays reproducible. Clearing the alert bookkeeping (#431) makes the clear
@@ -1224,7 +1249,7 @@ WHERE dag_run_id = $1 AND task_id = $2;
 
 -- name: ListOrphanCandidates :many
 -- Lists dag_runs currently in 'running' whose task instances are ALL terminal
--- or never-started (every TI in none/success/failed/skipped/upstream_failed),
+-- or never-started (every TI in none/success/failed/skipped/upstream_failed/removed),
 -- alongside the timestamp of their most recent observable activity. The "no
 -- live TI" filter is the critical safety guarantee: a run that is still
 -- progressing stays out of the candidate set, so the reaper can never kill a
@@ -1269,7 +1294,7 @@ WHERE dr.state = 'running'
   AND NOT EXISTS (
       SELECT 1 FROM task_instances ti2
       WHERE ti2.dag_run_id = dr.id
-        AND ti2.state NOT IN ('none', 'success', 'failed', 'skipped', 'upstream_failed')
+        AND ti2.state NOT IN ('none', 'success', 'failed', 'skipped', 'upstream_failed', 'removed')
   )
 GROUP BY dr.id, d.dag_id, dr.started_at, dr.queued_at
 ORDER BY dr.queued_at
@@ -1615,7 +1640,7 @@ WHERE dr.id = sqlc.arg(id)
   AND NOT EXISTS (
       SELECT 1 FROM task_instances ti2
       WHERE ti2.dag_run_id = dr.id
-        AND ti2.state NOT IN ('none', 'success', 'failed', 'skipped', 'upstream_failed')
+        AND ti2.state NOT IN ('none', 'success', 'failed', 'skipped', 'upstream_failed', 'removed')
   )
   AND GREATEST(
           COALESCE((SELECT GREATEST(MAX(ti.ended_at), MAX(ti.started_at), MAX(ti.released_at))
@@ -1771,7 +1796,8 @@ WHERE dag_run_id = $1 AND task_id = $2 AND state IN ('scheduled', 'queued');
 
 -- name: ListSettledRunIDs :many
 -- Of the given (tenant, run) pairs, the settled runs: run in success or failed
--- and no task instance outside success, failed, skipped and upstream_failed.
+-- and no task instance outside success, failed, skipped, upstream_failed and
+-- removed.
 -- This is the same "settled" the retention janitor's LockExpiredSettledRuns
 -- uses (duplicated there on purpose, keep the two identical). A run marked
 -- failed while a task still runs is not settled, so the reconciler never
@@ -1785,4 +1811,4 @@ WHERE (r.tenant_id, r.id) IN (
   AND NOT EXISTS (
     SELECT 1 FROM task_instances ti
     WHERE ti.dag_run_id = r.id
-      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed'));
+      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed', 'removed'));

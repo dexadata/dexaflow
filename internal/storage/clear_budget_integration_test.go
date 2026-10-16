@@ -50,8 +50,9 @@ func registerClearSpec(t *testing.T, repo *storage.Repository, ctx context.Conte
 
 // seedClearRun registers spec, creates run r1 pinned to it, materializes
 // materialized (the task list as the scheduler hands it over, defaults already
-// applied) and fails task "t". Every other task is marked success. It returns
-// the run UUID.
+// applied) and fails task "t". Every other task is marked success, and the
+// run is failed: a clear with run_on_latest_version moves only a finished run
+// (ADR 0086). It returns the run UUID.
 func seedClearRun(t *testing.T, repo *storage.Repository, sched *storage.SchedulerStore, ctx context.Context, spec domain.DAGSpec, materialized []domain.TaskSpec) string {
 	t.Helper()
 	registerClearSpec(t, repo, ctx, spec)
@@ -72,6 +73,9 @@ func seedClearRun(t *testing.T, repo *storage.Repository, sched *storage.Schedul
 		if err := sched.ApplyTransition(ctx, runUUID, task.TaskID, state); err != nil {
 			t.Fatalf("transition %s to %s: %v", task.TaskID, state, err)
 		}
+	}
+	if err := repo.SetDagRunState(ctx, "default", spec.DagID, "r1", string(domain.DagRunStateFailed)); err != nil {
+		t.Fatalf("fail run: %v", err)
 	}
 	return runUUID
 }
@@ -187,9 +191,10 @@ func TestClearRetryBudgetFollowsTheVersionThatWillRun(t *testing.T) {
 // never below the cleared attempt, so the UI cannot show an attempt past its
 // budget.
 //
-// A clear no longer re-binds a run onto a version without one of its tasks
-// (#1702), so the case is the run a re-bind moved there before that guard: it
-// is pinned to v2 and keeps the task instance of the task v2 dropped.
+// A clear that moves a run onto a version without one of its tasks marks
+// that task instance removed (ADR 0086), so the case is a run a re-bind moved
+// there before #1702: it is pinned to v2 and keeps the task instance of the
+// task v2 dropped.
 func TestClearRetryBudgetForATaskTheVersionNoLongerHas(t *testing.T) {
 	repo, sched, pg, ctx := openInfra(t)
 	dagID := fmt.Sprintf("clear_budget_gone_%d", time.Now().UnixNano())

@@ -105,7 +105,9 @@ func seedRetention(t *testing.T, pool *pgxpool.Pool, ctx context.Context) retent
 	recent := 24 * time.Hour
 	f := retentionFixture{tenant: tenant, otherTenant: other, runs: map[string]string{}}
 	f.runs["old_success"] = seedRun(t, pool, ctx, tenant, dag, version, "old_success", "success", &old, "success", "success")
-	f.runs["old_failed"] = seedRun(t, pool, ctx, tenant, dag, version, "old_failed", "failed", &old, "failed", "upstream_failed", "skipped")
+	// removed is settled too: a clear marks it on a finished run's task
+	// instance whose task the run's new version dropped (ADR 0086).
+	f.runs["old_failed"] = seedRun(t, pool, ctx, tenant, dag, version, "old_failed", "failed", &old, "failed", "upstream_failed", "skipped", "removed")
 	// A run being cleared: still success with an old end, its task instance
 	// already reset to none. It is waiting to be scheduled, not settled.
 	f.runs["old_clearing"] = seedRun(t, pool, ctx, tenant, dag, version, "old_clearing", "success", &old, "success", "none")
@@ -176,7 +178,7 @@ func TestRetentionDeletesOnlyExpiredSettledRunsIntegration(t *testing.T) {
 	if calls < 10 {
 		t.Errorf("finished in %d calls; the row limit was not applied", calls)
 	}
-	want := retention.Counts{DagRuns: 2, TaskInstances: 5, TaskStateHistory: 10, TaskInstanceHistory: 5, XComIndex: 5}
+	want := retention.Counts{DagRuns: 2, TaskInstances: 6, TaskStateHistory: 12, TaskInstanceHistory: 6, XComIndex: 6}
 	if total != want {
 		t.Fatalf("deleted %+v, want %+v", total, want)
 	}
@@ -284,8 +286,8 @@ func TestRetentionCountEligibleIntegration(t *testing.T) {
 	if d := after.DagRuns - before.DagRuns; d != 2 {
 		t.Errorf("eligible runs delta = %d, want 2", d)
 	}
-	if d := after.TaskInstances - before.TaskInstances; d != 5 {
-		t.Errorf("eligible task instances delta = %d, want 5", d)
+	if d := after.TaskInstances - before.TaskInstances; d != 6 {
+		t.Errorf("eligible task instances delta = %d, want 6", d)
 	}
 	if d := after.AuditLog - before.AuditLog; d != 1 {
 		t.Errorf("eligible audit delta = %d, want 1", d)
