@@ -67,16 +67,17 @@ func TestDockerResponsive(t *testing.T) {
 func TestDatastoreNote(t *testing.T) {
 	cases := []struct {
 		mode    string
-		present bool
+		host    dockerHost
 		wantSub string
 	}{
-		{datastoreDocker, true, "Docker detected"},
-		{datastoreManaged, true, "not responding"},
-		{datastoreManaged, false, "no Docker detected"},
+		{datastoreDocker, dockerReady, "Docker detected"},
+		{datastoreManaged, dockerUnresponsive, "not responding"},
+		{datastoreManaged, dockerNoCompose, "Compose v2 plugin is missing"},
+		{datastoreManaged, dockerAbsent, "no Docker detected"},
 	}
 	for _, c := range cases {
-		if got := datastoreNote(c.mode, c.present); !strings.Contains(got, c.wantSub) {
-			t.Errorf("datastoreNote(%q, present=%v) = %q, want substring %q", c.mode, c.present, got, c.wantSub)
+		if got := datastoreNote(c.mode, c.host); !strings.Contains(got, c.wantSub) {
+			t.Errorf("datastoreNote(%q, host=%v) = %q, want substring %q", c.mode, c.host, got, c.wantSub)
 		}
 	}
 }

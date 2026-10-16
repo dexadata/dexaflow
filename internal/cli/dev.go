@@ -532,7 +532,7 @@ func newLiteCommand() *cobra.Command {
 	cmd.Flags().StringVar(&o.agentBin, "agent-bin", "", "dexaflow-agent binary (default: PATH, then ./bin)")
 	cmd.Flags().BoolVar(&o.noUp, "no-up", false, "skip docker compose (Lite's own Postgres is already running; this does not point Lite at another database); the dev DB + venv are still provisioned")
 	cmd.Flags().BoolVar(&o.fresh, "fresh", false, "drop the local dev database first, so the session starts with nothing registered (DESTRUCTIVE: registered DAGs, runs and history)")
-	cmd.Flags().StringVar(&o.postgres, "postgres", datastoreAuto, "Postgres backend: 'auto' (default; the Docker postgres:16 when Docker is present, else a managed relocatable PG under ~/.dexaflow on a Unix socket, no Docker), 'docker', or 'managed' (best on full distros; minimal hosts may lack its system libs)")
+	cmd.Flags().StringVar(&o.postgres, "postgres", datastoreAuto, "Postgres backend: 'auto' (default; the Docker postgres:16 when the Docker daemon answers and has the Compose v2 plugin, else a managed relocatable PG under ~/.dexaflow on a Unix socket, no Docker), 'docker', or 'managed' (best on full distros; minimal hosts may lack its system libs)")
 	cmd.AddCommand(newLiteProvisionCommand())
 	cmd.AddCommand(newResetPasswordCommand())
 	cmd.AddCommand(newForgetCommand())
@@ -995,6 +995,11 @@ func devClusterSetup(ctx context.Context, cmd *cobra.Command, ws *WorkspaceSpec,
 // name (so two users/installs never share or clobber a container/volume) and on
 // the resolved host port (LEOFLOW_DB_PORT, which the compose interpolates).
 func devComposeUp(ctx context.Context, cmd *cobra.Command, o devOptions, services ...string) error {
+	// Without the plugin, `docker compose -f ... up` fails with the docker CLI's
+	// usage text (#759); say what to do instead.
+	if err := requireComposePlugin(); err != nil {
+		return err
+	}
 	devPrintln(cmd.OutOrStdout(), "▸ starting dependencies (docker compose) …")
 	var captured bytes.Buffer
 	args := append([]string{"compose", "-f", o.composeFile, "up", "-d", "--wait"}, services...)

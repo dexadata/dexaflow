@@ -97,7 +97,11 @@ present it uses the `postgres:16` container; when it is not, it falls back to an
 **embedded managed Postgres** (a pinned, checksum-verified relocatable build
 downloaded under `~/.dexaflow`, on a local Unix socket) — so `dexaflow lite` runs on
 a **Docker-free host with nothing to install**. (Force either with
-`--postgres docker|managed`.)
+`--postgres docker|managed`.) The Docker Postgres is started with
+`docker compose`, so auto also falls back to the managed Postgres when the
+Docker daemon answers but the Compose v2 plugin is not installed, and says so.
+An explicit `--postgres docker` on such a host stops with what to do: install
+the Compose v2 plugin, or use `--postgres managed`.
 
 Lite **owns its database**: it runs only on the Postgres it starts, and it does
 not read `DEXAFLOW_DATABASE_URL` (or `LEOFLOW_DATABASE_URL`). One exported in
