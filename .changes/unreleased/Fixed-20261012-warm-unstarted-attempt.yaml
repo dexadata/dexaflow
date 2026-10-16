@@ -1,0 +1,13 @@
+kind: Fixed
+body: |-
+  **A warm attempt that cannot start no longer stays queued for up to an hour.**
+  When a warm worker acked an attempt and then failed before any report reached
+  the control plane (its task spec could not be fetched, or its command could
+  not be built), it freed its slot and served the next assignment without
+  reporting the first. That attempt stayed `queued` with the worker bound to it,
+  holding its pool slot and `max_active_tasks` charge and keeping the worker
+  counted busy, until the warm pod ended (`max_worker_lifetime`, 1 hour by
+  default). The worker now reports such an attempt `failed` before it frees the
+  slot, the same outcome a dedicated pod that fails that way already gets.
+  (#1603)
+time: 2026-10-12T22:30:01.000000000-03:00

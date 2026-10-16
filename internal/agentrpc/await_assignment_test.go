@@ -12,6 +12,7 @@ import (
 	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -25,6 +26,8 @@ type fakeAwaitStream struct {
 	ctx  context.Context
 	recv chan recvItem
 	sent chan *agentv1.WorkAssignment
+	// headers receives every response header the handler sends.
+	headers chan metadata.MD
 }
 
 type recvItem struct {
@@ -34,13 +37,19 @@ type recvItem struct {
 
 func newFakeAwaitStream(ctx context.Context) *fakeAwaitStream {
 	return &fakeAwaitStream{
-		ctx:  ctx,
-		recv: make(chan recvItem, 16),
-		sent: make(chan *agentv1.WorkAssignment, 16),
+		ctx:     ctx,
+		recv:    make(chan recvItem, 16),
+		sent:    make(chan *agentv1.WorkAssignment, 16),
+		headers: make(chan metadata.MD, 4),
 	}
 }
 
 func (s *fakeAwaitStream) Context() context.Context { return s.ctx }
+
+func (s *fakeAwaitStream) SendHeader(md metadata.MD) error {
+	s.headers <- md
+	return nil
+}
 
 func (s *fakeAwaitStream) Recv() (*agentv1.WorkerMessage, error) {
 	it := <-s.recv
