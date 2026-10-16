@@ -85,6 +85,12 @@ type Metrics struct {
 	RetentionRowsDeleted   *prometheus.CounterVec
 	RetentionRowsEligible  *prometheus.GaugeVec
 	RetentionCycleDuration prometheus.Histogram
+
+	// TLSReloadFailures counts certificate or key files that changed on disk
+	// but failed to load, by listener (api, agent_grpc). The listener keeps
+	// serving the last good pair, so a non-zero rate means a rotation is stuck
+	// and the served certificate will expire unless the files are fixed (#637).
+	TLSReloadFailures *prometheus.CounterVec
 }
 
 // NewMetrics registers every ADR 0010 collector with reg and returns the set.
@@ -231,6 +237,11 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		RedisPoolTotalConns: f.NewGauge(prometheus.GaugeOpts{
 			Name: "dexaflow_redis_pool_total_conns", Help: "Redis pool: total connections (active + idle). Saturating against PoolSize is the leading indicator of throughput issues.",
 		}),
+		TLSReloadFailures: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_tls_reload_failures_total",
+			Help: "Rotated TLS certificate or key files that failed to load, by listener (api, agent_grpc). " +
+				"The listener keeps serving the last good certificate; alert on any increase (#637).",
+		}, []string{"listener"}),
 		RedisPoolTimeouts: f.NewCounter(prometheus.CounterOpts{
 			Name: "dexaflow_redis_pool_timeouts_total", Help: "Redis pool checkout timeouts — a caller waited PoolTimeout for an idle connection. A non-zero rate means the pool is too small or commands are too slow.",
 		}),
@@ -298,6 +309,16 @@ func (m *Metrics) UpdateRedisPoolStats(active, idle, total uint32) {
 // connection — the leading indicator that the pool is too small for the
 // command rate.
 func (m *Metrics) RecordRedisPoolTimeout() { m.RedisPoolTimeouts.Inc() }
+
+// RecordTLSReloadFailure counts one rotated certificate pair that failed to
+// load on the given listener. It is a no-op on a nil receiver so a caller
+// without metrics wired needs no guard.
+func (m *Metrics) RecordTLSReloadFailure(listener string) {
+	if m == nil {
+		return
+	}
+	m.TLSReloadFailures.WithLabelValues(listener).Inc()
+}
 
 // RecordHTTPRequest records a completed HTTP request (count + duration).
 func (m *Metrics) RecordHTTPRequest(method, path string, status int, dur time.Duration) {
