@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,7 +54,7 @@ func TestDisplayURL(t *testing.T) {
 // docker-compose.dev.yaml, then a materialized managed file.
 func TestResolveComposeFile(t *testing.T) {
 	// Explicit flag wins.
-	if got, err := resolveComposeFile("/my/compose.yaml"); err != nil || got != "/my/compose.yaml" {
+	if got, err := resolveComposeFile(io.Discard, "/my/compose.yaml"); err != nil || got != "/my/compose.yaml" {
 		t.Errorf("explicit = (%q,%v)", got, err)
 	}
 
@@ -63,7 +64,7 @@ func TestResolveComposeFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(repo)
-	if got, err := resolveComposeFile(""); err != nil || got != "docker-compose.dev.yaml" {
+	if got, err := resolveComposeFile(io.Discard, ""); err != nil || got != "docker-compose.dev.yaml" {
 		t.Errorf("CWD compose = (%q,%v), want docker-compose.dev.yaml", got, err)
 	}
 
@@ -72,7 +73,7 @@ func TestResolveComposeFile(t *testing.T) {
 	t.Setenv("HOME", home)
 	clean := t.TempDir() // a dir with no compose file
 	t.Chdir(clean)
-	got, err := resolveComposeFile("")
+	got, err := resolveComposeFile(io.Discard, "")
 	if err != nil {
 		t.Fatalf("managed resolve: %v", err)
 	}
