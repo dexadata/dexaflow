@@ -388,6 +388,7 @@ holds, then re-run.
 | 044 (deployer role, API tokens) | 44 | nothing: one transaction, rolled back, and the file is idempotent | 43 |
 | 045 (device sign-ins) | 45 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and the file is idempotent | 44 |
 | 046 (`build_info`) | 46 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the column is not there yet | 45; retry when the table is quiet |
+| 048 (`dispatch_unavailable_since`) | 48 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the column is not there yet | 47; retry when the table is quiet |
 
 **How to run `migrate force`.** The hook image is the golang-migrate CLI plus
 the SQL files at `/migrations`, so the `version`, `force`, `goto` and `up`
@@ -990,6 +991,46 @@ schema, and 0.5.6 drops them in a migration. A 0.5.5 control plane runs
 against either schema, so it keeps working through that migration and after a
 rollback from 0.5.6. Upgrading to 0.5.5 and rolling back to 0.5.4 need nothing
 for this change.
+
+### Upgrading to 0.5.6
+
+0.5.6 applies two migrations, 047 and 048.
+
+- **`047_removed_task_state`** adds the `removed` task state of
+  [ADR 0086](/project/adrs/0086-clear-rebinds-a-finished-run-with-its-task-set/)
+  (`ALTER TYPE ... ADD VALUE`, catalog only). Its down migration is a no-op:
+  the value stays.
+- **`048_task_instance_dispatch_unavailable_since`** runs in one transaction,
+  which took about 7 ms on a `task_instances` table of 1,000,000 rows. It adds
+  the nullable `task_instances.dispatch_unavailable_since` column, where the
+  scheduler keeps when the Kubernetes API became unavailable to a task it is
+  dispatching
+  ([A pod create that fails](/operate/scheduler-resilience/#a-pod-create-that-fails)).
+  The column has no default, so Postgres adds it to the catalog without
+  rewriting or scanning `task_instances`, and every existing row reads as not
+  waiting on an outage. Adding it takes an `ACCESS EXCLUSIVE` lock on
+  `task_instances`, which waits for every open transaction that touched the
+  table, and queries on the table queue behind it while it waits. The
+  migration waits at most 5 seconds for it. If it waits longer, the
+  transaction rolls back, golang-migrate marks version 48 dirty and nothing
+  changed: run `migrate force 47` and retry when the table is quiet. The
+  statement can be repeated.
+
+**Rolling back 0.5.6.** On Pro, `helm rollback <release> <revision>` leaves
+the schema at 048, and the previous control plane boots against it with the
+warning `database schema is ahead of this binary; proceeding`: it never reads
+or writes the column. On Lite, the previous `dexaflow lite` refuses a database
+above its own schema, so run the down migration first, with the 0.5.6 CLI or
+migrate image (it took about 8 ms on the same table):
+
+```sh
+migrate -path migrations -database "$DATABASE_URL" goto 46
+```
+
+That rolls back 048 and runs the no-op down of 047 (the file says what the
+previous release does with a `removed` task instance). A task that was
+waiting on an unavailable Kubernetes API at that moment falls back onto the
+dispatch-attempt budget of the previous release. No other data changes.
 
 ## Related issues
 

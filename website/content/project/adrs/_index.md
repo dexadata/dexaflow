@@ -105,6 +105,7 @@ this page.
 - [ADR 0090: the control plane waits for its schema, and names a database that was emptied, replaced, restored or repointed under it](/project/adrs/0090-database-replaced-under-a-running-release/)
 - [ADR 0091: registry login without docker](/project/adrs/0091-registry-login-without-docker/)
 - [ADR 0092: CI pipelines deploy with their provider's OIDC token, exchanged for a short session](/project/adrs/0092-ci-deploys-with-oidc-tokens/)
+- [ADR 0093: an unavailable Kubernetes API is ridden out for a bounded time, off the dispatch-attempt budget](/project/adrs/0093-unavailable-api-dispatch-window/)
 
 ## Template
 
