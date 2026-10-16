@@ -41,7 +41,8 @@ Median of 5 runs.
 `BenchmarkWarmPoolTick` (#1906) came after the recording above, and its time
 has not been recorded on the baseline host yet: re-record it with the next
 update of this table (B3 of the release checklist). Its memory and allocations
-do not depend on the machine. It measures one steady warm pool reconcile tick,
+do not depend on the machine (they do on the Go version: the Go 1.26.6 of the
+header applies). It measures one steady warm pool reconcile tick,
 the work the leader repeats every warm pool interval, over 60 versions of 3
 tenants under a per-tenant cap, with the Kubernetes and database reads faked
 and nothing to create or delete. The second case adds 30 prewarm-only versions

@@ -42,8 +42,8 @@ first-time contributors without a discussion issue first.
   `test/load/BASELINE.md` the command and
   `test/release/perf-reliability-checklist.md` (row B1) the bar against the
   previous release. A steady tick allocates nothing per worker, and the
-  prewarm pass nothing at all (`warmpool_allocs_test.go`); keep it that way
-  or say why in the PR. A performance PR is reviewed by a specialist before
+  prewarm pass nothing while the per-tenant cap covers every prewarm floor
+  (`warmpool_allocs_test.go`); keep it that way or say why in the PR. A performance PR is reviewed by a specialist before
   it merges (root section 2).
 - **Hardening applies to every pod.** The settings that are not configurable
   are pinned by `pod_security_test.go`; a change that relaxes one is a

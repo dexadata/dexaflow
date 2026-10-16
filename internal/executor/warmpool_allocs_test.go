@@ -105,3 +105,35 @@ func TestWarmPoolSteadyVersionAllocatesNothing(t *testing.T) {
 		t.Errorf("remaining, create = %d, %d; want 3 (busy + 2 idle), 0", remaining, create)
 	}
 }
+
+// Every group of groupByVersion is capped at its own length, so an append to
+// one group reallocates instead of writing over the next group in the shared
+// backing array (#1906).
+func TestGroupByVersionGroupsDoNotAlias(t *testing.T) {
+	fleet := []WarmPodInfo{
+		{Name: "a1", DagVersionID: "a"}, {Name: "b1", DagVersionID: "b"},
+		{Name: "a2", DagVersionID: "a"}, {Name: "c1", DagVersionID: "c"},
+		{Name: "b2", DagVersionID: "b"},
+	}
+	byVersion := groupByVersion(fleet, 3)
+	want := map[string][]string{"a": {"a1", "a2"}, "b": {"b1", "b2"}, "c": {"c1"}}
+	for v, g := range byVersion {
+		if cap(g) != len(g) {
+			t.Errorf("group %s has cap %d, len %d: an append would reach the next group", v, cap(g), len(g))
+		}
+	}
+	for _, v := range []string{"a", "b"} {
+		_ = append(byVersion[v], WarmPodInfo{Name: "intruder", DagVersionID: v})
+	}
+	for v, names := range want {
+		got := byVersion[v]
+		if len(got) != len(names) {
+			t.Fatalf("group %s = %v, want %v", v, got, names)
+		}
+		for i, n := range names {
+			if got[i].Name != n {
+				t.Errorf("group %s[%d] = %s after appends to other groups, want %s", v, i, got[i].Name, n)
+			}
+		}
+	}
+}
