@@ -1910,7 +1910,7 @@ func devReadyOnce(ctx context.Context, baseURL string) bool {
 	if err != nil {
 		return false
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := cliHTTPClient(0).Do(req)
 	if err != nil {
 		return false
 	}
@@ -2157,7 +2157,7 @@ func devImportErrorRequest(ctx context.Context, method, reqURL, token string, bo
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	resp, err := cliHTTPClient(10 * time.Second).Do(req)
 	if err != nil {
 		return fmt.Errorf("calling %s: %w", reqURL, err)
 	}
