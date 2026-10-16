@@ -397,7 +397,7 @@ targets:
   lab:
     server: https://flow-lab.acme.dev
     # optional: deploy dag.py on this runtime image, with no build (source mode)
-    source_mode_image: ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:<digest>
+    source_mode_image: ghcr.io/dexadata/dexaflow-runtime:py3.11-{{< latest-version v >}}@sha256:<digest>
 default_target: dev
 defaults:                            # optional, for every DAG in the workspace
   registry: ghcr.io/acme

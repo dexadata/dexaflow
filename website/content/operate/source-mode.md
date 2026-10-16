@@ -76,7 +76,7 @@ to names the runtime image as `source_mode_image`. Set it on the target in
 targets:
   dev:
     server: https://pro.example.com
-    source_mode_image: ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:<digest>
+    source_mode_image: ghcr.io/dexadata/dexaflow-runtime:py3.11-{{< latest-version v >}}@sha256:<digest>
 ```
 
 or on a target of your config file (`dexaflow target add dev
@@ -125,7 +125,7 @@ Before anything else the deploy prints the image and where it came from:
 
 ```text
 server:     https://pro.example.com (target dev, from default_target in /work/dags/dexaflow.workspace.yaml)
-image:      ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:<digest> (source mode, from target "dev" in /work/dags/dexaflow.workspace.yaml): dag.py runs on this runtime image, nothing is built or pushed
+image:      ghcr.io/dexadata/dexaflow-runtime:py3.11-{{< latest-version v >}}@sha256:<digest> (source mode, from target "dev" in /work/dags/dexaflow.workspace.yaml): dag.py runs on this runtime image, nothing is built or pushed
 ```
 
 `dexaflow deploy <dag_id>` then:
