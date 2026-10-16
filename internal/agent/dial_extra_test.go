@@ -44,24 +44,24 @@ func writeFile(t *testing.T, name string, data []byte) string {
 	return p
 }
 
-func TestCAPoolMissingFile(t *testing.T) {
-	if _, err := caPool(filepath.Join(t.TempDir(), "absent.pem")); err == nil {
+func TestNewCATrustMissingFile(t *testing.T) {
+	if _, err := newCATrust(filepath.Join(t.TempDir(), "absent.pem")); err == nil {
 		t.Error("a missing CA file must error, not silently trust nothing")
 	}
 }
 
-func TestCAPoolRejectsNonPEM(t *testing.T) {
+func TestNewCATrustRejectsNonPEM(t *testing.T) {
 	for _, junk := range [][]byte{[]byte("not a certificate"), {}, []byte("-----BEGIN CERTIFICATE-----\ngarbage\n-----END CERTIFICATE-----\n")} {
-		if _, err := caPool(writeFile(t, "bad.pem", junk)); err == nil {
+		if _, err := newCATrust(writeFile(t, "bad.pem", junk)); err == nil {
 			t.Errorf("a file with no valid certificate (%q) must error", junk)
 		}
 	}
 }
 
-func TestCAPoolAcceptsValidCert(t *testing.T) {
-	pool, err := caPool(writeFile(t, "ca.pem", selfSignedPEM(t)))
-	if err != nil || pool == nil {
-		t.Fatalf("a valid CA cert should produce a pool, got pool=%v err=%v", pool, err)
+func TestNewCATrustAcceptsValidCert(t *testing.T) {
+	trust, err := newCATrust(writeFile(t, "ca.pem", selfSignedPEM(t)))
+	if err != nil || trust == nil || trust.current() == nil {
+		t.Fatalf("a valid CA cert should produce a pool, got trust=%v err=%v", trust, err)
 	}
 }
 
