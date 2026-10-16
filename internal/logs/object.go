@@ -172,7 +172,10 @@ func (o *ObjectSink) StoredEpochs(ref Ref) ([]int, error) {
 // the attempt, so a second stream opened once the previous one has closed
 // appends instead of overwriting. Two writers live at the same time (a
 // reconnect before the old stream ended) can still overwrite each other's
-// segments, as they overwrite each other's object in the single layout.
+// segments, as they overwrite each other's object in the single layout. In the
+// single layout Open always starts empty: one writer per attempt, and a second
+// one opened with Open overwrites what the first stored. A stream that
+// continues an attempt opens with Resume instead.
 //
 // When the probe for the stored segments fails, even after its retries, Open
 // refuses the stream instead of guessing where the attempt ends. Starting at
@@ -203,6 +206,61 @@ func (o *ObjectSink) Open(ref Ref) (LogWriter, error) {
 	}
 	keyFn := func(n int) string { return o.segmentKey(ref, n) }
 	return newObjectWriter(o.ctx, o.store, keyFn, true, first, o.logger), nil
+}
+
+// Resume opens a writer for a stream that continues an attempt whose earlier
+// stream ended: the agent re-opening its log stream after the control plane
+// closed it mid-task (#912). Open would hand the single layout an empty writer
+// whose first flush overwrites the stored object with only the lines sent after
+// the re-open; Resume seeds the writer with the stored object instead, so the
+// object stays a prefix of the attempt. The segmented layout already continues
+// after the stored segments, so there Resume is Open.
+//
+// The seed is read like the segmented layout's probes (getRetrying). When the
+// read keeps failing for a reason other than not-found, Resume refuses the
+// stream rather than overwrite a prefix it could not read; the agent's lines
+// for that stream are lost, the stored prefix is not. A store that answers a
+// missing key with AccessDenied (S3 without s3:ListBucket) refuses the resume of
+// an attempt that never stored anything, which loses what an unseeded writer
+// would have kept; first streams use Open and are unaffected.
+//
+// Resuming is safe only once the earlier stream's writer is closed: the agent
+// re-opens after it has read the earlier stream's end, which the control plane
+// sends after that writer's final flush. A writer still alive (a stream cut by
+// the network whose handler has not noticed yet) races the resumed one, and
+// either can overwrite the other's latest flush, as with two writers in Open.
+func (o *ObjectSink) Resume(ref Ref) (LogWriter, error) {
+	if err := ref.validate(); err != nil {
+		return nil, err
+	}
+	if o.layout == ObjectLayoutSegmented {
+		return o.Open(ref)
+	}
+	key := o.key(ref)
+	rc, err := o.getRetrying(o.ctx, key, objectProbeAttempts)
+	if errors.Is(err, ErrObjectNotFound) {
+		return o.Open(ref)
+	}
+	if err != nil {
+		o.logger.Warn("reading the stored log object to resume the stream failed; refusing the stream rather than overwriting it",
+			"key", logSafe(key), "error", logSafe(err.Error()))
+		return nil, fmt.Errorf("reading the stored log object to resume: %w", err)
+	}
+	seed, err := io.ReadAll(io.LimitReader(rc, int64(maxBufferedAttemptBytes)+1))
+	if cerr := rc.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading the stored log object to resume: %w", err)
+	}
+	if len(seed) > maxBufferedAttemptBytes {
+		return nil, fmt.Errorf("stored log object exceeds the %d-byte object-sink buffer cap; not resuming", maxBufferedAttemptBytes)
+	}
+	w := newObjectWriter(o.ctx, o.store, func(int) string { return key }, false, 0, o.logger)
+	w.mu.Lock()
+	w.buf, w.flushed, w.stored = seed, len(seed), true
+	w.mu.Unlock()
+	return w, nil
 }
 
 // countSegments returns how many contiguous segments are stored for ref. A
