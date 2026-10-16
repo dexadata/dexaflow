@@ -123,6 +123,11 @@ type Runner struct {
 	// spec, stamped on the outcome record (ADR 0052 amendment). It is reset for
 	// every attempt a warm worker runs; 0 until the spec is read.
 	attemptEpoch int64
+	// reportLanded is set once the control plane has answered a ReportState for
+	// this attempt (applied, or acknowledged as stale). A warm worker reads it to
+	// settle an acked attempt that ended before any report reached the control
+	// plane (#1603).
+	reportLanded bool
 	// Resolver resolves a declared secret name from an external backend, pod-side
 	// (ADR 0060). Nil = no external backend configured: the resolution chain is the
 	// vault only, byte-identical to the pre-0060 env-export. SecretBackend is the
@@ -1076,6 +1081,7 @@ func (r *Runner) reportRequest(ctx context.Context, req *agentv1.ReportStateRequ
 	for attempt := 1; ; attempt++ {
 		resp, err := r.Client.ReportState(ctx, req)
 		if err == nil {
+			r.reportLanded = true
 			// should_terminate means the row already moved on — a reaper settled it,
 			// a later attempt superseded it, or (on a retry here) our own earlier
 			// attempt applied but its ack was lost. We cannot tell "superseded" from

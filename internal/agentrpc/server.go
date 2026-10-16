@@ -186,6 +186,10 @@ type Server struct {
 	// bindRetryDelays is the backoff between retries of a failed warm binding
 	// write (bindWarmAttempt). Injectable so tests retry without waiting.
 	bindRetryDelays []time.Duration
+	// leaderPoll is how often an open AwaitAssignment stream re-checks
+	// leaderCheck, so a replica that steps down without a restart sends its
+	// workers away (#1602). Zero means defaultLeaderPoll; tests shorten it.
+	leaderPoll time.Duration
 	// shutdown, when non-nil, is closed as the control plane begins shutting down.
 	// StreamLogs is a bidi stream held open for the whole task; without this signal
 	// its receive loop blocked on Recv until the agent finished, so a graceful stop
@@ -200,6 +204,11 @@ type Server struct {
 	// legacyTokens meters task tokens without an attempt_epoch claim (unset or
 	// nil recorder: off). Atomic because it is attached after Serve starts.
 	legacyTokens atomic.Pointer[legacyRecorderBox]
+	// rejectionMeter counts refused bearers by reason (unset or nil recorder:
+	// off). Atomic because it is attached after Serve starts.
+	rejectionMeter atomic.Pointer[rejectionRecorderBox]
+	// rejections rate limits the refused-bearer log line per reason.
+	rejections rejectionLimiter
 	// attemptSpecs caches each live attempt's XCom spec fields (attemptSpec) so
 	// PushXCom and FetchXCom do not reload the full task spec on every call.
 	attemptSpecs *attemptSpecCache
@@ -741,14 +750,22 @@ func toXComUpstreamsMap(in map[string][]string) map[string]*agentv1.XComUpstream
 	return out
 }
 
-// identify extracts and verifies the agent token from the request metadata.
+// identify extracts and verifies the agent token from the request metadata. A
+// refusal is metered and logged with its reason (#1125); the agent is told only
+// that its token was missing or invalid.
 func (s *Server) identify(ctx context.Context) (*auth.AgentIdentity, error) {
 	token, ok := bearerFromContext(ctx)
 	if !ok {
+		s.rejectToken(ctx, &auth.AgentTokenRejection{Reason: tokenMissing})
 		return nil, status.Error(codes.Unauthenticated, "missing authorization token")
 	}
 	id, err := s.auth.AuthenticateAgent(token)
 	if err != nil {
+		var rej *auth.AgentTokenRejection
+		if !errors.As(err, &rej) {
+			rej = &auth.AgentTokenRejection{Reason: auth.AgentTokenInvalid}
+		}
+		s.rejectToken(ctx, rej)
 		return nil, status.Error(codes.Unauthenticated, "invalid agent token")
 	}
 	return id, nil

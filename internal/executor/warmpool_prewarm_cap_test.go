@@ -323,3 +323,64 @@ func TestWarmPoolPrewarmRationClearedByTheFastPathIsNotedAgain(t *testing.T) {
 		t.Errorf("the same ration after a fit metered %d times in all, want 2", n)
 	}
 }
+
+// Two versions with an active run share one credit: the idle workers a
+// rationed prewarm pool keeps above its share are credited once in all, not
+// once per run version (#1905). Here zeta (share 1) keeps 2 idle workers above
+// it and the tenant has no real headroom left (run1's busy worker holds it):
+// run1 takes 1 of the credit and run2 the 1 left, not 2.
+func TestWarmPoolRetiringPrewarmCreditIsSharedAcrossRunVersions(t *testing.T) {
+	targets := &fakeWarmTargets{targets: []WarmTarget{
+		{DagVersionID: "dvZ", DagID: "zeta", TenantID: "T", EffectiveMinIdle: 3, MaxPoolSize: 8, Prewarm: true},
+		{DagVersionID: "dvR1", DagID: "run1", TenantID: "T", EffectiveMinIdle: 1, MaxPoolSize: 8},
+		{DagVersionID: "dvR2", DagID: "run2", TenantID: "T", EffectiveMinIdle: 2, MaxPoolSize: 8},
+	}}
+	pods := &fakeWarmPods{existing: append(warmPodsT("dvZ", "T", "z1", "z2", "z3"), warmPodsT("dvR1", "T", "r1")...)}
+	r, _, rec := logged(targets, pods, busySet("r1"), 4)
+	tick(t, r)
+	if byV := createdByVersion(pods); byV["dvR1"] != 1 || byV["dvR2"] != 1 || byV["dvZ"] != 0 {
+		t.Errorf("created %v, want run1 1 and run2 1: the credit of 2 is spent once", byV)
+	}
+	if n := rec.count("warm_pool_run_floor_over_retiring_prewarm"); n != 2 {
+		t.Errorf("warm_pool_run_floor_over_retiring_prewarm = %d, want 2 (one per run version granted past the cap)", n)
+	}
+}
+
+// A tenant already over its budget (busy workers hold more than the cap
+// leaves) spends the credit on that deficit first: the credit is added to the
+// negative headroom, not to zero (#1905). Here the tenant is 1 over and zeta
+// keeps 2 idle workers above its share, so the run version gets 1 create, not
+// 2.
+func TestWarmPoolRetiringPrewarmCreditCoversTheDeficitFirst(t *testing.T) {
+	targets := &fakeWarmTargets{targets: []WarmTarget{
+		{DagVersionID: "dvZ", DagID: "zeta", TenantID: "T", EffectiveMinIdle: 3, MaxPoolSize: 8, Prewarm: true},
+		{DagVersionID: "dvR", DagID: "run", TenantID: "T", EffectiveMinIdle: 2, MaxPoolSize: 8},
+	}}
+	pods := &fakeWarmPods{existing: append(warmPodsT("dvZ", "T", "z1", "z2", "z3"), warmPodsT("dvR", "T", "r1")...)}
+	r, logs, _ := logged(targets, pods, busySet("r1"), 3)
+	tick(t, r)
+	if byV := createdByVersion(pods); byV["dvR"] != 1 || byV["dvZ"] != 0 {
+		t.Errorf("created %v, want 1 run worker: the credit of 2 less the deficit of 1", byV)
+	}
+	if !strings.Contains(logs.String(), "over_cap=1") {
+		t.Errorf("the log does not record 1 worker over the cap:\n%s", logs.String())
+	}
+}
+
+// When a version with an active run and an unrationed prewarm pool compete
+// for the same real headroom, the run version takes it first, whatever their
+// version ids: a prewarm floor is an anticipation and takes only what the
+// cap leaves (ADR 0082 D7, #1905). Here run's busy workers leave room for 2
+// creates; the prewarm version sorts first by id but waits.
+func TestWarmPoolRunVersionTakesTheHeadroomBeforePrewarm(t *testing.T) {
+	targets := &fakeWarmTargets{targets: []WarmTarget{
+		{DagVersionID: "dvA", DagID: "alpha", TenantID: "T", EffectiveMinIdle: 2, MaxPoolSize: 8, Prewarm: true},
+		{DagVersionID: "dvR", DagID: "run", TenantID: "T", EffectiveMinIdle: 2, MaxPoolSize: 8},
+	}}
+	pods := &fakeWarmPods{existing: warmPodsT("dvR", "T", "r1", "r2")}
+	r, _, _ := logged(targets, pods, busySet("r1", "r2"), 4)
+	tick(t, r)
+	if byV := createdByVersion(pods); byV["dvR"] != 2 || byV["dvA"] != 0 {
+		t.Errorf("created %v, want the run version's 2 and nothing for the prewarm version", byV)
+	}
+}

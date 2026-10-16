@@ -135,7 +135,8 @@ type WarmRunner struct {
 	//
 	//   - ReconnectBackoff: base backoff, doubled each consecutive reconnect.
 	//   - ReconnectMaxBackoff: ceiling on a single backoff sleep.
-	//   - MaxReconnects: consecutive not-leader reconnects before giving up.
+	//   - MaxReconnects: consecutive not-leader reconnects before giving up. A
+	//     stream a leader accepted starts the count over (see leaderAccepted).
 	ReconnectBackoff    time.Duration
 	ReconnectMaxBackoff time.Duration
 	MaxReconnects       int
@@ -154,6 +155,24 @@ type WarmRunner struct {
 	// streamCloser holds the connection the most recent Redial opened, so it can be
 	// closed on the following reconnect (or on exit) rather than leaked.
 	streamCloser io.Closer
+
+	// leaderAccepted records that the current serve's stream was accepted by a
+	// leader: it announced the registration (warmRegisteredHeader) or sent an
+	// assignment. Run resets the reconnect budget on it.
+	leaderAccepted bool
+}
+
+// warmRegisteredHeader is the response header the control plane sends on an
+// assignment stream once it has registered the worker, so the worker can tell a
+// stream a leader accepted from one a follower refused. It must match
+// agentrpc's warmRegisteredHeader.
+const warmRegisteredHeader = "dexaflow-warm-registered"
+
+// acceptedByHeader reports whether the stream's response header announces the
+// registration. Called once the stream has ended, Header does not block.
+func acceptedByHeader(stream agentv1.AgentService_AwaitAssignmentClient) bool {
+	md, err := stream.Header()
+	return err == nil && len(md.Get(warmRegisteredHeader)) > 0
 }
 
 // Reconnect defaults (warm-pool Hole B) used when the corresponding WarmRunner
@@ -202,6 +221,7 @@ func (w *WarmRunner) Run(ctx context.Context, dagVersionID string) error {
 
 	reconnects := 0
 	for {
+		w.leaderAccepted = false
 		err := w.serve(ctx, dagVersionID)
 		if err == nil {
 			return nil
@@ -210,6 +230,14 @@ func (w *WarmRunner) Run(ctx context.Context, dagVersionID string) error {
 		// transport failure, fail-closed scratch) surfaces as before.
 		if status.Code(err) != codes.FailedPrecondition {
 			return err
+		}
+		// A stream a leader accepted ends not-leader when that leader steps down
+		// (#1602). That is a new search for the leader, not one more failure of
+		// the last search, so the consecutive-rejection budget starts over;
+		// otherwise a long-lived worker would exit after MaxReconnects leader
+		// changes over its whole life.
+		if w.leaderAccepted {
+			reconnects = 0
 		}
 		reconnects++
 		if reconnects > maxReconnects {
@@ -287,8 +315,13 @@ func (w *WarmRunner) serve(ctx context.Context, dagVersionID string) error {
 				slog.Info("warm worker recycling: the control plane ended the assignment stream while this worker was idle", "error", rerr)
 				return nil
 			}
+			if acceptedByHeader(stream) {
+				w.leaderAccepted = true
+			}
 			return fmt.Errorf("receiving assignment: %w", rerr)
 		}
+		// Only a leader hands out assignments, so this stream was accepted.
+		w.leaderAccepted = true
 		if serr := w.serveAssignment(ctx, stream, assignment); serr != nil {
 			// A stream / isolation failure is loop-fatal, EXCEPT a canceled stream
 			// (parent shutdown mid-attempt) — that is a clean shutdown, not an error.
@@ -557,6 +590,7 @@ func (w *WarmRunner) serveAssignment(ctx context.Context, stream agentv1.AgentSe
 		// A failed attempt is a normal, already-reported outcome. Keep serving.
 		slog.Warn("warm attempt finished with an error",
 			"assignment", a.GetAssignmentId(), "error", aerr)
+		w.settleUnreported(ctx, r, a, aerr)
 	}
 
 	// D4 isolation, part 3: no process of this attempt may outlive it. The exec
@@ -586,6 +620,32 @@ func (w *WarmRunner) serveAssignment(ctx context.Context, stream agentv1.AgentSe
 		return fmt.Errorf("signaling slot free after assignment %q: %w", a.GetAssignmentId(), err)
 	}
 	return nil
+}
+
+// settleUnreported reports FAILED for an acked attempt that ended before any of
+// its reports reached the control plane: a GetTaskSpec error, a command that
+// cannot be built, a RUNNING report that was refused (#1603). The ack bound the
+// attempt to this worker while it was still queued, and nothing else settles a
+// bound queued row while the worker lives, so without this report the attempt
+// stays queued and the worker counts as busy until the pod ends. A dedicated pod
+// that fails the same way exits non-zero and is settled failed by the
+// reconciler; this is the same outcome, reported directly. It runs on the
+// worker's context, not the attempt's, so an attempt that hit its watchdog
+// before reporting is still settled; a worker that is itself shutting down
+// reports nothing, since its pod is going away and the reapers settle the row.
+// The report goes out under the attempt's own token, which is still the live
+// one here, and is best effort: a report that cannot land leaves the
+// dispatch-lost reaper as the backstop.
+func (w *WarmRunner) settleUnreported(ctx context.Context, r *Runner, a *agentv1.WorkAssignment, cause error) {
+	if r.reportLanded || ctx.Err() != nil {
+		return
+	}
+	slog.Warn("warm attempt ended before any report reached the control plane; reporting it failed",
+		"assignment", a.GetAssignmentId())
+	if err := r.reportClassified(ctx, agentv1.TaskState_TASK_STATE_FAILED, 1, cause.Error(), ""); err != nil {
+		slog.Warn("reporting failed state for a warm attempt that never started",
+			"assignment", a.GetAssignmentId(), "error", err)
+	}
 }
 
 // resetScratch removes and recreates the agent's per-attempt scratch dir. This is

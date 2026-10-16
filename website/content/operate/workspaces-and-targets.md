@@ -104,13 +104,16 @@ control plane a command calls is, in order:
 3. `DEXAFLOW_SERVER_URL`;
 4. the target chosen with `dexaflow target use` for this workspace, then the
    workspace's `default_target`, then `current_target` in your config file;
-5. `server_url` in your config file, then `http://localhost:8080`.
+5. `server_url` in your config file, then the local server: on a machine set
+   up for Lite (`dexaflow setup`), the Lite server on the `lite_port` of your
+   config file (`http://localhost:8088` unless you chose another port), else
+   `http://localhost:8080`.
 
 `dexaflow deploy` does not take that last default: with no server set by any
 of the steps above it stops before building and says how to set one, unless
-the machine is set up for Lite (`dexaflow setup`), where the local server is
-the expected one. Pass `--server http://localhost:8080` to deploy to a local
-server on purpose.
+the machine is set up for Lite, where the local Lite server is the expected
+one. Pass `--server` with the local URL (`--server http://localhost:8088` for
+Lite on its default port) to deploy to a local server on purpose.
 
 A name that matches no target is an error that lists the known ones; the
 command never falls back to another server silently. `dexaflow auth login`

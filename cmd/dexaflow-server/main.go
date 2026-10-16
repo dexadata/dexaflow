@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1070,6 +1071,7 @@ func resilienceLadder(cfg *config.ServerConfig) executor.ResilienceLadder {
 		MaxAttemptCredentialLifetime: cfg.Auth.MaxAttemptCredentialLifetime,
 		TaskTerminationGrace:         time.Duration(corev1.DefaultTerminationGracePeriodSeconds) * time.Second,
 		InfraConfirmMaxWait:          scheduler.InfraConfirmMaxWait,
+		DispatchLostThreshold:        rc.DispatchLostThreshold,
 	}
 }
 
@@ -1170,13 +1172,15 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	// is otherwise silent. gRPC exposes no such number, so the counter rides on
 	// the interceptor chain and the stop func reads it.
 	inflight := agentrpc.NewInflightHandlers()
-	grpcSrv, agentSrv, gerr := startAgentGRPC(ctx, cfg.Server.GRPCAddr, authn, execStore, repo, xcomSvc, logSink, logTailer, cfg.Logs.Tail.Publish == config.LogTailPublishOnDemand, allowInsecureSecrets, cfg.Auth.SecretScoping, cfg.Auth.SecretLivenessMode, cfg.Auth.MaxAttemptCredentialLifetime, xchg, cfg.Server.GRPCTLSCert, cfg.Server.GRPCTLSKey, warmReg, inflight, logger)
+	grpcSrv, agentSrv, gerr := startAgentGRPC(ctx, cfg.Server.GRPCAddr, authn, execStore, repo, xcomSvc, logSink, logTailer, cfg.Logs.Tail.Publish == config.LogTailPublishOnDemand, allowInsecureSecrets, cfg.Auth.SecretScoping, cfg.Auth.SecretLivenessMode, cfg.Auth.MaxAttemptCredentialLifetime, xchg, cfg.Server.GRPCTLSCert, cfg.Server.GRPCTLSKey, warmReg, inflight, metrics, logger)
 	if gerr != nil {
 		return nil, false, nil, gerr
 	}
-	// Meter task tokens that predate the attempt_epoch claim (ADR 0051 amendment).
+	// Meter task tokens that predate the attempt_epoch claim (ADR 0051 amendment)
+	// and refused agent bearers by reason (#1125).
 	if metrics != nil {
 		agentSrv.SetLegacyTokenRecorder(metrics)
+		agentSrv.SetTokenRejectionRecorder(metrics)
 	}
 	// The scheduler loop, its reapers and the janitors run on their own pool
 	// when database.scheduler_max_conns is set, so API traffic cannot starve
@@ -1338,7 +1342,7 @@ func startAPISide(ctx context.Context, cfg *config.ServerConfig, tel *observabil
 	//nolint:contextcheck // buildAPIServer wires per-request handlers; each request carries its own context
 	srv := buildAPIServer(cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, oidcFlow, newTrustedIssuer(ctx, cfg))
 	// Optional HTTPS on the API listener (#638); plain HTTP when unset.
-	if err := configureAPITLS(srv, cfg.Server); err != nil {
+	if err := configureAPITLS(srv, cfg.Server, tel.Metrics); err != nil {
 		return nil, err
 	}
 	tel.Logger.Info("api listener", "http_addr", cfg.Server.HTTPAddr, "tls", srv.TLSConfig != nil)
@@ -1632,10 +1636,21 @@ func serveHTTP(ctx context.Context, logger *slog.Logger, servesAPI bool, apiSrv,
 
 // startAgentGRPC starts the AgentService gRPC server and returns it for graceful
 // shutdown. TLS is enabled when tlsCert/tlsKey are set (issue #58); otherwise the
-// channel is plaintext (dev). The per-task bearer token in metadata authenticates
+// channel is plaintext (dev). The pair is read at boot (a missing or invalid file
+// is a boot error) and re-read on the next handshake whenever either file
+// changes, so a renewed certificate is served without a restart (#637). The per-task bearer token in metadata authenticates
 // each call regardless. inflight (required) is installed on the interceptor
 // chain so the bounded stop can report the handlers it leaves running.
-func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticator, store *storage.ExecutionStore, secretsStore agentrpc.SecretsStore, xcomSvc agentrpc.XComService, logSink agentrpc.LogSink, logTailer agentrpc.LogPublisher, tailOnDemand bool, allowInsecureSecrets bool, secretScoping, secretLivenessMode string, maxAttemptLifetime time.Duration, exchange *tokenExchange, tlsCert, tlsKey string, warmPools *agentrpc.WorkerRegistry, inflight *agentrpc.InflightHandlers, logger *slog.Logger) (srv *grpc.Server, agentSrv *agentrpc.Server, err error) {
+func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticator, store *storage.ExecutionStore, secretsStore agentrpc.SecretsStore, xcomSvc agentrpc.XComService, logSink agentrpc.LogSink, logTailer agentrpc.LogPublisher, tailOnDemand bool, allowInsecureSecrets bool, secretScoping, secretLivenessMode string, maxAttemptLifetime time.Duration, exchange *tokenExchange, tlsCert, tlsKey string, warmPools *agentrpc.WorkerRegistry, inflight *agentrpc.InflightHandlers, metrics *observability.Metrics, logger *slog.Logger) (srv *grpc.Server, agentSrv *agentrpc.Server, err error) {
+	secure := tlsCert != "" && tlsKey != ""
+	var creds credentials.TransportCredentials
+	if secure {
+		r, cerr := newCertReloader(tlsListenerAgentGRPC, tlsCert, tlsKey, metrics)
+		if cerr != nil {
+			return nil, nil, fmt.Errorf("loading agent grpc TLS cert: %w", cerr)
+		}
+		creds = credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: r.getCertificate})
+	}
 	var lc net.ListenConfig
 	lis, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
@@ -1712,12 +1727,7 @@ func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticat
 		// connection would cost something and detect nothing those miss.
 		grpc.KeepaliveEnforcementPolicy(agentrpc.KeepaliveEnforcementPolicy()),
 	}
-	secure := tlsCert != "" && tlsKey != ""
 	if secure {
-		creds, cerr := credentials.NewServerTLSFromFile(tlsCert, tlsKey)
-		if cerr != nil {
-			return nil, nil, fmt.Errorf("loading agent grpc TLS cert: %w", cerr)
-		}
 		opts = append(opts, grpc.Creds(creds))
 	}
 	srv = grpc.NewServer(opts...)
@@ -2376,9 +2386,7 @@ func startWarmPoolReconciler(ctx context.Context, targets executor.WarmTargetSou
 	go func() {
 		defer t.Stop()
 		runGatedTickerOrKick(ctx, "warm-pool-reconcile", t.C, kicks, warmKickMinGap, leading, logger, func() {
-			if err := rc.Reconcile(ctx); err != nil {
-				logger.Error("warm pool reconcile", "error", err)
-			}
+			runLeaderTick(ctx, "warm pool reconcile", reconcileInterval, leaderTickPoll, leading, logger, rc.Reconcile)
 		})
 	}()
 }
@@ -2536,10 +2544,49 @@ func startStagingGC(ctx context.Context, cs kubernetes.Interface, namespace stri
 	exec := executor.NewKubernetesExecutor(cs, namespace)
 	exec.SetStagingStore(store)
 	startGatedTicker(ctx, "staging-gc", stagingGCInterval, leading, logger, func() {
-		if err := exec.GCStagingClaims(ctx, stagingTTL); err != nil {
-			logger.Error("staging gc", "error", err)
-		}
+		runLeaderTick(ctx, "staging gc", stagingGCInterval, leaderTickPoll, leading, logger, func(tctx context.Context) error {
+			return exec.GCStagingClaims(tctx, stagingTTL)
+		})
 	})
+}
+
+// leaderTickPoll is how often a running leader-gated cycle re-checks leadership
+// (runLeaderTick). The leadership watch polls every 5 seconds, so one second
+// adds little to how long a step-down takes to stop the cycle.
+const leaderTickPoll = time.Second
+
+// runLeaderTick runs one cycle of a leader-gated loop that mutates cluster
+// state (the warm-pool reconcile, the staging GC) under a context that ends at
+// the cycle's budget or as soon as leading() reports false (#1602). The gated
+// ticker only checks leadership when a tick starts, so without this a cycle in
+// progress at a step-down kept creating and deleting pods next to the new
+// leader's own loop, and one database call hung on a dead connection could hold
+// it indefinitely. Both loops are level-triggered, so a cycle cut short is
+// finished by the next one. A nil leading means always leading. An error is
+// logged, except once the parent context is done (shutdown).
+func runLeaderTick(ctx context.Context, name string, budget, poll time.Duration, leading func() bool, logger *slog.Logger, fn func(context.Context) error) {
+	tctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	if leading != nil {
+		go func() {
+			t := time.NewTicker(poll)
+			defer t.Stop()
+			for {
+				select {
+				case <-tctx.Done():
+					return
+				case <-t.C:
+					if !leading() {
+						cancel()
+						return
+					}
+				}
+			}
+		}()
+	}
+	if err := fn(tctx); err != nil && ctx.Err() == nil {
+		logger.Error(name, "error", err)
+	}
 }
 
 func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.Postgres, repo *storage.Repository, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (*scheduler.Scheduler, bool, io.Closer, error) {
@@ -3085,6 +3132,14 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// attempt watchdog: a silent attempt older than it fails for the credential
 	// ceiling, as a task failure, instead of being re-placed as agent_lost (#1461).
 	reaper.SetAttemptLifetimeCeiling(cfg.Auth.MaxAttemptCredentialLifetime)
+	// Under the env-var transport the attempt credential is minted at dispatch
+	// and sits on the pod spec, so its TTL runs while the pod is still Pending.
+	// A pod still Pending as it runs out is re-placed with a fresh one instead
+	// of starting with a dead credential (#1126). The exchange transport mints
+	// the credential when the agent starts, so nothing runs out while it waits.
+	if cfg.Auth.AgentTokenTransport != config.AgentTokenTransportExchange {
+		reaper.SetAttemptTokenTTL(attemptTokenTTL)
+	}
 	// Give the reaper an append-aware marker sink so a reaped attempt's log ends
 	// with a "killed: agent_lost" marker instead of a silent truncation (#861).
 	// Both DiskSink and ObjectSink implement MarkerSink (append preserves the
