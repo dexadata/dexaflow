@@ -854,6 +854,31 @@ type Querier interface {
 	// last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
 	// ResetTaskInstanceToNone.
 	RecordDispatchFailure(ctx context.Context, arg RecordDispatchFailureParams) error
+	// A pod CREATE failed because the Kubernetes API was unavailable: a 503, a
+	// 504, a 500 (a fail-closed admission webhook that is down), a connection
+	// refused or reset, or the client deadline (#1606). Re-offer the task the way
+	// backpressure is re-offered, back to 'scheduled' and held until
+	// next_dispatch_at, WITHOUT touching dispatch_attempts, and stamp the start of
+	// the outage window on the first such failure (COALESCE keeps the first one).
+	// The caller fails the task as dispatch_failed once the window it returns is
+	// older than the scheduler's bound (ADR 0093), so an API that never comes back
+	// cannot hold the task forever.
+	//
+	// The hold grows with the outage: the next attempt waits as long as the task
+	// has already been riding it out, at least min_delay and at most max_delay.
+	// That doubles the interval without a counter, so a recovering apiserver is
+	// not hit by every due task every few seconds, and a recovery is still seen
+	// within max_delay.
+	//
+	// The create may have succeeded on the server before the response was lost,
+	// so this is a rail like RequeueDispatch: attempt_epoch is bumped, and the
+	// re-dispatch claims a new epoch on top, so an orphan pod from the ambiguous
+	// create is fenced (its reports get ErrStaleReport). Guarded to
+	// scheduled/queued: the sync path re-offers a scheduled row, a buffered
+	// worker a scheduled or queued one, and a row the agent has since reported on
+	// (the orphan pod won the race and runs the attempt) is left alone. The other
+	// fields are cleared for the reasons given on RequeueDispatch.
+	RecordDispatchUnavailable(ctx context.Context, arg RecordDispatchUnavailableParams) (RecordDispatchUnavailableRow, error)
 	// One audit entry per scope a retention cycle purged audit rows from, so the
 	// purge itself is on the record. tenant_id NULL is the system rows.
 	RecordRetentionPurge(ctx context.Context, arg RecordRetentionPurgeParams) error

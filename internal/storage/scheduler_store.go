@@ -754,6 +754,35 @@ func (s *SchedulerStore) RecordDispatchBackpressure(ctx context.Context, runID, 
 	})
 }
 
+// RecordDispatchUnavailable re-offers a task whose pod create failed because
+// the Kubernetes API was unavailable (#1606): back to scheduled, WITHOUT
+// incrementing dispatch_attempts, held for as long as the task has already
+// been riding the outage out, clamped to [minDelay, maxDelay]. It returns the
+// start of the task's outage window, stamped with now on the first such
+// failure of the episode, so the caller can fail the task once the window
+// passes its bound (ADR 0093), and the next_dispatch_at it wrote. applied is
+// false when the task is no longer scheduled or queued.
+func (s *SchedulerStore) RecordDispatchUnavailable(ctx context.Context, runID, taskID string, now time.Time, minDelay, maxDelay time.Duration) (since, nextAt time.Time, applied bool, err error) {
+	rid, err := parseUUID(runID)
+	if err != nil {
+		return time.Time{}, time.Time{}, false, err
+	}
+	row, err := s.q.RecordDispatchUnavailable(ctx, queries.RecordDispatchUnavailableParams{
+		DagRunID: rid,
+		TaskID:   taskID,
+		Now:      pgtype.Timestamptz{Time: now, Valid: true},
+		MinDelay: pgtype.Interval{Microseconds: minDelay.Microseconds(), Valid: true},
+		MaxDelay: pgtype.Interval{Microseconds: maxDelay.Microseconds(), Valid: true},
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, time.Time{}, false, fmt.Errorf("recording unavailable dispatch: %w", err)
+	}
+	return row.UnavailableSince.Time, row.NextDispatchAt.Time, true, nil
+}
+
 // MarkQueued moves a task from the scheduled slot this tick planned to queued
 // after its dispatch was accepted. expectNextDispatchAt is the next_dispatch_at
 // the tick read (nil when unset). It reports false, with no error, when the row

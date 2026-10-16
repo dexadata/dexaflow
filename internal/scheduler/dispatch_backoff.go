@@ -23,6 +23,17 @@ const (
 	// dispatchMaxAttempts (ADR 0051 Phase 1). Past this, a task that keeps hitting
 	// infra faults fails terminally instead of re-placing forever.
 	infraMaxAttempts = 6
+	// dispatchUnavailableWindow bounds how long a task is re-offered while the
+	// Kubernetes API is unavailable to it (a 503, a 504, a 500, a connection
+	// refused or reset, the client deadline), off the dispatch-attempt budget
+	// (ADR 0085). It outlasts a managed control plane upgrade or an etcd leader
+	// change; an API that stays down longer surfaces as dispatch_failed.
+	dispatchUnavailableWindow = 15 * time.Minute
+	// dispatchUnavailableMaxDelay caps the hold between two re-offers during an
+	// outage, so a task is dispatched again within a minute of the API coming
+	// back. The hold below it equals the time already spent in the outage
+	// (doubling from dispatchBackoffBase).
+	dispatchUnavailableMaxDelay = time.Minute
 )
 
 // dispatchBackoff returns the delay before the next dispatch attempt after

@@ -450,7 +450,7 @@ func (q *Queries) CreateScheduledRunByDagID(ctx context.Context, arg CreateSched
 const createTaskInstance = `-- name: CreateTaskInstance :one
 INSERT INTO task_instances (tenant_id, dag_run_id, task_id, operator, max_tries, state, pool, try_number, pool_slots)
 VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8)
-RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots
+RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots, dispatch_unavailable_since
 `
 
 type CreateTaskInstanceParams struct {
@@ -514,6 +514,7 @@ func (q *Queries) CreateTaskInstance(ctx context.Context, arg CreateTaskInstance
 		&i.AttemptEpoch,
 		&i.InfraConfirmedAt,
 		&i.PoolSlots,
+		&i.DispatchUnavailableSince,
 	)
 	return i, err
 }
@@ -2155,7 +2156,7 @@ func (q *Queries) ListTaskInstanceAttempts(ctx context.Context, arg ListTaskInst
 }
 
 const listTaskInstancesByRun = `-- name: ListTaskInstancesByRun :many
-SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots FROM task_instances
+SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots, dispatch_unavailable_since FROM task_instances
 WHERE tenant_id = $1 AND dag_run_id = $2
 ORDER BY task_id
 `
@@ -2209,6 +2210,7 @@ func (q *Queries) ListTaskInstancesByRun(ctx context.Context, arg ListTaskInstan
 			&i.AttemptEpoch,
 			&i.InfraConfirmedAt,
 			&i.PoolSlots,
+			&i.DispatchUnavailableSince,
 		); err != nil {
 			return nil, err
 		}
@@ -2221,7 +2223,7 @@ func (q *Queries) ListTaskInstancesByRun(ctx context.Context, arg ListTaskInstan
 }
 
 const listTaskInstancesByRuns = `-- name: ListTaskInstancesByRuns :many
-SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots FROM task_instances
+SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots, dispatch_unavailable_since FROM task_instances
 WHERE dag_run_id = ANY($1::uuid[])
 ORDER BY dag_run_id, task_id
 `
@@ -2274,6 +2276,7 @@ func (q *Queries) ListTaskInstancesByRuns(ctx context.Context, dagRunIds []pgtyp
 			&i.AttemptEpoch,
 			&i.InfraConfirmedAt,
 			&i.PoolSlots,
+			&i.DispatchUnavailableSince,
 		); err != nil {
 			return nil, err
 		}
@@ -2804,6 +2807,74 @@ func (q *Queries) RecordDispatchFailure(ctx context.Context, arg RecordDispatchF
 	return err
 }
 
+const recordDispatchUnavailable = `-- name: RecordDispatchUnavailable :one
+UPDATE task_instances
+SET state = 'scheduled',
+    next_dispatch_at = $1::timestamptz + LEAST(
+        $2::interval,
+        GREATEST($3::interval,
+                 $1::timestamptz - COALESCE(dispatch_unavailable_since, $1::timestamptz))),
+    dispatch_unavailable_since = COALESCE(dispatch_unavailable_since, $1::timestamptz),
+    warm_worker_id = NULL,
+    last_heartbeat_at = NULL,
+    attempt_epoch = attempt_epoch + 1,
+    queued_at = NULL
+WHERE dag_run_id = $4
+  AND task_id = $5
+  AND state IN ('scheduled', 'queued')
+RETURNING dispatch_unavailable_since::timestamptz AS unavailable_since, next_dispatch_at
+`
+
+type RecordDispatchUnavailableParams struct {
+	Now      pgtype.Timestamptz `json:"now"`
+	MaxDelay pgtype.Interval    `json:"max_delay"`
+	MinDelay pgtype.Interval    `json:"min_delay"`
+	DagRunID pgtype.UUID        `json:"dag_run_id"`
+	TaskID   string             `json:"task_id"`
+}
+
+type RecordDispatchUnavailableRow struct {
+	UnavailableSince pgtype.Timestamptz `json:"unavailable_since"`
+	NextDispatchAt   pgtype.Timestamptz `json:"next_dispatch_at"`
+}
+
+// A pod CREATE failed because the Kubernetes API was unavailable: a 503, a
+// 504, a 500 (a fail-closed admission webhook that is down), a connection
+// refused or reset, or the client deadline (#1606). Re-offer the task the way
+// backpressure is re-offered, back to 'scheduled' and held until
+// next_dispatch_at, WITHOUT touching dispatch_attempts, and stamp the start of
+// the outage window on the first such failure (COALESCE keeps the first one).
+// The caller fails the task as dispatch_failed once the window it returns is
+// older than the scheduler's bound (ADR 0093), so an API that never comes back
+// cannot hold the task forever.
+//
+// The hold grows with the outage: the next attempt waits as long as the task
+// has already been riding it out, at least min_delay and at most max_delay.
+// That doubles the interval without a counter, so a recovering apiserver is
+// not hit by every due task every few seconds, and a recovery is still seen
+// within max_delay.
+//
+// The create may have succeeded on the server before the response was lost,
+// so this is a rail like RequeueDispatch: attempt_epoch is bumped, and the
+// re-dispatch claims a new epoch on top, so an orphan pod from the ambiguous
+// create is fenced (its reports get ErrStaleReport). Guarded to
+// scheduled/queued: the sync path re-offers a scheduled row, a buffered
+// worker a scheduled or queued one, and a row the agent has since reported on
+// (the orphan pod won the race and runs the attempt) is left alone. The other
+// fields are cleared for the reasons given on RequeueDispatch.
+func (q *Queries) RecordDispatchUnavailable(ctx context.Context, arg RecordDispatchUnavailableParams) (RecordDispatchUnavailableRow, error) {
+	row := q.db.QueryRow(ctx, recordDispatchUnavailable,
+		arg.Now,
+		arg.MaxDelay,
+		arg.MinDelay,
+		arg.DagRunID,
+		arg.TaskID,
+	)
+	var i RecordDispatchUnavailableRow
+	err := row.Scan(&i.UnavailableSince, &i.NextDispatchAt)
+	return i, err
+}
+
 const recordTaskHeartbeat = `-- name: RecordTaskHeartbeat :execrows
 UPDATE task_instances
 SET last_heartbeat_at = now()
@@ -2857,6 +2928,7 @@ func (q *Queries) RecordTaskHeartbeat(ctx context.Context, arg RecordTaskHeartbe
 const redispatchRescheduledTaskInstance = `-- name: RedispatchRescheduledTaskInstance :exec
 UPDATE task_instances
 SET state = 'none',
+    dispatch_unavailable_since = NULL,
     released_at = now(),
     started_at = NULL,
     ended_at = NULL,
@@ -3225,6 +3297,7 @@ SET state = 'none',
     scheduled_at = NULL,
     dispatch_attempts = 0,
     next_dispatch_at = NULL,
+    dispatch_unavailable_since = NULL,
     last_failure_kind = NULL,
     infra_confirmed_at = NULL,
     warm_worker_id = NULL,
@@ -3373,6 +3446,7 @@ SET state = 'none',
     scheduled_at = NULL,
     dispatch_attempts = 0,
     next_dispatch_at = NULL,
+    dispatch_unavailable_since = NULL,
     last_failure_kind = NULL,
     infra_confirmed_at = NULL,
     warm_worker_id = NULL,
@@ -3478,6 +3552,7 @@ SET state = 'none',
     scheduled_at = NULL,
     dispatch_attempts = 0,
     next_dispatch_at = NULL,
+    dispatch_unavailable_since = NULL,
     reschedule_at = NULL,
     first_reschedule_at = NULL,
     last_failure_kind = NULL,
@@ -3551,6 +3626,7 @@ SET state = 'none',
     scheduled_at = NULL,
     dispatch_attempts = 0,
     next_dispatch_at = NULL,
+    dispatch_unavailable_since = NULL,
     reschedule_at = NULL,
     first_reschedule_at = NULL,
     last_failure_kind = NULL,
@@ -3635,6 +3711,7 @@ SET state = 'none',
     scheduled_at = NULL,
     dispatch_attempts = 0,
     next_dispatch_at = NULL,
+    dispatch_unavailable_since = NULL,
     reschedule_at = NULL,
     first_reschedule_at = NULL,
     last_failure_kind = NULL,
@@ -4124,7 +4201,7 @@ const updateTaskInstanceState = `-- name: UpdateTaskInstanceState :one
 UPDATE task_instances
 SET state = $2, started_at = $3, ended_at = $4
 WHERE id = $1
-RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots
+RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots, dispatch_unavailable_since
 `
 
 type UpdateTaskInstanceStateParams struct {
@@ -4177,6 +4254,7 @@ func (q *Queries) UpdateTaskInstanceState(ctx context.Context, arg UpdateTaskIns
 		&i.AttemptEpoch,
 		&i.InfraConfirmedAt,
 		&i.PoolSlots,
+		&i.DispatchUnavailableSince,
 	)
 	return i, err
 }
