@@ -77,6 +77,27 @@ func TestRegisterDeployedDAGSurfacesServerError(t *testing.T) {
 	}
 }
 
+// TestRegisterDeployedDAGExplainsTheTrustedIssuerRefusal: a register the
+// server refuses because deploys go through its trusted issuer (#1773) says
+// so, rather than a bare 403.
+func TestRegisterDeployedDAGExplainsTheTrustedIssuerRefusal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Dexaflow-Deploy-Via", "trusted-issuer")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"detail":"deploys go through the trusted issuer"}`)
+	}))
+	defer srv.Close()
+
+	out := filepath.Join(t.TempDir(), "dag.json")
+	if err := os.WriteFile(out, []byte(pushSpec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := registerDeployedDAG(context.Background(), io.Discard, registerRequest{serverURL: srv.URL, token: "tok", output: out, digestRef: "r@sha256:x", version: "v1", origin: labelDefault})
+	if err == nil || !strings.Contains(err.Error(), "takes deploys only through its trusted issuer") {
+		t.Errorf("err = %v, want it to say deploys go through the trusted issuer", err)
+	}
+}
+
 func TestTriggerDeployRunPostsToDagRuns(t *testing.T) {
 	var gotPath, gotAuth, gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

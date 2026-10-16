@@ -774,7 +774,14 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
-          description: The caller may not register, or sent is_paused without write on dags or, with a scoped token, without dexaflow:run
+          description: The caller may not register (with a deploy audience set, only the trusted issuer's deploy-audience bearer may), or sent is_paused without write on dags or, with a scoped token, without dexaflow:run
+          headers:
+            Dexaflow-Deploy-Via:
+              description: >-
+                trusted-issuer when auth.trusted_issuer.deploy_audience is set
+                and the caller is not the trusted issuer's bearer for that
+                audience: deploys on this server go through the issuer.
+              schema: { type: string }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -890,7 +897,14 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
-          description: The caller may not register, or the register would refuse is_paused or a tenant limit
+          description: The caller may not register (with a deploy audience set, only the trusted issuer's deploy-audience bearer may), or the register would refuse is_paused or a tenant limit
+          headers:
+            Dexaflow-Deploy-Via:
+              description: >-
+                trusted-issuer when auth.trusted_issuer.deploy_audience is set
+                and the caller is not the trusted issuer's bearer for that
+                audience: deploys on this server go through the issuer.
+              schema: { type: string }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -937,7 +951,14 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
-          description: The caller may not deploy, or the version exceeds a tenant limit
+          description: The caller may not deploy (with a deploy audience set, only the trusted issuer's deploy-audience bearer may), or the version exceeds a tenant limit
+          headers:
+            Dexaflow-Deploy-Via:
+              description: >-
+                trusted-issuer when auth.trusted_issuer.deploy_audience is set
+                and the caller is not the trusted issuer's bearer for that
+                audience: deploys on this server go through the issuer.
+              schema: { type: string }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
