@@ -1,0 +1,11 @@
+kind: Changed
+body: |-
+  **Cheaper warm pool tick.** With warm pools on, a steady reconcile tick of
+  the warm pool allocates 69% to 79% fewer objects and 26% to 33% less
+  memory than before (60 versions: 51 allocations and 50 KB per tick, down
+  from 238 and 75 KB): grouping the fleet and classifying each version's workers
+  no longer allocate per worker, and the prewarm pass of ADR 0082 allocates
+  nothing while the per-tenant cap covers every floor. Behavior is unchanged.
+  The tick now has benchmarks (`BenchmarkWarmPoolTick`) in the release
+  benchmark gate (#1906).
+time: 2026-10-16T19:00:00.000000000-03:00
