@@ -57,7 +57,7 @@ Pick the release once and reuse it in every step. It is the release tag without
 the leading `v`:
 
 ```bash
-export DEXAFLOW_VERSION=0.5.3   # the release you are testing
+export DEXAFLOW_VERSION={{< latest-version >}}   # the release you are testing
 ```
 
 The CLI, the chart and the images should be the same release. A released CLI
