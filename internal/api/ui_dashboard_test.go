@@ -106,3 +106,24 @@ func TestHistoricalMetricsRequiresStartDate(t *testing.T) {
 		t.Errorf("missing start_date: status = %d, want 400", w.Code)
 	}
 }
+
+// A task instance a clear marked removed (ADR 0086) is counted under the
+// Airflow member of the same name, not dropped from the chart.
+func TestHistoricalMetricsCountsRemovedTaskInstances(t *testing.T) {
+	reader := fakeStatsReader{hist: domain.HistoricalMetrics{
+		TIStates: map[string]int{"removed": 3, "success": 1},
+	}}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet,
+		"/ui/dashboard/historical_metrics_data?start_date=2026-05-01T00:00:00Z", http.NoBody)
+	newDashboardEngine(reader).ServeHTTP(w, req)
+	var got struct {
+		TIStates map[string]int `json:"task_instance_states"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v (status %d)", err, w.Code)
+	}
+	if got.TIStates["removed"] != 3 {
+		t.Errorf("removed = %d, want 3: %v", got.TIStates["removed"], got.TIStates)
+	}
+}

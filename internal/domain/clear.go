@@ -19,3 +19,12 @@ type ClearOptions struct {
 	ResetDagRun        bool
 	RunOnLatestVersion bool
 }
+
+// ClearVersionKept names a run that a clear asked to move to the DAG's
+// current version (RunOnLatestVersion) and that keeps the version it is bound
+// to, with the reason (ADR 0086): only a finished run with no queued or
+// running task instance moves.
+type ClearVersionKept struct {
+	RunID  string
+	Reason string
+}

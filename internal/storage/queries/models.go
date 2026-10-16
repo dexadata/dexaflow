@@ -114,6 +114,7 @@ const (
 	TaskStateUpstreamFailed  TaskState = "upstream_failed"
 	TaskStateUpForRetry      TaskState = "up_for_retry"
 	TaskStateUpForReschedule TaskState = "up_for_reschedule"
+	TaskStateRemoved         TaskState = "removed"
 )
 
 func (e *TaskState) Scan(src interface{}) error {

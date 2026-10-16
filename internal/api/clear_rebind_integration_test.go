@@ -121,58 +121,108 @@ func (f clearGuardFixture) state(t *testing.T) (run, image string, reset int) {
 func (f clearGuardFixture) assertUntouched(t *testing.T) {
 	t.Helper()
 	if run, image, reset := f.state(t); run != "failed" || image != "img:v1" || reset != 0 {
-		t.Errorf("after a refused clear: run %s on %s with %d task instances reset, want failed on img:v1 with 0", run, image, reset)
+		t.Errorf("after a clear that must not apply: run %s on %s with %d task instances reset, want failed on img:v1 with 0", run, image, reset)
 	}
+}
+
+// taskStates lists the run's task instances as task=state, by task id.
+func (f clearGuardFixture) taskStates(t *testing.T) string {
+	t.Helper()
+	var got string
+	if err := f.pg.Pool.QueryRow(context.Background(), `SELECT string_agg(task_id || '=' || state::text, ' ' ORDER BY task_id)
+		FROM task_instances WHERE dag_run_id = $1::uuid`, f.runUUID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	return got
 }
 
 // clearRequests are the two routes the UI clears a run through, as dry run
 // and as the clear itself.
 func (f clearGuardFixture) clearRequests(latest bool) map[string][2]string {
-	tiPath := "/api/v2/dags/" + f.dagID + "/clearTaskInstances"
-	runPath := "/api/v2/dags/" + f.dagID + "/dagRuns/r1/clear"
 	out := map[string][2]string{}
 	for _, dry := range []bool{true, false} {
-		out[fmt.Sprintf("clearTaskInstances dry_run=%v", dry)] = [2]string{tiPath,
-			fmt.Sprintf(`{"dag_run_id":"r1","only_failed":true,"run_on_latest_version":%v,"dry_run":%v}`, latest, dry)}
-		out[fmt.Sprintf("dagRuns clear dry_run=%v", dry)] = [2]string{runPath,
-			fmt.Sprintf(`{"only_failed":true,"run_on_latest_version":%v,"dry_run":%v}`, latest, dry)}
+		for route, req := range f.routes(latest, dry) {
+			out[fmt.Sprintf("%s dry_run=%v", route, dry)] = req
+		}
 	}
 	return out
 }
 
-func TestClearOntoAVersionWithOtherTasksIsRefusedIntegration(t *testing.T) {
-	cases := []struct {
-		name   string
-		v1, v2 []string
-		detail string
-	}{
-		{"the version adds a task", []string{"a"}, []string{"a", "b"}, "adds tasks [b]"},
-		{"the version removes a task", []string{"a", "b"}, []string{"a"}, "removes tasks [b]"},
+// routes is one request per clear route.
+func (f clearGuardFixture) routes(latest, dry bool) map[string][2]string {
+	return map[string][2]string{
+		"clearTaskInstances": {"/api/v2/dags/" + f.dagID + "/clearTaskInstances",
+			fmt.Sprintf(`{"dag_run_id":"r1","only_failed":true,"run_on_latest_version":%v,"dry_run":%v}`, latest, dry)},
+		"dagRuns clear": {"/api/v2/dags/" + f.dagID + "/dagRuns/r1/clear",
+			fmt.Sprintf(`{"only_failed":true,"run_on_latest_version":%v,"dry_run":%v}`, latest, dry)},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newClearGuardFixture(t, tc.v1, tc.v2)
-			for name, req := range f.clearRequests(true) {
-				rec := authGet(f.srv, http.MethodPost, req[0], req[1])
-				if rec.Code != http.StatusConflict {
-					t.Fatalf("%s = %d (%s), want 409", name, rec.Code, rec.Body.String())
-				}
-				var p Problem
-				if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
-					t.Fatalf("%s: decode: %v", name, err)
-				}
-				for _, want := range []string{tc.detail, `version "v2"`, "without run_on_latest_version", "trigger a new run"} {
-					if !strings.Contains(p.Detail, want) {
-						t.Errorf("%s: detail %q does not say %q", name, p.Detail, want)
-					}
-				}
-				f.assertUntouched(t)
+}
+
+// A finished run moves to a version with other tasks through either route:
+// the added task gets a task instance and the dropped one is removed (ADR
+// 0086). The dry run changes nothing and names no run as kept.
+func TestClearMovesAFinishedRunWithItsTaskSetIntegration(t *testing.T) {
+	for _, route := range []string{"clearTaskInstances", "dagRuns clear"} {
+		t.Run(route, func(t *testing.T) {
+			f := newClearGuardFixture(t, []string{"a", "b"}, []string{"a", "c"})
+			dry := f.routes(true, true)[route]
+			rec := authGet(f.srv, http.MethodPost, dry[0], dry[1])
+			if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "run_on_latest_version_not_applied") {
+				t.Fatalf("dry run = %d (%s), want 200 without a kept run", rec.Code, rec.Body.String())
+			}
+			f.assertUntouched(t)
+			req := f.routes(true, false)[route]
+			rec = authGet(f.srv, http.MethodPost, req[0], req[1])
+			if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "run_on_latest_version_not_applied") {
+				t.Fatalf("clear = %d (%s), want 200 without a kept run", rec.Code, rec.Body.String())
+			}
+			if run, image, _ := f.state(t); run != "queued" || image != "img:v2" {
+				t.Errorf("run %s on %s, want queued on img:v2", run, image)
+			}
+			if got := f.taskStates(t); got != "a=none b=removed c=none" {
+				t.Errorf("task states = %q, want a=none b=removed c=none", got)
 			}
 		})
 	}
 }
 
-// The way out the refusal names: without run_on_latest_version both routes
+// A run still running keeps its version through either route, dry run
+// included: the clear applies on v1 and the response says why the option was
+// not applied.
+func TestClearOfARunningRunReportsTheVersionKeptIntegration(t *testing.T) {
+	f := newClearGuardFixture(t, []string{"a"}, []string{"a", "b"})
+	if _, err := f.pg.Pool.Exec(context.Background(), `UPDATE dag_runs SET state = 'running', ended_at = NULL WHERE id = $1::uuid`, f.runUUID); err != nil {
+		t.Fatal(err)
+	}
+	for _, dry := range []bool{true, false} {
+		for route, req := range f.routes(true, dry) {
+			rec := authGet(f.srv, http.MethodPost, req[0], req[1])
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s dry_run=%v = %d (%s)", route, dry, rec.Code, rec.Body.String())
+			}
+			var got struct {
+				NotApplied []struct {
+					DagRunID string `json:"dag_run_id"`
+					Reason   string `json:"reason"`
+				} `json:"run_on_latest_version_not_applied"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if len(got.NotApplied) != 1 || got.NotApplied[0].DagRunID != "r1" || !strings.Contains(got.NotApplied[0].Reason, "the run is") {
+				t.Errorf("%s dry_run=%v: run_on_latest_version_not_applied = %+v (%s)", route, dry, got.NotApplied, rec.Body.String())
+			}
+		}
+	}
+	if _, image, _ := f.state(t); image != "img:v1" {
+		t.Errorf("run moved to %s while it was running", image)
+	}
+	if got := f.taskStates(t); got != "a=none" {
+		t.Errorf("task states = %q, want a=none and no task instance for v2's b", got)
+	}
+}
+
+// Without run_on_latest_version both routes
 // preview and clear, and the run stays on the version it was created with.
 func TestClearWithoutRebindStillAppliesIntegration(t *testing.T) {
 	f := newClearGuardFixture(t, []string{"a"}, []string{"a", "b"})
@@ -186,7 +236,7 @@ func TestClearWithoutRebindStillAppliesIntegration(t *testing.T) {
 	}
 }
 
-// A version with the same tasks re-binds as before.
+// A finished run moves to a version with the same tasks and keeps them.
 func TestClearOntoAVersionWithTheSameTasksRebindsIntegration(t *testing.T) {
 	f := newClearGuardFixture(t, []string{"a", "b"}, []string{"b", "a"})
 	rec := authGet(f.srv, http.MethodPost, "/api/v2/dags/"+f.dagID+"/dagRuns/r1/clear",
@@ -200,7 +250,7 @@ func TestClearOntoAVersionWithTheSameTasksRebindsIntegration(t *testing.T) {
 }
 
 // Another tenant reaches neither the check nor the clear.
-func TestClearGuardIsTenantScopedIntegration(t *testing.T) {
+func TestClearVersionIsTenantScopedIntegration(t *testing.T) {
 	f := newClearGuardFixture(t, []string{"a"}, []string{"a"})
 	other := fmt.Sprintf("clearguard_other_%d", time.Now().UnixNano())
 	if _, err := f.pg.Pool.Exec(context.Background(), `INSERT INTO tenants (name, display_name) VALUES ($1, $1)`, other); err != nil {
@@ -216,8 +266,8 @@ func TestClearGuardIsTenantScopedIntegration(t *testing.T) {
 }
 
 // An unknown dag_run_id answers 404 on both routes, as without
-// run_on_latest_version, before any version is compared.
-func TestClearGuardUnknownRunIsNotFoundIntegration(t *testing.T) {
+// run_on_latest_version, before anything is cleared.
+func TestClearVersionUnknownRunIsNotFoundIntegration(t *testing.T) {
 	f := newClearGuardFixture(t, []string{"a"}, []string{"a", "b"})
 	for _, req := range [][2]string{
 		{"/api/v2/dags/" + f.dagID + "/clearTaskInstances", `{"dag_run_id":"nope","run_on_latest_version":true,"dry_run":true}`},

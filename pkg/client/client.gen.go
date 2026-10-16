@@ -106,6 +106,7 @@ const (
 	TaskInstanceStateFailed         TaskInstanceState = "failed"
 	TaskInstanceStateNone           TaskInstanceState = "none"
 	TaskInstanceStateQueued         TaskInstanceState = "queued"
+	TaskInstanceStateRemoved        TaskInstanceState = "removed"
 	TaskInstanceStateRunning        TaskInstanceState = "running"
 	TaskInstanceStateScheduled      TaskInstanceState = "scheduled"
 	TaskInstanceStateSkipped        TaskInstanceState = "skipped"
@@ -122,6 +123,8 @@ func (e TaskInstanceState) Valid() bool {
 	case TaskInstanceStateNone:
 		return true
 	case TaskInstanceStateQueued:
+		return true
+	case TaskInstanceStateRemoved:
 		return true
 	case TaskInstanceStateRunning:
 		return true
@@ -283,9 +286,17 @@ type ClearTaskInstancesRequest struct {
 	// ResetDagRuns Re-open the run so the scheduler looks at it again. Without it a terminal run stays terminal and the cleared task instance is never scheduled.
 	ResetDagRuns *bool `json:"reset_dag_runs,omitempty"`
 
-	// RunOnLatestVersion Which version the re-run executes. false (the default, matching Apache Airflow) keeps the version the run was created with, so the re-run executes the image that produced the original attempt. true re-binds the run to the DAG's current registered version, so the re-run picks up the newest image and config. Use it to re-run a failed task against a fix without creating a new run. A re-bind onto a version that adds or removes a task is refused with 409 (the clear does not yet create or remove task instances), naming the tasks.
+	// RunOnLatestVersion Which version the re-run executes. false (the default, matching Apache Airflow) keeps the version the run was created with, so the re-run executes the image that produced the original attempt. true re-binds the run to the DAG's current registered version, so the re-run picks up the newest image and config. Use it to re-run a failed task against a fix without creating a new run. Only a finished run (success or failed, with no task instance queued or running) moves: the clear creates the task instances of the tasks the version adds and marks removed the ones of the tasks it dropped. A run that has not finished keeps its version, as in Airflow, and the response lists it in run_on_latest_version_not_applied with the reason (ADR 0086).
 	RunOnLatestVersion *bool     `json:"run_on_latest_version,omitempty"`
 	TaskIds            *[]string `json:"task_ids,omitempty"`
+}
+
+// ClearVersionNotApplied Dexaflow-only. The runs a clear with run_on_latest_version keeps on their own version, each with the reason (ADR 0086): only a finished run with no task instance queued or running moves to the current version. The clear still applies to these runs, on their version. Left out when every run moved or the option was not asked, and on every response other than the two clear routes.
+type ClearVersionNotApplied = []struct {
+	DagRunId string `json:"dag_run_id"`
+
+	// Reason Why the run keeps its version, for example "the run is running: only a finished run moves to the current version".
+	Reason string `json:"reason"`
 }
 
 // ComponentHealth defines model for ComponentHealth.
@@ -413,9 +424,12 @@ type DAGRun struct {
 	LogicalDate       *time.Time              `json:"logical_date,omitempty"`
 	Note              *string                 `json:"note,omitempty"`
 	QueuedAt          *time.Time              `json:"queued_at,omitempty"`
-	RunType           *DAGRunRunType          `json:"run_type,omitempty"`
-	StartDate         *time.Time              `json:"start_date,omitempty"`
-	State             *DAGRunState            `json:"state,omitempty"`
+
+	// RunOnLatestVersionNotApplied Dexaflow-only. The runs a clear with run_on_latest_version keeps on their own version, each with the reason (ADR 0086): only a finished run with no task instance queued or running moves to the current version. The clear still applies to these runs, on their version. Left out when every run moved or the option was not asked, and on every response other than the two clear routes.
+	RunOnLatestVersionNotApplied *ClearVersionNotApplied `json:"run_on_latest_version_not_applied,omitempty"`
+	RunType                      *DAGRunRunType          `json:"run_type,omitempty"`
+	StartDate                    *time.Time              `json:"start_date,omitempty"`
+	State                        *DAGRunState            `json:"state,omitempty"`
 }
 
 // DAGRunRunType defines model for DAGRun.RunType.
@@ -438,7 +452,7 @@ type DAGRunClearRequest struct {
 	// OnlyNew Not supported. Sending true is refused with 400: Dexaflow cannot yet tell which tasks a newer DAG version added.
 	OnlyNew *bool `json:"only_new,omitempty"`
 
-	// RunOnLatestVersion Which version the re-run executes. Unset or false keeps the version the run was created with; true re-binds the run to the DAG's current registered version. A re-bind onto a version whose tasks differ from the run's task instances is refused with 409.
+	// RunOnLatestVersion Which version the re-run executes. Unset or false keeps the version the run was created with. true moves a finished run (success or failed, with no task instance queued or running) to the DAG's current registered version, creating the task instances of the tasks that version adds and marking removed the ones of the tasks it dropped. A run that has not finished keeps its version, as in Airflow; the response then lists it in run_on_latest_version_not_applied with the reason (ADR 0086).
 	RunOnLatestVersion *bool `json:"run_on_latest_version,omitempty"`
 }
 
@@ -618,9 +632,12 @@ type TaskInstanceCollection struct {
 	NextCursor *string `json:"next_cursor,omitempty"`
 
 	// PreviousCursor Cursor of the previous page. Present only when the request carried cursor and the page is not the first.
-	PreviousCursor *string         `json:"previous_cursor,omitempty"`
-	TaskInstances  *[]TaskInstance `json:"task_instances,omitempty"`
-	TotalEntries   *int            `json:"total_entries,omitempty"`
+	PreviousCursor *string `json:"previous_cursor,omitempty"`
+
+	// RunOnLatestVersionNotApplied Dexaflow-only. The runs a clear with run_on_latest_version keeps on their own version, each with the reason (ADR 0086): only a finished run with no task instance queued or running moves to the current version. The clear still applies to these runs, on their version. Left out when every run moved or the option was not asked, and on every response other than the two clear routes.
+	RunOnLatestVersionNotApplied *ClearVersionNotApplied `json:"run_on_latest_version_not_applied,omitempty"`
+	TaskInstances                *[]TaskInstance         `json:"task_instances,omitempty"`
+	TotalEntries                 *int                    `json:"total_entries,omitempty"`
 }
 
 // TaskInstanceStateUpdate defines model for TaskInstanceStateUpdate.
