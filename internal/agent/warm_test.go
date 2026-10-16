@@ -26,8 +26,9 @@ type fakeAssignmentStream struct {
 	assignments []*agentv1.WorkAssignment
 	idx         int
 	sent        []*agentv1.WorkerMessage
-	recvErr     error // returned once assignments are exhausted; io.EOF when nil
-	sendErr     error // when set, every Send fails with it (a stream dying mid-attempt)
+	recvErr     error       // returned once assignments are exhausted; io.EOF when nil
+	sendErr     error       // when set, every Send fails with it (a stream dying mid-attempt)
+	header      metadata.MD // response header the control plane sent; nil means none
 }
 
 func (s *fakeAssignmentStream) Send(m *agentv1.WorkerMessage) error {
@@ -47,12 +48,17 @@ func (s *fakeAssignmentStream) Recv() (*agentv1.WorkAssignment, error) {
 	return a, nil
 }
 
-func (s *fakeAssignmentStream) Header() (metadata.MD, error) { return metadata.MD{}, nil }
-func (s *fakeAssignmentStream) Trailer() metadata.MD         { return nil }
-func (s *fakeAssignmentStream) CloseSend() error             { return nil }
-func (s *fakeAssignmentStream) Context() context.Context     { return s.ctx }
-func (s *fakeAssignmentStream) SendMsg(any) error            { return nil }
-func (s *fakeAssignmentStream) RecvMsg(any) error            { return nil }
+func (s *fakeAssignmentStream) Header() (metadata.MD, error) {
+	if s.header != nil {
+		return s.header, nil
+	}
+	return metadata.MD{}, nil
+}
+func (s *fakeAssignmentStream) Trailer() metadata.MD     { return nil }
+func (s *fakeAssignmentStream) CloseSend() error         { return nil }
+func (s *fakeAssignmentStream) Context() context.Context { return s.ctx }
+func (s *fakeAssignmentStream) SendMsg(any) error        { return nil }
+func (s *fakeAssignmentStream) RecvMsg(any) error        { return nil }
 
 // warmFake is the control-plane double for the warm-worker tests. It embeds the
 // single-shot fakeClient (reusing its Register / ReportState / secrets stubs) and
