@@ -380,8 +380,9 @@ holds, then re-run.
 | 027, 032, 035 (index build) | 27, 32, 35 | drop the INVALID index named above | 26, 31, 34 |
 | 028, 029, 030, 033, 034 (index drop) | 28, 29, 30, 33, 34 | run the file's `DROP INDEX CONCURRENTLY IF EXISTS` by hand (`idx_ti_run`, `idx_ti_task`, `idx_ti_running_heartbeat`, `idx_dag_versions_hash`, `idx_dag_versions_spec`); it is safe to repeat | the same number: the drop is now done |
 | 031 (`fillfactor`), 038 (`attempt_epoch`) | 31, 38 | nothing: each runs in a transaction with a 5 s `lock_timeout`, so nothing changed | 30, 37; retry when the table is quiet |
-| 036, 039, 040 (columns) | 36, 39, 40 | nothing: `ADD COLUMN IF NOT EXISTS`, and 039's backfill, can be repeated | 35, 38, 39 |
+| 036, 039, 040, 041 (columns) | 36, 39, 40, 41 | nothing: `ADD COLUMN IF NOT EXISTS`, and 039's backfill, can be repeated | 35, 38, 39, 40 |
 | 037 (role reconcile) | 37 | nothing: one transaction, rolled back, and the file is idempotent | 36 |
+| 042 (`pool_slots`) | 42 | nothing: the column and its `NOT VALID` check are added in one transaction with a 5 s `lock_timeout`, which rolled back if it was interrupted; if the closing `VALIDATE CONSTRAINT` was, both are there, and every statement of the file can be repeated | 41; retry when the table is quiet |
 | 043 (index build) | 43 | `DROP INDEX CONCURRENTLY IF EXISTS idx_dag_runs_tenant_settled_ended;` | 42 |
 | 044 (deployer role, API tokens) | 44 | nothing: one transaction, rolled back, and the file is idempotent | 43 |
 | 045 (device sign-ins) | 45 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and the file is idempotent | 44 |
