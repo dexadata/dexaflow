@@ -222,6 +222,12 @@ type Querier interface {
 	// error_message carries the underlying cause. Guarded to 'scheduled' for the same
 	// reason as RecordDispatchFailure. This is distinct from dispatch_lost (a TI that
 	// reached 'queued' then vanished) and from a task's own 'failed' (the code ran).
+	// dispatch_failed is terminal: a dispatch failure never consumes try_number
+	// (ADR 0031 Amendment A), so the user's retry budget is not a second dispatch
+	// budget. It is spent the way FailDispatchRefused spends it, by lowering
+	// max_tries to the current try, so the planner does not move the task to
+	// up_for_retry and dispatch it again on a new try. A clear restores the
+	// budget from the task, as after a refusal.
 	FailDispatchExhausted(ctx context.Context, arg FailDispatchExhaustedParams) error
 	// A dispatch the executor refused (ADR 0066 section 3: the task is larger than
 	// its size, or above executor.unit.max_size) fails the task for good. The
@@ -777,6 +783,8 @@ type Querier interface {
 	// task_id) and the active states (scheduled/queued) — a TI that already
 	// moved to running/terminal between the worker accepting the request and
 	// the dispatch failing is left alone (defense in depth).
+	// The failure is dispatch_failed, which is terminal: the retry budget is
+	// spent as in FailDispatchExhausted, so the planner does not retry it.
 	MarkTaskDispatchFailed(ctx context.Context, arg MarkTaskDispatchFailedParams) error
 	// Fails one queued TI with a dispatch_lost error. The WHERE state='queued'
 	// guard makes the operation idempotent: a second call on a TI that has

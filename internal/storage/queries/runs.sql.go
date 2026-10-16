@@ -597,7 +597,8 @@ func (q *Queries) DispatchAttemptsForActive(ctx context.Context, arg DispatchAtt
 const failDispatchExhausted = `-- name: FailDispatchExhausted :exec
 UPDATE task_instances
 SET state = 'failed', ended_at = now(), error_message = $3,
-    next_dispatch_at = NULL
+    next_dispatch_at = NULL,
+    max_tries = LEAST(max_tries, try_number)
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled'
 `
 
@@ -612,6 +613,12 @@ type FailDispatchExhaustedParams struct {
 // error_message carries the underlying cause. Guarded to 'scheduled' for the same
 // reason as RecordDispatchFailure. This is distinct from dispatch_lost (a TI that
 // reached 'queued' then vanished) and from a task's own 'failed' (the code ran).
+// dispatch_failed is terminal: a dispatch failure never consumes try_number
+// (ADR 0031 Amendment A), so the user's retry budget is not a second dispatch
+// budget. It is spent the way FailDispatchRefused spends it, by lowering
+// max_tries to the current try, so the planner does not move the task to
+// up_for_retry and dispatch it again on a new try. A clear restores the
+// budget from the task, as after a refusal.
 func (q *Queries) FailDispatchExhausted(ctx context.Context, arg FailDispatchExhaustedParams) error {
 	_, err := q.db.Exec(ctx, failDispatchExhausted, arg.DagRunID, arg.TaskID, arg.ErrorMessage)
 	return err
@@ -2534,7 +2541,8 @@ const markTaskDispatchFailed = `-- name: MarkTaskDispatchFailed :exec
 UPDATE task_instances
 SET state = 'failed',
     ended_at = now(),
-    error_message = $3
+    error_message = $3,
+    max_tries = LEAST(max_tries, try_number)
 WHERE dag_run_id = $1
   AND task_id = $2
   AND state IN ('scheduled', 'queued')
@@ -2551,6 +2559,8 @@ type MarkTaskDispatchFailedParams struct {
 // task_id) and the active states (scheduled/queued) — a TI that already
 // moved to running/terminal between the worker accepting the request and
 // the dispatch failing is left alone (defense in depth).
+// The failure is dispatch_failed, which is terminal: the retry budget is
+// spent as in FailDispatchExhausted, so the planner does not retry it.
 func (q *Queries) MarkTaskDispatchFailed(ctx context.Context, arg MarkTaskDispatchFailedParams) error {
 	_, err := q.db.Exec(ctx, markTaskDispatchFailed, arg.DagRunID, arg.TaskID, arg.ErrorMessage)
 	return err
