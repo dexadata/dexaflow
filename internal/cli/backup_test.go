@@ -38,22 +38,43 @@ func TestWorkspaceDirFromConfig(t *testing.T) {
 	})
 }
 
-// TestLeoflowHomeHasData mirrors the safety guard. A non-existent or empty
-// dir is "no install"; one regular file inside it is.
-func TestLeoflowHomeHasData(t *testing.T) {
-	if leoflowHomeHasData(filepath.Join(t.TempDir(), "definitely-missing")) {
-		t.Error("missing dir reported as having data")
+// TestLiteHomeHasDatastore mirrors the safety guard (#154). A missing or
+// empty home, or one that only `dexaflow setup` filled, holds no datastore a
+// restore would replace; a managed data dir, or a Docker datastore a Lite run
+// recorded the port of, does.
+func TestLiteHomeHasDatastore(t *testing.T) {
+	if liteHomeHasDatastore(filepath.Join(t.TempDir(), "definitely-missing")) {
+		t.Error("missing dir reported as having a datastore")
 	}
-	emptyDir := t.TempDir()
-	if leoflowHomeHasData(emptyDir) {
-		t.Error("empty dir reported as having data")
+	if liteHomeHasDatastore(t.TempDir()) {
+		t.Error("empty dir reported as having a datastore")
 	}
-	withFile := t.TempDir()
-	if err := os.WriteFile(filepath.Join(withFile, "config.yaml"), []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
+	write := func(dir, rel, data string) {
+		t.Helper()
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if !leoflowHomeHasData(withFile) {
-		t.Error("dir with a file reported as empty")
+	setupOnly := t.TempDir()
+	write(setupOnly, "config.yaml", "x")
+	write(setupOnly, "setup.json", "{}")
+	write(setupOnly, "pysrc/parser/x.py", "")
+	if liteHomeHasDatastore(setupOnly) {
+		t.Error("a home only `dexaflow setup` filled reported as having a datastore")
+	}
+	managed := t.TempDir()
+	write(managed, "pgdata/PG_VERSION", "16\n")
+	if !liteHomeHasDatastore(managed) {
+		t.Error("a managed data dir not reported as a datastore")
+	}
+	docker := t.TempDir()
+	write(docker, "dev/db-port", "5433\n")
+	if !liteHomeHasDatastore(docker) {
+		t.Error("a recorded Docker datastore not reported as a datastore")
 	}
 }
 
