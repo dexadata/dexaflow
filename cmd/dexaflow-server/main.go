@@ -1509,7 +1509,9 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		WarmPolicy:                   warmPolicy(cfg),
 		WarmPools:                    cfg.Execution,
 		WarmWorkersAbsent:            warmWorkersAbsent(cfg, executorInfo.PodDispatchEnabled),
-		TaskPods:                     taskPodSettings(cfg, executorInfo.PodDispatchEnabled),
+		TaskPods: taskPodSettings(cfg, executorInfo.PodDispatchEnabled, func() (kubernetes.Interface, error) {
+			return buildK8sClient(cfg.Executor.KubeClient)
+		}, tel.Logger),
 
 		Dags:            repo,
 		DagRuns:         repo,
@@ -2996,14 +2998,32 @@ func warmWorkersAbsent(cfg *config.ServerConfig, podDispatch bool) string {
 
 // taskPodSettings is how the dispatcher starts task pods, which the
 // register dry run reports (#1889): podDispatch is
-// ExecutorInfo.PodDispatchEnabled.
-func taskPodSettings(cfg *config.ServerConfig, podDispatch bool) api.TaskPodSettings {
-	return api.TaskPodSettings{
+// ExecutorInfo.PodDispatchEnabled. The ServiceAccounts of the task namespace
+// are read with a client newClient builds, only by a process that holds the
+// executor's Role, which grants that read (ADR 0085): the all role. The api
+// role of a split control plane has no access to the cluster (ADR 0049), so
+// it reports every account unchecked, with the reason.
+func taskPodSettings(cfg *config.ServerConfig, podDispatch bool, newClient func() (kubernetes.Interface, error), logger *slog.Logger) api.TaskPodSettings {
+	s := api.TaskPodSettings{
 		Enabled:               podDispatch,
 		RunAsNonRoot:          cfg.Executor.Defaults.RunTasksAsNonRoot,
 		DefaultServiceAccount: cfg.Executor.TaskServiceAccount,
-		Unread:                "this server does not look up ServiceAccounts",
 	}
+	switch {
+	case !podDispatch:
+		return s
+	case !cfg.Server.ServesScheduler():
+		s.Unread = "the API role of a split control plane has no access to the cluster (ADR 0049)"
+		return s
+	}
+	cs, err := newClient()
+	if err != nil {
+		logger.Warn("the register dry run cannot look up task ServiceAccounts", "error", err)
+		s.Unread = "the control plane has no Kubernetes client"
+		return s
+	}
+	s.ServiceAccounts = executor.NewServiceAccounts(cs, cfg.Executor.TaskNamespace)
+	return s
 }
 
 // resolveAgentControlAddr returns the address task agents dial back, defaulting

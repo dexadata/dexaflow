@@ -241,7 +241,11 @@ this order:
      Workload Identity, a credential helper), which the server cannot see.
      The operator lists a pull secret in `taskServiceAccount.imagePullSecrets`
      otherwise. A ServiceAccount the server could not look up is a `note:`
-     with the reason.
+     with the reason: the control plane reads the account with `get` on
+     `serviceaccounts` in the task namespace, which the chart grants
+     ([ADR 0085](/project/adrs/0085-control-plane-reads-task-service-accounts/)),
+     except in a split control plane, whose API role has no access to the
+     cluster.
    - When the project builds from its own `Dockerfile`, the deploy reads the
      `USER` its final stage ends with (the one of the stage it is built
      `FROM`, when that is a stage of the same file). On a server that runs
