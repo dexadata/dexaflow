@@ -298,6 +298,32 @@ func TestWarmPoolIdleAboveAnUnrationedPrewarmFloorEarnsNoCredit(t *testing.T) {
 	}
 }
 
+// A ration cleared through the fast path (the cap covers every floor again)
+// is logged and forgotten, so the same ration coming back is a change: it is
+// logged and metered again (ADR 0082 D7, #1906).
+func TestWarmPoolPrewarmRationClearedByTheFastPathIsNotedAgain(t *testing.T) {
+	targets := prewarmCapTargets()
+	both := targets.targets
+	r, logs, rec := logged(targets, &fakeWarmPods{}, busySet(), 4)
+	tick(t, r) // 3 + 3 over a cap of 4: dv1 is rationed
+	if n := rec.count("warm_pool_prewarm_rationed"); n != 1 {
+		t.Fatalf("first tick: warm_pool_prewarm_rationed = %d, want 1", n)
+	}
+	targets.targets = both[1:] // only alpha (dv9) is left: 3 fits in 4
+	tick(t, r)
+	if !strings.Contains(logs.String(), "per-tenant cap covers every prewarmed DAG again") {
+		t.Errorf("a ration cleared through the fast path was not logged:\n%s", logs.String())
+	}
+	if len(r.rationed) != 0 {
+		t.Errorf("rationed = %v after the cap covered every floor, want empty", r.rationed)
+	}
+	targets.targets = both // the same ration comes back
+	tick(t, r)
+	if n := rec.count("warm_pool_prewarm_rationed"); n != 2 {
+		t.Errorf("the same ration after a fit metered %d times in all, want 2", n)
+	}
+}
+
 // Two versions with an active run share one credit: the idle workers a
 // rationed prewarm pool keeps above its share are credited once in all, not
 // once per run version (#1905). Here zeta (share 1) keeps 2 idle workers above
