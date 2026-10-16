@@ -13,8 +13,8 @@ machine; compare ratios, and re-record both sides on the same host.
 
 ```sh
 go test -run '^$' -benchmem -count 5 \
-  -bench 'PlanRunFanOut|StepSteadyState|StepQueueFanOut|ActiveRunProjection|TopoSortFanOut|StaticHandlerBundle' \
-  ./internal/scheduler/ ./internal/storage/ ./internal/api/ ./internal/ui/
+  -bench 'PlanRunFanOut|StepSteadyState|StepQueueFanOut|ActiveRunProjection|TopoSortFanOut|StaticHandlerBundle|WarmPoolTick' \
+  ./internal/scheduler/ ./internal/storage/ ./internal/api/ ./internal/ui/ ./internal/executor/
 ```
 
 Median of 5 runs.
@@ -35,6 +35,21 @@ Median of 5 runs.
 | `BenchmarkTopoSortFanOut` | 5,000 tasks | 68.6 ms | 4.0 MB | 5,070 |
 | `BenchmarkStaticHandlerBundle` | 5 MB bundle, gzip | 417 ms | 9.1 MB | 63 |
 | `BenchmarkStaticHandlerBundle` | 5 MB bundle, identity | 3.18 ms | 10.5 MB | 28 |
+| `BenchmarkWarmPoolTick` | 60 versions, run | see below | 50.2 KB | 51 |
+| `BenchmarkWarmPoolTick` | 60 versions, rationed prewarm | see below | 62.3 KB | 88 |
+
+`BenchmarkWarmPoolTick` (#1906) came after the recording above, and its time
+has not been recorded on the baseline host yet: re-record it with the next
+update of this table (B3 of the release checklist). Its memory and allocations
+do not depend on the machine (they do on the Go version: the Go 1.26.6 of the
+header applies). It measures one steady warm pool reconcile tick,
+the work the leader repeats every warm pool interval, over 60 versions of 3
+tenants under a per-tenant cap, with the Kubernetes and database reads faked
+and nothing to create or delete. The second case adds 30 prewarm-only versions
+the cap rations (ADR 0082). Before #1906 the first case cost 75.1 KB and 238
+allocations per tick and the second 84.7 KB and 286 (v0.5.3 had 57.6 KB and
+226 for the first); the v0.5.4-rc.1 recheck measured the first case at
+68.8 µs at v0.5.4 against 55.4 µs at v0.5.3 on a quiet 4 vCPU host.
 
 What stands out:
 
