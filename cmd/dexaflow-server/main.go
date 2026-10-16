@@ -1779,8 +1779,8 @@ func buildTokenExchange(cfg *config.ServerConfig, newK8sClient func() (kubernete
 }
 
 // loadK8sRESTConfig loads the in-cluster config or, failing that, the local
-// kubeconfig. It returns an error when neither is available, in which case pod
-// dispatch is disabled and tasks have no executor to run them.
+// kubeconfig. It returns an error when neither is available, in which case a
+// server on the Kubernetes executor refuses to boot (#704).
 func loadK8sRESTConfig() (*rest.Config, error) {
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
@@ -2638,7 +2638,11 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 		metrics,
 		logger,
 	))
-	podDispatch, dispatchCloser := setupDispatch(ctx, cfg, sched, execStore, authn, store, warmPools, logSink, logger, metrics)
+	podDispatch, dispatchCloser, err := setupDispatch(ctx, cfg, sched, execStore, authn, store, warmPools, logSink, logger, metrics)
+	if err != nil {
+		leaderPool.Close()
+		return nil, false, nil, err
+	}
 	leader := scheduler.NewLeader(leaderPool)
 	go func() {
 		defer leaderPool.Close()
@@ -2886,10 +2890,13 @@ func serve(s *http.Server, errCh chan<- error) {
 
 // setupDispatch wires the pod-path executor selected by executor.type onto the
 // scheduler and returns whether pod dispatch is active. "subprocess" runs the
-// agent on the host (dev only); "kubernetes" (default) launches task pods.
-func setupDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, store *storage.SchedulerStore, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (bool, io.Closer) {
+// agent on the host (dev only); "kubernetes" (default) launches task pods. An
+// error means the selected executor cannot be wired and the server must not
+// boot.
+func setupDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, store *storage.SchedulerStore, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (bool, io.Closer, error) {
 	if cfg.Executor.Type == "subprocess" {
-		return setupSubprocessDispatch(ctx, cfg, sched, execStore, authn, warmPools, store, logSink, logger, metrics) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
+		on, closer := setupSubprocessDispatch(ctx, cfg, sched, execStore, authn, warmPools, store, logSink, logger, metrics) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
+		return on, closer, nil
 	}
 	return setupK8sDispatch(ctx, cfg, sched, execStore, authn, store, warmPools, logSink, logger, metrics) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 }
@@ -3067,14 +3074,18 @@ func startLiteMaintenance(ctx context.Context, reaper *executor.Reaper, leading 
 	})
 }
 
-// setupK8sDispatch wires the production pod-per-task executor; it is a no-op
-// (tasks have no executor and are failed as undispatchable) when no Kubernetes
-// client is available.
-func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, store *storage.SchedulerStore, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (bool, io.Closer) {
+// setupK8sDispatch wires the production pod-per-task executor.
+//
+// When no Kubernetes client can be built it FAILS CLOSED and returns an error,
+// so the server refuses to boot (#704, the sibling of #700). It used to log a
+// warning and leave pod dispatch unwired, so a scheduler on the Kubernetes
+// executor reported itself healthy while every task it planned failed as
+// undispatchable. A deployment without a cluster selects
+// executor.type=subprocess, which needs no client.
+func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, store *storage.SchedulerStore, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (bool, io.Closer, error) {
 	clients, perr := buildK8sClients(cfg.Executor.KubeClient)
 	if perr != nil {
-		logger.Warn("pod dispatch disabled; tasks have no executor and will fail as undispatchable", "error", perr)
-		return false, nil
+		return false, nil, fmt.Errorf("executor type %q requires a Kubernetes client to dispatch task pods, but none is available (set executor.type=subprocess to run without a cluster): %w", cfg.Executor.Type, perr)
 	}
 	cs, mcs := clients.dispatch, clients.maintenance
 	controlAddr := resolveAgentControlAddr(cfg)
@@ -3196,7 +3207,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	logger.Info("pod dispatch enabled", "namespace", cfg.Executor.TaskNamespace, "agent_control_plane_addr", controlAddr,
 		"kube_qps", cfg.Executor.KubeClient.QPS, "kube_burst", cfg.Executor.KubeClient.Burst,
 		"separate_maintenance_client", mcs != cs)
-	return true, closer
+	return true, closer, nil
 }
 
 // wrapBuffered returns the dispatcher to plug into the scheduler. When

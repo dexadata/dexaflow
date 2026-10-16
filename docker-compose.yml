@@ -97,6 +97,11 @@ services:
       # The distroless image runs as nonroot, which cannot create /var/log;
       # write task logs under a world-writable path instead.
       DEXAFLOW_LOGS_DIR: /tmp/leoflow-logs
+      # The demo stack has no Kubernetes cluster, and the kubernetes executor
+      # refuses to boot without one (#704). The subprocess executor boots, but
+      # the image ships no agent, so tasks fail at dispatch: run DAGs with
+      # `dexaflow lite` or on a cluster.
+      DEXAFLOW_EXECUTOR_TYPE: subprocess
     ports:
       - "8080:8080"
       - "9090:9090"
