@@ -119,6 +119,12 @@ type Runner struct {
 	// second. runOneAttempt resets both.
 	startPhase  retryPhase
 	outputPhase retryPhase
+	// warmAttempt marks an attempt a warm worker serves (attemptRunner). Its
+	// pod outlives the attempt, so no reconciler reads a per-attempt outcome
+	// record from it: a start the control plane never answered is reported
+	// FAILED there, the only settle it has, instead of recorded as
+	// unexecutable (startFailed).
+	warmAttempt bool
 	// attemptEpoch is the execution of the try this attempt is, from its task
 	// spec, stamped on the outcome record (ADR 0052 amendment). It is reset for
 	// every attempt a warm worker runs; 0 until the spec is read.
@@ -155,7 +161,7 @@ func (r *Runner) clock() time.Time {
 // runOneAttempt directly, registering separately and driving many attempts.
 func (r *Runner) Run(ctx context.Context) error {
 	if err := r.register(ctx); err != nil {
-		return err
+		return r.startFailed(err)
 	}
 	return r.runOneAttempt(ctx)
 }
@@ -175,7 +181,7 @@ func (r *Runner) runOneAttempt(ctx context.Context) error {
 		return cerr
 	})
 	if err != nil {
-		return fmt.Errorf("fetching task spec: %w", err)
+		return r.startFailed(fmt.Errorf("fetching task spec: %w", err))
 	}
 	r.attemptEpoch = spec.GetAttemptEpoch()
 	argv, err := BuildCommand(spec.GetOperator(), spec.GetEntrypoint(), spec.GetOperatorClass())
@@ -196,6 +202,12 @@ func (r *Runner) runOneAttempt(ctx context.Context) error {
 		// gRPC error — control-plane endpoint, TLS handshake text — on a durable
 		// field readable by anyone with pod read access in the task namespace
 		// (#930).
+		//
+		// An upstream read the control plane never answered is not the task's
+		// failure, though: it is settled as unexecutable, and not reported.
+		if r.controlPlaneOutage(err) {
+			return r.startFailed(err)
+		}
 		return r.failWithReason(ctx, 1, err.Error(), classifyEnvFailure(err))
 	}
 	return r.execute(ctx, argv, env, time.Duration(spec.GetExecutionTimeoutSeconds())*time.Second)
@@ -651,7 +663,7 @@ func fetchFanInValues(ctx context.Context, client xcomFetcher, param string, ups
 
 func (r *Runner) execute(ctx context.Context, argv, env []string, timeout time.Duration) error {
 	if err := r.report(ctx, agentv1.TaskState_TASK_STATE_RUNNING, 0, ""); err != nil {
-		return err
+		return r.startFailed(err)
 	}
 	stdout := &logWriter{sink: r.Sink, stream: "stdout", level: agentv1.LogLevel_LOG_LEVEL_INFO}
 	stderr := &logWriter{sink: r.Sink, stream: "stderr", level: agentv1.LogLevel_LOG_LEVEL_ERROR}
@@ -1165,6 +1177,35 @@ func retryableTransientErr(err error) bool {
 	default:
 		return false
 	}
+}
+
+// controlPlaneOutage reports whether err, which ended an attempt before the
+// task's code ran, means the control plane did not answer: a transient code
+// (retryableTransientErr) that outlasted the start budget. An external secret
+// backend's failure is excluded even when its own gRPC code is transient: that
+// backend belongs to the task's configuration, not to the control plane, and
+// keeps its own classification (classifyEnvFailure). A warm attempt is
+// excluded too (warmAttempt).
+func (r *Runner) controlPlaneOutage(err error) bool {
+	return !r.warmAttempt && retryableTransientErr(err) && !errors.Is(err, errSecretResolution)
+}
+
+// startFailed ends an attempt that stopped before the task's code ran and
+// returns err. When the cause is a control-plane outage (controlPlaneOutage),
+// the substrate could not run the task (ADR 0051, Unexecutable; R-01, #1594):
+// it writes the unexecutable outcome record, which the reconciler settles on
+// the infra rail without spending a task retry, and reports nothing, since a
+// FAILED report would settle the attempt as the task's failure first. The
+// record's reason is a fixed classification, never err's text (#930). On
+// Lite, which reads no record, the unreported attempt is the dispatch-lost
+// reaper's, which settles it on the same rail. Any other cause is returned
+// unchanged, as before.
+func (r *Runner) startFailed(err error) error {
+	if r.controlPlaneOutage(err) {
+		slog.Warn("control plane did not answer before the task started; recording the attempt as unexecutable", "error", err)
+		r.writeOutcome(taskoutcome.UnexecutableBecause(reasonControlPlaneUnavailable))
+	}
+	return err
 }
 
 // withTransientRetry runs call until it succeeds, fails with an error
