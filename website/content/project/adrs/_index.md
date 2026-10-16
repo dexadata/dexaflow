@@ -101,6 +101,7 @@ this page.
 - [ADR 0086: a clear on the latest version re-binds a finished run with its task set, and leaves an unfinished run on its own version](/project/adrs/0086-clear-rebinds-a-finished-run-with-its-task-set/)
 - [ADR 0087: the local daemon takes the digest from its own push](/project/adrs/0087-local-daemon-digest-from-the-push/)
 - [ADR 0088: build args, build secrets and a private package index](/project/adrs/0088-build-args-secrets-and-package-index/)
+- [ADR 0090: the control plane waits for its schema, and names a database that was emptied, replaced, restored or repointed under it](/project/adrs/0090-database-replaced-under-a-running-release/)
 - [ADR 0091: registry login without docker](/project/adrs/0091-registry-login-without-docker/)
 
 ## Template
