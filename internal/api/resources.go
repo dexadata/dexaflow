@@ -1083,7 +1083,7 @@ func newClearScope(c *gin.Context, specs DagSpecReader, opts domain.ClearOptions
 	}
 	spec, err := specs.GetCurrentSpec(c.Request.Context(), tenantOf(c), c.Param("dag_id"))
 	if err != nil {
-		slog.Warn("reading the current version a clear moves runs to", "dag_id", c.Param("dag_id"), "error", err)
+		slog.Warn("reading the current version a clear moves runs to", "dag_id", logSafe(c.Param("dag_id")), "error", err)
 		return scope
 	}
 	scope.current = make(map[string]bool, len(spec.Tasks))
