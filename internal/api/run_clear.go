@@ -127,6 +127,6 @@ func keptDTOs(kept []domain.ClearVersionKept) []clearVersionKeptDTO {
 // the request asked for the current one.
 func logKeptVersions(dagID string, kept []domain.ClearVersionKept) {
 	for _, k := range kept {
-		slog.Info("clear kept the run on its version", "dag_id", dagID, "run_id", k.RunID, "reason", k.Reason)
+		slog.Info("clear kept the run on its version", "dag_id", logSafe(dagID), "run_id", logSafe(k.RunID), "reason", k.Reason)
 	}
 }
