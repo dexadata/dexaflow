@@ -379,6 +379,14 @@ gen-connectors-check: ## Anti-drift: regenerate to a temp file and diff against 
 	/tmp/conngen/bin/python scripts/gen_connectors.py /tmp/catalog.check.json
 	@diff -u internal/connectors/catalog.json /tmp/catalog.check.json && echo "catalog.json is in sync with the pinned providers"
 
+.PHONY: gen-config-reference
+gen-config-reference: ## Regenerate the configuration reference tables from internal/config (#1570)
+	go run ./internal/tools/configref
+
+.PHONY: gen-config-reference-check
+gen-config-reference-check: ## Fail when website/content/reference/configuration.md is stale (also run by go test)
+	go run ./internal/tools/configref -check
+
 .PHONY: clean
 clean: ## Remove build artifacts
 	rm -rf $(BIN_DIR) coverage.out
