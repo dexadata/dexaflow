@@ -3,6 +3,7 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"math"
 
 	"k8s.io/apimachinery/pkg/api/resource"
 )
@@ -257,16 +258,26 @@ func (u *ResourceUnit) WarmEligible(t TaskSpec) bool {
 // unparsable value. milli reads the quantity in millis (CPU) instead of whole
 // units (memory), matching how the unit was stored.
 func unitsFor(value string, unit int64, milli bool) int {
-	if value == "" {
+	if value == "" || unit <= 0 {
 		return 0
 	}
 	q, err := resource.ParseQuantity(value)
-	if err != nil {
+	if err != nil || q.Sign() <= 0 {
 		return 0
 	}
 	v := q.Value()
 	if milli {
 		v = q.MilliValue()
 	}
-	return int((v + unit - 1) / unit)
+	if v <= 0 {
+		return math.MaxInt
+	}
+	div := v / unit
+	if v%unit != 0 {
+		div++
+	}
+	if div > int64(math.MaxInt) || div < 0 {
+		return math.MaxInt
+	}
+	return int(div)
 }
