@@ -68,6 +68,9 @@ type deployServer struct {
 	// checks the spec against, refusing with its own message as the
 	// register does.
 	policy *domain.ExecutionPolicy
+	// taskPods, when set, is the task_pods object of an accepted dry run
+	// (#1889); unset, the answer has none, as an older server's.
+	taskPods string
 }
 
 // detailsJSON is the details answer: the current label and the fields the
@@ -225,8 +228,12 @@ func (s *deployServer) serveDryRun(w http.ResponseWriter, r *http.Request, body 
 		created = false
 	}
 	warnings, _ := json.Marshal(append([]string{}, s.dryRunWarnings...))
-	_, _ = fmt.Fprintf(w, `{"dag_id":"etl","version":"v","spec_hash":"abc","created":%v,"dag_created":%v,"is_paused":true,"dry_run":true,"warnings":%s}`,
-		created, s.dagCreated && created, warnings)
+	pods := ""
+	if s.taskPods != "" {
+		pods = `,"task_pods":` + s.taskPods
+	}
+	_, _ = fmt.Fprintf(w, `{"dag_id":"etl","version":"v","spec_hash":"abc","created":%v,"dag_created":%v,"is_paused":true,"dry_run":true,"warnings":%s%s}`,
+		created, s.dagCreated && created, warnings, pods)
 }
 
 func TestCheckDeployed(t *testing.T) {

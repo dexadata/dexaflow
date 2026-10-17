@@ -225,6 +225,43 @@ this order:
    register runs the checks. A warning (a task that does not fit its size
    under `executor.unit.enforce: warn`) prints on stderr and the deploy goes
    on.
+4. **With the dry run: what the task pods will run as.** The dry run
+   answer also says whether the server runs task pods as non-root
+   (`taskPodSecurity.runAsNonRoot`) and, for each ServiceAccount a task pod
+   would run as (the task's `execution.service_account`, else the chart's
+   task ServiceAccount, else the namespace's `default`), whether it exists in
+   the task namespace and how many `imagePullSecrets` it carries. Both used
+   to fail only when a task pod started.
+   - A ServiceAccount that does not exist stops the deploy, naming it and
+     its tasks: the pods of those tasks would not be created. Set
+     `execution.service_account` to one that exists, or have the operator
+     create it (`taskServiceAccount.create` in the Helm values). The
+     namespace's `default` ServiceAccount is the exception: Kubernetes
+     creates it in every namespace a moment after the namespace, so a
+     missing `default` is a `note:` and the deploy goes on.
+   - A ServiceAccount with no `imagePullSecrets` is a `note:`: a private
+     registry is then pulled only with the nodes' own credentials (IRSA,
+     Workload Identity, a credential helper), which the server cannot see.
+     The operator lists a pull secret in `taskServiceAccount.imagePullSecrets`
+     otherwise. A ServiceAccount the server could not look up is a `note:`
+     with the reason: the control plane reads the account with `get` on
+     `serviceaccounts` in the task namespace, which the chart grants
+     ([ADR 0085](/project/adrs/0085-control-plane-reads-task-service-accounts/)),
+     except in a split control plane, whose API role has no access to the
+     cluster.
+   - When the project builds from its own `Dockerfile`, the deploy reads the
+     `USER` its final stage ends with (the one of the stage it is built
+     `FROM`, when that is a stage of the same file). On a server that runs
+     task pods as non-root, `USER root`, `USER 0` or a user name
+     (`USER app`, which the kubelet cannot check is not root) stops the
+     deploy and names the fix: a numeric non-root id such as
+     `USER 65532:65532`. No `USER` (the base image decides) or a build
+     variable (`USER $UID`) is a `note:`. A server that does not run task
+     pods as non-root takes any `USER`. When the server does not say (an
+     older server, or no dry run), root or a name is a `note:`. The
+     Dockerfile generated from `dexaflow.yaml` always ends with
+     `USER 65532:65532` and is not read; nothing is read with
+     `--skip-build` or in source mode, which build nothing.
 
 Each check that passes prints a `preflight:` line (on stderr with
 `--output json`). A server from before the dry run route answers it with
