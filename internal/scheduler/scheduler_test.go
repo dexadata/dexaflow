@@ -32,6 +32,9 @@ type fakeStore struct {
 	// createdTenants records the tenant of each created scheduled run, in the
 	// same order as createdRuns.
 	createdTenants []string
+	// createdLogical records the logical date of each created scheduled run,
+	// in the same order as createdRuns.
+	createdLogical []time.Time
 	notes          map[string]string
 	createErr      bool
 	// scheduledErr makes ScheduledDAGs fail, as a broken run-creation query.
@@ -103,7 +106,7 @@ func (f *fakeStore) PoolBudgets(context.Context) (map[string]int, error) {
 	f.poolBudgetsCalls++
 	return f.poolBudgets, nil
 }
-func (f *fakeStore) CreateScheduledRun(_ context.Context, tenantID, dagID string, _ time.Time) error {
+func (f *fakeStore) CreateScheduledRun(_ context.Context, tenantID, dagID string, logical time.Time) error {
 	if f.createErr {
 		return errors.New("create scheduled run failed")
 	}
@@ -113,6 +116,7 @@ func (f *fakeStore) CreateScheduledRun(_ context.Context, tenantID, dagID string
 	}
 	f.createdRuns = append(f.createdRuns, dagID)
 	f.createdTenants = append(f.createdTenants, tenantID)
+	f.createdLogical = append(f.createdLogical, logical)
 	return nil
 }
 func (f *fakeStore) MaterializeTasks(_ context.Context, runID string, _ []domain.TaskSpec) error {
