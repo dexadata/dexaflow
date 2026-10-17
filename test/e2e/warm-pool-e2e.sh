@@ -233,6 +233,38 @@ jq -e '.tasks[] | select(.task_id=="placed") | .execution.labels["e2e-placement"
   "$WORKDIR/$DAG_ID/dag.json" >/dev/null || fail "placed: the compiled task does not carry its execution.labels"
 k3d_import "$CLUSTER" "$DAG_IMAGE"
 
+# k3d adds host.k3d.internal to CoreDNS NodeHosts a little after the cluster
+# reports ready, and a task or warm pod that starts before that fails its
+# token exchange ("produced zero addresses"). Wait until a pod resolves it, as
+# deploy-e2e.sh does. The probe runs the DAG image, which also warms the node's
+# image cache, in the default namespace to stay out of the task pod listings.
+wait_host_dns() {
+  local probe=e2e-host-dns-probe phase deadline
+  kubectl run "$probe" -n default --image="$DAG_IMAGE" --restart=Never --command -- \
+    python -c 'import socket, sys, time
+for _ in range(90):
+    try:
+        print(socket.gethostbyname(sys.argv[1])); sys.exit(0)
+    except OSError:
+        time.sleep(2)
+sys.exit(1)' "$HOST_ADDR" >/dev/null
+  deadline=$(( $(date +%s) + 240 ))
+  while :; do
+    phase="$(kubectl get pod "$probe" -n default -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    case "$phase" in
+      Succeeded) break ;;
+      Failed)
+        kubectl logs -n default "$probe" >&2 2>&1 || true
+        fail "pods never resolved $HOST_ADDR (CoreDNS NodeHosts)" ;;
+    esac
+    [ "$(date +%s)" -ge "$deadline" ] && fail "the $HOST_ADDR DNS probe did not finish (phase: ${phase:-none})"
+    sleep 2
+  done
+  log "pods resolve $HOST_ADDR as $(kubectl logs -n default "$probe" 2>/dev/null)"
+  kubectl delete pod "$probe" -n default --wait=false >/dev/null 2>&1 || true
+}
+wait_host_dns
+
 # ─────────────────────────────────────────────────────────────────────────────
 log "Starting the control plane with warm pools on"
 env \
