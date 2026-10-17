@@ -18,6 +18,13 @@ in [build the docs](content/contribute/build-docs.md).
   decision text itself is never edited, and an earlier note is never rewritten:
   a later change gets a note of its own. A note records facts; a changed
   decision still needs a new ADR. Examples: ADR 0003, 0014 and 0041.
+- **The configuration reference tables are generated.** In
+  `content/reference/configuration.md`, the rows between `BEGIN GENERATED` and
+  `END GENERATED` markers come from `internal/config`: change a purpose or an
+  edition in `internal/tools/configref/settings.yaml` (or the field's doc
+  comment), then run `make gen-config-reference`. The prose around the markers
+  is edited by hand. `go test ./internal/tools/configref/` fails on a stale page
+  and on a `DEXAFLOW_*` variable the code reads but the page does not list.
 - **New names first.** Examples use `dexaflow`, `DEXAFLOW_*` and
   `dexaflow.yaml`; the names from before the rename appear only where the page
   explains that they still work.
