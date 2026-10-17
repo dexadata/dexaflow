@@ -146,6 +146,9 @@ sync_changelog_pr() { # <version>
 }
 
 self_test() {
+  # A git hook exports these, and the fixture repositories below would follow
+  # them to the repository being committed to.
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_PREFIX
   local fail=0
   # The real checkout, captured before any case overrides ROOT with a fixture.
   local REPO_ROOT="$ROOT"

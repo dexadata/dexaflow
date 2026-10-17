@@ -335,6 +335,9 @@ sync_pr() {
 # ---- self-test ------------------------------------------------------------------
 
 self_test() {
+	# A git hook exports these, and the fixture repositories below would follow
+	# them to the repository being committed to.
+	unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_PREFIX
 	local fail=0 tmp got rc
 	_eq() { if [ "$1" = "$2" ]; then printf '  ok   %s\n' "$3"; else printf '  FAIL %s\n    got:  %q\n    want: %q\n' "$3" "$1" "$2"; fail=1; fi; }
 	tmp="$(mktemp -d)"
