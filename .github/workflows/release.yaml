@@ -377,13 +377,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { image: "mirror.gcr.io/library/debian:12", prep: "apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq && apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y -qq curl ca-certificates tar" }
-          - { image: "mirror.gcr.io/library/ubuntu:24.04", prep: "apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq && apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y -qq curl ca-certificates tar" }
-          - { image: "mirror.gcr.io/library/fedora:41", prep: "dnf install -y -q tar curl --allowerasing" }
-          - { image: "quay.io/rockylinux/rockylinux:9", prep: "dnf install -y -q tar curl --allowerasing" }
-          - { image: "mirror.gcr.io/opensuse/leap:15", prep: "zypper --no-gpg-checks -n in -y curl tar gzip" }
-          - { image: "mirror.gcr.io/library/archlinux:latest", prep: "pacman -Sy --noconfirm archlinux-keyring && pacman -Syu --noconfirm curl tar" }
-          - { image: "mirror.gcr.io/library/alpine:3.20", prep: "apk add --no-cache curl tar" }
+          - { image: "mirror.gcr.io/library/debian:12", python: managed, prep: "apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq && apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y -qq curl ca-certificates tar" }
+          - { image: "mirror.gcr.io/library/ubuntu:24.04", python: managed, prep: "apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq && apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y -qq curl ca-certificates tar" }
+          - { image: "mirror.gcr.io/library/fedora:41", python: any, prep: "dnf install -y -q tar curl --allowerasing" }
+          - { image: "quay.io/rockylinux/rockylinux:9", python: any, prep: "dnf install -y -q tar curl --allowerasing" }
+          - { image: "mirror.gcr.io/opensuse/leap:15", python: any, prep: "zypper --no-gpg-checks -n in -y curl tar gzip" }
+          - { image: "mirror.gcr.io/library/archlinux:latest", python: any, prep: "pacman -Sy --noconfirm archlinux-keyring && pacman -Syu --noconfirm curl tar" }
+          - { image: "mirror.gcr.io/library/alpine:3.20", python: managed, prep: "apk add --no-cache curl tar" }
     steps:
       - name: Install prerequisites (curl + tar)
         # Retry the whole prep. apt-get carries Acquire::Retries inline, but
@@ -412,11 +412,47 @@ jobs:
           curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/install.sh" -o /tmp/install.sh
           sh /tmp/install.sh
 
-      - name: Verify the binary and managed CPython run
+      # Setup records the interpreter it chose in setup.json: a host Python
+      # 3.11 to 3.13 when the image ships one, otherwise the managed CPython it
+      # downloaded (#1700). Check that interpreter, whichever it is, and on the
+      # legs marked `python: managed` (images with no python3 at all, glibc and
+      # musl) require the download, so the relocatable CPython path stays
+      # proven on every release. `python: any` legs report what setup chose.
+      - name: Verify the binary and the Python setup chose run
+        env:
+          EXPECT: ${{ matrix.python }}
+          IMAGE: ${{ matrix.image }}
         run: |
           set -eu
           dexaflow version
-          "$HOME/.dexaflow/python/bin/python3.11" --version
+          state="$HOME/.dexaflow"
+          managed="$state/python/bin/python3.11"
+          py="$(sed -n 's/.*"python":[[:space:]]*"\([^"]*\)".*/\1/p' "$state/setup.json")"
+          if [ -z "$py" ]; then
+            echo "::error::$state/setup.json names no python"
+            exit 1
+          fi
+          ver="$("$py" --version 2>&1)"
+          case "$ver" in
+            "Python 3.11."* | "Python 3.12."* | "Python 3.13."*) ;;
+            *)
+              echo "::error::setup chose $py, which reports '$ver', not Python 3.11 to 3.13"
+              exit 1
+              ;;
+          esac
+          if [ "$py" = "$managed" ]; then source=managed; else source=host; fi
+          echo "setup chose the $source interpreter $py ($ver)"
+          echo "install smoke $IMAGE: $source interpreter $py ($ver)" >>"$GITHUB_STEP_SUMMARY"
+          if [ "$EXPECT" = "managed" ]; then
+            if [ "$source" != "managed" ]; then
+              echo "::error::$IMAGE is the leg that proves the managed CPython download, but setup used the host $py; move this leg to python: any and mark an image with no python3 as managed"
+              exit 1
+            fi
+            if [ ! -s "$state/python/.py-version" ]; then
+              echo "::error::$managed exists but the download sentinel $state/python/.py-version does not; the managed CPython was not installed by setup"
+              exit 1
+            fi
+          fi
 
   # ── Cold-start smoke (#96): the actual user flow we cannot reproduce in
   # any other gate — install fresh, run `dexaflow setup`, boot `dexaflow lite`,
@@ -552,6 +588,40 @@ jobs:
           # process becomes a CI zombie and future runs leak).
           kill -TERM "$LITE_PID"
           wait "$LITE_PID" 2>/dev/null || true
+      # The runner has a system Python 3.12 and no python3.11 on PATH, so setup
+      # runs the parser on the host 3.12 and downloads nothing, and the starter
+      # DAG (python_version "3.11", as `dexaflow init` writes it) gets the
+      # managed CPython 3.11 when `dexaflow lite` builds its venv (#1700).
+      # Check both interpreters whichever way they were resolved, and report
+      # which, rather than assuming a managed CPython that setup may not fetch.
+      - name: Verify the parser and starter venv interpreters
+        run: |
+          set -eu
+          state="$HOME/.dexaflow"
+          py="$(sed -n 's/.*"python":[[:space:]]*"\([^"]*\)".*/\1/p' "$state/setup.json")"
+          if [ -z "$py" ]; then
+            echo "::error::$state/setup.json names no python"
+            exit 1
+          fi
+          pver="$("$py" --version 2>&1)"
+          case "$pver" in
+            "Python 3.11."* | "Python 3.12."* | "Python 3.13."*) ;;
+            *)
+              echo "::error::setup chose $py, which reports '$pver', not Python 3.11 to 3.13"
+              exit 1
+              ;;
+          esac
+          venv="$state/dev/venvs/hello/bin/python"
+          vver="$("$venv" --version 2>&1)"
+          case "$vver" in
+            "Python 3.11."*) ;;
+            *)
+              echo "::error::the starter DAG declares python_version 3.11 but its venv $venv reports '$vver'"
+              exit 1
+              ;;
+          esac
+          if [ -x "$state/python/bin/python3.11" ]; then managed=present; else managed=absent; fi
+          echo "lite cold-start: parser on $py ($pver), starter venv on $vver, managed CPython $managed" | tee -a "$GITHUB_STEP_SUMMARY"
 
   # ── Upgrade-in-place smoke (#150): install the previous non-draft prerelease,
   # then install THIS tag on top, asserting the new version is in place. Catches

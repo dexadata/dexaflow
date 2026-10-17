@@ -1196,17 +1196,87 @@ const minPythonMinor = 11
 // With a declared wantVersion ("3.13") it resolves an interpreter REPORTING that
 // minor, and refuses rather than substituting — see resolvePythonFor. With no
 // declared version it keeps the historical precedence: the managed relocatable
-// CPython (installed by `dexaflow setup` under ~/.dexaflow/python) when present,
-// since it bundles venv + ensurepip, falling back to a python3.11 / python3 on
-// PATH that reports >= 3.11. Using the managed interpreter avoids
-// needing the system python3-venv package, which Debian/Ubuntu split out (the
-// common first-run failure: "ensurepip is not available").
+// CPython (installed under ~/.dexaflow/python) when present, since it bundles
+// venv + ensurepip, falling back to a python3.11 / python3 on PATH that reports
+// >= 3.11. Using the managed interpreter avoids needing the system python3-venv
+// package, which Debian/Ubuntu split out (the common first-run failure:
+// "ensurepip is not available").
+//
+// `dexaflow setup` no longer downloads the managed CPython when the host has a
+// Python 3.12 or 3.13 for the parser (#1700), so this is where it is fetched:
+// lazily, the first time a venv needs the pinned minor (a declared 3.11, or no
+// declaration and no usable host interpreter) and the host has none, or when
+// the host interpreter cannot build a venv (see basePythonDeps.venvCapable).
 //
 // It errors when an interpreter IS present but reports an unsupported version,
-// or when none is found at all — a venv cannot be built without a base — rather
-// than returning a bare "python3" that fails opaquely later (#742).
-func devBasePython(ctx context.Context, home, wantVersion string) (string, error) {
-	managed := filepath.Join(filepath.Dir(home), "python", "bin", "python3.11")
+// or when a declared minor other than the pinned one is missing, rather than
+// returning a bare "python3" that fails opaquely later (#742).
+func devBasePython(ctx context.Context, out io.Writer, home, wantVersion string) (string, error) {
+	return basePythonFor(ctx, wantVersion, devBasePythonDeps(out, filepath.Dir(home)))
+}
+
+// devBasePythonDeps wires basePythonFor to the real host: PATH, `--version`,
+// the venv probe, the lazy managed download into stateDir, and progress lines
+// on out.
+func devBasePythonDeps(out io.Writer, stateDir string) basePythonDeps {
+	return basePythonDeps{
+		managed:    setup.ManagedPythonPath(stateDir),
+		lookPath:   exec.LookPath,
+		runVersion: pythonVersion,
+		ensureManaged: func(ctx context.Context) (string, error) {
+			return provisionManagedPython(ctx, out, stateDir, nil)
+		},
+		canVenv: pythonCanVenv,
+		logf: func(format string, a ...any) {
+			devPrintf(out, "▸ "+format+"\n", a...)
+		},
+	}
+}
+
+// basePythonDeps carries what basePythonFor touches, so the lazy download is
+// testable against a fake PATH without the network.
+type basePythonDeps struct {
+	managed       string
+	lookPath      func(string) (string, error)
+	runVersion    func(context.Context, string) (int, int, error)
+	ensureManaged func(context.Context) (string, error)
+	// canVenv reports whether an interpreter can build a venv; nil skips the
+	// check.
+	canVenv func(context.Context, string) bool
+	// logf prints a progress line; nil prints nothing.
+	logf func(string, ...any)
+}
+
+// pythonCanVenv reports whether py can build a venv with pip in it. Debian
+// and Ubuntu ship ensurepip in the separate python3-venv package, so a system
+// interpreter there imports venv but cannot run `-m venv`.
+func pythonCanVenv(ctx context.Context, py string) bool {
+	return exec.CommandContext(ctx, py, "-c", "import venv, ensurepip").Run() == nil //nolint:gosec // py is a resolved interpreter path (LookPath result)
+}
+
+// venvCapable returns the host interpreter p, or the managed CPython when p
+// cannot build a venv and the managed build is the minor the DAG needs (want is
+// the declared minor, 0 when none is declared). Before #1700 setup had always
+// fetched the managed build, which bundles ensurepip, so a Debian or Ubuntu
+// host without python3-venv never met this; now the host interpreter is found
+// first. A declared minor Dexaflow does not pin is never substituted: p is
+// returned and the venv step's error names the missing package.
+func (d basePythonDeps) venvCapable(ctx context.Context, want int, p string) (string, error) {
+	if p == d.managed || d.canVenv == nil || d.canVenv(ctx, p) {
+		return p, nil
+	}
+	if want != 0 && want != minPythonMinor {
+		return p, nil
+	}
+	if d.logf != nil {
+		d.logf("%s cannot create a venv (its venv or ensurepip module is missing; on Debian and Ubuntu "+
+			"that is the python3-venv package), so the managed CPython 3.%d is used instead", p, minPythonMinor)
+	}
+	return d.ensureManaged(ctx)
+}
+
+// basePythonFor is devBasePython with its dependencies injected.
+func basePythonFor(ctx context.Context, wantVersion string, d basePythonDeps) (string, error) {
 	// A declared python_version is the authoring surface's statement about which
 	// interpreter the task runs on, and the cluster honors it through the task
 	// base image. Honor it here too, or `dexaflow lite` validates the DAG on an
@@ -1216,14 +1286,43 @@ func devBasePython(ctx context.Context, home, wantVersion string) (string, error
 		if verr != nil {
 			return "", verr
 		}
-		return resolvePythonFor(ctx, want, managed, exec.LookPath, pythonVersion)
+		p, err := resolvePythonFor(ctx, want, d.managed, d.lookPath, d.runVersion)
+		if err != nil {
+			if want != minPythonMinor {
+				return p, err
+			}
+			// The pinned minor is the one Dexaflow can provide itself.
+			return d.ensureManaged(ctx)
+		}
+		return d.venvCapable(ctx, want, p)
 	}
-	p, err := resolvePython3(ctx, managed, exec.LookPath, pythonVersion)
+	p, err := resolvePython3(ctx, d.managed, d.lookPath, d.runVersion)
 	if err != nil {
 		return "", err
 	}
 	if p == "" {
-		return "", fmt.Errorf("no Python interpreter found; run `dexaflow setup` to provision a managed CPython 3.%d", minPythonMinor)
+		return d.ensureManaged(ctx)
+	}
+	return d.venvCapable(ctx, 0, p)
+}
+
+// provisionManagedPython downloads and verifies the pinned managed CPython into
+// stateDir/python, the same build `dexaflow setup` used to fetch up front, and
+// turns a failed download into a message that names the way out. A nil client
+// uses the setup package's default, as `dexaflow setup` does, which honors
+// HTTPS_PROXY.
+func provisionManagedPython(ctx context.Context, out io.Writer, stateDir string, client *http.Client) (string, error) {
+	p, err := setup.EnsureManagedPython(ctx, setup.EnsureOpts{
+		Home: stateDir, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Libc: detectLibc(),
+		Stat: os.Stat, Client: client,
+		Logf: func(format string, a ...any) {
+			devPrintf(out, "▸ "+format+"\n", a...)
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("no host interpreter reports Python 3.%d, and fetching the managed CPython 3.%d failed "+
+			"(it needs outbound network; check your proxy settings, or install python3.%d and retry): %w",
+			minPythonMinor, minPythonMinor, minPythonMinor, err)
 	}
 	return p, nil
 }
@@ -1236,7 +1335,7 @@ func leoflowManagedPython() string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(stateDirIn(h), "python", "bin", "python3.11")
+	return setup.ManagedPythonPath(stateDirIn(h))
 }
 
 // resolvePython3 returns a usable Python >= 3.11 with a single, unified
@@ -1284,35 +1383,13 @@ func resolvePython3(ctx context.Context, managed string, lookPath func(string) (
 
 // pythonVersion runs `<py> --version` and returns the reported major.minor.
 func pythonVersion(ctx context.Context, py string) (major, minor int, err error) {
-	out, err := exec.CommandContext(ctx, py, "--version").CombinedOutput() //nolint:gosec // py is a resolved interpreter path (managed or LookPath result)
-	if err != nil {
-		return 0, 0, fmt.Errorf("running %s --version: %w", py, err)
-	}
-	return parsePythonVersion(string(out))
+	return setup.PythonVersion(ctx, py)
 }
 
 // parsePythonVersion extracts the major and minor from a `python --version` line
-// such as "Python 3.11.15" (the version token may carry a patch and a pre-release
-// suffix, e.g. "3.12.0rc1").
+// such as "Python 3.11.15"; see setup.ParsePythonVersion.
 func parsePythonVersion(s string) (major, minor int, err error) {
-	fields := strings.Fields(s)
-	if len(fields) < 2 {
-		return 0, 0, fmt.Errorf("unrecognized python version output %q", strings.TrimSpace(s))
-	}
-	ver := fields[len(fields)-1] // "3.11.15"
-	parts := strings.SplitN(ver, ".", 3)
-	if len(parts) < 2 {
-		return 0, 0, fmt.Errorf("unrecognized python version %q", ver)
-	}
-	major, err = strconv.Atoi(parts[0])
-	if err != nil {
-		return 0, 0, fmt.Errorf("parsing python major from %q: %w", ver, err)
-	}
-	minor, err = strconv.Atoi(parts[1])
-	if err != nil {
-		return 0, 0, fmt.Errorf("parsing python minor from %q: %w", ver, err)
-	}
-	return major, minor, nil
+	return setup.ParsePythonVersion(s)
 }
 
 // resolveRuntimeSrc returns the leoflow_runtime package source to pip-install
@@ -2242,13 +2319,14 @@ func resolvePythonFor(ctx context.Context, want int, managed string,
 }
 
 // installHint names the action that actually produces the requested minor.
-// `dexaflow setup` provisions exactly one version — the managed build's pinned
-// minor — so offering it for any other minor sends the user around a loop that
-// cannot end: setup succeeds, the version they asked for is still missing, and
-// the same error comes back.
+// It never offers `dexaflow setup`: setup provisions no venv interpreter, and
+// since #1700 it does not even fetch the managed build when the host has a
+// Python 3.12 or 3.13 for the parser, so offering it sends the user around a
+// loop that cannot end: setup succeeds, the version is still missing, and the
+// same error comes back. The pinned minor is the one Dexaflow can fetch itself.
 func installHint(want int) string {
 	if want == minPythonMinor {
-		return fmt.Sprintf("run `dexaflow setup` to provision a managed CPython 3.%d", want)
+		return fmt.Sprintf("install Python 3.%d (with network access, `dexaflow lite` fetches a managed CPython 3.%d itself)", want, want)
 	}
 	return fmt.Sprintf("install Python 3.%d", want)
 }

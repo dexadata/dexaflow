@@ -21,12 +21,13 @@ run it on your machine or a trusted internal network — see [Editions](/concept
       [Editions § Datastores](/concepts/editions/) for the auto-selection logic.
 - Linux or macOS (incl. WSL2). No system Python needed: Lite installs a managed
   one. See [Installation](/get-started/installation/) for details.
-- **Outbound network on the first `dexaflow setup`, unless you already have
-  `python3.11`.** Setup needs that exact version and downloads a managed CPython
-  3.11 under `~/.dexaflow/python` when it is not on your `PATH`. A newer host
-  Python is not a substitute here: 3.12 and 3.13 can parse DAGs, which is why
-  `dexaflow doctor` reports them as present, but setup still fetches its own 3.11.
-  Behind a proxy or offline, install `python3.11` first and setup will use it.
+- **Outbound network only when no Python 3.11 to 3.13 is installed.** Setup
+  runs the DAG parser on a host `python3.13`, `python3.12`, `python3.11` or
+  `python3` that reports one of those versions, and downloads a managed CPython
+  3.11 under `~/.dexaflow/python` only when there is none. A DAG that declares
+  `python_version: "3.11"` (the default `dexaflow init` writes) on a host without
+  3.11 fetches that same CPython the first time `dexaflow lite` builds its venv.
+  Behind a proxy or offline, install `python3.11` and nothing is downloaded.
 
 ## 1 · Install
 
@@ -46,7 +47,7 @@ each `[default]`:
 - **Admin email**: default `admin@dexaflow.local` (an install created before the
   rename keeps `admin@leoflow.local`)
 
-It then fetches a managed Python + the editor, creates your workspace, and prints
+It then picks a Python for the parser (downloading one only if you have none), fetches the editor, creates your workspace, and prints
 your **admin password once** (`dexaflow lite reset-password` resets it):
 
 ```
