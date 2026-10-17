@@ -127,6 +127,7 @@ else
   run_step "e2e split two-process (make e2e-split)" make e2e-split
   run_step "e2e dbt (make e2e-dbt)"          make e2e-dbt
   run_step "e2e source mode (make e2e-source-mode)" make e2e-source-mode
+  run_step "e2e warm pools (make e2e-warm-pools)" make e2e-warm-pools
   run_step "ui smoke (headless SPA)"         ui_smoke
 fi
 
