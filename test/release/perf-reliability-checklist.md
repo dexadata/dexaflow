@@ -98,6 +98,7 @@ recorded as a pass.
 | F2 | Deploy rollover | Push a new DAG version while warm workers run tasks of the old one; repeat with a DAG that declares `min_idle_workers` and once paused | No busy worker deleted; old version's idle workers deleted at the next reconcile, not after `worker_idle_ttl` (ADR 0082); the new version's idle workers Running before its first run when the DAG declares `min_idle_workers` and is unpaused, none while it is paused; warm anchor ConfigMaps equal the number of versions with pods once the drain ends | rc, GA, patch* (warm target computation) | k3d |
 | F3 | Leader change | Restart the leader replica with 2 replicas and warm pools on, with a prewarmed DAG and a draining version | Warm placements resume within 60 s (not after `worker_idle_ttl`); the new leader keeps the prewarmed pool and finishes the drain (its `warm_pool_prewarm_started` and `warm_pool_drain_started` counts fire once more, by design) | rc, GA, patch* (warm target computation) | k3d |
 | F4 | Placement honoured | A task with `node_selector` or `resource_claims` and warm pools on | It runs on a dedicated pod with its placement | rc, GA | k3d |
+| F5 | Warm pool e2e | The `E2E warm pools (k3d)` job of `e2e-gates.yaml` on the candidate's commit, or `make e2e-warm-pools` | Green: warm hit, a task with its own pod labels on a dedicated pod, no file carried between attempts on one worker (or reported as not judged), no open task instance, warm pod or anchor left after the run | rc, GA | k3d |
 
 ## G. Soak and leaks
 
