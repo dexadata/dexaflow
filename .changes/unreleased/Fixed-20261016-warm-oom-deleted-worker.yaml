@@ -1,0 +1,14 @@
+kind: Fixed
+body: |-
+  **A warm worker killed for memory is named as an OOM kill even after its pod
+  is deleted.** The warm-worker-lost reaper named an OOM kill only while the
+  dead worker was still listed, but after a cgroup v2 OOM the pod is usually
+  already gone (the reconciler deletes terminal warm workers), so the attempt
+  kept the generic `pod_lost` text. The server now remembers, for 10 minutes,
+  the terminated reason of each warm worker it saw terminate: from its own
+  listings and, with `execution.warm_pool_event_refill` on, from the warm-pod
+  informer's update and delete events. The reaper uses that reason for a worker
+  that is no longer listed. Attribution is unchanged: the attempt is still an
+  infra failure. With no remembered reason it keeps the `pod_lost` text.
+  (#1835)
+time: 2026-10-16T12:00:00.000000000-03:00

@@ -20,6 +20,14 @@ type WarmPodLister interface {
 	ListWarmPods(ctx context.Context) ([]WarmPodInfo, error)
 }
 
+// WarmTerminationLookup is the optional seam a WarmPodLister offers to name the
+// cause of a worker the LIST no longer returns: the warm-worker container's
+// terminated reason it last observed for that pod, or "" (#1835).
+// KubernetesWarmPods implements it.
+type WarmTerminationLookup interface {
+	LastTerminationReason(podName string) string
+}
+
 // liveWarmPodNames returns the set of LIVE (non-terminal) warm-pod names, read
 // once per tick. A nil lister (warm pools off, or not wired) yields an empty
 // set, which makes every warm consumer inert: the failover reaper marks nothing
@@ -162,26 +170,9 @@ func (r *warmWorkerLostReaper) run(ctx context.Context) error {
 		r.record("warm_worker_lost_list_pods_error")
 		return nil
 	}
-	live := make(map[string]bool, len(pods))
-	// oomKilled names the terminal workers whose container the kubelet reported
-	// OOMKilled (#1218). On cgroup v2 the kubelet sets memory.oom.group, so an
-	// OOM in a task kills the whole warm-worker container and this reaper is the
-	// one that settles the attempt. A worker already deleted leaves no evidence
-	// and keeps the plain pod_lost text.
-	oomKilled := map[string]bool{}
-	for _, p := range pods {
-		if p.Terminal {
-			// A terminal warm pod can never serve again; it is not live, so an
-			// attempt still bound to it is correctly reaped below.
-			if p.TerminationReason == "OOMKilled" {
-				oomKilled[p.Name] = true
-			}
-			continue
-		}
-		live[p.Name] = true
-	}
+	fleet := viewWarmFleet(pods)
 	for _, ti := range bound {
-		if live[ti.WarmWorkerID] {
+		if fleet.live[ti.WarmWorkerID] {
 			// The serving warm worker is still alive; the attempt is healthy.
 			continue
 		}
@@ -189,7 +180,7 @@ func (r *warmWorkerLostReaper) run(ctx context.Context) error {
 			r.record("warm_worker_lost_gate_skip")
 			continue
 		}
-		oom := oomKilled[ti.WarmWorkerID]
+		oom := r.oomKilled(fleet, ti.WarmWorkerID)
 		applied, ferr := r.mark(ctx, ti, oom)
 		if ferr != nil {
 			r.logger.Error("marking warm-worker-lost task pod-lost",
@@ -212,6 +203,49 @@ func (r *warmWorkerLostReaper) run(ctx context.Context) error {
 		r.writeMarker(ti, oom)
 	}
 	return nil
+}
+
+// warmFleetView is one tick's reading of the listed warm fleet: the live
+// workers, every listed one, and the terminal ones whose container the kubelet
+// reported OOMKilled.
+type warmFleetView struct {
+	live, listed, oomKilled map[string]bool
+}
+
+// viewWarmFleet classifies the listed warm pods once per tick. A terminal warm
+// pod can never serve again, so it is not live and an attempt still bound to
+// it is reaped. On cgroup v2 the kubelet sets memory.oom.group, so an OOM in a
+// task kills the whole warm-worker container and the warm-worker-lost reaper
+// is the one that settles the attempt (#1218).
+func viewWarmFleet(pods []WarmPodInfo) warmFleetView {
+	v := warmFleetView{
+		live:      make(map[string]bool, len(pods)),
+		listed:    make(map[string]bool, len(pods)),
+		oomKilled: map[string]bool{},
+	}
+	for _, p := range pods {
+		v.listed[p.Name] = true
+		switch {
+		case !p.Terminal:
+			v.live[p.Name] = true
+		case p.TerminationReason == "OOMKilled":
+			v.oomKilled[p.Name] = true
+		}
+	}
+	return v
+}
+
+// oomKilled reports whether the named worker's container was OOMKilled: from
+// its listed status while the LIST still returns it, else from the lister's
+// remembered terminated reason, since after an OOM the pod is usually deleted
+// before this reaper runs (#1835). A lister without that memory, or no
+// remembered reason, reports false, which keeps the plain pod_lost text.
+func (r *warmWorkerLostReaper) oomKilled(fleet warmFleetView, worker string) bool {
+	if fleet.listed[worker] {
+		return fleet.oomKilled[worker]
+	}
+	tl, ok := r.warmPods.(WarmTerminationLookup)
+	return ok && tl.LastTerminationReason(worker) == "OOMKilled"
 }
 
 // mark fails the attempt as pod_lost, through the OOMKilled variant when its
