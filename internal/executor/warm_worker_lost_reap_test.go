@@ -382,7 +382,12 @@ func TestWarmWorkerLostReaper_NamesOOMKillOfDeletedWorker(t *testing.T) {
 			t.Fatalf("delete %s: %v", name, err)
 		}
 	}
-	if !waitFor(t, func() bool { _, ok := wi.CachedWarmPods(); return ok && len(wi.listCachedNames()) == 0 }) {
+	// The informer drops a pod from its cache before its delete handler records
+	// the final state, so wait for the record too, not only for an empty cache.
+	if !waitFor(t, func() bool {
+		_, ok := wi.CachedWarmPods()
+		return ok && len(wi.listCachedNames()) == 0 && warmPods.LastTerminationReason("pod-oom") == "OOMKilled"
+	}) {
 		t.Fatal("the informer did not observe both deletes")
 	}
 
