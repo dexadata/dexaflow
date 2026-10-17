@@ -234,7 +234,30 @@ kubectl logs deploy/<release> -c leoflow-server \
   | jq 'select(.msg == "rejected agent bearer token") | {reason, run, task, try, expired_at, peer}'
 ```
 
+## Ingress & Unavailable Service (502 / 503 / 504)
+
+When no control plane server pod is ready (for example while booting or waiting for schema migrations), Kubernetes routes no traffic to the service and the ingress answers with a 502, 503, or 504 error.
+
+### Static Maintenance Page
+
+The Helm chart includes an optional static maintenance page that reloads automatically:
+
+```yaml
+ingress:
+  enabled: true
+  maintenancePage:
+    enabled: true
+    operatorText: "Scheduled maintenance in progress"
+    statusUrl: "https://status.example.com"
+```
+
+When enabled:
+- A ConfigMap (`<release>-maintenance`) is rendered with an auto-refreshing HTML page.
+- For `ingress-nginx`, default annotations wire `custom-http-errors: "502,503,504"` and point `default-backend` to the maintenance backend.
+- For **Gateway API** or ingress controllers without custom error annotations, route 5xx error rules or fallback routes to the maintenance page ConfigMap.
+
 ## Observability
+
 
 - **Metrics:** Prometheus at `:9090/metrics` (scheduler, dispatch, inline
   runner, undispatchable counters; ADR 0007 has the catalogue).

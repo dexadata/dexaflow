@@ -6,7 +6,15 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "leoflow.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
+  {{- $annotations := dict -}}
+  {{- if and .Values.ingress.maintenancePage .Values.ingress.maintenancePage.enabled -}}
+    {{- $_ := set $annotations "nginx.ingress.kubernetes.io/custom-http-errors" "502,503,504" -}}
+    {{- $_ := set $annotations "nginx.ingress.kubernetes.io/default-backend" (printf "%s-maintenance" (include "leoflow.fullname" .)) -}}
+  {{- end -}}
+  {{- with .Values.ingress.annotations -}}
+    {{- $annotations = merge (deepCopy .) $annotations -}}
+  {{- end }}
+  {{- with $annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
