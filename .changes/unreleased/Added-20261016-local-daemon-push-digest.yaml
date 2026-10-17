@@ -1,0 +1,14 @@
+kind: Added
+body: |-
+  **The local daemon builder pushes several platforms with docker buildx,
+  podman and nerdctl, and takes the digest from its own push.** With buildx,
+  docker builds and pushes in one `docker buildx build --push --metadata-file`;
+  podman builds several platforms into a manifest list and pushes it with
+  `podman manifest push --all --digestfile`; nerdctl pushes with
+  `--all-platforms`. The digest a deploy registers is the one the tool reports
+  for the push (the metadata file, the digest file, the last line of
+  `docker push`), so another push of the same tag right after cannot change
+  which image is registered, and a multi-platform push is checked in the
+  registry at that digest. A tool that reports no digest (nerdctl) is read at
+  the tag, as before, with a note. (#1885)
+time: 2026-10-16T23:30:00.000000000-03:00
