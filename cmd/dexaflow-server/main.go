@@ -2408,13 +2408,17 @@ const warmKickMinGap = time.Second
 // buildWarmPodInformer starts the warm-pod informer for event-driven refill and
 // waits for its first sync within the same boot budget as the task-pod informer.
 // A nil return (it could not be built) leaves the reconciler polling with a live
-// LIST; an informer that has not synced is read live until it does.
-func buildWarmPodInformer(ctx context.Context, cs kubernetes.Interface, namespace string, logger *slog.Logger) *executor.WarmPodInformer {
+// LIST; an informer that has not synced is read live until it does. It records
+// the final state of every warm worker it sees terminate or get deleted on
+// warmPods, the client the warm-worker-lost reaper lists through, so the reaper
+// names an OOM kill of a worker already deleted (#1835).
+func buildWarmPodInformer(ctx context.Context, cs kubernetes.Interface, namespace string, warmPods *executor.KubernetesWarmPods, logger *slog.Logger) *executor.WarmPodInformer {
 	wi, err := executor.NewWarmPodInformer(cs, namespace)
 	if err != nil {
 		logger.Warn("warm pod informer unavailable; warm pools keep polling refill", "error", err)
 		return nil
 	}
+	wi.RecordTerminationsTo(warmPods)
 	wi.Start(ctx)
 	syncCtx, cancel := context.WithTimeout(ctx, podInformerSyncTimeout)
 	defer cancel()
@@ -3229,7 +3233,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 		if cfg.Execution.WarmPoolEventRefill {
 			// On the maintenance client, like the task-pod informer and the
 			// warm-pod client the reconciler checks it against (#1315).
-			warmCache = buildWarmPodInformer(ctx, mcs, cfg.Executor.TaskNamespace, logger)
+			warmCache = buildWarmPodInformer(ctx, mcs, cfg.Executor.TaskNamespace, warmPods, logger)
 			if warmCache != nil && warmPools != nil {
 				// A claimed worker leaves the idle buffer short: refill now.
 				warmPools.SetOnClaim(warmCache.Kick)

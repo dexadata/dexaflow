@@ -7,6 +7,6 @@ body: |-
   never the OOM kill. When the dead worker is still listed and its container
   terminated `OOMKilled`, the failure message and the final log line now say so
   and point at the task's memory limit. Attribution is unchanged: the attempt
-  is still an infra failure. A worker already deleted keeps the previous text.
+  is still an infra failure.
   (#1218)
 time: 2026-10-12T21:00:00.000000000-03:00
