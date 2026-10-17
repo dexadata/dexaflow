@@ -311,3 +311,35 @@ func TestResourceUnitApplyNeverPutsRequestsAboveLimits(t *testing.T) {
 		}
 	}
 }
+
+func TestResourceUnitHugeQuantityDoesNotOverflowRefuseCheck(t *testing.T) {
+	u, err := ParseResourceUnit(ResourceUnitConfig{
+		CPU:     "1",
+		Memory:  "1Gi",
+		Enforce: UnitEnforceRefuse,
+		MaxSize: 8,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hugeValues := []struct {
+		name string
+		task TaskSpec
+	}{
+		{"memory 8Ei", TaskSpec{TaskID: "t1", Resources: &Resources{Limits: &ResourceQuantity{Memory: "8Ei"}}}},
+		{"memory 9Ei", TaskSpec{TaskID: "t2", Resources: &Resources{Limits: &ResourceQuantity{Memory: "9Ei"}}}},
+		{"memory 16Ei", TaskSpec{TaskID: "t3", Resources: &Resources{Limits: &ResourceQuantity{Memory: "16Ei"}}}},
+		{"cpu huge", TaskSpec{TaskID: "t4", Resources: &Resources{Limits: &ResourceQuantity{CPU: "9223372036854775"}}}},
+	}
+
+	for _, tc := range hugeValues {
+		t.Run(tc.name, func(t *testing.T) {
+			_, refused := u.Check(tc.task)
+			if refused == nil {
+				t.Fatalf("Check(%+v) returned nil refused error, expected overflow to be refused", tc.task)
+			}
+		})
+	}
+
+}
