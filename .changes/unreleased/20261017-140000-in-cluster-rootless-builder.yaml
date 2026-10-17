@@ -1,0 +1,15 @@
+kind: Added
+body: |-
+  **The Helm chart can run an in-cluster image builder.** `builder.enabled`
+  deploys rootless BuildKit in a namespace of its own (`builder.namespace`,
+  which the chart refuses to share with the release or the task namespace):
+  one pod running as uid 1000, not privileged, with every capability dropped
+  but the two `newuidmap` needs and a read-only root filesystem. It listens
+  on a unix socket only, so it has no port and no Service; a client reaches
+  it with `buildctl --addr kube-pod://...` over `kubectl exec`, which a Role
+  in that namespace allows for `builder.subjects` only. The ServiceAccount
+  mounts no token, and a NetworkPolicy, on by default with the builder,
+  denies ingress and the cloud metadata range. Off by default, so nothing
+  changes for an existing install. `dexaflow deploy` does not use it yet:
+  `remote_builder` pointing at it is the next step (#1883).
+time: 2026-10-17T14:00:00.000000000-03:00
