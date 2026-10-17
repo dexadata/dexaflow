@@ -1,6 +1,7 @@
 {{- if .Values.migrations.enabled -}}
 {{/*
-Runs golang-migrate before the server starts, as a pre-install/pre-upgrade hook.
+Runs the dexaflow-migrate wrapper (golang-migrate underneath, #1020) before the
+server starts, as a pre-install/pre-upgrade hook.
 The default image (ghcr.io/dexadata/dexaflow-migrate, built from
 deploy/Dockerfile.migrate via `make migrate-image`) bundles the Dexaflow
 migrations at .Values.migrations.path. Override migrations.image to use your own,
