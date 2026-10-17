@@ -456,6 +456,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	registerUIPools(r, deps.Pools, deps.Edition == "pro", deps.PoolsReadOnly)
 	registerUIFavorites(r, deps.Favorites)
 	registerImportErrors(r, deps.ImportErrors)
+	registerDagTags(r, deps.Dags)
 	registerIDE(r, deps.Workspace, deps.MonacoDir, deps.ExamplesFS)
 	registerUIStubs(r)
 	registerAPIStubs(r)

@@ -27,6 +27,24 @@ type DAG struct {
 	CurrentVersion string
 }
 
+// DagFilter specifies filtering, searching, and sorting options for listing DAGs.
+type DagFilter struct {
+	DagIDPattern                string
+	DagIDPrefixPattern          string
+	DagDisplayNamePattern       string
+	DagDisplayNamePrefixPattern string
+	Paused                      *bool
+	LastDagRunState             string
+	Tags                        []string
+	TagsMatchMode               string // "any" or "all"
+	Owners                      []string
+	IsFavorite                  *bool
+	UserID                      string
+	OrderBy                     string
+	Limit                       int
+	Offset                      int
+}
+
 // DagVersion is a registered version of a DAG. VersionNumber is the 1-based
 // ordinal the UI uses (the stored version label is free-form).
 type DagVersion struct {

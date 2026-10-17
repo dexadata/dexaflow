@@ -1331,3 +1331,137 @@ func TestCreateDagRunRespectsMaxActiveRunsIntegration(t *testing.T) {
 		t.Fatalf("after freeing a slot the trigger should succeed: %v", err)
 	}
 }
+
+func TestListDagsWithFilterAndTagsIntegration(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	prefix := fmt.Sprintf("filt_%d", time.Now().UnixNano())
+	dag1 := prefix + "_alpha"
+	dag2 := prefix + "_beta"
+	dag3 := prefix + "_gamma"
+
+	registerWithMeta := func(dagID, owner string, tags []string) {
+		spec := domain.DAGSpec{
+			SchemaVersion: "1.0",
+			DagID:         dagID,
+			DagVersion:    "v1",
+			Image:         "img:v1",
+			Owner:         owner,
+			Tags:          tags,
+			Tasks:         []domain.TaskSpec{{TaskID: "t1", Type: domain.TaskTypePython}},
+		}
+		hash, err := spec.CanonicalHash()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if created, rerr := repo.RegisterDagVersion(ctx, "default", spec, hash); rerr != nil || !created {
+			t.Fatalf("register %s: %v", dagID, rerr)
+		}
+	}
+
+	registerWithMeta(dag1, "alice", []string{"etl", "daily"})
+	registerWithMeta(dag2, "bob", []string{"etl", "hourly"})
+	registerWithMeta(dag3, "alice", []string{"ml", "weekly"})
+
+	// Pause dag2 to test paused filter
+	if _, err := repo.SetPausedBy(ctx, "default", "u1", dag2, true); err != nil {
+		t.Fatalf("SetPausedBy: %v", err)
+	}
+
+	// 1. Filter by dag_id_pattern
+	dags, total, err := repo.ListDagsWithFilter(ctx, "default", domain.DagFilter{
+		DagIDPattern: prefix + "_alpha",
+		Limit:        10,
+	})
+	if err != nil {
+		t.Fatalf("filter pattern: %v", err)
+	}
+	if total != 1 || len(dags) != 1 || dags[0].DagID != dag1 {
+		t.Errorf("expected dag1, got total=%d, dags=%+v", total, dags)
+	}
+
+	// 2. Filter by paused
+	isPaused := true
+	dags, total, err = repo.ListDagsWithFilter(ctx, "default", domain.DagFilter{
+		DagIDPrefixPattern: prefix,
+		Paused:             &isPaused,
+		Limit:              10,
+	})
+	if err != nil {
+		t.Fatalf("filter paused: %v", err)
+	}
+	if total != 1 || len(dags) != 1 || dags[0].DagID != dag2 {
+		t.Errorf("expected paused dag2, got total=%d, dags=%+v", total, dags)
+	}
+
+	// 3. Filter by tags - match any
+	dags, total, err = repo.ListDagsWithFilter(ctx, "default", domain.DagFilter{
+		DagIDPrefixPattern: prefix,
+		Tags:               []string{"daily", "weekly"},
+		TagsMatchMode:      "any",
+		Limit:              10,
+	})
+	if err != nil {
+		t.Fatalf("filter tags any: %v", err)
+	}
+	if total != 2 || len(dags) != 2 {
+		t.Errorf("expected 2 dags with daily/weekly, got total=%d, dags=%+v", total, dags)
+	}
+
+	// 4. Filter by tags - match all
+	dags, total, err = repo.ListDagsWithFilter(ctx, "default", domain.DagFilter{
+		DagIDPrefixPattern: prefix,
+		Tags:               []string{"etl", "daily"},
+		TagsMatchMode:      "all",
+		Limit:              10,
+	})
+	if err != nil {
+		t.Fatalf("filter tags all: %v", err)
+	}
+	if total != 1 || len(dags) != 1 || dags[0].DagID != dag1 {
+		t.Errorf("expected 1 dag matching both etl and daily, got total=%d, dags=%+v", total, dags)
+	}
+
+	// 5. Filter by owner
+	dags, total, err = repo.ListDagsWithFilter(ctx, "default", domain.DagFilter{
+		DagIDPrefixPattern: prefix,
+		Owners:             []string{"bob"},
+		Limit:              10,
+	})
+	if err != nil {
+		t.Fatalf("filter owners: %v", err)
+	}
+	if total != 1 || len(dags) != 1 || dags[0].DagID != dag2 {
+		t.Errorf("expected dag2 owned by bob, got total=%d, dags=%+v", total, dags)
+	}
+
+	// 6. Order by descending dag_id
+	dags, total, err = repo.ListDagsWithFilter(ctx, "default", domain.DagFilter{
+		DagIDPrefixPattern: prefix,
+		OrderBy:            "-dag_id",
+		Limit:              10,
+	})
+	if err != nil {
+		t.Fatalf("order by: %v", err)
+	}
+	if total != 3 || len(dags) != 3 || dags[0].DagID != dag3 || dags[2].DagID != dag1 {
+		t.Errorf("expected descending order (gamma, beta, alpha), got %+v", dags)
+	}
+
+	// 7. ListDagTags
+	tags, tagTotal, err := repo.ListDagTags(ctx, "default", "", 10, 0)
+	if err != nil {
+		t.Fatalf("ListDagTags: %v", err)
+	}
+	if tagTotal < 4 {
+		t.Errorf("expected at least 4 tags across dags, got %d tags (%v)", tagTotal, tags)
+	}
+
+	// ListDagTags with pattern
+	tags, tagTotal, err = repo.ListDagTags(ctx, "default", "hour", 10, 0)
+	if err != nil {
+		t.Fatalf("ListDagTags with pattern: %v", err)
+	}
+	if tagTotal != 1 || len(tags) != 1 || tags[0] != "hourly" {
+		t.Errorf("expected 1 tag 'hourly', got total=%d tags=%v", tagTotal, tags)
+	}
+}

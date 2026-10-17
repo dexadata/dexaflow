@@ -32,6 +32,8 @@ type DagRepository interface {
 	DeleteDag(ctx context.Context, tenant, dagID string) error
 	ClearDagHistory(ctx context.Context, tenant, dagID string) error
 	ListDagsFiltered(ctx context.Context, tenant, runState string, paused *bool, limit, offset int) ([]domain.DAG, int, error)
+	ListDagsWithFilter(ctx context.Context, tenant string, filter domain.DagFilter) ([]domain.DAG, int, error)
+	ListDagTags(ctx context.Context, tenant string, pattern string, limit, offset int) (tags []string, total int, err error)
 }
 
 // DagRunRepository reads and creates DAG runs.
@@ -260,7 +262,21 @@ func handleRepoError(c *gin.Context, err error) {
 func listDagsHandler(repo DagRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		limit, offset := pagination(c)
-		dags, total, err := repo.ListDags(c.Request.Context(), tenantOf(c), limit, offset)
+		filter := domain.DagFilter{
+			DagIDPattern:                c.Query("dag_id_pattern"),
+			DagIDPrefixPattern:          c.Query("dag_id_prefix_pattern"),
+			DagDisplayNamePattern:       c.Query("dag_display_name_pattern"),
+			DagDisplayNamePrefixPattern: c.Query("dag_display_name_prefix_pattern"),
+			LastDagRunState:             c.Query("last_dag_run_state"),
+			Paused:                      pausedFilter(c),
+			Tags:                        parseQueryStrings(c, "tags"),
+			TagsMatchMode:               c.Query("tags_match_mode"),
+			Owners:                      parseQueryStrings(c, "owners"),
+			OrderBy:                     c.Query("order_by"),
+			Limit:                       limit,
+			Offset:                      offset,
+		}
+		dags, total, err := repo.ListDagsWithFilter(c.Request.Context(), tenantOf(c), filter)
 		if err != nil {
 			handleRepoError(c, err)
 			return
@@ -272,6 +288,49 @@ func listDagsHandler(repo DagRepository) gin.HandlerFunc {
 		setPaginationLinks(c, total, limit, offset)
 		c.JSON(http.StatusOK, out)
 	}
+}
+
+type dagTagItemDTO struct {
+	Name string `json:"name"`
+}
+
+type dagTagCollectionDTO struct {
+	Tags         []dagTagItemDTO `json:"tags"`
+	DagTags      []dagTagItemDTO `json:"dag_tags"`
+	TotalEntries int             `json:"total_entries"`
+}
+
+func listDagTagsHandler(repo DagRepository) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		limit, offset := pagination(c)
+		pattern := c.Query("tag_name_pattern")
+		if pattern == "" {
+			pattern = c.Query("tag_name_prefix_pattern")
+		}
+		tags, total, err := repo.ListDagTags(c.Request.Context(), tenantOf(c), pattern, limit, offset)
+		if err != nil {
+			handleRepoError(c, err)
+			return
+		}
+		items := make([]dagTagItemDTO, 0, len(tags))
+		for _, t := range tags {
+			items = append(items, dagTagItemDTO{Name: t})
+		}
+		setPaginationLinks(c, total, limit, offset)
+		c.JSON(http.StatusOK, dagTagCollectionDTO{
+			Tags:         items,
+			DagTags:      items,
+			TotalEntries: total,
+		})
+	}
+}
+
+func registerDagTags(r gin.IRouter, dags DagRepository) {
+	if dags == nil {
+		r.GET("/api/v2/dagTags", apiEmptyCollection("tags"))
+		return
+	}
+	r.GET("/api/v2/dagTags", RequirePermission("read", "dag"), listDagTagsHandler(dags))
 }
 
 func getDagHandler(repo DagRepository) gin.HandlerFunc {

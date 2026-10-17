@@ -62,7 +62,6 @@ var scopelessReads = map[string]bool{
 	"GET /ui/dags/:dag_id/deadlineAlerts":                true,
 	"GET /ui/dags/:dag_id/dagRuns/:dag_run_id/deadlines": true,
 	"GET /ui/dags/:dag_id/dagRuns/:dag_run_id/stats":     true,
-	"GET /api/v2/dagTags":                                true,
 	// A token never lists tokens (ADR 0074).
 	"GET /api/v2/apiTokens":            true,
 	"GET /api/v2/dagWarnings":          true,

@@ -133,6 +133,16 @@ async function resolveUser() {
   };
   for (const r of routes) await step('route ' + r, async () => { await gotoRoute(r); });
 
+  // 1b) DAG list search and filter interaction.
+  await step('dags: search and filter interaction', async () => {
+    await page.goto(URL + '/dags', { waitUntil: 'networkidle' });
+    const search = page.locator('input[placeholder*="Search" i], input[type="search"]').first();
+    if (await search.count()) {
+      await search.fill('hello');
+      await page.waitForTimeout(500);
+    }
+  });
+
   // 2) Connection form open (the bug that shipped broken).
   await step('connections: open Add form', async () => {
     await page.goto(URL + '/connections', { waitUntil: 'networkidle' });
