@@ -1,0 +1,13 @@
+kind: Fixed
+body: |-
+  **A DAG with `catchup=False` now schedules only its most recent interval, as
+  in Airflow.** When the `start_date`, or the last run, lay more than 100
+  slots in the past, the scheduler stopped at the 100th slot of its per-tick
+  backfill cap and created a run for that slot instead of the latest one, so
+  each tick walked history 100 slots further. A `* * * * *` DAG with a
+  `start_date` months back created one run every tick, 100 minutes apart from
+  its `start_date`, until `max_active_runs` stopped it. The scheduler now
+  finds the latest slot at or before now directly and skips the older missed
+  slots. `catchup=True` keeps backfilling every missed slot, oldest first.
+  (#1919)
+time: 2026-10-17T12:00:00.000000000+00:00
