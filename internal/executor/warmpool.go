@@ -207,6 +207,16 @@ type WarmPoolReconciler struct {
 	// empty and logs the pools it finds once more.
 	lastTargets map[string]bool
 	draining    map[string]bool
+	// noteNow, spareTargets and spareDraining are the sets notePoolChanges
+	// fills for the tick, cleared and reused so a steady tick allocates none
+	// (#1906): spareTargets and spareDraining swap with lastTargets and
+	// draining at the end of each tick. prewarmRoom is boundPrewarm's
+	// per-tenant room, reused the same way. They are scratch only, and safe
+	// because one goroutine runs Reconcile.
+	noteNow       map[string]bool
+	spareTargets  map[string]bool
+	spareDraining map[string]bool
+	prewarmRoom   map[string]int
 	// rationed is, per tenant, the prewarm versions the previous tick gave
 	// less than their declared floor (boundPrewarm), joined, so a ration is
 	// logged and metered when it changes rather than on every tick.
@@ -353,10 +363,7 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context) error {
 	targets = r.boundPrewarm(ctx, targets)
 
 	// Group the existing fleet by the dag_version each worker serves.
-	byVersion := make(map[string][]WarmPodInfo, len(existing))
-	for _, p := range existing {
-		byVersion[p.DagVersionID] = append(byVersion[p.DagVersionID], p)
-	}
+	byVersion := groupByVersion(existing, len(targets))
 
 	// Ration each active version's create allowance under the per-tenant aggregate
 	// cap (M4): reserve every version's promised idle floor, then ration the tenant's
@@ -418,6 +425,40 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context) error {
 	return nil
 }
 
+// groupByVersion groups the fleet by the dag_version each worker serves,
+// keeping list order within a version. Every group is a window of one backing
+// array, capped so an append to it can never reach the next group, so the
+// grouping allocates the same whether a version holds 2 workers or 200
+// (#1906). versionsHint sizes the maps.
+func groupByVersion(existing []WarmPodInfo, versionsHint int) map[string][]WarmPodInfo {
+	counts := make(map[string]int, versionsHint)
+	for _, p := range existing {
+		counts[p.DagVersionID]++
+	}
+	backing := make([]WarmPodInfo, len(existing))
+	byVersion := make(map[string][]WarmPodInfo, len(counts))
+	next := 0
+	for _, p := range existing {
+		group, ok := byVersion[p.DagVersionID]
+		if !ok {
+			n := counts[p.DagVersionID]
+			group = backing[next : next : next+n]
+			next += n
+		}
+		byVersion[p.DagVersionID] = append(group, p)
+	}
+	return byVersion
+}
+
+// resetSet returns m emptied for reuse, or a new set when m is nil.
+func resetSet(m map[string]bool, hint int) map[string]bool {
+	if m == nil {
+		return make(map[string]bool, hint)
+	}
+	clear(m)
+	return m
+}
+
 // notePoolChanges logs and meters, once each, a prewarm pool starting (a
 // Prewarm target the previous tick did not have) and a pool starting to drain
 // (a version with pods that is no longer a target), so an operator sees a
@@ -425,11 +466,12 @@ func (r *WarmPoolReconciler) Reconcile(ctx context.Context) error {
 // (decision_type warm_pool_prewarm_started and warm_pool_drain_started, ADR
 // 0082).
 func (r *WarmPoolReconciler) notePoolChanges(ctx context.Context, targets []WarmTarget, byVersion map[string][]WarmPodInfo) {
-	now := make(map[string]bool, len(targets))
+	now := resetSet(r.noteNow, len(targets))
+	r.noteNow = now
 	// warmed holds the targets with an idle floor this tick: a prewarm target
 	// rationed to nothing has not started, so its start is noted when it
 	// gets a share.
-	warmed := make(map[string]bool, len(targets))
+	warmed := resetSet(r.spareTargets, len(targets))
 	for _, t := range targets {
 		now[t.DagVersionID] = true
 		if t.EffectiveMinIdle > 0 {
@@ -441,7 +483,7 @@ func (r *WarmPoolReconciler) notePoolChanges(ctx context.Context, targets []Warm
 			r.record("warm_pool_prewarm_started")
 		}
 	}
-	draining := make(map[string]bool)
+	draining := resetSet(r.spareDraining, 0)
 	for dagVersionID, have := range byVersion {
 		if now[dagVersionID] {
 			continue
@@ -454,7 +496,9 @@ func (r *WarmPoolReconciler) notePoolChanges(ctx context.Context, targets []Warm
 			"dag_version", dagVersionID, "pods", len(have))
 		r.record("warm_pool_drain_started")
 	}
-	r.lastTargets, r.draining = warmed, draining
+	// The previous tick's sets become next tick's scratch.
+	r.spareTargets, r.lastTargets = r.lastTargets, warmed
+	r.spareDraining, r.draining = r.draining, draining
 }
 
 // warmCreate is one active version's planned creates for the tick, issued after
@@ -692,9 +736,15 @@ func (r *WarmPoolReconciler) countLiveByTenant(existing []WarmPodInfo, busy map[
 // (createAllowances does not charge them against the floors of versions with
 // an active run).
 // The rationed versions are noted per tenant (noteRationedPrewarm). With no
-// cap (maxWarmPodsPerTenant <= 0) the targets are returned unchanged.
+// cap (maxWarmPodsPerTenant <= 0), or when the cap covers the floors of
+// every tenant's targets, the targets are returned unchanged and nothing is
+// allocated (#1906).
 func (r *WarmPoolReconciler) boundPrewarm(ctx context.Context, targets []WarmTarget) []WarmTarget {
 	if r.maxWarmPodsPerTenant <= 0 {
+		return targets
+	}
+	if r.prewarmFloorsFit(targets) {
+		r.noteRationedPrewarm(ctx, nil)
 		return targets
 	}
 	left := make(map[string]int)
@@ -728,6 +778,27 @@ func (r *WarmPoolReconciler) boundPrewarm(ctx context.Context, targets []WarmTar
 	return out
 }
 
+// prewarmFloorsFit reports whether, in every tenant with a prewarm target,
+// the floors of all the tenant's targets fit in maxWarmPodsPerTenant. Then
+// each prewarm target's share covers its floor and boundPrewarm rations
+// none, whatever their order.
+func (r *WarmPoolReconciler) prewarmFloorsFit(targets []WarmTarget) bool {
+	if r.prewarmRoom == nil {
+		r.prewarmRoom = make(map[string]int)
+	}
+	room := r.prewarmRoom
+	clear(room)
+	for _, t := range targets {
+		room[t.TenantID] += t.EffectiveMinIdle
+	}
+	for _, t := range targets {
+		if t.Prewarm && room[t.TenantID] > r.maxWarmPodsPerTenant {
+			return false
+		}
+	}
+	return true
+}
+
 // maxLoggedRationed bounds the versions one ration log line lists.
 const maxLoggedRationed = 10
 
@@ -737,6 +808,9 @@ const maxLoggedRationed = 10
 // tenant's set empties. A line lists at most maxLoggedRationed versions and
 // how many more there are.
 func (r *WarmPoolReconciler) noteRationedPrewarm(ctx context.Context, rationed map[string][]string) {
+	if len(rationed) == 0 && len(r.rationed) == 0 {
+		return // nothing rationed now or before: nothing to note
+	}
 	now := make(map[string]string, len(rationed))
 	tenants := make([]string, 0, len(rationed))
 	for tenant, versions := range rationed {
@@ -886,8 +960,10 @@ func (r *WarmPoolReconciler) reconcileVersion(ctx context.Context, t WarmTarget,
 	// tick's deletes (busy workers, kept idle, and any delete/reap that FAILED). The
 	// caller uses it as the footgun guard: an inactive version's anchor is deleted
 	// only when remaining == 0, so the cascade can never catch a live pod.
-	idle := make([]WarmPodInfo, 0, len(have))
-	busyCount := 0
+	//
+	// The idle workers are counted here and listed only when some must be
+	// trimmed, so a steady tick allocates nothing per version (#1906).
+	idle, busyCount := 0, 0
 	for _, p := range have {
 		if p.Terminal {
 			if !r.deleteWarmPod(ctx, t, p, "deleting terminal warm worker") {
@@ -899,10 +975,10 @@ func (r *WarmPoolReconciler) reconcileVersion(ctx context.Context, t WarmTarget,
 			busyCount++
 			continue
 		}
-		idle = append(idle, p)
+		idle++
 	}
 	remaining += busyCount // busy workers are never deleted this tick — they still reference the anchor
-	live := busyCount + len(idle)
+	live := busyCount + idle
 
 	// Effective ceiling: the idle buffer must always be creatable, so never let the
 	// ceiling fall below the idle target even if an operator (or a stale target)
@@ -915,26 +991,38 @@ func (r *WarmPoolReconciler) reconcileVersion(ctx context.Context, t WarmTarget,
 	}
 
 	switch {
-	case len(idle) < t.EffectiveMinIdle && live < maxPool:
+	case idle < t.EffectiveMinIdle && live < maxPool:
 		// Idle buffer is short AND the pool is below its total ceiling: create
 		// enough to restore the buffer, but never past the ceiling OR the tenant's
 		// rationed allowance. create = min(idle shortfall, headroom to the ceiling,
 		// tenant allowance). Each create is isolated so one apiserver rejection does
 		// not stop the rest of this version's workers.
-		create = t.EffectiveMinIdle - len(idle)
+		create = t.EffectiveMinIdle - idle
 		if headroom := maxPool - live; headroom < create {
 			create = headroom
 		}
 		if createAllowance >= 0 && create > createAllowance {
 			create = createAllowance
 		}
-		remaining += len(idle) // no idle deleted on the create path; every idle pod survives
-	case len(idle) > t.EffectiveMinIdle:
-		remaining += r.trimIdle(ctx, t, idle)
+		remaining += idle // no idle deleted on the create path; every idle pod survives
+	case idle > t.EffectiveMinIdle:
+		remaining += r.trimIdle(ctx, t, idleWorkers(have, busy, idle))
 	default:
-		remaining += len(idle) // steady state / at-ceiling: the idle workers survive
+		remaining += idle // steady state / at-ceiling: the idle workers survive
 	}
 	return remaining, create
+}
+
+// idleWorkers lists the live workers of have that are not busy, in order;
+// n is their count, from the classifying pass.
+func idleWorkers(have []WarmPodInfo, busy map[string]bool, n int) []WarmPodInfo {
+	idle := make([]WarmPodInfo, 0, n)
+	for _, p := range have {
+		if !p.Terminal && !busy[p.Name] {
+			idle = append(idle, p)
+		}
+	}
+	return idle
 }
 
 // trimIdle handles a version with more idle workers than its target and
