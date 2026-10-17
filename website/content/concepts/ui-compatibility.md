@@ -191,6 +191,22 @@ browser ──▶ static SPA assets (Airflow 3.3.2, unmodified)
     `Authorization: Bearer` on subsequent calls; Dexaflow's existing JWT issuance
     backs both, secret shared via configuration.
 
+### Dexaflow screens inside the UI
+
+The bundle is never edited, so a screen that only Dexaflow has reaches the UI
+through Airflow 3's own extension point: `GET /api/v2/plugins` lists a built-in
+plugin named `dexaflow` whose `external_views` the UI turns into menu entries.
+Each view is a page served by the control plane and shown in the UI's
+same-origin frame at `/plugin/<url_route>`. The page calls the API with the
+session cookie, so the API's checks are the only checks, and it answers with a
+CSP that allows only its own script (by hash), calls to its own origin and a
+same-origin frame. The plugin lists a view only when the API behind it is
+mounted; with none, the response is the empty collection the stub served.
+
+| Menu entry | View `url_route` | Page | API |
+|---|---|---|---|
+| User menu, **API tokens** | `api-tokens` | `/dexaflow/api-tokens` | `GET` and `DELETE /api/v2/apiTokens` ([ADR 0074](/project/adrs/0074-scoped-api-tokens/), #1886) |
+
 ## Learnings log
 
 - **2026-05-22:** Airflow 3.x split the backend into a stable public `/api/v2/`

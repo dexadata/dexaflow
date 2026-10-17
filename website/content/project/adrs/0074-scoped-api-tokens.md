@@ -163,6 +163,12 @@ JWT), `dexaflow auth tokens list` and `dexaflow auth tokens revoke <id>`.
   token.
 - The UI does not list or revoke tokens yet; that is a follow-up over the same
   API.
+
+  > **Note (2026-10, #1886).** The UI now lists and revokes tokens at
+  > **User > API tokens**, over the same API and checks; see
+  > [CI/CD deploy](/operate/cicd-deploy/) and
+  > [UI compatibility](/concepts/ui-compatibility/#dexaflow-screens-inside-the-ui).
+
 - Migration `044` adds `api_tokens`, the permission and the role. Its down
   drops the table, which revokes every token, and removes the built-in role.
 - CI OIDC with trusted issuers (#1708) may later replace stored tokens for

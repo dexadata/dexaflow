@@ -1092,9 +1092,17 @@ What a deploy token can do, and how it ends:
   to 365 days; the default is 90 days. An expired token answers `401`.
 - **Listing.** `dexaflow auth tokens list` shows your tokens with their id,
   name, scopes, expiry and when each was last used (recorded at most once every
-  five minutes). An admin sees every token of the tenant.
+  five minutes). An admin (whoever holds `write:user`) sees every token of the
+  tenant, and never a token of another tenant.
 - **Revoking.** `dexaflow auth tokens revoke <id>` stops a token on its next
   request. Deactivating the owner stops all of the owner's tokens.
+- **In the UI.** **User > API tokens** lists the same tokens as
+  `dexaflow auth tokens list`: name, scope, owner, when it was created, when it
+  expires and when it was last used, never the token itself. **Revoke** asks
+  for a confirmation and then stops the token, like
+  `dexaflow auth tokens revoke`, and the revoke is recorded in the audit log as
+  `api_token.revoke`. The screen does not create tokens: the secret is shown
+  once, by `dexaflow auth create-token`.
 - **Limits.** A token cannot create, list or revoke tokens. A user holds at
   most 50 live tokens, and token names are unique among a user's live tokens:
   1 to 64 letters, digits, dots, dashes or underscores. Once a token has
@@ -1106,8 +1114,7 @@ What a deploy token can do, and how it ends:
   cookie.
 
 Creating, listing and revoking tokens is also available through the API
-(`POST`, `GET /api/v2/apiTokens` and `DELETE /api/v2/apiTokens/{id}`). The UI
-does not list tokens yet.
+(`POST`, `GET /api/v2/apiTokens` and `DELETE /api/v2/apiTokens/{id}`).
 
 {{% alert title="Without a deploy token: a password per job" color="info" %}}
 A session token from `dexaflow auth create-token` without `--scope` **expires
