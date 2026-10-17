@@ -69,7 +69,9 @@ podman and nerdctl accept the same form.
 
 - Private dependencies work on the daemonless path, with the local daemon
   and in a project's own Dockerfile without writing a credential anywhere.
-- A secret mount needs BuildKit; the legacy docker builder refuses it.
+- A secret mount needs BuildKit; the legacy docker builder refuses it, as
+  does a podman or nerdctl release without `env=` secrets. A failed build
+  that has secrets says so next to the tool's own message.
 - A project with secrets or a package index cannot build on Cloud Build
   until the remote builder can read them from a secret store of its own
   (Secret Manager), a follow-up.

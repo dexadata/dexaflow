@@ -461,6 +461,8 @@ build:
   ```
 
   A variable that is not set fails the build before the tool runs, naming it.
+  The `env=` form needs BuildKit: docker with buildx (the legacy builder has
+  no `--secret`), or a podman or nerdctl release that takes `env=` secrets.
   Its value is not part of the content label; its id and variable are.
 - **`package_index`** replaces PyPI rather than adding to it, so a package
   name can never be taken from another index (dependency confusion): mirror

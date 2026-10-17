@@ -204,3 +204,21 @@ func readRaw(t *testing.T, path string) string {
 	}
 	return string(data)
 }
+
+// A tool that cannot take `--secret id=<id>,env=<var>` (the legacy docker
+// builder has no --secret flag) fails with its own terse message; the error
+// says what the secrets need. A failure without secrets does not mention
+// them.
+func TestLocalDaemonBuildFailureWithSecretsSaysWhatTheyNeed(t *testing.T) {
+	tool, _ := fakeTool(t, "build")
+	req := request("linux/amd64")
+	req.Secrets = []Secret{{ID: "github_token", Env: "GITHUB_TOKEN"}}
+	_, err := LocalDaemon{Tool: tool, Registry: &fakeRegistry{}}.Build(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "--secret id=<id>,env=<variable>") || !strings.Contains(err.Error(), "BuildKit") {
+		t.Errorf("Build = %v, want an error saying what build secrets need", err)
+	}
+	_, err = LocalDaemon{Tool: tool, Registry: &fakeRegistry{}}.Build(context.Background(), request("linux/amd64"))
+	if err == nil || strings.Contains(err.Error(), "--secret") {
+		t.Errorf("Build = %v, want a failure that does not mention secrets", err)
+	}
+}

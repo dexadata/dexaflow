@@ -132,9 +132,15 @@ func (b LocalDaemon) pinReported(ctx context.Context, req Request, res Result, d
 }
 
 // buildError wraps the failure of the build step, with the multi-platform
-// hint when several platforms were asked for.
+// hint when several platforms were asked for, and what build secrets need
+// when the build has some: a tool that cannot take them fails with its own
+// terse message, such as the legacy docker builder's "unknown flag".
 func (b LocalDaemon) buildError(req Request, err error) error {
 	err = fmt.Errorf("building image %q with %q: %w", req.Image, b.tool(), err)
+	if len(req.Secrets) > 0 {
+		err = fmt.Errorf("%w\n  the build passes its secrets as --secret id=<id>,env=<variable>, which needs BuildKit: "+
+			"docker with buildx (the legacy builder has no --secret), podman or nerdctl with env= secret support (ADR 0088)", err)
+	}
 	if len(req.Platforms) > 1 {
 		err = b.multiPlatformHint(req.Platforms, err)
 	}
