@@ -491,22 +491,29 @@ func (r *agentLostReaper) writeAgentLostMarker(c AgentLostCandidate, now time.Ti
 // Best-effort, like writeAgentLostMarker: a nil sink or a write error never
 // blocks the reap.
 func (r *agentLostReaper) writeMarker(c AgentLostCandidate, now time.Time, msg string) {
-	if r.sink == nil {
-		return
-	}
 	ref := logs.Ref{
 		TenantID: c.TenantID, DagID: c.DagID, RunID: c.DagRunID, TaskID: c.TaskID,
 		TryNumber: c.TryNumber, AttemptEpoch: c.AttemptEpoch,
 	}
-	ev := logs.Event{
+	if err := appendKilledMarker(r.sink, ref, now, msg); err != nil {
+		r.record("agent_lost_log_marker_error")
+	}
+}
+
+// appendKilledMarker appends msg as the final system line of the attempt ref
+// names, so a log the reaper cut short ends with the reason instead of a
+// silent truncation (#861). A nil sink is a no-op. The caller meters an error
+// and carries on: the DB state and server slog remain the source of truth.
+func appendKilledMarker(sink logSink, ref logs.Ref, now time.Time, msg string) error {
+	if sink == nil {
+		return nil
+	}
+	return sink.AppendEvent(ref, logs.Event{
 		Time:    now,
 		Level:   "error",
 		Stream:  "system",
 		Message: msg,
-	}
-	if err := r.sink.AppendEvent(ref, ev); err != nil {
-		r.record("agent_lost_log_marker_error")
-	}
+	})
 }
 
 func (r *agentLostReaper) record(decision string) {

@@ -3,6 +3,8 @@ package executor
 import (
 	"context"
 	"errors"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -25,6 +27,8 @@ type fakeWarmBoundStore struct {
 	marked   []string
 	markErr  error
 	markNoop bool // MarkTaskPodLost reports 0 rows (a late settle raced)
+	// oomMarked records the attempts marked through the OOMKilled variant.
+	oomMarked []string
 }
 
 func (f *fakeWarmBoundStore) ListWarmBoundRunningTIs(context.Context) ([]WarmBoundTI, error) {
@@ -39,6 +43,17 @@ func (f *fakeWarmBoundStore) MarkTaskPodLost(_ context.Context, id string, _, _ 
 		return false, nil
 	}
 	f.marked = append(f.marked, id)
+	return true, nil
+}
+
+func (f *fakeWarmBoundStore) MarkTaskPodLostOOMKilled(_ context.Context, id string, _, _ int) (bool, error) {
+	if f.markErr != nil {
+		return false, f.markErr
+	}
+	if f.markNoop {
+		return false, nil
+	}
+	f.oomMarked = append(f.oomMarked, id)
 	return true, nil
 }
 
@@ -226,6 +241,9 @@ func (panickyWarmStore) ListWarmBoundRunningTIs(context.Context) ([]WarmBoundTI,
 func (panickyWarmStore) MarkTaskPodLost(context.Context, string, int, int) (bool, error) {
 	return true, nil
 }
+func (panickyWarmStore) MarkTaskPodLostOOMKilled(context.Context, string, int, int) (bool, error) {
+	return true, nil
+}
 
 // TestWarmWorkerLostReaper_PanicRecovered: a panic anywhere in run is recovered,
 // mirroring the sibling reapers, so one bad tick never crashes the scheduler.
@@ -234,5 +252,89 @@ func TestWarmWorkerLostReaper_PanicRecovered(t *testing.T) {
 	// Must not panic out of run.
 	if err := r.run(context.Background()); err != nil {
 		t.Fatalf("run returned err after recovered panic: %v", err)
+	}
+}
+
+// TestWarmWorkerLostReaper_WritesKilledMarker: every attempt a dead warm worker
+// held ends its own log with one "killed: pod_lost" line naming the worker, so
+// the log does not stop mid-line with no cause (#861). An attempt on a live
+// worker, or one whose mark was a noop, gets nothing.
+func TestWarmWorkerLostReaper_WritesKilledMarker(t *testing.T) {
+	store := &fakeWarmBoundStore{bound: []WarmBoundTI{
+		{TaskInstanceID: "ti-a", TenantID: "t1", DagID: "dag-x", DagRunID: "run-1", TaskID: "load", TryNumber: 1, AttemptEpoch: 2, WarmWorkerID: "pod-dead"},
+		{TaskInstanceID: "ti-b", TenantID: "t1", DagID: "dag-x", DagRunID: "run-2", TaskID: "load", TryNumber: 3, WarmWorkerID: "pod-dead"},
+		{TaskInstanceID: "ti-live", TenantID: "t1", DagID: "dag-x", DagRunID: "run-3", TaskID: "load", TryNumber: 1, WarmWorkerID: "pod-live"},
+	}}
+	sink := &fakeLogSink{}
+	r := newWarmReaper(store, &fakeWarmLister{pods: []WarmPodInfo{{Name: "pod-live"}}})
+	r.sink = sink
+	if err := r.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	for _, key := range []string{"t1/dag-x/run-1/load/1", "t1/dag-x/run-2/load/3"} {
+		evs := sink.events[key]
+		if len(evs) != 1 {
+			t.Fatalf("%s: want exactly one marker, got %v", key, sink.events)
+		}
+		if !strings.HasPrefix(evs[0].Message, "killed: pod_lost") || !strings.Contains(evs[0].Message, "pod-dead") {
+			t.Errorf("%s: marker = %q, want a killed: pod_lost line naming the worker", key, evs[0].Message)
+		}
+	}
+	if _, ok := sink.events["t1/dag-x/run-3/load/1"]; ok {
+		t.Errorf("an attempt on a live worker must not get a marker")
+	}
+
+	noop := &fakeWarmBoundStore{bound: store.bound[:1], markNoop: true}
+	sink = &fakeLogSink{}
+	r = newWarmReaper(noop, &fakeWarmLister{})
+	r.sink = sink
+	if err := r.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(sink.events) != 0 {
+		t.Errorf("a noop mark must not write a marker, got %v", sink.events)
+	}
+}
+
+// TestWarmWorkerLostReaper_NamesOOMKill: on cgroup v2 an OOM kills the whole
+// warm-worker container, so the reaper is what settles the attempt (#1218).
+// When the dead worker is still listed with an OOMKilled container, the attempt
+// is marked through the OOMKilled variant (still infra, ADR 0051 and ADR 0058
+// D7) and the marker names the OOM kill. A worker that is already gone, or one
+// that terminated for another reason, keeps today's mark and text.
+func TestWarmWorkerLostReaper_NamesOOMKill(t *testing.T) {
+	bound := func(id, worker string) WarmBoundTI {
+		return WarmBoundTI{TaskInstanceID: id, TenantID: "t1", DagID: "d", DagRunID: "run-" + id, TaskID: "load", TryNumber: 1, WarmWorkerID: worker}
+	}
+	store := &fakeWarmBoundStore{bound: []WarmBoundTI{
+		bound("oom", "pod-oom"),
+		bound("gone", "pod-gone"),
+		bound("error", "pod-error"),
+	}}
+	lister := &fakeWarmLister{pods: []WarmPodInfo{
+		{Name: "pod-oom", Terminal: true, TerminationReason: "OOMKilled"},
+		{Name: "pod-error", Terminal: true, TerminationReason: "Error"},
+	}}
+	sink := &fakeLogSink{}
+	r := newWarmReaper(store, lister)
+	r.sink = sink
+	if err := r.run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !reflect.DeepEqual(store.oomMarked, []string{"oom"}) {
+		t.Errorf("OOMKilled marks = %v, want [oom]", store.oomMarked)
+	}
+	if !reflect.DeepEqual(store.marked, []string{"gone", "error"}) {
+		t.Errorf("plain pod_lost marks = %v, want [gone error]", store.marked)
+	}
+	oom := sink.events["t1/d/run-oom/load/1"]
+	if len(oom) != 1 || !strings.HasPrefix(oom[0].Message, "killed: pod_lost") || !strings.Contains(oom[0].Message, "OOMKilled") {
+		t.Errorf("OOM marker = %v, want one killed: pod_lost line naming OOMKilled", oom)
+	}
+	for _, key := range []string{"t1/d/run-gone/load/1", "t1/d/run-error/load/1"} {
+		evs := sink.events[key]
+		if len(evs) != 1 || strings.Contains(evs[0].Message, "OOMKilled") {
+			t.Errorf("%s marker = %v, want today's text with no OOM claim", key, evs)
+		}
 	}
 }

@@ -108,6 +108,44 @@ func TestKubernetesWarmPodsListFlagsTerminal(t *testing.T) {
 	}
 }
 
+// TestKubernetesWarmPodsListReadsTerminationReason proves ListWarmPods carries
+// the warm-worker container's terminated reason, so the warm-worker-lost reaper
+// can name an OOM kill (#1218). Another container's reason and a live
+// container read "".
+func TestKubernetesWarmPodsListReadsTerminationReason(t *testing.T) {
+	warm := func(name string, statuses ...corev1.ContainerStatus) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name, Namespace: "leoflow",
+				Labels: map[string]string{warmWorkerLabelKey: warmWorkerLabelVal, warmDagVersionLabelKey: "dv1"},
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodFailed, ContainerStatuses: statuses},
+		}
+	}
+	terminated := func(container, reason string) corev1.ContainerStatus {
+		return corev1.ContainerStatus{Name: container, State: corev1.ContainerState{
+			Terminated: &corev1.ContainerStateTerminated{Reason: reason, ExitCode: 137},
+		}}
+	}
+	cs := fake.NewSimpleClientset(
+		warm("oom", terminated(warmContainerName, "OOMKilled")),
+		warm("sidecar-oom", terminated("sidecar", "OOMKilled")),
+		warm("running", corev1.ContainerStatus{Name: warmContainerName, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}),
+	)
+	got, err := NewKubernetesWarmPods(cs, "leoflow", nil).ListWarmPods(context.Background())
+	if err != nil {
+		t.Fatalf("ListWarmPods: %v", err)
+	}
+	reason := map[string]string{}
+	for _, p := range got {
+		reason[p.Name] = p.TerminationReason
+	}
+	want := map[string]string{"oom": "OOMKilled", "sidecar-oom": "", "running": ""}
+	if !reflect.DeepEqual(reason, want) {
+		t.Errorf("TerminationReason = %v, want %v", reason, want)
+	}
+}
+
 // TestKubernetesWarmPodsCreateBuildsAndCreates proves CreateWarmPod runs the
 // injected spec builder, builds a warm pod, and Creates it in the namespace.
 func TestKubernetesWarmPodsCreateBuildsAndCreates(t *testing.T) {

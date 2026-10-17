@@ -2280,12 +2280,16 @@ func (q *Queries) ListTaskInstancesByRuns(ctx context.Context, dagRunIds []pgtyp
 
 const listWarmBoundRunningTIs = `-- name: ListWarmBoundRunningTIs :many
 SELECT ti.id AS task_instance_id,
+       ti.tenant_id AS tenant_id,
        ti.dag_run_id AS dag_run_id,
+       d.dag_id AS dag_id_text,
        ti.task_id AS task_id,
        ti.try_number AS try_number,
        ti.attempt_epoch AS attempt_epoch,
        ti.warm_worker_id AS warm_worker_id
 FROM task_instances ti
+JOIN dag_runs dr ON dr.id = ti.dag_run_id
+JOIN dags d ON d.id = dr.dag_id
 WHERE ti.state = 'running'
   AND ti.warm_worker_id IS NOT NULL
 ORDER BY ti.started_at NULLS LAST
@@ -2294,7 +2298,9 @@ LIMIT 100
 
 type ListWarmBoundRunningTIsRow struct {
 	TaskInstanceID pgtype.UUID `json:"task_instance_id"`
+	TenantID       pgtype.UUID `json:"tenant_id"`
 	DagRunID       pgtype.UUID `json:"dag_run_id"`
+	DagIDText      string      `json:"dag_id_text"`
 	TaskID         string      `json:"task_id"`
 	TryNumber      int32       `json:"try_number"`
 	AttemptEpoch   int32       `json:"attempt_epoch"`
@@ -2311,6 +2317,8 @@ type ListWarmBoundRunningTIsRow struct {
 // entirely — with warm pools off no TI is ever bound, so this returns empty and
 // the reaper is inert. The LIMIT bounds a single tick's work after a large
 // outage; the rest are picked up next tick.
+// tenant_id and dag_id locate the attempt's log stream for the reaper's
+// killed marker (#861).
 func (q *Queries) ListWarmBoundRunningTIs(ctx context.Context) ([]ListWarmBoundRunningTIsRow, error) {
 	rows, err := q.db.Query(ctx, listWarmBoundRunningTIs)
 	if err != nil {
@@ -2322,7 +2330,9 @@ func (q *Queries) ListWarmBoundRunningTIs(ctx context.Context) ([]ListWarmBoundR
 		var i ListWarmBoundRunningTIsRow
 		if err := rows.Scan(
 			&i.TaskInstanceID,
+			&i.TenantID,
 			&i.DagRunID,
+			&i.DagIDText,
 			&i.TaskID,
 			&i.TryNumber,
 			&i.AttemptEpoch,
@@ -2651,15 +2661,19 @@ SET state = 'failed',
     -- Provisional on Kubernetes (the reconciler confirms it), confirmed at
     -- once on Lite (ADR 0052 amendment, part 2).
     infra_confirmed_at = CASE WHEN $1::bool THEN NULL ELSE now() END,
-    error_message = 'pod_lost: the task pod vanished with no live pod past the grace period — see #527'
-WHERE id = $2
-  AND try_number = $3
-  AND attempt_epoch = $4
+    -- error_message overrides the default reason; the warm-worker-lost reaper
+    -- passes one naming an OOM kill (#1218). It keeps the pod_lost: prefix the
+    -- infra override reads the mark from.
+    error_message = COALESCE($2::text, 'pod_lost: the task pod vanished with no live pod past the grace period — see #527')
+WHERE id = $3
+  AND try_number = $4
+  AND attempt_epoch = $5
   AND state = 'running'
 `
 
 type MarkTaskPodLostParams struct {
 	Provisional  bool        `json:"provisional"`
+	ErrorMessage *string     `json:"error_message"`
 	ID           pgtype.UUID `json:"id"`
 	TryNumber    int32       `json:"try_number"`
 	AttemptEpoch int32       `json:"attempt_epoch"`
@@ -2674,6 +2688,7 @@ type MarkTaskPodLostParams struct {
 func (q *Queries) MarkTaskPodLost(ctx context.Context, arg MarkTaskPodLostParams) (int64, error) {
 	result, err := q.db.Exec(ctx, markTaskPodLost,
 		arg.Provisional,
+		arg.ErrorMessage,
 		arg.ID,
 		arg.TryNumber,
 		arg.AttemptEpoch,

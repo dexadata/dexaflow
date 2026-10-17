@@ -640,6 +640,8 @@ type Querier interface {
 	// entirely — with warm pools off no TI is ever bound, so this returns empty and
 	// the reaper is inert. The LIMIT bounds a single tick's work after a large
 	// outage; the rest are picked up next tick.
+	// tenant_id and dag_id locate the attempt's log stream for the reaper's
+	// killed marker (#861).
 	ListWarmBoundRunningTIs(ctx context.Context) ([]ListWarmBoundRunningTIsRow, error)
 	// The current version of the DAGs the warm-pool reconcile looks at (#1707,
 	// ADR 0082): with prewarm, every active unpaused DAG whose current version
