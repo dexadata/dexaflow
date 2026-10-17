@@ -378,3 +378,32 @@ func TestStoreLoginDoesNotWriteThroughASymlink(t *testing.T) {
 		t.Errorf("config.json = %s, want the linked config's fields and the login", data)
 	}
 }
+
+// A registry that redirects the check to another host does not pass it, and
+// the credential never reaches that host.
+func TestVerifyLoginDoesNotFollowARedirectToAnotherHost(t *testing.T) {
+	var leaked []string
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a := r.Header.Get("Authorization"); a != "" {
+			leaked = append(leaked, a)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(other.Close)
+	reg := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, _, ok := r.BasicAuth(); !ok {
+			w.Header().Set("WWW-Authenticate", `Basic realm="test"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		http.Redirect(w, r, other.URL+"/v2/", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(reg.Close)
+	err := VerifyLogin(context.Background(), strings.TrimPrefix(reg.URL, "http://"), "ci", "tok-123")
+	if err == nil {
+		t.Error("VerifyLogin passed on a redirect to another host")
+	}
+	if len(leaked) != 0 {
+		t.Errorf("the other host received %q", leaked)
+	}
+}
