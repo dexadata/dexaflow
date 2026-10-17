@@ -327,3 +327,19 @@ func TestStoreLoginStopsAHangingHelper(t *testing.T) {
 		t.Errorf("config.json = %s, want nothing recorded for a failed store", data)
 	}
 }
+
+// An empty or malformed registry is refused before any request: the
+// registry client would read an empty one as Docker Hub.
+func TestVerifyLoginRefusesABadRegistryHost(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, host := range []string{"", "ghcr.io/octocat", "https://ghcr.io", "bad\x1bhost"} {
+		err := VerifyLogin(ctx, host, "ci", "tok-123")
+		if err == nil || !strings.Contains(err.Error(), "not a registry host") {
+			t.Errorf("VerifyLogin(%q) = %v, want the host refused", host, err)
+		}
+		if err != nil && strings.ContainsRune(err.Error(), '\x1b') {
+			t.Errorf("VerifyLogin(%q) error quotes a control character as is: %q", host, err)
+		}
+	}
+}

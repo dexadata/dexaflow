@@ -188,3 +188,37 @@ func TestRunGHStopsAHangingGH(t *testing.T) {
 		t.Error("runGH with a hanging gh succeeded")
 	}
 }
+
+// A registry argument that is not a registry host, or a user name a docker
+// config cannot hold, is refused before anything is checked or stored: an
+// empty argument does not fall back to Docker Hub, and a user name with a
+// colon would be stored as another user.
+func TestRegistryLoginRefusesABadRegistryOrUser(t *testing.T) {
+	var verified []string
+	defer func(v func(context.Context, string, string, string) error) { verifyRegistryLogin = v }(verifyRegistryLogin)
+	verifyRegistryLogin = func(_ context.Context, host, user, _ string) error {
+		verified = append(verified, host+" "+user)
+		return nil
+	}
+	for _, tc := range []struct{ host, user, want string }{
+		{"", "ci", "not a registry host"},
+		{"ghcr.io/octocat", "ci", "not a registry host"},
+		{"ci:pw@ghcr.io", "ci", "not a registry host"},
+		{"bad\x1bhost", "ci", "not a registry host"},
+		{"harbor.example.com", "ci:admin", "user name"},
+		{"harbor.example.com", "ci\x1b[2J", "user name"},
+	} {
+		dir := t.TempDir()
+		t.Setenv("DOCKER_CONFIG", dir)
+		_, _, err := runWithStdin(t, "tok-abc-123\n", "registry", "login", tc.host, "--username", tc.user, "--password-stdin")
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%q as %q: err = %v, want it to say %q", tc.host, tc.user, err, tc.want)
+		}
+		if _, serr := os.Stat(filepath.Join(dir, "config.json")); serr == nil {
+			t.Errorf("%q as %q: a credential was stored", tc.host, tc.user)
+		}
+	}
+	if len(verified) != 0 {
+		t.Errorf("verified %q, want nothing sent to a registry", verified)
+	}
+}

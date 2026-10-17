@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -77,8 +78,14 @@ func newRegistryLoginCommand() *cobra.Command {
 // checks it with the registry and stores it.
 func runRegistryLogin(cmd *cobra.Command, host string, f registryLoginFlags) error {
 	ctx := cmdContext(cmd)
+	if err := build.CheckRegistryHost(host); err != nil {
+		return err
+	}
 	user, secret, via, err := registryCredential(ctx, cmd.InOrStdin(), host, f)
 	if err != nil {
+		return err
+	}
+	if err := checkRegistryUser(user); err != nil {
 		return err
 	}
 	if verr := verifyRegistryLogin(ctx, host, user, secret); verr != nil {
@@ -139,6 +146,16 @@ func loginKeyIsDockerHub(host string) bool {
 		return true
 	}
 	return false
+}
+
+// checkRegistryUser refuses a user name a docker config cannot hold: one
+// with a colon, which splits user from secret there, or a control
+// character, which the output would print as is.
+func checkRegistryUser(user string) error {
+	if strings.Contains(user, ":") || strings.IndexFunc(user, unicode.IsControl) >= 0 {
+		return fmt.Errorf("the user name %q holds a colon or a control character, which a registry credential cannot", user)
+	}
+	return nil
 }
 
 // readSecretLine reads one non-empty line from r, without its line break.

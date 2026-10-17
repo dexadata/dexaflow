@@ -33,9 +33,9 @@ var errLoginRefused = errors.New("the registry refused the credential")
 // or the token exchange of a Bearer one, as GHCR and Docker Hub answer) and
 // asks /v2/ with what it got. The secret never appears in the error.
 func VerifyLogin(ctx context.Context, host, user, secret string) error {
-	reg, err := name.NewRegistry(host)
+	reg, err := parseRegistryHost(host)
 	if err != nil {
-		return fmt.Errorf("%q is not a registry host: %w", host, err)
+		return err
 	}
 	auth := authn.FromConfig(authn.AuthConfig{Username: user, Password: secret})
 	rt, err := ggcrtransport.NewWithContext(ctx, reg, auth, transport(remote.DefaultTransport), nil)
@@ -55,6 +55,25 @@ func VerifyLogin(ctx context.Context, host, user, secret string) error {
 		return fmt.Errorf("%w: %s answered %s", errLoginRefused, reg.RegistryStr(), resp.Status)
 	}
 	return nil
+}
+
+// CheckRegistryHost reports whether host names a registry the way a login
+// takes it: a host with an optional port and nothing else, no scheme, path
+// or user, and not empty, which the registry client would read as Docker
+// Hub. The error quotes host escaped, never as given.
+func CheckRegistryHost(host string) error {
+	_, err := parseRegistryHost(host)
+	return err
+}
+
+// parseRegistryHost is the registry host names, as CheckRegistryHost says.
+func parseRegistryHost(host string) (name.Registry, error) {
+	reg, err := name.NewRegistry(host, name.StrictValidation)
+	if err != nil {
+		return name.Registry{}, fmt.Errorf("%q is not a registry host: give a host name with an optional port, "+
+			"such as ghcr.io or harbor.example.com:8443", host)
+	}
+	return reg, nil
 }
 
 // refusal words a failed handshake with the registry at host.
