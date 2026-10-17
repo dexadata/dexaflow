@@ -157,8 +157,8 @@ runtime-images: ## Build the task base images for each supported Python version
 	done
 
 .PHONY: migrate-image
-migrate-image: ## Build the migrate image (migrations + golang-migrate) for the Helm migration Job
-	docker build -f deploy/Dockerfile.migrate -t leoflow-migrate:$(VERSION) .
+migrate-image: ## Build the migrate image (dexaflow-migrate + migrations) for the Helm migration Job
+	docker build -f deploy/Dockerfile.migrate --build-arg VERSION=$(VERSION) --build-arg GIT_COMMIT=$(GIT_COMMIT) -t leoflow-migrate:$(VERSION) .
 
 .PHONY: rc-smoke
 rc-smoke: ## Run the full RC pre-cut smoke battery (gates + k3d e2es). SKIP_E2E=1 for gates only.
