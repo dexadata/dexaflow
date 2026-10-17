@@ -62,4 +62,9 @@ func TestScheduledRunSpecCarriesDagAndTaskParamsIntegration(t *testing.T) {
 	if len(params) != 2 || params["table"] != "orders" || params["region"] != "us" {
 		t.Fatalf("ParamsJSON = %s, want {\"region\":\"us\",\"table\":\"orders\"}", got.ParamsJSON)
 	}
+	// dag_run.conf is the conf alone, without the layered defaults, and the
+	// run type is the Task SDK's (#1843).
+	if got.RunConfJSON != "{}" || got.RunType != "scheduled" {
+		t.Fatalf("RunConfJSON/RunType = %q/%q, want {}/scheduled", got.RunConfJSON, got.RunType)
+	}
 }

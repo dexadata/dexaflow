@@ -69,10 +69,11 @@ def _resolve_kwargs(fn, context: dict) -> dict:
     - **LEOFLOW_XCOM_<PARAM>**: an upstream task's ``return_value`` (the agent fetches it).
     - **LEOFLOW_CALL_ARGS_JSON** (#115): the literal args the user wrote at the @task call
       site (``shard(n=0)``), captured by the parser at compile time.
-    - **run context** (ds, ts, data_interval_start/end, params, run_id, ti, var, conn):
-      injected for a param whose name is a context key, and for a ``**kwargs`` catch-all —
-      mirroring Airflow's TaskFlow context injection. Lowest precedence, so an explicit
-      call_arg/XCom binding is never overridden and existing tasks are unchanged.
+    - **run context** (the keys :func:`_operator_context` builds: ds, ts, logical_date,
+      params, run_id, ti, dag_run, task, ...): injected for a param whose name is a
+      context key, and for a ``**kwargs`` catch-all, mirroring Airflow's TaskFlow context
+      injection. Lowest precedence, so an explicit call_arg/XCom binding is never
+      overridden and existing tasks are unchanged.
 
     Parameters with no binding are left unset so the function's defaults apply (or it
     raises TypeError if it has none — exactly Airflow's semantics).
@@ -163,6 +164,8 @@ def run(entrypoint: str) -> None:
         sys.stderr.flush()
         # Run the @task's on_failure_callback on its terminal attempt, before the
         # re-raise, so the task's own failed outcome is unchanged (#424 inc 4b).
+        # Airflow hands the callback the error as context["exception"].
+        context["exception"] = exc
         _maybe_fire_on_failure_callback(context, on_failure_callback)
         # Re-raise so Python's default handler emits the traceback to stderr —
         # the agent captures it.
@@ -289,7 +292,107 @@ def _load_xcom_by_task() -> dict:
     return decoded if isinstance(decoded, dict) else {}
 
 
-class _StandaloneTaskInstance:
+class NotProvidedError(AttributeError):
+    """NotProvidedError is raised for a context attribute Dexaflow does not provide.
+
+    The runtime builds the Airflow context itself (ADR 0040), so its task
+    instance, task, DAG and DAG run objects carry the attributes the runtime has
+    data for and no others. A provider that reaches for another one gets this
+    error, which names the attribute, instead of a bare AttributeError deep inside
+    the provider (#1843). It is an AttributeError, so ``hasattr`` and
+    ``getattr(obj, name, default)`` keep working.
+    """
+
+    def __init__(self, owner: str, name: str) -> None:
+        super().__init__(
+            f"{owner} has no attribute {name!r}: Dexaflow does not provide it in the "
+            f"task context yet (#1843)")
+        self.name = name
+
+
+class _ContextObject:
+    """Base of the context stand-ins: an attribute that is not set raises
+    :class:`NotProvidedError` naming it. Dunder lookups keep the plain
+    AttributeError so copy, pickle and introspection behave as usual."""
+
+    _owner = "context object"
+
+    def __getattr__(self, name: str):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        raise NotProvidedError(self._owner, name)
+
+
+class _StandaloneTask(_ContextObject):
+    """The ``task`` key when the runtime holds no operator object: a ``@task``
+    function or a bash command. It carries the task's identity only; an operator
+    run hands the real operator instead."""
+
+    _owner = "the task"
+
+    def __init__(self, task_id: str, dag_id: str) -> None:
+        self.task_id = task_id
+        self.dag_id = dag_id
+
+
+class _StandaloneDag(_ContextObject):
+    """The ``dag`` key. The runtime does not load the DAG object (an operator is
+    built on its own, a bash task imports no Python), so it carries the DAG's
+    identity only."""
+
+    _owner = "the DAG"
+
+    def __init__(self, dag_id: str) -> None:
+        self.dag_id = dag_id
+
+
+class _StandaloneDagRun(_ContextObject):
+    """The ``dag_run`` key, shaped like the Task SDK's DagRun for the fields the
+    agent delivers: ``dag_id``, ``run_id``, ``logical_date``, the data interval,
+    ``run_type`` (LEOFLOW_RUN_TYPE, the Task SDK's DagRunType value) and ``conf``
+    (LEOFLOW_RUN_CONF, the run conf alone, without the param defaults that
+    ``params`` layers under it). A control plane that does not deliver
+    ``conf`` or ``run_type`` leaves the attribute missing rather than invented.
+    ``start_date``, ``end_date``, ``state`` and the rest are not delivered to the
+    pod, so they are not provided."""
+
+    _owner = "the DAG run"
+
+    def __init__(self, dag_id: str, run_id: str) -> None:
+        self.dag_id = dag_id
+        self.run_id = run_id
+        self.logical_date = _parse_dt(os.environ.get("LEOFLOW_TS"))
+        self.data_interval_start = _parse_dt(os.environ.get("LEOFLOW_DATA_INTERVAL_START"))
+        self.data_interval_end = _parse_dt(os.environ.get("LEOFLOW_DATA_INTERVAL_END"))
+        run_type = os.environ.get("LEOFLOW_RUN_TYPE")
+        if run_type:
+            self.run_type = run_type
+        raw_conf = os.environ.get("LEOFLOW_RUN_CONF")
+        if raw_conf is not None:
+            self.conf = _json_object(raw_conf)
+
+
+def _json_object(raw: str | None) -> dict:
+    """Decode a JSON object from the agent's env; anything else (unset, malformed,
+    or not an object such as "null") is an empty dict."""
+    if not raw:
+        return {}
+    try:
+        decoded = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read an integer from the agent's env, or ``default`` when unset or invalid."""
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+class _StandaloneTaskInstance(_ContextObject):
     """A minimal, tolerant TaskInstance stand-in for a standalone operator run (ADR
     0040 Phase A).
 
@@ -302,18 +405,22 @@ class _StandaloneTaskInstance:
     rather than crashing the task *after* its real side effect (which on retry would
     re-run a non-idempotent operator). Identity fields come from the agent's env.
     Attributes beyond these are intentionally absent: an operator that needs the real
-    metastore then fails loudly rather than running silently wrong.
+    metastore then fails loudly, with a :class:`NotProvidedError` naming the
+    attribute, rather than running silently wrong.
     """
 
-    def __init__(self) -> None:
+    _owner = "the task instance"
+
+    def __init__(self, task=None) -> None:
         self.task_id = os.environ.get("LEOFLOW_TASK_ID", "")
         self.dag_id = os.environ.get("LEOFLOW_DAG_ID", "")
         self.run_id = os.environ.get("LEOFLOW_RUN_ID", "")
         self.map_index = -1
-        try:
-            self.try_number = int(os.environ.get("LEOFLOW_TRY_NUMBER", "1"))
-        except (TypeError, ValueError):
-            self.try_number = 1
+        self.try_number = _env_int("LEOFLOW_TRY_NUMBER", 1)
+        # The attempt budget the agent delivers (retries + 1); without it this
+        # attempt is treated as the last, as the on_failure_callback gate does.
+        self.max_tries = _env_int("LEOFLOW_MAX_TRIES", self.try_number)
+        self.task = task if task is not None else _StandaloneTask(self.task_id, self.dag_id)
         self._xcom_by_task = _load_xcom_by_task()
         self.pushed: dict = {}
 
@@ -361,43 +468,61 @@ class _StandaloneTaskInstance:
         return _parse_dt(os.environ.get("LEOFLOW_FIRST_RESCHEDULE_AT"))
 
 
-def _operator_context() -> dict:
-    """A minimal Airflow execution context for a standalone operator run (ADR 0040
-    Phase A). The agent supplies the run's macros via env; many operators read no
-    context at all, so sensible defaults are enough for the common case. ``ti`` /
-    ``task_instance`` are a tolerant :class:`_StandaloneTaskInstance` (not None) so
-    the near-universal operator-link ``ti.xcom_push`` pattern does not crash."""
-    params = {}
-    raw_params = os.environ.get("LEOFLOW_PARAMS")
-    if raw_params:
-        try:
-            decoded = json.loads(raw_params)
-        except (TypeError, ValueError):
-            decoded = {}
-        # Coerce non-object conf (e.g. "null") to {} so context["params"].get(...) works.
-        params = decoded if isinstance(decoded, dict) else {}
+def _operator_context(task=None) -> dict:
+    """The Airflow execution context the runtime hands an operator, a ``@task``
+    function and a bash command alike (ADR 0040), built from the agent's env.
+
+    It follows the pinned Task SDK's ``Context``; the keys it leaves out are listed,
+    with the reason, in ``tests/test_task_sdk_context_contract.py`` (#1843). ``task``
+    is the operator instance on an operator run; otherwise a stand-in carrying the
+    task's identity. ``ti`` / ``task_instance`` are a tolerant
+    :class:`_StandaloneTaskInstance` (not None) so the near-universal operator-link
+    ``ti.xcom_push`` pattern does not crash. The keys the Task SDK derives from the
+    logical date (``ds_nodash``, ``ts_nodash``, ``ts_nodash_with_tz``) are set only
+    when the run has one, as on Airflow."""
+    # Coerce non-object conf (e.g. "null") to {} so context["params"].get(...) works.
+    params = _json_object(os.environ.get("LEOFLOW_PARAMS"))
     ds = os.environ.get("LEOFLOW_DS", "")
-    ti = _StandaloneTaskInstance()
+    ti = _StandaloneTaskInstance(task)
+    run_id = os.environ.get("LEOFLOW_RUN_ID", "")
+    # The logical date the agent delivers as LEOFLOW_TS; None on a run without
+    # one, where Airflow also has none (#1843).
+    logical_date = _parse_dt(os.environ.get("LEOFLOW_TS"))
     ctx = {
         "ds": ds,
         "ts": os.environ.get("LEOFLOW_TS", ""),
-        "run_id": os.environ.get("LEOFLOW_RUN_ID", ""),
+        "run_id": run_id,
         "params": params,
         "task_instance": ti,
         "ti": ti,
-        "dag_run": None,
-        # The logical date the agent delivers as LEOFLOW_TS; None on a run without
-        # one, where Airflow also has none (#1843).
-        "logical_date": _parse_dt(os.environ.get("LEOFLOW_TS")),
+        "task": ti.task,
+        "dag": _StandaloneDag(ti.dag_id),
+        "dag_run": _StandaloneDagRun(ti.dag_id, run_id),
+        "try_number": ti.try_number,
+        "logical_date": logical_date,
         "macros": _Macros(),
         "data_interval_start": _parse_dt(os.environ.get("LEOFLOW_DATA_INTERVAL_START")),
         "data_interval_end": _parse_dt(os.environ.get("LEOFLOW_DATA_INTERVAL_END")),
+        "task_instance_key_str": f"{ti.dag_id}__{ti.task_id}__{run_id}",
     }
+    if logical_date is not None:
+        ctx.update(_logical_date_keys(logical_date))
+        ctx["task_instance_key_str"] = f"{ti.dag_id}__{ti.task_id}__{ctx['ds_nodash']}"
     var, conn = _secrets_accessors()
     if var is not None:
         ctx["var"] = var
         ctx["conn"] = conn
     return ctx
+
+
+def _logical_date_keys(logical_date: datetime) -> dict:
+    """The keys the Task SDK derives from the logical date, in its formats."""
+    ts = logical_date.isoformat()
+    return {
+        "ds_nodash": logical_date.strftime("%Y%m%d"),
+        "ts_nodash": logical_date.strftime("%Y%m%dT%H%M%S"),
+        "ts_nodash_with_tz": ts.replace("-", "").replace(":", ""),
+    }
 
 
 def _secrets_accessors():
@@ -538,7 +663,7 @@ def run_operator(operator_class: str, args: dict) -> None:
     task_id = os.environ.get("LEOFLOW_TASK_ID", class_name)
     op = op_cls(task_id=task_id, **_merge_operator_xcom(dict(args)))
 
-    context = _operator_context()
+    context = _operator_context(task=op)
     # Task-level params= sit on op.params; Airflow renders {{ params.x }} against
     # context["params"], which merges them under the run conf (conf wins, as with
     # dag_run_conf_overrides_params). Without this they render empty (#1841).
@@ -549,6 +674,7 @@ def run_operator(operator_class: str, args: dict) -> None:
         # The attempt fails before execute(), as on Airflow (ADR 0084): running
         # with the raw template text would send it to the external system.
         _lifecycle(str(exc))
+        context["exception"] = exc
         _maybe_fire_on_failure_callback(context, _on_failure_from_task_object(op))
         raise
 
@@ -566,7 +692,8 @@ def run_operator(operator_class: str, args: dict) -> None:
         # A genuine failure (not a reschedule/deferral): run the on_failure_callback
         # on the terminal attempt before re-raising, so the task's failed state is
         # unchanged (#424 inc 4b). The operator instance carries the (list-normalised)
-        # callback as an attribute.
+        # callback as an attribute, and gets the error as context["exception"].
+        context["exception"] = exc
         _maybe_fire_on_failure_callback(context, _on_failure_from_task_object(op))
         raise
     _write_return(result)

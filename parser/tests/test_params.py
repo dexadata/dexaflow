@@ -113,3 +113,63 @@ def test_explicit_null_default_is_kept(monkeypatch, tmp_path):
     """)
     assert "default" in spec["params"]["n"]
     assert spec["params"]["n"]["default"] is None
+
+
+def _task(spec: dict, task_id: str) -> dict:
+    return next(t for t in spec["tasks"] if t["task_id"] == task_id)
+
+
+def test_bash_task_params_are_captured(monkeypatch, tmp_path):
+    # BashOperator(params=...) feeds {{ params.x }} in its command; the compiler
+    # kept only bash_command, so the task params never reached the run (#1843).
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.sdk import DAG, Param
+        from airflow.providers.standard.operators.bash import BashOperator
+        with DAG("g"):
+            BashOperator(task_id="b", bash_command="echo {{ params.table }}",
+                         params={"table": "orders", "n": Param(3, type="integer")})
+    """)
+    assert _task(spec, "b")["params"] == {"table": "orders", "n": 3}
+
+
+def test_taskflow_task_params_are_captured(monkeypatch, tmp_path):
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.sdk import DAG, task
+        @task(params={"table": "orders"})
+        def a() -> None: ...
+        with DAG("g"):
+            a()
+    """)
+    assert _task(spec, "a")["params"] == {"table": "orders"}
+
+
+def test_task_params_omit_dag_params_and_required_ones(monkeypatch, tmp_path):
+    # Airflow merges the DAG's params into each task's; the control plane layers
+    # the DAG defaults itself, so a task carries only what it declares or
+    # overrides. A required Param has no value to carry.
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.sdk import DAG, Param, task
+        @task(params={"region": "eu", "limit": 5, "must": Param(type="string")})
+        def a() -> None: ...
+        @task
+        def b() -> None: ...
+        with DAG("g", params={"region": "us", "limit": 5}):
+            a()
+            b()
+    """)
+    assert _task(spec, "a")["params"] == {"region": "eu"}
+    assert "params" not in _task(spec, "b")
+
+
+def test_task_params_must_be_json(monkeypatch, tmp_path):
+    import pytest
+
+    with pytest.raises(ValueError, match="param 'when' on task 'b'"):
+        _compile(monkeypatch, tmp_path, """
+            import datetime
+            from airflow.sdk import DAG
+            from airflow.providers.standard.operators.bash import BashOperator
+            with DAG("g"):
+                BashOperator(task_id="b", bash_command="echo",
+                             params={"when": datetime.date(2026, 1, 1)})
+        """)

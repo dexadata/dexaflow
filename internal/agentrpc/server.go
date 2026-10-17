@@ -61,6 +61,13 @@ type TaskSpec struct {
 	// agent stamps LEOFLOW_PARAMS so the runtime exposes context['params'] /
 	// {{ params.X }}.
 	ParamsJSON string
+	// RunConfJSON is the DagRun's conf alone, JSON-encoded, "{}" for a run
+	// without one (#1843). Unlike ParamsJSON it carries no param defaults. The
+	// agent stamps LEOFLOW_RUN_CONF so the runtime exposes dag_run.conf.
+	RunConfJSON string
+	// RunType is the DagRun's type in the Task SDK's DagRunType vocabulary
+	// (#1843). The agent stamps LEOFLOW_RUN_TYPE for dag_run.run_type.
+	RunType string
 	// FirstRescheduleAt is when a reschedule-mode sensor first entered reschedule,
 	// RFC3339 (#380). The agent stamps LEOFLOW_FIRST_RESCHEDULE_AT so the sensor's
 	// get_first_reschedule_date returns it and cumulative timeout works. Empty on
@@ -324,6 +331,8 @@ func (s *Server) GetTaskSpec(ctx context.Context, _ *agentv1.GetTaskSpecRequest)
 		DataIntervalStart:       spec.DataIntervalStart,
 		DataIntervalEnd:         spec.DataIntervalEnd,
 		ParamsJson:              spec.ParamsJSON,
+		RunConfJson:             spec.RunConfJSON,
+		RunType:                 spec.RunType,
 		FirstRescheduleAt:       spec.FirstRescheduleAt,
 		MaxTries:                clampInt32(spec.MaxTries),
 		OnFailureCallback:       spec.OnFailureCallback,

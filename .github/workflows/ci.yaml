@@ -1633,3 +1633,7 @@ jobs:
           PY
       - name: Authoring contract
         run: python -m pytest runtime/python/tests/test_leoflow_authoring.py -q
+      # The context the runtime builds against the pinned Task SDK's Context and
+      # RuntimeTaskInstance (#1843): a pin bump that widens the gap fails here.
+      - name: Task context contract
+        run: python -m pytest runtime/python/tests/test_task_sdk_context_contract.py -q
