@@ -10,11 +10,15 @@ same either way.
 
 from __future__ import annotations
 
-import json  # noqa: F401 (re-exported, as in the Task SDK's macros)
+import json
 import random as _random
-import time  # noqa: F401 (re-exported, as in the Task SDK's macros)
-import uuid  # noqa: F401 (re-exported, as in the Task SDK's macros)
+import time
+import uuid
 from datetime import datetime, timedelta
+
+# The standard modules are re-exported, as in the Task SDK's macros, so templates
+# can call macros.json, macros.time and macros.uuid.
+__all__ = ["datetime", "ds_add", "ds_format", "json", "random", "time", "timedelta", "uuid"]
 
 random = _random.random
 

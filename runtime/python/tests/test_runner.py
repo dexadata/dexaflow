@@ -197,6 +197,16 @@ def test_operator_context_macros_fall_back_without_the_sdk(monkeypatch):
     assert macros.ds_format("2026-06-14", "%Y-%m-%d", "%d/%m/%Y") == "14/06/2026"
 
 
+def test_fallback_macros_export_the_task_sdk_modules():
+    # Templates reach the standard modules through macros, as with the Task SDK,
+    # so the fallback lists them as its public names, not as stray imports.
+    from leoflow_runtime import macros
+
+    for name in ("datetime", "json", "random", "time", "timedelta", "uuid"):
+        assert name in macros.__all__
+        assert getattr(macros, name) is not None
+
+
 def test_run_without_return_writes_no_file(tmp_path, monkeypatch):
     out = tmp_path / "rv.json"
     monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(out))
