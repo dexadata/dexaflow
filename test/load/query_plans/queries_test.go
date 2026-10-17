@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -53,6 +54,12 @@ func TestBindSqlcArgs(t *testing.T) {
 			wantSQL:   "WHERE started_at <= now() - make_interval(secs => $1::float8)",
 			wantNames: []string{"grace_seconds"},
 		},
+		{
+			name:      "embed expands to every column of the table",
+			in:        "SELECT sqlc.embed(dag_runs), COALESCE(d.is_paused, false) FROM dag_runs WHERE tenant_id = sqlc.arg(tenant_id)",
+			wantSQL:   "SELECT dag_runs.*, COALESCE(d.is_paused, false) FROM dag_runs WHERE tenant_id = $1",
+			wantNames: []string{"tenant_id"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -83,5 +90,20 @@ func TestSeqScans(t *testing.T) {
 	want := []string{"dag_runs", "task_instances"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// TestBindSqlcArgsLeavesNoMacroInShippedQueries binds every query the
+// experiment reads at run time and fails on any sqlc macro left behind, which
+// Postgres would reject with `schema "sqlc" does not exist` (#1921).
+func TestBindSqlcArgsLeavesNoMacroInShippedQueries(t *testing.T) {
+	queries, err := loadQueries(filepath.Join("..", "..", "..", "internal", "storage", "queries"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, raw := range queries {
+		if sql, _ := bindSqlcArgs(raw); strings.Contains(sql, "sqlc.") {
+			t.Errorf("%s: sqlc macro left after binding:\n%s", name, sql)
+		}
 	}
 }

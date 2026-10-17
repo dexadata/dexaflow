@@ -181,7 +181,8 @@ soak-credential-ceiling: ## Prove the credential-renewal ceiling is enforced: lo
 	    --label credential-ceiling --out .soak/credential-ceiling
 
 .PHONY: soak-selftest
-soak-selftest: ## Prove the soak's assertions can fail: injects a real outage that outlives its declared window. MUST exit 1 with recorded violations.
+soak-selftest: ## Prove the soak's assertions can fail: injects a real outage that outlives its declared window. MUST exit 1 with recorded violations. First checks that an interrupted soak exits 2, never 0.
+	@bash test/soak/soak.sh --self-test || { echo "soak-selftest FAILED: an interrupted soak must exit 2 and tear down once (#1921)."; exit 1; }
 	@bash test/soak/soak.sh --duration 6m --faults selftest-red --label selftest-red --out .soak/selftest-red; \
 	code=$$?; \
 	if [ $$code -ne 1 ]; then \
@@ -197,7 +198,7 @@ soak-selftest: ## Prove the soak's assertions can fail: injects a real outage th
 	echo "soak-selftest OK: the battery went red (exit 1, violations recorded) as designed"
 
 .PHONY: soak-warmpool-ab
-soak-warmpool-ab: ## Warm-pool A/B on k3d (ADR 0058): same workload with pools off and on, interleaved. Needs k3d + docker. Written, not yet executed.
+soak-warmpool-ab: ## Warm-pool A/B on k3d (ADR 0058): same workload with pools off and on, interleaved. Needs k3d, docker and migrate. Exits 2 when it measured nothing. Not yet run green on a cluster.
 	bash test/soak/warmpool-ab.sh
 
 .PHONY: e2e-timeout
