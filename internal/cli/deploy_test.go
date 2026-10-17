@@ -372,7 +372,7 @@ func TestRequireRegistryNamesTheRegistryLogins(t *testing.T) {
 		"Artifact Registry, GCR: gcloud auth login",
 		"ECR: aws sso login, aws configure, environment credentials or an instance role",
 		"ACR: az login",
-		"any other registry: docker login <registry>",
+		"any other registry: dexaflow registry login <registry> (or docker login <registry>)",
 		"the deploy preflight names it",
 	} {
 		if !strings.Contains(msg, want) {

@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_setup/
 title: "dexaflow setup"
 linkTitle: "setup"
-weight: 60
+weight: 62
 ---
 
 Bootstrap the managed Dexaflow runtime (Python, parser, workspace).

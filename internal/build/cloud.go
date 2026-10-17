@@ -177,14 +177,20 @@ func (c CloudRegistry) cacheKey() string {
 // LoginCommand is the command that signs tool (docker when empty) in to
 // the registry at host once, so its pushes and the registry client's find a
 // credential: for docker, the cloud CLI's own docker login; for another
-// tool, the cloud's token piped to `<tool> login`; `<tool> login <host>`
-// for a registry no cloud owns.
+// tool, the cloud's token piped to `<tool> login`. For a registry no cloud
+// owns, `dexaflow registry login <host>` when the tool is docker: it needs
+// no docker and stores the credential in the docker config, which docker
+// and the registry client both read (StoreLogin); `<tool> login <host>`
+// for another tool, which keeps credentials of its own.
 func LoginCommand(host, tool string) string {
 	if tool == "" {
 		tool = "docker"
 	}
 	c, ok := DetectCloudRegistry(host)
 	if !ok {
+		if tool == "docker" {
+			return "dexaflow registry login " + host
+		}
 		return tool + " login " + host
 	}
 	if tool == "docker" {
