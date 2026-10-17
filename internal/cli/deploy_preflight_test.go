@@ -266,8 +266,8 @@ func TestDeployPreflightChecksTheRegistryPush(t *testing.T) {
 		builder, log := argvBuilder(t)
 		fake := &deployServer{}
 		_, _, err := deployDir(t, fake, dir, builder, "--force")
-		if err == nil || !strings.Contains(err.Error(), "docker login "+reg.host) || !strings.Contains(err.Error(), reg.host+"/team/etl") {
-			t.Fatalf("err = %v, want the refused repository and docker login %s", err, reg.host)
+		if err == nil || !strings.Contains(err.Error(), "dexaflow registry login "+reg.host) || !strings.Contains(err.Error(), reg.host+"/team/etl") {
+			t.Fatalf("err = %v, want the refused repository and dexaflow registry login %s", err, reg.host)
 		}
 		if compiled(dir) || argvLines(t, log) != nil || fake.registers != 0 {
 			t.Errorf("compiled=%v builder=%q registers=%d, want nothing done", compiled(dir), argvLines(t, log), fake.registers)
@@ -276,7 +276,7 @@ func TestDeployPreflightChecksTheRegistryPush(t *testing.T) {
 	for _, tc := range []struct {
 		name, cred, login string
 	}{
-		{"refused, no credential", "", "docker login"},
+		{"refused, no credential", "", "dexaflow registry login"},
 		{"refused, another builder", "cred", "builder.sh login"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

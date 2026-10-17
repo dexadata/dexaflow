@@ -468,7 +468,7 @@ func copyImage(ctx context.Context, out io.Writer, image string, dest destImage,
 // cloud owns, the session the client also reads.
 func copyLoginHint(src, dstRepo string) string {
 	var b strings.Builder
-	b.WriteString("  The copy reads the source and pushes to the destination with the credentials of `docker login` and of a cloud CLI session. Sign in to each:")
+	b.WriteString("  The copy reads the source and pushes to the destination with the credentials of `dexaflow registry login` or `docker login` and of a cloud CLI session. Sign in to each:")
 	for _, ref := range []string{src, dstRepo} {
 		host := ref
 		if r, err := name.ParseReference(ref); err == nil {

@@ -566,7 +566,7 @@ func TestPromoteCopyFailureNamesTheLogins(t *testing.T) {
 	digest := pushRandom(t, devReg+"/dev/etl:v1.2.0-ccc")
 	e := newPromoteEnv(t, devReg+"/dev/etl@"+digest, devReg+"/dev", "127.0.0.1:1/prod")
 	_, _, err := e.promote(t, "--from", "dev", "--to", "prod")
-	if err == nil || !strings.Contains(err.Error(), "docker login 127.0.0.1:1") || !strings.Contains(err.Error(), "docker login "+devReg) {
+	if err == nil || !strings.Contains(err.Error(), "dexaflow registry login 127.0.0.1:1") || !strings.Contains(err.Error(), "dexaflow registry login "+devReg) {
 		t.Fatalf("err = %v, want the login command of both registries", err)
 	}
 	if len(e.dst.registers) != 0 {

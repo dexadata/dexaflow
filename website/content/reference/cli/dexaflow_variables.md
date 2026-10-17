@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_variables/
 title: "dexaflow variables"
 linkTitle: "variables"
-weight: 70
+weight: 72
 ---
 
 Manage control-plane variables.

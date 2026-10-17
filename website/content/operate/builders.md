@@ -580,7 +580,8 @@ for it, and finds one in this order
 ([ADR 0080](/project/adrs/0080-registry-credentials-from-cloud-cli-sessions/)):
 
 1. The docker config, `~/.docker/config.json` (or `$DOCKER_CONFIG`), with its
-   `credsStore` and `credHelpers`: what `docker login`, `gcloud auth
+   `credsStore` and `credHelpers`: what [`dexaflow registry
+   login`](#signing-in-without-docker), `docker login`, `gcloud auth
    configure-docker`, `az acr login` or a helper such as
    `docker-credential-ecr-login` on `PATH` wrote.
 2. When the docker config holds nothing for the registry, and the registry
@@ -595,8 +596,8 @@ for it, and finds one in this order
 
    The token stays in memory for ten minutes at most, and a failure of the
    CLI (signed out, not installed) for thirty seconds; each run of the CLI
-   has thirty seconds and no input. Dexaflow never stores a registry
-   credential.
+   has thirty seconds and no input. Dexaflow never stores a cloud session's
+   token.
 
 `registry.auth_method` in `dexaflow.yaml` picks the sources: `auto` (the
 default) is the order above, `docker_config` reads only the docker config,
@@ -624,7 +625,48 @@ preflight, `dexaflow doctor` and a refused push name for your registry:
 | Artifact Registry, GCR | `gcloud auth configure-docker <host>` | `gcloud auth print-access-token \| podman login --username oauth2accesstoken --password-stdin <host>` |
 | ECR | `aws ecr get-login-password --region <region> \| docker login --username AWS --password-stdin <host>` | the same, piped to `podman login` |
 | ACR | `az acr login --name <name>` | `az acr login --name <name> --expose-token --output tsv --query accessToken \| podman login --username 00000000-0000-0000-0000-000000000000 --password-stdin <host>` |
-| any other | `docker login <host>` | `podman login <host>` |
+| any other (GHCR, Docker Hub, Harbor) | `dexaflow registry login <host>` | `podman login <host>` |
+
+### Signing in without docker
+
+For a registry no cloud owns, `dexaflow registry login` signs in with no
+docker installed. It checks the credential with the registry first (the
+same handshake a push makes), then stores it in the docker config, or in the
+`credsStore` or `credHelpers` helper the config names (the system keychain),
+as `docker login` does. The CLI's registry client reads it from there, and
+so do docker, podman and nerdctl, so a `local-daemon` build pushes with it
+too ([ADR 0089](/project/adrs/0089-registry-login-without-docker/)).
+
+- **GHCR.** With the [GitHub CLI](https://cli.github.com) signed in
+  (`gh auth login`), no token is needed: the CLI exchanges the `gh` session
+  (`gh auth token`, and the user from `gh api user`).
+
+  ```bash
+  dexaflow registry login ghcr.io
+  ```
+
+  A push needs the `write:packages` scope, which `gh auth login` does not
+  ask for by default: `gh auth refresh -h github.com -s write:packages`.
+  In CI, pass a token instead (`GITHUB_TOKEN` with `packages: write`):
+
+  ```bash
+  echo "$GITHUB_TOKEN" | dexaflow registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+  ```
+
+- **Docker Hub.** Create a personal access token with read and write
+  access (Account settings, Personal access tokens) and pass it on stdin:
+
+  ```bash
+  echo "$DOCKERHUB_TOKEN" | dexaflow registry login docker.io --username <user> --password-stdin
+  ```
+
+- **Any other registry** (Harbor, Nexus, a self-hosted one) takes
+  `--username` and its password or token on stdin the same way.
+
+The token is read from stdin only, never from a flag, so it stays out of
+`ps` and the shell history, and it is never printed. A credential the
+registry refuses is not stored. For Artifact Registry, GCR, ECR and ACR,
+sign in to the cloud's CLI instead, as above.
 
 Only a registry on `localhost`, a `*.localhost` name (as k3d names its
 registries) or a loopback address may answer over plain HTTP; every other
@@ -635,7 +677,7 @@ proxy.
 
 podman users: the CLI reads `~/.docker/config.json`, and podman's
 `auth.json` only when that file does not exist. If you have both, run
-`docker login` for the registry too, or the push succeeds and the read is
+`dexaflow registry login` for the registry too, or the push succeeds and the read is
 refused with a 401. When that read fails after a push, `dexaflow deploy`
 stops, and `dexaflow compile --build --push` keeps the tag in `dag.json` with
 a warning (see [the explicit steps](/operate/cicd-deploy/)).

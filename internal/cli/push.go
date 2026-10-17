@@ -153,7 +153,7 @@ func pinPushImage(cmd *cobra.Command, data []byte, spec *domain.DAGSpec, img pus
 }
 
 // pinFix is how to get past an image a push could not pin.
-const pinFix = "fix: make the registry readable from here (`docker login <registry>`, or the session of the cloud CLI that owns it), " +
+const pinFix = "fix: make the registry readable from here (`dexaflow registry login <registry>` or `docker login <registry>`, or the session of the cloud CLI that owns it), " +
 	"or pass --image <repository>@sha256:<digest>"
 
 // pushProjectDir is the project whose config a push reads: flag (--project)
