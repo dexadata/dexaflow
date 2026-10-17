@@ -85,8 +85,8 @@ func runRegistryLogin(cmd *cobra.Command, host string, f registryLoginFlags) err
 	if err != nil {
 		return err
 	}
-	if err := checkRegistryUser(user); err != nil {
-		return err
+	if uerr := checkRegistryUser(user); uerr != nil {
+		return uerr
 	}
 	if verr := verifyRegistryLogin(ctx, host, user, secret); verr != nil {
 		return fmt.Errorf("signing in to %s as %s: %w", host, user, verr)
