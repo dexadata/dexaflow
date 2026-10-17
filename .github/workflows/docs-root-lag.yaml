@@ -1,0 +1,52 @@
+# Fails when the documentation root does not serve the newest GA release, and
+# keeps one tracking issue open while it does not (#1936).
+#
+# The root is the `latest` leg of website/scripts/ci/versions.json, which only
+# the docs promotion moves. After v0.5.4 the promotion never ran and the root
+# kept serving v0.5.3 until someone read the site. This job compares the leg
+# with the GitHub release marked Latest (scripts/docs-root-lag.sh) once a day,
+# and on every change to versions.json on main, which is how the issue closes
+# itself once the promotion lands. A release younger than six hours is given
+# time for its promotion pull request to merge.
+name: Docs root lag
+
+on:
+  schedule:
+    - cron: "41 6 * * *" # daily, 06:41 UTC
+  push:
+    branches: [main]
+    paths:
+      - "website/scripts/ci/versions.json"
+      - "scripts/docs-root-lag.sh"
+      - ".github/workflows/docs-root-lag.yaml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-root-lag
+  cancel-in-progress: false
+
+jobs:
+  lag:
+    name: Docs root serves the newest release
+    # A fork has no releases of its own to compare with.
+    if: ${{ github.repository == 'dexadata/dexaflow' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write # open, refresh or close the one tracking issue
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Compare the docs root with the release marked Latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash scripts/docs-root-lag.sh --issue

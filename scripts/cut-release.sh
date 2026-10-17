@@ -632,6 +632,19 @@ JSON
   _eq "$(grep -c '^    version = "v9.9.8"$' "$dv/website/hugo.toml")" "1" "and keeps the superseded one as an archived leg"
   rm -rf "$dv"
 
+  # run_gates judges the stale-pin gate against the release being cut. Run
+  # bare, check-stale-versions.sh reads versions.json, which before the tag
+  # still names the GA being replaced (on release-X.Y, an even older one), so
+  # v0.5.4 was tagged with pages pinning 0.5.3 (#1934).
+  local gd; gd="$(mktemp -d)"
+  mkdir -p "$gd/scripts"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >"%s/stale.argv"\n' "$gd" >"$gd/scripts/check-stale-versions.sh"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >"%s/other.argv"\n' "$gd" >"$gd/scripts/check-other.sh"
+  ( ROOT="$gd" MIN_GATES=2 run_gates v9.9.9-rc.1 release-9.9 >/dev/null 2>&1 )
+  _eq "$(cat "$gd/stale.argv" 2>/dev/null)" "--candidate v9.9.9-rc.1" "run_gates judges stale pins against the tag being cut"
+  _eq "$(cat "$gd/other.argv" 2>/dev/null)" "" "and still runs every other gate bare"
+  rm -rf "$gd"
+
   # The changelog sync runs after a patch GA tag and only then: a minor GA is
   # dated on main itself, and an rc leaves [Unreleased] for its GA to date.
   _ws() { if wants_changelog_sync "$1"; then echo sync; else echo no; fi; }
@@ -1126,8 +1139,13 @@ run_gates() { # <tag> <base>
     # entries an earlier rc folded, while main's stays empty since fragments
     # replaced hand edits. Against main, a GA that dates [Unreleased] reads as
     # "no entry" (empty before, empty after), so the gate gets the cut's base.
+    # check-stale-versions.sh judges against the release being cut: bare, it
+    # reads versions.json, which still names the GA this cut replaces (on
+    # release-X.Y an older one still), and v0.5.4 was tagged with pages
+    # pinning 0.5.3 that way (#1934).
     if [[ "$s" == *chart-version-matches-tag* ]]; then out="$(bash "$s" "$tag" 2>&1)"
     elif [[ "$s" == *check-changelog-entry* ]]; then out="$(bash "$s" "origin/$base" 2>&1)"
+    elif [[ "$s" == *check-stale-versions* ]]; then out="$(bash "$s" --candidate "$tag" 2>&1)"
     else out="$(bash "$s" 2>&1)"; fi
     rc=$?
     if [ "$rc" -ne 0 ]; then

@@ -179,7 +179,11 @@ What checks it, and when:
    `scripts/check-*.sh` gate against the tag. One of them,
    `check-changelog-entry.sh`, is a pull-request gate with no question to ask
    when there is no pull request, so it reports `gate SKIP`; the cut log
-   distinguishes SKIP from PASS to keep the count honest.
+   distinguishes SKIP from PASS to keep the count honest. Another,
+   `check-stale-versions.sh`, runs as `--candidate <tag>`: it judges the pages
+   against the release being cut, because `versions.json` still names the GA
+   that release replaces (on `release-X.Y`, an older one still), and v0.5.4
+   was tagged with pages that pinned 0.5.3 (#1934).
 3. **PR → wait green → merge**: opens the prepare PR against the base and waits
    for CI, re-running **only known-transient flakes** (registry rate-limits, Go
    module-proxy resets, the shallow-fetch merge-base gate, the cold-start
@@ -419,6 +423,17 @@ promote-artifact model is tracked in #878.
   not Latest, and no chart was pushed. Fix the cause and re-run the failed
   `promote` job. The job summary says which pointers it moved, and why it left
   Latest and `py3.N` alone for an rc or an older minor.
+- **The docs root still serves the previous GA.** Nothing about the release
+  fails when the root is left behind, so a separate job watches for it:
+  `.github/workflows/docs-root-lag.yaml` runs `scripts/docs-root-lag.sh`
+  daily and on every change to `versions.json` on `main`. It fails when the
+  `latest` leg names a different tag from the GitHub release marked Latest
+  (which only `promote` moves, by the rule of
+  `scripts/release-promote-plan.sh`), once that release is more than six
+  hours old, and keeps one issue open, titled "docs: the documentation root
+  does not serve the newest release", until the root catches up (#1936).
+  Promote the release as [Publishing the docs root](#publishing-the-docs-root-ga)
+  says.
 - **`no merge base`** in the heavy-E2E gate — rebase the branch onto current
   `main` (tracked: #876).
 
