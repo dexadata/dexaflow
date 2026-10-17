@@ -61,10 +61,9 @@ type sample struct {
 	TotalHistory int64 `json:"total_ti_history"`
 	TotalXCom    int64 `json:"total_xcom"`
 	ImportErrors int64 `json:"import_errors"`
-	// The two tables nobody budgets for until a weekend run fills the disk with
-	// them. Counted so the growth model in the README is measured, not guessed.
-	TotalAudit        int64 `json:"total_audit_log"`
-	TotalStateHistory int64 `json:"total_task_state_history"`
+	// The table nobody budgets for until a weekend run fills the disk with it.
+	// Counted so the growth model in the README is measured, not guessed.
+	TotalAudit int64 `json:"total_audit_log"`
 	// InfraReplacements is the total number of off-budget re-placements the
 	// infra-fault rail has performed (ADR 0051: an agent-lost or dispatch-lost
 	// attempt is re-placed without consuming a retry). It is RECORDED, not
@@ -324,11 +323,10 @@ SELECT (SELECT count(*) FROM dag_runs),
        (SELECT count(*) FROM dag_runs WHERE state = 'success'),
        (SELECT count(*) FROM dag_runs WHERE state = 'failed'),
        (SELECT count(*) FROM audit_log),
-       (SELECT count(*) FROM task_state_history),
        (SELECT COALESCE(sum(infra_attempts), 0) FROM task_instances)`
 	if err := c.pool.QueryRow(ctx, q).Scan(
 		&s.TotalRuns, &s.TotalTIs, &s.TotalHistory, &s.TotalXCom, &s.ImportErrors,
-		&s.RunsSuccess, &s.RunsFailed, &s.TotalAudit, &s.TotalStateHistory, &s.InfraReplacements,
+		&s.RunsSuccess, &s.RunsFailed, &s.TotalAudit, &s.InfraReplacements,
 	); err != nil {
 		return fmt.Errorf("totals: %w", err)
 	}

@@ -211,29 +211,6 @@ func (q *Queries) DeleteTaskInstancesOfRuns(ctx context.Context, arg DeleteTaskI
 	return result.RowsAffected(), nil
 }
 
-const deleteTaskStateHistoryOfRuns = `-- name: DeleteTaskStateHistoryOfRuns :execrows
-DELETE FROM task_state_history
-WHERE id IN (
-  SELECT h.id FROM task_state_history h
-  JOIN task_instances ti ON ti.id = h.task_instance_id
-  WHERE ti.tenant_id = $1 AND ti.dag_run_id = ANY($2::uuid[])
-  LIMIT $3)
-`
-
-type DeleteTaskStateHistoryOfRunsParams struct {
-	TenantID pgtype.UUID   `json:"tenant_id"`
-	RunIds   []pgtype.UUID `json:"run_ids"`
-	RowLimit int32         `json:"row_limit"`
-}
-
-func (q *Queries) DeleteTaskStateHistoryOfRuns(ctx context.Context, arg DeleteTaskStateHistoryOfRunsParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteTaskStateHistoryOfRuns, arg.TenantID, arg.RunIds, arg.RowLimit)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const deleteTenantAuditLog = `-- name: DeleteTenantAuditLog :execrows
 DELETE FROM audit_log
 WHERE id IN (
