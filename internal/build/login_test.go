@@ -103,7 +103,8 @@ func emptyDockerConfig(t *testing.T, content string) string {
 // keychain every registry request uses resolves it for the registry, and
 // what was in the config before is kept.
 func TestStoreLoginIsReadByTheKeychain(t *testing.T) {
-	dir := emptyDockerConfig(t, `{"auths":{"other.example.com":{"auth":"b3RoZXI6c2VjcmV0"}},"proxies":{"default":{"httpProxy":"http://p:3128"}}}`)
+	otherAuth := base64.StdEncoding.EncodeToString([]byte("other:secret"))
+	dir := emptyDockerConfig(t, `{"auths":{"other.example.com":{"auth":"`+otherAuth+`"}},"proxies":{"default":{"httpProxy":"http://p:3128"}}}`)
 	where, err := StoreLogin(context.Background(), "ghcr.io", "octocat", "gho_token")
 	if err != nil {
 		t.Fatal(err)
