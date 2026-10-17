@@ -87,12 +87,11 @@ func TestChaosMidTickCrashRecoveryIntegration(t *testing.T) {
 	if err := s.Step(ctx); err != nil {
 		t.Fatalf("dispatch-lost tick: %v", err)
 	}
-	if err := reaper.ReapOnce(ctx); err != nil {
-		t.Fatalf("dispatch-lost reap: %v", err)
-	}
-	tiState := taskInstanceState(t, sched, ctx, runUUID, "t")
-	if tiState != domain.TaskStateFailed {
-		t.Fatalf("TI state after dispatch-lost reap = %q, want failed", tiState)
+	reached := reapUntil(t, ctx, reaper, "dispatch-lost", func() bool {
+		return taskInstanceState(t, sched, ctx, runUUID, "t") == domain.TaskStateFailed
+	})
+	if !reached {
+		t.Fatalf("TI state after dispatch-lost reap = %q, want failed", taskInstanceState(t, sched, ctx, runUUID, "t"))
 	}
 
 	// 4. Wait past the orphan threshold (relative to the run's last
@@ -103,14 +102,36 @@ func TestChaosMidTickCrashRecoveryIntegration(t *testing.T) {
 	if err := s.Step(ctx); err != nil {
 		t.Fatalf("orphan-run tick: %v", err)
 	}
-	if err := reaper.ReapOnce(ctx); err != nil {
-		t.Fatalf("orphan-run reap: %v", err)
-	}
-	runState := dagRunState(t, sched, ctx, runUUID)
-	if runState != domain.DagRunStateFailed {
-		t.Fatalf("run state after orphan tick = %q, want failed (orphaned cleanup)", runState)
+	if !reapUntil(t, ctx, reaper, "orphan-run", func() bool {
+		return dagRunState(t, sched, ctx, runUUID) == domain.DagRunStateFailed
+	}) {
+		t.Fatalf("run state after orphan tick = %q, want failed (orphaned cleanup)", dagRunState(t, sched, ctx, runUUID))
 	}
 }
+
+// reapUntil drives sweeps until done reports true, up to chaosMaxSweeps. The
+// reapers read one bounded page per sweep (ReapPageSize, the orphan LIMIT), and
+// the integration database holds the rows every other test left behind, so a
+// candidate can sit behind a full page of older rows and be reached only on a
+// later sweep. That is the designed behavior (R-07), not a failure of the
+// recovery contract this test checks.
+func reapUntil(t *testing.T, ctx context.Context, reaper *executor.Reaper, stage string, done func() bool) bool {
+	t.Helper()
+	for i := 0; i < chaosMaxSweeps; i++ {
+		if err := reaper.ReapOnce(ctx); err != nil {
+			t.Fatalf("%s reap: %v", stage, err)
+		}
+		if done() {
+			return true
+		}
+	}
+	return false
+}
+
+// chaosMaxSweeps bounds reapUntil: enough pages to pass every row a full
+// integration run leaves behind, few enough that a reaper that never reaches
+// the row still fails the test quickly.
+const chaosMaxSweeps = 50
 
 // taskInstanceState looks up a single TI's state via the active-runs query
 // (which the scheduler already uses); this avoids adding a new query just
