@@ -1205,21 +1205,32 @@ const minPythonMinor = 11
 // `dexaflow setup` no longer downloads the managed CPython when the host has a
 // Python 3.12 or 3.13 for the parser (#1700), so this is where it is fetched:
 // lazily, the first time a venv needs the pinned minor (a declared 3.11, or no
-// declaration and no usable host interpreter) and the host has none.
+// declaration and no usable host interpreter) and the host has none, or when
+// the host interpreter cannot build a venv (see basePythonDeps.venvCapable).
 //
 // It errors when an interpreter IS present but reports an unsupported version,
 // or when a declared minor other than the pinned one is missing, rather than
 // returning a bare "python3" that fails opaquely later (#742).
 func devBasePython(ctx context.Context, out io.Writer, home, wantVersion string) (string, error) {
-	stateDir := filepath.Dir(home)
-	return basePythonFor(ctx, wantVersion, basePythonDeps{
+	return basePythonFor(ctx, wantVersion, devBasePythonDeps(out, filepath.Dir(home)))
+}
+
+// devBasePythonDeps wires basePythonFor to the real host: PATH, `--version`,
+// the venv probe, the lazy managed download into stateDir, and progress lines
+// on out.
+func devBasePythonDeps(out io.Writer, stateDir string) basePythonDeps {
+	return basePythonDeps{
 		managed:    setup.ManagedPythonPath(stateDir),
 		lookPath:   exec.LookPath,
 		runVersion: pythonVersion,
 		ensureManaged: func(ctx context.Context) (string, error) {
 			return provisionManagedPython(ctx, out, stateDir, nil)
 		},
-	})
+		canVenv: pythonCanVenv,
+		logf: func(format string, a ...any) {
+			devPrintf(out, "▸ "+format+"\n", a...)
+		},
+	}
 }
 
 // basePythonDeps carries what basePythonFor touches, so the lazy download is
@@ -1229,6 +1240,39 @@ type basePythonDeps struct {
 	lookPath      func(string) (string, error)
 	runVersion    func(context.Context, string) (int, int, error)
 	ensureManaged func(context.Context) (string, error)
+	// canVenv reports whether an interpreter can build a venv; nil skips the
+	// check.
+	canVenv func(context.Context, string) bool
+	// logf prints a progress line; nil prints nothing.
+	logf func(string, ...any)
+}
+
+// pythonCanVenv reports whether py can build a venv with pip in it. Debian
+// and Ubuntu ship ensurepip in the separate python3-venv package, so a system
+// interpreter there imports venv but cannot run `-m venv`.
+func pythonCanVenv(ctx context.Context, py string) bool {
+	return exec.CommandContext(ctx, py, "-c", "import venv, ensurepip").Run() == nil //nolint:gosec // py is a resolved interpreter path (LookPath result)
+}
+
+// venvCapable returns the host interpreter p, or the managed CPython when p
+// cannot build a venv and the managed build is the minor the DAG needs (want is
+// the declared minor, 0 when none is declared). Before #1700 setup had always
+// fetched the managed build, which bundles ensurepip, so a Debian or Ubuntu
+// host without python3-venv never met this; now the host interpreter is found
+// first. A declared minor Dexaflow does not pin is never substituted: p is
+// returned and the venv step's error names the missing package.
+func (d basePythonDeps) venvCapable(ctx context.Context, want int, p string) (string, error) {
+	if p == d.managed || d.canVenv == nil || d.canVenv(ctx, p) {
+		return p, nil
+	}
+	if want != 0 && want != minPythonMinor {
+		return p, nil
+	}
+	if d.logf != nil {
+		d.logf("%s cannot create a venv (its venv or ensurepip module is missing; on Debian and Ubuntu "+
+			"that is the python3-venv package), so the managed CPython 3.%d is used instead", p, minPythonMinor)
+	}
+	return d.ensureManaged(ctx)
 }
 
 // basePythonFor is devBasePython with its dependencies injected.
@@ -1243,11 +1287,14 @@ func basePythonFor(ctx context.Context, wantVersion string, d basePythonDeps) (s
 			return "", verr
 		}
 		p, err := resolvePythonFor(ctx, want, d.managed, d.lookPath, d.runVersion)
-		if err == nil || want != minPythonMinor {
-			return p, err
+		if err != nil {
+			if want != minPythonMinor {
+				return p, err
+			}
+			// The pinned minor is the one Dexaflow can provide itself.
+			return d.ensureManaged(ctx)
 		}
-		// The pinned minor is the one Dexaflow can provide itself.
-		return d.ensureManaged(ctx)
+		return d.venvCapable(ctx, want, p)
 	}
 	p, err := resolvePython3(ctx, d.managed, d.lookPath, d.runVersion)
 	if err != nil {
@@ -1256,7 +1303,7 @@ func basePythonFor(ctx context.Context, wantVersion string, d basePythonDeps) (s
 	if p == "" {
 		return d.ensureManaged(ctx)
 	}
-	return p, nil
+	return d.venvCapable(ctx, 0, p)
 }
 
 // provisionManagedPython downloads and verifies the pinned managed CPython into

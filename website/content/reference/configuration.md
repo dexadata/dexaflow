@@ -119,7 +119,7 @@ cluster runs correctly, and phrases it as a mistake in your code.
 | Tool | What it does with the declared version |
 |---|---|
 | `dexaflow validate` | Lints `dag.py` under that minor. If it is not installed, it falls back to any interpreter **at least as new**, because a newer one accepts everything the declared minor accepts. If all that is installed is older, the lint is **skipped with a warning** naming the version rather than run under it. |
-| `dexaflow lite` | Builds the project's venv on it, and stops rather than substituting a different minor. The one minor it can supply itself is `3.11`: when no host interpreter reports it, `dexaflow lite` downloads the pinned, checksum-verified managed CPython 3.11 into `~/.dexaflow/python` the first time it builds the venv (this needs outbound network once). |
+| `dexaflow lite` | Builds the project's venv on it, and stops rather than substituting a different minor. The one minor it can supply itself is `3.11`: when no host interpreter reports it, `dexaflow lite` downloads the pinned, checksum-verified managed CPython 3.11 into `~/.dexaflow/python` the first time it builds the venv (this needs outbound network once). It does the same when the host 3.11 cannot build a venv (on Debian and Ubuntu, a system Python without the `python3-venv` package), and says so. For any other declared minor, install `python3-venv` (or your distribution's equivalent) for that interpreter. |
 
 Three things follow from this that are worth knowing:
 

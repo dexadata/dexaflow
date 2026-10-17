@@ -9,7 +9,9 @@ body: |-
   none does. A managed CPython that is already installed still wins. A DAG that
   declares `python_version: "3.11"` (the default) on a host without 3.11 gets the
   same checksum-verified build lazily, when `dexaflow lite` first builds its
-  venv, with an error naming the fixes if the download fails. `dexaflow doctor`
+  venv, with an error naming the fixes if the download fails. The same build is
+  used, with a line saying why, when the host Python cannot create a venv (a
+  Debian or Ubuntu system Python without `python3-venv`). `dexaflow doctor`
   and `dexaflow setup --dry-run` report which interpreter setup will use and
   when a download will happen. Config keys, `leoflow.yaml`, `LEOFLOW_*` and
   `~/.leoflow` are unchanged (#1700).
