@@ -5,7 +5,7 @@ weight: 890
 description: "ADR 0089: a warm pool is keyed by tenant, DAG, the dependency image digest and a hash of the warm pod's runtime settings instead of by dag_version_id. A version built on the code-layer path delivers its code to the worker per attempt as a bundle verified by digest before import, so a deploy that changes only code keeps the pool warm. Replaces the pool key of ADR 0058 D1 for those versions; every other version keeps its per-version pool."
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-17
 **Relates:** ADR 0058 (warm worker pools; this ADR replaces the pool key of D1 for versions that carry a code bundle, and keeps D2 to D12), ADR 0082 (a warm pool follows the current version; its targets, prewarm, drain and per-tenant cap now apply to pools instead of versions), ADR 0077 (dependency image and code layer; the environment is its dependency image and the bundle is its code layer), ADR 0053 (same-DAG reuse only; kept), ADR 0055 (per-attempt identity; kept), ADR 0048 (no user-influenced network request in the control plane; decides where the code comes from), ADR 0067 (source mode; still dedicated), ADR 0003 (a version is a `dag.json` and an image)
 **Issues:** #1893, #1707
