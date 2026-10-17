@@ -1,0 +1,161 @@
+{{- /*
+In-cluster rootless image builder (#1883, path 4 of ADR 0073): one BuildKit
+daemon, in a namespace of its own, for the builds no daemonless path covers (a project
+Dockerfile, system_packages, a package without wheels).
+
+It listens on a unix socket only, so it has no port, no Service and no TLS to
+manage: a client reaches it through the Kubernetes API with
+`buildctl --addr kube-pod://<pod>?namespace=<builder namespace>`, which runs
+`buildctl dial-stdio` in the pod over `kubectl exec`. Who may build is decided
+by the Role in builder-rbac.yaml, and registry credentials stay with the client,
+which BuildKit asks for them over the session: the pod holds no secret.
+
+The security context is the least rootless BuildKit runs with, measured with
+moby/buildkit:v0.33.1-rootless:
+- runAsUser 1000 and runAsNonRoot: the image's own user; nothing runs as root
+  on the node. Build steps run as root inside a user namespace that maps to it.
+- privileged false, every capability dropped but SETUID and SETGID. Those two
+  are the file capabilities of newuidmap and newgidmap, which write the user
+  namespace's id maps; with them dropped rootlesskit fails with
+  "fork/exec /usr/bin/newuidmap: operation not permitted".
+- allowPrivilegeEscalation true, for the same reason: no_new_privs stops a file
+  capability from being gained, and newuidmap then fails with "Could not set
+  caps".
+- seccomp and AppArmor Unconfined by default, because the runtime default
+  profiles refuse the unshare and mount calls a user namespace needs. Both are
+  values, so a Localhost profile that allows them can replace Unconfined.
+- --oci-worker-no-process-sandbox: build steps share the pod's PID namespace
+  instead of getting one of their own, which would need privileged.
+- a read-only root filesystem, every write going to a size-limited emptyDir.
+*/ -}}
+{{- if .Values.builder.enabled }}
+{{- $ns := include "leoflow.builderNamespace" . }}
+{{- $keep := .Values.builder.cache.gcKeepStorage | toString | trim }}
+{{- if not (regexMatch "^[0-9]+(,[0-9]+){0,2}$" $keep) }}
+{{- fail (printf "builder.cache.gcKeepStorage=%q must be one to three numbers of MB separated by commas (reserved[,free[,maximum]]), as buildkitd's --oci-worker-gc-keepstorage reads them" $keep) }}
+{{- end }}
+{{- $seccomp := include "leoflow.builderProfile" (dict "value" .Values.builder.seccompProfile "key" "builder.seccompProfile" "types" (list "Unconfined" "RuntimeDefault" "Localhost")) }}
+{{- $apparmor := include "leoflow.builderProfile" (dict "value" .Values.builder.appArmorProfile "key" "builder.appArmorProfile" "types" (list "Unconfined" "RuntimeDefault" "Localhost")) }}
+{{- $image := printf "%s:%s" .Values.builder.image.repository .Values.builder.image.tag }}
+{{- with .Values.builder.image.digest }}
+{{- $image = printf "%s@%s" $image . }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "leoflow.builderName" . }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "leoflow.builderLabels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "leoflow.builderSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "leoflow.builderSelectorLabels" . | nindent 8 }}
+      {{- with .Values.builder.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "leoflow.builderName" . }}
+      # Build steps run in this pod: no API token for them to find.
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- with .Values.builder.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: buildkitd
+          image: {{ $image | quote }}
+          imagePullPolicy: {{ .Values.builder.image.pullPolicy }}
+          args:
+            - --addr
+            - unix:///run/user/1000/buildkit/buildkitd.sock
+            - --oci-worker-no-process-sandbox
+            - --oci-worker-gc
+            - --oci-worker-gc-keepstorage={{ $keep }}
+          readinessProbe:
+            exec:
+              command: [buildctl, debug, workers]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command: [buildctl, debug, workers]
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          securityContext:
+            privileged: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: true
+            capabilities:
+              drop: [ALL]
+              add: [SETUID, SETGID]
+            {{- with $seccomp }}
+            seccompProfile:
+              {{- . | nindent 14 }}
+            {{- end }}
+            {{- with $apparmor }}
+            appArmorProfile:
+              {{- . | nindent 14 }}
+            {{- end }}
+          {{- with .Values.builder.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: buildkit-state
+              mountPath: /home/user/.local/share/buildkit
+            - name: runtime
+              mountPath: /run/user/1000
+            - name: buildkit-tmp
+              mountPath: /home/user/.local/tmp
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        # Layers and the build cache. buildkitd's garbage collector keeps it
+        # under builder.cache.gcKeepStorage; the sizeLimit evicts the pod
+        # rather than filling the node if a single build outgrows it.
+        - name: buildkit-state
+          emptyDir:
+            sizeLimit: {{ .Values.builder.cache.sizeLimit }}
+        - name: runtime
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        - name: buildkit-tmp
+          emptyDir:
+            sizeLimit: 1Gi
+        # rootlesskit creates its bind directory here before it starts.
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+      {{- with .Values.builder.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.builder.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.builder.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

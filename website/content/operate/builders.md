@@ -2,7 +2,7 @@
 title: How deploy builds the DAG image
 linkTitle: Builders
 weight: 13
-description: The builders `dexaflow deploy`, `compile --build` and `build` choose from, in order, the Cloud Build remote builder, how the target platform is picked, and the local container daemon as the fallback.
+description: The builders `dexaflow deploy`, `compile --build` and `build` choose from, in order, the Cloud Build remote builder, the in-cluster builder the Helm chart can run, how the target platform is picked, and the local container daemon as the fallback.
 ---
 
 A DAG version is a `dag.json` and a container image
@@ -23,7 +23,7 @@ no container daemon on your machine.
 | 1 | `skip` | The whole DAG image for this content is already in the registry under its content label ([see below](#reusing-an-image-already-in-the-registry)) | Available for `deploy` |
 | 2 | `code-layer` | The image of your dependencies is already in the registry: only your DAG code is pushed, as one layer on it, through the registry ([see below](#pushing-only-the-dag-code)) | Available for pushed builds |
 | 3 | `dependency-layer` | The image of your dependencies is missing and every dependency has a wheel for the target platform: they are installed for that platform with `uv` and added as a layer on the runtime base, with no daemon and no emulation ([see below](#building-the-dependency-image-from-wheels)) | Available when `uv` is on `PATH` |
-| 4 | `remote` | A real build is needed (a package without wheels, `system_packages`, your own `Dockerfile`) and a remote builder is configured: Google Cloud Build ([see below](#building-on-cloud-build)) | Available for Cloud Build; a build pod in your cluster is planned (#1706) |
+| 4 | `remote` | A real build is needed (a package without wheels, `system_packages`, your own `Dockerfile`) and a remote builder is configured: Google Cloud Build ([see below](#building-on-cloud-build)) | Available for Cloud Build; the [in-cluster builder](#the-in-cluster-builder) ships in the Helm chart, and `remote_builder` pointing at it is planned (#1883) |
 | 5 | `local-daemon` | None of the above applies: a local container tool builds and pushes the image | Available, the fallback |
 
 Every build prints the builder it took and why before it starts:
@@ -419,6 +419,107 @@ names its id, its status and the command that prints its log.
 Build arguments, build secrets and a private package index are not
 supported on this path yet. The decision is recorded in
 [ADR 0083](/project/adrs/0083-remote-builder-on-cloud-build/).
+
+## The in-cluster builder
+
+On a cluster with no cloud builder, the Helm chart can run a builder for you:
+rootless [BuildKit](https://github.com/moby/buildkit) in a namespace of its
+own. `builder.enabled` deploys it; `deploy` does not use it yet, because
+`remote_builder` pointing at it is the next step (#1883). Until then it is a
+BuildKit daemon a platform team can reach with `buildctl`.
+
+What the chart renders, all in `builder.namespace`:
+
+- a Deployment of one pod running `moby/buildkit:<version>-rootless` as uid
+  1000, listening on a unix socket only. It has no port and no Service, and
+  needs no TLS: a client reaches it through the Kubernetes API, with
+  `kubectl exec`.
+- a ServiceAccount with no token and no Role: the builder never calls the
+  Kubernetes API, and build steps find no token in the pod.
+- a Role that allows `get` and `list` on pods and `create` and `get` on
+  `pods/exec` in that namespace and nowhere else, bound to `builder.subjects`.
+  Being bound is what lets someone build.
+- a NetworkPolicy, on by default with the builder: no ingress, and egress to
+  DNS and everywhere except the cloud metadata range (`169.254.0.0/16`) and
+  `builder.networkPolicy.extraExcept`. Build steps run code from Dockerfiles,
+  and the metadata endpoint would hand them the node's credentials. A CNI
+  that does not enforce policies ignores it.
+
+Registry credentials stay with the client: BuildKit asks the client for them
+when it pushes, so the builder holds no secret.
+
+### Installing it
+
+The chart does not create the namespace. With the default seccomp and
+AppArmor profiles it must allow the privileged Pod Security level (the pod is
+not privileged, see [Security posture](#security-posture)):
+
+```sh
+kubectl create namespace dexaflow-builder
+kubectl label namespace dexaflow-builder pod-security.kubernetes.io/enforce=privileged
+```
+
+```yaml
+# values.yaml
+builder:
+  enabled: true
+  namespace: dexaflow-builder
+  subjects:
+    - kind: Group
+      name: platform-deployers
+    - kind: ServiceAccount
+      name: ci-deployer
+      namespace: ci
+```
+
+The chart refuses to render without `builder.namespace`, with the release
+namespace or with the task namespace: the builder runs build steps under a
+looser posture than task pods and must not share a namespace with them or
+with the control plane.
+
+Check it from a machine bound by `builder.subjects`, with
+[`buildctl`](https://github.com/moby/buildkit/releases) and `kubectl` on
+`PATH`:
+
+```sh
+POD=$(kubectl -n dexaflow-builder get pods -l app.kubernetes.io/component=builder -o jsonpath='{.items[0].metadata.name}')
+buildctl --addr "kube-pod://$POD?namespace=dexaflow-builder" debug workers
+buildctl --addr "kube-pod://$POD?namespace=dexaflow-builder" build \
+  --frontend dockerfile.v0 --local context=. --local dockerfile=. \
+  --opt platform=linux/amd64 \
+  --output type=image,name=registry.example.com/team/app:dev,push=true
+```
+
+The builder builds for the architecture of the node it runs on; schedule it
+with `builder.nodeSelector` on nodes of the cluster's architecture.
+
+### Security posture
+
+The pod runs with the least rootless BuildKit starts with:
+
+| Setting | Value | Why |
+|---|---|---|
+| `runAsUser`, `runAsNonRoot` | 1000, true | The image's own user. Build steps run as root inside a user namespace that maps to it, never as root on the node. |
+| `privileged` | false | Build steps share the pod's process namespace (`--oci-worker-no-process-sandbox`) instead of one of their own, which would need a privileged pod. |
+| `capabilities` | drop `ALL`, add `SETUID` and `SETGID` | The file capabilities of `newuidmap` and `newgidmap`, which write the user namespace's id maps. Without them the daemon does not start. |
+| `allowPrivilegeEscalation` | true | `no_new_privs` stops `newuidmap` from gaining those two capabilities. |
+| `seccompProfile`, `appArmorProfile` | `Unconfined` | The runtime default profiles refuse the `unshare` and `mount` calls a user namespace needs. Both are values: a `Localhost` profile that allows them replaces `Unconfined`, and `null` leaves the AppArmor field out. |
+| `readOnlyRootFilesystem` | true | Every write goes to an `emptyDir`; the cache's is limited by `builder.cache.sizeLimit`. |
+
+The `Unconfined` profiles are why the namespace needs the privileged Pod
+Security level and why the builder has a namespace of its own. With
+`Localhost` profiles for both, the baseline level admits it.
+
+Everyone bound by `builder.subjects` shares one daemon and its cache: a build
+step can see the other builds running in the pod, and `pods/exec` opens a
+shell in it. Bind people who already trust each other, such as a platform
+team and its CI.
+
+The cache lives in an `emptyDir` and is lost when the pod restarts. buildkitd's
+garbage collector keeps it under `builder.cache.gcKeepStorage` (MB); keep
+`builder.cache.sizeLimit` above that plus your largest build, or the kubelet
+evicts the pod. All values are listed in the
+[chart README](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md).
 
 ## Choosing the platform
 

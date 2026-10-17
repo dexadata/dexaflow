@@ -87,6 +87,11 @@ A first-class values reference on this site is a TODO for a later migration phas
   from values, rather than requiring a hand-mounted config file. See
   [SSO with Google Workspace](/operate/sso-google-workspace/) or
   [SSO with another OIDC provider](/operate/sso-other-providers/).
+- An in-cluster image builder (`builder.*`), off by default: rootless BuildKit
+  in a namespace of its own, with no port, a ServiceAccount with no token, a
+  Role that lets `builder.subjects` exec into it and a NetworkPolicy that keeps
+  build steps away from the cloud metadata endpoint. See
+  [The in-cluster builder](/operate/builders/#the-in-cluster-builder).
 
 ## Tuning the probes
 
