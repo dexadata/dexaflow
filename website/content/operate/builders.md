@@ -447,20 +447,22 @@ that source.
 
 Several platforms (`--platform linux/amd64,linux/arm64`) need a tool that
 pushes one image per platform under one manifest list. The `local-daemon`
-builder hands the list to the tool as is (`<tool> build --platform
-linux/amd64,linux/arm64`, then `<tool> push`); docker with the containerd
-image store enabled builds and pushes it as one manifest list.
+builder hands the list to the tool, each tool the way it builds a manifest
+list ([see below](#the-local-daemon-fallback)): docker with buildx, docker
+with the containerd image store enabled, podman and nerdctl all push one.
 
 Whatever the tool, a multi-platform push is then checked before anything is
-registered: the CLI reads what the tag names from the registry itself, and it
-must be a manifest list holding an image for every requested platform. A tool
+registered: the CLI reads the pushed image from the registry itself, at the
+digest the tool reported for the push (at the tag when the tool reports
+none), and it must be a manifest list holding an image for every requested
+platform. A tool
 can succeed at build and push and still leave a partial image, so the build
 fails when the build itself fails, when the list misses a platform, and when
 the registry cannot be read or answers something that is not a list. The
 error keeps the cause and says how to build one platform:
 
 ```text
-Error: the multi-platform build failed: building for linux/amd64,linux/arm64 with local-daemon (docker) needs a tool that pushes one image per platform under one manifest list, such as docker with the containerd image store enabled. Otherwise build one platform: set build.platforms in dexaflow.yaml (or pass --platform where the command has it), for example linux/amd64: the pushed image ghcr.io/your-org/first-pro-dag@sha256:... is not a manifest list holding every platform; missing linux/arm64
+Error: the multi-platform build failed: building for linux/amd64,linux/arm64 with local-daemon (docker) needs a tool that pushes one image per platform under one manifest list, such as docker with buildx or with the containerd image store enabled, or podman. Otherwise build one platform: set build.platforms in dexaflow.yaml (or pass --platform where the command has it), for example linux/amd64: the pushed image ghcr.io/your-org/first-pro-dag@sha256:... is not a manifest list holding every platform; missing linux/arm64
 ```
 
 `compile --build --push` runs the same check; a one-platform build is a plain
@@ -469,11 +471,28 @@ image and is not checked.
 ## The local daemon fallback
 
 `local-daemon` is the last path, for a build no earlier path covers and no
-remote builder takes. It runs a container tool on your machine: `docker` by default, or
-`podman` or `nerdctl` with `--builder`. It runs `<tool> build --platform ...`
-and `<tool> push`. The digest `deploy` registers is then read from the
-registry, not from the tool
-([ADR 0075](/project/adrs/0075-daemonless-builds-in-0-5-4/)).
+remote builder takes. It runs a container tool on your machine: `docker` by
+default, or `podman` or `nerdctl` with `--builder`. The digest `deploy`
+registers is the one the tool reports for its own push, so another push of
+the same tag right after yours (two CI jobs building one version) cannot
+change which image is registered
+([ADR 0087](/project/adrs/0087-local-daemon-digest-from-the-push/)):
+
+| Tool | Build and push | Digest taken from |
+|---|---|---|
+| docker with buildx | `docker buildx build --platform ... --push --metadata-file <file>` | `containerimage.digest` in the metadata file |
+| docker without buildx | `docker build --platform ...`, then `docker push` | the `digest: sha256:...` line `docker push` ends with |
+| podman, one platform | `podman build --platform ... -t <image>`, then `podman push --digestfile <file>` | the digest file |
+| podman, several platforms | `podman build --platform a,b --manifest <image>`, then `podman manifest push --all --digestfile <file>` | the digest file |
+| nerdctl | `nerdctl build --platform ...`, then `nerdctl push` (with `--all-platforms` for several platforms) | the registry, at the tag |
+
+With podman, a manifest list left under the image name by an earlier build
+is removed first, so its old images are not pushed again. nerdctl reports no
+digest in a form the CLI can rely on, and a tool that reports none, or one
+that is not a `sha256:` digest, falls back to reading the tag from the
+registry right after the push, with a note, as before
+([ADR 0075](/project/adrs/0075-daemonless-builds-in-0-5-4/)). A build that is
+not pushed (`compile --build` without `--push`) is a plain `<tool> build`.
 
 `--builder` takes any tool that answers those two commands as docker does
 (`build --platform <platforms> -t <image> -f <Dockerfile> <dir>`, then

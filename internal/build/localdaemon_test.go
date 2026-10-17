@@ -21,7 +21,10 @@ func fakeTool(t *testing.T, failOn string) (tool, log string) {
 	dir := t.TempDir()
 	tool = filepath.Join(dir, "docker")
 	log = filepath.Join(dir, "calls.log")
+	// No buildx: these tests drive the classic build-then-push argv, and a
+	// push whose output names no digest, so the registry is read by tag.
 	script := "#!/bin/sh\n" +
+		"if [ \"$1 $2\" = \"buildx version\" ]; then exit 1; fi\n" +
 		"echo \"$*\" >> \"" + log + "\"\n" +
 		"if [ \"$1\" = \"" + failOn + "\" ]; then echo refused >&2; exit 1; fi\n" +
 		"exit 0\n"
