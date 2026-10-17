@@ -38,6 +38,8 @@ PW="$(printf '%s\n' "$SETUP_OUT" | sed -n 's/^[[:space:]]*password:[[:space:]]*/
 HASH="$(sed -n 's/^admin_password_hash:[[:space:]]*"\(.*\)"/\1/p' "$HOME_DIR/.dexaflow/config.yaml")"
 [ -n "$PW" ]   || fail "setup did not print a generated password"
 [ -n "$HASH" ] || fail "setup did not store an admin_password_hash"
+EMAIL="$(sed -n 's/^admin_email:[[:space:]]*"\(.*\)"/\1/p' "$HOME_DIR/.dexaflow/config.yaml")"
+[ "$EMAIL" = "admin@dexaflow.local" ] || fail "setup recorded admin_email '$EMAIL' (want the default admin@dexaflow.local)"
 pass "setup generated an admin password (shown once) and stored only the hash"
 
 # Seed the editor's workspace (a DAG project) and a fake Monaco bundle so the
@@ -56,11 +58,12 @@ LEOFLOW_REDIS_URL="$REDIS_URL" \
 LEOFLOW_AUTH_JWT_SECRET="e2e-insecure-jwt-secret-please-change" \
 LEOFLOW_SECRET_KEY="e2e-insecure-secret-key-32bytes!" \
 LEOFLOW_BOOTSTRAP_PASSWORD_HASH="$HASH" \
-LEOFLOW_BOOTSTRAP_EMAIL="admin@leoflow.local" \
+LEOFLOW_BOOTSTRAP_EMAIL="$EMAIL" \
 LEOFLOW_UI_EDITION="lite" \
 LEOFLOW_UI_WORKSPACE="$HOME_DIR/ws" \
 LEOFLOW_UI_MONACO_DIR="$HOME_DIR/monaco" \
 LEOFLOW_LOGS_DIR="$HOME_DIR/logs" \
+LEOFLOW_EXECUTOR_TYPE="subprocess" \
   "$HOME_DIR/leoflow-server" >"$HOME_DIR/server.log" 2>&1 &
 SERVER_PID=$!
 
@@ -78,7 +81,7 @@ echo "==> login with the correct admin password (the happy path)"
 login() { curl -s -o "$HOME_DIR/resp.json" -w '%{http_code}' -X POST "${BASE}/auth/token" \
   -H 'content-type: application/json' -d "$1"; }
 
-code="$(login "{\"username\":\"admin@leoflow.local\",\"password\":$(printf '%s' "$PW" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')}")"
+code="$(login "{\"username\":\"${EMAIL}\",\"password\":$(printf '%s' "$PW" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')}")"
 [ "$code" = "200" ] || fail "login returned $code (want 200)\n$(cat "$HOME_DIR/resp.json")"
 grep -q '"access_token"' "$HOME_DIR/resp.json" || fail "login 200 but no access_token\n$(cat "$HOME_DIR/resp.json")"
 TOKEN="$(python3 -c 'import json;print(json.load(open("'"$HOME_DIR"'/resp.json"))["access_token"])')"
@@ -86,7 +89,7 @@ TOKEN="$(python3 -c 'import json;print(json.load(open("'"$HOME_DIR"'/resp.json")
 pass "admin login succeeded and returned a JWT"
 
 echo "==> wrong password must be rejected"
-code="$(login '{"username":"admin@leoflow.local","password":"definitely-wrong"}')"
+code="$(login "{\"username\":\"${EMAIL}\",\"password\":\"definitely-wrong\"}")"
 [ "$code" = "401" ] || fail "wrong password returned $code (want 401)"
 pass "wrong password rejected (401)"
 

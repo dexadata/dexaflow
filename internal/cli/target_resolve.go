@@ -34,17 +34,18 @@ type activeTarget struct {
 }
 
 // targetContext is everything target resolution reads: the workspace around
-// the current directory and the user's config file.
+// the command's work dir (findWorkspaceFor) and the user's config file.
 type targetContext struct {
 	ws        *workspaceLocation
 	store     *config.UserStore
 	storePath string
 }
 
-// loadTargetContext reads the workspace around the current directory and the
-// config file the command uses.
+// loadTargetContext reads the workspace around the command's work dir (the
+// current directory unless withWorkDir set another) and the config file the
+// command uses.
 func loadTargetContext(cmd *cobra.Command) (*targetContext, error) {
-	ws, err := findWorkspaceFromCwd()
+	ws, err := findWorkspaceFor(cmd)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +66,7 @@ func (tc *targetContext) lookup(name string) (*activeTarget, bool) {
 	}
 	if t, ok := tc.store.Target(name); ok {
 		return &activeTarget{Name: name, Server: t.Server, Scope: scopeUser,
-			Defaults: deployDefaults{Registry: t.Registry, Platforms: t.Platforms, BaseImage: t.BaseImage}}, true
+			Defaults: deployDefaults{Registry: t.Registry, Platforms: t.Platforms, BaseImage: t.BaseImage, SourceModeImage: t.SourceModeImage}}, true
 	}
 	return nil, false
 }
@@ -153,7 +154,8 @@ type serverChoice struct {
 	// Source says what chose URL, in words a user can act on.
 	Source string
 	// Implicit is true when nothing chose URL: no flag, target, variable or
-	// server_url, so it is the built-in http://localhost:8080.
+	// server_url. URL is then the local Lite server on a machine set up for
+	// Lite (implicitServer), else the built-in http://localhost:8080.
 	Implicit bool
 	// Lite is true when the config file was written for Lite (`dexaflow
 	// setup`), where the local server is the expected one.
@@ -167,7 +169,8 @@ type serverChoice struct {
 //  2. --target, then DEXAFLOW_TARGET;
 //  3. DEXAFLOW_SERVER_URL;
 //  4. the workspace's or the user's selected target;
-//  5. server_url in the config file, then http://localhost:8080.
+//  5. server_url in the config file, then the implicit server: the local
+//     Lite server on a machine set up for Lite, else http://localhost:8080.
 func resolveServer(cmd *cobra.Command, serverFlag string) (*serverChoice, error) {
 	tc, err := loadTargetContext(cmd)
 	if err != nil {
@@ -191,18 +194,33 @@ func resolveServer(cmd *cobra.Command, serverFlag string) (*serverChoice, error)
 	if err != nil {
 		return nil, err
 	}
-	source := "the default"
-	implicit := false
+	choice := &serverChoice{URL: cfg.ServerURL, tc: tc, Lite: cfg.LiteExecutor != ""}
 	switch {
 	case envServer:
-		source = "DEXAFLOW_SERVER_URL"
+		choice.Source = "DEXAFLOW_SERVER_URL"
 	case tc.store.ServerURL != "":
-		source = "server_url in " + tc.storePath
+		choice.Source = "server_url in " + tc.storePath
 	default:
-		implicit = true
+		choice.Implicit = true
+		choice.URL, choice.Source = implicitServer(cfg, tc.storePath)
 	}
-	return &serverChoice{URL: cfg.ServerURL, Source: source, tc: tc,
-		Implicit: implicit, Lite: cfg.LiteExecutor != ""}, nil
+	return choice, nil
+}
+
+// implicitServer is the server a command calls when nothing names one, and
+// what it says chose it. On a machine set up for Lite it is the port Lite
+// serves on (lite_port, written by `dexaflow setup` and read by `dexaflow
+// lite`, else Lite's default port), not the built-in localhost:8080 where
+// nothing listens (#1912).
+func implicitServer(cfg *config.Config, path string) (serverURL, source string) {
+	switch {
+	case cfg.LiteExecutor == "":
+		return cfg.ServerURL, "the default"
+	case cfg.LitePort != 0:
+		return devURL(cfg.LitePort), "lite_port in " + path
+	default:
+		return devURL(devDefaultPort), "Lite's default port, as no lite_port is set in " + path
+	}
 }
 
 // tokenSource says where resolveServerToken found the token.
@@ -215,19 +233,30 @@ const (
 	tokenLegacy               // the single-server session from before targets
 )
 
-// pickToken applies the token precedence for server: --token, then
+// pickTokenFor applies the token precedence for server: --token, then
 // DEXAFLOW_TOKEN (LEOFLOW_TOKEN), then the session saved for that server, then
 // the single-server session. The single-server token is only sent to the
 // server it was saved with (or anywhere when it was saved with none): whatever
 // chose the server, a flag, a variable or a target name in a shared workspace
-// file, a token must never follow it to another control plane.
-func pickToken(choice *serverChoice, tokenFlag string) (string, tokenSource) {
+// file, a token must never follow it to another control plane. With ownOnly
+// a single-server token saved with no server_url is withheld too:
+// `status --all-targets` calls every target in turn, and that one token must
+// not go to all of them.
+func pickTokenFor(choice *serverChoice, tokenFlag string, ownOnly bool) (string, tokenSource) {
 	if tokenFlag != "" {
 		return tokenFlag, tokenExternal
 	}
 	if v, ok := envcompat.Lookup("TOKEN"); ok {
 		return v, tokenExternal
 	}
+	return savedTokenFor(choice, ownOnly)
+}
+
+// savedTokenFor is the token saved in the config file for choice's server:
+// the session saved for it, else the single-server session under the rules
+// of pickTokenFor. It never reads a flag or a variable, so `dexaflow
+// promote`, which calls two control planes, cannot send one token to both.
+func savedTokenFor(choice *serverChoice, ownOnly bool) (string, tokenSource) {
 	store := choice.tc.store
 	if tok, ok := store.Session(choice.URL); ok {
 		return tok, tokenSession
@@ -235,7 +264,7 @@ func pickToken(choice *serverChoice, tokenFlag string) (string, tokenSource) {
 	if store.Token == "" {
 		return "", tokenNone
 	}
-	if store.ServerURL != "" && !sameServer(store.ServerURL, choice.URL) {
+	if (store.ServerURL == "" && ownOnly) || (store.ServerURL != "" && !sameServer(store.ServerURL, choice.URL)) {
 		return "", tokenNone
 	}
 	return store.Token, tokenLegacy

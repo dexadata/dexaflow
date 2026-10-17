@@ -26,6 +26,7 @@ var scopedWrites = map[string]string{
 	"POST /api/v2/dags/:dag_id/clearTaskInstances":                                  auth.ScopeRun,
 	"POST /api/v2/dags/:dag_id/dagRuns/:dag_run_id/clear":                           auth.ScopeRun,
 	"POST /api/v2/dags/:dag_id/versions":                                            auth.ScopeDeploy,
+	"POST /api/v2/dags/:dag_id/versions/dry_run":                                    auth.ScopeDeploy,
 	"PUT /api/v2/dags/:dag_id/currentVersion":                                       auth.ScopeDeploy,
 }
 
@@ -38,6 +39,8 @@ var deployReads = map[string]bool{
 	"GET /api/v2/dags/:dag_id/details":                     true,
 	"GET /api/v2/dags/:dag_id/dagVersions":                 true,
 	"GET /api/v2/dags/:dag_id/dagVersions/:version_number": true,
+	// The cluster's deploy defaults, read before the build (#1704).
+	"GET /api/v2/deployDefaults": true,
 }
 
 // scopelessReads are the protected GET routes a scoped token cannot call at
@@ -100,6 +103,7 @@ func newFullScopeServer(t *testing.T) *gin.Engine {
 		LatestRuns:          &fakeLatestRuns{},
 		TaskSummary:         &fakeTaskSummary{},
 		DagVersions:         &fakeVersionLister{},
+		DagSources:          rolledBackSources(),
 		DashboardStats:      &fakeStatsReader{},
 		AuditLog:            &fakeAuditReader{},
 		Variables:           &fakeVariableStore{},

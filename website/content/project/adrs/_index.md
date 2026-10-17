@@ -89,6 +89,16 @@ this page.
 - [ADR 0074: CI deploys with named, scoped, revocable API tokens and a built-in deployer role](/project/adrs/0074-scoped-api-tokens/)
 - [ADR 0075: The daemonless build of ADR 0073 ships in 0.5.4, and pushed images are read back through the registry](/project/adrs/0075-daemonless-builds-in-0-5-4/)
 - [ADR 0076: deploy reuses the image already in the registry under the content label](/project/adrs/0076-reuse-image-by-content-label/)
+- [ADR 0077: a pushed build splits into a dependency image and a code layer](/project/adrs/0077-dependency-image-and-code-layer/)
+- [ADR 0078: the dependency image is built from wheels without a daemon](/project/adrs/0078-dependency-image-from-wheels/)
+- [ADR 0079: the CLI signs in with single sign-on through the server, which stays the only OIDC client](/project/adrs/0079-cli-sso-through-the-server/)
+- [ADR 0080: registry credentials from the cloud CLI session, after the docker config](/project/adrs/0080-registry-credentials-from-cloud-cli-sessions/)
+- [ADR 0081: the CLI signs in from a machine with no browser through a device sign-in served by Dexaflow](/project/adrs/0081-cli-device-sign-in/)
+- [ADR 0082: a warm pool follows the DAG's current version, started when it becomes current and drained when it stops being current](/project/adrs/0082-warm-pool-follows-the-current-version/)
+- [ADR 0083: the remote builder runs on Cloud Build first, through the gcloud CLI](/project/adrs/0083-remote-builder-on-cloud-build/)
+- [ADR 0084: a template that fails to render fails the task attempt](/project/adrs/0084-template-render-errors-fail-the-task/)
+- [ADR 0085: the control plane reads task ServiceAccounts for the register dry run](/project/adrs/0085-control-plane-reads-task-service-accounts/)
+- [ADR 0086: a clear on the latest version re-binds a finished run with its task set, and leaves an unfinished run on its own version](/project/adrs/0086-clear-rebinds-a-finished-run-with-its-task-set/)
 
 ## Template
 

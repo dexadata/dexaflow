@@ -93,6 +93,20 @@ type Record struct {
 	// label alone. A reader that finds an epoch different from the pod's label
 	// treats the record as absent.
 	AttemptEpoch *int64 `json:"attempt_epoch,omitempty"`
+	// Infra marks a failure the agent saw before the task's code ran because
+	// the control plane did not answer: ADR 0051's Unexecutable, the substrate
+	// could not run the task (#1594). Only UnexecutableBecause sets it, always
+	// with an agent-authored reason and never with an exit code. It is optional
+	// and additive like AttemptEpoch: v stays 1, every other record keeps
+	// today's bytes, and a reader that does not know the field settles the
+	// record as a plain failure.
+	//
+	// Like Author it is a declaration, not an authentication: the task can write
+	// this file too. What a forged marker buys is a re-place on the bounded
+	// infra budget, which the task can already get by killing its agent, so the
+	// reader honors it only with the bounds the reconciler checks (an
+	// agent-authored reason and no exit code).
+	Infra bool `json:"infra,omitempty"`
 }
 
 // AuthorAgent is the Author value the agent stamps on a reason it classified.
@@ -148,6 +162,17 @@ func FailedBecause(reason string) Record {
 // has no exit code to report.
 func FailedBecauseWith(exitCode int32, reason string) Record {
 	return Record{V: Version, Outcome: Failed, ExitCode: &exitCode}.agentReason(reason)
+}
+
+// UnexecutableBecause returns the record of an attempt that ended before the
+// task's code ran because the control plane did not answer (#1594): a failure
+// with no exit code, since no user process ran, a classified reason stamped as
+// agent-authored, and the Infra marker, so the reconciler settles it on the
+// infra rail instead of spending one of the task's retries (ADR 0051).
+func UnexecutableBecause(reason string) Record {
+	r := FailedBecause(reason)
+	r.Infra = true
+	return r
 }
 
 // TruncateReason clamps a failure reason to limit bytes, cutting on a rune boundary

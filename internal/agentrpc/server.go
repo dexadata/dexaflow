@@ -56,8 +56,10 @@ type TaskSpec struct {
 	// stamps the runtime's data_interval_start/end context from them (ADR 0040).
 	DataIntervalStart string
 	DataIntervalEnd   string
-	// ParamsJSON is the DagRun's params/conf, JSON-encoded (#148); the agent stamps
-	// LEOFLOW_PARAMS so the runtime exposes context['params'] / {{ params.X }}.
+	// ParamsJSON is the task's params, JSON-encoded (#148): the DAG's param
+	// defaults, then the task's own params, then the run conf (#1841, #1844). The
+	// agent stamps LEOFLOW_PARAMS so the runtime exposes context['params'] /
+	// {{ params.X }}.
 	ParamsJSON string
 	// FirstRescheduleAt is when a reschedule-mode sensor first entered reschedule,
 	// RFC3339 (#380). The agent stamps LEOFLOW_FIRST_RESCHEDULE_AT so the sensor's
@@ -186,6 +188,10 @@ type Server struct {
 	// bindRetryDelays is the backoff between retries of a failed warm binding
 	// write (bindWarmAttempt). Injectable so tests retry without waiting.
 	bindRetryDelays []time.Duration
+	// leaderPoll is how often an open AwaitAssignment stream re-checks
+	// leaderCheck, so a replica that steps down without a restart sends its
+	// workers away (#1602). Zero means defaultLeaderPoll; tests shorten it.
+	leaderPoll time.Duration
 	// shutdown, when non-nil, is closed as the control plane begins shutting down.
 	// StreamLogs is a bidi stream held open for the whole task; without this signal
 	// its receive loop blocked on Recv until the agent finished, so a graceful stop
@@ -200,6 +206,11 @@ type Server struct {
 	// legacyTokens meters task tokens without an attempt_epoch claim (unset or
 	// nil recorder: off). Atomic because it is attached after Serve starts.
 	legacyTokens atomic.Pointer[legacyRecorderBox]
+	// rejectionMeter counts refused bearers by reason (unset or nil recorder:
+	// off). Atomic because it is attached after Serve starts.
+	rejectionMeter atomic.Pointer[rejectionRecorderBox]
+	// rejections rate limits the refused-bearer log line per reason.
+	rejections rejectionLimiter
 	// attemptSpecs caches each live attempt's XCom spec fields (attemptSpec) so
 	// PushXCom and FetchXCom do not reload the full task spec on every call.
 	attemptSpecs *attemptSpecCache
@@ -554,10 +565,23 @@ func (s *Server) StreamLogs(stream agentv1.AgentService_StreamLogsServer) (err e
 	// execution of the same try no longer overwrites it (ADR 0051 amendment,
 	// #863). A token without the claim writes the epoch-0 key, where every
 	// pre-upgrade log already lives.
-	w, oerr := s.logs.Open(logs.Ref{
+	open, resumed, rerr := s.logOpener(stream.Context())
+	if rerr != nil {
+		return rerr
+	}
+	w, oerr := open(logs.Ref{
 		TenantID: id.TenantID, DagID: id.DagID, RunID: id.RunID, TaskID: id.TaskID, TryNumber: id.TryNumber,
 		AttemptEpoch: id.AttemptEpoch,
 	})
+	if oerr == nil && resumed {
+		// The agent waits for this header before it sends the lines it kept
+		// while the stream was down: without it, it cannot tell a resumed writer
+		// from a refused stream or a control plane that would overwrite (#912).
+		if herr := stream.SendHeader(metadata.Pairs(logResumedHeaderKey, "1")); herr != nil {
+			_ = w.Close() //nolint:errcheck // nothing was written; the stream is already gone
+			return peerStatus("confirming the resumed log stream", herr, attemptAttrs(id)...)
+		}
+	}
 	if oerr != nil {
 		// The agent is told WHICH step failed — without that it sees only a bare
 		// stream EOF, with no server-side explanation (#36) — but not the sink's
@@ -590,6 +614,39 @@ func (s *Server) StreamLogs(stream agentv1.AgentService_StreamLogsServer) (err e
 		publish = func(line string) { gate.publish(stream.Context(), line) }
 	}
 	return writeLines(s.shutdown, w, stream.Recv, publish, attemptAttrs(id))
+}
+
+// Log stream resume keys, mirrored from internal/agent
+// (agent.LogResumeMetadataKey, agent.LogResumedHeaderKey): the agent sets the
+// first on a StreamLogs stream it re-opens after the previous one ended
+// mid-task, and the control plane answers a resumed stream it accepted with
+// the second (#912).
+const (
+	logResumeMetadataKey = "dexaflow-log-resume"
+	logResumedHeaderKey  = "dexaflow-log-resumed"
+)
+
+// LogResumer is implemented by log sinks that can continue an attempt's stored
+// log (logs.DiskSink, logs.ObjectSink): Resume opens a writer that keeps what
+// is already stored, where Open may start the attempt over.
+type LogResumer interface {
+	Resume(ref logs.Ref) (logs.LogWriter, error)
+}
+
+// logOpener picks how StreamLogs opens the attempt's writer: Open for a first
+// stream, the sink's Resume for a stream the agent re-opened. A resume asked of
+// a sink that cannot resume is refused (Unimplemented) rather than served with
+// Open, which would overwrite the stored log; the agent then stops re-opening.
+func (s *Server) logOpener(ctx context.Context) (open func(logs.Ref) (logs.LogWriter, error), resumed bool, err error) {
+	md, _ := metadata.FromIncomingContext(ctx)
+	if len(md.Get(logResumeMetadataKey)) == 0 {
+		return s.logs.Open, false, nil
+	}
+	r, ok := s.logs.(LogResumer)
+	if !ok {
+		return nil, false, status.Error(codes.Unimplemented, "log stream resume is not supported by the configured log sink")
+	}
+	return r.Resume, true, nil
 }
 
 // logLevelString maps the protobuf log level onto the lowercase level name the
@@ -741,14 +798,22 @@ func toXComUpstreamsMap(in map[string][]string) map[string]*agentv1.XComUpstream
 	return out
 }
 
-// identify extracts and verifies the agent token from the request metadata.
+// identify extracts and verifies the agent token from the request metadata. A
+// refusal is metered and logged with its reason (#1125); the agent is told only
+// that its token was missing or invalid.
 func (s *Server) identify(ctx context.Context) (*auth.AgentIdentity, error) {
 	token, ok := bearerFromContext(ctx)
 	if !ok {
+		s.rejectToken(ctx, &auth.AgentTokenRejection{Reason: tokenMissing})
 		return nil, status.Error(codes.Unauthenticated, "missing authorization token")
 	}
 	id, err := s.auth.AuthenticateAgent(token)
 	if err != nil {
+		var rej *auth.AgentTokenRejection
+		if !errors.As(err, &rej) {
+			rej = &auth.AgentTokenRejection{Reason: auth.AgentTokenInvalid}
+		}
+		s.rejectToken(ctx, rej)
 		return nil, status.Error(codes.Unauthenticated, "invalid agent token")
 	}
 	return id, nil

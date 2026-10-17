@@ -41,6 +41,9 @@ type Metrics struct {
 	// Agent credentials: task tokens authenticated without an attempt_epoch
 	// claim, accepted under the epoch-0 rule (ADR 0051 amendment).
 	AgentLegacyAttemptTokens prometheus.Counter
+	// AgentTokenRejections counts agent RPCs refused for their bearer token, by
+	// reason (#1125).
+	AgentTokenRejections *prometheus.CounterVec
 	// Reconciler: durable SUCCESS records settled over a reaper's provisional
 	// infra mark, by the mark overridden (ADR 0052 amendment).
 	ReconcileInfraOverrides *prometheus.CounterVec
@@ -60,6 +63,10 @@ type Metrics struct {
 	// although they do not fit their size, by stage (register, dispatch;
 	// ADR 0066 §3).
 	UnitMisfits *prometheus.CounterVec
+	// UnpinnedImages counts images not pinned by digest that
+	// deploy.require_digest warned about or refused, by stage (register,
+	// set_current) and outcome (warned, refused) (#1703).
+	UnpinnedImages *prometheus.CounterVec
 
 	// Redis observability — port of the #311 step-down pattern for Redis (Pro
 	// only; Lite uses Postgres + in-process tailer per ADR 0026, so these
@@ -81,6 +88,12 @@ type Metrics struct {
 	RetentionRowsDeleted   *prometheus.CounterVec
 	RetentionRowsEligible  *prometheus.GaugeVec
 	RetentionCycleDuration prometheus.Histogram
+
+	// TLSReloadFailures counts certificate or key files that changed on disk
+	// but failed to load, by listener (api, agent_grpc). The listener keeps
+	// serving the last good pair, so a non-zero rate means a rotation is stuck
+	// and the served certificate will expire unless the files are fixed (#637).
+	TLSReloadFailures *prometheus.CounterVec
 }
 
 // NewMetrics registers every ADR 0010 collector with reg and returns the set.
@@ -167,6 +180,13 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 				"It falls to zero once the rollout has finished and every pre-upgrade attempt has finished; a later release rejects such tokens.",
 		}),
 
+		AgentTokenRejections: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_agent_token_rejections_total",
+			Help: "Agent RPCs refused for their bearer token, by reason: expired (the credential lapsed: the agent could not renew it for a whole TTL, " +
+				"or its pod started after it ran out), wrong_audience (a token for another surface), bad_signature (another signing key), " +
+				"wrong_issuer, not_yet_valid, malformed, invalid, or missing (no bearer at all).",
+		}, []string{"reason"}),
+
 		ReconcileInfraOverrides: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_reconcile_infra_override_total",
 			Help: "Durable SUCCESS records the reconciler settled over a reaper's provisional infra mark (agent_lost, pod_lost, dispatch_lost), " +
@@ -199,6 +219,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "dexaflow_unit_misfit_total",
 			Help: "Tasks accepted under executor.unit.enforce=warn although their resources exceed pool_slots x unit, by stage (register, set_current, dispatch).",
 		}, []string{"stage"}),
+		UnpinnedImages: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_unpinned_image_total",
+			Help: "Images not pinned by digest that deploy.require_digest warned about (outcome=warned) or refused (outcome=refused), by stage (register, set_current). Dry runs are not counted.",
+		}, []string{"stage", "outcome"}),
 
 		RedisCommandFailures: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_redis_command_failures_total",
@@ -223,6 +247,11 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		RedisPoolTotalConns: f.NewGauge(prometheus.GaugeOpts{
 			Name: "dexaflow_redis_pool_total_conns", Help: "Redis pool: total connections (active + idle). Saturating against PoolSize is the leading indicator of throughput issues.",
 		}),
+		TLSReloadFailures: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_tls_reload_failures_total",
+			Help: "Rotated TLS certificate or key files that failed to load, by listener (api, agent_grpc). " +
+				"The listener keeps serving the last good certificate; alert on any increase (#637).",
+		}, []string{"listener"}),
 		RedisPoolTimeouts: f.NewCounter(prometheus.CounterOpts{
 			Name: "dexaflow_redis_pool_timeouts_total", Help: "Redis pool checkout timeouts — a caller waited PoolTimeout for an idle connection. A non-zero rate means the pool is too small or commands are too slow.",
 		}),
@@ -290,6 +319,16 @@ func (m *Metrics) UpdateRedisPoolStats(active, idle, total uint32) {
 // connection — the leading indicator that the pool is too small for the
 // command rate.
 func (m *Metrics) RecordRedisPoolTimeout() { m.RedisPoolTimeouts.Inc() }
+
+// RecordTLSReloadFailure counts one rotated certificate pair that failed to
+// load on the given listener. It is a no-op on a nil receiver so a caller
+// without metrics wired needs no guard.
+func (m *Metrics) RecordTLSReloadFailure(listener string) {
+	if m == nil {
+		return
+	}
+	m.TLSReloadFailures.WithLabelValues(listener).Inc()
+}
 
 // RecordHTTPRequest records a completed HTTP request (count + duration).
 func (m *Metrics) RecordHTTPRequest(method, path string, status int, dur time.Duration) {
@@ -390,6 +429,12 @@ func (m *Metrics) RecordDispatchLatencySeconds(seconds float64) {
 // agentrpc.LegacyTokenRecorder.
 func (m *Metrics) RecordLegacyAttemptToken() { m.AgentLegacyAttemptTokens.Inc() }
 
+// RecordAgentTokenRejection counts one agent RPC refused for its bearer token.
+// It satisfies agentrpc.TokenRejectionRecorder.
+func (m *Metrics) RecordAgentTokenRejection(reason string) {
+	m.AgentTokenRejections.WithLabelValues(reason).Inc()
+}
+
 // RecordInfraOverride counts one durable SUCCESS settled over an infra mark.
 // It satisfies executor.InfraOverrideRecorder.
 func (m *Metrics) RecordInfraOverride(mark string) {
@@ -404,3 +449,10 @@ func (m *Metrics) RecordDispatchInnerError() { m.DispatchInnerErrors.Inc() }
 // although it does not fit its size. It satisfies dispatch.UnitMisfitRecorder
 // and api.UnitMisfitRecorder.
 func (m *Metrics) RecordUnitMisfit(stage string) { m.UnitMisfits.WithLabelValues(stage).Inc() }
+
+// RecordUnpinnedImage counts one image not pinned by digest that
+// deploy.require_digest warned about or refused at stage. It satisfies
+// api.UnpinnedImageRecorder.
+func (m *Metrics) RecordUnpinnedImage(stage, outcome string) {
+	m.UnpinnedImages.WithLabelValues(stage, outcome).Inc()
+}

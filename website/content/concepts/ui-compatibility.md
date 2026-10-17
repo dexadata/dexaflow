@@ -352,6 +352,20 @@ Known gaps the 3.3 UI exposes, none of them a crash:
   Clear dialog shows "run on latest version" as forced for it; the request it
   sends still keeps the run's own version. Every other run names its pinned
   version, in `GET .../dagRuns/{dag_run_id}` and in the run list alike.
+- "Run with latest bundle version" follows Airflow 3.2
+  ([ADR 0086](/project/adrs/0086-clear-rebinds-a-finished-run-with-its-task-set/)):
+  a finished run with no task queued or running moves to the current version,
+  which creates the task instances of the tasks that version adds and marks
+  `removed` the ones of the tasks it dropped. A run that has not finished keeps
+  its version and the clear applies on it.
+  - **The UI does not say when the option was not applied.** Both Clear routes
+    (`clearTaskInstances` and `dagRuns/{dag_run_id}/clear`), dry run included,
+    name such a run in the added field `run_on_latest_version_not_applied`,
+    with the reason. The 3.3.2 Clear dialogs read only the fields Airflow
+    defines, so they show the usual preview and no message; the run keeps
+    showing the version it had. [Clearing a run that is still
+    running](/author-dags/dag-authoring/#clearing-a-run-that-is-still-running)
+    shows how to read the field and how to move the run once it has finished.
 - Deadline alerts and run duration stats answer empty.
 - The calls below are not served yet. Each one answers `501` with the detail
   "... is not available in Dexaflow yet", which the UI shows as an error toast,

@@ -59,7 +59,16 @@ dominated by the image pull. During it:
   `Unavailable` rather than `Internal`. The agent also retries an `Internal`
   answer to a state report for up to 2 minutes of backoff, which covers an
   older control plane during an upgrade. An outage longer than that still
-  fails the attempt as before.
+  ends the attempt, but when it ends before the task's code ran (the agent
+  could not register, read its task spec or upstream XComs, or report
+  `running`), the task does not pay for it: on Kubernetes the agent leaves an
+  outcome record that the pod reconciler settles on the infra rail as
+  `control_plane_unavailable`, and on Lite the unreported attempt is
+  `dispatch_lost`. Either way the task is re-placed on the infra budget
+  without spending one of its retries
+  ([scheduler resilience](/operate/scheduler-resilience/)). An outage that
+  outlasts the push of a finished task's outputs still fails the attempt, since
+  its code already ran.
 - **The API and UI are down.** Every replica is the same binary, so one replica
   means one API.
 
@@ -230,6 +239,19 @@ from the workers' side:
   constant today (the bound is a field only tests set), after which it exits
   non-zero and lets the reconciler replace the pod rather than spinning forever
   against a misconfigured deployment.
+- **A leader that steps down without restarting sends its workers on.** A
+  replica can lose leadership and keep running as a follower (a lost advisory
+  lock, failed leadership checks). Its open assignment streams re-check
+  leadership about once a second: each **idle** worker's stream ends with the
+  same `FailedPrecondition`, and the worker re-dials toward the new leader as
+  above. The 10-rejection bound counts only consecutive rejections: a stream a
+  leader accepted (it announces the registration, or hands out an assignment)
+  starts the count over, so a long-lived worker survives any number of leader
+  changes. A worker running an attempt keeps its stream until the attempt is done
+  and its slot is free, then is sent on the same way. The warm-pool reconcile
+  and staging-volume GC cycles that were running at the step-down stop within
+  about a second as well, so they do not create or delete pods next to the new
+  leader's own cycles.
 - **A busy worker finishes its attempt, then exits non-zero — by design.** The
   server puts **no busy predicate** on the shutdown: the raw `SIGTERM` context
   *is* the shutdown signal the assignment handler selects on, so every open
@@ -286,11 +308,18 @@ by at most a few seconds. What a kill loses is therefore **the unflushed tail
 of each running attempt** — for a typical task, the lines of the last ~5 s —
 not the attempt's whole log; and an orderly shutdown loses nothing on the
 control-plane side, because open log streams are closed and flushed at
-`SIGTERM` (see [drain grace](#drain-grace)). Two honest caveats. First, the
-agent does not currently re-open a log stream the control plane closed, so the
-lines a task prints *after* its control plane went away are not shipped by that
-task; the task itself is unaffected, the reconciler still recovers its outcome,
-and a replacement control plane serves the stored partial log. Second, a bucket
+`SIGTERM` (see [drain grace](#drain-grace)). Two honest caveats. First, when
+the control plane closes a task's log stream mid-task, the agent re-opens it
+against whichever replica answers next, retrying with the same capped backoff
+as its final report, and the new stream **continues** the stored log rather
+than starting it over (the control plane reads the stored object back before
+it accepts the stream). The lines the task prints while no control plane is
+reachable wait in the agent, up to 4 MiB, and are shipped once the stream is
+back. What is still lost: the lines already in flight when the stream broke,
+lines past that 4 MiB, and everything after the re-open is refused for good
+(a store that keeps failing the read of the stored object, or a control plane
+older than this behavior, which the agent detects and does not write to). The
+task itself is never affected. Second, a bucket
 with **object versioning** keeps every rewrite as a version — set a lifecycle
 rule on noncurrent versions or expect the versioned size to be several times
 the log size. On memory: the whole attempt is still held in RAM until it ends

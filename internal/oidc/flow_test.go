@@ -217,3 +217,11 @@ func authQuery(t *testing.T, flow *Flow) url.Values {
 	}
 	return u.Query()
 }
+
+func TestAuthEndpointIsTheDiscoveredAuthorizationEndpoint(t *testing.T) {
+	f := newFakeIDP(t)
+	flow := newTestFlow(t, baseOIDCConfig(f))
+	if got, want := flow.AuthEndpoint(), f.issuer+"/authorize"; got != want {
+		t.Fatalf("AuthEndpoint() = %q, want %q", got, want)
+	}
+}

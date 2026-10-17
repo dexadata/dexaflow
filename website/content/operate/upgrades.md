@@ -382,6 +382,10 @@ holds, then re-run.
 | 031 (`fillfactor`), 038 (`attempt_epoch`) | 31, 38 | nothing: each runs in a transaction with a 5 s `lock_timeout`, so nothing changed | 30, 37; retry when the table is quiet |
 | 036, 039, 040 (columns) | 36, 39, 40 | nothing: `ADD COLUMN IF NOT EXISTS`, and 039's backfill, can be repeated | 35, 38, 39 |
 | 037 (role reconcile) | 37 | nothing: one transaction, rolled back, and the file is idempotent | 36 |
+| 043 (index build) | 43 | `DROP INDEX CONCURRENTLY IF EXISTS idx_dag_runs_tenant_settled_ended;` | 42 |
+| 044 (deployer role, API tokens) | 44 | nothing: one transaction, rolled back, and the file is idempotent | 43 |
+| 045 (device sign-ins) | 45 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and the file is idempotent | 44 |
+| 046 (`build_info`) | 46 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the column is not there yet | 45; retry when the table is quiet |
 
 **How to run `migrate force`.** The hook image is the golang-migrate CLI plus
 the SQL files at `/migrations`, so the `version`, `force`, `goto` and `up`
@@ -749,9 +753,84 @@ The down drops the column and its check. No other data changes.
 
 ### Upgrading to 0.5.4
 
+0.5.4 applies four migrations, 043 to 046.
+
+- **`043_dag_runs_settled_ended_index`** builds the index the retention janitor
+  reads, on `dag_runs (tenant_id, ended_at)` for runs in `success` or
+  `failed`. It is built `CONCURRENTLY`: reads and writes on `dag_runs` keep
+  going during the build, which took about 0.2 s on 100,000 runs. The build
+  first waits for every transaction already open in the database to finish,
+  whatever table it touches, with no time limit, and the hook waits with it
+  (see "Why the hook can take longer than usual" under
+  [What the 0.5.1 migrations do](#what-the-051-migrations-do), including
+  Helm's `--timeout`). During the build, autovacuum skips `dag_runs`, and a
+  manual `VACUUM`, `ANALYZE` or schema change on it waits. Upgrade when no long
+  transaction is open in the database. If the build is interrupted, recover it
+  as the table in [An interrupted migration](#an-interrupted-migration) says.
+- **`044_deployer_role_and_api_tokens`** runs in one transaction, which took
+  about 40 ms. It adds the `deploy:dag` permission, the built-in `deployer`
+  role in every tenant, and the `api_tokens` table. The role has no holders,
+  so no account gains anything on upgrade. A tenant that already has a custom
+  role named `deployer` keeps it as it is. Creating `api_tokens` briefly takes
+  a lock on `tenants` and `users` that blocks writes to them (not reads), with
+  no `lock_timeout`. Every statement can be repeated.
+- **`045_cli_device_authorizations`** runs in one transaction, which took
+  about 20 ms. It creates the `cli_device_authorizations` table, where the
+  device sign-ins of `dexaflow auth login --device` wait for approval
+  ([From a machine with no browser](/operate/sso-google-workspace/#from-a-machine-with-no-browser)).
+  The table is new, so no existing row changes. Its foreign keys briefly take
+  a lock on `tenants` and `users` that blocks writes to them (not reads); the
+  migration waits at most 5 seconds for it. If it waits longer, the
+  transaction rolls back, golang-migrate marks version 45 dirty and nothing
+  changed: run `migrate force 44` and retry. Every statement can be repeated.
+- **`046_dag_versions_build_info`** runs in one transaction, which took about
+  10 ms. It adds the nullable `dag_versions.build_info` column, where the
+  register records where a version was built
+  ([Where a version was built](/operate/cicd-deploy/#where-a-version-was-built)).
+  The column has no default, so Postgres adds it to the catalog without
+  rewriting or scanning `dag_versions`, and every version registered before
+  the upgrade reads as having no build info. Adding it takes an `ACCESS
+  EXCLUSIVE` lock on `dag_versions`, which waits for every open transaction
+  that touched the table, and queries on the table queue behind it while it
+  waits. The migration waits at most 5 seconds for it. If it waits longer,
+  the transaction rolls back, golang-migrate marks version 46 dirty and
+  nothing changed: run `migrate force 45` and retry when the table is quiet.
+  The statement can be repeated.
+
+**Rolling back 0.5.4 to 0.5.3.** On Pro, `helm rollback <release> <revision>`
+is supported and leaves the schema at 046: the 0.5.3 control plane boots
+against it with the warning `database schema is ahead of this binary;
+proceeding`. It ignores the new index, the `deployer` role, the API tokens,
+the device sign-ins and the `build_info` column, so tokens created on 0.5.4
+stop authenticating until you move forward again, a device sign-in in
+progress cannot finish, and the versions it registers record no build info
+(its inserts leave the column out and get `NULL`).
+As with earlier patches, prefer it to a `helm upgrade` that points at chart
+0.5.3, whose migration Job fails with `no migration found for version 46`; if
+you must use that upgrade, pass `--set migrations.enabled=false` or run the
+down migrations first. On Lite, `dexaflow lite` 0.5.3 refuses a database above
+042, so the way back is the snapshot from
+[How to test an upgrade safely](#how-to-test-an-upgrade-safely-recommended),
+or the down migrations with the 0.5.4 CLI or migrate image:
+
+```sh
+migrate -path migrations -database "$DATABASE_URL" goto 42
+```
+
+The downs run from 046 to 043. The down of 046 drops `dag_versions.build_info`,
+so the build info recorded for every version is lost; the register audit
+entries keep a copy. The down of 045 drops `cli_device_authorizations`, so
+every device sign-in in progress is lost and has to be started again with
+`dexaflow auth login --device`; no token is kept there. The down of 044 drops
+`api_tokens`, which revokes every API token, deletes the built-in `deployer`
+roles with their user assignments, and deletes the `deploy:dag` permission, so
+a custom role granted it loses that grant. The down of 043 drops the index. No
+other data changes.
+
 **Encrypting Variables is opt-in** (#507). With the default
 `variable_encryption: off`, 0.5.4 stores Variables exactly as 0.5.3 does, so a
-rolling upgrade and a rollback need nothing for them. No migration is involved:
+rolling upgrade and a rollback need nothing for them. Encryption needs no
+migration:
 an encrypted value lives in the same `value` column, marked by the
 `dexaflow:enc:v1:` prefix, and every 0.5.4 mode reads both forms.
 
@@ -833,8 +912,8 @@ created it: a manual trigger (UI, `POST /api/v2/dags/{id}/dagRuns`,
 `dexaflow deploy --trigger`, `dexaflow runs trigger`) or a clear that
 re-queues the run. The API is unchanged and still answers with the queued
 run. Unpausing the DAG (UI switch or `dexaflow admin dags unpause <dag_id>`)
-starts the waiting runs on the next scheduler tick, all of them even when
-there are more than `max_active_runs`. Runs in `running` keep going when
+starts the waiting runs from the next scheduler tick, as `max_active_runs`
+allows (see the next item). Runs in `running` keep going when
 the DAG is paused. A run that a clear put back in `queued` waits like any
 queued run, even while some of its tasks run: those tasks finish, and nothing
 downstream or retried starts until the unpause. In 0.5.3 a manual trigger on a
@@ -842,6 +921,73 @@ paused DAG started at once, so a pipeline that deploys a new DAG and triggers
 it now has to unpause it too (or register it active, as above). Runs queued
 on a paused DAG at the moment of the upgrade wait from then on. Rolling back
 to 0.5.3 starts them.
+
+**Queued runs start under `max_active_runs`** (#1766). As in Airflow, the
+scheduler moves a queued run to `running` only while fewer than
+`max_active_runs` runs of its DAG are running, oldest logical date first
+(close to Airflow's `run_after` order); the rest stay `queued` with nothing
+dispatched until a slot frees. In 0.5.3 the cap applied only when the schedule
+or a trigger created a run, so every run re-queued by a clear ran at once,
+past the cap. A run that a clear re-queued now shows `running` again once it
+starts, with a new `start_date`; in 0.5.3 it stayed `queued`, with no start
+date, while its tasks ran.
+`PATCH /api/v2/dags/{dag_id}/dagRuns/{run_id}` with `"state": "running"` is
+still accepted but now stores `queued` (the response shows it, and the audit
+entry records `requested_state: running`), so the scheduler starts the run
+under the pause and the cap; on a run already `running` it still changes
+nothing. A PATCH to `queued` also clears the run's start date. Airflow 3.2 accepts only `queued`,
+`success` and `failed`; a script that sets `running` should send `queued`,
+since a later minor release may refuse `running`. Rolling back to 0.5.3 needs
+no migration, but 0.5.3 has no start cap and no paused hold: every queued run,
+the backlog the cap held included, starts on its first tick.
+
+**A new install's bootstrap admin is `admin@dexaflow.local`** (#1709). A first
+`dexaflow setup` records `admin_email: "admin@dexaflow.local"`, and a server
+started with a bootstrap password (`bootstrap.password` on Helm,
+`DEXAFLOW_BOOTSTRAP_PASSWORD` or `DEXAFLOW_BOOTSTRAP_PASSWORD_HASH`) and no
+`DEXAFLOW_BOOTSTRAP_EMAIL` creates `admin@dexaflow.local` on an empty database.
+An install created before keeps `admin@leoflow.local` and logs in as before. The
+user is never renamed and no second admin is created:
+
+- Lite keeps the `admin_email` its `config.yaml` records.
+- At every start, the server resolves the default address to
+  `admin@leoflow.local` when that user exists and `admin@dexaflow.local` does
+  not, or when only `admin@leoflow.local` holds the admin role, reconciles
+  that account's password as before, and logs `bootstrap admin kept its
+  pre-rename address`. When both addresses have a user it also logs a warning
+  naming both. This covers Helm and
+  docker-compose installs, which never set the email, and a Lite reinstall over
+  a kept datastore: `dexaflow setup` then prints `admin@dexaflow.local`, but
+  the account that logs in with the new password is `admin@leoflow.local`, and
+  the `dexaflow lite` ready banner names it. `dexaflow lite reset-password`
+  resets that account and records it in `config.yaml`.
+- Any other `DEXAFLOW_BOOTSTRAP_EMAIL` (or `LEOFLOW_BOOTSTRAP_EMAIL`) is used as
+  given.
+- `auth.oidc.breakGlassEmails` must keep naming the address your admin has. The
+  chart's [Google SSO example](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/examples/values-oidc-google.yaml)
+  now lists `admin@dexaflow.local`, which has no password login on an older
+  database: list `admin@leoflow.local` there instead.
+
+To move an existing install to the new address, create `admin@dexaflow.local`
+with the admin role (`dexaflow auth create-user --role admin`); from the next
+start the bootstrap reconciles that account, and `admin@leoflow.local` stays as
+an ordinary account. On Lite, also set `admin_email` in `config.yaml`. Rolling
+back to 0.5.3 needs nothing on an existing install or on Lite, whose
+`config.yaml` names the address. A server install created by 0.5.4 that sets no
+bootstrap email gets a second admin, `admin@leoflow.local`, from the same
+bootstrap password when it starts on 0.5.3.
+
+### Upgrading to 0.5.5: three unused tables are no longer touched
+
+`scheduler_loops`, `replicas` and `task_state_history` (migrations 003 and
+004) were never written by any release (#1186). 0.5.5 stops touching them:
+the retention janitor no longer deletes from `task_state_history`, so
+`dexaflow_retention_rows_deleted_total` and `dexaflow_retention_rows_eligible`
+no longer have a `table="task_state_history"` series. The tables stay in the
+schema, and 0.5.6 drops them in a migration. A 0.5.5 control plane runs
+against either schema, so it keeps working through that migration and after a
+rollback from 0.5.6. Upgrading to 0.5.5 and rolling back to 0.5.4 need nothing
+for this change.
 
 ## Related issues
 

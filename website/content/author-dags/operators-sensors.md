@@ -132,6 +132,14 @@ op.render_template_fields(context)          # Jinja on template_fields ({{ ds }}
 op.execute(context)                         # the actual work
 ```
 
+A template field that fails to render fails the attempt before `execute()`, as on
+Airflow: the task log names the field and carries the Jinja error, for example
+`template field 'sql' of BigQueryInsertJobOperator failed to render:
+UndefinedError: 'nope' is undefined`. The attempt then retries or fails like any
+other failure, and the task's `on_failure_callback` runs on its last attempt.
+Before 0.5.5 the error was logged and the operator ran with the raw `{{ ... }}`
+text ([ADR 0084](/project/adrs/0084-template-render-errors-fail-the-task/)).
+
 Poke-mode **sensors** run on the same path: `execute()` drives the poke loop
 standalone; a timeout raises `AirflowSensorTimeout`, which surfaces as an ordinary
 task failure. The operator's connection comes from `AIRFLOW_CONN_<ID>` — the same
@@ -152,11 +160,24 @@ a fallback for older SDKs).
 `_operator_context()` builds the dict passed to `execute()` and to templating, so
 operators and native tasks see the same macros Airflow exposes:
 
-`ds`, `ts`, `run_id`, `task_instance`/`ti`, `dag_run`, `data_interval_start`,
-`data_interval_end`, `params`, `var`, `conn`.
+`ds`, `ts`, `logical_date`, `run_id`, `task_instance`/`ti`, `dag_run`,
+`data_interval_start`, `data_interval_end`, `params`, `macros`, `var`, `conn`.
 
-`params` (#148) come from the DAG/run config the control plane resolved
-(`run.Conf`), serialized into `DEXAFLOW_PARAMS`. The data interval and logical date
+`logical_date` is the run's logical date as a timezone-aware `datetime`, or
+`None` on a run without one. `macros` is the Task SDK's macros module
+(`{{ macros.ds_add(ds, 1) }}`, `{{ macros.ds_format(...) }}`, `macros.datetime`,
+`macros.timedelta`); in an image without the Task SDK the runtime supplies
+`ds_add`, `ds_format` and the same standard modules itself. Other keys of the
+Task SDK context (`ds_nodash`, `ts_nodash`, `dag`, `task`, ...) are not provided
+yet ([#1843](https://github.com/dexadata/dexaflow/issues/1843)); a template that
+names one renders it as an empty string.
+
+`params` (#148) are layered as in Airflow: the DAG's declared param defaults,
+then the task's own `params=`, then the run's `conf`, each winning per key. The
+control plane resolves them when the agent fetches the task spec and serializes
+them into `DEXAFLOW_PARAMS`, and the runtime merges the operator's `params=`
+under them before rendering, so `{{ params.x }}` sees task params too (#1841,
+#1844). The data interval and logical date
 ride through the gRPC `TaskSpec` (proto fields `logical_date`,
 `data_interval_start/end`, `params_json`).
 
@@ -214,9 +235,12 @@ changing existing behaviour:
 
 `bash` gets the context through Jinja rendering of the command (`{{ ds }}`,
 `{{ var.value.X }}`, `{{ params.region }}`) when the command contains `{{` — a
-plain command stays a direct `bash -c` so bash-only images need no Python. Jinja2
-is optional at runtime: if it is absent the command falls back to its raw form and
-the `$DEXAFLOW_DS` / `$AIRFLOW_VAR_*` env vars still reach the shell. Every
+plain command stays a direct `bash -c` so bash-only images need no Python. A
+templated command that cannot render (a Jinja error, an expression the sandbox
+refuses, or an image without Jinja2) fails the attempt without running anything,
+with the error in the task log; the raw template text never reaches the shell
+([ADR 0084](/project/adrs/0084-template-render-errors-fail-the-task/)). The base
+image ships Jinja2 with the Task SDK. Every
 interpolated **value** is shell-quoted (`shlex.quote`) before exec, so a `params`
 value from an untrusted `conf` cannot inject shell — write interpolations unquoted
 (`--name {{ params.x }}`, not `--name "{{ params.x }}"`). See

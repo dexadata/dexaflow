@@ -76,9 +76,11 @@ picks the highest path available**; without Docker it uses subprocess. Run
    for your DAG projects, and asks (on a terminal) for the workspace, executor
    (`subprocess` for local use, `k8s` for a dev mini-cluster — changeable later),
    and UI port. Run non-interactively (e.g. `curl | sh`) it uses sensible defaults.
-5. **Creates the Lite admin** (`admin@leoflow.local`) with a generated,
+5. **Creates the Lite admin** (`admin@dexaflow.local`) with a generated,
    human-friendly password, **shown once** at the end (only its hash is stored).
-   Recover it with `dexaflow lite reset-password`.
+   Recover it with `dexaflow lite reset-password`. An install created before
+   the rename keeps its `admin@leoflow.local`
+   ([upgrade note](/operate/upgrades/#what-changes-in-054-without-a-flag)).
 
 {{% alert title="Lite is for trusted networks" color="warning" %}}
 The admin password is short by design and there is no SSO/RBAC — run Lite
@@ -363,7 +365,8 @@ ServiceMonitor, NetworkPolicy):
 Open the UI by port-forwarding the Service, or enable `ingress.enabled=true`
 with a controller of your choice — see the chart's
 [ingress values](/operate/helm-chart/) for the field shape. Log in as the bootstrap
-admin (`admin@leoflow.local` / the password you set above) and rotate it.
+admin (`admin@dexaflow.local` / the password you set above) and rotate it. A
+database created before the rename keeps its `admin@leoflow.local`.
 
 ### Prerequisites
 
@@ -564,7 +567,7 @@ for those.
 #### Build provenance and SBOMs
 
 From `v0.5.4` on, every release archive and every image the release workflow
-pushes (`dexaflow-server`, `dexaflow-mcp`, `dexaflow-migrate`, each
+pushes (`dexaflow-server`, `dexaflow-mcp`, `dexaflow-cli`, `dexaflow-migrate`, each
 `dexaflow-runtime:py3.N-<tag>`, and the `leoflow-*` names, which share their
 digests) carries a [SLSA build provenance](https://slsa.dev/spec/v1.0/provenance)
 attestation, and each archive's SPDX SBOM is attested against that archive.

@@ -1,9 +1,0 @@
-kind: Changed
-body: |-
-  The MCP `unpause_dag` tool now plans first whenever the paused DAG has
-  queued runs waiting for the unpause (runs triggered or cleared while it was
-  paused), even when the DAG has no schedule, and the plan says how many
-  queued runs will start. `apply_plan` refuses an unpause plan when more runs
-  are queued than the plan showed. The `clear_task` description says that a
-  clear on a paused DAG waits until the unpause. (#1705)
-time: 2026-10-13T19:00:00.000000000-03:00

@@ -119,10 +119,21 @@ type Runner struct {
 	// second. runOneAttempt resets both.
 	startPhase  retryPhase
 	outputPhase retryPhase
+	// warmAttempt marks an attempt a warm worker serves (attemptRunner). Its
+	// pod outlives the attempt, so no reconciler reads a per-attempt outcome
+	// record from it: a start the control plane never answered is reported
+	// FAILED there, the only settle it has, instead of recorded as
+	// unexecutable (startFailed).
+	warmAttempt bool
 	// attemptEpoch is the execution of the try this attempt is, from its task
 	// spec, stamped on the outcome record (ADR 0052 amendment). It is reset for
 	// every attempt a warm worker runs; 0 until the spec is read.
 	attemptEpoch int64
+	// reportLanded is set once the control plane has answered a ReportState for
+	// this attempt (applied, or acknowledged as stale). A warm worker reads it to
+	// settle an acked attempt that ended before any report reached the control
+	// plane (#1603).
+	reportLanded bool
 	// Resolver resolves a declared secret name from an external backend, pod-side
 	// (ADR 0060). Nil = no external backend configured: the resolution chain is the
 	// vault only, byte-identical to the pre-0060 env-export. SecretBackend is the
@@ -155,7 +166,7 @@ func (r *Runner) clock() time.Time {
 // runOneAttempt directly, registering separately and driving many attempts.
 func (r *Runner) Run(ctx context.Context) error {
 	if err := r.register(ctx); err != nil {
-		return err
+		return r.startFailed(err)
 	}
 	return r.runOneAttempt(ctx)
 }
@@ -175,7 +186,7 @@ func (r *Runner) runOneAttempt(ctx context.Context) error {
 		return cerr
 	})
 	if err != nil {
-		return fmt.Errorf("fetching task spec: %w", err)
+		return r.startFailed(fmt.Errorf("fetching task spec: %w", err))
 	}
 	r.attemptEpoch = spec.GetAttemptEpoch()
 	argv, err := BuildCommand(spec.GetOperator(), spec.GetEntrypoint(), spec.GetOperatorClass())
@@ -196,6 +207,12 @@ func (r *Runner) runOneAttempt(ctx context.Context) error {
 		// gRPC error — control-plane endpoint, TLS handshake text — on a durable
 		// field readable by anyone with pod read access in the task namespace
 		// (#930).
+		//
+		// An upstream read the control plane never answered is not the task's
+		// failure, though: it is settled as unexecutable, and not reported.
+		if r.controlPlaneOutage(err) {
+			return r.startFailed(err)
+		}
 		return r.failWithReason(ctx, 1, err.Error(), classifyEnvFailure(err))
 	}
 	return r.execute(ctx, argv, env, time.Duration(spec.GetExecutionTimeoutSeconds())*time.Second)
@@ -651,7 +668,7 @@ func fetchFanInValues(ctx context.Context, client xcomFetcher, param string, ups
 
 func (r *Runner) execute(ctx context.Context, argv, env []string, timeout time.Duration) error {
 	if err := r.report(ctx, agentv1.TaskState_TASK_STATE_RUNNING, 0, ""); err != nil {
-		return err
+		return r.startFailed(err)
 	}
 	stdout := &logWriter{sink: r.Sink, stream: "stdout", level: agentv1.LogLevel_LOG_LEVEL_INFO}
 	stderr := &logWriter{sink: r.Sink, stream: "stderr", level: agentv1.LogLevel_LOG_LEVEL_ERROR}
@@ -993,11 +1010,13 @@ func (r *Runner) writeOutcome(rec taskoutcome.Record) {
 
 // reportRetryMaxDelay caps the pause between two attempts to deliver a report.
 // It equals the heartbeat interval on purpose: the heartbeat is the agent's
-// other channel to the control plane, and once the server is back a report
-// retry lands within about one heartbeat plus the gRPC channel's own reconnect
-// backoff (the channel re-dials on its own schedule, independent of this cap) —
-// the same posture the kubelet's status manager takes toward an unreachable
-// apiserver (keep trying at a bounded cadence, never abandon the status).
+// other channel to the control plane. The gRPC channel redials on its own
+// schedule (a fail-fast RPC on a channel in TRANSIENT_FAILURE does not start a
+// connect), so Dial caps that schedule at this same value (reconnectBackoff):
+// once the server is back the channel is up within about one heartbeat and the
+// next report retry lands by the following one. It is the same posture the
+// kubelet's status manager takes toward an unreachable apiserver (keep trying
+// at a bounded cadence, never abandon the status).
 const reportRetryMaxDelay = DefaultHeartbeatInterval
 
 // reportBackoff returns the delay before report retry attempt n (1-based): an
@@ -1035,7 +1054,11 @@ func jitterDelay(d time.Duration) time.Duration {
 // Unavailable, a deadline) is retried until it lands, with the delay between
 // attempts following reportBackoff, jittered (jitterDelay). Retrying is safe: the server's ReportState
 // is idempotent (a report that already applied comes back as a stale ack, not a
-// double-apply). A logical rejection or a credential rejection (Unauthenticated,
+// double-apply). A terminal report also retries the transport-class Unknown and
+// Internal errors an outage produces behind a load balancer or a mesh
+// (retryableTerminalReportErr) without a budget; the RUNNING report does not.
+// Any other Internal is retried only within transientRetryBudget. A logical
+// rejection or a credential rejection (Unauthenticated,
 // PermissionDenied) is returned immediately, and a canceled context (parent
 // shutdown, SIGTERM, pod deletion, execution timeout) aborts the loop at once
 // with the context error.
@@ -1068,14 +1091,19 @@ func jitterDelay(d time.Duration) time.Duration {
 // reaped for it.
 func (r *Runner) reportRequest(ctx context.Context, req *agentv1.ReportStateRequest) error {
 	// internalSpent is the backoff spent on Internal answers, which (unlike the
-	// codes retryableReportErr names) are retried only within
-	// transientRetryBudget: Internal is what the control plane answered for a
-	// store error before it learned to say Unavailable, and still answers for a
-	// failure that repeats on every attempt.
+	// codes retryable names) are retried only within transientRetryBudget:
+	// Internal is what the control plane answered for a store error before it
+	// learned to say Unavailable, and still answers for a failure that repeats
+	// on every attempt.
 	var internalSpent time.Duration
+	retryable := retryableReportErr
+	if req.GetState() != agentv1.TaskState_TASK_STATE_RUNNING {
+		retryable = retryableTerminalReportErr
+	}
 	for attempt := 1; ; attempt++ {
 		resp, err := r.Client.ReportState(ctx, req)
 		if err == nil {
+			r.reportLanded = true
 			// should_terminate means the row already moved on — a reaper settled it,
 			// a later attempt superseded it, or (on a retry here) our own earlier
 			// attempt applied but its ack was lost. We cannot tell "superseded" from
@@ -1089,7 +1117,7 @@ func (r *Runner) reportRequest(ctx context.Context, req *agentv1.ReportStateRequ
 			return nil
 		}
 		delay := jitterDelay(reportBackoff(attempt))
-		if !retryableReportErr(err) {
+		if !retryable(err) {
 			if status.Code(err) != codes.Internal || internalSpent+delay > transientRetryBudget {
 				return fmt.Errorf("reporting state %v: %w", req.GetState(), err)
 			}
@@ -1167,6 +1195,35 @@ func retryableTransientErr(err error) bool {
 	}
 }
 
+// controlPlaneOutage reports whether err, which ended an attempt before the
+// task's code ran, means the control plane did not answer: a transient code
+// (retryableTransientErr) that outlasted the start budget. An external secret
+// backend's failure is excluded even when its own gRPC code is transient: that
+// backend belongs to the task's configuration, not to the control plane, and
+// keeps its own classification (classifyEnvFailure). A warm attempt is
+// excluded too (warmAttempt).
+func (r *Runner) controlPlaneOutage(err error) bool {
+	return !r.warmAttempt && retryableTransientErr(err) && !errors.Is(err, errSecretResolution)
+}
+
+// startFailed ends an attempt that stopped before the task's code ran and
+// returns err. When the cause is a control-plane outage (controlPlaneOutage),
+// the substrate could not run the task (ADR 0051, Unexecutable; R-01, #1594):
+// it writes the unexecutable outcome record, which the reconciler settles on
+// the infra rail without spending a task retry, and reports nothing, since a
+// FAILED report would settle the attempt as the task's failure first. The
+// record's reason is a fixed classification, never err's text (#930). On
+// Lite, which reads no record, the unreported attempt is the dispatch-lost
+// reaper's, which settles it on the same rail. Any other cause is returned
+// unchanged, as before.
+func (r *Runner) startFailed(err error) error {
+	if r.controlPlaneOutage(err) {
+		slog.Warn("control plane did not answer before the task started; recording the attempt as unexecutable", "error", err)
+		r.writeOutcome(taskoutcome.UnexecutableBecause(reasonControlPlaneUnavailable))
+	}
+	return err
+}
+
 // withTransientRetry runs call until it succeeds, fails with an error
 // retryableTransientErr rejects, or phase runs out of budget, and returns
 // call's last error. Every try gets a context bounded by the phase deadline,
@@ -1226,6 +1283,54 @@ func (f retryingFetcher) FetchXCom(ctx context.Context, in *agentv1.FetchXComReq
 		return cerr
 	})
 	return resp, err
+}
+
+// retryableTerminalReportErr is retryableReportErr for a terminal report (the
+// attempt's last word: SUCCESS, FAILED, UP_FOR_RESCHEDULE). It also retries the
+// transport-class subset of Unknown and Internal (transportClassErr), which is
+// how a control-plane outage reaches the agent behind an L7 load balancer or a
+// service mesh: an HTTP 500 from the proxy, a stream reset or cut mid-call
+// (#908). Giving up there sends the task to the reconciler's slower recovery
+// from the durable outcome record. The retry stays bounded by the context, and
+// the task pod's ActiveDeadlineSeconds floor bounds that, so even a
+// misclassified error cannot keep a pod alive forever.
+func retryableTerminalReportErr(err error) bool {
+	return retryableReportErr(err) || transportClassErr(err)
+}
+
+// transportMarkers are the lowercase fragments grpc-go and the network stack
+// put in a status message when the transport, not the handler, failed. The
+// control plane's own Unknown and Internal statuses carry only the operation
+// name (agentrpc redacts the cause), so they never match.
+var transportMarkers = []string{
+	"rst_stream", // stream terminated by RST_STREAM (proxy reset)
+	"server closed the stream without sending trailers",
+	"unexpected eof",
+	"connection reset",
+	"broken pipe",
+	"transport is closing",
+	"unexpected http status code received from server: 5", // LB/proxy 500 (grpc-go maps it to Unknown)
+}
+
+// transportClassErr reports whether an Unknown or Internal error is the
+// transport-class kind: the stream or connection broke, or a proxy answered
+// in the backend's place. Any other code, and an Unknown or Internal the
+// handler itself returned, is not.
+func transportClassErr(err error) bool {
+	st, ok := status.FromError(err)
+	if !ok || (st.Code() != codes.Unknown && st.Code() != codes.Internal) {
+		return false
+	}
+	msg := strings.ToLower(st.Message())
+	if msg == "eof" || strings.HasSuffix(msg, ": eof") {
+		return true
+	}
+	for _, m := range transportMarkers {
+		if strings.Contains(msg, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // reschedule reads the next-poke time a reschedule-mode sensor wrote to

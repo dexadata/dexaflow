@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -80,7 +81,11 @@ func (f *fakeDagRepo) ClearDagHistory(_ context.Context, _, dagID string) error 
 	return ErrNotFound
 }
 
-type fakeRunRepo struct{ runs []domain.DagRun }
+type fakeRunRepo struct {
+	runs []domain.DagRun
+	// setCalls counts SetDagRunState writes.
+	setCalls int
+}
 
 func (f *fakeRunRepo) ListDagRuns(context.Context, string, string, int, int) ([]domain.DagRun, int, error) {
 	return f.runs, len(f.runs), nil
@@ -94,6 +99,7 @@ func (f *fakeRunRepo) GetDagRun(_ context.Context, _, _, runID string) (domain.D
 	return domain.DagRun{}, ErrNotFound
 }
 func (f *fakeRunRepo) SetDagRunState(_ context.Context, _, _, runID, state string) error {
+	f.setCalls++
 	for i := range f.runs {
 		if f.runs[i].RunID == runID {
 			f.runs[i].State = domain.DagRunState(state)
@@ -122,6 +128,13 @@ type fakeTaskRepo struct {
 	gotOnlyFailed bool
 	setState      string
 	setTaskID     string
+	// kept is what RunsKeepingVersion answers, filtered to the runs asked
+	// about, and checkErr its error; checkCalls counts the calls and
+	// checkedRuns records the runs asked about, in order.
+	kept        []domain.ClearVersionKept
+	checkErr    error
+	checkCalls  int
+	checkedRuns []string
 }
 
 func (f *fakeTaskRepo) ListTaskInstances(context.Context, string, string, string, int, int) ([]domain.TaskInstance, int, error) {
@@ -145,6 +158,20 @@ func (f *fakeTaskRepo) ClearTaskInstances(_ context.Context, _, _, _ string, _ [
 	f.clearCalled = true
 	f.gotOnlyFailed = onlyFailed
 	return len(f.tis), nil
+}
+func (f *fakeTaskRepo) RunsKeepingVersion(_ context.Context, _, _ string, runIDs []string, _ domain.ClearOptions) ([]domain.ClearVersionKept, error) {
+	f.checkCalls++
+	f.checkedRuns = append(f.checkedRuns, runIDs...)
+	if f.checkErr != nil {
+		return nil, f.checkErr
+	}
+	out := make([]domain.ClearVersionKept, 0)
+	for _, k := range f.kept {
+		if slices.Contains(runIDs, k.RunID) {
+			out = append(out, k)
+		}
+	}
+	return out, nil
 }
 func (f *fakeTaskRepo) SetTaskInstanceState(_ context.Context, _, _, _, taskID, state string) error {
 	f.setTaskID, f.setState = taskID, state
@@ -320,8 +347,65 @@ func TestMarkDagRunState(t *testing.T) {
 	}
 }
 
+// TestMarkDagRunStateRunningQueuesTheRun: a PATCH to running, which 0.5.3
+// accepted, is kept for compatibility (ADR 0068) but stores queued, so only
+// the scheduler starts the run, under the paused hold and the max_active_runs
+// cap (#1766). Airflow 3.2 accepts queued, success and failed. The audit entry
+// records the stored state and the state the caller asked for.
+func TestMarkDagRunStateRunningQueuesTheRun(t *testing.T) {
+	runs := &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1", State: domain.DagRunStateSuccess}}}
+	audit := &fakeAuditWriter{}
+	srv := NewServer(Dependencies{
+		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
+		DagRuns: runs, Audit: audit,
+	})
+	rec := authGet(srv, http.MethodPatch, "/api/v2/dags/etl/dagRuns/r1", `{"state":"running"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH state running = %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	if runs.runs[0].State != domain.DagRunStateQueued {
+		t.Errorf("PATCH running stores %q, want queued for the scheduler to start", runs.runs[0].State)
+	}
+	if !strings.Contains(rec.Body.String(), `"state":"queued"`) {
+		t.Errorf("the response shows the stored state queued: %s", rec.Body.String())
+	}
+	if len(audit.calls) != 1 || audit.calls[0].action != "dagrun.mark.queued" || audit.calls[0].metadata["requested_state"] != "running" {
+		t.Errorf("audit = %+v, want one dagrun.mark.queued entry with requested_state running", audit.calls)
+	}
+}
+
+// TestMarkDagRunStateRunningOnRunningRunIsANoOp: a PATCH to running on a run
+// that is already running changes nothing, as in 0.5.3: the run is not put
+// back in queued, its start date is kept, and the response shows running.
+func TestMarkDagRunStateRunningOnRunningRunIsANoOp(t *testing.T) {
+	started := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	runs := &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1", State: domain.DagRunStateRunning, StartedAt: &started}}}
+	audit := &fakeAuditWriter{}
+	srv := NewServer(Dependencies{
+		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
+		DagRuns: runs, Audit: audit,
+	})
+	rec := authGet(srv, http.MethodPatch, "/api/v2/dags/etl/dagRuns/r1", `{"state":"running"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH state running = %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	if runs.setCalls != 0 || runs.runs[0].State != domain.DagRunStateRunning || runs.runs[0].StartedAt == nil {
+		t.Errorf("a running run is left alone: %d writes, state %q, started %v", runs.setCalls, runs.runs[0].State, runs.runs[0].StartedAt)
+	}
+	if !strings.Contains(rec.Body.String(), `"state":"running"`) {
+		t.Errorf("the response shows the current state running: %s", rec.Body.String())
+	}
+	for _, call := range audit.calls {
+		if _, ok := call.metadata["requested_state"]; ok {
+			t.Errorf("nothing differs from the request, so no requested_state: %+v", call)
+		}
+	}
+}
+
 func TestMarkTaskInstanceState(t *testing.T) {
-	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", RunID: "r1", State: domain.TaskStateFailed}}}
+	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", RunID: "r1", State: domain.TaskStateFailed, MapIndex: -1}}}
 	srv := NewServer(Dependencies{
 		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
 		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
@@ -751,7 +835,7 @@ func TestHandleRepoErrorClientCancel(t *testing.T) {
 
 func TestClearOnlyFailedForwarded(t *testing.T) {
 	admin := &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}
-	repo := &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", RunID: "r1", State: domain.TaskStateFailed}}}
+	repo := &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", RunID: "r1", State: domain.TaskStateFailed, MapIndex: -1}}}
 	srv := NewServer(Dependencies{
 		Logger:        discardLogger(),
 		Authenticator: &fakeAuthn{user: admin},
@@ -1004,18 +1088,17 @@ func TestDagDTOCarriesCurrentVersion(t *testing.T) {
 }
 
 // TestTaskInstanceDagVersionCarriesTheRunsPinnedLabel: the single-task clear
-// dialog — the ordinary "my task failed, clear it" path — gates its version
-// control on
+// dialog of the embedded Airflow 3.2 UI (the ordinary "my task failed, clear
+// it" path) decides whether to offer "Run with latest bundle version" in cQt,
+// which compares the DAG's details.bundle_version (the current label) with
+// the task instance's dag_version.bundle_version, and
+// details.latest_dag_version.version_number with dag_version.version_number.
+// The literal that built that nested object once omitted BundleVersion, so
+// the label comparison never fired.
 //
-//	he !== ge && ge !== null && ge !== ''
-//
-// where he is the DAG's current label and ge is the task instance's
-// dag_version.bundle_version. The literal that builds that nested object omitted
-// BundleVersion, so ge was null and the control never rendered.
-//
-// The label must come from the RUN's pinned version, not from the DAG's latest.
-// Filling it from the latest makes he === ge, so the control stays hidden — the
-// same invisible outcome as null, reached a different way, and the obvious fix.
+// The label must come from the RUN's pinned version, not from the DAG's
+// latest. Here the run's label no longer resolves to a version, the fallback
+// case, and it must still be the run's.
 func TestTaskInstanceDagVersionCarriesTheRunsPinnedLabel(t *testing.T) {
 	runs := &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1", Version: "v1-pinned"}}}
 	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{
@@ -1082,6 +1165,110 @@ func TestTaskInstanceDagVersionCarriesTheRunsPinnedLabel(t *testing.T) {
 	}
 	if *dv.BundleVersion != "v1-pinned" {
 		t.Errorf("clear payload dag_version.bundle_version = %q, want v1-pinned", *dv.BundleVersion)
+	}
+}
+
+// TestTaskInstanceDagVersionIsTheRunsVersion: a task instance's dag_version is
+// the version its run was created with, complete as the dagVersions listing
+// serves it, not the DAG's newest version. After a rollback the two differ, and
+// the Code tab of a task instance opens on this version_number.
+func TestTaskInstanceDagVersionIsTheRunsVersion(t *testing.T) {
+	at := time.Date(2026, 10, 14, 0, 41, 33, 0, time.UTC)
+	runs := &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1", Version: "label-1"}}}
+	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", RunID: "r1", State: domain.TaskStateFailed, MapIndex: -1}}}
+	srv := NewServer(Dependencies{
+		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
+		Tasks: tasks, DagRuns: runs,
+		DagVersions: &fakeVersionLister{versions: []domain.DagVersion{
+			{ID: "id-2", VersionNumber: 2, Version: "label-2", CreatedAt: at.Add(time.Minute), ImageReference: "img@sha256:bb", SpecHash: "h2"},
+			{ID: "id-1", VersionNumber: 1, Version: "label-1", CreatedAt: at, ImageReference: "img@sha256:aa", SpecHash: "h1", IsCurrent: true, CreatedBy: "7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a"},
+		}},
+	})
+	want := map[string]any{
+		"id": "id-1", "version_number": float64(1), "dag_id": "etl", "bundle_name": "leoflow",
+		"bundle_version": "label-1", "created_at": "2026-10-14T00:41:33Z", "dag_display_name": "etl",
+		"bundle_url": nil, "image": "img@sha256:aa", "spec_hash": "h1", "is_current": true,
+		"created_by": "7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a",
+	}
+	check := func(what, method, path, body string) {
+		t.Helper()
+		rec := authGet(srv, method, path, body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s = %d (%s)", what, rec.Code, rec.Body.String())
+		}
+		var got struct {
+			TaskInstances []struct {
+				DagVersion map[string]any `json:"dag_version"`
+			} `json:"task_instances"`
+			DagVersion map[string]any `json:"dag_version"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		dv := got.DagVersion
+		if len(got.TaskInstances) > 0 {
+			dv = got.TaskInstances[0].DagVersion
+		}
+		if len(dv) != len(want) {
+			t.Errorf("%s: dag_version has %d fields, want %d: %v", what, len(dv), len(want), dv)
+		}
+		for k, v := range want {
+			if g, ok := dv[k]; !ok || g != v {
+				t.Errorf("%s: dag_version.%s = %v, want %v", what, k, g, v)
+			}
+		}
+	}
+	check("taskInstances", http.MethodGet, "/api/v2/dags/etl/dagRuns/r1/taskInstances", "")
+	check("taskInstance", http.MethodGet, "/api/v2/dags/etl/dagRuns/r1/taskInstances/extract", "")
+	check("clear dry_run", http.MethodPost, "/api/v2/dags/etl/clearTaskInstances", `{"dag_run_id":"r1","task_ids":["extract"],"dry_run":true}`)
+}
+
+// TestTaskInstanceDagVersionTieBreak: when two versions carry the run's label,
+// the task instance's dag_version is the highest-numbered one, the version the
+// run's own dag_versions names, so the run and its task instances agree.
+func TestTaskInstanceDagVersionTieBreak(t *testing.T) {
+	at := time.Date(2026, 10, 14, 0, 41, 33, 0, time.UTC)
+	runs := &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1", Version: "dev"}}}
+	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", RunID: "r1", State: domain.TaskStateFailed, MapIndex: -1}}}
+	srv := NewServer(Dependencies{
+		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
+		Tasks: tasks, DagRuns: runs,
+		DagVersions: &fakeVersionLister{versions: []domain.DagVersion{
+			{ID: "id-4", VersionNumber: 4, Version: "other", CreatedAt: at.Add(3 * time.Minute)},
+			{ID: "id-3", VersionNumber: 3, Version: "dev", CreatedAt: at.Add(2 * time.Minute)},
+			{ID: "id-2", VersionNumber: 2, Version: "dev", CreatedAt: at.Add(time.Minute)},
+		}},
+	})
+	for _, path := range []string{"/api/v2/dags/etl/dagRuns/r1/taskInstances", "/api/v2/dags/etl/dagRuns/r1"} {
+		rec := authGet(srv, http.MethodGet, path, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s = %d (%s)", path, rec.Code, rec.Body.String())
+		}
+		var got struct {
+			TaskInstances []struct {
+				DagVersion struct {
+					ID string `json:"id"`
+				} `json:"dag_version"`
+			} `json:"task_instances"`
+			DagVersions []struct {
+				ID string `json:"id"`
+			} `json:"dag_versions"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		var id string
+		switch {
+		case len(got.TaskInstances) == 1:
+			id = got.TaskInstances[0].DagVersion.ID
+		case len(got.DagVersions) == 1:
+			id = got.DagVersions[0].ID
+		}
+		if id != "id-3" {
+			t.Errorf("%s names version %q, want id-3, the highest-numbered dev", path, id)
+		}
 	}
 }
 

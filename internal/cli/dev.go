@@ -72,7 +72,7 @@ const (
 	// liteLoginRateLimit is the per-minute failed-login cap for Lite — generous,
 	// because locking out the single local user is pure friction, not security.
 	liteLoginRateLimit = 30
-	devAdminUser       = "admin@leoflow.local"
+	devAdminUser       = auth.DefaultAdminEmail
 	devPollInterval    = 750 * time.Millisecond
 	devReadyTimeout    = 30 * time.Second
 	// Dev uses ports distinct from the demo/production defaults (8080/9090/9091)
@@ -771,7 +771,8 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 		return firstErr(serverExited(), werr)
 	}
 	removePreRestoreAfterBoot(out, keySt)
-	announceReady(out, o.host, o.port, o.adminEmail, ws.Path, countRegisteredDags(ctx))
+	login := liteLoginEmail(ctx, o.adminEmail, liteAdminState)
+	announceReady(out, o.host, o.port, login, ws.Path, countRegisteredDags(ctx))
 	// Mint an admin token in-process signed with the dev JWT secret; the control
 	// plane validates it by signature + claims, so no login or seeded user is
 	// needed. Re-minted per operation (signing is cheap) so a Lite left running
@@ -780,7 +781,7 @@ func runDev(cmd *cobra.Command, dir string, o devOptions) error {
 	logf := func(format string, args ...any) { devPrintf(cmd.OutOrStdout(), format+"\n", args...) }
 	mintToken := func() string {
 		tok, err := auth.MintUserToken(resolveLiteJWTSecret(o.jwtSecret), time.Hour, auth.User{
-			ID: auth.DevTokenSubject, TenantID: "default", Email: devAdminUser, Roles: []string{"admin"},
+			ID: auth.DevTokenSubject, TenantID: "default", Email: devTokenEmail(login), Roles: []string{"admin"},
 		})
 		if err != nil {
 			logf("✗ minting dev token: %v", err)
@@ -1833,7 +1834,7 @@ func loadLiteAdmin(cmd *cobra.Command) liteEnvParams {
 	}
 	email := c.AdminEmail
 	if email == "" {
-		email = "admin@leoflow.local"
+		email = auth.DefaultAdminEmail
 	}
 	return liteEnvParams{
 		adminHash:  c.AdminPasswordHash,
@@ -1909,7 +1910,7 @@ func devReadyOnce(ctx context.Context, baseURL string) bool {
 	if err != nil {
 		return false
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := cliHTTPClient(0).Do(req)
 	if err != nil {
 		return false
 	}
@@ -1926,8 +1927,7 @@ func devWatchLoop(ctx context.Context, cmd *cobra.Command, ws *WorkspaceSpec, re
 	if rerr := reload(); rerr != nil {
 		devPrintf(cmd.ErrOrStderr(), "✗ %v\n", rerr)
 	}
-	watched := workspaceWatchPaths(ws)
-	snap := projectMtimes(watched)
+	snap := projectMtimes(workspaceWatchPaths(ws))
 	// lastSeenDagIDs holds the set of DAG IDs the watcher registered in the
 	// previous tick. On every tick we set-diff against the current workspace
 	// scan; any DAG in lastSeen but not in current was deleted from disk and
@@ -1942,53 +1942,46 @@ func devWatchLoop(ctx context.Context, cmd *cobra.Command, ws *WorkspaceSpec, re
 		lastSeenDagIDs = bootReconcile()
 	}
 	devPrintf(cmd.OutOrStdout(), "👀 watching %s — edit and save to reload (Ctrl-C to stop)\n", ws.Path)
-	ticker := time.NewTicker(devPollInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			devPrintln(cmd.OutOrStdout(), "\nstopping dev environment …")
-			return nil
-		case <-ticker.C:
-			// Re-resolve the workspace each tick so newly-added or removed
-			// projects are detected. Discovery errors (e.g. a fresh
-			// duplicate-dag_id collision) surface here so the user sees them
-			// immediately.
-			curWs, derr := ResolveWorkspace(ws.Path)
-			if derr != nil {
-				devPrintf(cmd.ErrOrStderr(), "✗ workspace discovery: %v\n", derr)
-				continue
+	// Re-resolve the workspace each tick so newly-added or removed projects
+	// are detected. Discovery errors (e.g. a fresh duplicate-dag_id
+	// collision) surface here so the user sees them immediately.
+	curWs := ws
+	scan := func() (map[string]time.Time, bool) {
+		resolved, derr := ResolveWorkspace(ws.Path)
+		if derr != nil {
+			devPrintf(cmd.ErrOrStderr(), "✗ workspace discovery: %v\n", derr)
+			return nil, false
+		}
+		curWs = resolved
+		return projectMtimes(workspaceWatchPaths(curWs)), true
+	}
+	onSave := func(_, _ map[string]time.Time) {
+		// Set-diff lastSeen vs current: any DAG present last tick but
+		// missing now was removed from disk and needs to be deregistered
+		// from the control plane (issue #345). Logged to stderr so the
+		// user sees what the watcher did.
+		if deleteDag != nil {
+			logf := func(format string, args ...any) {
+				devPrintf(cmd.OutOrStdout(), format+"\n", args...)
 			}
-			watched = workspaceWatchPaths(curWs)
-			cur := projectMtimes(watched)
-			if !mtimesChanged(snap, cur) {
-				continue
-			}
-			snap = cur
-			// Set-diff lastSeen vs current: any DAG present last tick but
-			// missing now was removed from disk and needs to be deregistered
-			// from the control plane (issue #345). Logged to stderr so the
-			// user sees what the watcher did.
-			if deleteDag != nil {
-				logf := func(format string, args ...any) {
-					devPrintf(cmd.OutOrStdout(), format+"\n", args...)
-				}
-				lastSeenDagIDs = removeMissingDags(lastSeenDagIDs, projectDagIDs(curWs), deleteDag, logf)
-			}
-			devPrintf(cmd.OutOrStdout(), "[%s] change detected → reloading …\n", time.Now().Format("15:04:05"))
-			// Time the reload — a broken DAG's reload should still finish in
-			// ~1s. Anything multi-second is a red flag (parser hang, lock
-			// contention with the running control plane, slow registration
-			// retry). Log it so the user can grep for slow reloads when they
-			// notice the UI freezing on save (#217 diagnostic).
-			reloadStart := time.Now()
-			rerr := reload()
-			devPrintf(cmd.OutOrStdout(), "[%s] reload finished in %s\n", time.Now().Format("15:04:05"), time.Since(reloadStart).Truncate(time.Millisecond))
-			if rerr != nil {
-				devPrintf(cmd.ErrOrStderr(), "✗ %v\n", rerr)
-			}
+			lastSeenDagIDs = removeMissingDags(lastSeenDagIDs, projectDagIDs(curWs), deleteDag, logf)
+		}
+		devPrintf(cmd.OutOrStdout(), "[%s] change detected → reloading …\n", time.Now().Format("15:04:05"))
+		// Time the reload: a broken DAG's reload should still finish in
+		// ~1s. Anything multi-second is a red flag (parser hang, lock
+		// contention with the running control plane, slow registration
+		// retry). Log it so the user can grep for slow reloads when they
+		// notice the UI freezing on save (#217 diagnostic).
+		reloadStart := time.Now()
+		rerr := reload()
+		devPrintf(cmd.OutOrStdout(), "[%s] reload finished in %s\n", time.Now().Format("15:04:05"), time.Since(reloadStart).Truncate(time.Millisecond))
+		if rerr != nil {
+			devPrintf(cmd.ErrOrStderr(), "✗ %v\n", rerr)
 		}
 	}
+	saveWatcher{interval: devPollInterval, scan: scan, onSave: onSave}.run(ctx, snap)
+	devPrintln(cmd.OutOrStdout(), "\nstopping dev environment …")
+	return nil
 }
 
 // projectDagIDs returns the set of DAG IDs the workspace currently exposes.
@@ -2164,7 +2157,7 @@ func devImportErrorRequest(ctx context.Context, method, reqURL, token string, bo
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	resp, err := cliHTTPClient(10 * time.Second).Do(req)
 	if err != nil {
 		return fmt.Errorf("calling %s: %w", reqURL, err)
 	}
@@ -2350,6 +2343,63 @@ func devEnforcedPythonVersion(cmd *cobra.Command, cfg *domain.LeoflowConfig) str
 		return ""
 	}
 	return cfg.PythonVersion
+}
+
+// liteLoginEmail returns the address the ready banner names as the login. The
+// server resolves the default admin to an install's legacy admin@leoflow.local
+// (auth.ResolveAdminEmail), and the banner resolves it the same way so it names
+// the account that logs in. An empty address (no-auth) stays empty, and a
+// failed lookup keeps the configured address rather than guess.
+func liteLoginEmail(ctx context.Context, configured string, lookup auth.AdminLookup) string {
+	if configured == "" {
+		return ""
+	}
+	res, err := auth.ResolveAdminEmail(ctx, configured, lookup)
+	if err != nil {
+		return configured
+	}
+	return res.Email
+}
+
+// devTokenEmail is the email claim of the in-process dev token: the admin the
+// banner names, or the default admin address under no-auth.
+func devTokenEmail(login string) string {
+	if login != "" {
+		return login
+	}
+	return devAdminUser
+}
+
+// liteAdminState reports the auth.AdminState of an email in the Lite
+// database's default tenant. Like countRegisteredDags it reads Postgres
+// directly, bounded, because it runs at banner time.
+func liteAdminState(ctx context.Context, email string) (auth.AdminState, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	conn, err := pgx.Connect(ctx, devDSNs().database)
+	if err != nil {
+		return auth.UserAbsent, fmt.Errorf("connecting to the Lite database: %w", err)
+	}
+	defer func() { _ = conn.Close(ctx) }() //nolint:errcheck // best-effort close of a short-lived read connection
+	var found, admin bool
+	if qerr := conn.QueryRow(ctx, `
+SELECT count(*) > 0,
+       coalesce(bool_or(r.name = 'admin'), false)
+FROM users u
+JOIN tenants t ON t.id = u.tenant_id
+LEFT JOIN user_roles ur ON ur.user_id = u.id
+LEFT JOIN roles r ON r.id = ur.role_id
+WHERE t.name = 'default' AND u.email = $1`, email).Scan(&found, &admin); qerr != nil {
+		return auth.UserAbsent, fmt.Errorf("looking up the Lite admin: %w", qerr)
+	}
+	switch {
+	case admin:
+		return auth.UserIsAdmin, nil
+	case found:
+		return auth.UserWithoutAdminRole, nil
+	default:
+		return auth.UserAbsent, nil
+	}
 }
 
 // countRegisteredDags reports how many DAGs the local database already holds.

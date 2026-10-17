@@ -204,7 +204,17 @@ func (f *epochMarkStore) MarkTaskPodLost(_ context.Context, _ string, try, epoch
 	return true, nil
 }
 
+func (f *epochMarkStore) MarkTaskPodLostOOMKilled(_ context.Context, _ string, try, epoch int) (bool, error) {
+	f.marks = append(f.marks, Attempt{TryNumber: try, AttemptEpoch: epoch})
+	return true, nil
+}
+
 func (f *epochMarkStore) MarkTaskDispatchLost(_ context.Context, _ string, try, epoch int) (bool, error) {
+	f.marks = append(f.marks, Attempt{TryNumber: try, AttemptEpoch: epoch})
+	return !f.stale, nil
+}
+
+func (f *epochMarkStore) MarkTaskStartExpired(_ context.Context, _ string, try, epoch int) (bool, error) {
 	f.marks = append(f.marks, Attempt{TryNumber: try, AttemptEpoch: epoch})
 	return !f.stale, nil
 }

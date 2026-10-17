@@ -336,6 +336,31 @@ func (r *Repository) LocalPasswordUserExists(ctx context.Context, tenant, email 
 	return n > 0, nil
 }
 
+// AdminUserState reports whether a user with exactly this email exists in the
+// tenant, active or not and whatever its login, and whether it holds the admin
+// role. It backs the bootstrap admin resolution (auth.ResolveAdminEmail): an
+// install whose admin predates the rename to Dexaflow keeps that admin instead
+// of gaining a second one.
+func (r *Repository) AdminUserState(ctx context.Context, tenant, email string) (auth.AdminState, error) {
+	row, err := r.q.GetUserByEmail(ctx, queries.GetUserByEmailParams{Name: tenant, Email: email})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return auth.UserAbsent, nil
+		}
+		return auth.UserAbsent, fmt.Errorf("looking up user: %w", err)
+	}
+	roles, err := r.q.GetUserRoles(ctx, row.ID)
+	if err != nil {
+		return auth.UserAbsent, fmt.Errorf("loading user roles: %w", err)
+	}
+	for _, role := range roles {
+		if role == "admin" {
+			return auth.UserIsAdmin, nil
+		}
+	}
+	return auth.UserWithoutAdminRole, nil
+}
+
 // RoleExists reports whether a role name exists for the tenant. The OIDC login
 // path uses it to fail closed on a misconfigured default_role before minting a
 // token for a returning user (the JIT path validates roles inside CreateOIDCUser).
@@ -754,6 +779,16 @@ func (r *Repository) ListTaskInstances(ctx context.Context, tenant, dagID, runID
 // opts carries the two independent run-level decisions — whether to re-open the
 // run, and which version the re-run executes (see domain.ClearOptions).
 //
+// A clear that asks for the current version (opts.RunOnLatestVersion with
+// opts.ResetDagRun) moves the run to it only when the run has finished and
+// none of its task instances is queued or running, decided inside the
+// clear's transaction on the locked run (decideMove, ADR 0086). The move
+// brings the run's task instances to that version's tasks
+// (alignTaskInstances). Any other run keeps its version, and the clear
+// applies on it; RunsKeepingVersion reports why. Either way the clear resets
+// only tasks the version the re-run executes declares, so a task instance
+// left removed by an earlier move stays removed.
+//
 // Each cleared task instance gets its retry budget back and starts without the
 // XCom of the attempt it replaces (#1131). The whole clear is one transaction,
 // and the stored XCom values are deleted before it commits: a backend failure
@@ -768,27 +803,15 @@ func (r *Repository) ClearTaskInstances(ctx context.Context, tenant, dagID, runI
 	if err != nil {
 		return 0, mapNotFound(err)
 	}
-	budget, err := r.loadClearRetryBudget(ctx, dag, run, opts)
-	if err != nil {
-		return 0, err
-	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("beginning clear tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
 	qtx := r.q.WithTx(tx)
-	cleared, err := resetTaskInstances(ctx, qtx, run, taskIDs, onlyFailed, budget)
+	cleared, err := r.clearInTx(ctx, qtx, dag, run, taskIDs, onlyFailed, opts)
 	if err != nil {
 		return 0, err
-	}
-	if err := r.deleteClearedXCom(ctx, qtx, run, cleared); err != nil {
-		return 0, err
-	}
-	if opts.ResetDagRun {
-		if err := reopenClearedRun(ctx, qtx, dag, run, opts); err != nil {
-			return 0, err
-		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("committing clear tx: %w", err)
@@ -796,10 +819,60 @@ func (r *Repository) ClearTaskInstances(ctx context.Context, tenant, dagID, runI
 	return len(cleared), nil
 }
 
+// clearInTx is ClearTaskInstances on run, inside the clear's transaction q.
+// It returns the ids of the task instances it reset.
+func (r *Repository) clearInTx(ctx context.Context, q *queries.Queries, dag queries.Dag, run queries.DagRun, taskIDs []string, onlyFailed bool, opts domain.ClearOptions) ([]string, error) {
+	run, tis, moves, err := decideMove(ctx, q, dag, run, opts)
+	if err != nil {
+		return nil, err
+	}
+	versionID := run.DagVersionID
+	if moves {
+		versionID = dag.CurrentVersionID
+	}
+	budget, err := loadClearRetryBudget(ctx, q, dag.TenantID, versionID)
+	if err != nil {
+		return nil, err
+	}
+	var restored []string
+	if moves {
+		if restored, err = alignTaskInstances(ctx, q, run, tis, budget); err != nil {
+			return nil, err
+		}
+	}
+	if versionID.Valid {
+		// Only a task the version the re-run executes declares is reset,
+		// whether or not the run moves: a task instance a past move left
+		// removed, reset to none, would never be planned and the finished
+		// run would never settle again (ADR 0086).
+		named := len(taskIDs) > 0
+		taskIDs = declaredOnly(taskIDs, budget, restored)
+		if named && len(taskIDs) == 0 {
+			// Every named task was dropped or already brought back: an
+			// empty list would mean "every failed task" below.
+			onlyFailed = false
+		}
+	}
+	cleared, err := resetTaskInstances(ctx, q, run, taskIDs, onlyFailed, budget)
+	if err != nil {
+		return nil, err
+	}
+	cleared = append(cleared, restored...)
+	if err := r.deleteClearedXCom(ctx, q, run, cleared); err != nil {
+		return nil, err
+	}
+	if opts.ResetDagRun {
+		if err := reopenClearedRun(ctx, q, dag, run, moves); err != nil {
+			return nil, err
+		}
+	}
+	return cleared, nil
+}
+
 // reopenClearedRun re-opens a cleared run so the scheduler looks at it again,
-// re-binding it to the DAG's current version when opts asks for that.
-func reopenClearedRun(ctx context.Context, q *queries.Queries, dag queries.Dag, run queries.DagRun, opts domain.ClearOptions) error {
-	if opts.RunOnLatestVersion {
+// re-binding it to the DAG's current version when moves is set.
+func reopenClearedRun(ctx context.Context, q *queries.Queries, dag queries.Dag, run queries.DagRun, moves bool) error {
+	if moves {
 		// Re-bind the run to the DAG's current version so a clear after a
 		// code/yaml fix re-runs against the newest image + config (ADR 0020).
 		// In dev the current version is the last hot-reload; in prod, the last
@@ -879,9 +952,7 @@ func resetTaskInstances(ctx context.Context, q *queries.Queries, run queries.Dag
 			}
 			continue
 		}
-		if err := q.ResetTaskInstanceToNone(ctx, queries.ResetTaskInstanceToNoneParams{
-			TenantID: run.TenantID, DagRunID: run.ID, TaskID: taskID, SpecTaskIds: budget.taskIDs, SpecRetries: budget.retries, SpecPoolSlots: budget.poolSlots, SpecPools: budget.pools,
-		}); err != nil {
+		if err := q.ResetTaskInstanceToNone(ctx, budget.resetToNone(run, taskID)); err != nil {
 			return nil, fmt.Errorf("clearing task %q: %w", taskID, err)
 		}
 		cleared = append(cleared, taskID)
@@ -905,8 +976,14 @@ func (r *Repository) SetDagRunState(ctx context.Context, tenant, dagID, runID, s
 	if domain.DagRunState(state).IsTerminal() {
 		ended = pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
 	}
+	// A run set back to queued waits for the scheduler to start it again, as
+	// after a clear: its start is cleared so the next start stamps a new one.
+	started := run.StartedAt
+	if domain.DagRunState(state) == domain.DagRunStateQueued {
+		started = pgtype.Timestamptz{}
+	}
 	if _, err := r.q.UpdateDagRunState(ctx, queries.UpdateDagRunStateParams{
-		ID: run.ID, State: queries.DagRunState(state), StartedAt: run.StartedAt, EndedAt: ended, TenantID: run.TenantID,
+		ID: run.ID, State: queries.DagRunState(state), StartedAt: started, EndedAt: ended, TenantID: run.TenantID,
 	}); err != nil {
 		return fmt.Errorf("setting dag run state: %w", err)
 	}
@@ -918,6 +995,30 @@ func (r *Repository) SetDagRunState(ctx context.Context, tenant, dagID, runID, s
 // owner and the task columns. Scoped to the DAG (resource_id = dag_id) so it
 // appears on the DAG's Audit Log tab.
 func (r *Repository) RecordTaskActionAudit(ctx context.Context, tenant, userID, action, dagID, runID, taskID string, tryNumber int) error {
+	fields := map[string]any{"run_id": runID}
+	if taskID != "" { // run-level events (e.g. trigger) carry no task columns
+		fields["task_id"] = taskID
+		fields["try_number"] = tryNumber
+	}
+	return r.recordDagAudit(ctx, tenant, userID, action, dagID, fields)
+}
+
+// RecordRunActionAudit logs a run-level action on the DAG's Audit Log tab, as
+// RecordTaskActionAudit does, with extra metadata fields next to run_id (for
+// example requested_state when a PATCH stored another state, #1766).
+func (r *Repository) RecordRunActionAudit(ctx context.Context, tenant, userID, action, dagID, runID string, metadata map[string]string) error {
+	fields := map[string]any{"run_id": runID}
+	for k, v := range metadata {
+		if k != "run_id" {
+			fields[k] = v
+		}
+	}
+	return r.recordDagAudit(ctx, tenant, userID, action, dagID, fields)
+}
+
+// recordDagAudit writes one audit entry scoped to the DAG with the given
+// metadata fields.
+func (r *Repository) recordDagAudit(ctx context.Context, tenant, userID, action, dagID string, fields map[string]any) error {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
 		return err
@@ -925,11 +1026,6 @@ func (r *Repository) RecordTaskActionAudit(ctx context.Context, tenant, userID, 
 	var uid pgtype.UUID
 	if u, perr := parseUUID(userID); perr == nil {
 		uid = u
-	}
-	fields := map[string]any{"run_id": runID}
-	if taskID != "" { // run-level events (e.g. trigger) carry no task columns
-		fields["task_id"] = taskID
-		fields["try_number"] = tryNumber
 	}
 	meta, err := json.Marshal(fields)
 	if err != nil {
@@ -1214,7 +1310,27 @@ func dagVersionOf(row queries.ListDagVersionsRow) domain.DagVersion {
 		SpecHash:       row.SpecHash,
 		IsCurrent:      row.IsCurrent,
 		CreatedBy:      row.CreatedBy,
+		BuildInfo:      buildInfoOf(uuidToString(row.ID), row.BuildInfo),
 	}
+}
+
+// buildInfoOf decodes the build_info column of version versionID: nil when
+// it is NULL. A value that does not decode is logged and read as nil, since
+// provenance is shown beside the version and must not make it unlistable.
+func buildInfoOf(versionID string, raw []byte) *domain.BuildInfo {
+	if len(raw) == 0 {
+		return nil
+	}
+	var b domain.BuildInfo
+	if err := json.Unmarshal(raw, &b); err != nil {
+		slog.Warn("listing a dag version without its build info: the stored value does not decode",
+			"dag_version_id", versionID, "error", err)
+		return nil
+	}
+	if b.IsZero() {
+		return nil
+	}
+	return &b
 }
 
 // GetCurrentSpec returns the parsed spec of the DAG's current version, or
@@ -1309,11 +1425,15 @@ func (r *Repository) RegisterDagVersionAs(ctx context.Context, tenant string, re
 	got, err := registerDagVersionTx(ctx, r.q.WithTx(tx), tid, registration{
 		spec: spec, specHash: reg.SpecHash, specJSON: specJSON,
 		paused: paused, pausedOverride: reg.IsPaused != nil, actor: actorUUID(reg.ActorUserID),
+		promotedFrom: reg.PromotedFrom, buildInfo: reg.BuildInfo, requireDigest: reg.RequireDigest,
 	})
 	if err != nil {
 		return domain.DagRegistered{}, err
 	}
-	if !got.wrote {
+	// A dry run (#1705) stops here, before the commit: the deferred rollback
+	// undoes every write, audit entries included, so its outcome and its
+	// errors are exactly the register's and nothing remains.
+	if !got.wrote || reg.DryRun {
 		return got.DagRegistered, nil
 	}
 	if cerr := tx.Commit(ctx); cerr != nil {
@@ -1360,6 +1480,10 @@ func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.
 	} else if !errors.Is(verr, pgx.ErrNoRows) {
 		return registerOutcome{}, fmt.Errorf("checking existing version: %w", verr)
 	}
+	buildInfo, err := reg.buildInfoJSON()
+	if err != nil {
+		return registerOutcome{}, err
+	}
 	version, err := qtx.InsertDagVersion(ctx, queries.InsertDagVersionParams{
 		DagID:          dag.ID,
 		TenantID:       tid,
@@ -1368,6 +1492,7 @@ func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.
 		Spec:           reg.specJSON,
 		SpecHash:       specHash,
 		CreatedBy:      actor,
+		BuildInfo:      buildInfo,
 	})
 	if err != nil {
 		// A collision on dag_versions_unique (dag_id, version) means the same
@@ -1386,11 +1511,7 @@ func registerDagVersionTx(ctx context.Context, qtx *queries.Queries, tid pgtype.
 	if err := qtx.SetCurrentDagVersion(ctx, queries.SetCurrentDagVersionParams{ID: dag.ID, CurrentVersionID: version.ID, TenantID: tid}); err != nil {
 		return registerOutcome{}, fmt.Errorf("setting current version: %w", err)
 	}
-	fields := map[string]any{"version": spec.DagVersion, "image": spec.Image, "spec_hash": specHash}
-	if reg.pausedOverride {
-		fields["is_paused"] = reg.paused
-	}
-	if err := writeDagAudit(ctx, qtx, tid, actor, "dag.version.register", spec.DagID, fields); err != nil {
+	if err := writeDagAudit(ctx, qtx, tid, actor, "dag.version.register", spec.DagID, reg.auditFields()); err != nil {
 		return registerOutcome{}, err
 	}
 	out.Created, out.wrote = true, true
@@ -1409,8 +1530,11 @@ func setPausedByRegister(ctx context.Context, qtx *queries.Queries, tid, actor p
 }
 
 // registration is what one register writes: the spec, its hash and encoding,
-// is_paused for a DAG it creates (or for any DAG with pausedOverride), and the
-// registering user (null when none).
+// is_paused for a DAG it creates (or for any DAG with pausedOverride), the
+// registering user (null when none), for a promoted version the control
+// plane it came from (nil otherwise), where the version was built (nil
+// when the register sent none) and the deploy.require_digest it was
+// admitted under.
 type registration struct {
 	spec           domain.DAGSpec
 	specHash       string
@@ -1418,6 +1542,43 @@ type registration struct {
 	paused         bool
 	pausedOverride bool
 	actor          pgtype.UUID
+	promotedFrom   *domain.DagPromotion
+	buildInfo      *domain.BuildInfo
+	requireDigest  domain.DigestRequirement
+}
+
+// buildInfoJSON encodes the build info of a register for its column: nil
+// (NULL) when the register sent none or an empty one.
+func (reg registration) buildInfoJSON() ([]byte, error) {
+	if reg.buildInfo == nil || reg.buildInfo.IsZero() {
+		return nil, nil
+	}
+	out, err := json.Marshal(reg.buildInfo)
+	if err != nil {
+		return nil, fmt.Errorf("encoding build info: %w", err)
+	}
+	return out, nil
+}
+
+// auditFields is the metadata of the register's audit entry: the version,
+// image and hash, and what the register was sent beyond the spec.
+func (reg registration) auditFields() map[string]any {
+	spec := reg.spec
+	fields := map[string]any{"version": spec.DagVersion, "image": spec.Image, "spec_hash": reg.specHash}
+	if reg.pausedOverride {
+		fields["is_paused"] = reg.paused
+	}
+	if p := reg.promotedFrom; p != nil {
+		fields["promoted_from"] = map[string]string{"target": p.Target, "server": p.Server}
+	}
+	if b := reg.buildInfo; b != nil && !b.IsZero() {
+		fields["build_info"] = *b
+	}
+	if reg.requireDigest.Active() {
+		fields["require_digest"] = string(reg.requireDigest)
+		fields["image_pinned"] = domain.IsDigestPinned(spec.Image)
+	}
+	return fields
 }
 
 // actorUUID is the user id of an acting principal, or a null UUID when the

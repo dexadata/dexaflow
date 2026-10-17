@@ -77,7 +77,10 @@ func newIsolationFixture(t *testing.T) *isolationFixture {
 	repo := storage.NewRepository(pg)
 	sink := logs.NewDiskSink(t.TempDir())
 
-	n := time.Now().UnixNano()
+	// The MCP server reads "today" from a clock pinned before the seed, so a
+	// run seeded just before midnight UTC still counts as today's.
+	seededAt := time.Now()
+	n := seededAt.UnixNano()
 	f := &isolationFixture{
 		shared:  fmt.Sprintf("iso_shared_%d", n),
 		aOnly:   fmt.Sprintf("iso_a_only_%d", n),
@@ -109,6 +112,7 @@ func newIsolationFixture(t *testing.T) *isolationFixture {
 		Tasks:         repo,
 		Versions:      repo,
 		Specs:         repo,
+		DagSources:    repo,
 		DagVersions:   repo,
 		Logs:          storage.NewLogReader(pg, sink, nil),
 	}))
@@ -120,7 +124,7 @@ func newIsolationFixture(t *testing.T) *isolationFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.sess = connectMCP(t, apiSrv.URL, token)
+	f.sess = connectMCP(t, apiSrv.URL, token, seededAt)
 
 	userB, err := repo.CreateUser(ctx, tenantB, fmt.Sprintf("admin-%d@b.example", n), "pw-not-used-here", []string{"admin"})
 	if err != nil {
@@ -130,7 +134,7 @@ func newIsolationFixture(t *testing.T) *isolationFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.sessB, f.repo, f.tenantB = connectMCP(t, apiSrv.URL, tokenB), repo, tenantB
+	f.sessB, f.repo, f.tenantB = connectMCP(t, apiSrv.URL, tokenB, seededAt), repo, tenantB
 	return f
 }
 
@@ -261,8 +265,9 @@ func (b bearerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 // connectMCP serves the MCP server over Streamable HTTP, the transport a
-// shared engine exposes, and connects a client carrying token.
-func connectMCP(t *testing.T, apiURL, token string) *mcpsdk.ClientSession {
+// shared engine exposes, and connects a client carrying token. The server's
+// clock stays at now.
+func connectMCP(t *testing.T, apiURL, token string, now time.Time) *mcpsdk.ClientSession {
 	t.Helper()
 	base, err := apiclient.New(apiURL, "")
 	if err != nil {
@@ -271,7 +276,8 @@ func connectMCP(t *testing.T, apiURL, token string) *mcpsdk.ClientSession {
 	// A server option that registers more (a tool, resource or prompt behind
 	// a flag) must be turned on here, so what it adds is enumerated and needs
 	// a case too.
-	srv := mcp.NewServer(base, apiURL, "test", true, isolationServerOptions()...)
+	opts := append(isolationServerOptions(), mcp.WithClock(func() time.Time { return now }))
+	srv := mcp.NewServer(base, apiURL, "test", true, opts...)
 	mcpHTTP := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(
 		func(*http.Request) *mcpsdk.Server { return srv },
 		&mcpsdk.StreamableHTTPOptions{Stateless: true},

@@ -1,0 +1,10 @@
+kind: Fixed
+body: |-
+  **`{{ params.x }}` now sees task params and DAG param defaults on every run.**
+  An operator's own `params=` reached the operator but not its template
+  context, so `{{ params.table }}` rendered as an empty string without an error
+  (#1841). DAG param defaults (`DAG(params=...)`) reached only manually
+  triggered runs, so a scheduled run rendered them empty too (#1844). A task now
+  gets the params Airflow gives it: the DAG's declared defaults, then the task's
+  own params, then the run's `conf`, each winning per key.
+time: 2026-10-14T14:00:00.000000000-03:00

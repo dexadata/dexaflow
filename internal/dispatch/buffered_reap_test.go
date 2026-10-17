@@ -51,6 +51,11 @@ func (c *throttledCluster) TaskPodPresence(_ context.Context, a executor.Attempt
 	return executor.PodPresenceAbsent, nil
 }
 
+// TaskPodPending reports no pod as pending: every pod this cluster creates is running.
+func (c *throttledCluster) TaskPodPending(context.Context, executor.Attempt) (bool, error) {
+	return false, nil
+}
+
 // queuedRows is the metadatabase side of one run. A task the buffer accepts is
 // written queued with queued_at = now, as MarkTaskInstanceQueued does after
 // Dispatch returns Dispatched. RequeueDispatch moves it back to scheduled and
@@ -145,6 +150,14 @@ func (q *queuedRows) MarkTaskDispatchFailed(context.Context, string, string, str
 
 func (q *queuedRows) FailDispatchRefused(context.Context, string, string, string) error {
 	return nil
+}
+
+func (q *queuedRows) MarkTaskPodLostOOMKilled(context.Context, string, int, int) (bool, error) {
+	return false, nil
+}
+
+func (q *queuedRows) MarkTaskStartExpired(context.Context, string, int, int) (bool, error) {
+	return false, nil
 }
 
 // Every other reaper sees nothing.

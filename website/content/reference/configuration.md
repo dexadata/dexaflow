@@ -33,6 +33,7 @@ chart's own values (image, replicas, ingress, Postgres/Redis wiring), see the
 | `build`, `registry` | object | Image build + push settings. |
 | `defaults` | object | DAG-level `retries`, `retry_delay_seconds`, `execution_timeout_seconds`, `size`, `resources`. |
 | `staging` | object | Opt-in per-run RWX volume: `enabled`, `size`, `storage_class` (ADR 0022). |
+| `min_idle_workers` | integer, 0 to 100 | Idle warm workers kept for the DAG's current version, so its tasks skip the cold pod start. With warm pools on, an unpaused DAG that declares it is prewarmed as soon as a version becomes current ([Prewarm and drain on deploy](/operate/warm-pools/#prewarm-and-drain-on-deploy)). The server clamps it to `execution.max_pool_size`; with warm pools off it does nothing. Refused with `staging.enabled`. |
 | `tasks.<task_id>` | object | Per-task overrides (ADR 0023): `retries`, `retry_delay_seconds`, `execution_timeout_seconds`, `size`, `env`, `resources`, `execution`. `size` is the task's pool slots, 1 to 1024 (ADR 0066, see [Task size](/author-dags/dag-authoring/#task-size-size-adr-0066)). |
 
 See [DAG authoring](/author-dags/dag-authoring/) for the override layers.
@@ -246,10 +247,11 @@ never overwrites or deletes it; put the missing key in the list and restart.
 Until then the server logs a warning naming the connection, and:
 
 - the connections list (`GET /api/v2/connections`) still returns every
-  connection of the tenant, and shows this one with its `extra` masked (`***`)
-  and `extra_unreadable: true`;
+  connection of the tenant, and shows this one with `extra` set to `null` and
+  `extra_unreadable: true`, so the Admin Connections page still opens it;
 - reading it alone (`GET /api/v2/connections/<connection_id>`), or updating
-  it, answers `500` with a message that names the connection;
+  it (saving it from the Admin page included), answers `500` with a message
+  that names the connection, and its stored `extra` is left as it is;
 - delivery to a task pod skips it with a warning, so only the tasks that use
   it fail.
 
@@ -378,12 +380,18 @@ roadmap item.
 | `system_packages` | `[]` | apt packages. `apt-get install`ed into the DAG image at compile, resolving against the task base image's Debian suite — see the `system_packages` row under [dexaflow.yaml](#dexaflowyaml) for which suite that is and what moved. |
 | `include_paths` | `["."]` | Extra paths copied into the image **alongside** `dag_source` — a helper module, a config file, a fixtures directory. Entries are relative to the project directory; an absolute one, or one escaping the context (`../x`), is refused at compile with the entry named, because Docker cannot `COPY` it and failing at build time would name a Docker error instead. The default `["."]` means *no extra paths*, not "everything": it is what every existing project carries, so it must not change what their images contain. Entries already copied (the DAG source, a dbt group directory) are skipped rather than duplicated. Only the **generated** Dockerfile honours it — a project-supplied Dockerfile copies whatever its own `COPY` lines say. Included paths are scanned by the credential warning like everything else that ships. |
 | `exclude_paths` | `[".git", "__pycache__", "*.pyc", ".venv", "venv"]` | Kept out of the image. On `--build` these become a `.dockerignore` in the build context for the duration of the build — merged with yours if you have one, and removed afterwards. Each entry is expanded to the forms Docker actually honours, because a bare name in a `.dockerignore` matches only at the context root: a plain directory name becomes four patterns (`p`, `**/p`, `p/**`, `**/p/**`) so that both the directory and its contents are pruned at any depth; an entry whose last segment contains a glob becomes `p` and `**/p` only, since a glob names files rather than a directory to descend into; and an entry containing a `/` is already anchored, so it becomes `p` and `p/**`. An entry starting with `!` or `#` contributes nothing: it is dropped rather than expanded, so a negation belongs in your own `.dockerignore` (which is merged, never rewritten) and not here. A dropped `!` is **reported by name** at build time — leoflow's block is appended after your own lines, so a negation emitted there could resurrect a path one of your earlier lines excluded. Add anything holding credentials: the image is pushed to a registry and pulled by every pod that runs the DAG. **Not** used by workspace discovery, which has its own hardcoded skip list. |
-| `build.context` | `"."` | **Not implemented.** Declared and defaulted, but the build always uses the DAG directory. Tracked in [#1062](https://github.com/dexadata/dexaflow/issues/1062). |
-| `build.dockerfile` | *unset* | A Dockerfile the project ships, used as-is instead of the generated one when the file exists (a missing file falls back to the generated Dockerfile). It is relative to the directory holding `dexaflow.yaml` and must stay inside it: an absolute path, or one escaping the project (`../x`), is refused by `dexaflow validate` and `compile`, and `compile --build` refuses one that a symlink leads out of the project. A Dockerfile outside the project is not reviewed with it, and it skips every check described in [Values that reach the generated Dockerfile](#values-that-reach-the-generated-dockerfile). The `--dockerfile` flag is not confined: it is the operator's own choice on the command line, and it wins over this field. |
+| `build.context` | `"."` | **Ignored.** Declared and defaulted, but the build always uses the DAG directory; `validate`, `compile` and `deploy` warn when it is set to anything other than `.`. Tracked in [#1062](https://github.com/dexadata/dexaflow/issues/1062). |
+| `build.dockerfile` | *unset* | A Dockerfile the project ships, used as-is instead of the generated one when the file exists (a missing file falls back to the generated Dockerfile). It is relative to the directory holding `dexaflow.yaml` and must stay inside it: an absolute path, or one escaping the project (`../x`), is refused by `dexaflow validate` and `compile`, and `compile --build` refuses one that a symlink leads out of the project. A Dockerfile outside the project is not reviewed with it, and it skips every check described in [Values that reach the generated Dockerfile](#values-that-reach-the-generated-dockerfile). A project Dockerfile (this one, or a `Dockerfile` in the project) replaces the generated one, so `base_image`, `dependencies`, `connectors`, `system_packages` and `include_paths` do not reach the image; `compile --build` and `deploy` print a warning naming those the project's own file sets (a `base_image` filled from the workspace, a target or the cluster is not named) ([ADR 0003](/project/adrs/0003-dag-as-image/)). The `--dockerfile` flag is not confined: it is the operator's own choice on the command line, and it wins over this field. |
 | `build.platforms` | `["linux/amd64"]` | The platforms the image is built for, `os/arch[/variant]`. `--platform` on `compile`, `build` and `deploy` overrides it, and a target or the workspace defaults fill it when the project sets none. A malformed value is refused before the build, with its source named. Several platforms need a tool that pushes one image per platform under one manifest list, such as docker with the containerd image store; the manifest the registry holds for the push is checked to list every platform, and when the tool cannot build it or the check cannot confirm it, the build fails with a hint (see [Builders](/operate/builders/#choosing-the-platform)). |
-| `registry.auth_method` | `"docker_config"` | Credential source for `compile --push`. |
+| `build.labels` | *unset* | **Ignored.** Accepted, with a warning from `validate`, `compile` and `deploy`: no label is set on the image, whichever builder runs. The map is still part of the `dexaflow.yaml` the content label hashes, so changing it gives the DAG a new version label. |
+| `build.remote_builder.cloud_build.project` | *unset* | Builds no daemonless path covers (a package without wheels, `system_packages`, a project `Dockerfile`, the dependency image of a split build the wheels cannot build) run on Google Cloud Build in this project, through the `gcloud` CLI signed in on your machine, instead of a local container daemon. `linux/amd64` only. A target's or the workspace's `remote_builder` fills it when the project sets none. Not part of the content label. See [Builders](/operate/builders/#building-on-cloud-build). |
+| `build.remote_builder.cloud_build.region` | *unset* | Cloud Build region, such as `us-central1`; gcloud's `builds/region`, else global, when unset. |
+| `build.remote_builder.cloud_build.worker_pool` | *unset* | A private pool, `projects/<project>/locations/<region>/workerPools/<name>`. |
+| `build.remote_builder.cloud_build.service_account` | *unset* | The account the build runs as, `projects/<project>/serviceAccounts/<email>`; the build then logs to Cloud Logging only. The project's Cloud Build service account when unset. |
+| `registry.auth_method` | `"auto"` | Where the CLI reads the registry credential for `deploy`, `compile --push` and every registry read. `auto`: the docker config and its credential helpers, then, for an Artifact Registry, GCR, ECR or ACR host, the session of the `gcloud`, `aws` or `az` CLI, so no separate `docker login` is needed. `docker_config`: the docker config and its credential helpers only. `cloud`: the cloud CLI's session only for a registry a cloud owns (for a docker config entry that has expired), the docker config for any other registry. `env` and `iam` are deprecated and still load, with a warning, and read as `auto`. Changing the value among `auto`, `docker_config` and `cloud` does not change the content label, and a project that sets `env` or `iam` keeps the label it had. See [Registry credentials](/operate/builders/#registry-credentials). |
 | `registry.tag_strategy` | `"version"` | How the image tag is picked. `version` and `custom`: the DAG version label, the `--dag-version` you pass or else the default `<git describe>-<content hash>` (see [the version label](/operate/deploy-prerequisites/#8-the-version-label-and-its-409)). `git_sha`: the short commit of the project directory. `git_tag`: the git tag on the project's `HEAD`. `git_sha` and `git_tag` fall back to the version label, with a warning, when there is no commit or no tag on `HEAD`. Characters an image tag cannot carry become `-`. |
 | `staging.enabled` | `false` | Opt-in per-run RWX volume — ADR 0022. |
+| `min_idle_workers` | `0` | No warm workers are kept for the DAG beyond the operator's `execution.min_idle_workers` floor, and the DAG is not prewarmed. |
 | `defaults.*` | *unset* | DAG-level task defaults; layered under task overrides — ADR 0023. |
 | `tasks.<id>` | *unset* | Per-task overrides; must reference a `task_id` present in the compiled DAG. |
 
@@ -503,6 +511,7 @@ config key (e.g. `auth.oidc.role_mappings`) is config-file-only.
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS` | _(empty)_ | both | Comma-separated origins (`scheme://host[:port]`, no path) whose pages may post a handoff, typically your portal. A post with any other `Origin`, or none, is refused with `403`, so another site cannot sign a visitor in as someone else. Required when the issuer is set. Helm: `auth.trustedIssuer.allowedOrigins`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_BEARER_AUDIENCES` | _(empty)_ | both | Comma-separated audiences whose tokens from the trusted issuer are accepted as the bearer of any `/api/v2` request, reused until they expire: the [bearer mode](#trusted-issuer-bearer-tokens), for remote MCP clients behind your platform (`leoflow-mcp` is the conventional audience). Each must differ from `DEXAFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE`. Empty leaves the mode off. Helm: `auth.trustedIssuer.bearerAudiences`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS` | `0` | both | Longest `exp - iat` a bearer token may have. `0` uses 900 seconds; at most 3600. Helm: `auth.trustedIssuer.bearerMaxLifetimeSeconds`. |
+| `DEXAFLOW_AUTH_TRUSTED_ISSUER_DEPLOY_AUDIENCE` | _(empty)_ | both | Makes the trusted issuer the only way to deploy: registering a DAG version, its dry run, setting the current version and deleting a DAG then take only a bearer the issuer minted for this audience alone with the `dexaflow:deploy` scope. See [Deploys through the issuer only](#deploys-through-the-issuer-only). Must differ from `DEXAFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE` and every bearer audience; boot fails otherwise, or when the issuer is not set. Empty changes nothing. Helm: `auth.trustedIssuer.deployAudience`. |
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_HOST_PATTERN` | _(empty)_ | both | Binds every browser session to its tenant's host, for an operator that serves each tenant on its own host in front of one Dexaflow, for example `{tenant}.example.com`. A handoff for a tenant is accepted only on that tenant's host, and a session cookie only on the host of the session's tenant. See [Binding sessions to tenant hosts](#binding-sessions-to-tenant-hosts). A host and optional port with exactly one `{tenant}`; boot fails otherwise, or when the issuer is not set. Empty binds nothing. Helm: `auth.trustedIssuer.hostPattern`. |
 | `DEXAFLOW_AUTH_EXTERNAL_SIGNIN_URL` | _(empty)_ | both | Sends UI visitors without a session to your own sign-in instead of Dexaflow's page, for a Dexaflow served from a larger platform. The page they asked for travels in a `next` query parameter (a same-origin path, `/` when the request carried anything else), added to whatever query your URL already has; your flow is expected to return them with a Dexaflow session. A refused [trusted-issuer handoff](#trusted-issuer-handoff) is also sent back here, with an `error` code. API calls without a session still get `401`. `/api/v2/auth/login?local=1` and a refused single sign-on still render Dexaflow's page, so break-glass access survives an outage of your sign-in. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSigninUrl`. |
 | `DEXAFLOW_AUTH_EXTERNAL_SIGNOUT_URL` | _(empty)_ | both | Where `/api/v2/auth/logout` lands after clearing the session cookie, so your platform can end its own session too. Empty returns to Dexaflow's sign-in page. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSignoutUrl`. |
@@ -586,6 +595,30 @@ a WARN at boot when the secret is empty.
 | Variable | Default | Edition | Purpose |
 |---|---|---|---|
 | `DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION` | `true` | both | Start a DAG paused when it is registered for the first time, so its schedule creates no run until someone unpauses it. Airflow's setting of the same name. A DAG's own `is_paused_upon_creation` wins over it. Applies only on creation: a redeploy never pauses or unpauses an existing DAG. `false` registers new DAGs active, as releases before 0.5.4 did. `dexaflow lite` sets it to `false`. Config key `dags_are_paused_at_creation`. Helm: set the chart value `config.dagsArePausedAtCreation` (not `extraEnv`); the chart always renders this variable. A DAG deleted and deployed again comes back paused. See [New DAGs start paused](/concepts/core-concepts/#new-dags-start-paused). |
+| `DEXAFLOW_DEPLOY_REQUIRE_DIGEST` | `off` | both | What the control plane does with an image that is not pinned by a full sha256 digest (`<repository>@sha256:<64 hex>`), when a version is registered and when one is made current again (`dexaflow rollback`). `off` accepts any image, as before. `warn` accepts it with a warning in the answer (printed by `dexaflow push`, `dexaflow deploy` and `dexaflow rollback`), logs it, counts it in `dexaflow_unpinned_image_total{stage,outcome="warned"}` and records `require_digest` and `image_pinned` in the `dag.version.register` or `dag.version.set_current` audit entry. `enforce` refuses it with a 400 that names this setting and the way out, counted with `outcome="refused"`. The dry run of a register gives the same answer and records nothing. `dexaflow deploy`, and `dexaflow compile --build --push` followed by `dexaflow push`, register the image by digest (#1703); a CLI from before that registers a tag on the second path, so start with `warn` to find those pipelines. Any other value fails boot; in a config file a YAML `false` means `off`. Config key `deploy.require_digest`. Helm: `deploy.requireDigest`. See [Require images pinned by digest](/operate/cicd-deploy/#require-images-pinned-by-digest). |
+
+### Cluster deploy defaults (`deploy.defaults.*`)
+
+What `dexaflow deploy` uses on this cluster for whatever the project, its
+workspace, its target and the person's CLI config leave unset. The server
+serves them on `GET /api/v2/deployDefaults`; unset, it advertises nothing and
+every deploy resolves as before. They are not secrets: never put registry
+credentials here. The task service account and the warm pools are the
+server's own settings, advertised when their switch is on. The server refuses to start with a value no deploy could use.
+See [Cluster deploy defaults](/operate/workspaces-and-targets/#cluster-deploy-defaults).
+
+| Variable | Default | Edition | Purpose |
+|---|---|---|---|
+| `DEXAFLOW_DEPLOY_DEFAULTS_REGISTRY` | (unset) | Pro | Image prefix a deploy pushes to, such as `ghcr.io/acme`: a host, an optional port and a path, lowercase, with no scheme, credentials, tag or trailing `/`. The image name defaults to the `dag_id`. Helm: `deploy.defaults.registry`. |
+| `DEXAFLOW_DEPLOY_DEFAULTS_PLATFORMS` | (unset) | Pro | Platforms a deploy builds for, comma separated (`linux/amd64,linux/arm64`), each `os/arch` or `os/arch/variant`. Unset, the built-in `linux/amd64` applies. Helm: `deploy.defaults.platforms` (a list). |
+| `DEXAFLOW_DEPLOY_DEFAULTS_BASE_IMAGE` | (unset) | Pro | Base image of the generated Dockerfile for projects that set no `base_image`. Helm: `deploy.defaults.baseImage`. |
+| `DEXAFLOW_DEPLOY_DEFAULTS_SOURCE_MODE` | `false` | Pro | Advertise the source mode runtime image (`execution.source_mode.image`) as `source_mode_image`, so a deploy that names no runtime image of its own registers the DAG's `dag.py` on it with no build or push, and refuses a DAG that needs a build. The server serves its own runtime image, so nothing is copied by hand. Requires `execution.source_mode.enabled`; the server refuses to start otherwise. There is no `deploy.defaults.source_mode_image` key: the server refuses to start when one is set (in the file or as `DEXAFLOW_DEPLOY_DEFAULTS_SOURCE_MODE_IMAGE`). Helm: `deploy.defaults.sourceMode`. See [Deploying in source mode](/operate/source-mode/#deploying-in-source-mode). |
+| `DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT` | (unset) | Pro | Google Cloud project of the remote builder (Cloud Build, ADR 0083) a deploy uses for builds no daemonless path covers, when the project's `build.remote_builder`, its target and its workspace name none. Required when any other `remote_builder` value is set. Served as `remote_builder.cloud_build`. Helm: `deploy.defaults.remoteBuilder.cloudBuild.project`. See [Builders](/operate/builders/). |
+| `DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_REGION` | (unset) | Pro | Cloud Build region of that remote builder, such as `us-central1`; required with a worker pool. Helm: `deploy.defaults.remoteBuilder.cloudBuild.region`. |
+| `DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_WORKER_POOL` | (unset) | Pro | Private pool of that remote builder, `projects/<project>/locations/<region>/workerPools/<name>`, in its region. Helm: `deploy.defaults.remoteBuilder.cloudBuild.workerPool`. |
+| `DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_SERVICE_ACCOUNT` | (unset) | Pro | Account the remote build runs as, `projects/<project>/serviceAccounts/<email>`. Helm: `deploy.defaults.remoteBuilder.cloudBuild.serviceAccount`. |
+| `DEXAFLOW_DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT` | `false` | Pro | Advertise `executor.task_service_account` as `task_service_account`, so a deploy says which ServiceAccount its tasks run as when they set no `execution.service_account`. The deploy only reports it: nothing is written into `dag.json`. Requires `executor.task_service_account`; the server refuses to start otherwise. Helm: `deploy.defaults.taskServiceAccount`. |
+| `DEXAFLOW_DEPLOY_DEFAULTS_WARM_POOLS` | `false` | Pro | Advertise `execution.warm_pools_enabled`, `execution.min_idle_workers` and `execution.max_pool_size` as `warm_pools`, so a deploy says whether warm pools are on and how many idle workers its DAG gets: its own `min_idle_workers`, else the cluster's, capped at the pool size. The deploy only reports it. Helm: `deploy.defaults.warmPools`. |
 
 ### Scheduler (`scheduler.*`)
 
@@ -606,7 +639,7 @@ a WARN at boot when the secret is empty.
 
 | Variable | Default | Edition | Purpose |
 |---|---|---|---|
-| `DEXAFLOW_EXECUTOR_TYPE` | `kubernetes` | both | Pod-path executor: `kubernetes` (default, pod-per-task) or `subprocess` (dev only — runs the agent on the host without isolation; `dexaflow lite` sets it). |
+| `DEXAFLOW_EXECUTOR_TYPE` | `kubernetes` | both | Pod-path executor: `kubernetes` (default, pod-per-task) or `subprocess` (dev only, runs the agent on the host without isolation; `dexaflow lite` sets it). With `kubernetes`, a scheduler that finds no in-cluster config or kubeconfig refuses to start. |
 | `DEXAFLOW_EXECUTOR_TASK_NAMESPACE` | `leoflow` | Pro | Kubernetes namespace the server creates task pods and per-run staging PVCs in. MUST match the namespace the Helm chart grants the executor Role in (chart `taskNamespace`); a mismatch 403s every dispatch (#480). The Helm chart always sets it (to the release namespace by default, #1682), so the `leoflow` default applies only to installs that do not use the chart. |
 | `DEXAFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR` | _(empty → `server.grpc_addr`)_ | both | gRPC address task pods dial back to. In a local k3d/kind cluster set it to a host-reachable address such as `host.k3d.internal:9091`. |
 | `DEXAFLOW_EXECUTOR_AGENT_TLS_CA_CONFIGMAP` | _(empty)_ | Pro | Names a ConfigMap (key `ca.crt`) mounted into task pods so the agent verifies the control plane's gRPC TLS cert (#58). Empty = agents use the insecure channel (dev). |
@@ -665,6 +698,7 @@ dedicated pod per task attempt.
 | `DEXAFLOW_EXECUTION_WORKER_IDLE_TTL` | `5m` | Pro | How long an idle warm worker is kept before it is recycled (D6). A duration string. |
 | `DEXAFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT` | `100` | Pro | Cap on the total warm pods one tenant may hold across all its DAG versions (M4), so one team cannot pin idle pods and starve neighbours on a shared cluster. |
 | `DEXAFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM` | `false` | Pro | Mount every warm worker's root filesystem read only, give each attempt its own `HOME` and XDG dirs inside the scratch the worker wipes between attempts, and empty the `/tmp` emptyDir and `/dev/shm` before each attempt and again as soon as it ends, so nothing one attempt writes reaches the next one on the same worker. A task that writes outside `$HOME`, `$TMPDIR`, `/tmp` and `/dev/shm` fails with it on. Takes effect on warm pods created after it is turned on; running warm pods keep their spec until they recycle. Dedicated task pods are not affected. Helm: `execution.warmReadOnlyRootFilesystem`. |
+| `DEXAFLOW_EXECUTION_WARM_REQUIRE_ATTEMPT_HOME_SWEEP` | `false` | Pro | With `DEXAFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM` on, refuse a warm worker whose agent does not confirm, when it registers, that it empties `/tmp` and `/dev/shm` between attempts, so that DAG version's attempts run on dedicated pods. Off, such a worker is logged with `reason=attempt_home_sweep_unconfirmed`, counted in `dexaflow_scheduler_decisions_total{decision_type="warm_worker_sweep_unconfirmed"}` and kept, because task images built on runtimes from v0.5.1 sweep but only newer ones confirm it. Helm: `execution.warmRequireAttemptHomeSweep`. |
 | `DEXAFLOW_EXECUTION_WARM_POOL_EVENT_REFILL` | `false` | Pro | Refill warm pools on events instead of every 30s: the reconciler reads the warm fleet from a dedicated pod informer instead of a LIST per tick, reacts at once when a warm worker is deleted, fails or is claimed by an attempt, and creates replacements concurrently (up to 4 at a time). The periodic tick stays as a backstop. Helm: `execution.warmPoolEventRefill`. |
 
 ### Source mode (`execution.source_mode.*`)
@@ -720,9 +754,13 @@ deletes a row. It runs on the scheduler leader only and rechecks leadership
 before every batch. A run is eligible once it settled (`success` or `failed`)
 more than `dag_runs_days` ago, every task instance of it is settled
 (`success`, `failed`, `skipped` or `upstream_failed`; a task in `none` is
-waiting to be scheduled, for example after a clear, so its run is kept), and
-no staging volume of it is still live. It goes with its task instances, state
-history, attempt history and XCom index rows, children first. Every batch is
+waiting to be scheduled, for example after a clear, so its run is kept), no
+staging volume of it is still live, and it is not the newest run of its DAG.
+The newest run (by logical date) is always kept, however old: the scheduler
+reads a DAG's last logical date from it, and without it a scheduled DAG would
+run its latest slot again, or its whole history with `catchup`. An eligible
+run goes with its task instances, attempt history and XCom index rows,
+children first. Every batch is
 one short transaction of at most `batch_size` rows, run rows included; a run
 with more rows than that is finished by later batches, each of which checks
 again that the run is still eligible. A run's task instances are deleted all
@@ -753,7 +791,7 @@ keys; set them through `extraEnv`.
 
 | Variable | Default | Edition | Purpose |
 |---|---|---|---|
-| `DEXAFLOW_RETENTION_DAG_RUNS_DAYS` | `0` (off) | both | Delete settled runs, with their task instances and history, that ended more than this many days ago. `0` keeps every run. |
+| `DEXAFLOW_RETENTION_DAG_RUNS_DAYS` | `0` (off) | both | Delete settled runs, with their task instances and history, that ended more than this many days ago. The newest run of each DAG is always kept. `0` keeps every run. |
 | `DEXAFLOW_RETENTION_AUDIT_LOG_DAYS` | `0` (off) | both | Delete audit log entries older than this many days, per tenant and for the tenant-less system entries. `0` keeps the whole audit log. |
 | `DEXAFLOW_RETENTION_DRY_RUN` | `false` | both | Only count what a cycle would delete; delete nothing. |
 | `DEXAFLOW_RETENTION_INTERVAL` | `1h` | both | How often a cycle runs. Must be greater than zero when a class is on. |
@@ -1021,6 +1059,60 @@ so a user can grant a client less than their own rights:
 
 Dexaflow tokens and the sessions the browser handoff opens carry no scopes;
 only their roles decide.
+
+#### Deploys through the issuer only
+
+An operator whose deployments belong to a platform (a CD system, a
+review-and-approve service) can make that platform the only way to deploy, so
+nobody skips its checks and audit by calling the API directly. Set a deploy
+audience, minted by the issuer for that platform only:
+
+```yaml
+auth:
+  trusted_issuer:
+    # ... the handoff keys above ...
+    deploy_audience: dexaflow-deploy
+```
+
+Then `POST /api/v2/dags/{id}/versions`, its dry run
+(`POST /api/v2/dags/{id}/versions/dry_run`),
+`PUT /api/v2/dags/{id}/currentVersion` (rollback) and
+`DELETE /api/v2/dags/{id}` (an undeploy) accept only a bearer of the trusted
+issuer whose `aud` is `deploy_audience` alone and that carries
+`dexaflow:deploy`, and the linked user's roles must still allow it (`deploy`
+or `write` on dags; `write` on dags to delete). Every other credential is refused with `403`,
+a detail saying that deploys go through the trusted issuer and the header
+`Dexaflow-Deploy-Via: trusted-issuer`, whatever its roles and scopes: a UI
+session, a password login token, an API token (`dexaflow auth create-token
+--scope deploy` included), a bearer of one of the `bearer_audiences`, a token
+whose `aud` names the deploy audience next to another audience, the session a
+handoff opens, and the `auth.dev_no_auth` principal. `dexaflow deploy` turns
+that `403` into a message that says so. Reads, run control and every other
+route are unchanged. Pausing and unpausing a DAG (`PATCH /api/v2/dags/{id}`)
+stays under roles and the `dexaflow:run` scope on purpose: it is run control,
+not a deploy, so an operator can still stop a DAG without the platform.
+
+- The deploy audience is a bearer audience of its own: it turns the bearer
+  checks above on even with no `bearer_audiences`, and its tokens follow the
+  same rules (lifetime, linked user, tenant, no `jti` rule).
+- A deploy-audience token gets the scopes it carries, like any bearer. Mint
+  it with `dexaflow:deploy` alone, so it reaches only the deploy routes and
+  the reads a deploy makes; with more scopes it can do more, as any bearer can.
+- A deploy token's `aud` is the deploy audience alone (a string, or an array
+  of that one entry). A token minted for the deploy audience and another
+  bearer audience, such as `[leoflow-mcp, dexaflow-deploy]`, is an ordinary
+  bearer of that other audience and is refused on these routes, so the
+  client it was minted for cannot deploy with it. Audiences are compared
+  exactly, case included.
+- `deploy_audience` must differ from `audience` and from every
+  `bearer_audiences` entry, so neither a handoff token nor another client's
+  bearer is ever a deploy token, and has no surrounding spaces. The server
+  refuses to start otherwise, and when the trusted issuer itself is not
+  configured. The Helm chart refuses to render `deployAudience` without
+  `issuer`.
+- Nothing else registers a version or changes the current version: the UI's
+  version screens only read, and the MCP server has no deploy tool (it reads
+  and controls runs through the same API with its client's token).
 
 ### Operator service API
 

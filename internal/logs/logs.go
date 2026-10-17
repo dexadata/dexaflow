@@ -307,6 +307,10 @@ func (d *DiskSink) Open(ref Ref) (LogWriter, error) {
 	return &diskWriter{f: f, buf: bufio.NewWriterSize(f, flushThreshold)}, nil
 }
 
+// Resume opens a writer for a stream that continues an attempt whose earlier
+// stream ended (#912). Open already appends, so it is Open.
+func (d *DiskSink) Resume(ref Ref) (LogWriter, error) { return d.Open(ref) }
+
 // AppendEvent adds one event to the attempt's log file. The disk sink already
 // opens with O_APPEND, so this is a plain open-write-close that preserves the
 // streamed content — the marker lands after whatever the agent wrote (#861).

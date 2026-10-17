@@ -17,6 +17,8 @@ type versionsServer struct {
 	puts     []map[string]any
 	auth     string
 	putCode  int
+	// warnings is what the set-current answer warns about.
+	warnings []string
 }
 
 func (s *versionsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +46,11 @@ func (s *versionsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				to = v
 			}
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"dag_id": "etl", "changed": from["bundle_version"] != to["bundle_version"], "from": from, "to": to})
+		answer := map[string]any{"dag_id": "etl", "changed": from["bundle_version"] != to["bundle_version"], "from": from, "to": to}
+		if s.warnings != nil {
+			answer["warnings"] = s.warnings
+		}
+		_ = json.NewEncoder(w).Encode(answer)
 	default:
 		http.NotFound(w, r)
 	}
@@ -60,8 +66,10 @@ func threeVersions() *versionsServer {
 			"spec_hash":  "h", "is_current": current, "created_by": by,
 		}
 	}
+	newest := v(3, "v1.2.0-ccc", true, "7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a")
+	newest["build_info"] = map[string]any{"commit": "0123456789abcdef0123456789abcdef01234567", "repo": "https://github.com/acme/etl"}
 	return &versionsServer{versions: []map[string]any{
-		v(3, "v1.2.0-ccc", true, "7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a"),
+		newest,
 		v(2, "v1.1.0-bbb", false, "0b9d8c7e-6f5a-4b3c-8d2e-1a0f9e8d7c6b"),
 		v(1, "v1.0.0-aaa", false, nil),
 	}}
@@ -79,7 +87,7 @@ func TestDagsVersionsPrintsTheTable(t *testing.T) {
 	if len(lines) != 4 {
 		t.Fatalf("want a header and 3 rows, got:\n%s", out)
 	}
-	for _, want := range []string{"VERSION", "LABEL", "CURRENT", "CREATED", "CREATOR ID", "IMAGE"} {
+	for _, want := range []string{"VERSION", "LABEL", "CURRENT", "CREATED", "CREATOR ID", "COMMIT", "IMAGE"} {
 		if !strings.Contains(lines[0], want) {
 			t.Errorf("header %q misses %s", lines[0], want)
 		}
@@ -87,6 +95,9 @@ func TestDagsVersionsPrintsTheTable(t *testing.T) {
 	if !strings.Contains(lines[1], "v1.2.0-ccc") || !strings.Contains(lines[1], "*") || !strings.Contains(lines[1], "7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a") ||
 		!strings.Contains(lines[1], "sha256:dddddddddddd") || strings.Contains(lines[1], strings.Repeat("d", 13)) {
 		t.Errorf("current row = %q, want label, marker, user and a short digest", lines[1])
+	}
+	if !strings.Contains(lines[1], " 0123456789ab ") || strings.Contains(lines[1], "0123456789abc") {
+		t.Errorf("current row = %q, want the commit shortened to 12 characters", lines[1])
 	}
 	if strings.Contains(lines[2], "*") || !strings.Contains(lines[3], "-") {
 		t.Errorf("older rows = %q / %q, want no marker and - for an unknown user", lines[2], lines[3])
@@ -166,5 +177,25 @@ func TestRollbackAlreadyCurrentSaysSo(t *testing.T) {
 	}
 	if !strings.Contains(out, "already runs v1.2.0-ccc") || strings.Contains(out, "changed from") {
 		t.Errorf("output %q does not say the version is already current", out)
+	}
+}
+
+// The server's warnings on a rollback (an image not pinned by digest under
+// deploy.require_digest=warn, #1703) are printed on stderr; the rollback
+// itself succeeds.
+func TestRollbackPrintsTheServerWarnings(t *testing.T) {
+	fake := threeVersions()
+	fake.warnings = []string{"this version's image \"etl:v1\" is not pinned by digest"}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	out, errOut, err := run(t, "rollback", "etl", "--server", srv.URL, "--token", "tok")
+	if err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if !strings.Contains(errOut, "warning: the server: this version's image \"etl:v1\" is not pinned by digest\n") {
+		t.Errorf("stderr = %q, want the server's warning", errOut)
+	}
+	if !strings.Contains(out, "current version changed") {
+		t.Errorf("stdout = %q, want the change", out)
 	}
 }

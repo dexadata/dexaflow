@@ -79,22 +79,15 @@ type DAGSpec struct {
 	// exactly as before. The scheduler enforces it in PlanRun's scheduled→queued
 	// admission gate.
 	MaxActiveTasks int `json:"max_active_tasks,omitempty"`
-	// MinIdleWorkers is a DORMANT seam for per-DAG author-declared warmth: the
-	// number of warm workers an author would want kept ready for this DAG version
-	// so its tasks skip cold-pod startup (ADR 0058, warm pools model A2). It is NOT
-	// author-settable today. There is no author entry point: the field is absent
-	// from the authoring schema (leoflow-yaml-schema.json, which is
-	// additionalProperties:false) and the parser never emits it, so after the
-	// parse→compile path this value is ALWAYS 0. The intended split is that the
-	// operator gates IF warmth happens at all (execution.warm_pools_enabled) while
-	// the author would only tune HOW MANY, with the operator clamping the request;
+	// MinIdleWorkers is the number of idle warm workers the author asks to keep
+	// for this DAG version so its tasks skip the cold pod start (ADR 0058, warm
+	// pools model A2). It comes from min_idle_workers in dexaflow.yaml, which
+	// the compiler overlays onto dag.json. The operator gates whether warmth
+	// happens at all (execution.warm_pools_enabled) and caps it
+	// (config.ExecutionSection.EffectiveMinIdle clamps it to max_pool_size);
 	// whether a pod may be reused across attempts stays the operator's security
-	// decision. The downstream is intentionally pre-wired around this field —
-	// config.ExecutionSection.EffectiveMinIdle already clamps it and the scheduler
-	// store already reads it — so exposing it to authors later is a schema+parser
-	// change only (add the key to the authoring schema and have the parser emit
-	// it), with no domain/scheduler rework. Until then it stays 0 and every DAG,
-	// and all of Lite, behaves exactly as before.
+	// decision. A version whose DAG declares it is prewarmed when it becomes
+	// current (ADR 0082). Zero, the default, declares none.
 	MinIdleWorkers int  `json:"min_idle_workers,omitempty"`
 	Catchup        bool `json:"catchup,omitempty"`
 	// IsPausedUponCreation is Airflow's is_paused_upon_creation DAG argument:

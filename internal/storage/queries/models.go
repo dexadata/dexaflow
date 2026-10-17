@@ -114,6 +114,7 @@ const (
 	TaskStateUpstreamFailed  TaskState = "upstream_failed"
 	TaskStateUpForRetry      TaskState = "up_for_retry"
 	TaskStateUpForReschedule TaskState = "up_for_reschedule"
+	TaskStateRemoved         TaskState = "removed"
 )
 
 func (e *TaskState) Scan(src interface{}) error {
@@ -175,6 +176,24 @@ type AuditLog struct {
 	IpAddress    *netip.Addr        `json:"ip_address"`
 	UserAgent    *string            `json:"user_agent"`
 	OccurredAt   pgtype.Timestamptz `json:"occurred_at"`
+}
+
+type CliDeviceAuthorization struct {
+	ID                  pgtype.UUID        `json:"id"`
+	DeviceCodeHash      string             `json:"device_code_hash"`
+	UserCodeHash        string             `json:"user_code_hash"`
+	Status              string             `json:"status"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	PollIntervalSeconds int32              `json:"poll_interval_seconds"`
+	RequesterHash       string             `json:"requester_hash"`
+	RequesterAddr       string             `json:"requester_addr"`
+	LastPolledAt        pgtype.Timestamptz `json:"last_polled_at"`
+	DecidedAt           pgtype.Timestamptz `json:"decided_at"`
+	TenantID            pgtype.UUID        `json:"tenant_id"`
+	UserID              pgtype.UUID        `json:"user_id"`
+	Email               *string            `json:"email"`
+	Roles               []string           `json:"roles"`
 }
 
 type Connection struct {
@@ -252,6 +271,7 @@ type DagVersion struct {
 	SpecHash       string             `json:"spec_hash"`
 	CreatedBy      pgtype.UUID        `json:"created_by"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	BuildInfo      []byte             `json:"build_info"`
 }
 
 type ImportError struct {

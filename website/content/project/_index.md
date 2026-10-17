@@ -27,7 +27,7 @@ The record of how Dexaflow got here and where it is going.
   <a class="lf-card" href="/project/roadmap/">
     <span class="lf-card__icon"><i class="fa-solid fa-map"></i></span>
     <span class="lf-card__title">Roadmap</span>
-    <span class="lf-card__desc">The historical road to release.</span>
+    <span class="lf-card__desc">What is planned next, and the road to the first release.</span>
     <span class="lf-card__more">See the roadmap →</span>
   </a>
   <a class="lf-card" href="/project/planning/">

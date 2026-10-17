@@ -51,6 +51,9 @@ type DagVersion struct {
 	// call, a deleted user). It is an id, not an email: every reader of the
 	// DAG sees it.
 	CreatedBy string
+	// BuildInfo is where the version was built, as its register sent it
+	// (#1702); nil when it sent none.
+	BuildInfo *BuildInfo
 }
 
 // DagVersionSelector names one registered version of a DAG, by its label
@@ -58,6 +61,19 @@ type DagVersion struct {
 type DagVersionSelector struct {
 	Version string
 	Number  int
+}
+
+// DagSetCurrent is one request to make a registered version of DagID current
+// again (#1702): the version Selector names, on behalf of ActorUserID (empty
+// when none), after Admit accepts its spec. RequireDigest is the
+// deploy.require_digest it was admitted under (#1703); while it is warn or
+// enforce, the audit entry records it and whether the image is pinned.
+type DagSetCurrent struct {
+	DagID         string
+	Selector      DagVersionSelector
+	ActorUserID   string
+	Admit         func(DAGSpec) error
+	RequireDigest DigestRequirement
 }
 
 // CurrentVersionChange is the outcome of making a version current: the
@@ -75,17 +91,41 @@ type CurrentVersionChange struct {
 // register creates starts paused per its is_paused_upon_creation or the
 // server's dags_are_paused_at_creation, and an existing DAG keeps its state.
 // IsPaused set is the DAG's state after the register, created or not.
+// DryRun runs every check and step of the register and then undoes it, so
+// the outcome says what the register would do and nothing is written, audit
+// included. PromotedFrom, when set, names the control plane the version was
+// promoted from (`dexaflow promote`), recorded in the register's audit entry.
+// BuildInfo, when set, is where the version was built, stored with the version
+// the register creates and recorded in its audit entry; a register that
+// creates no version (the content is already registered) changes no build
+// info.
+// RequireDigest is the deploy.require_digest the register was admitted under
+// (#1703); while it is warn or enforce, the audit entry records it and
+// whether the image is pinned by digest.
 type DagRegistration struct {
-	Spec        DAGSpec
-	SpecHash    string
-	ActorUserID string
-	IsPaused    *bool
+	Spec          DAGSpec
+	SpecHash      string
+	ActorUserID   string
+	IsPaused      *bool
+	DryRun        bool
+	PromotedFrom  *DagPromotion
+	BuildInfo     *BuildInfo
+	RequireDigest DigestRequirement
+}
+
+// DagPromotion names where a promoted version came from: the source target's
+// name as the promoting CLI knows it, and the source control plane's URL
+// (empty when not sent).
+type DagPromotion struct {
+	Target string
+	Server string
 }
 
 // DagRegistered is the outcome of a register: whether a new version was
 // created (false when the content was already registered), whether the
 // register created the DAG itself (its first version), and the DAG's
-// is_paused afterwards.
+// is_paused afterwards. For a dry run each field is what the register would
+// have done.
 type DagRegistered struct {
 	Created    bool
 	DagCreated bool

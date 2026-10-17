@@ -32,6 +32,9 @@ type fakeStore struct {
 	// createdTenants records the tenant of each created scheduled run, in the
 	// same order as createdRuns.
 	createdTenants []string
+	// createdLogical records the logical date of each created scheduled run,
+	// in the same order as createdRuns.
+	createdLogical []time.Time
 	notes          map[string]string
 	createErr      bool
 	// scheduledErr makes ScheduledDAGs fail, as a broken run-creation query.
@@ -77,6 +80,9 @@ type fakeStore struct {
 	// user's mark or clear, an agent's report) so the write skips it.
 	batchFrom       map[string]domain.TaskState
 	batchSuperseded map[string]bool
+	// startSuperseded makes StartQueuedRun find the run no longer queued (a
+	// user marked it, or deleted it, after the tick read it), so nothing starts.
+	startSuperseded map[string]bool
 }
 
 func newFakeStore(runs ...RunState) *fakeStore {
@@ -100,7 +106,7 @@ func (f *fakeStore) PoolBudgets(context.Context) (map[string]int, error) {
 	f.poolBudgetsCalls++
 	return f.poolBudgets, nil
 }
-func (f *fakeStore) CreateScheduledRun(_ context.Context, tenantID, dagID string, _ time.Time) error {
+func (f *fakeStore) CreateScheduledRun(_ context.Context, tenantID, dagID string, logical time.Time) error {
 	if f.createErr {
 		return errors.New("create scheduled run failed")
 	}
@@ -110,6 +116,7 @@ func (f *fakeStore) CreateScheduledRun(_ context.Context, tenantID, dagID string
 	}
 	f.createdRuns = append(f.createdRuns, dagID)
 	f.createdTenants = append(f.createdTenants, tenantID)
+	f.createdLogical = append(f.createdLogical, logical)
 	return nil
 }
 func (f *fakeStore) MaterializeTasks(_ context.Context, runID string, _ []domain.TaskSpec) error {
@@ -207,6 +214,16 @@ func (f *fakeStore) RedispatchReschedule(_ context.Context, runID, taskID string
 func (f *fakeStore) SetRunState(_ context.Context, runID string, state domain.DagRunState) error {
 	f.runStates[runID] = state
 	return nil
+}
+
+// StartQueuedRun mirrors the guarded queued -> running write: it reports false,
+// writing nothing, for a run the test marked as moved on.
+func (f *fakeStore) StartQueuedRun(_ context.Context, runID, _ string) (bool, error) {
+	if f.startSuperseded[runID] {
+		return false, nil
+	}
+	f.runStates[runID] = domain.DagRunStateRunning
+	return true, nil
 }
 
 // The alert bookkeeping is the one part of this fake touched from two

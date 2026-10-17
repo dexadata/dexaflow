@@ -97,8 +97,11 @@ WHERE tenant_id = $1 AND dag_id = $2 AND state IN ('queued', 'running');
 -- gate unchanged.
 -- attempt_epoch rides along (ADR 0051 amendment) so the mark and the pod
 -- teardown name exactly the attempt that was listed.
+-- tenant_id rides along so a start_expired reap can append its marker to the
+-- attempt's log (#1126).
 SELECT ti.id AS task_instance_id,
        ti.dag_run_id,
+       ti.tenant_id,
        d.dag_id AS dag_id_text,
        ti.task_id,
        ti.try_number,
@@ -135,6 +138,26 @@ WHERE id = sqlc.arg(id)
   AND attempt_epoch = sqlc.arg(attempt_epoch)
   AND state = 'queued';
 
+-- name: MarkTaskStartExpired :execrows
+-- Fails one queued TI whose task pod is still Pending (image pull, node
+-- provisioning, init containers) when the attempt credential minted at dispatch
+-- is about to run out (#1126). The agent has not started, so it could only
+-- start with a dead credential: it would be refused at Register, stream no log
+-- and fail the attempt against the user's retry budget. Marked infra instead,
+-- so the planner re-places it off-budget with a fresh credential. Same guards
+-- and provisional rule as MarkTaskDispatchLost: state='queued' (an agent that
+-- reported RUNNING wins) and the listed attempt, (try_number, attempt_epoch).
+UPDATE task_instances
+SET state = 'failed',
+    ended_at = now(),
+    last_failure_kind = 'infra',
+    infra_confirmed_at = CASE WHEN sqlc.arg(provisional)::bool THEN NULL ELSE now() END,
+    error_message = 'start_expired: the task pod did not start before its attempt credential ran out (slow image pull, node provisioning or init containers); will be re-placed with a fresh credential'
+WHERE id = sqlc.arg(id)
+  AND try_number = sqlc.arg(try_number)
+  AND attempt_epoch = sqlc.arg(attempt_epoch)
+  AND state = 'queued';
+
 -- name: ListActiveDagRuns :many
 -- The runs the scheduler reads on a tick, and the warm-pool reconcile reads:
 -- every queued and running run, each with dag_paused, the is_paused of its DAG.
@@ -145,14 +168,25 @@ WHERE id = sqlc.arg(id)
 -- advances so the tasks it started finish. The waiting run stays in the result
 -- because a clear on a running run puts it back in queued while other tasks of
 -- it still run, and those tasks must keep counting against max_active_runs,
--- max_active_tasks and the pool caps. The scan stays on idx_dag_runs_state;
--- dag_paused is one primary-key probe of dags per active run, which keeps the
--- cost proportional to the active runs, not to the number of DAGs.
+-- max_active_tasks and the pool caps. dag_max_active_runs is the DAG's
+-- max_active_runs: the tick starts a queued run only while fewer than that
+-- many runs of the DAG are running, as Airflow does (#1766). Both come from one
+-- primary-key probe of dags per active run; a run whose DAG row is gone reads
+-- unpaused with 0, which the scheduler takes as unlimited. The probe is a
+-- LATERAL subquery with LIMIT 1 on purpose: a plain LEFT JOIN lets the planner
+-- hash every row of dags, a cost that grows with the number of DAGs (about 10
+-- ms against 2 ms for 500 active runs over 20000 DAGs), while the scan stays
+-- on idx_dag_runs_state and the probe keeps the cost proportional to the
+-- active runs.
 SELECT sqlc.embed(dag_runs),
-  COALESCE((SELECT d.is_paused FROM dags d WHERE d.id = dag_runs.dag_id), false)::boolean AS dag_paused
+  COALESCE(d.is_paused, false)::boolean AS dag_paused,
+  COALESCE(d.max_active_runs, 0)::integer AS dag_max_active_runs
 FROM dag_runs
-WHERE state IN ('queued', 'running')
-ORDER BY queued_at;
+LEFT JOIN LATERAL (
+  SELECT dags.is_paused, dags.max_active_runs FROM dags WHERE dags.id = dag_runs.dag_id LIMIT 1
+) d ON true
+WHERE dag_runs.state IN ('queued', 'running')
+ORDER BY dag_runs.queued_at;
 
 -- name: UpdateDagRunState :one
 UPDATE dag_runs
@@ -180,9 +214,40 @@ SET state = 'queued', started_at = NULL, ended_at = NULL, alerted_at = NULL,
     alert_attempts = 0, next_alert_attempt_at = NULL
 WHERE id = $1 AND tenant_id = $2;
 
+-- name: GetDagRunForUpdate :one
+-- A finished run a clear may move to the DAG's current version, read and
+-- locked inside the clear's transaction before any of its task instances is
+-- written (ADR 0086). The move depends on the run's state, so it is decided
+-- on the locked row: a second clear of the same run waits for the first
+-- instead of deciding from the same state. Only a finished run is locked:
+-- the state predicate is checked again after a wait, so a run another clear
+-- re-opened meanwhile is not returned and not held. The orphan reaper
+-- share-locks a running run's task instances and then updates the run row,
+-- the opposite order. NO KEY UPDATE is enough, since no key changes, and it
+-- lets through the key-share lock an XCom insert of a live attempt takes on
+-- the run. The retention janitor locks finished runs with SKIP LOCKED and
+-- their task instances with NOWAIT, so it skips or gives way and never waits
+-- on a clear.
+SELECT * FROM dag_runs
+ WHERE id = $1 AND tenant_id = $2 AND state IN ('success', 'failed')
+   FOR NO KEY UPDATE;
+
+-- name: MarkTaskInstancesRemoved :exec
+-- A clear that moves a finished run to a version that no longer declares
+-- these tasks marks their task instances removed (ADR 0086), as Airflow's
+-- verify_integrity does. Their history, logs and XCom stay. A queued or
+-- running task instance is never marked: the clear does not move a run that
+-- has one, and the guard keeps a racing attempt's row as it is.
+UPDATE task_instances
+SET state = 'removed'
+WHERE tenant_id = sqlc.arg(tenant_id) AND dag_run_id = sqlc.arg(dag_run_id)
+  AND task_id = ANY(sqlc.arg(task_ids)::text[])
+  AND state NOT IN ('queued', 'running', 'removed');
+
 -- name: ResetDagRunToVersion :exec
 -- Clear with run_on_latest_version re-binds the run to the DAG's current
--- registered version (ADR 0020; opt-in since the 2026-09-15 amendment): a
+-- registered version (ADR 0020; opt-in since the 2026-09-15 amendment; only a
+-- finished run with no queued or running task instance, ADR 0086): a
 -- re-run after a code/yaml fix picks up the newest image and config — in dev that
 -- is the last hot-reload, in prod the last deploy — while everything within a
 -- version stays reproducible. Clearing the alert bookkeeping (#431) makes the clear
@@ -245,6 +310,17 @@ SET state = sqlc.arg(state)::dag_run_state,
     started_at = CASE WHEN sqlc.arg(state)::dag_run_state = 'running' AND started_at IS NULL THEN now() ELSE started_at END,
     ended_at = CASE WHEN sqlc.arg(state)::dag_run_state IN ('success', 'failed') THEN now() ELSE ended_at END
 WHERE id = sqlc.arg(id);
+
+-- name: StartQueuedRun :one
+-- Moves a queued run to running when the tick admits it (#1766), guarded on
+-- the run still being queued: a run a user marked success or failed, or
+-- deleted, after the tick read it is left alone, and no row comes back.
+-- started_at is stamped on the first start only, as StampDagRunState does; a
+-- clear resets it, so a re-queued run gets a new one.
+UPDATE dag_runs
+SET state = 'running', started_at = COALESCE(started_at, now())
+WHERE id = sqlc.arg(id) AND tenant_id = sqlc.arg(tenant_id) AND state = 'queued'
+RETURNING id;
 
 -- name: CreateTaskInstance :one
 -- try_number starts at 1 to match Airflow (1-based attempts): the first run's
@@ -414,6 +490,11 @@ SELECT EXISTS (
 -- hold version ids from their own runs. A request path reads a version with
 -- GetDagVersionInTenant (#508).
 SELECT * FROM dag_versions WHERE id = $1;
+
+-- name: GetDagVersionsByIDs :many
+-- Unscoped, like GetDagVersionByID: the spec cache's batch fill for a warm
+-- pool reconcile tick, which reads the versions of its own targets (#1707).
+SELECT * FROM dag_versions WHERE id = ANY(@ids::uuid[]);
 
 -- name: GetDagVersionInTenant :one
 -- A version by id, only when its DAG belongs to the given tenant (#508).
@@ -1174,7 +1255,7 @@ WHERE dag_run_id = $1 AND task_id = $2;
 
 -- name: ListOrphanCandidates :many
 -- Lists dag_runs currently in 'running' whose task instances are ALL terminal
--- or never-started (every TI in none/success/failed/skipped/upstream_failed),
+-- or never-started (every TI in none/success/failed/skipped/upstream_failed/removed),
 -- alongside the timestamp of their most recent observable activity. The "no
 -- live TI" filter is the critical safety guarantee: a run that is still
 -- progressing stays out of the candidate set, so the reaper can never kill a
@@ -1219,7 +1300,7 @@ WHERE dr.state = 'running'
   AND NOT EXISTS (
       SELECT 1 FROM task_instances ti2
       WHERE ti2.dag_run_id = dr.id
-        AND ti2.state NOT IN ('none', 'success', 'failed', 'skipped', 'upstream_failed')
+        AND ti2.state NOT IN ('none', 'success', 'failed', 'skipped', 'upstream_failed', 'removed')
   )
 GROUP BY dr.id, d.dag_id, dr.started_at, dr.queued_at
 ORDER BY dr.queued_at
@@ -1353,13 +1434,19 @@ WHERE dag_run_id = $1
 -- entirely — with warm pools off no TI is ever bound, so this returns empty and
 -- the reaper is inert. The LIMIT bounds a single tick's work after a large
 -- outage; the rest are picked up next tick.
+-- tenant_id and dag_id locate the attempt's log stream for the reaper's
+-- killed marker (#861).
 SELECT ti.id AS task_instance_id,
+       ti.tenant_id AS tenant_id,
        ti.dag_run_id AS dag_run_id,
+       d.dag_id AS dag_id_text,
        ti.task_id AS task_id,
        ti.try_number AS try_number,
        ti.attempt_epoch AS attempt_epoch,
        ti.warm_worker_id AS warm_worker_id
 FROM task_instances ti
+JOIN dag_runs dr ON dr.id = ti.dag_run_id
+JOIN dags d ON d.id = dr.dag_id
 WHERE ti.state = 'running'
   AND ti.warm_worker_id IS NOT NULL
 ORDER BY ti.started_at NULLS LAST
@@ -1526,7 +1613,10 @@ SET state = 'failed',
     -- Provisional on Kubernetes (the reconciler confirms it), confirmed at
     -- once on Lite (ADR 0052 amendment, part 2).
     infra_confirmed_at = CASE WHEN sqlc.arg(provisional)::bool THEN NULL ELSE now() END,
-    error_message = 'pod_lost: the task pod vanished with no live pod past the grace period — see #527'
+    -- error_message overrides the default reason; the warm-worker-lost reaper
+    -- passes one naming an OOM kill (#1218). It keeps the pod_lost: prefix the
+    -- infra override reads the mark from.
+    error_message = COALESCE(sqlc.narg(error_message)::text, 'pod_lost: the task pod vanished with no live pod past the grace period — see #527')
 WHERE id = sqlc.arg(id)
   AND try_number = sqlc.arg(try_number)
   AND attempt_epoch = sqlc.arg(attempt_epoch)
@@ -1565,7 +1655,7 @@ WHERE dr.id = sqlc.arg(id)
   AND NOT EXISTS (
       SELECT 1 FROM task_instances ti2
       WHERE ti2.dag_run_id = dr.id
-        AND ti2.state NOT IN ('none', 'success', 'failed', 'skipped', 'upstream_failed')
+        AND ti2.state NOT IN ('none', 'success', 'failed', 'skipped', 'upstream_failed', 'removed')
   )
   AND GREATEST(
           COALESCE((SELECT GREATEST(MAX(ti.ended_at), MAX(ti.started_at), MAX(ti.released_at))
@@ -1721,7 +1811,8 @@ WHERE dag_run_id = $1 AND task_id = $2 AND state IN ('scheduled', 'queued');
 
 -- name: ListSettledRunIDs :many
 -- Of the given (tenant, run) pairs, the settled runs: run in success or failed
--- and no task instance outside success, failed, skipped and upstream_failed.
+-- and no task instance outside success, failed, skipped, upstream_failed and
+-- removed.
 -- This is the same "settled" the retention janitor's LockExpiredSettledRuns
 -- uses (duplicated there on purpose, keep the two identical). A run marked
 -- failed while a task still runs is not settled, so the reconciler never
@@ -1735,4 +1826,4 @@ WHERE (r.tenant_id, r.id) IN (
   AND NOT EXISTS (
     SELECT 1 FROM task_instances ti
     WHERE ti.dag_run_id = r.id
-      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed'));
+      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed', 'removed'));

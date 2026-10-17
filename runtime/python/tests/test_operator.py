@@ -5,6 +5,7 @@ fake operator class (no real Airflow), so the operator execution path is covered
 in CI where ``apache-airflow`` is intentionally absent.
 """
 
+import importlib
 import itertools
 import json
 import sys
@@ -73,6 +74,41 @@ class ReadyRescheduleSensor(EchoOperator):
 class RenderBoomOperator(EchoOperator):
     def render_template_fields(self, context):
         raise ValueError("cannot render")
+
+
+# Records the context each on_failure_callback received, for the render-failure test.
+FAILURES = []
+
+
+def _record_failure(context):
+    FAILURES.append(context["ti"].task_id)
+
+
+class TemplatedOperator(EchoOperator):
+    """Renders its template_fields the way Airflow's Templater does: in order, in
+    place, with a sandboxed Jinja environment, re-raising the first field that fails
+    (so the fields before it are already rendered when the error surfaces)."""
+    template_fields = ("label", "sql")
+    on_failure_callback = [_record_failure]
+
+    def __init__(self, task_id, label="", sql="", **kwargs):
+        super().__init__(task_id, **kwargs)
+        self.label = label
+        self.sql = sql
+
+    def render_template(self, content, context):
+        from jinja2.sandbox import SandboxedEnvironment
+
+        return SandboxedEnvironment().from_string(content).render(**context)
+
+    def render_template_fields(self, context):
+        for name in self.template_fields:
+            value = getattr(self, name)
+            if value:
+                setattr(self, name, self.render_template(value, context))
+
+    def execute(self, context):
+        return {"label": self.label, "sql": self.sql}
 
 
 class NonJsonOperator(EchoOperator):
@@ -166,6 +202,33 @@ class GenericLinkOperator(EchoOperator):
         return {"ok": True}
 
 
+class ResumableReadOperator(EchoOperator):
+    """Mirrors the Task SDK's ResumableJobMixin (Airflow 3.3): with durable=True, the
+    default, execute_resumable() reads context["ti"].stats_tags before submitting the
+    job. BigQueryInsertJobOperator runs through it."""
+
+    def execute(self, context):
+        team = context["ti"].stats_tags.get("team_name")
+        return {"tags": context["ti"].stats_tags, "team": team}
+
+
+class ParamsOperator(EchoOperator):
+    """Mirrors how an Airflow operator treats params: the constructor keeps its
+    task-level params on self.params, and render_template_fields / execute read
+    context["params"] (what {{ params.x }} resolves against), not self.params."""
+
+    def __init__(self, task_id, params=None, **kwargs):
+        super().__init__(task_id, **kwargs)
+        self.params = dict(params or {})
+        self.rendered_params = None
+
+    def render_template_fields(self, context):
+        self.rendered_params = dict(context["params"])
+
+    def execute(self, context):
+        return {"rendered": self.rendered_params, "executed": dict(context["params"])}
+
+
 class MultiKeyOperator(EchoOperator):
     """Pushes a custom-keyed XCom during execute (besides its return value) — the
     multi-key XCom pattern the runtime ships so it is stored/visible (#XCOM)."""
@@ -195,6 +258,54 @@ def test_run_operator_executes_and_writes_return(tmp_path, monkeypatch):
     assert written == {"task_id": "load", "kwargs": {"bucket": "b1"}}
 
 
+def _run_params_operator(tmp_path, monkeypatch, args) -> dict:
+    out = tmp_path / "rv.json"
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(out))
+    mod = _write_operator_module(tmp_path, monkeypatch)
+    runner.run_operator(f"{mod}.ParamsOperator", args)
+    return json.loads(out.read_text())
+
+
+def test_run_operator_task_params_reach_template_context(tmp_path, monkeypatch):
+    # Task-level params= must be in the context {{ params.table }} renders against,
+    # not only on op.params; otherwise the template renders empty silently (#1841).
+    monkeypatch.delenv("LEOFLOW_PARAMS", raising=False)
+    got = _run_params_operator(tmp_path, monkeypatch, {"params": {"table": "orders"}})
+    assert got["rendered"] == {"table": "orders"}
+    assert got["executed"] == {"table": "orders"}
+
+
+def test_run_operator_conf_overrides_task_params(tmp_path, monkeypatch):
+    # Airflow's dag_run_conf_overrides_params: the run conf wins over a task param of
+    # the same name, and task params the conf does not name are kept (#1841).
+    monkeypatch.setenv("LEOFLOW_PARAMS", '{"table": "users", "limit": 5}')
+    got = _run_params_operator(
+        tmp_path, monkeypatch, {"params": {"table": "orders", "dataset": "raw"}})
+    assert got["rendered"] == {"table": "users", "dataset": "raw", "limit": 5}
+    assert got["executed"] == got["rendered"]
+
+
+def test_run_operator_dag_params_reach_template_context(tmp_path, monkeypatch):
+    # DAG(params=...) defaults arrive in LEOFLOW_PARAMS (the control plane merges
+    # them under the run conf); they reach the context next to task params (#1841).
+    monkeypatch.setenv("LEOFLOW_PARAMS", '{"region": "us"}')
+    got = _run_params_operator(tmp_path, monkeypatch, {"params": {"table": "orders"}})
+    assert got["rendered"] == {"region": "us", "table": "orders"}
+
+
+def test_run_operator_without_task_params_keeps_conf(tmp_path, monkeypatch):
+    monkeypatch.setenv("LEOFLOW_PARAMS", '{"region": "us"}')
+    got = _run_params_operator(tmp_path, monkeypatch, {})
+    assert got["rendered"] == {"region": "us"}
+
+
+def test_task_params_unreadable_yields_empty():
+    # A params object that cannot be read as a mapping must not break the run conf.
+    op = types.SimpleNamespace(params=5)
+    assert runner._task_params(op) == {}
+    assert runner._task_params(types.SimpleNamespace()) == {}
+
+
 def test_run_operator_requires_dotted_class():
     with pytest.raises(ValueError, match="dotted"):
         runner.run_operator("NotDotted", {})
@@ -210,16 +321,65 @@ def test_run_operator_reschedule_mode_ready_succeeds(tmp_path, monkeypatch):
     assert out.exists()
 
 
-def test_run_operator_render_template_fields_is_best_effort(tmp_path, monkeypatch, capsys):
+def test_run_operator_render_error_fails_before_execute(tmp_path, monkeypatch, capsys):
+    # A template field that cannot render fails the attempt before execute(), with
+    # the field name and the Jinja error in the task log, as on Airflow (#1845).
     out = tmp_path / "rv.json"
     monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(out))
     mod = _write_operator_module(tmp_path, monkeypatch)
 
-    # A render failure must not fail the task — execute still runs.
-    runner.run_operator(f"{mod}.RenderBoomOperator", {})
+    with pytest.raises(runner.TemplateRenderError) as info:
+        runner.run_operator(f"{mod}.TemplatedOperator",
+                            {"label": "{{ ds }}", "sql": "select {{ nope.x }}"})
 
-    assert out.exists()
-    assert "render_template_fields skipped" in capsys.readouterr().out
+    assert info.value.field == "sql"
+    assert not out.exists()  # execute() never ran
+    log = capsys.readouterr().out
+    assert "template field 'sql' of TemplatedOperator failed to render" in log
+    assert "'nope' is undefined" in log
+
+
+def test_run_operator_render_error_without_template_fields(tmp_path, monkeypatch):
+    # An operator whose failing field cannot be identified still fails, with the error.
+    out = tmp_path / "rv.json"
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(out))
+    mod = _write_operator_module(tmp_path, monkeypatch)
+
+    with pytest.raises(runner.TemplateRenderError) as info:
+        runner.run_operator(f"{mod}.RenderBoomOperator", {})
+
+    assert info.value.field is None
+    assert "cannot render" in str(info.value)
+    assert not out.exists()
+
+
+def test_run_operator_render_error_runs_on_failure_callback(tmp_path, monkeypatch):
+    # A render failure is a task failure: on the terminal attempt the task's
+    # on_failure_callback runs, as for an execute() failure.
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(tmp_path / "rv.json"))
+    monkeypatch.setenv("LEOFLOW_ON_FAILURE_CALLBACK", "1")
+    monkeypatch.setenv("LEOFLOW_TASK_ID", "load")
+    monkeypatch.setenv("LEOFLOW_TRY_NUMBER", "2")
+    monkeypatch.setenv("LEOFLOW_MAX_TRIES", "2")
+    mod = _write_operator_module(tmp_path, monkeypatch)
+
+    with pytest.raises(runner.TemplateRenderError):
+        runner.run_operator(f"{mod}.TemplatedOperator", {"sql": "{{ nope.x }}"})
+
+    assert importlib.import_module(mod).FAILURES == ["load"]
+
+
+def test_run_operator_renders_macros_and_logical_date(tmp_path, monkeypatch):
+    out = tmp_path / "rv.json"
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(out))
+    monkeypatch.setenv("LEOFLOW_DS", "2026-06-14")
+    monkeypatch.setenv("LEOFLOW_TS", "2026-06-14T05:30:00Z")
+    mod = _write_operator_module(tmp_path, monkeypatch)
+
+    runner.run_operator(f"{mod}.TemplatedOperator",
+                        {"sql": "{{ macros.ds_add(ds, 1) }} {{ logical_date.hour }}"})
+
+    assert json.loads(out.read_text())["sql"] == "2026-06-15 5"
 
 
 def test_run_operator_reschedule_signals_when_wired(tmp_path, monkeypatch):
@@ -291,6 +451,22 @@ def test_run_operator_tolerates_ti_xcom_push_and_try_number(tmp_path, monkeypatc
     runner.run_operator(f"{mod}.LinkPersistOperator", {})
 
     assert json.loads(out.read_text()) == {"task_id": "invoke", "try_number": 2}
+
+
+def test_run_operator_serves_ti_stats_tags(tmp_path, monkeypatch):
+    out = tmp_path / "rv.json"
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(out))
+    monkeypatch.setenv("LEOFLOW_DAG_ID", "report")
+    monkeypatch.setenv("LEOFLOW_TASK_ID", "build")
+    mod = _write_operator_module(tmp_path, monkeypatch)
+
+    # ResumableJobMixin operators (BigQueryInsertJobOperator with its default
+    # durable=True) crashed on the missing ti.stats_tags before submitting the job,
+    # so DAGs had to pass durable=False to run on Dexaflow.
+    runner.run_operator(f"{mod}.ResumableReadOperator", {})
+
+    assert json.loads(out.read_text()) == {
+        "tags": {"dag_id": "report", "task_id": "build"}, "team": None}
 
 
 def test_operator_context_provides_tolerant_ti(monkeypatch):

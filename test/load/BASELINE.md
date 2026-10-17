@@ -13,8 +13,8 @@ machine; compare ratios, and re-record both sides on the same host.
 
 ```sh
 go test -run '^$' -benchmem -count 5 \
-  -bench 'PlanRunFanOut|StepSteadyState|StepQueueFanOut|ActiveRunProjection|TopoSortFanOut|StaticHandlerBundle' \
-  ./internal/scheduler/ ./internal/storage/ ./internal/api/ ./internal/ui/
+  -bench 'PlanRunFanOut|StepSteadyState|StepQueueFanOut|ActiveRunProjection|TopoSortFanOut|StaticHandlerBundle|WarmPoolTick' \
+  ./internal/scheduler/ ./internal/storage/ ./internal/api/ ./internal/ui/ ./internal/executor/
 ```
 
 Median of 5 runs.
@@ -35,6 +35,21 @@ Median of 5 runs.
 | `BenchmarkTopoSortFanOut` | 5,000 tasks | 68.6 ms | 4.0 MB | 5,070 |
 | `BenchmarkStaticHandlerBundle` | 5 MB bundle, gzip | 417 ms | 9.1 MB | 63 |
 | `BenchmarkStaticHandlerBundle` | 5 MB bundle, identity | 3.18 ms | 10.5 MB | 28 |
+| `BenchmarkWarmPoolTick` | 60 versions, run | see below | 50.2 KB | 51 |
+| `BenchmarkWarmPoolTick` | 60 versions, rationed prewarm | see below | 62.3 KB | 88 |
+
+`BenchmarkWarmPoolTick` (#1906) came after the recording above, and its time
+has not been recorded on the baseline host yet: re-record it with the next
+update of this table (B3 of the release checklist). Its memory and allocations
+do not depend on the machine (they do on the Go version: the Go 1.26.6 of the
+header applies). It measures one steady warm pool reconcile tick,
+the work the leader repeats every warm pool interval, over 60 versions of 3
+tenants under a per-tenant cap, with the Kubernetes and database reads faked
+and nothing to create or delete. The second case adds 30 prewarm-only versions
+the cap rations (ADR 0082). Before #1906 the first case cost 75.1 KB and 238
+allocations per tick and the second 84.7 KB and 286 (v0.5.3 had 57.6 KB and
+226 for the first); the v0.5.4-rc.1 recheck measured the first case at
+68.8 µs at v0.5.4 against 55.4 µs at v0.5.3 on a quiet 4 vCPU host.
 
 What stands out:
 
@@ -94,3 +109,46 @@ The gates of the performance plan, against the rows above.
 | UI bundle served with gzip (batch 4) | 417 ms | under 5 ms |
 | Hot queries above, at this dataset size (batch 2) | up to 710 ms | each under 20 ms |
 | DeleteDag with 51 versions (batch 2) | 4,768 ms | under 100 ms |
+
+## Accepted changes of the bar
+
+A B1 row of `test/release/perf-reliability-checklist.md` may exceed the 10% bar
+only with an entry here: the benchmark, the release, the measured delta, the
+lines that cost the time and why the cost is not a regression of production.
+Re-check an entry when the code it names changes.
+
+### `BenchmarkStepQueueFanOut`, v0.5.4 (dispatch tick budget, #1728)
+
+- **Delta.** v0.5.3 to v0.5.4-rc.1 (`f69451b1`): +19.7% at 1,000 tasks and
+  +15.7% at 5,000 tasks, sec/op, p <= 0.002 (n=8; confirmed with n=10 and
+  n=12 interleaved). Memory and allocations within the bar (+0.1% B/op, +4
+  allocs/op).
+- **Cause.** `holdDispatch` in `internal/scheduler/scheduler.go` reads the
+  tick's clock before every dispatch to check `scheduler.dispatch.tick_budget`,
+  and `launchQueued` counts each dispatch per tenant for
+  `scheduler.dispatch.max_per_tenant_per_tick`. On the 4 vCPU reference host a
+  clock read costs 72 ns and the map increment 12 ns. The benchmark dispatches
+  every task of a 5,000-task fan-out to an in-memory store and a no-op
+  dispatcher, about 700 ns a task, so those reads are 12% to 15% of it. With
+  both lines removed the benchmark is level with v0.5.3 (p = 0.16 and 0.71);
+  no other change in the range costs anything measurable.
+- **Why it stays.** The read is the feature: the budget must be checked before
+  each dispatch, because one throttled pod create takes 200 ms under the
+  default client limit and the budget exists to stop a fan-out in time (R-03,
+  `TestSyncDispatchThrottleDoesNotStallOtherRuns`). Checking every N
+  dispatches would overshoot it by N creates. In production each dispatched
+  task also writes its queued state to Postgres and creates a pod or enqueues a
+  buffered dispatch, hundreds of microseconds at least, so the read adds under
+  0.03% to a real tick. The tick benchmarks without dispatch
+  (`BenchmarkStepSteadyState`, `BenchmarkTickWithMetrics`) are unchanged, and
+  the rc soak tick probe was 1.2 ms with no violations.
+- **Measured alternative.** Counting per tenant only while a cap is set,
+  passing the run by pointer and reading only the monotonic clock
+  (`time.Since`) is 4% to 5% faster and keeps the behavior, but still leaves
+  the row 13% to 15% over v0.5.3, and a timer that flips a flag at the deadline
+  would change how the budget is enforced to save nanoseconds a task. Neither
+  is worth a change in a patch.
+- **New reference.** From v0.5.4 on, B1 compares `BenchmarkStepQueueFanOut`
+  with v0.5.4, not v0.5.3.
+- **Evidence.** release tracking issue for v0.5.4, review 8 line P1; profiles
+  and interleaved runs in the rc.1 `perf-p1` evidence folder.

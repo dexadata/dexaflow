@@ -134,26 +134,14 @@ def test_missing_dag_raises(monkeypatch, tmp_path):
 
 
 def test_min_idle_workers_is_never_emitted(monkeypatch, tmp_path, dag_schema):
-    """Pin the dormant warm-pool seam: the compiler MUST NOT emit
-    ``min_idle_workers`` into dag.json.
+    """The parser MUST NOT emit ``min_idle_workers`` into dag.json.
 
-    The field exists downstream (dag-schema.json accepts it; the Go DAGSpec
-    carries it; EffectiveMinIdle and the scheduler store read it) but has no
-    author entry point today: it is absent from the authoring schema
-    (dexaflow.yaml, additionalProperties:false) and the compiler never writes
-    it. So a compiled artifact never carries the key and the Go
-    ``spec.MinIdleWorkers`` is always 0. This test locks that inert contract so
-    the seam cannot silently become half-wired.
-
-    Even a config that smuggles the key in is dropped: the compiler copies only
-    whitelisted config keys, never arbitrary ones.
-
-    When you DO wire author-declared warmth later, this test must change
-    deliberately, and the change is not just here — you must ALSO: add
-    ``min_idle_workers`` to the authoring schema (leoflow-yaml-schema.json) and
-    have the compiler emit it; keep the staging exclusion (a DAG with
-    ``staging.enabled`` falls back to a dedicated pod and cannot be warm); and
-    lead the operator docs with the safe default (0 = scale-to-zero).
+    The author declares it in dexaflow.yaml (the authoring schema accepts it)
+    and the Go compiler overlays it onto dag.json after the parser ran, next
+    to staging and alerts (``overlayProject`` in ``internal/cli/compile.go``).
+    So the parser stays out of it: it copies only whitelisted config keys,
+    never arbitrary ones, and a config that carries the key is not passed
+    through. Emitting it here too would give the value two writers.
     """
     monkeypatch.setenv(
         "LEOFLOW_PROJECT_CONFIG_JSON",
@@ -161,8 +149,8 @@ def test_min_idle_workers_is_never_emitted(monkeypatch, tmp_path, dag_schema):
             {
                 "dag_id": "simple_linear",
                 "python_version": "3.11",
-                # An author trying to smuggle warmth in via the project config:
-                # the compiler must not pass it through.
+                # The key reaches the parser in the project config; the Go
+                # overlay owns it, so the parser must not pass it through.
                 "min_idle_workers": 3,
             }
         ),
@@ -172,10 +160,7 @@ def test_min_idle_workers_is_never_emitted(monkeypatch, tmp_path, dag_schema):
     )
     Draft202012Validator(dag_schema).validate(spec)
     assert "min_idle_workers" not in spec, (
-        "the compiler emitted min_idle_workers; the warm-pool seam is dormant "
-        "and must stay unwired. To wire it later: add the key to the authoring "
-        "schema (leoflow-yaml-schema.json) AND emit it here; keep the staging "
-        "exclusion (staging.enabled => dedicated pod, never warm); and lead the "
-        "operator docs with the safe default (0 = scale-to-zero). Then update "
-        f"this test deliberately. Got spec keys: {sorted(spec)}"
+        "the parser emitted min_idle_workers; the Go compile overlay "
+        "(overlayProject) is its only writer. "
+        f"Got spec keys: {sorted(spec)}"
     )

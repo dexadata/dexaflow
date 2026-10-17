@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -59,28 +60,93 @@ func checkDeployed(ctx context.Context, warn io.Writer, serverURL, token, dagID,
 	if details.BundleVersion != nil {
 		current = *details.BundleVersion
 	}
-	if current == "" {
-		// No current version to compare with: nothing says this content is
-		// stale, so build as for an unknown label.
-		return deployUnknown, "", nil
+	if state := classifyLabel(label, current, nil); state != deployUnknown || current == "" {
+		return state, current, nil
 	}
-	if current == label {
-		return deployCurrent, current, nil
-	}
-	var versions struct {
-		DagVersions []struct {
-			BundleVersion *string `json:"bundle_version"`
-		} `json:"dag_versions"`
-	}
-	if ok, err := getControlPlaneJSON(ctx, warn, base+"/dagVersions", token, label, &versions); !ok || err != nil {
+	versions, err := listRegisteredVersions(base, func(u string, page any) (bool, error) {
+		return getControlPlaneJSON(ctx, warn, u, token, label, page)
+	})
+	if err != nil || versions == nil {
 		return deployUnknown, current, err
 	}
-	for _, v := range versions.DagVersions {
-		if v.BundleVersion != nil && *v.BundleVersion == label {
-			return deployStale, current, nil
+	registered := make([]string, 0, len(versions))
+	for _, v := range versions {
+		registered = append(registered, v.Label)
+	}
+	return classifyLabel(label, current, registered), current, nil
+}
+
+// registeredVersion is one entry of GET /api/v2/dags/{dag_id}/dagVersions.
+// IsCurrent is nil from a server that does not report it (Airflow).
+type registeredVersion struct {
+	Label     string     `json:"bundle_version"`
+	Number    int        `json:"version_number"`
+	CreatedAt *time.Time `json:"created_at"`
+	IsCurrent *bool      `json:"is_current"`
+}
+
+// versionsPageSize is the page size listRegisteredVersions asks for.
+const versionsPageSize = 100
+
+// maxVersionsPages bounds listRegisteredVersions against a server that
+// never ends its list.
+const maxVersionsPages = 1000
+
+// listRegisteredVersions reads every page of the versions of the DAG at base
+// (.../api/v2/dags/{dag_id}) with get, which decodes one URL into a page and
+// reports ok=false when nothing more should be read; the result is then nil.
+// It moves by limit and offset until total_entries versions are read, as
+// Airflow pages the list (a page may hold fewer than asked for, under
+// maximum_page_limit), and stops at a page that adds nothing, as from a
+// server that serves the whole list whatever the offset (Dexaflow). Deploy
+// and status both read the versions with it, so an older version on a later
+// page is stale for both.
+func listRegisteredVersions(base string, get func(u string, page any) (bool, error)) ([]registeredVersion, error) {
+	all := []registeredVersion{}
+	seen := map[registeredVersion]bool{}
+	for range maxVersionsPages {
+		var page struct {
+			DagVersions  []registeredVersion `json:"dag_versions"`
+			TotalEntries *int                `json:"total_entries"`
+		}
+		u := fmt.Sprintf("%s/dagVersions?limit=%d&offset=%d", base, versionsPageSize, len(all))
+		if ok, err := get(u, &page); !ok || err != nil {
+			return nil, err
+		}
+		added := 0
+		for _, v := range page.DagVersions {
+			key := v
+			key.CreatedAt, key.IsCurrent = nil, nil
+			if !seen[key] {
+				seen[key] = true
+				all = append(all, v)
+				added++
+			}
+		}
+		if added == 0 || page.TotalEntries == nil || len(all) >= *page.TotalEntries {
+			break
 		}
 	}
-	return deployUnknown, current, nil
+	return all, nil
+}
+
+// classifyLabel says what a DAG whose current version is labeled current
+// (empty when it has none) and whose registered labels are registered holds
+// for a content label: deployCurrent when it is the current version,
+// deployStale when it is another registered version, deployUnknown
+// otherwise, and always deployUnknown with no current version, since nothing
+// then says this content is stale. deploy and status both decide with it, so
+// what status calls in sync is what deploy skips.
+func classifyLabel(label, current string, registered []string) deployedState {
+	switch {
+	case current == "":
+		return deployUnknown
+	case current == label:
+		return deployCurrent
+	case slices.Contains(registered, label):
+		return deployStale
+	}
+	return deployUnknown
 }
 
 // getControlPlaneJSON GETs u and decodes a 2xx body into out. It reports
@@ -128,7 +194,7 @@ func getOnce(ctx context.Context, u, token string) (status int, body []byte, err
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	resp, err := cliHTTPClient(15 * time.Second).Do(req)
 	if err != nil {
 		return 0, nil, err
 	}

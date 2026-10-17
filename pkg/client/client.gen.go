@@ -83,11 +83,30 @@ func (e DAGRunState) Valid() bool {
 	}
 }
 
+// Defines values for TaskExecutionMode.
+const (
+	TaskExecutionModeDedicated TaskExecutionMode = "dedicated"
+	TaskExecutionModeWarm      TaskExecutionMode = "warm"
+)
+
+// Valid indicates whether the value is a known member of the TaskExecutionMode enum.
+func (e TaskExecutionMode) Valid() bool {
+	switch e {
+	case TaskExecutionModeDedicated:
+		return true
+	case TaskExecutionModeWarm:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TaskInstanceState.
 const (
 	TaskInstanceStateFailed         TaskInstanceState = "failed"
 	TaskInstanceStateNone           TaskInstanceState = "none"
 	TaskInstanceStateQueued         TaskInstanceState = "queued"
+	TaskInstanceStateRemoved        TaskInstanceState = "removed"
 	TaskInstanceStateRunning        TaskInstanceState = "running"
 	TaskInstanceStateScheduled      TaskInstanceState = "scheduled"
 	TaskInstanceStateSkipped        TaskInstanceState = "skipped"
@@ -104,6 +123,8 @@ func (e TaskInstanceState) Valid() bool {
 	case TaskInstanceStateNone:
 		return true
 	case TaskInstanceStateQueued:
+		return true
+	case TaskInstanceStateRemoved:
 		return true
 	case TaskInstanceStateRunning:
 		return true
@@ -137,6 +158,42 @@ func (e TaskInstanceStateUpdateNewState) Valid() bool {
 	case TaskInstanceStateUpdateNewStateSkipped:
 		return true
 	case TaskInstanceStateUpdateNewStateSuccess:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WarmPoolReportPreviousPool.
+const (
+	WarmPoolReportPreviousPoolDraining WarmPoolReportPreviousPool = "draining"
+)
+
+// Valid indicates whether the value is a known member of the WarmPoolReportPreviousPool enum.
+func (e WarmPoolReportPreviousPool) Valid() bool {
+	switch e {
+	case WarmPoolReportPreviousPoolDraining:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WarmPoolReportState.
+const (
+	WarmPoolReportStateNone WarmPoolReportState = "none"
+	WarmPoolReportStateOff  WarmPoolReportState = "off"
+	WarmPoolReportStateOn   WarmPoolReportState = "on"
+)
+
+// Valid indicates whether the value is a known member of the WarmPoolReportState enum.
+func (e WarmPoolReportState) Valid() bool {
+	switch e {
+	case WarmPoolReportStateNone:
+		return true
+	case WarmPoolReportStateOff:
+		return true
+	case WarmPoolReportStateOn:
 		return true
 	default:
 		return false
@@ -188,6 +245,27 @@ type APITokenCollection struct {
 	TotalEntries *int        `json:"total_entries,omitempty"`
 }
 
+// BuildInfo Dexaflow. Where a DAG version was built (#1702), as the register claimed it, not verified. Every field is optional and absent when it was not sent.
+type BuildInfo struct {
+	// BaseImage The base image the DAG image was built from; it carries the task agent.
+	BaseImage *string `json:"base_image,omitempty"`
+
+	// Builder The builder that produced the image.
+	Builder *string `json:"builder,omitempty"`
+
+	// CliVersion The version of the CLI that built and registered the version.
+	CliVersion *string `json:"cli_version,omitempty"`
+
+	// Commit The git commit of the sources.
+	Commit *string `json:"commit,omitempty"`
+
+	// PipelineUrl The CI pipeline run that built the version (http or https URL).
+	PipelineUrl *string `json:"pipeline_url,omitempty"`
+
+	// Repo The repository of the sources (http or https URL).
+	Repo *string `json:"repo,omitempty"`
+}
+
 // ClearTaskInstancesRequest defines model for ClearTaskInstancesRequest.
 type ClearTaskInstancesRequest struct {
 	DagRunId *string `json:"dag_run_id,omitempty"`
@@ -208,9 +286,17 @@ type ClearTaskInstancesRequest struct {
 	// ResetDagRuns Re-open the run so the scheduler looks at it again. Without it a terminal run stays terminal and the cleared task instance is never scheduled.
 	ResetDagRuns *bool `json:"reset_dag_runs,omitempty"`
 
-	// RunOnLatestVersion Which version the re-run executes. false (the default, matching Apache Airflow) keeps the version the run was created with, so the re-run executes the image that produced the original attempt. true re-binds the run to the DAG's current registered version, so the re-run picks up the newest image and config — use it to re-run a failed task against a fix without creating a new run.
+	// RunOnLatestVersion Which version the re-run executes. false (the default, matching Apache Airflow) keeps the version the run was created with, so the re-run executes the image that produced the original attempt. true re-binds the run to the DAG's current registered version, so the re-run picks up the newest image and config. Use it to re-run a failed task against a fix without creating a new run. Only a finished run (success or failed, with no task instance queued or running) moves: the clear creates the task instances of the tasks the version adds and marks removed the ones of the tasks it dropped. A run that has not finished keeps its version, as in Airflow, and the response lists it in run_on_latest_version_not_applied with the reason (ADR 0086).
 	RunOnLatestVersion *bool     `json:"run_on_latest_version,omitempty"`
 	TaskIds            *[]string `json:"task_ids,omitempty"`
+}
+
+// ClearVersionNotApplied Dexaflow-only. The runs a clear with run_on_latest_version keeps on their own version, each with the reason (ADR 0086): only a finished run with no task instance queued or running moves to the current version. The clear still applies to these runs, on their version. Left out when every run moved or the option was not asked, and on every response other than the two clear routes.
+type ClearVersionNotApplied = []struct {
+	DagRunId string `json:"dag_run_id"`
+
+	// Reason Why the run keeps its version, for example "the run is running: only a finished run moves to the current version".
+	Reason string `json:"reason"`
 }
 
 // ComponentHealth defines model for ComponentHealth.
@@ -228,7 +314,7 @@ type Connection struct {
 	Description  *string `json:"description,omitempty"`
 	Extra        *string `json:"extra,omitempty"`
 
-	// ExtraUnreadable Present and true in a listing when the extra is encrypted with a secret key the server does not have (for example after a key rotation that dropped the old key). The extra is then masked. Reading the connection alone answers 500 with a message naming it.
+	// ExtraUnreadable Present and true in a listing when the extra is encrypted with a secret key the server does not have (for example after a key rotation that dropped the old key). The extra is then null, so a client that parses it as JSON still can. Reading the connection alone, or updating it, answers 500 with a message naming it, and the stored extra is kept.
 	ExtraUnreadable *bool   `json:"extra_unreadable,omitempty"`
 	Host            *string `json:"host,omitempty"`
 	Login           *string `json:"login,omitempty"`
@@ -338,9 +424,12 @@ type DAGRun struct {
 	LogicalDate       *time.Time              `json:"logical_date,omitempty"`
 	Note              *string                 `json:"note,omitempty"`
 	QueuedAt          *time.Time              `json:"queued_at,omitempty"`
-	RunType           *DAGRunRunType          `json:"run_type,omitempty"`
-	StartDate         *time.Time              `json:"start_date,omitempty"`
-	State             *DAGRunState            `json:"state,omitempty"`
+
+	// RunOnLatestVersionNotApplied Dexaflow-only. The runs a clear with run_on_latest_version keeps on their own version, each with the reason (ADR 0086): only a finished run with no task instance queued or running moves to the current version. The clear still applies to these runs, on their version. Left out when every run moved or the option was not asked, and on every response other than the two clear routes.
+	RunOnLatestVersionNotApplied *ClearVersionNotApplied `json:"run_on_latest_version_not_applied,omitempty"`
+	RunType                      *DAGRunRunType          `json:"run_type,omitempty"`
+	StartDate                    *time.Time              `json:"start_date,omitempty"`
+	State                        *DAGRunState            `json:"state,omitempty"`
 }
 
 // DAGRunRunType defines model for DAGRun.RunType.
@@ -363,7 +452,7 @@ type DAGRunClearRequest struct {
 	// OnlyNew Not supported. Sending true is refused with 400: Dexaflow cannot yet tell which tasks a newer DAG version added.
 	OnlyNew *bool `json:"only_new,omitempty"`
 
-	// RunOnLatestVersion Which version the re-run executes. Unset or false keeps the version the run was created with; true re-binds the run to the DAG's current registered version.
+	// RunOnLatestVersion Which version the re-run executes. Unset or false keeps the version the run was created with. true moves a finished run (success or failed, with no task instance queued or running) to the DAG's current registered version, creating the task instances of the tasks that version adds and marking removed the ones of the tasks it dropped. A run that has not finished keeps its version, as in Airflow; the response then lists it in run_on_latest_version_not_applied with the reason (ADR 0086).
 	RunOnLatestVersion *bool `json:"run_on_latest_version,omitempty"`
 }
 
@@ -401,6 +490,9 @@ type DagCurrentVersionChange struct {
 	// From The version that was current before; null when none was.
 	From *DagVersion `json:"from"`
 	To   DagVersion  `json:"to"`
+
+	// Warnings What the change let through with a warning (a task that does not fit its size under executor.unit.enforce=warn, an image not pinned by digest under deploy.require_digest=warn). Absent when there is none.
+	Warnings *[]string `json:"warnings,omitempty"`
 }
 
 // DagCurrentVersionRequest Exactly one of version and version_number.
@@ -416,7 +508,9 @@ type DagSource struct {
 	Content        *string `json:"content,omitempty"`
 	DagDisplayName *string `json:"dag_display_name,omitempty"`
 	DagId          *string `json:"dag_id,omitempty"`
-	VersionNumber  *int    `json:"version_number,omitempty"`
+
+	// VersionNumber The version whose source this is.
+	VersionNumber *int `json:"version_number,omitempty"`
 }
 
 // DagSpec A compiled dag.json, as described by docs/api/dag-schema.json.
@@ -431,6 +525,8 @@ type DagSpec struct {
 
 // DagVersion defines model for DagVersion.
 type DagVersion struct {
+	// BuildInfo Dexaflow. Where the version was built, as its register sent it in the build_* parameters; null when it sent none. Served by the dagVersions routes and the currentVersion answer; the dag_version copies embedded in task instance, run and DAG details answers leave it out.
+	BuildInfo     *BuildInfo `json:"build_info,omitempty"`
 	BundleName    *string    `json:"bundle_name,omitempty"`
 	BundleUrl     *string    `json:"bundle_url,omitempty"`
 	BundleVersion *string    `json:"bundle_version,omitempty"`
@@ -468,6 +564,15 @@ type Error struct {
 	Type     *string `json:"type,omitempty"`
 }
 
+// ExecutionReport Where the version's tasks run (Dexaflow), from the same decision dispatch places an attempt with: on a warm worker of the version (warm pools, ADR 0058) or on a dedicated pod. Sent by the register and its dry run. A task is warm-eligible; it still takes a dedicated pod when no warm worker is free. A task the dispatcher would offer to a warm worker is reported dedicated when no warm worker of its version can exist (no idle worker kept, or a server that runs none).
+type ExecutionReport struct {
+	Pool  WarmPoolReport  `json:"pool"`
+	Tasks []TaskExecution `json:"tasks"`
+
+	// WarmPools execution.warm_pools_enabled on the server.
+	WarmPools bool `json:"warm_pools"`
+}
+
 // ExecutorInfo defines model for ExecutorInfo.
 type ExecutorInfo struct {
 	AgentControlPlaneAddr *string   `json:"agent_control_plane_addr,omitempty"`
@@ -483,6 +588,18 @@ type HealthInfo struct {
 	Scheduler    *ComponentHealth `json:"scheduler,omitempty"`
 	Triggerer    *ComponentHealth `json:"triggerer,omitempty"`
 }
+
+// TaskExecution defines model for TaskExecution.
+type TaskExecution struct {
+	Mode TaskExecutionMode `json:"mode"`
+
+	// Reason Why the task takes a dedicated pod, absent when warm-eligible: warm pools off, staging enabled, source mode, service_account set, a placement field set (node_selector set, tolerations set, ...), a size larger than a warm pod, no idle warm workers kept for this DAG, or a server that runs no warm workers.
+	Reason *string `json:"reason,omitempty"`
+	TaskId string  `json:"task_id"`
+}
+
+// TaskExecutionMode defines model for TaskExecution.Mode.
+type TaskExecutionMode string
 
 // TaskInstance defines model for TaskInstance.
 type TaskInstance struct {
@@ -515,9 +632,12 @@ type TaskInstanceCollection struct {
 	NextCursor *string `json:"next_cursor,omitempty"`
 
 	// PreviousCursor Cursor of the previous page. Present only when the request carried cursor and the page is not the first.
-	PreviousCursor *string         `json:"previous_cursor,omitempty"`
-	TaskInstances  *[]TaskInstance `json:"task_instances,omitempty"`
-	TotalEntries   *int            `json:"total_entries,omitempty"`
+	PreviousCursor *string `json:"previous_cursor,omitempty"`
+
+	// RunOnLatestVersionNotApplied Dexaflow-only. The runs a clear with run_on_latest_version keeps on their own version, each with the reason (ADR 0086): only a finished run with no task instance queued or running moves to the current version. The clear still applies to these runs, on their version. Left out when every run moved or the option was not asked, and on every response other than the two clear routes.
+	RunOnLatestVersionNotApplied *ClearVersionNotApplied `json:"run_on_latest_version_not_applied,omitempty"`
+	TaskInstances                *[]TaskInstance         `json:"task_instances,omitempty"`
+	TotalEntries                 *int                    `json:"total_entries,omitempty"`
 }
 
 // TaskInstanceStateUpdate defines model for TaskInstanceStateUpdate.
@@ -527,6 +647,31 @@ type TaskInstanceStateUpdate struct {
 
 // TaskInstanceStateUpdateNewState defines model for TaskInstanceStateUpdate.NewState.
 type TaskInstanceStateUpdateNewState string
+
+// TaskPodsReport What the version's task pods would run as (Dexaflow), sent by the dry run route only, absent from a register. A server that starts no task pods sends run_as_non_root false and no service account.
+type TaskPodsReport struct {
+	// RunAsNonRoot True when task pods refuse an image that runs as root or as a user name rather than a number (executor.run_tasks_as_non_root).
+	RunAsNonRoot bool `json:"run_as_non_root"`
+
+	// ServiceAccounts Each ServiceAccount a task pod of the version would run as (the task's execution.service_account, else executor.task_service_account, else the namespace's default), sorted by name. A dry run looks up at most 8.
+	ServiceAccounts []TaskServiceAccountCheck `json:"service_accounts"`
+}
+
+// TaskServiceAccountCheck defines model for TaskServiceAccountCheck.
+type TaskServiceAccountCheck struct {
+	// Detail Why it is unchecked, or why a missing name is not valid.
+	Detail *string `json:"detail,omitempty"`
+
+	// ImagePullSecrets How many imagePullSecrets it carries; sent with state found.
+	ImagePullSecrets *int   `json:"image_pull_secrets,omitempty"`
+	Name             string `json:"name"`
+
+	// State One of found, missing or unchecked. found: it exists in the task namespace. missing: it does not, and the pods of these tasks would not be created; when its name is not a valid ServiceAccount name (a DNS-1123 subdomain), it is not looked up and detail says so. unchecked: the server could not look it up (detail says why).
+	State string `json:"state"`
+
+	// Tasks The tasks whose pods run as it.
+	Tasks []string `json:"tasks"`
+}
 
 // TokenRequest defines model for TokenRequest.
 type TokenRequest struct {
@@ -609,11 +754,43 @@ type VersionRegistration struct {
 	DagCreated *bool   `json:"dag_created,omitempty"`
 	DagId      *string `json:"dag_id,omitempty"`
 
+	// DryRun True on an answer of the dry run route: nothing was written, and the other fields say what the register would do. Absent from a register.
+	DryRun *bool `json:"dry_run,omitempty"`
+
+	// Execution Where the version's tasks run (Dexaflow), from the same decision dispatch places an attempt with: on a warm worker of the version (warm pools, ADR 0058) or on a dedicated pod. Sent by the register and its dry run. A task is warm-eligible; it still takes a dedicated pod when no warm worker is free. A task the dispatcher would offer to a warm worker is reported dedicated when no warm worker of its version can exist (no idle worker kept, or a server that runs none).
+	Execution *ExecutionReport `json:"execution,omitempty"`
+
 	// IsPaused The DAG's is_paused after the register.
 	IsPaused *bool   `json:"is_paused,omitempty"`
 	SpecHash *string `json:"spec_hash,omitempty"`
-	Version  *string `json:"version,omitempty"`
+
+	// TaskPods What the version's task pods would run as (Dexaflow), sent by the dry run route only, absent from a register. A server that starts no task pods sends run_as_non_root false and no service account.
+	TaskPods *TaskPodsReport `json:"task_pods,omitempty"`
+	Version  *string         `json:"version,omitempty"`
+
+	// Warnings What the register lets through with a warning (a task that does not fit its size under executor.unit.enforce=warn, an image not pinned by digest under deploy.require_digest=warn). Always sent by the dry run route; sent by a register only when it has a warning to give.
+	Warnings *[]string `json:"warnings,omitempty"`
 }
+
+// WarmPoolReport defines model for WarmPoolReport.
+type WarmPoolReport struct {
+	// Detail The state in a sentence for a person.
+	Detail         string `json:"detail"`
+	MaxPoolSize    *int   `json:"max_pool_size,omitempty"`
+	MinIdleWorkers *int   `json:"min_idle_workers,omitempty"`
+
+	// PreviousPool draining for a new version of an existing DAG when this server keeps warm workers; the previous version's idle warm workers, if it has any, are removed, and each busy one once its attempt ends.
+	PreviousPool *WarmPoolReportPreviousPool `json:"previous_pool,omitempty"`
+
+	// State off: warm pools are off. none: this version gets no warm worker (staging, source mode, no idle worker kept, or a server that runs no warm workers: the subprocess executor, or pod dispatch disabled). on: the version keeps min_idle_workers idle warm workers, up to max_pool_size, while it is the DAG's current version; for a DAG that declares min_idle_workers they start at the next reconcile (when a paused DAG is unpaused), else with the version's first run.
+	State WarmPoolReportState `json:"state"`
+}
+
+// WarmPoolReportPreviousPool draining for a new version of an existing DAG when this server keeps warm workers; the previous version's idle warm workers, if it has any, are removed, and each busy one once its attempt ends.
+type WarmPoolReportPreviousPool string
+
+// WarmPoolReportState off: warm pools are off. none: this version gets no warm worker (staging, source mode, no idle worker kept, or a server that runs no warm workers: the subprocess executor, or pod dispatch disabled). on: the version keeps min_idle_workers idle warm workers, up to max_pool_size, while it is the DAG's current version; for a DAG that declares min_idle_workers they start at the next reconcile (when a paused DAG is unpaused), else with the version's first run.
+type WarmPoolReportState string
 
 // XComEntry defines model for XComEntry.
 type XComEntry struct {
@@ -701,6 +878,30 @@ type ClearDagRun200JSONResponseBody struct {
 type RegisterDagVersionParams struct {
 	// IsPaused Sets the DAG's is_paused for this register (true or false). Any other value is refused with 400. Sending it needs write on dags, and a scoped token also needs the dexaflow:run scope (403 otherwise).
 	IsPaused *bool `form:"is_paused,omitempty" json:"is_paused,omitempty"`
+
+	// PromotedFrom Marks the register as a promotion (`dexaflow promote`): the name of the target the version was read from, recorded with promoted_from_server under promoted_from in the register's audit entry. It is the caller's claim, recorded as sent and not verified. A target name: lower case letters, digits, _ and -, starting with a letter or digit, at most 63 characters; anything else is refused with 400.
+	PromotedFrom *string `form:"promoted_from,omitempty" json:"promoted_from,omitempty"`
+
+	// PromotedFromServer The URL of the control plane the version was promoted from, as the caller claims it (not verified): an absolute http or https URL without credentials and with no control or format character, at most 2048 bytes. It needs promoted_from (400 otherwise).
+	PromotedFromServer *string `form:"promoted_from_server,omitempty" json:"promoted_from_server,omitempty"`
+
+	// BuildCommit Where the version was built (#1702), with the other build_* parameters: the git commit of its sources, 7 to 64 lower case hex characters. The build_* parameters are metadata of the register, not part of dag.json: they change neither the spec, its hash nor the version label. They are stored with the version the register creates (build_info in DagVersion) and recorded in its audit entry; a register of content already registered keeps the build info of its first register. They are the caller's claim, recorded as sent and not verified. A value that is empty or breaks its rule is refused with 400.
+	BuildCommit *string `form:"build_commit,omitempty" json:"build_commit,omitempty"`
+
+	// BuildRepo The repository of the sources: an absolute http or https URL without credentials, query string or fragment, valid UTF-8 with no control or format character, at most 2048 bytes.
+	BuildRepo *string `form:"build_repo,omitempty" json:"build_repo,omitempty"`
+
+	// BuildPipelineUrl The CI pipeline run that built the version: an absolute http or https URL without credentials, query string or fragment, valid UTF-8 with no control or format character, at most 2048 bytes.
+	BuildPipelineUrl *string `form:"build_pipeline_url,omitempty" json:"build_pipeline_url,omitempty"`
+
+	// BuildBuilder The builder that produced the image, at most 255 bytes, with no control or format character.
+	BuildBuilder *string `form:"build_builder,omitempty" json:"build_builder,omitempty"`
+
+	// BuildBaseImage The base image the DAG image was built from (it carries the task agent), at most 512 bytes, with no space, control or format character.
+	BuildBaseImage *string `form:"build_base_image,omitempty" json:"build_base_image,omitempty"`
+
+	// BuildCliVersion The version of the CLI that built and registered the version, at most 128 bytes, with no space, control or format character.
+	BuildCliVersion *string `form:"build_cli_version,omitempty" json:"build_cli_version,omitempty"`
 }
 
 // ListUsersParams defines parameters for ListUsers.
@@ -1022,7 +1223,7 @@ type ClientInterface interface {
 
 	// CreateAPITokenWithBody Create an API token (Dexaflow)
 	//
-	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -1031,7 +1232,7 @@ type ClientInterface interface {
 
 	// CreateAPIToken Create an API token (Dexaflow)
 	//
-	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -1109,6 +1310,8 @@ type ClientInterface interface {
 
 	// GetDagSource Get a DAG's source (the dag.py text)
 	//
+	// The source registered with one version of the DAG, as in Airflow 3.2: version_number selects the version, and without it (or with 0) the newest version is served. After a rollback the newest version is not the current one. A version the DAG does not have is a 404, and a version_number that is not an integer is a 400.
+	//
 	// Corresponds with GET /api/v2/dagSources/{dag_id} (the `GetDagSource` operationId).
 	GetDagSource(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1156,7 +1359,7 @@ type ClientInterface interface {
 
 	// SetDagCurrentVersionWithBody Make a registered version current (Dexaflow)
 	//
-	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
+	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -1165,7 +1368,7 @@ type ClientInterface interface {
 
 	// SetDagCurrentVersion Make a registered version current (Dexaflow)
 	//
-	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
+	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -1286,6 +1489,8 @@ type ClientInterface interface {
 	//
 	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+	// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
+	// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -1296,6 +1501,8 @@ type ClientInterface interface {
 	//
 	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+	// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
+	// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -1435,7 +1642,7 @@ func (c *Client) ListAPITokens(ctx context.Context, params *ListAPITokensParams,
 
 // CreateAPITokenWithBody Create an API token (Dexaflow)
 //
-// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
 //
 // Takes any type of body and a specified content type.
 //
@@ -1454,7 +1661,7 @@ func (c *Client) CreateAPITokenWithBody(ctx context.Context, contentType string,
 
 // CreateAPIToken Create an API token (Dexaflow)
 //
-// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -1632,6 +1839,8 @@ func (c *Client) UpdateConnection(ctx context.Context, connectionId ConnectionID
 
 // GetDagSource Get a DAG's source (the dag.py text)
 //
+// The source registered with one version of the DAG, as in Airflow 3.2: version_number selects the version, and without it (or with 0) the newest version is served. After a rollback the newest version is not the current one. A version the DAG does not have is a 404, and a version_number that is not an integer is a 400.
+//
 // Corresponds with GET /api/v2/dagSources/{dag_id} (the `GetDagSource` operationId).
 func (c *Client) GetDagSource(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetDagSourceRequest(c.Server, dagId)
@@ -1749,7 +1958,7 @@ func (c *Client) ClearTaskInstances(ctx context.Context, dagId DagID, body Clear
 
 // SetDagCurrentVersionWithBody Make a registered version current (Dexaflow)
 //
-// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
+// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
 //
 // Takes any type of body and a specified content type.
 //
@@ -1768,7 +1977,7 @@ func (c *Client) SetDagCurrentVersionWithBody(ctx context.Context, dagId DagID, 
 
 // SetDagCurrentVersion Make a registered version current (Dexaflow)
 //
-// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
+// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -2059,6 +2268,8 @@ func (c *Client) GetDagSpec(ctx context.Context, dagId DagID, reqEditors ...Requ
 //
 // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 // Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
+// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 //
 // Takes any type of body and a specified content type.
 //
@@ -2079,6 +2290,8 @@ func (c *Client) RegisterDagVersionWithBody(ctx context.Context, dagId DagID, pa
 //
 // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 // Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
+// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -3739,6 +3952,102 @@ func NewRegisterDagVersionRequestWithBody(server string, dagId DagID, params *Re
 
 		}
 
+		if params.PromotedFrom != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "promoted_from", *params.PromotedFrom, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.PromotedFromServer != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "promoted_from_server", *params.PromotedFromServer, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.BuildCommit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "build_commit", *params.BuildCommit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.BuildRepo != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "build_repo", *params.BuildRepo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.BuildPipelineUrl != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "build_pipeline_url", *params.BuildPipelineUrl, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.BuildBuilder != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "build_builder", *params.BuildBuilder, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.BuildBaseImage != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "build_base_image", *params.BuildBaseImage, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.BuildCliVersion != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "build_cli_version", *params.BuildCliVersion, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -4320,7 +4629,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateAPITokenWithBodyWithResponse Create an API token (Dexaflow)
 	//
-	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -4329,7 +4638,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateAPITokenWithResponse Create an API token (Dexaflow)
 	//
-	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -4417,6 +4726,8 @@ type ClientWithResponsesInterface interface {
 
 	// GetDagSourceWithResponse Get a DAG's source (the dag.py text)
 	//
+	// The source registered with one version of the DAG, as in Airflow 3.2: version_number selects the version, and without it (or with 0) the newest version is served. After a rollback the newest version is not the current one. A version the DAG does not have is a 404, and a version_number that is not an integer is a 400.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /api/v2/dagSources/{dag_id} (the `GetDagSource` operationId).
@@ -4470,7 +4781,7 @@ type ClientWithResponsesInterface interface {
 
 	// SetDagCurrentVersionWithBodyWithResponse Make a registered version current (Dexaflow)
 	//
-	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
+	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -4479,7 +4790,7 @@ type ClientWithResponsesInterface interface {
 
 	// SetDagCurrentVersionWithResponse Make a registered version current (Dexaflow)
 	//
-	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
+	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -4616,6 +4927,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+	// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
+	// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -4626,6 +4939,8 @@ type ClientWithResponsesInterface interface {
 	//
 	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+	// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
+	// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -5280,6 +5595,8 @@ type GetDagSourceResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *DagSource
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Error
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -5287,6 +5604,11 @@ type GetDagSourceResponse struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetDagSourceResponse) GetJSON200() *DagSource {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetDagSourceResponse) GetJSON400() *Error {
+	return r.JSON400
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -5465,11 +5787,18 @@ type ClearTaskInstancesResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *TaskInstanceCollection
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ClearTaskInstancesResponse) GetJSON200() *TaskInstanceCollection {
 	return r.JSON200
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ClearTaskInstancesResponse) GetJSON409() *Error {
+	return r.JSON409
 }
 
 // GetBody returns the raw response body bytes
@@ -5501,6 +5830,11 @@ func (r ClearTaskInstancesResponse) ContentType() string {
 	return ""
 }
 
+// SetDagCurrentVersionResponse403Headers the declared response headers of an HTTP 403 response for SetDagCurrentVersion
+type SetDagCurrentVersionResponse403Headers struct {
+	DexaflowDeployVia *string
+}
+
 type SetDagCurrentVersionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5514,6 +5848,8 @@ type SetDagCurrentVersionResponse struct {
 	JSON403 *Error
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *SetDagCurrentVersionResponse403Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -5711,6 +6047,8 @@ type ClearDagRunResponse struct {
 	JSON403 *Error
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -5731,6 +6069,11 @@ func (r ClearDagRunResponse) GetJSON403() *Error {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r ClearDagRunResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ClearDagRunResponse) GetJSON409() *Error {
+	return r.JSON409
 }
 
 // GetBody returns the raw response body bytes
@@ -6125,6 +6468,11 @@ func (r GetDagSpecResponse) ContentType() string {
 	return ""
 }
 
+// RegisterDagVersionResponse403Headers the declared response headers of an HTTP 403 response for RegisterDagVersion
+type RegisterDagVersionResponse403Headers struct {
+	DexaflowDeployVia *string
+}
+
 type RegisterDagVersionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6140,6 +6488,8 @@ type RegisterDagVersionResponse struct {
 	JSON403 *Error
 	// JSON409 the response for an HTTP 409 `application/json` response
 	JSON409 *Error
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *RegisterDagVersionResponse403Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -6828,7 +7178,7 @@ func (c *ClientWithResponses) ListAPITokensWithResponse(ctx context.Context, par
 
 // CreateAPITokenWithBodyWithResponse Create an API token (Dexaflow)
 //
-// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -6843,7 +7193,7 @@ func (c *ClientWithResponses) CreateAPITokenWithBodyWithResponse(ctx context.Con
 
 // CreateAPITokenWithResponse Create an API token (Dexaflow)
 //
-// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Not callable with an API token or any other scoped token.
+// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -6991,6 +7341,8 @@ func (c *ClientWithResponses) UpdateConnectionWithResponse(ctx context.Context, 
 
 // GetDagSourceWithResponse Get a DAG's source (the dag.py text)
 //
+// The source registered with one version of the DAG, as in Airflow 3.2: version_number selects the version, and without it (or with 0) the newest version is served. After a rollback the newest version is not the current one. A version the DAG does not have is a 404, and a version_number that is not an integer is a 400.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /api/v2/dagSources/{dag_id} (the `GetDagSource` operationId).
@@ -7086,7 +7438,7 @@ func (c *ClientWithResponses) ClearTaskInstancesWithResponse(ctx context.Context
 
 // SetDagCurrentVersionWithBodyWithResponse Make a registered version current (Dexaflow)
 //
-// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
+// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -7101,7 +7453,7 @@ func (c *ClientWithResponses) SetDagCurrentVersionWithBodyWithResponse(ctx conte
 
 // SetDagCurrentVersionWithResponse Make a registered version current (Dexaflow)
 //
-// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy).
+// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -7340,6 +7692,8 @@ func (c *ClientWithResponses) GetDagSpecWithResponse(ctx context.Context, dagId 
 //
 // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 // Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
+// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -7356,6 +7710,8 @@ func (c *ClientWithResponses) RegisterDagVersionWithBodyWithResponse(ctx context
 //
 // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 // Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
+// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -7998,6 +8354,13 @@ func ParseGetDagSourceResponse(rsp *http.Response) (*GetDagSourceResponse, error
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -8123,6 +8486,13 @@ func ParseClearTaskInstancesResponse(rsp *http.Response) (*ClearTaskInstancesRes
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
 	}
 
 	return response, nil
@@ -8177,6 +8547,19 @@ func ParseSetDagCurrentVersionResponse(rsp *http.Response) (*SetDagCurrentVersio
 		}
 		response.JSON404 = &dest
 
+	}
+
+	switch {
+	case rsp.StatusCode == 403:
+		var headers SetDagCurrentVersionResponse403Headers
+		if values := rsp.Header.Values("Dexaflow-Deploy-Via"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Dexaflow-Deploy-Via", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.DexaflowDeployVia = &value
+		}
+		response.Headers403 = &headers
 	}
 
 	return response, nil
@@ -8308,6 +8691,13 @@ func ParseClearDagRunResponse(rsp *http.Response) (*ClearDagRunResponse, error) 
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	}
 
@@ -8610,6 +9000,19 @@ func ParseRegisterDagVersionResponse(rsp *http.Response) (*RegisterDagVersionRes
 		}
 		response.JSON409 = &dest
 
+	}
+
+	switch {
+	case rsp.StatusCode == 403:
+		var headers RegisterDagVersionResponse403Headers
+		if values := rsp.Header.Values("Dexaflow-Deploy-Via"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Dexaflow-Deploy-Via", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.DexaflowDeployVia = &value
+		}
+		response.Headers403 = &headers
 	}
 
 	return response, nil

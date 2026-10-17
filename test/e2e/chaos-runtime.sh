@@ -225,7 +225,7 @@ deregister_dag() {
   "$ROOT/bin/leoflow" dags delete "$1" --deregister --server "$API" --token "$TOKEN" >/dev/null 2>&1 || true
 }
 
-TOKEN="$("$ROOT/bin/leoflow" auth create-token --server "$API" --username admin@leoflow.local --password admin)" \
+TOKEN="$(admin_token "$ROOT/bin/leoflow" "$API" admin)" \
   || fatal "could not mint an admin token against $API"
 [ -n "$TOKEN" ] || fatal "empty admin token from $API"
 deregister_dag "$DAG_ID"

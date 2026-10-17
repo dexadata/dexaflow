@@ -30,3 +30,14 @@ func TestHintEmailUsername(t *testing.T) {
 		t.Error("empty username should not get a hint")
 	}
 }
+
+// TestHintEmailUsernameNamesBothAdmins: the hint names the new bootstrap admin
+// and the one installs created before the rename keep.
+func TestHintEmailUsernameNamesBothAdmins(t *testing.T) {
+	got := hintEmailUsername("admin", fmt.Errorf("server returned 401: invalid credentials")).Error()
+	for _, want := range []string{"admin@dexaflow.local", "admin@leoflow.local"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("hint should name %s; got %q", want, got)
+		}
+	}
+}

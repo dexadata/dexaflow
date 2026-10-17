@@ -5,9 +5,13 @@
 // builders are tried in (ResolutionOrder): skip the build when the dependency
 // image already exists, append a code layer, pack a daemonless dependency
 // layer, use a remote builder, and only then fall back to a local container
-// daemon. Two exist today: Existing, the skip path in its first form (the
-// whole image for this content label is already in the registry, see Select),
-// and LocalDaemon. Every builder returns a Result that carries the digest of the image it
+// daemon. Four exist today: Existing, the skip path in its first form (the
+// whole image for this content label is already in the registry, see Select);
+// CodeLayer, which appends the DAG code to a dependency image the registry
+// holds, or first builds that dependency image, from wheels without a daemon
+// (DependencyLayer, ADR 0078), with the remote builder or with the daemon
+// (ADR 0077); CloudBuild, the remote builder on Google Cloud Build (Remote,
+// ADR 0083); and LocalDaemon. Every builder returns a Result that carries the digest of the image it
 // pushed, so the caller pins dag.json to exactly those bytes (ADR 0003,
 // ADR 0041).
 //
@@ -27,9 +31,9 @@ type Path string
 
 // The builder resolution order of ADR 0073, first to last.
 const (
-	// PathSkip reuses an image already in the registry: today the whole
-	// image of the content label; once images are split, the dependency
-	// image of the dependency key (ADR 0073 section 4).
+	// PathSkip reuses the whole image of the content label already in the
+	// registry (ADR 0076). A cached dependency image is reused by
+	// PathCodeLayer (ADR 0077).
 	PathSkip Path = "skip"
 	// PathCodeLayer appends the DAG code as a layer to a cached dependency
 	// image through the registry API.
@@ -54,6 +58,14 @@ func ResolutionOrder() []Path {
 // error wraps the builder's own failure and says how to build one platform.
 var ErrMultiPlatform = errors.New("the multi-platform build failed")
 
+// ErrPinRead marks a build whose push succeeded and whose read of the pushed
+// image's digest, asked for by Request.Pin, failed (#1703). The builder then
+// returns the Result of the push, Pushed and without Ref, with the error, so
+// a caller that may register a tag (compile) keeps it, and one that must
+// register a digest (deploy) stops. A read that verifies a multi-platform
+// push is not a pin read: its failure leaves the push unverified.
+var ErrPinRead = errors.New("the image was pushed, but its digest could not be read")
+
 // Request is one image to produce.
 type Request struct {
 	// Image is the tag reference to build, <registry>/<name>:<tag>.
@@ -69,6 +81,15 @@ type Request struct {
 	// Pin asks for the digest of the pushed image in Result.Ref. It needs
 	// Push: an image that is not pushed has no registry digest.
 	Pin bool
+	// Code is the DAG project files of the code layer, for a split build
+	// (Split); other builders read ContextDir.
+	Code []LayerFile
+	// ContextFiles is the build context as the build would read it, the
+	// files of ContextDir that the .dockerignore keeps, for a builder that
+	// sends the context to another machine (the remote path). nil means not
+	// listed: such a builder refuses to run rather than send the whole
+	// directory; an empty list is an empty context.
+	ContextFiles []LayerFile
 	// Stdout and Stderr receive the builder's own output.
 	Stdout io.Writer
 	Stderr io.Writer

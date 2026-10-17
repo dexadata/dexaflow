@@ -276,6 +276,12 @@ reportcard: ## Verify the Go Report Card A+ floor (ADR 0012) with maintained too
 vuln: ## Run govulncheck (ADR 0014)
 	govulncheck ./...
 
+FUZZTIME ?= 30s
+
+.PHONY: fuzz
+fuzz: ## Run every Go fuzz target for FUZZTIME each (default 30s; FUZZ=<regexp> picks targets) (#1571)
+	FUZZTIME=$(FUZZTIME) bash scripts/fuzz.sh
+
 .PHONY: ci-local
 ci-local: ## Run every CI gate locally — pre-push tripwire so a PR does not arrive red
 	@echo "▸ gofmt"

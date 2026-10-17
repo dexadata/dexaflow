@@ -68,6 +68,10 @@ func (f *Flow) Codec() *StateCodec { return f.codec }
 // Verifier returns the ID-token verifier.
 func (f *Flow) Verifier() *Verifier { return f.verifier }
 
+// AuthEndpoint returns the IdP's discovered authorization endpoint, the URL
+// the browser is sent to, without building a redirect.
+func (f *Flow) AuthEndpoint() string { return f.oauth.Endpoint.AuthURL }
+
 // AuthCodeURL builds the authorization redirect for the given CSRF state, ID
 // token nonce, and PKCE verifier. The verifier is sent as an S256 challenge
 // (never in the clear); the nonce is echoed back in the ID token and checked on

@@ -10,11 +10,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/egress"
+	"github.com/dexadata/dexaflow/internal/envcompat"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
@@ -35,6 +37,7 @@ type ServerConfig struct {
 	UI            UISection            `mapstructure:"ui"`
 	Secrets       SecretsSection       `mapstructure:"secrets"`
 	Retention     RetentionSection     `mapstructure:"retention"`
+	Deploy        DeploySection        `mapstructure:"deploy"`
 	// SecretKey (LEOFLOW_SECRET_KEY) encrypts connection secrets at rest (ADR
 	// 0019). Raw 32 chars, 64-char hex, or base64. Empty disables connection
 	// writes.
@@ -76,6 +79,128 @@ type ServerConfig struct {
 	// (#1705). `dexaflow lite` sets it to false, so a DAG run locally starts
 	// active as it always did.
 	DagsArePausedAtCreation bool `mapstructure:"dags_are_paused_at_creation"`
+}
+
+// DeploySection is what the server tells `dexaflow deploy` (#1704).
+type DeploySection struct {
+	// Defaults (deploy.defaults.*) are the registry prefix, build platforms,
+	// base image and remote builder a deploy to this cluster uses for
+	// whatever the project, its workspace, its target and the person's config
+	// leave unset, and the switches that advertise the source mode runtime
+	// image, the task service account and the warm pools. Served on GET
+	// /api/v2/deployDefaults; unset (the default) advertises nothing, so
+	// every deploy resolves as it did before. None of them is a secret.
+	Defaults DeployDefaultsSection `mapstructure:"defaults"`
+	// RequireDigest (deploy.require_digest, #1703) is what registering a
+	// version, or making one current again, does with an image not pinned by
+	// a full sha256 digest: off (the default) accepts it, warn accepts it with
+	// a warning, a log line and a count, enforce refuses it. DEXAFLOW_DEPLOY_REQUIRE_DIGEST (legacy
+	// LEOFLOW_DEPLOY_REQUIRE_DIGEST).
+	RequireDigest domain.DigestRequirement `mapstructure:"require_digest"`
+}
+
+// DeployDefaultsSection is deploy.defaults: the values served as they are,
+// and the switch that adds the source mode runtime image to them.
+type DeployDefaultsSection struct {
+	domain.DeployDefaults `mapstructure:",squash"`
+	// SourceMode (deploy.defaults.source_mode, default false) advertises
+	// execution.source_mode.image as source_mode_image, so a deploy to this
+	// cluster that names no runtime image of its own registers dag.py on it
+	// with no build (#1772). It requires execution.source_mode.enabled.
+	SourceMode bool `mapstructure:"source_mode"`
+	// RemoteBuilder (deploy.defaults.remote_builder.cloud_build.*, #1890) is
+	// the remote builder a deploy to this cluster uses for builds no
+	// daemonless path covers, when the project, its target and its workspace
+	// name none (ADR 0083). Unset (the default) advertises none.
+	RemoteBuilder RemoteBuilderSection `mapstructure:"remote_builder"`
+	// AdvertiseTaskServiceAccount (deploy.defaults.task_service_account,
+	// default false, #1890) serves executor.task_service_account as
+	// task_service_account, so a deploy says which account its tasks run as
+	// when they name none. It requires executor.task_service_account.
+	AdvertiseTaskServiceAccount bool `mapstructure:"task_service_account"`
+	// AdvertiseWarmPools (deploy.defaults.warm_pools, default false, #1890)
+	// serves execution.warm_pools_enabled, execution.min_idle_workers and
+	// execution.max_pool_size as warm_pools, so a deploy says how many idle
+	// workers its DAG gets.
+	AdvertiseWarmPools bool `mapstructure:"warm_pools"`
+}
+
+// RemoteBuilderSection is deploy.defaults.remote_builder: the backends of
+// domain.RemoteBuilderConfig as server keys. Cloud Build is the only one.
+type RemoteBuilderSection struct {
+	// CloudBuild is deploy.defaults.remote_builder.cloud_build.
+	CloudBuild CloudBuildSection `mapstructure:"cloud_build"`
+}
+
+// CloudBuildSection is deploy.defaults.remote_builder.cloud_build, the
+// fields of domain.CloudBuildConfig. Every field empty advertises none.
+type CloudBuildSection struct {
+	// Project is the Google Cloud project the build runs in.
+	Project string `mapstructure:"project"`
+	// Region is the Cloud Build region, such as us-central1.
+	Region string `mapstructure:"region"`
+	// WorkerPool is a private pool,
+	// projects/<project>/locations/<region>/workerPools/<name>.
+	WorkerPool string `mapstructure:"worker_pool"`
+	// ServiceAccount is the account the build runs as,
+	// projects/<project>/serviceAccounts/<email>.
+	ServiceAccount string `mapstructure:"service_account"`
+}
+
+// sourceModeImageKey is the deploy.defaults key the server refuses: the
+// runtime image it advertises is always execution.source_mode.image, turned
+// on by deploy.defaults.source_mode.
+const sourceModeImageKey = "deploy.defaults.source_mode_image"
+
+// refuseAdvertisedSourceModeImage refuses deploy.defaults.source_mode_image,
+// from the config file or from either variable prefix: nothing reads it
+// (DeployDefaults.SourceModeImage is never decoded), and an operator who set
+// it would believe the cluster advertises an image it does not.
+func refuseAdvertisedSourceModeImage(v *viper.Viper) error {
+	suffix := "DEPLOY_DEFAULTS_SOURCE_MODE_IMAGE"
+	if err := v.BindEnv(sourceModeImageKey, envcompat.NewPrefix+suffix, envcompat.LegacyPrefix+suffix); err != nil {
+		return fmt.Errorf("binding environment for %q: %w", sourceModeImageKey, err)
+	}
+	if !v.IsSet(sourceModeImageKey) {
+		return nil
+	}
+	return fmt.Errorf("%s is not a setting: the cluster advertises its runtime image only as execution.source_mode.image, "+
+		"so set deploy.defaults.source_mode: true (with execution.source_mode.enabled and execution.source_mode.image) instead", sourceModeImageKey)
+}
+
+// AdvertisedDeployDefaults are the deploy defaults GET /api/v2/deployDefaults
+// serves: deploy.defaults, with the runtime image of source mode when
+// deploy.defaults.source_mode asks for it and the mode is on, the remote
+// builder when deploy.defaults.remote_builder sets one, and the task
+// service account and warm pools of this server when their switches are on
+// (#1890).
+func (c *ServerConfig) AdvertisedDeployDefaults() domain.DeployDefaults {
+	d := c.Deploy.Defaults.DeployDefaults
+	d.SourceModeImage = ""
+	if c.Deploy.Defaults.SourceMode {
+		d.SourceModeImage = c.Execution.SourceMode.RuntimeImage()
+	}
+	d.RemoteBuilder = c.Deploy.Defaults.RemoteBuilder.config()
+	d.TaskServiceAccount = ""
+	if c.Deploy.Defaults.AdvertiseTaskServiceAccount {
+		d.TaskServiceAccount = c.Executor.TaskServiceAccount
+	}
+	d.WarmPools = nil
+	if c.Deploy.Defaults.AdvertiseWarmPools {
+		d.WarmPools = &domain.WarmPoolDefaults{Enabled: c.Execution.WarmPoolsEnabled,
+			MinIdleWorkers: c.Execution.MinIdleWorkers, MaxPoolSize: c.Execution.MaxPoolSize}
+	}
+	return d
+}
+
+// config is the remote builder s configures, nil when it sets nothing.
+func (s RemoteBuilderSection) config() *domain.RemoteBuilderConfig {
+	cb := s.CloudBuild
+	if cb == (CloudBuildSection{}) {
+		return nil
+	}
+	return &domain.RemoteBuilderConfig{CloudBuild: &domain.CloudBuildConfig{
+		Project: cb.Project, Region: cb.Region, WorkerPool: cb.WorkerPool, ServiceAccount: cb.ServiceAccount}}
 }
 
 // Variable encryption modes (variable_encryption, #507).
@@ -402,11 +527,16 @@ type ExecutionSection struct {
 	// dag_version's pool, this bounds a tenant's aggregate warm footprint so one
 	// tenant cannot pin unlimited idle pods and starve neighbors on a shared
 	// multi-team cluster. Default 100, operator-set. It is a RESERVE-then-RATION
-	// budget, never a starvation lever: a tenant's promised idle floors (the sum of
-	// its versions' EffectiveMinIdle) are honored even when they exceed this cap
-	// (the reconciler raises the effective budget to the floor sum and meters the
-	// misconfiguration), and the cap is enforced only by refusing to CREATE new
-	// warm pods — never by deleting a busy worker.
+	// budget, never a starvation lever: the promised idle floors of a tenant's
+	// versions with an active run (the sum of their EffectiveMinIdle) are honored
+	// even when they exceed this cap (the reconciler raises the effective budget
+	// to the floor sum and meters the misconfiguration). A prewarm-only version
+	// (ADR 0082) never raises it: the prewarm floors share what the cap leaves,
+	// by DAG id, and a prewarm pool above its share shrinks with the worker idle
+	// TTL. The floors of versions with an active run are created at once on top
+	// of such a pool, so the tenant exceeds the cap until it has shrunk (at
+	// most one idle TTL after each share drop). The cap is otherwise enforced
+	// only by refusing to CREATE new warm pods, never by deleting a busy worker.
 	MaxWarmPodsPerTenant int `mapstructure:"max_warm_pods_per_tenant"`
 	// WarmReadOnlyRootFilesystem mounts every warm worker's root filesystem read
 	// only and gives each attempt its own HOME and XDG dirs inside the scratch the
@@ -420,6 +550,13 @@ type ExecutionSection struct {
 	// is turned on. Dedicated task pods are not affected; they follow
 	// executor.defaults.read_only_task_root_filesystem.
 	WarmReadOnlyRootFilesystem bool `mapstructure:"warm_read_only_root_filesystem"`
+	// WarmRequireAttemptHomeSweep refuses a warm worker that does not confirm,
+	// when it registers, that it empties /tmp and /dev/shm between attempts
+	// (#1678), so its DAG version's attempts run on dedicated pods. It applies
+	// only with WarmReadOnlyRootFilesystem on. Default false logs and meters
+	// such a worker and keeps it: agents from runtime v0.5.1 sweep but only the
+	// ones built after the report was added can confirm it.
+	WarmRequireAttemptHomeSweep bool `mapstructure:"warm_require_attempt_home_sweep"`
 	// WarmPoolEventRefill makes warm-pool refill event driven: the reconciler
 	// reads the fleet from a dedicated warm-pod informer instead of a LIST per
 	// tick, reacts at once to a worker being deleted, failing or claimed, and
@@ -705,6 +842,18 @@ type TrustedIssuerSection struct {
 	// BearerMaxLifetimeSeconds caps exp - iat of a bearer. Zero uses the
 	// 900-second default; at most 3600.
 	BearerMaxLifetimeSeconds int `mapstructure:"bearer_max_lifetime_seconds"`
+	// DeployAudience makes the issuer the only way to deploy (#1773). When
+	// set, registering a DAG version (and its dry run) and setting the current
+	// version, and deleting a DAG, take only a bearer of this issuer whose
+	// `aud` is this audience alone and that carries dexaflow:deploy, besides
+	// the role check; a token that also names another audience, a session, a
+	// password login token, an API token and a bearer of another audience
+	// are refused with 403. It is a bearer audience of its own: it turns the
+	// bearer verifier on without BearerAudiences, and a token for it gets
+	// the scopes it carries, like any bearer. It must differ from Audience
+	// and from every BearerAudiences entry, so a handoff or another client's
+	// bearer is never a deploy token. Empty (the default) changes nothing.
+	DeployAudience string `mapstructure:"deploy_audience"`
 	// HostPattern binds a browser session to its tenant's host (#1463), for
 	// an operator that serves each tenant on its own host in front of one
 	// engine, for example "{tenant}.example.com". When set, a handoff is
@@ -1019,8 +1168,8 @@ type DispatchSection struct {
 // knobs keep each statement small and each cycle bounded.
 type RetentionSection struct {
 	// DagRunsDays deletes finished (success or failed) dag runs, with their task
-	// instances, attempt history, state history and XCom index rows, once they
-	// ended more than this many days ago. 0 (default) keeps every run.
+	// instances, attempt history and XCom index rows, once they ended more
+	// than this many days ago. 0 (default) keeps every run.
 	DagRunsDays int `mapstructure:"dag_runs_days"`
 	// AuditLogDays deletes audit log entries older than this many days. 0
 	// (default) keeps the whole audit log.
@@ -1336,6 +1485,7 @@ var serverDefaults = map[string]any{
 	"auth.trusted_issuer.bearer_audiences":            []string{},
 	"auth.trusted_issuer.bearer_max_lifetime_seconds": 0,
 	"auth.trusted_issuer.host_pattern":                "",
+	"auth.trusted_issuer.deploy_audience":             "",
 	"auth.external_signin_url":                        "",
 	"auth.external_signout_url":                       "",
 	// Registered so LEOFLOW_AUTH_SESSION_COOKIE_INSECURE binds at all (viper's
@@ -1369,12 +1519,32 @@ var serverDefaults = map[string]any{
 	// Warm isolation mode (X3.2, ADR 0058). Registered so AutomaticEnv binds
 	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM; false keeps
 	// today's writable warm root.
-	"execution.warm_read_only_root_filesystem": false,
-	"execution.source_mode.enabled":            false,
-	"execution.source_mode.image":              "",
+	"execution.warm_read_only_root_filesystem":  false,
+	"execution.warm_require_attempt_home_sweep": false,
+	"execution.source_mode.enabled":             false,
+	"execution.source_mode.image":               "",
 	// Event-driven warm-pool refill (ADR 0058). Registered so AutomaticEnv binds
 	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL; false keeps polling.
 	"execution.warm_pool_event_refill": false,
+	// Cluster deploy defaults (#1704). Registered so AutomaticEnv binds
+	// DEXAFLOW_/LEOFLOW_DEPLOY_DEFAULTS_*; empty advertises nothing.
+	"deploy.defaults.registry":   "",
+	"deploy.defaults.platforms":  []string{},
+	"deploy.defaults.base_image": "",
+	// Off: no runtime image is advertised for source mode (#1772).
+	"deploy.defaults.source_mode": false,
+	// #1890: the remote builder a deploy uses when nothing local names one,
+	// and the switches that advertise the task service account and the warm
+	// pools. Unset and off advertise nothing.
+	"deploy.defaults.remote_builder.cloud_build.project":         "",
+	"deploy.defaults.remote_builder.cloud_build.region":          "",
+	"deploy.defaults.remote_builder.cloud_build.worker_pool":     "",
+	"deploy.defaults.remote_builder.cloud_build.service_account": "",
+	"deploy.defaults.task_service_account":                       false,
+	"deploy.defaults.warm_pools":                                 false,
+	// Digest-pinned images at register (#1703). off keeps every register as
+	// it was.
+	"deploy.require_digest": string(domain.DigestRequireOff),
 	// Retention (the leader-only janitor). Every class ships off: nothing is
 	// deleted until an operator sets a window. The pacing values apply once one is.
 	"retention.dag_runs_days":      0,
@@ -1411,11 +1581,15 @@ func LoadServer(configFile string, flags *pflag.FlagSet) (*ServerConfig, error) 
 	if err := bindBothPrefixes(v, strings.NewReplacer(".", "_", "-", "_")); err != nil {
 		return nil, err
 	}
+	if err := refuseAdvertisedSourceModeImage(v); err != nil {
+		return nil, err
+	}
 
 	var c ServerConfig
 	if err := v.Unmarshal(&c); err != nil {
 		return nil, fmt.Errorf("unmarshaling server config: %w", err)
 	}
+	normalizeRequireDigest(v, &c)
 	// The OIDC role_mappings / tenant_claims maps are decoded straight from the
 	// raw YAML, bypassing viper's "." key-delimiter flattening that would split a
 	// dotted map key (a Google `hd` domain, a dotted IdP group) and fail (#826).
@@ -1536,6 +1710,8 @@ func (c *ServerConfig) Validate() error {
 		c.Retention.Validate,
 		c.validateExecutorPolicies,
 		c.validatePlatformIntegration,
+		c.validateDeployDefaults,
+		c.validateRequireDigest,
 	} {
 		if err := check(); err != nil {
 			return err
@@ -1556,6 +1732,42 @@ func (c *ServerConfig) Validate() error {
 		return fmt.Errorf("auth.dev_no_auth disables authentication and is only permitted on a loopback http_addr (got %q); never enable it in production", c.Server.HTTPAddr)
 	}
 	return nil
+}
+
+// validateDeployDefaults refuses a deploy.defaults value no deploy could
+// use, so it fails at boot instead of in every deploy to the cluster.
+func (c *ServerConfig) validateDeployDefaults() error {
+	if c.Deploy.Defaults.SourceMode && !c.Execution.SourceMode.Enabled {
+		return errors.New("deploy.defaults.source_mode advertises the source mode runtime image, but execution.source_mode.enabled is false; turn source mode on or leave deploy.defaults.source_mode off")
+	}
+	if c.Deploy.Defaults.AdvertiseTaskServiceAccount && c.Executor.TaskServiceAccount == "" {
+		return errors.New("deploy.defaults.task_service_account advertises the task service account, but executor.task_service_account is empty; set it or leave deploy.defaults.task_service_account off")
+	}
+	d := c.AdvertisedDeployDefaults()
+	// The source mode runtime image is execution.source_mode's, checked
+	// with it; the rest is checked as a deploy will read it.
+	d.SourceModeImage = ""
+	return d.Validate("deploy.defaults")
+}
+
+// normalizeRequireDigest reads a YAML boolean deploy.require_digest as the
+// chart does: a bare off in a config file is YAML for false, which means off,
+// and true stays "true" (the weak decode would make it "1") so that Validate
+// names the value the operator wrote.
+func normalizeRequireDigest(v *viper.Viper, c *ServerConfig) {
+	if b, ok := v.Get("deploy.require_digest").(bool); ok {
+		c.Deploy.RequireDigest = domain.DigestRequireOff
+		if b {
+			c.Deploy.RequireDigest = "true"
+		}
+	}
+}
+
+// validateRequireDigest refuses a deploy.require_digest other than off, warn
+// or enforce, so a typo fails at boot instead of registering unpinned images.
+func (c *ServerConfig) validateRequireDigest() error {
+	_, err := domain.ParseDigestRequirement(string(c.Deploy.RequireDigest))
+	return err
 }
 
 // isLoopbackListenAddr reports whether a listen address binds only to loopback,
@@ -1969,7 +2181,7 @@ var issuerNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$
 // Every missing or malformed key is reported in one error, so first-time setup
 // is one edit rather than a chain of restarts.
 func validateTrustedIssuer(s TrustedIssuerSection) error {
-	if !s.Enabled() && s.Name == "" && s.JWKSURL == "" && s.Audience == "" && len(s.AllowedTenants) == 0 && len(s.AllowedOrigins) == 0 && s.HostPattern == "" {
+	if !s.Enabled() && s.Name == "" && s.JWKSURL == "" && s.Audience == "" && len(s.AllowedTenants) == 0 && len(s.AllowedOrigins) == 0 && s.HostPattern == "" && s.DeployAudience == "" {
 		return nil
 	}
 	checks := []struct {
@@ -1987,6 +2199,7 @@ func validateTrustedIssuer(s TrustedIssuerSection) error {
 		{bearerAudiencesValid(s), "auth.trusted_issuer.bearer_audiences (non-empty, and none equal to auth.trusted_issuer.audience)"},
 		{s.BearerMaxLifetimeSeconds >= 0 && s.BearerMaxLifetimeSeconds <= 3600, "auth.trusted_issuer.bearer_max_lifetime_seconds (0 to 3600)"},
 		{hostPatternValid(s.HostPattern), "auth.trusted_issuer.host_pattern (empty, or a host[:port] with exactly one {tenant}, such as {tenant}.example.com)"},
+		{deployAudienceValid(s), "auth.trusted_issuer.deploy_audience (empty, or an audience without surrounding spaces other than auth.trusted_issuer.audience and every auth.trusted_issuer.bearer_audiences entry)"},
 	}
 	var problems []string
 	for _, c := range checks {
@@ -2010,6 +2223,19 @@ func bearerAudiencesValid(s TrustedIssuerSection) bool {
 		}
 	}
 	return true
+}
+
+// deployAudienceValid reports whether the deploy audience is unset, or free
+// of surrounding whitespace (aud is compared exactly, so " x" would match no
+// token and read as a typo) and shared with no other audience: a handoff or
+// another client's bearer that is also a deploy token would undo the
+// restriction it exists for (#1773).
+func deployAudienceValid(s TrustedIssuerSection) bool {
+	d := s.DeployAudience
+	if d == "" {
+		return true
+	}
+	return d == strings.TrimSpace(d) && d != s.Audience && !slices.Contains(s.BearerAudiences, d)
 }
 
 // validateHomeLink checks ui.home_link (#1290): both fields or neither, and an

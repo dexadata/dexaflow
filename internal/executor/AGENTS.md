@@ -18,6 +18,12 @@ first-time contributors without a discussion issue first.
 - **A warm pool belongs to one DAG version.** It is keyed by
   `dag_version_id`, so a pod on an old image never runs new code, and an
   inactive version's pods are removed (ADR 0058 D1, `warmpool_test.go`).
+  The versions kept are the current version of each unpaused DAG that
+  declares `min_idle_workers` and the versions of active runs that are
+  still current (ADR 0082,
+  `warmCandidates` in `internal/storage`), so a deploy, a promote or a
+  rollback starts the new pool and drains the old one; the drain never
+  deletes a busy worker (`warm_prewarm_integration_test.go`).
 - **The termination message is a contract.** `BuildPod` pins
   `TerminationMessagePolicy` and `TerminationMessagePath` because the durable
   outcome record travels there
@@ -31,6 +37,14 @@ first-time contributors without a discussion issue first.
   reads the `CoreV1().<Resource>(...)` calls in this directory and fails when
   the chart's Role does not permit one. It is a grep: write calls in that shape
   so it can see them.
+- **The warm pool tick is measured, not assumed.** The leader runs it every
+  warm pool interval. `warmpool_bench_test.go` has its benchmarks,
+  `test/load/BASELINE.md` the command and
+  `test/release/perf-reliability-checklist.md` (row B1) the bar against the
+  previous release. A steady tick allocates nothing per worker, and the
+  prewarm pass nothing while the per-tenant cap covers every prewarm floor
+  (`warmpool_allocs_test.go`); keep it that way or say why in the PR. A performance PR is reviewed by a specialist before
+  it merges (root section 2).
 - **Hardening applies to every pod.** The settings that are not configurable
   are pinned by `pod_security_test.go`; a change that relaxes one is a
   security change (review 6 in the root AGENTS.md).

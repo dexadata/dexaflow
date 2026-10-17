@@ -161,8 +161,10 @@ The task instances make it visible — `load` is on **try 2**, `extract` and
 
 `clear` re-runs the task on **the version its run was created with**, so what you
 see is the attempt reproduced, not a different one. To pick up a code/yaml fix
-instead, trigger a new run — or pass `run_on_latest_version: true` on the clear.
-ADR 0020 has the reasoning.
+instead, trigger a new run, or pass `run_on_latest_version: true` on the clear
+of a finished run ([clearing onto the current
+version](/author-dags/dag-authoring/#clearing-onto-the-current-version)).
+ADR 0020 and ADR 0086 have the reasoning.
 
 ## The external load uses a managed Connection
 

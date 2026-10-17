@@ -67,7 +67,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write   # GoReleaser creates the GitHub release.
-      packages: write   # Push the leoflow-server image to GHCR.
+      packages: write   # Push the server, MCP and CLI images to GHCR.
       id-token: write   # Cosign keyless signing via Sigstore OIDC.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -591,7 +591,7 @@ jobs:
   # ── Build provenance and SBOM attestations (#1562) ──
   # The release already carries cosign signatures and one syft SBOM per
   # archive. This adds SLSA build provenance (actions/attest) for the four
-  # archives and for every image this run pushed (server, mcp, migrate and each
+  # archives and for every image this run pushed (server, mcp, cli, migrate and each
   # runtime leg, by digest, so the leoflow-* names that share a digest are
   # covered too), the archive SBOMs attested against the archive they describe,
   # and an SPDX SBOM attached to each image with `cosign attest`. Verification
@@ -719,7 +719,7 @@ jobs:
   # Verifying the `:v<tag>` manifest is sufficient: it and the un-prefixed
   # `:<version>` manifest resolve to the same digest, and both were signed.
   verify-server-signature:
-    name: Verify dexaflow-server and dexaflow-mcp image signatures
+    name: Verify dexaflow-server, dexaflow-mcp and dexaflow-cli image signatures
     needs: release
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -768,6 +768,38 @@ jobs:
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             --certificate-identity-regexp "^https://github\.com/${REPO}/\.github/workflows/release\.yaml@refs/tags/" \
             "${IMAGE}"
+
+      # The CLI image pipelines pull by tag (#1708), from the same GoReleaser
+      # docker_signs block: an unsigned one retracts the release like the others.
+      # It is then run, because what it is for is the programs next to the
+      # binary: a CLI that reports another version, or a python3, git or uv
+      # missing, fails the first `dexaflow deploy` of every pipeline using it.
+      - name: cosign verify and run dexaflow-cli
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-cli:${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ./scripts/cosign-retry.sh verify \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-identity-regexp "^https://github\.com/${REPO}/\.github/workflows/release\.yaml@refs/tags/" \
+            "${IMAGE}"
+          got="$(docker run --rm "$IMAGE" version --json | jq -r .version)"
+          [ "$got" = "${TAG#v}" ] || { echo "::error::${IMAGE} runs dexaflow ${got}, want ${TAG#v}"; exit 1; }
+          for tool in python3 git uv; do
+            docker run --rm --entrypoint "$tool" "$IMAGE" --version
+          done
+
+      # Every step above is logged in, so a private package passes them while
+      # every pipeline's anonymous pull is denied. A new GHCR package can start
+      # private, and the first rc is the run that creates it: an rc warns, a GA
+      # fails (RELEASING.md, "A new image").
+      - name: dexaflow-cli pulls without credentials (warns on an rc, fails a GA)
+        env:
+          REPO_IMAGE: ${{ github.repository_owner }}/dexaflow-cli
+          TAG: ${{ github.ref_name }}
+        run: bash scripts/release-check-public.sh "$REPO_IMAGE" "$TAG"
 
   # ── Release gate: if any of the smoke jobs OR the migrate-image build
   # failed, retract the release to a draft so a pinned `curl | sh` stops

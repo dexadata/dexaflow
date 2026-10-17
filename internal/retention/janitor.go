@@ -17,7 +17,6 @@ import (
 const (
 	TableDagRuns             = "dag_runs"
 	TableTaskInstances       = "task_instances"
-	TableTaskStateHistory    = "task_state_history"
 	TableTaskInstanceHistory = "task_instance_history"
 	TableXComIndex           = "xcom_index"
 	TableAuditLog            = "audit_log"
@@ -35,7 +34,6 @@ var ErrNotLeading = errors.New("retention: not leading")
 type Counts struct {
 	DagRuns             int64
 	TaskInstances       int64
-	TaskStateHistory    int64
 	TaskInstanceHistory int64
 	XComIndex           int64
 	AuditLog            int64
@@ -49,7 +47,6 @@ func (c Counts) Add(o Counts) Counts {
 	return Counts{
 		DagRuns:             c.DagRuns + o.DagRuns,
 		TaskInstances:       c.TaskInstances + o.TaskInstances,
-		TaskStateHistory:    c.TaskStateHistory + o.TaskStateHistory,
 		TaskInstanceHistory: c.TaskInstanceHistory + o.TaskInstanceHistory,
 		XComIndex:           c.XComIndex + o.XComIndex,
 		AuditLog:            c.AuditLog + o.AuditLog,
@@ -59,14 +56,13 @@ func (c Counts) Add(o Counts) Counts {
 
 // Total is the number of rows across every table.
 func (c Counts) Total() int64 {
-	return c.DagRuns + c.TaskInstances + c.TaskStateHistory + c.TaskInstanceHistory + c.XComIndex + c.AuditLog
+	return c.DagRuns + c.TaskInstances + c.TaskInstanceHistory + c.XComIndex + c.AuditLog
 }
 
 func (c Counts) byTable() map[string]int64 {
 	return map[string]int64{
 		TableDagRuns:             c.DagRuns,
 		TableTaskInstances:       c.TaskInstances,
-		TableTaskStateHistory:    c.TaskStateHistory,
 		TableTaskInstanceHistory: c.TaskInstanceHistory,
 		TableXComIndex:           c.XComIndex,
 		TableAuditLog:            c.AuditLog,

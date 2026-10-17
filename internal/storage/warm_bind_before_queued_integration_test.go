@@ -24,6 +24,7 @@ func (noTaskPods) DeleteRunPods(context.Context, string) error           { retur
 func (noTaskPods) TaskPodPresence(context.Context, executor.Attempt) (executor.PodPresence, error) {
 	return executor.PodPresenceAbsent, nil
 }
+func (noTaskPods) TaskPodPending(context.Context, executor.Attempt) (bool, error) { return false, nil }
 
 // TestWarmAckBeforeQueuedKeepsBindingIntegration (#1600) drives the synchronous
 // dispatch order with warm pools on: Dispatch claims the epoch and the warm
@@ -46,8 +47,8 @@ func TestWarmAckBeforeQueuedKeepsBindingIntegration(t *testing.T) {
 	if err := sched.MaterializeTasks(ctx, runUUID, tasks); err != nil {
 		t.Fatalf("MaterializeTasks: %v", err)
 	}
-	if err := sched.ApplyTransitions(ctx, runUUID, []string{"load"}, domain.TaskStateScheduled); err != nil {
-		t.Fatalf("ApplyTransitions scheduled: %v", err)
+	if applied, err := sched.ApplyTransitions(ctx, runUUID, []string{"load"}, domain.TaskStateNone, domain.TaskStateScheduled); err != nil || len(applied) != 1 {
+		t.Fatalf("ApplyTransitions scheduled: applied=%v err=%v", applied, err)
 	}
 
 	// Dispatch: ResolveTask claims the epoch, the warm placer assigns the attempt.

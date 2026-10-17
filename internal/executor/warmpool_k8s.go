@@ -26,6 +26,11 @@ type KubernetesWarmPods struct {
 	clientset kubernetes.Interface
 	namespace string
 	newSpec   WarmPodSpecFunc
+	// terminations remembers the terminated reason of the warm workers this
+	// client listed, and of those the warm-pod informer saw terminate when it
+	// records to this client (RecordTerminationsTo), for the warm-worker-lost
+	// reaper (#1835).
+	terminations *warmTerminations
 }
 
 // NewKubernetesWarmPods builds the cluster-backed warm-pod client. newSpec is the
@@ -34,7 +39,7 @@ func NewKubernetesWarmPods(cs kubernetes.Interface, namespace string, newSpec Wa
 	if namespace == "" {
 		namespace = "default"
 	}
-	return &KubernetesWarmPods{clientset: cs, namespace: namespace, newSpec: newSpec}
+	return &KubernetesWarmPods{clientset: cs, namespace: namespace, newSpec: newSpec, terminations: newWarmTerminations()}
 }
 
 // warmAnchorSelector selects exactly the warm-pool GC anchors (ADR 0058 D11),
@@ -61,7 +66,8 @@ func (k *KubernetesWarmPods) ListWarmAnchors(ctx context.Context) ([]string, err
 const warmPodSelector = warmWorkerLabelKey + "=" + warmWorkerLabelVal
 
 // ListWarmPods returns every warm-worker pod in the namespace, tagged with the
-// dag_version it serves (from its label).
+// dag_version it serves (from its label). It remembers the terminated reason of
+// each terminal one, for LastTerminationReason.
 func (k *KubernetesWarmPods) ListWarmPods(ctx context.Context) ([]WarmPodInfo, error) {
 	list, err := k.clientset.CoreV1().Pods(k.namespace).List(ctx, metav1.ListOptions{LabelSelector: warmPodSelector})
 	if err != nil {
@@ -69,9 +75,19 @@ func (k *KubernetesWarmPods) ListWarmPods(ctx context.Context) ([]WarmPodInfo, e
 	}
 	out := make([]WarmPodInfo, 0, len(list.Items))
 	for i := range list.Items {
+		k.terminations.observe(&list.Items[i])
 		out = append(out, warmPodInfoOf(&list.Items[i]))
 	}
 	return out, nil
+}
+
+// LastTerminationReason returns the warm-worker container's terminated reason
+// last observed for the named warm pod (for example OOMKilled), or "" when none
+// was observed within the last warmTerminationMemory. It still answers after the
+// pod is deleted, so the warm-worker-lost reaper can name an OOM kill of a
+// worker the LIST no longer returns (#1835).
+func (k *KubernetesWarmPods) LastTerminationReason(podName string) string {
+	return k.terminations.reason(podName)
 }
 
 // warmPodInfoOf maps a warm pod to the reconciler's view of it, shared by the
@@ -88,8 +104,21 @@ func warmPodInfoOf(p *corev1.Pod) WarmPodInfo {
 		// pod (rolling upgrade) has no tenant label and reads "" here; the
 		// reconciler attributes it via its version when resolvable and never
 		// deletes it for the cap.
-		TenantID: p.Labels[warmTenantLabelKey],
+		TenantID:          p.Labels[warmTenantLabelKey],
+		TerminationReason: warmTerminationReason(p),
 	}
+}
+
+// warmTerminationReason is the warm-worker container's terminated reason, or ""
+// when it has not terminated. Only that container counts: it is the one that
+// runs the agent and its tasks.
+func warmTerminationReason(p *corev1.Pod) string {
+	for _, cs := range p.Status.ContainerStatuses {
+		if cs.Name == warmContainerName && cs.State.Terminated != nil {
+			return cs.State.Terminated.Reason
+		}
+	}
+	return ""
 }
 
 // CreateWarmPod mints the target's warm-pod spec, builds the pod, and creates it.

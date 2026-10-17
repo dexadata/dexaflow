@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_dags_list/
 title: "dexaflow dags list"
 linkTitle: "dags list"
-weight: 33
+weight: 35
 ---
 
 List registered DAGs.

@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -194,7 +195,7 @@ func run() error {
 	// It runs AFTER bootstrapAdmin, and that order is the whole point. The break-glass
 	// check asks whether a listed address has a local password login, and the
 	// bootstrap admin is the only such account a fresh install has. Running first
-	// meant a first install with bootstrap.password set and admin@leoflow.local in
+	// meant a first install with bootstrap.password set and admin@dexaflow.local in
 	// break_glass_emails, which is the chart's own documented posture, warned that
 	// its escape hatch does not open when it does. It cleared on the next restart,
 	// which is worse than plainly wrong: wrong on the one boot an operator reads,
@@ -390,35 +391,64 @@ func configureSecretCipher(repo *storage.Repository, secretKey string, logger *s
 	return nil
 }
 
-func bootstrapAdmin(ctx context.Context, repo *storage.Repository, logger *slog.Logger) error {
-	email := os.Getenv("LEOFLOW_BOOTSTRAP_EMAIL")
-	if email == "" {
-		email = "admin@leoflow.local"
+// adminBootstrapper is what bootstrapAdmin needs from the user store.
+type adminBootstrapper interface {
+	AdminUserState(ctx context.Context, tenant, email string) (auth.AdminState, error)
+	BootstrapAdminHash(ctx context.Context, tenant, email, hash string) (bool, error)
+	BootstrapAdmin(ctx context.Context, tenant, email, password string) (bool, error)
+}
+
+// bootstrapAdmin creates or reconciles the bootstrap admin from
+// LEOFLOW_BOOTSTRAP_PASSWORD_HASH or LEOFLOW_BOOTSTRAP_PASSWORD, under
+// LEOFLOW_BOOTSTRAP_EMAIL (default auth.DefaultAdminEmail). The default address
+// resolves to the legacy admin@leoflow.local when that is the install's admin
+// (auth.ResolveAdminEmail), so an install created before the rename keeps one
+// admin.
+func bootstrapAdmin(ctx context.Context, repo adminBootstrapper, logger *slog.Logger) error {
+	hash := os.Getenv("LEOFLOW_BOOTSTRAP_PASSWORD_HASH")
+	pw := os.Getenv("LEOFLOW_BOOTSTRAP_PASSWORD")
+	if hash == "" && pw == "" {
+		return nil
+	}
+	email, err := resolveBootstrapEmail(ctx, repo, logger)
+	if err != nil {
+		return err
 	}
 	// Prefer a precomputed bcrypt hash (Dexaflow Lite never sends the plaintext to
 	// the control plane); fall back to a plaintext bootstrap password.
-	if hash := os.Getenv("LEOFLOW_BOOTSTRAP_PASSWORD_HASH"); hash != "" {
-		created, err := repo.BootstrapAdminHash(ctx, "default", email, hash)
+	var created bool
+	if hash != "" {
+		created, err = repo.BootstrapAdminHash(ctx, "default", email, hash)
 		if err != nil {
 			return fmt.Errorf("bootstrap admin (hash): %w", err)
 		}
-		if created {
-			logger.Info("bootstrapped admin user", "email", email)
-		}
-		return nil
-	}
-	pw := os.Getenv("LEOFLOW_BOOTSTRAP_PASSWORD")
-	if pw == "" {
-		return nil
-	}
-	created, err := repo.BootstrapAdmin(ctx, "default", email, pw)
-	if err != nil {
+	} else if created, err = repo.BootstrapAdmin(ctx, "default", email, pw); err != nil {
 		return fmt.Errorf("bootstrap admin: %w", err)
 	}
 	if created {
 		logger.Info("bootstrapped admin user", "email", email)
 	}
 	return nil
+}
+
+// resolveBootstrapEmail resolves LEOFLOW_BOOTSTRAP_EMAIL to the address the
+// bootstrap admin lives under, and says so when it is not the address asked for.
+func resolveBootstrapEmail(ctx context.Context, repo adminBootstrapper, logger *slog.Logger) (string, error) {
+	res, err := auth.ResolveAdminEmail(ctx, os.Getenv("LEOFLOW_BOOTSTRAP_EMAIL"),
+		func(ctx context.Context, email string) (auth.AdminState, error) {
+			return repo.AdminUserState(ctx, "default", email)
+		})
+	if err != nil {
+		return "", fmt.Errorf("bootstrap admin: %w", err)
+	}
+	if res.KeptLegacy {
+		logger.Info("bootstrap admin kept its pre-rename address", "email", res.Email)
+	}
+	if res.BothExist {
+		logger.Warn("users exist under both bootstrap admin addresses; only one is bootstrapped",
+			"email", res.Email, "new_email", auth.DefaultAdminEmail, "legacy_email", auth.LegacyAdminEmail)
+	}
+	return res.Email, nil
 }
 
 // attemptTokenTTL is the short per-attempt agent-token lifetime minted at
@@ -1041,6 +1071,7 @@ func resilienceLadder(cfg *config.ServerConfig) executor.ResilienceLadder {
 		MaxAttemptCredentialLifetime: cfg.Auth.MaxAttemptCredentialLifetime,
 		TaskTerminationGrace:         time.Duration(corev1.DefaultTerminationGracePeriodSeconds) * time.Second,
 		InfraConfirmMaxWait:          scheduler.InfraConfirmMaxWait,
+		DispatchLostThreshold:        rc.DispatchLostThreshold,
 	}
 }
 
@@ -1124,6 +1155,7 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 			handleReclaim(ctx, execStore, logger, ev)
 		})
 		logger.Warn("warm worker pools enabled (ADR 0058 N1b1-place); admitted tasks place on a free warm worker of their dag_version, else dispatch dedicated")
+		requireWarmSweep(cfg, warmReg, metrics)
 	}
 	// Fail closed (#700): when the operator selected the exchange transport, the
 	// Kubernetes client is a hard prerequisite. buildTokenExchange returns an
@@ -1141,13 +1173,15 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	// is otherwise silent. gRPC exposes no such number, so the counter rides on
 	// the interceptor chain and the stop func reads it.
 	inflight := agentrpc.NewInflightHandlers()
-	grpcSrv, agentSrv, gerr := startAgentGRPC(ctx, cfg.Server.GRPCAddr, authn, execStore, repo, xcomSvc, logSink, logTailer, cfg.Logs.Tail.Publish == config.LogTailPublishOnDemand, allowInsecureSecrets, cfg.Auth.SecretScoping, cfg.Auth.SecretLivenessMode, cfg.Auth.MaxAttemptCredentialLifetime, xchg, cfg.Server.GRPCTLSCert, cfg.Server.GRPCTLSKey, warmReg, inflight, logger)
+	grpcSrv, agentSrv, gerr := startAgentGRPC(ctx, cfg.Server.GRPCAddr, authn, execStore, repo, xcomSvc, logSink, logTailer, cfg.Logs.Tail.Publish == config.LogTailPublishOnDemand, allowInsecureSecrets, cfg.Auth.SecretScoping, cfg.Auth.SecretLivenessMode, cfg.Auth.MaxAttemptCredentialLifetime, xchg, cfg.Server.GRPCTLSCert, cfg.Server.GRPCTLSKey, warmReg, inflight, metrics, logger)
 	if gerr != nil {
 		return nil, false, nil, gerr
 	}
-	// Meter task tokens that predate the attempt_epoch claim (ADR 0051 amendment).
+	// Meter task tokens that predate the attempt_epoch claim (ADR 0051 amendment)
+	// and refused agent bearers by reason (#1125).
 	if metrics != nil {
 		agentSrv.SetLegacyTokenRecorder(metrics)
+		agentSrv.SetTokenRejectionRecorder(metrics)
 	}
 	// The scheduler loop, its reapers and the janitors run on their own pool
 	// when database.scheduler_max_conns is set, so API traffic cannot starve
@@ -1303,10 +1337,13 @@ func startAPISide(ctx context.Context, cfg *config.ServerConfig, tel *observabil
 		}
 		oidcFlow = flow
 	}
+	if oidcFlow != nil {
+		startCLIDeviceSweep(ctx, repo, tel.Logger)
+	}
 	//nolint:contextcheck // buildAPIServer wires per-request handlers; each request carries its own context
 	srv := buildAPIServer(cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, oidcFlow, newTrustedIssuer(ctx, cfg))
 	// Optional HTTPS on the API listener (#638); plain HTTP when unset.
-	if err := configureAPITLS(srv, cfg.Server); err != nil {
+	if err := configureAPITLS(srv, cfg.Server, tel.Metrics); err != nil {
 		return nil, err
 	}
 	tel.Logger.Info("api listener", "http_addr", cfg.Server.HTTPAddr, "tls", srv.TLSConfig != nil)
@@ -1389,12 +1426,13 @@ func trustedIssuerConfig(s config.TrustedIssuerSection) issuer.Config {
 
 		BearerAudiences:   s.BearerAudiences,
 		BearerMaxLifetime: time.Duration(s.BearerMaxLifetimeSeconds) * time.Second,
+		DeployAudience:    s.DeployAudience,
 	}
 }
 
 // issuerBearer returns the trusted issuer as the verifier of request bearers
-// when auth.trusted_issuer.bearer_audiences is set (#1468), or nil, which
-// leaves the bearer mode off.
+// when auth.trusted_issuer.bearer_audiences (#1468) or deploy_audience
+// (#1773) is set, or nil, which leaves the bearer mode off.
 func issuerBearer(ti api.TrustedIssuer) api.TrustedIssuerBearer {
 	v, ok := ti.(*issuer.Verifier)
 	if !ok || !v.BearerEnabled() {
@@ -1466,6 +1504,15 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		UnitMisfits:                  unitMisfits(tel.Metrics),
 		SourceModeImage:              cfg.Execution.SourceMode.RuntimeImage(),
 		ExecutionPolicy:              executionPolicy(cfg.Executor.Defaults),
+		DeployDefaults:               cfg.AdvertisedDeployDefaults(),
+		RequireDigest:                cfg.Deploy.RequireDigest,
+		UnpinnedImages:               unpinnedImages(tel.Metrics),
+		WarmPolicy:                   warmPolicy(cfg),
+		WarmPools:                    cfg.Execution,
+		WarmWorkersAbsent:            warmWorkersAbsent(cfg, executorInfo.PodDispatchEnabled),
+		TaskPods: taskPodSettings(cfg, executorInfo.PodDispatchEnabled, func() (kubernetes.Interface, error) {
+			return buildK8sClient(cfg.Executor.KubeClient)
+		}, tel.Logger),
 
 		Dags:            repo,
 		DagRuns:         repo,
@@ -1474,6 +1521,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		Xcoms:           xcomReader,
 		Logs:            storage.NewLogReader(pg, logSink, logTailer),
 		Specs:           repo,
+		DagSources:      repo,
 		LatestRuns:      repo,
 		TaskSummary:     repo,
 		DagVersions:     repo,
@@ -1505,6 +1553,9 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		OIDCUsers:          repo,
 		AuthAudit:          repo,
 		JWTSecret:          cfg.Auth.JWT.Secret,
+		// The device sign-in of the CLI (ADR 0081) keeps its pending
+		// sign-ins in the database, shared by every replica.
+		CLIDevices: repo,
 
 		// Trusted-issuer handoff (#1284): nil unless auth.trusted_issuer is set,
 		// which leaves POST /api/v2/auth/session unregistered.
@@ -1515,6 +1566,9 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		TrustedIssuerHostPattern: cfg.Auth.TrustedIssuer.HostPattern,
 		// Trusted-issuer bearer (#1468): nil unless bearer audiences are set.
 		TrustedIssuerBearer: issuerBearer(trustedIssuer),
+		// Deploys through the issuer only (#1773): off unless
+		// auth.trusted_issuer.deploy_audience is set.
+		DeployViaIssuer: cfg.Auth.TrustedIssuer.DeployAudience != "",
 		// Operator service API (#1283): off unless auth.service_token is set.
 		ServiceToken:   cfg.Auth.ServiceToken,
 		ServiceTenants: repo,
@@ -1586,10 +1640,21 @@ func serveHTTP(ctx context.Context, logger *slog.Logger, servesAPI bool, apiSrv,
 
 // startAgentGRPC starts the AgentService gRPC server and returns it for graceful
 // shutdown. TLS is enabled when tlsCert/tlsKey are set (issue #58); otherwise the
-// channel is plaintext (dev). The per-task bearer token in metadata authenticates
+// channel is plaintext (dev). The pair is read at boot (a missing or invalid file
+// is a boot error) and re-read on the next handshake whenever either file
+// changes, so a renewed certificate is served without a restart (#637). The per-task bearer token in metadata authenticates
 // each call regardless. inflight (required) is installed on the interceptor
 // chain so the bounded stop can report the handlers it leaves running.
-func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticator, store *storage.ExecutionStore, secretsStore agentrpc.SecretsStore, xcomSvc agentrpc.XComService, logSink agentrpc.LogSink, logTailer agentrpc.LogPublisher, tailOnDemand bool, allowInsecureSecrets bool, secretScoping, secretLivenessMode string, maxAttemptLifetime time.Duration, exchange *tokenExchange, tlsCert, tlsKey string, warmPools *agentrpc.WorkerRegistry, inflight *agentrpc.InflightHandlers, logger *slog.Logger) (srv *grpc.Server, agentSrv *agentrpc.Server, err error) {
+func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticator, store *storage.ExecutionStore, secretsStore agentrpc.SecretsStore, xcomSvc agentrpc.XComService, logSink agentrpc.LogSink, logTailer agentrpc.LogPublisher, tailOnDemand bool, allowInsecureSecrets bool, secretScoping, secretLivenessMode string, maxAttemptLifetime time.Duration, exchange *tokenExchange, tlsCert, tlsKey string, warmPools *agentrpc.WorkerRegistry, inflight *agentrpc.InflightHandlers, metrics *observability.Metrics, logger *slog.Logger) (srv *grpc.Server, agentSrv *agentrpc.Server, err error) {
+	secure := tlsCert != "" && tlsKey != ""
+	var creds credentials.TransportCredentials
+	if secure {
+		r, cerr := newCertReloader(tlsListenerAgentGRPC, tlsCert, tlsKey, metrics)
+		if cerr != nil {
+			return nil, nil, fmt.Errorf("loading agent grpc TLS cert: %w", cerr)
+		}
+		creds = credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: r.getCertificate})
+	}
 	var lc net.ListenConfig
 	lis, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
@@ -1666,12 +1731,7 @@ func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticat
 		// connection would cost something and detect nothing those miss.
 		grpc.KeepaliveEnforcementPolicy(agentrpc.KeepaliveEnforcementPolicy()),
 	}
-	secure := tlsCert != "" && tlsKey != ""
 	if secure {
-		creds, cerr := credentials.NewServerTLSFromFile(tlsCert, tlsKey)
-		if cerr != nil {
-			return nil, nil, fmt.Errorf("loading agent grpc TLS cert: %w", cerr)
-		}
 		opts = append(opts, grpc.Creds(creds))
 	}
 	srv = grpc.NewServer(opts...)
@@ -1683,6 +1743,36 @@ func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticat
 	}()
 	logger.Info("agent grpc server started", "grpc_addr", addr, "tls", secure)
 	return srv, agentSrv, nil
+}
+
+// warmSweepPolicy is how the warm registry treats a worker that does not
+// confirm the /tmp and /dev/shm sweep (#1678). The sweep is done by the agent in
+// the task image, so an image built on an older runtime runs with the read-only
+// root while nothing empties those paths between attempts. With the read-only
+// root on, such a worker is logged and metered, and refused only when
+// execution.warm_require_attempt_home_sweep is also on: agents from v0.5.1 up to
+// the release that added the report do sweep but cannot confirm it, so refusing
+// by default would take warm pools away from images that are fine.
+func warmSweepPolicy(cfg *config.ServerConfig) agentrpc.SweepPolicy {
+	switch {
+	case !cfg.Execution.WarmReadOnlyRootFilesystem:
+		return agentrpc.SweepIgnore
+	case cfg.Execution.WarmRequireAttemptHomeSweep:
+		return agentrpc.SweepRefuse
+	default:
+		return agentrpc.SweepWarn
+	}
+}
+
+// requireWarmSweep sets the warm registry's sweep policy from the config.
+func requireWarmSweep(cfg *config.ServerConfig, reg *agentrpc.WorkerRegistry, metrics *observability.Metrics) {
+	// A nil *Metrics boxed into the interface would be non-nil, so pass a nil
+	// interface when metrics are off.
+	var rec agentrpc.DecisionRecorder
+	if metrics != nil {
+		rec = metrics
+	}
+	reg.SetSweepPolicy(warmSweepPolicy(cfg), rec)
 }
 
 // tokenExchange bundles the Kubernetes-backed dependencies of the agent
@@ -1723,8 +1813,8 @@ func buildTokenExchange(cfg *config.ServerConfig, newK8sClient func() (kubernete
 }
 
 // loadK8sRESTConfig loads the in-cluster config or, failing that, the local
-// kubeconfig. It returns an error when neither is available, in which case pod
-// dispatch is disabled and tasks have no executor to run them.
+// kubeconfig. It returns an error when neither is available, in which case a
+// server on the Kubernetes executor refuses to boot (#704).
 func loadK8sRESTConfig() (*rest.Config, error) {
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
@@ -2001,6 +2091,47 @@ func healthChecks(pg *storage.Postgres, redisHealth api.HealthChecker) map[strin
 		checks["redis"] = redisHealth
 	}
 	return checks
+}
+
+// cliDeviceSweepInterval is how often the server forgets device sign-ins
+// of the CLI ten minutes past their expiry (ADR 0081), so the address a
+// sign-in was started from is gone about 21 minutes after the start at the
+// latest, even when nobody starts another.
+const cliDeviceSweepInterval = time.Minute
+
+// cliDeviceSweeper deletes the expired device sign-ins; storage implements
+// it.
+type cliDeviceSweeper interface {
+	DeleteExpiredCLIDeviceAuthorizations(ctx context.Context) (int64, error)
+}
+
+// startCLIDeviceSweep runs runCLIDeviceSweep every cliDeviceSweepInterval
+// until ctx ends. Every replica runs it: the delete is idempotent and cheap.
+func startCLIDeviceSweep(ctx context.Context, store cliDeviceSweeper, logger *slog.Logger) {
+	t := time.NewTicker(cliDeviceSweepInterval)
+	go func() {
+		defer t.Stop()
+		runCLIDeviceSweep(ctx, t.C, store, logger)
+	}()
+}
+
+// runCLIDeviceSweep sweeps the expired device sign-ins at each tick until
+// ctx ends. A failed sweep is logged and retried at the next tick.
+func runCLIDeviceSweep(ctx context.Context, ticks <-chan time.Time, store cliDeviceSweeper, logger *slog.Logger) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticks:
+			safeCycle("cli-device-sweep", logger, func() {
+				if n, err := store.DeleteExpiredCLIDeviceAuthorizations(ctx); err != nil {
+					logger.Error("sweeping expired cli device sign-ins", "error", err)
+				} else if n > 0 {
+					logger.Debug("swept expired cli device sign-ins", "rows", n)
+				}
+			})
+		}
+	}
 }
 
 // startXComSweep periodically deletes expired rows from the embedded Postgres
@@ -2289,9 +2420,7 @@ func startWarmPoolReconciler(ctx context.Context, targets executor.WarmTargetSou
 	go func() {
 		defer t.Stop()
 		runGatedTickerOrKick(ctx, "warm-pool-reconcile", t.C, kicks, warmKickMinGap, leading, logger, func() {
-			if err := rc.Reconcile(ctx); err != nil {
-				logger.Error("warm pool reconcile", "error", err)
-			}
+			runLeaderTick(ctx, "warm pool reconcile", reconcileInterval, leaderTickPoll, leading, logger, rc.Reconcile)
 		})
 	}()
 }
@@ -2310,13 +2439,17 @@ const warmKickMinGap = time.Second
 // buildWarmPodInformer starts the warm-pod informer for event-driven refill and
 // waits for its first sync within the same boot budget as the task-pod informer.
 // A nil return (it could not be built) leaves the reconciler polling with a live
-// LIST; an informer that has not synced is read live until it does.
-func buildWarmPodInformer(ctx context.Context, cs kubernetes.Interface, namespace string, logger *slog.Logger) *executor.WarmPodInformer {
+// LIST; an informer that has not synced is read live until it does. It records
+// the final state of every warm worker it sees terminate or get deleted on
+// warmPods, the client the warm-worker-lost reaper lists through, so the reaper
+// names an OOM kill of a worker already deleted (#1835).
+func buildWarmPodInformer(ctx context.Context, cs kubernetes.Interface, namespace string, warmPods *executor.KubernetesWarmPods, logger *slog.Logger) *executor.WarmPodInformer {
 	wi, err := executor.NewWarmPodInformer(cs, namespace)
 	if err != nil {
 		logger.Warn("warm pod informer unavailable; warm pools keep polling refill", "error", err)
 		return nil
 	}
+	wi.RecordTerminationsTo(warmPods)
 	wi.Start(ctx)
 	syncCtx, cancel := context.WithTimeout(ctx, podInformerSyncTimeout)
 	defer cancel()
@@ -2449,10 +2582,49 @@ func startStagingGC(ctx context.Context, cs kubernetes.Interface, namespace stri
 	exec := executor.NewKubernetesExecutor(cs, namespace)
 	exec.SetStagingStore(store)
 	startGatedTicker(ctx, "staging-gc", stagingGCInterval, leading, logger, func() {
-		if err := exec.GCStagingClaims(ctx, stagingTTL); err != nil {
-			logger.Error("staging gc", "error", err)
-		}
+		runLeaderTick(ctx, "staging gc", stagingGCInterval, leaderTickPoll, leading, logger, func(tctx context.Context) error {
+			return exec.GCStagingClaims(tctx, stagingTTL)
+		})
 	})
+}
+
+// leaderTickPoll is how often a running leader-gated cycle re-checks leadership
+// (runLeaderTick). The leadership watch polls every 5 seconds, so one second
+// adds little to how long a step-down takes to stop the cycle.
+const leaderTickPoll = time.Second
+
+// runLeaderTick runs one cycle of a leader-gated loop that mutates cluster
+// state (the warm-pool reconcile, the staging GC) under a context that ends at
+// the cycle's budget or as soon as leading() reports false (#1602). The gated
+// ticker only checks leadership when a tick starts, so without this a cycle in
+// progress at a step-down kept creating and deleting pods next to the new
+// leader's own loop, and one database call hung on a dead connection could hold
+// it indefinitely. Both loops are level-triggered, so a cycle cut short is
+// finished by the next one. A nil leading means always leading. An error is
+// logged, except once the parent context is done (shutdown).
+func runLeaderTick(ctx context.Context, name string, budget, poll time.Duration, leading func() bool, logger *slog.Logger, fn func(context.Context) error) {
+	tctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	if leading != nil {
+		go func() {
+			t := time.NewTicker(poll)
+			defer t.Stop()
+			for {
+				select {
+				case <-tctx.Done():
+					return
+				case <-t.C:
+					if !leading() {
+						cancel()
+						return
+					}
+				}
+			}
+		}()
+	}
+	if err := fn(tctx); err != nil && ctx.Err() == nil {
+		logger.Error(name, "error", err)
+	}
 }
 
 func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.Postgres, repo *storage.Repository, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (*scheduler.Scheduler, bool, io.Closer, error) {
@@ -2504,7 +2676,11 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 		metrics,
 		logger,
 	))
-	podDispatch, dispatchCloser := setupDispatch(ctx, cfg, sched, execStore, authn, store, warmPools, logSink, logger, metrics)
+	podDispatch, dispatchCloser, err := setupDispatch(ctx, cfg, sched, execStore, authn, store, warmPools, logSink, logger, metrics)
+	if err != nil {
+		leaderPool.Close()
+		return nil, false, nil, err
+	}
 	leader := scheduler.NewLeader(leaderPool)
 	go func() {
 		defer leaderPool.Close()
@@ -2752,10 +2928,13 @@ func serve(s *http.Server, errCh chan<- error) {
 
 // setupDispatch wires the pod-path executor selected by executor.type onto the
 // scheduler and returns whether pod dispatch is active. "subprocess" runs the
-// agent on the host (dev only); "kubernetes" (default) launches task pods.
-func setupDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, store *storage.SchedulerStore, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (bool, io.Closer) {
+// agent on the host (dev only); "kubernetes" (default) launches task pods. An
+// error means the selected executor cannot be wired and the server must not
+// boot.
+func setupDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, store *storage.SchedulerStore, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (bool, io.Closer, error) {
 	if cfg.Executor.Type == "subprocess" {
-		return setupSubprocessDispatch(ctx, cfg, sched, execStore, authn, warmPools, store, logSink, logger, metrics) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
+		on, closer := setupSubprocessDispatch(ctx, cfg, sched, execStore, authn, warmPools, store, logSink, logger, metrics) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
+		return on, closer, nil
 	}
 	return setupK8sDispatch(ctx, cfg, sched, execStore, authn, store, warmPools, logSink, logger, metrics) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 }
@@ -2770,6 +2949,116 @@ func setWarmPlacer(d *dispatch.Dispatcher, reg *agentrpc.WorkerRegistry) {
 	if reg != nil {
 		d.SetWarmPlacer(reg)
 	}
+}
+
+// configureSubprocessDispatcher applies cfg to the dev-only subprocess
+// dispatcher. warmPolicy describes what it makes of a task, for the register
+// response.
+func configureSubprocessDispatcher(dispatcher *dispatch.Dispatcher, cfg *config.ServerConfig, warmPools *agentrpc.WorkerRegistry) {
+	dispatcher.SetPlatformDefaults(platformDefaults(cfg.Executor.Defaults))
+	setWarmPlacer(dispatcher, warmPools)
+}
+
+// configureK8sDispatcher applies cfg to the pod-path dispatcher. warmPolicy
+// describes what it makes of a task, for the register response.
+func configureK8sDispatcher(dispatcher *dispatch.Dispatcher, cfg *config.ServerConfig, warmPools *agentrpc.WorkerRegistry, metrics *observability.Metrics) {
+	dispatcher.SetAgentTLSCAConfigMap(cfg.Executor.AgentTLSCAConfigMap)
+	dispatcher.SetTaskSecret(cfg.Executor.TaskSecretName, cfg.Executor.TaskSecretMountPath)
+	dispatcher.SetDefaultTaskServiceAccount(cfg.Executor.TaskServiceAccount)
+	// Agent-token transport (ADR 0055 Fix #3). Under the exchange transport the
+	// executor projects a ServiceAccount token instead of the plaintext one; the
+	// default (envvar) leaves the pod spec unchanged. The audience is the shared
+	// const the control-plane TokenReviewer validates against; expiration floors in
+	// BuildPod.
+	dispatcher.SetAgentTokenTransport(cfg.Auth.AgentTokenTransport, executor.DefaultAgentTokenAudience, 0)
+	k8sDefaults := platformDefaults(cfg.Executor.Defaults)
+	k8sDefaults.Unit = resourceUnit(cfg)
+	dispatcher.SetPlatformDefaults(k8sDefaults)
+	if metrics != nil {
+		dispatcher.SetUnitMisfitRecorder(metrics)
+	}
+	// Deadline floor for task pods that declare no execution timeout: the agent's
+	// reports retry for as long as the control plane is unreachable, so a pod
+	// with no deadline of its own would outlive a total outage indefinitely. The
+	// credential ceiling is the natural bound (past it the pod cannot renew its
+	// bearer), and it is the same knob the warm worker's attempt watchdog uses.
+	dispatcher.SetAttemptLifetimeCeiling(cfg.Auth.MaxAttemptCredentialLifetime)
+	// External secrets backend (ADR 0060, Pro pod path): deliver the operator config
+	// to task pods as LEOFLOW_SECRETS_* env. Empty backend → podEnv skips it (chain
+	// stays vault-only). The D6 registration relaxation is wired separately in run()
+	// where the Repository is in scope.
+	dispatcher.SetSecretsBackend(cfg.Secrets.Backend, secretsKwargsJSON(cfg.Secrets))
+	// Pro source mode (ADR 0067 §3): a version on the runtime image runs from
+	// its registered dag.py. "" (the default) keeps it off.
+	dispatcher.SetSourceModeImage(cfg.Execution.SourceMode.RuntimeImage())
+	// Warm placement seam (ADR 0058 N1b1-place): the dispatcher Assign()s onto the
+	// SAME registry the gRPC handler serves. nil when warm pools are off.
+	setWarmPlacer(dispatcher, warmPools)
+}
+
+// warmPolicy is the warm placement decision the dispatcher that cfg selects
+// applies (configureK8sDispatcher or configureSubprocessDispatcher), built
+// from the same settings: the register response reports each task's
+// execution mode with it (#1707), and warm_policy_test.go holds the two
+// together. The warm registry, and so the placer, exists exactly when
+// execution.warm_pools_enabled is on.
+func warmPolicy(cfg *config.ServerConfig) domain.WarmPolicy {
+	policy := domain.WarmPolicy{Enabled: cfg.Execution.WarmPoolsEnabled, Limits: defaultLimits(cfg.Executor.Defaults)}
+	if cfg.Executor.Type == "subprocess" {
+		return policy
+	}
+	policy.ServiceAccount = cfg.Executor.TaskServiceAccount
+	policy.Unit = resourceUnit(cfg)
+	policy.SourceModeImage = cfg.Execution.SourceMode.RuntimeImage()
+	return policy
+}
+
+// warmWorkersAbsent says why no warm worker runs although warm pools are on,
+// "" when they run or warm pools are off. Only the pod path starts the warm
+// pool reconciler (setupK8sDispatch): the subprocess executor never does, and
+// a server whose Kubernetes client failed has pod dispatch disabled. There the
+// dispatcher's warm offer always misses, so the register response reports
+// every task on a dedicated pod. podDispatch is ExecutorInfo.PodDispatchEnabled.
+func warmWorkersAbsent(cfg *config.ServerConfig, podDispatch bool) string {
+	switch {
+	case !cfg.Execution.WarmPoolsEnabled:
+		return ""
+	case cfg.Executor.Type == "subprocess":
+		return "the subprocess executor runs no warm workers"
+	case !podDispatch:
+		return "pod dispatch is disabled on this server"
+	}
+	return ""
+}
+
+// taskPodSettings is how the dispatcher starts task pods, which the
+// register dry run reports (#1889): podDispatch is
+// ExecutorInfo.PodDispatchEnabled. The ServiceAccounts of the task namespace
+// are read with a client newClient builds, only by a process that holds the
+// executor's Role, which grants that read (ADR 0085): the all role. The api
+// role of a split control plane has no access to the cluster (ADR 0049), so
+// it reports every account unchecked, with the reason.
+func taskPodSettings(cfg *config.ServerConfig, podDispatch bool, newClient func() (kubernetes.Interface, error), logger *slog.Logger) api.TaskPodSettings {
+	s := api.TaskPodSettings{
+		Enabled:               podDispatch,
+		RunAsNonRoot:          cfg.Executor.Defaults.RunTasksAsNonRoot,
+		DefaultServiceAccount: cfg.Executor.TaskServiceAccount,
+	}
+	switch {
+	case !podDispatch:
+		return s
+	case !cfg.Server.ServesScheduler():
+		s.Unread = "the API role of a split control plane has no access to the cluster (ADR 0049)"
+		return s
+	}
+	cs, err := newClient()
+	if err != nil {
+		logger.Warn("the register dry run cannot look up task ServiceAccounts", "error", err)
+		s.Unread = "the control plane has no Kubernetes client"
+		return s
+	}
+	s.ServiceAccounts = executor.NewServiceAccounts(cs, cfg.Executor.TaskNamespace)
+	return s
 }
 
 // resolveAgentControlAddr returns the address task agents dial back, defaulting
@@ -2789,8 +3078,7 @@ func setupSubprocessDispatch(ctx context.Context, cfg *config.ServerConfig, sche
 	subExec := executor.NewSubprocessExecutor(cfg.Executor.AgentPath, logger)
 	subExec.SetWorkDir(cfg.Executor.SubprocessWorkDir)
 	dispatcher := dispatch.NewDispatcher(subExec, execStore, authn, resolveAgentControlAddr(cfg), attemptTokenTTL)
-	dispatcher.SetPlatformDefaults(platformDefaults(cfg.Executor.Defaults))
-	setWarmPlacer(dispatcher, warmPools)
+	configureSubprocessDispatcher(dispatcher, cfg, warmPools)
 	disp, closer := wrapBuffered(dispatcher, store, logger, metrics, cfg.Scheduler.Dispatch) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 	sched.SetDispatcher(disp)
 	var markers logs.MarkerSink
@@ -2854,14 +3142,18 @@ func startLiteMaintenance(ctx context.Context, reaper *executor.Reaper, leading 
 	})
 }
 
-// setupK8sDispatch wires the production pod-per-task executor; it is a no-op
-// (tasks have no executor and are failed as undispatchable) when no Kubernetes
-// client is available.
-func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, store *storage.SchedulerStore, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (bool, io.Closer) {
+// setupK8sDispatch wires the production pod-per-task executor.
+//
+// When no Kubernetes client can be built it FAILS CLOSED and returns an error,
+// so the server refuses to boot (#704, the sibling of #700). It used to log a
+// warning and leave pod dispatch unwired, so a scheduler on the Kubernetes
+// executor reported itself healthy while every task it planned failed as
+// undispatchable. A deployment without a cluster selects
+// executor.type=subprocess, which needs no client.
+func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, store *storage.SchedulerStore, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (bool, io.Closer, error) {
 	clients, perr := buildK8sClients(cfg.Executor.KubeClient)
 	if perr != nil {
-		logger.Warn("pod dispatch disabled; tasks have no executor and will fail as undispatchable", "error", perr)
-		return false, nil
+		return false, nil, fmt.Errorf("executor type %q requires a Kubernetes client to dispatch task pods, but none is available (set executor.type=subprocess to run without a cluster): %w", cfg.Executor.Type, perr)
 	}
 	cs, mcs := clients.dispatch, clients.maintenance
 	controlAddr := resolveAgentControlAddr(cfg)
@@ -2875,38 +3167,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 		podExec.SetPodMetrics(metrics)
 	}
 	dispatcher := dispatch.NewDispatcher(podExec, execStore, authn, controlAddr, attemptTokenTTL)
-	dispatcher.SetAgentTLSCAConfigMap(cfg.Executor.AgentTLSCAConfigMap)
-	dispatcher.SetTaskSecret(cfg.Executor.TaskSecretName, cfg.Executor.TaskSecretMountPath)
-	dispatcher.SetDefaultTaskServiceAccount(cfg.Executor.TaskServiceAccount)
-	// Agent-token transport (ADR 0055 Fix #3). Under the exchange transport the
-	// executor projects a ServiceAccount token instead of the plaintext one; the
-	// default (envvar) leaves the pod spec unchanged. The audience is the shared
-	// const the control-plane TokenReviewer validates against; expiration floors in
-	// BuildPod.
-	dispatcher.SetAgentTokenTransport(cfg.Auth.AgentTokenTransport, executor.DefaultAgentTokenAudience, 0)
-	k8sDefaults := platformDefaults(cfg.Executor.Defaults)
-	k8sDefaults.Unit = resourceUnit(cfg)
-	dispatcher.SetPlatformDefaults(k8sDefaults)
-	if metrics != nil {
-		dispatcher.SetUnitMisfitRecorder(metrics)
-	}
-	// Deadline floor for task pods that declare no execution timeout: the agent's
-	// reports retry for as long as the control plane is unreachable, so a pod
-	// with no deadline of its own would outlive a total outage indefinitely. The
-	// credential ceiling is the natural bound — past it the pod cannot renew its
-	// bearer — and it is the same knob the warm worker's attempt watchdog uses.
-	dispatcher.SetAttemptLifetimeCeiling(cfg.Auth.MaxAttemptCredentialLifetime)
-	// External secrets backend (ADR 0060, Pro pod path): deliver the operator config
-	// to task pods as LEOFLOW_SECRETS_* env. Empty backend → podEnv skips it (chain
-	// stays vault-only). The D6 registration relaxation is wired separately in run()
-	// where the Repository is in scope.
-	dispatcher.SetSecretsBackend(cfg.Secrets.Backend, secretsKwargsJSON(cfg.Secrets))
-	// Pro source mode (ADR 0067 §3): a version on the runtime image runs from
-	// its registered dag.py. "" (the default) keeps it off.
-	dispatcher.SetSourceModeImage(cfg.Execution.SourceMode.RuntimeImage())
-	// Warm placement seam (ADR 0058 N1b1-place): the dispatcher Assign()s onto the
-	// SAME registry the gRPC handler serves. nil when warm pools are off.
-	setWarmPlacer(dispatcher, warmPools)
+	configureK8sDispatcher(dispatcher, cfg, warmPools, metrics)
 	disp, closer := wrapBuffered(dispatcher, store, logger, metrics, cfg.Scheduler.Dispatch) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 	sched.SetDispatcher(disp)
 	// Shared informer read-path (PR-10): one long-lived watch replaces the
@@ -2950,8 +3211,17 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// attempt watchdog: a silent attempt older than it fails for the credential
 	// ceiling, as a task failure, instead of being re-placed as agent_lost (#1461).
 	reaper.SetAttemptLifetimeCeiling(cfg.Auth.MaxAttemptCredentialLifetime)
+	// Under the env-var transport the attempt credential is minted at dispatch
+	// and sits on the pod spec, so its TTL runs while the pod is still Pending.
+	// A pod still Pending as it runs out is re-placed with a fresh one instead
+	// of starting with a dead credential (#1126). The exchange transport mints
+	// the credential when the agent starts, so nothing runs out while it waits.
+	if cfg.Auth.AgentTokenTransport != config.AgentTokenTransportExchange {
+		reaper.SetAttemptTokenTTL(attemptTokenTTL)
+	}
 	// Give the reaper an append-aware marker sink so a reaped attempt's log ends
-	// with a "killed: agent_lost" marker instead of a silent truncation (#861).
+	// with a "killed: agent_lost" or "killed: pod_lost" marker instead of a
+	// silent truncation (#861).
 	// Both DiskSink and ObjectSink implement MarkerSink (append preserves the
 	// agent's streamed content on either backend); the assertion holds for every
 	// sink NewDurableSink returns.
@@ -2994,7 +3264,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 		if cfg.Execution.WarmPoolEventRefill {
 			// On the maintenance client, like the task-pod informer and the
 			// warm-pod client the reconciler checks it against (#1315).
-			warmCache = buildWarmPodInformer(ctx, mcs, cfg.Executor.TaskNamespace, logger)
+			warmCache = buildWarmPodInformer(ctx, mcs, cfg.Executor.TaskNamespace, warmPods, logger)
 			if warmCache != nil && warmPools != nil {
 				// A claimed worker leaves the idle buffer short: refill now.
 				warmPools.SetOnClaim(warmCache.Kick)
@@ -3006,7 +3276,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	logger.Info("pod dispatch enabled", "namespace", cfg.Executor.TaskNamespace, "agent_control_plane_addr", controlAddr,
 		"kube_qps", cfg.Executor.KubeClient.QPS, "kube_burst", cfg.Executor.KubeClient.Burst,
 		"separate_maintenance_client", mcs != cs)
-	return true, closer
+	return true, closer, nil
 }
 
 // wrapBuffered returns the dispatcher to plug into the scheduler. When
@@ -3082,6 +3352,16 @@ func executionPolicy(c config.PlatformDefaultsSection) *domain.ExecutionPolicy {
 // unitMisfits is the API's misfit counter, nil (not a typed nil) without
 // metrics so the handler's nil check holds.
 func unitMisfits(m *observability.Metrics) api.UnitMisfitRecorder {
+	if m == nil {
+		return nil
+	}
+	return m
+}
+
+// unpinnedImages is the API's count of images deploy.require_digest warned
+// about or refused, nil (not a typed nil) without metrics so the handler's
+// nil check holds.
+func unpinnedImages(m *observability.Metrics) api.UnpinnedImageRecorder {
 	if m == nil {
 		return nil
 	}

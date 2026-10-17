@@ -53,3 +53,34 @@ unpause_dag() {
     return 1
   }
 }
+
+# admin_user prints the bootstrap admin address that logs in on the server. A
+# database created by this release bootstraps admin@dexaflow.local; one created
+# before the rename keeps admin@leoflow.local (the server never adds a second
+# admin, see auth.ResolveAdminEmail), and these scripts run against both, so the
+# new address is tried first and the old one second. DEXAFLOW_E2E_ADMIN_USER
+# pins the address instead.
+#
+# Usage: admin_user <dexaflow-binary> <api-base-url> <password>
+admin_user() {
+  local bin="$1" api="$2" pw="$3" user
+  local users="${DEXAFLOW_E2E_ADMIN_USER:-admin@dexaflow.local admin@leoflow.local}"
+  for user in $users; do
+    if "$bin" auth create-token --server "$api" --username "$user" --password "$pw" >/dev/null 2>&1; then
+      printf '%s\n' "$user"
+      return 0
+    fi
+  done
+  printf 'admin_user: no bootstrap admin (%s) logs in on %s\n' "$users" "$api" >&2
+  return 1
+}
+
+# admin_token mints an admin token for the bootstrap admin (see admin_user)
+# with `dexaflow auth create-token` and prints it.
+#
+# Usage: admin_token <dexaflow-binary> <api-base-url> <password>
+admin_token() {
+  local user
+  user="$(admin_user "$@")" || return 1
+  "$1" auth create-token --server "$2" --username "$user" --password "$3"
+}

@@ -1,0 +1,44 @@
+# Deploys the DAGs of this workspace to Dexaflow on Cloud Build.
+# Written by `dexaflow ci init cloudbuild` for dexaflow v0.6.0; the
+# deploy itself is in ci/dexaflow-deploy.sh.
+#
+# Set up once:
+#   - a Secret Manager secret dexaflow-deploy-token holding a deploy token,
+#     created with `dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d`,
+#     readable by the build's service account;
+#   - the substitution _DEXAFLOW_SERVER_URL: the control plane URL;
+#   - a trigger on pushes to main, for example
+#     gcloud builds triggers create github --repo-owner=<owner> --repo-name=<repo> --branch-pattern='^main$' --build-config=cloudbuild.yaml \
+#       --service-account=projects/<project>/serviceAccounts/<builder>@<project>.iam.gserviceaccount.com
+# The step signs in to Artifact Registry with the build's service account
+# (the gcloud session the CLI reads), which needs roles/artifactregistry.writer.
+# A source uploaded by `gcloud builds submit` has no .git, so every DAG is
+# deployed; DAGs whose content is already the current version register
+# nothing. When the source is a git clone, the step fetches its full history
+# and tags, and _DEXAFLOW_BASE_REF deploys only what changed since a commit.
+steps:
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim@sha256:ffd36b9b80bb08b2dea60b58ca2b60dfa3a40a3c00f3e5732d6d113f4e7ffa45
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends python3 python3-pip git curl ca-certificates >/dev/null
+        if [ -d .git ]; then git fetch --unshallow --tags || true; fi
+        sh ci/dexaflow-deploy.sh
+    secretEnv: [DEXAFLOW_TOKEN]
+    env:
+      - DEXAFLOW_SERVER_URL=${_DEXAFLOW_SERVER_URL}
+      - DEXAFLOW_BASE_REF=${_DEXAFLOW_BASE_REF}
+      - PIP_BREAK_SYSTEM_PACKAGES=1
+substitutions:
+  _DEXAFLOW_SERVER_URL: https://dexaflow.example.com
+  _DEXAFLOW_BASE_REF: ""
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/dexaflow-deploy-token/versions/latest
+      env: DEXAFLOW_TOKEN
+options:
+  logging: CLOUD_LOGGING_ONLY

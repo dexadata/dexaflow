@@ -8,6 +8,7 @@ Thank you for your interest in contributing to Dexaflow! This document explains 
 2. Read the [Architecture Decision Records](website/content/project/adrs/) under `website/content/project/adrs/`. These document non-negotiable design choices. Contributions that contradict an ADR will be rejected unless the ADR is first amended via a separate PR.
 3. Read [`AGENTS.md`](AGENTS.md): the standing rules for every change, and a map to the rules of each area (directories such as `migrations/` carry their own `AGENTS.md`) and to the step by step recipes.
 4. Read [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+5. See what is planned: issues are the backlog, each in the milestone of the release it is planned for. The [Dexaflow roadmap](https://github.com/orgs/dexadata/projects/4) project is a read-only view of them; change the issue, not the project.
 
 ## How to Contribute
 
@@ -149,7 +150,7 @@ scripts/api-compat.sh /tmp/base    # needs buf, oasdiff and apidiff on PATH
 4. Push and open a PR using the template.
 5. Fill in the PR description completely. Linked issue, what changed, what was tested, screenshots if UI is affected.
 6. Wait for CI. If any check fails, fix and push again.
-7. Address review feedback. We aim to review within 3 business days.
+7. Address review feedback. We aim for a first response within 7 days; ping on the PR if it is quiet.
 8. Maintainers will squash-merge or rebase-merge based on the change.
 
 **Pull requests from a fork** get the same checks, and none of them needs an
@@ -222,7 +223,8 @@ cd dexaflow
 
 ```bash
 docker compose --profile demo up --build
-# open http://localhost:8080 — log in as admin@leoflow.local / admin
+# open http://localhost:8080 and log in as admin@dexaflow.local / admin
+# (admin@leoflow.local on a volume created before the rename)
 # stop with: docker compose --profile demo down   (add -v to wipe data)
 ```
 
@@ -246,9 +248,10 @@ See [`README.md`](README.md) for the high-level layout. Detailed module document
 
 ## Communication
 
+See [`SUPPORT.md`](SUPPORT.md) for where to ask questions, report bugs, and report security issues.
+
 - GitHub Issues for bugs and feature requests
 - GitHub Discussions for design questions and general help
-- The OpenSSF Slack `#leoflow` channel for real-time discussion (link in README)
 
 ## License
 

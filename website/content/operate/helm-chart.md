@@ -75,6 +75,15 @@ A first-class values reference on this site is a TODO for a later migration phas
 
   **The HPA needs both of its bounds set together** — see
   [Autoscaling](/operate/control-plane-ha/#autoscaling-set-both-bounds-or-neither).
+- Cluster deploy defaults (`deploy.defaults`), unset by default: the registry
+  prefix, platforms and base image `dexaflow deploy` uses for whatever a
+  repository leaves unset, so no project needs its own `registry:` block, and
+  with `sourceMode: true` the source mode runtime image (see
+  [Deploying in source mode](/operate/source-mode/#deploying-in-source-mode)),
+  the remote builder (`remoteBuilder.cloudBuild`), and, with
+  `taskServiceAccount: true` and `warmPools: true`, the task ServiceAccount and
+  warm pool settings a deploy reports. See
+  [Cluster deploy defaults](/operate/workspaces-and-targets/#cluster-deploy-defaults).
 - TLS termination via cert-manager — see [Pro TLS](/operate/pro-tls/).
 - OIDC/SSO login (`auth.oidc.*`), off by default: turning it on renders the
   ConfigMap the two map settings need and makes `auth.provider: oidc` reachable

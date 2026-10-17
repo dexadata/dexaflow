@@ -73,10 +73,18 @@ func (f *fakeReaperStore) MarkTaskDispatchLost(_ context.Context, tiID string, _
 	f.queuedMarked = append(f.queuedMarked, tiID)
 	return true, nil
 }
+
+func (f *fakeReaperStore) MarkTaskStartExpired(context.Context, string, int, int) (bool, error) {
+	return false, nil
+}
 func (f *fakeReaperStore) ListRunningTasks(context.Context, time.Duration, ReapCursor) ([]PodLostCandidate, error) {
 	return f.runningCands, nil
 }
 func (f *fakeReaperStore) MarkTaskPodLost(_ context.Context, tiID string, _, _ int) (bool, error) {
+	f.podMarked = append(f.podMarked, tiID)
+	return true, nil
+}
+func (f *fakeReaperStore) MarkTaskPodLostOOMKilled(_ context.Context, tiID string, _, _ int) (bool, error) {
 	f.podMarked = append(f.podMarked, tiID)
 	return true, nil
 }

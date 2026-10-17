@@ -148,8 +148,8 @@ func TestPinnedRefKeepsTheSpelling(t *testing.T) {
 		"k3d-x.localhost:5050/a/b/etl:1.2.3": "k3d-x.localhost:5050/a/b/etl@sha256:abc",
 	}
 	for image, want := range cases {
-		if got := pinnedRef(image, "sha256:abc"); got != want {
-			t.Errorf("pinnedRef(%q) = %q, want %q", image, got, want)
+		if got := PinnedRef(image, "sha256:abc"); got != want {
+			t.Errorf("PinnedRef(%q) = %q, want %q", image, got, want)
 		}
 	}
 }
@@ -320,5 +320,19 @@ func TestRegistryReadsThePlatformOfASingleImage(t *testing.T) {
 	}
 	if got, err := (Registry{}).Platform(context.Background(), host+"/team/etl:arm"); err != nil || got != "linux/arm64/v8" {
 		t.Errorf("Platform = %q, %v; want linux/arm64/v8", got, err)
+	}
+}
+
+// CheckReference accepts what Resolve can read and refuses the rest.
+func TestCheckReference(t *testing.T) {
+	for _, ok := range []string{"ghcr.io/acme/etl:v1", "localhost:5000/etl", "etl@sha256:" + strings.Repeat("a", 64)} {
+		if err := CheckReference(ok); err != nil {
+			t.Errorf("CheckReference(%q) = %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "Not A Reference", "ghcr.io/acme/etl@sha256:abc", "ghcr.io/Acme/etl:v1"} {
+		if err := CheckReference(bad); err == nil {
+			t.Errorf("CheckReference(%q) accepted it", bad)
+		}
 	}
 }

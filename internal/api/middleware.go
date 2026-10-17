@@ -356,10 +356,39 @@ func RequireScope(scope string) gin.HandlerFunc {
 // version and setting the current version (ADR 0074). deploy:dag, the
 // deployer role's grant, allows them, and so does write:dag, so a role that
 // deployed before deploy:dag existed, a custom one included, still does. A
-// scoped token also needs dexaflow:deploy.
-func RequireDeployPermission() gin.HandlerFunc {
-	return permissionGate{action: "deploy", alt: "write", resource: "dag", scope: auth.ScopeDeploy}.check
+// scoped token also needs dexaflow:deploy. With viaIssuer
+// (auth.trusted_issuer.deploy_audience, #1773) the principal must also be a
+// trusted-issuer bearer of the deploy audience: a session, a password login
+// token, an API token or a bearer of another audience is refused with 403,
+// whatever its roles and scopes.
+func RequireDeployPermission(viaIssuer bool) gin.HandlerFunc {
+	return permissionGate{action: "deploy", alt: "write", resource: "dag", scope: auth.ScopeDeploy, viaIssuer: viaIssuer}.check
 }
+
+// RequireUndeployPermission guards deleting a DAG, which undeploys it. It
+// needs write:dag. Without viaIssuer a scoped token is refused, as on every
+// write no scope grants. With viaIssuer (#1773) it is a deploy decision like
+// RequireDeployPermission: only a trusted-issuer bearer of the deploy
+// audience with dexaflow:deploy may call it, so no undeploy skips the
+// platform that owns deploys.
+func RequireUndeployPermission(viaIssuer bool) gin.HandlerFunc {
+	scope := ""
+	if viaIssuer {
+		scope = auth.ScopeDeploy
+	}
+	return permissionGate{action: "write", resource: "dag", scope: scope, viaIssuer: viaIssuer}.check
+}
+
+// The header a deploy refused for not coming through the trusted issuer
+// carries (#1773), so a client tells it from a missing role or scope
+// without parsing the detail.
+const (
+	deployViaHeader = "Dexaflow-Deploy-Via"
+	deployViaIssuer = "trusted-issuer"
+)
+
+// deployViaIssuerRefusal is the detail of that refusal.
+const deployViaIssuerRefusal = "deploys go through the trusted issuer: this server accepts a deploy only from a bearer token the trusted issuer minted for its deploy audience, with the dexaflow:deploy scope"
 
 // RequireDeployRead guards a DAG read that a deploy needs: the DAG list, a
 // DAG, its details and its versions (ADR 0074). It needs read:dag, and a
@@ -378,8 +407,12 @@ func requirePermission(action, resource, scope string) gin.HandlerFunc {
 // a scoped principal, the route's scope (or altScope, when set); an empty
 // scope means no scope grants the route. Its check is a method value rather
 // than a closure so jwtAuth can find it in a route's handler chain
-// (scopeGated).
-type permissionGate struct{ action, alt, resource, scope, altScope string }
+// (scopeGated). viaIssuer, when set, also requires a trusted-issuer bearer
+// of the deploy audience (RequireDeployPermission).
+type permissionGate struct {
+	action, alt, resource, scope, altScope string
+	viaIssuer                              bool
+}
 
 // scopeAllows reports whether a scoped user's token carries the route's scope.
 func (g permissionGate) scopeAllows(user *auth.User) bool {
@@ -410,6 +443,11 @@ func (g permissionGate) check(c *gin.Context) {
 	}
 	if g.action != "" && !g.allows(user) {
 		AbortProblem(c, http.StatusForbidden, "forbidden", "missing permission "+g.missing())
+		return
+	}
+	if g.viaIssuer && !user.DeployAudience {
+		c.Header(deployViaHeader, deployViaIssuer)
+		AbortProblem(c, http.StatusForbidden, "forbidden", deployViaIssuerRefusal)
 		return
 	}
 	if user.Scoped && g.scope == "" {

@@ -48,6 +48,12 @@ func TestIssuerBearerFollowsTheConfig(t *testing.T) {
 		t.Fatalf("issuerBearer(no bearer audiences) = %v, want nil", got)
 	}
 
+	cfg.Auth.TrustedIssuer.DeployAudience = "dexaflow-deploy"
+	if got := issuerBearer(newTrustedIssuer(context.Background(), cfg)); got == nil {
+		t.Fatal("issuerBearer(deploy audience only) = nil, want the verifier (#1773)")
+	}
+
+	cfg.Auth.TrustedIssuer.DeployAudience = ""
 	cfg.Auth.TrustedIssuer.BearerAudiences = []string{"leoflow-mcp"}
 	got := issuerBearer(newTrustedIssuer(context.Background(), cfg))
 
@@ -63,6 +69,7 @@ func TestTrustedIssuerConfigMapsEveryKey(t *testing.T) {
 		Name: "portal", Issuer: "https://portal.example.com", JWKSURL: "https://portal.example.com/jwks",
 		Audience: "leoflow-engine", TenantClaim: "org", AllowedTenants: []string{"acme"},
 		MaxLifetimeSeconds: 90, BearerAudiences: []string{"leoflow-mcp"}, BearerMaxLifetimeSeconds: 300,
+		DeployAudience: "dexaflow-deploy",
 	}
 
 	got := trustedIssuerConfig(s)
@@ -71,6 +78,7 @@ func TestTrustedIssuerConfigMapsEveryKey(t *testing.T) {
 		Name: "portal", Issuer: "https://portal.example.com", JWKSURL: "https://portal.example.com/jwks",
 		Audience: "leoflow-engine", TenantClaim: "org", AllowedTenants: []string{"acme"},
 		MaxLifetime: 90 * time.Second, BearerAudiences: []string{"leoflow-mcp"}, BearerMaxLifetime: 5 * time.Minute,
+		DeployAudience: "dexaflow-deploy",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("trustedIssuerConfig = %+v, want %+v", got, want)

@@ -35,7 +35,7 @@ a relative rule disagree, the stricter one decides.
 
 | # | Item | How | Decides | When | Where |
 |---|---|---|---|---|---|
-| B1 | Scheduler, planner, projection and static asset benchmarks | Check out `vPREV` and `HEAD` side by side, run the command in BASELINE.md "Go benchmarks" with `-count 10` on both, compare with `benchstat` | No benchmark slower by more than 10% with p < 0.05; allocations per op not up by more than 10% | GA, patch* (`internal/scheduler`, `internal/storage`, `internal/dispatch`) | local |
+| B1 | Scheduler, planner, projection, static asset and warm pool tick benchmarks | Check out `vPREV` and `HEAD` side by side, run the command in BASELINE.md "Go benchmarks" with `-count 10` on both, compare with `benchstat`. A benchmark `vPREV` does not have yet (`BenchmarkWarmPoolTick` before v0.5.5) is run from `HEAD`'s test file copied into `vPREV`'s tree when it compiles there, and otherwise recorded for the next release | No benchmark slower by more than 10% with p < 0.05; allocations per op not up by more than 10% | GA, patch* (`internal/scheduler`, `internal/storage`, `internal/dispatch`, `internal/executor/warmpool*`) | local |
 | B2 | Absolute targets | Same run | `BenchmarkStepSteadyState` 1,000 runs x 20 tasks under 2 ms; `BenchmarkPlanRunFanOut` 5,000 tasks under 2 ms; static bundle with gzip under 5 ms | GA | local |
 | B3 | BASELINE.md is current | Re-record the tables when B1 changes a row by more than 10% | The file names the release and commit it was recorded on | GA | local |
 
@@ -47,6 +47,7 @@ a relative rule disagree, the stricter one decides.
 | C2 | Tick read at scale | `go run ./test/load/scheduler_ceiling --n 50,200,500,1000,5000 --tasks 20` | Tick p99 under half the loop interval (500 ms at the 1 s default) at 1,000 runs x 20 tasks; record the N where p99 crosses the interval | GA, patch* (scheduler or storage) | local |
 | C3 | Reaper candidate queries | EXPLAIN (ANALYZE) of the stale-queued, pod-lost, agent-lost and warm-bound lists with 150k active task instances | Each under 50 ms | GA | local |
 | C4 | Migrations on a realistic database | Upgrade from `vPREV` over the BASELINE dataset, then roll back to `vPREV`'s schema (AGENTS.md review 7) | Time of each migration recorded; no `INVALID` index left (`SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid` returns 0 rows); the upgrade guide's recovery table lists every new migration | rc, GA, patch* (`migrations/`) | local |
+| C6 | Warm current versions | EXPLAIN (ANALYZE) of `ListWarmCurrentVersions` with 100k DAGs, a few thousand unpaused, and 200 DAG ids of active runs (ADR 0082) | A scan of `dags` with one primary-key probe of `dag_versions` per kept row, never a scan of `dag_versions`; under 100 ms | rc, GA, patch* (`internal/storage/queries/dags.sql`, warm pools) | local |
 | C5 | Connection budget | Count the pools the release opens per replica (main, scheduler, leader, health) and compare with the chart's documented formula | The formula in the HA guide matches the code | GA | local |
 
 Watch in C1: `ListActiveDagRuns` reads the pause of each active run's DAG
@@ -89,8 +90,8 @@ recorded as a pass.
 | # | Item | How | Decides | When | Where |
 |---|---|---|---|---|---|
 | F1 | A/B against dedicated pods | `make soak-warmpool-ab` | Warm arm median start latency at least 3x better; no task failure in either arm | GA, patch* (`warmpool*`, `internal/agent/warm.go`, `internal/agentrpc`) | k3d |
-| F2 | Deploy rollover | Push a new DAG version while warm workers run tasks of the old one | No busy worker deleted; old version's idle workers drained; warm anchor ConfigMaps equal the number of versions with pods once the drain ends | GA, patch* | k3d |
-| F3 | Leader change | Restart the leader replica with 2 replicas and warm pools on | Warm placements resume within 60 s (not after `worker_idle_ttl`) | GA, patch* | k3d |
+| F2 | Deploy rollover | Push a new DAG version while warm workers run tasks of the old one; repeat with a DAG that declares `min_idle_workers` and once paused | No busy worker deleted; old version's idle workers deleted at the next reconcile, not after `worker_idle_ttl` (ADR 0082); the new version's idle workers Running before its first run when the DAG declares `min_idle_workers` and is unpaused, none while it is paused; warm anchor ConfigMaps equal the number of versions with pods once the drain ends | rc, GA, patch* (warm target computation) | k3d |
+| F3 | Leader change | Restart the leader replica with 2 replicas and warm pools on, with a prewarmed DAG and a draining version | Warm placements resume within 60 s (not after `worker_idle_ttl`); the new leader keeps the prewarmed pool and finishes the drain (its `warm_pool_prewarm_started` and `warm_pool_drain_started` counts fire once more, by design) | rc, GA, patch* (warm target computation) | k3d |
 | F4 | Placement honoured | A task with `node_selector` or `resource_claims` and warm pools on | It runs on a dedicated pod with its placement | rc, GA | k3d |
 
 ## G. Soak and leaks
@@ -100,7 +101,7 @@ recorded as a pass.
 | G1 | Short soak | `make soak` (30 min) | Zero recorded violations | rc, patch* (scheduler, dispatch, storage) | local |
 | G2 | Long soak with faults | `bash test/soak/soak.sh --duration 12h --faults standard` | Zero violations; tick duration p99 at the end within 20% of the first hour; RSS growth under 10% after the first hour | GA | local |
 | G3 | Soak self test | `make soak-selftest` | Exits 1 with recorded violations (the assertions can still fail) | GA | local |
-| G4 | Nothing leaks after a run | After G2 or the k3d legs: count task pods older than the GC age, warm anchor ConfigMaps without pods, staging PVCs without a row, task instances non-terminal in finished runs, goroutines (`/debug/pprof/goroutine` delta) | All zero, goroutines back to the idle count within 10% | GA | local, k3d |
+| G4 | Nothing leaks after a run | After G2 or the k3d legs: count task pods older than the GC age, warm anchor ConfigMaps without pods, staging PVCs without a row, task instances non-terminal in finished runs, goroutines (`/debug/pprof/goroutine` delta), and the leader's heap (`/debug/pprof/heap` in-use delta: with warm pools on it pins the decoded current spec of each prewarmed DAG, ADR 0082, so compare at the same number of DAGs) | All zero, goroutines back to the idle count within 10%, heap within 10% of the idle reading | GA | local, k3d |
 
 ## H. Observability needed to judge the above
 

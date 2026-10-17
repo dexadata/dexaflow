@@ -23,6 +23,9 @@ type deployPlan struct {
 	CurrentVersion string `json:"current_version,omitempty"`
 	Registered     bool   `json:"registered_on_server"`
 	SetIsPaused    *bool  `json:"set_is_paused,omitempty"`
+	// SourceMode says the deploy registers dag.py on the runtime image,
+	// with no build or push (#1772).
+	SourceMode bool `json:"source_mode,omitempty"`
 }
 
 // planInput is what deploy --plan decides from: the resolved label and image,
@@ -33,11 +36,16 @@ type planInput struct {
 	image            string
 	origin           labelOrigin
 	skipBuild, force bool
-	paused           *bool
+	// sourceMode is a deploy that registers dag.py on the runtime image
+	// (image), with no build or push.
+	sourceMode bool
+	paused     *bool
 	// reuse and platforms let the plan check the skip path as the deploy
 	// would: whether the registry already holds the image for this label.
 	reuse     bool
 	platforms []string
+	// registry reads the registry with the project's credentials.
+	registry build.Registry
 }
 
 // serverDag is what the plan learns about the DAG from the server's details:
@@ -83,7 +91,8 @@ func planDeploy(ctx context.Context, warn io.Writer, in planInput) (deployResult
 	if err != nil {
 		return res, err
 	}
-	p := &deployPlan{Build: !in.skipBuild, Push: !in.skipBuild, Register: true,
+	building := !in.skipBuild && !in.sourceMode
+	p := &deployPlan{Build: building, Push: building, Register: true, SourceMode: in.sourceMode,
 		LabelOrigin: labelOriginName(in.origin), Registered: dag.registered, SetIsPaused: in.paused}
 	res.Plan = p
 	if dag.registered {
@@ -93,7 +102,7 @@ func planDeploy(ctx context.Context, warn io.Writer, in planInput) (deployResult
 	case in.origin != labelDefault:
 		p.Reason = "the label comes from --dag-version, so it is not checked against the server; a label registered with other content is refused with 409"
 	case in.force:
-		p.Reason = "--force: built, pushed and registered without checking the content label"
+		p.Reason = "--force: " + planSteps(in, "built, pushed and registered", "registered") + " without checking the content label"
 	case dag.known && !dag.registered:
 		p.Reason = "not registered on the server: the deploy creates the DAG"
 	default:
@@ -115,7 +124,7 @@ func planReuse(ctx context.Context, p *deployPlan, in planInput) {
 	if !p.Build || !in.reuse {
 		return
 	}
-	if b, _ := build.Select(ctx, build.Options{Reuse: true}, in.image, in.platforms); b.Path() != build.PathSkip {
+	if b, _ := build.Select(ctx, build.Options{Reuse: true, Registry: in.registry}, in.image, in.platforms); b.Path() != build.PathSkip {
 		return
 	}
 	p.Build, p.Push = false, false
@@ -137,11 +146,20 @@ func planFromState(res *deployResult, state deployedState, current string, in pl
 			"make it current with `dexaflow rollback %s --to %s`, or pass --dag-version <new-label>", in.version, current, in.dagID, in.version)
 	case deployUnknown:
 		if current == "" {
-			p.Reason = "the server has no current version to compare with (or could not be asked): the deploy builds, pushes and registers"
+			p.Reason = "the server has no current version to compare with (or could not be asked): the deploy " + planSteps(in, "builds, pushes and registers", "registers")
 			return
 		}
 		p.Reason = fmt.Sprintf("content changed: label %s is not registered, the current version is %s", in.version, current)
 	}
+}
+
+// planSteps returns built for a deploy that builds, pushes and registers,
+// and registered for one that only registers (source mode).
+func planSteps(in planInput, built, registered string) string {
+	if in.sourceMode {
+		return registered
+	}
+	return built
 }
 
 // labelOriginName says where the version label came from.
@@ -182,7 +200,10 @@ func pausedPlan(res deployResult, in planInput) string {
 func printPlan(out io.Writer, dir string, res deployResult, in planInput) error {
 	p := res.Plan
 	skip := ""
-	if in.skipBuild {
+	switch {
+	case in.sourceMode:
+		skip = "source mode"
+	case in.skipBuild:
 		skip = "--skip-build"
 	}
 	origin := "content label"

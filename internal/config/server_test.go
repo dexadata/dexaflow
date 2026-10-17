@@ -800,6 +800,7 @@ func TestLoadServerReadsTrustedIssuerFromEnv(t *testing.T) {
 	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_AUDIENCES", "leoflow-mcp,other-mcp")
 	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS", "600")
 	t.Setenv("DEXAFLOW_AUTH_TRUSTED_ISSUER_HOST_PATTERN", "{tenant}.example.com")
+	t.Setenv("DEXAFLOW_AUTH_TRUSTED_ISSUER_DEPLOY_AUDIENCE", "dexaflow-deploy")
 	c, err = LoadServer("", nil)
 	if err != nil {
 		t.Fatalf("LoadServer: %v", err)
@@ -813,7 +814,7 @@ func TestLoadServerReadsTrustedIssuerFromEnv(t *testing.T) {
 		got.TenantClaim != want.TenantClaim || strings.Join(got.AllowedTenants, ",") != "acme,globex" || got.MaxLifetimeSeconds != 300 ||
 		strings.Join(got.AllowedOrigins, ",") != "https://portal.example.com,http://localhost:3000" ||
 		strings.Join(got.BearerAudiences, ",") != "leoflow-mcp,other-mcp" || got.BearerMaxLifetimeSeconds != 600 ||
-		got.HostPattern != "{tenant}.example.com" {
+		got.HostPattern != "{tenant}.example.com" || got.DeployAudience != "dexaflow-deploy" {
 		t.Errorf("TrustedIssuer = %+v, want %+v", got, want)
 	}
 }
@@ -863,6 +864,21 @@ func TestValidateTrustedIssuer(t *testing.T) {
 		{"host pattern with a scheme", func(s *TrustedIssuerSection) { s.HostPattern = "https://{tenant}.example.com" }, []string{"auth.trusted_issuer.host_pattern"}},
 		{"host pattern with a path", func(s *TrustedIssuerSection) { s.HostPattern = "{tenant}.example.com/ui" }, []string{"auth.trusted_issuer.host_pattern"}},
 		{"host pattern with a wildcard", func(s *TrustedIssuerSection) { s.HostPattern = "{tenant}.*.com" }, []string{"auth.trusted_issuer.host_pattern"}},
+		{"deploy audience", func(s *TrustedIssuerSection) { s.DeployAudience = "dexaflow-deploy" }, nil},
+		{"deploy audience next to bearer audiences", func(s *TrustedIssuerSection) {
+			s.BearerAudiences = []string{"leoflow-mcp"}
+			s.DeployAudience = "dexaflow-deploy"
+		}, nil},
+		{"deploy audience is the handoff audience", func(s *TrustedIssuerSection) { s.DeployAudience = "leoflow-engine" }, []string{"auth.trusted_issuer.deploy_audience"}},
+		{"deploy audience is a bearer audience", func(s *TrustedIssuerSection) {
+			s.BearerAudiences = []string{"leoflow-mcp", "dexaflow-deploy"}
+			s.DeployAudience = "dexaflow-deploy"
+		}, []string{"auth.trusted_issuer.deploy_audience"}},
+		{"deploy audience with surrounding spaces", func(s *TrustedIssuerSection) { s.DeployAudience = " dexaflow-deploy" }, []string{"auth.trusted_issuer.deploy_audience"}},
+		{"deploy audience with a trailing newline", func(s *TrustedIssuerSection) { s.DeployAudience = "dexaflow-deploy\n" }, []string{"auth.trusted_issuer.deploy_audience"}},
+		{"deploy audience without an issuer", func(s *TrustedIssuerSection) {
+			*s = TrustedIssuerSection{TenantClaim: "tenant_id", DeployAudience: "dexaflow-deploy"}
+		}, []string{"auth.trusted_issuer.issuer", "auth.trusted_issuer.jwks_url"}},
 		{"host pattern without an issuer", func(s *TrustedIssuerSection) {
 			*s = TrustedIssuerSection{TenantClaim: "tenant_id", HostPattern: "{tenant}.example.com"}
 		}, []string{"auth.trusted_issuer.issuer"}},

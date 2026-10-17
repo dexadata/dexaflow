@@ -15,9 +15,11 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/spf13/cobra"
 	yaml "go.yaml.in/yaml/v3"
 
 	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/envcompat"
 )
 
@@ -60,6 +62,14 @@ type deployDefaults struct {
 	Platforms []string `yaml:"platforms,omitempty"`
 	// BaseImage replaces base_image for projects that set none.
 	BaseImage string `yaml:"base_image,omitempty"`
+	// SourceModeImage is the runtime image, pinned by digest, a deploy
+	// registers dag.py on with no build or push (source mode, ADR 0067,
+	// #1772). It must be the server's execution.source_mode.image byte for
+	// byte.
+	SourceModeImage string `yaml:"source_mode_image,omitempty"`
+	// RemoteBuilder replaces build.remote_builder for projects that set
+	// none (ADR 0083).
+	RemoteBuilder *domain.RemoteBuilderConfig `yaml:"remote_builder,omitempty"`
 }
 
 // workspaceTarget is one named control plane in a workspace file.
@@ -229,6 +239,29 @@ func findWorkspaceFromCwd() (*workspaceLocation, error) {
 	return findWorkspace(wd)
 }
 
+// workDirKey is the context key of a command's work dir (withWorkDir).
+type workDirKey struct{}
+
+// withWorkDir makes dir the folder cmd resolves its workspace (its targets,
+// its defaults and the target selected for it) from, in place of the process
+// working directory, until the returned func puts the previous context back.
+// `dexaflow sync <dir>` resolves as a command run in dir would, without
+// changing the process working directory.
+func withWorkDir(cmd *cobra.Command, dir string) func() {
+	prev := cmd.Context()
+	cmd.SetContext(context.WithValue(cmdContext(cmd), workDirKey{}, dir))
+	return func() { cmd.SetContext(prev) }
+}
+
+// findWorkspaceFor is findWorkspace from the command's work dir: the one
+// withWorkDir set, else the process working directory.
+func findWorkspaceFor(cmd *cobra.Command) (*workspaceLocation, error) {
+	if dir, ok := cmdContext(cmd).Value(workDirKey{}).(string); ok {
+		return findWorkspace(dir)
+	}
+	return findWorkspaceFromCwd()
+}
+
 // parseWorkspaceFile reads and validates the workspace file at path. Unknown
 // keys are refused, like in dexaflow.yaml: a misspelled key would otherwise be
 // a setting that silently does nothing.
@@ -265,6 +298,12 @@ func (s *workspaceSpec) validate() error {
 		if err := validateServerURL(t.Server); err != nil {
 			return fmt.Errorf("target %q: %w", name, err)
 		}
+		if err := t.RemoteBuilder.Validate("remote_builder"); err != nil {
+			return fmt.Errorf("target %q: %w", name, err)
+		}
+	}
+	if err := s.Defaults.RemoteBuilder.Validate("defaults.remote_builder"); err != nil {
+		return err
 	}
 	if s.DefaultTarget != "" && s.Targets[s.DefaultTarget] == nil {
 		return fmt.Errorf("default_target %q is not one of the targets (%s)", s.DefaultTarget, strings.Join(s.targetNames(), ", "))

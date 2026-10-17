@@ -47,7 +47,8 @@ services:
   # behind the "demo" profile, so `make dev-up` still brings up only Postgres +
   # Redis. Run the whole stack (UI included) with:
   #   docker compose --profile demo up --build
-  # then open http://localhost:8080 and log in as admin@leoflow.local / admin.
+  # then open http://localhost:8080 and log in as admin@dexaflow.local / admin
+  # (admin@leoflow.local on a volume created before the rename).
 
   # One-shot migration runner: applies all up migrations, then exits.
   #
@@ -90,11 +91,17 @@ services:
       DEXAFLOW_DATABASE_URL: postgres://leoflow:leoflow@postgres:5432/leoflow?sslmode=disable
       DEXAFLOW_REDIS_URL: redis://redis:6379/0
       DEXAFLOW_AUTH_JWT_SECRET: dev-secret-change-me
-      # Seeds admin@leoflow.local with this password on first boot (dev only).
+      # Seeds admin@dexaflow.local with this password on first boot (dev only); a
+      # volume created before the rename keeps its admin@leoflow.local.
       DEXAFLOW_BOOTSTRAP_PASSWORD: admin
       # The distroless image runs as nonroot, which cannot create /var/log;
       # write task logs under a world-writable path instead.
       DEXAFLOW_LOGS_DIR: /tmp/leoflow-logs
+      # The demo stack has no Kubernetes cluster, and the kubernetes executor
+      # refuses to boot without one (#704). The subprocess executor boots, but
+      # the image ships no agent, so tasks fail at dispatch: run DAGs with
+      # `dexaflow lite` or on a cluster.
+      DEXAFLOW_EXECUTOR_TYPE: subprocess
     ports:
       - "8080:8080"
       - "9090:9090"

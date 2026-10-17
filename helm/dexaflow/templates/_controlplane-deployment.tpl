@@ -436,6 +436,9 @@ spec:
               value: {{ . | quote }}
             {{- end }}
             {{- with .ctx.Values.auth.trustedIssuer }}
+            {{- if and .deployAudience (not .issuer) }}
+            {{- fail "auth.trustedIssuer.deployAudience needs auth.trustedIssuer.issuer" }}
+            {{- end }}
             {{- if .issuer }}
             # Trusted-issuer handoff (#1284). Rendered as a block only when an
             # issuer is set; the server validates the whole section at boot.
@@ -465,6 +468,11 @@ spec:
             {{- with .hostPattern }}
             # Host binding (#1463), off unless a pattern is set.
             - name: LEOFLOW_AUTH_TRUSTED_ISSUER_HOST_PATTERN
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .deployAudience }}
+            # Deploys through the issuer only (#1773), off unless an audience is set.
+            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_DEPLOY_AUDIENCE
               value: {{ . | quote }}
             {{- end }}
             {{- end }}
@@ -600,12 +608,90 @@ spec:
             - name: LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
               value: {{ .ctx.Values.execution.warmReadOnlyRootFilesystem | quote }}
             {{- end }}
+            {{- if .ctx.Values.execution.warmRequireAttemptHomeSweep }}
+            # Stamped only when on, so enabling warm pools alone renders the same
+            # env it did before this knob existed (the server default is false).
+            - name: LEOFLOW_EXECUTION_WARM_REQUIRE_ATTEMPT_HOME_SWEEP
+              value: {{ .ctx.Values.execution.warmRequireAttemptHomeSweep | quote }}
+            {{- end }}
             {{- if .ctx.Values.execution.warmPoolEventRefill }}
             # Stamped only when on, so enabling warm pools alone renders the same
             # env it did before this knob existed (the server default is false).
             - name: LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL
               value: {{ .ctx.Values.execution.warmPoolEventRefill | quote }}
             {{- end }}
+            {{- end }}
+            {{- $deployDefaults := (.ctx.Values.deploy | default dict).defaults | default dict }}
+            {{- if or $deployDefaults.registry $deployDefaults.platforms $deployDefaults.baseImage }}
+            {{- with $deployDefaults }}
+            # Cluster deploy defaults (#1704), served on /api/v2/deployDefaults.
+            # Each is stamped only when set, so an install that sets none renders
+            # the env it had before. deployment.yaml has already refused a value
+            # the server refuses at boot.
+            {{- if .registry }}
+            - name: LEOFLOW_DEPLOY_DEFAULTS_REGISTRY
+              value: {{ .registry | quote }}
+            {{- end }}
+            {{- if .platforms }}
+            - name: LEOFLOW_DEPLOY_DEFAULTS_PLATFORMS
+              value: {{ join "," .platforms | quote }}
+            {{- end }}
+            {{- if .baseImage }}
+            - name: LEOFLOW_DEPLOY_DEFAULTS_BASE_IMAGE
+              value: {{ .baseImage | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if $deployDefaults.sourceMode }}
+            # Advertise the source mode runtime image on /api/v2/deployDefaults
+            # (#1772). The server serves execution.source_mode.image itself;
+            # deployment.yaml has already refused this while source mode is off.
+            - name: LEOFLOW_DEPLOY_DEFAULTS_SOURCE_MODE
+              value: "true"
+            {{- end }}
+            {{- with ($deployDefaults.remoteBuilder | default dict).cloudBuild }}
+            # Cluster remote builder (#1890), served on /api/v2/deployDefaults
+            # for deploys whose project, target and workspace name none. Each
+            # value is stamped only when set; deployment.yaml has already
+            # refused a value the server refuses at boot.
+            {{- if .project }}
+            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT
+              value: {{ .project | quote }}
+            {{- end }}
+            {{- if .region }}
+            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_REGION
+              value: {{ .region | quote }}
+            {{- end }}
+            {{- if .workerPool }}
+            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_WORKER_POOL
+              value: {{ .workerPool | quote }}
+            {{- end }}
+            {{- if .serviceAccount }}
+            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_SERVICE_ACCOUNT
+              value: {{ .serviceAccount | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if $deployDefaults.taskServiceAccount }}
+            # Advertise the task ServiceAccount (#1890): the server serves its
+            # own executor.task_service_account; deployment.yaml has already
+            # refused this when the chart sets none.
+            - name: LEOFLOW_DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT
+              value: "true"
+            {{- end }}
+            {{- if $deployDefaults.warmPools }}
+            # Advertise the warm pool settings (#1890): the server serves its
+            # own execution.warm_pools_enabled, min_idle_workers and
+            # max_pool_size.
+            - name: LEOFLOW_DEPLOY_DEFAULTS_WARM_POOLS
+              value: "true"
+            {{- end }}
+            {{- $requireDigest := (.ctx.Values.deploy | default dict).requireDigest | default "off" | toString }}
+            {{- if ne $requireDigest "off" }}
+            # Digest-pinned images at register (#1703). Stamped only when warn
+            # or enforce, so an install that leaves it off renders the env it
+            # had before. deployment.yaml has already refused any other value.
+            - name: LEOFLOW_DEPLOY_REQUIRE_DIGEST
+              value: {{ $requireDigest | quote }}
             {{- end }}
             {{- if (.ctx.Values.execution.sourceMode | default dict).enabled }}
             # Pro source mode (ADR 0067). Stamped only when on, so an install that

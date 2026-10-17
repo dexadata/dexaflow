@@ -64,3 +64,63 @@ func TestStateCodecRejectsExpired(t *testing.T) {
 		t.Errorf("Decode(expired) err = %v, want ErrInvalidState", err)
 	}
 }
+
+func TestStateCodecRoundTripsCLIBinding(t *testing.T) {
+	c := NewStateCodec("app-secret")
+	in := StatePayload{
+		State: "st", Nonce: "n", Verifier: "v", Next: "/",
+		CLI: &CLIBinding{
+			Redirect:  "http://127.0.0.1:43123/callback",
+			State:     "cli-state-123",
+			Challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+		},
+	}
+	tok, err := c.Encode(in, time.Minute)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	got, err := c.Decode(tok)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if got.CLI == nil || *got.CLI != *in.CLI {
+		t.Fatalf("CLI binding = %+v, want %+v", got.CLI, in.CLI)
+	}
+}
+
+func TestStateCodecBrowserLoginHasNoCLIBinding(t *testing.T) {
+	c := NewStateCodec("app-secret")
+	tok, err := c.Encode(StatePayload{State: "st", Nonce: "n", Verifier: "v", Next: "/"}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.Decode(tok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CLI != nil {
+		t.Errorf("a browser login decoded with a CLI binding: %+v", got.CLI)
+	}
+}
+
+func TestStateCodecRoundTripsDeviceBinding(t *testing.T) {
+	c := NewStateCodec("app-secret")
+	in := StatePayload{
+		State: "st", Nonce: "n", Verifier: "v", Next: "/",
+		Device: &DeviceBinding{UserCode: "BCDF-GHJK"},
+	}
+	tok, err := c.Encode(in, time.Minute)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	got, err := c.Decode(tok)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if got.Device == nil || *got.Device != *in.Device {
+		t.Fatalf("device binding = %+v, want %+v", got.Device, in.Device)
+	}
+	if got.CLI != nil {
+		t.Errorf("a device login decoded with a loopback binding: %+v", got.CLI)
+	}
+}

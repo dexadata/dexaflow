@@ -219,12 +219,31 @@ func (r *Reaper) mayReap(ctx context.Context) bool {
 	return true
 }
 
-// SetLogSink wires the sink the agent-lost reaper uses to append a final
-// "killed: agent_lost" marker to a reaped attempt's log stream, so a killed
-// task's log ends with the reason instead of a silent truncation. Any logs.Sink
-// satisfies the parameter; nil (Lite / unwired) leaves markers off.
+// SetLogSink wires the sink the agent-lost, pod-lost and warm-worker-lost
+// reapers use to append a final "killed: <reason>" marker to a reaped
+// attempt's log stream, so a killed task's log ends with the reason instead of
+// a silent truncation (#861), and the dispatch-lost reaper its "killed:
+// start_expired" marker (#1126). Any logs.MarkerSink satisfies the parameter;
+// nil (Lite / unwired) leaves markers off.
 func (r *Reaper) SetLogSink(s logSink) {
 	r.agentLost.sink = s
+	r.podLost.sink = s
+	r.warmWorkerLost.sink = s
+	r.dispatchLost.sink = s
+}
+
+// SetAttemptTokenTTL wires the TTL of the attempt credential minted at dispatch
+// into the dispatch-lost reaper (#1126). A queued attempt whose pod is still
+// Pending when that credential is StartCredentialMargin from running out is
+// failed as start_expired, an infra mark re-placed off the retry budget with a
+// fresh credential, instead of being left to start with a dead one. Only the
+// Kubernetes path sets it; zero or a TTL no longer than the margin keeps the
+// reaper deferring on every live pod, as before.
+func (r *Reaper) SetAttemptTokenTTL(ttl time.Duration) {
+	r.dispatchLost.startDeadline = 0
+	if ttl > StartCredentialMargin {
+		r.dispatchLost.startDeadline = ttl - StartCredentialMargin
+	}
 }
 
 // SetAttemptLifetimeCeiling wires auth.max_attempt_credential_lifetime into

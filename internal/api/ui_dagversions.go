@@ -41,9 +41,24 @@ type dagVersionDTO struct {
 	CreatedBy *string `json:"created_by"`
 }
 
+// listedDagVersionDTO is dagVersionDTO as the routes about versions serve it
+// (the listing, one version by number, a rollback's from and to), with where
+// the version was built: null when its register sent none (#1702). The
+// dag_version copies embedded in other answers (task instances, runs, a
+// DAG's latest_dag_version) leave it out, so a long list does not repeat it.
+type listedDagVersionDTO struct {
+	dagVersionDTO
+	BuildInfo *domain.BuildInfo `json:"build_info"`
+}
+
 type dagVersionCollectionDTO struct {
-	DagVersions  []dagVersionDTO `json:"dag_versions"`
-	TotalEntries int             `json:"total_entries"`
+	DagVersions  []listedDagVersionDTO `json:"dag_versions"`
+	TotalEntries int                   `json:"total_entries"`
+}
+
+// toListedDagVersionDTO maps a domain version onto listedDagVersionDTO.
+func toListedDagVersionDTO(dagID string, v domain.DagVersion) listedDagVersionDTO {
+	return listedDagVersionDTO{dagVersionDTO: toDagVersionDTO(dagID, v), BuildInfo: v.BuildInfo}
 }
 
 // toDagVersionDTO maps a domain version onto the Airflow DAGVersionResponse.
@@ -73,11 +88,11 @@ func dagVersionsHandler(lister DagVersionLister) gin.HandlerFunc {
 			return
 		}
 		out := dagVersionCollectionDTO{
-			DagVersions:  make([]dagVersionDTO, 0, len(versions)),
+			DagVersions:  make([]listedDagVersionDTO, 0, len(versions)),
 			TotalEntries: len(versions),
 		}
 		for _, v := range versions {
-			out.DagVersions = append(out.DagVersions, toDagVersionDTO(dagID, v))
+			out.DagVersions = append(out.DagVersions, toListedDagVersionDTO(dagID, v))
 		}
 		c.JSON(http.StatusOK, out)
 	}
@@ -101,7 +116,7 @@ func dagVersionHandler(lister DagVersionLister) gin.HandlerFunc {
 		}
 		for _, v := range versions {
 			if v.VersionNumber == number {
-				c.JSON(http.StatusOK, toDagVersionDTO(dagID, v))
+				c.JSON(http.StatusOK, toListedDagVersionDTO(dagID, v))
 				return
 			}
 		}

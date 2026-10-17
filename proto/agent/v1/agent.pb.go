@@ -1786,9 +1786,18 @@ type WorkerRegister struct {
 	// ListWarmPods returns, even after a leader failover. Unlike an identity, it
 	// is a locator, not a credential: the worker's authenticated identity still
 	// comes from its bearer token on the stream context, never from this field.
-	PodName       string `protobuf:"bytes,2,opt,name=pod_name,json=podName,proto3" json:"pod_name,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	PodName string `protobuf:"bytes,2,opt,name=pod_name,json=podName,proto3" json:"pod_name,omitempty"`
+	// attempt_home_sweep confirms that this worker runs with a per-attempt HOME
+	// and empties /tmp and /dev/shm before and after every attempt (the
+	// read-only-root isolation mode, LEOFLOW_WARM_ATTEMPT_HOME=1). A worker
+	// built on an older runtime never sets it. With
+	// execution.warm_read_only_root_filesystem on, the control plane logs and
+	// meters a registration that does not confirm the sweep, and refuses it
+	// when execution.warm_require_attempt_home_sweep is on too, so attempts run
+	// on dedicated pods instead of on a worker that would leak those paths.
+	AttemptHomeSweep bool `protobuf:"varint,3,opt,name=attempt_home_sweep,json=attemptHomeSweep,proto3" json:"attempt_home_sweep,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *WorkerRegister) Reset() {
@@ -1833,6 +1842,13 @@ func (x *WorkerRegister) GetPodName() string {
 		return x.PodName
 	}
 	return ""
+}
+
+func (x *WorkerRegister) GetAttemptHomeSweep() bool {
+	if x != nil {
+		return x.AttemptHomeSweep
+	}
+	return false
 }
 
 // AssignmentAck answers a WorkAssignment. started=true means the worker began the
@@ -2145,10 +2161,11 @@ const file_agent_proto_rawDesc = "" +
 	"\bregister\x18\x01 \x01(\v2 .leoflow.agent.v1.WorkerRegisterH\x00R\bregister\x123\n" +
 	"\x03ack\x18\x02 \x01(\v2\x1f.leoflow.agent.v1.AssignmentAckH\x00R\x03ack\x129\n" +
 	"\tslot_free\x18\x03 \x01(\v2\x1a.leoflow.agent.v1.SlotFreeH\x00R\bslotFreeB\x05\n" +
-	"\x03msg\"Q\n" +
+	"\x03msg\"\x7f\n" +
 	"\x0eWorkerRegister\x12$\n" +
 	"\x0edag_version_id\x18\x01 \x01(\tR\fdagVersionId\x12\x19\n" +
-	"\bpod_name\x18\x02 \x01(\tR\apodName\"N\n" +
+	"\bpod_name\x18\x02 \x01(\tR\apodName\x12,\n" +
+	"\x12attempt_home_sweep\x18\x03 \x01(\bR\x10attemptHomeSweep\"N\n" +
 	"\rAssignmentAck\x12#\n" +
 	"\rassignment_id\x18\x01 \x01(\tR\fassignmentId\x12\x18\n" +
 	"\astarted\x18\x02 \x01(\bR\astarted\"\n" +

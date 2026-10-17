@@ -28,6 +28,7 @@ const (
 	deployStatusPlanned    = "planned"    // --plan: what a deploy would do
 	deployStatusRefused    = "refused"    // --plan: a deploy would be refused
 	deployStatusFailed     = "failed"     // --all: this DAG's deploy failed
+	deployStatusSkipped    = "skipped"    // --changed-since: unchanged since the ref, not deployed
 )
 
 // deployReport is the --output json document: where the deploy went and one
@@ -36,6 +37,11 @@ type deployReport struct {
 	Server string         `json:"server"`
 	Target string         `json:"target,omitempty"`
 	DAGs   []deployResult `json:"dags"`
+	// Removed lists the projects --changed-since found removed since the ref.
+	Removed []removedProject `json:"removed,omitempty"`
+	// Moved lists the projects --changed-since found in another folder than
+	// at the ref, under the same dag_id.
+	Moved []movedProject `json:"moved,omitempty"`
 }
 
 // deployResult is what one DAG's deploy did, or with --plan would do.
@@ -51,7 +57,16 @@ type deployResult struct {
 	IsPaused   *bool       `json:"is_paused,omitempty"`
 	Next       string      `json:"next,omitempty"`
 	Plan       *deployPlan `json:"plan,omitempty"`
-	Error      string      `json:"error,omitempty"`
+	// Execution is the server's report of where each task runs and what the
+	// version's warm pool does (#1707), absent from an older server.
+	Execution *executionSummary `json:"execution,omitempty"`
+	Error     string            `json:"error,omitempty"`
+	// Reason says why a skipped DAG was not deployed.
+	Reason string `json:"reason,omitempty"`
+	// Links and Checks are what the server, or a platform in front of it,
+	// added to the register answer (#1772); absent when it added none.
+	Links  map[string]string `json:"links,omitempty"`
+	Checks []serverCheck     `json:"checks,omitempty"`
 }
 
 // setServer records the control plane the deploy goes to. A nil report (text
@@ -70,6 +85,22 @@ func (r *deployReport) setServer(choice *serverChoice) {
 func (r *deployReport) add(res deployResult) {
 	if r != nil {
 		r.DAGs = append(r.DAGs, res)
+	}
+}
+
+// addRemoved records a project removed since the --changed-since ref. A nil
+// report records nothing.
+func (r *deployReport) addRemoved(p removedProject) {
+	if r != nil {
+		r.Removed = append(r.Removed, p)
+	}
+}
+
+// addMoved records a project moved since the --changed-since ref. A nil
+// report records nothing.
+func (r *deployReport) addMoved(p movedProject) {
+	if r != nil {
+		r.Moved = append(r.Moved, p)
 	}
 }
 
@@ -108,6 +139,9 @@ func validateDeployOptions(o deployOptions) error {
 	if o.output != outputText && o.output != outputJSON {
 		return fmt.Errorf("--output must be %s or %s, not %q", outputText, outputJSON, o.output)
 	}
+	if err := checkDeployWatch(o); err != nil {
+		return err
+	}
 	if o.plan && o.trigger {
 		return fmt.Errorf("--plan builds, pushes and registers nothing, so it cannot --trigger a run; drop one of them")
 	}
@@ -121,6 +155,10 @@ func validateDeployOptions(o deployOptions) error {
 func runDeployCommand(cmd *cobra.Command, args []string, o deployOptions) error {
 	if err := validateDeployOptions(o); err != nil {
 		return err
+	}
+	o.cluster = &clusterDefaultsCache{}
+	if o.watch {
+		return runDeployWatch(cmd, args, o)
 	}
 	if o.output != outputJSON {
 		return runDeployTarget(cmd, args, o)
@@ -144,7 +182,7 @@ func runDeployCommand(cmd *cobra.Command, args []string, o deployOptions) error 
 // deployServerChoice resolves where a deploy goes and its token, refusing the
 // built-in localhost default unless the machine is set up for Lite: with no
 // server set anywhere, a deploy used to go to http://localhost:8080 without a
-// prompt (#1705).
+// prompt (#1705). On Lite the implicit server is the Lite port (#1912).
 func deployServerChoice(cmd *cobra.Command, o deployOptions) (*serverChoice, string, error) {
 	choice, token, err := resolveServerChoiceToken(cmd, o.serverURL, o.token)
 	if err != nil {
@@ -158,7 +196,7 @@ func deployServerChoice(cmd *cobra.Command, o deployOptions) (*serverChoice, str
       this shell or CI job:    export DEXAFLOW_SERVER_URL=https://dexaflow.example.com
       a named target:          dexaflow target add prod https://dexaflow.example.com && dexaflow target use prod
 
-  For the local Lite server, pass --server %s`, choice.URL, choice.URL)
+  For the local Lite server, pass --server %s`, choice.URL, devURL(devDefaultPort))
 	}
 	return choice, token, nil
 }
@@ -192,7 +230,7 @@ func patchDagPausedRaw(ctx context.Context, serverURL, token, dagID string, paus
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	resp, err := cliHTTPClient(30 * time.Second).Do(req)
 	if err != nil {
 		return fmt.Errorf("setting is_paused of %s: %w", dagID, err)
 	}

@@ -122,7 +122,7 @@ func TestLocalDaemonBuildsPushesAndPins(t *testing.T) {
 	}
 }
 
-// compile --build --push asks for no pin: the registry is not read, and the
+// A push that asks for no pin reads no registry, and the
 // result carries no digest.
 func TestLocalDaemonPushWithoutPinDoesNotReadTheRegistry(t *testing.T) {
 	tool, log := fakeTool(t, "")
@@ -313,9 +313,29 @@ func TestLocalDaemonFailsWhenTheRegistryCannotPin(t *testing.T) {
 	tool, _ := fakeTool(t, "")
 	req := request()
 	req.Push, req.Pin = true, true
-	_, err := LocalDaemon{Tool: tool, Registry: &fakeRegistry{err: errors.New("manifest unknown")}}.Build(context.Background(), req)
+	res, err := LocalDaemon{Tool: tool, Registry: &fakeRegistry{err: errors.New("manifest unknown")}}.Build(context.Background(), req)
 	if err == nil || !strings.Contains(err.Error(), "manifest unknown") || !strings.Contains(err.Error(), "reg.io/team/etl:v1") {
 		t.Fatalf("err = %v, want the registry failure and the image named", err)
+	}
+	// The push happened: the error says only the read failed, and the
+	// result names what was pushed, for a caller that can keep the tag.
+	if !errors.Is(err, ErrPinRead) {
+		t.Errorf("err = %v, want ErrPinRead", err)
+	}
+	if !res.Pushed || res.Image != req.Image || res.Ref != "" {
+		t.Errorf("result = %+v, want the pushed tag, unpinned", res)
+	}
+}
+
+// A multi-platform push whose read fails cannot be verified, which is not a
+// pin read the caller may skip.
+func TestLocalDaemonUnverifiedMultiPlatformPushIsNotAPinRead(t *testing.T) {
+	tool, _ := fakeTool(t, "")
+	req := request("linux/amd64", "linux/arm64")
+	req.Push, req.Pin = true, true
+	_, err := LocalDaemon{Tool: tool, Registry: &fakeRegistry{err: errors.New("manifest unknown")}}.Build(context.Background(), req)
+	if err == nil || errors.Is(err, ErrPinRead) {
+		t.Fatalf("err = %v, want a failure that is not ErrPinRead", err)
 	}
 }
 
@@ -336,5 +356,20 @@ func TestLocalDaemonDescribe(t *testing.T) {
 func TestResultDigestOfAnEmptyResult(t *testing.T) {
 	if d := (Result{}).Digest(); d != "" {
 		t.Errorf("Digest of an unpinned result = %q, want empty", d)
+	}
+}
+
+// A failed push names the command that signs the tool in to the registry:
+// a push the daemonless paths make with a cloud session still needs the
+// tool's own login when the daemon builds.
+func TestLocalDaemonNamesTheLoginWhenThePushFails(t *testing.T) {
+	tool, _ := fakeTool(t, "push")
+	req := request()
+	req.Image = "123456789012.dkr.ecr.eu-west-1.amazonaws.com/team/etl:v1"
+	req.Push = true
+	_, err := LocalDaemon{Tool: tool, Registry: &fakeRegistry{}}.Build(context.Background(), req)
+	want := "aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin 123456789012.dkr.ecr.eu-west-1.amazonaws.com"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want the login command %q", err, want)
 	}
 }

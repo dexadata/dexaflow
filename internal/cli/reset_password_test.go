@@ -18,8 +18,8 @@ func TestResolveAdminEmail(t *testing.T) {
 	}{
 		{"me@x.io", &config.Config{AdminEmail: "cfg@x.io"}, "me@x.io"}, // flag wins
 		{"", &config.Config{AdminEmail: "cfg@x.io"}, "cfg@x.io"},       // config admin
-		{"", &config.Config{}, "admin@leoflow.local"},                  // default
-		{"", nil, "admin@leoflow.local"},                               // no config
+		{"", &config.Config{}, "admin@dexaflow.local"},                 // default
+		{"", nil, "admin@dexaflow.local"},                              // no config
 	}
 	for _, c := range cases {
 		if got := resolveAdminEmail(c.flag, c.cfg); got != c.want {

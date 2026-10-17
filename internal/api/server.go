@@ -103,20 +103,55 @@ type Dependencies struct {
 	// (ADR 0067 §3), "" when it is off. Registering a version on that image
 	// answers 400 when its source is empty or over domain.MaxSourceModeBytes.
 	SourceModeImage string
+	// RequireDigest is deploy.require_digest (#1703): what registering a
+	// version, or making one current again, does with an image not pinned by
+	// a full sha256 digest. Off (and the zero value) accepts it; warn accepts
+	// it with a warning in the answer, a log line and a count; enforce
+	// answers 400.
+	RequireDigest domain.DigestRequirement
+	// UnpinnedImages counts the unpinned images deploy.require_digest warned
+	// about or refused. Nil: not counted.
+	UnpinnedImages UnpinnedImageRecorder
+	// DeployDefaults are what the server advertises from deploy.defaults
+	// (config.ServerConfig.AdvertisedDeployDefaults), served on
+	// GET /api/v2/deployDefaults (#1704, #1890). The zero value serves empty
+	// fields.
+	DeployDefaults domain.DeployDefaults
 	// ExecutionPolicy is executor.defaults.execution_allowlist (issue #629).
 	// When set, registering a DAG whose task sets an execution field (or
 	// priority class) outside it answers 400 naming the task and the field.
 	// Nil: everything allowed.
 	ExecutionPolicy *domain.ExecutionPolicy
+	// WarmPolicy is the warm placement decision the dispatcher applies
+	// (dispatch.Dispatcher.WarmPolicy, built from the same configuration). The
+	// register response reports each task's execution mode with it (#1707).
+	// The zero value reports warm pools off.
+	WarmPolicy domain.WarmPolicy
+	// WarmPools is the operator's execution section (warm pool sizes), read
+	// for the pool state of the register response.
+	WarmPools config.ExecutionSection
+	// WarmWorkersAbsent says why no warm worker runs although warm pools are
+	// on (the subprocess executor starts no warm pool reconciler; neither does
+	// a server whose pod dispatch is disabled), "" when they run. The register
+	// response then reports every task on a dedicated pod, with this reason.
+	WarmWorkersAbsent string
+	// TaskPods is how this server starts task pods, which the register dry
+	// run reports (#1889): whether they refuse an image that runs as root,
+	// and the ServiceAccount each task would run as, looked up. The zero
+	// value reports a server that starts no task pods.
+	TaskPods TaskPodSettings
 
 	// Resource repositories. Routes for nil repositories are not registered.
-	Dags           DagRepository
-	DagRuns        DagRunRepository
-	Tasks          TaskInstanceRepository
-	Versions       DagVersionRepository
-	Xcoms          XComReader
-	Logs           LogReader
-	Specs          DagSpecReader
+	Dags     DagRepository
+	DagRuns  DagRunRepository
+	Tasks    TaskInstanceRepository
+	Versions DagVersionRepository
+	Xcoms    XComReader
+	Logs     LogReader
+	Specs    DagSpecReader
+	// DagSources reads one version of a DAG with its spec, for the Code view
+	// (GET /api/v2/dagSources/{dag_id}). Nil leaves that route unregistered.
+	DagSources     DagSourceReader
 	LatestRuns     DagLatestRunsReader
 	TaskSummary    TaskSummaryReader
 	DagVersions    DagVersionLister
@@ -176,6 +211,10 @@ type Dependencies struct {
 	ExternalSignOutURL string
 	// OIDCUsers resolves and JIT-provisions OIDC identities (the storage repo).
 	OIDCUsers OIDCUserStore
+	// CLIDevices keeps the device sign-ins of the CLI (ADR 0081, the storage
+	// repo). With single sign-on configured it serves `dexaflow auth login
+	// --device`; nil leaves the device sign-in unserved.
+	CLIDevices CLIDeviceStore
 	// AuthAudit records authentication events (login, tenant-pin rejection, JIT,
 	// break-glass, logout) to the audit sink.
 	AuthAudit AuthAuditWriter
@@ -188,6 +227,11 @@ type Dependencies struct {
 	// for a bearer audience as the Authorization bearer of any protected
 	// request (#1468). It resolves users through TrustedIssuerUsers.
 	TrustedIssuerBearer TrustedIssuerBearer
+	// DeployViaIssuer is set when auth.trusted_issuer.deploy_audience is
+	// (#1773): the deploy routes and deleting a DAG then take only a
+	// TrustedIssuerBearer token of that audience. With no TrustedIssuerBearer every deploy is refused,
+	// so a wiring mistake fails closed.
+	DeployViaIssuer bool
 	// TrustedIssuerOrigins are the only Origins a handoff may be posted from
 	// (scheme://host[:port]), so another site cannot sign a browser in.
 	TrustedIssuerOrigins []string
@@ -300,12 +344,17 @@ func NewServer(deps Dependencies) *gin.Engine {
 	}
 	// The Airflow UI redirects unauthenticated users to GET /api/v2/auth/login.
 	r.GET("/api/v2/auth/logout", logoutHandler(deps.sessionCookie(), deps.ExternalSignOutURL))
-	r.GET("/api/v2/auth/login", loginPageHandler(loginPageOpts{
+	pageOpts := loginPageOpts{
 		sso:            deps.OIDCFlow != nil,
 		breakGlass:     len(deps.OIDCSettings.BreakGlassEmails) > 0,
 		autoRedirect:   deps.OIDCSettings.AutoRedirect,
 		externalSignIn: deps.ExternalSignInURL,
-	}))
+	}
+	r.GET("/api/v2/auth/login", loginPageHandler(pageOpts))
+	// What the CLI reads before it chooses how to sign in (#1704): the same
+	// facts the sign-in page renders from.
+	device := newCLIDeviceDeps(deps)
+	r.GET(authMethodsPath, authMethodsHandler(pageOpts, deps.OIDCEnabled, device != nil))
 	// Operator service API (#1283): registered only when a service token is
 	// configured. /api/v2/service/ is outside the user-session middleware's
 	// scope (alwaysPublic) because the group authenticates its own callers.
@@ -337,9 +386,23 @@ func NewServer(deps Dependencies) *gin.Engine {
 	if deps.OIDCFlow != nil {
 		// Rate-limit the OIDC endpoints on their own per-IP limiter (separate from
 		// the /auth/token budget), bounding state-generation / callback spam.
-		oidcLimiter := auth.NewRateLimiter(30, time.Minute)
+		// The CLI code exchange (#1704) spends the same budget.
+		oidcLimiter := auth.NewRateLimiter(oidcRateLimitPerMinute, time.Minute)
+		codes := newCLICodes(deps.JWTSecret)
 		r.GET("/api/v2/auth/oidc/login", rateLimitByIP(oidcLimiter), oidcLoginHandler(deps.OIDCFlow, deps.Logger, deps.SessionCookieInsecure))
+		// The token route spends the OIDC budget on a code exchange and the
+		// device sign-in's own poll budget on a device poll, so it picks the
+		// limiter once it has read the grant.
+		if device != nil {
+			device.codes = codes
+			registerCLIDevice(r, device, oidcLimiter)
+		}
+		r.POST(cliTokenPath, cliTokenHandler(cliTokenDeps{codes: codes, logger: deps.Logger, audit: deps.AuthAudit, limiter: oidcLimiter, device: device}))
+		r.POST(cliConsentPath, rateLimitByIP(oidcLimiter), cliConsentHandler(cliConsentDeps{
+			codes: codes, audit: deps.AuthAudit, logger: deps.Logger, insecure: deps.SessionCookieInsecure,
+		}))
 		r.GET("/api/v2/auth/oidc/callback", rateLimitByIP(oidcLimiter), oidcCallbackHandler(oidcDeps{
+			cliCodes:  codes,
 			flow:      deps.OIDCFlow,
 			users:     deps.OIDCUsers,
 			audit:     deps.AuthAudit,
@@ -355,6 +418,9 @@ func NewServer(deps Dependencies) *gin.Engine {
 	// (ADR 0067). The MCP's health resource reads all three.
 	r.GET("/api/v2/monitor/health", RequireScope(auth.ScopeRead), monitorHealthHandler(deps.HealthChecks, deps.SchedulerHealth))
 	r.GET("/api/v2/monitor/executor", RequireScope(auth.ScopeRead), monitorExecutorHandler(deps.ExecutorInfo))
+	// What a deploy reads before it builds (#1704): the gate of the other
+	// deploy reads, so a dexaflow:deploy token reaches it (ADR 0074).
+	r.GET("/api/v2/deployDefaults", RequireDeployRead(), deployDefaultsHandler(deps.DeployDefaults))
 
 	registerResources(r, deps)
 	registerUI(r, deps.TokenTTLSecs, deps.InstanceName, deps.UIAutoRefreshIntervalSeconds, deps.UITheme)
@@ -362,7 +428,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	registerUIStructure(r, deps.Specs)
 	registerUISummaries(r, deps.TaskSummary, deps.UIETagRevalidation)
 	registerUIGantt(r, deps.Tasks)
-	registerUITasks(r, deps.Specs)
+	registerUITasks(r, deps.Specs, deps.DagSources)
 	registerUIDashboard(r, deps.DashboardStats)
 	registerUIAudit(r, deps.AuditLog)
 	registerUIVariables(r, deps.Variables)

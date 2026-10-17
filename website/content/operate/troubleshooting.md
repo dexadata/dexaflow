@@ -17,7 +17,7 @@ guides cover a clean first run; this page is where you land when one goes wrong.
 ## First things to run
 
 ```bash
-dexaflow doctor                          # host check (OS, python, docker, k3d, kubectl, recommended tier)
+dexaflow doctor                          # host check (OS, python, docker, k3d, kubectl, recommended tier); with a target, the deploy preflight too
 dexaflow version                         # version + commit + build date
 tail -f /tmp/leoflow-lite.log           # the live boot log when you ran `dexaflow lite` via lite-redeploy
 journalctl -u dexaflow-server -f         # Pro / systemd hosts
@@ -44,6 +44,7 @@ dexaflow-mcp --version
 | `dexaflow doctor` finds your `python3.12` or `python3.13`, but `dexaflow setup` downloads a CPython anyway | Expected. `doctor` reports any Python that can parse a `dag.py` (3.11 to 3.13), but `setup` uses a host interpreter only when it is named `python3.11`; otherwise it downloads a managed CPython 3.11 into `~/.dexaflow/python`, which needs outbound network. Behind a proxy or offline, install `python3.11` first and re-run `dexaflow setup`. Using a newer host Python instead is tracked in [#1700](https://github.com/dexadata/dexaflow/issues/1700). |
 | Install on Alpine / musl fails fetching CPython | The musl-libc relocatable CPython build can be missing system libs. `dexaflow lite --postgres docker` falls back to the Docker Postgres path instead of the embedded managed one. |
 | Control plane never becomes ready; logs show `remaining connection slots are reserved` or `too many connections` (SQLSTATE 53300) | Every control-plane pod opens `database.maxIdleConns` + 3 connections at boot and can grow to `database.maxOpenConns` + 3 under load, plus 1 for the migration Job. On a small managed Postgres (Cloud SQL `db-f1-micro`, the smallest RDS or Azure tiers, about 25 slots) that can exceed `max_connections`, or a per-role or per-database `CONNECTION LIMIT`. The boot error names the setting; lower `database.maxOpenConns` / `database.maxIdleConns` in the chart values, or raise the server's limit. `helm install` prints the estimated boot and peak demand in its notes. |
+| Control plane exits at boot with `executor type "kubernetes" requires a Kubernetes client to dispatch task pods, but none is available` | The scheduler runs on the Kubernetes executor (the default) and found neither an in-cluster config nor a kubeconfig. Older versions booted anyway and failed every task as undispatchable; the server now refuses to start instead. In a cluster, check that the pod mounts its ServiceAccount token. Outside one, point `KUBECONFIG` at the cluster, or set `DEXAFLOW_EXECUTOR_TYPE=subprocess` for a dev setup with no cluster. |
 
 ## `dexaflow lite` boot
 
@@ -72,6 +73,8 @@ dexaflow-mcp --version
 | Run stuck at `running` long after the task finished | The agent's heartbeat reaper picks these up after the configured window. Check `DEXAFLOW_TI_HEARTBEAT_TIMEOUT_SECONDS` and look for a `reaped` log line. |
 | A task's outbound TLS call to one endpoint hangs or resets, right after a green build, from inside your network | The task base image moved to Debian 13 (trixie)'s OpenSSL 3.5, which puts a post-quantum key share in the first TLS ClientHello — growing it from ~517 to ~1525 bytes. Some middleboxes and TLS-inspecting proxies mishandle a ClientHello that no longer fits one segment. Restore the classical group list by pointing `OPENSSL_CONF` at a file setting `[system_default_sect]` / `Groups = x25519:secp256r1:x448:secp521r1:secp384r1` (confirmed: puts the ClientHello back to 517 bytes). |
 | Task pod `CreateContainerConfigError: container has runAsNonRoot and image will run as root` | Your task image runs as UID 0; the executor's `taskPodSecurity.runAsNonRoot` default refuses it. Fix: numeric `USER 65532:65532` in your Dockerfile, or an operator sets `taskPodSecurity.runAsNonRoot: false`. See [Deploy prerequisites](/operate/deploy-prerequisites/#4-non-root-task-image). |
+| `deploy` stops with `preflight: Dockerfile runs as root` or `runs as a name` | The server runs task pods as non-root and the final `USER` of your Dockerfile is root or a name, so the pods would not start. End it with a numeric non-root id, such as `USER 65532:65532`. |
+| `deploy` stops with `preflight: task ServiceAccount "<name>" ... does not exist` | A task pod would run as a ServiceAccount the task namespace does not have. Set `execution.service_account` to one that exists, or have the operator create it (`taskServiceAccount.create` in the Helm values). When the line adds `not a valid ServiceAccount name`, the name cannot exist at all: use lower case letters, digits, `-` and `.`. A missing `default` ServiceAccount is only a note, since Kubernetes creates it a moment after the namespace. |
 | `CreateContainerConfigError: secret "<release>-secrets" not found` on the control plane | Chart-managed credentials are missing. On charts before 0.4.7 that Secret was a Helm **hook**, and under Argo CD a hook is deleted and recreated in separate passes of one sync, is absent from the compared state, and is not restored by self-heal. An interrupted sync therefore removes it for good while the Application still reports `Synced`. Run an explicit sync (`argocd app sync`) and the pods recover with no restart, because the kubelet retries container creation once the Secret returns. From 0.4.7 the Deployment reads `<release>-credentials`, an ordinary tracked resource, so deleting it makes the app OutOfSync and self-heal restores it. |
 | `dexaflow deploy`/`push` fails on auth, registry, or a version conflict | One of the deploy-time gates. [Deploy prerequisites & why shortcuts fail](/operate/deploy-prerequisites/) covers every gate with the exact error and fix. |
 
@@ -100,7 +103,7 @@ dexaflow-mcp --version
 ## Reset paths (when in doubt)
 
 ```bash
-dexaflow lite reset-password --user admin@leoflow.local # fresh admin password, signs out old sessions (no sudo)
+dexaflow lite reset-password                             # fresh admin password, signs out old sessions (no sudo)
 dexaflow lite --fresh                                     # start a session with nothing registered (DESTRUCTIVE)
 dexaflow db reset --yes                                  # drop + recreate the Lite database (DESTRUCTIVE)
 dexaflow uninstall                                       # remove ~/.dexaflow (binaries, managed Python, config)
@@ -198,6 +201,36 @@ your DAG rather than an infrastructure failure, and you can act on them:
 | `loading task spec: task "x" not found in run "y"` | The pod is running a task its `dag_version` does not declare — usually a stale image, or a run created against a different version. |
 | `task "a" may not read xcom from "b" (not a declared input or dependency)` | The task pulled an XCom it never declared as an input or a dependency. |
 | `no xcom for task "x"` | Nothing was pushed under that key. The agent handles this one by status code rather than by text, so you will normally see its effect rather than the sentence. |
+
+### `agent_lost` that is not a network fault: a refused agent credential
+
+An agent whose bearer the control plane refuses gets `Unauthenticated` on every
+RPC, so its heartbeats stop counting and the attempt is eventually reaped as
+`agent_lost`, which looks exactly like a network partition. The control plane
+writes a WARN line for every refusal, `rejected agent bearer token`, with a
+`reason` that tells the cases apart:
+
+| `reason` | Means | Look at |
+|---|---|---|
+| `expired` | The credential lapsed. A running attempt renews it on every heartbeat, so the agent could not reach the control plane for a whole token TTL (10 minutes), or its pod started after the credential minted at dispatch had already run out. | Control-plane and database availability around `expired_at`. |
+| `wrong_audience` | A token minted for another surface (a user token) reached the agent service. | A wiring bug: report it. |
+| `bad_signature` | The token was signed with another key: the JWT secret was rotated, or the token comes from another install. | `auth.jwt.secret` across replicas. |
+| `wrong_issuer`, `not_yet_valid`, `malformed`, `invalid` | The bearer is not a token this control plane minted as it stands. | The caller at `peer`. |
+| `missing` | The RPC carried no bearer at all. | The caller at `peer`. |
+
+For `expired` (and `not_yet_valid`) the line also names the attempt the
+credential belonged to (`ti`, `run`, `dag`, `task`, `try`, `epoch`) and when it
+lapsed (`expired_at`, `expired_for`), because the token's signature verified.
+For every other reason the token's claims are not trusted, so they are not
+logged. The token itself is never logged. The line is rate limited to ten per
+reason per minute, and the first line after a quiet minute reports how many
+were left out in `suppressed`; the metric
+`dexaflow_agent_token_rejections_total{reason}` counts every refusal.
+
+```bash
+kubectl logs deploy/<release> -c leoflow-server \
+  | jq 'select(.msg == "rejected agent bearer token") | {reason, run, task, try, expired_at, peer}'
+```
 
 ## Observability
 
