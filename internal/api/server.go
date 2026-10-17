@@ -112,8 +112,10 @@ type Dependencies struct {
 	// UnpinnedImages counts the unpinned images deploy.require_digest warned
 	// about or refused. Nil: not counted.
 	UnpinnedImages UnpinnedImageRecorder
-	// DeployDefaults are the server's deploy.defaults, served on
-	// GET /api/v2/deployDefaults (#1704). The zero value serves empty fields.
+	// DeployDefaults are what the server advertises from deploy.defaults
+	// (config.ServerConfig.AdvertisedDeployDefaults), served on
+	// GET /api/v2/deployDefaults (#1704, #1890). The zero value serves empty
+	// fields.
 	DeployDefaults domain.DeployDefaults
 	// ExecutionPolicy is executor.defaults.execution_allowlist (issue #629).
 	// When set, registering a DAG whose task sets an execution field (or

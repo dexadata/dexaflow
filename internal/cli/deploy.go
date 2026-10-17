@@ -606,21 +606,23 @@ func settleDeployConfig(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfi
 	return prov, nil
 }
 
-// deploySettings says, before anything is built, where the deploy goes and
-// where each setting it did not get from the project came from.
-func deploySettings(choice *serverChoice, cfg *domain.LeoflowConfig, prov defaultsProvenance) string {
+// deploySettings says, before anything is built, where the deploy goes,
+// where each setting it did not get from the project in dir came from, and
+// what the cluster advertises about where its tasks run.
+func deploySettings(choice *serverChoice, dir string, cfg *domain.LeoflowConfig, prov defaultsProvenance) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "server:     %s (%s)\n", choice.URL, choice.Source)
 	if sm := prov.sourceMode; sm.on() {
 		// Nothing is built or pushed: no registry, platform or base image.
 		fmt.Fprintf(&b, "image:      %s (source mode, from %s): dag.py runs on this runtime image, nothing is built or pushed\n", sm.image, sm.source)
-		return b.String()
+	} else {
+		fmt.Fprintf(&b, "registry:   %s/%s (from %s)\n", cfg.Registry.URL, cfg.Registry.ImageName, prov.registrySource)
+		fmt.Fprintf(&b, "platforms:  %s (from %s)\n", strings.Join(cfg.Build.Platforms, ","), orDefault(prov.platformsSource))
+		if cfg.BaseImage != "" {
+			fmt.Fprintf(&b, "base image: %s (from %s)\n", cfg.BaseImage, prov.baseImageSource)
+		}
 	}
-	fmt.Fprintf(&b, "registry:   %s/%s (from %s)\n", cfg.Registry.URL, cfg.Registry.ImageName, prov.registrySource)
-	fmt.Fprintf(&b, "platforms:  %s (from %s)\n", strings.Join(cfg.Build.Platforms, ","), orDefault(prov.platformsSource))
-	if cfg.BaseImage != "" {
-		fmt.Fprintf(&b, "base image: %s (from %s)\n", cfg.BaseImage, prov.baseImageSource)
-	}
+	b.WriteString(clusterExecutionLines(dir, cfg, prov.cluster))
 	return b.String()
 }
 
@@ -678,7 +680,7 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) (err error) {
 	}
 	o.report.setServer(choice)
 	serverURL := choice.URL
-	settings := deploySettings(choice, cfg, prov)
+	settings := deploySettings(choice, dir, cfg, prov)
 	if !o.watching.redeploy() {
 		// A redeploy of a watch prints them when it deploys (watchSkip).
 		o.watching.noteSettings(dir, settings)

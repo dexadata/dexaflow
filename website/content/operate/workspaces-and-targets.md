@@ -194,8 +194,8 @@ defaults:
 
 ## Cluster deploy defaults
 
-The platform team can state the registry, the platforms and the base image
-once for the whole cluster, so a repository needs no `registry:` block at all.
+The platform team can state the registry, the platforms, the base image and
+the remote builder once for the whole cluster, so a repository needs no `registry:` block at all.
 They set them in the Helm values:
 
 ```yaml
@@ -227,6 +227,7 @@ order, first match wins:
 | platforms | `--platform`, the project's `build.platforms`, the target, the workspace `defaults`, **the cluster**, `linux/amd64` |
 | base image | the project's `base_image`, the target, the workspace `defaults`, **the cluster**, the built-in base image |
 | source mode runtime image | `--no-source-mode` (builds), the target's `source_mode_image`, the workspace `defaults` (`none` clears it: the deploy builds), **the cluster** (`deploy.defaults.sourceMode`, only when no local source set a registry; a local image that differs is refused), none (the deploy builds) |
+| remote builder | the project's `build.remote_builder`, the target's `remote_builder`, the workspace `defaults`, **the cluster** (`deploy.defaults.remoteBuilder`), none (the local daemon) |
 
 The cluster comes after every local source on purpose: each of those is a
 choice of the person deploying, so a cluster that starts advertising defaults
@@ -245,6 +246,49 @@ cluster also advertises its runtime image as `source_mode_image`, and a deploy
 that names none of its own and resolves no registry locally registers
 `dag.py` on it with no build or push
 ([Deploying in source mode](/operate/source-mode/#deploying-in-source-mode)).
+
+### Remote builder, task service account and warm pools
+
+The cluster can also name the remote builder for builds no daemonless path
+covers ([Builders](/operate/builders/)), and tell a deploy which
+ServiceAccount its tasks run as and what its warm pool will be:
+
+```yaml
+deploy:
+  defaults:
+    remoteBuilder:
+      cloudBuild:
+        project: acme-ci        # required with any other cloudBuild value
+        region: us-central1
+    taskServiceAccount: true    # advertise taskServiceAccount.name
+    warmPools: true             # advertise execution.warmPoolsEnabled, minIdleWorkers, maxPoolSize
+```
+
+The remote builder is a default like the others: a project, target or
+workspace that names its own keeps it, and the builder line of the deploy
+names where the one it used came from (`the remote builder from the deploy
+defaults of https://flow-dev.acme.dev builds the whole image`). The person
+deploying still signs in with `gcloud` and needs the Cloud Build role on that
+project.
+
+The task service account and the warm pools are the server's own settings,
+served as they are when their switch is on, so nothing is copied by hand. The
+deploy only reports them, and writes neither into `dag.json`: the server
+already applies its task ServiceAccount to every task that sets no
+`execution.service_account`, and its warm pool settings to every version.
+
+```
+task SA:    dexaflow-task (from the deploy defaults of https://flow-dev.acme.dev), for tasks that set no execution.service_account
+warm pool:  on, 2 idle workers kept for the current version (min_idle_workers from /work/acme-dags/dags/orders_report/dexaflow.yaml)
+```
+
+The warm pool line resolves the number the way the server does: the
+project's `min_idle_workers` when it sets one, else the cluster's
+`execution.minIdleWorkers`, capped at `execution.maxPoolSize` (the line then
+says so). With warm pools off it says every task runs on a dedicated pod, and
+that a `min_idle_workers` the project sets keeps no worker warm.
+`taskServiceAccount: true` needs a task ServiceAccount on the server
+(`taskServiceAccount.create`); the chart and the server refuse it otherwise.
 
 A server from before this endpoint answers 404, and the deploy then resolves
 exactly as it did before, without a message. Any other failure to read the

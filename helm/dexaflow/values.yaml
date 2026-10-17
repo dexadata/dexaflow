@@ -531,6 +531,20 @@ deploy:
     baseImage: ""
     # -- Advertise `execution.sourceMode.image` to `dexaflow deploy` as the runtime image for source mode (#1772): a deploy to this cluster that names no runtime image of its own then registers the DAG's `dag.py` on it, with no build and no push, and refuses a DAG that needs a build. The value served is the server's own runtime image, so nothing is copied by hand. Off (the default) advertises none. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_SOURCE_MODE` only when on. Requires `execution.sourceMode.enabled`; the chart fails the render otherwise, as the server refuses to start.
     sourceMode: false
+    remoteBuilder:
+      cloudBuild:
+        # -- Google Cloud project of the remote builder (Cloud Build, ADR 0083) a deploy to this cluster uses for builds no daemonless path covers (a project `Dockerfile`, `system_packages`, a package without wheels), when the project's `build.remote_builder`, its target and its workspace name none (#1890). Empty (the default) advertises none. Required when any other `cloudBuild` value is set. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT` only when set. The person deploying signs in with `gcloud` and needs `roles/cloudbuild.builds.editor` there. The chart refuses a value that is not a project id, as the server does at boot.
+        project: ""
+        # -- Cloud Build region of that remote builder, such as `us-central1`; required with `workerPool`. Empty uses gcloud's `builds/region`, else global. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_REGION` only when set.
+        region: ""
+        # -- Private pool of that remote builder, `projects/<project>/locations/<region>/workerPools/<name>`, in `region`. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_WORKER_POOL` only when set.
+        workerPool: ""
+        # -- Account the remote build runs as, `projects/<project>/serviceAccounts/<email>`. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_SERVICE_ACCOUNT` only when set.
+        serviceAccount: ""
+    # -- Advertise the task ServiceAccount (`taskServiceAccount.name`, the server's `executor.task_service_account`) to `dexaflow deploy`, which then says which account tasks that set no `execution.service_account` run as (#1890). Reported only: nothing is written into `dag.json`. Off (the default) advertises none. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT` only when on. Requires `taskServiceAccount.create` (or `LEOFLOW_EXECUTOR_TASK_SERVICE_ACCOUNT` in `extraEnv`); the chart fails the render otherwise, as the server refuses to start.
+    taskServiceAccount: false
+    # -- Advertise the warm pool settings (`execution.warmPoolsEnabled`, `execution.minIdleWorkers`, `execution.maxPoolSize`) to `dexaflow deploy`, which then says whether warm pools are on and how many idle workers the DAG gets: its own `min_idle_workers`, else the cluster's, capped at the pool size (#1890). Reported only. Off (the default) advertises none. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_WARM_POOLS` only when on.
+    warmPools: false
   # -- What the control plane does with an image not pinned by a full sha256 digest (`<repository>@sha256:<64 hex>`, #1703), when a DAG version is registered and when one is made current again. `"off"` (the default) accepts it, as before. `warn` accepts it with a warning in the answer (printed by `dexaflow push`, `dexaflow deploy` and `dexaflow rollback`), a log line, a count in `dexaflow_unpinned_image_total` and `require_digest` and `image_pinned` in the audit entry. `enforce` refuses it with a 400 naming the setting and the way out. `dexaflow deploy`, and the split path (`dexaflow compile` with its build and push flags, then `dexaflow push`), register the image by digest (#1703); a CLI from before that registers a tag on the split path, so start with `warn` to find those pipelines. Quote `"off"`: a bare `off` is YAML for false, which the chart also reads as off. Rendered as `LEOFLOW_DEPLOY_REQUIRE_DIGEST` only when `warn` or `enforce`. The chart refuses any other value, as the server does at boot.
   requireDigest: "off"
 

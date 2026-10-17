@@ -213,3 +213,48 @@ func TestGetDeployDefaultsOlderServer(t *testing.T) {
 		t.Errorf("403: defaults=%+v err=%v, want an error naming 403", d, err)
 	}
 }
+
+// TestGetDeployDefaultsBuilderServiceAccountAndWarmPools (#1890): the remote
+// builder, task service account and warm pools are decoded, and a server
+// that predates them, or advertises none, leaves them nil and empty.
+func TestGetDeployDefaultsBuilderServiceAccountAndWarmPools(t *testing.T) {
+	body := `{"registry":"","platforms":[],"base_image":"","source_mode_image":"",` +
+		`"remote_builder":{"cloud_build":{"project":"acme-ci","region":"us-central1","worker_pool":"projects/acme-ci/locations/us-central1/workerPools/p","service_account":"projects/acme-ci/serviceAccounts/b@acme-ci.iam.gserviceaccount.com"}},` +
+		`"task_service_account":"dexaflow-task","warm_pools":{"enabled":true,"min_idle_workers":1,"max_pool_size":8}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := c.GetDeployDefaults(context.Background())
+	if err != nil {
+		t.Fatalf("GetDeployDefaults: %v", err)
+	}
+	wantCB := DeployCloudBuild{Project: "acme-ci", Region: "us-central1", WorkerPool: "projects/acme-ci/locations/us-central1/workerPools/p",
+		ServiceAccount: "projects/acme-ci/serviceAccounts/b@acme-ci.iam.gserviceaccount.com"}
+	if d.RemoteBuilder == nil || d.RemoteBuilder.CloudBuild == nil || *d.RemoteBuilder.CloudBuild != wantCB {
+		t.Errorf("remote_builder = %+v, want %+v", d.RemoteBuilder, wantCB)
+	}
+	if d.TaskServiceAccount != "dexaflow-task" {
+		t.Errorf("task_service_account = %q, want dexaflow-task", d.TaskServiceAccount)
+	}
+	if want := (DeployWarmPools{Enabled: true, MinIdleWorkers: 1, MaxPoolSize: 8}); d.WarmPools == nil || *d.WarmPools != want {
+		t.Errorf("warm_pools = %+v, want %+v", d.WarmPools, want)
+	}
+	for _, older := range []string{
+		`{"registry":"ghcr.io/acme","platforms":[],"base_image":""}`,
+		`{"registry":"","platforms":[],"base_image":"","source_mode_image":"","remote_builder":null,"task_service_account":"","warm_pools":null}`,
+	} {
+		body = older
+		d, err := c.GetDeployDefaults(context.Background())
+		if err != nil {
+			t.Fatalf("GetDeployDefaults(%s): %v", older, err)
+		}
+		if d.RemoteBuilder != nil || d.TaskServiceAccount != "" || d.WarmPools != nil {
+			t.Errorf("%s decoded as %+v, want no remote builder, task service account or warm pools", older, d)
+		}
+	}
+}
