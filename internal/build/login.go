@@ -206,7 +206,8 @@ func writeDockerConfig(path string, doc map[string]json.RawMessage) error {
 
 // storeInHelper stores the credential of key with docker-credential-<helper>,
 // the credential helper protocol docker speaks: `store`, with the server,
-// user and secret as JSON on stdin. The secret never reaches its argv.
+// user and secret as JSON on stdin. The secret never reaches its argv, and
+// is cut from what a failing helper printed before that goes in the error.
 func storeInHelper(helper, key, user, secret string) error {
 	bin := "docker-credential-" + helper
 	if _, err := exec.LookPath(bin); err != nil {
@@ -223,9 +224,21 @@ func storeInHelper(helper, key, user, secret string) error {
 	var out bytes.Buffer
 	c.Stdout, c.Stderr = &out, &out
 	if err := c.Run(); err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(out.String()))
+		return fmt.Errorf("%w: %s", err, redact(strings.TrimSpace(out.String()), secret))
 	}
 	return nil
+}
+
+// redact replaces secret in s, as written and as JSON encodes it.
+func redact(s, secret string) string {
+	if secret == "" {
+		return s
+	}
+	s = strings.ReplaceAll(s, secret, "[redacted]")
+	if enc, err := json.Marshal(secret); err == nil {
+		s = strings.ReplaceAll(s, strings.Trim(string(enc), `"`), "[redacted]")
+	}
+	return s
 }
 
 // helperTimeout bounds one run of a credential helper, which can hang when

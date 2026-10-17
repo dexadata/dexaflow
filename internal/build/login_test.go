@@ -233,3 +233,36 @@ func TestStoreLoginFailsWithoutTheConfiguredHelper(t *testing.T) {
 		t.Errorf("config.json = %s, want no credential written", data)
 	}
 }
+
+// writeHelper puts docker-credential-<name> on PATH running script.
+func writeHelper(t *testing.T, helper, script string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stubs are POSIX-only")
+	}
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "docker-credential-"+helper), []byte("#!/bin/sh\n"+script), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+":/bin:/usr/bin")
+}
+
+// A helper that fails and echoes what it received never puts the secret in
+// the error, which the CLI prints: neither as given nor as the JSON the
+// helper read it from encodes it.
+func TestStoreLoginHelperErrorNeverCarriesTheSecret(t *testing.T) {
+	for _, tc := range []struct{ secret, echoed string }{
+		{"gho_leaky_secret", "gho_leaky_secret"},
+		{"pa<ss>&word", `pa\u003css\u003e\u0026word`},
+	} {
+		emptyDockerConfig(t, `{"credsStore":"echo"}`)
+		writeHelper(t, "echo", "echo \"cannot store: $(cat)\" >&2\nexit 1\n")
+		_, err := StoreLogin("ghcr.io", "octocat", tc.secret)
+		if err == nil || !strings.Contains(err.Error(), "docker-credential-echo") || !strings.Contains(err.Error(), "cannot store") {
+			t.Fatalf("err = %v, want the helper and its message named", err)
+		}
+		if strings.Contains(err.Error(), tc.secret) || strings.Contains(err.Error(), tc.echoed) {
+			t.Errorf("the error carries the secret: %v", err)
+		}
+	}
+}
