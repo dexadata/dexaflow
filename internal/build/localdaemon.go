@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -75,7 +77,7 @@ func (b LocalDaemon) Build(ctx context.Context, req Request) (Result, error) {
 	}
 	res := Result{Path: PathLocalDaemon, Image: req.Image, Platforms: req.Platforms}
 	if !req.Push {
-		if err := b.run(ctx, req.Stdout, req.Stderr, buildArgs(req.Image, req.Dockerfile, req.ContextDir, req.Platforms)...); err != nil {
+		if err := b.runEnv(ctx, req.Stdout, req.Stderr, req.Env, buildArgs(req.Image, req.Dockerfile, req.ContextDir, req.Platforms, inputArgs(req)...)...); err != nil {
 			return Result{}, b.buildError(req, err)
 		}
 		return res, nil
@@ -177,9 +179,18 @@ func (b LocalDaemon) loginCommand(image string) string {
 
 // run executes the tool with args.
 func (b LocalDaemon) run(ctx context.Context, stdout, stderr io.Writer, args ...string) error {
+	return b.runEnv(ctx, stdout, stderr, nil, args...)
+}
+
+// runEnv executes the tool with args and env added to the CLI's
+// environment.
+func (b LocalDaemon) runEnv(ctx context.Context, stdout, stderr io.Writer, env []string, args ...string) error {
 	//nolint:gosec // G204: the tool is the operator's choice by design (ADR 0015).
 	c := exec.CommandContext(ctx, b.tool(), args...)
 	c.Stdout, c.Stderr = stdout, stderr
+	if len(env) > 0 {
+		c.Env = append(os.Environ(), env...)
+	}
 	if err := c.Run(); err != nil {
 		return fmt.Errorf("running %s %s: %w", b.tool(), args[0], err)
 	}
@@ -188,11 +199,37 @@ func (b LocalDaemon) run(ctx context.Context, stdout, stderr io.Writer, args ...
 
 // buildArgs assembles the argv of an image build. With platforms it passes
 // `--platform a,b`, so the image targets the cluster's architecture rather
-// than the host's (ADR 0041).
-func buildArgs(image, dockerfile, contextDir string, platforms []string) []string {
+// than the host's (ADR 0041); opts follow it (inputArgs).
+func buildArgs(image, dockerfile, contextDir string, platforms []string, opts ...string) []string {
 	args := []string{"build"}
 	if len(platforms) > 0 {
 		args = append(args, "--platform", strings.Join(platforms, ","))
 	}
+	args = append(args, opts...)
 	return append(args, "-t", image, "-f", dockerfile, contextDir)
+}
+
+// inputArgs are the --build-arg options of req, in name order, then its
+// --secret options. A secret names the variable that holds its value, never
+// the value (ADR 0088).
+func inputArgs(req Request) []string {
+	args := buildArgFlags(req.BuildArgs)
+	for _, s := range req.Secrets {
+		args = append(args, "--secret", "id="+s.ID+",env="+s.Env)
+	}
+	return args
+}
+
+// buildArgFlags are the --build-arg options of args, in name order.
+func buildArgFlags(args map[string]string) []string {
+	names := make([]string, 0, len(args))
+	for k := range args {
+		names = append(names, k)
+	}
+	slices.Sort(names)
+	out := make([]string, 0, 2*len(names))
+	for _, k := range names {
+		out = append(out, "--build-arg", k+"="+args[k])
+	}
+	return out
 }

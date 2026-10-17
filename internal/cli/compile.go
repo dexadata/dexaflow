@@ -27,6 +27,9 @@ import (
 
 // compileOptions holds the resolved flags for a compile run.
 type compileOptions struct {
+	// inputs are the build args, secrets and package index of the build,
+	// resolved by buildAndPush.
+	inputs     buildInputs
 	output     string
 	image      string
 	parserCmd  string
@@ -655,6 +658,7 @@ func buildAndPush(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.
 		warnAuthMethod(cmd.ErrOrStderr(), cfg)
 	}
 	name, _ := resolveDockerfileName(cmd, o, cfg)
+	o.inputs = resolveBuildInputs(cfg, os.LookupEnv)
 	b, reason := selectBuilder(cmdContext(cmd), dir, name, o, cfg, image)
 	return buildImage(cmd, dir, o, cfg, image, b, reason)
 }
@@ -703,6 +707,9 @@ func buildImage(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.Le
 		return lerr
 	}
 	warnUploadedSecrets(cmd.ErrOrStderr(), contextFiles, cfg)
+	if ierr := checkBuildInputs(cmd.ErrOrStderr(), o, cfg, b, ownDockerfile); ierr != nil {
+		return ierr
+	}
 	res, berr := b.Build(cmdContext(cmd), build.Request{
 		Image:        image,
 		Dockerfile:   dockerfile,
@@ -712,6 +719,9 @@ func buildImage(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.Le
 		Pin:          o.push,
 		Code:         code,
 		ContextFiles: contextFiles,
+		BuildArgs:    o.inputs.args,
+		Secrets:      o.inputs.secrets,
+		Env:          o.inputs.env,
 		Stdout:       cmd.OutOrStdout(),
 		Stderr:       cmd.ErrOrStderr(),
 	})

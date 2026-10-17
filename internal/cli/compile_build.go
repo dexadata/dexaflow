@@ -206,6 +206,14 @@ func writeInstallLayers(b *strings.Builder, cfg *domain.LeoflowConfig, deps []st
 		}
 		// Dependencies before COPY so the (rarely-changing) layer is cached across
 		// edits to the DAG source.
+		if cfg.Build != nil && cfg.Build.PackageIndex != nil {
+			// The index URL, credentials included, is a build secret mounted
+			// for this RUN only: it reaches no layer, ENV or image history,
+			// and the line itself names only the secret (ADR 0088).
+			fmt.Fprintf(b, "RUN --mount=type=secret,id=%s,required=true PIP_INDEX_URL=\"$(cat /run/secrets/%s)\" pip install --no-cache-dir -- %s\n",
+				domain.IndexSecretID, domain.IndexSecretID, args)
+			return nil
+		}
 		fmt.Fprintf(b, "RUN pip install --no-cache-dir -- %s\n", args)
 	}
 	return nil

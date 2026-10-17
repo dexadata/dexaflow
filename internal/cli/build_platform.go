@@ -88,7 +88,7 @@ func buildPlatforms(cfg *domain.LeoflowConfig) []string {
 func selectBuilder(ctx context.Context, dir, dockerfile string, o compileOptions, cfg *domain.LeoflowConfig, image string) (b build.Builder, reason string) {
 	split, noSplit := splitFor(ctx, dir, dockerfile, o, cfg, image)
 	opts := build.Options{Tool: o.builder, Reuse: o.reuse, Split: split, NoSplit: noSplit, Rebuild: o.rebuild,
-		Registry: registryFor(cfg), Push: o.push, Remote: remoteFor(cfg), RemoteSource: o.remoteSource}
+		Registry: registryFor(cfg), Push: o.push, Remote: remoteFor(cfg), RemoteSource: o.remoteSource, LocalOnly: cfg.Build.LocalOnly()}
 	return build.Select(ctx, opts, image, buildPlatforms(cfg))
 }
 

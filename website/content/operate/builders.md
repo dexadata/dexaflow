@@ -272,7 +272,10 @@ image (or the whole image, for dependencies that are not pinned), when:
   conflicts with a package of the base image at another version, or PyPI
   cannot be reached. The builder line carries uv's reason.
 
-Private package indexes are not supported on this path yet.
+With a [package index](#build-arguments-secrets-and-a-private-package-index),
+uv resolves and installs from it instead of PyPI; its URL and credentials
+reach uv through its environment (`UV_DEFAULT_INDEX`), never its command
+line.
 
 If the install or the push of the dependency image fails after the path was
 chosen and every dependency is pinned, the dependency image the daemon path
@@ -420,9 +423,74 @@ A refused submit keeps gcloud's last line and names what to check: the
 sign-in, the project and the roles above. A build that fails on Cloud Build
 names its id, its status and the command that prints its log.
 
-Build arguments, build secrets and a private package index are not
-supported on this path yet. The decision is recorded in
-[ADR 0083](/project/adrs/0083-remote-builder-on-cloud-build/).
+Build arguments reach the Cloud Build step as `--build-arg`. A project with
+build secrets or a package index does not build here: their values come from
+your machine's environment, and Cloud Build would have to store them in its
+build record. Such a build goes to the local daemon, and the `builder:` line
+says why ([see below](#build-arguments-secrets-and-a-private-package-index)).
+
+## Build arguments, secrets and a private package index
+
+`dexaflow.yaml` declares what a build needs beyond the project files:
+
+```yaml
+build:
+  args:                    # --build-arg for the ARG lines of your own Dockerfile
+    APP_ENV: prod
+  secrets:                 # RUN --mount=type=secret,id=<id> in your own Dockerfile
+    - id: github_token
+      env: GITHUB_TOKEN    # read from the environment of the machine that builds
+  package_index:           # installs dependencies from this index instead of PyPI
+    url: https://pypi.example.com/simple
+    username_env: PYPI_USER
+    password_env: PYPI_TOKEN
+```
+
+- **`args`** are plain values: they stay in the image history, and they are
+  part of the content label, so changing one builds a new image. Only your
+  own Dockerfile reads them (`ARG APP_ENV`); the generated Dockerfile declares
+  none, and the build warns when they are set without one.
+- **`secrets`** are passed as `--secret id=<id>,env=<variable>`: the container
+  tool reads the value from its own environment, so it never appears in its
+  command line, in the build log, in `dag.json` or in a layer. A RUN line of
+  your Dockerfile mounts it for that one step:
+
+  ```dockerfile
+  RUN --mount=type=secret,id=github_token \
+      GITHUB_TOKEN="$(cat /run/secrets/github_token)" ./fetch-private-assets.sh
+  ```
+
+  A variable that is not set fails the build before the tool runs, naming it.
+  Its value is not part of the content label; its id and variable are.
+- **`package_index`** replaces PyPI rather than adding to it, so a package
+  name can never be taken from another index (dependency confusion): mirror
+  PyPI through it (an Artifact Registry remote repository, devpi, Nexus,
+  Artifactory). The URL is `https` (plain `http` only on the loopback) and
+  carries no credentials; the user name and token come from the two variables.
+  On the [daemonless path](#building-the-dependency-image-from-wheels) uv
+  installs from it. The generated Dockerfile mounts it as the build secret
+  `dexaflow_index_url` for its `pip install` only:
+
+  ```dockerfile
+  RUN --mount=type=secret,id=dexaflow_index_url,required=true PIP_INDEX_URL="$(cat /run/secrets/dexaflow_index_url)" pip install --no-cache-dir -- 'pandas==2.2.3'
+  ```
+
+  Your own Dockerfile can mount the same secret. The index URL is part of the
+  content label and of the key of the dependency image, so an image built
+  from one index is never reused for another.
+
+Secret mounts need BuildKit: docker (BuildKit is its default builder), docker
+buildx, podman and nerdctl all support them. A build with secrets or a
+package index runs on your machine, never on a [remote
+builder](#building-on-cloud-build); the `builder:` line says so:
+
+```console
+builder:    local-daemon (docker), fallback: the project ships its own Dockerfile, which needs a real build; the remote builder from dexaflow.yaml does not apply: build.secrets reach the build from this machine's environment, so only a builder on this machine takes it
+```
+
+A deploy that reuses an image already in the registry builds nothing and
+needs none of the variables. The decision is recorded in
+[ADR 0088](/project/adrs/0088-build-args-secrets-and-package-index/).
 
 ## Choosing the platform
 

@@ -132,6 +132,11 @@ and ADR 0080 already reads registry tokens from that same session.
 - The build step image is Google's `gcr.io/cloud-builders/docker` by tag.
   Pinning it, build arguments, build secrets and a private package index are
   follow-ups (#1706 item 6).
+
+  > **Note (2026-10, #1884).** Build arguments now reach the Cloud Build step;
+  > a build with build secrets or a package index does not go to Cloud Build
+  > and builds on the local machine instead. See
+  > [ADR 0088](/project/adrs/0088-build-args-secrets-and-package-index/).
 - Builds on arm64 or for several platforms keep the local daemon until the
   in-cluster build pod or a multi-platform Cloud Build step lands.
 - Cloud Build is billed to the configured project, and a build waits for a
