@@ -41,6 +41,13 @@ have.
    ADR 0073 section 3. `deploy --skip-build` does the same, so an image pushed
    by any tool (Cloud Build, kaniko, a CI job) can be deployed without a local
    copy. `<tool> inspect` is no longer called.
+
+   > **Note (2026-10, #1885).** The local daemon now takes the digest from the
+   > tool's report of its own push (the buildx metadata file, podman's
+   > `--digestfile`, the last line of `docker push`) and reads the registry at
+   > that digest only to check a multi-platform push; the tag read remains for a
+   > tool that reports none. See
+   > [ADR 0087](/project/adrs/0087-local-daemon-digest-from-the-push/).
 3. **The platform check reads the registry too.** The multi-platform check of
    ADR 0073 section 5 reads the pushed manifest through the registry client
    instead of `<tool> manifest inspect`. What it checks is unchanged: the
