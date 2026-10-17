@@ -343,3 +343,38 @@ func TestVerifyLoginRefusesABadRegistryHost(t *testing.T) {
 		}
 	}
 }
+
+// A config.json that is a symlink is read, but the credential never goes
+// through the link into the file it points at, which can be readable by
+// others: the link is replaced by a file readable by its owner only.
+func TestStoreLoginDoesNotWriteThroughASymlink(t *testing.T) {
+	dir := emptyDockerConfig(t, "")
+	target := filepath.Join(t.TempDir(), "shared.json")
+	const before = `{"auths":{},"psFormat":"table"}`
+	if err := os.WriteFile(target, []byte(before), 0o644); err != nil { //nolint:gosec // a world-readable file is the point
+		t.Fatal(err)
+	}
+	if err := os.Chmod(target, 0o644); err != nil { //nolint:gosec // a world-readable file is the point
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.json")
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := StoreLogin(context.Background(), "ghcr.io", "octocat", "gho_secret"); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(target); string(data) != before { //nolint:gosec,errcheck // a path this test created
+		t.Errorf("the symlink's target was written: %s", data)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+		t.Errorf("config.json mode = %v, want a regular file readable by its owner only", info.Mode())
+	}
+	if data, _ := os.ReadFile(path); !strings.Contains(string(data), "psFormat") || !strings.Contains(string(data), "ghcr.io") { //nolint:gosec,errcheck // a path this test created
+		t.Errorf("config.json = %s, want the linked config's fields and the login", data)
+	}
+}

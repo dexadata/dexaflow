@@ -665,8 +665,11 @@ too ([ADR 0091](/project/adrs/0091-registry-login-without-docker/)).
 
 The token is read from stdin only, never from a flag, so it stays out of
 `ps` and the shell history, and it is never printed. A credential the
-registry refuses is not stored. For Artifact Registry, GCR, ECR and ACR,
-sign in to the cloud's CLI instead, as above.
+registry refuses is not stored. The docker config is replaced atomically
+and stays readable by its owner only; when `config.json` is a symlink, the
+link is replaced by a file and the file it pointed at is left as it was.
+For Artifact Registry, GCR, ECR and ACR, sign in to the cloud's CLI
+instead, as above.
 
 Only a registry on `localhost`, a `*.localhost` name (as k3d names its
 registries) or a loopback address may answer over plain HTTP; every other
