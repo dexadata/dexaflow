@@ -38,7 +38,9 @@ podman and nerdctl accept the same form.
    `--secret id=<id>,env=<var>` and only checked to be set. The CLI reads the
    index credentials to compose the URL and hands it to the tool in one
    variable of the tool's environment (`DEXAFLOW_BUILD_INDEX_URL`, secret id
-   `dexaflow_index_url`), and to uv as `UV_DEFAULT_INDEX`. Neither appears in
+   `dexaflow_index_url`), and to uv as `UV_DEFAULT_INDEX` and `UV_INDEX_URL`
+   (a uv release older than `UV_DEFAULT_INDEX` ignores it and would resolve
+   from PyPI). Neither appears in
    an argv, a layer, the image history or `dag.json`; a uv message that
    quotes the URL has its credential removed.
 3. **The generated Dockerfile mounts the index.** With a package index, its

@@ -264,3 +264,19 @@ func TestContentLabelCoversTheBuildInputs(t *testing.T) {
 		t.Error("the secret's value changed the content label")
 	}
 }
+
+// uv releases before UV_DEFAULT_INDEX ignore it and resolve from PyPI, the
+// dependency confusion the index is there to prevent: uv also gets the
+// index as UV_INDEX_URL, which every release reads, with the same value.
+func TestUVGetsTheIndexUnderBothVariables(t *testing.T) {
+	const index = "https://ci:tok@pypi.example.com/simple"
+	env := uvEnv(index)
+	for _, want := range []string{"UV_DEFAULT_INDEX=" + index, "UV_INDEX_URL=" + index} {
+		if !slices.Contains(env, want) {
+			t.Errorf("uv env = %q, want %s", env, want)
+		}
+	}
+	if slices.ContainsFunc(uvEnv(""), func(kv string) bool { return strings.HasPrefix(kv, "UV_INDEX_URL=") }) {
+		t.Error("uv runs with UV_INDEX_URL when the project sets no index")
+	}
+}

@@ -274,8 +274,8 @@ image (or the whole image, for dependencies that are not pinned), when:
 
 With a [package index](#build-arguments-secrets-and-a-private-package-index),
 uv resolves and installs from it instead of PyPI; its URL and credentials
-reach uv through its environment (`UV_DEFAULT_INDEX`), never its command
-line.
+reach uv through its environment (`UV_DEFAULT_INDEX`, and `UV_INDEX_URL` for
+uv releases older than `UV_DEFAULT_INDEX`), never its command line.
 
 If the install or the push of the dependency image fails after the path was
 chosen and every dependency is pinned, the dependency image the daemon path

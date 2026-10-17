@@ -65,12 +65,13 @@ func findUV(ctx context.Context) (u *uvTool, why string) {
 
 // uvEnv is the environment uv runs with (uvKeptEnv), with Python downloads
 // off: uv uses a Python already on this machine and never fetches one. A
-// package index goes in UV_DEFAULT_INDEX, never in uv's argv, where ps
-// would show its credentials.
+// package index goes in UV_DEFAULT_INDEX, and in UV_INDEX_URL for the uv
+// releases that predate UV_DEFAULT_INDEX and would otherwise resolve from
+// PyPI; never in uv's argv, where ps would show its credentials.
 func uvEnv(index string) []string {
 	env := []string{"UV_PYTHON_DOWNLOADS=never"}
 	if index != "" {
-		env = append(env, "UV_DEFAULT_INDEX="+index)
+		env = append(env, "UV_DEFAULT_INDEX="+index, "UV_INDEX_URL="+index)
 	}
 	for _, k := range uvKeptEnv {
 		if v, ok := os.LookupEnv(k); ok {
