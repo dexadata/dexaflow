@@ -44,7 +44,7 @@ type registryLoginFlags struct {
 	passwordStdin bool
 }
 
-// newRegistryLoginCommand is `dexaflow registry login <registry>` (ADR 0089).
+// newRegistryLoginCommand is `dexaflow registry login <registry>` (ADR 0091).
 func newRegistryLoginCommand() *cobra.Command {
 	var f registryLoginFlags
 	cmd := &cobra.Command{

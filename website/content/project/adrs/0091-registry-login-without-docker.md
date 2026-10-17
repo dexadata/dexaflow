@@ -1,8 +1,8 @@
 ---
-title: "ADR 0089: Registry login without docker"
-linkTitle: "0089 · Registry login without docker"
-weight: 890
-description: "ADR 0089: dexaflow registry login signs in to a registry no cloud owns without docker. For GHCR it exchanges the gh CLI session; otherwise it takes a token on stdin. The credential is checked with the registry and stored in the docker config or its credential helper, where the registry client and every container tool read it."
+title: "ADR 0091: Registry login without docker"
+linkTitle: "0091 · Registry login without docker"
+weight: 910
+description: "ADR 0091: dexaflow registry login signs in to a registry no cloud owns without docker. For GHCR it exchanges the gh CLI session; otherwise it takes a token on stdin. The credential is checked with the registry and stored in the docker config or its credential helper, where the registry client and every container tool read it."
 ---
 
 **Status:** Accepted

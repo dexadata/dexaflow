@@ -635,7 +635,7 @@ same handshake a push makes), then stores it in the docker config, or in the
 `credsStore` or `credHelpers` helper the config names (the system keychain),
 as `docker login` does. The CLI's registry client reads it from there, and
 so do docker, podman and nerdctl, so a `local-daemon` build pushes with it
-too ([ADR 0089](/project/adrs/0089-registry-login-without-docker/)).
+too ([ADR 0091](/project/adrs/0091-registry-login-without-docker/)).
 
 - **GHCR.** With the [GitHub CLI](https://cli.github.com) signed in
   (`gh auth login`), no token is needed: the CLI exchanges the `gh` session
