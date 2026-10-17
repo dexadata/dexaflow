@@ -58,6 +58,14 @@ func TestDeployDefaultsWiringAgainstPostgres(t *testing.T) {
 	t.Setenv("DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED", "true")
 	t.Setenv("DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE", runtime)
 	t.Setenv("DEXAFLOW_DEPLOY_DEFAULTS_SOURCE_MODE", "true")
+	// #1890: a remote builder, and the task service account and warm pools
+	// the server advertises from its own settings (warm pools off here).
+	t.Setenv("DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT", "acme-ci")
+	t.Setenv("LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_REGION", "us-central1")
+	t.Setenv("DEXAFLOW_EXECUTOR_TASK_SERVICE_ACCOUNT", "dexaflow-task")
+	t.Setenv("DEXAFLOW_DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT", "true")
+	t.Setenv("LEOFLOW_DEPLOY_DEFAULTS_WARM_POOLS", "true")
+	t.Setenv("DEXAFLOW_EXECUTION_MIN_IDLE_WORKERS", "2")
 	cfg, err := config.LoadServer("", nil)
 	if err != nil {
 		t.Fatalf("LoadServer: %v", err)
@@ -114,6 +122,15 @@ func TestDeployDefaultsWiringAgainstPostgres(t *testing.T) {
 	}
 	if got.SourceModeImage != runtime {
 		t.Errorf("deployDefaults source_mode_image = %q, want the server's runtime image %q", got.SourceModeImage, runtime)
+	}
+	if rb := got.RemoteBuilder; rb == nil || rb.CloudBuild == nil || rb.CloudBuild.Project != "acme-ci" || rb.CloudBuild.Region != "us-central1" {
+		t.Errorf("deployDefaults remote_builder = %+v, want acme-ci in us-central1 from the environment", rb)
+	}
+	if got.TaskServiceAccount != "dexaflow-task" {
+		t.Errorf("deployDefaults task_service_account = %q, want the server's executor.task_service_account", got.TaskServiceAccount)
+	}
+	if w := got.WarmPools; w == nil || w.Enabled || w.MinIdleWorkers != 2 || w.MaxPoolSize != 8 {
+		t.Errorf("deployDefaults warm_pools = %+v, want off with the server's min_idle_workers 2 and max_pool_size 8", w)
 	}
 	if rec := call(http.MethodGet, "/api/v2/deployDefaults", "", ""); rec.Code != http.StatusUnauthorized {
 		t.Errorf("anonymous deployDefaults = %d %s, want 401", rec.Code, rec.Body.String())

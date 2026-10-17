@@ -62,7 +62,8 @@ func TestDeployDefaultsUnsetServesEmptyFields(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d %s, want 200", rec.Code, rec.Body.String())
 	}
-	if got, want := rec.Body.String(), `{"registry":"","platforms":[],"base_image":"","source_mode_image":""}`; got != want {
+	if got, want := rec.Body.String(), `{"registry":"","platforms":[],"base_image":"","source_mode_image":"",`+
+		`"remote_builder":null,"task_service_account":"","warm_pools":null}`; got != want {
 		t.Errorf("body = %s, want %s", got, want)
 	}
 }
@@ -92,5 +93,28 @@ func TestDeployDefaultsServesTheSourceModeImage(t *testing.T) {
 	}
 	if got["source_mode_image"] != runtime {
 		t.Errorf("source_mode_image = %v, want %q (body %s)", got["source_mode_image"], runtime, rec.Body.String())
+	}
+}
+
+// TestDeployDefaultsServesBuilderServiceAccountAndWarmPools (#1890): the
+// remote builder, the task service account and the warm pools the cluster
+// advertises are served in the documented shape, next to the older fields.
+func TestDeployDefaultsServesBuilderServiceAccountAndWarmPools(t *testing.T) {
+	d := domain.DeployDefaults{
+		Registry:           "ghcr.io/acme",
+		RemoteBuilder:      &domain.RemoteBuilderConfig{CloudBuild: &domain.CloudBuildConfig{Project: "acme-ci", Region: "us-central1"}},
+		TaskServiceAccount: "dexaflow-task",
+		WarmPools:          &domain.WarmPoolDefaults{Enabled: true, MinIdleWorkers: 1, MaxPoolSize: 8},
+	}
+	admin := &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}
+	rec := getDeployDefaults(deployDefaultsServer(admin, d), "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	want := `{"registry":"ghcr.io/acme","platforms":[],"base_image":"","source_mode_image":"",` +
+		`"remote_builder":{"cloud_build":{"project":"acme-ci","region":"us-central1"}},` +
+		`"task_service_account":"dexaflow-task","warm_pools":{"enabled":true,"min_idle_workers":1,"max_pool_size":8}}`
+	if got := rec.Body.String(); got != want {
+		t.Errorf("body = %s, want %s", got, want)
 	}
 }

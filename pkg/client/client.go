@@ -94,8 +94,9 @@ var ErrDeployDefaultsNotServed = errors.New("the server does not serve " + deplo
 
 // DeployDefaults are the cluster deploy defaults GET /api/v2/deployDefaults
 // serves: what a deploy uses for the registry prefix, the build platforms,
-// the base image and the source mode runtime image when nothing local sets
-// them. An unset field is empty.
+// the base image, the source mode runtime image and the remote builder when
+// nothing local sets them, and what it reports about the task service
+// account and the warm pools. An unset field is empty or nil.
 type DeployDefaults struct {
 	// Registry is the image prefix a deploy pushes to, such as ghcr.io/acme.
 	Registry string `json:"registry"`
@@ -108,6 +109,50 @@ type DeployDefaults struct {
 	// #1772). Empty when the cluster advertises none, or from a server
 	// that predates the field.
 	SourceModeImage string `json:"source_mode_image,omitempty"`
+	// RemoteBuilder is the remote builder a deploy uses for builds no
+	// daemonless path covers, when nothing local names one (#1890). Nil when
+	// the cluster advertises none, or from a server that predates the field.
+	RemoteBuilder *DeployRemoteBuilder `json:"remote_builder,omitempty"`
+	// TaskServiceAccount is the ServiceAccount task pods run as when a task
+	// sets no execution.service_account (#1890). Empty when the cluster
+	// advertises none, or from a server that predates the field.
+	TaskServiceAccount string `json:"task_service_account,omitempty"`
+	// WarmPools are the cluster's warm pool settings (#1890). Nil when the
+	// cluster advertises none, or from a server that predates the field.
+	WarmPools *DeployWarmPools `json:"warm_pools,omitempty"`
+}
+
+// DeployRemoteBuilder is the remote_builder of DeployDefaults: its backend.
+type DeployRemoteBuilder struct {
+	// CloudBuild builds on Google Cloud Build.
+	CloudBuild *DeployCloudBuild `json:"cloud_build,omitempty"`
+}
+
+// DeployCloudBuild is the Cloud Build backend of DeployRemoteBuilder. An
+// unset field is empty.
+type DeployCloudBuild struct {
+	// Project is the Google Cloud project the build runs in.
+	Project string `json:"project,omitempty"`
+	// Region is the Cloud Build region, such as us-central1.
+	Region string `json:"region,omitempty"`
+	// WorkerPool is a private pool,
+	// projects/<project>/locations/<region>/workerPools/<name>.
+	WorkerPool string `json:"worker_pool,omitempty"`
+	// ServiceAccount is the account the build runs as,
+	// projects/<project>/serviceAccounts/<email>.
+	ServiceAccount string `json:"service_account,omitempty"`
+}
+
+// DeployWarmPools is the warm_pools of DeployDefaults: a DAG that declares
+// no min_idle_workers gets MinIdleWorkers, every value is capped at
+// MaxPoolSize (0 sets no cap), and nothing is kept warm unless Enabled.
+type DeployWarmPools struct {
+	// Enabled says whether the cluster keeps warm workers at all.
+	Enabled bool `json:"enabled"`
+	// MinIdleWorkers is the cluster's idle worker floor per version.
+	MinIdleWorkers int `json:"min_idle_workers"`
+	// MaxPoolSize caps one version's pool.
+	MaxPoolSize int `json:"max_pool_size"`
 }
 
 // GetDeployDefaults reads GET /api/v2/deployDefaults through the client's

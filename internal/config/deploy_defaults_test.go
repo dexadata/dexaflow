@@ -183,3 +183,120 @@ func TestLoadServerRefusesASourceModeImage(t *testing.T) {
 		})
 	}
 }
+
+// TestDeployDefaultsBuilderServiceAccountAndWarmPoolsOffByDefault (#1890):
+// an upgrade advertises no remote builder, task service account or warm
+// pools.
+func TestDeployDefaultsBuilderServiceAccountAndWarmPoolsOffByDefault(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	got := c.AdvertisedDeployDefaults()
+	if got.RemoteBuilder != nil || got.TaskServiceAccount != "" || got.WarmPools != nil {
+		t.Errorf("AdvertisedDeployDefaults() = %+v, want no remote builder, task service account or warm pools", got)
+	}
+	if !got.IsEmpty() {
+		t.Errorf("AdvertisedDeployDefaults() = %+v, want empty", got)
+	}
+}
+
+// TestDeployDefaultsBuilderServiceAccountAndWarmPoolsEnvBind (#1890): the
+// remote builder and both switches bind from either variable prefix.
+func TestDeployDefaultsBuilderServiceAccountAndWarmPoolsEnvBind(t *testing.T) {
+	for _, prefix := range []string{"DEXAFLOW_", "LEOFLOW_"} {
+		t.Run(prefix, func(t *testing.T) {
+			t.Setenv(prefix+"DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT", "acme-ci")
+			t.Setenv(prefix+"DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_REGION", "us-central1")
+			t.Setenv(prefix+"DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_WORKER_POOL", "projects/acme-ci/locations/us-central1/workerPools/builds")
+			t.Setenv(prefix+"DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_SERVICE_ACCOUNT", "projects/acme-ci/serviceAccounts/builder@acme-ci.iam.gserviceaccount.com")
+			t.Setenv(prefix+"DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT", "true")
+			t.Setenv(prefix+"DEPLOY_DEFAULTS_WARM_POOLS", "true")
+			t.Setenv(prefix+"EXECUTOR_TASK_SERVICE_ACCOUNT", "dexaflow-task")
+			c, err := LoadServer("", nil)
+			if err != nil {
+				t.Fatalf("LoadServer: %v", err)
+			}
+			got := c.AdvertisedDeployDefaults()
+			want := domain.CloudBuildConfig{Project: "acme-ci", Region: "us-central1",
+				WorkerPool:     "projects/acme-ci/locations/us-central1/workerPools/builds",
+				ServiceAccount: "projects/acme-ci/serviceAccounts/builder@acme-ci.iam.gserviceaccount.com"}
+			if got.RemoteBuilder == nil || got.RemoteBuilder.CloudBuild == nil || *got.RemoteBuilder.CloudBuild != want {
+				t.Errorf("remote_builder = %+v, want %+v from the %s variables", got.RemoteBuilder, want, prefix)
+			}
+			if got.TaskServiceAccount != "dexaflow-task" {
+				t.Errorf("task_service_account = %q, want executor.task_service_account", got.TaskServiceAccount)
+			}
+			if got.WarmPools == nil {
+				t.Errorf("warm_pools not advertised with %sDEPLOY_DEFAULTS_WARM_POOLS", prefix)
+			}
+		})
+	}
+}
+
+// TestDeployDefaultsRemoteBuilderFromConfigFile: the file form is the
+// dotted key under deploy.defaults.
+func TestDeployDefaultsRemoteBuilderFromConfigFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.yaml")
+	body := "deploy:\n  defaults:\n    remote_builder:\n      cloud_build: {project: acme-ci, region: europe-west1}\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := LoadServer(path, nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	rb := c.AdvertisedDeployDefaults().RemoteBuilder
+	if rb == nil || rb.CloudBuild == nil || rb.CloudBuild.Project != "acme-ci" || rb.CloudBuild.Region != "europe-west1" {
+		t.Errorf("remote_builder = %+v, want the file's values", rb)
+	}
+}
+
+// TestAdvertisedTaskServiceAccountAndWarmPools: the served values are the
+// server's own executor.task_service_account and execution.* warm pool
+// settings, and only when the operator turns each switch on.
+func TestAdvertisedTaskServiceAccountAndWarmPools(t *testing.T) {
+	c := validWarmConfig()
+	c.Executor.TaskServiceAccount = "dexaflow-task"
+	c.Execution.MinIdleWorkers = 1
+	if got := c.AdvertisedDeployDefaults(); got.TaskServiceAccount != "" || got.WarmPools != nil {
+		t.Errorf("switches off: AdvertisedDeployDefaults() = %+v, want neither advertised", got)
+	}
+	c.Deploy.Defaults.AdvertiseTaskServiceAccount = true
+	c.Deploy.Defaults.AdvertiseWarmPools = true
+	got := c.AdvertisedDeployDefaults()
+	if got.TaskServiceAccount != "dexaflow-task" {
+		t.Errorf("task_service_account = %q, want executor.task_service_account", got.TaskServiceAccount)
+	}
+	want := domain.WarmPoolDefaults{Enabled: true, MinIdleWorkers: 1, MaxPoolSize: 8}
+	if got.WarmPools == nil || *got.WarmPools != want {
+		t.Errorf("warm_pools = %+v, want %+v", got.WarmPools, want)
+	}
+	c.Execution.WarmPoolsEnabled = false
+	if got := c.AdvertisedDeployDefaults().WarmPools; got == nil || got.Enabled {
+		t.Errorf("warm pools off: warm_pools = %+v, want advertised as off", got)
+	}
+}
+
+// TestValidateDeployDefaultsBuilderAndServiceAccount: an unusable remote
+// builder, or a task service account switch with no account to serve, fails
+// at boot, naming the key.
+func TestValidateDeployDefaultsBuilderAndServiceAccount(t *testing.T) {
+	c := validWarmConfig()
+	c.Deploy.Defaults.RemoteBuilder.CloudBuild.Region = "us-central1"
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "deploy.defaults.remote_builder.cloud_build.project") {
+		t.Errorf("Validate() = %v, want an error naming deploy.defaults.remote_builder.cloud_build.project", err)
+	}
+	c.Deploy.Defaults.RemoteBuilder.CloudBuild.Project = "acme-ci"
+	if err := c.Validate(); err != nil {
+		t.Errorf("Validate() with a project = %v, want nil", err)
+	}
+	c.Deploy.Defaults.AdvertiseTaskServiceAccount = true
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "deploy.defaults.task_service_account") || !strings.Contains(err.Error(), "executor.task_service_account") {
+		t.Errorf("Validate() = %v, want an error naming deploy.defaults.task_service_account and executor.task_service_account", err)
+	}
+	c.Executor.TaskServiceAccount = "dexaflow-task"
+	if err := c.Validate(); err != nil {
+		t.Errorf("Validate() with a task service account = %v, want nil", err)
+	}
+}

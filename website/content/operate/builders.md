@@ -313,9 +313,13 @@ build:
 ```
 
 or once for many projects, as `remote_builder` on a target or in the
-workspace `defaults` ([workspaces and targets](/operate/workspaces-and-targets/));
-the project's own block wins, then the target's, then the workspace's, and
-the `builder:` line names where it came from. A Google Cloud registry alone
+workspace `defaults` ([workspaces and targets](/operate/workspaces-and-targets/)),
+or once for the whole cluster, as `deploy.defaults.remoteBuilder` in the
+server's Helm values
+([cluster deploy defaults](/operate/workspaces-and-targets/#remote-builder-task-service-account-and-warm-pools)),
+which `deploy` and `build --push` read from the server;
+the project's own block wins, then the target's, then the workspace's, then
+the cluster's, and the `builder:` line names where it came from. A Google Cloud registry alone
 never selects Cloud Build: where the build runs, and who pays for it, is
 your choice. The block is not part of the content label, so adding it does
 not change the DAG version.

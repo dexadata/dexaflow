@@ -209,3 +209,168 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: deploy.defaults.sourceMode
+
+  # Remote builder, task service account and warm pools (#1890).
+  - it: renders no remote builder, task service account or warm pools default by default
+    template: deployment.yaml
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT")]
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT")]
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_WARM_POOLS")]
+
+  - it: renders each remote builder value that is set
+    template: deployment.yaml
+    set:
+      deploy.defaults.remoteBuilder.cloudBuild.project: acme-ci
+      deploy.defaults.remoteBuilder.cloudBuild.region: us-central1
+      deploy.defaults.remoteBuilder.cloudBuild.workerPool: projects/acme-ci/locations/us-central1/workerPools/builds
+      deploy.defaults.remoteBuilder.cloudBuild.serviceAccount: projects/acme-ci/serviceAccounts/builder@acme-ci.iam.gserviceaccount.com
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT
+            value: acme-ci
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_REGION
+            value: us-central1
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_WORKER_POOL
+            value: projects/acme-ci/locations/us-central1/workerPools/builds
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_SERVICE_ACCOUNT
+            value: projects/acme-ci/serviceAccounts/builder@acme-ci.iam.gserviceaccount.com
+
+  - it: renders only the remote builder values that are set
+    template: deployment.yaml
+    set:
+      deploy.defaults.remoteBuilder.cloudBuild.project: acme-ci
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT
+            value: acme-ci
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_REGION")]
+
+  - it: refuses a remote builder without a project
+    template: deployment.yaml
+    set:
+      deploy.defaults.remoteBuilder.cloudBuild.region: us-central1
+    asserts:
+      - failedTemplate:
+          errorPattern: deploy.defaults.remoteBuilder.cloudBuild.project
+  - it: refuses a remote builder project that is no Google Cloud project id
+    template: deployment.yaml
+    set:
+      deploy.defaults.remoteBuilder.cloudBuild.project: Acme
+    asserts:
+      - failedTemplate:
+          errorPattern: deploy.defaults.remoteBuilder.cloudBuild.project
+  - it: refuses a remote builder region that is no region name
+    template: deployment.yaml
+    set:
+      deploy.defaults.remoteBuilder.cloudBuild.project: acme-ci
+      deploy.defaults.remoteBuilder.cloudBuild.region: US Central
+    asserts:
+      - failedTemplate:
+          errorPattern: deploy.defaults.remoteBuilder.cloudBuild.region
+  - it: refuses a worker pool without a region
+    template: deployment.yaml
+    set:
+      deploy.defaults.remoteBuilder.cloudBuild.project: acme-ci
+      deploy.defaults.remoteBuilder.cloudBuild.workerPool: projects/acme-ci/locations/us-central1/workerPools/builds
+    asserts:
+      - failedTemplate:
+          errorPattern: deploy.defaults.remoteBuilder.cloudBuild.region
+  - it: refuses a worker pool in another region
+    template: deployment.yaml
+    set:
+      deploy.defaults.remoteBuilder.cloudBuild.project: acme-ci
+      deploy.defaults.remoteBuilder.cloudBuild.region: europe-west1
+      deploy.defaults.remoteBuilder.cloudBuild.workerPool: projects/acme-ci/locations/us-central1/workerPools/builds
+    asserts:
+      - failedTemplate:
+          errorPattern: deploy.defaults.remoteBuilder.cloudBuild.workerPool
+  - it: refuses a build service account that is no resource name
+    template: deployment.yaml
+    set:
+      deploy.defaults.remoteBuilder.cloudBuild.project: acme-ci
+      deploy.defaults.remoteBuilder.cloudBuild.serviceAccount: builder@acme-ci.iam.gserviceaccount.com
+    asserts:
+      - failedTemplate:
+          errorPattern: deploy.defaults.remoteBuilder.cloudBuild.serviceAccount
+
+  - it: renders the task service account default when the chart sets the account
+    template: deployment.yaml
+    set:
+      taskServiceAccount.create: true
+      deploy.defaults.taskServiceAccount: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT
+            value: "true"
+  - it: accepts the task service account default when extraEnv sets the account
+    template: deployment.yaml
+    set:
+      deploy.defaults.taskServiceAccount: true
+      extraEnv:
+        - name: DEXAFLOW_EXECUTOR_TASK_SERVICE_ACCOUNT
+          value: tasks
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT
+            value: "true"
+  - it: refuses the task service account default when no account is set
+    template: deployment.yaml
+    set:
+      deploy.defaults.taskServiceAccount: true
+    asserts:
+      - failedTemplate:
+          errorPattern: deploy.defaults.taskServiceAccount
+
+  - it: renders the warm pools default when on
+    template: deployment.yaml
+    set:
+      deploy.defaults.warmPools: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_DEFAULTS_WARM_POOLS
+            value: "true"
+
+  - it: renders the new defaults on the split api Deployment
+    template: deployment.yaml
+    set:
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+      deploy.defaults.remoteBuilder.cloudBuild.project: acme-ci
+      deploy.defaults.warmPools: true
+    asserts:
+      - hasDocuments:
+          count: 2
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT
+            value: acme-ci
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_DEFAULTS_WARM_POOLS
+            value: "true"
