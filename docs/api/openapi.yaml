@@ -1352,11 +1352,13 @@ paths:
     get:
       summary: Cluster deploy defaults (Dexaflow)
       description: >-
-        The registry prefix, build platforms and base image the operator set
-        in the server's deploy.defaults, and the source mode runtime image when
-        deploy.defaults.source_mode advertises it. dexaflow deploy applies them to
-        whatever the project, its workspace, its target and the CLI config
-        leave unset. The values are the cluster's, the same for every tenant,
+        The registry prefix, build platforms, base image and remote builder
+        the operator set in the server's deploy.defaults, the source mode
+        runtime image when deploy.defaults.source_mode advertises it, and the
+        task service account and warm pools when their switches advertise
+        them. dexaflow deploy applies the build values to whatever the
+        project, its workspace, its target and the CLI config leave unset,
+        and reports the task service account and warm pools. The values are the cluster's, the same for every tenant,
         and none is a secret. Every field is always present; an unset one is
         empty. A server without this route answers 404, and the CLI then
         deploys with its local settings only. Needs read on dags (scope
@@ -2083,6 +2085,45 @@ components:
             their own. It is the server's execution.source_mode.image, served
             only when deploy.defaults.source_mode is on; empty otherwise. Absent
             from servers that predate it.
+        remote_builder:
+          type: object
+          nullable: true
+          description: >-
+            Remote builder (ADR 0083) a deploy uses for builds no daemonless
+            path covers, for projects, targets and workspaces that name none:
+            the server's deploy.defaults.remote_builder. Null when unset.
+            Absent from servers that predate it.
+          properties:
+            cloud_build:
+              type: object
+              properties:
+                project: { type: string, description: Google Cloud project the build runs in. }
+                region: { type: string, description: Cloud Build region; absent when unset. }
+                worker_pool: { type: string, description: "Private pool, projects/<project>/locations/<region>/workerPools/<name>; absent when unset." }
+                service_account: { type: string, description: "Account the build runs as, projects/<project>/serviceAccounts/<email>; absent when unset." }
+        task_service_account:
+          type: string
+          description: >-
+            ServiceAccount task pods run as when a task sets no
+            execution.service_account: the server's
+            executor.task_service_account, served only when
+            deploy.defaults.task_service_account is on; empty otherwise. A
+            deploy reports it and never writes it into dag.json. Absent from
+            servers that predate it.
+        warm_pools:
+          type: object
+          nullable: true
+          description: >-
+            The server's warm pool settings (ADR 0058), served only when
+            deploy.defaults.warm_pools is on; null otherwise. A DAG that
+            declares no min_idle_workers gets min_idle_workers, every value
+            is capped at max_pool_size, and nothing is kept warm while
+            enabled is false. Absent from servers that predate it.
+          required: [enabled, min_idle_workers, max_pool_size]
+          properties:
+            enabled: { type: boolean, description: execution.warm_pools_enabled. }
+            min_idle_workers: { type: integer, description: execution.min_idle_workers. }
+            max_pool_size: { type: integer, description: execution.max_pool_size; 0 sets no cap. }
 
     VersionInfo:
       type: object

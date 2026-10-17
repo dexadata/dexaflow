@@ -235,6 +235,54 @@ refused, as domain.CheckImageReference refuses them.
 {{- fail "deploy.defaults.sourceMode advertises the source mode runtime image, but execution.sourceMode.enabled is false. Turn source mode on or leave deploy.defaults.sourceMode off. The server refuses to start with it." -}}
 {{- end -}}
 {{- /*
+Remote builder and task service account defaults (#1890), refused here as
+the server refuses them at boot (domain.RemoteBuilderConfig.Validate and
+config.validateDeployDefaults). The task service account advertised is the
+server's executor.task_service_account, which the chart sets only with
+taskServiceAccount.create, unless extraEnv sets it.
+*/ -}}
+{{- $cloudBuild := ($deployDefaults.remoteBuilder | default dict).cloudBuild | default dict -}}
+{{- if or $cloudBuild.project $cloudBuild.region $cloudBuild.workerPool $cloudBuild.serviceAccount -}}
+{{- $project := toString ($cloudBuild.project | default "") -}}
+{{- $region := toString ($cloudBuild.region | default "") -}}
+{{- $pool := toString ($cloudBuild.workerPool | default "") -}}
+{{- $buildSA := toString ($cloudBuild.serviceAccount | default "") -}}
+{{- if not $project -}}
+{{- fail "deploy.defaults.remoteBuilder.cloudBuild.project is required with any other remoteBuilder value: the Google Cloud project the build runs in. The server refuses to start without it." -}}
+{{- end -}}
+{{- if not (regexMatch "^([a-z0-9][a-z0-9.-]*[a-z0-9]:)?[a-z][a-z0-9-]{4,28}[a-z0-9]$" $project) -}}
+{{- fail (printf "deploy.defaults.remoteBuilder.cloudBuild.project %q is not a Google Cloud project id. The server refuses to start with it." $project) -}}
+{{- end -}}
+{{- if and $region (not (regexMatch "^[a-z][a-z0-9-]*[a-z0-9]$" $region)) -}}
+{{- fail (printf "deploy.defaults.remoteBuilder.cloudBuild.region %q is not a region name, such as us-central1. The server refuses to start with it." $region) -}}
+{{- end -}}
+{{- if $pool -}}
+{{- if not (regexMatch "^projects/[^/\\s]+/locations/[a-z][a-z0-9-]*/workerPools/[A-Za-z0-9_-]+$" $pool) -}}
+{{- fail (printf "deploy.defaults.remoteBuilder.cloudBuild.workerPool %q: want projects/<project>/locations/<region>/workerPools/<name>. The server refuses to start with it." $pool) -}}
+{{- end -}}
+{{- if not $region -}}
+{{- fail "deploy.defaults.remoteBuilder.cloudBuild.region is required with workerPool: a build runs in the region of its pool. The server refuses to start without it." -}}
+{{- end -}}
+{{- if ne (index (splitList "/" $pool) 3) $region -}}
+{{- fail (printf "deploy.defaults.remoteBuilder.cloudBuild.workerPool %q is not in region %s; a build runs in the region of its pool. The server refuses to start with it." $pool $region) -}}
+{{- end -}}
+{{- end -}}
+{{- if and $buildSA (not (regexMatch "^projects/[^/\\s]+/serviceAccounts/[^/\\s@]+@[^/\\s@]+$" $buildSA)) -}}
+{{- fail (printf "deploy.defaults.remoteBuilder.cloudBuild.serviceAccount %q: want projects/<project>/serviceAccounts/<email>. The server refuses to start with it." $buildSA) -}}
+{{- end -}}
+{{- end -}}
+{{- if $deployDefaults.taskServiceAccount -}}
+{{- $taskSAFromEnv := false -}}
+{{- range .Values.extraEnv -}}
+{{- if has .name (list "DEXAFLOW_EXECUTOR_TASK_SERVICE_ACCOUNT" "LEOFLOW_EXECUTOR_TASK_SERVICE_ACCOUNT") -}}
+{{- $taskSAFromEnv = true -}}
+{{- end -}}
+{{- end -}}
+{{- if not (or (.Values.taskServiceAccount | default dict).create $taskSAFromEnv) -}}
+{{- fail "deploy.defaults.taskServiceAccount advertises the task ServiceAccount, but the server has none: set taskServiceAccount.create (or LEOFLOW_EXECUTOR_TASK_SERVICE_ACCOUNT in extraEnv), or leave deploy.defaults.taskServiceAccount off. The server refuses to start with it." -}}
+{{- end -}}
+{{- end -}}
+{{- /*
 Digest-pinned images at register (#1703). The server refuses at boot any
 deploy.require_digest other than off, warn or enforce
 (domain.ParseDigestRequirement); refuse the same here. A bare `off` in a

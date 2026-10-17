@@ -9,9 +9,10 @@ import (
 // DeployDefaults are the build and push settings a cluster advertises to
 // `dexaflow deploy` (#1704): what a project, its workspace and its target
 // leave unset is taken from here, so a platform team states its registry
-// once instead of in every repository. The operator sets them in the
-// server's deploy.defaults; GET /api/v2/deployDefaults serves them. None is
-// a secret: registry credentials never go here.
+// once instead of in every repository. The task service account and the
+// warm pools (#1890) are only reported by a deploy. The operator sets them
+// in the server's deploy.defaults; GET /api/v2/deployDefaults serves them.
+// None is a secret: registry credentials never go here.
 type DeployDefaults struct {
 	// Registry is the image prefix a project without registry.url pushes
 	// to, such as ghcr.io/acme. The image name defaults to the dag_id.
@@ -26,6 +27,36 @@ type DeployDefaults struct {
 	// when deploy.defaults.source_mode is on; it is never set by hand, so
 	// it cannot drift from the image the server runs.
 	SourceModeImage string `json:"source_mode_image" mapstructure:"-"`
+	// RemoteBuilder replaces build.remote_builder for projects, targets and
+	// workspaces that set none (ADR 0083, #1890); nil advertises none. The
+	// server fills it from deploy.defaults.remote_builder.
+	RemoteBuilder *RemoteBuilderConfig `json:"remote_builder" mapstructure:"-"`
+	// TaskServiceAccount is the ServiceAccount task pods run as when a task
+	// sets no execution.service_account (#1890). The server fills it from
+	// executor.task_service_account when deploy.defaults.task_service_account
+	// is on, so it cannot drift from the account pods get; a deploy reports
+	// it and never writes it into dag.json.
+	TaskServiceAccount string `json:"task_service_account" mapstructure:"-"`
+	// WarmPools is what the cluster does with a DAG's min_idle_workers
+	// (ADR 0058, ADR 0082, #1890); nil advertises nothing. The server fills
+	// it from execution.* when deploy.defaults.warm_pools is on.
+	WarmPools *WarmPoolDefaults `json:"warm_pools" mapstructure:"-"`
+}
+
+// WarmPoolDefaults are the warm pool settings of a cluster, as a deploy
+// reads them (#1890): a DAG that declares no min_idle_workers gets
+// MinIdleWorkers, and every value is capped at MaxPoolSize, while warm pools
+// are Enabled. They mirror config.ExecutionSection.EffectiveMinIdle.
+type WarmPoolDefaults struct {
+	// Enabled is execution.warm_pools_enabled: off, no worker is kept warm
+	// whatever a DAG declares.
+	Enabled bool `json:"enabled"`
+	// MinIdleWorkers is execution.min_idle_workers, the idle warm workers
+	// kept for a version whose DAG declares none.
+	MinIdleWorkers int `json:"min_idle_workers"`
+	// MaxPoolSize is execution.max_pool_size, the cap on one version's pool;
+	// 0 sets none.
+	MaxPoolSize int `json:"max_pool_size"`
 }
 
 // platformPattern is the os/arch[/variant] form a platform takes, the one
@@ -33,9 +64,17 @@ type DeployDefaults struct {
 // equal, as domain cannot import build).
 var platformPattern = regexp.MustCompile(`^[A-Za-z0-9]+/[A-Za-z0-9_]+(/[A-Za-z0-9]+)?$`)
 
+// serviceAccountNamePattern is a Kubernetes ServiceAccount name: a DNS
+// subdomain (RFC 1123), lowercase, of at most maxServiceAccountName bytes.
+var serviceAccountNamePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
+
+// maxServiceAccountName is the longest name Kubernetes accepts.
+const maxServiceAccountName = 253
+
 // IsEmpty reports whether d sets nothing.
 func (d DeployDefaults) IsEmpty() bool {
-	return d.Registry == "" && len(d.Platforms) == 0 && d.BaseImage == "" && d.SourceModeImage == ""
+	return d.Registry == "" && len(d.Platforms) == 0 && d.BaseImage == "" && d.SourceModeImage == "" &&
+		d.RemoteBuilder == nil && d.TaskServiceAccount == "" && d.WarmPools == nil
 }
 
 // Validate refuses a value a deploy could not use, naming the field under
@@ -57,6 +96,26 @@ func (d DeployDefaults) Validate(prefix string) error {
 	}
 	if d.SourceModeImage != "" && !IsDigestPinned(d.SourceModeImage) {
 		return fmt.Errorf("%s.source_mode_image %q is not pinned by a full digest (image@sha256:<64 hex>), the only form source mode runs (ADR 0067)", prefix, d.SourceModeImage)
+	}
+	if err := d.RemoteBuilder.Validate(prefix + ".remote_builder"); err != nil {
+		return err
+	}
+	if sa := d.TaskServiceAccount; sa != "" && (len(sa) > maxServiceAccountName || !serviceAccountNamePattern.MatchString(sa)) {
+		return fmt.Errorf("%s.task_service_account %q is not a Kubernetes ServiceAccount name: lowercase letters, digits, '-' and '.', at most %d characters", prefix, sa, maxServiceAccountName)
+	}
+	return d.WarmPools.validate(prefix + ".warm_pools")
+}
+
+// validate refuses a negative count, naming the field under prefix. Nil is
+// valid: nothing is advertised.
+func (w *WarmPoolDefaults) validate(prefix string) error {
+	switch {
+	case w == nil:
+		return nil
+	case w.MinIdleWorkers < 0:
+		return fmt.Errorf("%s.min_idle_workers is %d; want 0 or more", prefix, w.MinIdleWorkers)
+	case w.MaxPoolSize < 0:
+		return fmt.Errorf("%s.max_pool_size is %d; want 0 or more", prefix, w.MaxPoolSize)
 	}
 	return nil
 }

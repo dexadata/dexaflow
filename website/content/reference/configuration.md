@@ -603,7 +603,8 @@ What `dexaflow deploy` uses on this cluster for whatever the project, its
 workspace, its target and the person's CLI config leave unset. The server
 serves them on `GET /api/v2/deployDefaults`; unset, it advertises nothing and
 every deploy resolves as before. They are not secrets: never put registry
-credentials here. The server refuses to start with a value no deploy could use.
+credentials here. The task service account and the warm pools are the
+server's own settings, advertised when their switch is on. The server refuses to start with a value no deploy could use.
 See [Cluster deploy defaults](/operate/workspaces-and-targets/#cluster-deploy-defaults).
 
 | Variable | Default | Edition | Purpose |
@@ -612,6 +613,12 @@ See [Cluster deploy defaults](/operate/workspaces-and-targets/#cluster-deploy-de
 | `DEXAFLOW_DEPLOY_DEFAULTS_PLATFORMS` | (unset) | Pro | Platforms a deploy builds for, comma separated (`linux/amd64,linux/arm64`), each `os/arch` or `os/arch/variant`. Unset, the built-in `linux/amd64` applies. Helm: `deploy.defaults.platforms` (a list). |
 | `DEXAFLOW_DEPLOY_DEFAULTS_BASE_IMAGE` | (unset) | Pro | Base image of the generated Dockerfile for projects that set no `base_image`. Helm: `deploy.defaults.baseImage`. |
 | `DEXAFLOW_DEPLOY_DEFAULTS_SOURCE_MODE` | `false` | Pro | Advertise the source mode runtime image (`execution.source_mode.image`) as `source_mode_image`, so a deploy that names no runtime image of its own registers the DAG's `dag.py` on it with no build or push, and refuses a DAG that needs a build. The server serves its own runtime image, so nothing is copied by hand. Requires `execution.source_mode.enabled`; the server refuses to start otherwise. There is no `deploy.defaults.source_mode_image` key: the server refuses to start when one is set (in the file or as `DEXAFLOW_DEPLOY_DEFAULTS_SOURCE_MODE_IMAGE`). Helm: `deploy.defaults.sourceMode`. See [Deploying in source mode](/operate/source-mode/#deploying-in-source-mode). |
+| `DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT` | (unset) | Pro | Google Cloud project of the remote builder (Cloud Build, ADR 0083) a deploy uses for builds no daemonless path covers, when the project's `build.remote_builder`, its target and its workspace name none. Required when any other `remote_builder` value is set. Served as `remote_builder.cloud_build`. Helm: `deploy.defaults.remoteBuilder.cloudBuild.project`. See [Builders](/operate/builders/). |
+| `DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_REGION` | (unset) | Pro | Cloud Build region of that remote builder, such as `us-central1`; required with a worker pool. Helm: `deploy.defaults.remoteBuilder.cloudBuild.region`. |
+| `DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_WORKER_POOL` | (unset) | Pro | Private pool of that remote builder, `projects/<project>/locations/<region>/workerPools/<name>`, in its region. Helm: `deploy.defaults.remoteBuilder.cloudBuild.workerPool`. |
+| `DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_SERVICE_ACCOUNT` | (unset) | Pro | Account the remote build runs as, `projects/<project>/serviceAccounts/<email>`. Helm: `deploy.defaults.remoteBuilder.cloudBuild.serviceAccount`. |
+| `DEXAFLOW_DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT` | `false` | Pro | Advertise `executor.task_service_account` as `task_service_account`, so a deploy says which ServiceAccount its tasks run as when they set no `execution.service_account`. The deploy only reports it: nothing is written into `dag.json`. Requires `executor.task_service_account`; the server refuses to start otherwise. Helm: `deploy.defaults.taskServiceAccount`. |
+| `DEXAFLOW_DEPLOY_DEFAULTS_WARM_POOLS` | `false` | Pro | Advertise `execution.warm_pools_enabled`, `execution.min_idle_workers` and `execution.max_pool_size` as `warm_pools`, so a deploy says whether warm pools are on and how many idle workers its DAG gets: its own `min_idle_workers`, else the cluster's, capped at the pool size. The deploy only reports it. Helm: `deploy.defaults.warmPools`. |
 
 ### Scheduler (`scheduler.*`)
 
