@@ -5,6 +5,7 @@
 package setup
 
 import (
+	"context"
 	"io/fs"
 	"strings"
 )
@@ -53,21 +54,23 @@ type Report struct {
 	Libc            string // "glibc" or "musl" on linux; empty on darwin
 	PythonAvailable bool   // a usable Python 3.11+ interpreter is on PATH
 	PythonPath      string // path to the chosen interpreter; empty when none is on PATH
-	// Python311Path is a host python3.11 SPECIFICALLY, empty when there is none.
+	// SetupPython is the host interpreter `dexaflow setup` will point the
+	// parser at (FindHostPython: the first of python3.13, python3.12,
+	// python3.11 and python3 that reports 3.11 to 3.13). Empty Path means setup
+	// downloads the managed CPython instead. Detect leaves it empty, because it
+	// runs nothing; ProbeSetupPython fills it.
 	//
-	// It is separate from PythonPath because the two answer different questions
-	// and the answers disagree on a very common machine. PythonPath answers
-	// "what can parse a dag.py", and 3.12 or 3.13 can, because the Lite parser
-	// shim is stdlib-only (ADR 0024). This field answers "will `dexaflow setup`
-	// have to download a managed CPython", and only a 3.11 avoids that, because
-	// setup.EnsurePython resolves the host interpreter with LookPath("python3.11")
-	// and nothing else qualifies.
-	//
-	// Reporting only the first made `doctor` and `setup --dry-run` tell a host
-	// with just 3.12 that its system Python would be used and nothing
-	// downloaded, and then setup downloaded (#1224). Neither component was
-	// wrong on its own; they were answering different questions in the same
-	// sentence.
+	// It is separate from PythonPath because the two answer different
+	// questions. PythonPath answers "what can parse a dag.py" by binary name,
+	// across a wider range; this answers "will `dexaflow setup` download", by
+	// running the same probe setup runs. Answering both in one sentence is how
+	// `doctor` and `setup --dry-run` once promised no download and then setup
+	// downloaded (#1224).
+	SetupPython HostPython
+	// Python311Path is a host interpreter reporting 3.11, empty when there is
+	// none. Without one, the first DAG venv that declares python_version 3.11
+	// (the default) downloads the managed CPython 3.11 when it is built
+	// (#1700), so `doctor` and `setup --dry-run` say so up front.
 	Python311Path string
 	Docker        bool
 	K3d           bool
@@ -94,11 +97,13 @@ type Report struct {
 // Python.
 //
 // The forward-looking range (3.14–3.18) covers minors that haven't shipped
-// yet so users with a future system Python still skip the managed-CPython
-// download. Bump the upper bound when a new minor lands AND the parser
-// shim has been verified against it — the list is the deliberate gate
-// for "we know this version works", not a free-for-all (see follow-up
-// issue tracking the more general fallback via `python3 --version` exec).
+// yet so `dexaflow lite` and `validate` still find a future system Python.
+// `dexaflow setup` uses the narrower hostPythonNames list for parser_cmd and
+// accepts an interpreter on its reported version (#1700). Bump the upper
+// bound when a new minor lands AND the parser shim has been verified against
+// it: the list is the deliberate gate for "we know this version works", not a
+// free-for-all (see follow-up issue tracking the more general fallback via
+// `python3 --version` exec).
 //
 // The `// lite-only` marker is load-bearing, not decoration:
 // scripts/check-python-host-interpreters.sh requires every candidate to be
@@ -163,6 +168,30 @@ func Detect(p Probe) Report {
 		r.Tier = TierSubprocess
 	}
 	return r
+}
+
+// ProbeSetupPython fills SetupPython by running the same version probe
+// `dexaflow setup` runs, and widens Python311Path to a bare python3 that
+// reports 3.11 (the DAG venv resolver accepts any name on the version it
+// reports, so such a host needs no lazy download for a default DAG).
+func (r *Report) ProbeSetupPython(ctx context.Context, lookPath func(string) (string, error), runVersion VersionFunc) {
+	if lookPath == nil {
+		return
+	}
+	if runVersion == nil {
+		runVersion = PythonVersion
+	}
+	if host, ok := FindHostPython(ctx, lookPath, runVersion); ok {
+		r.SetupPython = host
+	}
+	if r.Python311Path != "" {
+		return
+	}
+	if path, err := lookPath("python3"); err == nil {
+		if major, minor, verr := runVersion(ctx, path); verr == nil && major == 3 && minor == minHostPythonMinor {
+			r.Python311Path = path
+		}
+	}
 }
 
 // detectLibc returns "musl" or "glibc" on linux (based on the dynamic loader)

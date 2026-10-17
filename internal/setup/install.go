@@ -25,51 +25,94 @@ const maxPythonArchiveBytes = 200 << 20 // 200 MiB
 // re-extracts instead of silently keeping the prior release's interpreter.
 const pyVersionFile = ".py-version"
 
-// EnsureOpts configures EnsurePython.
+// EnsureOpts configures EnsurePython and EnsureManagedPython.
 type EnsureOpts struct {
-	Home     string // the managed root, e.g. ~/.dexaflow
-	GOOS     string
-	GOARCH   string
-	Libc     string
-	LookPath func(string) (string, error)
-	Stat     func(string) (os.FileInfo, error)
-	Client   *http.Client
-	Logf     func(string, ...any) // optional progress callback
+	Home       string // the managed root, e.g. ~/.dexaflow
+	GOOS       string
+	GOARCH     string
+	Libc       string
+	LookPath   func(string) (string, error)
+	RunVersion VersionFunc // probes a host interpreter's version; nil runs `--version`
+	Stat       func(string) (os.FileInfo, error)
+	Client     *http.Client
+	Logf       func(string, ...any) // optional progress callback
 }
 
-// EnsurePython returns the path to a usable Python 3.11: a system interpreter if
-// one is on PATH, the managed relocatable CPython if already installed under
-// Home, or a freshly downloaded-and-verified pinned build otherwise. The managed
-// build is extracted to Home/python (the archive's top-level "python/" dir).
+// EnsurePython returns the interpreter `dexaflow setup` points the parser at:
+// the managed relocatable CPython if a current one is already installed under
+// Home, otherwise any host interpreter reporting Python 3.11 to 3.13 (see
+// FindHostPython), and only when neither exists a freshly downloaded and
+// verified pinned build.
+//
+// The parser shim is stdlib-only (ADR 0024), so a host 3.12 or 3.13 parses as
+// well as the pinned 3.11. Requiring python3.11 by name made every host without
+// it download about 50 MB on first setup, a hard failure behind a proxy or
+// offline (#1700). The managed build is still fetched, lazily, when a DAG venv
+// needs a 3.11 the host lacks (EnsureManagedPython).
 func EnsurePython(ctx context.Context, o EnsureOpts) (string, error) {
-	pyRoot := filepath.Join(o.Home, "python")
-	managed := filepath.Join(pyRoot, "bin", "python3.11")
+	managed, present, current := managedPythonState(o)
+	// A COMPLETE managed install of the PINNED version wins over any host
+	// interpreter: it is the checksum-verified build Lite provisioned (#742).
+	if current {
+		return managed, nil
+	}
+	// No CURRENT managed install. Prefer a host interpreter to avoid a download,
+	// but only when there is no managed tree to repair: a version-mismatched or
+	// half-extracted managed tree must be re-installed, not shadowed.
+	if !present {
+		if host, ok := FindHostPython(ctx, o.LookPath, o.RunVersion); ok {
+			return host.Path, nil
+		}
+	}
+	return installManagedPython(ctx, o)
+}
+
+// EnsureManagedPython returns the managed CPython under Home, downloading and
+// verifying the pinned build when it is absent or not the pinned version. It
+// never returns a host interpreter: callers use it when a DAG declares the
+// pinned minor and no host interpreter reports it (#1700).
+func EnsureManagedPython(ctx context.Context, o EnsureOpts) (string, error) {
+	managed, _, current := managedPythonState(o)
+	if current {
+		return managed, nil
+	}
+	return installManagedPython(ctx, o)
+}
+
+// ManagedPythonPath returns where the managed CPython interpreter lives under
+// home (e.g. ~/.dexaflow).
+func ManagedPythonPath(home string) string {
+	return filepath.Join(home, "python", "bin", "python3.11")
+}
+
+// ManagedPythonInstalled reports whether home holds a complete managed CPython
+// at the pinned version, the install EnsurePython returns before probing the
+// host.
+func ManagedPythonInstalled(home string) bool {
+	_, _, current := managedPythonState(EnsureOpts{Home: home})
+	return current
+}
+
+// managedPythonState reports the managed interpreter path, whether a managed
+// tree is on disk at all, and whether it is a complete install of the pinned
+// version (its sentinel matches pyVersion).
+func managedPythonState(o EnsureOpts) (managed string, present, current bool) {
+	managed = ManagedPythonPath(o.Home)
 	stat := o.Stat
 	if stat == nil {
 		stat = os.Stat
 	}
-	// A COMPLETE managed install of the PINNED version wins over any host
-	// interpreter: it is the checksum-verified build Lite provisioned, at the
-	// exact version the runtime expects. Keying on mere presence (the pre-#742
-	// behavior) meant (a) a clean upgrade never re-extracted — it silently kept
-	// the prior release — and (b) LookPath("python3.11") ran FIRST, so a host
-	// python3.11 outranked the pinned managed one. Check the sentinel first.
-	managedPresent := false
-	if _, err := stat(managed); err == nil {
-		managedPresent = true
-		if readManagedPythonVersion(pyRoot) == pyVersion {
-			return managed, nil
-		}
+	if _, err := stat(managed); err != nil {
+		return managed, false, false
 	}
-	// No CURRENT managed install. Prefer a host python3.11 to avoid a download,
-	// but only when there is no managed tree to repair — a version-mismatched or
-	// half-extracted managed tree must be re-installed, not shadowed by a host
-	// interpreter of unknown version.
-	if !managedPresent && o.LookPath != nil {
-		if p, err := o.LookPath("python3.11"); err == nil {
-			return p, nil
-		}
-	}
+	return managed, true, readManagedPythonVersion(filepath.Join(o.Home, "python")) == pyVersion
+}
+
+// installManagedPython downloads, verifies and extracts the pinned relocatable
+// CPython into Home/python (the archive's top-level "python/" dir).
+func installManagedPython(ctx context.Context, o EnsureOpts) (string, error) {
+	pyRoot := filepath.Join(o.Home, "python")
+	managed := ManagedPythonPath(o.Home)
 	build, err := ResolvePython(o.GOOS, o.GOARCH, o.Libc)
 	if err != nil {
 		return "", err

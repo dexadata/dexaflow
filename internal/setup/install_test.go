@@ -100,11 +100,18 @@ func TestDownloadVerifyExtract(t *testing.T) {
 func TestEnsurePythonBranches(t *testing.T) {
 	t.Run("system python3.11 on PATH is used", func(t *testing.T) {
 		got, err := EnsurePython(context.Background(), EnsureOpts{
-			Home:     t.TempDir(),
-			GOOS:     "linux",
-			GOARCH:   "amd64",
-			LookPath: func(string) (string, error) { return "/usr/bin/python3.11", nil },
-			Stat:     func(string) (os.FileInfo, error) { return nil, os.ErrNotExist },
+			Home:   t.TempDir(),
+			GOOS:   "linux",
+			GOARCH: "amd64",
+			LookPath: func(name string) (string, error) {
+				if name == "python3.11" {
+					return "/usr/bin/python3.11", nil
+				}
+				return "", os.ErrNotExist
+			},
+			RunVersion: func(context.Context, string) (int, int, error) { return 3, 11, nil },
+			Stat:       func(string) (os.FileInfo, error) { return nil, os.ErrNotExist },
+			Client:     &http.Client{Transport: errRoundTripper{t}},
 		})
 		if err != nil {
 			t.Fatalf("err = %v, want nil", err)

@@ -159,11 +159,13 @@ func newSetupCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Bootstrap the managed Dexaflow runtime (Python, parser, workspace).",
-		Long: "setup prepares ~/.dexaflow: it ensures a Python 3.11 is available " +
-			"(using a system interpreter if present, otherwise downloading a pinned, " +
-			"checksum-verified relocatable CPython — no sudo, no system packages), " +
+		Long: "setup prepares ~/.dexaflow: it picks the Python the DAG parser runs on " +
+			"(a host python3.13, python3.12, python3.11 or python3 reporting 3.11 to 3.13, " +
+			"otherwise downloading a pinned, checksum-verified relocatable CPython 3.11; " +
+			"no sudo, no system packages; a DAG declaring python_version 3.11 on a host " +
+			"without 3.11 fetches that CPython when its venv is first built), " +
 			"extracts the embedded parser and runtime sources, points the parser at the " +
-			"interpreter (pure Python, no venv, no Airflow — ADR 0024), and creates a " +
+			"interpreter (pure Python, no venv, no Airflow; ADR 0024), and creates a " +
 			"workspace directory. Re-running is safe; --dry-run shows the plan.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -187,6 +189,8 @@ func runSetup(cmd *cobra.Command, workspaceFlag string, dryRun bool) error {
 		GOOS: runtime.GOOS, GOARCH: runtime.GOARCH,
 		LookPath: exec.LookPath, Stat: os.Stat, Getwd: os.Getwd,
 	})
+	// The same probe EnsurePython runs, so the plan names what setup will do.
+	r.ProbeSetupPython(cmd.Context(), exec.LookPath, setup.PythonVersion)
 
 	def := liteSettings{Workspace: workspaceFlag, Executor: "subprocess", AdminEmail: auth.DefaultAdminEmail, Port: 8088}
 	if def.Workspace == "" {
@@ -213,18 +217,7 @@ func runSetup(cmd *cobra.Command, workspaceFlag string, dryRun bool) error {
 	}
 
 	_, _ = fmt.Fprintf(out, "\n  workspace  %s\n  executor   %s\n  port       %d\n  admin      %s\n", lc.Workspace, lc.Executor, lc.Port, lc.AdminEmail) //nolint:errcheck // best-effort terminal output
-	switch {
-	case r.PythonAvailable && r.Python311Path == "":
-		// The case the old message got wrong: a host Python that can parse but is
-		// not the one setup will use. Saying "using system 3.12" here and then
-		// downloading is the gap #1224 reported, and a dry run that misdescribes
-		// the real run is worse than no dry run.
-		_, _ = fmt.Fprintf(out, "  python     %s can parse DAGs, but setup needs python3.11 specifically\n             and will download a managed CPython 3.11 under ~/.dexaflow/python (needs network)\n", r.PythonPath) //nolint:errcheck // best-effort terminal output
-	case r.PythonAvailable:
-		_, _ = fmt.Fprintf(out, "  python     using system %s\n", r.PythonPath) //nolint:errcheck // best-effort terminal output
-	default:
-		_, _ = fmt.Fprintln(out, "  python     no python3.11/3.12/3.13 on PATH; will install a relocatable CPython 3.11 under ~/.dexaflow/python") //nolint:errcheck // best-effort terminal output
-	}
+	printSetupPythonPlan(out, r, setup.ManagedPythonInstalled(leoflowHome))
 
 	if dryRun {
 		_, _ = fmt.Fprintln(out, "\n  (dry run: nothing downloaded or written)") //nolint:errcheck // best-effort terminal output
@@ -241,6 +234,26 @@ func runSetup(cmd *cobra.Command, workspaceFlag string, dryRun bool) error {
 	}
 	printSetupSummary(out, lc, generated)
 	return nil
+}
+
+// printSetupPythonPlan says which interpreter setup will use and whether
+// anything will be downloaded, now or when a DAG venv is first built. It runs
+// the same probe as setup.EnsurePython (Report.SetupPython), so the dry run
+// cannot promise what the real run does not do (#1224, #1700).
+func printSetupPythonPlan(out io.Writer, r setup.Report, managedInstalled bool) {
+	switch {
+	case managedInstalled:
+		_, _ = fmt.Fprintln(out, "  python     using the managed CPython under ~/.dexaflow/python") //nolint:errcheck // best-effort terminal output
+	case r.SetupPython.Path != "":
+		_, _ = fmt.Fprintf(out, "  python     using system %s (Python 3.%d) for the parser\n", r.SetupPython.Path, r.SetupPython.Minor) //nolint:errcheck // best-effort terminal output
+		if r.Python311Path == "" {
+			_, _ = fmt.Fprintln(out, "             no host Python 3.11: a DAG declaring python_version 3.11 (the default) downloads\n             a managed CPython 3.11 under ~/.dexaflow/python when its venv is first built (needs network)") //nolint:errcheck // best-effort terminal output
+		}
+	case r.PythonAvailable:
+		_, _ = fmt.Fprintf(out, "  python     %s is not a Python 3.11 to 3.13 setup can use;\n             will download a managed CPython 3.11 under ~/.dexaflow/python (needs network)\n", r.PythonPath) //nolint:errcheck // best-effort terminal output
+	default:
+		_, _ = fmt.Fprintln(out, "  python     no python3.11/3.12/3.13 on PATH; will install a relocatable CPython 3.11 under ~/.dexaflow/python (needs network)") //nolint:errcheck // best-effort terminal output
+	}
 }
 
 // provisionLite does the on-disk work: ensure Python, extract the parser/runtime
