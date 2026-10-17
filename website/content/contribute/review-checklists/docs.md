@@ -44,7 +44,9 @@ The site follows the four kinds of documentation of the
 - [ ] No page pins a release to install by hand: use the
   `{{</* latest-version */>}}` shortcode. `scripts/check-stale-versions.sh`
   fails a page that tells readers to install a release older than the newest
-  one (ADRs and other records under `project/` are exempt).
+  one (ADRs and other records under `project/` are exempt). At a release cut
+  it runs as `--candidate <tag>` and judges against the release being cut,
+  since `versions.json` still names the GA it replaces.
 
 ## The gates
 
