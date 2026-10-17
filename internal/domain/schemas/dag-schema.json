@@ -392,6 +392,11 @@
           "description": "TaskFlow literal call arguments captured at compile time (#115). Delivered to the runtime as LEOFLOW_CALL_ARGS_JSON. Each value must be JSON-serialisable; XCom upstreams take precedence at runtime over a same-name literal. Named call_args (not params) to leave Airflow's DAG-run params term free for a future feature.",
           "additionalProperties": true
         },
+        "params": {
+          "type": "object",
+          "description": "For type=bash and type=python: the task's own params (Airflow's task-level params=), captured at compile time (#1843). The control plane layers them over the DAG's param defaults and under the run conf into the task's params context. A captured operator carries its params in operator_args instead.",
+          "additionalProperties": true
+        },
         "xcom_schema": {
           "type": "object",
           "description": "Optional JSON Schema for XCom output validation."

@@ -146,6 +146,8 @@ message TaskSpec {
     repeated string declared_variables = 24;         // The variable names this task declared (dexaflow.yaml). The agent asks a pod-side external secret resolver only for declared names, so declaration stays the scope authority for externally-sourced secrets too (ADR 0060 / ADR 0055).
     repeated string declared_connections = 25;       // The connection ids this task declared (dexaflow.yaml). Same role as declared_variables for connections.
     int64 attempt_epoch = 26;                         // Which execution of this try the agent is (ADR 0051 amendment), read from its verified token; 0 for a token minted before the epoch existed. Informational for the agent: the control plane fences on the token, never on this field.
+    string run_conf_json = 27;                        // The DagRun's conf alone, JSON-encoded ("{}" for a run without one), not layered with param defaults as params_json is (#1843). Stamped as LEOFLOW_RUN_CONF -> context dag_run.conf. Empty from a control plane that predates the field; the runtime then reports dag_run.conf as not provided.
+    string run_type = 28;                             // The DagRun's type in the Task SDK's DagRunType vocabulary (manual, scheduled, backfill, asset_triggered) (#1843). Stamped as LEOFLOW_RUN_TYPE -> context dag_run.run_type. Empty leaves it unset.
 }
 
 // XComUpstreams is the list of upstream task_ids whose return_values feed one

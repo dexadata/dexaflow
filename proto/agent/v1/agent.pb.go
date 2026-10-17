@@ -572,6 +572,8 @@ type TaskSpec struct {
 	DeclaredVariables       []string                  `protobuf:"bytes,24,rep,name=declared_variables,json=declaredVariables,proto3" json:"declared_variables,omitempty"`       // The variable names this task declared (dexaflow.yaml). The agent asks a pod-side external secret resolver only for declared names, so declaration stays the scope authority for externally-sourced secrets too (ADR 0060 / ADR 0055).
 	DeclaredConnections     []string                  `protobuf:"bytes,25,rep,name=declared_connections,json=declaredConnections,proto3" json:"declared_connections,omitempty"` // The connection ids this task declared (dexaflow.yaml). Same role as declared_variables for connections.
 	AttemptEpoch            int64                     `protobuf:"varint,26,opt,name=attempt_epoch,json=attemptEpoch,proto3" json:"attempt_epoch,omitempty"`                     // Which execution of this try the agent is (ADR 0051 amendment), read from its verified token; 0 for a token minted before the epoch existed. Informational for the agent: the control plane fences on the token, never on this field.
+	RunConfJson             string                    `protobuf:"bytes,27,opt,name=run_conf_json,json=runConfJson,proto3" json:"run_conf_json,omitempty"`                       // The DagRun's conf alone, JSON-encoded ("{}" for a run without one), not layered with param defaults as params_json is (#1843). Stamped as LEOFLOW_RUN_CONF -> context dag_run.conf. Empty from a control plane that predates the field; the runtime then reports dag_run.conf as not provided.
+	RunType                 string                    `protobuf:"bytes,28,opt,name=run_type,json=runType,proto3" json:"run_type,omitempty"`                                     // The DagRun's type in the Task SDK's DagRunType vocabulary (manual, scheduled, backfill, asset_triggered) (#1843). Stamped as LEOFLOW_RUN_TYPE -> context dag_run.run_type. Empty leaves it unset.
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
 }
@@ -786,6 +788,20 @@ func (x *TaskSpec) GetAttemptEpoch() int64 {
 		return x.AttemptEpoch
 	}
 	return 0
+}
+
+func (x *TaskSpec) GetRunConfJson() string {
+	if x != nil {
+		return x.RunConfJson
+	}
+	return ""
+}
+
+func (x *TaskSpec) GetRunType() string {
+	if x != nil {
+		return x.RunType
+	}
+	return ""
 }
 
 // XComUpstreams is the list of upstream task_ids whose return_values feed one
@@ -2044,7 +2060,8 @@ const file_agent_proto_rawDesc = "" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12;\n" +
 	"\vserver_time\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"serverTime\"\x14\n" +
-	"\x12GetTaskSpecRequest\"\xe8\t\n" +
+	"\x12GetTaskSpecRequest\"\xa7\n" +
+	"\n" +
 	"\bTaskSpec\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x15\n" +
 	"\x06dag_id\x18\x02 \x01(\tR\x05dagId\x12\x1f\n" +
@@ -2078,7 +2095,9 @@ const file_agent_proto_rawDesc = "" +
 	"\x13on_failure_callback\x18\x17 \x01(\bR\x11onFailureCallback\x12-\n" +
 	"\x12declared_variables\x18\x18 \x03(\tR\x11declaredVariables\x121\n" +
 	"\x14declared_connections\x18\x19 \x03(\tR\x13declaredConnections\x12#\n" +
-	"\rattempt_epoch\x18\x1a \x01(\x03R\fattemptEpoch\x1a>\n" +
+	"\rattempt_epoch\x18\x1a \x01(\x03R\fattemptEpoch\x12\"\n" +
+	"\rrun_conf_json\x18\x1b \x01(\tR\vrunConfJson\x12\x19\n" +
+	"\brun_type\x18\x1c \x01(\tR\arunType\x1a>\n" +
 	"\x10EnvironmentEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1ad\n" +

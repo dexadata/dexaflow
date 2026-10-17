@@ -196,6 +196,11 @@ type TaskSpec struct {
 	// Named call_args (not params) to leave the term free for Airflow's
 	// DAG-run params semantic (#148).
 	CallArgs map[string]any `json:"call_args,omitempty"`
+	// Params are a bash or python task's own params (Airflow's task-level
+	// params=), captured at compile time (#1843). RunParams layers them over the
+	// DAG's param defaults and under the run conf. A captured operator carries
+	// its params in OperatorArgs instead.
+	Params map[string]any `json:"params,omitempty"`
 	// OperatorClass is the dotted Airflow operator/sensor class for an
 	// airflow_operator task (ADR 0040), e.g.
 	// "airflow.providers.snowflake.operators.snowflake.SQLExecuteQueryOperator".

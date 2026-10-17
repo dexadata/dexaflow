@@ -181,6 +181,143 @@ def test_operator_context_logical_date(monkeypatch):
     assert ctx["logical_date"] is None
 
 
+def test_operator_context_date_keys(monkeypatch):
+    # The keys the Task SDK derives from the logical date, with its own formats (#1843).
+    monkeypatch.setenv("LEOFLOW_DAG_ID", "report")
+    monkeypatch.setenv("LEOFLOW_TASK_ID", "build")
+    monkeypatch.setenv("LEOFLOW_TS", "2026-06-14T05:30:00Z")
+    monkeypatch.setenv("LEOFLOW_DS", "2026-06-14")
+    ctx = runner._operator_context()
+    assert ctx["ds_nodash"] == "20260614"
+    assert ctx["ts_nodash"] == "20260614T053000"
+    assert ctx["ts_nodash_with_tz"] == "20260614T053000+0000"
+    assert ctx["task_instance_key_str"] == "report__build__20260614"
+
+
+def test_operator_context_date_keys_absent_without_logical_date(monkeypatch):
+    # The Task SDK sets them only for a run with a logical date; a run without one
+    # keys task_instance_key_str by run_id instead.
+    monkeypatch.delenv("LEOFLOW_TS", raising=False)
+    monkeypatch.setenv("LEOFLOW_DAG_ID", "report")
+    monkeypatch.setenv("LEOFLOW_TASK_ID", "build")
+    monkeypatch.setenv("LEOFLOW_RUN_ID", "manual__1")
+    ctx = runner._operator_context()
+    for key in ("ds_nodash", "ts_nodash", "ts_nodash_with_tz"):
+        assert key not in ctx
+    assert ctx["task_instance_key_str"] == "report__build__manual__1"
+
+
+def test_operator_context_try_number(monkeypatch):
+    monkeypatch.setenv("LEOFLOW_TRY_NUMBER", "3")
+    assert runner._operator_context()["try_number"] == 3
+
+
+def test_operator_context_dag_run(monkeypatch):
+    # dag_run was None, so operators and callbacks reading dag_run.conf crashed (#1843).
+    monkeypatch.setenv("LEOFLOW_DAG_ID", "report")
+    monkeypatch.setenv("LEOFLOW_RUN_ID", "manual__2026-06-14T05:30:00+00:00")
+    monkeypatch.setenv("LEOFLOW_TS", "2026-06-14T05:30:00Z")
+    monkeypatch.setenv("LEOFLOW_DATA_INTERVAL_START", "2026-06-13T05:30:00Z")
+    monkeypatch.setenv("LEOFLOW_DATA_INTERVAL_END", "2026-06-14T05:30:00Z")
+    monkeypatch.setenv("LEOFLOW_RUN_CONF", '{"table": "orders"}')
+    monkeypatch.setenv("LEOFLOW_RUN_TYPE", "scheduled")
+    dag_run = runner._operator_context()["dag_run"]
+    assert dag_run.dag_id == "report"
+    assert dag_run.run_id == "manual__2026-06-14T05:30:00+00:00"
+    assert dag_run.logical_date == datetime(2026, 6, 14, 5, 30, tzinfo=timezone.utc)
+    assert dag_run.data_interval_start == datetime(2026, 6, 13, 5, 30, tzinfo=timezone.utc)
+    assert dag_run.data_interval_end == datetime(2026, 6, 14, 5, 30, tzinfo=timezone.utc)
+    assert dag_run.conf == {"table": "orders"}
+    assert dag_run.run_type == "scheduled"
+
+
+def test_operator_context_dag_run_conf_is_the_conf_not_params(monkeypatch):
+    # params layers DAG and task defaults under the conf; dag_run.conf is the
+    # conf alone, as on Airflow.
+    monkeypatch.setenv("LEOFLOW_PARAMS", '{"table": "orders", "limit": 5}')
+    monkeypatch.setenv("LEOFLOW_RUN_CONF", '{"table": "orders"}')
+    assert runner._operator_context()["dag_run"].conf == {"table": "orders"}
+
+
+def test_operator_context_dag_run_bad_conf_is_empty(monkeypatch):
+    monkeypatch.setenv("LEOFLOW_RUN_CONF", "null")
+    assert runner._operator_context()["dag_run"].conf == {}
+    monkeypatch.setenv("LEOFLOW_RUN_CONF", "{oops")
+    assert runner._operator_context()["dag_run"].conf == {}
+
+
+def test_operator_context_dag_run_without_delivered_conf_says_so(monkeypatch):
+    # A control plane older than the agent delivers no conf and no run type: the
+    # attribute is missing with a message naming it, not a made-up empty conf.
+    monkeypatch.delenv("LEOFLOW_RUN_CONF", raising=False)
+    monkeypatch.delenv("LEOFLOW_RUN_TYPE", raising=False)
+    dag_run = runner._operator_context()["dag_run"]
+    with pytest.raises(AttributeError, match="'conf'.*Dexaflow"):
+        _ = dag_run.conf
+    assert not hasattr(dag_run, "run_type")
+
+
+def test_operator_context_dag_and_task_identity(monkeypatch):
+    # Outside an operator run the runtime has no DAG or task object; the stand-ins
+    # carry their ids, and ti.task is the same task (#1843).
+    monkeypatch.setenv("LEOFLOW_DAG_ID", "report")
+    monkeypatch.setenv("LEOFLOW_TASK_ID", "build")
+    ctx = runner._operator_context()
+    assert ctx["dag"].dag_id == "report"
+    assert ctx["task"].task_id == "build"
+    assert ctx["task"].dag_id == "report"
+    assert ctx["ti"].task is ctx["task"]
+
+
+@pytest.mark.parametrize("key,name", [
+    ("dag", "get_task"), ("task", "execute"), ("dag_run", "start_date"), ("ti", "hostname")])
+def test_operator_context_missing_attribute_names_it(key, name):
+    # A provider that reaches for an attribute the runtime lacks gets an error that
+    # names it and says Dexaflow does not provide it, not a bare AttributeError.
+    obj = runner._operator_context()[key]
+    with pytest.raises(AttributeError, match=f"'{name}'.*Dexaflow does not provide"):
+        getattr(obj, name)
+    assert getattr(obj, name, "fallback") == "fallback"
+
+
+def test_standalone_ti_max_tries(monkeypatch):
+    monkeypatch.setenv("LEOFLOW_TRY_NUMBER", "2")
+    monkeypatch.setenv("LEOFLOW_MAX_TRIES", "4")
+    assert runner._operator_context()["ti"].max_tries == 4
+    monkeypatch.delenv("LEOFLOW_MAX_TRIES")
+    assert runner._operator_context()["ti"].max_tries == 2
+
+
+def test_run_bash_renders_the_new_context_keys(monkeypatch):
+    execs = []
+    monkeypatch.setattr(runner.os, "execvp", lambda *a: execs.append(a))
+    monkeypatch.setenv("LEOFLOW_DAG_ID", "report")
+    monkeypatch.setenv("LEOFLOW_TASK_ID", "build")
+    monkeypatch.setenv("LEOFLOW_TS", "2026-06-14T05:30:00Z")
+    monkeypatch.setenv("LEOFLOW_RUN_CONF", '{"table": "orders"}')
+    runner.run_bash("echo {{ ds_nodash }} {{ dag.dag_id }}.{{ task.task_id }} "
+                    "{{ dag_run.conf.table }}")
+    assert execs == [("bash", ["bash", "-c", "echo 20260614 report.build orders"])]
+
+
+def test_run_task_failure_callback_gets_the_exception(tmp_path, monkeypatch):
+    # Airflow hands on_failure_callback the error as context["exception"] (#1843).
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(tmp_path / "rv.json"))
+    monkeypatch.setenv("LEOFLOW_ON_FAILURE_CALLBACK", "1")
+    body = ("SEEN = []\n"
+            "def _cb(context):\n"
+            "    SEEN.append(repr(context.get('exception')))\n"
+            "def task():\n"
+            "    raise ValueError('bad row')\n"
+            "task.on_failure_callback = _cb\n")
+    mod = _write_module(tmp_path, monkeypatch, body)
+
+    with pytest.raises(ValueError):
+        runner.run(f"{mod}:task")
+
+    assert sys.modules[mod].SEEN == ["ValueError('bad row')"]
+
+
 def test_operator_context_macros_prefer_the_task_sdk(monkeypatch):
     # When the Task SDK is installed (the base image), macros are its own module, so
     # templates behave as on Airflow; the built-in subset is only the fallback.
