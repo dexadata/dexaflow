@@ -424,8 +424,8 @@ func xcomByTaskEnv(ctx context.Context, fetcher xcomFetcher, spec *agentv1.TaskS
 // defaulting to 1, and run_operator falling back to the operator class name as the
 // task_id — a silent-wrong gap for operators that read them. The server carries
 // these on the TaskSpec. ts/ds are derived from the single logical_date (ts is the
-// RFC3339 value, ds its UTC date). The macros params/data_interval need fields not
-// yet on TaskSpec and are deliberately left unset rather than fabricated.
+// RFC3339 value, ds its UTC date). A field the server leaves empty is left unset
+// rather than fabricated.
 func runContextEnv(spec *agentv1.TaskSpec) []string {
 	var env []string
 	if v := spec.GetTaskId(); v != "" {
@@ -462,6 +462,15 @@ func runContextEnv(spec *agentv1.TaskSpec) []string {
 	}
 	if v := spec.GetParamsJson(); v != "" {
 		env = append(env, "LEOFLOW_PARAMS="+v)
+	}
+	// The run conf alone and the run type, for the runtime's dag_run (#1843).
+	// Unset from a control plane that predates them, so the runtime can tell an
+	// unknown conf from an empty one.
+	if v := spec.GetRunConfJson(); v != "" {
+		env = append(env, "LEOFLOW_RUN_CONF="+v)
+	}
+	if v := spec.GetRunType(); v != "" {
+		env = append(env, "LEOFLOW_RUN_TYPE="+v)
 	}
 	if v := spec.GetFirstRescheduleAt(); v != "" {
 		// Delivered to a re-dispatched reschedule-mode sensor so its

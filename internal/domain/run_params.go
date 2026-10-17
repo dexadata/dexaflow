@@ -8,15 +8,17 @@ import (
 // RunParams returns the params a task of this DAG runs with, as the JSON object
 // the agent delivers in LEOFLOW_PARAMS. It layers them the way Airflow does with
 // dag_run_conf_overrides_params on: the DAG's declared param defaults, then the
-// task's own params (operator_args.params), then the run conf, each layer winning
-// per key over the one before. A run created without conf, such as a scheduled
+// task's own params (operator_args.params for an operator, the task's params
+// field for a bash or python task), then the run conf, each layer winning per key
+// over the one before. A run created without conf, such as a scheduled
 // run, still gets the DAG defaults and task params (#1841, #1844).
 //
 // When neither the DAG nor the task declares params, conf is returned unchanged.
 // A conf that is not a JSON object (or null) is an error.
 func (d DAGSpec) RunParams(task TaskSpec, conf json.RawMessage) (json.RawMessage, error) {
-	var taskParams map[string]any // a params value that is not an object is not a layer
-	if tp, ok := task.OperatorArgs["params"].(map[string]any); ok {
+	taskParams := task.Params
+	// An operator's params value that is not an object is not a layer.
+	if tp, ok := task.OperatorArgs["params"].(map[string]any); ok && len(taskParams) == 0 {
 		taskParams = tp
 	}
 	if len(d.Params) == 0 && len(taskParams) == 0 {

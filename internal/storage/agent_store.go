@@ -129,6 +129,8 @@ func (s *ExecutionStore) TaskSpec(ctx context.Context, id auth.AgentIdentity) (a
 		DataIntervalStart: dataIntervalStart,
 		DataIntervalEnd:   dataIntervalEnd,
 		ParamsJSON:        paramsJSON,
+		RunConfJSON:       runConfJSON(run.Conf),
+		RunType:           taskSDKRunType(run.Trigger),
 		FirstRescheduleAt: firstRescheduleAt,
 		MaxTries:          attemptBudget,
 		OnFailureCallback: task.OnFailureCallback,
@@ -624,4 +626,24 @@ func (s *ExecutionStore) SettledRuns(ctx context.Context, refs []executor.RunRef
 		out[executor.RunRef{Tenant: uuidToString(row.TenantID), Run: uuidToString(row.ID)}] = true
 	}
 	return out, nil
+}
+
+// runConfJSON returns the run's conf for the runtime's dag_run.conf (#1843): the
+// conf alone, as stored, or "{}" for a run without one, as Airflow gives an empty
+// dict. Never empty, so the runtime can tell it from a server that sends none.
+func runConfJSON(conf []byte) string {
+	if len(conf) == 0 || string(conf) == "null" {
+		return "{}"
+	}
+	return string(conf)
+}
+
+// taskSDKRunType names the run's trigger in the Task SDK's DagRunType
+// vocabulary, which dag_run.run_type compares against (#1843). The dataset
+// trigger is the SDK's asset_triggered; the other triggers share their names.
+func taskSDKRunType(trigger queries.DagRunTrigger) string {
+	if trigger == queries.DagRunTriggerDataset {
+		return "asset_triggered"
+	}
+	return string(trigger)
 }
