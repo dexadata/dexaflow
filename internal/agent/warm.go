@@ -375,14 +375,27 @@ func (w *WarmRunner) connect(ctx context.Context, dagVersionID string) (agentv1.
 	}
 	// The mandatory first WorkerMessage names which pool (dag_version) this worker
 	// serves, so the control plane only dispatches matching assignments to it.
-	if serr := stream.Send(&agentv1.WorkerMessage{
-		Msg: &agentv1.WorkerMessage_Register{
-			Register: &agentv1.WorkerRegister{DagVersionId: dagVersionID, PodName: w.PodName},
-		},
-	}); serr != nil {
+	if serr := stream.Send(w.registerMessage(dagVersionID)); serr != nil {
 		return nil, fmt.Errorf("sending worker register: %w", serr)
 	}
 	return stream, nil
+}
+
+// registerMessage is the WorkerRegister this worker sends first on every
+// stream and again as its stream heartbeat. attempt_home_sweep states that the
+// worker empties /tmp and /dev/shm around every attempt: AttemptHome with both
+// paths known, the condition resetScratch sweeps them on. The control plane
+// checks it when warm workers run with a read-only root (#1678).
+func (w *WarmRunner) registerMessage(dagVersionID string) *agentv1.WorkerMessage {
+	return &agentv1.WorkerMessage{
+		Msg: &agentv1.WorkerMessage_Register{
+			Register: &agentv1.WorkerRegister{
+				DagVersionId:     dagVersionID,
+				PodName:          w.PodName,
+				AttemptHomeSweep: w.AttemptHome && w.SharedTmpDir != "" && w.SharedMemDir != "",
+			},
+		},
+	}
 }
 
 // lockedSendStream serializes Send on an AwaitAssignment client stream so the
@@ -424,11 +437,7 @@ func (w *WarmRunner) startStreamHeartbeat(ctx context.Context, stream *lockedSen
 			case <-hbCtx.Done():
 				return
 			case <-ticker.C:
-				if err := stream.Send(&agentv1.WorkerMessage{
-					Msg: &agentv1.WorkerMessage_Register{
-						Register: &agentv1.WorkerRegister{DagVersionId: dagVersionID, PodName: w.PodName},
-					},
-				}); err != nil {
+				if err := stream.Send(w.registerMessage(dagVersionID)); err != nil {
 					return
 				}
 			}
