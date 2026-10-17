@@ -164,6 +164,7 @@ func (b CloudBuild) config(req Request) cloudBuildConfig {
 	if len(req.Platforms) > 0 {
 		args = append(args, "--platform", strings.Join(req.Platforms, ","))
 	}
+	args = append(args, buildArgFlags(req.BuildArgs)...)
 	args = append(args, "--tag", req.Image, "--file", remoteDockerfile, ".")
 	cfg := cloudBuildConfig{
 		Steps:  []cloudBuildStep{{Name: cloudBuildDockerImage, Args: args}},
@@ -186,6 +187,10 @@ func (b CloudBuild) Build(ctx context.Context, req Request) (Result, error) {
 	}
 	if req.ContextFiles == nil {
 		return Result{}, errors.New("the remote builder sends the build context to Cloud Build, and this build listed none")
+	}
+	if len(req.Secrets) > 0 {
+		return Result{}, errors.New("the build has secrets, which are read from this machine's environment; " +
+			"Cloud Build would have to store them in its build record, so a builder on this machine builds it (ADR 0088)")
 	}
 	if err := b.Ready(); err != nil {
 		return Result{}, err

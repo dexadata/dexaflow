@@ -49,7 +49,7 @@ func (b LocalDaemon) pushImage(ctx context.Context, req Request) (string, error)
 		return "", b.buildThenPush(ctx, req, io.Discard, nerdctlPushArgs(req.Image, req.Platforms)...)
 	}
 	if filepath.Base(b.tool()) == "docker" && b.hasBuildx(ctx) {
-		if err := b.run(ctx, req.Stdout, req.Stderr, buildxPushArgs(req, report)...); err != nil {
+		if err := b.runEnv(ctx, req.Stdout, req.Stderr, req.Env, buildxPushArgs(req, report)...); err != nil {
 			return "", b.buildError(req, err)
 		}
 		return metadataDigest(report), nil
@@ -64,7 +64,7 @@ func (b LocalDaemon) pushImage(ctx context.Context, req Request) (string, error)
 // buildThenPush runs the plain build, then the push with pushArgs, copying
 // the push's stdout to capture as well as to req.Stdout.
 func (b LocalDaemon) buildThenPush(ctx context.Context, req Request, capture io.Writer, pushArgs ...string) error {
-	if err := b.run(ctx, req.Stdout, req.Stderr, buildArgs(req.Image, req.Dockerfile, req.ContextDir, req.Platforms)...); err != nil {
+	if err := b.runEnv(ctx, req.Stdout, req.Stderr, req.Env, buildArgs(req.Image, req.Dockerfile, req.ContextDir, req.Platforms, inputArgs(req)...)...); err != nil {
 		return b.buildError(req, err)
 	}
 	if err := b.run(ctx, teeWriter(req.Stdout, capture), req.Stderr, pushArgs...); err != nil {
@@ -86,8 +86,9 @@ func (b LocalDaemon) pushPodman(ctx context.Context, req Request, report string)
 		return fileDigest(report), nil
 	}
 	_ = b.run(ctx, io.Discard, io.Discard, "manifest", "rm", req.Image) //nolint:errcheck // see above
-	args := []string{"build", "--platform", strings.Join(req.Platforms, ","), "--manifest", req.Image, "-f", req.Dockerfile, req.ContextDir}
-	if err := b.run(ctx, req.Stdout, req.Stderr, args...); err != nil {
+	args := append([]string{"build", "--platform", strings.Join(req.Platforms, ",")}, inputArgs(req)...)
+	args = append(args, "--manifest", req.Image, "-f", req.Dockerfile, req.ContextDir)
+	if err := b.runEnv(ctx, req.Stdout, req.Stderr, req.Env, args...); err != nil {
 		return "", b.buildError(req, err)
 	}
 	if err := b.run(ctx, req.Stdout, req.Stderr, "manifest", "push", "--all", "--digestfile", report, req.Image, "docker://"+req.Image); err != nil {
@@ -102,12 +103,14 @@ func (b LocalDaemon) hasBuildx(ctx context.Context) bool {
 }
 
 // buildxPushArgs assembles the argv of a build that buildx pushes itself and
-// whose digest it writes to the metadata file.
+// whose digest it writes to the metadata file, with the build args and
+// secrets of req (inputArgs).
 func buildxPushArgs(req Request, metadata string) []string {
 	args := []string{"buildx", "build"}
 	if len(req.Platforms) > 0 {
 		args = append(args, "--platform", strings.Join(req.Platforms, ","))
 	}
+	args = append(args, inputArgs(req)...)
 	return append(args, "--push", "--metadata-file", metadata, "-t", req.Image, "-f", req.Dockerfile, req.ContextDir)
 }
 

@@ -27,6 +27,9 @@ type pushTool struct {
 	digestFile string
 	// pushOutput is printed on stdout by `<tool> push`.
 	pushOutput string
+	// envVar, when set, is the variable whose value each call appends to
+	// env.log, next to the log of calls, one line per call.
+	envVar string
 }
 
 // fake writes the tool and returns its path and the log of its calls.
@@ -50,6 +53,7 @@ func (p pushTool) fake(t *testing.T) (tool, log string) {
 	script := "#!/bin/sh\n" +
 		"if [ \"$1 $2\" = \"buildx version\" ]; then exit " + buildxExit + "; fi\n" +
 		"echo \"$*\" >> \"" + log + "\"\n" +
+		envLine(p.envVar, filepath.Join(dir, "env.log")) +
 		"prev=\n" +
 		"for a in \"$@\"; do\n" +
 		"  case \"$prev\" in\n" +
@@ -64,6 +68,15 @@ func (p pushTool) fake(t *testing.T) (tool, log string) {
 		t.Fatal(err)
 	}
 	return tool, log
+}
+
+// envLine is the line of a fake tool's script that appends the value of
+// envVar to log, or nothing without envVar.
+func envLine(envVar, log string) string {
+	if envVar == "" {
+		return ""
+	}
+	return "printf '%s\\n' \"$" + envVar + "\" >> \"" + log + "\"\n"
 }
 
 // fileArg matches the temporary file a call names after --metadata-file or

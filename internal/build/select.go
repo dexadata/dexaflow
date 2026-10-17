@@ -41,6 +41,10 @@ type Options struct {
 	// Push says the build is pushed. The remote builder pushes what it
 	// builds, so it applies only to a pushed build.
 	Push bool
+	// LocalOnly says why the build must run on this machine (its build
+	// secrets or package index come from this machine's environment), or ""
+	// when the remote builder may take it.
+	LocalOnly string
 }
 
 // remote returns the remote builder when it applies to a build for
@@ -57,6 +61,9 @@ func (o Options) remote(platforms []string, daemon LocalDaemon) (rem Remote, why
 	}
 	if !o.Push {
 		return nil, from + " pushes what it builds, and this build is not pushed"
+	}
+	if o.LocalOnly != "" {
+		return nil, from + " does not apply: " + o.LocalOnly
 	}
 	if why := o.Remote.Decline(platforms); why != "" {
 		return nil, from + " does not apply: " + why
