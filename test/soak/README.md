@@ -20,6 +20,7 @@ bash test/soak/soak.sh --duration 12h --faults standard   # overnight with fault
 bash test/soak/soak.sh --duration 6m  --faults selftest-red   # must go RED
 make soak            # the default run
 make soak-selftest   # proves the assertions can fail: must exit exactly 1
+                     # (after checking that an interrupted soak exits 2)
 ```
 
 Everything runs locally: one Postgres container and one `dexaflow lite` process.
@@ -527,10 +528,13 @@ open-ended one:
    `time.ParseDuration` has no day unit and would reject `2d` outright.
 2. **The harness watchdog.** A background timer that sends `SIGTERM` to the
    harness at `duration + 5 min`, so a hung monitor cannot hold the run open.
-3. **`trap cleanup EXIT INT TERM`.** Idempotent teardown on every exit path:
-   kills the monitor, the control plane and the fixture, `docker unpause`es the
-   Postgres container (a fault injector that died mid-pause would otherwise leave
-   it frozen and holding memory), collects the evidence, and stops the container.
+3. **`trap cleanup EXIT`, and `INT`/`TERM` exit 2.** One teardown on every exit
+   path: kills the monitor, the control plane and the fixture, `docker unpause`es
+   the Postgres container (a fault injector that died mid-pause would otherwise
+   leave it frozen and holding memory), collects the evidence, and stops the
+   container. A signal before the verdict (Ctrl-C, the watchdog) exits 2, never
+   0, so an interrupted run cannot read as a pass (#1921);
+   `bash test/soak/soak.sh --self-test` proves it with stubbed docker and go.
 
 The default is conservative on purpose. A weekend run is an explicit
 `--duration 48h`, typed by a human who has read this section.
