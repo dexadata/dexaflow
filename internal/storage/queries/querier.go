@@ -182,7 +182,6 @@ type Querier interface {
 	// whole even when it alone exceeds the limit, so a run larger than a batch is
 	// still deleted (the janitor sets it when the batch has its whole limit left).
 	DeleteTaskInstancesOfRuns(ctx context.Context, arg DeleteTaskInstancesOfRunsParams) (int64, error)
-	DeleteTaskStateHistoryOfRuns(ctx context.Context, arg DeleteTaskStateHistoryOfRunsParams) (int64, error)
 	DeleteTenantAuditLog(ctx context.Context, arg DeleteTenantAuditLogParams) (int64, error)
 	// Remove every role grant for a user: the delete half of the IdP-authoritative
 	// reconcile that sets the grants to exactly the group-mapped set on each login.
