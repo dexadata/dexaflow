@@ -48,8 +48,10 @@ func TestRunSetupVenvless(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	// A fake python3.11 on PATH so EnsurePython uses it instead of downloading.
+	// It must answer the version probe: setup accepts a host interpreter on
+	// the version it reports, not on its name (#1700).
 	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "python3.11"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "python3.11"), []byte("#!/bin/sh\necho 'Python 3.11.9'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))

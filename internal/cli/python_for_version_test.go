@@ -317,21 +317,27 @@ func TestDagVenvKeptWhenPyvenvCfgUnreadable(t *testing.T) {
 	}
 }
 
-// TestInstallHintOnlyOffersSetupForTheVersionItInstalls guards an error message
-// that used to send the user around a loop it cannot end: `dexaflow setup`
-// provisions exactly one minor — the managed build's — so offering it to someone
-// who asked for 3.13 means setup succeeds, 3.13 is still missing, and the same
-// error comes back.
-func TestInstallHintOnlyOffersSetupForTheVersionItInstalls(t *testing.T) {
-	if got := installHint(minPythonMinor); !strings.Contains(got, "dexaflow setup") {
-		t.Errorf("installHint(3.%d) = %q, want it to offer `dexaflow setup` — that is the version setup installs", minPythonMinor, got)
+// TestInstallHintNeverOffersSetup guards an error message that used to send
+// the user around a loop it cannot end. Offering `dexaflow setup` to someone
+// who asked for 3.13 meant setup succeeded, 3.13 was still missing, and the same
+// error came back. Since #1700 the same is true of 3.11: setup keeps a host 3.12
+// for the parser and fetches nothing, so only the lazy managed fetch (or
+// installing 3.11) produces it.
+func TestInstallHintNeverOffersSetup(t *testing.T) {
+	for _, want := range []int{minPythonMinor, minPythonMinor + 2} {
+		got := installHint(want)
+		if strings.Contains(got, "dexaflow setup") {
+			t.Errorf("installHint(3.%d) = %q, must not offer `dexaflow setup`", want, got)
+		}
+		if !strings.Contains(got, fmt.Sprintf("3.%d", want)) {
+			t.Errorf("installHint(3.%d) = %q, want it to name the version the user actually needs", want, got)
+		}
 	}
-	got := installHint(minPythonMinor + 2)
-	if strings.Contains(got, "dexaflow setup") {
-		t.Errorf("installHint(3.%d) = %q, must not offer `dexaflow setup`: setup only ever provisions 3.%d", minPythonMinor+2, got, minPythonMinor)
+	if got := installHint(minPythonMinor); !strings.Contains(got, "managed CPython") {
+		t.Errorf("installHint(3.%d) = %q, want it to say Dexaflow fetches the pinned minor itself", minPythonMinor, got)
 	}
-	if !strings.Contains(got, fmt.Sprintf("3.%d", minPythonMinor+2)) {
-		t.Errorf("installHint = %q, want it to name the version the user actually needs", got)
+	if got := installHint(minPythonMinor + 2); strings.Contains(got, "managed CPython") {
+		t.Errorf("installHint(3.%d) = %q, must not promise a managed build of a minor Dexaflow does not pin", minPythonMinor+2, got)
 	}
 }
 
