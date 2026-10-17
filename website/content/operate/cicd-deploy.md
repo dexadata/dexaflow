@@ -1158,7 +1158,7 @@ The recommended path on each runner type:
 | Runner | Recipe |
 |---|---|
 | **GitHub Actions** | Add `actions/setup-python@v5` with `python-version: '3.12'` before installing dexaflow. Cached automatically. |
-| **GitLab CI** | Run the job on `python:3.12-slim` (the job `dexaflow ci init gitlab` writes), or in the [`dexaflow-cli` image](#the-dexaflow-cli-image). A job that needs Docker in Docker runs on `docker:27` and installs `python3` with `apk add python3`. |
+| **GitLab CI** | Run the job in the [`dexaflow-cli` image](#the-dexaflow-cli-image) (the job `dexaflow ci init gitlab` writes, from `v0.5.4`), or on `python:3.12-slim`. A job that needs Docker in Docker runs on `docker:27` and installs `python3` with `apk add python3`. |
 | **Argo CD, Argo Workflows, Flux, Tekton, Jenkins on Kubernetes** | Run the job in the [`dexaflow-cli` image](#the-dexaflow-cli-image): it ships Python 3.13, git and uv next to the CLI ([recipes](#recipes-for-argo-workflows-tekton-jenkins-buildah-and-kaniko)). |
 | **Cloud Build** | Run the step on an image with Python 3.11 or later: the generated step installs Debian's `python3` on `gcr.io/google.com/cloudsdktool/cloud-sdk:slim`, which also has the gcloud session the CLI reads for Artifact Registry. `gcr.io/cloud-builders/docker` is Ubuntu 20.04, whose `python3` is 3.8. |
 | **CodeBuild** | Select Python 3.11 or later under `runtime-versions` in the buildspec. |
@@ -1239,7 +1239,9 @@ image needs a real build (a package with no wheel, `system_packages`, its own
 `Dockerfile`) needs a remote builder, a job with a daemon (the GitLab
 recipe under [Examples](#examples-what-dexaflow-ci-init-writes)), or buildah
 or kaniko in the cluster ([recipes](#recipes-for-argo-workflows-tekton-jenkins-buildah-and-kaniko)). The Cloud Build remote builder runs
-`gcloud`, which the image does not carry.
+`gcloud`, which the image does not carry. The GitLab job that
+`dexaflow ci init gitlab` writes runs in this image, pinned by digest, when no
+project needs a daemon.
 
 The entrypoint is `dexaflow`, and the image runs as UID 65532 with
 `HOME=/home/dexaflow`. It is signed like the other images; the identity
@@ -1355,7 +1357,9 @@ the logic is the same on every system. On each push to the branch (`--branch`,
    [setup-dexaflow action](#the-setup-dexaflow-action) of the same release
    instead, pinned by the commit of its tag, so the workflow needs `v0.5.4` or
    later. The commit is this CLI's own, or for another `--cli-version` the one
-   `git ls-remote` finds for the tag on GitHub;
+   `git ls-remote` finds for the tag on GitHub. On GitLab the job runs in the
+   [`dexaflow-cli` image](#the-dexaflow-cli-image) of the same release, which
+   already holds the CLI, so the script installs nothing;
 2. installs [uv](/operate/builders/#building-the-dependency-image-from-wheels)
    when the runner has none, from PyPI with `--require-hashes` against the
    wheel hashes the script carries, so dependency images are built from wheels
@@ -1404,7 +1408,7 @@ pins of the new release.
 The CLI picks the [builder](/operate/builders/) at deploy time, as it does on
 a laptop, and Docker is the fallback. On GitHub the runner has Docker, so
 nothing changes in the workflow. On GitLab the job needs no daemon, and runs
-on `python:3.12-slim`, unless a project needs a real image build (its own
+in the [`dexaflow-cli` image](#the-dexaflow-cli-image), unless a project needs a real image build (its own
 `Dockerfile`, `system_packages`, a dependency that is not a requirement by
 name) and no [remote builder](/operate/builders/#building-on-cloud-build) is
 configured: then it runs Docker in Docker, and the file names the projects
@@ -1558,9 +1562,16 @@ branch through `env:` rather than inline in `run:`:
 # with process_mode=oldest_first), so pipelines deploy in push order.
 #
 # No container daemon is needed: the CLI pushes the DAG code as a layer on the
-# dependency image, and builds that image from wheels with uv.
+# dependency image, and builds that image from wheels with uv. The job runs in
+# the dexaflow-cli image of vX.Y.Z, pinned by digest, which carries the
+# CLI, Python, git and uv, so nothing is installed in the job. The CLI is the
+# image's, so DEXAFLOW_CLI_VERSION does not apply: to change the release,
+# write this file again with `dexaflow ci init gitlab --force` (--cli-version
+# picks another release).
 dexaflow-deploy:
-  image: python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+  image:
+    name: ghcr.io/dexadata/dexaflow-cli:vX.Y.Z@sha256:<digest>
+    entrypoint: [""] # GitLab runs the script in a shell
   resource_group: dexaflow-deploy
   variables:
     GIT_DEPTH: "0" # --changed-since and the version label need the history
@@ -1568,8 +1579,6 @@ dexaflow-deploy:
     DEXAFLOW_REPORT_FILE: $CI_PROJECT_DIR/dexaflow-deploy.json
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web")
-  before_script:
-    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git curl ca-certificates >/dev/null
   script:
     - |
       mkdir -p "$HOME/.docker"
@@ -1580,9 +1589,16 @@ dexaflow-deploy:
     - |
       DEXAFLOW_BASE_REF="$CI_COMMIT_BEFORE_SHA"
       if [ -n "${DEXAFLOW_GITLAB_API_TOKEN:-}" ]; then
-        DEXAFLOW_BASE_REF="$(curl -fsS --header "PRIVATE-TOKEN: $DEXAFLOW_GITLAB_API_TOKEN" \
-          "$CI_API_V4_URL/projects/$CI_PROJECT_ID/pipelines?ref=$CI_COMMIT_BRANCH&source=push&status=success&per_page=1" |
-          python3 -c 'import json, sys; p = json.load(sys.stdin); print(p[0]["sha"] if p else "")')" || DEXAFLOW_BASE_REF=""
+        DEXAFLOW_BASE_REF="$(python3 -c '
+      import json, os, urllib.parse, urllib.request
+      e = os.environ
+      q = urllib.parse.urlencode({"ref": e["CI_COMMIT_BRANCH"], "source": "push", "status": "success", "per_page": 1})
+      r = urllib.request.Request(e["CI_API_V4_URL"] + "/projects/" + e["CI_PROJECT_ID"] + "/pipelines?" + q,
+                                 headers={"PRIVATE-TOKEN": e["DEXAFLOW_GITLAB_API_TOKEN"]})
+      with urllib.request.urlopen(r, timeout=30) as resp:
+          p = json.load(resp)
+      print(p[0]["sha"] if p else "")
+      ')" || DEXAFLOW_BASE_REF=""
       fi
       export DEXAFLOW_BASE_REF
     - sh ci/dexaflow-deploy.sh
@@ -1591,6 +1607,20 @@ dexaflow-deploy:
     paths: [dexaflow-deploy.md, dexaflow-deploy.json]
     expire_in: 30 days
 ```
+
+The job runs in the [`dexaflow-cli` image](#the-dexaflow-cli-image) of the
+release `ci init` pins, by tag and digest: the command reads the digest from
+`ghcr.io` when it writes the file, and stops, writing nothing, when it cannot
+(no network, for example). The image carries the CLI, Python, git and uv, so
+the job installs nothing, and `entrypoint: [""]` lets GitLab run the script in
+a shell instead of the image's `dexaflow` entrypoint. The image runs as UID
+65532, which writes to the checkout because GitLab's Docker executor leaves it
+writable for any user. The CLI is the image's, so `DEXAFLOW_CLI_VERSION` does
+not apply: run `dexaflow ci init gitlab --force` (with `--cli-version` for
+another release) to move the job to another release. A `--cli-version` older
+than `v0.5.4`, which has no `dexaflow-cli` image, writes a job on
+`python:3.12-slim` (by digest) that installs git and curl with `apt-get`, and
+the CLI and uv with the script.
 
 When a project needs a real image build and no remote builder is configured,
 the job runs Docker in Docker instead: `image: docker:27` and
