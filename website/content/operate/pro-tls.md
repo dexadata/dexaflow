@@ -145,6 +145,10 @@ signing CA to a ConfigMap — cert-manager's
 standard way, or copy the issuer's `ca.crt` into a ConfigMap keyed `ca.crt`. Set
 `agentTLS.caConfigMap` to that ConfigMap's name.
 
+The bundle may hold more than one CA. To renew the server certificate or move to
+a new CA later without a restart or failed tasks, see
+[Rotate agent certificates](/operate/rotate-agent-certificates/).
+
 ## 5. Install
 
 ```console

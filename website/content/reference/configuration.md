@@ -632,7 +632,7 @@ See [Cluster deploy defaults](/operate/workspaces-and-targets/#cluster-deploy-de
 
 | Variable | Default | Edition | Purpose |
 |---|---|---|---|
-| `DEXAFLOW_EXECUTOR_TYPE` | `kubernetes` | both | Pod-path executor: `kubernetes` (default, pod-per-task) or `subprocess` (dev only — runs the agent on the host without isolation; `dexaflow lite` sets it). |
+| `DEXAFLOW_EXECUTOR_TYPE` | `kubernetes` | both | Pod-path executor: `kubernetes` (default, pod-per-task) or `subprocess` (dev only, runs the agent on the host without isolation; `dexaflow lite` sets it). With `kubernetes`, a scheduler that finds no in-cluster config or kubeconfig refuses to start. |
 | `DEXAFLOW_EXECUTOR_TASK_NAMESPACE` | `leoflow` | Pro | Kubernetes namespace the server creates task pods and per-run staging PVCs in. MUST match the namespace the Helm chart grants the executor Role in (chart `taskNamespace`); a mismatch 403s every dispatch (#480). The Helm chart always sets it (to the release namespace by default, #1682), so the `leoflow` default applies only to installs that do not use the chart. |
 | `DEXAFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR` | _(empty → `server.grpc_addr`)_ | both | gRPC address task pods dial back to. In a local k3d/kind cluster set it to a host-reachable address such as `host.k3d.internal:9091`. |
 | `DEXAFLOW_EXECUTOR_AGENT_TLS_CA_CONFIGMAP` | _(empty)_ | Pro | Names a ConfigMap (key `ca.crt`) mounted into task pods so the agent verifies the control plane's gRPC TLS cert (#58). Empty = agents use the insecure channel (dev). |

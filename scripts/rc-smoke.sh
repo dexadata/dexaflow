@@ -72,6 +72,7 @@ ui_smoke() {
   LEOFLOW_SECRET_KEY="e2e-insecure-secret-key-32bytes!" LEOFLOW_BOOTSTRAP_PASSWORD_HASH="$hash" \
   LEOFLOW_BOOTSTRAP_EMAIL="$email" LEOFLOW_UI_EDITION="lite" \
   LEOFLOW_UI_WORKSPACE="$home_dir/ws" LEOFLOW_LOGS_DIR="$home_dir/logs" \
+  LEOFLOW_EXECUTOR_TYPE=subprocess \
     ./bin/leoflow-server >"$home_dir/server.log" 2>&1 &
   pid=$!
   for _ in $(seq 1 60); do

@@ -108,11 +108,11 @@ jobs:
         options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
     env:
       # Lite's executor is the subprocess one (dexaflow lite sets
-      # LEOFLOW_EXECUTOR_TYPE=subprocess). e2e-lite leaves the kubernetes
-      # default, and on a runner with no cluster setupK8sDispatch logs "pod
-      # dispatch disabled" and wires no dispatcher at all; the buffered pool
-      # fronts a dispatcher, so this leg needs one, and the subprocess executor
-      # is the one Lite ships with. The login path dispatches no task.
+      # LEOFLOW_EXECUTOR_TYPE=subprocess). A runner has no cluster, and the
+      # kubernetes executor refuses to boot without a Kubernetes client (#704);
+      # the buffered pool fronts a dispatcher, so this leg needs one, and the
+      # subprocess executor is the one Lite ships with. The login path
+      # dispatches no task.
       DEXAFLOW_EXECUTOR_TYPE: subprocess
       PERF_GATES_LEG: lite
     steps:

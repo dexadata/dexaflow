@@ -576,7 +576,8 @@ func allowanceFor(allow map[string]int, dagVersionID string) int {
 //     (metered warm_pool_untenanted_pod) and otherwise left uncounted — it is never
 //     deleted for the cap.
 //   - headroom = budget − tenant_live. It is rationed across the tenant's active
-//     versions still short of their idle floor, in a STABLE order (by DagVersionID),
+//     versions still short of their idle floor, in a STABLE order (versions with
+//     an active run first, then prewarm targets, each kind by DagVersionID),
 //     each taking min(idle shortfall, its own MaxPoolSize headroom, remaining
 //     headroom). The idle workers a rationed prewarm target keeps above its share
 //     (retiringPrewarmIdle) are not charged against the versions with an active
@@ -775,8 +776,12 @@ func (r *WarmPoolReconciler) tenantBudget(ctx context.Context, tenant string, fl
 }
 
 // rationTenant distributes a tenant's create headroom across its versions in a
-// stable order (by DagVersionID), writing each version's create allowance into
-// allow. Each version takes min(idle shortfall to its floor, its own MaxPoolSize
+// stable order, writing each version's create allowance into allow: the
+// versions with an active run first, then the prewarm targets, each kind by
+// DagVersionID. A prewarm floor is an anticipation and takes only what the cap
+// leaves (ADR 0082 D7), so when busy pods have consumed part of the budget the
+// run floors take the rest before any prewarm target, whatever their ids
+// (#1905). Each version takes min(idle shortfall to its floor, its own MaxPoolSize
 // headroom, remaining tenant headroom). A version with an active run also
 // counts the retiring idle workers of rationed prewarm targets
 // (retiringPrewarmIdle) as headroom, so those workers never hold back its
@@ -789,7 +794,12 @@ func (r *WarmPoolReconciler) tenantBudget(ctx context.Context, tenant string, fl
 // less, never by deleting, and the floor is granted on a later tick.
 func (r *WarmPoolReconciler) rationTenant(ctx context.Context, versions []WarmTarget, stat map[string]warmVerStat, headroom, retiring int, allow map[string]int) {
 	runHeadroom := headroom + retiring
-	sort.Slice(versions, func(i, j int) bool { return versions[i].DagVersionID < versions[j].DagVersionID })
+	sort.Slice(versions, func(i, j int) bool {
+		if versions[i].Prewarm != versions[j].Prewarm {
+			return !versions[i].Prewarm
+		}
+		return versions[i].DagVersionID < versions[j].DagVersionID
+	})
 	for _, t := range versions {
 		s := stat[t.DagVersionID]
 		maxPool := t.MaxPoolSize

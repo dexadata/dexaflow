@@ -40,6 +40,8 @@ func TestRecordersIncrementCounters(t *testing.T) {
 	m.RecordUnitMisfit("register")              // backs executor.unit.enforce=warn (ADR 0066)
 	m.RecordUnpinnedImage("register", "warned") // backs deploy.require_digest (#1703)
 	m.RecordSchedulerWokenTick()                // backs scheduler.eager_promotion's wake rate
+	m.RecordTLSReloadFailure("agent_grpc")      // backs a stuck certificate rotation (#637)
+	(*Metrics)(nil).RecordTLSReloadFailure("api")
 
 	// Each recorder must have incremented its counter to 1.
 	for name, want := range map[string]float64{
@@ -49,6 +51,7 @@ func TestRecordersIncrementCounters(t *testing.T) {
 		"dexaflow_unit_misfit_total":           1,
 		"dexaflow_unpinned_image_total":        1,
 		"dexaflow_scheduler_woken_ticks_total": 1,
+		"dexaflow_tls_reload_failures_total":   1,
 	} {
 		if got := counterTotal(t, reg, name); got != want {
 			t.Errorf("%s = %v, want %v", name, got, want)
