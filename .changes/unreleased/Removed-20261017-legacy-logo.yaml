@@ -1,0 +1,6 @@
+kind: Removed
+body: |-
+  **The unused 4.1 MB legacy logo.png and scripts/gen_assets.py were removed from the repository root.**
+  Brand logos and icons are now exclusively located under `website/static/assets/`, reducing
+  initial checkout size for contributors and CI pipelines. (#1939)
+time: 2026-10-17T18:39:00.000000000+00:00
