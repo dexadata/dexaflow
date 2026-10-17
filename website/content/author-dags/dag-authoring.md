@@ -343,6 +343,15 @@ meta-schemas. Since 0.5.1 any other reference, such as a `file://` URL or a
 relative path, is refused with a schema error at registration, at trigger or
 at the push, so inline what a schema needs instead of pointing at a file.
 
+A task sees `params` (`{{ params.x }}`, `context["params"]`) the way Airflow
+builds them: the DAG's declared defaults, then the task's own `params=`, then the
+run's `conf`, each one winning over the one before for the same key. Since 0.5.5
+this holds for every run: a scheduled run, which carries no `conf`, still gets
+the DAG defaults, and an operator's `params=` is part of its template context.
+A manual trigger stores the declared defaults in the run's `conf`, as the Airflow
+UI's trigger form does, so on such a run a DAG default wins over a task param of
+the same name.
+
 ### Clearing a task
 
 Clearing a task (the UI's Clear, or
