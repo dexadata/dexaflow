@@ -1,4 +1,4 @@
-// Command leoflow-agent runs as PID 1 inside every task pod. It connects back to
+// Command dexaflow-agent runs as PID 1 inside every task pod. It connects back to
 // the control plane over gRPC, fetches the task spec, runs the user process while
 // streaming logs, pushes the return value, and reports the terminal state.
 package main

@@ -1,4 +1,4 @@
-// Command leoflow is the developer CLI for authoring and compiling DAGs.
+// Command dexaflow is the developer CLI for authoring and compiling DAGs.
 package main
 
 import (
