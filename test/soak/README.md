@@ -367,9 +367,15 @@ attempts served per warm worker. Plus one correctness assertion that matters mor
 than any of the numbers: on a reused pod, attempt N must resolve the same
 Connection values as attempt 1, and a superseded attempt's token must not.
 
-> **Status: written, not yet executed.** The script is in the tree and reuses the
-> k3d patterns from `test/e2e/chaos-runtime.sh`, but it has not been run to
-> completion. Treat its output format as a proposal until the first green run.
+> **Status: not yet run green on a cluster.** The script builds the base image
+> and the two DAG images the way `test/e2e/e2e.sh` does (`dexaflow compile
+> --build` from `dexaflow.yaml`), imports them with `k3d_import`, migrates its
+> database, boots each arm with a JWT secret and registers and unpauses the DAGs
+> with the `test/e2e/lib.sh` helpers. It exits 2 whenever it has no latency for
+> both arms, so `make soak-warmpool-ab` can no longer pass having measured
+> nothing (#1920). `bash test/soak/warmpool-ab.sh --self-test` runs its decision
+> logic and its whole flow against stubbed tools. It has not completed on a
+> cluster, so treat its output format as a proposal until the first green run.
 > It prints this warning itself.
 
 ---
@@ -615,7 +621,7 @@ than one with an honest gap list.
 | `dags/` | the six DAG projects |
 | `fixture/` | the loopback HTTP server the operator leg points at |
 | `monitor/` | the continuous invariant checker (`package main`, `test/load` convention) |
-| `warmpool-ab.sh` | the k3d warm-pool A/B (written, not yet executed) |
+| `warmpool-ab.sh` | the k3d warm-pool A/B (not yet run green on a cluster; `--self-test` covers its logic) |
 | `schedule/install.sh` | installs a local launchd agent or systemd user timer |
 
 ### Evidence layout

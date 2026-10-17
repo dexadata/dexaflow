@@ -198,7 +198,7 @@ soak-selftest: ## Prove the soak's assertions can fail: injects a real outage th
 	echo "soak-selftest OK: the battery went red (exit 1, violations recorded) as designed"
 
 .PHONY: soak-warmpool-ab
-soak-warmpool-ab: ## Warm-pool A/B on k3d (ADR 0058): same workload with pools off and on, interleaved. Needs k3d + docker. Written, not yet executed.
+soak-warmpool-ab: ## Warm-pool A/B on k3d (ADR 0058): same workload with pools off and on, interleaved. Needs k3d, docker and migrate. Exits 2 when it measured nothing. Not yet run green on a cluster.
 	bash test/soak/warmpool-ab.sh
 
 .PHONY: e2e-timeout
