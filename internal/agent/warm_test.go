@@ -347,6 +347,71 @@ func TestWarmWorkerRegisterCarriesPodName(t *testing.T) {
 	}
 }
 
+// TestWarmWorkerRegisterCarriesAttemptHomeSweep locks the agent side of #1678:
+// the register states whether this worker empties /tmp and /dev/shm between
+// attempts (AttemptHome, from LEOFLOW_WARM_ATTEMPT_HOME), so a control plane
+// running warm workers with a read-only root can refuse one that does not.
+func TestWarmWorkerRegisterCarriesAttemptHomeSweep(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		stream := &fakeAssignmentStream{ctx: context.Background()} // empty => immediate io.EOF
+		client := &warmFake{fakeClient: &fakeClient{}, stream: stream, tokens: NewTokenSource("bootstrap")}
+		tmp := t.TempDir()
+		w := &WarmRunner{
+			StreamClient:  client,
+			WorkClient:    client,
+			AttemptTokens: NewTokenSource("bootstrap"),
+			Cmd:           &scratchProbeCmd{scratchDir: filepath.Join(tmp, "scratch")},
+			Hostname:      "warm-pod-1",
+			Version:       "test",
+			ScratchDir:    filepath.Join(tmp, "scratch"),
+			AttemptHome:   on,
+			SharedTmpDir:  tmp,
+			SharedMemDir:  t.TempDir(),
+		}
+		if err := w.Run(context.Background(), "dagver-1"); err != nil {
+			t.Fatalf("AttemptHome=%v: WarmRunner.Run: %v", on, err)
+		}
+		if len(stream.sent) == 0 {
+			t.Fatalf("AttemptHome=%v: worker sent no messages; expected a WorkerRegister", on)
+		}
+		reg := stream.sent[0].GetRegister()
+		if reg == nil {
+			t.Fatalf("AttemptHome=%v: first message must be a WorkerRegister, got %+v", on, stream.sent[0])
+		}
+		if reg.GetAttemptHomeSweep() != on {
+			t.Errorf("AttemptHome=%v: WorkerRegister.attempt_home_sweep = %v", on, reg.GetAttemptHomeSweep())
+		}
+	}
+}
+
+// TestWarmWorkerRegisterSweepNeedsBothPaths: the register confirms the sweep
+// only when the worker knows both paths it empties. AttemptHome with no /tmp or
+// no /dev/shm path skips that sweep in resetScratch, so it must not be
+// reported as done (#1678).
+func TestWarmWorkerRegisterSweepNeedsBothPaths(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		tmpSet, shm  bool
+		wantConfirms bool
+	}{
+		{"both", true, true, true},
+		{"no tmp", false, true, false},
+		{"no shm", true, false, false},
+	} {
+		w := &WarmRunner{PodName: "warm-pod-1", AttemptHome: true}
+		if tc.tmpSet {
+			w.SharedTmpDir = "/tmp"
+		}
+		if tc.shm {
+			w.SharedMemDir = "/dev/shm"
+		}
+		got := w.registerMessage("dagver-1").GetRegister().GetAttemptHomeSweep()
+		if got != tc.wantConfirms {
+			t.Errorf("%s: attempt_home_sweep = %v, want %v", tc.name, got, tc.wantConfirms)
+		}
+	}
+}
+
 // warmSpecs returns n identical minimal specs (bash true, no execution_timeout) so
 // a warmFake can hand one out per served attempt without index-out-of-range.
 func warmSpecs(n int) []*agentv1.TaskSpec {

@@ -1155,6 +1155,7 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 			handleReclaim(ctx, execStore, logger, ev)
 		})
 		logger.Warn("warm worker pools enabled (ADR 0058 N1b1-place); admitted tasks place on a free warm worker of their dag_version, else dispatch dedicated")
+		requireWarmSweep(cfg, warmReg, metrics)
 	}
 	// Fail closed (#700): when the operator selected the exchange transport, the
 	// Kubernetes client is a hard prerequisite. buildTokenExchange returns an
@@ -1742,6 +1743,36 @@ func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticat
 	}()
 	logger.Info("agent grpc server started", "grpc_addr", addr, "tls", secure)
 	return srv, agentSrv, nil
+}
+
+// warmSweepPolicy is how the warm registry treats a worker that does not
+// confirm the /tmp and /dev/shm sweep (#1678). The sweep is done by the agent in
+// the task image, so an image built on an older runtime runs with the read-only
+// root while nothing empties those paths between attempts. With the read-only
+// root on, such a worker is logged and metered, and refused only when
+// execution.warm_require_attempt_home_sweep is also on: agents from v0.5.1 up to
+// the release that added the report do sweep but cannot confirm it, so refusing
+// by default would take warm pools away from images that are fine.
+func warmSweepPolicy(cfg *config.ServerConfig) agentrpc.SweepPolicy {
+	switch {
+	case !cfg.Execution.WarmReadOnlyRootFilesystem:
+		return agentrpc.SweepIgnore
+	case cfg.Execution.WarmRequireAttemptHomeSweep:
+		return agentrpc.SweepRefuse
+	default:
+		return agentrpc.SweepWarn
+	}
+}
+
+// requireWarmSweep sets the warm registry's sweep policy from the config.
+func requireWarmSweep(cfg *config.ServerConfig, reg *agentrpc.WorkerRegistry, metrics *observability.Metrics) {
+	// A nil *Metrics boxed into the interface would be non-nil, so pass a nil
+	// interface when metrics are off.
+	var rec agentrpc.DecisionRecorder
+	if metrics != nil {
+		rec = metrics
+	}
+	reg.SetSweepPolicy(warmSweepPolicy(cfg), rec)
 }
 
 // tokenExchange bundles the Kubernetes-backed dependencies of the agent

@@ -235,6 +235,9 @@ func (s *Server) registerFromStream(stream agentv1.AgentService_AwaitAssignmentS
 			"identity", identity, "token_dag_version", tokenPool, "register_dag_version", dagVersion)
 		return nil, status.Error(codes.PermissionDenied, "worker token is not valid for this dag_version")
 	}
+	if serr := s.checkAttemptHomeSweep(reg, identity, dagVersion); serr != nil {
+		return nil, serr
+	}
 	// pod_name is the worker's own downward-API pod name, the durable key a started
 	// attempt is bound to (ADR 0058 N1d-a1). It is a locator, not a credential — the
 	// identity above still governs authorization — so an empty value only means the
@@ -252,6 +255,36 @@ func (s *Server) registerFromStream(stream agentv1.AgentService_AwaitAssignmentS
 	}
 	slog.Info("warm worker registered", "identity", identity, "dag_version", dagVersion, "pod_name", podName)
 	return worker, nil
+}
+
+// checkAttemptHomeSweep applies the registry's sweep policy to a registration
+// that does not confirm the attempt home sweep (#1678, warm workers with a
+// read-only root). Such a worker comes from a task image whose agent does not
+// report the sweep (an agent before runtime v0.5.1 does not sweep at all; later
+// ones that predate the report sweep but cannot say so), or from a pod created
+// before the read-only root was turned on. Under SweepWarn it is logged,
+// metered and accepted. Under SweepRefuse it is refused and never joins the
+// pool, so placement runs its DAG version's attempts on dedicated pods.
+func (s *Server) checkAttemptHomeSweep(reg *agentv1.WorkerRegister, identity, dagVersion string) error {
+	policy, rec := s.warmPools.sweepPolicyAndRecorder()
+	if policy == SweepIgnore || reg.GetAttemptHomeSweep() {
+		return nil
+	}
+	attrs := []any{"reason", ReasonAttemptHomeSweepUnconfirmed,
+		"identity", identity, "dag_version", dagVersion, "pod_name", reg.GetPodName()}
+	if policy != SweepRefuse {
+		slog.Warn("warm worker does not confirm it empties /tmp and /dev/shm between attempts under warm_read_only_root_filesystem; rebuild the task image on a runtime that reports the sweep", attrs...)
+		if rec != nil {
+			rec.RecordSchedulerDecision(DecisionWarmWorkerSweepUnconfirmed)
+		}
+		return nil
+	}
+	slog.Warn("warm worker refused: it does not confirm it empties /tmp and /dev/shm between attempts and warm_require_attempt_home_sweep is on; rebuild the task image on a runtime that reports the sweep", attrs...)
+	if rec != nil {
+		rec.RecordSchedulerDecision(DecisionWarmWorkerRefusedNoSweep)
+	}
+	return status.Error(codes.PermissionDenied, ReasonAttemptHomeSweepUnconfirmed+
+		": warm workers run with a read-only root filesystem and this worker does not confirm the /tmp and /dev/shm sweep")
 }
 
 // pumpWorkerMessages drains WorkerMessages off the stream into the registry
