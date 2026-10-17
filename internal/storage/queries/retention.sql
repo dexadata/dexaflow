@@ -64,14 +64,6 @@ FROM task_instances ti
 WHERE ti.tenant_id = sqlc.arg(tenant_id) AND ti.dag_run_id = ANY(sqlc.arg(run_ids)::uuid[])
 FOR UPDATE OF ti NOWAIT;
 
--- name: DeleteTaskStateHistoryOfRuns :execrows
-DELETE FROM task_state_history
-WHERE id IN (
-  SELECT h.id FROM task_state_history h
-  JOIN task_instances ti ON ti.id = h.task_instance_id
-  WHERE ti.tenant_id = sqlc.arg(tenant_id) AND ti.dag_run_id = ANY(sqlc.arg(run_ids)::uuid[])
-  LIMIT sqlc.arg(row_limit));
-
 -- name: DeleteTaskInstanceHistoryOfRuns :execrows
 DELETE FROM task_instance_history
 WHERE history_id IN (

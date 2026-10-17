@@ -198,7 +198,7 @@ func (r *reporter) renderMarkdown(v verdict) string {
 		fmt.Fprintf(&b, "| dispatch latency p50 / p95 / p99 | %.0f / %.0f / %.0f ms (n=%d) |\n", s.DispatchP50, s.DispatchP95, s.DispatchP99, s.DispatchN)
 		fmt.Fprintf(&b, "| runs total / success / failed | %d / %d / %d |\n", s.TotalRuns, s.RunsSuccess, s.RunsFailed)
 		fmt.Fprintf(&b, "| task instances / archived attempts / xcom rows | %d / %d / %d |\n", s.TotalTIs, s.TotalHistory, s.TotalXCom)
-		fmt.Fprintf(&b, "| state-history rows / audit rows | %d / %d |\n", s.TotalStateHistory, s.TotalAudit)
+		fmt.Fprintf(&b, "| audit rows | %d |\n", s.TotalAudit)
 		fmt.Fprintf(&b, "| off-budget infra re-placements (recorded, not asserted) | %d |\n", s.InfraReplacements)
 		fmt.Fprintf(&b, "| database size (metadatabase / whole cluster) | %s / %s |\n", humanBytes(s.DBBytes), humanBytes(s.DBClusterBytes))
 		fmt.Fprintf(&b, "| DAG scratch data | %s |\n", humanBytes(s.DataBytes))

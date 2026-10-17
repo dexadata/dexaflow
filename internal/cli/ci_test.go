@@ -5,6 +5,8 @@ import (
 	"errors"
 	"flag"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,6 +47,25 @@ func stubTagCommit(t *testing.T) *[]string {
 	return &asked
 }
 
+// ciGoldenImageDigest stands for the digest of the dexaflow-cli image of
+// ciGoldenVersion, which the GitLab job runs in.
+const ciGoldenImageDigest = "sha256:89abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567"
+
+// stubImageDigest makes the lookup of the dexaflow-cli image answer
+// ciGoldenImageDigest for any tag, without the network, and records the
+// images it was asked for.
+func stubImageDigest(t *testing.T) *[]string {
+	t.Helper()
+	var asked []string
+	saved := ciImageDigest
+	ciImageDigest = func(_ context.Context, image string) (string, error) {
+		asked = append(asked, image)
+		return ciGoldenImageDigest, nil
+	}
+	t.Cleanup(func() { ciImageDigest = saved })
+	return &asked
+}
+
 // ciCase is one golden case: a workspace and the system it is generated for.
 type ciCase struct {
 	name     string
@@ -81,6 +102,7 @@ func ciWorkspace(t *testing.T, registry, orders string) string {
 func ciInit(t *testing.T, root string, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
 	stubTagCommit(t)
+	stubImageDigest(t)
 	t.Chdir(root)
 	full := append([]string{"ci", "init"}, args...)
 	full = append(full, "--cli-version", ciGoldenVersion, "--config", emptyConfig(t))
@@ -626,14 +648,14 @@ func TestCIRecipesMatchGenerated(t *testing.T) {
 			t.Errorf("block %s names an unknown case %q", path, name)
 			continue
 		}
-		want := strings.ReplaceAll(strings.ReplaceAll(files[path], ciGoldenVersion, "vX.Y.Z"), ciGoldenCommit, "<sha>")
+		want := strings.NewReplacer(ciGoldenVersion, "vX.Y.Z", ciGoldenCommit, "<sha>", ciGoldenImageDigest, "sha256:<digest>").Replace(files[path])
 		if want == "" {
 			t.Errorf("case %s writes no %s", name, path)
 			continue
 		}
 		if body != want {
-			t.Errorf("the recipe %s (%s) in cicd-deploy.md is not what ci init writes; paste testdata/ci/%s/%s with %s as vX.Y.Z and %s as <sha>:\n%s",
-				path, name, name, path, ciGoldenVersion, ciGoldenCommit, body)
+			t.Errorf("the recipe %s (%s) in cicd-deploy.md is not what ci init writes; paste testdata/ci/%s/%s with %s as vX.Y.Z, %s as <sha> and %s as sha256:<digest>:\n%s",
+				path, name, name, path, ciGoldenVersion, ciGoldenCommit, ciGoldenImageDigest, body)
 		}
 		seen[name+"/"+path] = true
 	}
@@ -833,10 +855,11 @@ func TestCIGitHubBaseIsTheLastSuccessfulDeploy(t *testing.T) {
 	}
 }
 
-// TestCIGitLabBase runs the job's base snippet with a fake curl: with
-// DEXAFLOW_GITLAB_API_TOKEN the base is the last successful push pipeline,
-// without it the previous commit of the push, and a failed API call
-// deploys everything.
+// TestCIGitLabBase runs the job's base snippet against a fake GitLab API:
+// with DEXAFLOW_GITLAB_API_TOKEN the base is the last successful push
+// pipeline, without it the previous commit of the push, and a failed API
+// call deploys everything. The snippet asks with python3, which every image
+// the job runs in has, since the dexaflow-cli image has no curl.
 func TestCIGitLabBase(t *testing.T) {
 	for _, bin := range []string{"sh", "python3"} {
 		if _, err := exec.LookPath(bin); err != nil {
@@ -858,33 +881,126 @@ func TestCIGitLabBase(t *testing.T) {
 	if snippet == "" {
 		t.Fatal("no base snippet in the job")
 	}
-	for _, c := range []struct{ token, curl, want string }{
-		{"glpat-x", "#!/bin/sh\necho \"$*\" >>\"$CURL_LOG\"\necho '[{\"sha\":\"feed01\"}]'\n", "feed01"},
-		{"", "#!/bin/sh\nexit 9\n", "before01"},
-		{"glpat-x", "#!/bin/sh\nexit 22\n", ""},
-		{"glpat-x", "#!/bin/sh\necho '[]'\n", ""},
+	for _, c := range []struct {
+		token, body string
+		status      int
+		want        string
+	}{
+		{"glpat-x", `[{"sha":"feed01"}]`, http.StatusOK, "feed01"},
+		{"", `[{"sha":"feed01"}]`, http.StatusOK, "before01"},
+		{"glpat-x", `{"message":"401 Unauthorized"}`, http.StatusUnauthorized, ""},
+		{"glpat-x", `[]`, http.StatusOK, ""},
 	} {
-		dir := t.TempDir()
-		log := filepath.Join(dir, "log")
-		bin := fakeTool(t, "curl", c.curl)
+		var asked []string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			asked = append(asked, r.URL.RequestURI()+" "+r.Header.Get("PRIVATE-TOKEN"))
+			w.WriteHeader(c.status)
+			_, _ = w.Write([]byte(c.body)) //nolint:errcheck // a test server
+		}))
+		// A curl that fails loudly comes first on PATH: the snippet must not use it.
+		bin := fakeTool(t, "curl", "#!/bin/sh\necho curl called >&2\nexit 9\n")
 		cmd := exec.CommandContext(t.Context(), "sh", "-e", "-c", snippet+"\nprintf '%s' \"$DEXAFLOW_BASE_REF\"") //nolint:gosec // the snippet under test
 		cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
-			"DEXAFLOW_GITLAB_API_TOKEN="+c.token, "CI_COMMIT_BEFORE_SHA=before01", "CURL_LOG="+log,
-			"CI_API_V4_URL=https://gitlab.example/api/v4", "CI_PROJECT_ID=7", "CI_COMMIT_BRANCH=main")
+			"DEXAFLOW_GITLAB_API_TOKEN="+c.token, "CI_COMMIT_BEFORE_SHA=before01",
+			"CI_API_V4_URL="+srv.URL+"/api/v4", "CI_PROJECT_ID=7", "CI_COMMIT_BRANCH=main")
+		var stderr strings.Builder
+		cmd.Stderr = &stderr
 		b, err := cmd.Output()
+		srv.Close()
 		if err != nil {
-			t.Fatalf("token %q: the snippet failed: %v", c.token, err)
+			t.Fatalf("token %q: the snippet failed: %v\n%s", c.token, err, stderr.String())
 		}
 		if string(b) != c.want {
-			t.Errorf("token %q, curl %q: DEXAFLOW_BASE_REF = %q, want %q", c.token, c.curl, b, c.want)
+			t.Errorf("token %q, answer %d %s: DEXAFLOW_BASE_REF = %q, want %q\n%s", c.token, c.status, c.body, b, c.want, stderr.String())
 		}
-		if args, _ := os.ReadFile(log); len(args) > 0 { //nolint:errcheck // absent when curl was not called
-			for _, want := range []string{"projects/7/pipelines?ref=main&source=push&status=success&per_page=1", "PRIVATE-TOKEN: glpat-x"} {
-				if !strings.Contains(string(args), want) {
-					t.Errorf("curl %s lacks %q", args, want)
-				}
+		if strings.Contains(stderr.String(), "curl called") {
+			t.Errorf("token %q: the snippet ran curl, which the dexaflow-cli image does not have", c.token)
+		}
+		if c.token == "" {
+			if len(asked) > 0 {
+				t.Errorf("without a token the API must not be called: %v", asked)
 			}
+			continue
 		}
+		want := "/api/v4/projects/7/pipelines?ref=main&source=push&status=success&per_page=1 glpat-x"
+		if !slices.Equal(asked, []string{want}) {
+			t.Errorf("token %q: asked %v, want [%s]", c.token, asked, want)
+		}
+	}
+}
+
+// TestCIInitGitLabRunsInTheCLIImage runs the GitLab job in the published
+// dexaflow-cli image of the pinned release, pinned by the digest its
+// registry answers, with GitLab's shell in place of the image's entrypoint
+// and nothing installed in the job. A release without the image keeps the
+// Python image, a project that needs a daemon keeps Docker in Docker, and a
+// digest that cannot be read is a refusal, not an unpinned image.
+func TestCIInitGitLabRunsInTheCLIImage(t *testing.T) {
+	var doc map[string]struct {
+		Image struct {
+			Name       string   `yaml:"name"`
+			Entrypoint []string `yaml:"entrypoint"`
+		} `yaml:"image"`
+		BeforeScript []string `yaml:"before_script"`
+		Script       []string `yaml:"script"`
+	}
+	golden := ciGolden(t)["gitlab"][".gitlab-ci.yml"]
+	if err := yaml.Unmarshal([]byte(golden), &doc); err != nil {
+		t.Fatal(err)
+	}
+	job := doc["dexaflow-deploy"]
+	if want := ciCLIImageRepo + ":" + ciGoldenVersion + "@" + ciGoldenImageDigest; job.Image.Name != want {
+		t.Errorf("image = %q, want %q", job.Image.Name, want)
+	}
+	if !slices.Equal(job.Image.Entrypoint, []string{""}) {
+		t.Errorf("entrypoint = %q, want [\"\"] so GitLab runs the script in a shell", job.Image.Entrypoint)
+	}
+	if len(job.BeforeScript) > 0 {
+		t.Errorf("the image runs as a non-root user and carries what the job needs; nothing may be installed: %q", job.BeforeScript)
+	}
+	if strings.Contains(strings.Join(job.Script, "\n"), "curl") {
+		t.Errorf("the image has no curl:\n%s", golden)
+	}
+
+	isolateCLIEnv(t)
+	root := ciWorkspace(t, "registry.gitlab.com/acme/dags", "")
+	stubTagCommit(t)
+	asked := stubImageDigest(t)
+	t.Chdir(root)
+	if _, _, err := run(t, "ci", "init", "gitlab", "--cli-version", "v0.7.0", "--stdout", "--config", emptyConfig(t)); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{ciCLIImageRepo + ":v0.7.0"}; !slices.Equal(*asked, want) {
+		t.Errorf("looked up %v, want %v", *asked, want)
+	}
+	*asked = nil
+	out, _, err := run(t, "ci", "init", "gitlab", "--cli-version", "v0.5.3", "--stdout", "--config", emptyConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(*asked) > 0 || !strings.Contains(out, "image: "+ciPythonImage) || strings.Contains(out, ciCLIImageRepo) {
+		t.Errorf("v0.5.3 ships no dexaflow-cli image, so the job keeps %s: looked up %v\n%s", ciPythonImage, *asked, out)
+	}
+	writeTree(t, filepath.Join(root, "dags", "orders", projectConfigFile), "dag_id: orders\nsystem_packages: [libpq-dev]\n")
+	out, _, err = run(t, "ci", "init", "gitlab", "--cli-version", "v0.7.0", "--stdout", "--config", emptyConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(*asked) > 0 || !strings.Contains(out, "image: "+ciDockerImage) || strings.Contains(out, ciCLIImageRepo) {
+		t.Errorf("a project that needs a daemon keeps Docker in Docker, with no lookup: looked up %v\n%s", *asked, out)
+	}
+	writeTree(t, filepath.Join(root, "dags", "orders", projectConfigFile), "dag_id: orders\n")
+
+	ciImageDigest = func(context.Context, string) (string, error) { return "latest", nil }
+	if _, _, err = run(t, "ci", "init", "gitlab", "--cli-version", "v0.7.0", "--stdout", "--config", emptyConfig(t)); err == nil ||
+		!strings.Contains(err.Error(), "not a sha256 digest") {
+		t.Errorf("err = %v, want a refusal of an answer that is not a digest", err)
+	}
+
+	ciImageDigest = func(context.Context, string) (string, error) { return "", errors.New("unauthorized") }
+	_, _, err = run(t, "ci", "init", "gitlab", "--cli-version", "v0.7.0", "--stdout", "--config", emptyConfig(t))
+	if err == nil || !strings.Contains(err.Error(), ciCLIImageRepo+":v0.7.0") || !strings.Contains(err.Error(), "unauthorized") {
+		t.Errorf("err = %v, want a refusal naming the image whose digest could not be read, and why", err)
 	}
 }
 
@@ -907,6 +1023,7 @@ func TestCIInitGitHubInstallsWithTheAction(t *testing.T) {
 	isolateCLIEnv(t)
 	root := ciWorkspace(t, "ghcr.io/acme/dags", "")
 	asked := stubTagCommit(t)
+	stubImageDigest(t)
 	t.Chdir(root)
 	_, _, err := run(t, "ci", "init", "github", "--cli-version", "v0.7.0", "--stdout", "--config", emptyConfig(t))
 	if err == nil || !strings.Contains(err.Error(), "v0.7.0") {

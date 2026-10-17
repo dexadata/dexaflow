@@ -155,7 +155,45 @@ type WorkerRegistry struct {
 	tombstoneFor time.Duration
 	// now is the clock the liveness grace is measured on. Injectable for tests.
 	now func() time.Time
+	// sweepPolicy is what a registration that does not confirm the /tmp and
+	// /dev/shm sweep gets (#1678); sweepDecisions meters each one.
+	sweepPolicy    SweepPolicy
+	sweepDecisions DecisionRecorder
 }
+
+// DecisionRecorder meters a control-plane decision by type. The production
+// implementation is observability.Metrics (dexaflow_scheduler_decisions_total).
+type DecisionRecorder interface {
+	RecordSchedulerDecision(decisionType string)
+}
+
+// SweepPolicy is how the registry treats a warm worker whose register does not
+// confirm attempt_home_sweep (#1678).
+type SweepPolicy int
+
+const (
+	// SweepIgnore accepts every worker without looking (the read-only root is
+	// off, so no sweep is expected).
+	SweepIgnore SweepPolicy = iota
+	// SweepWarn accepts the worker, logs a warning and meters it.
+	SweepWarn
+	// SweepRefuse refuses the registration, logs and meters it, so the worker
+	// never joins the pool and its DAG version's attempts run on dedicated pods.
+	SweepRefuse
+)
+
+// DecisionWarmWorkerSweepUnconfirmed is the decision type metered when a warm
+// worker that does not confirm the attempt home sweep is accepted (SweepWarn).
+const DecisionWarmWorkerSweepUnconfirmed = "warm_worker_sweep_unconfirmed"
+
+// DecisionWarmWorkerRefusedNoSweep is the decision type metered when a warm
+// worker is refused because it does not confirm the attempt home sweep
+// (SweepRefuse).
+const DecisionWarmWorkerRefusedNoSweep = "warm_worker_refused_no_sweep"
+
+// ReasonAttemptHomeSweepUnconfirmed is the stable reason logged for a warm
+// worker that does not confirm the sweep, and carried by its refusal.
+const ReasonAttemptHomeSweepUnconfirmed = "attempt_home_sweep_unconfirmed"
 
 // NewWorkerRegistry builds a registry whose reclaim events are delivered to
 // onReclaim (may be nil).
@@ -180,6 +218,33 @@ func (r *WorkerRegistry) SetOnClaim(fn func()) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.onClaim = fn
+}
+
+// SetSweepPolicy sets how the registry treats a warm worker whose register
+// does not confirm attempt_home_sweep (#1678). With
+// execution.warm_read_only_root_filesystem on, isolation between attempts
+// relies on the agent in the task image to empty /tmp and /dev/shm, and an
+// agent built on an older runtime silently does not. rec (may be nil) meters
+// each unconfirmed worker. Call it before the registry serves workers.
+func (r *WorkerRegistry) SetSweepPolicy(p SweepPolicy, rec DecisionRecorder) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sweepPolicy = p
+	r.sweepDecisions = rec
+}
+
+// SweepPolicy reports the policy SetSweepPolicy set (SweepIgnore by default).
+func (r *WorkerRegistry) SweepPolicy() SweepPolicy {
+	p, _ := r.sweepPolicyAndRecorder()
+	return p
+}
+
+// sweepPolicyAndRecorder reports the sweep policy and the recorder its
+// decisions are metered on.
+func (r *WorkerRegistry) sweepPolicyAndRecorder() (SweepPolicy, DecisionRecorder) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sweepPolicy, r.sweepDecisions
 }
 
 // claimed runs the onClaim hook, if any, outside the registry lock.

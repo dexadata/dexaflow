@@ -191,17 +191,33 @@ def _write_return(result) -> None:
         fh.write(payload)
 
 
+class TemplateRenderError(RuntimeError):
+    """TemplateRenderError fails a task attempt whose templates cannot render.
+
+    A template that fails to render must never run as its raw ``{{ ... }}`` text
+    (#1845, ADR 0084): the attempt fails before ``execute()`` or ``bash -c``, as on
+    Airflow. ``field`` names the template field that failed, or is None when it
+    cannot be identified; the message carries the Jinja error.
+    """
+
+    def __init__(self, field: str | None, owner: str, error: BaseException) -> None:
+        self.field = field
+        where = f"template field {field!r} of {owner}" if field else f"template fields of {owner}"
+        super().__init__(f"{where} failed to render: {type(error).__name__}: {error}")
+
+
 def _render_bash(command: str, context: dict) -> str:
     """Jinja-render a bash command with the run context (ds/params/var/conn/...), so a
-    native bash task can template like Airflow (ADR 0040 parity). No template markers,
-    no jinja2, or a render error → the raw command (best-effort; the env vars
-    $LEOFLOW_DS/$AIRFLOW_VAR_* still reach it either way)."""
+    native bash task can template like Airflow (ADR 0040 parity). A command with no
+    template markers is returned unchanged. A command that cannot render (a Jinja
+    error, a sandbox refusal, or no jinja2 in the image) raises
+    :class:`TemplateRenderError` instead of running the raw template (ADR 0084)."""
     if "{{" not in command and "{%" not in command:
         return command
     try:
         from jinja2.sandbox import SandboxedEnvironment
-    except Exception:  # noqa: BLE001 — no jinja in this env; env vars still work
-        return command
+    except ImportError as exc:
+        raise TemplateRenderError("bash_command", "the bash task", exc) from exc
     try:
         # A SandboxedEnvironment (what Airflow uses for templating) refuses access to
         # Python internals, so a template-injection payload (e.g. {{ ''.__class__ }})
@@ -221,16 +237,21 @@ def _render_bash(command: str, context: dict) -> str:
         # governs what the template may evaluate, not what the result means to bash.
         env = SandboxedEnvironment(finalize=lambda value: shlex.quote(str(value)))
         return env.from_string(command).render(**context)
-    except Exception:  # noqa: BLE001 — a broken/blocked template must not fail the task
-        return command
+    except Exception as exc:  # noqa: BLE001 (any render failure fails the attempt)
+        raise TemplateRenderError("bash_command", "the bash task", exc) from exc
 
 
 def run_bash(command: str) -> None:
     """Render a bash command with the run context, then exec ``bash -c`` in place so
     bash's stdout/stderr/exit code flow to the agent unchanged (ADR 0040). The agent
     only routes a command here when it contains ``{{`` — plain bash stays a direct
-    ``bash -c`` (no Python needed in bash-only images)."""
-    rendered = _render_bash(command, _operator_context())
+    ``bash -c`` (no Python needed in bash-only images). A command that cannot render
+    fails the attempt without running anything (ADR 0084)."""
+    try:
+        rendered = _render_bash(command, _operator_context())
+    except TemplateRenderError as exc:
+        _lifecycle(str(exc))
+        raise
     if rendered != command:
         _lifecycle("rendered bash command from the run context")
     # Intentionally exec bash by PATH (the agent ran the task as `bash -c` before this
@@ -365,6 +386,10 @@ def _operator_context() -> dict:
         "task_instance": ti,
         "ti": ti,
         "dag_run": None,
+        # The logical date the agent delivers as LEOFLOW_TS; None on a run without
+        # one, where Airflow also has none (#1843).
+        "logical_date": _parse_dt(os.environ.get("LEOFLOW_TS")),
+        "macros": _Macros(),
         "data_interval_start": _parse_dt(os.environ.get("LEOFLOW_DATA_INTERVAL_START")),
         "data_interval_end": _parse_dt(os.environ.get("LEOFLOW_DATA_INTERVAL_END")),
     }
@@ -519,9 +544,13 @@ def run_operator(operator_class: str, args: dict) -> None:
     # dag_run_conf_overrides_params). Without this they render empty (#1841).
     context["params"] = {**_task_params(op), **context["params"]}
     try:
-        op.render_template_fields(context)
-    except Exception as exc:  # noqa: BLE001 — templating is best-effort in Phase A
-        _lifecycle(f"render_template_fields skipped ({type(exc).__name__}: {exc})")
+        _render_operator_fields(op, class_name, context)
+    except TemplateRenderError as exc:
+        # The attempt fails before execute(), as on Airflow (ADR 0084): running
+        # with the raw template text would send it to the external system.
+        _lifecycle(str(exc))
+        _maybe_fire_on_failure_callback(context, _on_failure_from_task_object(op))
+        raise
 
     _lifecycle(f"executing {class_name}.execute()")
     try:
@@ -543,6 +572,62 @@ def run_operator(operator_class: str, args: dict) -> None:
     _write_return(result)
     _write_extra_links(op, context["ti"].pushed)
     _write_xcom_pushes(context["ti"].pushed)
+
+
+def _render_operator_fields(op, class_name: str, context: dict) -> None:
+    """Render the operator's template fields in place, raising
+    :class:`TemplateRenderError` when any of them fails (ADR 0084). Airflow's
+    templater logs the failing field through stdlib logging only, so the field is
+    found again here: each field's value from before the render is rendered on its
+    own, in order, and the first one that raises is the one named."""
+    template_fields = tuple(getattr(op, "template_fields", None) or ())
+    originals = [(name, getattr(op, name, None)) for name in template_fields]
+    try:
+        op.render_template_fields(context)
+    except Exception as exc:  # noqa: BLE001 (any render failure fails the attempt)
+        field = _failing_template_field(op, originals, context)
+        raise TemplateRenderError(field, class_name, exc) from exc
+
+
+def _failing_template_field(op, originals, context) -> str | None:
+    """Return the first template field whose original value fails to render on its
+    own, or None when none does or the operator has no ``render_template``."""
+    render = getattr(op, "render_template", None)
+    if not callable(render):
+        return None
+    for name, value in originals:
+        if not value:
+            continue
+        try:
+            render(value, context)
+        except Exception:  # noqa: BLE001, S112 (a raise is the answer being looked for)
+            return name
+    return None
+
+
+class _Macros:
+    """The ``macros`` context key: the Task SDK's macros module, loaded on first
+    use so a task that never reads it pays no import, or the runtime's own subset
+    (:mod:`leoflow_runtime.macros`) when the SDK is not installed (#1843)."""
+
+    _module = None
+
+    def __getattr__(self, name: str):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        if self._module is None:
+            self._module = _load_macros_module()
+        return getattr(self._module, name)
+
+
+def _load_macros_module():
+    """Import the Task SDK's macros module, or the runtime's fallback without it."""
+    try:
+        return importlib.import_module("airflow.sdk.execution_time.macros")
+    except ImportError:
+        from leoflow_runtime import macros
+
+        return macros
 
 
 def _task_params(op) -> dict:
