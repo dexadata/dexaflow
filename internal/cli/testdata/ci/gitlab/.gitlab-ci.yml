@@ -25,9 +25,16 @@
 # with process_mode=oldest_first), so pipelines deploy in push order.
 #
 # No container daemon is needed: the CLI pushes the DAG code as a layer on the
-# dependency image, and builds that image from wheels with uv.
+# dependency image, and builds that image from wheels with uv. The job runs in
+# the dexaflow-cli image of v0.6.0, pinned by digest, which carries the
+# CLI, Python, git and uv, so nothing is installed in the job. The CLI is the
+# image's, so DEXAFLOW_CLI_VERSION does not apply: to change the release,
+# write this file again with `dexaflow ci init gitlab --force` (--cli-version
+# picks another release).
 dexaflow-deploy:
-  image: python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+  image:
+    name: ghcr.io/dexadata/dexaflow-cli:v0.6.0@sha256:89abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567
+    entrypoint: [""] # GitLab runs the script in a shell
   resource_group: dexaflow-deploy
   variables:
     GIT_DEPTH: "0" # --changed-since and the version label need the history
@@ -35,8 +42,6 @@ dexaflow-deploy:
     DEXAFLOW_REPORT_FILE: $CI_PROJECT_DIR/dexaflow-deploy.json
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web")
-  before_script:
-    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git curl ca-certificates >/dev/null
   script:
     - |
       mkdir -p "$HOME/.docker"
@@ -47,9 +52,16 @@ dexaflow-deploy:
     - |
       DEXAFLOW_BASE_REF="$CI_COMMIT_BEFORE_SHA"
       if [ -n "${DEXAFLOW_GITLAB_API_TOKEN:-}" ]; then
-        DEXAFLOW_BASE_REF="$(curl -fsS --header "PRIVATE-TOKEN: $DEXAFLOW_GITLAB_API_TOKEN" \
-          "$CI_API_V4_URL/projects/$CI_PROJECT_ID/pipelines?ref=$CI_COMMIT_BRANCH&source=push&status=success&per_page=1" |
-          python3 -c 'import json, sys; p = json.load(sys.stdin); print(p[0]["sha"] if p else "")')" || DEXAFLOW_BASE_REF=""
+        DEXAFLOW_BASE_REF="$(python3 -c '
+      import json, os, urllib.parse, urllib.request
+      e = os.environ
+      q = urllib.parse.urlencode({"ref": e["CI_COMMIT_BRANCH"], "source": "push", "status": "success", "per_page": 1})
+      r = urllib.request.Request(e["CI_API_V4_URL"] + "/projects/" + e["CI_PROJECT_ID"] + "/pipelines?" + q,
+                                 headers={"PRIVATE-TOKEN": e["DEXAFLOW_GITLAB_API_TOKEN"]})
+      with urllib.request.urlopen(r, timeout=30) as resp:
+          p = json.load(resp)
+      print(p[0]["sha"] if p else "")
+      ')" || DEXAFLOW_BASE_REF=""
       fi
       export DEXAFLOW_BASE_REF
     - sh ci/dexaflow-deploy.sh
