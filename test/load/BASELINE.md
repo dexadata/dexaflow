@@ -9,6 +9,18 @@ with 15 GB of RAM, Go 1.26.6 and Postgres 16.14 with default settings
 (`shared_buffers` 160 MB, `work_mem` 4 MB). Absolute times move with the
 machine; compare ratios, and re-record both sides on the same host.
 
+**Release and status.** `fc4b56c` is part of v0.5.0: these tables describe
+v0.5.0, before the performance changes that shipped in v0.5.1 (#1309 to #1354:
+the gzip cache of the UI bundle, the `dag_runs.dag_version_id` index, the
+lateral probe for each DAG's latest run, the one-query tick read and others).
+Most rows no longer describe what ships and **need a refresh**: re-record every
+table on the reference host on a named release and commit, and replace this
+paragraph with them (#1617, B3 of the
+[release checklist](../release/perf-reliability-checklist.md)). Until then, compare a change
+with the previous release measured on your own host, as B1 does, and not with
+these numbers. Rows added later say where their numbers come from, and the
+[accepted changes](#accepted-changes-of-the-bar) name their release.
+
 ## Go benchmarks
 
 ```sh
@@ -101,14 +113,16 @@ What stands out:
 
 ## Targets
 
-The gates of the performance plan, against the rows above.
+The gates of the performance plan, against the rows above (v0.5.0). Two were
+never met and are no longer absolute bars of the release checklist; its section
+"Amended bars and known failures" says why.
 
-| Gate | Baseline | Target |
-|---|---|---|
-| Scheduler tick, 1,000 active runs x 20 tasks (batch 3) | 4.76 ms | under 2 ms |
-| UI bundle served with gzip (batch 4) | 417 ms | under 5 ms |
-| Hot queries above, at this dataset size (batch 2) | up to 710 ms | each under 20 ms |
-| DeleteDag with 51 versions (batch 2) | 4,768 ms | under 100 ms |
+| Gate | Baseline | Target | Status |
+|---|---|---|---|
+| Scheduler tick, 1,000 active runs x 20 tasks (batch 3) | 4.76 ms | under 2 ms | Not met: 5.35 ms in the v0.5.4 release checks on `1f1b4cb1`, unchanged since v0.5.3 (#1922). The checklist compares it with the previous release (B1) instead |
+| UI bundle served with gzip (batch 4) | 417 ms | under 5 ms | Still an absolute bar (B2) |
+| Hot queries above, at this dataset size (batch 2) | up to 710 ms | each under 20 ms | Still an absolute bar (C1) except the dashboard history counts, which count every row of their window: 37 ms and 277 ms at one fifth of this dataset in the v0.5.4 release checks, the same as v0.5.3 (#1922). The checklist compares them with the previous release |
+| DeleteDag with 51 versions (batch 2) | 4,768 ms | under 100 ms | Still an absolute bar (C1) |
 
 ## Accepted changes of the bar
 
