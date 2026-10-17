@@ -900,6 +900,21 @@ ingress:
           pathType: Prefix
   # -- TLS configuration. Each entry maps hosts to a TLS Secret (typically a cert-manager Certificate Secret).
   tls: []
+  # Maintenance page configuration for Ingress 502, 503, and 504 errors when no server pod is ready.
+  maintenancePage:
+    # -- Enable the static maintenance page ConfigMap and Ingress error annotations.
+    enabled: false
+    # -- Custom message displayed on the maintenance page. Defaults to generic retrying text.
+    message: ""
+    # -- Optional operator text displayed on the maintenance page (rendered escaped).
+    operatorText: ""
+    # -- Optional status or support URL (rendered escaped).
+    statusUrl: ""
+    # -- Optional label text for statusUrl. Defaults to "Status page".
+    statusText: ""
+    # -- Seconds between automatic page refreshes. Set to 0 to disable auto-refresh.
+    refreshSeconds: 10
+
 
 # -- Extra annotations on the control-plane pod template. EKS/Karpenter opt-in: `karpenter.sh/do-not-disrupt: "true"` exempts the pod's node from Karpenter's voluntary disruption (consolidation, drift, expiration), trading maintenance friction — that node is never consolidated or upgraded by Karpenter while the pod runs — for eviction protection. Not set by default; a second replica plus the auto PDB is the platform-neutral answer.
 podAnnotations: {}

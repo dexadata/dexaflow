@@ -1,0 +1,8 @@
+kind: Added
+body: |-
+  **The Helm chart now includes an optional static maintenance page for ingress 502/503/504 errors.**
+  When all server pods are not ready (such as during boot or schema migrations), ingress controllers
+  previously showed raw error pages. Setting `ingress.maintenancePage.enabled: true` provisions an
+  auto-refreshing maintenance HTML ConfigMap and configures custom error annotations for ingress-nginx
+  with optional custom operator text and status URLs. (#1998)
+time: 2026-10-17T18:46:00.000000000+00:00
