@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -103,7 +104,7 @@ func emptyDockerConfig(t *testing.T, content string) string {
 // what was in the config before is kept.
 func TestStoreLoginIsReadByTheKeychain(t *testing.T) {
 	dir := emptyDockerConfig(t, `{"auths":{"other.example.com":{"auth":"b3RoZXI6c2VjcmV0"}},"proxies":{"default":{"httpProxy":"http://p:3128"}}}`)
-	where, err := StoreLogin("ghcr.io", "octocat", "gho_token")
+	where, err := StoreLogin(context.Background(), "ghcr.io", "octocat", "gho_token")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +146,7 @@ func TestStoreLoginIsReadByTheKeychain(t *testing.T) {
 func TestStoreLoginNormalizesDockerHub(t *testing.T) {
 	for _, host := range []string{"docker.io", "index.docker.io", "registry-1.docker.io"} {
 		dir := emptyDockerConfig(t, "")
-		if _, err := StoreLogin(host, "me", "dckr_pat_x"); err != nil {
+		if _, err := StoreLogin(context.Background(), host, "me", "dckr_pat_x"); err != nil {
 			t.Fatal(err)
 		}
 		data, err := os.ReadFile(filepath.Join(dir, "config.json")) //nolint:gosec // a path this test created
@@ -195,7 +196,7 @@ func TestStoreLoginUsesTheCredentialHelper(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			dir := emptyDockerConfig(t, cfg)
 			got := fakeHelper(t, "fake")
-			if _, err := StoreLogin("ghcr.io", "octocat", "gho_secret"); err != nil {
+			if _, err := StoreLogin(context.Background(), "ghcr.io", "octocat", "gho_secret"); err != nil {
 				t.Fatal(err)
 			}
 			var stored map[string]string
@@ -226,7 +227,7 @@ func TestStoreLoginUsesTheCredentialHelper(t *testing.T) {
 func TestStoreLoginFailsWithoutTheConfiguredHelper(t *testing.T) {
 	dir := emptyDockerConfig(t, `{"credsStore":"missing"}`)
 	t.Setenv("PATH", t.TempDir())
-	if _, err := StoreLogin("ghcr.io", "octocat", "gho_secret"); err == nil || !strings.Contains(err.Error(), "docker-credential-missing") {
+	if _, err := StoreLogin(context.Background(), "ghcr.io", "octocat", "gho_secret"); err == nil || !strings.Contains(err.Error(), "docker-credential-missing") {
 		t.Fatalf("err = %v, want the missing helper named", err)
 	}
 	if data, _ := os.ReadFile(filepath.Join(dir, "config.json")); strings.Contains(string(data), "auth\"") { //nolint:gosec,errcheck // a path this test created
@@ -257,7 +258,7 @@ func TestStoreLoginHelperErrorNeverCarriesTheSecret(t *testing.T) {
 	} {
 		emptyDockerConfig(t, `{"credsStore":"echo"}`)
 		writeHelper(t, "echo", "echo \"cannot store: $(cat)\" >&2\nexit 1\n")
-		_, err := StoreLogin("ghcr.io", "octocat", tc.secret)
+		_, err := StoreLogin(context.Background(), "ghcr.io", "octocat", tc.secret)
 		if err == nil || !strings.Contains(err.Error(), "docker-credential-echo") || !strings.Contains(err.Error(), "cannot store") {
 			t.Fatalf("err = %v, want the helper and its message named", err)
 		}
@@ -287,7 +288,7 @@ func TestStoreLoginRefusesAHelperNameThatIsAPath(t *testing.T) {
 	for _, helper := range []string{"/../evil", "../evil", "a b", ""} {
 		cfg, _ := json.Marshal(map[string]any{"credHelpers": map[string]string{"ghcr.io": helper}, "credsStore": helper}) //nolint:errcheck // a map of strings
 		dir := emptyDockerConfig(t, string(cfg))
-		_, err := StoreLogin("ghcr.io", "octocat", "gho_secret")
+		_, err := StoreLogin(context.Background(), "ghcr.io", "octocat", "gho_secret")
 		if helper == "" {
 			if err != nil {
 				t.Errorf("an empty credsStore means no helper: %v", err)
@@ -303,5 +304,26 @@ func TestStoreLoginRefusesAHelperNameThatIsAPath(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Error("a helper named by a path ran")
+	}
+}
+
+// A helper that hangs is stopped when its time is up, even when a program
+// it started still holds its output open: the login fails instead of
+// waiting for that program.
+func TestStoreLoginStopsAHangingHelper(t *testing.T) {
+	dir := emptyDockerConfig(t, `{"credsStore":"hang"}`)
+	writeHelper(t, "hang", "sleep 20 &\nexec sleep 20\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := StoreLogin(ctx, "ghcr.io", "octocat", "gho_secret")
+	if took := time.Since(start); took > 10*time.Second {
+		t.Errorf("StoreLogin took %v after the deadline, want the helper stopped", took)
+	}
+	if err == nil {
+		t.Fatal("StoreLogin with a hanging helper succeeded")
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "config.json")); strings.Contains(string(data), "ghcr.io") { //nolint:gosec,errcheck // a path this test created
+		t.Errorf("config.json = %s, want nothing recorded for a failed store", data)
 	}
 }

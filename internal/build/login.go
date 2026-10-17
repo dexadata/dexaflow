@@ -75,8 +75,8 @@ func refusal(host string, err error) error {
 // secret goes in the file's auths, base64 as docker writes it. Every other
 // field of the file is kept, and the file stays readable by its owner only.
 // Docker Hub is filed under its legacy key, whichever of its names host is.
-// It returns the path of the config file.
-func StoreLogin(host, user, secret string) (string, error) {
+// It returns the path of the config file. ctx bounds the helper's run.
+func StoreLogin(ctx context.Context, host, user, secret string) (string, error) {
 	key := loginKey(host)
 	path := filepath.Join(dockerConfigDir(), "config.json")
 	doc, err := readDockerConfig(path)
@@ -85,7 +85,7 @@ func StoreLogin(host, user, secret string) (string, error) {
 	}
 	entry := map[string]string{}
 	if helper := credentialHelper(doc, key); helper != "" {
-		if herr := storeInHelper(helper, key, user, secret); herr != nil {
+		if herr := storeInHelper(ctx, helper, key, user, secret); herr != nil {
 			return "", fmt.Errorf("storing the credential for %s with docker-credential-%s: %w", host, helper, herr)
 		}
 	} else {
@@ -209,7 +209,7 @@ func writeDockerConfig(path string, doc map[string]json.RawMessage) error {
 // the credential helper protocol docker speaks: `store`, with the server,
 // user and secret as JSON on stdin. The secret never reaches its argv, and
 // is cut from what a failing helper printed before that goes in the error.
-func storeInHelper(helper, key, user, secret string) error {
+func storeInHelper(ctx context.Context, helper, key, user, secret string) error {
 	if !helperName.MatchString(helper) {
 		return fmt.Errorf("%q is not a credential helper name: the docker config names a docker-credential-<name> program on PATH", helper)
 	}
@@ -221,10 +221,11 @@ func storeInHelper(helper, key, user, secret string) error {
 	if err != nil {
 		return fmt.Errorf("encoding the credential: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), helperTimeout)
+	ctx, cancel := context.WithTimeout(ctx, helperTimeout)
 	defer cancel()
 	c := exec.CommandContext(ctx, bin, "store") //nolint:gosec // G204: the helper the user's docker config names, as docker runs it
 	c.Stdin = bytes.NewReader(in)
+	c.WaitDelay = pipeWaitDelay
 	var out bytes.Buffer
 	c.Stdout, c.Stderr = &out, &out
 	if err := c.Run(); err != nil {
@@ -252,6 +253,11 @@ var helperName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 // helperTimeout bounds one run of a credential helper, which can hang when
 // the program behind it is not running (Docker Desktop's helper, for one).
 const helperTimeout = 30 * time.Second
+
+// pipeWaitDelay bounds the wait for a helper's output once it has exited or
+// been stopped, so a program it started that still holds the output open
+// cannot outlast helperTimeout.
+const pipeWaitDelay = 2 * time.Second
 
 // loginKey is the docker config key of the registry host.
 func loginKey(host string) string {
