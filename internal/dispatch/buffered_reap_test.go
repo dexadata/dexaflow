@@ -152,6 +152,10 @@ func (q *queuedRows) FailDispatchRefused(context.Context, string, string, string
 	return nil
 }
 
+func (q *queuedRows) MarkTaskPodLostOOMKilled(context.Context, string, int, int) (bool, error) {
+	return false, nil
+}
+
 func (q *queuedRows) MarkTaskStartExpired(context.Context, string, int, int) (bool, error) {
 	return false, nil
 }

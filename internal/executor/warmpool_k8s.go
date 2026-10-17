@@ -88,8 +88,21 @@ func warmPodInfoOf(p *corev1.Pod) WarmPodInfo {
 		// pod (rolling upgrade) has no tenant label and reads "" here; the
 		// reconciler attributes it via its version when resolvable and never
 		// deletes it for the cap.
-		TenantID: p.Labels[warmTenantLabelKey],
+		TenantID:          p.Labels[warmTenantLabelKey],
+		TerminationReason: warmTerminationReason(p),
 	}
+}
+
+// warmTerminationReason is the warm-worker container's terminated reason, or ""
+// when it has not terminated. Only that container counts: it is the one that
+// runs the agent and its tasks.
+func warmTerminationReason(p *corev1.Pod) string {
+	for _, cs := range p.Status.ContainerStatuses {
+		if cs.Name == warmContainerName && cs.State.Terminated != nil {
+			return cs.State.Terminated.Reason
+		}
+	}
+	return ""
 }
 
 // CreateWarmPod mints the target's warm-pod spec, builds the pod, and creates it.
