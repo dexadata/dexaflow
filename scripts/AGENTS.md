@@ -14,7 +14,8 @@ Rules for changing the scripts that gate CI and cut releases. The root
   the version used locally and in CI equal; bump the pin and every place it
   names in the same PR.
 - **Release scripts** (`cut-release.sh`, `release-gap.sh`, `docs-gap.sh`,
-  `release-notes.sh`, `changelog-fold.sh`, `changelog-sync.sh`) follow [RELEASING.md](../RELEASING.md); a change to
+  `release-notes.sh`, `changelog-fold.sh`, `changelog-sync.sh`,
+  `docs-promote.sh`) follow [RELEASING.md](../RELEASING.md); a change to
   `cut-release.sh` shows a `--dry-run` of it in the PR.
 - Shell style: `set -euo pipefail`, and a header comment that says what the
   script guards and which incident made it necessary.

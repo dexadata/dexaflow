@@ -22,7 +22,7 @@
 # GA (an upcoming release, or another tool's version) is never stale.
 #
 # The newest GA is the `latest` leg of website/scripts/ci/versions.json, which
-# cut-release.sh repoints on every GA (promote_docs_version). It is read from
+# scripts/docs-promote.sh repoints on every GA (promote_docs_version). It is read from
 # the file, not from git tags, so this gate needs no network and gives the same
 # answer during a cut, in CI and offline. promote_docs_version also calls
 # `--bump` below, so the docs promotion pull request carries the new pins and
