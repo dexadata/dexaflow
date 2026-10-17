@@ -546,7 +546,7 @@ func TestUVEnvironmentDropsInstallerConfiguration(t *testing.T) {
 	if err := os.Unsetenv("ALL_PROXY"); err != nil {
 		t.Fatal(err)
 	}
-	env := uvEnv()
+	env := uvEnv("")
 	for _, kv := range env {
 		if strings.HasPrefix(kv, "UV_INDEX_URL=") || strings.HasPrefix(kv, "PIP_") || strings.HasPrefix(kv, "ALL_PROXY=") {
 			t.Errorf("uv runs with %s", kv)

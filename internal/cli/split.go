@@ -80,6 +80,7 @@ func splitFor(ctx context.Context, dir, dockerfile string, o compileOptions, cfg
 	}
 	loose := unpinned(deps)
 	uv, noWheels := findUV(ctx)
+	uv, noWheels = withIndex(uv, noWheels, o, cfg)
 	if len(loose) > 0 && uv == nil {
 		return nil, looseReason(loose, noWheels)
 	}
@@ -100,7 +101,7 @@ func splitFor(ctx context.Context, dir, dockerfile string, o compileOptions, cfg
 			wheels.Registry = registryFor(cfg)
 			split := &build.Split{DepsImage: depsImage(image, plan.key()), Dockerfile: content, Wheels: wheels, Note: plan.note()}
 			if len(loose) == 0 {
-				split.DaemonDepsImage = depsImage(image, depsKey(content, platforms))
+				split.DaemonDepsImage = depsImage(image, depsKey(depsKeyContent(content, cfg), platforms))
 			}
 			return split, ""
 		}
@@ -108,7 +109,7 @@ func splitFor(ctx context.Context, dir, dockerfile string, o compileOptions, cfg
 	if len(loose) > 0 {
 		return nil, looseReason(loose, noWheels)
 	}
-	return &build.Split{DepsImage: depsImage(image, depsKey(content, platforms)), Dockerfile: content, NoWheels: noWheels}, ""
+	return &build.Split{DepsImage: depsImage(image, depsKey(depsKeyContent(content, cfg), platforms)), Dockerfile: content, NoWheels: noWheels}, ""
 }
 
 // splitBlocker says why the project cannot split whatever its dependencies:
