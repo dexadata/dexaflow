@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -209,6 +210,9 @@ func writeDockerConfig(path string, doc map[string]json.RawMessage) error {
 // user and secret as JSON on stdin. The secret never reaches its argv, and
 // is cut from what a failing helper printed before that goes in the error.
 func storeInHelper(helper, key, user, secret string) error {
+	if !helperName.MatchString(helper) {
+		return fmt.Errorf("%q is not a credential helper name: the docker config names a docker-credential-<name> program on PATH", helper)
+	}
 	bin := "docker-credential-" + helper
 	if _, err := exec.LookPath(bin); err != nil {
 		return fmt.Errorf("%s is not on PATH", bin)
@@ -240,6 +244,10 @@ func redact(s, secret string) string {
 	}
 	return s
 }
+
+// helperName is what a credential helper name may hold: a name, never a
+// path, so the program run is a docker-credential-* one found on PATH.
+var helperName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 // helperTimeout bounds one run of a credential helper, which can hang when
 // the program behind it is not running (Docker Desktop's helper, for one).

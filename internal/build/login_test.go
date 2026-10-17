@@ -266,3 +266,42 @@ func TestStoreLoginHelperErrorNeverCarriesTheSecret(t *testing.T) {
 		}
 	}
 }
+
+// A helper name from the docker config that is a path, or holds anything
+// but a name's characters, is refused before anything runs: the config
+// names a helper on PATH, never a program elsewhere.
+func TestStoreLoginRefusesAHelperNameThatIsAPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stubs are POSIX-only")
+	}
+	work := t.TempDir()
+	t.Chdir(work)
+	marker := filepath.Join(t.TempDir(), "ran")
+	if err := os.Mkdir(filepath.Join(work, "docker-credential-"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(work, "evil"), []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
+		t.Fatal(err)
+	}
+	writeHelper(t, "ok", "exit 0\n")
+	for _, helper := range []string{"/../evil", "../evil", "a b", ""} {
+		cfg, _ := json.Marshal(map[string]any{"credHelpers": map[string]string{"ghcr.io": helper}, "credsStore": helper}) //nolint:errcheck // a map of strings
+		dir := emptyDockerConfig(t, string(cfg))
+		_, err := StoreLogin("ghcr.io", "octocat", "gho_secret")
+		if helper == "" {
+			if err != nil {
+				t.Errorf("an empty credsStore means no helper: %v", err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), "credential helper name") {
+			t.Errorf("helper %q: err = %v, want the name refused", helper, err)
+		}
+		if data, _ := os.ReadFile(filepath.Join(dir, "config.json")); strings.Contains(string(data), "auth\"") { //nolint:gosec,errcheck // a path this test created
+			t.Errorf("helper %q: config.json = %s, want no credential written", helper, data)
+		}
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("a helper named by a path ran")
+	}
+}
