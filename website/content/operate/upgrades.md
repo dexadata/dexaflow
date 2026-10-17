@@ -977,6 +977,18 @@ back to 0.5.3 needs nothing on an existing install or on Lite, whose
 bootstrap email gets a second admin, `admin@leoflow.local`, from the same
 bootstrap password when it starts on 0.5.3.
 
+### Upgrading to 0.5.5: three unused tables are no longer touched
+
+`scheduler_loops`, `replicas` and `task_state_history` (migrations 003 and
+004) were never written by any release (#1186). 0.5.5 stops touching them:
+the retention janitor no longer deletes from `task_state_history`, so
+`dexaflow_retention_rows_deleted_total` and `dexaflow_retention_rows_eligible`
+no longer have a `table="task_state_history"` series. The tables stay in the
+schema, and 0.5.6 drops them in a migration. A 0.5.5 control plane runs
+against either schema, so it keeps working through that migration and after a
+rollback from 0.5.6. Upgrading to 0.5.5 and rolling back to 0.5.4 need nothing
+for this change.
+
 ## Related issues
 
 - #136 — this contract.

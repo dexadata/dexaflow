@@ -1,0 +1,11 @@
+kind: Changed
+body: |-
+  **Retention no longer deletes from `task_state_history`.** No release ever
+  wrote a row to that table, so the janitor's delete always removed nothing.
+  `dexaflow_retention_rows_deleted_total` and
+  `dexaflow_retention_rows_eligible` no longer have a
+  `table="task_state_history"` series, and the soak report no longer counts
+  the table. 0.5.6 drops `task_state_history`, `scheduler_loops` and
+  `replicas`, which nothing writes, in a migration; 0.5.5 runs against the
+  schema before and after it. (#1186)
+time: 2026-10-17T12:00:00.000000000-03:00

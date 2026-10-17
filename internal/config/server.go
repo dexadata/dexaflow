@@ -1099,8 +1099,8 @@ type DispatchSection struct {
 // knobs keep each statement small and each cycle bounded.
 type RetentionSection struct {
 	// DagRunsDays deletes finished (success or failed) dag runs, with their task
-	// instances, attempt history, state history and XCom index rows, once they
-	// ended more than this many days ago. 0 (default) keeps every run.
+	// instances, attempt history and XCom index rows, once they ended more
+	// than this many days ago. 0 (default) keeps every run.
 	DagRunsDays int `mapstructure:"dag_runs_days"`
 	// AuditLogDays deletes audit log entries older than this many days. 0
 	// (default) keeps the whole audit log.

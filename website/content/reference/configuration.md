@@ -751,8 +751,8 @@ staging volume of it is still live, and it is not the newest run of its DAG.
 The newest run (by logical date) is always kept, however old: the scheduler
 reads a DAG's last logical date from it, and without it a scheduled DAG would
 run its latest slot again, or its whole history with `catchup`. An eligible
-run goes with its task instances, state history, attempt history and XCom
-index rows, children first. Every batch is
+run goes with its task instances, attempt history and XCom index rows,
+children first. Every batch is
 one short transaction of at most `batch_size` rows, run rows included; a run
 with more rows than that is finished by later batches, each of which checks
 again that the run is still eligible. A run's task instances are deleted all
