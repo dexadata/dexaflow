@@ -50,6 +50,8 @@ type dryRunResponse struct {
 	versionResponse
 	DryRun   bool     `json:"dry_run"`
 	Warnings []string `json:"warnings"`
+	// TaskPods is what the version's task pods would run as (#1889).
+	TaskPods *taskPodsReport `json:"task_pods"`
 }
 
 // dryRunHeader marks every answer of the register dry run route, refusals
@@ -248,7 +250,7 @@ func pauseRefusal(c *gin.Context, paused *bool) string {
 // registerVersionHandler serves POST /api/v2/dags/{dag_id}/versions.
 func registerVersionHandler(repo DagVersionRepository, admission specAdmission, execution executionReporter) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		registerVersion(c, repo, admission, execution, false)
+		registerVersion(c, repo, admission, execution, nil)
 	}
 }
 
@@ -259,16 +261,20 @@ func registerVersionHandler(repo DagVersionRepository, admission specAdmission, 
 // dryRunHeader. A route of its own, not a parameter of the register, because
 // an older server answers it with 404 instead of registering. A dry run
 // writes no audit row, like the dry run of a clear: no state changed.
-func dryRunVersionHandler(repo DagVersionRepository, admission specAdmission, execution executionReporter) gin.HandlerFunc {
+//
+// The answer also says what the version's task pods would run as (pods,
+// #1889), which the register does not report.
+func dryRunVersionHandler(repo DagVersionRepository, admission specAdmission, execution executionReporter, pods taskPodReporter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header(dryRunHeader, "true")
-		registerVersion(c, repo, admission, execution, true)
+		registerVersion(c, repo, admission, execution, &pods)
 	}
 }
 
-// registerVersion registers the spec of the request body, or with dryRun
-// says what registering it would do, and where its tasks run.
-func registerVersion(c *gin.Context, repo DagVersionRepository, admission specAdmission, execution executionReporter, dryRun bool) {
+// registerVersion registers the spec of the request body, or for a dry run
+// (dryRun, which reports the task pods) says what registering it would do,
+// and where its tasks run.
+func registerVersion(c *gin.Context, repo DagVersionRepository, admission specAdmission, execution executionReporter, dryRun *taskPodReporter) {
 	paused, perr := pausedQuery(c)
 	if perr != nil {
 		AbortProblem(c, http.StatusBadRequest, "bad request", perr.Error())
@@ -297,7 +303,7 @@ func registerVersion(c *gin.Context, repo DagVersionRepository, admission specAd
 		AbortProblem(c, http.StatusBadRequest, "bad request", "dag_id in path does not match spec")
 		return
 	}
-	warnings, aerr := admission.checkWarn(&spec, stageRegister, dryRun)
+	warnings, aerr := admission.checkWarn(&spec, stageRegister, dryRun != nil)
 	if aerr != nil {
 		AbortProblem(c, http.StatusBadRequest, "invalid dag spec", aerr.Error())
 		return
@@ -312,7 +318,7 @@ func registerVersion(c *gin.Context, repo DagVersionRepository, admission specAd
 		return
 	}
 	got, err := repo.RegisterDagVersionAs(c.Request.Context(), tenantOf(c), domain.DagRegistration{
-		Spec: spec, SpecHash: hash, ActorUserID: actorOf(c), IsPaused: paused, DryRun: dryRun, PromotedFrom: promoted, BuildInfo: buildInfo,
+		Spec: spec, SpecHash: hash, ActorUserID: actorOf(c), IsPaused: paused, DryRun: dryRun != nil, PromotedFrom: promoted, BuildInfo: buildInfo,
 		RequireDigest: admission.digest.mode,
 	})
 	if err != nil {
@@ -321,8 +327,9 @@ func registerVersion(c *gin.Context, repo DagVersionRepository, admission specAd
 	}
 	resp := versionResponse{DagID: spec.DagID, Version: spec.DagVersion, SpecHash: hash, Created: got.Created, DagCreated: got.DagCreated, IsPaused: got.IsPaused,
 		Execution: execution.report(&spec, got.Created && !got.DagCreated, got.IsPaused), Warnings: warnings}
-	if dryRun {
-		c.JSON(http.StatusOK, dryRunResponse{versionResponse: resp, DryRun: true, Warnings: warnings})
+	if dryRun != nil {
+		c.JSON(http.StatusOK, dryRunResponse{versionResponse: resp, DryRun: true, Warnings: warnings,
+			TaskPods: dryRun.report(c.Request.Context(), &spec)})
 		return
 	}
 	status := http.StatusOK

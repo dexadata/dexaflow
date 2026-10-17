@@ -31,6 +31,7 @@ resource_of() {
 	Pods) echo "pods" ;;
 	PersistentVolumeClaims) echo "persistentvolumeclaims" ;;
 	ConfigMaps) echo "configmaps" ;;
+	ServiceAccounts) echo "serviceaccounts" ;;
 	Secrets) echo "secrets" ;;
 	Services) echo "services" ;;
 	Events) echo "events" ;;

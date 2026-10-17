@@ -648,6 +648,31 @@ type TaskInstanceStateUpdate struct {
 // TaskInstanceStateUpdateNewState defines model for TaskInstanceStateUpdate.NewState.
 type TaskInstanceStateUpdateNewState string
 
+// TaskPodsReport What the version's task pods would run as (Dexaflow), sent by the dry run route only, absent from a register. A server that starts no task pods sends run_as_non_root false and no service account.
+type TaskPodsReport struct {
+	// RunAsNonRoot True when task pods refuse an image that runs as root or as a user name rather than a number (executor.run_tasks_as_non_root).
+	RunAsNonRoot bool `json:"run_as_non_root"`
+
+	// ServiceAccounts Each ServiceAccount a task pod of the version would run as (the task's execution.service_account, else executor.task_service_account, else the namespace's default), sorted by name. A dry run looks up at most 8.
+	ServiceAccounts []TaskServiceAccountCheck `json:"service_accounts"`
+}
+
+// TaskServiceAccountCheck defines model for TaskServiceAccountCheck.
+type TaskServiceAccountCheck struct {
+	// Detail Why it is unchecked, or why a missing name is not valid.
+	Detail *string `json:"detail,omitempty"`
+
+	// ImagePullSecrets How many imagePullSecrets it carries; sent with state found.
+	ImagePullSecrets *int   `json:"image_pull_secrets,omitempty"`
+	Name             string `json:"name"`
+
+	// State One of found, missing or unchecked. found: it exists in the task namespace. missing: it does not, and the pods of these tasks would not be created; when its name is not a valid ServiceAccount name (a DNS-1123 subdomain), it is not looked up and detail says so. unchecked: the server could not look it up (detail says why).
+	State string `json:"state"`
+
+	// Tasks The tasks whose pods run as it.
+	Tasks []string `json:"tasks"`
+}
+
 // TokenRequest defines model for TokenRequest.
 type TokenRequest struct {
 	Password string `json:"password"`
@@ -738,7 +763,10 @@ type VersionRegistration struct {
 	// IsPaused The DAG's is_paused after the register.
 	IsPaused *bool   `json:"is_paused,omitempty"`
 	SpecHash *string `json:"spec_hash,omitempty"`
-	Version  *string `json:"version,omitempty"`
+
+	// TaskPods What the version's task pods would run as (Dexaflow), sent by the dry run route only, absent from a register. A server that starts no task pods sends run_as_non_root false and no service account.
+	TaskPods *TaskPodsReport `json:"task_pods,omitempty"`
+	Version  *string         `json:"version,omitempty"`
 
 	// Warnings What the register lets through with a warning (a task that does not fit its size under executor.unit.enforce=warn, an image not pinned by digest under deploy.require_digest=warn). Always sent by the dry run route; sent by a register only when it has a warning to give.
 	Warnings *[]string `json:"warnings,omitempty"`
