@@ -42,8 +42,9 @@ type PackageIndex struct {
 var buildArgName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // buildSecretID is the form of a secret id: no comma or equals sign, which
-// would add options to `--secret id=<id>,env=<var>`.
-var buildSecretID = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+// would add options to `--secret id=<id>,env=<var>`, and no leading dot or
+// dash, so the id never names /run/secrets itself or its parent.
+var buildSecretID = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
 
 // validateInputs refuses build args, build secrets and a package index the
 // build could not pass on as written, naming the field.
@@ -66,7 +67,7 @@ func (b *BuildConfig) validateInputs() error {
 		at := fmt.Sprintf("build.secrets[%d]", i)
 		switch {
 		case !buildSecretID.MatchString(s.ID):
-			return fmt.Errorf("%s.id %q is not a secret id (letters, digits, '.', '_' and '-')", at, s.ID)
+			return fmt.Errorf("%s.id %q is not a secret id (letters, digits, '.', '_' and '-', starting with a letter, a digit or '_')", at, s.ID)
 		case s.ID == IndexSecretID:
 			return fmt.Errorf("%s.id %q is the id of the package index secret; set build.package_index instead", at, s.ID)
 		case seen[s.ID]:

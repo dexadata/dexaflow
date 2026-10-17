@@ -148,3 +148,19 @@ func TestBuildConfigLocalOnly(t *testing.T) {
 		}
 	}
 }
+
+// A secret id names the file BuildKit mounts under /run/secrets, so "." and
+// ".." (and any id starting with a dot or a dash) are refused: they would
+// name the directory itself or its parent.
+func TestBuildSecretIDCannotNameADirectory(t *testing.T) {
+	for _, id := range []string{".", "..", ".hidden", "-x"} {
+		b := &BuildConfig{Secrets: []BuildSecret{{ID: id, Env: "TOKEN"}}}
+		if err := b.validateInputs(); err == nil || !strings.Contains(err.Error(), "build.secrets[0].id") {
+			t.Errorf("validateInputs(id %q) = %v, want a refusal naming build.secrets[0].id", id, err)
+		}
+	}
+	ok := &BuildConfig{Secrets: []BuildSecret{{ID: "npm.token-1", Env: "TOKEN"}}}
+	if err := ok.validateInputs(); err != nil {
+		t.Errorf("validateInputs(npm.token-1) = %v, want nil", err)
+	}
+}

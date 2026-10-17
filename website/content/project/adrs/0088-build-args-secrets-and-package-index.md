@@ -30,7 +30,8 @@ podman and nerdctl accept the same form.
 1. **Three fields under `build`.** `args` (name to plain value),
    `secrets` (a list of `{id, env}`) and `package_index`
    (`{url, username_env, password_env}`). Names, ids and variable names are
-   validated when the project loads; an index URL must be `https` (plain
+   validated when the project loads (a secret id starts with a letter, a
+   digit or `_`, so it never names `/run/secrets` or its parent); an index URL must be `https` (plain
    `http` on the loopback) and must not carry credentials, a query or a
    fragment, and a refusal never quotes a credential back.
 2. **Values by reference.** A secret is passed to the tool as
