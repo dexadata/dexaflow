@@ -221,8 +221,9 @@ func TestCompileKeepsABuildWithSecretsOnThisMachine(t *testing.T) {
 	if !strings.Contains(out, "builder:    local-daemon") || !strings.Contains(out, "build.secrets reach the build from this machine's environment") {
 		t.Errorf("builder line does not name the local daemon and why:\n%s", out)
 	}
-	if calls := argvLines(t, argvLog); len(calls) == 0 || !strings.HasPrefix(calls[0], "build ") {
-		t.Errorf("builder calls = %q, want the local build", calls)
+	if calls := argvLines(t, argvLog); len(calls) == 0 || !strings.HasPrefix(calls[0], "build ") ||
+		!strings.Contains(calls[0], "--secret id=github_token,env=TEST_GITHUB_TOKEN") {
+		t.Errorf("builder calls = %q, want the local build, pushed, with the secret", calls)
 	}
 }
 

@@ -130,3 +130,77 @@ func readLog(t *testing.T, path string) string {
 	}
 	return strings.TrimSpace(string(data))
 }
+
+// Every way the daemon pushes runs a build that carries the build args and
+// the secrets, and only that build gets the index URL in its environment:
+// buildx's one build-and-push, docker's and nerdctl's build then push, and
+// podman's build of one image or of a manifest list.
+func TestLocalDaemonPassesTheInputsOnEveryPushPath(t *testing.T) {
+	const indexURL = "https://ci:s3cr3t@pypi.example.com/simple"
+	const inputs = "--build-arg APP_ENV=prod --secret id=dexaflow_index_url,env=DEXAFLOW_BUILD_INDEX_URL"
+	cases := map[string]struct {
+		tool      pushTool
+		platforms []string
+	}{
+		"docker buildx":         {pushTool{name: "docker", buildx: true, metadata: `{"containerimage.digest":"` + pushedDigest + `"}`}, []string{"linux/amd64"}},
+		"docker without buildx": {pushTool{name: "docker", pushOutput: "v1: digest: " + pushedDigest + " size: 9\n"}, []string{"linux/amd64"}},
+		"podman one platform":   {pushTool{name: "podman", digestFile: pushedDigest}, []string{"linux/amd64"}},
+		"podman manifest list":  {pushTool{name: "podman", digestFile: pushedDigest}, []string{"linux/amd64", "linux/arm64"}},
+		"nerdctl":               {pushTool{name: "nerdctl"}, []string{"linux/amd64"}},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			c.tool.envVar = "DEXAFLOW_BUILD_INDEX_URL"
+			tool, log := c.tool.fake(t)
+			req := pushRequest(true, c.platforms...)
+			req.BuildArgs = map[string]string{"APP_ENV": "prod"}
+			req.Secrets = []Secret{{ID: "dexaflow_index_url", Env: "DEXAFLOW_BUILD_INDEX_URL"}}
+			req.Env = []string{"DEXAFLOW_BUILD_INDEX_URL=" + indexURL}
+			reg := &fakeRegistry{ref: "reg.io/team/etl@" + pushedDigest, manifest: indexOf(c.platforms...)}
+			if len(c.platforms) == 1 {
+				reg.manifest = singleManifest
+			}
+			if _, err := (LocalDaemon{Tool: tool, Registry: reg}).Build(context.Background(), req); err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			argv := calls(t, log)
+			env := strings.Split(strings.TrimSuffix(readRaw(t, filepath.Join(filepath.Dir(log), "env.log")), "\n"), "\n")
+			builds := 0
+			for i, call := range argv {
+				isBuild := strings.HasPrefix(call, "build ") || strings.HasPrefix(call, "buildx build ")
+				if isBuild {
+					builds++
+					if !strings.Contains(call, inputs) {
+						t.Errorf("build call %q does not carry %s", call, inputs)
+					}
+				}
+				if strings.Contains(call, "s3cr3t") {
+					t.Errorf("the index password reached the argv: %s", call)
+				}
+				got := ""
+				if i < len(env) {
+					got = env[i]
+				}
+				if isBuild && got != indexURL {
+					t.Errorf("build call %q ran with the index URL %q, want it", call, got)
+				}
+				if !isBuild && got != "" {
+					t.Errorf("call %q ran with the index URL in its environment", call)
+				}
+			}
+			if builds != 1 {
+				t.Errorf("tool calls = %q, want one build", argv)
+			}
+		})
+	}
+}
+
+// readRaw reads a log this test's fake wrote, keeping its empty lines.
+func readRaw(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path) //nolint:gosec // a path this test created
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
