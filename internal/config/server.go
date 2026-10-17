@@ -83,11 +83,13 @@ type ServerConfig struct {
 
 // DeploySection is what the server tells `dexaflow deploy` (#1704).
 type DeploySection struct {
-	// Defaults (deploy.defaults.*) are the registry prefix, build platforms
-	// and base image a deploy to this cluster uses for whatever the project,
-	// its workspace, its target and the person's config leave unset. Served
-	// on GET /api/v2/deployDefaults; unset (the default) advertises nothing,
-	// so every deploy resolves as it did before. None of them is a secret.
+	// Defaults (deploy.defaults.*) are the registry prefix, build platforms,
+	// base image and remote builder a deploy to this cluster uses for
+	// whatever the project, its workspace, its target and the person's config
+	// leave unset, and the switches that advertise the source mode runtime
+	// image, the task service account and the warm pools. Served on GET
+	// /api/v2/deployDefaults; unset (the default) advertises nothing, so
+	// every deploy resolves as it did before. None of them is a secret.
 	Defaults DeployDefaultsSection `mapstructure:"defaults"`
 	// RequireDigest (deploy.require_digest, #1703) is what registering a
 	// version, or making one current again, does with an image not pinned by
@@ -106,6 +108,43 @@ type DeployDefaultsSection struct {
 	// cluster that names no runtime image of its own registers dag.py on it
 	// with no build (#1772). It requires execution.source_mode.enabled.
 	SourceMode bool `mapstructure:"source_mode"`
+	// RemoteBuilder (deploy.defaults.remote_builder.cloud_build.*, #1890) is
+	// the remote builder a deploy to this cluster uses for builds no
+	// daemonless path covers, when the project, its target and its workspace
+	// name none (ADR 0083). Unset (the default) advertises none.
+	RemoteBuilder RemoteBuilderSection `mapstructure:"remote_builder"`
+	// AdvertiseTaskServiceAccount (deploy.defaults.task_service_account,
+	// default false, #1890) serves executor.task_service_account as
+	// task_service_account, so a deploy says which account its tasks run as
+	// when they name none. It requires executor.task_service_account.
+	AdvertiseTaskServiceAccount bool `mapstructure:"task_service_account"`
+	// AdvertiseWarmPools (deploy.defaults.warm_pools, default false, #1890)
+	// serves execution.warm_pools_enabled, execution.min_idle_workers and
+	// execution.max_pool_size as warm_pools, so a deploy says how many idle
+	// workers its DAG gets.
+	AdvertiseWarmPools bool `mapstructure:"warm_pools"`
+}
+
+// RemoteBuilderSection is deploy.defaults.remote_builder: the backends of
+// domain.RemoteBuilderConfig as server keys. Cloud Build is the only one.
+type RemoteBuilderSection struct {
+	// CloudBuild is deploy.defaults.remote_builder.cloud_build.
+	CloudBuild CloudBuildSection `mapstructure:"cloud_build"`
+}
+
+// CloudBuildSection is deploy.defaults.remote_builder.cloud_build, the
+// fields of domain.CloudBuildConfig. Every field empty advertises none.
+type CloudBuildSection struct {
+	// Project is the Google Cloud project the build runs in.
+	Project string `mapstructure:"project"`
+	// Region is the Cloud Build region, such as us-central1.
+	Region string `mapstructure:"region"`
+	// WorkerPool is a private pool,
+	// projects/<project>/locations/<region>/workerPools/<name>.
+	WorkerPool string `mapstructure:"worker_pool"`
+	// ServiceAccount is the account the build runs as,
+	// projects/<project>/serviceAccounts/<email>.
+	ServiceAccount string `mapstructure:"service_account"`
 }
 
 // sourceModeImageKey is the deploy.defaults key the server refuses: the
@@ -131,14 +170,37 @@ func refuseAdvertisedSourceModeImage(v *viper.Viper) error {
 
 // AdvertisedDeployDefaults are the deploy defaults GET /api/v2/deployDefaults
 // serves: deploy.defaults, with the runtime image of source mode when
-// deploy.defaults.source_mode asks for it and the mode is on.
+// deploy.defaults.source_mode asks for it and the mode is on, the remote
+// builder when deploy.defaults.remote_builder sets one, and the task
+// service account and warm pools of this server when their switches are on
+// (#1890).
 func (c *ServerConfig) AdvertisedDeployDefaults() domain.DeployDefaults {
 	d := c.Deploy.Defaults.DeployDefaults
 	d.SourceModeImage = ""
 	if c.Deploy.Defaults.SourceMode {
 		d.SourceModeImage = c.Execution.SourceMode.RuntimeImage()
 	}
+	d.RemoteBuilder = c.Deploy.Defaults.RemoteBuilder.config()
+	d.TaskServiceAccount = ""
+	if c.Deploy.Defaults.AdvertiseTaskServiceAccount {
+		d.TaskServiceAccount = c.Executor.TaskServiceAccount
+	}
+	d.WarmPools = nil
+	if c.Deploy.Defaults.AdvertiseWarmPools {
+		d.WarmPools = &domain.WarmPoolDefaults{Enabled: c.Execution.WarmPoolsEnabled,
+			MinIdleWorkers: c.Execution.MinIdleWorkers, MaxPoolSize: c.Execution.MaxPoolSize}
+	}
 	return d
+}
+
+// config is the remote builder s configures, nil when it sets nothing.
+func (s RemoteBuilderSection) config() *domain.RemoteBuilderConfig {
+	cb := s.CloudBuild
+	if cb == (CloudBuildSection{}) {
+		return nil
+	}
+	return &domain.RemoteBuilderConfig{CloudBuild: &domain.CloudBuildConfig{
+		Project: cb.Project, Region: cb.Region, WorkerPool: cb.WorkerPool, ServiceAccount: cb.ServiceAccount}}
 }
 
 // Variable encryption modes (variable_encryption, #507).
@@ -1463,6 +1525,15 @@ var serverDefaults = map[string]any{
 	"deploy.defaults.base_image": "",
 	// Off: no runtime image is advertised for source mode (#1772).
 	"deploy.defaults.source_mode": false,
+	// #1890: the remote builder a deploy uses when nothing local names one,
+	// and the switches that advertise the task service account and the warm
+	// pools. Unset and off advertise nothing.
+	"deploy.defaults.remote_builder.cloud_build.project":         "",
+	"deploy.defaults.remote_builder.cloud_build.region":          "",
+	"deploy.defaults.remote_builder.cloud_build.worker_pool":     "",
+	"deploy.defaults.remote_builder.cloud_build.service_account": "",
+	"deploy.defaults.task_service_account":                       false,
+	"deploy.defaults.warm_pools":                                 false,
 	// Digest-pinned images at register (#1703). off keeps every register as
 	// it was.
 	"deploy.require_digest": string(domain.DigestRequireOff),
@@ -1661,7 +1732,14 @@ func (c *ServerConfig) validateDeployDefaults() error {
 	if c.Deploy.Defaults.SourceMode && !c.Execution.SourceMode.Enabled {
 		return errors.New("deploy.defaults.source_mode advertises the source mode runtime image, but execution.source_mode.enabled is false; turn source mode on or leave deploy.defaults.source_mode off")
 	}
-	return c.Deploy.Defaults.Validate("deploy.defaults")
+	if c.Deploy.Defaults.AdvertiseTaskServiceAccount && c.Executor.TaskServiceAccount == "" {
+		return errors.New("deploy.defaults.task_service_account advertises the task service account, but executor.task_service_account is empty; set it or leave deploy.defaults.task_service_account off")
+	}
+	d := c.AdvertisedDeployDefaults()
+	// The source mode runtime image is execution.source_mode's, checked
+	// with it; the rest is checked as a deploy will read it.
+	d.SourceModeImage = ""
+	return d.Validate("deploy.defaults")
 }
 
 // normalizeRequireDigest reads a YAML boolean deploy.require_digest as the

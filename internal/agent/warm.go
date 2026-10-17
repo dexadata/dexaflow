@@ -749,5 +749,6 @@ func (w *WarmRunner) attemptRunner(sink LogSink) *Runner {
 		TerminationLogPath: w.TerminationLogPath,
 		HeartbeatInterval:  w.HeartbeatInterval,
 		Token:              w.AttemptTokens,
+		warmAttempt:        true,
 	}
 }

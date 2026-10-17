@@ -84,6 +84,10 @@ func (f *fakeReaperStore) MarkTaskPodLost(_ context.Context, tiID string, _, _ i
 	f.podMarked = append(f.podMarked, tiID)
 	return true, nil
 }
+func (f *fakeReaperStore) MarkTaskPodLostOOMKilled(_ context.Context, tiID string, _, _ int) (bool, error) {
+	f.podMarked = append(f.podMarked, tiID)
+	return true, nil
+}
 func (f *fakeReaperStore) ListWarmBoundRunningTIs(context.Context) ([]WarmBoundTI, error) {
 	return f.warmBound, nil
 }

@@ -128,11 +128,11 @@ type fakeTaskRepo struct {
 	gotOnlyFailed bool
 	setState      string
 	setTaskID     string
-	// checkErr is what CheckClearVersion answers, always or, when checkErrRun
-	// is set, only when that run is among the runs asked about; checkCalls
-	// counts the calls and checkedRuns records the runs asked about, in order.
+	// kept is what RunsKeepingVersion answers, filtered to the runs asked
+	// about, and checkErr its error; checkCalls counts the calls and
+	// checkedRuns records the runs asked about, in order.
+	kept        []domain.ClearVersionKept
 	checkErr    error
-	checkErrRun string
 	checkCalls  int
 	checkedRuns []string
 }
@@ -159,13 +159,19 @@ func (f *fakeTaskRepo) ClearTaskInstances(_ context.Context, _, _, _ string, _ [
 	f.gotOnlyFailed = onlyFailed
 	return len(f.tis), nil
 }
-func (f *fakeTaskRepo) CheckClearVersion(_ context.Context, _, _ string, runIDs []string, _ domain.ClearOptions) error {
+func (f *fakeTaskRepo) RunsKeepingVersion(_ context.Context, _, _ string, runIDs []string, _ domain.ClearOptions) ([]domain.ClearVersionKept, error) {
 	f.checkCalls++
 	f.checkedRuns = append(f.checkedRuns, runIDs...)
-	if f.checkErrRun != "" && !slices.Contains(runIDs, f.checkErrRun) {
-		return nil
+	if f.checkErr != nil {
+		return nil, f.checkErr
 	}
-	return f.checkErr
+	out := make([]domain.ClearVersionKept, 0)
+	for _, k := range f.kept {
+		if slices.Contains(runIDs, k.RunID) {
+			out = append(out, k)
+		}
+	}
+	return out, nil
 }
 func (f *fakeTaskRepo) SetTaskInstanceState(_ context.Context, _, _, _, taskID, state string) error {
 	f.setTaskID, f.setState = taskID, state

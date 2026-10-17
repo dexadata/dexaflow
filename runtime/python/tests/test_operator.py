@@ -176,6 +176,23 @@ class ResumableReadOperator(EchoOperator):
         return {"tags": context["ti"].stats_tags, "team": team}
 
 
+class ParamsOperator(EchoOperator):
+    """Mirrors how an Airflow operator treats params: the constructor keeps its
+    task-level params on self.params, and render_template_fields / execute read
+    context["params"] (what {{ params.x }} resolves against), not self.params."""
+
+    def __init__(self, task_id, params=None, **kwargs):
+        super().__init__(task_id, **kwargs)
+        self.params = dict(params or {})
+        self.rendered_params = None
+
+    def render_template_fields(self, context):
+        self.rendered_params = dict(context["params"])
+
+    def execute(self, context):
+        return {"rendered": self.rendered_params, "executed": dict(context["params"])}
+
+
 class MultiKeyOperator(EchoOperator):
     """Pushes a custom-keyed XCom during execute (besides its return value) — the
     multi-key XCom pattern the runtime ships so it is stored/visible (#XCOM)."""
@@ -203,6 +220,54 @@ def test_run_operator_executes_and_writes_return(tmp_path, monkeypatch):
 
     written = json.loads(out.read_text())
     assert written == {"task_id": "load", "kwargs": {"bucket": "b1"}}
+
+
+def _run_params_operator(tmp_path, monkeypatch, args) -> dict:
+    out = tmp_path / "rv.json"
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(out))
+    mod = _write_operator_module(tmp_path, monkeypatch)
+    runner.run_operator(f"{mod}.ParamsOperator", args)
+    return json.loads(out.read_text())
+
+
+def test_run_operator_task_params_reach_template_context(tmp_path, monkeypatch):
+    # Task-level params= must be in the context {{ params.table }} renders against,
+    # not only on op.params; otherwise the template renders empty silently (#1841).
+    monkeypatch.delenv("LEOFLOW_PARAMS", raising=False)
+    got = _run_params_operator(tmp_path, monkeypatch, {"params": {"table": "orders"}})
+    assert got["rendered"] == {"table": "orders"}
+    assert got["executed"] == {"table": "orders"}
+
+
+def test_run_operator_conf_overrides_task_params(tmp_path, monkeypatch):
+    # Airflow's dag_run_conf_overrides_params: the run conf wins over a task param of
+    # the same name, and task params the conf does not name are kept (#1841).
+    monkeypatch.setenv("LEOFLOW_PARAMS", '{"table": "users", "limit": 5}')
+    got = _run_params_operator(
+        tmp_path, monkeypatch, {"params": {"table": "orders", "dataset": "raw"}})
+    assert got["rendered"] == {"table": "users", "dataset": "raw", "limit": 5}
+    assert got["executed"] == got["rendered"]
+
+
+def test_run_operator_dag_params_reach_template_context(tmp_path, monkeypatch):
+    # DAG(params=...) defaults arrive in LEOFLOW_PARAMS (the control plane merges
+    # them under the run conf); they reach the context next to task params (#1841).
+    monkeypatch.setenv("LEOFLOW_PARAMS", '{"region": "us"}')
+    got = _run_params_operator(tmp_path, monkeypatch, {"params": {"table": "orders"}})
+    assert got["rendered"] == {"region": "us", "table": "orders"}
+
+
+def test_run_operator_without_task_params_keeps_conf(tmp_path, monkeypatch):
+    monkeypatch.setenv("LEOFLOW_PARAMS", '{"region": "us"}')
+    got = _run_params_operator(tmp_path, monkeypatch, {})
+    assert got["rendered"] == {"region": "us"}
+
+
+def test_task_params_unreadable_yields_empty():
+    # A params object that cannot be read as a mapping must not break the run conf.
+    op = types.SimpleNamespace(params=5)
+    assert runner._task_params(op) == {}
+    assert runner._task_params(types.SimpleNamespace()) == {}
 
 
 def test_run_operator_requires_dotted_class():

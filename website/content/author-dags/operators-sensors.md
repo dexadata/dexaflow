@@ -155,8 +155,12 @@ operators and native tasks see the same macros Airflow exposes:
 `ds`, `ts`, `run_id`, `task_instance`/`ti`, `dag_run`, `data_interval_start`,
 `data_interval_end`, `params`, `var`, `conn`.
 
-`params` (#148) come from the DAG/run config the control plane resolved
-(`run.Conf`), serialized into `DEXAFLOW_PARAMS`. The data interval and logical date
+`params` (#148) are layered as in Airflow: the DAG's declared param defaults,
+then the task's own `params=`, then the run's `conf`, each winning per key. The
+control plane resolves them when the agent fetches the task spec and serializes
+them into `DEXAFLOW_PARAMS`, and the runtime merges the operator's `params=`
+under them before rendering, so `{{ params.x }}` sees task params too (#1841,
+#1844). The data interval and logical date
 ride through the gRPC `TaskSpec` (proto fields `logical_date`,
 `data_interval_start/end`, `params_json`).
 

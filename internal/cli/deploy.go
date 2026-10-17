@@ -606,21 +606,23 @@ func settleDeployConfig(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfi
 	return prov, nil
 }
 
-// deploySettings says, before anything is built, where the deploy goes and
-// where each setting it did not get from the project came from.
-func deploySettings(choice *serverChoice, cfg *domain.LeoflowConfig, prov defaultsProvenance) string {
+// deploySettings says, before anything is built, where the deploy goes,
+// where each setting it did not get from the project in dir came from, and
+// what the cluster advertises about where its tasks run.
+func deploySettings(choice *serverChoice, dir string, cfg *domain.LeoflowConfig, prov defaultsProvenance) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "server:     %s (%s)\n", choice.URL, choice.Source)
 	if sm := prov.sourceMode; sm.on() {
 		// Nothing is built or pushed: no registry, platform or base image.
 		fmt.Fprintf(&b, "image:      %s (source mode, from %s): dag.py runs on this runtime image, nothing is built or pushed\n", sm.image, sm.source)
-		return b.String()
+	} else {
+		fmt.Fprintf(&b, "registry:   %s/%s (from %s)\n", cfg.Registry.URL, cfg.Registry.ImageName, prov.registrySource)
+		fmt.Fprintf(&b, "platforms:  %s (from %s)\n", strings.Join(cfg.Build.Platforms, ","), orDefault(prov.platformsSource))
+		if cfg.BaseImage != "" {
+			fmt.Fprintf(&b, "base image: %s (from %s)\n", cfg.BaseImage, prov.baseImageSource)
+		}
 	}
-	fmt.Fprintf(&b, "registry:   %s/%s (from %s)\n", cfg.Registry.URL, cfg.Registry.ImageName, prov.registrySource)
-	fmt.Fprintf(&b, "platforms:  %s (from %s)\n", strings.Join(cfg.Build.Platforms, ","), orDefault(prov.platformsSource))
-	if cfg.BaseImage != "" {
-		fmt.Fprintf(&b, "base image: %s (from %s)\n", cfg.BaseImage, prov.baseImageSource)
-	}
+	b.WriteString(clusterExecutionLines(dir, cfg, prov.cluster))
 	return b.String()
 }
 
@@ -678,7 +680,7 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) (err error) {
 	}
 	o.report.setServer(choice)
 	serverURL := choice.URL
-	settings := deploySettings(choice, cfg, prov)
+	settings := deploySettings(choice, dir, cfg, prov)
 	if !o.watching.redeploy() {
 		// A redeploy of a watch prints them when it deploys (watchSkip).
 		o.watching.noteSettings(dir, settings)
@@ -821,9 +823,10 @@ func (d *deployRun) compileOptions(output string, built *build.Result, provenanc
 // beforeBuild is what runs once dag.json is compiled and before anything is
 // built: in source mode the check of the source the server will make
 // (checkSourceModeSpec), then the server's dry run of the register when it
-// offers one; nil when there is nothing to run.
+// offers one, then the task pod step (checkTaskPods) with what the dry run
+// reported; nil when there is nothing to run.
 func (d *deployRun) beforeBuild(ctx context.Context, access serverAccess, output, image, version string, origin labelOrigin, reuse bool) func() error {
-	if !d.sourceMode.on() && !access.dryRun {
+	if dockerfile, _ := d.ownDockerfile(); !d.sourceMode.on() && !access.dryRun && dockerfile == "" {
 		return nil
 	}
 	return func() error {
@@ -832,10 +835,17 @@ func (d *deployRun) beforeBuild(ctx context.Context, access serverAccess, output
 				return err
 			}
 		}
-		if !access.dryRun {
-			return nil
+		var pods *taskPodsAnswer
+		if access.dryRun {
+			answer, err := d.dryRun(ctx, output, image, version, origin, reuse)
+			if err != nil {
+				return err
+			}
+			if answer != nil {
+				pods = answer.TaskPods
+			}
 		}
-		return d.dryRun(ctx, output, image, version, origin, reuse)
+		return d.checkTaskPods(pods)
 	}
 }
 
@@ -915,16 +925,18 @@ func (d *deployRun) checkRegistry(ctx context.Context, image string, reuse bool)
 	return err, nil
 }
 
-// dryRun is the last step of the preflight: the server's dry run of the
-// compiled spec at output, before the build. reuse says the compile takes
-// the skip path when the registry holds the image.
-func (d *deployRun) dryRun(ctx context.Context, output, image, version string, origin labelOrigin, reuse bool) error {
+// dryRun is the server's dry run of the compiled spec at output, before the
+// build, and its answer (nil when there is none to read). reuse says the
+// compile takes the skip path when the registry holds the image.
+func (d *deployRun) dryRun(ctx context.Context, output, image, version string, origin labelOrigin, reuse bool) (*dryRunAnswer, error) {
 	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
 	defer cancel()
-	warned, err := serverDryRun(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), versionPost{serverURL: d.serverURL, token: d.token,
+	answer, err := serverDryRun(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), versionPost{serverURL: d.serverURL, token: d.token,
 		dagID: d.cfg.DagID, paused: d.o.pausedOverride()}, output, d.dryRunImage(ctx, image, reuse), version, origin)
-	d.preflightWarnings = warned
-	return err
+	if answer != nil {
+		d.preflightWarnings = answer.Warnings
+	}
+	return answer, err
 }
 
 // dryRunImage is the image the dry run is sent. The register gets the image

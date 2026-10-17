@@ -313,9 +313,13 @@ build:
 ```
 
 or once for many projects, as `remote_builder` on a target or in the
-workspace `defaults` ([workspaces and targets](/operate/workspaces-and-targets/));
-the project's own block wins, then the target's, then the workspace's, and
-the `builder:` line names where it came from. A Google Cloud registry alone
+workspace `defaults` ([workspaces and targets](/operate/workspaces-and-targets/)),
+or once for the whole cluster, as `deploy.defaults.remoteBuilder` in the
+server's Helm values
+([cluster deploy defaults](/operate/workspaces-and-targets/#remote-builder-task-service-account-and-warm-pools)),
+which `deploy` and `build --push` read from the server;
+the project's own block wins, then the target's, then the workspace's, then
+the cluster's, and the `builder:` line names where it came from. A Google Cloud registry alone
 never selects Cloud Build: where the build runs, and who pays for it, is
 your choice. The block is not part of the content label, so adding it does
 not change the DAG version.
@@ -470,6 +474,15 @@ remote builder takes. It runs a container tool on your machine: `docker` by defa
 and `<tool> push`. The digest `deploy` registers is then read from the
 registry, not from the tool
 ([ADR 0075](/project/adrs/0075-daemonless-builds-in-0-5-4/)).
+
+`--builder` takes any tool that answers those two commands as docker does
+(`build --platform <platforms> -t <image> -f <Dockerfile> <dir>`, then
+`push <image>`), so `--builder buildah` builds the generated Dockerfile with
+buildah, with no daemon, in a pipeline pod. kaniko takes other arguments and
+runs only in its own image, so it is not a `--builder`: a pipeline builds a
+project's own Dockerfile with it and registers the digest it pushed. Both
+are under
+[Recipes for Argo Workflows, Tekton, Jenkins, buildah and kaniko](/operate/cicd-deploy/#recipes-for-argo-workflows-tekton-jenkins-buildah-and-kaniko).
 
 ## Registry credentials
 

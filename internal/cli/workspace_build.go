@@ -144,7 +144,8 @@ func newBuildCommand() *cobra.Command {
 			if derr != nil {
 				return derr
 			}
-			// The registry, platforms and base image deploy would use. Only
+			// The registry, platforms, base image and remote builder deploy
+			// would use. Only
 			// --push asks the server a deploy would go to for its deploy
 			// defaults (buildClusterLayer); a build that stays local never
 			// calls a server.

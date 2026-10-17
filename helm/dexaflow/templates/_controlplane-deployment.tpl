@@ -643,6 +643,42 @@ spec:
             - name: LEOFLOW_DEPLOY_DEFAULTS_SOURCE_MODE
               value: "true"
             {{- end }}
+            {{- with ($deployDefaults.remoteBuilder | default dict).cloudBuild }}
+            # Cluster remote builder (#1890), served on /api/v2/deployDefaults
+            # for deploys whose project, target and workspace name none. Each
+            # value is stamped only when set; deployment.yaml has already
+            # refused a value the server refuses at boot.
+            {{- if .project }}
+            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT
+              value: {{ .project | quote }}
+            {{- end }}
+            {{- if .region }}
+            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_REGION
+              value: {{ .region | quote }}
+            {{- end }}
+            {{- if .workerPool }}
+            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_WORKER_POOL
+              value: {{ .workerPool | quote }}
+            {{- end }}
+            {{- if .serviceAccount }}
+            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_SERVICE_ACCOUNT
+              value: {{ .serviceAccount | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if $deployDefaults.taskServiceAccount }}
+            # Advertise the task ServiceAccount (#1890): the server serves its
+            # own executor.task_service_account; deployment.yaml has already
+            # refused this when the chart sets none.
+            - name: LEOFLOW_DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT
+              value: "true"
+            {{- end }}
+            {{- if $deployDefaults.warmPools }}
+            # Advertise the warm pool settings (#1890): the server serves its
+            # own execution.warm_pools_enabled, min_idle_workers and
+            # max_pool_size.
+            - name: LEOFLOW_DEPLOY_DEFAULTS_WARM_POOLS
+              value: "true"
+            {{- end }}
             {{- $requireDigest := (.ctx.Values.deploy | default dict).requireDigest | default "off" | toString }}
             {{- if ne $requireDigest "off" }}
             # Digest-pinned images at register (#1703). Stamped only when warn

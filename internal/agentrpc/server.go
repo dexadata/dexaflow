@@ -56,8 +56,10 @@ type TaskSpec struct {
 	// stamps the runtime's data_interval_start/end context from them (ADR 0040).
 	DataIntervalStart string
 	DataIntervalEnd   string
-	// ParamsJSON is the DagRun's params/conf, JSON-encoded (#148); the agent stamps
-	// LEOFLOW_PARAMS so the runtime exposes context['params'] / {{ params.X }}.
+	// ParamsJSON is the task's params, JSON-encoded (#148): the DAG's param
+	// defaults, then the task's own params, then the run conf (#1841, #1844). The
+	// agent stamps LEOFLOW_PARAMS so the runtime exposes context['params'] /
+	// {{ params.X }}.
 	ParamsJSON string
 	// FirstRescheduleAt is when a reschedule-mode sensor first entered reschedule,
 	// RFC3339 (#380). The agent stamps LEOFLOW_FIRST_RESCHEDULE_AT so the sensor's

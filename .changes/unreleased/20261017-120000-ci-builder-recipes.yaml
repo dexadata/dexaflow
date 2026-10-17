@@ -1,0 +1,12 @@
+kind: Added
+body: |-
+  **CI recipes for Argo Workflows, Tekton, Jenkins, buildah and kaniko.** The
+  CI/CD page shows how to run the script `dexaflow ci init generic` writes in
+  the `dexaflow-cli` image on Argo Workflows (a `WorkflowTemplate`), Tekton (a
+  `Task` and its `TaskRun`) and Jenkins (a `Jenkinsfile` on the Kubernetes
+  plugin, comparing with the last successful build), and how to build a DAG
+  that needs a real image build in the cluster: `--builder buildah` with the
+  Dockerfile the CLI generates, or kaniko for a project that ships its own
+  Dockerfile, registered with `dexaflow push --image` at the digest kaniko
+  pushed. A test parses every recipe and its shell steps. (#1887)
+time: 2026-10-17T12:00:00.000000000+00:00

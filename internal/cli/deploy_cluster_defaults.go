@@ -82,8 +82,11 @@ func clusterLayer(ctx context.Context, serverURL, token string) (*defaultsLayer,
 		return nil, nil //nolint:nilnil // no defaults advertised is a normal outcome, not an error.
 	}
 	return &defaultsLayer{
-		values: deployDefaults{Registry: d.Registry, Platforms: d.Platforms, BaseImage: d.BaseImage, SourceModeImage: d.SourceModeImage},
-		name:   "the deploy defaults of " + serverURL,
+		values: deployDefaults{Registry: d.Registry, Platforms: d.Platforms, BaseImage: d.BaseImage, SourceModeImage: d.SourceModeImage,
+			RemoteBuilder: d.RemoteBuilder},
+		name:               "the deploy defaults of " + serverURL,
+		taskServiceAccount: d.TaskServiceAccount,
+		warmPools:          d.WarmPools,
 	}, nil
 }
 
@@ -110,9 +113,26 @@ func fetchClusterDefaults(ctx context.Context, serverURL, token string) (d domai
 	if err != nil {
 		return d, false, err
 	}
-	d = domain.DeployDefaults{Registry: got.Registry, Platforms: got.Platforms, BaseImage: got.BaseImage, SourceModeImage: got.SourceModeImage}
+	d = domain.DeployDefaults{Registry: got.Registry, Platforms: got.Platforms, BaseImage: got.BaseImage, SourceModeImage: got.SourceModeImage,
+		RemoteBuilder: remoteBuilderOf(got.RemoteBuilder), TaskServiceAccount: got.TaskServiceAccount}
+	if w := got.WarmPools; w != nil {
+		d.WarmPools = &domain.WarmPoolDefaults{Enabled: w.Enabled, MinIdleWorkers: w.MinIdleWorkers, MaxPoolSize: w.MaxPoolSize}
+	}
 	if verr := d.Validate("deploy.defaults"); verr != nil {
 		return domain.DeployDefaults{}, false, verr
 	}
 	return d, true, nil
+}
+
+// remoteBuilderOf is the remote builder a deployDefaults answer advertises,
+// nil when none. One with no backend is kept, so Validate refuses it.
+func remoteBuilderOf(rb *apiclient.DeployRemoteBuilder) *domain.RemoteBuilderConfig {
+	if rb == nil {
+		return nil
+	}
+	out := &domain.RemoteBuilderConfig{}
+	if cb := rb.CloudBuild; cb != nil {
+		out.CloudBuild = &domain.CloudBuildConfig{Project: cb.Project, Region: cb.Region, WorkerPool: cb.WorkerPool, ServiceAccount: cb.ServiceAccount}
+	}
+	return out
 }

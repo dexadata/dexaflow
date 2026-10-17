@@ -28,13 +28,19 @@ const (
 	// released its pod; the scheduler re-dispatches it once reschedule_at is reached,
 	// without consuming retry budget (ADR 0040 Phase B, #380). Non-terminal.
 	TaskStateUpForReschedule TaskState = "up_for_reschedule"
+	// TaskStateRemoved means the version the run is bound to no longer
+	// declares the task: a clear that moved a finished run to the DAG's current
+	// version set it on the task instance of a task that version dropped (ADR
+	// 0086). Terminal, as in Airflow, and never part of the run's outcome,
+	// which counts only the tasks of the run's version.
+	TaskStateRemoved TaskState = "removed"
 )
 
 // IsTerminal reports whether the task state is final (no further automatic
 // transitions occur from it).
 func (s TaskState) IsTerminal() bool {
 	switch s {
-	case TaskStateSuccess, TaskStateFailed, TaskStateSkipped, TaskStateUpstreamFailed:
+	case TaskStateSuccess, TaskStateFailed, TaskStateSkipped, TaskStateUpstreamFailed, TaskStateRemoved:
 		return true
 	default:
 		return false

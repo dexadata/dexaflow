@@ -21,6 +21,9 @@ const (
 	reasonOutputUndelivered = "the task's own code finished and its side effects already happened, but its " +
 		"outputs (return value, XCom, extra links) could not be delivered; a retry re-runs that code. " +
 		"Check the control plane and its XCom storage."
+	reasonControlPlaneUnavailable = "the control plane, its database or its Redis did not answer the agent " +
+		"before the task's code ran, so the attempt is re-placed without spending a task retry; " +
+		"check the control plane's health."
 )
 
 // errSecretResolution marks a buildEnv failure that came from the external secret

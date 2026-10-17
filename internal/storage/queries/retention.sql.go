@@ -25,7 +25,7 @@ FROM (
     AND NOT EXISTS (
       SELECT 1 FROM task_instances ti
       WHERE ti.dag_run_id = r.id
-        AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed'))
+        AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed', 'removed'))
     AND NOT EXISTS (
       SELECT 1 FROM staging_volumes s
       WHERE s.tenant_id = r.tenant_id AND s.run_id = r.id::text AND s.state = 'active')
@@ -318,7 +318,7 @@ WHERE r.tenant_id = $1
   AND NOT EXISTS (
     SELECT 1 FROM task_instances ti
     WHERE ti.dag_run_id = r.id
-      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed'))
+      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed', 'removed'))
   AND NOT EXISTS (
     SELECT 1 FROM staging_volumes s
     WHERE s.tenant_id = r.tenant_id AND s.run_id = r.id::text AND s.state = 'active')
@@ -337,7 +337,7 @@ type LockExpiredSettledRunsParams struct {
 // first, whose task instances are all settled and that no live staging volume
 // still points at. "Settled" is the predicate the pod reconciler's settled-run
 // collection uses too: run in success or failed, and no task instance outside
-// success, failed, skipped and upstream_failed. none is unsettled on purpose:
+// success, failed, skipped, upstream_failed and removed. none is unsettled on purpose:
 // it is a task a clear just reset, waiting to be scheduled, while the run row
 // still says success until the clear reopens it. Any state added later counts
 // as unsettled, so it is kept rather than deleted. The janitor calls this once
@@ -376,7 +376,7 @@ func (q *Queries) LockExpiredSettledRuns(ctx context.Context, arg LockExpiredSet
 
 const lockTaskInstancesOfRuns = `-- name: LockTaskInstancesOfRuns :many
 SELECT ti.dag_run_id,
-       (ti.state IN ('success', 'failed', 'skipped', 'upstream_failed'))::boolean AS settled
+       (ti.state IN ('success', 'failed', 'skipped', 'upstream_failed', 'removed'))::boolean AS settled
 FROM task_instances ti
 WHERE ti.tenant_id = $1 AND ti.dag_run_id = ANY($2::uuid[])
 FOR UPDATE OF ti NOWAIT
@@ -393,7 +393,9 @@ type LockTaskInstancesOfRunsRow struct {
 }
 
 // Locks every task instance of the locked runs and reports whether each is
-// still settled. A clear resets task instances without locking the run row
+// still settled. A clear that moves a finished run to the current version
+// locks the run row first (ADR 0086), so LockExpiredSettledRuns skips it; any
+// other clear resets task instances without locking the run row
 // first, so the run lock alone does not keep it out: a clear that committed
 // since LockExpiredSettledRuns shows here as an unsettled state, and the
 // janitor drops that run from the batch. Once these locks are held no clear can

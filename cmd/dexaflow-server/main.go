@@ -1509,6 +1509,9 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		WarmPolicy:                   warmPolicy(cfg),
 		WarmPools:                    cfg.Execution,
 		WarmWorkersAbsent:            warmWorkersAbsent(cfg, executorInfo.PodDispatchEnabled),
+		TaskPods: taskPodSettings(cfg, executorInfo.PodDispatchEnabled, func() (kubernetes.Interface, error) {
+			return buildK8sClient(cfg.Executor.KubeClient)
+		}, tel.Logger),
 
 		Dags:            repo,
 		DagRuns:         repo,
@@ -2405,13 +2408,17 @@ const warmKickMinGap = time.Second
 // buildWarmPodInformer starts the warm-pod informer for event-driven refill and
 // waits for its first sync within the same boot budget as the task-pod informer.
 // A nil return (it could not be built) leaves the reconciler polling with a live
-// LIST; an informer that has not synced is read live until it does.
-func buildWarmPodInformer(ctx context.Context, cs kubernetes.Interface, namespace string, logger *slog.Logger) *executor.WarmPodInformer {
+// LIST; an informer that has not synced is read live until it does. It records
+// the final state of every warm worker it sees terminate or get deleted on
+// warmPods, the client the warm-worker-lost reaper lists through, so the reaper
+// names an OOM kill of a worker already deleted (#1835).
+func buildWarmPodInformer(ctx context.Context, cs kubernetes.Interface, namespace string, warmPods *executor.KubernetesWarmPods, logger *slog.Logger) *executor.WarmPodInformer {
 	wi, err := executor.NewWarmPodInformer(cs, namespace)
 	if err != nil {
 		logger.Warn("warm pod informer unavailable; warm pools keep polling refill", "error", err)
 		return nil
 	}
+	wi.RecordTerminationsTo(warmPods)
 	wi.Start(ctx)
 	syncCtx, cancel := context.WithTimeout(ctx, podInformerSyncTimeout)
 	defer cancel()
@@ -2993,6 +3000,36 @@ func warmWorkersAbsent(cfg *config.ServerConfig, podDispatch bool) string {
 	return ""
 }
 
+// taskPodSettings is how the dispatcher starts task pods, which the
+// register dry run reports (#1889): podDispatch is
+// ExecutorInfo.PodDispatchEnabled. The ServiceAccounts of the task namespace
+// are read with a client newClient builds, only by a process that holds the
+// executor's Role, which grants that read (ADR 0085): the all role. The api
+// role of a split control plane has no access to the cluster (ADR 0049), so
+// it reports every account unchecked, with the reason.
+func taskPodSettings(cfg *config.ServerConfig, podDispatch bool, newClient func() (kubernetes.Interface, error), logger *slog.Logger) api.TaskPodSettings {
+	s := api.TaskPodSettings{
+		Enabled:               podDispatch,
+		RunAsNonRoot:          cfg.Executor.Defaults.RunTasksAsNonRoot,
+		DefaultServiceAccount: cfg.Executor.TaskServiceAccount,
+	}
+	switch {
+	case !podDispatch:
+		return s
+	case !cfg.Server.ServesScheduler():
+		s.Unread = "the API role of a split control plane has no access to the cluster (ADR 0049)"
+		return s
+	}
+	cs, err := newClient()
+	if err != nil {
+		logger.Warn("the register dry run cannot look up task ServiceAccounts", "error", err)
+		s.Unread = "the control plane has no Kubernetes client"
+		return s
+	}
+	s.ServiceAccounts = executor.NewServiceAccounts(cs, cfg.Executor.TaskNamespace)
+	return s
+}
+
 // resolveAgentControlAddr returns the address task agents dial back, defaulting
 // to the server's own gRPC address.
 func resolveAgentControlAddr(cfg *config.ServerConfig) string {
@@ -3152,7 +3189,8 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 		reaper.SetAttemptTokenTTL(attemptTokenTTL)
 	}
 	// Give the reaper an append-aware marker sink so a reaped attempt's log ends
-	// with a "killed: agent_lost" marker instead of a silent truncation (#861).
+	// with a "killed: agent_lost" or "killed: pod_lost" marker instead of a
+	// silent truncation (#861).
 	// Both DiskSink and ObjectSink implement MarkerSink (append preserves the
 	// agent's streamed content on either backend); the assertion holds for every
 	// sink NewDurableSink returns.
@@ -3195,7 +3233,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 		if cfg.Execution.WarmPoolEventRefill {
 			// On the maintenance client, like the task-pod informer and the
 			// warm-pod client the reconciler checks it against (#1315).
-			warmCache = buildWarmPodInformer(ctx, mcs, cfg.Executor.TaskNamespace, logger)
+			warmCache = buildWarmPodInformer(ctx, mcs, cfg.Executor.TaskNamespace, warmPods, logger)
 			if warmCache != nil && warmPools != nil {
 				// A claimed worker leaves the idle buffer short: refill now.
 				warmPools.SetOnClaim(warmCache.Kick)

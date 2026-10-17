@@ -267,6 +267,20 @@ type Querier interface {
 	// their own listings. A run id that arrives in an agent token is read with
 	// GetDagRunInTenant instead (#508).
 	GetDagRunByID(ctx context.Context, id pgtype.UUID) (DagRun, error)
+	// A finished run a clear may move to the DAG's current version, read and
+	// locked inside the clear's transaction before any of its task instances is
+	// written (ADR 0086). The move depends on the run's state, so it is decided
+	// on the locked row: a second clear of the same run waits for the first
+	// instead of deciding from the same state. Only a finished run is locked:
+	// the state predicate is checked again after a wait, so a run another clear
+	// re-opened meanwhile is not returned and not held. The orphan reaper
+	// share-locks a running run's task instances and then updates the run row,
+	// the opposite order. NO KEY UPDATE is enough, since no key changes, and it
+	// lets through the key-share lock an XCom insert of a live attempt takes on
+	// the run. The retention janitor locks finished runs with SKIP LOCKED and
+	// their task instances with NOWAIT, so it skips or gives way and never waits
+	// on a clear.
+	GetDagRunForUpdate(ctx context.Context, arg GetDagRunForUpdateParams) (DagRun, error)
 	// A run by id, only inside the given tenant: the agent RPC reads the run its
 	// token names with the token's tenant, so a token of one tenant never loads
 	// another tenant's run (#508).
@@ -480,7 +494,7 @@ type Querier interface {
 	ListFavoriteDagIDs(ctx context.Context, arg ListFavoriteDagIDsParams) ([]string, error)
 	ListImportErrors(ctx context.Context, tenant string) ([]ListImportErrorsRow, error)
 	// Lists dag_runs currently in 'running' whose task instances are ALL terminal
-	// or never-started (every TI in none/success/failed/skipped/upstream_failed),
+	// or never-started (every TI in none/success/failed/skipped/upstream_failed/removed),
 	// alongside the timestamp of their most recent observable activity. The "no
 	// live TI" filter is the critical safety guarantee: a run that is still
 	// progressing stays out of the candidate set, so the reaper can never kill a
@@ -547,7 +561,8 @@ type Querier interface {
 	// (#209).
 	ListScheduledDags(ctx context.Context) ([]ListScheduledDagsRow, error)
 	// Of the given (tenant, run) pairs, the settled runs: run in success or failed
-	// and no task instance outside success, failed, skipped and upstream_failed.
+	// and no task instance outside success, failed, skipped, upstream_failed and
+	// removed.
 	// This is the same "settled" the retention janitor's LockExpiredSettledRuns
 	// uses (duplicated there on purpose, keep the two identical). A run marked
 	// failed while a task still runs is not settled, so the reconciler never
@@ -625,6 +640,8 @@ type Querier interface {
 	// entirely — with warm pools off no TI is ever bound, so this returns empty and
 	// the reaper is inert. The LIMIT bounds a single tick's work after a large
 	// outage; the rest are picked up next tick.
+	// tenant_id and dag_id locate the attempt's log stream for the reaper's
+	// killed marker (#861).
 	ListWarmBoundRunningTIs(ctx context.Context) ([]ListWarmBoundRunningTIsRow, error)
 	// The current version of the DAGs the warm-pool reconcile looks at (#1707,
 	// ADR 0082): with prewarm, every active unpaused DAG whose current version
@@ -666,7 +683,7 @@ type Querier interface {
 	// first, whose task instances are all settled and that no live staging volume
 	// still points at. "Settled" is the predicate the pod reconciler's settled-run
 	// collection uses too: run in success or failed, and no task instance outside
-	// success, failed, skipped and upstream_failed. none is unsettled on purpose:
+	// success, failed, skipped, upstream_failed and removed. none is unsettled on purpose:
 	// it is a task a clear just reset, waiting to be scheduled, while the run row
 	// still says success until the clear reopens it. Any state added later counts
 	// as unsettled, so it is kept rather than deleted. The janitor calls this once
@@ -695,7 +712,9 @@ type Querier interface {
 	// scheduler transition); a reap that never waits on a TI cannot be in one.
 	LockRunTaskInstancesForReap(ctx context.Context, dagRunID pgtype.UUID) error
 	// Locks every task instance of the locked runs and reports whether each is
-	// still settled. A clear resets task instances without locking the run row
+	// still settled. A clear that moves a finished run to the current version
+	// locks the run row first (ADR 0086), so LockExpiredSettledRuns skips it; any
+	// other clear resets task instances without locking the run row
 	// first, so the run lock alone does not keep it out: a clear that committed
 	// since LockExpiredSettledRuns shows here as an unsettled state, and the
 	// janitor drops that run from the batch. Once these locks are held no clear can
@@ -772,6 +791,12 @@ type Querier interface {
 	// have reported running. Each of those moves the row off the planned slot, so
 	// this write touches zero rows instead of overwriting the newer outcome.
 	MarkTaskInstanceQueued(ctx context.Context, arg MarkTaskInstanceQueuedParams) (int64, error)
+	// A clear that moves a finished run to a version that no longer declares
+	// these tasks marks their task instances removed (ADR 0086), as Airflow's
+	// verify_integrity does. Their history, logs and XCom stay. A queued or
+	// running task instance is never marked: the clear does not move a run that
+	// has one, and the guard keeps a racing attempt's row as it is.
+	MarkTaskInstancesRemoved(ctx context.Context, arg MarkTaskInstancesRemovedParams) error
 	// Fails a running TI whose pod has vanished (deleted/evicted/node lost). The
 	// WHERE state='running' guard makes it idempotent and prevents overwriting a
 	// late terminal report that landed between our list and our write (a live
@@ -973,7 +998,8 @@ type Querier interface {
 	// task ids it reset, so the clear can delete exactly their XCom.
 	ResetAllFailedTaskInstances(ctx context.Context, arg ResetAllFailedTaskInstancesParams) ([]string, error)
 	// Clear with run_on_latest_version re-binds the run to the DAG's current
-	// registered version (ADR 0020; opt-in since the 2026-09-15 amendment): a
+	// registered version (ADR 0020; opt-in since the 2026-09-15 amendment; only a
+	// finished run with no queued or running task instance, ADR 0086): a
 	// re-run after a code/yaml fix picks up the newest image and config — in dev that
 	// is the last hot-reload, in prod the last deploy — while everything within a
 	// version stays reproducible. Clearing the alert bookkeeping (#431) makes the clear

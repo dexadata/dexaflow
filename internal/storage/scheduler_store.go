@@ -1259,6 +1259,8 @@ func (s *SchedulerStore) ListWarmBoundRunningTIs(ctx context.Context) ([]executo
 	for _, r := range rows {
 		out = append(out, executor.WarmBoundTI{
 			TaskInstanceID: uuidToString(r.TaskInstanceID),
+			TenantID:       uuidToString(r.TenantID),
+			DagID:          r.DagIDText,
 			DagRunID:       uuidToString(r.DagRunID),
 			TaskID:         r.TaskID,
 			TryNumber:      int(r.TryNumber),
@@ -1373,13 +1375,32 @@ func (s *SchedulerStore) ListRunningTasks(ctx context.Context, grace time.Durati
 // (a late terminal report landed) is left alone, and so is a row on a different
 // (tryNumber, attemptEpoch) than the one listed (ADR 0051 amendment).
 func (s *SchedulerStore) MarkTaskPodLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error) {
+	return s.markTaskPodLost(ctx, taskInstanceID, tryNumber, attemptEpoch, nil)
+}
+
+// warmOOMKilledReason is the failure message of an attempt whose warm worker's
+// container was OOMKilled (#1218). It keeps the pod_lost: prefix, because the
+// mark is the same infra mark.
+const warmOOMKilledReason = "pod_lost: the warm worker serving this attempt was OOMKilled; raise the task's memory limit."
+
+// MarkTaskPodLostOOMKilled is MarkTaskPodLost for an attempt whose warm
+// worker's container the kubelet reported OOMKilled: the same infra mark and
+// guards, with a failure message that names the OOM kill (#1218).
+func (s *SchedulerStore) MarkTaskPodLostOOMKilled(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error) {
+	reason := warmOOMKilledReason
+	return s.markTaskPodLost(ctx, taskInstanceID, tryNumber, attemptEpoch, &reason)
+}
+
+// markTaskPodLost applies the pod_lost mark; a nil reason keeps the default.
+func (s *SchedulerStore) markTaskPodLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, reason *string) (bool, error) {
 	tid, err := parseUUID(taskInstanceID)
 	if err != nil {
 		return false, err
 	}
 	n, err := s.q.MarkTaskPodLost(ctx, queries.MarkTaskPodLostParams{
-		Provisional: s.provisionalInfraMarks,
-		ID:          tid, TryNumber: toInt32(tryNumber), AttemptEpoch: toInt32(attemptEpoch),
+		Provisional:  s.provisionalInfraMarks,
+		ErrorMessage: reason,
+		ID:           tid, TryNumber: toInt32(tryNumber), AttemptEpoch: toInt32(attemptEpoch),
 	})
 	if err != nil {
 		return false, fmt.Errorf("marking task pod-lost: %w", err)

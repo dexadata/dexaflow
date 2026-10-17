@@ -59,7 +59,16 @@ dominated by the image pull. During it:
   `Unavailable` rather than `Internal`. The agent also retries an `Internal`
   answer to a state report for up to 2 minutes of backoff, which covers an
   older control plane during an upgrade. An outage longer than that still
-  fails the attempt as before.
+  ends the attempt, but when it ends before the task's code ran (the agent
+  could not register, read its task spec or upstream XComs, or report
+  `running`), the task does not pay for it: on Kubernetes the agent leaves an
+  outcome record that the pod reconciler settles on the infra rail as
+  `control_plane_unavailable`, and on Lite the unreported attempt is
+  `dispatch_lost`. Either way the task is re-placed on the infra budget
+  without spending one of its retries
+  ([scheduler resilience](/operate/scheduler-resilience/)). An outage that
+  outlasts the push of a finished task's outputs still fails the attempt, since
+  its code already ran.
 - **The API and UI are down.** Every replica is the same binary, so one replica
   means one API.
 

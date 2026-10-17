@@ -1043,7 +1043,9 @@ paths:
         "200":
           description: >-
             With dry_run (the default), the task instances the clear would
-            reset; otherwise the cleared run.
+            reset; otherwise the cleared run. Either carries
+            run_on_latest_version_not_applied when run_on_latest_version was
+            asked and the run keeps its version.
           content:
             application/json:
               schema:
@@ -1063,11 +1065,9 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: >-
-            run_on_latest_version would re-bind the run to a current version
-            whose tasks differ from the run's task instances (a task added or
-            removed). The detail names the tasks and the ways out: clear without
-            run_on_latest_version, or trigger a new run. A dry run answers the
-            same refusal.
+            Not answered since ADR 0086, which replaced the refusal of a clear
+            onto a version with other tasks by the full re-bind. Kept declared
+            because Airflow declares it.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1200,18 +1200,19 @@ paths:
               $ref: "#/components/schemas/ClearTaskInstancesRequest"
       responses:
         "200":
-          description: List of cleared task instances
+          description: >-
+            The task instances cleared, or with dry_run (the default) the ones
+            the clear would reset. Carries run_on_latest_version_not_applied
+            when run_on_latest_version was asked and a run keeps its version.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaskInstanceCollection"
         "409":
           description: >-
-            run_on_latest_version would re-bind the run to a current version
-            whose tasks differ from the run's task instances (a task added or
-            removed). The detail names the tasks and the ways out: clear without
-            run_on_latest_version, or trigger a new run. A dry run answers the
-            same refusal.
+            Not answered since ADR 0086, which replaced the refusal of a clear
+            onto a version with other tasks by the full re-bind. Kept declared
+            because Airflow declares it.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1351,11 +1352,13 @@ paths:
     get:
       summary: Cluster deploy defaults (Dexaflow)
       description: >-
-        The registry prefix, build platforms and base image the operator set
-        in the server's deploy.defaults, and the source mode runtime image when
-        deploy.defaults.source_mode advertises it. dexaflow deploy applies them to
-        whatever the project, its workspace, its target and the CLI config
-        leave unset. The values are the cluster's, the same for every tenant,
+        The registry prefix, build platforms, base image and remote builder
+        the operator set in the server's deploy.defaults, the source mode
+        runtime image when deploy.defaults.source_mode advertises it, and the
+        task service account and warm pools when their switches advertise
+        them. dexaflow deploy applies the build values to whatever the
+        project, its workspace, its target and the CLI config leave unset,
+        and reports the task service account and warm pools. The values are the cluster's, the same for every tenant,
         and none is a secret. Every field is always present; an unset one is
         empty. A server without this route answers 404, and the CLI then
         deploys with its local settings only. Needs read on dags (scope
@@ -1919,6 +1922,45 @@ components:
           items: { type: string }
           description: What the register lets through with a warning (a task that does not fit its size under executor.unit.enforce=warn, an image not pinned by digest under deploy.require_digest=warn). Always sent by the dry run route; sent by a register only when it has a warning to give.
         execution: { $ref: "#/components/schemas/ExecutionReport" }
+        task_pods: { $ref: "#/components/schemas/TaskPodsReport" }
+
+    TaskPodsReport:
+      type: object
+      description: >-
+        What the version's task pods would run as (Dexaflow), sent by the dry
+        run route only, absent from a register. A server that starts no task
+        pods sends run_as_non_root false and no service account.
+      required: [run_as_non_root, service_accounts]
+      properties:
+        run_as_non_root:
+          type: boolean
+          description: >-
+            True when task pods refuse an image that runs as root or as a user
+            name rather than a number (executor.run_tasks_as_non_root).
+        service_accounts:
+          type: array
+          description: >-
+            Each ServiceAccount a task pod of the version would run as (the
+            task's execution.service_account, else executor.task_service_account,
+            else the namespace's default), sorted by name. A dry run looks up at
+            most 8.
+          items: { $ref: "#/components/schemas/TaskServiceAccountCheck" }
+
+    TaskServiceAccountCheck:
+      type: object
+      required: [name, tasks, state]
+      properties:
+        name: { type: string }
+        tasks: { type: array, items: { type: string }, description: The tasks whose pods run as it. }
+        state:
+          type: string
+          description: >-
+            One of found, missing or unchecked. found: it exists in the task namespace. missing: it does not, and
+            the pods of these tasks would not be created; when its name is not a valid ServiceAccount name (a
+            DNS-1123 subdomain), it is not looked up and detail says so. unchecked: the server
+            could not look it up (detail says why).
+        image_pull_secrets: { type: integer, description: "How many imagePullSecrets it carries; sent with state found." }
+        detail: { type: string, description: "Why it is unchecked, or why a missing name is not valid." }
 
     ExecutionReport:
       type: object
@@ -2043,6 +2085,45 @@ components:
             their own. It is the server's execution.source_mode.image, served
             only when deploy.defaults.source_mode is on; empty otherwise. Absent
             from servers that predate it.
+        remote_builder:
+          type: object
+          nullable: true
+          description: >-
+            Remote builder (ADR 0083) a deploy uses for builds no daemonless
+            path covers, for projects, targets and workspaces that name none:
+            the server's deploy.defaults.remote_builder. Null when unset.
+            Absent from servers that predate it.
+          properties:
+            cloud_build:
+              type: object
+              properties:
+                project: { type: string, description: Google Cloud project the build runs in. }
+                region: { type: string, description: Cloud Build region; absent when unset. }
+                worker_pool: { type: string, description: "Private pool, projects/<project>/locations/<region>/workerPools/<name>; absent when unset." }
+                service_account: { type: string, description: "Account the build runs as, projects/<project>/serviceAccounts/<email>; absent when unset." }
+        task_service_account:
+          type: string
+          description: >-
+            ServiceAccount task pods run as when a task sets no
+            execution.service_account: the server's
+            executor.task_service_account, served only when
+            deploy.defaults.task_service_account is on; empty otherwise. A
+            deploy reports it and never writes it into dag.json. Absent from
+            servers that predate it.
+        warm_pools:
+          type: object
+          nullable: true
+          description: >-
+            The server's warm pool settings (ADR 0058), served only when
+            deploy.defaults.warm_pools is on; null otherwise. A DAG that
+            declares no min_idle_workers gets min_idle_workers, every value
+            is capped at max_pool_size, and nothing is kept warm while
+            enabled is false. Absent from servers that predate it.
+          required: [enabled, min_idle_workers, max_pool_size]
+          properties:
+            enabled: { type: boolean, description: execution.warm_pools_enabled. }
+            min_idle_workers: { type: integer, description: execution.min_idle_workers. }
+            max_pool_size: { type: integer, description: execution.max_pool_size; 0 sets no cap. }
 
     VersionInfo:
       type: object
@@ -2062,6 +2143,7 @@ components:
     DAGRun:
       type: object
       properties:
+        run_on_latest_version_not_applied: { $ref: "#/components/schemas/ClearVersionNotApplied" }
         dag_id: { type: string }
         dag_run_id: { type: string }
         logical_date: { type: string, format: date-time }
@@ -2116,7 +2198,7 @@ components:
         state:
           type: string
           nullable: true
-          enum: [scheduled, queued, running, success, failed, skipped, upstream_failed, up_for_retry, none]
+          enum: [scheduled, queued, running, success, failed, skipped, upstream_failed, up_for_retry, removed, none]
         operator: { type: string }
         start_date: { type: string, format: date-time, nullable: true }
         end_date: { type: string, format: date-time, nullable: true }
@@ -2142,9 +2224,30 @@ components:
             token; check the control plane's RBAC for tokenreviews and the
             configured token audience.
 
+    ClearVersionNotApplied:
+      type: array
+      description: >-
+        Dexaflow-only. The runs a clear with run_on_latest_version keeps on
+        their own version, each with the reason (ADR 0086): only a finished
+        run with no task instance queued or running moves to the current
+        version. The clear still applies to these runs, on their version.
+        Left out when every run moved or the option was not asked, and on
+        every response other than the two clear routes.
+      items:
+        type: object
+        required: [dag_run_id, reason]
+        properties:
+          dag_run_id: { type: string }
+          reason:
+            type: string
+            description: >-
+              Why the run keeps its version, for example "the run is running:
+              only a finished run moves to the current version".
+
     TaskInstanceCollection:
       type: object
       properties:
+        run_on_latest_version_not_applied: { $ref: "#/components/schemas/ClearVersionNotApplied" }
         task_instances:
           type: array
           items: { $ref: "#/components/schemas/TaskInstance" }
@@ -2196,9 +2299,13 @@ components:
           nullable: true
           description: >-
             Which version the re-run executes. Unset or false keeps the version
-            the run was created with; true re-binds the run to the DAG's current
-            registered version. A re-bind onto a version whose tasks differ from
-            the run's task instances is refused with 409.
+            the run was created with. true moves a finished run (success or
+            failed, with no task instance queued or running) to the DAG's
+            current registered version, creating the task instances of the
+            tasks that version adds and marking removed the ones of the tasks
+            it dropped. A run that has not finished keeps its version, as in
+            Airflow; the response then lists it in
+            run_on_latest_version_not_applied with the reason (ADR 0086).
         note:
           type: string
           nullable: true
@@ -2243,9 +2350,12 @@ components:
             executes the image that produced the original attempt. true re-binds
             the run to the DAG's current registered version, so the re-run picks up
             the newest image and config. Use it to re-run a failed task against a
-            fix without creating a new run. A re-bind onto a version that adds or removes a
-            task is refused with 409 (the clear does not yet create or remove task
-            instances), naming the tasks.
+            fix without creating a new run. Only a finished run (success or
+            failed, with no task instance queued or running) moves: the clear
+            creates the task instances of the tasks the version adds and marks
+            removed the ones of the tasks it dropped. A run that has not
+            finished keeps its version, as in Airflow, and the response lists
+            it in run_on_latest_version_not_applied with the reason (ADR 0086).
         dry_run:
           type: boolean
           default: true

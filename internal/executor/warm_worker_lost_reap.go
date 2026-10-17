@@ -2,8 +2,12 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"time"
+
+	"github.com/dexadata/dexaflow/internal/logs"
 )
 
 // WarmPodLister is the narrow read-only seam onto the live warm fleet the
@@ -14,6 +18,14 @@ import (
 // reuses that one type, it is not duplicated.
 type WarmPodLister interface {
 	ListWarmPods(ctx context.Context) ([]WarmPodInfo, error)
+}
+
+// WarmTerminationLookup is the optional seam a WarmPodLister offers to name the
+// cause of a worker the LIST no longer returns: the warm-worker container's
+// terminated reason it last observed for that pod, or "" (#1835).
+// KubernetesWarmPods implements it.
+type WarmTerminationLookup interface {
+	LastTerminationReason(podName string) string
 }
 
 // liveWarmPodNames returns the set of LIVE (non-terminal) warm-pod names, read
@@ -59,6 +71,10 @@ type WarmBoundTI struct {
 	// amendment).
 	AttemptEpoch int
 	WarmWorkerID string
+	// TenantID and DagID locate the attempt's log stream for the killed marker
+	// (#861).
+	TenantID string
+	DagID    string
 }
 
 // WarmWorkerLostReapStore is the slice of the store the warm-worker-lost reaper
@@ -73,6 +89,11 @@ type WarmWorkerLostReapStore interface {
 	// state='running'). applied=false means a late settle raced the mark — a
 	// benign skip, never a false reap.
 	MarkTaskPodLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error)
+	// MarkTaskPodLostOOMKilled is MarkTaskPodLost, the same infra mark with the
+	// same guards, for an attempt whose warm worker's container the kubelet
+	// reported OOMKilled (#1218): only the failure message differs, naming the
+	// OOM kill. The attribution stays infra (ADR 0051, ADR 0058 D7).
+	MarkTaskPodLostOOMKilled(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error)
 }
 
 // warmWorkerLostReaper recovers a dead warm worker's in-flight attempts (ADR 0058
@@ -101,6 +122,9 @@ type warmWorkerLostReaper struct {
 	warmPods WarmPodLister
 	// gate is re-checked before every destructive call (see destructiveGate).
 	gate destructiveGate
+	// sink appends a final "killed: pod_lost" marker to each reaped attempt's
+	// log stream (#861). Nil disables the marker; the reap is unaffected.
+	sink logSink
 }
 
 func newWarmWorkerLostReaper(store WarmWorkerLostReapStore, logger *slog.Logger, rec DecisionRecorder) *warmWorkerLostReaper {
@@ -146,17 +170,9 @@ func (r *warmWorkerLostReaper) run(ctx context.Context) error {
 		r.record("warm_worker_lost_list_pods_error")
 		return nil
 	}
-	live := make(map[string]bool, len(pods))
-	for _, p := range pods {
-		if p.Terminal {
-			// A terminal warm pod can never serve again; it is not live, so an
-			// attempt still bound to it is correctly reaped below.
-			continue
-		}
-		live[p.Name] = true
-	}
+	fleet := viewWarmFleet(pods)
 	for _, ti := range bound {
-		if live[ti.WarmWorkerID] {
+		if fleet.live[ti.WarmWorkerID] {
 			// The serving warm worker is still alive; the attempt is healthy.
 			continue
 		}
@@ -164,7 +180,8 @@ func (r *warmWorkerLostReaper) run(ctx context.Context) error {
 			r.record("warm_worker_lost_gate_skip")
 			continue
 		}
-		applied, ferr := r.store.MarkTaskPodLost(ctx, ti.TaskInstanceID, ti.TryNumber, ti.AttemptEpoch)
+		oom := r.oomKilled(fleet, ti.WarmWorkerID)
+		applied, ferr := r.mark(ctx, ti, oom)
 		if ferr != nil {
 			r.logger.Error("marking warm-worker-lost task pod-lost",
 				"ti", ti.TaskInstanceID, "run", ti.DagRunID, "task", ti.TaskID, "worker", ti.WarmWorkerID, "error", ferr)
@@ -178,10 +195,84 @@ func (r *warmWorkerLostReaper) run(ctx context.Context) error {
 			continue
 		}
 		r.logger.Warn("warm worker gone; failing its in-flight attempt as pod_lost",
-			"ti", ti.TaskInstanceID, "run", ti.DagRunID, "task", ti.TaskID, "worker", ti.WarmWorkerID)
+			"ti", ti.TaskInstanceID, "run", ti.DagRunID, "task", ti.TaskID, "worker", ti.WarmWorkerID, "oom_killed", oom)
 		r.record("warm_worker_lost")
+		if oom {
+			r.record("warm_worker_lost_oomkilled")
+		}
+		r.writeMarker(ti, oom)
 	}
 	return nil
+}
+
+// warmFleetView is one tick's reading of the listed warm fleet: the live
+// workers, every listed one, and the terminal ones whose container the kubelet
+// reported OOMKilled.
+type warmFleetView struct {
+	live, listed, oomKilled map[string]bool
+}
+
+// viewWarmFleet classifies the listed warm pods once per tick. A terminal warm
+// pod can never serve again, so it is not live and an attempt still bound to
+// it is reaped. On cgroup v2 the kubelet sets memory.oom.group, so an OOM in a
+// task kills the whole warm-worker container and the warm-worker-lost reaper
+// is the one that settles the attempt (#1218).
+func viewWarmFleet(pods []WarmPodInfo) warmFleetView {
+	v := warmFleetView{
+		live:      make(map[string]bool, len(pods)),
+		listed:    make(map[string]bool, len(pods)),
+		oomKilled: map[string]bool{},
+	}
+	for _, p := range pods {
+		v.listed[p.Name] = true
+		switch {
+		case !p.Terminal:
+			v.live[p.Name] = true
+		case p.TerminationReason == "OOMKilled":
+			v.oomKilled[p.Name] = true
+		}
+	}
+	return v
+}
+
+// oomKilled reports whether the named worker's container was OOMKilled: from
+// its listed status while the LIST still returns it, else from the lister's
+// remembered terminated reason, since after an OOM the pod is usually deleted
+// before this reaper runs (#1835). A lister without that memory, or no
+// remembered reason, reports false, which keeps the plain pod_lost text.
+func (r *warmWorkerLostReaper) oomKilled(fleet warmFleetView, worker string) bool {
+	if fleet.listed[worker] {
+		return fleet.oomKilled[worker]
+	}
+	tl, ok := r.warmPods.(WarmTerminationLookup)
+	return ok && tl.LastTerminationReason(worker) == "OOMKilled"
+}
+
+// mark fails the attempt as pod_lost, through the OOMKilled variant when its
+// worker's container was reported OOMKilled. Both are the same infra mark.
+func (r *warmWorkerLostReaper) mark(ctx context.Context, ti WarmBoundTI, oom bool) (bool, error) {
+	if oom {
+		return r.store.MarkTaskPodLostOOMKilled(ctx, ti.TaskInstanceID, ti.TryNumber, ti.AttemptEpoch)
+	}
+	return r.store.MarkTaskPodLost(ctx, ti.TaskInstanceID, ti.TryNumber, ti.AttemptEpoch)
+}
+
+// writeMarker ends the reaped attempt's log with the reason, since the stream
+// stopped wherever its warm worker died (#861). Best-effort, like the other
+// reapers' markers. oom names the OOM kill when the worker's container was
+// reported OOMKilled (#1218).
+func (r *warmWorkerLostReaper) writeMarker(ti WarmBoundTI, oom bool) {
+	ref := logs.Ref{
+		TenantID: ti.TenantID, DagID: ti.DagID, RunID: ti.DagRunID, TaskID: ti.TaskID,
+		TryNumber: ti.TryNumber, AttemptEpoch: ti.AttemptEpoch,
+	}
+	msg := fmt.Sprintf("killed: pod_lost (warm worker %s is gone or terminated)", ti.WarmWorkerID)
+	if oom {
+		msg = fmt.Sprintf("killed: pod_lost (warm worker %s was OOMKilled; raise the task's memory limit)", ti.WarmWorkerID)
+	}
+	if err := appendKilledMarker(r.sink, ref, time.Now().UTC(), msg); err != nil {
+		r.record("warm_worker_lost_log_marker_error")
+	}
 }
 
 func (r *warmWorkerLostReaper) record(decision string) {

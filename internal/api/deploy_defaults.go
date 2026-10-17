@@ -10,11 +10,13 @@ import (
 
 // deployDefaultsHandler implements GET /api/v2/deployDefaults, a Dexaflow
 // route Airflow has no counterpart for (#1704): the registry prefix,
-// platforms and base image the operator set in deploy.defaults, and the
-// source mode runtime image when deploy.defaults.source_mode advertises it
-// (#1772), which `dexaflow deploy` applies to whatever a project leaves unset. The values
-// are the cluster's, the same for every tenant, and none is a secret. Every
-// field is always present; an unset one is empty.
+// platforms, base image and remote builder the operator set in
+// deploy.defaults, the source mode runtime image when
+// deploy.defaults.source_mode advertises it (#1772), which `dexaflow deploy`
+// applies to whatever a project leaves unset, and the task service account
+// and warm pools when their switches advertise them (#1890), which it
+// reports. The values are the cluster's, the same for every tenant, and none
+// is a secret. Every field is always present; an unset one is empty or null.
 func deployDefaultsHandler(d domain.DeployDefaults) gin.HandlerFunc {
 	body := d
 	body.Platforms = append([]string{}, d.Platforms...)

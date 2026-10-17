@@ -112,8 +112,10 @@ type Dependencies struct {
 	// UnpinnedImages counts the unpinned images deploy.require_digest warned
 	// about or refused. Nil: not counted.
 	UnpinnedImages UnpinnedImageRecorder
-	// DeployDefaults are the server's deploy.defaults, served on
-	// GET /api/v2/deployDefaults (#1704). The zero value serves empty fields.
+	// DeployDefaults are what the server advertises from deploy.defaults
+	// (config.ServerConfig.AdvertisedDeployDefaults), served on
+	// GET /api/v2/deployDefaults (#1704, #1890). The zero value serves empty
+	// fields.
 	DeployDefaults domain.DeployDefaults
 	// ExecutionPolicy is executor.defaults.execution_allowlist (issue #629).
 	// When set, registering a DAG whose task sets an execution field (or
@@ -133,6 +135,11 @@ type Dependencies struct {
 	// a server whose pod dispatch is disabled), "" when they run. The register
 	// response then reports every task on a dedicated pod, with this reason.
 	WarmWorkersAbsent string
+	// TaskPods is how this server starts task pods, which the register dry
+	// run reports (#1889): whether they refuse an image that runs as root,
+	// and the ServiceAccount each task would run as, looked up. The zero
+	// value reports a server that starts no task pods.
+	TaskPods TaskPodSettings
 
 	// Resource repositories. Routes for nil repositories are not registered.
 	Dags     DagRepository

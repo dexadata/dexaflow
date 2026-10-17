@@ -30,9 +30,10 @@ see [Lite: which reapers run](#lite-which-reapers-run).
 | Agent process crashed mid-task (TI in `running`, no heartbeat) | TI heartbeat reaper ([#128](https://github.com/dexadata/dexaflow/issues/128)) | **90 s** | TI failed with `agent_lost`; the TI's pod is deleted so a partitioned-but-alive container stops — unless it has already reached a terminal phase, in which case it is left for the reconciler (see teardown below). Retries kick in if budget remains. |
 | Scheduler crashed before dispatching (TI stuck in `queued`) | Dispatch-lost reaper ([#202](https://github.com/dexadata/dexaflow/issues/202)) | **3 min** | TI failed with `dispatch_lost` — but only if no live pod for it exists (see below); any pod still Pending/Running for the attempt is torn down, a finished one is left for the reconciler. Frees the run for the orphan reaper on the next maintenance cycle. |
 | Task pod still `Pending` as its attempt credential nears its end (TI in `queued`; env-var transport only) | Dispatch-lost reaper ([#1126](https://github.com/dexadata/dexaflow/issues/1126)) | **8 min** after `queued_at` (the 10 min attempt token TTL less a 2 min margin) | TI failed with `start_expired`, an infra mark: the Pending pod is deleted, `killed: start_expired …` is appended to the attempt's log, and the planner re-places the task with a fresh credential **without spending a retry**. A pod already `Running` is left alone. |
-| Task pod vanished (TI in `running`, no pod at all for its attempt) | Pod-lost reaper | **60 s** after the running transition, then a live pod read | TI failed with `pod_lost`. Only when the apiserver holds no pod for the attempt: a pod that is still there in a terminal phase is left for the reconciler to settle from its termination log (`pod_lost_terminal_pod_defer`). |
-| Warm worker died holding attempts (warm pools only) | Warm-worker-lost reaper | next maintenance cycle | Each attempt bound to the dead worker is failed `pod_lost`; refill of the pool is the warm-pool reconciler's job, not the reaper's. |
+| Task pod vanished (TI in `running`, no pod at all for its attempt) | Pod-lost reaper | **60 s** after the running transition, then a live pod read | TI failed with `pod_lost`, and a final `killed: pod_lost (...)` line is appended to the attempt's log. Only when the apiserver holds no pod for the attempt: a pod that is still there in a terminal phase is left for the reconciler to settle from its termination log (`pod_lost_terminal_pod_defer`). |
+| Warm worker died holding attempts (warm pools only) | Warm-worker-lost reaper | next maintenance cycle | Each attempt bound to the dead worker is failed `pod_lost`, and its log ends with a `killed: pod_lost (warm worker <name> is gone or terminated)` line. When the worker's container terminated `OOMKilled` (on cgroup v2 an OOM in a task kills the whole worker), the failure message and the log line name the OOM kill instead, also when the pod is already deleted: the server remembers the terminated reason of each warm worker it saw terminate for 10 minutes; the attempt still counts as an infra failure; refill of the pool is the warm-pool reconciler's job, not the reaper's. |
 | Cluster stopped the task pod (graceful node shutdown on a spot or preemptible reclaim, node-pressure eviction, preemption, admission refusal) | Pod reconciler | next reconcile sweep (30 s) | TI failed with `pod_disrupted` on the infra rail: re-placed on the infra budget without spending a task retry. See [A pod the cluster stopped is an infra failure](#a-pod-the-cluster-stopped-is-an-infra-failure). |
+| Control plane, its database or its Redis did not answer the agent before the task's code ran (Kubernetes, dedicated pods) | Pod reconciler, from the agent's outcome record | next reconcile sweep (30 s) after the agent gives up (2 minutes of retries for the spec and input reads) | TI failed with `control_plane_unavailable` on the infra rail: re-placed on the infra budget without spending a task retry. See [A start the control plane never answered is an infra failure](#a-start-the-control-plane-never-answered-is-an-infra-failure). |
 | Run stuck `running` with no live TIs (post-crash limbo) | Orphan-run reaper ([#120](https://github.com/dexadata/dexaflow/issues/120)) | **5 min** | Run failed with `orphaned`; any remaining active TIs flipped to `failed` and every still-live pod of the run is deleted (its finished pods keep their outcome records for the reconciler). |
 
 Every SLA above is a floor: the reapers run every **30 s**, so detection lands
@@ -329,6 +330,38 @@ vanished with its node instead is still the pod-lost reaper's `pod_lost`; both
 end on the same infra rail. The infra budget bounds the re-places, so a task
 that keeps landing on reclaimed nodes ends in a terminal infra failure instead
 of looping.
+
+## A start the control plane never answered is an infra failure
+
+The agent retries the calls it makes before the task's code runs (registering,
+reading the task spec, upstream XComs, variables and connections, and the
+`running` report) through a control-plane restart, a Postgres failover or a
+Redis restart, for up to 2 minutes
+([control-plane HA](/operate/control-plane-ha/)). When the outage outlasts that,
+the attempt ends before the task's code ran, so the task is not at fault
+([ADR 0051](/project/adrs/0051-separate-orchestration-and-execution-state-machines/),
+an unexecutable attempt). On a dedicated pod the agent then writes an outcome
+record marked as infra, with no exit code and a fixed reason, reports nothing,
+and exits. The pod reconciler settles that record on the infra rail: the task
+instance is `failed` with `last_failure_kind = infra` and an `error_message`
+that starts with `control_plane_unavailable:`, confirmed at once like a
+disrupted pod, and the planner re-places it on the infra budget. A task with
+`retries: 0` therefore survives an outage that lands on its start.
+
+Only an answer that never came counts: `Unavailable`, `DeadlineExceeded`,
+`Aborted`, or `Internal` from an older control plane. A refusal (for example
+`PermissionDenied` on the spec read of a superseded attempt) and a failure of
+an external secret backend keep their task-failure settle. The reconciler
+honors the infra marker only on a record with an agent-authored reason and no
+exit code, the shape the agent writes. A task can write its termination
+message too, so a forged marker could at most buy a re-place on the infra
+budget, which a task can already get by killing its agent (`agent_lost`), and
+the infra budget bounds it.
+
+On Lite the agent writes no record and reports nothing, so the attempt stays
+`queued` until the dispatch-lost reaper settles it as `dispatch_lost`, on the
+same infra rail. A warm-pool attempt keeps reporting `failed`: its pod serves
+other attempts, so no reconciler reads a record for it.
 
 ## Lite: which reapers run
 
@@ -712,6 +745,7 @@ your Prometheus dashboard:
 | `pod_lost` | TI failed by the pod-lost reaper (no pod at all for the attempt) |
 | `pod_lost_terminal_pod_defer` | Pod-lost skipped because the attempt's pod is still there in a terminal phase — the reconciler settles it from its termination log; reaping would delete that evidence. Healthy as a *transient*. Sustained past two maintenance cycles means the reconciler is not settling and those task instances are stranded `running`, not about to settle: correlate with `reap_settling_valve_open` and `pod_lost_pod_query_error` |
 | `warm_worker_lost` | TI failed by the warm-worker-lost reaper (its warm worker is gone) |
+| `warm_worker_lost_oomkilled` | Of those, the ones whose warm worker's container was reported `OOMKilled`; the failure message names the OOM kill |
 | `orphan_reaped` | Run failed by the orphan-run reaper |
 | `orphan_reap_noop` | A listed orphan candidate was no longer orphaned when the reap re-checked it (a TI moved, fresh activity landed, or a TI was being written); nothing was written and no pod was torn down |
 | `reap_settling_skip` | The whole reaper pass was held because the leader has not settled yet (grace, informer sync, or a post-leadership reconciler sweep still pending) — expected for ~3 min after every (re-)election |
@@ -729,6 +763,7 @@ your Prometheus dashboard:
 | `agent_lost_never_heartbeated` | Lite only: a `running` TI that never heartbeated, past the agent-lost threshold, whose agent and task process group are both gone, was failed as `agent_lost` |
 | `agent_lost_never_heartbeated_process_alive`, `agent_lost_never_heartbeated_process_query_error` | Lite only: such a TI's agent or task group is alive, or its liveness could not be read; the reaper deferred |
 | `agent_lost_pod_delete_error`, `dispatch_lost_pod_delete_error`, `orphan_pod_delete_error`, `pod_lost_pod_delete_error` | Pod teardown after a reap failed; the DB reap stands and the pod's `activeDeadlineSeconds`/GC are backstops |
+| `agent_lost_log_marker_error`, `pod_lost_log_marker_error`, `warm_worker_lost_log_marker_error` | The final `killed: <reason>` line could not be appended to the reaped attempt's log; the reap stands, and the reason is still in the task's error message and the server log |
 
 A sustained non-zero rate on any of these is worth investigating — reapers
 are backstops, not the primary path; if they fire often, something upstream

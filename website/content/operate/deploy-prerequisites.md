@@ -139,9 +139,13 @@ fails to start with:
 CreateContainerConfigError: container has runAsNonRoot and image will run as root
 ```
 
-This is easy to miss because it surfaces as a **pod** failure, not a `deploy`
-CLI error — `deploy` succeeds (the artifact registers fine), and the rejection
-only shows up when the scheduler tries to run a task.
+The kubelet refuses it when the task pod starts, after the version has
+registered. `dexaflow deploy` catches it before the build: when the project
+builds from its own Dockerfile and the server runs task pods as non-root, a
+final `USER` of root or of a name stops the deploy (see
+[Checks before the build](/operate/cicd-deploy/#checks-before-the-build-preflight)).
+An image registered another way (`push`, `--skip-build`, a base image that
+runs as root with no `USER` of your own) still shows it only at the pod.
 
 **Fix — pick one:**
 - End your custom `Dockerfile` with a **numeric** non-root user, e.g.
@@ -191,6 +195,16 @@ private registry needs the task pod to carry pull credentials:
   node/pod-level IAM (IRSA / EKS Pod Identity) paired with an ECR credential
   helper so the kubelet authenticates without a static secret. Dexaflow does not
   care which — it only needs the pull to work; either path satisfies this gate.
+
+`dexaflow deploy` asks the server, before the build, which ServiceAccount each
+task pod would run as: one that does not exist stops the deploy, and one with
+no `imagePullSecrets` is a note (the nodes' own credentials may still pull).
+The control plane reads the account with `get` on `serviceaccounts` in the
+task namespace, which the chart's Role grants unless `split.enabled` is on
+([ADR 0085](/project/adrs/0085-control-plane-reads-task-service-accounts/)); a
+Role managed outside the chart needs that verb, or each deploy prints a note
+that the account was not checked.
+See [Checks before the build](/operate/cicd-deploy/#checks-before-the-build-preflight).
 
 See the chart-wiring detail in [ADR 0041 → Cluster wiring](/project/adrs/0041-leoflow-deploy-pipelineless/#cluster-wiring-helm--required-for-the-deploy-path-to-actually-pull).
 
