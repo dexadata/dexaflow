@@ -45,7 +45,7 @@ error: deploy requires a container registry, but none is configured.
       Artifact Registry, GCR: gcloud auth login
       ECR: aws sso login, aws configure, environment credentials or an instance role
       ACR: az login
-      any other registry: docker login <registry>
+      any other registry: dexaflow registry login <registry> (or docker login <registry>)
   A build by a local container tool pushes with that tool's own login; the deploy preflight names it.
 ```
 
@@ -53,8 +53,8 @@ error: deploy requires a container registry, but none is configured.
 [Workspaces and targets](/operate/workspaces-and-targets/#registry-platforms-and-base-image)),
 or ask the platform team to advertise one for the whole cluster
 ([Cluster deploy defaults](/operate/workspaces-and-targets/#cluster-deploy-defaults)),
-then make sure the CLI has a credential for the registry: `docker login
-<registry>` once, or, for Artifact Registry, GCR, ECR and ACR, just be signed
+then make sure the CLI has a credential for the registry: `dexaflow registry
+login <registry>` once (no docker needed), or, for Artifact Registry, GCR, ECR and ACR, just be signed
 in to that cloud's CLI ([Registry credentials](/operate/builders/#registry-credentials)).
 Registry auth is separate from the control-plane login, see [gate 5](#5-auth--writedag-rbac-scope).
 See [ADR 0041](/project/adrs/0041-leoflow-deploy-pipelineless/).
@@ -84,7 +84,7 @@ why the image could not be pinned:
 ```text
 Error: server returned 400: {..."detail":"image \"ghcr.io/acme/etl:v1\" is not pinned by digest (<repository>@sha256:<64 hex>), and this server refuses it (deploy.require_digest=enforce). ..."}
   the push could not pin the image by digest: reading "ghcr.io/acme/etl:v1" from its registry ...: UNAUTHORIZED ...
-  fix: make the registry readable from here (`docker login <registry>`, or the session of the cloud CLI that owns it), or pass --image <repository>@sha256:<digest>
+  fix: make the registry readable from here (`dexaflow registry login <registry>` or `docker login <registry>`, or the session of the cloud CLI that owns it), or pass --image <repository>@sha256:<digest>
 ```
 
 **Fix:** give the CLI a credential that can read the registry, register with

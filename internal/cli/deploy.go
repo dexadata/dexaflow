@@ -487,7 +487,7 @@ func registryLoginHints() string {
 	return "      Artifact Registry, GCR: " + session(build.ProviderGoogle) + "\n" +
 		"      ECR: " + session(build.ProviderAWS) + "\n" +
 		"      ACR: " + session(build.ProviderAzure) + "\n" +
-		"      any other registry: docker login <registry>\n" +
+		"      any other registry: dexaflow registry login <registry> (or docker login <registry>)\n" +
 		"  A build by a local container tool pushes with that tool's own login; the deploy preflight names it."
 }
 

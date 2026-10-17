@@ -92,7 +92,7 @@ func TestDoctorChecksTheRegistryPushOfTheProject(t *testing.T) {
 		out := doctorAgainst(t, srv.URL, "tok")
 		want := "registry      " + reg.host + "/team/etl accepts a push"
 		if deny {
-			want = "docker login " + reg.host
+			want = "dexaflow registry login " + reg.host
 		}
 		if !strings.Contains(out, want) || reg.uploadCount() != 1 {
 			t.Errorf("deny=%v: uploads=%d, doctor does not say %q:\n%s", deny, reg.uploadCount(), want, out)

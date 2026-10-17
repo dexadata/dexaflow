@@ -93,8 +93,8 @@ func TestDeployAuthMethodDockerConfigIgnoresTheCloud(t *testing.T) {
 	if err == nil {
 		t.Fatal("deploy reached a registry it holds no credential for")
 	}
-	if !strings.Contains(errOut, "docker login "+reg.host) || cloud.askedCount() != 0 {
-		t.Errorf("cloud asked %d times; stderr does not name docker login %s:\n%s", cloud.askedCount(), reg.host, errOut)
+	if !strings.Contains(errOut, "dexaflow registry login "+reg.host) || cloud.askedCount() != 0 {
+		t.Errorf("cloud asked %d times; stderr does not name dexaflow registry login %s:\n%s", cloud.askedCount(), reg.host, errOut)
 	}
 }
 
@@ -121,7 +121,7 @@ func TestDoctorReadsTheCloudSession(t *testing.T) {
 	t.Cleanup(srv.Close)
 	out := doctorAgainst(t, srv.URL, "tok")
 	want := "registry      " + reg.host + "/team/etl accepts a push (credential from the fake cloud session; " +
-		"a local-daemon build pushes with docker's own login: docker login " + reg.host + ")"
+		"a local-daemon build pushes with docker's own login: dexaflow registry login " + reg.host + ")"
 	if !strings.Contains(out, want) {
 		t.Errorf("doctor does not say %q:\n%s", want, out)
 	}

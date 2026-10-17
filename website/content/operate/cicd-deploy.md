@@ -194,7 +194,7 @@ this order:
    credential found stops a `docker` deploy, naming the login command of the
    registry (`gcloud auth configure-docker <host>`,
    `aws ecr get-login-password --region <region> | docker login ...`,
-   `az acr login --name <name>`, or `docker login <registry>`). With no
+   `az acr login --name <name>`, or `dexaflow registry login <registry>`). With no
    credential found, or with another `--builder` (podman, for one, keeps
    credentials of its own in `auth.json`), a refusal is a `note:` naming the
    command for that builder, and why the cloud CLI gave no token when it

@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_validate/
 title: "dexaflow validate"
 linkTitle: "validate"
-weight: 69
+weight: 71
 ---
 
 Validate dexaflow.yaml and the DAG source against the schema.

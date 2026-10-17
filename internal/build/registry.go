@@ -65,9 +65,9 @@ type Resolver interface {
 // Registry is the CLI's registry client (ADR 0073, section 3). It speaks the
 // registry API in process, never through a local image store, so an image
 // any tool pushed can be pinned (ADR 0075). Its credentials are those
-// `docker login` and its credential helpers wrote (authn.DefaultKeychain)
-// and, for a registry a cloud owns, that cloud CLI's session, as Auth says
-// (ADR 0080). The zero value reads both, the default of registry.auth_method.
+// `dexaflow registry login` (StoreLogin), `docker login` and its credential
+// helpers wrote (authn.DefaultKeychain) and, for a registry a cloud owns,
+// that cloud CLI's session, as Auth says (ADR 0080). The zero value reads both, the default of registry.auth_method.
 type Registry struct {
 	// Auth is registry.auth_method; empty is AuthAuto.
 	Auth AuthMethod
@@ -87,7 +87,7 @@ func (r Registry) Resolve(ctx context.Context, image string) (Pinned, error) {
 	}
 	desc, err := remote.Get(ref, r.remoteOptions(ctx)...)
 	if err != nil {
-		return Pinned{}, fmt.Errorf("reading %q from its registry (credentials come from `docker login` "+
+		return Pinned{}, fmt.Errorf("reading %q from its registry (credentials come from `dexaflow registry login` or `docker login` "+
 			"or its credential helpers, in ~/.docker/config.json, or from the session of the cloud CLI that owns the registry): %w",
 			image, err)
 	}
