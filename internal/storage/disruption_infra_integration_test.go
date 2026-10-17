@@ -84,3 +84,28 @@ func TestFailTaskInfraIsAttemptGuarded(t *testing.T) {
 		t.Errorf("a terminal row must keep no failure kind, got %q", *k)
 	}
 }
+
+// TestFailTaskInfraSettlesAQueuedAttempt: an agent whose control plane never
+// answered before the task's code ran (R-01, #1594) exits before it reports
+// running, so the reconciler settles its unexecutable record on a row still
+// in queued. The settle and the re-place must take that row too, keeping the
+// task's try number.
+func TestFailTaskInfraSettlesAQueuedAttempt(t *testing.T) {
+	f := seedStaleHeartbeat(t, "unexecutable_start")
+	f.setState(t, "queued")
+	try, epoch := f.tryNumber(t), f.attemptEpoch(t)
+
+	if err := f.exec.FailTaskInfra(f.ctx, f.tiID, try, epoch, "control_plane_unavailable: no answer"); err != nil {
+		t.Fatalf("FailTaskInfra: %v", err)
+	}
+	f.wantState(t, "after the infra settle of a queued attempt", "failed")
+	if k := f.failureKind(t); k == nil || *k != "infra" {
+		t.Fatalf("last_failure_kind = %v, want infra", k)
+	}
+	if ok, err := f.sched.ResetForInfraReplace(f.ctx, f.runUUID, "t"); err != nil || !ok {
+		t.Fatalf("the infra settle must re-place: ok=%v err=%v", ok, err)
+	}
+	if got := f.tryNumber(t); got != try {
+		t.Errorf("the infra re-place must keep try_number %d, got %d", try, got)
+	}
+}

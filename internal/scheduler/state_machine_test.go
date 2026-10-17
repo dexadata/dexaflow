@@ -17,21 +17,27 @@ var allTaskStates = []domain.TaskState{
 	domain.TaskStateUpstreamFailed,
 	domain.TaskStateUpForRetry,
 	domain.TaskStateUpForReschedule,
+	domain.TaskStateRemoved,
 }
 
 // allowedTaskTransitions is the test's independent source of truth for the task
-// state machine; the implementation must agree with it on all 81 pairs.
+// state machine; the implementation must agree with it on all 121 pairs.
+//
+// Only a clear writes removed (ADR 0086): it marks removed a task instance
+// that is not queued or running when the run's new version drops its task,
+// and brings a removed one back to none when the task returns.
 var allowedTaskTransitions = map[domain.TaskState][]domain.TaskState{
-	domain.TaskStateNone:            {domain.TaskStateScheduled, domain.TaskStateSkipped, domain.TaskStateUpstreamFailed},
-	domain.TaskStateScheduled:       {domain.TaskStateQueued},
+	domain.TaskStateNone:            {domain.TaskStateScheduled, domain.TaskStateSkipped, domain.TaskStateUpstreamFailed, domain.TaskStateRemoved},
+	domain.TaskStateScheduled:       {domain.TaskStateQueued, domain.TaskStateRemoved},
 	domain.TaskStateQueued:          {domain.TaskStateRunning, domain.TaskStateFailed, domain.TaskStateUpForRetry},
 	domain.TaskStateRunning:         {domain.TaskStateSuccess, domain.TaskStateFailed, domain.TaskStateUpForRetry, domain.TaskStateUpForReschedule},
-	domain.TaskStateUpForRetry:      {domain.TaskStateScheduled, domain.TaskStateQueued, domain.TaskStateNone},
-	domain.TaskStateUpForReschedule: {domain.TaskStateScheduled, domain.TaskStateQueued, domain.TaskStateNone},
-	domain.TaskStateSuccess:         {domain.TaskStateNone},
-	domain.TaskStateFailed:          {domain.TaskStateNone},
-	domain.TaskStateSkipped:         {domain.TaskStateNone},
-	domain.TaskStateUpstreamFailed:  {domain.TaskStateNone},
+	domain.TaskStateUpForRetry:      {domain.TaskStateScheduled, domain.TaskStateQueued, domain.TaskStateNone, domain.TaskStateRemoved},
+	domain.TaskStateUpForReschedule: {domain.TaskStateScheduled, domain.TaskStateQueued, domain.TaskStateNone, domain.TaskStateRemoved},
+	domain.TaskStateSuccess:         {domain.TaskStateNone, domain.TaskStateRemoved},
+	domain.TaskStateFailed:          {domain.TaskStateNone, domain.TaskStateRemoved},
+	domain.TaskStateSkipped:         {domain.TaskStateNone, domain.TaskStateRemoved},
+	domain.TaskStateUpstreamFailed:  {domain.TaskStateNone, domain.TaskStateRemoved},
+	domain.TaskStateRemoved:         {domain.TaskStateNone},
 }
 
 func TestCanTransitionExhaustive(t *testing.T) {

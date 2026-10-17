@@ -20,17 +20,23 @@ const (
 )
 
 // taskTransitions is the authoritative set of legal task state transitions.
+//
+// Only a clear writes removed (ADR 0086): when it moves a finished run to a
+// version that dropped a task, the task instance goes to removed from any
+// state but queued and running, and a removed task instance whose task the
+// version declares again goes back to none. The scheduler never writes it.
 var taskTransitions = map[domain.TaskState]map[domain.TaskState]bool{
-	domain.TaskStateNone:            {domain.TaskStateScheduled: true, domain.TaskStateSkipped: true, domain.TaskStateUpstreamFailed: true},
-	domain.TaskStateScheduled:       {domain.TaskStateQueued: true},
+	domain.TaskStateNone:            {domain.TaskStateScheduled: true, domain.TaskStateSkipped: true, domain.TaskStateUpstreamFailed: true, domain.TaskStateRemoved: true},
+	domain.TaskStateScheduled:       {domain.TaskStateQueued: true, domain.TaskStateRemoved: true},
 	domain.TaskStateQueued:          {domain.TaskStateRunning: true, domain.TaskStateFailed: true, domain.TaskStateUpForRetry: true},
 	domain.TaskStateRunning:         {domain.TaskStateSuccess: true, domain.TaskStateFailed: true, domain.TaskStateUpForRetry: true, domain.TaskStateUpForReschedule: true},
-	domain.TaskStateUpForRetry:      {domain.TaskStateScheduled: true, domain.TaskStateQueued: true, domain.TaskStateNone: true},
-	domain.TaskStateUpForReschedule: {domain.TaskStateScheduled: true, domain.TaskStateQueued: true, domain.TaskStateNone: true},
-	domain.TaskStateSuccess:         {domain.TaskStateNone: true},
-	domain.TaskStateFailed:          {domain.TaskStateNone: true},
-	domain.TaskStateSkipped:         {domain.TaskStateNone: true},
-	domain.TaskStateUpstreamFailed:  {domain.TaskStateNone: true},
+	domain.TaskStateUpForRetry:      {domain.TaskStateScheduled: true, domain.TaskStateQueued: true, domain.TaskStateNone: true, domain.TaskStateRemoved: true},
+	domain.TaskStateUpForReschedule: {domain.TaskStateScheduled: true, domain.TaskStateQueued: true, domain.TaskStateNone: true, domain.TaskStateRemoved: true},
+	domain.TaskStateSuccess:         {domain.TaskStateNone: true, domain.TaskStateRemoved: true},
+	domain.TaskStateFailed:          {domain.TaskStateNone: true, domain.TaskStateRemoved: true},
+	domain.TaskStateSkipped:         {domain.TaskStateNone: true, domain.TaskStateRemoved: true},
+	domain.TaskStateUpstreamFailed:  {domain.TaskStateNone: true, domain.TaskStateRemoved: true},
+	domain.TaskStateRemoved:         {domain.TaskStateNone: true},
 }
 
 // dagRunTransitions is the authoritative set of legal dag run state transitions.

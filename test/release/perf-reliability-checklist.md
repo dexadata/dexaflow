@@ -35,7 +35,7 @@ a relative rule disagree, the stricter one decides.
 
 | # | Item | How | Decides | When | Where |
 |---|---|---|---|---|---|
-| B1 | Scheduler, planner, projection and static asset benchmarks | Check out `vPREV` and `HEAD` side by side, run the command in BASELINE.md "Go benchmarks" with `-count 10` on both, compare with `benchstat` | No benchmark slower by more than 10% with p < 0.05; allocations per op not up by more than 10% | GA, patch* (`internal/scheduler`, `internal/storage`, `internal/dispatch`) | local |
+| B1 | Scheduler, planner, projection, static asset and warm pool tick benchmarks | Check out `vPREV` and `HEAD` side by side, run the command in BASELINE.md "Go benchmarks" with `-count 10` on both, compare with `benchstat`. A benchmark `vPREV` does not have yet (`BenchmarkWarmPoolTick` before v0.5.5) is run from `HEAD`'s test file copied into `vPREV`'s tree when it compiles there, and otherwise recorded for the next release | No benchmark slower by more than 10% with p < 0.05; allocations per op not up by more than 10% | GA, patch* (`internal/scheduler`, `internal/storage`, `internal/dispatch`, `internal/executor/warmpool*`) | local |
 | B2 | Absolute targets | Same run | `BenchmarkStepSteadyState` 1,000 runs x 20 tasks under 2 ms; `BenchmarkPlanRunFanOut` 5,000 tasks under 2 ms; static bundle with gzip under 5 ms | GA | local |
 | B3 | BASELINE.md is current | Re-record the tables when B1 changes a row by more than 10% | The file names the release and commit it was recorded on | GA | local |
 

@@ -569,12 +569,12 @@ always runs its newest version:
 - **The Clear dialog offers "Run with latest bundle version"** even on a run
   that already uses the current version, because the UI compares the run's
   version with the newest one. In Dexaflow that option re-pins the run to the
-  current version, so on such a run it changes nothing. When the current
-  version adds or removes a task compared with the run, the option is refused
-  with `409` before anything is cleared: clear without the option, or trigger
-  a new run. The dialog does not say why (its preview stays empty and Confirm
-  disabled); the `detail` of the API's `409` names the tasks, and
-  [UI compatibility](/concepts/ui-compatibility/) shows how to read it.
+  current version, so on such a run it changes nothing. On a finished run
+  whose version adds or drops a task, the clear creates the added tasks' task
+  instances and marks the dropped ones `removed`. A run that is still running
+  keeps its version, and the API response says the option was not applied
+  (the dialog does not show it): see
+  [Clearing a run that is still running](/author-dags/dag-authoring/#clearing-a-run-that-is-still-running).
 - **Which version is current** is the `*` in `dexaflow dags versions`, and the
   `is_current` field of each version in `GET /api/v2/dags/{dag_id}/dagVersions`
   and of `latest_dag_version` in the DAG details. The MCP `dag://source`

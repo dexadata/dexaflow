@@ -360,6 +360,77 @@ The clear is one transaction: if the XCom values cannot be deleted, nothing is
 cleared and the request fails. Before 0.5.1 a clear kept the spent retries,
 and the UI could show "try 4 of 3".
 
+#### Clearing onto the current version
+
+By default a clear re-runs the version the run was created with. To re-run on
+the DAG's current version, tick "Run with latest bundle version" in the Clear
+dialog, or send `run_on_latest_version: true`. As in Airflow, this moves the
+run only when the run has finished (`success` or `failed`) and none of its
+task instances is `queued` or `running`. The run then takes the current
+version's tasks in the same transaction:
+
+- a task the version adds gets a task instance and runs in the re-opened run;
+- a task the version dropped keeps its task instance, history and logs, in the
+  new state `removed`. It is not run, and it does not count toward the run's
+  outcome;
+- a `removed` task whose task a later version declares again runs again as a
+  new try.
+
+A clear that names a task the current version dropped resets nothing for it.
+See [ADR 0086](/project/adrs/0086-clear-rebinds-a-finished-run-with-its-task-set/)
+for the reasoning.
+
+#### Clearing a run that is still running
+
+A run that is `queued` or `running`, or a finished run that still has a task
+instance `queued` or `running` (marked failed or success while that task ran),
+**keeps its DAG version**. Asking for the current version does not move it:
+
+- the cleared tasks re-run on the run's own version, with that version's
+  retries, as a clear without the option would;
+- tasks already running finish on the image they started with;
+- the response says the option was not applied, and why. Both clear routes,
+  dry run included, add `run_on_latest_version_not_applied`, one entry per run
+  with its `dag_run_id` and a `reason` such as `the run is running: only a
+  finished run moves to the current version`. The run's version in the UI
+  stays the one it had. The Clear dialog of the Airflow UI that Dexaflow ships
+  does not display this field, so read it from the API when you need the
+  reason.
+
+To run the cleared tasks on the current version, first get the run to a
+finished state with no task queued or running, then clear again with the
+option:
+
+1. wait for the run to finish, or mark it failed or success (the run page's
+   **Mark run as**, or `PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}` with
+   a `state`);
+2. if you marked it while a task was still running, wait for that task to end;
+3. clear again with `run_on_latest_version: true`.
+
+Or trigger a new run, which always uses the current version.
+
+For example, with `etl` still running on version 3 while version 4 is
+current:
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  "$DEXAFLOW_URL/api/v2/dags/etl/dagRuns/$RUN_ID/clear" \
+  -d '{"dry_run": true, "run_on_latest_version": true}' | jq .run_on_latest_version_not_applied
+```
+
+```json
+[
+  {
+    "dag_run_id": "manual__2026-10-16T09:00:00+00:00",
+    "reason": "the run is running: only a finished run moves to the current version"
+  }
+]
+```
+
+Once the run has finished, the same dry run answers no
+`run_on_latest_version_not_applied`, and the clear with `"dry_run": false`
+moves the run to version 4.
+
 ## dexaflow.yaml — deploy config
 
 These are Dexaflow concerns, **not** Airflow operator attributes (you cannot invent

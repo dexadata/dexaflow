@@ -97,6 +97,7 @@ this page.
 - [ADR 0082: a warm pool follows the DAG's current version, started when it becomes current and drained when it stops being current](/project/adrs/0082-warm-pool-follows-the-current-version/)
 - [ADR 0083: the remote builder runs on Cloud Build first, through the gcloud CLI](/project/adrs/0083-remote-builder-on-cloud-build/)
 - [ADR 0085: the control plane reads task ServiceAccounts for the register dry run](/project/adrs/0085-control-plane-reads-task-service-accounts/)
+- [ADR 0086: a clear on the latest version re-binds a finished run with its task set, and leaves an unfinished run on its own version](/project/adrs/0086-clear-rebinds-a-finished-run-with-its-task-set/)
 
 ## Template
 

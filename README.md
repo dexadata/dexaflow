@@ -45,6 +45,7 @@
 | [HTTP API (Scalar)](https://dexaflow.dexadata.ai/api-reference.html) · [Go packages](https://dexaflow.dexadata.ai/reference/go/) · [MCP server](https://dexaflow.dexadata.ai/reference/mcp/) | API references & the LLM-agent surface |
 | [Concepts & glossary](https://dexaflow.dexadata.ai/concepts/core-concepts/) · [Architecture](https://dexaflow.dexadata.ai/concepts/architecture/) · [ADRs](https://dexaflow.dexadata.ai/project/adrs/) | the model, the *why*, and every major decision |
 | [Troubleshooting](https://dexaflow.dexadata.ai/operate/troubleshooting/) · [Security policy](SECURITY.md) | when things break; how to report a vulnerability |
+| [Roadmap](https://dexaflow.dexadata.ai/project/roadmap/) · [Project board](https://github.com/orgs/dexadata/projects/4) · [Milestones](https://github.com/dexadata/dexaflow/milestones) | what is planned next, by release |
 
 ---
 
@@ -89,9 +90,9 @@ coexist out of the box.
 
 ```bash
 kubectl create namespace leoflow
-helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version 0.5.3 -n leoflow \
-  --set image.tag=v0.5.3 \
-  --set migrations.image.tag=v0.5.3 \
+helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version 0.5.4 -n leoflow \
+  --set image.tag=v0.5.4 \
+  --set migrations.image.tag=v0.5.4 \
   --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full' \
   --set redis.url='rediss://HOST:6380/0' \
   --set auth.jwtSecret="$(openssl rand -base64 64)" \
@@ -297,7 +298,7 @@ Versioning follows [ADR 0037](https://dexaflow.dexadata.ai/project/adrs/0037-rel
 - **dbt** — a dbt project runs as a DAG (pod-per-model or fused groups); managed warehouse connections generate `profiles.yml` in-pod, with modern service-account auth (Snowflake key-pair, BigQuery keyless / Workload Identity, Databricks OAuth M2M).
 - **MCP + typed client** — an experimental [`dexaflow-mcp`](https://dexaflow.dexadata.ai/project/adrs/0050-mcp-server/) Model Context Protocol server (read tools + resources over stdio / Streamable HTTP) and a generated, typed Go client for `/api/v2` (`pkg/client`).
 
-**Not yet implemented:** load tests. Tracked refinements live in the [issue tracker](https://github.com/dexadata/dexaflow/issues).
+**Not yet implemented:** load tests. Tracked refinements live in the [issue tracker](https://github.com/dexadata/dexaflow/issues); what is planned for each release is on the [public roadmap](https://github.com/orgs/dexadata/projects/4).
 
 ## Features
 
