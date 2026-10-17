@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -162,5 +163,28 @@ func TestRegistryLoginRefusesABadToken(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%q %v: err = %v, want it to name %q", tc.stdin, tc.args, err, tc.want)
 		}
+	}
+}
+
+// A gh that hangs is stopped when its time is up, even when a program it
+// started still holds its output open.
+func TestRunGHStopsAHangingGH(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stubs are POSIX-only")
+	}
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte("#!/bin/sh\nsleep 20 &\nexec sleep 20\n"), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+":/bin:/usr/bin")
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := runGH(ctx, "auth", "token")
+	if took := time.Since(start); took > 10*time.Second {
+		t.Errorf("runGH took %v after the deadline, want gh stopped", took)
+	}
+	if err == nil {
+		t.Error("runGH with a hanging gh succeeded")
 	}
 }

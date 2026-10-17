@@ -27,6 +27,11 @@ const ghcrHost = "ghcr.io"
 // ghRunTimeout bounds one run of the gh CLI.
 const ghRunTimeout = 30 * time.Second
 
+// ghWaitDelay bounds the wait for gh's output once it has exited or been
+// stopped, so a program it started that still holds the output open cannot
+// outlast ghRunTimeout.
+const ghWaitDelay = 2 * time.Second
+
 // newRegistryCommand is `dexaflow registry`, the commands about the
 // container registry DAG images are pushed to.
 func newRegistryCommand() *cobra.Command {
@@ -176,6 +181,7 @@ func runGH(ctx context.Context, args ...string) (string, error) {
 	defer cancel()
 	c := exec.CommandContext(ctx, "gh", args...) //nolint:gosec // G204: gh from PATH, with arguments built here
 	c.Stdin = strings.NewReader("")
+	c.WaitDelay = ghWaitDelay
 	var stderr strings.Builder
 	c.Stderr = &stderr
 	out, err := c.Output()
