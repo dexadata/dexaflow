@@ -55,9 +55,16 @@ dexaflow-deploy:
     - |
       DEXAFLOW_BASE_REF="$CI_COMMIT_BEFORE_SHA"
       if [ -n "${DEXAFLOW_GITLAB_API_TOKEN:-}" ]; then
-        DEXAFLOW_BASE_REF="$(curl -fsS --header "PRIVATE-TOKEN: $DEXAFLOW_GITLAB_API_TOKEN" \
-          "$CI_API_V4_URL/projects/$CI_PROJECT_ID/pipelines?ref=$CI_COMMIT_BRANCH&source=push&status=success&per_page=1" |
-          python3 -c 'import json, sys; p = json.load(sys.stdin); print(p[0]["sha"] if p else "")')" || DEXAFLOW_BASE_REF=""
+        DEXAFLOW_BASE_REF="$(python3 -c '
+      import json, os, urllib.parse, urllib.request
+      e = os.environ
+      q = urllib.parse.urlencode({"ref": e["CI_COMMIT_BRANCH"], "source": "push", "status": "success", "per_page": 1})
+      r = urllib.request.Request(e["CI_API_V4_URL"] + "/projects/" + e["CI_PROJECT_ID"] + "/pipelines?" + q,
+                                 headers={"PRIVATE-TOKEN": e["DEXAFLOW_GITLAB_API_TOKEN"]})
+      with urllib.request.urlopen(r, timeout=30) as resp:
+          p = json.load(resp)
+      print(p[0]["sha"] if p else "")
+      ')" || DEXAFLOW_BASE_REF=""
       fi
       export DEXAFLOW_BASE_REF
     - sh ci/dexaflow-deploy.sh

@@ -17,8 +17,9 @@ Writes a deploy pipeline for a CI system at the top of the repository:
   cloudbuild  cloudbuild.yaml
   generic     only ci/dexaflow-deploy.sh
 and ci/dexaflow-deploy.sh, which every pipeline runs. The pipeline installs this
-version of the CLI, logs in to the workspace's registry the way the CI system
-does natively, and runs `dexaflow deploy --all --changed-since <before>` on
+version of the CLI (on GitLab it runs in the dexaflow-cli image of that
+release, pinned by digest), logs in to the workspace's registry the way the
+CI system does natively, and runs `dexaflow deploy --all --changed-since <before>` on
 each push to --branch. It reads the control plane from DEXAFLOW_SERVER_URL,
 or from the workspace target (--target, else default_target), and a deploy
 token from the CI secret DEXAFLOW_TOKEN:

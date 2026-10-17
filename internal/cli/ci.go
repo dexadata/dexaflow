@@ -19,6 +19,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dexadata/dexaflow/internal/build"
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/version"
 )
@@ -60,6 +61,54 @@ const ciMinCLIVersion = "v0.5.0"
 // ciActionMinVersion is the first release that ships the setup-dexaflow
 // action the GitHub workflow installs the CLI with.
 const ciActionMinVersion = "v0.5.4"
+
+// ciCLIImageRepo is the published image of the CLI, which the GitLab job
+// runs in from the release that first ships it.
+const ciCLIImageRepo = "ghcr.io/dexadata/dexaflow-cli"
+
+// ciCLIImageMinVersion is the first release that publishes ciCLIImageRepo.
+const ciCLIImageMinVersion = "v0.5.4"
+
+// ciImageDigest reads the digest an image reference names in its registry.
+// It is a variable only so the tests of this package answer without the
+// network; nothing else assigns it.
+var ciImageDigest = lookupImageDigest
+
+// lookupImageDigest asks the registry of image (a tag reference) for the
+// digest it names, with the CLI's registry client, which computes it from
+// the manifest returned. The dexaflow-cli package is public, so no
+// credentials are needed.
+func lookupImageDigest(ctx context.Context, image string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	pinned, err := build.Registry{}.Resolve(ctx, image)
+	if err != nil {
+		return "", err
+	}
+	_, digest, _ := strings.Cut(pinned.Ref, "@")
+	return digest, nil
+}
+
+// ciCLIImage is the dexaflow-cli image of cliVersion, pinned by its tag
+// and its digest, that the GitLab job runs in; "" for a release older than
+// the image, whose job installs the CLI on the Python image.
+func ciCLIImage(ctx context.Context, cliVersion string) (string, error) {
+	if semverLess(cliVersion, ciCLIImageMinVersion) {
+		return "", nil
+	}
+	image := ciCLIImageRepo + ":" + cliVersion
+	digest, err := ciImageDigest(ctx, image)
+	if err != nil {
+		return "", fmt.Errorf("finding the digest of %s, to pin the image the GitLab job runs in: %w", image, err)
+	}
+	if !ciDigestRe.MatchString(digest) {
+		return "", fmt.Errorf("finding the digest of %s, to pin the image the GitLab job runs in: %q is not a sha256 digest", image, digest)
+	}
+	return image + "@" + digest, nil
+}
+
+// ciDigestRe matches a sha256 image digest.
+var ciDigestRe = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 // ciReleaseRepo is the repository the releases, and the action, come from.
 const ciReleaseRepo = "https://github.com/dexadata/dexaflow.git"
@@ -199,6 +248,10 @@ type ciPlan struct {
 	// CLICommit is the commit of CLIVersion, which the GitHub workflow pins
 	// the setup-dexaflow action to.
 	CLICommit string
+	// CLIImage is the dexaflow-cli image of CLIVersion, by tag and digest,
+	// that the GitLab job runs in when no project needs a daemon; "" for a
+	// release without the image.
+	CLIImage string
 	// MinCLIVersion is ciMinCLIVersion, for the script's help.
 	MinCLIVersion string
 	// UVHashes are the hashes the script installs uv with.
@@ -267,8 +320,9 @@ func newCIInitCommand() *cobra.Command {
 			"  cloudbuild  cloudbuild.yaml\n" +
 			"  generic     only " + ciScriptPath + "\n" +
 			"and " + ciScriptPath + ", which every pipeline runs. The pipeline installs this\n" +
-			"version of the CLI, logs in to the workspace's registry the way the CI system\n" +
-			"does natively, and runs `dexaflow deploy --all --changed-since <before>` on\n" +
+			"version of the CLI (on GitLab it runs in the dexaflow-cli image of that\n" +
+			"release, pinned by digest), logs in to the workspace's registry the way the\n" +
+			"CI system does natively, and runs `dexaflow deploy --all --changed-since <before>` on\n" +
 			"each push to --branch. It reads the control plane from DEXAFLOW_SERVER_URL,\n" +
 			"or from the workspace target (--target, else default_target), and a deploy\n" +
 			"token from the CI secret DEXAFLOW_TOKEN:\n" +
@@ -320,10 +374,8 @@ func runCIInit(cmd *cobra.Command, system string, o ciInitOptions) error {
 	}
 	plan.BranchSet = cmd.Flags().Changed("branch")
 	plan.Environment = o.environment
-	if system == "github" {
-		if plan.CLICommit, err = ciActionCommit(cmdContext(cmd), cliVersion); err != nil {
-			return err
-		}
+	if pinErr := plan.pinInstall(cmdContext(cmd)); pinErr != nil {
+		return pinErr
 	}
 	files, err := renderCI(plan)
 	if err != nil {
@@ -333,6 +385,21 @@ func runCIInit(cmd *cobra.Command, system string, o ciInitOptions) error {
 		return printCIFiles(cmd.OutOrStdout(), files)
 	}
 	return writeCIFiles(cmd.OutOrStdout(), top, files, plan, o.force)
+}
+
+// pinInstall pins how the pipeline gets the CLI where that is pinned by
+// what a remote holds: the commit of the setup-dexaflow action on GitHub,
+// the digest of the dexaflow-cli image on GitLab when the job needs no
+// daemon.
+func (p *ciPlan) pinInstall(ctx context.Context) error {
+	var err error
+	switch {
+	case p.System == "github":
+		p.CLICommit, err = ciActionCommit(ctx, p.CLIVersion)
+	case p.System == "gitlab" && len(p.Daemon) == 0:
+		p.CLIImage, err = ciCLIImage(ctx, p.CLIVersion)
+	}
+	return err
 }
 
 // ciCLIVersion is the release tag the pipeline installs: --cli-version, or
