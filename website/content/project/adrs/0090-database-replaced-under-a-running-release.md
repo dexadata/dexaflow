@@ -2,10 +2,10 @@
 title: "ADR 0090: the control plane waits for its schema, and names a database that was emptied, replaced, restored or repointed under it"
 linkTitle: "0090 · Database replaced under a release"
 weight: 840
-description: "ADR 0090: a control plane that finds its schema absent or behind stays up and not ready, names the recovery command for its install method, and retries until the schema is current instead of exiting. An installation id kept in the database and in a chart-managed ConfigMap tells an emptied or replaced database from a fresh one and makes accepting it an explicit step; a running pod that sees the id change exits so no cache outlives the old database. Self-migration on boot is opt-in, limited to roles that hold a DDL identity, and never runs against an ahead schema."
+description: "ADR 0090: a control plane that finds its schema absent or behind stays up and not ready, names the recovery command for its install method, and retries until the schema is current instead of exiting. An installation id kept in the database and in a ConfigMap the migrate wrapper owns tells an emptied or replaced database from a fresh one and makes accepting it an explicit step; a running pod that sees the id change exits so no cache outlives the old database. Self-migration on boot is opt-in, limited to roles that hold a DDL identity, and never runs against an ahead schema. A schema-readiness metric and an optional alert rule make the wait visible."
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-16
 **Relates:** ADR 0049 (api and scheduler roles), ADR 0068 (patch content), ADR 0033 (release flow)
 **Issues:** #1846 (this ADR), #1842 (the crash loop that started it), #1020 (the migrate wrapper), #1614 (tenant id cache), #1619 (recovery table), #1023 (readiness re-checks the schema), #154 (Lite and Helm database docs)
@@ -109,14 +109,20 @@ read off its role.
    - A migration adds a one-row `installation` table. The id in it is
      written by the migrate wrapper of #1020 after `Up`, never by the SQL,
      from the value the chart hands the Job.
-   - The chart keeps the id in a ConfigMap of its own, generated at the
-     first install and kept on every upgrade with `lookup` (the pattern of
-     `agent-tls-autogen.yaml`), or pinned with `installation.id`. The
-     server reads it from the environment.
+   - The id outside the database lives in a ConfigMap that the migrate
+     wrapper creates and updates itself, not in a chart template, so no
+     Helm `lookup` is involved and `helm template`, Argo CD and Flux
+     installs behave like `helm install`. The id is not a secret. The
+     Job's service account gets `get` and `create` on ConfigMaps in the
+     release namespace and `update` on that one name. An operator can
+     still pin the id with `installation.id`; a pinned id that differs
+     from the ConfigMap is the acknowledgement described below. The
+     server reads the id from the ConfigMap through the environment.
    - The wrapper writes the id into a database without one in two cases
-     only: the schema is absent and the release has no ConfigMap yet (the
-     first install), or the schema exists from before the `installation`
-     table (an existing installation upgrading, adopted once).
+     only: the schema is absent and the namespace has no installation
+     ConfigMap yet (the first install), or the schema exists from before
+     the `installation` table (an existing installation upgrading, adopted
+     once). In both cases it creates the ConfigMap with the same id.
    - Any other mismatch is reported as a replaced database, by the Job
      (which then fails without migrating) and by the server (which stays
      not ready under decision 1): an absent schema on an established
@@ -153,6 +159,21 @@ read off its role.
    workers that hold attempt tokens of the old database reconnect to a
    process that does not know those attempts; that path is the existing one
    for an unknown attempt and is not changed here.
+6. **The wait is visible, not silent.** A pod that stays not ready with
+   nobody looking is almost as bad as a crash loop.
+   - Every role exports `dexaflow_schema_ready` (1 or 0) with a `reason`
+     label taken from decision 2's fixed reasons, and
+     `dexaflow_schema_wait_seconds`, the time since the process started
+     waiting.
+   - The chart gains an optional PrometheusRule
+     (`metrics.prometheusRule.enabled`, default false, next to the existing
+     ServiceMonitor) with one alert: `dexaflow_schema_ready == 0` for 5
+     minutes, critical when the reason is `database replaced`. The
+     observability docs give the same expression for installs without the
+     Prometheus Operator.
+   - While the ids differ, the process opens no write path: it serves only
+     the probes and metrics, so a database adopted by mistake is never
+     written to before an operator acknowledges it.
 
 ## Alternatives considered
 
@@ -188,15 +209,17 @@ read off its role.
   bounds a schema wait, because `/healthz` answers during it.
 - The migrate wrapper of #1020 becomes a prerequisite: decisions 3 and 4
   both run through it, and the Job image switches to it.
-- New chart surface: the installation ConfigMap, `installation.id`,
-  `migrations.onBoot`, and the release environment variables of decision 2.
+- New chart surface: `installation.id`, `migrations.onBoot`,
+  `metrics.prometheusRule.enabled`, the release environment variables of
+  decision 2, and a Role for the migrate Job's ConfigMap. The ConfigMap
+  itself is not rendered by the chart, so `helm uninstall` leaves it in
+  place; reinstalling into the same namespace against an empty database is
+  therefore reported as a replaced database, which is the safe reading.
   Each needs its helm-unittest cases and its `values.yaml` doc comment.
-- Open question for the implementation: a renderer without `lookup`
-  (`helm template`, Argo CD, Flux) cannot tell a first install from an
-  established one, so it must pin `installation.id`, as GitOps installs
-  already must not use the generated agent TLS material. How the wrapper
-  learns that an empty database under a pinned id is a first install there
-  is not settled by this record.
+- Follow-ups outside this record: expand/contract migrations so a rollback
+  always runs on the newer schema (#1994), a warning for a bundled Postgres
+  without a volume plus restore drills (#1995), and an end-to-end test that
+  empties the database under a running release (#1996).
 - Docs: one operate page for a database that was lost, restored or
   repointed, covering Helm and Lite (#154), linked from every reason of
   decision 2; and the interrupted-migration table in
