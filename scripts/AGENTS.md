@@ -18,3 +18,9 @@ Rules for changing the scripts that gate CI and cut releases. The root
   `cut-release.sh` shows a `--dry-run` of it in the PR.
 - Shell style: `set -euo pipefail`, and a header comment that says what the
   script guards and which incident made it necessary.
+- **A self-test that runs git on a fixture repository unsets the repository
+  variables first** (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`,
+  `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`,
+  `GIT_PREFIX`). A git hook exports them, and `git -C "$tmp"` or `git init`
+  then writes the fixture's commits, tags and `core.bare` into the repository
+  being committed to.
