@@ -56,7 +56,7 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
    that applies to this candidate (rc, GA, or a patch touching the area) gets its
    own line: gates on the tagged commit, benchmarks against the previous release,
    the database at scale, dispatch backpressure, failure injection, warm pools,
-   soak and leaks. At minimum, when the candidate touches the scheduler, dispatch
+   soak and leaks, and the code-only deploy time and warm-up. At minimum, when the candidate touches the scheduler, dispatch
    or storage: the benchmarks of the area compared with the previous release, and
    a soak run (`make soak`) with no recorded violations.
 9. **Release checklist.**

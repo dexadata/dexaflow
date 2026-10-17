@@ -18,8 +18,11 @@ cluster and no executor, so they run on a laptop with just Postgres up.
 | 4 | API read fan-out — dashboard queries under many DAGs | — | not yet |
 | 5 | Log tailer — SSE fan-out under many concurrent viewers | — | not yet |
 | 6 | Query plans at scale: hot queries on 1M runs and 5M task instances | [`query_plans/`](query_plans/) | ✅ implemented |
+| 7 | Code-only deploy: p50 of `dexaflow deploy` after a DAG code change, and the warm-up of the new version's pool | [`deploy_p50/`](deploy_p50/) | ✅ implemented |
 
-Experiments 1 and 6 are built. The others are documented extension points.
+Experiments 1, 6 and 7 are built. The others are documented extension points.
+Experiment 7 is the exception to "no cluster": it drives the CLI against a
+running control plane, and its warm-up half needs a cluster with warm pools on.
 
 ## Prerequisites
 
@@ -130,6 +133,94 @@ Output is a Markdown table per case: median, best and worst execution time, the
 time spent in triggers (FK checks and cascades, already part of execution time)
 and the tables read with a sequential scan. Recorded results live in
 [`BASELINE.md`](BASELINE.md).
+
+## Experiment 7: code-only deploy and warm-up
+
+A deploy that changed only DAG code should not pay for a build: the registry
+already holds the dependency image, so the CLI appends the code as one layer
+through the registry API and registers the new digest (ADR 0077). The target
+is a p50 under 30 seconds (#1706). With warm pools on, the new version's pool
+starts when it becomes current (ADR 0082), and its pods pull only the code
+layer, since the node has the dependency layers already (#1707).
+
+`deploy_p50` drives the real `dexaflow deploy` binary. It scaffolds a project
+with `dexaflow init`, gives it pinned dependencies and a registry, and deploys
+it once cold; that deploy builds the dependency image and is not counted. It
+then changes a comment line of `dag.py` before each of `--n` deploys and times
+each one from the start of the command to its exit (compile, content label,
+pre-check, code layer push, digest read and register). Every measured deploy
+must report `builder: code-layer`; one that took another path did not measure
+a code-only deploy, and the run fails.
+
+Prerequisites: a built CLI (`make build`), the parser on `PYTHONPATH`, `uv` on
+`PATH` (the cold deploy builds the dependency image from wheels without a
+daemon), a running control plane and a CLI config logged in to it.
+
+```sh
+make build
+bin/dexaflow auth login --server http://localhost:8080 --username admin@dexaflow.local \
+  --password admin --config /tmp/p50-cli.yaml
+PYTHONPATH=parser go run ./test/load/deploy_p50 --cli bin/dexaflow \
+  --config /tmp/p50-cli.yaml --local-registry --n 20
+```
+
+`--local-registry` serves an in-memory registry on the loopback inside the
+harness and builds the scaffold on a stand-in runtime base pushed there (it
+holds only what the dependency layer reads from a base, and runs nothing). It
+needs no container daemon, no cluster and no access to a public registry, and
+it gives the lower bound: the CLI and the register, with no network between
+the CLI and the registry. It also counts the registry requests of each deploy;
+on a remote registry each of them costs a round trip. A control plane with
+`executor.type=subprocess` is enough for it. Measure against a real registry
+with `--registry <prefix>` instead, with the registry login a deploy to it
+needs. `--warm` refuses `--local-registry`: a cluster cannot pull from the
+harness's loopback.
+
+The warm-up half runs on a cluster with warm pools on, such as the k3d setup of
+`test/e2e/deploy-e2e.sh` with `DEXAFLOW_E2E_WARM_POOLS=on`:
+
+```sh
+PYTHONPATH=parser go run ./test/load/deploy_p50 --cli bin/dexaflow \
+  --config /tmp/p50-cli.yaml --registry k3d-registry.localhost:5111 \
+  --platform linux/amd64 --warm --n 10
+```
+
+With `--warm` the project declares `min_idle_workers: 1` and deploys with
+`--active`, since only an unpaused DAG that declares a warm floor is
+prewarmed. After each deploy the harness polls the warm worker pods
+(`leoflow.io/warm-worker=true` in `--namespace`) for one whose image is the
+digest the deploy registered, and records when it appeared and when it became
+Ready, from the end of the deploy, with the pull time the kubelet reported in
+its `Pulled` event. The project builds on the published runtime base, which
+the pods run.
+
+Flags:
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--cli` | `bin/dexaflow` | the CLI binary |
+| `--config`, `--server`, `--token` | none | passed to `deploy` when set |
+| `--registry` | none | registry prefix the image is pushed to |
+| `--local-registry` | `false` | push to an in-memory loopback registry instead |
+| `--project` | none | deploy this project instead of a scaffold |
+| `--workdir` | a new temporary directory | where the scaffold is written |
+| `--dag-id` | `deploy_p50` | `dag_id` of the scaffold; use a new one per run against a shared server |
+| `--platform` | `linux/<host arch>` | the platform built |
+| `--python` | `3.12` | `python_version` of the scaffold |
+| `--base-image` | the published runtime base (the stand-in with `--local-registry`) | `base_image` of the scaffold |
+| `--dependency` | `requests==2.32.3` | a pinned dependency of the scaffold; repeat for more |
+| `--n` | `10` | measured deploys after the cold one |
+| `--target` | `30s` | the p50 of the measured deploys must be under it |
+| `--warm` | `false` | also measure the warm-up |
+| `--kubeconfig`, `--namespace` | default rules, `leoflow` | the cluster and namespace of the warm workers |
+| `--warm-target` | `1m` | the p50 to a Ready warm worker must be under it |
+| `--warm-timeout` | `3m` | how long to wait for each version's warm worker |
+| `--deploy-arg` | none | an extra `deploy` flag; repeat for more |
+
+Output is a Markdown table with one row per deploy (time, builder path,
+registry requests, and with `--warm` the warm worker's appearance, Ready time
+and image pull), the p50, p95 and maximum, and a `PASS` or `FAIL` line; the
+exit code is 1 on `FAIL`. Recorded results live in [`BASELINE.md`](BASELINE.md).
 
 ## Adding an experiment
 
