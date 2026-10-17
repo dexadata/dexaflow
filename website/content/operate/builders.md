@@ -471,6 +471,15 @@ and `<tool> push`. The digest `deploy` registers is then read from the
 registry, not from the tool
 ([ADR 0075](/project/adrs/0075-daemonless-builds-in-0-5-4/)).
 
+`--builder` takes any tool that answers those two commands as docker does
+(`build --platform <platforms> -t <image> -f <Dockerfile> <dir>`, then
+`push <image>`), so `--builder buildah` builds the generated Dockerfile with
+buildah, with no daemon, in a pipeline pod. kaniko takes other arguments and
+runs only in its own image, so it is not a `--builder`: a pipeline builds a
+project's own Dockerfile with it and registers the digest it pushed. Both
+are under
+[Recipes for Argo Workflows, Tekton, Jenkins, buildah and kaniko](/operate/cicd-deploy/#recipes-for-argo-workflows-tekton-jenkins-buildah-and-kaniko).
+
 ## Registry credentials
 
 The CLI reads and pushes to the registry in process, so it needs a credential
