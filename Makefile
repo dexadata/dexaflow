@@ -221,6 +221,10 @@ e2e-source-mode: ## Run the k3d Pro source mode e2e (ADR 0067, #1539; needs k3d,
 e2e-warm-pools: ## Run the k3d warm pool e2e (ADR 0058, #1611: warm hit, placement, isolation between attempts, no leaks; needs k3d, kubectl, docker, jq, psql, python3; run make dev-up + make build first)
 	bash test/e2e/warm-pool-e2e.sh
 
+.PHONY: e2e-daemonless-deploy
+e2e-daemonless-deploy: ## Run the k3d daemonless deploy e2e (#1888: dexaflow deploy examples/taskflow_sales from the dexaflow-cli image with no container daemon, dependency layer from wheels with uv, then a green run; Linux, needs k3d, kubectl, docker, go, jq; run make dev-up + make build first)
+	bash test/e2e/daemonless-deploy-e2e.sh
+
 .PHONY: e2e-dbt
 e2e-dbt: ## Run the k3d dbt pod-per-node e2e (ADR 0042; needs k3d, kubectl, docker, jq, dbt; run make dev-up + make build first)
 	bash test/e2e/dbt-e2e.sh

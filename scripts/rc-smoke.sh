@@ -129,6 +129,13 @@ else
   run_step "e2e dbt (make e2e-dbt)"          make e2e-dbt
   run_step "e2e source mode (make e2e-source-mode)" make e2e-source-mode
   run_step "e2e warm pools (make e2e-warm-pools)" make e2e-warm-pools
+  # Linux only: its CLI container shares the host network. Elsewhere the rc
+  # tag's run of e2e-daemonless-deploy.yaml is the record.
+  if [ "$(uname -s)" = Linux ]; then
+    run_step "e2e daemonless deploy (make e2e-daemonless-deploy)" make e2e-daemonless-deploy
+  else
+    bold "Skipping the daemonless deploy e2e (Linux only; see .github/workflows/e2e-daemonless-deploy.yaml)"
+  fi
   run_step "ui smoke (headless SPA)"         ui_smoke
 fi
 
