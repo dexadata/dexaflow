@@ -5,7 +5,7 @@ weight: 810
 description: "ADR 0081: dexaflow auth login --device follows the shape of the device authorization grant (RFC 8628), served by Dexaflow rather than by the IdP. The person opens a Dexaflow page, signs in through the server's own OIDC flow, then enters the short code and confirms it before approving; the CLI polls the server. Pending sign-ins live in the database so any replica can answer."
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-14
 **Relates:** ADR 0079 (CLI single sign-on through the server), ADR 0057 (OIDC/SSO login, tenant pin and role mapping), ADR 0074 (scoped API tokens for CI)
 **Issues:** #1704

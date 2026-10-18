@@ -9,7 +9,7 @@ weight: 530
 description: "ADR 0053: Admission + placement — one scheduler-side layer for task concurrency and pod assignment"
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-08-17
 **Relates:** ADR 0002 (pod-per-task — amended here: the "no `pool`/`queue` abstraction" consequence is superseded), ADR 0051 (separate the orchestration and execution state machines — the foundation this layer sits on), ADR 0052 (durable task outcome — a warm pod uses its in-band per-attempt transport, impl #2), ADR 0055 (secret scoping + token liveness — the security gate that orders PR-N1), ADR 0031 (scheduler reconciliation loop, `max_active_runs`, `DispatchAttempts`), ADR 0027 (editions: Lite subprocess vs Pro Kubernetes), ADR 0015 (Kubernetes-only container execution)
 **Issues:** `max_active_tasks` enforcement (PR-4; memory-note only today, no issue yet); real task pools (PR-8; #31 **closed** as stub-only, needs a fresh issue); quota/APF backpressure classification (PR-2; #127 closed & different, needs a fresh issue). Warm-worker implementation (PR-N1) is tracked separately and **gated** behind ADR 0055 (secret scoping #59 + token liveness/revocation, remainder of #476/ADR 0045).

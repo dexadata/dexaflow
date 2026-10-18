@@ -9,7 +9,7 @@ weight: 570
 description: "ADR 0057: OIDC/SSO authentication with fail-closed tenant pinning"
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-08-19
 **Relates:** ADR 0008 (JWT auth — the `Authenticator` seam OIDC plugs into; the `_token` this flow mints and the per-request reload that governs live permissions), ADR 0035 (keyless-first — the verify path uses the issuer's public JWKS, no secret), ADR 0055 (token liveness/revocation — bounds the OIDC session lifetime), ADR 0014 (supply chain — the new `go-oidc` dependency), ADR 0049 (edition gating precedent), ADR 0018 (embedded login UI the `_token` cookie drives)
 

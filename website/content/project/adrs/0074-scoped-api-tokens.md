@@ -5,7 +5,7 @@ weight: 740
 description: "ADR 0074: long-lived API tokens owned by a user, stored as a SHA-256 hash, narrowed by the ADR 0067 scopes, expiring and revocable; a deploy:dag permission and a built-in deployer role that registers versions and rolls back, and cannot delete."
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-13
 **Relates:** ADR 0008 (JWT authentication; this adds a second credential next to the session JWT, under the same per-request reload), ADR 0067 (the scopes these tokens carry, and the rule that a scope only narrows; this amends its scope table so `dexaflow:deploy` also opens the reads a deploy makes), ADR 0041 (pipeline-less deploy, which CI runs)
 **Issues:** #1708 (CI/CD credentials and roles)
