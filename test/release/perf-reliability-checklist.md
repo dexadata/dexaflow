@@ -116,6 +116,18 @@ recorded as a pass.
 | H1 | Scheduler SLIs are exported | Scrape `/metrics` on a running leader | `dexaflow_scheduler_loop_duration_seconds` has samples, `dexaflow_dispatch_queue_depth` moves under load | GA | local |
 | H2 | Every new metric or alert in the release is documented | Compare `internal/observability` with the metrics reference page | No undocumented metric | rc, GA | local |
 
+## I. Deploy
+
+A code-only deploy is one that changed only DAG code: the registry holds the
+dependency image, so only the code layer is pushed (ADR 0077). Both rows run
+`go run ./test/load/deploy_p50` ([Experiment 7](../load/README.md#experiment-7-code-only-deploy-and-warm-up)),
+which exits 1 when a threshold is missed; paste its table as the evidence.
+
+| # | Item | How | Decides | When | Where |
+|---|---|---|---|---|---|
+| I1 | Code-only deploy time | `PYTHONPATH=parser go run ./test/load/deploy_p50 --cli bin/dexaflow --config <cli config> --local-registry --n 20` against a control plane built from the tagged commit, compared with the row in BASELINE.md "Code-only deploy" | `PASS`: p50 under 30 s and every measured deploy took the `code-layer` path; the p50 and the registry requests per deploy within 10% of the previous release on the same machine, or the change explained as in "Accepted changes of the bar" | rc, GA, patch* (`internal/build/`, `internal/cli/deploy*`, `internal/cli/compile*`, `internal/cli/split*`, `parser/`) | local |
+| I2 | Warm-up after a code-only deploy | The k3d setup of `test/e2e/deploy-e2e.sh` with `DEXAFLOW_E2E_WARM_POOLS=on`, then `deploy_p50 --registry <the k3d registry> --warm --n 10` | `PASS`: every new version gets a Ready warm worker with no run started (the prewarm of ADR 0082), with a p50 from the end of the deploy under 60 s (one 30 s warm pool interval and the pod start); the image pull of the measured versions is recorded next to the cold deploy's, and stays well under it (only the code layer is pulled) | GA, patch* (`internal/build/`, `internal/executor/warmpool*`, warm target computation) | k3d |
+
 ## Where the k3d items run
 
 A `k3d` item needs a host where k3d can start pods: Docker with a kernel that
@@ -125,8 +137,9 @@ so does a GitHub-hosted `ubuntu-latest` runner, where the k3d leg of
 release checks cannot: it refuses `oom_score_adj` writes, so no pod starts
 (#1922).
 
-D1, D2 and F1 have no workflow: `e2e-gates.yaml` and `make rc-smoke` run
-neither the fan-out and burst scenarios nor the warm pool A/B. Run them by hand
+D1, D2, F1 and I2 have no workflow: `e2e-gates.yaml` and `make rc-smoke` run
+neither the fan-out and burst scenarios, the warm pool A/B nor the warm-up
+after a deploy. Run them by hand
 on such a host, on the commit to be cut, and link the log. When no such host is
 available for a candidate, record the row as not run with that reason; it is
 never recorded as a pass or as N/A.
