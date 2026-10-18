@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_auth_tokens_revoke/
 title: "dexaflow auth tokens revoke"
 linkTitle: "auth tokens revoke"
-weight: 18
+weight: 19
 ---
 
 Revoke an API token; it stops working on its next request.

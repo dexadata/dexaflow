@@ -1542,6 +1542,14 @@ environment:
       Named control plane a command uses when `--target` is not given; it beats
       the target selected for the workspace, and `--server` or `--server-url`
       beat it. See [Workspaces and targets](/operate/workspaces-and-targets/).
+  - name: OIDC_TOKEN
+    group: cli
+    description: >-
+      The OIDC token a CI provider minted for the job, which `dexaflow auth
+      ci-token` exchanges for a short-lived deploy session. Pipelines written
+      by `dexaflow ci init` set it when the control plane offers a CI OIDC
+      issuer. See [Deploying without a stored token (CI
+      OIDC)](/operate/cicd-deploy/#deploying-without-a-stored-token-ci-oidc).
   - name: TRUSTED_WORKSPACES
     group: cli
     description: >-

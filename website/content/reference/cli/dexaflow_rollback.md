@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_rollback/
 title: "dexaflow rollback"
 linkTitle: "rollback"
-weight: 55
+weight: 56
 ---
 
 Make an earlier registered version of a DAG current again.

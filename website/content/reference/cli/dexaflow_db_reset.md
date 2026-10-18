@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_db_reset/
 title: "dexaflow db reset"
 linkTitle: "db reset"
-weight: 39
+weight: 40
 ---
 
 Drop, recreate, and migrate the Lite database (DESTRUCTIVE).

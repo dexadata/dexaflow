@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_ci_init/
 title: "dexaflow ci init"
 linkTitle: "ci init"
-weight: 21
+weight: 22
 ---
 
 Write a pipeline that deploys the DAGs a push changed.
@@ -24,6 +24,9 @@ each push to --branch. It reads the control plane from DEXAFLOW_SERVER_URL,
 or from the workspace target (--target, else default_target), and a deploy
 token from the CI secret DEXAFLOW_TOKEN:
   dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d
+When that control plane offers a CI OIDC issuer for the system (auth.ci_oidc),
+the pipeline instead exchanges the job's OIDC token for a short-lived session
+(`dexaflow auth ci-token`), and no token is stored; --auth picks the path.
 An existing file is never overwritten without --force.
 
 ```
@@ -33,6 +36,7 @@ dexaflow ci init <github|gitlab|cloudbuild|generic> [flags]
 ### Options
 
 ```
+      --auth string          how the pipeline signs in: auto (the job's OIDC token when the server offers an issuer for the system, else a deploy token), oidc or token (default "auto")
       --branch string        the branch whose pushes deploy (default "main")
       --cli-version string   the CLI release the pipeline installs, such as v0.6.0, v0.5.0 or later (default: this CLI's version)
       --environment string   github: the environment the deploy job runs in, whose secrets and protection rules apply (default "production")

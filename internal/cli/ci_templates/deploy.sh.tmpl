@@ -14,8 +14,16 @@
 [[- else]]
 #   DEXAFLOW_SERVER_URL    the control plane URL (required)
 [[- end]]
+[[- if .OIDC]]
+#   DEXAFLOW_OIDC_TOKEN    the job's OIDC token for the audience [[.OIDC.Audience]],
+#                          set by the pipeline: `dexaflow auth ci-token`
+#                          exchanges it for a short-lived deploy session
+#   DEXAFLOW_TOKEN         a deploy token, used only without DEXAFLOW_OIDC_TOKEN,
+#                          created with `dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d`
+[[- else]]
 #   DEXAFLOW_TOKEN         a deploy token (required), created once with
 #                          `dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d`
+[[- end]]
 #   DEXAFLOW_BASE_REF      the commit the branch was on before this push: only
 #                          the DAGs changed since it are deployed. Empty, all
 #                          zeros (a new branch) or missing from the clone
@@ -26,7 +34,12 @@
 #                          report to (optional)
 #   DEXAFLOW_CLI_VERSION   the release to install instead of [[.CLIVersion]] (a tag
 #                          such as v0.6.0, [[.MinCLIVersion]] or later)
+[[- if .OIDC]]
+# The pre-rename LEOFLOW_OIDC_TOKEN, LEOFLOW_TOKEN, LEOFLOW_SERVER_URL and
+# LEOFLOW_TARGET still work.
+[[- else]]
 # The pre-rename LEOFLOW_TOKEN, LEOFLOW_SERVER_URL and LEOFLOW_TARGET still work.
+[[- end]]
 #
 # The CLI is installed by the install.sh of its release tag, which checks the
 # archive against the release's checksums.txt, and its cosign signature when
@@ -38,6 +51,10 @@ cli_version="${DEXAFLOW_CLI_VERSION:-[[.CLIVersion]]}"
 DEXAFLOW_TOKEN="${DEXAFLOW_TOKEN:-${LEOFLOW_TOKEN:-}}"
 DEXAFLOW_SERVER_URL="${DEXAFLOW_SERVER_URL:-${LEOFLOW_SERVER_URL:-}}"
 export DEXAFLOW_TOKEN DEXAFLOW_SERVER_URL
+[[- if .OIDC]]
+DEXAFLOW_OIDC_TOKEN="${DEXAFLOW_OIDC_TOKEN:-${LEOFLOW_OIDC_TOKEN:-}}"
+export DEXAFLOW_OIDC_TOKEN
+[[- end]]
 uv_version="[[.UVVersion]]"
 workspace_dir="[[.WorkspaceDir]]"
 [[- if .Target]]
@@ -166,11 +183,25 @@ PY
 }
 
 deploy() {
+[[- if .OIDC]]
+[[- if not .Target]]
+	[ -n "${DEXAFLOW_SERVER_URL:-}" ] ||
+		die "DEXAFLOW_SERVER_URL is not set: set it to the control plane URL"
+[[- end]]
+	if [ -n "${DEXAFLOW_OIDC_TOKEN:-}" ]; then
+		DEXAFLOW_TOKEN="$(dexaflow auth ci-token)" ||
+			die "the control plane did not exchange the job's OIDC token for a session (see above)"
+		export DEXAFLOW_TOKEN
+	fi
+	[ -n "${DEXAFLOW_TOKEN:-}" ] ||
+		die "neither DEXAFLOW_OIDC_TOKEN nor DEXAFLOW_TOKEN is set: the pipeline sets the first; or store a deploy token as a CI secret (dexaflow auth create-token --scope deploy)"
+[[- else]]
 	[ -n "${DEXAFLOW_TOKEN:-}" ] ||
 		die "DEXAFLOW_TOKEN is not set: store a deploy token as a CI secret (dexaflow auth create-token --scope deploy)"
 [[- if not .Target]]
 	[ -n "${DEXAFLOW_SERVER_URL:-}" ] ||
 		die "DEXAFLOW_SERVER_URL is not set: set it to the control plane URL"
+[[- end]]
 [[- end]]
 	base="$(base_ref)"
 	report="$tmp/report.json"
