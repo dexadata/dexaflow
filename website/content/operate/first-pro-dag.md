@@ -110,7 +110,7 @@ The registry is a separate credential. The CLI reads and pushes to it itself
 | Artifact Registry, GCR | be signed in to `gcloud` (`gcloud auth login`) |
 | ECR | be signed in to `aws` (`aws sso login`, `aws configure`, environment credentials or an instance role) |
 | ACR | be signed in to `az` (`az login`) |
-| GHCR, Docker Hub, any other | `docker login <registry>` once, which stores the credential in `~/.docker/config.json` or in the credential helper it names |
+| GHCR, Docker Hub, any other | `dexaflow registry login <registry>` once, with no docker needed (GHCR uses your `gh` session; Docker Hub a personal access token on stdin), or `docker login <registry>`; both store the credential in `~/.docker/config.json` or in the credential helper it names ([Signing in without docker](/operate/builders/#signing-in-without-docker)) |
 
 When a project falls back to the local container tool, the tool pushes with
 its own login, which a cloud session alone does not give it: the deploy
@@ -299,7 +299,7 @@ the latest run.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `deploy requires a container registry…` | no registry from `--registry`, `DEXAFLOW_REGISTRY`, `dexaflow.yaml`, the target, the workspace defaults, your config file or the cluster | `--registry` on `dexaflow target add` (Step 1), or the `registry:` block in `dexaflow.yaml`; then the registry sign-in of Step 2 |
-| `denied` / `unauthorized` on push | no credential for the registry, or one that may not push there | the command the preflight names for your registry: a sign-in to the cloud's CLI for Artifact Registry, ECR and ACR, `docker login <registry>` for the others, and the tool's own login when the local container tool builds ([Registry credentials](/operate/builders/#registry-credentials)); registry auth ≠ control-plane auth |
+| `denied` / `unauthorized` on push | no credential for the registry, or one that may not push there | the command the preflight names for your registry: a sign-in to the cloud's CLI for Artifact Registry, ECR and ACR, `dexaflow registry login <registry>` for the others, and the tool's own login when the local container tool builds ([Registry credentials](/operate/builders/#registry-credentials)); registry auth ≠ control-plane auth |
 | Task pod: `exec format error` | image arch ≠ cluster arch | build for the cluster's architecture: `dexaflow deploy --platform linux/arm64` on a Graviton cluster, or `build: {platforms: [linux/arm64]}` in `dexaflow.yaml`. The `platforms:` line of the output names where the value came from |
 | DAG runs but a task fails on a missing `conn_id` | connections live in the control plane, **not** in the image | deploy prints `note: this DAG expects connection(s): …`; create them on Pro (UI/API) first. See [Variables & Connections](/author-dags/variables-connections/) |
 

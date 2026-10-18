@@ -39,7 +39,8 @@ its SHA-256 against the signed checksums, installs the binaries to
 ### What you need
 
 Almost nothing. The control plane, CLI, and agent are **static Go binaries**,
-and `dexaflow setup` provisions a Python 3.11 itself if you don't have one.
+and `dexaflow setup` uses the Python 3.11, 3.12 or 3.13 you have, or provisions
+a Python 3.11 itself if you have none.
 
 There are **two execution paths** — and **no Docker executor**, on purpose
 ([ADR 0015](/project/adrs/0015-kubernetes-only-execution/)):
@@ -62,10 +63,17 @@ picks the highest path available**; without Docker it uses subprocess. Run
 
 `setup` is idempotent — re-running is safe. It:
 
-1. **Ensures Python 3.11.** Uses a system `python3.11` if one is on `PATH`;
-   otherwise downloads a pinned, checksum-verified [relocatable
-   CPython](https://github.com/astral-sh/python-build-standalone) into
-   `~/.dexaflow/python`. No sudo, no system install.
+1. **Picks a Python for the parser.** A managed CPython already installed
+   under `~/.dexaflow/python` wins. Otherwise it uses the first of
+   `python3.13`, `python3.12`, `python3.11` and `python3` on `PATH` that reports
+   Python 3.11 to 3.13, and downloads nothing. Only when there is none does it
+   download a pinned, checksum-verified [relocatable
+   CPython](https://github.com/astral-sh/python-build-standalone) 3.11 into
+   `~/.dexaflow/python`. No sudo, no system install. A DAG that declares
+   `python_version: "3.11"` (the default) on a host without 3.11 fetches the
+   same build, with the same checksum, the first time `dexaflow lite` builds its
+   venv; offline, that build fails with a message naming the two ways out
+   (network access, or installing `python3.11`).
 2. **Extracts the DAG parser and task runtime** (embedded in the binary) to
    `~/.dexaflow/pysrc`.
 3. **Points `parser_cmd` at the parser** in `~/.dexaflow/config.yaml`. The parser is
@@ -159,7 +167,8 @@ $ dexaflow doctor
 dexaflow doctor
 
   platform      linux/amd64 (glibc)
-  python 3.11   found (/usr/bin/python3.11)
+  python 3.11+  found (/usr/bin/python3.11)
+                `dexaflow setup` will use /usr/bin/python3.11 (Python 3.11) for the parser; nothing to download
   docker        found
   k3d           not found (fetched on demand for the k8s tier)
   kubectl       not found (fetched on demand for the k8s tier)

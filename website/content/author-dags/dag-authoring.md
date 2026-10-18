@@ -363,6 +363,10 @@ builds them: the DAG's declared defaults, then the task's own `params=`, then th
 run's `conf`, each one winning over the one before for the same key. Since 0.5.5
 this holds for every run: a scheduled run, which carries no `conf`, still gets
 the DAG defaults, and an operator's `params=` is part of its template context.
+Since 0.5.5 the same holds for the `params=` of a `BashOperator` and of
+`@task(params=...)`, which the compiler now carries in `dag.json`. A task
+param must be JSON-serializable, or `dexaflow compile` fails naming it.
+`context["dag_run"].conf` is the run's `conf` alone, without the defaults.
 A manual trigger stores the declared defaults in the run's `conf`, as the Airflow
 UI's trigger form does, so on such a run a DAG default wins over a task param of
 the same name.

@@ -229,6 +229,35 @@ class ParamsOperator(EchoOperator):
         return {"rendered": self.rendered_params, "executed": dict(context["params"])}
 
 
+class ContextReadOperator(EchoOperator):
+    """Reads the context keys an operator reaches for besides params (#1843): the
+    task it is, the DAG run and the DAG."""
+
+    def execute(self, context):
+        return {
+            "task_is_self": context["task"] is self,
+            "ti_task_is_self": context["ti"].task is self,
+            "run_id": context["dag_run"].run_id,
+            "conf": context["dag_run"].conf,
+            "dag_id": context["dag"].dag_id,
+        }
+
+
+# Records the exception each on_failure_callback was handed, as Airflow passes it.
+EXCEPTIONS = []
+
+
+def _record_exception(context):
+    EXCEPTIONS.append(repr(context.get("exception")))
+
+
+class FailingOperator(EchoOperator):
+    on_failure_callback = [_record_exception]
+
+    def execute(self, context):
+        raise RuntimeError("boom")
+
+
 class MultiKeyOperator(EchoOperator):
     """Pushes a custom-keyed XCom during execute (besides its return value) — the
     multi-key XCom pattern the runtime ships so it is stored/visible (#XCOM)."""
@@ -304,6 +333,35 @@ def test_task_params_unreadable_yields_empty():
     op = types.SimpleNamespace(params=5)
     assert runner._task_params(op) == {}
     assert runner._task_params(types.SimpleNamespace()) == {}
+
+
+def test_run_operator_context_carries_task_dag_run_and_dag(tmp_path, monkeypatch):
+    # context["task"] is the operator itself, as on Airflow, and dag_run / dag are
+    # objects, not None: operators that read dag_run.conf crashed (#1843).
+    out = tmp_path / "rv.json"
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(out))
+    monkeypatch.setenv("LEOFLOW_DAG_ID", "report")
+    monkeypatch.setenv("LEOFLOW_RUN_ID", "manual__1")
+    monkeypatch.setenv("LEOFLOW_RUN_CONF", '{"table": "orders"}')
+    mod = _write_operator_module(tmp_path, monkeypatch)
+
+    runner.run_operator(f"{mod}.ContextReadOperator", {})
+
+    assert json.loads(out.read_text()) == {
+        "task_is_self": True, "ti_task_is_self": True, "run_id": "manual__1",
+        "conf": {"table": "orders"}, "dag_id": "report"}
+
+
+def test_run_operator_failure_callback_gets_the_exception(tmp_path, monkeypatch):
+    # Airflow hands on_failure_callback the error as context["exception"] (#1843).
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(tmp_path / "rv.json"))
+    monkeypatch.setenv("LEOFLOW_ON_FAILURE_CALLBACK", "1")
+    mod = _write_operator_module(tmp_path, monkeypatch)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        runner.run_operator(f"{mod}.FailingOperator", {})
+
+    assert importlib.import_module(mod).EXCEPTIONS == ["RuntimeError('boom')"]
 
 
 def test_run_operator_requires_dotted_class():

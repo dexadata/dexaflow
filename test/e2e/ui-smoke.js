@@ -20,6 +20,7 @@
 
 const { chromium } = require('playwright-core');
 const fs = require('fs');
+const { apiTokensFlow } = require('./ui-api-tokens');
 
 const URL = process.env.LEOFLOW_URL || 'http://localhost:18080';
 // Without LEOFLOW_USER the bootstrap admin is found by trying the current
@@ -378,6 +379,13 @@ async function resolveUser() {
     if (created.conf.region !== 'us') {
       throw new Error('declared default region=us not materialized into conf: ' + JSON.stringify(created.conf));
     }
+  });
+
+  // The API tokens screen (#1886): the user menu entry opens it in the UI's
+  // frame, it lists a token without its secret, and revoking it there asks
+  // first and stops the token (ui-api-tokens.js).
+  await step('api tokens: list and revoke from the user menu', async () => {
+    await apiTokensFlow(page, URL, USER, PASS);
   });
 
   await browser.close();

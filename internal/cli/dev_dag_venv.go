@@ -151,7 +151,7 @@ func ensureDagVenv(ctx context.Context, cmd *cobra.Command, home, dagID, runtime
 		// built on has to survive the failure. Discarding first left the author
 		// who typed a version they do not have with no venv at all, and a full
 		// dependency reinstall even after reverting the edit.
-		base, berr := devBasePython(ctx, home, pythonVersion)
+		base, berr := devBasePython(ctx, cmd.OutOrStdout(), home, pythonVersion)
 		if berr != nil {
 			return "", berr
 		}

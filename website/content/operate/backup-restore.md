@@ -34,8 +34,9 @@ A backup archive (`leoflow-backup-<timestamp>.tar.gz`) contains:
 
 What is **not** included:
 
-- `~/.dexaflow/python/` (managed CPython) — re-fetched by `dexaflow setup` on the
-  target machine if needed.
+- `~/.dexaflow/python/` (managed CPython): re-fetched on the target machine if
+  needed: by `dexaflow setup` when it has no Python 3.11 to 3.13, or by
+  `dexaflow lite` when a DAG declares 3.11 and the host has none.
 - `~/.dexaflow/postgres/` (managed PG binaries) — same.
 - `~/.dexaflow/venv/` (parser/runtime venv) — re-installed lazily.
 - VCS metadata (`.git`, `.hg`, `.svn`).

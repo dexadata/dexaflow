@@ -113,3 +113,76 @@ func TestRunParamsRejectsUnencodableTaskParam(t *testing.T) {
 		t.Fatal("RunParams accepted a task param that cannot be encoded")
 	}
 }
+
+// TestRunParamsBashAndTaskFlowTaskParams covers the tasks that carry their own
+// params in the task's params field, not in operator_args: a bash task and a
+// @task (#1843). They layer like an operator's: over the DAG defaults, under
+// the run conf.
+func TestRunParamsBashAndTaskFlowTaskParams(t *testing.T) {
+	task := TaskSpec{Type: TaskTypeBash, Params: map[string]any{
+		"table": "task_table", "dataset": "raw",
+	}}
+	conf := json.RawMessage(`{"dataset":"conf_dataset"}`)
+
+	raw, err := runParamsSpec().RunParams(task, conf)
+	if err != nil {
+		t.Fatalf("RunParams: %v", err)
+	}
+	got := decodeParams(t, raw)
+	want := map[string]any{"region": "us", "table": "task_table", "dataset": "conf_dataset"}
+	if len(got) != len(want) {
+		t.Fatalf("params = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("params[%q] = %v, want %v (all: %v)", k, got[k], v, got)
+		}
+	}
+}
+
+// TestRunParamsTaskParamsWithoutDagParams: a DAG with no params still layers
+// a bash task's own params under the conf.
+func TestRunParamsTaskParamsWithoutDagParams(t *testing.T) {
+	task := TaskSpec{Type: TaskTypePython, Params: map[string]any{"table": "orders"}}
+
+	raw, err := DAGSpec{}.RunParams(task, nil)
+	if err != nil {
+		t.Fatalf("RunParams: %v", err)
+	}
+	if got := decodeParams(t, raw); len(got) != 1 || got["table"] != "orders" {
+		t.Errorf("params = %v, want {table: orders}", got)
+	}
+}
+
+// TestDAGSpecTaskParamsValidate: a compiled bash or python task carries its own
+// params (#1843); the spec must validate with them and keep them round trip.
+func TestDAGSpecTaskParamsValidate(t *testing.T) {
+	in := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
+		`{"task_id":"b","type":"bash","entrypoint":"echo {{ params.table }}","params":{"table":"orders"}}]}`
+	var spec DAGSpec
+	if err := json.Unmarshal([]byte(in), &spec); err != nil {
+		t.Fatal(err)
+	}
+	if got := spec.Tasks[0].Params["table"]; got != "orders" {
+		t.Fatalf("decoded params = %v", spec.Tasks[0].Params)
+	}
+	if err := spec.Validate(); err != nil {
+		t.Fatalf("a task with params must validate: %v", err)
+	}
+}
+
+// TestDAGSpecSchemaRejectsNonObjectTaskParams: task params are an object.
+func TestDAGSpecSchemaRejectsNonObjectTaskParams(t *testing.T) {
+	s, err := schemas()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc any
+	if err := json.Unmarshal([]byte(`{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1",`+
+		`"tasks":[{"task_id":"b","type":"bash","entrypoint":"echo","params":["x"]}]}`), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateAgainst(s.dag, doc); err == nil {
+		t.Fatal("params: [...] must be refused by the schema")
+	}
+}

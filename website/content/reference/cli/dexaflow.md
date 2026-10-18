@@ -37,6 +37,7 @@ Dexaflow is a GitOps-first, container-native workflow orchestrator.
 * [dexaflow new](/reference/cli/dexaflow_new/)	 - Scaffold a new DAG under the workspace's dags/ folder.
 * [dexaflow promote](/reference/cli/dexaflow_promote/)	 - Register on one target the exact version another target runs (same digest, no build).
 * [dexaflow push](/reference/cli/dexaflow_push/)	 - Register a compiled dag.json with the control plane.
+* [dexaflow registry](/reference/cli/dexaflow_registry/)	 - Sign in to the container registry DAG images are pushed to
 * [dexaflow rollback](/reference/cli/dexaflow_rollback/)	 - Make an earlier registered version of a DAG current again.
 * [dexaflow runs](/reference/cli/dexaflow_runs/)	 - Trigger and inspect DAG runs.
 * [dexaflow server](/reference/cli/dexaflow_server/)	 - Information about running the control plane.

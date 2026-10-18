@@ -22,11 +22,19 @@
 # GA (an upcoming release, or another tool's version) is never stale.
 #
 # The newest GA is the `latest` leg of website/scripts/ci/versions.json, which
-# cut-release.sh repoints on every GA (promote_docs_version). It is read from
+# scripts/docs-promote.sh repoints on every GA (promote_docs_version). It is read from
 # the file, not from git tags, so this gate needs no network and gives the same
 # answer during a cut, in CI and offline. promote_docs_version also calls
 # `--bump` below, so the docs promotion pull request carries the new pins and
 # this gate stays green on it.
+#
+# That makes the plain check one release late at cut time: before the tag,
+# versions.json still names the GA being replaced (and on release-X.Y, which
+# the promotion never touches, the GA the branch was cut from or older). The
+# v0.5.4 tag shipped operate pages pinning 0.5.3, and only the promotion pull
+# request after the GA noticed (#1934). So cut-release.sh runs this gate as
+# `--candidate <tag>`, which judges against the release being cut and leaves
+# out README.md, whose pins the promotion bumps after the release is out.
 #
 # Docs pages should not carry a literal version at all: the
 # `{{< latest-version >}}` shortcode prints the newest GA. The Markdown files
@@ -38,6 +46,9 @@
 #
 # Usage:
 #   scripts/check-stale-versions.sh [root]          # check (default: this repo)
+#   scripts/check-stale-versions.sh --candidate <version> [root]
+#                                                   # judge against the release
+#                                                   # being cut (cut-release.sh)
 #   scripts/check-stale-versions.sh --bump <tag> [root]
 #                                                   # rewrite README.md's pins
 #   scripts/check-stale-versions.sh --self-test
@@ -82,10 +93,12 @@ scanned_files() {
 	fi
 }
 
-# findings <root> <latest>: "<file>:<line>: <version>" for each stale pin.
+# findings <root> <latest> [skip-bump-files]: "<file>:<line>: <version>" for
+# each stale pin. With a third argument the BUMP_FILES are left out.
 findings() {
-	local root="$1" latest="$2" f hit line ver
+	local root="$1" latest="$2" skip="${3:-}" f hit line ver
 	while IFS= read -r f; do
+		if [ -n "$skip" ] && [[ " ${BUMP_FILES[*]} " == *" $f "* ]]; then continue; fi
 		while IFS= read -r hit; do
 			line="${hit%%:*}"
 			ver=$(printf '%s' "${hit#*:}" | grep -oE "${VER_RE}\$")
@@ -99,15 +112,35 @@ findings() {
 }
 
 check() { # [root]
-	local root="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}" latest out
+	local root="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}" latest
 	latest=$(latest_ga "$root") || { echo "FAIL: cannot tell the newest release" >&2; return 1; }
-	out=$(findings "$root" "$latest")
+	report "$latest" "the newest GA" "$(findings "$root" "$latest")"
+}
+
+# check_candidate <version> [root]: judge the tree as if <version>'s GA were the
+# newest release. Before a cut tags it, versions.json still names the GA before
+# it (on release-X.Y, the GA of whenever the branch was cut, since the docs
+# promotion lands on main only), so the plain check passes a page pinning the
+# release being replaced, and that page ships in the tag: v0.5.4 shipped
+# operate pages pinning 0.5.3 that way, found only by the post-GA promotion
+# pull request (#1934). README.md is left out: it pins the previous GA until
+# the promotion bumps it, after the release is published.
+check_candidate() { # <version> [root]
+	local v="${1#v}" root="${2:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+	[[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] || { echo "--candidate needs a version like v1.2.3 or v1.2.3-rc.1, got '$1'" >&2; return 2; }
+	v="${v%%-*}"
+	report "$v" "the release being cut" "$(findings "$root" "$v" skip-bump-files)"
+}
+
+# report <latest> <what latest is> <findings>: print the verdict, 1 on findings.
+report() {
+	local latest="$1" what="$2" out="$3"
 	if [ -z "$out" ]; then
 		echo "OK: no page pins a release older than v${latest}."
 		return 0
 	fi
 	{
-		echo "FAIL: these lines install a release older than the newest GA, v${latest}:"
+		echo "FAIL: these lines install a release older than ${what}, v${latest}:"
 		printf '%s\n' "$out" | sed 's/^/  /'
 		echo
 		echo "In website/content/, write {{< latest-version >}} (or {{< latest-version v >}} for the v-prefixed tag)"
@@ -204,12 +237,45 @@ self_test() {
 	# no arguments, from anywhere, against this repository.
 	_eq "$(_rc bash "${BASH_SOURCE[0]}" "$r")" 0 "the entrypoint checks the root it is given"
 
+	# --candidate judges the tree a cut is about to tag against the release
+	# being cut, not against versions.json, which still names the GA before it
+	# (and on release-X.Y an even older one). The v0.5.4 tag shipped pages
+	# pinning 0.5.3 because the cut judged them against 0.5.3 (#1934).
+	printf '%s\n' 'source_mode_image: ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:<digest>' >"$r/website/content/get-started/source.md"
+	_eq "$(_rc check "$r")" 0 "a pin of the GA versions.json names passes the plain check"
+	_eq "$(_rc check_candidate v0.5.4 "$r")" 1 "the same pin fails when v0.5.4 is the release being cut"
+	_eq "$(_rc check_candidate 0.5.4-rc.1 "$r")" 1 "a candidate of v0.5.4 is judged against v0.5.4"
+	printf '%s\n' 'DEXAFLOW_VERSION=0.5.4' >"$r/website/content/get-started/source2.md"
+	rm -f "$r/website/content/get-started/source.md"
+	_eq "$(_rc check_candidate 0.5.4-rc.1 "$r")" 0 "under an rc, a pin of its own GA is not stale"
+	rm -f "$r/website/content/get-started/source2.md"
+	printf '%s\n' 'source_mode_image: ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:<digest>' >"$r/website/content/get-started/source.md"
+	out=$(check_candidate v0.5.4 "$r" 2>&1) || true
+	case "$out" in *"source.md:1: 0.5.3"*) echo "  ok   the candidate finding names the file, line and version" ;;
+		*) printf '  FAIL the candidate finding lacks file:line: version\n%s\n' "$out"; fail=1 ;; esac
+	printf '%s\n' 'source_mode_image: ghcr.io/dexadata/dexaflow-runtime:py3.11-{{< latest-version v >}}@sha256:<digest>' >"$r/website/content/get-started/source.md"
+	_eq "$(_rc check_candidate v0.5.4 "$r")" 0 "the shortcode passes the candidate check"
+	# README.md pins the previous GA until the docs promotion bumps it, after
+	# the release is published, so the candidate check must not refuse a cut
+	# over a line the cut is not allowed to change yet.
+	_eq "$(sed -n 1p "$r/README.md" | grep -c 'version 0.5.3')" 1 "the fixture README pins the previous GA"
+	_eq "$(_rc check_candidate v0.5.4 "$r")" 0 "the README pins the promotion bumps are not judged"
+	printf '%s\n' 'helm install x --version 0.5.3' >"$r/helm/dexaflow/README.md"
+	_eq "$(_rc check_candidate v0.5.4 "$r")" 1 "the chart README is still judged"
+	: >"$r/helm/dexaflow/README.md"
+	_eq "$(_rc check_candidate not-a-version "$r")" 2 "--candidate refuses a malformed version"
+	_eq "$(_rc bash "${BASH_SOURCE[0]}" --candidate v0.5.4 "$r")" 0 "the --candidate entrypoint checks the root it is given"
+	printf '%s\n' 'DEXAFLOW_VERSION=0.5.3' >"$r/website/content/get-started/source.md"
+	_eq "$(_rc bash "${BASH_SOURCE[0]}" --candidate v0.5.4 "$r")" 1 "the --candidate entrypoint fails a stale pin"
+	rm -f "$r/website/content/get-started/source.md"
+
 	if [ "$fail" -eq 0 ]; then echo "check-stale-versions self-test: ok"; return 0; fi
 	echo "check-stale-versions self-test: FAIL"; return 1
 }
 
 case "${1:-}" in
 	--self-test) self_test; exit $? ;;
+	--candidate) shift; [ $# -ge 1 ] || { echo "usage: $0 --candidate <version> [root]" >&2; exit 2; }; check_candidate "$@"; exit $? ;;
 	--bump) shift; [ $# -ge 1 ] || { echo "usage: $0 --bump <tag> [root]" >&2; exit 2; }; bump "$@"; exit $? ;;
 	*) check "$@"; exit $? ;;
 esac

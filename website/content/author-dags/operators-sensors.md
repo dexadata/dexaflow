@@ -160,26 +160,56 @@ a fallback for older SDKs).
 `_operator_context()` builds the dict passed to `execute()` and to templating, so
 operators and native tasks see the same macros Airflow exposes:
 
-`ds`, `ts`, `logical_date`, `run_id`, `task_instance`/`ti`, `dag_run`,
-`data_interval_start`, `data_interval_end`, `params`, `macros`, `var`, `conn`.
+`ds`, `ds_nodash`, `ts`, `ts_nodash`, `ts_nodash_with_tz`, `logical_date`,
+`run_id`, `task_instance`/`ti`, `task_instance_key_str`, `try_number`, `task`,
+`dag`, `dag_run`, `data_interval_start`, `data_interval_end`, `params`,
+`macros`, `var`, `conn`, and `exception` in an `on_failure_callback`.
 
 `logical_date` is the run's logical date as a timezone-aware `datetime`, or
-`None` on a run without one. `macros` is the Task SDK's macros module
+`None` on a run without one. `ds_nodash`, `ts_nodash` and `ts_nodash_with_tz`
+are derived from it in the Task SDK's formats (`20260614`, `20260614T053000`,
+`20260614T053000+0000`) and, as on Airflow, are absent on a run without a
+logical date. `macros` is the Task SDK's macros module
 (`{{ macros.ds_add(ds, 1) }}`, `{{ macros.ds_format(...) }}`, `macros.datetime`,
 `macros.timedelta`); in an image without the Task SDK the runtime supplies
-`ds_add`, `ds_format` and the same standard modules itself. Other keys of the
-Task SDK context (`ds_nodash`, `ts_nodash`, `dag`, `task`, ...) are not provided
-yet ([#1843](https://github.com/dexadata/dexaflow/issues/1843)); a template that
-names one renders it as an empty string.
+`ds_add`, `ds_format` and the same standard modules itself.
+
+`dag_run` carries `dag_id`, `run_id`, `logical_date`, `data_interval_start`,
+`data_interval_end`, `run_type` (the Task SDK's values: `manual`, `scheduled`,
+`backfill`, `asset_triggered`) and `conf`, the run's conf alone. `conf` is not
+`params`: it holds what the run was triggered with, without the param
+defaults that `params` layers under it. On an operator run `task` is the
+operator itself; on a `@task` or bash task, and for `dag` everywhere, the
+runtime holds no Airflow object, so `task` and `dag` carry their ids
+(`{{ task.task_id }}`, `{{ dag.dag_id }}`) and nothing else.
+
+The context objects carry only what the agent delivers. An attribute they
+lack, such as `dag_run.start_date` or `ti.hostname`, raises an
+`AttributeError` that names it and says Dexaflow does not provide it, instead
+of a bare error deep inside a provider. These Task SDK keys are not provided,
+because the task pod has no data for them: `prev_data_interval_start_success`,
+`prev_data_interval_end_success`, `prev_start_date_success`,
+`prev_end_date_success` (the previous successful run), `templates_dict` (not
+captured by the compiler), `task_reschedule_count`, the asset keys (`inlets`,
+`outlets`, `inlet_events`, `outlet_events`, `triggering_asset_events`,
+`asset_state_store`), `task_state_store`, `expanded_ti_count`,
+`map_index_template`, `partition_key`, `partition_date`, `reason` and
+`test_mode`. A template that names one renders it as an empty string (an
+empty quoted argument in a bash command). The
+runtime's tests compare this list with the pinned Task SDK, so a Task SDK
+upgrade that adds a key fails until it is provided or listed
+([#1843](https://github.com/dexadata/dexaflow/issues/1843)).
 
 `params` (#148) are layered as in Airflow: the DAG's declared param defaults,
 then the task's own `params=`, then the run's `conf`, each winning per key. The
 control plane resolves them when the agent fetches the task spec and serializes
 them into `DEXAFLOW_PARAMS`, and the runtime merges the operator's `params=`
 under them before rendering, so `{{ params.x }}` sees task params too (#1841,
-#1844). The data interval and logical date
+#1844). A `BashOperator`'s and a `@task`'s own `params=` are captured by the
+compiler as the task's `params` in `dag.json` and layered the same way (#1843).
+The data interval, logical date, run conf and run type
 ride through the gRPC `TaskSpec` (proto fields `logical_date`,
-`data_interval_start/end`, `params_json`).
+`data_interval_start/end`, `params_json`, `run_conf_json`, `run_type`).
 
 ### XCom chaining between tasks — like Airflow
 

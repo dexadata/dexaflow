@@ -434,6 +434,8 @@ func NewServer(deps Dependencies) *gin.Engine {
 	registerUIVariables(r, deps.Variables)
 	registerUsers(r, deps.Users, deps.UserAudit)
 	registerAPITokens(r, deps.APITokens, deps.AuthAudit)
+	registerAPITokensPage(r, deps, binding)
+	r.GET("/api/v2/plugins", pluginsHandler(deps.APITokens != nil))
 	registerUIConnections(r, deps.Connections, deps.ConnectionTest)
 	registerUIPools(r, deps.Pools, deps.Edition == "pro", deps.PoolsReadOnly)
 	registerUIFavorites(r, deps.Favorites)

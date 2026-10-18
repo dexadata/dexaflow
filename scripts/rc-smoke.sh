@@ -57,8 +57,9 @@ ui_smoke() {
   local db="postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable"
   local home_dir; home_dir="$(mktemp -d)"
   local pid="" rc=0 pw hash email setup_out code=""
-  # a no-op python3.11 so `setup` skips the CPython download (the parser is unused here)
-  mkdir -p "$home_dir/bin"; printf '#!/bin/sh\n' > "$home_dir/bin/python3.11"; chmod +x "$home_dir/bin/python3.11"
+  # a fake python3.11 so `setup` skips the CPython download (the parser is unused
+  # here); setup takes a host interpreter only on the version it reports (#1700)
+  mkdir -p "$home_dir/bin"; printf '#!/bin/sh\necho "Python 3.11.15"\n' > "$home_dir/bin/python3.11"; chmod +x "$home_dir/bin/python3.11"
   LEOFLOW_DATABASE_URL="$db" PATH="$home_dir/bin:$PATH" ./bin/leoflow db reset --yes >/dev/null 2>&1
   setup_out="$(HOME="$home_dir" PATH="$home_dir/bin:$PATH" ./bin/dexaflow setup --workspace "$home_dir/ws" </dev/null 2>&1)"
   pw="$(printf '%s\n' "$setup_out" | sed -n 's/^[[:space:]]*password:[[:space:]]*//p' | head -1)"
@@ -127,6 +128,7 @@ else
   run_step "e2e split two-process (make e2e-split)" make e2e-split
   run_step "e2e dbt (make e2e-dbt)"          make e2e-dbt
   run_step "e2e source mode (make e2e-source-mode)" make e2e-source-mode
+  run_step "e2e warm pools (make e2e-warm-pools)" make e2e-warm-pools
   run_step "ui smoke (headless SPA)"         ui_smoke
 fi
 

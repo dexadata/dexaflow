@@ -179,7 +179,11 @@ What checks it, and when:
    `scripts/check-*.sh` gate against the tag. One of them,
    `check-changelog-entry.sh`, is a pull-request gate with no question to ask
    when there is no pull request, so it reports `gate SKIP`; the cut log
-   distinguishes SKIP from PASS to keep the count honest.
+   distinguishes SKIP from PASS to keep the count honest. Another,
+   `check-stale-versions.sh`, runs as `--candidate <tag>`: it judges the pages
+   against the release being cut, because `versions.json` still names the GA
+   that release replaces (on `release-X.Y`, an older one still), and v0.5.4
+   was tagged with pages that pinned 0.5.3 (#1934).
 3. **PR → wait green → merge**: opens the prepare PR against the base and waits
    for CI, re-running **only known-transient flakes** (registry rate-limits, Go
    module-proxy resets, the shallow-fetch merge-base gate, the cold-start
@@ -197,8 +201,10 @@ What checks it, and when:
    re-running if the gate retracts on a flake (#862). PUBLISHED means the
    release run is green, which includes its `promote` job (see below).
 7. **Publish the docs root** (**GA** only, and only if step 6 reached
-   PUBLISHED): opens a `docs/promote-<tag>` PR repointing
-   `website/scripts/ci/versions.json`, waits for it green and merges it. It runs
+   PUBLISHED): runs `scripts/docs-promote.sh <tag> --pr`, which opens a
+   `docs/promote-<tag>` PR repointing `website/scripts/ci/versions.json`, or
+   finds the one the Docs promote workflow already opened, then waits for it
+   green and merges it. It runs
    last on purpose: the Pages deploy checks the tag out, so it cannot ride in
    the prepare commit; and the site root must never advertise a release whose
    artifacts are red or still draft. A failure here costs the docs root and
@@ -222,7 +228,7 @@ that people follow without naming a version.
 | Helm chart `X.Y.Z` (`charts/dexaflow`, `charts/leoflow`) | `helm install`, `helm upgrade` | `promote` | yes | yes | yes |
 | `dexaflow-runtime:py3.N`, `leoflow-runtime:py3.N` | development builds, the docs | `promote` | no | yes | no |
 | GitHub release marked Latest | `install.sh` without a pinned version, Renovate, Dependabot | `promote` | no | yes | no |
-| Docs root | the docs site | `cut-release.sh`, after PUBLISHED | no | yes | no |
+| Docs root | the docs site | `docs-promote.yaml` and `cut-release.sh`, after PUBLISHED | no | yes | no |
 
 The `setup-dexaflow` action (`.github/actions/setup-dexaflow`) is used at a
 release tag of this repository (`dexadata/dexaflow/.github/actions/setup-dexaflow@vX.Y.Z`),
@@ -298,28 +304,39 @@ and at depth 1 it would silently return `main`'s tip. Run `git fetch --unshallow
 ## Publishing the docs root (GA)
 
 `website/scripts/ci/versions.json`'s `latest` entry is the ref the published
-site root is built from. A GA repoints it and archives the one it replaces —
-and the cut opens that as its own PR **after pushing the tag**, because the
-deploy checks the tag out and it does not exist until then. If that PR does not
-land, the release is still published; the docs root just still serves the
-previous GA until it does.
+site root is built from. A GA repoints it and archives the one it replaces, in
+its own PR to `main` **after the tag exists**, because the deploy checks the
+tag out. `scripts/docs-promote.sh <tag> --pr` makes that PR, titled
+`docs: publish <tag> at the documentation root` from the branch
+`docs/promote-<tag>`: `versions.json` repointed (label `<tag> (latest)`), the
+`[[params.versions]]` menu of `website/hugo.toml` rendered from it, and the
+README install pins bumped. It never takes the root for an rc or for a GA
+older than the one the root serves, it works in a scratch worktree of
+`origin/main`, and re-running it finds the same branch and PR. If the PR does
+not land, the release is still published; the docs root just still serves
+the previous GA until it does.
 
-The cut skips the promotion entirely when the release workflows never reach
-PUBLISHED — the root must not advertise a tag with no artifacts behind it — and
-says so. `--resume` cannot help once the tag exists, so that recovery is by
-hand. Three edits to `website/scripts/ci/versions.json`, as one PR labelled
-`skip-changelog`:
+Two things run it (#1935):
 
-1. point the `latest` entry's `ref` at the new tag AND set its `label` to
-   `latest (<the new tag>)` (the dropdown names the release it points at, and
-   `render-version-config.py` reads `label`);
-2. for the GA it replaces, set `"archived": true`, adding the entry if it has
-   none yet — `id`/`ref`/`subpath`/`label` all the **outgoing** tag, inserted
-   directly after the `latest` entry, since the order here is the order of the
-   version dropdown;
-3. leave every other leg untouched, `dev` included.
+- **The Docs promote workflow** (`.github/workflows/docs-promote.yaml`), when
+  the Release workflow of a tag push completes green, which includes its
+  `promote` job. It enables auto-merge on the PR. This is what moves the root
+  when the tag was pushed without the cut, as v0.5.4 was.
+- **`cut-release.sh`**, after it watched the release to PUBLISHED. It opens the
+  PR or finds the workflow's, waits for it green and merges it.
 
-That is exactly what `promote_docs_version` does — read it if in doubt.
+A PR opened or pushed with the workflow's default `GITHUB_TOKEN` starts no
+workflows, so its checks never run. Set the `DOCS_PROMOTE_TOKEN` repository
+secret (a fine-grained token with Contents and Pull requests read and write
+on this repository) and the workflow uses it instead. Without it the workflow
+warns, and a maintainer closes and reopens the PR to start its checks.
+
+To promote by hand, for example when the release workflows were re-run after
+the cut gave up: run the Docs promote workflow with the tag
+(`gh workflow run docs-promote.yaml -f tag=vX.Y.Z`), or from any checkout
+`scripts/docs-promote.sh vX.Y.Z --pr --fetch`. Do not edit `versions.json` by hand: the promotion also renders
+`hugo.toml` and bumps the README, and a PR without them fails
+`check-docs-version-menu.sh` and `check-stale-versions.sh`.
 
 ## Release authorization
 
@@ -366,6 +383,10 @@ scripts/docs-gap.sh 0.5.2 --fetch
 
 # Does main carry the changelog of every patch already tagged? (a minor cut refuses while not)
 scripts/changelog-sync.sh --check-all --fetch
+
+# Publish a GA at the docs root by hand (the Docs promote workflow and the cut do this)
+gh workflow run docs-promote.yaml -f tag=v0.5.4
+scripts/docs-promote.sh v0.5.4 --pr --fetch
 
 # Bring a patch's changelog back to main by hand (the cut does this after a patch GA)
 scripts/changelog-sync.sh 0.5.4 --pr --fetch
@@ -419,6 +440,17 @@ promote-artifact model is tracked in #878.
   not Latest, and no chart was pushed. Fix the cause and re-run the failed
   `promote` job. The job summary says which pointers it moved, and why it left
   Latest and `py3.N` alone for an rc or an older minor.
+- **The docs root still serves the previous GA.** Nothing about the release
+  fails when the root is left behind, so a separate job watches for it:
+  `.github/workflows/docs-root-lag.yaml` runs `scripts/docs-root-lag.sh`
+  daily and on every change to `versions.json` on `main`. It fails when the
+  `latest` leg names a different tag from the GitHub release marked Latest
+  (which only `promote` moves, by the rule of
+  `scripts/release-promote-plan.sh`), once that release is more than six
+  hours old, and keeps one issue open, titled "docs: the documentation root
+  does not serve the newest release", until the root catches up (#1936).
+  Promote the release as [Publishing the docs root](#publishing-the-docs-root-ga)
+  says.
 - **`no merge base`** in the heavy-E2E gate — rebase the branch onto current
   `main` (tracked: #876).
 

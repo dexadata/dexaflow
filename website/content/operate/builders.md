@@ -2,7 +2,7 @@
 title: How deploy builds the DAG image
 linkTitle: Builders
 weight: 13
-description: The builders `dexaflow deploy`, `compile --build` and `build` choose from, in order, the Cloud Build remote builder, how the target platform is picked, and the local container daemon as the fallback.
+description: The builders `dexaflow deploy`, `compile --build` and `build` choose from, in order, the Cloud Build remote builder, the in-cluster builder the Helm chart can run, how the target platform is picked, and the local container daemon as the fallback.
 ---
 
 A DAG version is a `dag.json` and a container image
@@ -23,7 +23,7 @@ no container daemon on your machine.
 | 1 | `skip` | The whole DAG image for this content is already in the registry under its content label ([see below](#reusing-an-image-already-in-the-registry)) | Available for `deploy` |
 | 2 | `code-layer` | The image of your dependencies is already in the registry: only your DAG code is pushed, as one layer on it, through the registry ([see below](#pushing-only-the-dag-code)) | Available for pushed builds |
 | 3 | `dependency-layer` | The image of your dependencies is missing and every dependency has a wheel for the target platform: they are installed for that platform with `uv` and added as a layer on the runtime base, with no daemon and no emulation ([see below](#building-the-dependency-image-from-wheels)) | Available when `uv` is on `PATH` |
-| 4 | `remote` | A real build is needed (a package without wheels, `system_packages`, your own `Dockerfile`) and a remote builder is configured: Google Cloud Build ([see below](#building-on-cloud-build)) | Available for Cloud Build; a build pod in your cluster is planned (#1706) |
+| 4 | `remote` | A real build is needed (a package without wheels, `system_packages`, your own `Dockerfile`) and a remote builder is configured: Google Cloud Build ([see below](#building-on-cloud-build)) | Available for Cloud Build; the [in-cluster builder](#the-in-cluster-builder) ships in the Helm chart, and `remote_builder` pointing at it is planned (#1883) |
 | 5 | `local-daemon` | None of the above applies: a local container tool builds and pushes the image | Available, the fallback |
 
 Every build prints the builder it took and why before it starts:
@@ -272,7 +272,10 @@ image (or the whole image, for dependencies that are not pinned), when:
   conflicts with a package of the base image at another version, or PyPI
   cannot be reached. The builder line carries uv's reason.
 
-Private package indexes are not supported on this path yet.
+With a [package index](#build-arguments-secrets-and-a-private-package-index),
+uv resolves and installs from it instead of PyPI; its URL and credentials
+reach uv through its environment (`UV_DEFAULT_INDEX`, and `UV_INDEX_URL` for
+uv releases older than `UV_DEFAULT_INDEX`), never its command line.
 
 If the install or the push of the dependency image fails after the path was
 chosen and every dependency is pinned, the dependency image the daemon path
@@ -420,9 +423,177 @@ A refused submit keeps gcloud's last line and names what to check: the
 sign-in, the project and the roles above. A build that fails on Cloud Build
 names its id, its status and the command that prints its log.
 
-Build arguments, build secrets and a private package index are not
-supported on this path yet. The decision is recorded in
-[ADR 0083](/project/adrs/0083-remote-builder-on-cloud-build/).
+Build arguments reach the Cloud Build step as `--build-arg`. A project with
+build secrets or a package index does not build here: their values come from
+your machine's environment, and Cloud Build would have to store them in its
+build record. Such a build goes to the local daemon, and the `builder:` line
+says why ([see below](#build-arguments-secrets-and-a-private-package-index)).
+
+## Build arguments, secrets and a private package index
+
+`dexaflow.yaml` declares what a build needs beyond the project files:
+
+```yaml
+build:
+  args:                    # --build-arg for the ARG lines of your own Dockerfile
+    APP_ENV: prod
+  secrets:                 # RUN --mount=type=secret,id=<id> in your own Dockerfile
+    - id: github_token
+      env: GITHUB_TOKEN    # read from the environment of the machine that builds
+  package_index:           # installs dependencies from this index instead of PyPI
+    url: https://pypi.example.com/simple
+    username_env: PYPI_USER
+    password_env: PYPI_TOKEN
+```
+
+- **`args`** are plain values: they stay in the image history, and they are
+  part of the content label, so changing one builds a new image. Only your
+  own Dockerfile reads them (`ARG APP_ENV`); the generated Dockerfile declares
+  none, and the build warns when they are set without one.
+- **`secrets`** are passed as `--secret id=<id>,env=<variable>`: the container
+  tool reads the value from its own environment, so it never appears in its
+  command line, in the build log, in `dag.json` or in a layer. A RUN line of
+  your Dockerfile mounts it for that one step:
+
+  ```dockerfile
+  RUN --mount=type=secret,id=github_token \
+      GITHUB_TOKEN="$(cat /run/secrets/github_token)" ./fetch-private-assets.sh
+  ```
+
+  A variable that is not set fails the build before the tool runs, naming it.
+  The `env=` form needs BuildKit: docker with buildx (the legacy builder has
+  no `--secret`), or a podman or nerdctl release that takes `env=` secrets.
+  Its value is not part of the content label; its id and variable are.
+- **`package_index`** replaces PyPI rather than adding to it, so a package
+  name can never be taken from another index (dependency confusion): mirror
+  PyPI through it (an Artifact Registry remote repository, devpi, Nexus,
+  Artifactory). The URL is `https` (plain `http` only on the loopback) and
+  carries no credentials; the user name and token come from the two variables.
+  On the [daemonless path](#building-the-dependency-image-from-wheels) uv
+  installs from it. The generated Dockerfile mounts it as the build secret
+  `dexaflow_index_url` for its `pip install` only:
+
+  ```dockerfile
+  RUN --mount=type=secret,id=dexaflow_index_url,required=true PIP_INDEX_URL="$(cat /run/secrets/dexaflow_index_url)" pip install --no-cache-dir -- 'pandas==2.2.3'
+  ```
+
+  Your own Dockerfile can mount the same secret. The index URL is part of the
+  content label and of the key of the dependency image, so an image built
+  from one index is never reused for another.
+
+Secret mounts need BuildKit: docker (BuildKit is its default builder), docker
+buildx, podman and nerdctl all support them. A build with secrets or a
+package index runs on your machine, never on a [remote
+builder](#building-on-cloud-build); the `builder:` line says so:
+
+```console
+builder:    local-daemon (docker), fallback: the project ships its own Dockerfile, which needs a real build; the remote builder from dexaflow.yaml does not apply: build.secrets reach the build from this machine's environment, so only a builder on this machine takes it
+```
+
+A deploy that reuses an image already in the registry builds nothing and
+needs none of the variables. The decision is recorded in
+[ADR 0088](/project/adrs/0088-build-args-secrets-and-package-index/).
+
+## The in-cluster builder
+
+On a cluster with no cloud builder, the Helm chart can run a builder for you:
+rootless [BuildKit](https://github.com/moby/buildkit) in a namespace of its
+own. `builder.enabled` deploys it; `deploy` does not use it yet, because
+`remote_builder` pointing at it is the next step (#1883). Until then it is a
+BuildKit daemon a platform team can reach with `buildctl`.
+
+What the chart renders, all in `builder.namespace`:
+
+- a Deployment of one pod running `moby/buildkit:<version>-rootless` as uid
+  1000, listening on a unix socket only. It has no port and no Service, and
+  needs no TLS: a client reaches it through the Kubernetes API, with
+  `kubectl exec`.
+- a ServiceAccount with no token and no Role: the builder never calls the
+  Kubernetes API, and build steps find no token in the pod.
+- a Role that allows `get` and `list` on pods and `create` and `get` on
+  `pods/exec` in that namespace and nowhere else, bound to `builder.subjects`.
+  Being bound is what lets someone build.
+- a NetworkPolicy, on by default with the builder: no ingress, and egress to
+  DNS and everywhere except the cloud metadata range (`169.254.0.0/16`) and
+  `builder.networkPolicy.extraExcept`. Build steps run code from Dockerfiles,
+  and the metadata endpoint would hand them the node's credentials. A CNI
+  that does not enforce policies ignores it.
+
+Registry credentials stay with the client: BuildKit asks the client for them
+when it pushes, so the builder holds no secret.
+
+### Installing it
+
+The chart does not create the namespace. With the default seccomp and
+AppArmor profiles it must allow the privileged Pod Security level (the pod is
+not privileged, see [Security posture](#security-posture)):
+
+```sh
+kubectl create namespace dexaflow-builder
+kubectl label namespace dexaflow-builder pod-security.kubernetes.io/enforce=privileged
+```
+
+```yaml
+# values.yaml
+builder:
+  enabled: true
+  namespace: dexaflow-builder
+  subjects:
+    - kind: Group
+      name: platform-deployers
+    - kind: ServiceAccount
+      name: ci-deployer
+      namespace: ci
+```
+
+The chart refuses to render without `builder.namespace`, with the release
+namespace or with the task namespace: the builder runs build steps under a
+looser posture than task pods and must not share a namespace with them or
+with the control plane.
+
+Check it from a machine bound by `builder.subjects`, with
+[`buildctl`](https://github.com/moby/buildkit/releases) and `kubectl` on
+`PATH`:
+
+```sh
+POD=$(kubectl -n dexaflow-builder get pods -l app.kubernetes.io/component=builder -o jsonpath='{.items[0].metadata.name}')
+buildctl --addr "kube-pod://$POD?namespace=dexaflow-builder" debug workers
+buildctl --addr "kube-pod://$POD?namespace=dexaflow-builder" build \
+  --frontend dockerfile.v0 --local context=. --local dockerfile=. \
+  --opt platform=linux/amd64 \
+  --output type=image,name=registry.example.com/team/app:dev,push=true
+```
+
+The builder builds for the architecture of the node it runs on; schedule it
+with `builder.nodeSelector` on nodes of the cluster's architecture.
+
+### Security posture
+
+The pod runs with the least rootless BuildKit starts with:
+
+| Setting | Value | Why |
+|---|---|---|
+| `runAsUser`, `runAsNonRoot` | 1000, true | The image's own user. Build steps run as root inside a user namespace that maps to it, never as root on the node. |
+| `privileged` | false | Build steps share the pod's process namespace (`--oci-worker-no-process-sandbox`) instead of one of their own, which would need a privileged pod. |
+| `capabilities` | drop `ALL`, add `SETUID` and `SETGID` | The file capabilities of `newuidmap` and `newgidmap`, which write the user namespace's id maps. Without them the daemon does not start. |
+| `allowPrivilegeEscalation` | true | `no_new_privs` stops `newuidmap` from gaining those two capabilities. |
+| `seccompProfile`, `appArmorProfile` | `Unconfined` | The runtime default profiles refuse the `unshare` and `mount` calls a user namespace needs. Both are values: a `Localhost` profile that allows them replaces `Unconfined`, and `null` leaves the AppArmor field out. |
+| `readOnlyRootFilesystem` | true | Every write goes to an `emptyDir`; the cache's is limited by `builder.cache.sizeLimit`. |
+
+The `Unconfined` profiles are why the namespace needs the privileged Pod
+Security level and why the builder has a namespace of its own. With
+`Localhost` profiles for both, the baseline level admits it.
+
+Everyone bound by `builder.subjects` shares one daemon and its cache: a build
+step can see the other builds running in the pod, and `pods/exec` opens a
+shell in it. Bind people who already trust each other, such as a platform
+team and its CI.
+
+The cache lives in an `emptyDir` and is lost when the pod restarts. buildkitd's
+garbage collector keeps it under `builder.cache.gcKeepStorage` (MB); keep
+`builder.cache.sizeLimit` above that plus your largest build, or the kubelet
+evicts the pod. All values are listed in the
+[chart README](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md).
 
 ## Choosing the platform
 
@@ -510,7 +681,8 @@ for it, and finds one in this order
 ([ADR 0080](/project/adrs/0080-registry-credentials-from-cloud-cli-sessions/)):
 
 1. The docker config, `~/.docker/config.json` (or `$DOCKER_CONFIG`), with its
-   `credsStore` and `credHelpers`: what `docker login`, `gcloud auth
+   `credsStore` and `credHelpers`: what [`dexaflow registry
+   login`](#signing-in-without-docker), `docker login`, `gcloud auth
    configure-docker`, `az acr login` or a helper such as
    `docker-credential-ecr-login` on `PATH` wrote.
 2. When the docker config holds nothing for the registry, and the registry
@@ -525,8 +697,8 @@ for it, and finds one in this order
 
    The token stays in memory for ten minutes at most, and a failure of the
    CLI (signed out, not installed) for thirty seconds; each run of the CLI
-   has thirty seconds and no input. Dexaflow never stores a registry
-   credential.
+   has thirty seconds and no input. Dexaflow never stores a cloud session's
+   token.
 
 `registry.auth_method` in `dexaflow.yaml` picks the sources: `auto` (the
 default) is the order above, `docker_config` reads only the docker config,
@@ -554,7 +726,51 @@ preflight, `dexaflow doctor` and a refused push name for your registry:
 | Artifact Registry, GCR | `gcloud auth configure-docker <host>` | `gcloud auth print-access-token \| podman login --username oauth2accesstoken --password-stdin <host>` |
 | ECR | `aws ecr get-login-password --region <region> \| docker login --username AWS --password-stdin <host>` | the same, piped to `podman login` |
 | ACR | `az acr login --name <name>` | `az acr login --name <name> --expose-token --output tsv --query accessToken \| podman login --username 00000000-0000-0000-0000-000000000000 --password-stdin <host>` |
-| any other | `docker login <host>` | `podman login <host>` |
+| any other (GHCR, Docker Hub, Harbor) | `dexaflow registry login <host>` | `podman login <host>` |
+
+### Signing in without docker
+
+For a registry no cloud owns, `dexaflow registry login` signs in with no
+docker installed. It checks the credential with the registry first (the
+same handshake a push makes), then stores it in the docker config, or in the
+`credsStore` or `credHelpers` helper the config names (the system keychain),
+as `docker login` does. The CLI's registry client reads it from there, and
+so do docker, podman and nerdctl, so a `local-daemon` build pushes with it
+too ([ADR 0091](/project/adrs/0091-registry-login-without-docker/)).
+
+- **GHCR.** With the [GitHub CLI](https://cli.github.com) signed in
+  (`gh auth login`), no token is needed: the CLI exchanges the `gh` session
+  (`gh auth token`, and the user from `gh api user`).
+
+  ```bash
+  dexaflow registry login ghcr.io
+  ```
+
+  A push needs the `write:packages` scope, which `gh auth login` does not
+  ask for by default: `gh auth refresh -h github.com -s write:packages`.
+  In CI, pass a token instead (`GITHUB_TOKEN` with `packages: write`):
+
+  ```bash
+  echo "$GITHUB_TOKEN" | dexaflow registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+  ```
+
+- **Docker Hub.** Create a personal access token with read and write
+  access (Account settings, Personal access tokens) and pass it on stdin:
+
+  ```bash
+  echo "$DOCKERHUB_TOKEN" | dexaflow registry login docker.io --username <user> --password-stdin
+  ```
+
+- **Any other registry** (Harbor, Nexus, a self-hosted one) takes
+  `--username` and its password or token on stdin the same way.
+
+The token is read from stdin only, never from a flag, so it stays out of
+`ps` and the shell history, and it is never printed. A credential the
+registry refuses is not stored. The docker config is replaced atomically
+and stays readable by its owner only; when `config.json` is a symlink, the
+link is replaced by a file and the file it pointed at is left as it was.
+For Artifact Registry, GCR, ECR and ACR, sign in to the cloud's CLI
+instead, as above.
 
 Only a registry on `localhost`, a `*.localhost` name (as k3d names its
 registries) or a loopback address may answer over plain HTTP; every other
@@ -565,7 +781,7 @@ proxy.
 
 podman users: the CLI reads `~/.docker/config.json`, and podman's
 `auth.json` only when that file does not exist. If you have both, run
-`docker login` for the registry too, or the push succeeds and the read is
+`dexaflow registry login` for the registry too, or the push succeeds and the read is
 refused with a 401. When that read fails after a push, `dexaflow deploy`
 stops, and `dexaflow compile --build --push` keeps the tag in `dag.json` with
 a warning (see [the explicit steps](/operate/cicd-deploy/)).

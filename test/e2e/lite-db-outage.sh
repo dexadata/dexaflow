@@ -94,7 +94,8 @@ go build -o "$HOME_DIR/leoflow" ./cmd/dexaflow || die "building leoflow"
 go build -o "$HOME_DIR/leoflow-server" ./cmd/dexaflow-server || die "building leoflow-server"
 
 mkdir -p "$HOME_DIR/bin"
-printf '#!/bin/sh\n' > "$HOME_DIR/bin/python3.11"
+# Setup takes a host interpreter only on the version it reports (#1700).
+printf '#!/bin/sh\necho "Python 3.11.15"\n' > "$HOME_DIR/bin/python3.11"
 chmod +x "$HOME_DIR/bin/python3.11"
 export PATH="$HOME_DIR/bin:$PATH"
 

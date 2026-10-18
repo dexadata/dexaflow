@@ -90,9 +90,28 @@ type Request struct {
 	// listed: such a builder refuses to run rather than send the whole
 	// directory; an empty list is an empty context.
 	ContextFiles []LayerFile
+	// BuildArgs are the build arguments a Dockerfile build passes with
+	// --build-arg, in name order. Plain values, never secrets.
+	BuildArgs map[string]string
+	// Secrets are the build secrets a Dockerfile build passes with
+	// --secret id=<ID>,env=<Env>; the tool reads each value from its own
+	// environment, so none reaches its argv.
+	Secrets []Secret
+	// Env are KEY=VALUE variables added to the environment of the tool, for
+	// a secret whose value the caller composed (the package index URL).
+	Env []string
 	// Stdout and Stderr receive the builder's own output.
 	Stdout io.Writer
 	Stderr io.Writer
+}
+
+// Secret is one build secret: the id a RUN line mounts it under, and the
+// environment variable of the tool that holds its value.
+type Secret struct {
+	// ID is the id of --mount=type=secret,id=<ID>.
+	ID string
+	// Env is the environment variable holding the value.
+	Env string
 }
 
 // Result is what a builder produced.

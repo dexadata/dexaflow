@@ -160,6 +160,12 @@ type WarmRunner struct {
 	// leader: it announced the registration (warmRegisteredHeader) or sent an
 	// assignment. Run resets the reconnect budget on it.
 	leaderAccepted bool
+
+	// harden and sweepProcs are the process isolation steps (X3.3, X3.4). Nil
+	// uses hardenWarmProcess and sweepDescendants; tests set them to make a step
+	// fail and check that the worker fails closed.
+	harden     func() error
+	sweepProcs func() error
 }
 
 // warmRegisteredHeader is the response header the control plane sends on an
@@ -215,7 +221,11 @@ func (w *WarmRunner) Run(ctx context.Context, dagVersionID string) error {
 	// cannot read the agent's tokens out of /proc, and child subreaper, so an
 	// attempt's orphans stay findable by the post-attempt sweep (X3.3, X3.4).
 	// Fail-closed: a worker that cannot isolate its attempts must not serve any.
-	if err := hardenWarmProcess(); err != nil {
+	harden := w.harden
+	if harden == nil {
+		harden = hardenWarmProcess
+	}
+	if err := harden(); err != nil {
 		return fmt.Errorf("hardening the warm worker process: %w", err)
 	}
 
@@ -608,7 +618,11 @@ func (w *WarmRunner) serveAssignment(ctx context.Context, stream agentv1.AgentSe
 	// before SlotFree invites the next attempt. Fail-closed: a survivor ends the
 	// worker (the reconciler replaces the pod) rather than sharing it with the
 	// next attempt (X3.3).
-	if err := sweepDescendants(); err != nil {
+	sweepProcs := w.sweepProcs
+	if sweepProcs == nil {
+		sweepProcs = sweepDescendants
+	}
+	if err := sweepProcs(); err != nil {
 		return fmt.Errorf("sweeping processes after assignment %q: %w", a.GetAssignmentId(), err)
 	}
 

@@ -74,7 +74,9 @@ func TestDetectCloudRegistry(t *testing.T) {
 
 // The command that signs a tool in to a registry is the one its cloud
 // documents: docker gets the cloud CLI's own login, any other tool the
-// cloud's token piped to `<tool> login`.
+// cloud's token piped to `<tool> login`. A registry no cloud owns gets
+// `dexaflow registry login`, which needs no docker and writes the docker
+// config docker reads (#1891), or another tool's own login.
 func TestLoginCommand(t *testing.T) {
 	ecr := "123456789012.dkr.ecr.eu-west-1.amazonaws.com"
 	for _, tc := range []struct{ host, tool, want string }{
@@ -85,8 +87,9 @@ func TestLoginCommand(t *testing.T) {
 		{"acmeprod.azurecr.io", "docker", "az acr login --name acmeprod"},
 		{"acmeprod.azurecr.io", "nerdctl", "az acr login --name acmeprod --expose-token --output tsv --query accessToken | " +
 			"nerdctl login --username 00000000-0000-0000-0000-000000000000 --password-stdin acmeprod.azurecr.io"},
-		{"ghcr.io", "docker", "docker login ghcr.io"},
-		{"ghcr.io", "", "docker login ghcr.io"},
+		{"ghcr.io", "docker", "dexaflow registry login ghcr.io"},
+		{"ghcr.io", "", "dexaflow registry login ghcr.io"},
+		{"docker.io", "docker", "dexaflow registry login docker.io"},
 		{"ghcr.io", "podman", "podman login ghcr.io"},
 	} {
 		if got := LoginCommand(tc.host, tc.tool); got != tc.want {

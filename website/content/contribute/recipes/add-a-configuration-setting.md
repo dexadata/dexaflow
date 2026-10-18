@@ -24,9 +24,13 @@ CLI setting lives in `internal/config/config.go` and follows the same steps.
    value at boot, naming the key and what it accepts.
 5. **Use it where it applies**, and test that path through its real entry
    point, not only the config struct.
-6. **Document it.** Add a row to the
-   [configuration reference](/reference/configuration/) under the
-   `DEXAFLOW_<KEY>` name; `TestRegisteredKeysAreDocumented` fails without it.
+6. **Document it.** The settings tables of the
+   [configuration reference](/reference/configuration/) are generated from
+   `internal/config`: give the key its purpose and edition in
+   `internal/tools/configref/settings.yaml` (or let the field's GoDoc describe
+   it), make sure a `BEGIN GENERATED configref settings` block on the page
+   covers it, and run `make gen-config-reference`. Never edit the generated rows
+   by hand; `go test ./internal/tools/configref/` fails on a stale page.
    Mention it on the page of the feature it tunes, and on
    [upgrades](/operate/upgrades/) when an operator should act. Record a
    changelog fragment of kind `Added`
@@ -36,6 +40,6 @@ CLI setting lives in `internal/config/config.go` and follows the same steps.
 8. **Check:**
 
    ```sh
-   go test ./internal/config/
+   go test ./internal/config/ ./internal/tools/configref/
    make lint test
    ```

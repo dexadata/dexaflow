@@ -367,8 +367,10 @@ def _map_task(task, source: str, dag=None) -> dict[str, Any]:
         if call_args:
             _check_literal_payload_size(task.task_id, "call_args", call_args)
             entry["call_args"] = call_args
+        _apply_task_params(task, dag, entry)
     elif task_type == "bash":
         entry["entrypoint"] = _bash_command(task)
+        _apply_task_params(task, dag, entry)
     elif task_type == "airflow_operator":
         entry["operator_class"] = type(task).__leoflow_operator_class__
         xcom_input, operator_args = _split_operator_args(task)
@@ -692,6 +694,50 @@ def _is_json_literal(value: Any) -> bool:
     except (TypeError, ValueError):
         return False
     return True
+
+
+def _apply_task_params(task, dag, entry: dict[str, Any]) -> None:
+    """Capture a bash or ``@task`` task's own ``params=`` as ``entry["params"]``.
+
+    The control plane layers them between the DAG's param defaults and the run
+    conf into the task's ``params`` context (#1843); a captured operator carries
+    them in ``operator_args`` instead. Airflow merges the DAG's params into every
+    task's, so a key whose value equals the DAG default is left out: the control
+    plane already layers that default. A ``Param`` contributes its value, and a
+    required one (no value) is left out. A value that is not JSON is a loud
+    compile error, as for an operator argument.
+    """
+    declared = getattr(task, "params", None)
+    if not declared:
+        return
+    dag_params = getattr(dag, "params", None) or {}
+    out: dict[str, Any] = {}
+    for name in list(declared):
+        has_value, value = _task_param_value(declared, name)
+        if not has_value:
+            continue
+        if name in dag_params and _task_param_value(dag_params, name) == (True, value):
+            continue
+        if not _is_json_literal(value):
+            raise ValueError(
+                f"param {name!r} on task {task.task_id!r} is a {type(value).__name__}, "
+                "which Dexaflow cannot carry in dag.json; pass a JSON-serialisable value")
+        out[name] = value
+    if out:
+        entry["params"] = out
+
+
+def _task_param_value(params, name: str) -> tuple[bool, Any]:
+    """Return ``(has_value, value)`` for one task param. Reads the ``Param``
+    itself (Airflow's ``ParamsDict.get_param``, or the shim's plain dict) rather
+    than resolving it, so a required Param without a value does not raise."""
+    get_param = getattr(params, "get_param", None)
+    value = get_param(name) if callable(get_param) else params[name]
+    if hasattr(value, "has_default"):  # the parser shim's Param
+        return value.has_default, value.default
+    if hasattr(value, "has_value"):  # Airflow's Param
+        return value.has_value, value.value
+    return True, value
 
 
 def _bash_command(task) -> str:

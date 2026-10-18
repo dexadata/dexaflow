@@ -181,7 +181,8 @@ soak-credential-ceiling: ## Prove the credential-renewal ceiling is enforced: lo
 	    --label credential-ceiling --out .soak/credential-ceiling
 
 .PHONY: soak-selftest
-soak-selftest: ## Prove the soak's assertions can fail: injects a real outage that outlives its declared window. MUST exit 1 with recorded violations.
+soak-selftest: ## Prove the soak's assertions can fail: injects a real outage that outlives its declared window. MUST exit 1 with recorded violations. First checks that an interrupted soak exits 2, never 0.
+	@bash test/soak/soak.sh --self-test || { echo "soak-selftest FAILED: an interrupted soak must exit 2 and tear down once (#1921)."; exit 1; }
 	@bash test/soak/soak.sh --duration 6m --faults selftest-red --label selftest-red --out .soak/selftest-red; \
 	code=$$?; \
 	if [ $$code -ne 1 ]; then \
@@ -197,7 +198,7 @@ soak-selftest: ## Prove the soak's assertions can fail: injects a real outage th
 	echo "soak-selftest OK: the battery went red (exit 1, violations recorded) as designed"
 
 .PHONY: soak-warmpool-ab
-soak-warmpool-ab: ## Warm-pool A/B on k3d (ADR 0058): same workload with pools off and on, interleaved. Needs k3d + docker. Written, not yet executed.
+soak-warmpool-ab: ## Warm-pool A/B on k3d (ADR 0058): same workload with pools off and on, interleaved. Needs k3d, docker and migrate. Exits 2 when it measured nothing. Not yet run green on a cluster.
 	bash test/soak/warmpool-ab.sh
 
 .PHONY: e2e-timeout
@@ -215,6 +216,10 @@ e2e-split: ## Run the k3d two-process api/scheduler split e2e (ADR 0049; needs k
 .PHONY: e2e-source-mode
 e2e-source-mode: ## Run the k3d Pro source mode e2e (ADR 0067, #1539; needs k3d, kubectl, docker, jq, python3; run make dev-up + make build first)
 	bash test/e2e/source-mode-e2e.sh
+
+.PHONY: e2e-warm-pools
+e2e-warm-pools: ## Run the k3d warm pool e2e (ADR 0058, #1611: warm hit, placement, isolation between attempts, no leaks; needs k3d, kubectl, docker, jq, psql, python3; run make dev-up + make build first)
+	bash test/e2e/warm-pool-e2e.sh
 
 .PHONY: e2e-dbt
 e2e-dbt: ## Run the k3d dbt pod-per-node e2e (ADR 0042; needs k3d, kubectl, docker, jq, dbt; run make dev-up + make build first)
@@ -373,6 +378,14 @@ gen-connectors-check: ## Anti-drift: regenerate to a temp file and diff against 
 	/tmp/conngen/bin/pip install --quiet -r scripts/connectors-providers.lock.txt
 	/tmp/conngen/bin/python scripts/gen_connectors.py /tmp/catalog.check.json
 	@diff -u internal/connectors/catalog.json /tmp/catalog.check.json && echo "catalog.json is in sync with the pinned providers"
+
+.PHONY: gen-config-reference
+gen-config-reference: ## Regenerate the configuration reference tables from internal/config (#1570)
+	go run ./internal/tools/configref
+
+.PHONY: gen-config-reference-check
+gen-config-reference-check: ## Fail when website/content/reference/configuration.md is stale (also run by go test)
+	go run ./internal/tools/configref -check
 
 .PHONY: clean
 clean: ## Remove build artifacts

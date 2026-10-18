@@ -66,14 +66,17 @@ func parseNamedQueries(src string) map[string]string {
 var (
 	positionalRe = regexp.MustCompile(`\$(\d+)`)
 	sqlcArgRe    = regexp.MustCompile(`sqlc\.n?arg\(\s*'?([A-Za-z_][A-Za-z0-9_]*)'?\s*\)`)
+	sqlcEmbedRe  = regexp.MustCompile(`sqlc\.embed\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)`)
 )
 
-// bindSqlcArgs replaces sqlc.arg/sqlc.narg placeholders with numbered
-// parameters after the highest $N already in the query, the way sqlc does: the
-// same name always gets the same number. It returns the rewritten SQL and the
-// names in parameter order, so a caller passes positional args first and then
-// one value per returned name.
+// bindSqlcArgs rewrites the sqlc macros of a query into SQL Postgres runs.
+// sqlc.embed(t) becomes t.*, the columns sqlc selects for it. sqlc.arg and
+// sqlc.narg become numbered parameters after the highest $N already in the
+// query, the way sqlc does: the same name always gets the same number. It
+// returns the rewritten SQL and the names in parameter order, so a caller
+// passes positional args first and then one value per returned name.
 func bindSqlcArgs(sql string) (bound string, names []string) {
+	sql = sqlcEmbedRe.ReplaceAllString(sql, "$1.*")
 	highest := 0
 	for _, m := range positionalRe.FindAllStringSubmatch(sql, -1) {
 		var n int

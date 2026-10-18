@@ -150,6 +150,16 @@ type BuildConfig struct {
 	// covers (ADR 0083); nil leaves those to the target's or workspace's
 	// remote_builder, then the local daemon.
 	RemoteBuilder *RemoteBuilderConfig `json:"remote_builder,omitempty" yaml:"remote_builder,omitempty"`
+	// Args are the build arguments (`--build-arg`) the project's own
+	// Dockerfile reads with ARG. Plain values: they stay in the image
+	// history, so a secret goes in Secrets.
+	Args map[string]string `json:"args,omitempty" yaml:"args,omitempty"`
+	// Secrets are the build secrets a RUN line mounts with
+	// --mount=type=secret,id=<id>, read from the environment of the build.
+	Secrets []BuildSecret `json:"secrets,omitempty" yaml:"secrets,omitempty"`
+	// PackageIndex is the Python package index pip and uv install from in
+	// place of PyPI; nil is PyPI.
+	PackageIndex *PackageIndex `json:"package_index,omitempty" yaml:"package_index,omitempty"`
 }
 
 // RegistryConfig describes where the built image is pushed and how it is tagged.
@@ -306,6 +316,9 @@ func (c *LeoflowConfig) Validate() error {
 	}
 	if c.Build != nil {
 		if err := c.Build.RemoteBuilder.Validate("build.remote_builder"); err != nil {
+			return err
+		}
+		if err := c.Build.validateInputs(); err != nil {
 			return err
 		}
 	}

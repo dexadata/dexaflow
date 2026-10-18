@@ -125,6 +125,35 @@
             }
           },
           "additionalProperties": false
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Build arguments (--build-arg) for the ARG lines of your own Dockerfile; the generated Dockerfile declares none. Plain values that stay in the image history: a secret goes in build.secrets."
+        },
+        "secrets": {
+          "type": "array",
+          "description": "Build secrets a RUN line of your own Dockerfile mounts with --mount=type=secret,id=<id>. The value is read from the environment of the machine that builds and never reaches dexaflow.yaml, dag.json, the image or the build log. A build with secrets runs on this machine, never on a remote builder.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string", "description": "The id the RUN line mounts the secret under." },
+              "env": { "type": "string", "description": "The environment variable that holds the value." }
+            },
+            "required": ["id", "env"],
+            "additionalProperties": false
+          }
+        },
+        "package_index": {
+          "type": "object",
+          "description": "The Python package index dependencies are installed from in place of PyPI, by uv on the daemonless path and by pip in the generated Dockerfile. It replaces PyPI rather than adding to it, so a package name cannot be taken from another index: mirror PyPI through it. A build with a package index runs on this machine, never on a remote builder.",
+          "properties": {
+            "url": { "type": "string", "description": "The index's simple API, such as https://pypi.example.com/simple. https only (plain http on the loopback), with no credentials, query or fragment." },
+            "username_env": { "type": "string", "description": "The environment variable holding the user name. Set together with password_env." },
+            "password_env": { "type": "string", "description": "The environment variable holding the password or token. Set together with username_env." }
+          },
+          "required": ["url"],
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
