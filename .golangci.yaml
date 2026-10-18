@@ -60,6 +60,7 @@ linters:
           list-mode: lax
           files:
             - "!$test"
+            - "!**/test/load/**"
           deny:
             - pkg: github.com/google/go-containerregistry
               desc: "only the packages ADR 0073 section 3 allows"
@@ -83,11 +84,14 @@ linters:
             - github.com/google/go-containerregistry/pkg/v1/tarball
             - github.com/google/go-containerregistry/pkg/v1/empty
             - github.com/google/go-containerregistry/pkg/v1/types
-        # Tests may also stand up an in-memory registry and random images.
+        # Tests may also stand up an in-memory registry and random images,
+        # and so may the load harnesses, which are never part of a binary
+        # (test/load/deploy_p50 serves one on the loopback).
         registry-client-tests:
           list-mode: lax
           files:
             - "$test"
+            - "**/test/load/**"
           deny:
             - pkg: github.com/google/go-containerregistry/pkg/v1/daemon
               desc: "wraps the Docker SDK (ADR 0015)"
