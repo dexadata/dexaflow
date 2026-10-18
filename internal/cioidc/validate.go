@@ -95,10 +95,10 @@ func validateRule(at, provider string, r Rule) error {
 	if want, ok := identityClaims[provider]; ok && !slices.ContainsFunc(want, func(c string) bool { _, has := r.Claims[c]; return has }) {
 		return fmt.Errorf("%s.claims: a %s rule must match one of %s, or every job on the provider could deploy", at, provider, strings.Join(want, ", "))
 	}
-	switch {
-	case r.Role == "":
+	switch r.Role {
+	case "":
 		return fmt.Errorf("%s.role: required, a role of the entry's tenant", at)
-	case r.Role == "admin":
+	case "admin":
 		return fmt.Errorf("%s.role: a CI rule cannot grant admin; use deployer or a narrower custom role", at)
 	}
 	for _, s := range r.Scopes {

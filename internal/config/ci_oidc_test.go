@@ -154,7 +154,7 @@ func TestValidateCIOIDC(t *testing.T) {
 	}
 }
 
-// TestCIOIDCRefusesUnknownFields: a misspelt key fails boot instead of
+// TestCIOIDCRefusesUnknownFields: a misspelled key fails boot instead of
 // leaving the entry without it.
 func TestCIOIDCRefusesUnknownFields(t *testing.T) {
 	t.Setenv("DEXAFLOW_AUTH_JWT_SECRET", strings.Repeat("x", 40))

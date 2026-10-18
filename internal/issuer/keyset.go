@@ -213,9 +213,9 @@ func NewKeySet(url string, algs []string, now func() time.Time) gooidc.KeySet {
 // TrackKeyOutage returns a context to verify a token with, and a function
 // that reports, after the verification, whether it failed because the keys
 // could not be downloaded rather than because the token is bad.
-func TrackKeyOutage(ctx context.Context) (context.Context, func() bool) {
-	ctx, o := withKeyOutage(ctx)
-	return ctx, o.hit.Load
+func TrackKeyOutage(ctx context.Context) (tracked context.Context, outage func() bool) {
+	tracked, o := withKeyOutage(ctx)
+	return tracked, o.hit.Load
 }
 
 // MarkKeyOutage records on a context from TrackKeyOutage that the keys could

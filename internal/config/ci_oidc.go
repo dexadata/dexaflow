@@ -108,7 +108,7 @@ func (c *ServerConfig) validateCIOIDC() error {
 
 // decodeCIOIDCIssuers fills c.Auth.CIOIDC.Issuers from the variable (JSON),
 // which wins, or else from the configuration file (YAML). Unknown fields
-// are refused in both, so a misspelt key fails boot instead of being
+// are refused in both, so a misspelled key fails boot instead of being
 // ignored.
 func decodeCIOIDCIssuers(v *viper.Viper, configFile string, c *ServerConfig) error {
 	if raw := strings.TrimSpace(v.GetString(ciOIDCIssuersKey)); raw != "" {
@@ -138,7 +138,7 @@ func decodeCIOIDCIssuers(v *viper.Viper, configFile string, c *ServerConfig) err
 			} `yaml:"ci_oidc"`
 		} `yaml:"auth"`
 	}
-	if err := yaml.Unmarshal(data, &raw); err != nil {
+	if err = yaml.Unmarshal(data, &raw); err != nil {
 		return fmt.Errorf("decoding auth.ci_oidc.issuers from %q: %w", configFile, err)
 	}
 	if raw.Auth.CIOIDC.Issuers.IsZero() {

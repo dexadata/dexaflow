@@ -71,7 +71,7 @@ func TestCIOIDCWiringFromConfigToSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cfg.Validate(); err != nil {
+	if err = cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -103,7 +103,7 @@ func TestCIOIDCWiringFromConfigToSession(t *testing.T) {
 		AccessToken string `json:"access_token"`
 		Tenant      string `json:"tenant"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &session); err != nil {
+	if err = json.Unmarshal(rec.Body.Bytes(), &session); err != nil {
 		t.Fatal(err)
 	}
 	if session.Tenant != "acme" {
