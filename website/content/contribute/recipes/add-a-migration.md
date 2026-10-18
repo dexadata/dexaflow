@@ -32,6 +32,11 @@ The rules are in [`migrations/AGENTS.md`](https://github.com/dexadata/dexaflow/b
    candidate review needs them (AGENTS.md, review 7).
 6. **Document it.** A migration is user-facing: add a section to
    [upgrades](/operate/upgrades/) when it takes noticeable time or needs an
-   action, and a changelog fragment.
+   action, and a changelog fragment. Every migration also gets its row in
+   the recovery table of
+   [an interrupted migration](/operate/upgrades/#an-interrupted-migration):
+   the version left dirty, what to do before `force`, and the version to
+   force (the one whose schema the database holds once the file was cut
+   short).
 7. **Before merging**, merge the latest `main` into your branch; if the number
    is taken, rename both files to the next free number and rerun step 4.
