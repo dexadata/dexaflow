@@ -17,21 +17,6 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
-// Defines values for CITokenResponseTokenType.
-const (
-	Bearer CITokenResponseTokenType = "Bearer"
-)
-
-// Valid indicates whether the value is a known member of the CITokenResponseTokenType enum.
-func (e CITokenResponseTokenType) Valid() bool {
-	switch e {
-	case Bearer:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for CreateAPITokenRequestScope.
 const (
 	Deploy CreateAPITokenRequestScope = "deploy"
@@ -280,38 +265,6 @@ type BuildInfo struct {
 	// Repo The repository of the sources (http or https URL).
 	Repo *string `json:"repo,omitempty"`
 }
-
-// CITokenRequest defines model for CITokenRequest.
-type CITokenRequest struct {
-	// Token The OIDC token the CI provider minted for the job.
-	Token string `json:"token"`
-}
-
-// CITokenResponse defines model for CITokenResponse.
-type CITokenResponse struct {
-	// AccessToken The session token (dxci_...), for the Authorization header.
-	AccessToken string    `json:"access_token"`
-	ExpiresAt   time.Time `json:"expires_at"`
-
-	// ExpiresIn Seconds the session lives (auth.ci_oidc.session_ttl_seconds).
-	ExpiresIn int `json:"expires_in"`
-
-	// Issuer The issuer entry that verified the token.
-	Issuer string `json:"issuer"`
-
-	// Role The role the matching rule names.
-	Role string `json:"role"`
-
-	// Scopes The scopes the session is narrowed to.
-	Scopes []string `json:"scopes"`
-
-	// Tenant The entry's tenant
-	Tenant    string                   `json:"tenant"`
-	TokenType CITokenResponseTokenType `json:"token_type"`
-}
-
-// CITokenResponseTokenType defines model for CITokenResponse.TokenType.
-type CITokenResponseTokenType string
 
 // ClearTaskInstancesRequest defines model for ClearTaskInstancesRequest.
 type ClearTaskInstancesRequest struct {
@@ -966,9 +919,6 @@ type ListVariablesParams struct {
 // CreateAPITokenJSONRequestBody defines body for CreateAPIToken for application/json ContentType.
 type CreateAPITokenJSONRequestBody = CreateAPITokenRequest
 
-// ExchangeCITokenJSONRequestBody defines body for ExchangeCIToken for application/json ContentType.
-type ExchangeCITokenJSONRequestBody = CITokenRequest
-
 // CreateConnectionJSONRequestBody defines body for CreateConnection for application/json ContentType.
 type CreateConnectionJSONRequestBody = ConnectionBody
 
@@ -1295,24 +1245,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with DELETE /api/v2/apiTokens/{token_id} (the `RevokeAPIToken` operationId).
 	RevokeAPIToken(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ExchangeCITokenWithBody Exchange a CI provider's OIDC token for a deploy session (Dexaflow)
-	//
-	// A CI job (GitHub Actions, GitLab CI, Google Cloud Build) posts the OIDC token its provider minted for it. The token is checked against the issuer entry of the server's auth.ci_oidc whose issuer and audience it names (signature, issuer, audience, expiry, lifetime), and the entry's rules map its claims to a role of the entry's tenant; the first matching rule decides (ADR 0092). The tenant is the entry's, never a claim's. The answer is a dxci_ session token for that role, narrowed to the rule's scopes (dexaflow:deploy by default), for the Authorization header only. Public: the token in the body authenticates the caller. Served only when an issuer is configured; 404 otherwise. Refused exchanges are limited per client address.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /api/v2/auth/ciToken (the `ExchangeCIToken` operationId).
-	ExchangeCITokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ExchangeCIToken Exchange a CI provider's OIDC token for a deploy session (Dexaflow)
-	//
-	// A CI job (GitHub Actions, GitLab CI, Google Cloud Build) posts the OIDC token its provider minted for it. The token is checked against the issuer entry of the server's auth.ci_oidc whose issuer and audience it names (signature, issuer, audience, expiry, lifetime), and the entry's rules map its claims to a role of the entry's tenant; the first matching rule decides (ADR 0092). The tenant is the entry's, never a claim's. The answer is a dxci_ session token for that role, narrowed to the rule's scopes (dexaflow:deploy by default), for the Authorization header only. Public: the token in the body authenticates the caller. Served only when an issuer is configured; 404 otherwise. Refused exchanges are limited per client address.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /api/v2/auth/ciToken (the `ExchangeCIToken` operationId).
-	ExchangeCIToken(ctx context.Context, body ExchangeCITokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RenewToken Renew a still-valid JWT into a fresh short-lived token
 	//
@@ -1753,44 +1685,6 @@ func (c *Client) CreateAPIToken(ctx context.Context, body CreateAPITokenJSONRequ
 // Corresponds with DELETE /api/v2/apiTokens/{token_id} (the `RevokeAPIToken` operationId).
 func (c *Client) RevokeAPIToken(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeAPITokenRequest(c.Server, tokenId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ExchangeCITokenWithBody Exchange a CI provider's OIDC token for a deploy session (Dexaflow)
-//
-// A CI job (GitHub Actions, GitLab CI, Google Cloud Build) posts the OIDC token its provider minted for it. The token is checked against the issuer entry of the server's auth.ci_oidc whose issuer and audience it names (signature, issuer, audience, expiry, lifetime), and the entry's rules map its claims to a role of the entry's tenant; the first matching rule decides (ADR 0092). The tenant is the entry's, never a claim's. The answer is a dxci_ session token for that role, narrowed to the rule's scopes (dexaflow:deploy by default), for the Authorization header only. Public: the token in the body authenticates the caller. Served only when an issuer is configured; 404 otherwise. Refused exchanges are limited per client address.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /api/v2/auth/ciToken (the `ExchangeCIToken` operationId).
-func (c *Client) ExchangeCITokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewExchangeCITokenRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ExchangeCIToken Exchange a CI provider's OIDC token for a deploy session (Dexaflow)
-//
-// A CI job (GitHub Actions, GitLab CI, Google Cloud Build) posts the OIDC token its provider minted for it. The token is checked against the issuer entry of the server's auth.ci_oidc whose issuer and audience it names (signature, issuer, audience, expiry, lifetime), and the entry's rules map its claims to a role of the entry's tenant; the first matching rule decides (ADR 0092). The tenant is the entry's, never a claim's. The answer is a dxci_ session token for that role, narrowed to the rule's scopes (dexaflow:deploy by default), for the Authorization header only. Public: the token in the body authenticates the caller. Served only when an issuer is configured; 404 otherwise. Refused exchanges are limited per client address.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /api/v2/auth/ciToken (the `ExchangeCIToken` operationId).
-func (c *Client) ExchangeCIToken(ctx context.Context, body ExchangeCITokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewExchangeCITokenRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2823,46 +2717,6 @@ func NewRevokeAPITokenRequest(server string, tokenId string) (*http.Request, err
 	if err != nil {
 		return nil, err
 	}
-
-	return req, nil
-}
-
-// NewExchangeCITokenRequest calls the generic ExchangeCIToken builder with application/json body
-func NewExchangeCITokenRequest(server string, body ExchangeCITokenJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewExchangeCITokenRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewExchangeCITokenRequestWithBody constructs an http.Request for the ExchangeCIToken method, with any body, and a specified content type
-func NewExchangeCITokenRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v2/auth/ciToken")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -4800,24 +4654,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /api/v2/apiTokens/{token_id} (the `RevokeAPIToken` operationId).
 	RevokeAPITokenWithResponse(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*RevokeAPITokenResponse, error)
 
-	// ExchangeCITokenWithBodyWithResponse Exchange a CI provider's OIDC token for a deploy session (Dexaflow)
-	//
-	// A CI job (GitHub Actions, GitLab CI, Google Cloud Build) posts the OIDC token its provider minted for it. The token is checked against the issuer entry of the server's auth.ci_oidc whose issuer and audience it names (signature, issuer, audience, expiry, lifetime), and the entry's rules map its claims to a role of the entry's tenant; the first matching rule decides (ADR 0092). The tenant is the entry's, never a claim's. The answer is a dxci_ session token for that role, narrowed to the rule's scopes (dexaflow:deploy by default), for the Authorization header only. Public: the token in the body authenticates the caller. Served only when an issuer is configured; 404 otherwise. Refused exchanges are limited per client address.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /api/v2/auth/ciToken (the `ExchangeCIToken` operationId).
-	ExchangeCITokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeCITokenResponse, error)
-
-	// ExchangeCITokenWithResponse Exchange a CI provider's OIDC token for a deploy session (Dexaflow)
-	//
-	// A CI job (GitHub Actions, GitLab CI, Google Cloud Build) posts the OIDC token its provider minted for it. The token is checked against the issuer entry of the server's auth.ci_oidc whose issuer and audience it names (signature, issuer, audience, expiry, lifetime), and the entry's rules map its claims to a role of the entry's tenant; the first matching rule decides (ADR 0092). The tenant is the entry's, never a claim's. The answer is a dxci_ session token for that role, narrowed to the rule's scopes (dexaflow:deploy by default), for the Authorization header only. Public: the token in the body authenticates the caller. Served only when an issuer is configured; 404 otherwise. Refused exchanges are limited per client address.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /api/v2/auth/ciToken (the `ExchangeCIToken` operationId).
-	ExchangeCITokenWithResponse(ctx context.Context, body ExchangeCITokenJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeCITokenResponse, error)
-
 	// RenewTokenWithResponse Renew a still-valid JWT into a fresh short-lived token
 	//
 	// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again.
@@ -5418,82 +5254,6 @@ func (r RevokeAPITokenResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RevokeAPITokenResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ExchangeCITokenResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *CITokenResponse
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *Error
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *Error
-	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *Error
-	// JSON429 the response for an HTTP 429 `application/json` response
-	JSON429 *Error
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *Error
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ExchangeCITokenResponse) GetJSON200() *CITokenResponse {
-	return r.JSON200
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r ExchangeCITokenResponse) GetJSON400() *Error {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r ExchangeCITokenResponse) GetJSON401() *Error {
-	return r.JSON401
-}
-
-// GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r ExchangeCITokenResponse) GetJSON403() *Error {
-	return r.JSON403
-}
-
-// GetJSON429 returns the response for an HTTP 429 `application/json` response
-func (r ExchangeCITokenResponse) GetJSON429() *Error {
-	return r.JSON429
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r ExchangeCITokenResponse) GetJSON503() *Error {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r ExchangeCITokenResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ExchangeCITokenResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ExchangeCITokenResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ExchangeCITokenResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -7461,36 +7221,6 @@ func (c *ClientWithResponses) RevokeAPITokenWithResponse(ctx context.Context, to
 	return ParseRevokeAPITokenResponse(rsp)
 }
 
-// ExchangeCITokenWithBodyWithResponse Exchange a CI provider's OIDC token for a deploy session (Dexaflow)
-//
-// A CI job (GitHub Actions, GitLab CI, Google Cloud Build) posts the OIDC token its provider minted for it. The token is checked against the issuer entry of the server's auth.ci_oidc whose issuer and audience it names (signature, issuer, audience, expiry, lifetime), and the entry's rules map its claims to a role of the entry's tenant; the first matching rule decides (ADR 0092). The tenant is the entry's, never a claim's. The answer is a dxci_ session token for that role, narrowed to the rule's scopes (dexaflow:deploy by default), for the Authorization header only. Public: the token in the body authenticates the caller. Served only when an issuer is configured; 404 otherwise. Refused exchanges are limited per client address.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /api/v2/auth/ciToken (the `ExchangeCIToken` operationId).
-func (c *ClientWithResponses) ExchangeCITokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeCITokenResponse, error) {
-	rsp, err := c.ExchangeCITokenWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseExchangeCITokenResponse(rsp)
-}
-
-// ExchangeCITokenWithResponse Exchange a CI provider's OIDC token for a deploy session (Dexaflow)
-//
-// A CI job (GitHub Actions, GitLab CI, Google Cloud Build) posts the OIDC token its provider minted for it. The token is checked against the issuer entry of the server's auth.ci_oidc whose issuer and audience it names (signature, issuer, audience, expiry, lifetime), and the entry's rules map its claims to a role of the entry's tenant; the first matching rule decides (ADR 0092). The tenant is the entry's, never a claim's. The answer is a dxci_ session token for that role, narrowed to the rule's scopes (dexaflow:deploy by default), for the Authorization header only. Public: the token in the body authenticates the caller. Served only when an issuer is configured; 404 otherwise. Refused exchanges are limited per client address.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /api/v2/auth/ciToken (the `ExchangeCIToken` operationId).
-func (c *ClientWithResponses) ExchangeCITokenWithResponse(ctx context.Context, body ExchangeCITokenJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeCITokenResponse, error) {
-	rsp, err := c.ExchangeCIToken(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseExchangeCITokenResponse(rsp)
-}
-
 // RenewTokenWithResponse Renew a still-valid JWT into a fresh short-lived token
 //
 // Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again.
@@ -8354,67 +8084,6 @@ func ParseRevokeAPITokenResponse(rsp *http.Response) (*RevokeAPITokenResponse, e
 			return nil, err
 		}
 		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseExchangeCITokenResponse parses an HTTP response from a ExchangeCITokenWithResponse call
-func ParseExchangeCITokenResponse(rsp *http.Response) (*ExchangeCITokenResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ExchangeCITokenResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest CITokenResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON429 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
 
 	}
 

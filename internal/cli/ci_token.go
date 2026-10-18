@@ -1,10 +1,8 @@
 package cli
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -55,22 +53,18 @@ func runCIToken(cmd *cobra.Command, serverFlag string) error {
 	if choice.Implicit {
 		return errors.New("no control plane to exchange the token with: set DEXAFLOW_SERVER_URL, a target, or --server")
 	}
-	c, err := cliAPIClient(choice.URL, "", apiclient.WithHTTPClient(cliHTTPClient(30*time.Second)))
+	c, err := cliBareAPIClient(choice.URL, 30*time.Second)
 	if err != nil {
 		return err
 	}
-	resp, err := c.ExchangeCITokenWithResponse(cmdContext(cmd), apiclient.CITokenRequest{Token: raw})
-	if err != nil {
-		return fmt.Errorf("exchanging the CI token with %s: %w", choice.URL, err)
-	}
-	s := resp.JSON200
+	s, err := c.ExchangeCIToken(cmdContext(cmd), apiclient.CITokenRequest{Token: raw})
 	switch {
-	case resp.StatusCode() == http.StatusNotFound:
+	case errors.Is(err, apiclient.ErrCITokenNotServed):
 		return fmt.Errorf("%s does not accept CI OIDC tokens (no auth.ci_oidc issuer, or a release before %s): "+
 			"use a deploy token in DEXAFLOW_TOKEN instead", choice.URL, ciOIDCMinVersion)
-	case resp.StatusCode() != http.StatusOK:
-		return fmt.Errorf("%s refused the CI token (%d): %s", choice.URL, resp.StatusCode(), ciProblemDetail(resp.Body))
-	case s == nil || s.AccessToken == "":
+	case err != nil:
+		return fmt.Errorf("exchanging the CI token with %s: %w", choice.URL, err)
+	case s.AccessToken == "":
 		return fmt.Errorf("%s answered no session", choice.URL)
 	}
 	//nolint:errcheck // informational, on stderr so stdout holds the session alone
@@ -78,19 +72,4 @@ func runCIToken(cmd *cobra.Command, serverFlag string) error {
 		printable(s.Issuer), printable(s.Role), printable(s.Tenant), printable(strings.Join(s.Scopes, " ")), s.ExpiresAt.UTC().Format(time.RFC3339))
 	_, err = fmt.Fprintln(cmd.OutOrStdout(), s.AccessToken)
 	return err
-}
-
-// ciProblemDetail is the detail of a problem answer, made printable, or the
-// start of the body when it is not one.
-func ciProblemDetail(body []byte) string {
-	var problem struct {
-		Detail string `json:"detail"`
-	}
-	if json.Unmarshal(body, &problem) == nil && problem.Detail != "" {
-		return printable(problem.Detail)
-	}
-	if len(body) > 200 {
-		body = body[:200]
-	}
-	return printable(string(body))
 }
