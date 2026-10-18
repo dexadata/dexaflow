@@ -5,7 +5,7 @@ weight: 800
 description: "ADR 0080: the CLI's registry client reads a credential from the docker config and its credential helpers first, then, for an Artifact Registry, GCR, ECR or ACR host, from the token the gcloud, aws or az CLI prints. No cloud SDK is linked. registry.auth_method chooses between them: auto (the new default), docker_config and cloud; env and iam still load, deprecated."
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-14
 **Relates:** ADR 0073 (daemonless image builds, section 3: the registry client and its credentials), ADR 0075 (the registry is the source of the digest), ADR 0041 (deploy without a pipeline), ADR 0014 (supply chain)
 **Issues:** #1704, #1705

@@ -5,7 +5,7 @@ weight: 710
 description: "ADR 0071: a release tag publishes only immutable, versioned artifacts and a GitHub release that is not Latest; one promote job, after every gate is green, pushes the Helm chart, marks Latest (GA of the newest minor only) and moves the py3.N runtime tags."
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-12
 **Relates:** ADR 0014 (supply chain signing), ADR 0028 (Helm chart as an OCI artifact, co-versioned with the tag), ADR 0033 (RC tags and E2E gates), ADR 0062 (release branches per minor). This ADR keeps all four. It changes when each public pointer moves, not what is built or how it is versioned.
 **Issues:** #1684 (this change), #1685 (cut-release watch and queue preflight), #1686 (faster critical path), #1687 (signature coverage), #1688 (tag-triggered E2E), #878 (build once, promote the rc).

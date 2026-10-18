@@ -9,7 +9,7 @@ weight: 320
 description: "ADR 0032: Task Return Values Are Not Logged — Only Their Metadata Is"
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-01
 
 ## Context
