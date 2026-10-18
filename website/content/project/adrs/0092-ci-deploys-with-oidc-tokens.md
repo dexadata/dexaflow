@@ -191,8 +191,10 @@ that target:
   `keys_unavailable`, `error`.
 - Each refusal and each issued session is logged with `slog` with the entry,
   the tenant, the outcome, the reason, the role and the token's `sub`. No log
-  line, audit record or error body carries the token, its signature or any
-  claim other than `sub`.
+  line, audit record or error body carries the token or its signature. The
+  reason of a refusal may quote the token's `iss` or `aud` (for example an
+  unknown issuer), which name the provider and the control plane, not the
+  job; no other claim is logged.
 
 ## Alternatives considered
 

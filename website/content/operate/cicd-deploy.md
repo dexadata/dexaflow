@@ -1045,7 +1045,9 @@ setting `off` there.
 ## Credentials for the control plane
 
 A CI job authenticates with a **deploy token**: a long-lived API token that
-registers DAG versions and nothing else. Store it as a CI secret named
+registers DAG versions and nothing else. A control plane that trusts your CI
+provider takes the job's own OIDC token instead, and no token is stored
+([Deploying without a stored token](#deploying-without-a-stored-token-ci-oidc)). Store it as a CI secret named
 `DEXAFLOW_TOKEN`; `deploy`, `push`, `rollback` and the other commands read that
 variable (the pre-rename `LEOFLOW_TOKEN` still works).
 
@@ -1151,6 +1153,143 @@ With `--paused` or `--active`, which set `is_paused`, the token also needs
 the `dexaflow:run` scope (and the user `write` on dags). The token is
 short-lived (at most `auth.trusted_issuer.bearer_max_lifetime_seconds`), so
 mint it for each job. Deleting a DAG goes through the issuer the same way.
+
+## Deploying without a stored token (CI OIDC)
+
+A deploy token is a secret that lives for months in the CI system. When the
+control plane trusts the CI provider instead, nothing long-lived is stored:
+each job asks its provider for an OIDC token minted for that one job,
+`dexaflow auth ci-token` exchanges it at `POST /api/v2/auth/ciToken` for a
+deploy session of the control plane, and the session expires an hour later
+(`auth.ci_oidc.session_ttl_seconds`). GitHub Actions, GitLab CI and Google
+Cloud Build are supported, and any other provider that publishes its keys
+([ADR 0092](/project/adrs/0092-ci-deploys-with-oidc-tokens/)).
+
+### Trusting a CI provider
+
+List the providers the control plane trusts under `auth.ci_oidc.issuers`. Each
+entry is one provider for one tenant:
+
+```yaml
+auth:
+  ci_oidc:
+    session_ttl_seconds: 3600
+    issuers:
+      - name: github-acme
+        provider: github
+        issuer: https://token.actions.githubusercontent.com
+        audience: https://dexaflow.acme.example
+        tenant: acme
+        rules:
+          - claims:
+              repository: acme/dags
+              ref: refs/heads/main
+              environment: production
+            role: deployer
+      - name: gitlab-acme
+        provider: gitlab
+        issuer: https://gitlab.com
+        audience: https://dexaflow.acme.example
+        tenant: acme
+        rules:
+          - claims: {project_path: acme/dags, ref: main, ref_protected: "true"}
+            role: deployer
+      - name: cloudbuild-acme
+        provider: cloudbuild
+        issuer: https://accounts.google.com
+        audience: https://dexaflow.acme.example
+        tenant: acme
+        rules:
+          - claims: {email: dags-builder@acme-ci.iam.gserviceaccount.com}
+            role: deployer
+```
+
+With the Helm chart, the same list goes under `auth.ciOidc.issuers` and the
+lifetime under `auth.ciOidc.sessionTtlSeconds`; the chart passes the list to
+the server as JSON in `LEOFLOW_AUTH_CI_OIDC_ISSUERS` (`DEXAFLOW_AUTH_CI_OIDC_ISSUERS`
+works too, and wins over the file). The server checks every entry at boot and
+refuses to start, naming the field, when one is wrong.
+
+| Field | What it is |
+|---|---|
+| `name` | 1 to 40 lowercase letters, digits or `-`. It names the entry in logs, metrics, audit records and the sessions it issues. |
+| `provider` | `github`, `gitlab`, `cloudbuild` or `other`. It decides which identity claim each rule must pin. |
+| `issuer` | The exact `iss` of the provider's tokens, `https` (`http` only on a loopback host). The keys are read from its discovery document, whose `issuer` must be the same. |
+| `jwks_url` | Optional: where the keys are, instead of discovery. |
+| `audience` | The `aud` the job asks its token for. One issuer and audience pair belongs to one entry, so give each tenant its own audience. |
+| `tenant` | The tenant every session of this entry acts in. It is never read from a claim: a token that claims another tenant still gets this one. |
+| `max_lifetime_seconds` | The longest `exp - iat` a token may have, `0` (one hour) to 86400. GitHub and Cloud Build mint tokens for minutes; raise it for a GitLab job token that lives as long as a long job. |
+| `rules` | Which jobs may deploy, and as what. The first rule whose claims all match decides; a token that matches none is refused with `403`. |
+
+A rule has `claims`, a `role` and optional `scopes`:
+
+- **`claims`** maps claim names to values. A value is matched against a string
+  claim of the token, exactly or as a pattern (`*` and `?` within a segment, so
+  `acme/*` matches `acme/dags` but not `acme/dags/sub`, and `[a-z]` ranges). A
+  pattern must name something: `*` alone is refused. Each rule pins an identity
+  claim of its provider, so no rule admits every job on the provider:
+  `repository`, `repository_id`, `repository_owner` or `repository_owner_id`
+  on GitHub, `project_path`, `project_id`, `namespace_path` or `namespace_id`
+  on GitLab, `email` or `sub` on Cloud Build. Pin the branch (`ref`) and, on
+  GitHub, the `environment` too, so a pull request or a feature branch cannot
+  deploy.
+- **`role`** is a role of the entry's tenant, `deployer` for most pipelines.
+  `admin` is refused. The role must exist when the token is exchanged (the
+  exchange answers `403` otherwise), and its permissions are read again on
+  every request, so changing the role changes what live sessions can do.
+- **`scopes`** narrow the session, as the scopes of an API token do:
+  `dexaflow:deploy` (the default), `dexaflow:run` (for `deploy --trigger` and
+  `--paused`/`--active`) or `dexaflow:read`.
+
+### What the pipeline does
+
+`dexaflow ci init github|gitlab|cloudbuild` asks the control plane the
+pipeline deploys to which issuers it offers your tenant (`GET
+/api/v2/deployDefaults`, with your CLI session), and when one matches the
+system it writes the tokenless pipeline:
+
+- **GitHub**: the workflow gets `id-token: write`, and the deploy step asks
+  the runner for a token for the entry's audience, with no `DEXAFLOW_TOKEN`
+  secret.
+- **GitLab**: the job declares `id_tokens: DEXAFLOW_OIDC_TOKEN` with the
+  entry's audience, with no `DEXAFLOW_TOKEN` variable.
+- **Cloud Build**: the step runs `gcloud auth print-identity-token
+  --audiences=<audience> --include-email` as the build's service account, and
+  the Secret Manager secret is gone.
+
+`ci/dexaflow-deploy.sh` then exchanges that token with `dexaflow auth ci-token`
+and deploys with the session it prints. A `DEXAFLOW_TOKEN` set in the CI system still works when
+`DEXAFLOW_OIDC_TOKEN` is not set, so a pipeline can go back to a deploy token
+without being written again. The pre-rename `LEOFLOW_OIDC_TOKEN` works too.
+
+`--auth` picks the path: `auto` (the default) writes the tokenless pipeline
+when the server offers an issuer for the system and the deploy token path
+otherwise, with a note saying why (no issuer for the system, a server that
+does not answer, a CLI release before `v0.5.5`); `oidc` fails instead of
+falling back; `token` never asks. The `generic` script has no provider to
+mint a token, so it keeps the deploy token, unless your CI system sets
+`DEXAFLOW_OIDC_TOKEN` and runs `dexaflow auth ci-token` itself.
+
+### Watching the exchange
+
+- **Metric.** `dexaflow_ci_oidc_exchange_total{issuer, outcome}` counts the
+  exchanges by entry and outcome: `issued`, `invalid_token` (signature,
+  `alg`, audience, expiry or lifetime), `unknown_issuer`, `no_rule`,
+  `role_missing`, `keys_unavailable` and `error`. A token that names no entry
+  is counted under `issuer="unknown"`.
+- **Logs.** Each exchange logs the entry, the tenant, the job's `sub` claim,
+  the role and the outcome; a refusal adds the reason. Neither the token nor
+  its signature is logged.
+- **Audit.** Each exchange is recorded in the entry's tenant as
+  `ci_oidc.exchange`, with the entry, the subject, the role and the outcome.
+- **Answers.** `401` for a token that is not valid or names no entry, `403`
+  when no rule matches or the role is missing, `503` when the provider's keys
+  cannot be read (try again), `429` after 30 refused exchanges in a minute
+  from one address (issued sessions do not count).
+
+A session carries the entry's name and a fingerprint of the entry: changing
+or removing the entry ends its live sessions on their next request. A session
+works in the `Authorization` header only, never as a browser cookie.
 
 ## Python on the runner
 
@@ -1420,6 +1559,11 @@ in the [`dexaflow-cli` image](#the-dexaflow-cli-image), unless a project needs a
 name) and no [remote builder](/operate/builders/#building-on-cloud-build) is
 configured: then it runs Docker in Docker, and the file names the projects
 and why. On Cloud Build, the step installs Docker only in that case too.
+
+When the control plane trusts the CI provider, the pipeline signs in with
+the job's OIDC token instead of `DEXAFLOW_TOKEN`, and step 1 of `Next:` names
+the issuer it uses; `--auth` picks the path
+([Deploying without a stored token](#deploying-without-a-stored-token-ci-oidc)).
 
 An existing file is never overwritten: the command names it and writes
 nothing. Pass `--force` to replace it, or `--stdout` to print the files
