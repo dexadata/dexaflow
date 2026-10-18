@@ -84,6 +84,7 @@ type Querier interface {
 	CountActiveDagRunsByDagID(ctx context.Context, arg CountActiveDagRunsByDagIDParams) (int64, error)
 	CountAuditLogs(ctx context.Context, arg CountAuditLogsParams) (int64, error)
 	CountConnections(ctx context.Context, tenantID pgtype.UUID) (int64, error)
+	CountConnectionsFiltered(ctx context.Context, arg CountConnectionsFilteredParams) (int64, error)
 	CountDagRunStatesInWindow(ctx context.Context, arg CountDagRunStatesInWindowParams) ([]CountDagRunStatesInWindowRow, error)
 	// The tenant is checked on the parent dag, once, rather than on every run row:
 	// a per-row tenant_id filter would turn the index-only count over
@@ -92,6 +93,7 @@ type Querier interface {
 	// way (#508).
 	CountDagRunsByDag(ctx context.Context, arg CountDagRunsByDagParams) (int64, error)
 	CountDagRunsByDagStates(ctx context.Context, arg CountDagRunsByDagStatesParams) (int64, error)
+	CountDagRunsFiltered(ctx context.Context, arg CountDagRunsFilteredParams) (int64, error)
 	CountDags(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	// One index probe per DAG of the tenant for its newest run. DAGs without runs
 	// drop out of the CROSS JOIN, so they are not counted.
@@ -108,6 +110,7 @@ type Querier interface {
 	CountExpiredSystemAuditLog(ctx context.Context, arg CountExpiredSystemAuditLogParams) (int64, error)
 	// Audit rows of one tenant older than the cutoff, at most max_rows.
 	CountExpiredTenantAuditLog(ctx context.Context, arg CountExpiredTenantAuditLogParams) (int64, error)
+	CountImportErrorsFiltered(ctx context.Context, arg CountImportErrorsFilteredParams) (int64, error)
 	CountLiveAPITokens(ctx context.Context, arg CountLiveAPITokensParams) (int64, error)
 	// The live sign-ins, in all and from one requester.
 	CountLiveCLIDevices(ctx context.Context, requesterHash string) (CountLiveCLIDevicesRow, error)
@@ -123,10 +126,12 @@ type Querier interface {
 	CountLocalPasswordUser(ctx context.Context, arg CountLocalPasswordUserParams) (int64, error)
 	CountPools(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CountTaskInstanceStatesInWindow(ctx context.Context, arg CountTaskInstanceStatesInWindowParams) ([]CountTaskInstanceStatesInWindowRow, error)
+	CountTaskInstancesFiltered(ctx context.Context, arg CountTaskInstancesFilteredParams) (int64, error)
 	CountTenantDagTags(ctx context.Context, arg CountTenantDagTagsParams) (int64, error)
 	CountTenantDags(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CountUsers(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CountVariables(ctx context.Context, tenantID pgtype.UUID) (int64, error)
+	CountVariablesFiltered(ctx context.Context, arg CountVariablesFilteredParams) (int64, error)
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) error
 	CreateDagRun(ctx context.Context, arg CreateDagRunParams) (DagRun, error)
 	// Zero rows means the slot's run already exists (or the DAG has no current
@@ -475,6 +480,7 @@ type Querier interface {
 	// here — the handler returns nothing without a query.
 	ListConnectionSecretsScoped(ctx context.Context, arg ListConnectionSecretsScopedParams) ([]ListConnectionSecretsScopedRow, error)
 	ListConnections(ctx context.Context, arg ListConnectionsParams) ([]ListConnectionsRow, error)
+	ListConnectionsFiltered(ctx context.Context, arg ListConnectionsFilteredParams) ([]ListConnectionsFilteredRow, error)
 	ListDagRunsByDag(ctx context.Context, arg ListDagRunsByDagParams) ([]DagRun, error)
 	// Keyset form of ListDagRunsByDagWithVersion: the runs strictly before the
 	// cursor (logical_date, run_id) in the same order, so a deep page costs the
@@ -483,6 +489,7 @@ type Querier interface {
 	ListDagRunsByDagAfter(ctx context.Context, arg ListDagRunsByDagAfterParams) ([]ListDagRunsByDagAfterRow, error)
 	// See GetDagRunWithVersion. One join rather than a lookup per row.
 	ListDagRunsByDagWithVersion(ctx context.Context, arg ListDagRunsByDagWithVersionParams) ([]ListDagRunsByDagWithVersionRow, error)
+	ListDagRunsFiltered(ctx context.Context, arg ListDagRunsFilteredParams) ([]ListDagRunsFilteredRow, error)
 	// created_by is the registering user's id (empty when the register had no
 	// user), not their email: any reader of the DAG sees it. is_current marks the
 	// version new runs are created with. build_info is where the version was
@@ -509,6 +516,7 @@ type Querier interface {
 	ListEncryptedConnectionSecrets(ctx context.Context) ([]ListEncryptedConnectionSecretsRow, error)
 	ListFavoriteDagIDs(ctx context.Context, arg ListFavoriteDagIDsParams) ([]string, error)
 	ListImportErrors(ctx context.Context, tenant string) ([]ListImportErrorsRow, error)
+	ListImportErrorsFiltered(ctx context.Context, arg ListImportErrorsFilteredParams) ([]ListImportErrorsFilteredRow, error)
 	// Lists dag_runs currently in 'running' whose task instances are ALL terminal
 	// or never-started (every TI in none/success/failed/skipped/upstream_failed/removed),
 	// alongside the timestamp of their most recent observable activity. The "no
@@ -625,6 +633,7 @@ type Querier interface {
 	// come grouped by run and, within a run, in the same task_id order the per-run
 	// query returns, so the caller can split them without re-sorting.
 	ListTaskInstancesByRuns(ctx context.Context, dagRunIds []pgtype.UUID) ([]TaskInstance, error)
+	ListTaskInstancesFiltered(ctx context.Context, arg ListTaskInstancesFilteredParams) ([]TaskInstance, error)
 	ListTenantDagTags(ctx context.Context, arg ListTenantDagTagsParams) ([]string, error)
 	// Retention janitor (performance item D5). Every statement is tenant scoped and
 	// bounded; the janitor in internal/retention paces and caps them.
@@ -636,6 +645,7 @@ type Querier interface {
 	// caller. Never selects password_hash — the list must not expose secrets.
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUsersRow, error)
 	ListVariables(ctx context.Context, arg ListVariablesParams) ([]ListVariablesRow, error)
+	ListVariablesFiltered(ctx context.Context, arg ListVariablesFilteredParams) ([]ListVariablesFilteredRow, error)
 	// Every variable across every tenant whose stored value does (sealed = true) or
 	// does not (sealed = false) start with the ciphertext tag (#507). It backs the
 	// variable_encryption boot sweeps, which seal plaintext rows ("on") or restore

@@ -280,6 +280,51 @@ func (q *Queries) CountDagRunsByDagStates(ctx context.Context, arg CountDagRunsB
 	return count, err
 }
 
+const countDagRunsFiltered = `-- name: CountDagRunsFiltered :one
+SELECT count(*)
+FROM dag_runs r
+WHERE r.tenant_id = $1 AND r.dag_id = $2
+  AND (cardinality($3::text[]) = 0 OR r.state::text = ANY($3::text[]))
+  AND ($4::text IS NULL OR r.run_id ILIKE '%' || $4 || '%')
+  AND ($5::text IS NULL OR r.run_id ILIKE $5 || '%')
+  AND ($6::text IS NULL OR r.trigger::text = $6)
+  AND ($7::timestamptz IS NULL OR r.started_at >= $7)
+  AND ($8::timestamptz IS NULL OR r.started_at <= $8)
+  AND ($9::timestamptz IS NULL OR r.ended_at >= $9)
+  AND ($10::timestamptz IS NULL OR r.ended_at <= $10)
+`
+
+type CountDagRunsFilteredParams struct {
+	TenantID           pgtype.UUID        `json:"tenant_id"`
+	DagID              pgtype.UUID        `json:"dag_id"`
+	States             []string           `json:"states"`
+	RunIDPattern       *string            `json:"run_id_pattern"`
+	RunIDPrefixPattern *string            `json:"run_id_prefix_pattern"`
+	RunType            *string            `json:"run_type"`
+	StartDateGte       pgtype.Timestamptz `json:"start_date_gte"`
+	StartDateLte       pgtype.Timestamptz `json:"start_date_lte"`
+	EndDateGte         pgtype.Timestamptz `json:"end_date_gte"`
+	EndDateLte         pgtype.Timestamptz `json:"end_date_lte"`
+}
+
+func (q *Queries) CountDagRunsFiltered(ctx context.Context, arg CountDagRunsFilteredParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countDagRunsFiltered,
+		arg.TenantID,
+		arg.DagID,
+		arg.States,
+		arg.RunIDPattern,
+		arg.RunIDPrefixPattern,
+		arg.RunType,
+		arg.StartDateGte,
+		arg.StartDateLte,
+		arg.EndDateGte,
+		arg.EndDateLte,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countDagsByLatestRunState = `-- name: CountDagsByLatestRunState :many
 SELECT lr.state AS state, count(*) AS n
 FROM dags d
@@ -359,6 +404,38 @@ func (q *Queries) CountTaskInstanceStatesInWindow(ctx context.Context, arg Count
 		return nil, err
 	}
 	return items, nil
+}
+
+const countTaskInstancesFiltered = `-- name: CountTaskInstancesFiltered :one
+SELECT count(*) FROM task_instances
+WHERE tenant_id = $1 AND dag_run_id = $2
+  AND (cardinality($3::text[]) = 0 OR state::text = ANY($3::text[]))
+  AND ($4::text IS NULL OR task_id ILIKE '%' || $4 || '%')
+  AND ($5::text IS NULL OR task_id ILIKE $5 || '%')
+  AND ($6::text IS NULL OR pool = $6)
+`
+
+type CountTaskInstancesFilteredParams struct {
+	TenantID            pgtype.UUID `json:"tenant_id"`
+	DagRunID            pgtype.UUID `json:"dag_run_id"`
+	States              []string    `json:"states"`
+	TaskIDPattern       *string     `json:"task_id_pattern"`
+	TaskIDPrefixPattern *string     `json:"task_id_prefix_pattern"`
+	Pool                *string     `json:"pool"`
+}
+
+func (q *Queries) CountTaskInstancesFiltered(ctx context.Context, arg CountTaskInstancesFilteredParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countTaskInstancesFiltered,
+		arg.TenantID,
+		arg.DagRunID,
+		arg.States,
+		arg.TaskIDPattern,
+		arg.TaskIDPrefixPattern,
+		arg.Pool,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const createDagRun = `-- name: CreateDagRun :one
@@ -1599,6 +1676,115 @@ func (q *Queries) ListDagRunsByDagWithVersion(ctx context.Context, arg ListDagRu
 	return items, nil
 }
 
+const listDagRunsFiltered = `-- name: ListDagRunsFiltered :many
+SELECT r.id, r.tenant_id, r.dag_id, r.dag_version_id, r.run_id, r.logical_date, r.data_interval_start, r.data_interval_end, r.state, r.trigger, r.conf, r.triggered_by, r.queued_at, r.started_at, r.ended_at, r.note, r.alerted_at, r.alert_attempts, r.next_alert_attempt_at, v.version AS dag_version_label
+FROM dag_runs r
+LEFT JOIN dag_versions v ON v.id = r.dag_version_id
+WHERE r.tenant_id = $1 AND r.dag_id = $2
+  AND (cardinality($3::text[]) = 0 OR r.state::text = ANY($3::text[]))
+  AND ($4::text IS NULL OR r.run_id ILIKE '%' || $4 || '%')
+  AND ($5::text IS NULL OR r.run_id ILIKE $5 || '%')
+  AND ($6::text IS NULL OR r.trigger::text = $6)
+  AND ($7::timestamptz IS NULL OR r.started_at >= $7)
+  AND ($8::timestamptz IS NULL OR r.started_at <= $8)
+  AND ($9::timestamptz IS NULL OR r.ended_at >= $9)
+  AND ($10::timestamptz IS NULL OR r.ended_at <= $10)
+ORDER BY r.logical_date DESC, r.run_id DESC
+LIMIT $12 OFFSET $11
+`
+
+type ListDagRunsFilteredParams struct {
+	TenantID           pgtype.UUID        `json:"tenant_id"`
+	DagID              pgtype.UUID        `json:"dag_id"`
+	States             []string           `json:"states"`
+	RunIDPattern       *string            `json:"run_id_pattern"`
+	RunIDPrefixPattern *string            `json:"run_id_prefix_pattern"`
+	RunType            *string            `json:"run_type"`
+	StartDateGte       pgtype.Timestamptz `json:"start_date_gte"`
+	StartDateLte       pgtype.Timestamptz `json:"start_date_lte"`
+	EndDateGte         pgtype.Timestamptz `json:"end_date_gte"`
+	EndDateLte         pgtype.Timestamptz `json:"end_date_lte"`
+	RowOffset          int32              `json:"row_offset"`
+	RowLimit           int32              `json:"row_limit"`
+}
+
+type ListDagRunsFilteredRow struct {
+	ID                 pgtype.UUID        `json:"id"`
+	TenantID           pgtype.UUID        `json:"tenant_id"`
+	DagID              pgtype.UUID        `json:"dag_id"`
+	DagVersionID       pgtype.UUID        `json:"dag_version_id"`
+	RunID              string             `json:"run_id"`
+	LogicalDate        pgtype.Timestamptz `json:"logical_date"`
+	DataIntervalStart  pgtype.Timestamptz `json:"data_interval_start"`
+	DataIntervalEnd    pgtype.Timestamptz `json:"data_interval_end"`
+	State              DagRunState        `json:"state"`
+	Trigger            DagRunTrigger      `json:"trigger"`
+	Conf               []byte             `json:"conf"`
+	TriggeredBy        pgtype.UUID        `json:"triggered_by"`
+	QueuedAt           pgtype.Timestamptz `json:"queued_at"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	EndedAt            pgtype.Timestamptz `json:"ended_at"`
+	Note               *string            `json:"note"`
+	AlertedAt          pgtype.Timestamptz `json:"alerted_at"`
+	AlertAttempts      int32              `json:"alert_attempts"`
+	NextAlertAttemptAt pgtype.Timestamptz `json:"next_alert_attempt_at"`
+	DagVersionLabel    *string            `json:"dag_version_label"`
+}
+
+func (q *Queries) ListDagRunsFiltered(ctx context.Context, arg ListDagRunsFilteredParams) ([]ListDagRunsFilteredRow, error) {
+	rows, err := q.db.Query(ctx, listDagRunsFiltered,
+		arg.TenantID,
+		arg.DagID,
+		arg.States,
+		arg.RunIDPattern,
+		arg.RunIDPrefixPattern,
+		arg.RunType,
+		arg.StartDateGte,
+		arg.StartDateLte,
+		arg.EndDateGte,
+		arg.EndDateLte,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDagRunsFilteredRow{}
+	for rows.Next() {
+		var i ListDagRunsFilteredRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.DagID,
+			&i.DagVersionID,
+			&i.RunID,
+			&i.LogicalDate,
+			&i.DataIntervalStart,
+			&i.DataIntervalEnd,
+			&i.State,
+			&i.Trigger,
+			&i.Conf,
+			&i.TriggeredBy,
+			&i.QueuedAt,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.Note,
+			&i.AlertedAt,
+			&i.AlertAttempts,
+			&i.NextAlertAttemptAt,
+			&i.DagVersionLabel,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOrphanCandidates = `-- name: ListOrphanCandidates :many
 SELECT dr.id AS id,
        d.dag_id AS dag_id_text,
@@ -2234,6 +2420,93 @@ ORDER BY dag_run_id, task_id
 // query returns, so the caller can split them without re-sorting.
 func (q *Queries) ListTaskInstancesByRuns(ctx context.Context, dagRunIds []pgtype.UUID) ([]TaskInstance, error) {
 	rows, err := q.db.Query(ctx, listTaskInstancesByRuns, dagRunIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TaskInstance{}
+	for rows.Next() {
+		var i TaskInstance
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.DagRunID,
+			&i.TaskID,
+			&i.MapIndex,
+			&i.TryNumber,
+			&i.MaxTries,
+			&i.State,
+			&i.Pool,
+			&i.Operator,
+			&i.QueuedAt,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.DurationSeconds,
+			&i.PodName,
+			&i.NodeName,
+			&i.ExitCode,
+			&i.ErrorMessage,
+			&i.LogUrl,
+			&i.Hostname,
+			&i.Note,
+			&i.ScheduledAt,
+			&i.LastHeartbeatAt,
+			&i.RescheduleAt,
+			&i.FirstRescheduleAt,
+			&i.DispatchAttempts,
+			&i.NextDispatchAt,
+			&i.LastFailureKind,
+			&i.InfraAttempts,
+			&i.WarmWorkerID,
+			&i.ReleasedAt,
+			&i.AttemptEpoch,
+			&i.InfraConfirmedAt,
+			&i.PoolSlots,
+			&i.DispatchUnavailableSince,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTaskInstancesFiltered = `-- name: ListTaskInstancesFiltered :many
+SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots, dispatch_unavailable_since FROM task_instances
+WHERE tenant_id = $1 AND dag_run_id = $2
+  AND (cardinality($3::text[]) = 0 OR state::text = ANY($3::text[]))
+  AND ($4::text IS NULL OR task_id ILIKE '%' || $4 || '%')
+  AND ($5::text IS NULL OR task_id ILIKE $5 || '%')
+  AND ($6::text IS NULL OR pool = $6)
+ORDER BY task_id
+LIMIT $8 OFFSET $7
+`
+
+type ListTaskInstancesFilteredParams struct {
+	TenantID            pgtype.UUID `json:"tenant_id"`
+	DagRunID            pgtype.UUID `json:"dag_run_id"`
+	States              []string    `json:"states"`
+	TaskIDPattern       *string     `json:"task_id_pattern"`
+	TaskIDPrefixPattern *string     `json:"task_id_prefix_pattern"`
+	Pool                *string     `json:"pool"`
+	RowOffset           int32       `json:"row_offset"`
+	RowLimit            int32       `json:"row_limit"`
+}
+
+func (q *Queries) ListTaskInstancesFiltered(ctx context.Context, arg ListTaskInstancesFilteredParams) ([]TaskInstance, error) {
+	rows, err := q.db.Query(ctx, listTaskInstancesFiltered,
+		arg.TenantID,
+		arg.DagRunID,
+		arg.States,
+		arg.TaskIDPattern,
+		arg.TaskIDPrefixPattern,
+		arg.Pool,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

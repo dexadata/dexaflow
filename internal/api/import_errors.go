@@ -19,6 +19,7 @@ import (
 // public GET /api/v2/importErrors feed is what the UI polls.
 type ImportErrorStore interface {
 	ListImportErrors(ctx context.Context, tenant string) ([]domain.ImportError, error)
+	ListImportErrorsFiltered(ctx context.Context, tenant, filename, bundleName string, limit, offset int) ([]domain.ImportError, int, error)
 	SetImportError(ctx context.Context, tenant string, e domain.ImportError) error
 	ClearImportError(ctx context.Context, tenant, filename string) error
 }
@@ -58,23 +59,25 @@ type importErrorBody struct {
 
 func listImportErrorsHandler(store ImportErrorStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Trace timing: a save in the workspace lights up the SPA's
-		// import-error banner; if this read becomes slow when DAGs break,
-		// it shows up in the log next to /ui/dashboard/dag_stats so the
-		// freeze pattern (#217) is greppable: "slow handler + concurrent
-		// watcher reload" is the signature we are looking for.
 		start := time.Now()
-		errs, err := store.ListImportErrors(c.Request.Context(), tenantOf(c))
+		limit, offset := pagination(c)
+		filename := c.Query("filename")
+		if filename == "" {
+			filename = c.Query("filename_pattern")
+		}
+		bundleName := c.Query("bundle_name")
+		errs, total, err := store.ListImportErrorsFiltered(c.Request.Context(), tenantOf(c), filename, bundleName, limit, offset)
 		if err != nil {
 			handleRepoError(c, err)
 			return
 		}
 		slog.Info("/api/v2/importErrors GET",
-			"tenant", tenantOf(c), "count", len(errs), "duration_ms", time.Since(start).Milliseconds())
-		out := importErrorCollectionDTO{ImportErrors: make([]importErrorDTO, 0, len(errs)), TotalEntries: len(errs)}
+			"tenant", tenantOf(c), "count", len(errs), "total", total, "duration_ms", time.Since(start).Milliseconds())
+		out := importErrorCollectionDTO{ImportErrors: make([]importErrorDTO, 0, len(errs)), TotalEntries: total}
 		for _, e := range errs {
 			out.ImportErrors = append(out.ImportErrors, toImportErrorDTO(e))
 		}
+		setPaginationLinks(c, total, limit, offset)
 		c.JSON(http.StatusOK, out)
 	}
 }

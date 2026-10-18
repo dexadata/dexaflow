@@ -1,0 +1,12 @@
+kind: Fixed
+body: |-
+  **List endpoints now apply UI search and filter parameters in SQL.**
+  The handlers for `/api/v2/connections`, `/api/v2/variables`,
+  `/api/v2/dags/{dag_id}/dagRuns`, `/api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances`,
+  and `/api/v2/importErrors` previously read only pagination parameters or filtered
+  in memory, ignoring the search boxes and filters of the Airflow 3.3 UI.
+  Each handler now applies these filters at the database level with `total_entries`
+  accurately reflecting the filtered count. In particular, `/api/v2/importErrors`
+  now supports `filename` and `bundle_name` filtering so that DAG deactivated banners
+  display errors only for their own DAG file. (#1928)
+time: 2026-10-18T10:00:00.000000000+00:00
