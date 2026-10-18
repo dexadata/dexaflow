@@ -9,8 +9,10 @@
 [[- else]]
 #   - DEXAFLOW_SERVER_URL: the control plane URL;
 [[- end]]
+[[- if not .OIDC]]
 #   - DEXAFLOW_TOKEN, masked and protected: a deploy token, created with
 #     `dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d`
+[[- end]]
 [[- if .GitLabOthers]]
 #   - DEXAFLOW_REGISTRY_USERNAME and DEXAFLOW_REGISTRY_PASSWORD, masked: a
 #     push credential for [[range $i, $r := .GitLabOthers]][[if $i]], [[end]][[$r.Host]][[end]];
@@ -19,6 +21,17 @@
 #     access token with the read_api scope, see below.
 # The job pushes to the project's container registry with the job token
 # ($CI_REGISTRY_USER and $CI_REGISTRY_PASSWORD).
+[[- if .OIDC]]
+#
+# No deploy token is stored: the job signs in with the GitLab OIDC token in
+# DEXAFLOW_OIDC_TOKEN, for the audience [[.OIDC.Audience]], which the control
+# plane trusts through its CI OIDC issuer [[.OIDC.Name]] (auth.ci_oidc), and
+# the script exchanges it for a short-lived session. Without that issuer, store
+# a deploy token, created with
+# `dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d`,
+# as DEXAFLOW_TOKEN (masked and protected) and write this file again with
+# --auth token.
+[[- end]]
 #
 # What a run deploys: with DEXAFLOW_GITLAB_API_TOKEN, what changed since the
 # commit of the last successful push pipeline on the branch, so a failed or
@@ -66,6 +79,11 @@ dexaflow-deploy:
   image: [[.PythonImage]]
 [[- end]]
   resource_group: dexaflow-deploy
+[[- if .OIDC]]
+  id_tokens:
+    DEXAFLOW_OIDC_TOKEN:
+      aud: "[[.OIDC.Audience]]"
+[[- end]]
   variables:
     GIT_DEPTH: "0" # --changed-since and the version label need the history
     DEXAFLOW_SUMMARY_FILE: $CI_PROJECT_DIR/dexaflow-deploy.md

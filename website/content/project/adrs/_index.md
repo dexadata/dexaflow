@@ -100,6 +100,7 @@ this page.
 - [ADR 0088: build args, build secrets and a private package index](/project/adrs/0088-build-args-secrets-and-package-index/)
 - [ADR 0089: a warm pool is keyed by the DAG's environment, so versions that share a dependency image and runtime settings share workers](/project/adrs/0089-warm-pools-keyed-by-environment/)
 - [ADR 0091: registry login without docker](/project/adrs/0091-registry-login-without-docker/)
+- [ADR 0092: CI pipelines deploy with their provider's OIDC token, exchanged for a short session](/project/adrs/0092-ci-deploys-with-oidc-tokens/)
 
 ## Template
 

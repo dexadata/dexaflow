@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_registry/
 title: "dexaflow registry"
 linkTitle: "registry"
-weight: 53
+weight: 54
 ---
 
 Sign in to the container registry DAG images are pushed to

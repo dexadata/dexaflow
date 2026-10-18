@@ -379,6 +379,13 @@ auth:
     hostPattern: ""
     # -- Makes the issuer the only way to deploy (#1773): registering a DAG version, its dry run, setting the current version and deleting a DAG then take only a bearer the issuer minted for this audience alone with the `dexaflow:deploy` scope, and a UI session, a password login, an API token or a bearer of another audience is refused with 403. Must differ from `audience` and every `bearerAudiences` entry, and needs `issuer` (the chart fails to render otherwise). Empty (the default) changes nothing.
     deployAudience: ""
+  # CI pipelines that deploy with their provider's OIDC token instead of a
+  # stored deploy token (ADR 0092, #1882). Off until `issuers` lists an entry.
+  ciOidc:
+    # -- Trusted CI issuers, one entry per provider and tenant, rendered as JSON into `LEOFLOW_AUTH_CI_OIDC_ISSUERS` (`auth.ci_oidc.issuers`). Each entry has `name`, `provider` (`github`, `gitlab`, `cloudbuild` or `other`), `issuer` (the exact `iss`), `audience`, `tenant` (fixed here, never read from a claim), optional `jwks_url` and `max_lifetime_seconds`, and `rules`: `claims` (exact values or `path.Match` patterns, including one identity claim of the provider) mapped to a non-admin `role` of the tenant and optional `scopes`. See the operator guide, /operate/cicd-deploy/#deploying-without-a-stored-token-ci-oidc. Empty (the default) leaves the exchange off.
+    issuers: []
+    # -- Lifetime, in seconds, of the session a CI token is exchanged for, 300 to 43200 (`auth.ci_oidc.session_ttl_seconds`).
+    sessionTtlSeconds: 3600
   # -- HMAC secret signing API + agent JWTs. Set inline OR reference an existing Secret via `existingSecret`. Generate with `openssl rand -base64 64`.
   jwtSecret: ""
   # -- Name of a Secret with key `jwtSecret` (takes precedence over `jwtSecret`).

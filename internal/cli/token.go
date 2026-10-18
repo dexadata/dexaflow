@@ -21,6 +21,7 @@ func newAuthCommand() *cobra.Command {
 	auth.AddCommand(newLoginCommand())
 	auth.AddCommand(newCreateUserCommand())
 	auth.AddCommand(newTokensCommand())
+	auth.AddCommand(newCITokenCommand())
 	return auth
 }
 

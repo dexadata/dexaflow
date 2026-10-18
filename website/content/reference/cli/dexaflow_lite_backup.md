@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_lite_backup/
 title: "dexaflow lite backup"
 linkTitle: "lite backup"
-weight: 44
+weight: 45
 ---
 
 Snapshot the Lite install (workspace + datastore + config) into a portable archive.

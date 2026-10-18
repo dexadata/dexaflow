@@ -5,7 +5,7 @@ weight: 700
 description: "ADR 0070: a secret reaches task code as an environment variable (or a Secret the kubelet resolves), never as text rendered into a command line; templated bash keeps its Airflow parity for non-secret values only, and a lint becomes a policy once multi-tenancy needs it."
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-09
 **Relates:** ADR 0019 (secret encryption at rest), ADR 0021 (exposing Variables and Connections to pods), ADR 0040 (Airflow operator support; the bash render hop), ADR 0045 (declared secret delivery), ADR 0055 (secret scoping and token liveness; the agent token transport), ADR 0061 (secret locality, masked on read).
 **Issues:** #388, the #476 residual folded into #388 (agent token as a plaintext pod spec value), #489 (shell-quoting of rendered values).

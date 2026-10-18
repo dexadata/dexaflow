@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_registry_login/
 title: "dexaflow registry login"
 linkTitle: "registry login"
-weight: 54
+weight: 55
 ---
 
 Sign in to a registry without docker, storing the credential where builds and pushes read it

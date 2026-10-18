@@ -884,6 +884,10 @@ type AuthSection struct {
 	// UI session for them with a token its own issuer signed (#1284). Empty
 	// Issuer disables it.
 	TrustedIssuer TrustedIssuerSection `mapstructure:"trusted_issuer"`
+	// CIOIDC lets CI pipelines deploy with their provider's OIDC token
+	// instead of a stored deploy token (ADR 0092, #1882). No issuer turns
+	// it off.
+	CIOIDC CIOIDCSection `mapstructure:"ci_oidc"`
 	// ServiceToken enables the operator service API under /api/v2/service/
 	// (#1283), which creates tenants and links users to the trusted issuer. It
 	// is the bearer credential for that API: at least 32 characters, kept in a
@@ -1486,6 +1490,8 @@ var serverDefaults = map[string]any{
 	"auth.trusted_issuer.bearer_max_lifetime_seconds": 0,
 	"auth.trusted_issuer.host_pattern":                "",
 	"auth.trusted_issuer.deploy_audience":             "",
+	"auth.ci_oidc.issuers":                            "",
+	"auth.ci_oidc.session_ttl_seconds":                3600,
 	"auth.external_signin_url":                        "",
 	"auth.external_signout_url":                       "",
 	// Registered so LEOFLOW_AUTH_SESSION_COOKIE_INSECURE binds at all (viper's
@@ -1590,6 +1596,9 @@ func LoadServer(configFile string, flags *pflag.FlagSet) (*ServerConfig, error) 
 		return nil, fmt.Errorf("unmarshaling server config: %w", err)
 	}
 	normalizeRequireDigest(v, &c)
+	if err := decodeCIOIDCIssuers(v, configFile, &c); err != nil {
+		return nil, err
+	}
 	// The OIDC role_mappings / tenant_claims maps are decoded straight from the
 	// raw YAML, bypassing viper's "." key-delimiter flattening that would split a
 	// dotted map key (a Google `hd` domain, a dotted IdP group) and fail (#826).
@@ -1712,6 +1721,7 @@ func (c *ServerConfig) Validate() error {
 		c.validatePlatformIntegration,
 		c.validateDeployDefaults,
 		c.validateRequireDigest,
+		c.validateCIOIDC,
 	} {
 		if err := check(); err != nil {
 			return err

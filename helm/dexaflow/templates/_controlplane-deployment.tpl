@@ -477,6 +477,16 @@ spec:
             {{- end }}
             {{- end }}
             {{- end }}
+            {{- with .ctx.Values.auth.ciOidc }}
+            {{- if .issuers }}
+            # CI OIDC issuers (ADR 0092, #1882). Rendered only when an entry is
+            # set; the server validates every entry at boot.
+            - name: LEOFLOW_AUTH_CI_OIDC_ISSUERS
+              value: {{ toJson .issuers | quote }}
+            - name: LEOFLOW_AUTH_CI_OIDC_SESSION_TTL_SECONDS
+              value: {{ .sessionTtlSeconds | quote }}
+            {{- end }}
+            {{- end }}
             - name: LEOFLOW_OBSERVABILITY_LOG_FORMAT
               value: {{ .ctx.Values.observability.logFormat | quote }}
             - name: LEOFLOW_OBSERVABILITY_LOG_LEVEL

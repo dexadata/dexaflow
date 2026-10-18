@@ -300,15 +300,16 @@ func bearerToken(header string) string {
 // Authorization bearer first, then the session cookie named cookieName. Both are
 // returned (not just the first present) so JWTAuth can fall back to the cookie
 // when the bearer is stale/invalid — the SPA-refresh case — rather than failing
-// on the bearer alone. A cookie holding an API token is skipped.
+// on the bearer alone. A cookie holding an API token or a CI session is skipped.
 func candidateTokens(c *gin.Context, cookieName string) []string {
 	var tokens []string
 	if t := bearerToken(c.GetHeader("Authorization")); t != "" {
 		tokens = append(tokens, t)
 	}
-	// An API token (ADR 0074) is a bearer credential for clients, never a
-	// browser session: in the cookie it is ignored.
-	if cookie, err := c.Request.Cookie(cookieName); err == nil && cookie.Value != "" && !auth.IsAPIToken(cookie.Value) {
+	// An API token (ADR 0074) and a CI session (ADR 0092) are bearer
+	// credentials for clients, never a browser session: in the cookie they
+	// are ignored.
+	if cookie, err := c.Request.Cookie(cookieName); err == nil && cookie.Value != "" && !auth.IsAPIToken(cookie.Value) && !auth.IsCISession(cookie.Value) {
 		tokens = append(tokens, cookie.Value)
 	}
 	return tokens

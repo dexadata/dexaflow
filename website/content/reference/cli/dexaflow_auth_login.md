@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_auth_login/
 title: "dexaflow auth login"
 linkTitle: "auth login"
-weight: 15
+weight: 16
 ---
 
 Authenticate to a control plane (Pro) and store the token.

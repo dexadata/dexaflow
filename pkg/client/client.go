@@ -120,6 +120,26 @@ type DeployDefaults struct {
 	// WarmPools are the cluster's warm pool settings (#1890). Nil when the
 	// cluster advertises none, or from a server that predates the field.
 	WarmPools *DeployWarmPools `json:"warm_pools,omitempty"`
+	// CIOIDC lists the CI OIDC issuers of the caller's tenant (ADR 0092),
+	// which `dexaflow ci init` writes a tokenless pipeline for. Nil when the
+	// tenant has none, or from a server that predates the field.
+	CIOIDC *DeployCIOIDC `json:"ci_oidc,omitempty"`
+}
+
+// DeployCIOIDC is the ci_oidc of DeployDefaults.
+type DeployCIOIDC struct {
+	// Issuers are the entries, in the server's order.
+	Issuers []DeployCIOIDCIssuer `json:"issuers"`
+}
+
+// DeployCIOIDCIssuer is one CI OIDC issuer: its entry name, its provider
+// (github, gitlab, cloudbuild or other), the iss of its tokens and the
+// audience a pipeline asks its token for.
+type DeployCIOIDCIssuer struct {
+	Name     string `json:"name"`
+	Provider string `json:"provider"`
+	Issuer   string `json:"issuer"`
+	Audience string `json:"audience"`
 }
 
 // DeployRemoteBuilder is the remote_builder of DeployDefaults: its backend.

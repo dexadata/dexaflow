@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_target_add/
 title: "dexaflow target add"
 linkTitle: "target add"
-weight: 66
+weight: 67
 ---
 
 Add a target (to the workspace file, or your config with --global).
