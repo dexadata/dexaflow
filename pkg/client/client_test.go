@@ -258,3 +258,30 @@ func TestGetDeployDefaultsBuilderServiceAccountAndWarmPools(t *testing.T) {
 		}
 	}
 }
+
+// TestGetDeployDefaultsCIOIDC reads the CI OIDC issuers of the caller's
+// tenant (ADR 0092), and none from a server that predates them.
+func TestGetDeployDefaultsCIOIDC(t *testing.T) {
+	body := `{"registry":"","platforms":[],"base_image":"","ci_oidc":{"issuers":[` +
+		`{"name":"github-acme","provider":"github","issuer":"https://token.actions.githubusercontent.com","audience":"https://dexaflow.acme.example"}]}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := c.GetDeployDefaults(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := DeployCIOIDCIssuer{Name: "github-acme", Provider: "github", Issuer: "https://token.actions.githubusercontent.com", Audience: "https://dexaflow.acme.example"}
+	if d.CIOIDC == nil || len(d.CIOIDC.Issuers) != 1 || d.CIOIDC.Issuers[0] != want {
+		t.Errorf("ci_oidc = %+v, want %+v", d.CIOIDC, want)
+	}
+	body = `{"registry":"","platforms":[],"base_image":""}`
+	if d, err = c.GetDeployDefaults(context.Background()); err != nil || d.CIOIDC != nil {
+		t.Errorf("an older server: %+v, %v; want no ci_oidc", d, err)
+	}
+}
