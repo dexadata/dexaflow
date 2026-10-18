@@ -29,5 +29,12 @@ applies too; the step by step is in the
 - **Patch releases** may carry a migration only when it meets the safety bar of
   [ADR 0068](https://dexaflow.dexadata.ai/project/adrs/0068-patch-content-gated-by-safety/):
   additive, compatible with the previous patch's binary, down file tested.
+- **Every migration has a recovery row.** Add it to the table under
+  "An interrupted migration" in `website/content/operate/upgrades.md`: the
+  version left dirty, what to do before `force`, and the version to force,
+  which is the one whose schema the database holds when the file is cut
+  short. Read it off the file: a single transaction rolls back, a
+  concurrent index build leaves an INVALID index, a statement after the
+  `COMMIT` leaves the first part applied.
 - After a schema change, regenerate the queries with `make sqlc` and test with
   `make test-integration`.
