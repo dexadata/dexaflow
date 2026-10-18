@@ -2579,9 +2579,13 @@ const (
 // startStagingGC periodically reclaims per-run staging PVCs from the
 // metadatabase-tracked lifecycle: succeeded runs immediately, failed runs after
 // the TTL, orphaned volumes (run gone) on sight (ADR 0022).
-func startStagingGC(ctx context.Context, cs kubernetes.Interface, namespace string, store executor.StagingStore, leading func() bool, logger *slog.Logger) {
+func startStagingGC(ctx context.Context, cs kubernetes.Interface, namespace string, store executor.StagingStore, leading func() bool, logger *slog.Logger, rec executor.DecisionRecorder) {
 	exec := executor.NewKubernetesExecutor(cs, namespace)
 	exec.SetStagingStore(store)
+	exec.SetLogger(logger)
+	if rec != nil {
+		exec.SetDecisionRecorder(rec)
+	}
 	startGatedTicker(ctx, "staging-gc", stagingGCInterval, leading, logger, func() {
 		runLeaderTick(ctx, "staging gc", stagingGCInterval, leaderTickPoll, leading, logger, func(tctx context.Context) error {
 			return exec.GCStagingClaims(tctx, stagingTTL)
@@ -3251,7 +3255,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// confirming at mark time.
 	store.SetProvisionalInfraMarks(true)
 	startMaintenance(ctx, mcs, cfg.Executor.TaskNamespace, execStore, store, overrideObservers{metrics: metrics, sink: markers}, reaper, sched.IsLeading, logger, snapshotter, settledRunCollection(cfg.Executor, execStore))
-	startStagingGC(ctx, mcs, cfg.Executor.TaskNamespace, store, sched.IsLeading, logger)
+	startStagingGC(ctx, mcs, cfg.Executor.TaskNamespace, store, sched.IsLeading, logger, metrics)
 	// Warm-pool reconciler (ADR 0058 N1b2b, model A2): keeps min_idle warm workers
 	// ready per active dag_version. Started ONLY when warm pools are enabled — with
 	// them off it is never constructed, so no warm pod is ever created and dispatch

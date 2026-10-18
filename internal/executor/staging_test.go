@@ -2,12 +2,15 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/dexadata/dexaflow/internal/domain"
 )
@@ -167,5 +170,132 @@ func TestEnsureStagingClaimRecords(t *testing.T) {
 	}
 	if len(store.active) != 1 || store.active[0].PVCName != "leoflow-staging-etl-r1" {
 		t.Fatalf("expected the volume recorded as active, got %+v", store.active)
+	}
+}
+
+// Issue #1615: PVC created but not recorded in DB must be collected by label sweep
+// if older than TTL, while fresh unrecorded PVCs are kept.
+func TestGCStagingClaimsSweepsUnrecordedOrphanPVCs(t *testing.T) {
+	cs := fake.NewSimpleClientset()
+	e := NewKubernetesExecutor(cs, "leoflow")
+	store := &fakeStagingStore{}
+	e.SetStagingStore(store)
+
+	now := time.Now()
+	oldTime := metav1.NewTime(now.Add(-48 * time.Hour))
+	freshTime := metav1.NewTime(now.Add(-10 * time.Minute))
+
+	// An unrecorded old PVC with staging label
+	pvcOld := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "pvc-unrecorded-old",
+			Namespace:         "leoflow",
+			CreationTimestamp: oldTime,
+			Labels: map[string]string{
+				stagingLabel: "true",
+			},
+		},
+	}
+	// An unrecorded fresh PVC with staging label
+	pvcFresh := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "pvc-unrecorded-fresh",
+			Namespace:         "leoflow",
+			CreationTimestamp: freshTime,
+			Labels: map[string]string{
+				stagingLabel: "true",
+			},
+		},
+	}
+	// A non-staging PVC with old timestamp (should never be touched)
+	pvcOther := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "pvc-other",
+			Namespace:         "leoflow",
+			CreationTimestamp: oldTime,
+		},
+	}
+
+	for _, pvc := range []*corev1.PersistentVolumeClaim{pvcOld, pvcFresh, pvcOther} {
+		_, err := cs.CoreV1().PersistentVolumeClaims("leoflow").Create(context.Background(), pvc, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("create PVC %s: %v", pvc.Name, err)
+		}
+	}
+
+	if err := e.GCStagingClaims(context.Background(), 24*time.Hour); err != nil {
+		t.Fatalf("GCStagingClaims: %v", err)
+	}
+
+	exists := func(n string) bool {
+		_, err := cs.CoreV1().PersistentVolumeClaims("leoflow").Get(context.Background(), n, metav1.GetOptions{})
+		return err == nil
+	}
+
+	if exists("pvc-unrecorded-old") {
+		t.Errorf("unrecorded old PVC should be deleted")
+	}
+	if !exists("pvc-unrecorded-fresh") {
+		t.Errorf("unrecorded fresh PVC should be kept")
+	}
+	if !exists("pvc-other") {
+		t.Errorf("non-staging PVC should never be touched")
+	}
+}
+
+// Issue #1615: A delete error on one PVC must not stop the collection of subsequent PVCs,
+// and the error must be logged, returned in multierr, and counted in the metric.
+func TestGCStagingClaimsContinuesOnDeleteError(t *testing.T) {
+	cs := fake.NewSimpleClientset()
+	e := NewKubernetesExecutor(cs, "leoflow")
+	rec := &capturingRecorder{}
+	e.SetDecisionRecorder(rec)
+
+	store := &fakeStagingStore{
+		active: []domain.StagingVolumeState{
+			{PVCName: "pvc-fail-1", RunState: "success"},
+			{PVCName: "pvc-ok-2", RunState: "success"},
+		},
+	}
+	e.SetStagingStore(store)
+
+	for _, name := range []string{"pvc-fail-1", "pvc-ok-2"} {
+		_, err := cs.CoreV1().PersistentVolumeClaims("leoflow").Create(context.Background(),
+			&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "leoflow"}}, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("create PVC %s: %v", name, err)
+		}
+	}
+
+	// Fail deletion of pvc-fail-1
+	cs.PrependReactor("delete", "persistentvolumeclaims", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		del := action.(k8stesting.DeleteAction)
+		if del.GetName() == "pvc-fail-1" {
+			return true, nil, errors.New("apiserver storage error")
+		}
+		return false, nil, nil
+	})
+
+	err := e.GCStagingClaims(context.Background(), 24*time.Hour)
+	if err == nil {
+		t.Errorf("expected error from failed deletion, got nil")
+	}
+
+	exists := func(n string) bool {
+		_, err := cs.CoreV1().PersistentVolumeClaims("leoflow").Get(context.Background(), n, metav1.GetOptions{})
+		return err == nil
+	}
+
+	if !exists("pvc-fail-1") {
+		t.Errorf("pvc-fail-1 should still exist because delete failed")
+	}
+	if exists("pvc-ok-2") {
+		t.Errorf("pvc-ok-2 should have been deleted despite previous error")
+	}
+	if store.deleted["pvc-ok-2"] != "run_succeeded" {
+		t.Errorf("pvc-ok-2 should be marked deleted in store, got %q", store.deleted["pvc-ok-2"])
+	}
+	if rec.count("staging_pvc_delete_error") != 1 {
+		t.Errorf("expected 1 staging_pvc_delete_error metric, got %d", rec.count("staging_pvc_delete_error"))
 	}
 }
