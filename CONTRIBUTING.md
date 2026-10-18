@@ -37,6 +37,7 @@ Open an issue or comment on an existing one before starting work on anything bey
 Dexaflow has strict engineering standards documented in the ADRs:
 
 - **[ADR 0011 — TDD Strict](website/content/project/adrs/0011-tdd-strict.md):** every production change is preceded by a failing test. Two-commit pattern preferred (`test:` followed by `feat:`).
+- **Bug fixes carry a regression test:** a test that reproduces the bug, fails without the fix and passes with it, committed before the fix (`test:` followed by `fix:`). See the [Fix a bug](website/content/contribute/recipes/fix-a-bug.md) recipe.
 - **[ADR 0012 — Code Quality Standards](website/content/project/adrs/0012-code-quality-standards.md):** Go Report Card A+ as floor. GoDocs mandatory on every exported identifier. Cyclomatic complexity ≤ 15.
 - **[ADR 0014 — Supply Chain Security](website/content/project/adrs/0014-supply-chain-security.md):** vulnerability scans, signed commits encouraged, no introduction of unsafe patterns.
 

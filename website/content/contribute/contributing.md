@@ -77,6 +77,8 @@ merge. They are not bureaucracy; they are why the codebase stays an A+.
 - **Strict TDD** — every line of production code is written against a *failing*
   test (red → green → refactor). The preferred shape is two commits: a `test:`
   commit that fails, then the `feat:`/`fix:` that makes it pass. ([ADR 0011](/project/adrs/))
+- **Every bug fix ships a regression test** that reproduces the bug, fails
+  without the fix and passes with it. ([Fix a bug](/contribute/recipes/fix-a-bug/))
 - **Go Report Card A+** — gofmt, govet, gocyclo ≤ 15, golint, ineffassign, misspell,
   license, plus the extended golangci-lint stack. `make lint` clean every commit.
   ([ADR 0012](/project/adrs/))
