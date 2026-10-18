@@ -5,7 +5,7 @@ weight: 790
 description: "ADR 0079: dexaflow auth login signs in with the cluster's OIDC provider by driving the server's own sign-in in a browser. After a consent click, the server hands the CLI a one-time code on a loopback redirect, bound to a PKCE challenge, and the CLI exchanges it for the token a password login returns. The CLI never talks to the IdP."
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-14
 **Relates:** ADR 0057 (OIDC/SSO login, tenant pin and role mapping), ADR 0041 (deploy without a pipeline, `auth login` once), ADR 0074 (scoped API tokens for CI)
 **Issues:** #1704

@@ -5,7 +5,7 @@ weight: 820
 description: "ADR 0082: with warm pools on, the reconciler keeps a pool for the current version of every unpaused DAG that declares min_idle_workers from the moment it becomes current, and for an active run's version only while it is still current. A superseded version keeps no idle buffer: its idle workers are deleted and busy ones finish their attempt first. Replaces the version bump paragraph of ADR 0058 D1."
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-14
 **Relates:** ADR 0058 (warm worker pools; this ADR replaces the "a version bump drains the old pool by idle-TTL" sentence of D1 and keeps the rest of D1 and D2), ADR 0055 (per-attempt identity), ADR 0002 (pod per task, still the default)
 **Issues:** #1707
