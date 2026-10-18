@@ -30,6 +30,10 @@ actions:
     remove: true
   - target: $.paths['/api/v2/auth/cli/device']
     remove: true
+  # The CI OIDC exchange (ADR 0092) gets no generated method either; use
+  # Client.ExchangeCIToken in auth_ci.go.
+  - target: $.paths['/api/v2/auth/ciToken']
+    remove: true
   # The spec of one version (#1708) gets no generated method either; use
   # Client.GetDagVersionSpec in dag_version_spec.go.
   - target: $.paths['/api/v2/dags/{dag_id}/dagVersions/{version_number}/spec']

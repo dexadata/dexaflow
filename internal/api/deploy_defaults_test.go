@@ -63,7 +63,7 @@ func TestDeployDefaultsUnsetServesEmptyFields(t *testing.T) {
 		t.Fatalf("status = %d %s, want 200", rec.Code, rec.Body.String())
 	}
 	if got, want := rec.Body.String(), `{"registry":"","platforms":[],"base_image":"","source_mode_image":"",`+
-		`"remote_builder":null,"task_service_account":"","warm_pools":null}`; got != want {
+		`"remote_builder":null,"task_service_account":"","warm_pools":null,"ci_oidc":null}`; got != want {
 		t.Errorf("body = %s, want %s", got, want)
 	}
 }
@@ -113,7 +113,7 @@ func TestDeployDefaultsServesBuilderServiceAccountAndWarmPools(t *testing.T) {
 	}
 	want := `{"registry":"ghcr.io/acme","platforms":[],"base_image":"","source_mode_image":"",` +
 		`"remote_builder":{"cloud_build":{"project":"acme-ci","region":"us-central1"}},` +
-		`"task_service_account":"dexaflow-task","warm_pools":{"enabled":true,"min_idle_workers":1,"max_pool_size":8}}`
+		`"task_service_account":"dexaflow-task","warm_pools":{"enabled":true,"min_idle_workers":1,"max_pool_size":8},"ci_oidc":null}`
 	if got := rec.Body.String(); got != want {
 		t.Errorf("body = %s, want %s", got, want)
 	}

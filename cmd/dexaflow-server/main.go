@@ -1476,7 +1476,8 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 	// Gzip the SPA bundle once, off the startup path, so no browser pays it.
 	go uiSrv.Precompress()
 
-	handler := api.NewServer(api.Dependencies{
+	// CI OIDC (ADR 0092): unchanged deps unless auth.ci_oidc lists an issuer.
+	handler := api.NewServer(withCIOIDC(api.Dependencies{
 		Logger: tel.Logger,
 		// API tokens (ADR 0074) are checked first; every other bearer goes on
 		// to the JWT authenticator.
@@ -1577,7 +1578,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 
 		SessionCookieInsecure: cfg.Auth.SessionCookieInsecure,
 		SessionCookieName:     cfg.Auth.SessionCookieName,
-	})
+	}, cfg, repo, tel.Metrics))
 	return newHTTPServer(cfg.Server.HTTPAddr, handler, cfg)
 }
 

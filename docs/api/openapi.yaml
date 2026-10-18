@@ -83,6 +83,62 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v2/auth/ciToken:
+    post:
+      summary: Exchange a CI provider's OIDC token for a deploy session (Dexaflow)
+      description: >-
+        A CI job (GitHub Actions, GitLab CI, Google Cloud Build) posts the
+        OIDC token its provider minted for it. The token is checked against
+        the issuer entry of the server's auth.ci_oidc whose issuer and
+        audience it names (signature, issuer, audience, expiry, lifetime),
+        and the entry's rules map its claims to a role of the entry's tenant;
+        the first matching rule decides (ADR 0092). The tenant is the
+        entry's, never a claim's. The answer is a dxci_ session token for
+        that role, narrowed to the rule's scopes (dexaflow:deploy by
+        default), for the Authorization header only. Public: the token in
+        the body authenticates the caller. Served only when an issuer is
+        configured; 404 otherwise. Refused exchanges are limited per client
+        address.
+      operationId: exchangeCIToken
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CITokenRequest" }
+      responses:
+        "200":
+          description: A session for the role the matching rule names
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CITokenResponse" }
+        "400":
+          description: The body is not a JSON object with a token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          description: The token was not minted by a trusted CI issuer for this server, or is expired
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: No rule of the issuer admits the job, or the role it names does not exist in the tenant
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: Too many refused exchanges from this address
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: The provider's signing keys or the database could not be read
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /api/v2/auth/methods:
     get:
       summary: Sign-in methods this server offers (Dexaflow)
@@ -1359,7 +1415,8 @@ paths:
         them. dexaflow deploy applies the build values to whatever the
         project, its workspace, its target and the CLI config leave unset,
         and reports the task service account and warm pools. The values are the cluster's, the same for every tenant,
-        and none is a secret. Every field is always present; an unset one is
+        and none is a secret, except ci_oidc, the CI OIDC issuers of the
+        caller's tenant. Every field is always present; an unset one is
         empty. A server without this route answers 404, and the CLI then
         deploys with its local settings only. Needs read on dags (scope
         dexaflow:read or dexaflow:deploy).
@@ -2124,6 +2181,49 @@ components:
             enabled: { type: boolean, description: execution.warm_pools_enabled. }
             min_idle_workers: { type: integer, description: execution.min_idle_workers. }
             max_pool_size: { type: integer, description: execution.max_pool_size; 0 sets no cap. }
+        ci_oidc:
+          type: object
+          nullable: true
+          description: >-
+            The CI OIDC issuers (auth.ci_oidc, ADR 0092) of the caller's
+            tenant, which dexaflow ci init reads to write a pipeline that
+            deploys with its provider's token instead of a stored deploy
+            token; null when the tenant has none. Unlike the other fields it
+            depends on the caller. Absent from servers that predate it.
+          required: [issuers]
+          properties:
+            issuers:
+              type: array
+              items: { $ref: "#/components/schemas/CIOIDCIssuer" }
+    CIOIDCIssuer:
+      type: object
+      required: [name, provider, issuer, audience]
+      properties:
+        name: { type: string, description: The entry's name in auth.ci_oidc.issuers. }
+        provider: { type: string, enum: [github, gitlab, cloudbuild, other], description: The CI provider. }
+        issuer: { type: string, description: The exact iss of the provider's tokens. }
+        audience: { type: string, description: The aud a pipeline asks its token for. }
+    CITokenRequest:
+      type: object
+      required: [token]
+      additionalProperties: false
+      properties:
+        token: { type: string, description: The OIDC token the CI provider minted for the job. }
+    CITokenResponse:
+      type: object
+      required: [access_token, token_type, expires_in, expires_at, issuer, tenant, role, scopes]
+      properties:
+        access_token: { type: string, description: "The session token (dxci_...), for the Authorization header." }
+        token_type: { type: string, enum: [Bearer] }
+        expires_in: { type: integer, description: Seconds the session lives (auth.ci_oidc.session_ttl_seconds). }
+        expires_at: { type: string, format: date-time }
+        issuer: { type: string, description: The issuer entry that verified the token. }
+        tenant: { type: string, description: "The entry's tenant, which the session acts in." }
+        role: { type: string, description: The role the matching rule names. }
+        scopes:
+          type: array
+          items: { type: string }
+          description: The scopes the session is narrowed to.
 
     VersionInfo:
       type: object

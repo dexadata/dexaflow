@@ -239,6 +239,17 @@ type Dependencies struct {
 	// such as "{tenant}.example.com": when set, a handoff and a session cookie
 	// are accepted only on the host of their tenant. Empty binds nothing.
 	TrustedIssuerHostPattern string
+	// CIOIDC, when set, verifies the OIDC tokens of the configured CI
+	// issuers (ADR 0092, auth.ci_oidc): POST /api/v2/auth/ciToken exchanges
+	// one for a session, and GET /api/v2/deployDefaults lists the caller's
+	// tenant's issuers. Nil leaves both off. CIOIDCRoles reads the role a
+	// rule names (the storage repo), CIOIDCSessionTTL is the session's
+	// lifetime (an hour when zero), and CIOIDCExchanges counts the
+	// exchanges (nil: not counted).
+	CIOIDC           CIOIDCVerifier
+	CIOIDCRoles      auth.RolePermissionStore
+	CIOIDCSessionTTL time.Duration
+	CIOIDCExchanges  CIOIDCExchangeRecorder
 	// ServiceToken, when set, enables the operator service API under
 	// /api/v2/service/ (#1283), authenticated by this bearer token instead of a
 	// user session. ServiceTenants is its storage (the repo).
@@ -420,7 +431,12 @@ func NewServer(deps Dependencies) *gin.Engine {
 	r.GET("/api/v2/monitor/executor", RequireScope(auth.ScopeRead), monitorExecutorHandler(deps.ExecutorInfo))
 	// What a deploy reads before it builds (#1704): the gate of the other
 	// deploy reads, so a dexaflow:deploy token reaches it (ADR 0074).
-	r.GET("/api/v2/deployDefaults", RequireDeployRead(), deployDefaultsHandler(deps.DeployDefaults))
+	r.GET("/api/v2/deployDefaults", RequireDeployRead(), deployDefaultsHandler(deps.DeployDefaults, deps.CIOIDC))
+	// CI OIDC exchange (ADR 0092): registered only when an issuer is
+	// configured, under the public /api/v2/auth/ prefix.
+	if ci := newCITokenDeps(deps); ci != nil {
+		r.POST(ciTokenPath, ciTokenHandler(ci))
+	}
 
 	registerResources(r, deps)
 	registerUI(r, deps.TokenTTLSecs, deps.InstanceName, deps.UIAutoRefreshIntervalSeconds, deps.UITheme)

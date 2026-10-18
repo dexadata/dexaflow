@@ -41,6 +41,33 @@ type DeployDefaults struct {
 	// (ADR 0058, ADR 0082, #1890); nil advertises nothing. The server fills
 	// it from execution.* when deploy.defaults.warm_pools is on.
 	WarmPools *WarmPoolDefaults `json:"warm_pools" mapstructure:"-"`
+	// CIOIDC lists the CI OIDC issuers of the caller's tenant (ADR 0092),
+	// so `dexaflow ci init` writes a pipeline that deploys without a stored
+	// token; nil when the tenant has none. Unlike the fields above it
+	// depends on the caller: the server fills it per request, and it is no
+	// deploy setting, so IsEmpty and Validate ignore it.
+	CIOIDC *CIOIDCDefaults `json:"ci_oidc" mapstructure:"-"`
+}
+
+// CIOIDCDefaults are the CI OIDC issuers a deployDefaults answer lists
+// (ADR 0092).
+type CIOIDCDefaults struct {
+	// Issuers are the entries of the caller's tenant, in configuration order.
+	Issuers []CIOIDCIssuer `json:"issuers"`
+}
+
+// CIOIDCIssuer is one CI OIDC issuer as `dexaflow ci init` needs it: which
+// provider it is and the audience a pipeline asks its token for. It carries
+// no rule and no tenant.
+type CIOIDCIssuer struct {
+	// Name is the entry's name in the server configuration.
+	Name string `json:"name"`
+	// Provider is github, gitlab, cloudbuild or other.
+	Provider string `json:"provider"`
+	// Issuer is the exact iss of the provider's tokens.
+	Issuer string `json:"issuer"`
+	// Audience is the aud the pipeline asks its token for.
+	Audience string `json:"audience"`
 }
 
 // WarmPoolDefaults are the warm pool settings of a cluster, as a deploy
@@ -71,7 +98,7 @@ var serviceAccountNamePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9]
 // maxServiceAccountName is the longest name Kubernetes accepts.
 const maxServiceAccountName = 253
 
-// IsEmpty reports whether d sets nothing.
+// IsEmpty reports whether d sets no deploy setting (CIOIDC is not one).
 func (d DeployDefaults) IsEmpty() bool {
 	return d.Registry == "" && len(d.Platforms) == 0 && d.BaseImage == "" && d.SourceModeImage == "" &&
 		d.RemoteBuilder == nil && d.TaskServiceAccount == "" && d.WarmPools == nil

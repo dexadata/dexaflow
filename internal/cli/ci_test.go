@@ -73,6 +73,9 @@ type ciCase struct {
 	registry string
 	// orders is the dexaflow.yaml of the orders project, beyond its dag_id.
 	orders string
+	// oidc points ci init at a server that offers a CI OIDC issuer for
+	// every provider, so it writes the tokenless pipeline (ADR 0092).
+	oidc bool
 }
 
 // ciCases are the golden cases. Each system gets the registry its users
@@ -83,6 +86,9 @@ var ciCases = []ciCase{
 	{name: "gitlab-docker", system: "gitlab", registry: "registry.gitlab.com/acme/dags", orders: "system_packages: [libpq-dev]\n"},
 	{name: "cloudbuild", system: "cloudbuild", registry: "us-central1-docker.pkg.dev/acme/dags"},
 	{name: "generic", system: "generic", registry: "ghcr.io/acme/dags"},
+	{name: "github-oidc", system: "github", registry: "ghcr.io/acme/dags", oidc: true},
+	{name: "gitlab-oidc", system: "gitlab", registry: "registry.gitlab.com/acme/dags", oidc: true},
+	{name: "cloudbuild-oidc", system: "cloudbuild", registry: "us-central1-docker.pkg.dev/acme/dags", oidc: true},
 }
 
 // ciWorkspace writes a workspace with two DAG projects, orders and billing,
@@ -149,6 +155,9 @@ func ciGolden(t *testing.T) map[string]map[string]string {
 	all := map[string]map[string]string{}
 	for _, c := range ciCases {
 		isolateCLIEnv(t)
+		if c.oidc {
+			t.Setenv("DEXAFLOW_SERVER_URL", newDeployDefaultsServer(t, http.StatusOK, ciOIDCOffer).URL)
+		}
 		root := ciWorkspace(t, c.registry, c.orders)
 		if _, stderr, err := ciInit(t, root, c.system); err != nil {
 			t.Fatalf("%s: ci init %s: %v\n%s", c.name, c.system, err, stderr)
@@ -216,11 +225,14 @@ func sortedKeys(m map[string]string) []string {
 // script.
 func TestCIInitWritesWhereEachSystemReads(t *testing.T) {
 	want := map[string][]string{
-		"github":        {".github/workflows/dexaflow-deploy.yaml", ciScriptPath},
-		"gitlab":        {".gitlab-ci.yml", ciScriptPath},
-		"gitlab-docker": {".gitlab-ci.yml", ciScriptPath},
-		"cloudbuild":    {ciScriptPath, "cloudbuild.yaml"},
-		"generic":       {ciScriptPath},
+		"github":          {".github/workflows/dexaflow-deploy.yaml", ciScriptPath},
+		"gitlab":          {".gitlab-ci.yml", ciScriptPath},
+		"gitlab-docker":   {".gitlab-ci.yml", ciScriptPath},
+		"cloudbuild":      {ciScriptPath, "cloudbuild.yaml"},
+		"generic":         {ciScriptPath},
+		"github-oidc":     {".github/workflows/dexaflow-deploy.yaml", ciScriptPath},
+		"gitlab-oidc":     {".gitlab-ci.yml", ciScriptPath},
+		"cloudbuild-oidc": {ciScriptPath, "cloudbuild.yaml"},
 	}
 	for name, files := range ciGolden(t) {
 		if got := sortedKeys(files); !slices.Equal(got, want[name]) {
@@ -298,7 +310,11 @@ func TestCIInitFlagsExist(t *testing.T) {
 			t.Errorf("%s: flags the CLI does not have:\n%s", name, strings.Join(v, "\n"))
 		}
 		joined := strings.Join(seen, "\n")
-		for _, want := range []string{"deploy --all --changed-since", "deploy --all --yes --output json", "auth create-token --scope deploy"} {
+		wants := []string{"deploy --all --changed-since", "deploy --all --yes --output json", "auth create-token --scope deploy"}
+		if strings.HasSuffix(name, "-oidc") {
+			wants = append(wants, "auth ci-token")
+		}
+		for _, want := range wants {
 			if !strings.Contains(joined, want) {
 				t.Errorf("%s: the checker saw no %q in:\n%s", name, want, joined)
 			}

@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_lite_restore/
 title: "dexaflow lite restore"
 linkTitle: "lite restore"
-weight: 49
+weight: 50
 ---
 
 Restore a Lite install from an archive produced by `dexaflow lite backup`.

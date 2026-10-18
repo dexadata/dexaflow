@@ -72,3 +72,39 @@ func (q *Queries) GetRoleByName(ctx context.Context, arg GetRoleByNameParams) (p
 	err := row.Scan(&id)
 	return id, err
 }
+
+const getRolePermissionsByID = `-- name: GetRolePermissionsByID :many
+SELECT p.action, p.resource
+FROM role_permissions rp
+JOIN permissions p ON p.id = rp.permission_id
+WHERE rp.role_id = $1
+ORDER BY p.action, p.resource
+`
+
+type GetRolePermissionsByIDRow struct {
+	Action   string `json:"action"`
+	Resource string `json:"resource"`
+}
+
+// The grants of one role, for a CI OIDC session that acts with that role
+// alone (ADR 0092). The caller resolved the role in its tenant first
+// (GetRoleByName), so the tenant predicate is on that lookup.
+func (q *Queries) GetRolePermissionsByID(ctx context.Context, roleID pgtype.UUID) ([]GetRolePermissionsByIDRow, error) {
+	rows, err := q.db.Query(ctx, getRolePermissionsByID, roleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetRolePermissionsByIDRow{}
+	for rows.Next() {
+		var i GetRolePermissionsByIDRow
+		if err := rows.Scan(&i.Action, &i.Resource); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

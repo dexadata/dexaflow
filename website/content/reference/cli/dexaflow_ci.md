@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_ci/
 title: "dexaflow ci"
 linkTitle: "ci"
-weight: 20
+weight: 21
 ---
 
 Set up a CI pipeline that deploys the workspace.
