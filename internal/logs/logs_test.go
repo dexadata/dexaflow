@@ -193,6 +193,14 @@ func TestRefineLevel(t *testing.T) {
 		{"processed 42 rows", "info", "info"},
 		{"raw stderr noise", "error", "error"},
 		{"", "info", "info"},
+
+		// Issue #870: dbt summary lines printed to stderr must not be colored error
+		// when ERROR=0.
+		{"Done. PASS=24 WARN=0 ERROR=0 SKIP=0 TOTAL=24", "error", "info"},
+		{"Done. PASS=1 WARN=0 ERROR=0 SKIP=0", "error", "info"},
+		{"Done. PASS=20 WARN=2 ERROR=0 SKIP=0 TOTAL=22", "error", "warning"},
+		{"Done. PASS=20 WARN=0 ERROR=1 SKIP=0 TOTAL=21", "error", "error"},
+		{"\x1b[0m\x1b[32mDone. PASS=24 WARN=0 ERROR=0 SKIP=0\x1b[0m", "error", "info"},
 	}
 	for _, c := range cases {
 		if got := RefineLevel(c.msg, c.fallback); got != c.want {
