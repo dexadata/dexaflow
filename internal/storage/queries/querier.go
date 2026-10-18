@@ -318,6 +318,10 @@ type Querier interface {
 	// passing the tenant separately. A name that is not a role in that tenant yields
 	// no row, which the reconcile turns into a fail-closed error.
 	GetRoleIDForUserTenant(ctx context.Context, arg GetRoleIDForUserTenantParams) (pgtype.UUID, error)
+	// The grants of one role, for a CI OIDC session that acts with that role
+	// alone (ADR 0092). The caller resolved the role in its tenant first
+	// (GetRoleByName), so the tenant predicate is on that lookup.
+	GetRolePermissionsByID(ctx context.Context, roleID pgtype.UUID) ([]GetRolePermissionsByIDRow, error)
 	GetTenantByName(ctx context.Context, name string) (GetTenantByNameRow, error)
 	GetTenantLimits(ctx context.Context, id pgtype.UUID) (GetTenantLimitsRow, error)
 	// The id of a user of the tenant: no row when the user is gone or belongs to
