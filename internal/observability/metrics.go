@@ -67,6 +67,9 @@ type Metrics struct {
 	// deploy.require_digest warned about or refused, by stage (register,
 	// set_current) and outcome (warned, refused) (#1703).
 	UnpinnedImages *prometheus.CounterVec
+	// CIOIDCExchanges counts CI OIDC token exchanges by issuer entry
+	// ("unknown" when the token named none) and outcome (ADR 0092).
+	CIOIDCExchanges *prometheus.CounterVec
 
 	// Redis observability — port of the #311 step-down pattern for Redis (Pro
 	// only; Lite uses Postgres + in-process tailer per ADR 0026, so these
@@ -223,6 +226,11 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "dexaflow_unpinned_image_total",
 			Help: "Images not pinned by digest that deploy.require_digest warned about (outcome=warned) or refused (outcome=refused), by stage (register, set_current). Dry runs are not counted.",
 		}, []string{"stage", "outcome"}),
+		CIOIDCExchanges: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_ci_oidc_exchange_total",
+			Help: "CI OIDC token exchanges (auth.ci_oidc, ADR 0092) by issuer entry (unknown when none matched) and outcome " +
+				"(issued, invalid_token, unknown_issuer, no_rule, role_missing, keys_unavailable, error).",
+		}, []string{"issuer", "outcome"}),
 
 		RedisCommandFailures: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_redis_command_failures_total",
@@ -455,4 +463,10 @@ func (m *Metrics) RecordUnitMisfit(stage string) { m.UnitMisfits.WithLabelValues
 // api.UnpinnedImageRecorder.
 func (m *Metrics) RecordUnpinnedImage(stage, outcome string) {
 	m.UnpinnedImages.WithLabelValues(stage, outcome).Inc()
+}
+
+// RecordCIOIDCExchange counts one CI OIDC token exchange. It satisfies
+// api.CIOIDCExchangeRecorder.
+func (m *Metrics) RecordCIOIDCExchange(issuer, outcome string) {
+	m.CIOIDCExchanges.WithLabelValues(issuer, outcome).Inc()
 }
