@@ -28,8 +28,11 @@ by hand.
 3. **Run the end-to-end gates on the candidate's commit.** `make rc-smoke` runs
    the gates and the k3d suites. The performance gates workflow
    (`.github/workflows/e2e-gates.yaml`) and the soak smoke run nightly on `main`
-   and on rc tags only, so start both with `workflow_dispatch` on the
-   `release-X.Y` commit before the cut.
+   and on rc tags, and the daemonless deploy workflow
+   (`.github/workflows/e2e-daemonless-deploy.yaml`: `dexaflow deploy` of
+   `examples/taskflow_sales` from the `dexaflow-cli` image with no container
+   daemon, then a run on k3d) on rc tags only, so start all three with
+   `workflow_dispatch` on the `release-X.Y` commit before the cut.
 4. **Record every review** of
    [AGENTS.md section 1](https://github.com/dexadata/dexaflow/blob/main/AGENTS.md#1-release-candidate-reviews)
    in the tracking issue of the `vX.Y.Z` milestone: one line each, with who did
