@@ -99,6 +99,7 @@ this page.
 - [ADR 0087: the local daemon takes the digest from its own push](/project/adrs/0087-local-daemon-digest-from-the-push/)
 - [ADR 0088: build args, build secrets and a private package index](/project/adrs/0088-build-args-secrets-and-package-index/)
 - [ADR 0089: a warm pool is keyed by the DAG's environment, so versions that share a dependency image and runtime settings share workers](/project/adrs/0089-warm-pools-keyed-by-environment/)
+- [ADR 0090: the control plane waits for its schema, and names a database that was emptied, replaced, restored or repointed under it](/project/adrs/0090-database-replaced-under-a-running-release/)
 - [ADR 0091: registry login without docker](/project/adrs/0091-registry-login-without-docker/)
 - [ADR 0092: CI pipelines deploy with their provider's OIDC token, exchanged for a short session](/project/adrs/0092-ci-deploys-with-oidc-tokens/)
 
