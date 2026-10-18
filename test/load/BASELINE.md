@@ -111,6 +111,45 @@ What stands out:
 - `PoolSlotUsage` scans all 5,000,000 task instances to count a handful of
   active ones.
 
+## Code-only deploy
+
+```sh
+make build
+PYTHONPATH=parser go run ./test/load/deploy_p50 --cli bin/dexaflow \
+  --config <cli config> --local-registry --n 20 [--dependency pandas==2.2.3]
+```
+
+Recorded 2026-10-17 on `main` at `8d50751b` with the harness of #1892, on a 4
+vCPU Intel Xeon at 2.80 GHz with 15 GB of RAM (not the host of the tables
+above), Go 1.26.9, uv 0.11.32, the parser on the host's Python 3.13 and a
+control plane with `executor.type=subprocess` on Postgres 16.15 on the same
+host. The registry is the harness's in-memory loopback registry, so the times
+are the CLI and the register with no network to the registry. Each run is one
+cold deploy, then 20 deploys that each change one comment line of `dag.py`.
+See [Experiment 7](README.md#experiment-7-code-only-deploy-and-warm-up).
+
+| Dependencies | Cold deploy | Code-only p50 | p95 | Max | Builder of every measured deploy | Registry requests per code-only deploy |
+|---|---:|---:|---:|---:|---|---:|
+| `requests==2.32.3` | 0.51 s | 0.33 s | 0.35 s | 0.35 s | `code-layer` | 34 |
+| `pandas==2.2.3` | 4.66 s | 0.32 s | 0.35 s | 0.37 s | `code-layer` | 34 |
+
+What stands out:
+
+- A code-only deploy does not depend on the size of the dependencies: the
+  pandas image costs 4.7 s to build once, and its code-only deploys cost what
+  the requests ones do. The cold deploys reused the uv cache of earlier runs,
+  so they are not the time of a first build on a clean machine.
+- With the registry on the loopback, a code-only deploy is about a third of a
+  second, 90 times under the 30 s target. On a remote registry the 34 requests
+  are round trips: at 50 ms each they add about 1.7 s, plus the code layer
+  upload. Nine of the 34 are the `GET /v2/` ping each new registry client
+  sends first; the others look for an image of this content label, read the
+  base and the dependency image, push the code layer and the image config,
+  push the image and its index, and read the pushed tag back for its digest.
+- The warm-up after a code-only deploy (checklist row I2) needs a cluster
+  with warm pools on and has not been recorded yet: record it with the next k3d
+  run of `deploy_p50 --warm`.
+
 ## Targets
 
 The gates of the performance plan, against the rows above (v0.5.0). Two were
