@@ -1,0 +1,17 @@
+kind: Added
+body: |-
+  **CI pipelines can deploy without a stored token.** A control plane can now
+  trust CI providers (GitHub Actions, GitLab CI, Google Cloud Build, or any
+  other OIDC issuer) under `auth.ci_oidc.issuers` (Helm
+  `auth.ciOidc.issuers`): each entry names the provider's issuer, the
+  audience and the tenant its jobs deploy to, and rules that map the job's
+  claims (repository, branch, environment) to a role of that tenant. The
+  tenant is the entry's, never a claim's. A job exchanges its provider's OIDC
+  token at `POST /api/v2/auth/ciToken` (`dexaflow auth ci-token`) for a
+  session that lasts `auth.ci_oidc.session_ttl_seconds` (one hour by
+  default). `dexaflow ci init` writes the tokenless pipeline when the target
+  control plane offers an issuer for the system, and keeps the deploy token
+  otherwise (`--auth auto|oidc|token`). Exchanges are counted in
+  `dexaflow_ci_oidc_exchange_total` and audited as `ci_oidc.exchange`.
+  See ADR 0092. (#1882)
+time: 2026-10-18T12:00:00.000000000+00:00

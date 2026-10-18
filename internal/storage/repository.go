@@ -2785,3 +2785,32 @@ func (r *Repository) EnsureIssuerUser(ctx context.Context, tenant, email, provid
 	existing.Roles = roles
 	return existing, false, nil
 }
+
+// RolePermissions returns the grants of the role called role in tenant, for
+// a CI OIDC session that acts with that role alone (ADR 0092). A tenant
+// without such a role, or no such tenant, is auth.ErrRoleNotFound.
+func (r *Repository) RolePermissions(ctx context.Context, tenant, role string) ([]auth.Permission, error) {
+	tid, err := r.tenantID(ctx, tenant)
+	if errors.Is(err, domain.ErrNotFound) {
+		return nil, auth.ErrRoleNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	roleID, err := r.q.GetRoleByName(ctx, queries.GetRoleByNameParams{TenantID: tid, Name: role})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, auth.ErrRoleNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("looking up role: %w", err)
+	}
+	rows, err := r.q.GetRolePermissionsByID(ctx, roleID)
+	if err != nil {
+		return nil, fmt.Errorf("loading role permissions: %w", err)
+	}
+	perms := make([]auth.Permission, 0, len(rows))
+	for _, p := range rows {
+		perms = append(perms, auth.Permission{Action: p.Action, Resource: p.Resource})
+	}
+	return perms, nil
+}

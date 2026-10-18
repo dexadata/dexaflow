@@ -1,0 +1,41 @@
+suite: CI OIDC issuers reach the server (ADR 0092, #1882)
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+set:
+  nameOverride: leoflow
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: s
+tests:
+  - it: renders the issuers as JSON and the session lifetime when an entry is set
+    set:
+      auth.ciOidc.sessionTtlSeconds: 900
+      auth.ciOidc.issuers:
+        - name: github-acme
+          provider: github
+          issuer: https://token.actions.githubusercontent.com
+          audience: https://dexaflow.acme.example
+          tenant: acme
+          rules:
+            - claims: {repository: acme/dags, ref: refs/heads/main}
+              role: deployer
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: "spec.template.spec.containers[0].env"
+          content:
+            name: LEOFLOW_AUTH_CI_OIDC_ISSUERS
+            value: '[{"audience":"https://dexaflow.acme.example","issuer":"https://token.actions.githubusercontent.com","name":"github-acme","provider":"github","rules":[{"claims":{"ref":"refs/heads/main","repository":"acme/dags"},"role":"deployer"}],"tenant":"acme"}]'
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_CI_OIDC_SESSION_TTL_SECONDS, value: "900"}}
+
+  - it: renders nothing by default, so the exchange stays off
+    template: deployment.yaml
+    asserts:
+      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_CI_OIDC_ISSUERS, value: "[]"}}
+      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_CI_OIDC_SESSION_TTL_SECONDS, value: "3600"}}

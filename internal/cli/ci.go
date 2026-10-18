@@ -62,6 +62,11 @@ const ciMinCLIVersion = "v0.5.0"
 // action the GitHub workflow installs the CLI with.
 const ciActionMinVersion = "v0.5.4"
 
+// ciOIDCMinVersion is the first release whose CLI has `dexaflow auth
+// ci-token` and whose server serves the CI OIDC exchange (ADR 0092): a
+// pipeline that installs an older CLI keeps the deploy token.
+const ciOIDCMinVersion = "v0.5.5"
+
 // ciCLIImageRepo is the published image of the CLI, which the GitLab job
 // runs in from the release that first ships it.
 const ciCLIImageRepo = "ghcr.io/dexadata/dexaflow-cli"
@@ -224,6 +229,7 @@ type ciInitOptions struct {
 	branch      string
 	cliVersion  string
 	environment string
+	auth        string
 }
 
 // ciRegistry is one registry the workspace pushes to.
@@ -245,6 +251,9 @@ type ciPlan struct {
 	BranchSet bool
 	// Environment is the GitHub environment the job runs in.
 	Environment string
+	// OIDC is the issuer entry a tokenless pipeline signs in through, nil
+	// for the deploy token path (ADR 0092).
+	OIDC *ciOIDC
 	// CLICommit is the commit of CLIVersion, which the GitHub workflow pins
 	// the setup-dexaflow action to.
 	CLICommit string
@@ -327,6 +336,9 @@ func newCIInitCommand() *cobra.Command {
 			"or from the workspace target (--target, else default_target), and a deploy\n" +
 			"token from the CI secret DEXAFLOW_TOKEN:\n" +
 			"  dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d\n" +
+			"When that control plane offers a CI OIDC issuer for the system (auth.ci_oidc),\n" +
+			"the pipeline instead exchanges the job's OIDC token for a short-lived session\n" +
+			"(`dexaflow auth ci-token`), and no token is stored; --auth picks the path.\n" +
 			"An existing file is never overwritten without --force.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -338,6 +350,7 @@ func newCIInitCommand() *cobra.Command {
 	cmd.Flags().StringVar(&o.branch, "branch", "main", "the branch whose pushes deploy")
 	cmd.Flags().StringVar(&o.cliVersion, "cli-version", "", "the CLI release the pipeline installs, such as v0.6.0, "+ciMinCLIVersion+" or later (default: this CLI's version)")
 	cmd.Flags().StringVar(&o.environment, "environment", "production", "github: the environment the deploy job runs in, whose secrets and protection rules apply")
+	cmd.Flags().StringVar(&o.auth, "auth", ciAuthAuto, "how the pipeline signs in: auto (the job's OIDC token when the server offers an issuer for the system, else a deploy token), oidc or token")
 	return cmd
 }
 
@@ -374,6 +387,9 @@ func runCIInit(cmd *cobra.Command, system string, o ciInitOptions) error {
 	}
 	plan.BranchSet = cmd.Flags().Changed("branch")
 	plan.Environment = o.environment
+	if plan.OIDC, err = chooseCIAuth(cmd, system, cliVersion, o.auth); err != nil {
+		return err
+	}
 	if pinErr := plan.pinInstall(cmdContext(cmd)); pinErr != nil {
 		return pinErr
 	}
@@ -679,8 +695,13 @@ func ciExistsError(path string) error {
 func printCINext(w io.Writer, plan *ciPlan) error {
 	var b strings.Builder
 	b.WriteString("\nNext:\n")
-	b.WriteString("  1. create a deploy token, and store it as the CI secret DEXAFLOW_TOKEN:\n")
-	b.WriteString("       dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d\n")
+	if o := plan.OIDC; o != nil {
+		fmt.Fprintf(&b, "  1. no token to store: the job signs in with its OIDC token (audience %s),\n", o.Audience)
+		fmt.Fprintf(&b, "     which %s trusts through its CI OIDC issuer %s\n", o.Server, o.Name)
+	} else {
+		b.WriteString("  1. create a deploy token, and store it as the CI secret DEXAFLOW_TOKEN:\n")
+		b.WriteString("       dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d\n")
+	}
 	if plan.Target != "" {
 		fmt.Fprintf(&b, "  2. the pipeline deploys to target %s; commit %s with it\n", plan.Target, workspaceFileName)
 	} else {
