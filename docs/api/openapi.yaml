@@ -2148,7 +2148,8 @@ components:
           description: >-
             Remote builder (ADR 0083) a deploy uses for builds no daemonless
             path covers, for projects, targets and workspaces that name none:
-            the server's deploy.defaults.remote_builder. Null when unset.
+            the server's deploy.defaults.remote_builder, with one backend.
+            Null when unset.
             Absent from servers that predate it.
           properties:
             cloud_build:
@@ -2158,6 +2159,15 @@ components:
                 region: { type: string, description: Cloud Build region; absent when unset. }
                 worker_pool: { type: string, description: "Private pool, projects/<project>/locations/<region>/workerPools/<name>; absent when unset." }
                 service_account: { type: string, description: "Account the build runs as, projects/<project>/serviceAccounts/<email>; absent when unset." }
+            buildkit:
+              type: object
+              description: >-
+                The in-cluster BuildKit builder the Helm chart runs
+                (builder.enabled, #1883), which a deploy reaches with buildctl
+                over kubectl exec. Absent from servers that predate it.
+              properties:
+                namespace: { type: string, description: Namespace of the builder. }
+                pod_selector: { type: string, description: "Label selector of the builder pod, key=value pairs separated by commas; absent when unset." }
         task_service_account:
           type: string
           description: >-

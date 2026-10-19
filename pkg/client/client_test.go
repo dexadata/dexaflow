@@ -259,6 +259,28 @@ func TestGetDeployDefaultsBuilderServiceAccountAndWarmPools(t *testing.T) {
 	}
 }
 
+// TestGetDeployDefaultsBuildKit (#1883): the in-cluster builder a cluster
+// advertises is decoded with its namespace and pod selector.
+func TestGetDeployDefaultsBuildKit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"registry":"","platforms":[],"base_image":"",` +
+			`"remote_builder":{"buildkit":{"namespace":"dexaflow-builder","pod_selector":"app.kubernetes.io/instance=df,app.kubernetes.io/component=builder"}}}`))
+	}))
+	defer srv.Close()
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := c.GetDeployDefaults(context.Background())
+	if err != nil {
+		t.Fatalf("GetDeployDefaults: %v", err)
+	}
+	want := DeployBuildKit{Namespace: "dexaflow-builder", PodSelector: "app.kubernetes.io/instance=df,app.kubernetes.io/component=builder"}
+	if d.RemoteBuilder == nil || d.RemoteBuilder.CloudBuild != nil || d.RemoteBuilder.BuildKit == nil || *d.RemoteBuilder.BuildKit != want {
+		t.Errorf("remote_builder = %+v, want buildkit %+v", d.RemoteBuilder, want)
+	}
+}
+
 // TestGetDeployDefaultsCIOIDC reads the CI OIDC issuers of the caller's
 // tenant (ADR 0092), and none from a server that predates them.
 func TestGetDeployDefaultsCIOIDC(t *testing.T) {

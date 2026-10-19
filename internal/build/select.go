@@ -48,10 +48,11 @@ type Options struct {
 }
 
 // remote returns the remote builder when it applies to a build for
-// platforms, or nil and why not ("" when none is configured). One whose CLI
-// is missing is passed over only when the daemon's tool is on PATH;
-// otherwise it is kept, so the build fails on what was configured.
-func (o Options) remote(platforms []string, daemon LocalDaemon) (rem Remote, why string) {
+// platforms, or nil and why not ("" when none is configured). One that is
+// not ready (its CLI is missing, or the person deploying may not use it) is
+// passed over only when the daemon's tool is on PATH; otherwise it is kept,
+// so the build fails on what was configured.
+func (o Options) remote(ctx context.Context, platforms []string, daemon LocalDaemon) (rem Remote, why string) {
 	if o.Remote == nil {
 		return nil, ""
 	}
@@ -68,7 +69,7 @@ func (o Options) remote(platforms []string, daemon LocalDaemon) (rem Remote, why
 	if why := o.Remote.Decline(platforms); why != "" {
 		return nil, from + " does not apply: " + why
 	}
-	if err := o.Remote.Ready(); err != nil {
+	if err := o.Remote.Ready(ctx); err != nil {
 		if _, lerr := exec.LookPath(daemon.tool()); lerr == nil {
 			return nil, from + " does not apply: " + err.Error()
 		}
@@ -114,7 +115,7 @@ func Select(ctx context.Context, o Options, image string, platforms []string) (b
 		}
 		why = skipWhy + "; "
 	}
-	rem, remWhy := o.remote(platforms, daemon)
+	rem, remWhy := o.remote(ctx, platforms, daemon)
 	cr, ok := reg.(codeRegistry)
 	if o.Split == nil || !ok {
 		return whole(daemon, rem, why, o.NoSplit, remWhy, o.RemoteSource)

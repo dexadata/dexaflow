@@ -221,6 +221,66 @@ tests:
       - notExists:
           path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_WARM_POOLS")]
 
+  # The in-cluster builder (#1883) is advertised once the chart runs it.
+  - it: advertises no in-cluster builder while builder.enabled is false
+    template: deployment.yaml
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_NAMESPACE")]
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_POD_SELECTOR")]
+
+  - it: advertises the in-cluster builder with its namespace and the pod labels of this release
+    template: deployment.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_NAMESPACE
+            value: dexaflow-builder
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_POD_SELECTOR
+            value: app.kubernetes.io/instance=leoflow,app.kubernetes.io/component=builder
+
+  - it: keeps the in-cluster builder to itself with builder.advertise false
+    template: deployment.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+      builder.advertise: false
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_NAMESPACE")]
+
+  - it: refuses to advertise the in-cluster builder next to a Cloud Build default
+    template: deployment.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+      deploy.defaults.remoteBuilder.cloudBuild.project: acme-ci
+    asserts:
+      - failedTemplate:
+          errorPattern: builder.advertise
+
+  - it: keeps the Cloud Build default when the in-cluster builder is not advertised
+    template: deployment.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+      builder.advertise: false
+      deploy.defaults.remoteBuilder.cloudBuild.project: acme-ci
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT
+            value: acme-ci
+
   - it: renders each remote builder value that is set
     template: deployment.yaml
     set:

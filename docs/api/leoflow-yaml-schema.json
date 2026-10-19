@@ -122,6 +122,16 @@
                 "service_account": { "type": "string", "description": "The account the build runs as: projects/<project>/serviceAccounts/<email>. Default: the project's Cloud Build service account." }
               },
               "additionalProperties": false
+            },
+            "buildkit": {
+              "type": "object",
+              "description": "Build on the in-cluster BuildKit daemon the Helm chart runs (builder.enabled), with buildctl over kubectl exec as the person who deploys. One platform, the builder node's. Set this or cloud_build, not both.",
+              "properties": {
+                "namespace": { "type": "string", "description": "Required. The namespace of the builder, the chart's builder.namespace." },
+                "pod_selector": { "type": "string", "description": "Label selector of the builder pod, key=value pairs separated by commas. Default: app.kubernetes.io/component=builder." },
+                "context": { "type": "string", "description": "The kubeconfig context that reaches the builder's cluster. Default: kubectl's current context." }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false

@@ -5,13 +5,14 @@
 // builders are tried in (ResolutionOrder): skip the build when the dependency
 // image already exists, append a code layer, pack a daemonless dependency
 // layer, use a remote builder, and only then fall back to a local container
-// daemon. Four exist today: Existing, the skip path in its first form (the
+// daemon. These exist today: Existing, the skip path in its first form (the
 // whole image for this content label is already in the registry, see Select);
 // CodeLayer, which appends the DAG code to a dependency image the registry
 // holds, or first builds that dependency image, from wheels without a daemon
 // (DependencyLayer, ADR 0078), with the remote builder or with the daemon
-// (ADR 0077); CloudBuild, the remote builder on Google Cloud Build (Remote,
-// ADR 0083); and LocalDaemon. Every builder returns a Result that carries the digest of the image it
+// (ADR 0077); CloudBuild and InCluster, the remote builder on Google Cloud
+// Build (ADR 0083) or on the in-cluster BuildKit daemon the Helm chart runs
+// (Remote, #1883); and LocalDaemon. Every builder returns a Result that carries the digest of the image it
 // pushed, so the caller pins dag.json to exactly those bytes (ADR 0003,
 // ADR 0041).
 //

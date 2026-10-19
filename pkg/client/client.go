@@ -146,6 +146,18 @@ type DeployCIOIDCIssuer struct {
 type DeployRemoteBuilder struct {
 	// CloudBuild builds on Google Cloud Build.
 	CloudBuild *DeployCloudBuild `json:"cloud_build,omitempty"`
+	// BuildKit builds on the in-cluster BuildKit daemon the Helm chart runs
+	// (builder.enabled, #1883). Nil from a server that predates it.
+	BuildKit *DeployBuildKit `json:"buildkit,omitempty"`
+}
+
+// DeployBuildKit is the in-cluster BuildKit backend of DeployRemoteBuilder.
+type DeployBuildKit struct {
+	// Namespace is the namespace of the builder.
+	Namespace string `json:"namespace,omitempty"`
+	// PodSelector is the label selector of the builder pod; empty selects
+	// app.kubernetes.io/component=builder.
+	PodSelector string `json:"pod_selector,omitempty"`
 }
 
 // DeployCloudBuild is the Cloud Build backend of DeployRemoteBuilder. An
