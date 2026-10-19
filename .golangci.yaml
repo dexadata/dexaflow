@@ -48,8 +48,16 @@ linters:
     # ─── Style consistency ───
     - whitespace         # Trailing whitespace
     - tagliatelle        # Struct tag naming consistency
+    - nolintlint         # Every //nolint names its linters and says why (#1572)
 
   settings:
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      # A directive can be needed on one platform or golangci-lint version and
+      # not another (field widths in syscall structs, gosec rule changes), so
+      # an unused one is not a finding.
+      allow-unused: true
     depguard:
       rules:
         # ADR 0073 section 3: the CLI's registry client may use only these
