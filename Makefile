@@ -292,36 +292,8 @@ fuzz: ## Run every Go fuzz target for FUZZTIME each (default 30s; FUZZ=<regexp> 
 	FUZZTIME=$(FUZZTIME) bash scripts/fuzz.sh
 
 .PHONY: ci-local
-ci-local: ## Run every CI gate locally — pre-push tripwire so a PR does not arrive red
-	@echo "▸ gofmt"
-	@test -z "$$(gofmt -l . | tee /dev/stderr)" || (echo "FAIL: gofmt"; exit 1)
-	@echo "▸ go build"
-	@go build ./...
-	@echo "▸ golangci-lint"
-	@golangci-lint run ./...
-	@echo "▸ go test"
-	@go test ./...
-	@echo "▸ govulncheck (advisories DB is fetched at runtime — catches new stdlib CVEs CI will see)"
-	@command -v govulncheck >/dev/null && govulncheck ./... \
-		|| ($$(go env GOPATH)/bin/govulncheck ./... 2>/dev/null) \
-		|| (echo "skip govulncheck (run: go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION))"; exit 0)
-	@echo "▸ helm unittest (chart contracts)"
-	@command -v helm >/dev/null && command -v helm-unittest >/dev/null \
-		&& (cd helm/dexaflow && helm unittest .) \
-		|| (command -v helm >/dev/null && helm plugin list 2>/dev/null | grep -q unittest \
-			&& (cd helm/dexaflow && helm unittest .) \
-			|| echo "skip helm unittest (install: helm plugin install https://github.com/helm-unittest/helm-unittest)")
-	@echo "▸ python parser tests"
-	@command -v python3 >/dev/null && (cd parser && python3 -m pytest -q) || echo "skip pytest (no python3)"
-	@echo "▸ hugo --gc --minify (website/)"
-	@if ! command -v hugo >/dev/null; then \
-		echo "skip hugo (not installed: https://gohugo.io/installation/ — needs the extended build)"; \
-	elif [ ! -x website/node_modules/.bin/postcss ]; then \
-		echo "skip hugo (Docsy PostCSS toolchain missing: run 'npm --prefix website ci')"; \
-	else \
-		(cd website && hugo --gc --minify --quiet); \
-	fi
-	@echo "✅ ci-local clean — push when ready"
+ci-local: ## Run every CI gate locally, and list the gates whose tool is missing (no secrets needed)
+	@bash scripts/ci-local.sh
 
 .PHONY: install-pre-push-hook
 install-pre-push-hook: ## Install a pre-push hook that runs `make ci-local` automatically
