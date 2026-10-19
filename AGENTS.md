@@ -127,6 +127,10 @@ The Actions queue has few runners, so every wasted run delays everyone.
   messages, PR descriptions, docs and changelog entries.
 - **No em dashes** in new text written to the repository or to its PRs and
   issues. Use a comma, a colon, parentheses or two sentences instead.
+- `scripts/lint-new-text.sh` checks the two rules above that a script can
+  check, an em dash in an added line and an attribution trailer in a commit
+  message, on every pull request ("Text rules") and in the hooks `make setup`
+  installs.
 - Follow the PR template (`.github/PULL_REQUEST_TEMPLATE.md`): one logical change
   per PR, a changelog fragment (`make changelog`) or the `skip-changelog` label,
   docs updated or `skip-docs` with its reason.
