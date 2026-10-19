@@ -263,8 +263,9 @@ cover: test ## Show total Go coverage
 	go tool cover -func=coverage.out | tail -1
 
 .PHONY: lint
-lint: ## Run golangci-lint and ruff
+lint: ## Run golangci-lint, ruff and shellcheck
 	golangci-lint run ./...
+	@if command -v shellcheck >/dev/null; then git ls-files -z '*.sh' | xargs -0 shellcheck -S warning; else echo "skip shellcheck (not installed)"; fi
 	command -v ruff >/dev/null && (cd parser && ruff check .) || echo "skip ruff (not installed)"
 	command -v ruff >/dev/null && (cd runtime/python && ruff check .) || echo "skip runtime ruff (not installed)"
 

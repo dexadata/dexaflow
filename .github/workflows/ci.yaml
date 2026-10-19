@@ -218,6 +218,54 @@ jobs:
           path: coverage.out
 
   # ─────────────────────────────────────────────────────────────────────
+  # Shell scripts drive CI and every release cut, and nothing linted them
+  # (#1572). shellcheck runs at warning severity, where the tree is clean;
+  # the info and style findings are a later tightening.
+  # ─────────────────────────────────────────────────────────────────────
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: shellcheck every tracked script
+        run: |
+          shellcheck --version
+          git ls-files -z '*.sh' | xargs -0 shellcheck -S warning
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Dockerfile lint (#1572). Advisory until its findings are fixed, then
+  # required: continue-on-error keeps a finding from failing the run while
+  # the report stays on the job.
+  # ─────────────────────────────────────────────────────────────────────
+  hadolint:
+    name: hadolint (${{ matrix.dockerfile }}, advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile:
+          - deploy/Dockerfile.cli.release
+          - deploy/Dockerfile.mcp.release
+          - deploy/Dockerfile.migrate
+          - deploy/Dockerfile.server
+          - deploy/Dockerfile.server.release
+          - runtime/Dockerfile
+          - scripts/chaos/Dockerfile
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: ${{ matrix.dockerfile }}
+          failure-threshold: warning
+
+  # ─────────────────────────────────────────────────────────────────────
   # Integration tests (//go:build integration) against real Postgres + Redis.
   # Exercises the DB/lock-binding code excluded from the unit-coverage floor.
   # ─────────────────────────────────────────────────────────────────────
