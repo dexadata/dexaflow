@@ -1236,6 +1236,26 @@ jobs:
             echo "::warning::Production code changed without test changes. Verify ADR 0011 was followed."
           fi
 
+  # The text rules of AGENTS.md section 2 on what a pull request adds: no
+  # em dash in an added line, no attribution trailer or footer in a commit
+  # message (#1573). The pre-commit and commit-msg hooks run the same
+  # script.
+  new-text:
+    name: Text rules (added lines and commit messages)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: No em dash added, no attribution trailer
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/lint-new-text.sh --range "$BASE" "$HEAD"
+
   # ─────────────────────────────────────────────────────────────────────
   # Build all binaries
   # ─────────────────────────────────────────────────────────────────────

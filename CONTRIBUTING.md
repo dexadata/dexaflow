@@ -45,6 +45,13 @@ CI enforces all of the above automatically. PRs that fail CI cannot be merged.
 
 - Branch from `main`. Name: `feat/<short-description>`, `fix/<short-description>`, `docs/<short-description>`, `test/<short-description>`.
 - One logical change per PR. If you find yourself describing the PR with "and also...", split it.
+- Text is in English, and new text has no em dashes: use a comma, a colon,
+  parentheses or two sentences. Commit messages carry no `Co-Authored-By`
+  trailer, no session link and no generated-by footer. The "Text rules" check
+  on every pull request names the file and line, or the commit, that breaks
+  either rule, and `make setup` installs hooks that check the same before a
+  commit (`scripts/lint-new-text.sh`). Text that was there before keeps its
+  em dashes until a cleanup of its own.
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/):
   - `feat: add XCom schema validation`
   - `fix: handle pod OOMKilled in K8s executor`
