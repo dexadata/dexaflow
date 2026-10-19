@@ -134,5 +134,10 @@ func remoteBuilderOf(rb *apiclient.DeployRemoteBuilder) *domain.RemoteBuilderCon
 	if cb := rb.CloudBuild; cb != nil {
 		out.CloudBuild = &domain.CloudBuildConfig{Project: cb.Project, Region: cb.Region, WorkerPool: cb.WorkerPool, ServiceAccount: cb.ServiceAccount}
 	}
+	if bk := rb.BuildKit; bk != nil {
+		// No kubeconfig context: a server cannot know the names of this
+		// machine's contexts, so the current one reaches the builder.
+		out.BuildKit = &domain.BuildKitConfig{Namespace: bk.Namespace, PodSelector: bk.PodSelector}
+	}
 	return out
 }

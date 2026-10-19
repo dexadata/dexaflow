@@ -32,8 +32,8 @@ import (
 type Remote interface {
 	Builder
 	// Ready says why the builder cannot run on this machine (its CLI is not
-	// on PATH), or nil when it can.
-	Ready() error
+	// on PATH, or the person deploying may not use it), or nil when it can.
+	Ready(ctx context.Context) error
 	// Decline says why the builder does not build for platforms, or "" when
 	// it does.
 	Decline(platforms []string) string
@@ -116,7 +116,7 @@ func (b CloudBuild) Describe() string {
 }
 
 // Ready reports whether gcloud is on PATH.
-func (b CloudBuild) Ready() error {
+func (b CloudBuild) Ready(_ context.Context) error {
 	if _, err := exec.LookPath(b.tool()); err != nil {
 		return fmt.Errorf("the remote builder cloud-build runs gcloud, and %s is not on PATH; "+
 			"install the Google Cloud CLI (https://cloud.google.com/sdk/docs/install) and sign in with `gcloud auth login`", filepath.Base(b.tool()))
@@ -192,7 +192,7 @@ func (b CloudBuild) Build(ctx context.Context, req Request) (Result, error) {
 		return Result{}, errors.New("the build has secrets, which are read from this machine's environment; " +
 			"Cloud Build would have to store them in its build record, so a builder on this machine builds it (ADR 0088)")
 	}
-	if err := b.Ready(); err != nil {
+	if err := b.Ready(ctx); err != nil {
 		return Result{}, err
 	}
 	dir, err := os.MkdirTemp("", "dexaflow-cloudbuild-")

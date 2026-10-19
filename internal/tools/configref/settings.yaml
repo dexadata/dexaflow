@@ -1175,6 +1175,25 @@ settings:
       Account the remote build runs as,
       `projects/<project>/serviceAccounts/<email>`. Helm:
       `deploy.defaults.remoteBuilder.cloudBuild.serviceAccount`.
+  deploy.defaults.remote_builder.buildkit.namespace:
+    edition: Pro
+    description: >-
+      Namespace of the in-cluster builder (rootless BuildKit, #1883) a deploy
+      uses for builds no daemonless path covers, when the project's
+      `build.remote_builder`, its target and its workspace name none. The
+      person deploying needs `buildctl` and `kubectl`, and the builder
+      Role through `builder.subjects`; one who has not is passed over for
+      the local daemon. Required when `pod_selector` is set; refused with
+      any `cloud_build` value. Served as `remote_builder.buildkit`. The chart
+      sets it to `builder.namespace` when `builder.enabled` and
+      `builder.advertise` are on. See
+      [Builders](/operate/builders/#building-on-the-in-cluster-builder).
+  deploy.defaults.remote_builder.buildkit.pod_selector:
+    edition: Pro
+    description: >-
+      Label selector of the builder pod, `key=value` pairs separated by
+      commas; `app.kubernetes.io/component=builder` when unset. The chart
+      sets it to the builder's instance and component labels.
   deploy.defaults.task_service_account:
     edition: Pro
     description: >-

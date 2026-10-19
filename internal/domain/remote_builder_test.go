@@ -60,3 +60,56 @@ func TestRemoteBuilderValidateNamesThePrefix(t *testing.T) {
 		t.Errorf("Validate = %v, want the prefixed field", err)
 	}
 }
+
+// The in-cluster BuildKit backend loads with its namespace alone, or with a
+// pod selector and a kubeconfig context.
+func TestValidateAcceptsABuildKitRemoteBuilder(t *testing.T) {
+	for _, bk := range []*BuildKitConfig{
+		{Namespace: "dexaflow-builder"},
+		{Namespace: "builds", PodSelector: "app.kubernetes.io/instance=dexaflow,app.kubernetes.io/component=builder", Context: "prod-eu"},
+		{Namespace: "builds", PodSelector: "app=buildkitd", Context: "arn:aws:eks:eu-west-1:123456789012:cluster/prod"},
+	} {
+		if err := (&RemoteBuilderConfig{BuildKit: bk}).Validate("build.remote_builder"); err != nil {
+			t.Errorf("Validate(%+v) = %v, want it accepted", bk, err)
+		}
+	}
+}
+
+// What kubectl and buildctl would receive is checked when the file loads:
+// no namespace, a value that is not a namespace name or an equality
+// selector, a context kubectl could read as a flag, and two backends at
+// once are refused with the field named.
+func TestValidateRefusesABadBuildKitRemoteBuilder(t *testing.T) {
+	for name, tc := range map[string]struct {
+		rb    *RemoteBuilderConfig
+		field string
+	}{
+		"no namespace":   {&RemoteBuilderConfig{BuildKit: &BuildKitConfig{}}, "build.remote_builder.buildkit.namespace"},
+		"bad namespace":  {&RemoteBuilderConfig{BuildKit: &BuildKitConfig{Namespace: "Builds_1"}}, "build.remote_builder.buildkit.namespace"},
+		"flag namespace": {&RemoteBuilderConfig{BuildKit: &BuildKitConfig{Namespace: "--all-namespaces"}}, "build.remote_builder.buildkit.namespace"},
+		"bad selector":   {&RemoteBuilderConfig{BuildKit: &BuildKitConfig{Namespace: "builds", PodSelector: "app in (a b)"}}, "build.remote_builder.buildkit.pod_selector"},
+		"flag context":   {&RemoteBuilderConfig{BuildKit: &BuildKitConfig{Namespace: "builds", Context: "-v=9"}}, "build.remote_builder.buildkit.context"},
+		"ctl context":    {&RemoteBuilderConfig{BuildKit: &BuildKitConfig{Namespace: "builds", Context: "a\nb"}}, "build.remote_builder.buildkit.context"},
+		"two backends": {&RemoteBuilderConfig{CloudBuild: &CloudBuildConfig{Project: "acme-ci"}, BuildKit: &BuildKitConfig{Namespace: "builds"}},
+			"build.remote_builder"},
+	} {
+		err := tc.rb.Validate("build.remote_builder")
+		if err == nil || !strings.Contains(err.Error(), tc.field) {
+			t.Errorf("%s: Validate = %v, want a refusal naming %s", name, err, tc.field)
+		}
+	}
+	err := (&RemoteBuilderConfig{CloudBuild: &CloudBuildConfig{Project: "acme-ci"}, BuildKit: &BuildKitConfig{Namespace: "builds"}}).Validate("build.remote_builder")
+	if err == nil || !strings.Contains(err.Error(), "one backend") {
+		t.Errorf("two backends: Validate = %v, want it to say one backend is set", err)
+	}
+}
+
+// An unset pod selector selects the pods of the chart's builder.
+func TestBuildKitDefaultPodSelector(t *testing.T) {
+	if got := (BuildKitConfig{Namespace: "builds"}).Selector(); got != "app.kubernetes.io/component=builder" {
+		t.Errorf("Selector() = %q, want the chart's component label", got)
+	}
+	if got := (BuildKitConfig{Namespace: "builds", PodSelector: "app=buildkitd"}).Selector(); got != "app=buildkitd" {
+		t.Errorf("Selector() = %q, want the configured selector", got)
+	}
+}
