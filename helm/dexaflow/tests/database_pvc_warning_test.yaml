@@ -1,0 +1,48 @@
+suite: in-cluster Postgres PVC warning (#1995, ADR 0090)
+templates:
+  - NOTES.txt
+release:
+  name: leoflow
+set:
+  nameOverride: leoflow
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+tests:
+  - it: warns in NOTES when postgresql subchart has persistence disabled
+    template: NOTES.txt
+    set:
+      database.url: postgres://user:pass@h:5432/d
+      postgresql.enabled: true
+      postgresql.persistence.enabled: false
+    asserts:
+      - matchRegexRaw:
+          pattern: "WARNING: in-cluster Postgres runs without persistent storage"
+
+  - it: warns in NOTES when database.url points to an in-cluster PoC postgres
+    template: NOTES.txt
+    set:
+      database.url: postgres://leoflow:leoflow-poc@pg-postgresql:5432/leoflow?sslmode=disable
+    asserts:
+      - matchRegexRaw:
+          pattern: "WARNING: in-cluster Postgres runs without persistent storage"
+
+  - it: does not warn in NOTES when database.url is external
+    template: NOTES.txt
+    set:
+      database.url: postgres://user:pass@rds.example.com:5432/dexaflow
+    asserts:
+      - notMatchRegexRaw:
+          pattern: "WARNING: in-cluster Postgres runs without persistent storage"
+
+  - it: does not warn in NOTES when postgresql subchart has persistence enabled
+    template: NOTES.txt
+    set:
+      database.url: postgres://user:pass@h:5432/d
+      postgresql.enabled: true
+      postgresql.persistence.enabled: true
+    asserts:
+      - notMatchRegexRaw:
+          pattern: "WARNING: in-cluster Postgres runs without persistent storage"

@@ -186,6 +186,49 @@ would otherwise be queried with the old ones.
 The PR that hardens the Helm chart (#96) will add a `BACKUP.md` to the
 chart README pointing at the upstream guidance.
 
+## Regular restore drills
+
+A backup that has never been restored does not count as a backup.
+Disaster recovery procedures must periodically exercise restoring fresh
+backups into clean test databases to verify that:
+1. The snapshot or archive is intact and uncorrupted.
+2. The restored database schema matches the required version.
+3. The server boots cleanly, passes all startup checks, and becomes ready
+   (`/readyz` returns 200).
+
+### Lite restore drill
+
+```sh
+# 1. Take a fresh backup
+dexaflow lite backup --output /tmp/drill-snapshot.tar.gz
+
+# 2. In a temporary test directory or clean container:
+dexaflow lite restore --input /tmp/drill-snapshot.tar.gz --force
+
+# 3. Boot Lite and verify readiness
+dexaflow lite &
+PID=$!
+sleep 5
+curl -fsS http://localhost:8080/readyz
+kill "$PID"
+```
+
+### Pro / Helm restore drill
+
+```sh
+# 1. Dump logical backup
+pg_dump --clean --if-exists -d "$DATABASE_URL" > /tmp/drill-backup.sql
+
+# 2. Restore into a test or clean database
+psql "$TEST_DATABASE_URL" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+psql "$TEST_DATABASE_URL" < /tmp/drill-backup.sql
+
+# 3. Verify server readiness against restored database
+kubectl -n leoflow rollout restart deploy/leoflow
+kubectl -n leoflow rollout status deploy/leoflow --timeout=120s
+curl -fsS http://127.0.0.1:8080/readyz
+```
+
 ## Related issues
 
 - #137 — these commands.

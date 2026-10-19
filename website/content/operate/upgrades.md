@@ -1066,6 +1066,26 @@ previous release does with a `removed` task instance). A task that was
 waiting on an unavailable Kubernetes API at that moment falls back onto the
 dispatch-attempt budget of the previous release. No other data changes.
 
+## Ephemeral database loss (emptyDir Postgres)
+
+When evaluating Dexaflow with an in-cluster Postgres running on `emptyDir`
+storage (such as in local clusters or evaluation setups), the datastore has no
+persistence guarantees. Any pod recreation, node reboot, node drain, or
+Spot/preemptible reclamation destroys the database volume completely.
+
+When a running control plane discovers that its schema or data has vanished, it
+stops serving requests and marks itself not ready (`/readyz` returns 503) rather
+than crash-looping or silently re-initializing an empty database (see ADR 0090).
+
+To prevent data loss:
+- Never run production control planes against `emptyDir` datastores.
+- For in-cluster Postgres, always back the deployment with a
+  PersistentVolumeClaim (PVC).
+- For production environments, point `database.url` at managed services such as
+  AWS RDS, GCP Cloud SQL, or Azure Database for PostgreSQL.
+- Regularly exercise database backup and restore drills (see
+  [Backup and restore](/operate/backup-restore/#regular-restore-drills)).
+
 ## Related issues
 
 - #136 — this contract.
