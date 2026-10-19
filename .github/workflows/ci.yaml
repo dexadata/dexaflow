@@ -1256,6 +1256,24 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: bash scripts/lint-new-text.sh --range "$BASE" "$HEAD"
 
+  # Developer Certificate of Origin (#1575): every commit of a pull request
+  # is signed off by its author. Merge commits and Dependabot are exempt.
+  dco:
+    name: DCO (every commit signed off by its author)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Every commit signed off by its author
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/dco-check.sh --range "$BASE" "$HEAD"
+
   # ─────────────────────────────────────────────────────────────────────
   # Build all binaries
   # ─────────────────────────────────────────────────────────────────────

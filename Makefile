@@ -64,6 +64,7 @@ setup: ## Install Go tools (incl. changie), Python parser, and the pre-commit ho
 	command -v python3 >/dev/null && pip install -e "./parser[dev]" && pip install -e ./runtime/python || echo "skip parser/runtime install (python3 not found)"
 	install -m 0755 scripts/pre-commit .git/hooks/pre-commit
 	install -m 0755 scripts/commit-msg .git/hooks/commit-msg
+	install -m 0755 scripts/prepare-commit-msg .git/hooks/prepare-commit-msg
 	@echo "setup complete"
 
 .PHONY: build
