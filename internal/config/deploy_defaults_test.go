@@ -300,3 +300,46 @@ func TestValidateDeployDefaultsBuilderAndServiceAccount(t *testing.T) {
 		t.Errorf("Validate() with a task service account = %v, want nil", err)
 	}
 }
+
+// TestDeployDefaultsBuildKitEnvBind (#1883): the in-cluster builder binds
+// from either variable prefix and is served with its namespace and pod
+// selector; the chart sets them when builder.enabled.
+func TestDeployDefaultsBuildKitEnvBind(t *testing.T) {
+	for _, prefix := range []string{"DEXAFLOW_", "LEOFLOW_"} {
+		t.Run(prefix, func(t *testing.T) {
+			t.Setenv(prefix+"DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_NAMESPACE", "dexaflow-builder")
+			t.Setenv(prefix+"DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_POD_SELECTOR", "app.kubernetes.io/instance=df,app.kubernetes.io/component=builder")
+			c, err := LoadServer("", nil)
+			if err != nil {
+				t.Fatalf("LoadServer: %v", err)
+			}
+			rb := c.AdvertisedDeployDefaults().RemoteBuilder
+			want := domain.BuildKitConfig{Namespace: "dexaflow-builder", PodSelector: "app.kubernetes.io/instance=df,app.kubernetes.io/component=builder"}
+			if rb == nil || rb.CloudBuild != nil || rb.BuildKit == nil || *rb.BuildKit != want {
+				t.Errorf("remote_builder = %+v, want buildkit %+v from the %s variables", rb, want, prefix)
+			}
+		})
+	}
+}
+
+// TestValidateDeployDefaultsBuildKit: a pod selector without a namespace, a
+// bad namespace, and both backends at once fail at boot, naming the key.
+func TestValidateDeployDefaultsBuildKit(t *testing.T) {
+	c := validWarmConfig()
+	c.Deploy.Defaults.RemoteBuilder.BuildKit.PodSelector = "app=buildkitd"
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "deploy.defaults.remote_builder.buildkit.namespace") {
+		t.Errorf("Validate() = %v, want an error naming deploy.defaults.remote_builder.buildkit.namespace", err)
+	}
+	c.Deploy.Defaults.RemoteBuilder.BuildKit.Namespace = "Builds"
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "deploy.defaults.remote_builder.buildkit.namespace") {
+		t.Errorf("Validate() = %v, want an error naming deploy.defaults.remote_builder.buildkit.namespace", err)
+	}
+	c.Deploy.Defaults.RemoteBuilder.BuildKit.Namespace = "dexaflow-builder"
+	if err := c.Validate(); err != nil {
+		t.Errorf("Validate() with a namespace = %v, want nil", err)
+	}
+	c.Deploy.Defaults.RemoteBuilder.CloudBuild.Project = "acme-ci"
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "one backend") {
+		t.Errorf("Validate() with both backends = %v, want an error saying one backend is set", err)
+	}
+}

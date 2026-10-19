@@ -175,8 +175,10 @@ but never a target's. With a target, the workspace is the one around the
 current folder (the one the target came from), and its defaults apply only to
 projects inside it.
 
-`remote_builder`, the [Cloud Build remote builder](/operate/builders/#building-on-cloud-build)
-for builds that need a real Dockerfile build, follows the same order: the
+`remote_builder`, the remote builder for builds that need a real Dockerfile
+build ([Cloud Build](/operate/builders/#building-on-cloud-build) or the
+[in-cluster builder](/operate/builders/#building-on-the-in-cluster-builder)),
+follows the same order: the
 project's `build.remote_builder`, then the target's `remote_builder`, then
 `defaults.remote_builder`. Targets saved in your config file
 (`dexaflow target add`) and the cluster's defaults carry none.
@@ -187,6 +189,10 @@ targets:
     server: https://flow.acme.dev
     remote_builder:
       cloud_build: {project: acme-prod-ci, region: europe-west1}
+  staging:
+    server: https://flow-staging.acme.dev
+    remote_builder:
+      buildkit: {namespace: dexaflow-builder, context: staging}
 defaults:
   remote_builder:
     cloud_build: {project: acme-ci}
@@ -270,6 +276,13 @@ names where the one it used came from (`the remote builder from the deploy
 defaults of https://flow-dev.acme.dev builds the whole image`). The person
 deploying still signs in with `gcloud` and needs the Cloud Build role on that
 project.
+
+A cluster that runs the [in-cluster builder](/operate/builders/#building-on-the-in-cluster-builder)
+(`builder.enabled`) advertises it instead, with no `remoteBuilder` value: the
+chart sets its namespace and pod selector, unless `builder.advertise` is
+false. The chart refuses both at once. The person deploying needs `buildctl`
+and `kubectl` pointed at the cluster, and a binding in `builder.subjects`;
+without them the deploy says why and builds with the local daemon.
 
 The task service account and the warm pools are the server's own settings,
 served as they are when their switch is on, so nothing is copied by hand. The

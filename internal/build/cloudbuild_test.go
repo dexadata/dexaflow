@@ -354,7 +354,7 @@ func TestCloudBuildRefusesAnOversizedContext(t *testing.T) {
 func TestCloudBuildWithoutGcloudSaysHowToInstallIt(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	b := CloudBuild{Project: "acme-ci", Registry: &fakeRegistry{}}
-	if err := b.Ready(); err == nil || !strings.Contains(err.Error(), "gcloud is not on PATH") || !strings.Contains(err.Error(), "cloud.google.com/sdk") {
+	if err := b.Ready(context.Background()); err == nil || !strings.Contains(err.Error(), "gcloud is not on PATH") || !strings.Contains(err.Error(), "cloud.google.com/sdk") {
 		t.Errorf("Ready = %v, want gcloud missing and where to get it", err)
 	}
 	if _, err := b.Build(context.Background(), cloudRequest(t)); err == nil || !strings.Contains(err.Error(), "gcloud is not on PATH") {

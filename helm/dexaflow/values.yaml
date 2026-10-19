@@ -828,6 +828,8 @@ builder:
     pullPolicy: IfNotPresent
   # -- Pull secrets for the builder image, which must exist in `builder.namespace`, such as `[{name: regcred}]`.
   imagePullSecrets: []
+  # -- Advertise the builder on `/api/v2/deployDefaults` as the cluster's remote builder (`deploy.defaults.remote_builder.buildkit`, rendered as `LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_NAMESPACE` and `_POD_SELECTOR`), so a `dexaflow deploy` that needs a real build runs it here with `buildctl` instead of a local container daemon. A person who is not in `subjects`, or has no `buildctl` or `kubectl`, is passed over for the local daemon. The chart refuses it next to `deploy.defaults.remoteBuilder.cloudBuild`; set it to false to keep Cloud Build as the cluster's default.
+  advertise: true
   # -- Who may build: RBAC subjects bound to the builder Role, which allows `get` and `list` on pods and `create` and `get` on `pods/exec` in `builder.namespace` only. Each is `{kind: User|Group, name}` or `{kind: ServiceAccount, name, namespace}`. Everyone bound shares one daemon and its cache and can read what the others build, so bind people who already trust each other. Empty renders the Role with no binding.
   subjects: []
   cache:

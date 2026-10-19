@@ -108,10 +108,11 @@ type DeployDefaultsSection struct {
 	// cluster that names no runtime image of its own registers dag.py on it
 	// with no build (#1772). It requires execution.source_mode.enabled.
 	SourceMode bool `mapstructure:"source_mode"`
-	// RemoteBuilder (deploy.defaults.remote_builder.cloud_build.*, #1890) is
-	// the remote builder a deploy to this cluster uses for builds no
-	// daemonless path covers, when the project, its target and its workspace
-	// name none (ADR 0083). Unset (the default) advertises none.
+	// RemoteBuilder (deploy.defaults.remote_builder.cloud_build.*, #1890, or
+	// deploy.defaults.remote_builder.buildkit.*, #1883) is the remote builder
+	// a deploy to this cluster uses for builds no daemonless path covers,
+	// when the project, its target and its workspace name none (ADR 0083).
+	// Unset (the default) advertises none.
 	RemoteBuilder RemoteBuilderSection `mapstructure:"remote_builder"`
 	// AdvertiseTaskServiceAccount (deploy.defaults.task_service_account,
 	// default false, #1890) serves executor.task_service_account as
@@ -126,10 +127,23 @@ type DeployDefaultsSection struct {
 }
 
 // RemoteBuilderSection is deploy.defaults.remote_builder: the backends of
-// domain.RemoteBuilderConfig as server keys. Cloud Build is the only one.
+// domain.RemoteBuilderConfig as server keys. At most one is set.
 type RemoteBuilderSection struct {
 	// CloudBuild is deploy.defaults.remote_builder.cloud_build.
 	CloudBuild CloudBuildSection `mapstructure:"cloud_build"`
+	// BuildKit is deploy.defaults.remote_builder.buildkit.
+	BuildKit BuildKitSection `mapstructure:"buildkit"`
+}
+
+// BuildKitSection is deploy.defaults.remote_builder.buildkit, the in-cluster
+// builder the chart runs (builder.enabled): the fields of
+// domain.BuildKitConfig a server can know. The kubeconfig context is the
+// client's own. Every field empty advertises none.
+type BuildKitSection struct {
+	// Namespace is the namespace of the builder.
+	Namespace string `mapstructure:"namespace"`
+	// PodSelector is the label selector of the builder pod.
+	PodSelector string `mapstructure:"pod_selector"`
 }
 
 // CloudBuildSection is deploy.defaults.remote_builder.cloud_build, the
@@ -194,13 +208,20 @@ func (c *ServerConfig) AdvertisedDeployDefaults() domain.DeployDefaults {
 }
 
 // config is the remote builder s configures, nil when it sets nothing.
+// Both backends set is kept, so Validate refuses it.
 func (s RemoteBuilderSection) config() *domain.RemoteBuilderConfig {
-	cb := s.CloudBuild
-	if cb == (CloudBuildSection{}) {
+	cb, bk := s.CloudBuild, s.BuildKit
+	if cb == (CloudBuildSection{}) && bk == (BuildKitSection{}) {
 		return nil
 	}
-	return &domain.RemoteBuilderConfig{CloudBuild: &domain.CloudBuildConfig{
-		Project: cb.Project, Region: cb.Region, WorkerPool: cb.WorkerPool, ServiceAccount: cb.ServiceAccount}}
+	out := &domain.RemoteBuilderConfig{}
+	if cb != (CloudBuildSection{}) {
+		out.CloudBuild = &domain.CloudBuildConfig{Project: cb.Project, Region: cb.Region, WorkerPool: cb.WorkerPool, ServiceAccount: cb.ServiceAccount}
+	}
+	if bk != (BuildKitSection{}) {
+		out.BuildKit = &domain.BuildKitConfig{Namespace: bk.Namespace, PodSelector: bk.PodSelector}
+	}
+	return out
 }
 
 // Variable encryption modes (variable_encryption, #507).
@@ -1546,6 +1567,8 @@ var serverDefaults = map[string]any{
 	"deploy.defaults.remote_builder.cloud_build.region":          "",
 	"deploy.defaults.remote_builder.cloud_build.worker_pool":     "",
 	"deploy.defaults.remote_builder.cloud_build.service_account": "",
+	"deploy.defaults.remote_builder.buildkit.namespace":          "",
+	"deploy.defaults.remote_builder.buildkit.pod_selector":       "",
 	"deploy.defaults.task_service_account":                       false,
 	"deploy.defaults.warm_pools":                                 false,
 	// Digest-pinned images at register (#1703). off keeps every register as
