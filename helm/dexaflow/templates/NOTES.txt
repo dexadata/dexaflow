@@ -58,6 +58,12 @@ leader is invisible to every other pod's API/UI, and every log is lost when a po
 restarts. Ship task logs to object storage (logs.sink.provider=s3|gcs with
 logs.sink.bucket) or use a ReadWriteMany logs PVC — see
 helm/dexaflow/examples/values-ha.yaml.
+{{- else if and (not .Values.logs.persistence.enabled) (eq .Values.logs.sink.provider "disk") }}
+
+WARNING: logs.persistence.enabled=false with logs.sink.provider=disk.
+Task logs are stored in an ephemeral emptyDir and will not survive a pod restart
+or helm upgrade. Ship task logs to object storage (logs.sink.provider=s3|gcs with
+logs.sink.bucket) or enable persistent volume storage (logs.persistence.enabled=true).
 {{- end }}
 {{- /* Auto-selection only: this note credits the replica floor for the budget, so
 printing it over a value the operator set by hand — in either spelling — hands

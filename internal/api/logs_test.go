@@ -378,4 +378,92 @@ func TestNoLogsWithoutAReasonKeepsTheOriginalMessage(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "No logs available") {
 		t.Errorf("expected the plain no-logs message, got %q", rec.Body.String())
 	}
+	if strings.Contains(rec.Body.String(), "no durable log store is configured") {
+		t.Errorf("durable log store must not mention ephemeral loss: %q", rec.Body.String())
+	}
+}
+
+func logsServerWithEphemeral(reader LogReader, tasks TaskInstanceRepository, ephemeral bool) *gin.Engine {
+	return NewServer(Dependencies{
+		Logger:        discardLogger(),
+		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		CORSOrigins:   []string{"*"},
+		Tasks:         tasks,
+		Logs:          reader,
+		EphemeralLogs: ephemeral,
+	})
+}
+
+// TestNoLogsEphemeralStoreExplainsTerminalAttempt: when logs are on an ephemeral store
+// (emptyDir) and a terminal attempt's logs are missing, explain that they did not survive
+// a control plane restart.
+func TestNoLogsEphemeralStoreExplainsTerminalAttempt(t *testing.T) {
+	const expected = "no durable log store is configured (logs.persistence.enabled=false with logs.sink.provider=disk); logs for this attempt did not survive a control-plane restart."
+	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{
+		TaskID: "extract", TryNumber: 1, State: domain.TaskStateSuccess,
+	}}}
+	srv := logsServerWithEphemeral(&fakeLogReader{err: domain.ErrNotFound}, tasks, true)
+	rec := authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns/run-1/taskInstances/extract/logs/1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("no-logs = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "No logs available for this attempt.") {
+		t.Errorf("body must retain primary no-logs notice, got %q", body)
+	}
+	if !strings.Contains(body, expected) {
+		t.Errorf("body must explain ephemeral loss for terminal attempt, got %q", body)
+	}
+}
+
+// TestNoLogsStructuredEphemeralStoreSurfacesWarning: structured responses emit the
+// ephemeral loss notice as a warning-level event.
+func TestNoLogsStructuredEphemeralStoreSurfacesWarning(t *testing.T) {
+	const expected = "no durable log store is configured (logs.persistence.enabled=false with logs.sink.provider=disk); logs for this attempt did not survive a control-plane restart."
+	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{
+		TaskID: "extract", TryNumber: 1, State: domain.TaskStateFailed,
+	}}}
+	srv := logsServerWithEphemeral(&fakeLogReader{err: domain.ErrNotFound}, tasks, true)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet,
+		"/api/v2/dags/etl/dagRuns/run-1/taskInstances/extract/logs/1", http.NoBody)
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	var got struct {
+		Content []struct {
+			Event string `json:"event"`
+			Level string `json:"level"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, e := range got.Content {
+		if strings.Contains(e.Event, expected) {
+			found = true
+			if e.Level != "warning" {
+				t.Errorf("ephemeral loss event level = %q, want warning", e.Level)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("structured response must contain ephemeral warning, got %+v", got.Content)
+	}
+}
+
+// TestNoLogsEphemeralStoreSilentWhenAttemptNotTerminal: non-terminal attempts (running, queued)
+// do not emit the restart warning since they have not completed execution.
+func TestNoLogsEphemeralStoreSilentWhenAttemptNotTerminal(t *testing.T) {
+	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{
+		TaskID: "extract", TryNumber: 1, State: domain.TaskStateRunning,
+	}}}
+	srv := logsServerWithEphemeral(&fakeLogReader{err: domain.ErrNotFound}, tasks, true)
+	rec := authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns/run-1/taskInstances/extract/logs/1", "")
+	if strings.Contains(rec.Body.String(), "no durable log store is configured") {
+		t.Errorf("running attempt must not claim logs were lost to restart: %q", rec.Body.String())
+	}
 }

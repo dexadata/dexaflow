@@ -1,0 +1,10 @@
+kind: Fixed
+body: |-
+  **Task-log API emptyDir warning and distinction.** When the task instance is in a
+  terminal state and no log blob exists on an ephemeral emptyDir disk store, the API
+  now explains why logs did not survive a control plane restart rather than showing an
+  unexplained empty log response. Additionally, the Helm chart NOTES now warn for
+  single-replica installs when `logs.persistence.enabled` is false with the disk sink,
+  and the control plane emits a startup warning when booting with ephemeral disk logs.
+  (#1024)
+time: 2026-10-19T00:00:00.000000000+00:00
