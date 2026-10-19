@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Dexaflow prepare-commit-msg hook: sign the commit off as its author, the
+# Developer Certificate of Origin the "DCO" check asks for on every pull
+# request commit (#1575). `make setup` installs it. A sign-off that is
+# already there is not repeated; a merge commit gets none, as the check
+# skips merges.
+set -euo pipefail
+msg="$1" source="${2:-}"
+[ "$source" = "merge" ] && exit 0
+ident=$(git var GIT_AUTHOR_IDENT | sed 's/>.*/>/')
+git interpret-trailers --in-place --if-exists addIfDifferent --trailer "Signed-off-by: $ident" "$msg"
