@@ -194,3 +194,104 @@ func TestRenewTrafficDoesNotSpendTheLoginBudget(t *testing.T) {
 		t.Fatal("renewal traffic spent the password-login budget")
 	}
 }
+
+func postRenewWithCookie(srv *gin.Engine, cookieVal, site string) *httptest.ResponseRecorder {
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v2/auth/token/renew", http.NoBody)
+	if cookieVal != "" {
+		req.AddCookie(&http.Cookie{Name: "_token", Value: cookieVal})
+	}
+	if site != "" {
+		req.Header.Set("Sec-Fetch-Site", site)
+	}
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestRenewTokenViaSessionCookie: requests carrying the session cookie rather
+// than an Authorization header renew successfully, and write back the refreshed
+// session cookie when called same-origin (#1127).
+func TestRenewTokenViaSessionCookie(t *testing.T) {
+	r := &fakeRenewer{renewed: "new-token", ok: true}
+	srv := renewServer(r)
+	rec := postRenewWithCookie(srv, "current-cookie-token", "same-origin")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("renew with cookie = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp tokenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if resp.AccessToken != "new-token" {
+		t.Errorf("access_token = %q, want new-token", resp.AccessToken)
+	}
+	if r.gotToken != "current-cookie-token" {
+		t.Errorf("renewer got token %q, want current-cookie-token", r.gotToken)
+	}
+	cookie := rec.Header().Get("Set-Cookie")
+	if !strings.Contains(cookie, "_token=new-token") {
+		t.Errorf("Set-Cookie = %q, want refreshed _token cookie", cookie)
+	}
+	if !strings.Contains(cookie, "HttpOnly") {
+		t.Errorf("Set-Cookie = %q, want HttpOnly", cookie)
+	}
+}
+
+// TestRenewTokenViaCookieRefusesCrossSiteCookie: a cross-site renewal request
+// gets the body but does NOT rewrite the browser session cookie (#1127).
+func TestRenewTokenViaCookieRefusesCrossSiteCookie(t *testing.T) {
+	r := &fakeRenewer{renewed: "new-token", ok: true}
+	srv := renewServer(r)
+	rec := postRenewWithCookie(srv, "current-cookie-token", "cross-site")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("renew cross-site = %d, want 200", rec.Code)
+	}
+	if cookie := rec.Header().Get("Set-Cookie"); cookie != "" {
+		t.Errorf("cross-site renewal wrote Set-Cookie: %q", cookie)
+	}
+}
+
+// fallbackRenewer rejects candidate1 as invalid and accepts candidate2.
+type fallbackRenewer struct {
+	invalidToken string
+	validToken   string
+	renewed      string
+}
+
+func (f *fallbackRenewer) RenewUserToken(ctx context.Context, token string, ttl, maxLifetime time.Duration) (renewed string, ok bool, err error) {
+	if token == f.invalidToken {
+		return "", false, auth.ErrInvalidToken
+	}
+	if token == f.validToken {
+		return f.renewed, true, nil
+	}
+	return "", false, auth.ErrInvalidToken
+}
+
+// TestRenewTokenFallsBackToCookieWhenBearerInvalid: when a stale bearer is in
+// Authorization header but a valid session cookie is present, renewal falls
+// back to the cookie (#1127).
+func TestRenewTokenFallsBackToCookieWhenBearerInvalid(t *testing.T) {
+	r := &fallbackRenewer{
+		invalidToken: "stale-bearer",
+		validToken:   "valid-cookie",
+		renewed:      "fresh-cookie-token",
+	}
+	srv := renewServer(r)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v2/auth/token/renew", http.NoBody)
+	req.Header.Set("Authorization", "Bearer stale-bearer")
+	req.AddCookie(&http.Cookie{Name: "_token", Value: "valid-cookie"})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("renew with stale bearer + valid cookie = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp tokenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if resp.AccessToken != "fresh-cookie-token" {
+		t.Errorf("access_token = %q, want fresh-cookie-token", resp.AccessToken)
+	}
+}

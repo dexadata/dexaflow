@@ -91,22 +91,30 @@
 // Minimal Dexaflow Lite editor: a file tree backed by /api/v2/ide/* and a Monaco
 // editor served from /ide/vs (provisioned by `leoflow setup`). Same-origin, so
 // the auth cookie authenticates every request — no token handling here.
+const checkAuth = (r) => {
+  if (r.status === 401) {
+    window.location.replace("/api/v2/auth/login?next=" + encodeURIComponent(window.location.pathname));
+    throw new Error("unauthorized");
+  }
+  return r;
+};
+
 const api = {
-  tree:   () => fetch("/api/v2/ide/tree").then(r => r.json()),
-  read:   (p) => fetch("/api/v2/ide/file?path=" + encodeURIComponent(p)).then(r => r.json()),
+  tree:   () => fetch("/api/v2/ide/tree").then(checkAuth).then(r => r.json()),
+  read:   (p) => fetch("/api/v2/ide/file?path=" + encodeURIComponent(p)).then(checkAuth).then(r => r.json()),
   write:  (p, content) => fetch("/api/v2/ide/file", { method: "PUT",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ path: p, content }) }),
+            body: JSON.stringify({ path: p, content }) }).then(checkAuth),
   create: (p, dir) => fetch("/api/v2/ide/file", { method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ path: p, dir: !!dir }) }),
+            body: JSON.stringify({ path: p, dir: !!dir }) }).then(checkAuth),
   move:   (from, to) => fetch("/api/v2/ide/move", { method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ from, to }) }),
+            body: JSON.stringify({ from, to }) }).then(checkAuth),
   installExamples: (dir) => fetch("/api/v2/ide/examples/install", { method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ dir: dir || "examples" }) }).then(r => r.json()),
-  remove: (p) => fetch("/api/v2/ide/file?path=" + encodeURIComponent(p), { method: "DELETE" }),
+            body: JSON.stringify({ dir: dir || "examples" }) }).then(checkAuth).then(r => r.json()),
+  remove: (p) => fetch("/api/v2/ide/file?path=" + encodeURIComponent(p), { method: "DELETE" }).then(checkAuth),
 };
 
 // Currently selected tree node — used as the parent for "New folder/file",

@@ -84,6 +84,21 @@ func TestLoginPageSanitizesNext(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "/dags/etl/grid") {
 		t.Errorf("safe next path was not preserved")
 	}
+
+	// An absolute same-origin URL extracts the local path, preserving query and hash (#1127).
+	rec = anonGet(loginServer(), "/api/v2/auth/login?next=https://example.com/dags/etl/grid?run_id=123#details")
+	if !strings.Contains(rec.Body.String(), "/dags/etl/grid?run_id") || !strings.Contains(rec.Body.String(), "#details") {
+		t.Errorf("same-origin full URL next path was not preserved: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "example.com") {
+		t.Errorf("host leaked into next path: %s", rec.Body.String())
+	}
+
+	// An off-origin URL collapses to "/".
+	rec = anonGet(loginServer(), "/api/v2/auth/login?next=https://evil.com/dags/etl/grid")
+	if strings.Contains(rec.Body.String(), "dags/etl/grid") {
+		t.Errorf("off-origin full URL path leaked: %s", rec.Body.String())
+	}
 }
 
 func TestTokenCookieAuthenticatesDataPlane(t *testing.T) {
