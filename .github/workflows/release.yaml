@@ -40,7 +40,15 @@ jobs:
     name: Chart preflight (version, lint, contract)
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # One build date for the run: the runtime image's amd64 and arm64 halves
+    # build on different runners and must bake the same date (#1686).
+    outputs:
+      build_date: ${{ steps.stamp.outputs.date }}
     steps:
+      - name: Stamp build date
+        id: stamp
+        run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -160,7 +168,11 @@ jobs:
   # ── Build + push leoflow-migrate (golang-migrate + Dexaflow migrations)
   # The Helm chart's migration Job (#34/#48) defaults to
   # ghcr.io/dexadata/leoflow-migrate:<tag>; this job publishes that image,
-  # multi-arch, on every release tag in parallel with install-smoke.
+  # multi-arch, on every release tag. It builds from the tag's source and uses
+  # nothing GoReleaser produces, so it starts after the chart preflight, in
+  # parallel with the release job rather than after it (#1686); the gate
+  # waits on it. Dockerfile.migrate cross-compiles for the target from the
+  # build platform, so the arm64 half needs no native runner.
   #
   # Dockerfile.migrate builds golang-migrate's own CLI from the version in our
   # go.mod (#1039) and copies migrations/ on top. GoReleaser's dockers block
@@ -171,7 +183,7 @@ jobs:
   # security.yaml scans on every PR.
   migrate-image:
     name: Build + push dexaflow-migrate image
-    needs: release
+    needs: chart-preflight
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -268,11 +280,120 @@ jobs:
   # OS CVEs it has. The leg keeps being published until then because `base_image`
   # pins make a silent drop a broken build for somebody else; the schema carries
   # the removal date and `dexaflow compile` warns the author.
-  runtime-image:
-    name: Build + push dexaflow-runtime base (py${{ matrix.python }})
-    needs: release
-    runs-on: ubuntu-latest
+  runtime-image-build:
+    name: Build dexaflow-runtime base (py${{ matrix.python }}, ${{ matrix.arch }})
+    # Builds from the tag's source and uses nothing GoReleaser produces, so it
+    # starts after the chart preflight, not after the release job (#1686).
+    needs: chart-preflight
+    # Each platform builds on a runner of its own architecture. The arm64 half
+    # used to build under QEMU on amd64 and took 13 to 18 minutes per Python,
+    # the critical path of every release run (#1686). ubuntu-24.04-arm is the
+    # hosted arm64 runner public repositories get.
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13"]
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+
+      # Pushed by digest, with no tag: `runtime-image` puts the two platform
+      # images under one multi-arch manifest and tags that.
+      - name: Build + push by digest
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: runtime/Dockerfile
+          # Stamp the baked agent with the release version/commit/date, so
+          # `leoflow-agent version` in a task pod is traceable to a commit (matches
+          # the cosign-signed release binaries' provenance).
+          build-args: |
+            PYTHON_VERSION=${{ matrix.python }}
+            GO_VERSION=${{ env.GO_VERSION }}
+            VERSION=${{ github.ref_name }}
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ needs.chart-preflight.outputs.build_date }}
+          platforms: linux/${{ matrix.arch }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime,push-by-digest=true,name-canonical=true,push=true
+
+      - name: Record the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime-digest-py${{ matrix.python }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ── Publish the Dexaflow task base image (runtime/Dockerfile)
+  # A DAG image is `FROM ghcr.io/dexadata/leoflow-runtime:py<ver>` (ADR 0003):
+  # the base ships the leoflow-agent (PID 1) and the leoflow_runtime helper, so a
+  # `dexaflow compile --build` needs nothing but a registry. Before this job the
+  # base only existed locally (built from a source checkout), which blocked
+  # testing Pro without the repo (#318). One leg per supported Python so an author
+  # picks the interpreter via `python_version`. Multi-arch + keyless cosign mirror
+  # leoflow-server/leoflow-migrate. The two platform images come from
+  # `runtime-image-build`; this job joins them under one manifest list, tags
+  # it under both names and signs it, so digests, tags and signatures keep
+  # the shape they had when one job built both platforms (#1686).
+  #
+  # The matrix below is a COPY, as is the one of `runtime-image-build`. The
+  # source of truth is the `python_version` enum
+  # in internal/domain/schemas/leoflow-yaml-schema.json — the list the CLI's
+  # Validate() actually enforces — and scripts/check-python-runtime-matrix.sh
+  # fails when either disagrees. Publishing a leg nobody can select, or letting an
+  # author select a leg nobody publishes, both surface as a `docker pull` 404
+  # inside the user's own build, which is the furthest point from the cause (#1031).
+  #
+  # py3.10 is DEPRECATED: Python 3.10 goes EOL 2026-10-31 and docker-library/python
+  # stops rebuilding an EOL line the day after, so the base freezes with whatever
+  # OS CVEs it has. The leg keeps being published until then because `base_image`
+  # pins make a silent drop a broken build for somebody else; the schema carries
+  # the removal date and `dexaflow compile` warns the author.
+  runtime-image:
+    name: Publish dexaflow-runtime base (py${{ matrix.python }})
+    needs: runtime-image-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -290,7 +411,6 @@ jobs:
         with:
           cosign-release: v2.4.3
 
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GHCR
@@ -300,12 +420,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: runtime-digest-py${{ matrix.python }}-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+
       - name: Image metadata
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           # Published under its name since the rename and its pre-rename
-          # name: one build, both tags, same digest, both signed below.
+          # name: one manifest, both tags, same digest, both signed below.
           images: |
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/leoflow-runtime
@@ -317,38 +443,40 @@ jobs:
           # `:latest`: the tag must always name a Python version.
           tags: |
             type=raw,value=py${{ matrix.python }}-${{ github.ref_name }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ github.ref_name }}
 
-      - name: Stamp build date
-        id: stamp
-        run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-
-      - name: Build + push (multi-arch)
-        id: build
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: runtime/Dockerfile
-          # Stamp the baked agent with the release version/commit/date, so
-          # `leoflow-agent version` in a task pod is traceable to a commit (matches
-          # the cosign-signed release binaries' provenance).
-          build-args: |
-            PYTHON_VERSION=${{ matrix.python }}
-            GO_VERSION=${{ env.GO_VERSION }}
-            VERSION=${{ github.ref_name }}
-            GIT_COMMIT=${{ github.sha }}
-            BUILD_DATE=${{ steps.stamp.outputs.date }}
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+      # One manifest list over the two platform images, pushed under every tag
+      # of both names. It must hold exactly linux/amd64 and linux/arm64, or the
+      # job fails before anything is signed.
+      - name: Create the multi-arch manifest
+        id: manifest
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          SOURCE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime
+          DIGESTS: ${{ runner.temp }}/digests
+        run: |
+          set -euo pipefail
+          mapfile -t digests < <(ls "$DIGESTS")
+          if [ "${#digests[@]}" -ne 2 ]; then
+            echo "::error::want the amd64 and arm64 digests, got ${#digests[@]}: ${digests[*]}"
+            exit 1
+          fi
+          args=()
+          for tag in $TAGS; do args+=(-t "$tag"); done
+          for d in "${digests[@]}"; do args+=("${SOURCE}@sha256:${d}"); done
+          docker buildx imagetools create "${args[@]}"
+          first=$(printf '%s\n' "$TAGS" | head -n1)
+          digest=$(docker buildx imagetools inspect "$first" --format '{{json .Manifest}}' | jq -r .digest)
+          platforms=$(docker buildx imagetools inspect --raw "$first" |
+            jq -r '[.manifests[].platform | select(.os != "unknown") | .os + "/" + .architecture] | sort | join(",")')
+          if [ "$platforms" != "linux/amd64,linux/arm64" ]; then
+            echo "::error::the manifest of $first holds $platforms, want linux/amd64,linux/arm64"
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       - name: Sign image with cosign (keyless)
         env:
-          DIGEST: ${{ steps.build.outputs.digest }}
+          DIGEST: ${{ steps.manifest.outputs.digest }}
           TAGS: ${{ steps.meta.outputs.tags }}
         run: |
           set -euo pipefail
