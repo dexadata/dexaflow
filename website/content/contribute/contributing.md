@@ -151,6 +151,11 @@ git push -u origin fix/clear-error-message
 ```
 
 - **Branch names:** `feat/…`, `fix/…`, `docs/…`, `test/…`, `refactor/…`, `chore/…`.
+- **Sign-off (DCO):** every commit ends with `Signed-off-by: Your Name
+  <you@example.com>`, the author's name and email, under the
+  [Developer Certificate of Origin](https://developercertificate.org).
+  `git commit -s` adds it, and so does the hook `make setup` installs; the
+  "DCO" check on the pull request names any commit without it.
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) —
   `feat: add XCom schema validation`, `fix: handle pod OOMKilled`, `test: failing
   test for retry backoff`.
