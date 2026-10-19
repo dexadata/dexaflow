@@ -259,35 +259,35 @@ jobs:
       # on pull_request: a PR run would collide with the main-branch baseline
       # under a shared category, the same trap security.yaml documents (#437).
       - name: Upload SARIF (leoflow-runtime py3.10)
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         if: always() && github.event_name != 'pull_request'
         with:
           sarif_file: scan-out/leoflow-runtime-py3.10.sarif
           category: trivy-image-runtime-py310
 
       - name: Upload SARIF (leoflow-runtime py3.11)
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         if: always() && github.event_name != 'pull_request'
         with:
           sarif_file: scan-out/leoflow-runtime-py3.11.sarif
           category: trivy-image-runtime-py311
 
       - name: Upload SARIF (leoflow-runtime py3.12)
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         if: always() && github.event_name != 'pull_request'
         with:
           sarif_file: scan-out/leoflow-runtime-py3.12.sarif
           category: trivy-image-runtime-py312
 
       - name: Upload SARIF (leoflow-runtime py3.13)
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         if: always() && github.event_name != 'pull_request'
         with:
           sarif_file: scan-out/leoflow-runtime-py3.13.sarif
           category: trivy-image-runtime-py313
 
       - name: Upload SARIF (dexaflow-cli)
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         if: always() && github.event_name != 'pull_request'
         with:
           sarif_file: scan-out/dexaflow-cli.sarif
