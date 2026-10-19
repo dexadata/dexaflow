@@ -71,7 +71,7 @@ LEOFLOW_EXECUTOR_TYPE="subprocess" \
 SERVER_PID=$!
 
 echo "==> waiting for readiness"
-for i in $(seq 1 40); do
+for _ in $(seq 1 40); do
   code="$(curl -s -o /dev/null -w '%{http_code}' "${BASE}/readyz" || true)"
   [ "$code" = "200" ] && break
   kill -0 "$SERVER_PID" 2>/dev/null || fail "server exited early:\n$(cat "$HOME_DIR/server.log")"
