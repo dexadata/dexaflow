@@ -22,7 +22,8 @@ only, not for production).
 Every release tag publishes the chart as a **cosign-signed OCI artifact** to
 `oci://ghcr.io/dexadata/charts/dexaflow` ([ADR 0028](/project/adrs/0028-release-versioning-two-editions/)),
 co-versioned with the release tag — so you can install a pinned version without
-cloning the repo:
+cloning the repo. Its signature and its build provenance are checked as shown
+in [Build provenance and SBOMs](/get-started/installation/#build-provenance-and-sboms):
 
 ```bash
 helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> \

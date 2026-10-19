@@ -664,7 +664,8 @@ jobs:
   # archives and for every image this run pushed (server, mcp, cli, migrate and each
   # runtime leg, by digest, so the leoflow-* names that share a digest are
   # covered too), the archive SBOMs attested against the archive they describe,
-  # and an SPDX SBOM attached to each image with `cosign attest`. Verification
+  # and an SPDX SBOM attached to each image with `cosign attest`. The chart's
+  # provenance is made in `promote`, where the chart is pushed. Verification
   # is on the installation page (`gh attestation verify`,
   # `cosign verify-attestation`).
   #
@@ -964,7 +965,8 @@ jobs:
     permissions:
       contents: write   # Mark the release Latest.
       packages: write   # Push the chart and re-point the py3.N tags on GHCR.
-      id-token: write   # Cosign keyless signing of the chart.
+      id-token: write   # Cosign keyless signing of the chart and its provenance.
+      attestations: write   # Store the chart build provenance attestation.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1007,7 +1009,8 @@ jobs:
       # are the un-prefixed ones. The same templates are published twice, as
       # `dexaflow` and as `leoflow`: the chart name feeds the selector labels,
       # so a release installed before the rename upgrades in place only with
-      # the chart name it was installed with.
+      # the chart name it was installed with. Each pushed digest is also written
+      # to charts.sha256 (checksums format) for the provenance step below.
       - name: Package, push and sign the charts (dexaflow and leoflow)
         env:
           TAG: ${{ github.ref_name }}
@@ -1022,6 +1025,7 @@ jobs:
           sed -i 's/^name: dexaflow$/name: leoflow/' "$legacy/Chart.yaml"
           grep -q '^name: leoflow$' "$legacy/Chart.yaml"
           helm package "$legacy" --version "$version" --app-version "$version"
+          : > charts.sha256
           for name in dexaflow leoflow; do
             helm push "${name}-${version}.tgz" "$CHARTS" 2>&1 | tee push.log
             digest="$(awk '/Digest: /{print $2}' push.log)"
@@ -1029,6 +1033,7 @@ jobs:
               echo "::error::could not parse the pushed ${name} chart digest from helm push output"
               exit 1
             fi
+            printf '%s  %s\n' "${digest#sha256:}" "${SIGN_PREFIX}/${name}" >> charts.sha256
             ./scripts/cosign-retry.sh sign --yes "${SIGN_PREFIX}/${name}@${digest}"
             # Read the signature back with the same identity pins the images
             # use, so a sign that silently flaked cannot ship (#1687).
@@ -1038,6 +1043,15 @@ jobs:
               "${SIGN_PREFIX}/${name}@${digest}" >/dev/null
             echo "chart ${name} ${version} @ ${digest}, signed and verified" >> "$GITHUB_STEP_SUMMARY"
           done
+
+      # SLSA build provenance for both charts, by the digest just pushed (#1562).
+      # The chart is only pushed here, after the gate, so its provenance is made
+      # here too and not in the `attest` job. A failure stops before any pointer
+      # moves below.
+      - name: Provenance for the charts
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: charts.sha256
 
       # Re-point py3.N at the digest py3.N-<tag> already carries, under both
       # image names. No rebuild and no re-sign: the signature is on the digest,
