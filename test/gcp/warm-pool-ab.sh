@@ -162,6 +162,7 @@ drift_verdict() { # <first A p95> <second A p95>
 
 # ---------------------------------------------------------------- self-test
 
+# shellcheck disable=SC2046 # the series are passed one value per argument on purpose
 self_test() {
   local fail=0
   _eq() { [ "$1" = "$2" ] && { echo "  ok   $3"; return 0; }; echo "  FAIL $3: '$1' != '$2'"; fail=1; }
@@ -512,6 +513,7 @@ run_experiment() {
   wp_build_and_push "$out" || exp_die "the DAG image could not be built or pushed; no arm can run without it"
 
   local api_port="${API_PORT:-18080}" token
+  # shellcheck disable=SC2046 # wp_sets prints one --set pair per word
   stack_up leoflow "$WP_JWT" "$WP_PW" $(wp_sets A)
   stack_api_forward leoflow "$api_port"
   # The login identity is an EMAIL, not a name. FindUserByLogin calls
@@ -627,6 +629,7 @@ wp_sets() { # <arm> -> --set arguments
 wp_run_arm() { # <arm> <index> <out> <api port> <token>
   local arm="$1" idx="$2" out="$3" port="$4" token="$5" i
   exp_log "arm $arm (position $idx in: $RUN_ORDER)"
+  # shellcheck disable=SC2046 # wp_sets prints one --set pair per word
   stack_up leoflow "$WP_JWT" "$WP_PW" $(wp_sets "$arm")
   stack_api_forward leoflow "$port"
   # A warm pool is empty on the first attempt of a dag_version, so the first
