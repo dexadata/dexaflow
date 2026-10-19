@@ -10,6 +10,5 @@ body: |-
   in that namespace allows for `builder.subjects` only. The ServiceAccount
   mounts no token, and a NetworkPolicy, on by default with the builder,
   denies ingress and the cloud metadata range. Off by default, so nothing
-  changes for an existing install. `dexaflow deploy` does not use it yet:
-  `remote_builder` pointing at it is the next step (#1883).
+  changes for an existing install.
 time: 2026-10-17T14:00:00.000000000-03:00
