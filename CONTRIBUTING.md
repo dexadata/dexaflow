@@ -192,6 +192,10 @@ action only a maintainer can take:
 - Secrets: no workflow that runs on pull requests uses a repository secret, and
   none runs on `pull_request_target` (`scripts/check-fork-safe-workflows.sh`
   enforces both), so nothing waits on a secret your fork cannot have.
+- First run: the workflows of a first-time contributor's pull request wait
+  until a maintainer approves them (the repository requires approval for
+  first-time contributors), so a pending run on your first pull request is
+  expected and needs nothing from you.
 
 Before merging a pull request from a fork, the maintainer:
 
