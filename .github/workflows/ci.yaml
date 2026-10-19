@@ -1244,6 +1244,10 @@ jobs:
       # Shares this job so the check costs no extra runner.
       - name: Workflows stay safe for pull requests from forks
         run: bash scripts/check-fork-safe-workflows.sh
+      # #1688: a path filter does not apply to tag pushes, so a path-filtered
+      # push trigger without a ref filter runs on every release tag.
+      - name: Path-filtered workflows stay off tag pushes
+        run: bash scripts/check-workflow-tag-runs.sh
 
   # ─────────────────────────────────────────────────────────────────────
   # Stale deploy-path check. The old GKE deploy directory was renamed to
