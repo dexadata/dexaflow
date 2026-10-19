@@ -580,9 +580,9 @@ pushes (`dexaflow-server`, `dexaflow-mcp`, `dexaflow-cli`, `dexaflow-migrate`, e
 `dexaflow-runtime:py3.N-<tag>`, and the `leoflow-*` names, which share their
 digests) carries a [SLSA build provenance](https://slsa.dev/spec/v1.0/provenance)
 attestation, and each archive's SPDX SBOM is attested against that archive.
-The Helm chart is cosign-signed (see [the chart page](/operate/helm-chart/))
-but carries no build provenance attestation yet (#1562).
-Check the archive and image attestations with the [GitHub CLI](https://cli.github.com/):
+From `v0.5.5` on, the Helm chart (`charts/dexaflow`, and `charts/leoflow`)
+carries one too, next to its cosign signature.
+Check the attestations with the [GitHub CLI](https://cli.github.com/):
 
 ```bash
 TAG={{< latest-version v >}}
@@ -594,7 +594,16 @@ gh attestation verify "dexaflow_${TAG#v}_linux_amd64.tar.gz" \
 gh attestation verify "oci://ghcr.io/dexadata/dexaflow-server:${TAG}" \
   --repo dexadata/dexaflow \
   --signer-workflow dexadata/dexaflow/.github/workflows/release.yaml
+
+gh attestation verify "oci://ghcr.io/dexadata/charts/dexaflow:${TAG#v}" \
+  --repo dexadata/dexaflow \
+  --signer-workflow dexadata/dexaflow/.github/workflows/release.yaml
 ```
+
+The chart tag has no leading `v`, like `helm install --version`. A chart
+re-published by hand with the recovery workflow is attested by
+`.github/workflows/helm-release.yaml` instead; pass that path to
+`--signer-workflow` for it.
 
 Add `--predicate-type https://spdx.dev/Document/v2.3` to check the SBOM
 attestation of an archive instead of its provenance. Offline, the archive
