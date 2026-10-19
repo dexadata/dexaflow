@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,5 +117,22 @@ func TestDeployDefaultsServesBuilderServiceAccountAndWarmPools(t *testing.T) {
 		`"task_service_account":"dexaflow-task","warm_pools":{"enabled":true,"min_idle_workers":1,"max_pool_size":8},"ci_oidc":null}`
 	if got := rec.Body.String(); got != want {
 		t.Errorf("body = %s, want %s", got, want)
+	}
+}
+
+// TestDeployDefaultsServesTheInClusterBuilder (#1883): the in-cluster
+// builder is served under remote_builder.buildkit with its namespace and pod
+// selector, and never a kubeconfig context, which only a client can name.
+func TestDeployDefaultsServesTheInClusterBuilder(t *testing.T) {
+	d := domain.DeployDefaults{RemoteBuilder: &domain.RemoteBuilderConfig{BuildKit: &domain.BuildKitConfig{
+		Namespace: "dexaflow-builder", PodSelector: "app.kubernetes.io/instance=df,app.kubernetes.io/component=builder"}}}
+	admin := &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}
+	rec := getDeployDefaults(deployDefaultsServer(admin, d), "tok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	want := `"remote_builder":{"buildkit":{"namespace":"dexaflow-builder","pod_selector":"app.kubernetes.io/instance=df,app.kubernetes.io/component=builder"}}`
+	if got := rec.Body.String(); !strings.Contains(got, want) || strings.Contains(got, "context") {
+		t.Errorf("body = %s, want %s and no context", got, want)
 	}
 }

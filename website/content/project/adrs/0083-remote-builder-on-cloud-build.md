@@ -139,6 +139,14 @@ and ADR 0080 already reads registry tokens from that same session.
   > [ADR 0088](/project/adrs/0088-build-args-secrets-and-package-index/).
 - Builds on arm64 or for several platforms keep the local daemon until the
   in-cluster build pod or a multi-platform Cloud Build step lands.
+
+  > **Note (2026-10, #1883).** The in-cluster backend shipped as
+  > `remote_builder.buildkit`: the rootless BuildKit daemon the Helm chart runs
+  > (`builder.enabled`), reached with `buildctl --addr kube-pod://` over
+  > `kubectl exec` as the person who deploys, with no server API. It builds
+  > one platform, its node's, and the chart advertises it in the cluster
+  > deploy defaults. See
+  > [Builders](/operate/builders/#building-on-the-in-cluster-builder).
 - Cloud Build is billed to the configured project, and a build waits for a
   worker; a code-only change still takes the code-layer path and never
   reaches Cloud Build.

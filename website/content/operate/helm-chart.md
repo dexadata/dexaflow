@@ -93,7 +93,10 @@ A first-class values reference on this site is a TODO for a later migration phas
 - An in-cluster image builder (`builder.*`), off by default: rootless BuildKit
   in a namespace of its own, with no port, a ServiceAccount with no token, a
   Role that lets `builder.subjects` exec into it and a NetworkPolicy that keeps
-  build steps away from the cloud metadata endpoint. See
+  build steps away from the cloud metadata endpoint. Unless
+  `builder.advertise` is false, the server advertises it as the cluster's
+  remote builder, so `dexaflow deploy` builds there what no daemonless path
+  covers. See
   [The in-cluster builder](/operate/builders/#the-in-cluster-builder).
 
 ## Tuning the probes

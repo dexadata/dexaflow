@@ -681,6 +681,16 @@ spec:
               value: {{ .serviceAccount | quote }}
             {{- end }}
             {{- end }}
+            {{- if and .ctx.Values.builder.enabled .ctx.Values.builder.advertise }}
+            # Advertise the in-cluster builder (#1883) as the cluster's remote
+            # builder: a deploy that needs a real build runs it there with
+            # buildctl over kubectl exec. deployment.yaml has already refused
+            # it next to a Cloud Build default.
+            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_NAMESPACE
+              value: {{ include "leoflow.builderNamespace" .ctx | quote }}
+            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_POD_SELECTOR
+              value: {{ printf "app.kubernetes.io/instance=%s,app.kubernetes.io/component=builder" .ctx.Release.Name | quote }}
+            {{- end }}
             {{- if $deployDefaults.taskServiceAccount }}
             # Advertise the task ServiceAccount (#1890): the server serves its
             # own executor.task_service_account; deployment.yaml has already

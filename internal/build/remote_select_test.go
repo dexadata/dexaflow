@@ -18,10 +18,10 @@ type fakeRemote struct {
 	reqs    []Request
 }
 
-func (f *fakeRemote) Path() Path                { return PathRemote }
-func (f *fakeRemote) Describe() string          { return "remote (fake)" }
-func (f *fakeRemote) Ready() error              { return f.ready }
-func (f *fakeRemote) Decline(_ []string) string { return f.decline }
+func (f *fakeRemote) Path() Path                  { return PathRemote }
+func (f *fakeRemote) Describe() string            { return "remote (fake)" }
+func (f *fakeRemote) Ready(context.Context) error { return f.ready }
+func (f *fakeRemote) Decline(_ []string) string   { return f.decline }
 func (f *fakeRemote) Build(ctx context.Context, req Request) (Result, error) {
 	f.reqs = append(f.reqs, req)
 	if !f.push {

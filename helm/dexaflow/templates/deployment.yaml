@@ -271,6 +271,9 @@ taskServiceAccount.create, unless extraEnv sets it.
 {{- fail (printf "deploy.defaults.remoteBuilder.cloudBuild.serviceAccount %q: want projects/<project>/serviceAccounts/<email>. The server refuses to start with it." $buildSA) -}}
 {{- end -}}
 {{- end -}}
+{{- if and .Values.builder.enabled .Values.builder.advertise $cloudBuild.project -}}
+{{- fail "builder.advertise makes the in-cluster builder the cluster's remote builder, and deploy.defaults.remoteBuilder.cloudBuild sets Cloud Build; a cluster advertises one. Set builder.advertise: false to keep Cloud Build, or remove deploy.defaults.remoteBuilder.cloudBuild. The server refuses to start with both." -}}
+{{- end -}}
 {{- if $deployDefaults.taskServiceAccount -}}
 {{- $taskSAFromEnv := false -}}
 {{- range .Values.extraEnv -}}

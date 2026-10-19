@@ -2,7 +2,7 @@
 title: How deploy builds the DAG image
 linkTitle: Builders
 weight: 13
-description: The builders `dexaflow deploy`, `compile --build` and `build` choose from, in order, the Cloud Build remote builder, the in-cluster builder the Helm chart can run, how the target platform is picked, and the local container daemon as the fallback.
+description: The builders `dexaflow deploy`, `compile --build` and `build` choose from, in order, the remote builder on Cloud Build or on the in-cluster builder the Helm chart can run, how the target platform is picked, and the local container daemon as the fallback.
 ---
 
 A DAG version is a `dag.json` and a container image
@@ -23,7 +23,7 @@ no container daemon on your machine.
 | 1 | `skip` | The whole DAG image for this content is already in the registry under its content label ([see below](#reusing-an-image-already-in-the-registry)) | Available for `deploy` |
 | 2 | `code-layer` | The image of your dependencies is already in the registry: only your DAG code is pushed, as one layer on it, through the registry ([see below](#pushing-only-the-dag-code)) | Available for pushed builds |
 | 3 | `dependency-layer` | The image of your dependencies is missing and every dependency has a wheel for the target platform: they are installed for that platform with `uv` and added as a layer on the runtime base, with no daemon and no emulation ([see below](#building-the-dependency-image-from-wheels)) | Available when `uv` is on `PATH` |
-| 4 | `remote` | A real build is needed (a package without wheels, `system_packages`, your own `Dockerfile`) and a remote builder is configured: Google Cloud Build ([see below](#building-on-cloud-build)) | Available for Cloud Build; the [in-cluster builder](#the-in-cluster-builder) ships in the Helm chart, and `remote_builder` pointing at it is planned (#1883) |
+| 4 | `remote` | A real build is needed (a package without wheels, `system_packages`, your own `Dockerfile`) and a remote builder is configured: Google Cloud Build ([see below](#building-on-cloud-build)) or the [in-cluster builder](#building-on-the-in-cluster-builder) the Helm chart runs | Available |
 | 5 | `local-daemon` | None of the above applies: a local container tool builds and pushes the image | Available, the fallback |
 
 Every build prints the builder it took and why before it starts:
@@ -498,9 +498,10 @@ needs none of the variables. The decision is recorded in
 
 On a cluster with no cloud builder, the Helm chart can run a builder for you:
 rootless [BuildKit](https://github.com/moby/buildkit) in a namespace of its
-own. `builder.enabled` deploys it; `deploy` does not use it yet, because
-`remote_builder` pointing at it is the next step (#1883). Until then it is a
-BuildKit daemon a platform team can reach with `buildctl`.
+own. `builder.enabled` deploys it, and, unless `builder.advertise` is false,
+the server advertises it as the cluster's remote builder, so `deploy` builds
+there what no daemonless path covers
+([see below](#building-on-the-in-cluster-builder)).
 
 What the chart renders, all in `builder.namespace`:
 
@@ -566,6 +567,92 @@ buildctl --addr "kube-pod://$POD?namespace=dexaflow-builder" build \
 
 The builder builds for the architecture of the node it runs on; schedule it
 with `builder.nodeSelector` on nodes of the cluster's architecture.
+
+### Building on the in-cluster builder
+
+`remote_builder.buildkit` sends the builds a remote builder takes (the same
+ones as [Cloud Build](#building-on-cloud-build): a project `Dockerfile`, a
+dependency image the wheels cannot build) to the in-cluster builder instead
+of a container daemon on your machine:
+
+```yaml
+build:
+  remote_builder:
+    buildkit:
+      namespace: dexaflow-builder    # required: the chart's builder.namespace
+      pod_selector: app.kubernetes.io/instance=dexaflow,app.kubernetes.io/component=builder   # optional
+      context: prod-eu               # optional: the kubeconfig context; the current one when unset
+```
+
+Set `buildkit` or `cloud_build`, not both. Like Cloud Build, it can be set on
+a target or in the workspace `defaults`
+([workspaces and targets](/operate/workspaces-and-targets/)), and the cluster
+advertises it on its own: with `builder.enabled` and `builder.advertise` (the
+default), the chart sets `deploy.defaults.remote_builder.buildkit` to the
+builder's namespace and the pod labels of the release, so a deploy that names
+no remote builder of its own uses it. A server cannot know the names of your
+kubeconfig contexts, so a builder it advertises is reached with the current
+one: point `kubectl` at that cluster, or set the block with `context` on the
+target. The chart refuses `builder.advertise` next to
+`deploy.defaults.remoteBuilder.cloudBuild`; set `builder.advertise: false` to
+keep Cloud Build as the cluster's default.
+
+What you need on the machine that deploys:
+
+1. [`buildctl`](https://github.com/moby/buildkit/releases) and `kubectl` on
+   `PATH`, `kubectl` signed in to the cluster;
+2. to be bound by `builder.subjects` (a user, a group or a ServiceAccount):
+   the Role allows `get` and `list` on pods and `create` on `pods/exec` in the
+   builder namespace;
+3. push access to the image repository in your docker config or one of its
+   credential helpers, such as `dexaflow registry login` writes
+   ([registry credentials](#registry-credentials)). BuildKit asks `buildctl`
+   for the credential when it pushes, so the builder holds none. A credential
+   the CLI reads only from a cloud CLI's session
+   ([ADR 0080](/project/adrs/0080-registry-credentials-from-cloud-cli-sessions/))
+   is not passed on: install that cloud's docker credential helper.
+
+What happens:
+
+1. before choosing the builder, the CLI runs
+   `kubectl auth can-i create pods/exec` in the builder namespace. When
+   `buildctl` or `kubectl` is missing, or the answer is no, the builder is
+   passed over for the local daemon when its tool is on `PATH`, and the
+   `builder:` line says why; with no daemon either, the build fails with what
+   to install or which binding to ask for;
+2. it lists the builder pods with `kubectl get pods --selector=<pod_selector>`
+   and takes the first ready one;
+3. it runs `buildctl --addr kube-pod://<pod>?namespace=<namespace> build`
+   with the Dockerfile frontend, the project directory as the context, the
+   Dockerfile by its own name, `--opt platform=<platform>` and the build
+   arguments. `buildctl` reads the context with the same ignore file a local
+   `docker build` reads: your `.dockerignore` with `exclude_paths` and the dbt
+   artifacts merged in, or a `<Dockerfile>.dockerignore` next to your
+   Dockerfile. The output is the image, pushed by BuildKit, and the build log
+   streams to your terminal. Ctrl-C stops `buildctl`, which ends the session,
+   and BuildKit cancels the build;
+4. the deploy registers the digest BuildKit reports for the push
+   ([ADR 0087](/project/adrs/0087-local-daemon-digest-from-the-push/)), or the
+   one the registry holds when it reports none.
+
+```console
+builder:    remote (buildkit, namespace dexaflow-builder), the project ships its own Dockerfile, which needs a real build, so the remote builder from the deploy defaults of https://flow.acme.dev builds the whole image
+building on the in-cluster builder in namespace dexaflow-builder, on pod dexaflow-builder-7d9c6b5f4-x2k8p
+```
+
+The push leaves from the builder with your credential, so the deploy
+preflight's refusal of your push credential stops the deploy before anything
+is built, as with the local daemon. Before the build the CLI warns about any
+secret-looking file in the context (`.env`, `.netrc`, `.ssh/` and the like):
+it reaches the build cache everyone bound to the builder shares.
+
+The in-cluster builder is passed over, and the `builder:` line says why, when
+the build is not pushed, and when it is for several platforms: the rootless
+builder sets up no emulation and builds for the architecture of its node, so
+a single `--platform` must be that architecture (a `RUN` step for another one
+fails with `exec format error`). A build with build secrets or a package
+index never runs there: their values come from your environment, and build
+steps in the shared pod can read each other's processes.
 
 ### Security posture
 
