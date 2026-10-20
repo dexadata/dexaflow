@@ -17,6 +17,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/secrets"
 	"github.com/dexadata/dexaflow/internal/storage"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // openRepo connects to the migrated test database or skips. It returns the
@@ -1448,7 +1449,7 @@ func TestListDagsWithFilterAndTagsIntegration(t *testing.T) {
 	}
 
 	// 7. ListDagTags
-	tags, tagTotal, err := repo.ListDagTags(ctx, "default", "", 10, 0)
+	tags, tagTotal, err := repo.ListDagTags(ctx, "default", "", "", 10, 0)
 	if err != nil {
 		t.Fatalf("ListDagTags: %v", err)
 	}
@@ -1457,11 +1458,72 @@ func TestListDagsWithFilterAndTagsIntegration(t *testing.T) {
 	}
 
 	// ListDagTags with pattern
-	tags, tagTotal, err = repo.ListDagTags(ctx, "default", "hour", 10, 0)
+	tags, tagTotal, err = repo.ListDagTags(ctx, "default", "hour", "", 10, 0)
 	if err != nil {
 		t.Fatalf("ListDagTags with pattern: %v", err)
 	}
 	if tagTotal != 1 || len(tags) != 1 || tags[0] != "hourly" {
 		t.Errorf("expected 1 tag 'hourly', got total=%d tags=%v", tagTotal, tags)
+	}
+	// The UI's tag filter sends tag_name_prefix_pattern: "week" matches
+	// "weekly", "eek" (a substring, not a prefix) matches nothing.
+	if tags, _, err = repo.ListDagTags(ctx, "default", "", "week", 10, 0); err != nil || len(tags) != 1 || tags[0] != "weekly" {
+		t.Errorf("prefix week: tags=%v err=%v", tags, err)
+	}
+	if tags, _, err = repo.ListDagTags(ctx, "default", "", "eek", 10, 0); err != nil || len(tags) != 0 {
+		t.Errorf("prefix eek must not match: tags=%v err=%v", tags, err)
+	}
+}
+
+// TestListDagsOrderByLatestRunIntegration covers the UI's sort options that
+// read the latest run (#1927): a DAG with no run sorts last both ways.
+func TestListDagsOrderByLatestRunIntegration(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	pool, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	prefix := fmt.Sprintf("ordrun_%d", time.Now().UnixNano())
+	early, late, never := prefix+"_a", prefix+"_b", prefix+"_c"
+	now := time.Now().UTC()
+	for _, id := range []string{early, late, never} {
+		registerSpec(t, repo, ctx, id, []domain.TaskSpec{{TaskID: "t", Type: domain.TaskTypePython}})
+	}
+	for i, tc := range []struct {
+		id    string
+		state string
+	}{{early, "success"}, {late, "failed"}} {
+		if _, err := repo.CreateDagRun(ctx, "default", tc.id, domain.DagRun{
+			RunID: "r1", State: domain.DagRunStateRunning, RunType: "manual", LogicalDate: now,
+		}); err != nil {
+			t.Fatalf("create run: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `UPDATE dag_runs SET state=$2::dag_run_state, started_at=$3 WHERE dag_id IN (SELECT id FROM dags WHERE dag_id=$1)`,
+			tc.id, tc.state, now.Add(time.Duration(i)*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, tc := range []struct{ orderBy, want string }{
+		{"last_run_start_date", early + "," + late + "," + never},
+		{"-last_run_start_date", late + "," + early + "," + never},
+		{"last_run_state", late + "," + early + "," + never},
+		{"-last_run_state", early + "," + late + "," + never},
+		{"-dag_display_name", never + "," + late + "," + early},
+	} {
+		dags, _, err := repo.ListDagsWithFilter(ctx, "default", domain.DagFilter{
+			DagIDPrefixPattern: prefix, OrderBy: tc.orderBy, Limit: 10,
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", tc.orderBy, err)
+		}
+		ids := make([]string, 0, len(dags))
+		for _, d := range dags {
+			ids = append(ids, d.DagID)
+		}
+		if got := strings.Join(ids, ","); got != tc.want {
+			t.Errorf("order_by=%s: got %s, want %s", tc.orderBy, got, tc.want)
+		}
 	}
 }

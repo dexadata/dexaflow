@@ -33,7 +33,7 @@ type DagRepository interface {
 	ClearDagHistory(ctx context.Context, tenant, dagID string) error
 	ListDagsFiltered(ctx context.Context, tenant, runState string, paused *bool, limit, offset int) ([]domain.DAG, int, error)
 	ListDagsWithFilter(ctx context.Context, tenant string, filter domain.DagFilter) ([]domain.DAG, int, error)
-	ListDagTags(ctx context.Context, tenant string, pattern string, limit, offset int) (tags []string, total int, err error)
+	ListDagTags(ctx context.Context, tenant, pattern, prefixPattern string, limit, offset int) (tags []string, total int, err error)
 }
 
 // DagRunRepository reads and creates DAG runs.
@@ -290,38 +290,30 @@ func listDagsHandler(repo DagRepository) gin.HandlerFunc {
 	}
 }
 
-type dagTagItemDTO struct {
-	Name string `json:"name"`
-}
-
+// dagTagCollectionDTO is Airflow's DAGTagCollectionResponse: the tag names as
+// plain strings, which the UI's tag filter uses as both label and value.
 type dagTagCollectionDTO struct {
-	Tags         []dagTagItemDTO `json:"tags"`
-	DagTags      []dagTagItemDTO `json:"dag_tags"`
-	TotalEntries int             `json:"total_entries"`
+	Tags         []string `json:"tags"`
+	TotalEntries int      `json:"total_entries"`
 }
 
+// listDagTagsHandler serves GET /api/v2/dagTags: the tenant's distinct DAG
+// tags, narrowed by tag_name_pattern (anywhere) and tag_name_prefix_pattern
+// (the UI's tag filter sends this one), with paging (#1927).
 func listDagTagsHandler(repo DagRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		limit, offset := pagination(c)
-		pattern := c.Query("tag_name_pattern")
-		if pattern == "" {
-			pattern = c.Query("tag_name_prefix_pattern")
-		}
-		tags, total, err := repo.ListDagTags(c.Request.Context(), tenantOf(c), pattern, limit, offset)
+		tags, total, err := repo.ListDagTags(c.Request.Context(), tenantOf(c),
+			c.Query("tag_name_pattern"), c.Query("tag_name_prefix_pattern"), limit, offset)
 		if err != nil {
 			handleRepoError(c, err)
 			return
 		}
-		items := make([]dagTagItemDTO, 0, len(tags))
-		for _, t := range tags {
-			items = append(items, dagTagItemDTO{Name: t})
+		if tags == nil {
+			tags = []string{}
 		}
 		setPaginationLinks(c, total, limit, offset)
-		c.JSON(http.StatusOK, dagTagCollectionDTO{
-			Tags:         items,
-			DagTags:      items,
-			TotalEntries: total,
-		})
+		c.JSON(http.StatusOK, dagTagCollectionDTO{Tags: tags, TotalEntries: total})
 	}
 }
 

@@ -129,14 +129,15 @@ func (f *fakeDagRepo) ListDagsWithFilter(_ context.Context, _ string, filter dom
 	return out, len(out), nil
 }
 
-func (f *fakeDagRepo) ListDagTags(_ context.Context, _ string, pattern string, _, _ int) (tags []string, total int, err error) {
+func (f *fakeDagRepo) ListDagTags(_ context.Context, _, pattern, prefix string, _, _ int) (tags []string, total int, err error) {
 	seen := make(map[string]bool)
 	var out []string
 	for _, d := range f.dags {
 		for _, t := range d.Tags {
 			if !seen[t] {
 				seen[t] = true
-				if pattern == "" || strings.Contains(strings.ToLower(t), strings.ToLower(pattern)) {
+				lt := strings.ToLower(t)
+				if (pattern == "" || strings.Contains(lt, strings.ToLower(pattern))) && (prefix == "" || strings.HasPrefix(lt, strings.ToLower(prefix))) {
 					out = append(out, t)
 				}
 			}

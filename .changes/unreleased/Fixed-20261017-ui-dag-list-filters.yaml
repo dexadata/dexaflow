@@ -5,6 +5,8 @@ body: |-
   Previously, `/ui/dags` only respected `paused` and `last_dag_run_state`,
   ignoring search substrings, prefixes, order by, tags, and favorites filters,
   and `/api/v2/dagTags` was a static empty stub leaving UI tag filters empty.
-  The server now evaluates all DAG filter parameters in database queries and
-  serves distinct tenant DAG tags. (#1927)
+  The server now evaluates all DAG filter parameters in database queries,
+  sorts by latest run state and start date (DAGs with no run last), and serves
+  distinct tenant DAG tags as plain strings, narrowed by `tag_name_pattern` or
+  `tag_name_prefix_pattern`. (#1927)
 time: 2026-10-17T19:45:00.000000000+00:00

@@ -487,6 +487,10 @@ type Querier interface {
 	// one index probe each, instead of a DISTINCT ON over every run in the table.
 	// LEFT JOIN keeps DAGs without runs; they match no run_state filter.
 	ListDagsFiltered(ctx context.Context, arg ListDagsFilteredParams) ([]Dag, error)
+	// The Airflow 3.3 DAG list's search, tag, owner, favorite and sort controls
+	// (#1928). Patterns are SQL LIKE expressions matched case-insensitively; a
+	// display name is the dag_id. Sorting by next_dagrun is not done here: the next
+	// run is computed per DAG after the page is read, so it falls back to dag_id.
 	ListDagsWithFilter(ctx context.Context, arg ListDagsWithFilterParams) ([]ListDagsWithFilterRow, error)
 	// The DAG plus the LABEL of its current version. The UI's clear dialog compares
 	// this against the RUN's bundle_version and offers "Run with latest bundle

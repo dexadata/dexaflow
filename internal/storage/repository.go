@@ -2186,25 +2186,27 @@ func (r *Repository) ListDagsWithFilter(ctx context.Context, tenant string, filt
 	return out, int(total), nil
 }
 
-// ListDagTags returns distinct DAG tags for the tenant matching the optional
-// pattern, along with the total count of distinct tags.
-func (r *Repository) ListDagTags(ctx context.Context, tenant string, pattern string, limit, offset int) (tags []string, total int, err error) {
+// ListDagTags returns a page of the tenant's distinct DAG tags, narrowed by an
+// optional pattern (anywhere in the name) and prefix pattern, and the total.
+func (r *Repository) ListDagTags(ctx context.Context, tenant, pattern, prefixPattern string, limit, offset int) (tags []string, total int, err error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
 		return nil, 0, err
 	}
 	tList, err := r.q.ListTenantDagTags(ctx, queries.ListTenantDagTagsParams{
-		TenantID:       tid,
-		Limit:          toInt32(limit),
-		Offset:         toInt32(offset),
-		TagNamePattern: strPtr(pattern),
+		TenantID:             tid,
+		Limit:                toInt32(limit),
+		Offset:               toInt32(offset),
+		TagNamePattern:       strPtr(pattern),
+		TagNamePrefixPattern: strPtr(prefixPattern),
 	})
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing dag tags: %w", err)
 	}
 	count, err := r.q.CountTenantDagTags(ctx, queries.CountTenantDagTagsParams{
-		TenantID:       tid,
-		TagNamePattern: strPtr(pattern),
+		TenantID:             tid,
+		TagNamePattern:       strPtr(pattern),
+		TagNamePrefixPattern: strPtr(prefixPattern),
 	})
 	if err != nil {
 		return nil, 0, fmt.Errorf("counting dag tags: %w", err)

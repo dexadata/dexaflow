@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -261,31 +262,36 @@ func TestListDagTagsEndpoint(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /api/v2/dagTags = %d", rec.Code)
 	}
+	// Airflow's DAGTagCollectionResponse: tags are plain strings, which the
+	// UI's tag filter maps to {label, value}; objects render "[object Object]".
 	var resp struct {
-		Tags         []dagTagItemDTO `json:"tags"`
-		DagTags      []dagTagItemDTO `json:"dag_tags"`
-		TotalEntries int             `json:"total_entries"`
+		Tags         []string `json:"tags"`
+		TotalEntries int      `json:"total_entries"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
+		t.Fatalf("tags must be a list of strings: %v (%s)", err, rec.Body.String())
 	}
-	if resp.TotalEntries != 3 || len(resp.Tags) != 3 || len(resp.DagTags) != 3 {
-		t.Errorf("expected 3 distinct tags, got tags=%+v dag_tags=%+v total=%d", resp.Tags, resp.DagTags, resp.TotalEntries)
+	if resp.TotalEntries != 3 || strings.Join(resp.Tags, ",") != "alpha,beta,gamma" {
+		t.Errorf("expected alpha,beta,gamma, got tags=%v total=%d", resp.Tags, resp.TotalEntries)
 	}
 
-	// Filter by pattern
-	recPat := authGet(srv, http.MethodGet, "/api/v2/dagTags?tag_name_pattern=bet", "")
-	if recPat.Code != http.StatusOK {
-		t.Fatalf("GET /api/v2/dagTags with pattern = %d", recPat.Code)
-	}
-	var respPat struct {
-		Tags         []dagTagItemDTO `json:"tags"`
-		TotalEntries int             `json:"total_entries"`
-	}
-	if err := json.Unmarshal(recPat.Body.Bytes(), &respPat); err != nil {
-		t.Fatal(err)
-	}
-	if respPat.TotalEntries != 1 || len(respPat.Tags) != 1 || respPat.Tags[0].Name != "beta" {
-		t.Errorf("expected 1 tag 'beta', got %+v", respPat)
+	for _, tc := range []struct{ query, want string }{
+		{"tag_name_pattern=et", "beta"},
+		{"tag_name_prefix_pattern=g", "gamma"},
+		{"tag_name_prefix_pattern=et", ""},
+	} {
+		rec := authGet(srv, http.MethodGet, "/api/v2/dagTags?"+tc.query, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /api/v2/dagTags?%s = %d", tc.query, rec.Code)
+		}
+		var got struct {
+			Tags []string `json:"tags"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(got.Tags, ",") != tc.want {
+			t.Errorf("?%s = %v, want %q", tc.query, got.Tags, tc.want)
+		}
 	}
 }

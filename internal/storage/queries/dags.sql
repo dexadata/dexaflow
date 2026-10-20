@@ -185,11 +185,15 @@ WHERE ((@prewarm::boolean AND d.is_active AND NOT d.is_paused) OR d.id = ANY(@da
   AND ((@prewarm::boolean AND d.is_active AND NOT d.is_paused AND m.min_idle > 0) OR d.id = ANY(@dag_ids::uuid[]));
 
 -- name: ListDagsWithFilter :many
+-- The Airflow 3.3 DAG list's search, tag, owner, favorite and sort controls
+-- (#1928). Patterns are SQL LIKE expressions matched case-insensitively; a
+-- display name is the dag_id. Sorting by next_dagrun is not done here: the next
+-- run is computed per DAG after the page is read, so it falls back to dag_id.
 SELECT d.*, v.version AS current_version_label
 FROM dags d
 LEFT JOIN dag_versions v ON v.id = d.current_version_id
 LEFT JOIN LATERAL (
-    SELECT r.state
+    SELECT r.state, r.started_at
     FROM dag_runs r
     WHERE r.dag_id = d.id
     ORDER BY r.logical_date DESC
@@ -225,8 +229,11 @@ WHERE d.tenant_id = $1 AND d.is_active = true
       ))
   )
 ORDER BY
-  CASE WHEN sqlc.narg('order_by')::text = 'dag_id' OR sqlc.narg('order_by')::text = 'dag_display_name' THEN d.dag_id END ASC,
-  CASE WHEN sqlc.narg('order_by')::text = '-dag_id' OR sqlc.narg('order_by')::text = '-dag_display_name' THEN d.dag_id END DESC,
+  CASE WHEN sqlc.narg('order_by')::text IN ('-dag_id', '-dag_display_name') THEN d.dag_id END DESC,
+  CASE WHEN sqlc.narg('order_by')::text = 'last_run_state' THEN l.state::text END ASC NULLS LAST,
+  CASE WHEN sqlc.narg('order_by')::text = '-last_run_state' THEN l.state::text END DESC NULLS LAST,
+  CASE WHEN sqlc.narg('order_by')::text = 'last_run_start_date' THEN l.started_at END ASC NULLS LAST,
+  CASE WHEN sqlc.narg('order_by')::text = '-last_run_start_date' THEN l.started_at END DESC NULLS LAST,
   d.dag_id ASC
 LIMIT $2 OFFSET $3;
 
@@ -234,7 +241,7 @@ LIMIT $2 OFFSET $3;
 SELECT count(*)
 FROM dags d
 LEFT JOIN LATERAL (
-    SELECT r.state
+    SELECT r.state, r.started_at
     FROM dag_runs r
     WHERE r.dag_id = d.id
     ORDER BY r.logical_date DESC
@@ -278,8 +285,8 @@ WITH distinct_tags AS (
 )
 SELECT name
 FROM distinct_tags
-WHERE sqlc.narg('tag_name_pattern')::text IS NULL
-   OR name ILIKE '%' || sqlc.narg('tag_name_pattern') || '%'
+WHERE (sqlc.narg('tag_name_pattern')::text IS NULL OR name ILIKE '%' || sqlc.narg('tag_name_pattern') || '%')
+  AND (sqlc.narg('tag_name_prefix_pattern')::text IS NULL OR name ILIKE sqlc.narg('tag_name_prefix_pattern') || '%')
 ORDER BY name
 LIMIT $2 OFFSET $3;
 
@@ -291,6 +298,5 @@ WITH distinct_tags AS (
 )
 SELECT count(*)
 FROM distinct_tags
-WHERE sqlc.narg('tag_name_pattern')::text IS NULL
-   OR name ILIKE '%' || sqlc.narg('tag_name_pattern') || '%';
-
+WHERE (sqlc.narg('tag_name_pattern')::text IS NULL OR name ILIKE '%' || sqlc.narg('tag_name_pattern') || '%')
+  AND (sqlc.narg('tag_name_prefix_pattern')::text IS NULL OR name ILIKE sqlc.narg('tag_name_prefix_pattern') || '%');

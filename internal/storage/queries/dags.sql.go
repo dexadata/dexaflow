@@ -72,7 +72,7 @@ const countDagsWithFilter = `-- name: CountDagsWithFilter :one
 SELECT count(*)
 FROM dags d
 LEFT JOIN LATERAL (
-    SELECT r.state
+    SELECT r.state, r.started_at
     FROM dag_runs r
     WHERE r.dag_id = d.id
     ORDER BY r.logical_date DESC
@@ -152,17 +152,18 @@ WITH distinct_tags AS (
 )
 SELECT count(*)
 FROM distinct_tags
-WHERE $2::text IS NULL
-   OR name ILIKE '%' || $2 || '%'
+WHERE ($2::text IS NULL OR name ILIKE '%' || $2 || '%')
+  AND ($3::text IS NULL OR name ILIKE $3 || '%')
 `
 
 type CountTenantDagTagsParams struct {
-	TenantID       pgtype.UUID `json:"tenant_id"`
-	TagNamePattern *string     `json:"tag_name_pattern"`
+	TenantID             pgtype.UUID `json:"tenant_id"`
+	TagNamePattern       *string     `json:"tag_name_pattern"`
+	TagNamePrefixPattern *string     `json:"tag_name_prefix_pattern"`
 }
 
 func (q *Queries) CountTenantDagTags(ctx context.Context, arg CountTenantDagTagsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countTenantDagTags, arg.TenantID, arg.TagNamePattern)
+	row := q.db.QueryRow(ctx, countTenantDagTags, arg.TenantID, arg.TagNamePattern, arg.TagNamePrefixPattern)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -636,7 +637,7 @@ SELECT d.id, d.tenant_id, d.dag_id, d.description, d.is_paused, d.is_active, d.o
 FROM dags d
 LEFT JOIN dag_versions v ON v.id = d.current_version_id
 LEFT JOIN LATERAL (
-    SELECT r.state
+    SELECT r.state, r.started_at
     FROM dag_runs r
     WHERE r.dag_id = d.id
     ORDER BY r.logical_date DESC
@@ -672,8 +673,11 @@ WHERE d.tenant_id = $1 AND d.is_active = true
       ))
   )
 ORDER BY
-  CASE WHEN $15::text = 'dag_id' OR $15::text = 'dag_display_name' THEN d.dag_id END ASC,
-  CASE WHEN $15::text = '-dag_id' OR $15::text = '-dag_display_name' THEN d.dag_id END DESC,
+  CASE WHEN $15::text IN ('-dag_id', '-dag_display_name') THEN d.dag_id END DESC,
+  CASE WHEN $15::text = 'last_run_state' THEN l.state::text END ASC NULLS LAST,
+  CASE WHEN $15::text = '-last_run_state' THEN l.state::text END DESC NULLS LAST,
+  CASE WHEN $15::text = 'last_run_start_date' THEN l.started_at END ASC NULLS LAST,
+  CASE WHEN $15::text = '-last_run_start_date' THEN l.started_at END DESC NULLS LAST,
   d.dag_id ASC
 LIMIT $2 OFFSET $3
 `
@@ -717,6 +721,10 @@ type ListDagsWithFilterRow struct {
 	CurrentVersionLabel *string            `json:"current_version_label"`
 }
 
+// The Airflow 3.3 DAG list's search, tag, owner, favorite and sort controls
+// (#1928). Patterns are SQL LIKE expressions matched case-insensitively; a
+// display name is the dag_id. Sorting by next_dagrun is not done here: the next
+// run is computed per DAG after the page is read, so it falls back to dag_id.
 func (q *Queries) ListDagsWithFilter(ctx context.Context, arg ListDagsWithFilterParams) ([]ListDagsWithFilterRow, error) {
 	rows, err := q.db.Query(ctx, listDagsWithFilter,
 		arg.TenantID,
@@ -859,17 +867,18 @@ WITH distinct_tags AS (
 )
 SELECT name
 FROM distinct_tags
-WHERE $4::text IS NULL
-   OR name ILIKE '%' || $4 || '%'
+WHERE ($4::text IS NULL OR name ILIKE '%' || $4 || '%')
+  AND ($5::text IS NULL OR name ILIKE $5 || '%')
 ORDER BY name
 LIMIT $2 OFFSET $3
 `
 
 type ListTenantDagTagsParams struct {
-	TenantID       pgtype.UUID `json:"tenant_id"`
-	Limit          int32       `json:"limit"`
-	Offset         int32       `json:"offset"`
-	TagNamePattern *string     `json:"tag_name_pattern"`
+	TenantID             pgtype.UUID `json:"tenant_id"`
+	Limit                int32       `json:"limit"`
+	Offset               int32       `json:"offset"`
+	TagNamePattern       *string     `json:"tag_name_pattern"`
+	TagNamePrefixPattern *string     `json:"tag_name_prefix_pattern"`
 }
 
 func (q *Queries) ListTenantDagTags(ctx context.Context, arg ListTenantDagTagsParams) ([]string, error) {
@@ -878,6 +887,7 @@ func (q *Queries) ListTenantDagTags(ctx context.Context, arg ListTenantDagTagsPa
 		arg.Limit,
 		arg.Offset,
 		arg.TagNamePattern,
+		arg.TagNamePrefixPattern,
 	)
 	if err != nil {
 		return nil, err
