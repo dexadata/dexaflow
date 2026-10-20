@@ -1,0 +1,12 @@
+kind: Fixed
+body: |-
+  **Two concurrent clears on the latest version of the same finished run no
+  longer bring back a task the current version dropped.** When both named that
+  task with `only_failed=false`, the clear that waited for the other one used
+  the run's version as read before its transaction: it reset the task instance
+  the first clear had marked `removed` back to `none`, and applied the old
+  version's retries, pool and size. Nothing planned that task instance, so the
+  run never counted as settled, and retention and the orphan reaper skipped
+  it. The waiting clear now reads the run again inside its transaction and
+  applies on the version the run executes. (#2046)
+time: 2026-10-20T12:00:00.000000000+00:00
