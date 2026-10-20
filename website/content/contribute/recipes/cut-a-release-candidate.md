@@ -33,6 +33,11 @@ by hand.
    `examples/taskflow_sales` from the `dexaflow-cli` image with no container
    daemon, then a run on k3d) on rc tags only, so start all three with
    `workflow_dispatch` on the `release-X.Y` commit before the cut.
+   On a machine where another project owns port 5432, run
+   `DEXAFLOW_DEV_DB_PORT=55432 make rc-smoke`: the dev Postgres, the
+   migrations, the integration tests, the k3d suites and the UI smoke all use
+   that port, and the battery never resets a database it did not start.
+   `make soak` already runs on its own Postgres on port 55433 (`SOAK_PG_PORT`).
 4. **Record every review** of
    [AGENTS.md section 1](https://github.com/dexadata/dexaflow/blob/main/AGENTS.md#1-release-candidate-reviews)
    in the tracking issue of the `vX.Y.Z` milestone: one line each, with who did
