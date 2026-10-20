@@ -6,5 +6,7 @@ body: |-
   runs. The garbage collector now sweeps PVCs carrying the `leoflow.io/staging` label
   whose age exceeds the TTL. In addition, when deleting a PVC fails, the collector logs
   the error, increments the `staging_pvc_delete_error` decision metric, and continues
-  reclaiming subsequent volumes instead of halting the entire cycle. (#1615)
+  reclaiming subsequent volumes instead of halting the entire cycle. The chart's executor
+  Role now also grants `list` on `persistentvolumeclaims`; an install that manages its own
+  Role must add it, or the sweep of unrecorded claims logs a 403 every cycle. (#1615)
 time: 2026-10-18T20:40:00.000000000+00:00
