@@ -60,6 +60,26 @@ CI enforces all of the above automatically. PRs that fail CI cannot be merged.
   - `chore: bump dependencies`
   - `refactor: extract scheduler decision logic`
 
+#### Sign Off Your Commits (DCO)
+
+Every commit in a pull request carries a sign-off from its author under the
+[Developer Certificate of Origin](https://developercertificate.org): a line
+at the end of the message,
+
+```text
+Signed-off-by: Your Name <you@example.com>
+```
+
+with the name and email of the commit's author. It certifies that you wrote
+the change, or otherwise have the right to submit it under the project's
+license. `git commit -s` adds it, and the `prepare-commit-msg` hook that
+`make setup` installs adds it to every commit for you. To sign off the
+commits already on your branch, run `git rebase --signoff main` and push
+again.
+
+The "DCO" check on every pull request names each commit without a sign-off
+from its author. Merge commits and Dependabot's commits are exempt.
+
 #### 4. Record the Change
 
 Every pull request that changes shipped behavior records what changed. It does
