@@ -192,6 +192,11 @@ The Actions queue has few runners, so every wasted run delays everyone.
 - **Test the documented path.** A test that bypasses the path users take (a
   hand-written Dockerfile, an overridden environment variable, a fixture that
   never imports `dag.py`) proves nothing about that path.
+- **Every bug fix ships a regression test.** The test reproduces the reported
+  behavior, fails on the code without the fix and passes with it. Commit it
+  before the fix (`test:` then `fix:`) and name it in the PR under "How it was
+  tested". A fix without such a test is not done; see the
+  [Fix a bug](https://dexaflow.dexadata.ai/contribute/recipes/fix-a-bug/) recipe.
 - **Mutation-test every new assertion.** Revert the fix, watch the test fail,
   restore it, and check that the mutation actually applied.
 - **Lock the wiring, not the leaf.** Drive the real entry point and assert on its
