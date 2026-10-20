@@ -4,6 +4,10 @@
 #   database.url = postgres://leoflow:leoflow@localhost:5432/leoflow
 #   redis.url    = redis://localhost:6379/0
 #
+# Postgres publishes host port 5432 unless DEXAFLOW_DEV_DB_PORT (or the older
+# LEOFLOW_DEV_DB_PORT) names another, for a machine where another project
+# already owns 5432. The Makefile derives DATABASE_URL from the same variable.
+#
 # Usage:
 #   make dev-up      # start Postgres + Redis (wait healthy) and apply migrations
 #   make dev-down    # stop, keeping data
@@ -18,7 +22,7 @@ services:
       POSTGRES_PASSWORD: leoflow
       POSTGRES_DB: leoflow
     ports:
-      - "5432:5432"
+      - "${DEXAFLOW_DEV_DB_PORT:-${LEOFLOW_DEV_DB_PORT:-5432}}:5432"
     volumes:
       - leoflow-pgdata:/var/lib/postgresql/data
       # On a fresh volume, also provision the isolated `leoflow_test` database

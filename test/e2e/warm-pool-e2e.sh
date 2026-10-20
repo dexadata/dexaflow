@@ -48,8 +48,9 @@
 # Environment:
 #   LEOFLOW_E2E_HTTP_PORT      API port (default 18083)
 #   LEOFLOW_E2E_HOST_ADDR      address task pods dial for the control plane
-#   LEOFLOW_E2E_DATABASE_URL   the control plane's database, read for
-#                              warm_worker_id (default: the server default)
+#   DEXAFLOW_E2E_DATABASE_URL  the control plane's database, read for
+#                              warm_worker_id (default: the server default);
+#                              LEOFLOW_E2E_DATABASE_URL is the older name
 #   LEOFLOW_E2E_K3D_ARGS       extra `k3d cluster create` arguments, split on
 #                              spaces
 #
@@ -70,7 +71,7 @@ HTTP_PORT="${LEOFLOW_E2E_HTTP_PORT:-18083}"
 API="http://localhost:${HTTP_PORT}"
 GRPC_PORT="9091"
 HOST_ADDR="${LEOFLOW_E2E_HOST_ADDR:-$([ "$(uname -s)" = Linux ] && echo host.k3d.internal || echo host.docker.internal)}"
-DB_URL="${LEOFLOW_E2E_DATABASE_URL:-postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable}"
+DB_URL="${DEXAFLOW_E2E_DATABASE_URL:-${LEOFLOW_E2E_DATABASE_URL:-postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable}}"
 STAMP="$(date +%s)"
 SERVER_PID=""
 TOKEN=""
