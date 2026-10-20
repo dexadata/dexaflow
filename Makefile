@@ -40,10 +40,14 @@ LDFLAGS := -s -w \
 	-X '$(VERSION_PKG).buildDate=$(BUILD_DATE)'
 
 # ─── Database (used by migrate targets; override via env) ───
-DATABASE_URL ?= postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable
+# The host port `make dev-up` publishes Postgres on: 5432 unless
+# DEXAFLOW_DEV_DB_PORT (or the older LEOFLOW_DEV_DB_PORT) names another, so the
+# dev stack can run next to another project that owns 5432.
+DEXAFLOW_DEV_DB_PORT := $(or $(DEXAFLOW_DEV_DB_PORT),$(LEOFLOW_DEV_DB_PORT),5432)
+DATABASE_URL ?= postgres://leoflow:leoflow@localhost:$(DEXAFLOW_DEV_DB_PORT)/leoflow?sslmode=disable
 # Integration tests run against a SEPARATE database so they never pollute the
 # demo/dev `leoflow` DB (which backs the local control plane and its UI stats).
-TEST_DATABASE_URL ?= postgres://leoflow:leoflow@localhost:5432/leoflow_test?sslmode=disable
+TEST_DATABASE_URL ?= postgres://leoflow:leoflow@localhost:$(DEXAFLOW_DEV_DB_PORT)/leoflow_test?sslmode=disable
 
 .PHONY: help
 help: ## Show this help
@@ -306,8 +310,8 @@ install-pre-push-hook: ## Install a pre-push hook that runs `make ci-local` auto
 	@echo "▸ installed .git/hooks/pre-push → runs 'make ci-local' on every push"
 
 .PHONY: dev-up
-dev-up: ## Start local Postgres + Redis (wait healthy) and apply migrations
-	docker compose up -d --wait
+dev-up: ## Start local Postgres + Redis (wait healthy) and apply migrations. DEXAFLOW_DEV_DB_PORT moves Postgres off 5432.
+	DEXAFLOW_DEV_DB_PORT=$(DEXAFLOW_DEV_DB_PORT) docker compose up -d --wait
 	$(MAKE) migrate-up
 
 .PHONY: dev-down
