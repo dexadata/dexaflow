@@ -1912,54 +1912,90 @@ func (r *Repository) SetUserPassword(ctx context.Context, tenant, email, hash st
 // (so the plaintext never reaches the control plane). It RECONCILES: if the admin
 // already exists, its password is reset to this hash. The Lite config
 // (admin_password_hash) is the source of truth, so the password the setup printed
-// always logs in — even against a pre-existing or stale database — without anyone
+// always logs in, even against a pre-existing or stale database, without anyone
 // having to wipe Docker volumes. The only sanctioned way to change the password,
-// `reset-password`, also writes the config, so the two never drift. Returns true
-// only when the admin was newly created (false when an existing one was
-// reconciled). See cmd/dexaflow-server bootstrapAdmin.
+// `reset-password`, also writes the config, so the two never drift. Every path
+// also grants the admin role of the admin's own tenant, idempotently: a new admin
+// is created and granted in one transaction, and an existing admin without the
+// role (left by a crash between the two steps in an older release, #513) gets it
+// back. Returns true only when the admin was newly created (false when an
+// existing one was reconciled). See cmd/dexaflow-server bootstrapAdmin.
 func (r *Repository) BootstrapAdminHash(ctx context.Context, tenant, email, hash string) (bool, error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
 		return false, err
 	}
-	// Reconcile an existing admin to the configured hash.
-	updated, err := r.q.UpdateUserPassword(ctx, queries.UpdateUserPasswordParams{
+	roleID, err := r.q.GetRoleByName(ctx, queries.GetRoleByNameParams{TenantID: tid, Name: "admin"})
+	if err != nil {
+		return false, fmt.Errorf("loading admin role: %w", err)
+	}
+	created, err := r.bootstrapAdminTx(ctx, tid, roleID, tenant, email, hash)
+	if isUniqueViolation(err) {
+		// Concurrent bootstrap race: between the reconcile check and the insert,
+		// another process created the admin. This is expected under ADR 0049 (the
+		// api and scheduler roles boot at once) and with multiple active-active api
+		// replicas, since every replica runs bootstrap on startup. It is not a
+		// failure: the insert waited for the other transaction to commit, so a
+		// second pass finds the admin, reconciles its hash, ensures its role and
+		// reports "not newly created".
+		if _, rerr := r.bootstrapAdminTx(ctx, tid, roleID, tenant, email, hash); rerr != nil {
+			return false, fmt.Errorf("reconciling admin after concurrent create: %w", rerr)
+		}
+		return false, nil
+	}
+	return created, err
+}
+
+// bootstrapAdminTx runs one bootstrap pass in a single transaction. It
+// reconciles the admin's hash when the admin exists and creates the admin
+// otherwise, then grants roleID (the tenant's admin role) either way; the grant
+// is ON CONFLICT DO NOTHING, so a repeat is a no-op. A crash anywhere in the pass
+// rolls all of it back, so no admin is left without its role. A unique violation
+// from the insert is returned unwrapped for the caller's concurrent-create path.
+func (r *Repository) bootstrapAdminTx(ctx context.Context, tid, roleID pgtype.UUID, tenant, email, hash string) (bool, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("beginning bootstrap-admin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
+	qtx := r.q.WithTx(tx)
+	updated, err := qtx.UpdateUserPassword(ctx, queries.UpdateUserPasswordParams{
 		Name: tenant, Email: email, PasswordHash: strPtr(hash),
 	})
 	if err != nil {
 		return false, fmt.Errorf("reconciling admin password: %w", err)
 	}
-	if updated > 0 {
-		return false, nil
-	}
-	// No such admin yet — create it and grant the admin role.
-	uid, err := r.q.CreateUser(ctx, queries.CreateUserParams{TenantID: tid, Email: email, PasswordHash: strPtr(hash)})
-	if err != nil {
-		// Concurrent bootstrap race: between the reconcile check above and this
-		// insert, another process created the admin. This is expected under ADR
-		// 0049 (the api and scheduler roles boot at once) and with multiple
-		// active-active api replicas — every replica runs bootstrap on startup.
-		// It is not a failure: reconcile to the configured hash and report "not
-		// newly created", so no process crashes on the unique-constraint 23505.
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
-			if _, uerr := r.q.UpdateUserPassword(ctx, queries.UpdateUserPasswordParams{
-				Name: tenant, Email: email, PasswordHash: strPtr(hash),
-			}); uerr != nil {
-				return false, fmt.Errorf("reconciling admin after concurrent create: %w", uerr)
-			}
-			return false, nil
+	created := updated == 0
+	var uid pgtype.UUID
+	if created {
+		uid, err = qtx.CreateUser(ctx, queries.CreateUserParams{TenantID: tid, Email: email, PasswordHash: strPtr(hash)})
+		if isUniqueViolation(err) {
+			return false, err
 		}
-		return false, fmt.Errorf("creating admin user: %w", err)
+		if err != nil {
+			return false, fmt.Errorf("creating admin user: %w", err)
+		}
+	} else {
+		row, gerr := qtx.GetUserByEmail(ctx, queries.GetUserByEmailParams{Name: tenant, Email: email})
+		if gerr != nil {
+			return false, fmt.Errorf("loading admin user: %w", gerr)
+		}
+		uid = row.ID
 	}
-	roleID, err := r.q.GetRoleByName(ctx, queries.GetRoleByNameParams{TenantID: tid, Name: "admin"})
-	if err != nil {
-		return false, fmt.Errorf("loading admin role: %w", err)
-	}
-	if err := r.q.AssignUserRole(ctx, queries.AssignUserRoleParams{UserID: uid, RoleID: roleID}); err != nil {
+	if err := qtx.AssignUserRole(ctx, queries.AssignUserRoleParams{UserID: uid, RoleID: roleID}); err != nil {
 		return false, fmt.Errorf("assigning admin role: %w", err)
 	}
-	return true, nil
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("committing bootstrap-admin tx: %w", err)
+	}
+	return created, nil
+}
+
+// isUniqueViolation reports whether err is a Postgres unique-constraint
+// violation (SQLSTATE 23505).
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation
 }
 
 // compile-time assurance that Repository satisfies the auth user store.
