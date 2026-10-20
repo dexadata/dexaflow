@@ -488,10 +488,7 @@ func decodeStrict[T any](m map[string]any) error {
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
 	var out T
-	if err := dec.Decode(&out); err != nil {
-		return err
-	}
-	return nil
+	return dec.Decode(&out)
 }
 
 // decodeStrictSlice decodes each element of a slice of untyped maps into T,
