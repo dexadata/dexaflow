@@ -1480,7 +1480,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 	handler := api.NewServer(withCIOIDC(withAPITokens(api.Dependencies{
 		Logger: tel.Logger,
 		// withAPITokens puts the API tokens (ADR 0074) in front of it unless
-		// auth.api_tokens.enabled is false.
+		// auth.api_tokens.disabled is true.
 		Authenticator:                authn,
 		RateLimiter:                  auth.NewRateLimiter(loginRateLimit(cfg), time.Minute),
 		Registry:                     tel.Registry,

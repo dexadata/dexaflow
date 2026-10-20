@@ -909,7 +909,7 @@ type AuthSection struct {
 	// instead of a stored deploy token (ADR 0092, #1882). No issuer turns
 	// it off.
 	CIOIDC CIOIDCSection `mapstructure:"ci_oidc"`
-	// APITokens turns the long-lived API tokens (ADR 0074) on or off.
+	// APITokens can turn the long-lived API tokens (ADR 0074) off.
 	APITokens APITokensSection `mapstructure:"api_tokens"`
 	// ServiceToken enables the operator service API under /api/v2/service/
 	// (#1283), which creates tenants and links users to the trusted issuer. It
@@ -1015,15 +1015,15 @@ type AuthSection struct {
 
 // APITokensSection configures the API tokens of ADR 0074 (#2056).
 type APITokensSection struct {
-	// Enabled serves the API tokens: a signed-in user mints scoped tokens
-	// that live up to a year (/api/v2/apiTokens and the tokens screen), and
-	// every request may authenticate with one. False leaves those routes and
-	// the screen unserved and refuses every API token as an unknown bearer,
-	// a token minted while they were on included (it comes back if they are
-	// turned on again before it expires). Turn it off when a platform in
-	// front of the engine decides who may reach it at each sign-in, so no
-	// engine credential outlives that decision. True by default.
-	Enabled bool `mapstructure:"enabled"`
+	// Disabled stops serving the API tokens: /api/v2/apiTokens and the
+	// tokens screen are not registered, and every API token is refused as
+	// an unknown bearer, a token minted while they were served included (it
+	// works again if they are served again before it expires). For a
+	// platform in front of the engine that decides who may reach it at each
+	// sign-in, so no engine credential outlives that decision. False, the
+	// zero value, serves them, so a configuration that never mentions it
+	// keeps them.
+	Disabled bool `mapstructure:"disabled"`
 }
 
 // JWTSection configures JWT issuance and validation.
@@ -1528,7 +1528,7 @@ var serverDefaults = map[string]any{
 	"auth.trusted_issuer.deploy_audience":             "",
 	"auth.ci_oidc.issuers":                            "",
 	"auth.ci_oidc.session_ttl_seconds":                3600,
-	"auth.api_tokens.enabled":                         true,
+	"auth.api_tokens.disabled":                        false,
 	"auth.external_signin_url":                        "",
 	"auth.external_signout_url":                       "",
 	// Registered so LEOFLOW_AUTH_SESSION_COOKIE_INSECURE binds at all (viper's

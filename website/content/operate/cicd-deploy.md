@@ -1115,7 +1115,7 @@ What a deploy token can do, and how it ends:
   sent in the `Authorization` header only; it never works as a browser session
   cookie.
 - **Turned off.** An operator can turn API tokens off with
-  `auth.api_tokens.enabled: false` (Helm: `auth.apiTokens.enabled`), for
+  `auth.api_tokens.disabled: true` (Helm: `auth.apiTokens.disabled`), for
   example where a platform in front of Dexaflow decides at each sign-in who
   may reach it and no credential should outlive that decision. The token
   routes and the **API tokens** screen are then not served, and every `dxf_`

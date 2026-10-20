@@ -387,8 +387,8 @@ auth:
     # -- Lifetime, in seconds, of the session a CI token is exchanged for, 300 to 43200 (`auth.ci_oidc.session_ttl_seconds`).
     sessionTtlSeconds: 3600
   apiTokens:
-    # -- Serve the long-lived API tokens (ADR 0074) a signed-in user mints for CI and scripts (`auth.api_tokens.enabled`). `false` leaves `/api/v2/apiTokens` and the API tokens screen unserved and refuses every `dxf_` token with 401, one created before included. Turn it off when a platform in front of Dexaflow decides at each sign-in who may reach it, so no credential outlives that decision. `true` (the default) renders nothing.
-    enabled: true
+    # -- Stop serving the long-lived API tokens (ADR 0074) a signed-in user mints for CI and scripts (`auth.api_tokens.disabled`). `true` leaves `/api/v2/apiTokens` and the API tokens screen unserved and refuses every `dxf_` token with 401, one created before included. Turn it on when a platform in front of Dexaflow decides at each sign-in who may reach it, so no credential outlives that decision. `false` (the default) renders nothing.
+    disabled: false
   # -- HMAC secret signing API + agent JWTs. Set inline OR reference an existing Secret via `existingSecret`. Generate with `openssl rand -base64 64`.
   jwtSecret: ""
   # -- Name of a Secret with key `jwtSecret` (takes precedence over `jwtSecret`).

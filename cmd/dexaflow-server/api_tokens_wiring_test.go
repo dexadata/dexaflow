@@ -48,11 +48,11 @@ func (tokenRepo) RevokeAPIToken(context.Context, string, string, string) (auth.A
 	return auth.APIToken{}, errors.New("not used")
 }
 
-func loadWithTokens(t *testing.T, enabled string) *config.ServerConfig {
+func loadWithTokens(t *testing.T, disabled string) *config.ServerConfig {
 	t.Helper()
 	t.Setenv("DEXAFLOW_AUTH_JWT_SECRET", strings.Repeat("s", 40))
-	if enabled != "" {
-		t.Setenv("DEXAFLOW_AUTH_API_TOKENS_ENABLED", enabled)
+	if disabled != "" {
+		t.Setenv("DEXAFLOW_AUTH_API_TOKENS_DISABLED", disabled)
 	}
 	cfg, err := config.LoadServer("", nil)
 	if err != nil {
@@ -111,12 +111,26 @@ func TestAPITokensAreOnByDefault(t *testing.T) {
 	}
 }
 
+// TestAPITokensOnForAZeroConfig: a ServerConfig built in code, which sets
+// nothing, keeps the tokens, as every caller of buildAPIServer before the
+// setting existed expects.
+func TestAPITokensOnForAZeroConfig(t *testing.T) {
+	repo := tokenRepo{}
+	authn := auth.NewJWTAuthenticator(nil, strings.Repeat("s", 40), time.Hour)
+
+	deps := withAPITokens(api.Dependencies{Authenticator: authn}, &config.ServerConfig{}, repo)
+
+	if deps.APITokens == nil || deps.Authenticator == auth.Authenticator(authn) {
+		t.Error("a zero ServerConfig turned the API tokens off")
+	}
+}
+
 // TestAPITokensOffServeNoRouteAndAcceptNoToken: with the switch off the token
 // routes and their screen are not served, and a token
 // minted while they were on is refused like any unknown bearer; user JWTs
 // still authenticate.
 func TestAPITokensOffServeNoRouteAndAcceptNoToken(t *testing.T) {
-	cfg := loadWithTokens(t, "false")
+	cfg := loadWithTokens(t, "true")
 	plain, _, err := auth.NewAPIToken()
 	if err != nil {
 		t.Fatal(err)

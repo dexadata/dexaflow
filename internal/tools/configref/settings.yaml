@@ -411,16 +411,17 @@ settings:
       How long the session a CI token is exchanged for lives, 300 to 43200 seconds.
       It is not renewed: a later job exchanges again. Read only when an issuer is
       configured. Helm: `auth.ciOidc.sessionTtlSeconds`.
-  auth.api_tokens.enabled:
+  auth.api_tokens.disabled:
     edition: both
     description: >-
-      Serves the [API tokens](/operate/cicd-deploy/#credentials-for-the-control-plane) a signed-in user mints for
-      CI and scripts (`/api/v2/apiTokens` and the tokens screen). `false` leaves
-      those routes and the screen unserved and refuses every API token as an
-      unknown bearer, including one minted while they were on (it works again
-      if they are turned back on before it expires). Turn it off when a platform
-      in front of Dexaflow decides at each sign-in who may reach it, so no
-      Dexaflow credential outlives that decision. Helm: `auth.apiTokens.enabled`.
+      `true` stops serving the [API tokens](/operate/cicd-deploy/#credentials-for-the-control-plane)
+      a signed-in user mints for CI and scripts: `/api/v2/apiTokens` and the
+      tokens screen are not served, and every API token is refused as an unknown
+      bearer, including one minted before (it works again if they are served
+      again before it expires). Turn it on when a platform in front of Dexaflow
+      decides at each sign-in who may reach it, so no Dexaflow credential
+      outlives that decision. `false` (the default) serves them. Helm:
+      `auth.apiTokens.disabled`.
   auth.external_signin_url:
     edition: both
     description: >-

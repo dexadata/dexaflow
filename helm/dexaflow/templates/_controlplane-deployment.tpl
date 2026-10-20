@@ -245,12 +245,12 @@ spec:
               value: {{ join "," .allowedCIDRs | quote }}
             {{- end }}
             {{- end }}
-            {{- if eq (toString (dig "apiTokens" "enabled" true .ctx.Values.auth)) "false" }}
-            # No API tokens (auth.api_tokens.enabled): their routes and screen
+            {{- if eq (toString (dig "apiTokens" "disabled" false .ctx.Values.auth)) "true" }}
+            # No API tokens (auth.api_tokens.disabled): their routes and screen
             # are not served and every dxf_ bearer is refused. Omitted when
-            # true, which keeps the server default (served).
-            - name: LEOFLOW_AUTH_API_TOKENS_ENABLED
-              value: "false"
+            # false, which keeps the server default (served).
+            - name: LEOFLOW_AUTH_API_TOKENS_DISABLED
+              value: "true"
             {{- end }}
             {{- if .ctx.Values.config.poolsReadOnly }}
             # Tenant-facing pool API serves reads only (server.pools_read_only):

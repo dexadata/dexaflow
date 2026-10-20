@@ -1,4 +1,4 @@
-suite: API tokens switch (auth.api_tokens.enabled)
+suite: API tokens switch (auth.api_tokens.disabled)
 templates:
   # secret.yaml is in scope so the deployment's `checksum/secret` annotation can
   # resolve its `include` reference (same reason as deployment_test.yaml).
@@ -21,19 +21,19 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_API_TOKENS_ENABLED
+            name: LEOFLOW_AUTH_API_TOKENS_DISABLED
           any: true
 
-  - it: turns the tokens off when auth.apiTokens.enabled is false
+  - it: turns the tokens off when auth.apiTokens.disabled is true
     template: deployment.yaml
     set:
-      auth.apiTokens.enabled: false
+      auth.apiTokens.disabled: true
     asserts:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_API_TOKENS_ENABLED
-            value: "false"
+            name: LEOFLOW_AUTH_API_TOKENS_DISABLED
+            value: "true"
 
   # The api role serves the routes and authenticates requests, so the setting
   # must reach it when the control plane is split; both Deployments share the
@@ -41,7 +41,7 @@ tests:
   - it: reaches both Deployments when the control plane is split
     template: deployment.yaml
     set:
-      auth.apiTokens.enabled: false
+      auth.apiTokens.disabled: true
       split.enabled: true
       logs.persistence.accessMode: ReadWriteMany
     asserts:
@@ -50,8 +50,8 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_API_TOKENS_ENABLED
-            value: "false"
+            name: LEOFLOW_AUTH_API_TOKENS_DISABLED
+            value: "true"
 
   # helm upgrade --reuse-values from a release before this value existed
   # carries no auth.apiTokens: the render must keep the default.
@@ -63,5 +63,5 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_API_TOKENS_ENABLED
+            name: LEOFLOW_AUTH_API_TOKENS_DISABLED
           any: true

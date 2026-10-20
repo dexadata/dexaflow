@@ -15,12 +15,12 @@ type apiTokenRepo interface {
 }
 
 // withAPITokens serves the API tokens (ADR 0074) unless
-// auth.api_tokens.enabled is false. On, an API token is checked before every
+// auth.api_tokens.disabled is true. On, an API token is checked before every
 // other bearer and the token routes and screen are registered. Off, neither:
 // a dxf_ bearer reaches the next authenticator, which refuses it like any
 // token it did not mint, and /api/v2/apiTokens is not served (#2056).
 func withAPITokens(deps api.Dependencies, cfg *config.ServerConfig, repo apiTokenRepo) api.Dependencies {
-	if !cfg.Auth.APITokens.Enabled {
+	if cfg.Auth.APITokens.Disabled {
 		deps.APITokens = nil
 		return deps
 	}
