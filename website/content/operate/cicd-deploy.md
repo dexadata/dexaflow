@@ -1114,6 +1114,14 @@ What a deploy token can do, and how it ends:
   it is not mistaken for a manual revoke (`api_token.revoke`). The token is
   sent in the `Authorization` header only; it never works as a browser session
   cookie.
+- **Turned off.** An operator can turn API tokens off with
+  `auth.api_tokens.enabled: false` (Helm: `auth.apiTokens.enabled`), for
+  example where a platform in front of Dexaflow decides at each sign-in who
+  may reach it and no credential should outlive that decision. The token
+  routes and the **API tokens** screen are then not served, and every `dxf_`
+  token answers `401`, including one created before; it works again if the
+  tokens are turned back on before it expires. Deploy through CI OIDC or the
+  platform's issuer instead.
 
 Creating, listing and revoking tokens is also available through the API
 (`POST`, `GET /api/v2/apiTokens` and `DELETE /api/v2/apiTokens/{id}`).

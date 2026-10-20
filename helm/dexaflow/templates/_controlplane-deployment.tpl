@@ -245,6 +245,13 @@ spec:
               value: {{ join "," .allowedCIDRs | quote }}
             {{- end }}
             {{- end }}
+            {{- if not .ctx.Values.auth.apiTokens.enabled }}
+            # No API tokens (auth.api_tokens.enabled): their routes and screen
+            # are not served and every dxf_ bearer is refused. Omitted when
+            # true, which keeps the server default (served).
+            - name: LEOFLOW_AUTH_API_TOKENS_ENABLED
+              value: "false"
+            {{- end }}
             {{- if .ctx.Values.config.poolsReadOnly }}
             # Tenant-facing pool API serves reads only (server.pools_read_only):
             # no tenant role, admin included, can create, resize or delete a pool.

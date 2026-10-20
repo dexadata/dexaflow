@@ -909,6 +909,8 @@ type AuthSection struct {
 	// instead of a stored deploy token (ADR 0092, #1882). No issuer turns
 	// it off.
 	CIOIDC CIOIDCSection `mapstructure:"ci_oidc"`
+	// APITokens turns the long-lived API tokens (ADR 0074) on or off.
+	APITokens APITokensSection `mapstructure:"api_tokens"`
 	// ServiceToken enables the operator service API under /api/v2/service/
 	// (#1283), which creates tenants and links users to the trusted issuer. It
 	// is the bearer credential for that API: at least 32 characters, kept in a
@@ -1009,6 +1011,19 @@ type AuthSection struct {
 	// fails boot, because the browser would drop every session cookie.
 	// Empty means _token. Bind via LEOFLOW_AUTH_SESSION_COOKIE_NAME.
 	SessionCookieName string `mapstructure:"session_cookie_name"`
+}
+
+// APITokensSection configures the API tokens of ADR 0074 (#2056).
+type APITokensSection struct {
+	// Enabled serves the API tokens: a signed-in user mints scoped tokens
+	// that live up to a year (/api/v2/apiTokens and the tokens screen), and
+	// every request may authenticate with one. False leaves those routes and
+	// the screen unserved and refuses every API token as an unknown bearer,
+	// a token minted while they were on included (it comes back if they are
+	// turned on again before it expires). Turn it off when a platform in
+	// front of the engine decides who may reach it at each sign-in, so no
+	// engine credential outlives that decision. True by default.
+	Enabled bool `mapstructure:"enabled"`
 }
 
 // JWTSection configures JWT issuance and validation.
@@ -1513,6 +1528,7 @@ var serverDefaults = map[string]any{
 	"auth.trusted_issuer.deploy_audience":             "",
 	"auth.ci_oidc.issuers":                            "",
 	"auth.ci_oidc.session_ttl_seconds":                3600,
+	"auth.api_tokens.enabled":                         true,
 	"auth.external_signin_url":                        "",
 	"auth.external_signout_url":                       "",
 	// Registered so LEOFLOW_AUTH_SESSION_COOKIE_INSECURE binds at all (viper's
