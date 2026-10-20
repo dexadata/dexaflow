@@ -473,7 +473,10 @@ jobs:
       - name: helm rollback to previous release (expand/contract schema guard)
         run: |
           set -euo pipefail
-          helm rollback leoflow 1 --wait --timeout 300s
+          # Revision 1 is the last released chart installed above, revision 2
+          # the upgrade to HEAD. A rollback runs no pre-upgrade hook, so the
+          # old binary meets HEAD's schema as it is.
+          helm rollback leoflow 1 -n leoflow --wait --timeout 300s
           kubectl -n leoflow rollout status deploy/leoflow --timeout=180s
           kubectl -n leoflow port-forward svc/leoflow 8082:8080 &
           PF_PID=$!
@@ -488,7 +491,6 @@ jobs:
           done
           test "$ready" -eq 1 || { echo "::error::previous release binary failed /readyz on the new schema" >&2; exit 1; }
           echo "previous release binary is ready on HEAD schema after rollback"
-
 
       # If anything above failed (helm install, smoke, upgrade, post-upgrade
       # smoke), dump the cluster + helm state so the cause is visible from
