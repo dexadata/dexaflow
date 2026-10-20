@@ -14,6 +14,7 @@ Closes #
 ## Checklist
 
 - [ ] **TDD** — a failing test preceded the production code (red → green → refactor) — [ADR 0011](https://dexaflow.dexadata.ai/project/adrs/0011-tdd-strict/)
+- [ ] **Bug fix?** A regression test reproduces the bug: it fails without the fix and passes with it, and it is named under "How it was tested" ([Fix a bug](https://dexaflow.dexadata.ai/contribute/recipes/fix-a-bug/))
 - [ ] `make lint test` passes locally
 - [ ] GoDocs on every new exported identifier; cyclomatic complexity ≤ 15 — [ADR 0012](https://dexaflow.dexadata.ai/project/adrs/0012-code-quality-standards/)
 - [ ] No new dependency without justification; `make vuln` clean — [ADR 0014](https://dexaflow.dexadata.ai/project/adrs/0014-supply-chain-security/)
