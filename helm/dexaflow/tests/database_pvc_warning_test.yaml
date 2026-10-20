@@ -1,4 +1,4 @@
-suite: in-cluster Postgres PVC warning (#1995, ADR 0090)
+suite: in-cluster Postgres persistence warning (#1995, ADR 0090)
 templates:
   - NOTES.txt
 release:
@@ -11,38 +11,34 @@ set:
   redis.url: redis://h/0
   auth.jwtSecret: jwt
 tests:
-  - it: warns in NOTES when postgresql subchart has persistence disabled
-    template: NOTES.txt
-    set:
-      database.url: postgres://user:pass@h:5432/d
-      postgresql.enabled: true
-      postgresql.persistence.enabled: false
-    asserts:
-      - matchRegexRaw:
-          pattern: "WARNING: in-cluster Postgres runs without persistent storage"
-
-  - it: warns in NOTES when database.url points to an in-cluster PoC postgres
+  - it: warns when database.url points at the PoC in-cluster Postgres
     template: NOTES.txt
     set:
       database.url: postgres://leoflow:leoflow-poc@pg-postgresql:5432/leoflow?sslmode=disable
     asserts:
       - matchRegexRaw:
-          pattern: "WARNING: in-cluster Postgres runs without persistent storage"
+          pattern: "WARNING: database.url points at an in-cluster Postgres Service"
 
-  - it: does not warn in NOTES when database.url is external
+  - it: warns when database.url points at the local-cluster Postgres Service
+    template: NOTES.txt
+    set:
+      database.url: postgres://leoflow:leoflow@postgres:5432/leoflow?sslmode=disable
+    asserts:
+      - matchRegexRaw:
+          pattern: "WARNING: database.url points at an in-cluster Postgres Service"
+
+  - it: does not warn when database.url is external
     template: NOTES.txt
     set:
       database.url: postgres://user:pass@rds.example.com:5432/dexaflow
     asserts:
       - notMatchRegexRaw:
-          pattern: "WARNING: in-cluster Postgres runs without persistent storage"
+          pattern: "WARNING: database.url points at an in-cluster Postgres Service"
 
-  - it: does not warn in NOTES when postgresql subchart has persistence enabled
+  - it: does not warn when the URL comes from an existing Secret
     template: NOTES.txt
     set:
-      database.url: postgres://user:pass@h:5432/d
-      postgresql.enabled: true
-      postgresql.persistence.enabled: true
+      database.existingSecret: db-credentials
     asserts:
       - notMatchRegexRaw:
-          pattern: "WARNING: in-cluster Postgres runs without persistent storage"
+          pattern: "WARNING: database.url points at an in-cluster Postgres Service"

@@ -1,9 +1,9 @@
 kind: Changed
 body: |-
-  **Helm NOTES warn on in-cluster Postgres without a PVC, and restore drills verified.**
-  When Postgres is deployed without persistent volume storage (such as emptyDir
-  evaluation setups), Helm install and upgrade print a clear NOTES warning that
-  data does not survive node loss, drains, or Spot preemptions. Documented
-  regular backup and restore drills for Lite and Pro, and added a scheduled
-  restore drill CI workflow. (#1995)
+  **`helm install` and `helm upgrade` warn when `database.url` points at an
+  in-cluster Postgres Service.** The release notes say that a Postgres on
+  emptyDir loses every DAG version, run, secret and user when its pod moves,
+  and point at the upgrade guide. The backup guide now describes a regular
+  restore drill for Lite and for Helm, which the repository also runs every
+  week and on each release candidate. (#1995)
 time: 2026-10-19T20:30:00.000000000+00:00

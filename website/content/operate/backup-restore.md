@@ -188,45 +188,58 @@ chart README pointing at the upstream guidance.
 
 ## Regular restore drills
 
-A backup that has never been restored does not count as a backup.
-Disaster recovery procedures must periodically exercise restoring fresh
-backups into clean test databases to verify that:
-1. The snapshot or archive is intact and uncorrupted.
-2. The restored database schema matches the required version.
-3. The server boots cleanly, passes all startup checks, and becomes ready
-   (`/readyz` returns 200).
+A backup that has never been restored does not count as a backup. Restore a
+recent backup into a scratch environment on a schedule and check that:
+
+1. The archive or dump is complete and restores without errors.
+2. The control plane boots on it and `/readyz` returns 200.
+3. An admin can sign in and sees the DAGs and runs you expect.
+
+The repository runs the same drill every week and on every release candidate
+(`.github/workflows/restore-drill.yaml`, which runs
+`test/e2e/restore-drill-e2e.sh`).
 
 ### Lite restore drill
 
+`dexaflow lite restore --force` replaces `~/.dexaflow`, so run the drill on
+another machine or in a throwaway container or VM, never on the install you
+backed up.
+
 ```sh
-# 1. Take a fresh backup
+# On the install you protect: take a fresh backup.
 dexaflow lite backup --output /tmp/drill-snapshot.tar.gz
 
-# 2. In a temporary test directory or clean container:
+# On the scratch machine: restore it and start Lite.
 dexaflow lite restore --input /tmp/drill-snapshot.tar.gz --force
-
-# 3. Boot Lite and verify readiness
 dexaflow lite &
-PID=$!
-sleep 5
-curl -fsS http://localhost:8080/readyz
-kill "$PID"
+for _ in $(seq 1 60); do curl -fsS http://localhost:8080/readyz && break; sleep 1; done
 ```
 
-### Pro / Helm restore drill
+### Pro (Helm) restore drill
+
+Restore into a separate database and point a throwaway release at it, so the
+production release never sees the drill. Use your own values file, so the
+release has the same `secretKey` and can decrypt the restored connections.
 
 ```sh
-# 1. Dump logical backup
+# Dump the production database and restore it into an empty scratch database.
 pg_dump --clean --if-exists -d "$DATABASE_URL" > /tmp/drill-backup.sql
+psql "$DRILL_DATABASE_URL" -v ON_ERROR_STOP=1 < /tmp/drill-backup.sql
 
-# 2. Restore into a test or clean database
-psql "$TEST_DATABASE_URL" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
-psql "$TEST_DATABASE_URL" < /tmp/drill-backup.sql
+# Pause every DAG in the copy, so the drill release schedules nothing.
+psql "$DRILL_DATABASE_URL" -c "UPDATE dags SET is_paused = true"
 
-# 3. Verify server readiness against restored database
-kubectl -n leoflow rollout restart deploy/leoflow
-kubectl -n leoflow rollout status deploy/leoflow --timeout=120s
-curl -fsS http://127.0.0.1:8080/readyz
+# Start a throwaway release on the restored database and check it is ready.
+kubectl create namespace dexaflow-drill
+helm install drill oci://ghcr.io/dexadata/charts/dexaflow -n dexaflow-drill \
+  -f values.yaml --set fullnameOverride=dexaflow-drill \
+  --set database.url="$DRILL_DATABASE_URL" --wait
+kubectl -n dexaflow-drill port-forward svc/dexaflow-drill 8081:8080 &
+curl -fsS http://127.0.0.1:8081/readyz
+
+# Clean up.
+helm uninstall drill -n dexaflow-drill
+kubectl delete namespace dexaflow-drill
 ```
 
 ## Related issues

@@ -1073,9 +1073,19 @@ storage (such as in local clusters or evaluation setups), the datastore has no
 persistence guarantees. Any pod recreation, node reboot, node drain, or
 Spot/preemptible reclamation destroys the database volume completely.
 
-When a running control plane discovers that its schema or data has vanished, it
-stops serving requests and marks itself not ready (`/readyz` returns 503) rather
-than crash-looping or silently re-initializing an empty database (see ADR 0090).
+Today a control plane whose database lost its schema refuses to boot
+(`schema_migrations is absent`) and its pods crash-loop until `helm upgrade`
+runs the migration hook again, which recreates an empty schema; the data does
+not come back
+([#1842](https://github.com/dexadata/dexaflow/issues/1842)). [ADR
+0090](/project/adrs/0090-database-replaced-under-a-running-release/) defines how
+a running release will treat a database that was emptied or replaced; that work
+is tracked in [#1846](https://github.com/dexadata/dexaflow/issues/1846). Only a
+restore from a backup brings the data back.
+
+`helm install` and `helm upgrade` print a warning in the release notes when
+`database.url` points at an in-cluster Postgres Service, since the chart cannot
+see whether that Postgres has a volume.
 
 To prevent data loss:
 - Never run production control planes against `emptyDir` datastores.

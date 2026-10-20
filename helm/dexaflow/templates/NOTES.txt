@@ -146,22 +146,15 @@ database.maxOpenConns. See #1088.
 
 WARNING: no database URL set. Provide .Values.database.url or .Values.database.existingSecret (key databaseUrl).
 {{- end }}
-{{- $pgNoPVC := false }}
-{{- if and .Values.postgresql .Values.postgresql.enabled }}
-  {{- if not (index .Values.postgresql "persistence" "enabled" | default false) }}
-    {{- $pgNoPVC = true }}
-  {{- end }}
-{{- else if and .Values.database.url (or (contains "pg-postgresql" .Values.database.url) (contains "postgres.leoflow" .Values.database.url) (contains "@postgres:" .Values.database.url) (contains "@postgres." .Values.database.url)) }}
-  {{- $pgNoPVC = true }}
-{{- end }}
-{{- if $pgNoPVC }}
+{{- $dbURL := .Values.database.url | default "" }}
+{{- if or (contains "@pg-postgresql:" $dbURL) (contains "@postgres:" $dbURL) (contains "@postgres." $dbURL) }}
 
-WARNING: in-cluster Postgres runs without persistent storage (no PVC).
-Data does NOT survive a node reboot, node drain, or Spot/preemptible reclamation.
-An emptyDir datastore loses every DAG version, run, secret, and user when its pod
-restarts or moves to another node. For production, point database.url at a managed
-Postgres instance (RDS, Cloud SQL) or ensure the in-cluster datastore uses a
-PersistentVolumeClaim. See https://dexaflow.dexadata.ai/operate/upgrades/#ephemeral-database-loss
+WARNING: database.url points at an in-cluster Postgres Service. If that Postgres
+keeps its data on emptyDir (as the PoC and local-cluster examples do) instead of
+a PersistentVolumeClaim, every DAG version, run, secret and user is lost when its
+pod restarts or moves: a node reboot, a drain, a Spot or preemptible reclamation.
+For production use a managed Postgres (RDS, Cloud SQL) or back it with a PVC, and
+rehearse a restore. See https://dexaflow.dexadata.ai/operate/upgrades/#ephemeral-database-loss
 {{- end }}
 {{- if not (or .Values.auth.existingSecret .Values.auth.jwtSecret) }}
 
