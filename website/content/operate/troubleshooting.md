@@ -234,30 +234,46 @@ kubectl logs deploy/<release> -c leoflow-server \
   | jq 'select(.msg == "rejected agent bearer token") | {reason, run, task, try, expired_at, peer}'
 ```
 
-## Ingress & Unavailable Service (502 / 503 / 504)
+## Ingress errors while no server pod is ready (502, 503, 504)
 
-When no control plane server pod is ready (for example while booting or waiting for schema migrations), Kubernetes routes no traffic to the service and the ingress answers with a 502, 503, or 504 error.
+When no control plane pod is ready (while it boots, or while it waits for its
+schema), the Service has no endpoints and the ingress controller answers with
+its own 502 or 503 page. Once a pod answers again, the server's own outage page
+and API errors take over
+([#1099](https://github.com/dexadata/dexaflow/issues/1099)).
 
-### Static Maintenance Page
+### Maintenance page
 
-The Helm chart includes an optional static maintenance page that reloads automatically:
+The chart can deploy a small static maintenance page (a `<release>-maintenance`
+Deployment and Service running an unprivileged nginx) that answers every path
+with `503`, a `Retry-After` header and a page that reloads by itself:
 
 ```yaml
 ingress:
   enabled: true
+  className: nginx
   maintenancePage:
     enabled: true
     operatorText: "Scheduled maintenance in progress"
     statusUrl: "https://status.example.com"
 ```
 
-When enabled:
-- A ConfigMap (`<release>-maintenance`) is rendered with an auto-refreshing HTML page.
-- For `ingress-nginx`, default annotations wire `custom-http-errors: "502,503,504"` and point `default-backend` to the maintenance backend.
-- For **Gateway API** or ingress controllers without custom error annotations, route 5xx error rules or fallback routes to the maintenance page ConfigMap.
+- **ingress-nginx:** the chart sets `nginx.ingress.kubernetes.io/default-backend`
+  to the maintenance Service, which ingress-nginx uses while the server has no
+  ready endpoint, and `custom-http-errors: "502,504"` for a pod lost in the
+  middle of a request. `503` is not intercepted, so the server's own outage
+  responses still reach the browser and API clients. Annotations you set under
+  `ingress.annotations` win over these.
+- **Gateway API and other controllers:** the annotations do nothing there.
+  Route the controller's fallback or error backend to the `<release>-maintenance`
+  Service on port 80, if the controller supports one.
+
+The page text is generic on purpose: it names no cause. Operators find the
+reason in the server logs and metrics. The image is
+`nginxinc/nginx-unprivileged` by default; set
+`ingress.maintenancePage.image` to use a mirror or pin a digest.
 
 ## Observability
-
 
 - **Metrics:** Prometheus at `:9090/metrics` (scheduler, dispatch, inline
   runner, undispatchable counters; ADR 0007 has the catalogue).
