@@ -192,8 +192,9 @@ func withNext(raw, next string) string {
 // absolute path only, defaulting to "/". This blocks open redirects (such as
 // "//evil.com" or "https://evil.com"). When given an absolute in-app URL whose
 // host matches the current request host, its origin is stripped so the local
-// path, query and hash are preserved safely (#1127).
-func sanitizeNext(next string, host ...string) string {
+// path, query and hash are preserved safely (#1127). host is the request's Host;
+// empty accepts paths only.
+func sanitizeNext(next, host string) string {
 	if next == "" {
 		return "/"
 	}
@@ -202,7 +203,7 @@ func sanitizeNext(next string, host ...string) string {
 		if err != nil {
 			return "/"
 		}
-		if len(host) == 0 || host[0] == "" || !strings.EqualFold(u.Host, host[0]) {
+		if host == "" || !strings.EqualFold(u.Host, host) {
 			return "/"
 		}
 		target := u.RequestURI()
@@ -211,7 +212,9 @@ func sanitizeNext(next string, host ...string) string {
 		}
 		next = target
 	}
-	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.HasPrefix(next, "/\\") {
+	// Browsers drop tabs and newlines from a URL and read "\\" as "/", so
+	// "/\t/evil.com" or "/\\evil.com" would leave the origin.
+	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.ContainsAny(next, "\\\t\r\n") {
 		return "/"
 	}
 	return next

@@ -1,12 +1,12 @@
 kind: Fixed
 body: |-
-  **The browser session is kept renewed while the user works in the UI.**
-  `POST /api/v2/auth/token/renew` now accepts the `_token` session cookie via
-  candidate tokens and rewrites the refreshed session cookie server-side when
-  called same-origin. The served UI shell injects a lightweight session keeper
-  script that periodically renews the session and renews when the tab regains
-  visibility. `POST /ui/auth/token` accurately reports the remaining TTL from
-  JWT claims, the login page displays a distinct service-unavailable message
-  during database outages, and in-app deep links are preserved across post-login
-  redirects. (#1127)
+  **The web UI keeps its session renewed while it is open.** The session expired
+  after `auth.jwt.token_ttl_seconds` (one hour by default) with no renewal. The UI
+  now renews it every 15 minutes and when its tab is shown again, up to
+  `auth.jwt.max_lifetime_seconds`. `POST /api/v2/auth/token/renew` accepts the
+  session cookie on same-origin requests and rewrites it. "Generate token" in
+  the user menu reports the time the token really has left, the login page says
+  when authentication is unavailable instead of "Invalid credentials", the web
+  editor sends an expired session to the login page instead of showing an empty
+  workspace, and logging in again returns to the page you were on. (#1127)
 time: 2026-10-19T16:50:00.000000000+00:00

@@ -208,7 +208,19 @@ func renewTokenHandler(renewer TokenRenewer, ttlSeconds, maxLifetimeSeconds int,
 	ttl := time.Duration(ttlSeconds) * time.Second
 	maxLifetime := time.Duration(maxLifetimeSeconds) * time.Second
 	return func(c *gin.Context) {
-		tokens := candidateTokens(c, session.cookieName())
+		// The session cookie renews only on a same-origin request: a same-site
+		// sibling or cross-site page may make the browser send it, and must not
+		// keep that session alive. Such a request can still renew a bearer.
+		var tokens []string
+		if browserMaySetSession(c) {
+			tokens = candidateTokens(c, session.cookieName())
+		} else if t := bearerToken(c.GetHeader("Authorization")); t != "" {
+			tokens = []string{t}
+		}
+		cookieToken := ""
+		if ck, err := c.Request.Cookie(session.cookieName()); err == nil {
+			cookieToken = ck.Value
+		}
 		if len(tokens) == 0 {
 			AbortProblem(c, http.StatusUnauthorized, "unauthorized", "missing bearer token")
 			return
@@ -237,7 +249,9 @@ func renewTokenHandler(renewer TokenRenewer, ttlSeconds, maxLifetimeSeconds int,
 				lifetimeExceeded = true
 				continue
 			}
-			if browserMaySetSession(c) {
+			// Rewrite the cookie only with its own renewal: a bearer sent by a
+			// script must not replace the browser's session with another one.
+			if token == cookieToken && browserMaySetSession(c) {
 				setSessionCookie(c, renewed, ttl, session)
 			}
 			c.JSON(http.StatusOK, tokenResponse{AccessToken: renewed, TokenType: "bearer", ExpiresIn: ttlSeconds})

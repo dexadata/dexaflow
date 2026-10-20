@@ -237,17 +237,40 @@ func TestRenewTokenViaSessionCookie(t *testing.T) {
 	}
 }
 
-// TestRenewTokenViaCookieRefusesCrossSiteCookie: a cross-site renewal request
-// gets the body but does NOT rewrite the browser session cookie (#1127).
-func TestRenewTokenViaCookieRefusesCrossSiteCookie(t *testing.T) {
+// TestRenewTokenRefusesTheCookieOffOrigin: a same-site sibling or cross-site
+// page can make the browser send the session cookie, and must not renew it
+// (#1127).
+func TestRenewTokenRefusesTheCookieOffOrigin(t *testing.T) {
+	for _, site := range []string{"cross-site", "same-site"} {
+		r := &fakeRenewer{renewed: "new-token", ok: true}
+		rec := postRenewWithCookie(renewServer(r), "current-cookie-token", site)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s renew with only the cookie = %d, want 401", site, rec.Code)
+		}
+		if r.gotToken != "" {
+			t.Errorf("%s request renewed %q", site, r.gotToken)
+		}
+		if cookie := rec.Header().Get("Set-Cookie"); cookie != "" {
+			t.Errorf("%s renewal wrote Set-Cookie: %q", site, cookie)
+		}
+	}
+}
+
+// TestRenewBearerLeavesTheSessionCookie: renewing a bearer sent next to the
+// cookie answers the renewed bearer and leaves the browser's session as it was.
+func TestRenewBearerLeavesTheSessionCookie(t *testing.T) {
 	r := &fakeRenewer{renewed: "new-token", ok: true}
-	srv := renewServer(r)
-	rec := postRenewWithCookie(srv, "current-cookie-token", "cross-site")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("renew cross-site = %d, want 200", rec.Code)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v2/auth/token/renew", http.NoBody)
+	req.Header.Set("Authorization", "Bearer other-token")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.AddCookie(&http.Cookie{Name: "_token", Value: "session-token"})
+	rec := httptest.NewRecorder()
+	renewServer(r).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || r.gotToken != "other-token" {
+		t.Fatalf("renew = %d with %q, want 200 with other-token", rec.Code, r.gotToken)
 	}
 	if cookie := rec.Header().Get("Set-Cookie"); cookie != "" {
-		t.Errorf("cross-site renewal wrote Set-Cookie: %q", cookie)
+		t.Errorf("a bearer renewal replaced the session cookie: %q", cookie)
 	}
 }
 

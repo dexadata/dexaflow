@@ -132,3 +132,24 @@ func TestLogoutClearsCookieAndRedirects(t *testing.T) {
 		t.Errorf("logout should expire _token cookie, got %q", sc)
 	}
 }
+
+func TestSanitizeNext(t *testing.T) {
+	for _, tc := range []struct{ next, host, want string }{
+		{"", "dexaflow.example", "/"},
+		{"/dags/etl?x=1#g", "dexaflow.example", "/dags/etl?x=1#g"},
+		{"https://dexaflow.example/dags/etl?run_id=1#d", "dexaflow.example", "/dags/etl?run_id=1#d"},
+		{"https://DEXAFLOW.example/dags", "dexaflow.example", "/dags"},
+		{"https://dexaflow.example/dags", "", "/"},
+		{"https://evil.example/dags", "dexaflow.example", "/"},
+		{"https://dexaflow.example//evil.example/x", "dexaflow.example", "/"},
+		{"//evil.example", "dexaflow.example", "/"},
+		{"/\\evil.example", "dexaflow.example", "/"},
+		{"/\t/evil.example", "dexaflow.example", "/"},
+		{"/\n/evil.example", "dexaflow.example", "/"},
+		{"javascript:alert(1)", "dexaflow.example", "/"},
+	} {
+		if got := sanitizeNext(tc.next, tc.host); got != tc.want {
+			t.Errorf("sanitizeNext(%q, %q) = %q, want %q", tc.next, tc.host, got, tc.want)
+		}
+	}
+}
