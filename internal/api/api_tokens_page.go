@@ -5,7 +5,6 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -52,7 +51,8 @@ var apiTokensPageCSP = "default-src 'none'; script-src " + apiTokensScriptHash +
 
 // registerAPITokensPage mounts the token screen when the token API is
 // mounted. Like the UI shell, the page is refused to a browser without a
-// session, which is sent to the sign-in page and back to the framed screen.
+// session, which is sent to the sign-in page and back to the framed screen,
+// and a session the store could not check gets the outage page (#1099).
 func registerAPITokensPage(r gin.IRouter, deps Dependencies, hosts *hostBinding) {
 	if deps.APITokens == nil {
 		return
@@ -63,12 +63,11 @@ func registerAPITokensPage(r gin.IRouter, deps Dependencies, hosts *hostBinding)
 func apiTokensPageHandler(deps Dependencies, hosts *hostBinding) gin.HandlerFunc {
 	session := deps.sessionCookie()
 	return func(c *gin.Context) {
-		if !deps.DevNoAuth && !shellSessionValid(c, deps.Authenticator, session.cookieName(), hosts) {
-			if hosts != nil {
-				clearSessionCookie(c, session)
+		if !deps.DevNoAuth {
+			if verdict := shellSession(c, deps.Authenticator, session.cookieName(), hosts); verdict != shellVerified {
+				refuseShell(c, verdict, session, hosts, apiTokensSPARoute)
+				return
 			}
-			c.Redirect(http.StatusFound, "/api/v2/auth/login?next="+url.QueryEscape(apiTokensSPARoute))
-			return
 		}
 		c.Header("Cache-Control", "no-store")
 		c.Header("X-Frame-Options", "SAMEORIGIN")

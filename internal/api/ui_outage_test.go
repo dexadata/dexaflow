@@ -184,3 +184,30 @@ func TestShellOutagePageWithHostBinding(t *testing.T) {
 		t.Errorf("Set-Cookie = %q, want the session cookie left alone", c)
 	}
 }
+
+// TestAPITokensPageDuringAStoreOutage: the API tokens screen (#1886) has its
+// own session gate, which must tell an unreachable store from a missing
+// session the way the shell gate does (#1099): the outage page for a session
+// that could not be checked, the sign-in redirect for none.
+func TestAPITokensPageDuringAStoreOutage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	srv := NewServer(Dependencies{
+		Logger:        discardLogger(),
+		Authenticator: outageAuthn{},
+		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		APITokens:     &fakeAPITokens{},
+	})
+
+	rec := pageGet(t, srv, apiTokensPagePath, "down")
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unchecked session: status = %d to %q, want 503", rec.Code, rec.Header().Get("Location"))
+	}
+	if !strings.Contains(rec.Body.String(), "temporarily unavailable") {
+		t.Errorf("unchecked session: not the outage page: %s", rec.Body.String())
+	}
+
+	rec = pageGet(t, srv, apiTokensPagePath, "nope")
+	if rec.Code != http.StatusFound || !strings.HasPrefix(rec.Header().Get("Location"), "/api/v2/auth/login") {
+		t.Errorf("invalid session: got %d to %q, want 302 to the login page", rec.Code, rec.Header().Get("Location"))
+	}
+}
