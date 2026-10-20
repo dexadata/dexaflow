@@ -331,6 +331,8 @@ func TestResourceUnitHugeQuantityDoesNotOverflowRefuseCheck(t *testing.T) {
 		{"memory 9Ei", TaskSpec{TaskID: "t2", Resources: &Resources{Limits: &ResourceQuantity{Memory: "9Ei"}}}},
 		{"memory 16Ei", TaskSpec{TaskID: "t3", Resources: &Resources{Limits: &ResourceQuantity{Memory: "16Ei"}}}},
 		{"cpu huge", TaskSpec{TaskID: "t4", Resources: &Resources{Limits: &ResourceQuantity{CPU: "9223372036854775"}}}},
+		{"cpu 1e16 overflows millis", TaskSpec{TaskID: "t5", Resources: &Resources{Limits: &ResourceQuantity{CPU: "1e16"}}}},
+		{"cpu 1e19 overflows units", TaskSpec{TaskID: "t6", Resources: &Resources{Requests: &ResourceQuantity{CPU: "1e19"}}}},
 	}
 
 	for _, tc := range hugeValues {
@@ -341,5 +343,4 @@ func TestResourceUnitHugeQuantityDoesNotOverflowRefuseCheck(t *testing.T) {
 			}
 		})
 	}
-
 }
