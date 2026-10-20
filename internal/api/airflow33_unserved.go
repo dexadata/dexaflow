@@ -80,7 +80,8 @@ func registerAirflow33Unserved(r gin.IRouter) {
 	r.PUT("/api/v2/parseDagFile/:file_token", notAvailable(featureReparseDAG))
 
 	// Asset events and queues.
-	r.GET("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/upstreamAssetEvents", apiEmptyCollection("upstream_asset_events"))
+	// Airflow answers this with AssetEventCollectionResponse; the UI reads asset_events.
+	r.GET("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/upstreamAssetEvents", apiEmptyCollection("asset_events"))
 	r.GET("/api/v2/dags/:dag_id/assets/queuedEvents", apiEmptyCollection("queued_events"))
 	r.DELETE("/api/v2/dags/:dag_id/assets/queuedEvents", notAvailable(featureAssetEvents))
 	r.GET("/api/v2/assets/:asset_id/queuedEvents", apiEmptyCollection("queued_events"))

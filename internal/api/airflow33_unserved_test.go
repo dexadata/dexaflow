@@ -126,7 +126,7 @@ func TestAirflow33UnservedListsAnswerEmpty(t *testing.T) {
 		"/api/v2/assets/1/state-store":                                  `{"asset_state_store":[],"total_entries":0}`,
 		"/api/v2/dags/etl/dagRuns/r1/taskInstances/extract/state-store": `{"task_state_store":[],"total_entries":0}`,
 		"/ui/partitioned_dag_runs?dag_id=etl":                           `{"partitioned_dag_runs":[],"total":0}`,
-		"/api/v2/dags/etl/dagRuns/r1/upstreamAssetEvents":               `{"upstream_asset_events":[],"total_entries":0}`,
+		"/api/v2/dags/etl/dagRuns/r1/upstreamAssetEvents":               `{"asset_events":[],"total_entries":0}`,
 		"/api/v2/dags/etl/assets/queuedEvents":                          `{"queued_events":[],"total_entries":0}`,
 		"/api/v2/assets/1/queuedEvents":                                 `{"queued_events":[],"total_entries":0}`,
 		"/api/v2/dags/etl/assets/1/queuedEvents":                        `{"queued_events":[],"total_entries":0}`,
