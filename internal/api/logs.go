@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/logs"
 	"github.com/dexadata/dexaflow/internal/taskoutcome"
 )
@@ -174,13 +175,12 @@ func (s *replaySkipper) next(line string) (logs.Event, bool) {
 func serveNoLogs(c *gin.Context, tasks TaskInstanceRepository, try int, ephemeralLogs bool) {
 	const msg = "No logs available for this attempt."
 	events := []structuredLogEvent{{Event: msg, Level: "info"}}
-	reason, terminal := attemptDetails(c, tasks, try)
+	reason, ran := attemptDetails(c, tasks, try)
 	if reason != "" {
 		events = append(events, structuredLogEvent{Event: reason, Level: "error"})
 	}
-	if ephemeralLogs && terminal {
-		const ephemeralMsg = "no durable log store is configured (logs.persistence.enabled=false with logs.sink.provider=disk); logs for this attempt did not survive a control-plane restart."
-		events = append(events, structuredLogEvent{Event: ephemeralMsg, Level: "warning"})
+	if ephemeralLogs && ran {
+		events = append(events, structuredLogEvent{Event: ephemeralLogsMsg, Level: "warning"})
 	}
 	switch negotiateLogFormat(c) {
 	case logFormatNDJSON:
@@ -203,15 +203,23 @@ func serveNoLogs(c *gin.Context, tasks TaskInstanceRepository, try int, ephemera
 	c.String(http.StatusOK, body.String())
 }
 
+// ephemeralLogsMsg explains an empty log view for an attempt that ran while task
+// logs live on a pod's emptyDir (#1024): a control-plane restart dropped them, or
+// another replica's emptyDir holds them.
+const ephemeralLogsMsg = "Task logs are kept on ephemeral storage (logs.persistence.enabled=false with logs.sink.provider=disk): " +
+	"if this attempt wrote logs, they were lost when a control-plane pod restarted, or another replica holds them."
+
 // attemptDetails returns the recorded cause for exactly this attempt and whether
-// it reached a terminal state, or ("", false) when there is none, the repository
-// is absent, or the lookup fails. It is purely explanatory, so every uncertain
+// it ran to an end, or ("", false) when there is none, the repository is absent,
+// or the lookup fails. An attempt "ran" when it started and is no longer live: a
+// retried try is archived as up_for_retry, and skipped or upstream_failed tasks
+// that never started wrote nothing to lose. It is purely explanatory, so every uncertain
 // path degrades to the plain no-logs view.
 //
 // It matches on try_number rather than taking the task's current reason: a task
 // that failed on try 2 must not make try 1's empty log view claim a cause that
 // belongs to a different attempt.
-func attemptDetails(c *gin.Context, tasks TaskInstanceRepository, try int) (reason string, terminal bool) {
+func attemptDetails(c *gin.Context, tasks TaskInstanceRepository, try int) (reason string, ran bool) {
 	if tasks == nil {
 		return "", false
 	}
@@ -226,7 +234,8 @@ func attemptDetails(c *gin.Context, tasks TaskInstanceRepository, try int) (reas
 			if a.FailureReason != "" {
 				r = taskoutcome.TruncateReason(a.FailureReason, maxFailureReasonLen)
 			}
-			return r, a.State.IsTerminal()
+			ended := a.EndedAt != nil || a.State.IsTerminal() || a.State == domain.TaskStateUpForRetry
+			return r, a.StartedAt != nil && ended
 		}
 	}
 	return "", false

@@ -378,7 +378,7 @@ func TestNoLogsWithoutAReasonKeepsTheOriginalMessage(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "No logs available") {
 		t.Errorf("expected the plain no-logs message, got %q", rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), "no durable log store is configured") {
+	if strings.Contains(rec.Body.String(), "ephemeral storage") {
 		t.Errorf("durable log store must not mention ephemeral loss: %q", rec.Body.String())
 	}
 }
@@ -399,9 +399,10 @@ func logsServerWithEphemeral(reader LogReader, tasks TaskInstanceRepository, eph
 // (emptyDir) and a terminal attempt's logs are missing, explain that they did not survive
 // a control plane restart.
 func TestNoLogsEphemeralStoreExplainsTerminalAttempt(t *testing.T) {
-	const expected = "no durable log store is configured (logs.persistence.enabled=false with logs.sink.provider=disk); logs for this attempt did not survive a control-plane restart."
+	expected := ephemeralLogsMsg
+	started := time.Now()
 	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{
-		TaskID: "extract", TryNumber: 1, State: domain.TaskStateSuccess,
+		TaskID: "extract", TryNumber: 1, State: domain.TaskStateSuccess, StartedAt: &started,
 	}}}
 	srv := logsServerWithEphemeral(&fakeLogReader{err: domain.ErrNotFound}, tasks, true)
 	rec := authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns/run-1/taskInstances/extract/logs/1", "")
@@ -420,9 +421,10 @@ func TestNoLogsEphemeralStoreExplainsTerminalAttempt(t *testing.T) {
 // TestNoLogsStructuredEphemeralStoreSurfacesWarning: structured responses emit the
 // ephemeral loss notice as a warning-level event.
 func TestNoLogsStructuredEphemeralStoreSurfacesWarning(t *testing.T) {
-	const expected = "no durable log store is configured (logs.persistence.enabled=false with logs.sink.provider=disk); logs for this attempt did not survive a control-plane restart."
+	expected := ephemeralLogsMsg
+	started := time.Now()
 	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{
-		TaskID: "extract", TryNumber: 1, State: domain.TaskStateFailed,
+		TaskID: "extract", TryNumber: 1, State: domain.TaskStateFailed, StartedAt: &started,
 	}}}
 	srv := logsServerWithEphemeral(&fakeLogReader{err: domain.ErrNotFound}, tasks, true)
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet,
@@ -455,15 +457,31 @@ func TestNoLogsStructuredEphemeralStoreSurfacesWarning(t *testing.T) {
 	}
 }
 
-// TestNoLogsEphemeralStoreSilentWhenAttemptNotTerminal: non-terminal attempts (running, queued)
-// do not emit the restart warning since they have not completed execution.
-func TestNoLogsEphemeralStoreSilentWhenAttemptNotTerminal(t *testing.T) {
-	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{
-		TaskID: "extract", TryNumber: 1, State: domain.TaskStateRunning,
-	}}}
-	srv := logsServerWithEphemeral(&fakeLogReader{err: domain.ErrNotFound}, tasks, true)
-	rec := authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns/run-1/taskInstances/extract/logs/1", "")
-	if strings.Contains(rec.Body.String(), "no durable log store is configured") {
-		t.Errorf("running attempt must not claim logs were lost to restart: %q", rec.Body.String())
+// TestNoLogsEphemeralStoreOnlyForAttemptsThatRan: the notice appears for an
+// attempt that started and ended, including an earlier try of a retried task
+// (archived as up_for_retry), and never for one that is still live or never
+// started (skipped, upstream_failed).
+func TestNoLogsEphemeralStoreOnlyForAttemptsThatRan(t *testing.T) {
+	started := time.Now()
+	for _, tc := range []struct {
+		name    string
+		ti      domain.TaskInstance
+		warning bool
+	}{
+		{"retried try", domain.TaskInstance{State: domain.TaskStateUpForRetry, StartedAt: &started}, true},
+		{"running", domain.TaskInstance{State: domain.TaskStateRunning, StartedAt: &started}, false},
+		{"queued", domain.TaskInstance{State: domain.TaskStateQueued}, false},
+		{"upstream failed", domain.TaskInstance{State: domain.TaskStateUpstreamFailed}, false},
+		{"skipped before start", domain.TaskInstance{State: domain.TaskStateSkipped}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ti := tc.ti
+			ti.TaskID, ti.TryNumber = "extract", 1
+			srv := logsServerWithEphemeral(&fakeLogReader{err: domain.ErrNotFound}, &fakeTaskRepo{tis: []domain.TaskInstance{ti}}, true)
+			rec := authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns/run-1/taskInstances/extract/logs/1", "")
+			if got := strings.Contains(rec.Body.String(), ephemeralLogsMsg); got != tc.warning {
+				t.Errorf("notice shown = %v, want %v: %q", got, tc.warning, rec.Body.String())
+			}
+		})
 	}
 }
