@@ -64,7 +64,9 @@ func (r *Repository) RunsKeepingVersion(ctx context.Context, tenant, dagID strin
 // after run was read, is never locked here: the orphan reaper share-locks a
 // running run's task instances before it updates the run row, and a clear
 // holding that row while it resets those task instances would form a cycle
-// with it. Such a run keeps its version. It returns the run as read, its task
+// with it. Such a run keeps its version, read again inside the transaction
+// when the lock found it no longer finished, since another clear may have
+// moved it after run was read. It returns the run as read last, its task
 // instances when the move was considered, and the decision.
 func decideMove(ctx context.Context, q *queries.Queries, dag queries.Dag, run queries.DagRun, opts domain.ClearOptions) (queries.DagRun, []queries.TaskInstance, bool, error) {
 	if !rebinds(dag, opts) || !finished(run) {
@@ -72,8 +74,15 @@ func decideMove(ctx context.Context, q *queries.Queries, dag queries.Dag, run qu
 	}
 	locked, err := q.GetDagRunForUpdate(ctx, queries.GetDagRunForUpdateParams{ID: run.ID, TenantID: run.TenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		// No longer finished (or gone): the run keeps its version.
-		return run, nil, false, nil
+		// No longer finished (or gone): the run keeps its version, the one
+		// it has now. Another clear may have moved it since run was read,
+		// so it is read again here: the clear applies on the version the
+		// re-run executes, not on the one the stale read names (#2046).
+		current, gerr := q.GetDagRun(ctx, queries.GetDagRunParams{TenantID: run.TenantID, DagID: run.DagID, RunID: run.RunID})
+		if gerr != nil {
+			return run, nil, false, fmt.Errorf("reading the cleared run again: %w", mapNotFound(gerr))
+		}
+		return current, nil, false, nil
 	}
 	if err != nil {
 		return run, nil, false, fmt.Errorf("locking the cleared run: %w", err)
