@@ -59,6 +59,11 @@ type importErrorBody struct {
 
 func listImportErrorsHandler(store ImportErrorStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Trace timing: a save in the workspace lights up the SPA's
+		// import-error banner; if this read becomes slow when DAGs break,
+		// it shows up in the log next to /ui/dashboard/dag_stats so the
+		// freeze pattern (#217) is greppable: "slow handler + concurrent
+		// watcher reload" is the signature we are looking for.
 		start := time.Now()
 		limit, offset := pagination(c)
 		filename := c.Query("filename")
