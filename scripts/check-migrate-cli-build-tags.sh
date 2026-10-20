@@ -104,9 +104,10 @@ workflow_scans_migrate_image() {
 }
 
 # go_imports_driver exits 0 when Go source on stdin imports the pgx5 driver on
-# a line that is not a comment.
+# a line that is not a comment. It reads all of stdin (no `grep -q`): an early
+# exit would kill the writer with SIGPIPE and fail the pipeline under pipefail.
 go_imports_driver() {
-	grep -vE '^[[:space:]]*//' | grep -qF -- "$DRIVER_IMPORT"
+	grep -vE '^[[:space:]]*//' | grep -F -- "$DRIVER_IMPORT" >/dev/null
 }
 
 # dockerfile_go_version reads a Dockerfile on stdin and prints the default of
