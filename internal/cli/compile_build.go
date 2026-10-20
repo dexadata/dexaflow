@@ -326,7 +326,8 @@ func generatedDockerfile(cfg *domain.LeoflowConfig, dagSource string) (string, e
 	if cfg.Dbt != nil {
 		// A dbt project is the DAG source (ADR 0042): there is no dag.py to COPY and
 		// no Python module to import, so COPY the project directory (dbt_project.yml
-		// + models/ + baked manifest.json) to the workdir and set no PYTHONPATH. The
+		// + models/, and a pinned dbt.manifest when there is one; the CLI's own
+		// parse writes to a scratch dir, #1060) to the workdir and set no PYTHONPATH. The
 		// task runs `dbt --project-dir <project>` from WORKDIR /home/leoflow, so the
 		// project must land at /home/leoflow/<project> matching the baked --project-dir.
 		// The project is read-only to the task because COPY lands it root-owned, not
