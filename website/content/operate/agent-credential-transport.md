@@ -173,12 +173,11 @@ dimensions of the same credential and are configured independently:
 Warm pools require `agent_token_transport=exchange` **and**
 `secret_liveness_mode=enforce`. `secret_scoping` and
 `max_attempt_credential_lifetime` are independent hardening choices with their own
-rollout arcs — and for `secret_scoping` that arc runs through the `permissive`
-warning trail, where a clean trail proves only that no DAG whose declarations
-still *resolve* is over-served and does **not** prove that no DAG would lose
-secrets under `enforce`: the warning counts only declared names that actually
-resolve, so neither a DAG that declares nothing nor a DAG whose declared names
-were since deleted from the vault ever appears in it
+rollout arcs. For `secret_scoping` that arc runs through the `permissive`
+warning trail: a task that would receive less under `enforce` is warned about,
+including one that declares nothing or whose declared names were since deleted
+from the vault (recorded with `declared=0`), so a clean trail over a period that
+ran every DAG means no DAG would lose secrets on the flip
 ([#800](https://github.com/dexadata/dexaflow/issues/800)). All are
 operator-scoped and documented in the
 [Configuration reference](/reference/configuration/#server-environment-dexaflow_).
