@@ -1,9 +1,9 @@
 kind: Fixed
 body: |-
-  **Tenant writes now recover from stale cached tenant IDs on recreate or restore.**
-  When a tenant is deleted and recreated or the database is restored while the
-  server is running, writes that encounter a foreign-key constraint violation
-  against `tenants` (SQLSTATE 23503) drop the stale cached tenant ID and retry
-  once with the refreshed ID. In addition, `DeleteTenant` now explicitly
-  invalidates the tenant cache in the running process. (#1614)
+  **Saving a variable, connection or pool no longer fails after its tenant was
+  recreated or the database restored under a running server.** The server
+  caches each tenant's id; such a write failed with a foreign-key violation
+  against `tenants` (SQLSTATE 23503) until a restart. It now drops the stale
+  id and retries once. Other queries still need the restart the backup guide
+  describes. (#1614)
 time: 2026-10-17T18:00:00.000000000+00:00

@@ -280,25 +280,3 @@ func TestAuditBTenantCacheStaleAfterRecreateIntegration(t *testing.T) {
 		t.Fatalf("GetVariable = %+v, %v; want foo2=bar2", v, err)
 	}
 }
-
-// TestDeleteTenantInvalidatesCacheIntegration covers #1614: deleting a tenant
-// through Repository drops the cached ID, so subsequent reads return ErrNotFound.
-func TestDeleteTenantInvalidatesCacheIntegration(t *testing.T) {
-	repo, _, ctx := openRepo(t)
-	name := uniqueTenant("del-cache")
-	if _, err := repo.EnsureTenant(ctx, name, "To Delete", 0, domain.TenantLimitsUpdate{}); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.SetVariable(ctx, name, domain.Variable{Key: "a", Value: "1"}); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := repo.DeleteTenant(ctx, name); err != nil {
-		t.Fatalf("DeleteTenant = %v", err)
-	}
-
-	_, err := repo.GetVariable(ctx, name, "a")
-	if !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("GetVariable after DeleteTenant = %v, want ErrNotFound", err)
-	}
-}

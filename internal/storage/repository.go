@@ -122,21 +122,23 @@ const pgUniqueViolation = "23505"
 // pgForeignKeyViolation is the Postgres SQLSTATE for a foreign-key constraint violation.
 const pgForeignKeyViolation = "23503"
 
-// isTenantFKViolation reports whether err is caused by a Postgres foreign-key
-// constraint violation (SQLSTATE 23503) against the tenants table.
+// isTenantFKViolation reports whether err is a Postgres foreign-key violation
+// (SQLSTATE 23503) on a tenant_id column, which is how a write with a stale
+// cached tenant id fails: Postgres names the referenced table in the detail
+// ("is not present in table "tenants"") and every such constraint is named
+// <table>_tenant_id_fkey.
 func isTenantFKViolation(err error) bool {
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == pgForeignKeyViolation {
-		return strings.Contains(pgErr.ConstraintName, "tenant") ||
-			strings.Contains(pgErr.Detail, "tenants") ||
-			strings.Contains(pgErr.Message, "tenant") ||
-			strings.Contains(pgErr.TableName, "tenants")
+	if !errors.As(err, &pgErr) || pgErr.Code != pgForeignKeyViolation {
+		return false
 	}
-	return false
+	return strings.Contains(pgErr.Detail, `table "tenants"`) ||
+		strings.HasSuffix(pgErr.ConstraintName, "tenant_id_fkey")
 }
 
 // InvalidateTenant evicts a tenant from the tenant ID cache, so the next
-// lookup re-queries the database.
+// lookup re-queries the database. Code that deletes or recreates a tenant
+// behind this process calls it; nothing in this repository deletes a tenant.
 func (r *Repository) InvalidateTenant(name string) {
 	if r.tenants != nil {
 		r.tenants.Delete(name)
@@ -163,27 +165,6 @@ func (r *Repository) withTenantWrite(ctx context.Context, tenant string, op func
 	return err
 }
 
-// DeleteTenant removes a tenant by name and invalidates its cached ID.
-func (r *Repository) DeleteTenant(ctx context.Context, name string) error {
-	defer r.InvalidateTenant(name)
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("beginning delete tenant tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; commit path handles errors
-	cmd, err := tx.Exec(ctx, "DELETE FROM tenants WHERE name = $1", name)
-	if err != nil {
-		return fmt.Errorf("deleting tenant: %w", err)
-	}
-	if cmd.RowsAffected() == 0 {
-		return domain.ErrNotFound
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("committing delete tenant tx: %w", err)
-	}
-	return nil
-}
-
 // mapConflict translates a Postgres unique-constraint violation into
 // domain.ErrConflict (which the API maps to 409), leaving other errors as is — so
 // a duplicate write (e.g. a second dag run for the same logical date) surfaces as
@@ -200,10 +181,14 @@ func mapConflict(err error) error {
 }
 
 // tenantID resolves a tenant name to its id. Nearly every repository method
-// starts with it, so a resolved id is cached: a miss is not cached, so a
-// tenant created later is found. If a tenant is recreated or restored behind
-// the process, writes that encounter a foreign-key violation against tenants
-// invalidate the cached entry via InvalidateTenant and retry.
+// starts with it, so a resolved id is cached for the life of the process; a
+// miss is not cached, so a tenant created later is found. The mapping changes
+// under a running process only from outside it: a tenant recreated behind it,
+// or a restored backup whose tenants carry other ids. The writes an operator
+// makes right after such a restore (variables, connections, pools) go through
+// withTenantWrite, which drops the stale entry on a tenant foreign-key
+// violation and retries once (#1614). Other queries keep the old id until a
+// restart, which is why the restore guide still says to restart.
 func (r *Repository) tenantID(ctx context.Context, name string) (pgtype.UUID, error) {
 	if r.tenants != nil {
 		if id, ok := r.tenants.Load(name); ok {

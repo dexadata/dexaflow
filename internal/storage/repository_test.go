@@ -45,9 +45,9 @@ func TestIsTenantFKViolation(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "fk on table name",
-			err:  &pgconn.PgError{Code: "23503", TableName: "tenants"},
-			want: true,
+			name: "fk on another table's detail",
+			err:  &pgconn.PgError{Code: "23503", Detail: `Key (dag_id)=(x) is not present in table "dags".`},
+			want: false,
 		},
 		{
 			name: "fk on detail",
