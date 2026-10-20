@@ -36,8 +36,8 @@ func (tokenRepo) FindUserByID(context.Context, string) (*auth.User, bool, error)
 	return &auth.User{ID: "u1", TenantID: "acme", Roles: []string{"viewer"}}, true, nil
 }
 
-func (tokenRepo) CreateAPIToken(context.Context, string, string, string, string, []string, time.Time) (auth.APIToken, error) {
-	return auth.APIToken{}, errors.New("not used")
+func (tokenRepo) CreateAPIToken(_ context.Context, tenant, userID, name, _ string, scopes []string, expiresAt time.Time) (auth.APIToken, error) {
+	return auth.APIToken{ID: "t2", TenantID: tenant, UserID: userID, Name: name, Scopes: scopes, ExpiresAt: expiresAt}, nil
 }
 
 func (tokenRepo) ListAPITokens(context.Context, string, string, int, int) ([]auth.APIToken, int, error) {
@@ -106,8 +106,8 @@ func TestAPITokensAreOnByDefault(t *testing.T) {
 	if err != nil || u.TenantID != "acme" || !u.Scoped {
 		t.Fatalf("a live API token: %+v, %v; want acme's scoped user", u, err)
 	}
-	if got := createStatus(t, deps, cfg.Auth.JWT.Secret); got == http.StatusNotFound {
-		t.Error("POST /api/v2/apiTokens is not served by default")
+	if got := createStatus(t, deps, cfg.Auth.JWT.Secret); got != http.StatusCreated {
+		t.Errorf("POST /api/v2/apiTokens by default: %d, want 201", got)
 	}
 }
 

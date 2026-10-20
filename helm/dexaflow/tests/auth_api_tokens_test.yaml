@@ -52,3 +52,16 @@ tests:
           content:
             name: LEOFLOW_AUTH_API_TOKENS_ENABLED
             value: "false"
+
+  # helm upgrade --reuse-values from a release before this value existed
+  # carries no auth.apiTokens: the render must keep the default.
+  - it: keeps the tokens on when auth.apiTokens is missing
+    template: deployment.yaml
+    set:
+      auth.apiTokens: null
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_AUTH_API_TOKENS_ENABLED
+          any: true

@@ -245,7 +245,7 @@ spec:
               value: {{ join "," .allowedCIDRs | quote }}
             {{- end }}
             {{- end }}
-            {{- if not .ctx.Values.auth.apiTokens.enabled }}
+            {{- if eq (toString (dig "apiTokens" "enabled" true .ctx.Values.auth)) "false" }}
             # No API tokens (auth.api_tokens.enabled): their routes and screen
             # are not served and every dxf_ bearer is refused. Omitted when
             # true, which keeps the server default (served).
