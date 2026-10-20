@@ -201,6 +201,10 @@ func TestRefineLevel(t *testing.T) {
 		{"Done. PASS=20 WARN=2 ERROR=0 SKIP=0 TOTAL=22", "error", "warning"},
 		{"Done. PASS=20 WARN=0 ERROR=1 SKIP=0 TOTAL=21", "error", "error"},
 		{"\x1b[0m\x1b[32mDone. PASS=24 WARN=0 ERROR=0 SKIP=0\x1b[0m", "error", "info"},
+		{"Done. PASS=5 WARN=10 ERROR=0 SKIP=0 NO-OP=0 TOTAL=15", "error", "warning"},
+		{"Done. PASS=3 WARN=0 ERROR=10 SKIP=0 TOTAL=13", "error", "error"},
+		// Not a dbt summary: "Done." next to an ERROR token stays an error.
+		{"Done. ERROR=0 rows rejected by the loader", "info", "error"},
 	}
 	for _, c := range cases {
 		if got := RefineLevel(c.msg, c.fallback); got != c.want {

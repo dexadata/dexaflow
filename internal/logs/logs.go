@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -91,22 +92,26 @@ func levelFromContent(line string) (string, bool) {
 	}
 }
 
-// dbtSummaryLevel reports the severity indicated by a dbt run summary line
-// (e.g. "Done. PASS=24 WARN=0 ERROR=0 SKIP=0"), which dbt prints to stderr
-// even on complete success (#870). It colors the line info when ERROR=0 and WARN=0,
-// warning when ERROR=0 but WARN>0, and error when ERROR>0.
+// dbtSummaryRe matches dbt's end-of-run counts, e.g.
+// "Done. PASS=24 WARN=0 ERROR=0 SKIP=0 TOTAL=24", capturing WARN (optional)
+// and ERROR.
+var dbtSummaryRe = regexp.MustCompile(`\bPASS=\d+\s+(?:WARN=(\d+)\s+)?ERROR=(\d+)\b`)
+
+// dbtSummaryLevel reports the severity of a dbt run summary line, which dbt
+// prints to stderr even on complete success (#870): info when ERROR=0 and
+// WARN=0, warning when only WARN is non-zero, error when ERROR is non-zero.
 func dbtSummaryLevel(line string) (string, bool) {
-	if (strings.Contains(line, "PASS=") && strings.Contains(line, "ERROR=")) ||
-		(strings.Contains(line, "Done.") && strings.Contains(line, "ERROR=")) {
-		if strings.Contains(line, "ERROR=0") {
-			if strings.Contains(line, "WARN=") && !strings.Contains(line, "WARN=0") {
-				return "warning", true
-			}
-			return "info", true
-		}
-		return "error", true
+	m := dbtSummaryRe.FindStringSubmatch(line)
+	if m == nil {
+		return "", false
 	}
-	return "", false
+	switch {
+	case strings.TrimLeft(m[2], "0") != "":
+		return "error", true
+	case strings.TrimLeft(m[1], "0") != "":
+		return "warning", true
+	}
+	return "info", true
 }
 
 // containsAny reports whether s contains any of the given substrings.
