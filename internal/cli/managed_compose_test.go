@@ -70,7 +70,7 @@ func TestEnsureManagedComposeFreshWrite(t *testing.T) {
 // compose and the refresh is announced.
 func TestEnsureManagedComposeRefreshesAnUnchangedOldCompose(t *testing.T) {
 	dir := t.TempDir()
-	old := []byte("services:\n  postgres:\n    image: postgres:15\n")
+	old := []byte("services:\n  postgres:\n    image: example.invalid/older-lite-db:1\n")
 	path := writeComposeState(t, dir, old, composeChecksum(old))
 	var log composeLog
 	if _, err := ensureManagedComposeIn(dir, log.logf); err != nil {
@@ -101,7 +101,7 @@ func TestEnsureManagedComposeRefreshesAnUnchangedOldCompose(t *testing.T) {
 // is printed once per compose this binary ships, not on every start.
 func TestEnsureManagedComposeKeepsAnEditedComposeAndWarnsOnce(t *testing.T) {
 	dir := t.TempDir()
-	old := []byte("services:\n  postgres:\n    image: postgres:15\n")
+	old := []byte("services:\n  postgres:\n    image: example.invalid/older-lite-db:1\n")
 	edited := append(append([]byte{}, old...), []byte("    shm_size: 1g\n")...)
 	path := writeComposeState(t, dir, edited, composeChecksum(old))
 	var log composeLog
@@ -174,7 +174,7 @@ func TestEnsureManagedComposeWithoutMarker(t *testing.T) {
 	})
 	t.Run("different is kept with a warning", func(t *testing.T) {
 		dir := t.TempDir()
-		old := []byte("services:\n  postgres:\n    image: postgres:15\n")
+		old := []byte("services:\n  postgres:\n    image: example.invalid/older-lite-db:1\n")
 		path := writeComposeState(t, dir, old, "")
 		var log composeLog
 		if _, err := ensureManagedComposeIn(dir, log.logf); err != nil {
