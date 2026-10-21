@@ -90,6 +90,21 @@ func TestLoginPageSanitizesNext(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "/dags/etl/grid") {
 		t.Errorf("safe next path was not preserved")
 	}
+
+	// An absolute same-origin URL extracts the local path, preserving query and hash (#1127).
+	rec = anonGet(loginServer(), "/api/v2/auth/login?next=https://example.com/dags/etl/grid?run_id=123#details")
+	if !strings.Contains(rec.Body.String(), "/dags/etl/grid?run_id") || !strings.Contains(rec.Body.String(), "#details") {
+		t.Errorf("same-origin full URL next path was not preserved: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "example.com") {
+		t.Errorf("host leaked into next path: %s", rec.Body.String())
+	}
+
+	// An off-origin URL collapses to "/".
+	rec = anonGet(loginServer(), "/api/v2/auth/login?next=https://evil.com/dags/etl/grid")
+	if strings.Contains(rec.Body.String(), "dags/etl/grid") {
+		t.Errorf("off-origin full URL path leaked: %s", rec.Body.String())
+	}
 }
 
 func TestTokenCookieAuthenticatesDataPlane(t *testing.T) {
@@ -121,5 +136,26 @@ func TestLogoutClearsCookieAndRedirects(t *testing.T) {
 	}
 	if sc := rec.Header().Get("Set-Cookie"); !strings.Contains(sc, "_token=") || !strings.Contains(sc, "Max-Age=0") {
 		t.Errorf("logout should expire _token cookie, got %q", sc)
+	}
+}
+
+func TestSanitizeNext(t *testing.T) {
+	for _, tc := range []struct{ next, host, want string }{
+		{"", "dexaflow.example", "/"},
+		{"/dags/etl?x=1#g", "dexaflow.example", "/dags/etl?x=1#g"},
+		{"https://dexaflow.example/dags/etl?run_id=1#d", "dexaflow.example", "/dags/etl?run_id=1#d"},
+		{"https://DEXAFLOW.example/dags", "dexaflow.example", "/dags"},
+		{"https://dexaflow.example/dags", "", "/"},
+		{"https://evil.example/dags", "dexaflow.example", "/"},
+		{"https://dexaflow.example//evil.example/x", "dexaflow.example", "/"},
+		{"//evil.example", "dexaflow.example", "/"},
+		{"/\\evil.example", "dexaflow.example", "/"},
+		{"/\t/evil.example", "dexaflow.example", "/"},
+		{"/\n/evil.example", "dexaflow.example", "/"},
+		{"javascript:alert(1)", "dexaflow.example", "/"},
+	} {
+		if got := sanitizeNext(tc.next, tc.host); got != tc.want {
+			t.Errorf("sanitizeNext(%q, %q) = %q, want %q", tc.next, tc.host, got, tc.want)
+		}
 	}
 }

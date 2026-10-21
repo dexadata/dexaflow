@@ -110,7 +110,7 @@ func newServer(deps Dependencies) *gin.Engine {
 	// cannot spend an address's password-login budget.
 	if deps.Auth.TokenRenewer != nil {
 		renewLimiter := auth.NewRateLimiter(renewRateLimitPerMinute, time.Minute)
-		r.POST("/api/v2/auth/token/renew", rateLimitByIP(renewLimiter), renewTokenHandler(deps.Auth.TokenRenewer, deps.Auth.TokenTTLSecs, deps.Auth.TokenMaxLifetimeSecs))
+		r.POST("/api/v2/auth/token/renew", rateLimitByIP(renewLimiter), renewTokenHandler(deps.Auth.TokenRenewer, deps.Auth.TokenTTLSecs, deps.Auth.TokenMaxLifetimeSecs, deps.sessionCookie()))
 	}
 	// The Airflow UI redirects unauthenticated users to GET /api/v2/auth/login.
 	r.GET("/api/v2/auth/logout", logoutHandler(deps.sessionCookie(), deps.Auth.ExternalSignOutURL))
@@ -198,7 +198,7 @@ func newServer(deps Dependencies) *gin.Engine {
 	}
 
 	registerResources(r, deps)
-	registerUI(r, deps.Auth.TokenTTLSecs, deps.UI.InstanceName, deps.UI.AutoRefreshIntervalSeconds, deps.UI.Theme)
+	registerUI(r, deps.Auth.TokenTTLSecs, deps.UI.InstanceName, deps.UI.AutoRefreshIntervalSeconds, deps.UI.Theme, deps.sessionCookie())
 	registerUIViews(r, deps)
 	registerUIStructure(r, deps.Stores.Specs)
 	registerUISummaries(r, deps.Stores.TaskSummary, deps.UI.ETagRevalidation)

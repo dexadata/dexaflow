@@ -204,37 +204,68 @@ const renewRateLimitPerMinute = 60
 // past max_lifetime, so the CLI falls back to login in every case. You cannot
 // renew without already holding a valid token for a live account. The response
 // mirrors /auth/token so the same client decoder handles both.
-func renewTokenHandler(renewer TokenRenewer, ttlSeconds, maxLifetimeSeconds int) gin.HandlerFunc {
+func renewTokenHandler(renewer TokenRenewer, ttlSeconds, maxLifetimeSeconds int, session sessionCookieSpec) gin.HandlerFunc {
 	ttl := time.Duration(ttlSeconds) * time.Second
 	maxLifetime := time.Duration(maxLifetimeSeconds) * time.Second
 	return func(c *gin.Context) {
-		token := bearerToken(c.GetHeader("Authorization"))
-		if token == "" {
+		// The session cookie renews only on a same-origin request: a same-site
+		// sibling or cross-site page may make the browser send it, and must not
+		// keep that session alive. Such a request can still renew a bearer.
+		var tokens []string
+		if browserMaySetSession(c) {
+			tokens = candidateTokens(c, session.cookieName())
+		} else if t := bearerToken(c.GetHeader("Authorization")); t != "" {
+			tokens = []string{t}
+		}
+		cookieToken := ""
+		if ck, err := c.Request.Cookie(session.cookieName()); err == nil {
+			cookieToken = ck.Value
+		}
+		if len(tokens) == 0 {
 			AbortProblem(c, http.StatusUnauthorized, "unauthorized", "missing bearer token")
 			return
 		}
-		renewed, ok, err := renewer.RenewUserToken(c.Request.Context(), token, ttl, maxLifetime)
-		if err != nil {
-			// Renewal re-proves the principal against the user store, so it fails for
-			// two unrelated reasons: the token was judged and rejected, or the store
-			// could not be reached to judge it. Only the first is a statement about
-			// the caller. Answering 401 for the second sends the client to log in
-			// against the database that is already down and reads to whoever is on
-			// call as an auth incident — the same conflation JWTAuth carried (#1087).
-			// Either way the renewal is refused; the cause goes to the log, never to
-			// the body, and Retry-After tells the client how long to wait (#1100).
-			if authUnavailable(err) {
-				abortAuthUnavailable(c, err)
-				return
+		// Renewal re-proves the principal against the user store, so it fails for
+		// two unrelated reasons: the token was judged and rejected, or the store
+		// could not be reached to judge it. Only the first is a statement about
+		// the caller. Answering 401 for the second sends the client to log in
+		// against the database that is already down and reads to whoever is on
+		// call as an auth incident (#1087). Either way the renewal is refused; the
+		// cause goes to the log, never to the body, and Retry-After tells the
+		// client how long to wait (#1100).
+		var unavailable, invalidErr error
+		lifetimeExceeded := false
+		for _, token := range tokens {
+			renewed, ok, err := renewer.RenewUserToken(c.Request.Context(), token, ttl, maxLifetime)
+			if err != nil {
+				if authUnavailable(err) {
+					unavailable = err
+				} else {
+					invalidErr = err
+				}
+				continue
 			}
-			AbortProblemCause(c, http.StatusUnauthorized, "unauthorized", "token cannot be renewed; log in again", err)
+			if !ok {
+				lifetimeExceeded = true
+				continue
+			}
+			// Rewrite the cookie only with its own renewal: a bearer sent by a
+			// script must not replace the browser's session with another one.
+			if token == cookieToken && browserMaySetSession(c) {
+				setSessionCookie(c, renewed, ttl, session)
+			}
+			c.JSON(http.StatusOK, tokenResponse{AccessToken: renewed, TokenType: "bearer", ExpiresIn: ttlSeconds})
 			return
 		}
-		if !ok {
+		if unavailable != nil {
+			abortAuthUnavailable(c, unavailable)
+			return
+		}
+		if lifetimeExceeded {
 			AbortProblem(c, http.StatusUnauthorized, "unauthorized", "session lifetime exceeded; log in again")
 			return
 		}
-		c.JSON(http.StatusOK, tokenResponse{AccessToken: renewed, TokenType: "bearer", ExpiresIn: ttlSeconds})
+		AbortProblemCause(c, http.StatusUnauthorized, "unauthorized", "token cannot be renewed; log in again", invalidErr)
 	}
 }
 

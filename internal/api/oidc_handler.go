@@ -146,7 +146,7 @@ func oidcLoginHandler(flow *oidc.Flow, logger *slog.Logger, insecureCookies bool
 			}
 			cli = b
 		}
-		beginOIDCLogin(c, flow, logger, insecureCookies, oidc.StatePayload{Next: sanitizeNext(c.Query("next")), CLI: cli}, http.StatusFound)
+		beginOIDCLogin(c, flow, logger, insecureCookies, oidc.StatePayload{Next: sanitizeNext(c.Query("next"), c.Request.Host), CLI: cli}, http.StatusFound)
 	}
 }
 
@@ -269,7 +269,7 @@ func (d oidcDeps) finish(c *gin.Context, payload oidc.StatePayload, identity *oi
 	if payload.CLI == nil {
 		setSessionCookie(c, token, d.tokenTTL, d.session)
 		d.record(c, auditOIDCLoginSuccess, identity.Tenant, user.ID, identity.Email, "success", extra)
-		c.Redirect(http.StatusFound, sanitizeNext(payload.Next))
+		c.Redirect(http.StatusFound, sanitizeNext(payload.Next, ""))
 		return
 	}
 	extra["client"] = "cli"

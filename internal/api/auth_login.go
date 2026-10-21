@@ -163,7 +163,7 @@ func (o loginPageOpts) autoRedirectTarget(c *gin.Context) (string, bool) {
 	if c.Query(ssoErrorParam) != "" || c.Query(loginLocalParam) != "" {
 		return "", false
 	}
-	next := sanitizeNext(c.Query("next"))
+	next := sanitizeNext(c.Query("next"), c.Request.Host)
 	if o.externalSignIn != "" {
 		return withNext(o.externalSignIn, next), true
 	}
@@ -189,10 +189,32 @@ func withNext(raw, next string) string {
 }
 
 // sanitizeNext keeps the post-login redirect on this origin: a single-slash
-// absolute path only, defaulting to "/". This blocks open redirects (e.g.
-// "//evil.com" or "https://evil.com").
-func sanitizeNext(next string) string {
-	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
+// absolute path only, defaulting to "/". This blocks open redirects (such as
+// "//evil.com" or "https://evil.com"). When given an absolute in-app URL whose
+// host matches the current request host, its origin is stripped so the local
+// path, query and hash are preserved safely (#1127). host is the request's Host;
+// empty accepts paths only.
+func sanitizeNext(next, host string) string {
+	if next == "" {
+		return "/"
+	}
+	if strings.HasPrefix(next, "http://") || strings.HasPrefix(next, "https://") {
+		u, err := url.Parse(next)
+		if err != nil {
+			return "/"
+		}
+		if host == "" || !strings.EqualFold(u.Host, host) {
+			return "/"
+		}
+		target := u.RequestURI()
+		if u.Fragment != "" {
+			target += "#" + u.Fragment
+		}
+		next = target
+	}
+	// Browsers drop tabs and newlines from a URL and read "\\" as "/", so
+	// "/\t/evil.com" or "/\\evil.com" would leave the origin.
+	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.ContainsAny(next, "\\\t\r\n") {
 		return "/"
 	}
 	return next
@@ -221,7 +243,7 @@ func loginPageHandler(o loginPageOpts) gin.HandlerFunc {
 		c.Status(http.StatusOK)
 		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.Header("Cache-Control", "no-cache")
-		next := sanitizeNext(c.Query("next"))
+		next := sanitizeNext(c.Query("next"), c.Request.Host)
 		// Next is embedded as a JS string literal. NextQuery goes into an href, and
 		// html/template URL-escapes a value in that context ITSELF, so escaping it
 		// here too produced next=%252Fdags: the OIDC handler then saw a literal

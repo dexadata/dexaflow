@@ -258,7 +258,9 @@ settings:
   auth.jwt.token_ttl_seconds:
     edition: both
     description: >-
-      Lifetime, in seconds, of an issued API token.
+      Lifetime, in seconds, of an issued API token. The web UI renews its
+      session every 15 minutes and when its tab is shown again, so a browser
+      session with the UI open lasts up to `auth.jwt.max_lifetime_seconds`.
   auth.jwt.max_lifetime_seconds:
     edition: both
     description: >-
