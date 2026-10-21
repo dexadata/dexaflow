@@ -32,6 +32,12 @@ The response is `{"access_token": "...", "token_type": "bearer", "expires_in": 3
 Pass the token as `Authorization: Bearer $TOKEN` on every subsequent call. Tokens
 expire (default 1h); re-fetch, or renew via `POST /api/v2/auth/token/renew`.
 
+When the control plane cannot reach its user store to check a credential, it
+answers `503` with a `Retry-After` header (in seconds) instead of `401`, on
+`/auth/token`, on the renew call and on every protected route. The credential
+may still be good: wait the `Retry-After` and retry the same call rather than
+signing in again.
+
 ## 2. Trigger a run with conf
 
 `POST /api/v2/dags/{dag_id}/dagRuns`. The `conf` object becomes the run's

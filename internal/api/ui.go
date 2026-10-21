@@ -219,14 +219,16 @@ func uiNoRoute(uiSrv UIServer, authn auth.Authenticator, devNoAuth bool, session
 			// (which 401) before redirecting — flashing the whole UI and lighting
 			// the log with 401s. Redirecting here keeps the shell off-screen until
 			// there is a valid session. Skipped under dev no-auth.
-			if !devNoAuth && !shellSessionValid(c, authn, session.cookieName(), hosts) {
-				if hosts != nil {
-					// The cookie may be a valid session of another tenant
-					// than this host's (#1463); it can never work here.
-					clearSessionCookie(c, session)
+			//
+			// Fail-closed: only a verified session reaches the shell. A session
+			// that could not be checked because the store was unreachable gets a
+			// static outage page instead of the login redirect (#1099), since the
+			// login cannot work during the outage either.
+			if !devNoAuth {
+				if verdict := shellSession(c, authn, session.cookieName(), hosts); verdict != shellVerified {
+					refuseShell(c, verdict, session, hosts, path)
+					return
 				}
-				c.Redirect(http.StatusFound, "/api/v2/auth/login?next="+url.QueryEscape(path))
-				return
 			}
 			uiSrv.Index(c.Writer, "/")
 			return
@@ -235,26 +237,66 @@ func uiNoRoute(uiSrv UIServer, authn auth.Authenticator, devNoAuth bool, session
 	}
 }
 
-// shellSessionValid reports whether the request carries a token (bearer or the
-// session cookie named cookieName) that authenticates: the same check JWTAuth
-// applies to data routes, reused to gate the SPA shell so the gate and the
-// data plane agree on what "logged in" means. That includes the host binding
-// (#1463): a session cookie of another tenant than the host's does not count.
-func shellSessionValid(c *gin.Context, authn auth.Authenticator, cookieName string, hosts *hostBinding) bool {
-	if authn == nil {
-		return false
+// shellVerdict is what the SPA shell gate learned about a request's session.
+type shellVerdict int
+
+const (
+	// shellNoSession: no candidate token authenticated, and none failed for
+	// want of the store. The visitor signs in.
+	shellNoSession shellVerdict = iota
+	// shellUnverified: no candidate authenticated, and at least one could not
+	// be checked because the store was unreachable (authUnavailable).
+	shellUnverified
+	// shellVerified: a candidate authenticated. Only this serves the shell.
+	shellVerified
+)
+
+// refuseShell answers a SPA route whose session was not verified: the outage
+// page when it could not be checked, the login redirect otherwise.
+func refuseShell(c *gin.Context, verdict shellVerdict, session sessionCookieSpec, hosts *hostBinding, path string) {
+	if verdict == shellUnverified {
+		// The cookie is kept: it was never judged, and clearing it would
+		// sign out a session that may be valid once the store answers.
+		serveOutagePage(c)
+		return
 	}
+	if hosts != nil {
+		// The cookie may be a valid session of another tenant
+		// than this host's (#1463); it can never work here.
+		clearSessionCookie(c, session)
+	}
+	c.Redirect(http.StatusFound, "/api/v2/auth/login?next="+url.QueryEscape(path))
+}
+
+// shellSession reports what the request's tokens (bearer or the session cookie
+// named cookieName) say about its session: the same check JWTAuth applies to
+// data routes, reused to gate the SPA shell so the gate and the data plane
+// agree on what "logged in" means. That includes the host binding (#1463): a
+// session cookie of another tenant than the host's does not count. And, like
+// JWTAuth, a candidate that could not be checked decides the answer only when
+// no other candidate authenticates.
+func shellSession(c *gin.Context, authn auth.Authenticator, cookieName string, hosts *hostBinding) shellVerdict {
+	if authn == nil {
+		return shellNoSession
+	}
+	verdict := shellNoSession
 	fromHeader := bearerToken(c.GetHeader("Authorization")) != ""
 	for i, token := range candidateTokens(c, cookieName) {
+		u, err := authn.Authenticate(c.Request.Context(), token)
+		if err != nil {
+			if authUnavailable(err) {
+				verdict = shellUnverified
+			}
+			continue
+		}
 		// Same rule as JWTAuth: a principal with no tenant is no session, so
 		// the shell gate and the data plane never disagree about it.
-		u, err := authn.Authenticate(c.Request.Context(), token)
-		if err != nil || u.TenantID == "" {
+		if u.TenantID == "" {
 			continue
 		}
 		if (fromHeader && i == 0) || hosts.allows(c, u.TenantID) {
-			return true
+			return shellVerified
 		}
 	}
-	return false
+	return verdict
 }
