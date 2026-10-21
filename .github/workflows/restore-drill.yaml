@@ -1,0 +1,66 @@
+name: Database backup & restore drill
+
+# Periodic restore drill for Lite and Pro (#1995, ADR 0090).
+# A backup that was never restored does not count as a backup.
+# This workflow exercises taking a logical backup, clearing the database,
+# restoring the backup into the empty database, and verifying the server boots
+# cleanly and passes /readyz and authentication checks.
+on:
+  schedule:
+    - cron: "0 4 * * 1"
+  push:
+    tags: ["v*-rc.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  restore-drill:
+    name: Restore drill (clean database recovery verification)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: leoflow
+          POSTGRES_PASSWORD: leoflow
+          POSTGRES_DB: leoflow_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U leoflow -d leoflow_dev"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: mirror.gcr.io/library/redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install golang-migrate
+        run: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.20.1
+
+      - name: Run restore drill E2E
+        run: bash test/e2e/restore-drill-e2e.sh

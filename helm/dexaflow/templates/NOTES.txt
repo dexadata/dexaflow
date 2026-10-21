@@ -152,6 +152,16 @@ database.maxOpenConns. See #1088.
 
 WARNING: no database URL set. Provide .Values.database.url or .Values.database.existingSecret (key databaseUrl).
 {{- end }}
+{{- $dbURL := .Values.database.url | default "" }}
+{{- if or (contains "@pg-postgresql:" $dbURL) (contains "@postgres:" $dbURL) (contains "@postgres." $dbURL) }}
+
+WARNING: database.url points at an in-cluster Postgres Service. If that Postgres
+keeps its data on emptyDir (as the PoC and local-cluster examples do) instead of
+a PersistentVolumeClaim, every DAG version, run, secret and user is lost when its
+pod restarts or moves: a node reboot, a drain, a Spot or preemptible reclamation.
+For production use a managed Postgres (RDS, Cloud SQL) or back it with a PVC, and
+rehearse a restore. See https://dexaflow.dexadata.ai/operate/upgrades/#ephemeral-database-loss
+{{- end }}
 {{- if not (or .Values.auth.existingSecret .Values.auth.jwtSecret) }}
 
 WARNING: no JWT secret set. Provide .Values.auth.jwtSecret or .Values.auth.existingSecret (key jwtSecret).
