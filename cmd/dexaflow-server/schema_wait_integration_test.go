@@ -151,9 +151,13 @@ func TestBootWaitsForAnEmptyDatabaseThenBoots(t *testing.T) {
 	dsn := scratchDatabase(t)
 	httpAddr, metricsAddr, reg, run := bootAgainst(t, dsn)
 
-	eventually(t, "the probe listeners", func() bool {
-		code, _, err := get(metricsAddr, "/readyz")
-		return err == nil && code == http.StatusServiceUnavailable
+	// The listeners answer 503 "checking the database schema" before the
+	// first probe has run, so wait for its verdict, not for the first 503.
+	eventually(t, "the absent reason on /readyz and in the gauge", func() bool {
+		code, body, err := get(metricsAddr, "/readyz")
+		reason, _ := schemaReadyGauge(t, reg)
+		return err == nil && code == http.StatusServiceUnavailable &&
+			strings.Contains(body, "schema absent") && reason == storage.SchemaReasonAbsent
 	})
 	for _, addr := range []string{httpAddr, metricsAddr} {
 		if code, _, err := get(addr, "/healthz"); err != nil || code != http.StatusOK {
