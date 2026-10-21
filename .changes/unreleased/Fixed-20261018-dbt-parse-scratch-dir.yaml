@@ -1,0 +1,8 @@
+kind: Fixed
+body: |-
+  **`dbt parse` now writes into an ephemeral scratch directory instead of polluting the working tree.**
+  Compiling a dbt project previously ran `dbt parse` directly in the project directory without
+  redirecting outputs, writing `target/` and `logs/` into the user's working tree. The compiler now
+  sets `DBT_TARGET_PATH` and `DBT_LOG_PATH` to a temporary directory that is wiped after the manifest
+  is read, keeping the author's project tree untouched. (#1060)
+time: 2026-10-18T23:57:00.000000000+00:00

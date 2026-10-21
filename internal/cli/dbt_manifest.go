@@ -51,6 +51,19 @@ func loadDbtManifest(cmd *cobra.Command, dir string, c *domain.DbtConfig, localW
 	pc := exec.CommandContext(cmdContext(cmd), dbtBin, "parse") //nolint:gosec // dbtBin is the resolved venv or PATH dbt
 	pc.Dir = projectDir
 	pc.Env = os.Environ()
+
+	// Direct dbt's outputs (target/manifest.json and logs/) into an ephemeral scratch
+	// directory so `dbt parse` never mutates or pollutes the author's working tree (#1060).
+	scratchDir, serr := os.MkdirTemp("", "dexaflow-dbt-*")
+	if serr != nil {
+		return nil, fmt.Errorf("creating scratch dir for dbt parse: %w", serr)
+	}
+	defer func() { _ = os.RemoveAll(scratchDir) }() //nolint:errcheck // best-effort cleanup of a temp dir
+
+	targetDir := filepath.Join(scratchDir, "target")
+	logDir := filepath.Join(scratchDir, "logs")
+	pc.Env = append(pc.Env, "DBT_TARGET_PATH="+targetDir, "DBT_LOG_PATH="+logDir)
+
 	// Zero-config local warehouse: `dbt parse` needs a profile too, so give it a
 	// default duckdb one when the Lite project has no connection and no profiles.yml
 	// — the compile-time half of L4 (the runtime writes the same at task time).
@@ -74,8 +87,8 @@ func loadDbtManifest(cmd *cobra.Command, dir string, c *domain.DbtConfig, localW
 		}
 		return nil, fmt.Errorf("dbt parse in %s: %w", projectDir, rerr)
 	}
-	path := filepath.Join(projectDir, "target", "manifest.json")
-	data, rerr := os.ReadFile(path) //nolint:gosec // derived from operator-supplied project path.
+	path := filepath.Join(targetDir, "manifest.json")
+	data, rerr := os.ReadFile(path) //nolint:gosec // scratch directory output
 	if rerr != nil {
 		return nil, fmt.Errorf("reading dbt manifest %s: %w", path, rerr)
 	}
