@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/dexadata/dexaflow/internal/auth"
 )
@@ -80,11 +82,11 @@ const DefaultUIAutoRefreshIntervalSeconds = 30
 // autoRefreshIntervalSecs is the SPA's polling cadence for DAG / DagRun /
 // task-instance state refresh (non-positive values fall back to the
 // production default).
-func registerUI(r gin.IRouter, tokenTTLSecs int, instanceName string, autoRefreshIntervalSecs int, theme json.RawMessage) {
+func registerUI(r gin.IRouter, tokenTTLSecs int, instanceName string, autoRefreshIntervalSecs int, theme json.RawMessage, session sessionCookieSpec) {
 	r.GET("/ui/config", uiConfigHandler(instanceName, autoRefreshIntervalSecs, theme))
 	r.GET("/ui/auth/me", uiMeHandler())
 	r.GET("/ui/auth/menus", uiMenusHandler())
-	r.POST("/ui/auth/token", uiTokenHandler(tokenTTLSecs))
+	r.POST("/ui/auth/token", uiTokenHandler(tokenTTLSecs, session))
 }
 
 // uiConfigHandler returns the UI ConfigResponse (Airflow 3.2.1 shape). It keeps
@@ -135,25 +137,41 @@ func themeOrNull(theme json.RawMessage) any {
 
 // uiTokenHandler implements POST /ui/auth/token: it re-mints a bearer token for
 // an already-authenticated principal. Per the 3.2.1 spec the body carries no
-// credentials (only an optional token_type), so this is NOT the login endpoint
-// — credential login is the simple-auth-manager POST /auth/token. Without a
-// valid bearer it returns 401. The response is GenerateTokenResponse
+// credentials (only an optional token_type), so this is NOT the login endpoint,
+// credential login is the simple-auth-manager POST /auth/token. Without a
+// valid bearer or session cookie it returns 401. The response is GenerateTokenResponse
 // (access_token, token_type, expires_in_seconds). See docs/ui-compatibility.md.
-func uiTokenHandler(tokenTTLSecs int) gin.HandlerFunc {
+func uiTokenHandler(tokenTTLSecs int, session sessionCookieSpec) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if _, ok := UserFromContext(c); !ok {
 			AbortProblem(c, http.StatusUnauthorized, "unauthorized", "no authenticated user")
 			return
 		}
-		token := bearerToken(c.GetHeader("Authorization"))
+		var token string
+		for _, cand := range candidateTokens(c, session.cookieName()) {
+			if cand != "" {
+				token = cand
+				break
+			}
+		}
 		if token == "" {
 			AbortProblem(c, http.StatusUnauthorized, "unauthorized", "no bearer token")
 			return
 		}
+		expiresIn := tokenTTLSecs
+		var claims jwt.RegisteredClaims
+		if _, _, err := jwt.NewParser().ParseUnverified(token, &claims); err == nil && claims.ExpiresAt != nil {
+			rem := int(time.Until(claims.ExpiresAt.Time).Seconds())
+			if rem >= 0 {
+				expiresIn = rem
+			} else {
+				expiresIn = 0
+			}
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"access_token":       token,
 			"token_type":         "bearer",
-			"expires_in_seconds": tokenTTLSecs,
+			"expires_in_seconds": expiresIn,
 		})
 	}
 }
