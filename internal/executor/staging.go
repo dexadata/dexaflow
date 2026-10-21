@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -109,7 +110,9 @@ type StagingStore interface {
 // lifecycle (ADR 0022): a successful run frees its volume immediately; a failed
 // run keeps it until ttl elapses after the run's terminal time (clear+re-run
 // safety); an orphaned volume (run row gone) is reclaimed. Each deletion is
-// recorded with its reason. A no-op when no StagingStore is wired.
+// recorded with its reason. In addition, unrecorded orphan staging PVCs left in
+// Kubernetes are swept by label once ttl elapses (#1615). A no-op when no
+// StagingStore is wired.
 func (e *KubernetesExecutor) GCStagingClaims(ctx context.Context, ttl time.Duration) error {
 	if e.staging == nil {
 		return nil
@@ -118,20 +121,61 @@ func (e *KubernetesExecutor) GCStagingClaims(ctx context.Context, ttl time.Durat
 	if err != nil {
 		return fmt.Errorf("listing active staging volumes: %w", err)
 	}
+	var errs []error
+	knownPVCs := make(map[string]bool, len(vols))
 	now := time.Now()
 	for _, v := range vols {
+		knownPVCs[v.PVCName] = true
 		reason, drop := stagingDeleteDecision(v, now, ttl)
 		if !drop {
 			continue
 		}
 		if derr := e.clientset.CoreV1().PersistentVolumeClaims(e.namespace).Delete(ctx, v.PVCName, metav1.DeleteOptions{}); derr != nil && !apierrors.IsNotFound(derr) {
-			return fmt.Errorf("deleting staging PVC %s: %w", v.PVCName, derr)
+			e.log().ErrorContext(ctx, "failed to delete staging PVC", "pvc", v.PVCName, "error", derr)
+			e.recordDecision("staging_pvc_delete_error")
+			errs = append(errs, fmt.Errorf("deleting staging PVC %s: %w", v.PVCName, derr))
+			continue
 		}
 		if merr := e.staging.MarkStagingDeleted(ctx, v.PVCName, reason); merr != nil {
-			return fmt.Errorf("recording staging deletion %s: %w", v.PVCName, merr)
+			errs = append(errs, fmt.Errorf("recording staging deletion %s: %w", v.PVCName, merr))
 		}
 	}
-	return nil
+
+	orphanErrs := e.sweepUnrecordedStagingClaims(ctx, knownPVCs, now, ttl)
+	errs = append(errs, orphanErrs...)
+
+	return errors.Join(errs...)
+}
+
+// sweepUnrecordedStagingClaims sweeps unrecorded orphan PVCs in Kubernetes carrying the
+// staging label. If a PVC was created in K8s but never recorded in DB, collect it after
+// ttl so it does not leak forever (#1615).
+func (e *KubernetesExecutor) sweepUnrecordedStagingClaims(ctx context.Context, knownPVCs map[string]bool, now time.Time, ttl time.Duration) []error {
+	pvcs, lerr := e.clientset.CoreV1().PersistentVolumeClaims(e.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: stagingLabel + "=true",
+	})
+	if lerr != nil {
+		return []error{fmt.Errorf("listing staging PVCs: %w", lerr)}
+	}
+	var errs []error
+	for _, pvc := range pvcs.Items {
+		if knownPVCs[pvc.Name] {
+			continue
+		}
+		if !pvc.CreationTimestamp.IsZero() && now.Sub(pvc.CreationTimestamp.Time) <= ttl {
+			continue
+		}
+		if derr := e.clientset.CoreV1().PersistentVolumeClaims(e.namespace).Delete(ctx, pvc.Name, metav1.DeleteOptions{}); derr != nil && !apierrors.IsNotFound(derr) {
+			e.log().ErrorContext(ctx, "failed to delete unrecorded staging PVC", "pvc", pvc.Name, "error", derr)
+			e.recordDecision("staging_pvc_delete_error")
+			errs = append(errs, fmt.Errorf("deleting unrecorded staging PVC %s: %w", pvc.Name, derr))
+			continue
+		}
+		if merr := e.staging.MarkStagingDeleted(ctx, pvc.Name, "orphaned"); merr != nil {
+			errs = append(errs, fmt.Errorf("recording unrecorded staging deletion %s: %w", pvc.Name, merr))
+		}
+	}
+	return errs
 }
 
 // stagingDeleteDecision returns the delete reason and whether to reclaim a tracked

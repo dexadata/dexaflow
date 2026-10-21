@@ -337,7 +337,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// confirming at mark time.
 	store.SetProvisionalInfraMarks(true)
 	startMaintenance(ctx, mcs, cfg.Executor.TaskNamespace, execStore, store, overrideObservers{metrics: metrics, sink: markers}, reaper, sched.IsLeading, logger, snapshotter, settledRunCollection(cfg.Executor, execStore))
-	startStagingGC(ctx, mcs, cfg.Executor.TaskNamespace, store, sched.IsLeading, logger)
+	startStagingGC(ctx, mcs, cfg.Executor.TaskNamespace, store, sched.IsLeading, logger, metrics)
 	// Warm-pool reconciler (ADR 0058 N1b2b, model A2): keeps min_idle warm workers
 	// ready per active dag_version. Started ONLY when warm pools are enabled, with
 	// them off it is never constructed, so no warm pod is ever created and dispatch
