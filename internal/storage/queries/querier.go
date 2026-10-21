@@ -222,6 +222,12 @@ type Querier interface {
 	// error_message carries the underlying cause. Guarded to 'scheduled' for the same
 	// reason as RecordDispatchFailure. This is distinct from dispatch_lost (a TI that
 	// reached 'queued' then vanished) and from a task's own 'failed' (the code ran).
+	// dispatch_failed is terminal: a dispatch failure never consumes try_number
+	// (ADR 0031 Amendment A), so the user's retry budget is not a second dispatch
+	// budget. It is spent the way FailDispatchRefused spends it, by lowering
+	// max_tries to the current try, so the planner does not move the task to
+	// up_for_retry and dispatch it again on a new try. A clear restores the
+	// budget from the task, as after a refusal.
 	FailDispatchExhausted(ctx context.Context, arg FailDispatchExhaustedParams) error
 	// A dispatch the executor refused (ADR 0066 section 3: the task is larger than
 	// its size, or above executor.unit.max_size) fails the task for good. The
@@ -777,6 +783,8 @@ type Querier interface {
 	// task_id) and the active states (scheduled/queued) — a TI that already
 	// moved to running/terminal between the worker accepting the request and
 	// the dispatch failing is left alone (defense in depth).
+	// The failure is dispatch_failed, which is terminal: the retry budget is
+	// spent as in FailDispatchExhausted, so the planner does not retry it.
 	MarkTaskDispatchFailed(ctx context.Context, arg MarkTaskDispatchFailedParams) error
 	// Fails one queued TI with a dispatch_lost error. The WHERE state='queued'
 	// guard makes the operation idempotent: a second call on a TI that has
@@ -846,6 +854,31 @@ type Querier interface {
 	// last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
 	// ResetTaskInstanceToNone.
 	RecordDispatchFailure(ctx context.Context, arg RecordDispatchFailureParams) error
+	// A pod CREATE failed because the Kubernetes API was unavailable: a 503, a
+	// 504, a 500 (a fail-closed admission webhook that is down), a connection
+	// refused or reset, or the client deadline (#1606). Re-offer the task the way
+	// backpressure is re-offered, back to 'scheduled' and held until
+	// next_dispatch_at, WITHOUT touching dispatch_attempts, and stamp the start of
+	// the outage window on the first such failure (COALESCE keeps the first one).
+	// The caller fails the task as dispatch_failed once the window it returns is
+	// older than the scheduler's bound (ADR 0093), so an API that never comes back
+	// cannot hold the task forever.
+	//
+	// The hold grows with the outage: the next attempt waits as long as the task
+	// has already been riding it out, at least min_delay and at most max_delay.
+	// That doubles the interval without a counter, so a recovering apiserver is
+	// not hit by every due task every few seconds, and a recovery is still seen
+	// within max_delay.
+	//
+	// The create may have succeeded on the server before the response was lost,
+	// so this is a rail like RequeueDispatch: attempt_epoch is bumped, and the
+	// re-dispatch claims a new epoch on top, so an orphan pod from the ambiguous
+	// create is fenced (its reports get ErrStaleReport). Guarded to
+	// scheduled/queued: the sync path re-offers a scheduled row, a buffered
+	// worker a scheduled or queued one, and a row the agent has since reported on
+	// (the orphan pod won the race and runs the attempt) is left alone. The other
+	// fields are cleared for the reasons given on RequeueDispatch.
+	RecordDispatchUnavailable(ctx context.Context, arg RecordDispatchUnavailableParams) (RecordDispatchUnavailableRow, error)
 	// One audit entry per scope a retention cycle purged audit rows from, so the
 	// purge itself is on the record. tenant_id NULL is the system rows.
 	RecordRetentionPurge(ctx context.Context, arg RecordRetentionPurgeParams) error

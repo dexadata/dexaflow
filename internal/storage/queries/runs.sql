@@ -630,6 +630,7 @@ SET state = 'none',
     scheduled_at = NULL,
     dispatch_attempts = 0,
     next_dispatch_at = NULL,
+    dispatch_unavailable_since = NULL,
     reschedule_at = NULL,
     first_reschedule_at = NULL,
     last_failure_kind = NULL,
@@ -714,6 +715,7 @@ SET state = 'none',
     scheduled_at = NULL,
     dispatch_attempts = 0,
     next_dispatch_at = NULL,
+    dispatch_unavailable_since = NULL,
     reschedule_at = NULL,
     first_reschedule_at = NULL,
     last_failure_kind = NULL,
@@ -783,6 +785,7 @@ SET state = 'none',
     scheduled_at = NULL,
     dispatch_attempts = 0,
     next_dispatch_at = NULL,
+    dispatch_unavailable_since = NULL,
     reschedule_at = NULL,
     first_reschedule_at = NULL,
     last_failure_kind = NULL,
@@ -843,6 +846,7 @@ LIMIT 100;
 -- ResetTaskInstanceToNone.
 UPDATE task_instances
 SET state = 'none',
+    dispatch_unavailable_since = NULL,
     released_at = now(),
     started_at = NULL,
     ended_at = NULL,
@@ -1130,6 +1134,7 @@ SET state = 'none',
     scheduled_at = NULL,
     dispatch_attempts = 0,
     next_dispatch_at = NULL,
+    dispatch_unavailable_since = NULL,
     last_failure_kind = NULL,
     infra_confirmed_at = NULL,
     warm_worker_id = NULL,
@@ -1210,6 +1215,7 @@ SET state = 'none',
     scheduled_at = NULL,
     dispatch_attempts = 0,
     next_dispatch_at = NULL,
+    dispatch_unavailable_since = NULL,
     last_failure_kind = NULL,
     infra_confirmed_at = NULL,
     warm_worker_id = NULL,
@@ -1514,10 +1520,13 @@ LIMIT 100;
 -- task_id) and the active states (scheduled/queued) — a TI that already
 -- moved to running/terminal between the worker accepting the request and
 -- the dispatch failing is left alone (defense in depth).
+-- The failure is dispatch_failed, which is terminal: the retry budget is
+-- spent as in FailDispatchExhausted, so the planner does not retry it.
 UPDATE task_instances
 SET state = 'failed',
     ended_at = now(),
-    error_message = $3
+    error_message = $3,
+    max_tries = LEAST(max_tries, try_number)
 WHERE dag_run_id = $1
   AND task_id = $2
   AND state IN ('scheduled', 'queued');
@@ -1694,6 +1703,47 @@ UPDATE task_instances
 SET next_dispatch_at = $3
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled';
 
+-- name: RecordDispatchUnavailable :one
+-- A pod CREATE failed because the Kubernetes API was unavailable: a 503, a
+-- 504, a 500 (a fail-closed admission webhook that is down), a connection
+-- refused or reset, or the client deadline (#1606). Re-offer the task the way
+-- backpressure is re-offered, back to 'scheduled' and held until
+-- next_dispatch_at, WITHOUT touching dispatch_attempts, and stamp the start of
+-- the outage window on the first such failure (COALESCE keeps the first one).
+-- The caller fails the task as dispatch_failed once the window it returns is
+-- older than the scheduler's bound (ADR 0093), so an API that never comes back
+-- cannot hold the task forever.
+--
+-- The hold grows with the outage: the next attempt waits as long as the task
+-- has already been riding it out, at least min_delay and at most max_delay.
+-- That doubles the interval without a counter, so a recovering apiserver is
+-- not hit by every due task every few seconds, and a recovery is still seen
+-- within max_delay.
+--
+-- The create may have succeeded on the server before the response was lost,
+-- so this is a rail like RequeueDispatch: attempt_epoch is bumped, and the
+-- re-dispatch claims a new epoch on top, so an orphan pod from the ambiguous
+-- create is fenced (its reports get ErrStaleReport). Guarded to
+-- scheduled/queued: the sync path re-offers a scheduled row, a buffered
+-- worker a scheduled or queued one, and a row the agent has since reported on
+-- (the orphan pod won the race and runs the attempt) is left alone. The other
+-- fields are cleared for the reasons given on RequeueDispatch.
+UPDATE task_instances
+SET state = 'scheduled',
+    next_dispatch_at = sqlc.arg(now)::timestamptz + LEAST(
+        sqlc.arg(max_delay)::interval,
+        GREATEST(sqlc.arg(min_delay)::interval,
+                 sqlc.arg(now)::timestamptz - COALESCE(dispatch_unavailable_since, sqlc.arg(now)::timestamptz))),
+    dispatch_unavailable_since = COALESCE(dispatch_unavailable_since, sqlc.arg(now)::timestamptz),
+    warm_worker_id = NULL,
+    last_heartbeat_at = NULL,
+    attempt_epoch = attempt_epoch + 1,
+    queued_at = NULL
+WHERE dag_run_id = sqlc.arg(dag_run_id)
+  AND task_id = sqlc.arg(task_id)
+  AND state IN ('scheduled', 'queued')
+RETURNING dispatch_unavailable_since::timestamptz AS unavailable_since, next_dispatch_at;
+
 -- name: MarkTaskInstanceQueued :execrows
 -- The scheduler's scheduled -> queued write after a dispatch was accepted.
 -- Guarded to the exact slot the tick planned: still 'scheduled', with the
@@ -1788,9 +1838,16 @@ WHERE dag_run_id = $1 AND task_id = $2 AND try_number = $3
 -- error_message carries the underlying cause. Guarded to 'scheduled' for the same
 -- reason as RecordDispatchFailure. This is distinct from dispatch_lost (a TI that
 -- reached 'queued' then vanished) and from a task's own 'failed' (the code ran).
+-- dispatch_failed is terminal: a dispatch failure never consumes try_number
+-- (ADR 0031 Amendment A), so the user's retry budget is not a second dispatch
+-- budget. It is spent the way FailDispatchRefused spends it, by lowering
+-- max_tries to the current try, so the planner does not move the task to
+-- up_for_retry and dispatch it again on a new try. A clear restores the
+-- budget from the task, as after a refusal.
 UPDATE task_instances
 SET state = 'failed', ended_at = now(), error_message = $3,
-    next_dispatch_at = NULL
+    next_dispatch_at = NULL,
+    max_tries = LEAST(max_tries, try_number)
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled';
 
 -- name: FailDispatchRefused :exec

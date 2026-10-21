@@ -46,7 +46,12 @@ type fakeStore struct {
 	dispatchFailures     []transition
 	dispatchBackpressure []transition
 	dispatchExhausted    []string
-	dispatchRefused      []string
+	// dispatchUnavailable records each unavailable-API re-offer, and
+	// unavailableSince is the outage window the store keeps per task: stamped
+	// on the first one, kept after (the COALESCE of the SQL).
+	dispatchUnavailable []transition
+	unavailableSince    map[string]time.Time
+	dispatchRefused     []string
 	// alertAttempts mirrors the real per-episode attempt claim: each call
 	// consumes one, and the claim is refused once the budget is spent or the
 	// episode is already delivered. Backoff is not simulated — the fake is for
@@ -181,6 +186,22 @@ func (f *fakeStore) RecordDispatchFailure(_ context.Context, runID, taskID strin
 func (f *fakeStore) RecordDispatchBackpressure(_ context.Context, runID, taskID string, _ time.Time) error {
 	f.dispatchBackpressure = append(f.dispatchBackpressure, transition{runID, taskID, ""})
 	return nil
+}
+
+// RecordDispatchUnavailable mirrors the SQL: the window starts on the first
+// unavailable failure, and the hold is the time already spent in it, clamped.
+func (f *fakeStore) RecordDispatchUnavailable(_ context.Context, runID, taskID string, now time.Time, minDelay, maxDelay time.Duration) (since, nextAt time.Time, applied bool, err error) {
+	f.dispatchUnavailable = append(f.dispatchUnavailable, transition{runID, taskID, ""})
+	if f.unavailableSince == nil {
+		f.unavailableSince = map[string]time.Time{}
+	}
+	since, ok := f.unavailableSince[taskID]
+	if !ok {
+		since = now
+		f.unavailableSince[taskID] = since
+	}
+	hold := min(max(now.Sub(since), minDelay), maxDelay)
+	return since, now.Add(hold), true, nil
 }
 
 func (f *fakeStore) FailDispatchExhausted(_ context.Context, runID, taskID, _ string) error {

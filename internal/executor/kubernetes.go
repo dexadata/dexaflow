@@ -67,7 +67,8 @@ func NewKubernetesExecutor(clientset kubernetes.Interface, namespace string) *Ku
 // Execute creates the task pod. The agent inside the pod reports state over gRPC.
 // A dispatch failure is classified on this layer — where the apiserver's error
 // types are known — into transient Backpressure (a ResourceQuota 403 or an APF
-// 429) or a permanent Rejected, so the scheduler acts on the disposition without
+// 429), an Unavailable API (a 5xx, a connection refused or reset, the client
+// deadline; ADR 0093) or a permanent Rejected, so the scheduler acts on the disposition without
 // importing Kubernetes error types (ADR 0051 Phase 4). The cause is returned
 // alongside so its text still feeds the scheduler's note/log.
 func (e *KubernetesExecutor) Execute(ctx context.Context, req Request) (Disposition, error) {
