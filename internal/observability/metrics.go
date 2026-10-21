@@ -97,6 +97,10 @@ type Metrics struct {
 	// serving the last good pair, so a non-zero rate means a rotation is stuck
 	// and the served certificate will expire unless the files are fixed (#637).
 	TLSReloadFailures *prometheus.CounterVec
+
+	// schema backs dexaflow_schema_ready and dexaflow_schema_wait_seconds
+	// (RecordSchemaState, ADR 0090 decision 6).
+	schema *schemaState
 }
 
 // NewMetrics registers every ADR 0010 collector with reg and returns the set.
@@ -104,6 +108,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	f := promauto.With(reg)
 	sizeBuckets := prometheus.ExponentialBuckets(64, 4, 8)
 	return &Metrics{
+		schema: newSchemaState(f),
 		SchedulerLoopDuration: f.NewHistogram(prometheus.HistogramOpts{
 			Name: "dexaflow_scheduler_loop_duration_seconds", Help: "Duration of one scheduler loop iteration.",
 		}),
