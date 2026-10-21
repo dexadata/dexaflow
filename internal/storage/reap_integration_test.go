@@ -171,7 +171,7 @@ func TestReapRunIgnoresTerminalRunIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Move the run to its natural terminal state.
-	if err := sched.SetRunState(ctx, runUUID, domain.DagRunStateSuccess); err != nil {
+	if _, err := sched.SetRunState(ctx, runUUID, domain.DagRunStateRunning, domain.DagRunStateSuccess); err != nil {
 		t.Fatal(err)
 	}
 
