@@ -1485,11 +1485,11 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 	go uiSrv.Precompress()
 
 	// CI OIDC (ADR 0092): unchanged deps unless auth.ci_oidc lists an issuer.
-	handler := api.NewServer(withCIOIDC(api.Dependencies{
+	handler := api.NewServer(withCIOIDC(withAPITokens(api.Dependencies{
 		Logger: tel.Logger,
-		// API tokens (ADR 0074) are checked first; every other bearer goes on
-		// to the JWT authenticator.
-		Authenticator:                auth.NewAPITokenAuthenticator(authn, repo, repo),
+		// withAPITokens puts the API tokens (ADR 0074) in front of it unless
+		// auth.api_tokens.disabled is true.
+		Authenticator:                authn,
 		RateLimiter:                  auth.NewRateLimiter(loginRateLimit(cfg), time.Minute),
 		Registry:                     tel.Registry,
 		Metrics:                      tel.Metrics,
@@ -1539,7 +1539,6 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		Variables:       repo,
 		Users:           repo,
 		UserAudit:       repo,
-		APITokens:       repo,
 		Connections:     repo,
 		Pools:           repo,
 		Favorites:       repo,
@@ -1586,7 +1585,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 
 		SessionCookieInsecure: cfg.Auth.SessionCookieInsecure,
 		SessionCookieName:     cfg.Auth.SessionCookieName,
-	}, cfg, repo, tel.Metrics))
+	}, cfg, repo), cfg, repo, tel.Metrics))
 	return newHTTPServer(cfg.Server.HTTPAddr, handler, cfg)
 }
 

@@ -1,0 +1,10 @@
+kind: Added
+body: |-
+  **API tokens can be turned off.** `auth.api_tokens.disabled` (Helm
+  `auth.apiTokens.disabled`, `false` by default) set to `true` stops serving
+  `/api/v2/apiTokens` and the API tokens screen, and refuses every `dxf_`
+  token with `401`, one created before included. It is for a platform in
+  front of Dexaflow that decides at each sign-in who may reach it, so no
+  Dexaflow credential outlives that decision; deploys go through CI OIDC or
+  the trusted issuer's deploy audience instead (#2056).
+time: 2026-10-20T21:00:00.000000000+00:00
