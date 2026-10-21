@@ -21,14 +21,21 @@ type AsyncDispatchStore interface {
 	// FailDispatchRefused fails a refused task and spends its retry budget, as
 	// on the sync path.
 	FailDispatchRefused(ctx context.Context, runID, taskID, reason string) error
+	// RecordDispatchUnavailable re-offers a task whose pod create met an
+	// unavailable Kubernetes API without counting an attempt, as on the sync
+	// path (ADR 0093).
+	RecordDispatchUnavailable(ctx context.Context, runID, taskID string, now time.Time, minDelay, maxDelay time.Duration) (since, nextAt time.Time, applied bool, err error)
 }
 
 // AsyncDispatchFailures handles a dispatch that failed inside a buffered
 // dispatch worker exactly as handleDispatchFailure handles a synchronous one:
 // cluster backpressure (a quota 403, a 429) is re-offered without spending the
-// dispatch budget, any other error (a 5xx, a timeout, a rejection) is re-offered
-// with a counted attempt and a growing backoff, and the task fails as
-// dispatch_failed only once dispatchMaxAttempts is spent. It is the
+// dispatch budget, an unavailable Kubernetes API (a 503, a 504, a 500, a
+// connection refused or reset, the client deadline) is re-offered without
+// spending it until dispatchUnavailableWindow passes (ADR 0093), any other
+// error (a rejection) is re-offered with a counted attempt and a growing
+// backoff, and the task fails as dispatch_failed only once dispatchMaxAttempts
+// is spent. It is the
 // dispatch.FailureSink the buffered dispatcher reports to.
 type AsyncDispatchFailures struct {
 	store  AsyncDispatchStore
@@ -64,6 +71,22 @@ func (a *AsyncDispatchFailures) HandleDispatchFailure(ctx context.Context, runID
 	if disp == executor.Refused {
 		a.logger.Error("buffered dispatch refused; failing task", "run", runID, "task", taskID, "error", cause)
 		return a.store.FailDispatchRefused(ctx, runID, taskID, refusedReason(cause))
+	}
+	if disp == executor.Unavailable {
+		out, uerr := holdUnavailable(ctx, a.store.RecordDispatchUnavailable, runID, taskID, a.now(), cause)
+		if uerr != nil {
+			return fmt.Errorf("re-offering %s: %w", taskID, uerr)
+		}
+		if out.expired {
+			a.logger.Error("Kubernetes API unavailable past the dispatch window; failing task",
+				"run", runID, "task", taskID, "unavailable_since", out.since, "error", cause)
+			return a.store.MarkTaskDispatchFailed(ctx, runID, taskID, out.reason)
+		}
+		if out.applied {
+			a.logger.Warn("buffered dispatch met an unavailable Kubernetes API; re-offering the task",
+				"run", runID, "task", taskID, "unavailable_since", out.since, "next_dispatch_at", out.nextAt, "error", cause)
+		}
+		return nil
 	}
 	// Neither cluster backpressure nor a dispatch that never left the control
 	// plane (Deferred: the client rate limiter refused it) is a failed attempt.

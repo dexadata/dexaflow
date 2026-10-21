@@ -363,6 +363,47 @@ On Lite the agent writes no record and reports nothing, so the attempt stays
 same infra rail. A warm-pool attempt keeps reporting `failed`: its pod serves
 other attempts, so no reconciler reads a record for it.
 
+## A pod create that fails
+
+A dispatch can fail before any reaper is involved: the pod `CREATE` itself
+returns an error. What the scheduler does depends on what the error says,
+the same on the tick and in the buffered dispatch workers
+(`scheduler.dispatch.buffer_size` above 0):
+
+| The create failed with | Verdict | What happens |
+|---|---|---|
+| The client rate limiter refused it, or the dispatch buffer is full | Deferred | Nothing was sent. The task stays `scheduled` and the next tick offers it again. Nothing is counted. |
+| A ResourceQuota 403 (`exceeded quota`) or an API Priority and Fairness 429 | Backpressure | Held and re-offered for as long as the cluster stays full, never failed for it ([ADR 0053](/project/adrs/0053-admission-and-placement/)). |
+| A 503, a 504, a 500 (a server timeout, a fail-closed admission webhook that is down, a 502 from a load balancer), a connection refused or reset, the client deadline | Unavailable | Re-offered without counting an attempt. Each hold lasts as long as the task has already been waiting on the outage, from 5 s up to 1 min, so the task is dispatched within a minute of the API coming back. After **15 minutes** of unavailability the task fails as `dispatch_failed: Kubernetes API unavailable for <duration>: <cause>` ([ADR 0093](/project/adrs/0093-unavailable-api-dispatch-window/)). |
+| A request the apiserver understood and refused: 400, a 403 that is not quota (RBAC, a webhook that denied the pod), 404 (the namespace is gone), 409, 422 (an invalid spec) | Rejected | Retried 6 times, 5, 10, 20, 40 and 80 s apart, then failed as `dispatch_failed after 6 attempts: <cause>` ([ADR 0031](/project/adrs/0031-scheduler-architecture/) Amendment A). |
+| A task larger than its size or the executor's limit | Refused | Failed at once with the reason. |
+
+None of these spends a task retry: a dispatch failure is the substrate's, not
+the task's. `dispatch_failed` is terminal, so a task with `retries: 2` that
+failed to dispatch does not run again on a new try; clear it once the cause is
+fixed, which restores its retries. Before #1606, an outage longer than about
+2m35s (a managed control plane upgrade, an etcd leader change) failed every
+task due during it, and the failure then fell onto the task's retries.
+
+The start of a task's outage is kept on its row
+(`task_instances.dispatch_unavailable_since`), so a scheduler restart or a
+leader change does not restart the 15 minutes. It is reset with the attempt
+counter: by a retry, an infra re-place, a clear, or a reschedule.
+
+**A create whose answer was lost may still have made a pod.** Retrying is safe
+anyway: the re-offer moves the task to a new attempt epoch, so that pod's
+agent is told to stop at its RUNNING report, before it starts the task's code.
+If that pod reported RUNNING first, the task is running there and the re-offer
+leaves it alone. Only one of the two pods ever runs the task; the other one's
+agent exits with an error without running it.
+
+The scheduler logs every re-offer at `WARN` (`Kubernetes API unavailable;
+re-offering the task`) and the give-up at `ERROR`; on the tick they are also
+counted as `dexaflow_scheduler_decisions_total{decision_type="dispatch_unavailable"}`
+and `{decision_type="dispatch_unavailable_exhausted"}`. A rise of the first
+during a control plane upgrade is expected; any of the second means the API
+was unavailable to a task for 15 minutes.
+
 ## Lite: which reapers run
 
 Lite (the subprocess executor behind `dexaflow lite`) has no pods, no pod
@@ -799,8 +840,9 @@ registered but stayed empty, [#1186](https://github.com/dexadata/dexaflow/issues
   through the agent (if it survived) or as `agent_lost` (if the agent went
   with it).
 - **K8s API outage** — pods stay where they are; new dispatches fail at the
-  executor layer (visible as `dispatch_failed` metric on the
-  [BufferedDispatcher](/project/adrs/0031-scheduler-architecture/)); the
+  executor layer and are re-offered for up to 15 minutes without spending
+  their dispatch attempts, then fail as `dispatch_failed` (see
+  [A pod create that fails](#a-pod-create-that-fails)); the
   dispatch-lost reaper does NOT fail TIs during the outage — it cannot read
   pod liveness, so it defers (`dispatch_lost_pod_query_error`) rather than
   risk a false positive. Reap-time pod teardown is likewise skipped and
