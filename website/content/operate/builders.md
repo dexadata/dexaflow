@@ -761,6 +761,13 @@ project's own Dockerfile with it and registers the digest it pushed. Both
 are under
 [Recipes for Argo Workflows, Tekton, Jenkins, buildah and kaniko](/operate/cicd-deploy/#recipes-for-argo-workflows-tekton-jenkins-buildah-and-kaniko).
 
+Ctrl-C (or SIGTERM) during the build or the push interrupts the tool, which
+cancels it, and the CLI kills it if it has not exited 10 seconds later. The
+CLI then removes the Dockerfile it generated and restores your
+`.dockerignore` before it exits with code `130`, so an interrupted build
+leaves the project as it found it. A second Ctrl-C ends the CLI at once,
+without that cleanup.
+
 ## Registry credentials
 
 The CLI reads and pushes to the registry in process, so it needs a credential

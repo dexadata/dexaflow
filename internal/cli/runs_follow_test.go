@@ -504,7 +504,7 @@ func TestExecuteRootExitsWithTheRunResult(t *testing.T) {
 	root.SetOut(io.Discard)
 	root.SetArgs([]string{"runs", "trigger", "etl", "--follow", "--server", srv.URL, "--token", "x"})
 
-	got, err := executeRoot(root)
+	got, err := executeRoot(context.Background(), root)
 	if got != exitRunFailed {
 		t.Errorf("exit code = %d, want %d", got, exitRunFailed)
 	}
