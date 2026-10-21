@@ -298,6 +298,14 @@ message):
 kubectl -n <namespace> logs -l app.kubernetes.io/component=migrate --tail=50
 ```
 
+A control plane that starts on a schema that is absent or behind, because the
+Job failed, did not run (`migrations.enabled: false`) or the database lost its
+schema later, does not crash-loop: it stays up and not ready, says why on
+`/readyz` and in its log, and starts serving on its own once the migrations
+have run, so a failed upgrade stalls on unready new pods while the old ones
+keep serving
+([a control plane that is up but not ready](/operate/troubleshooting/#a-control-plane-that-is-up-but-not-ready)).
+
 On Lite, the new binary applies the same files from its embedded copy when
 `dexaflow lite` starts (or when you run `dexaflow db migrate`), one file at a
 time in the same way, so everything below applies to both editions unless it
@@ -350,8 +358,10 @@ killed while it migrates: all of them leave the same two things behind.
   `Dirty database version N. Fix and force version.` on its second line, and
   fails without retrying on Kubernetes 1.31 or newer; `dexaflow lite` refuses
   to start with `database schema is marked dirty at version N`; a Pro control
-  plane refuses to boot against a dirty version too, while the replicas that
-  were already serving keep serving.
+  plane refuses to boot against a version dirty at the one it requires, and
+  waits, not ready, on one dirty at any other version, since a migration may
+  be in flight there, while the replicas that were already serving keep
+  serving.
 - **An INVALID index, sometimes.** An interrupted `CREATE INDEX CONCURRENTLY`
   (027, 032, 035) leaves an index with the final name that Postgres marks
   INVALID and never uses, but the name is taken. Those three files

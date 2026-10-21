@@ -37,28 +37,73 @@ func (p *Postgres) SchemaVersion(ctx context.Context) (version uint, dirty, exis
 	return uint(v), d, true, nil
 }
 
-// checkSchemaCurrent fails fast when the database schema does not match the
-// binary's embedded latest migration, with an actionable message — instead of
-// booting and erroring at the first query against a missing/old table.
-func checkSchemaCurrent(dbVersion uint, exists, dirty bool, latest uint) error {
+// Schema reasons are the fixed classes of a schema this binary cannot serve
+// yet (ADR 0090 decision 2), and the reason label of dexaflow_schema_ready
+// (decision 6). They carry no version, so a migration that moves the version
+// does not start a new series and restart an alert's wait; the versions are in
+// SchemaWait.Reason. Later slices add "database replaced" (decision 3).
+const (
+	SchemaReasonAbsent     = "schema absent"
+	SchemaReasonBehind     = "schema behind"
+	SchemaReasonDirty      = "schema dirty"
+	SchemaReasonUnreadable = "schema unreadable"
+)
+
+// SchemaWait is the boot gate's verdict: whether this binary can build the
+// rest of the process on the schema it found, and if not, why.
+type SchemaWait struct {
+	// Class is one of the SchemaReason constants, empty when the schema is
+	// current.
+	Class string
+	// Reason is the text /readyz and the log carry, with the versions:
+	// "schema behind v40, requires v46". It never holds the DSN or a host,
+	// since /readyz is unauthenticated.
+	Reason string
+	// Ahead is a clean schema newer than this binary, accepted with a warning.
+	Ahead bool
+	// Err is why the schema could not be read, for the log line only.
+	Err error
+}
+
+// Ready reports whether the schema is one this binary can serve.
+func (w SchemaWait) Ready() bool { return w.Class == "" }
+
+// schemaWaitVerdict is the boot gate of ADR 0090 decision 1. An absent or
+// behind schema waits instead of exiting, since a migration Job or an operator
+// can still bring it current, and a crash loop only hides the pod that could
+// say so. A dirty version other than this binary's latest waits too: a
+// migration may be in flight. A dirty version equal to the latest is the one
+// error: the migration this binary needs is half applied and no wait finishes
+// it. A clean schema ahead of the binary is accepted, because expand-contract
+// migrations keep older code working through a rollout or a `helm rollback`.
+func schemaWaitVerdict(dbVersion uint, exists, dirty bool, latest uint) (SchemaWait, error) {
 	switch {
 	case !exists:
-		return fmt.Errorf("%w: schema_migrations is absent — migrations have not run (apply them: the Helm pre-upgrade migration Job, or `dexaflow db migrate` for Lite); schema v%d is required",
-			domain.ErrSchemaNotCurrent, latest)
-	case dirty:
-		return fmt.Errorf("%w: schema is dirty at v%d — a migration did not complete; resolve it before starting",
+		return SchemaWait{Class: SchemaReasonAbsent, Reason: SchemaReasonAbsent}, nil
+	case dirty && dbVersion == latest:
+		return SchemaWait{}, fmt.Errorf("%w: schema is dirty at v%d, the version this binary requires: a migration to it did not complete; resolve it before starting (see the interrupted-migration steps in the upgrade guide)",
 			domain.ErrSchemaNotCurrent, dbVersion)
+	case dirty:
+		return SchemaWait{Class: SchemaReasonDirty, Reason: fmt.Sprintf("schema dirty at v%d", dbVersion)}, nil
 	case dbVersion < latest:
-		return fmt.Errorf("%w: schema is at v%d but this binary requires v%d — run the pending migrations (the Helm pre-upgrade migration Job, or `dexaflow db migrate` for Lite)",
-			domain.ErrSchemaNotCurrent, dbVersion, latest)
+		return SchemaWait{Class: SchemaReasonBehind, Reason: fmt.Sprintf("schema behind v%d, requires v%d", dbVersion, latest)}, nil
 	default:
-		// dbVersion >= latest. An AHEAD schema (dbVersion > latest) is NOT fatal:
-		// expand-contract migrations are backward-compatible by construction, so
-		// older code is expected to run against a newer schema during a rollout or a
-		// `helm rollback`. Hard-failing here would CrashLoopBackOff the old pods on
-		// rollback and turn a recoverable bad deploy into an outage. The caller logs
-		// a warning for the ahead case; boot proceeds.
-		return nil
+		return SchemaWait{Ahead: dbVersion > latest}, nil
+	}
+}
+
+// readyClass names the reason a running pod's readiness fails, for
+// dexaflow_schema_ready, and is empty exactly when checkSchemaReady passes.
+func readyClass(dbVersion uint, exists, dirty bool, latest uint) string {
+	switch {
+	case checkSchemaReady(dbVersion, exists, dirty, latest) == nil:
+		return ""
+	case !exists:
+		return SchemaReasonAbsent
+	case dbVersion < latest:
+		return SchemaReasonBehind
+	default:
+		return SchemaReasonDirty
 	}
 }
 
@@ -75,14 +120,16 @@ func dirtyAhead(dbVersion uint, exists, dirty bool, latest uint) bool {
 }
 
 // checkSchemaReady is the READINESS gate, and it deliberately differs from
-// checkSchemaCurrent in exactly one state: dirty above this binary's latest.
+// the boot gate, schemaWaitVerdict, in exactly one state: dirty above this
+// binary's latest, where boot waits and a running pod stays ready.
 //
 // Sharing one function between boot and readiness looks like the safe economy —
 // two verdicts that cannot drift — but they answer different questions, and for
 // `dirty` the answers genuinely differ:
 //
 //   - Boot asks "may this process START against a half-applied schema?" No: it
-//     would run its first query against a table that may be half-migrated.
+//     would run its first query against a table that may be half-migrated, so
+//     it waits.
 //   - Readiness asks "should this pod, which was serving correctly a second ago,
 //     be pulled out of the Service?" A migration in flight is not a reason to.
 //
@@ -122,7 +169,7 @@ func checkSchemaReady(dbVersion uint, exists, dirty bool, latest uint) error {
 			domain.ErrSchemaNotCurrent, dbVersion)
 	default:
 		// Clean and at or above latest. See the ahead-schema reasoning in
-		// checkSchemaCurrent: expand-contract keeps older code working.
+		// schemaWaitVerdict: expand-contract keeps older code working.
 		return nil
 	}
 }
@@ -146,7 +193,7 @@ func (p *Postgres) SchemaReady(ctx context.Context) error {
 	}
 	if dirtyAhead(version, exists, dirty, latest) {
 		// Worth one line, because it explains why this pod is serving against a
-		// schema its own boot gate would have refused. Latched rather than
+		// schema its own boot gate would have waited on. Latched rather than
 		// logged per probe: readiness runs every periodSeconds, and a migration
 		// can take minutes. The latch resets when the condition clears, so the
 		// NEXT upgrade logs again instead of going silent for the process's life.
@@ -157,30 +204,40 @@ func (p *Postgres) SchemaReady(ctx context.Context) error {
 	} else {
 		p.dirtyAheadLogged.Store(false)
 	}
+	if p.schemaObserver != nil {
+		p.schemaObserver(readyClass(version, exists, dirty, latest))
+	}
 	return checkSchemaReady(version, exists, dirty, latest)
 }
 
-// CheckSchemaCurrent reads the DB schema version and compares it to the binary's
-// embedded latest, failing fast on a mismatch. Called at boot after the pool is
-// open, before the server serves.
-func (p *Postgres) CheckSchemaCurrent(ctx context.Context) error {
+// SchemaWaitState reads the schema and returns the boot gate's verdict
+// (schemaWaitVerdict). A read failure is not fatal: it comes back as the
+// SchemaReasonUnreadable class with the cause in Err, so the caller keeps
+// waiting. The only error is a schema dirty at this binary's latest.
+func (p *Postgres) SchemaWaitState(ctx context.Context) (SchemaWait, error) {
 	version, dirty, exists, latest, err := p.schemaState(ctx)
 	if err != nil {
-		return err
+		return SchemaWait{Class: SchemaReasonUnreadable, Reason: SchemaReasonUnreadable, Err: err}, nil //nolint:nilerr // a read failure is a reason to keep waiting, carried in Err
 	}
-	if exists && !dirty && version > latest {
-		// Ahead schema (see checkSchemaCurrent): boot proceeds — expand-contract
-		// migrations keep older code working — but surface it, since it means this
-		// binary is older than the DB (a rollout in progress or a rollback).
-		slog.Warn("database schema is ahead of this binary; proceeding (expand-contract assumed backward-compatible)",
+	w, err := schemaWaitVerdict(version, exists, dirty, latest)
+	if w.Ahead {
+		// Boot proceeds, but say so: this binary is older than the database
+		// (a rollout in progress or a rollback).
+		slog.WarnContext(ctx, "database schema is ahead of this binary; proceeding (expand-contract assumed backward-compatible)",
 			"db_version", version, "binary_latest", latest)
 	}
-	return checkSchemaCurrent(version, exists, dirty, latest)
+	return w, err
 }
 
-// schemaState gathers both sides of the comparison — what the database says and
-// what this binary embeds — so the boot gate and the readiness probe cannot drift
-// apart on either the query or the required version.
+// SetSchemaObserver registers what readiness reports each schema verdict to:
+// the class of a not-ready schema, or "" when it is ready. It feeds
+// dexaflow_schema_ready for a pod that was already serving. Set it once, at
+// boot, before the probes run.
+func (p *Postgres) SetSchemaObserver(observe func(class string)) { p.schemaObserver = observe }
+
+// schemaState gathers both sides of the comparison (what the database says and
+// what this binary embeds), so the boot gate and the readiness probe cannot
+// drift apart on either the query or the required version.
 func (p *Postgres) schemaState(ctx context.Context) (version uint, dirty, exists bool, latest uint, err error) {
 	latest, err = migrations.Latest()
 	if err != nil {
