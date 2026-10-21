@@ -48,6 +48,14 @@ type Postgres struct {
 	dirtyAheadLogged atomic.Bool
 	// schemaObserver hears each readiness schema verdict (SetSchemaObserver).
 	schemaObserver func(class string)
+	// installationID is database.installation_id: when set, the schema reads
+	// also read the database's installation id and compare it (ADR 0090
+	// decision 3). Empty checks nothing.
+	installationID string
+	// onReplaced hears a readiness probe that found the database replaced
+	// (SetOnReplaced), and replacedLogged latches its log line.
+	onReplaced     func()
+	replacedLogged atomic.Bool
 	// health is a dedicated one-connection pool used by Ping and the schema
 	// read, so a probe never queues behind application traffic. See
 	// newHealthPool for why that matters. Nil only in tests that construct a
@@ -188,7 +196,7 @@ func NewPostgres(ctx context.Context, cfg config.DatabaseSection) (*Postgres, er
 		pool.Close()
 		return nil, explainConnBudget(err, pc.MaxConns)
 	}
-	return &Postgres{Pool: pool, Queries: queries.New(pool), specs: newSpecCache(), health: health}, nil
+	return &Postgres{Pool: pool, Queries: queries.New(pool), specs: newSpecCache(), health: health, installationID: cfg.InstallationID}, nil
 }
 
 // newHealthPool opens the dedicated pool behind Ping and the readiness schema

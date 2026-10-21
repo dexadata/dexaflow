@@ -12,7 +12,7 @@ import (
 )
 
 // InstallationIDKey is the ConfigMap key that holds the installation id. The
-// chart's Deployments read it into DEXAFLOW_DATABASE_INSTALLATION_ID.
+// chart's Deployments read it into LEOFLOW_DATABASE_INSTALLATION_ID (database.installation_id).
 const InstallationIDKey = "installationId"
 
 // kubeStore is the installation ConfigMap in the release namespace. The

@@ -125,16 +125,3 @@ func openPostgresHoldingKeyLock(ctx context.Context, cfg *config.ServerConfig, t
 	}
 	return pg, lctx, release, nil
 }
-
-// keyLockExit turns a shutdown caused by a lost key-migration lock into a
-// non-zero exit, so neither the supervising `dexaflow lite` nor an operator
-// mistakes it for a clean stop.
-func keyLockExit(ctx context.Context, serveErr error) error {
-	if serveErr != nil {
-		return serveErr
-	}
-	if cause := context.Cause(ctx); errors.Is(cause, errKeyLockLost) {
-		return cause
-	}
-	return nil
-}

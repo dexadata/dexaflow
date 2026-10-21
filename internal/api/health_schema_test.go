@@ -205,6 +205,20 @@ func TestReadinessDistinguishesSchemaFromUnavailable(t *testing.T) {
 		}
 	})
 
+	t.Run("a replaced database says database replaced, without the ids", func(t *testing.T) {
+		rec := readyz(t, fmt.Errorf("%w: another installation id (this release is \"a1\", the database carries \"b2\")", domain.ErrDatabaseReplaced))
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503", rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "postgres database replaced") {
+			t.Errorf("body = %q, want it to name a replaced database", body)
+		}
+		if strings.Contains(body, "a1") || strings.Contains(body, "b2") {
+			t.Errorf("body = %q carries the installation ids", body)
+		}
+	})
+
 	t.Run("neither classification leaks connection detail", func(t *testing.T) {
 		for _, err := range []error{
 			fmt.Errorf("reading database schema version: dial postgres://leoflow:hunter2@pg.internal.svc:5432/leoflow: %w", context.DeadlineExceeded),

@@ -104,6 +104,9 @@ func (w *schemaWaiter) wait(ctx context.Context) error {
 			if verdict.Err != nil {
 				attrs = append(attrs, "error", verdict.Err.Error())
 			}
+			if verdict.Detail != "" {
+				attrs = append(attrs, "detail", verdict.Detail)
+			}
 			w.logger.WarnContext(ctx, "database schema is not ready; serving only the probes and metrics and checking again", attrs...)
 			last = verdict.Reason
 		}
@@ -127,6 +130,12 @@ func schemaRecoveryHint(class string) string {
 		return "a migration may be in flight; if none is running, follow the interrupted-migration steps of the upgrade guide"
 	case storage.SchemaReasonUnreadable:
 		return "check that the database is reachable with database.url; the server checks again on its own"
+	case storage.SchemaReasonReplaced:
+		// Migrating does not fix it: the migration Job refuses this database
+		// too, and the server must never write to it unacknowledged.
+		return "this is not the database this release was installed on (emptied, restored from another installation, or database.url changed); " +
+			"restore the right database or point database.url back at it, or accept this one by setting installation.id " +
+			"(see the troubleshooting page, a replaced database); the server checks again on its own"
 	default:
 		return "apply the migrations: on Helm, `helm upgrade <release> oci://ghcr.io/dexadata/charts/dexaflow -n <namespace> --version <chart version> --reuse-values` runs the migration Job again; on Lite, `dexaflow db migrate`; the server checks again on its own"
 	}

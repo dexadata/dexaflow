@@ -174,6 +174,17 @@ settings:
       so replicas started together do not all reconnect at the same moment. Applies
       to the main, scheduler and health pools, never to the leader election connection.
       `0` adds none.
+  database.installation_id:
+    edition: '**Pro only**'
+    description: >-
+      The installation id of the database this release was installed on ([ADR
+      0090](/project/adrs/0090-database-replaced-under-a-running-release/), decision 3).
+      The Helm chart sets it from the `<fullname>-installation` ConfigMap that
+      the migration Job keeps; do not set it by hand. When set, the server
+      serves only a database that carries this id: one with another id, none,
+      or no schema is reported as `database replaced`, boot waits not ready on
+      it, and a running server exits with code 3 when its database changes
+      under it. Empty checks nothing.
   redis.url:
     edition: '**Pro only**'
     description: >-

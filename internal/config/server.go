@@ -811,6 +811,14 @@ type DatabaseSection struct {
 	// replicas started together do not all reconnect at the same moment. 0 (the
 	// default) leaves the pgx default, or what the DSN sets.
 	ConnMaxLifetimeJitterMS int `mapstructure:"conn_max_lifetime_jitter_ms"`
+	// InstallationID (DEXAFLOW_DATABASE_INSTALLATION_ID) is the installation
+	// id of the database this release was installed on (ADR 0090 decision 3).
+	// The chart reads it from the ConfigMap the migration Job keeps. When set,
+	// the server serves only a database that carries it: another id, none, or
+	// no schema at all is a replaced database, which boot waits on and which
+	// makes a running server exit. Empty (the default, and Lite) checks
+	// nothing.
+	InstallationID string `mapstructure:"installation_id"`
 }
 
 // RedisSection configures the Redis connection.
@@ -1314,6 +1322,9 @@ var serverDefaults = map[string]any{
 	"database.scheduler_max_conns":         0,
 	"database.statement_timeout_ms":        0,
 	"database.conn_max_lifetime_jitter_ms": 0,
+	// Empty by default: no installation id is compared (Lite, and installs
+	// whose migration step does not record one). The chart sets it.
+	"database.installation_id": "",
 	// Empty by default: no Redis configured selects the embedded edition (Lite —
 	// XCom on Postgres, in-process log tailer, ADR 0026). Production sets this
 	// explicitly via the Helm chart (external Redis).

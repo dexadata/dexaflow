@@ -79,6 +79,14 @@ spec:
         # it has today rather than gaining a constant-valued one.
         checksum/oidc-config: {{ include (print .ctx.Template.BasePath "/oidc-config.yaml") .ctx | sha256sum }}
         {{- end }}
+        {{- with include "leoflow.installationID" .ctx }}
+        # A changed installation.id accepts a replaced database (ADR 0090
+        # decision 3). The migration Job writes it into the ConfigMap the
+        # pods read at start, and this rolls them so they do; a pod still
+        # waiting on the old id would otherwise wait for good. Rendered only
+        # when set, so an install that never pins one keeps its annotations.
+        dexaflow.dexadata.ai/installation-id: {{ . | quote }}
+        {{- end }}
         {{- with .ctx.Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -728,6 +736,18 @@ spec:
                 secretKeyRef:
                   name: {{ .ctx.Values.database.existingSecret | default (include "leoflow.credentialsSecretName" .ctx) }}
                   key: databaseUrl
+            # The installation id the migration Job keeps (ADR 0090 decision
+            # 3): the server serves only a database that carries it. Read from
+            # the ConfigMap, never rendered from installation.id, so a rollback
+            # (which runs no hook) still reads the id the database carries.
+            # Optional: with migrations.enabled false there is no ConfigMap,
+            # and nothing is compared.
+            - name: LEOFLOW_DATABASE_INSTALLATION_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "leoflow.installationConfigMapName" .ctx }}
+                  key: installationId
+                  optional: true
             - name: LEOFLOW_REDIS_URL
               valueFrom:
                 secretKeyRef:

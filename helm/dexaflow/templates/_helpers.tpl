@@ -136,7 +136,7 @@ Service/PDB selector is a subset of this map, in every mode.
 Name of the installation ConfigMap (ADR 0090 decision 3). The migrate wrapper
 creates and updates it; the chart never renders it, so `helm uninstall` leaves
 it in place and a reinstall against an emptied database reads as a replaced
-one. The control plane reads its id through DEXAFLOW_DATABASE_INSTALLATION_ID.
+one. The control plane reads its id through LEOFLOW_DATABASE_INSTALLATION_ID.
 */}}
 {{- define "leoflow.installationConfigMapName" -}}
 {{- printf "%s-installation" (include "leoflow.fullname" .) | trunc 63 | trimSuffix "-" -}}
