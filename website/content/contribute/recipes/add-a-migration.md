@@ -13,11 +13,15 @@ The rules are in [`migrations/AGENTS.md`](https://github.com/dexadata/dexaflow/b
 2. **Write both files** with the same name:
    `NNN_short_name.up.sql` and `NNN_short_name.down.sql`. Start each with a
    comment saying what it changes and why, and the issue or ADR.
-3. **Keep it additive** when it targets a patch: a new table, a nullable column
-   or a column with a constant default, or an index built with
-   `CREATE INDEX CONCURRENTLY` (without `IF NOT EXISTS`). Anything that rewrites
-   data or locks a large table waits for a minor
-   ([ADR 0068](/project/adrs/0068-patch-content-gated-by-safety/)).
+3. **Write every migration as expand/contract (ADR 0090).** A release only
+   adds (the expand phase): new tables, new indexes, and columns that are
+   nullable or carry a constant default. The previous release's binary must
+   continue to run on the newer schema so that `helm rollback` is always safe.
+   Removals, renames, and NOT NULL columns without defaults happen in a
+   contract phase at least one minor release later, once no supported release
+   binary expects the old shape. When targeting a patch, keep it additive and
+   within the safety bar of
+   [ADR 0068](/project/adrs/0068-patch-content-gated-by-safety/).
 4. **Regenerate and test:**
 
    ```sh

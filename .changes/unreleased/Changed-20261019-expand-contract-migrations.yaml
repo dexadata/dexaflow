@@ -1,0 +1,9 @@
+kind: Changed
+body: |-
+  **Expand/contract migration discipline documented and verified in CI.** Schema
+  migrations follow an expand/contract sequence per ADR 0090: a release only adds
+  nullable or defaulted columns, new tables, or new indexes. Removals, renames,
+  and NOT NULL constraints without defaults happen in a contract phase at least
+  one minor release later. Helm CI now verifies rollback to the previous release
+  against the newer schema to ensure compatibility. (#1994)
+time: 2026-10-19T20:00:00.000000000+00:00
