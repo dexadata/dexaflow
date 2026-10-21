@@ -296,6 +296,31 @@ func TestLoadServerPoolsReadOnly(t *testing.T) {
 	}
 }
 
+// TestLoadServerAPITokensSwitch proves auth.api_tokens.disabled defaults to
+// false, so an upgrade keeps the API tokens of ADR 0074, and binds true from
+// the environment, the only override path a Helm install has. Consequence
+// when unbound: an operator who turned the tokens off, because its own
+// sign-in decides who may reach the engine, would still serve year-long
+// credentials that outlive that decision.
+func TestLoadServerAPITokensSwitch(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer() error = %v", err)
+	}
+	if c.Auth.APITokens.Disabled {
+		t.Fatal("auth.api_tokens.disabled must default to false")
+	}
+
+	t.Setenv("DEXAFLOW_AUTH_API_TOKENS_DISABLED", "true")
+	c, err = LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer() error = %v", err)
+	}
+	if !c.Auth.APITokens.Disabled {
+		t.Fatal("DEXAFLOW_AUTH_API_TOKENS_DISABLED=true did not bind auth.api_tokens.disabled")
+	}
+}
+
 // TestLoadServerBindsExecutorDefaultLimits proves the default task limits (#537)
 // bind from env under both prefixes, the only route the Helm chart has to them.
 func TestLoadServerBindsExecutorDefaultLimits(t *testing.T) {
