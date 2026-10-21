@@ -239,7 +239,7 @@ func jwtAuth(authn auth.Authenticator, bearer *issuerBearerAuth, session session
 				c.Next()
 				return
 			}
-			if !errors.Is(err, auth.ErrInvalidToken) {
+			if authUnavailable(err) {
 				unavailable = err
 			}
 		}
@@ -260,7 +260,8 @@ func refuseCandidates(c *gin.Context, session sessionCookieSpec, unavailable, te
 		// 401s reads to whoever is on call as an auth incident rather than the
 		// outage it is. 503 is the same answer the login path already gives for
 		// the same cause (#843), and the cause stays in the log (#1087).
-		AbortProblemCause(c, http.StatusServiceUnavailable, "service unavailable", "authentication temporarily unavailable", unavailable)
+		// Retry-After gives the client a wait instead of a guess (#1100).
+		abortAuthUnavailable(c, unavailable)
 		return
 	}
 	if wrongHost {
