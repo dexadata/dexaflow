@@ -1283,7 +1283,7 @@ func findTaskInstanceDTO(c *gin.Context, repo TaskInstanceRepository, runs DagRu
 // taskInstanceActionHandler dispatches the catch-all under
 // /taskInstances/{task_id}/* : "logs/{try}" streams the attempt's logs, while a
 // bare "{map_index}" returns the single task instance (TaskInstanceResponse).
-func taskInstanceActionHandler(tasks TaskInstanceRepository, logs LogReader, xcoms XComReader, runs DagRunRepository, versions DagVersionLister, specs DagSpecReader) gin.HandlerFunc {
+func taskInstanceActionHandler(tasks TaskInstanceRepository, logs LogReader, xcoms XComReader, runs DagRunRepository, versions DagVersionLister, specs DagSpecReader, ephemeralLogs bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		action := strings.Trim(c.Param("action"), "/")
 		if rest, ok := strings.CutPrefix(action, "logs/"); ok {
@@ -1292,7 +1292,7 @@ func taskInstanceActionHandler(tasks TaskInstanceRepository, logs LogReader, xco
 				AbortProblem(c, http.StatusBadRequest, "bad request", "try_number must be an integer")
 				return
 			}
-			serveLogs(c, logs, tasks, try)
+			serveLogs(c, logs, tasks, try, ephemeralLogs)
 			return
 		}
 		if serveXComAction(c, xcoms, action) {
@@ -1542,7 +1542,7 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 		// RedirectTrailingSlash disabled in server.go and both routes
 		// registered, every hit reaches the handler through the no-store
 		// middleware.
-		actionH := taskInstanceActionHandler(deps.Stores.Tasks, deps.Stores.Logs, deps.Stores.Xcoms, deps.Stores.DagRuns, deps.Stores.DagVersions, deps.Stores.Specs)
+		actionH := taskInstanceActionHandler(deps.Stores.Tasks, deps.Stores.Logs, deps.Stores.Xcoms, deps.Stores.DagRuns, deps.Stores.DagVersions, deps.Stores.Specs, deps.Stores.EphemeralLogs)
 		r.GET("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/taskInstances/:task_id",
 			RequirePermission("read", "task_instance"), actionH)
 		r.GET("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/taskInstances/:task_id/*action",

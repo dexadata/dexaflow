@@ -420,6 +420,26 @@ func TestLoadServerLogsBackendDefaultsToDisk(t *testing.T) {
 	if c.Logs.Sink.Bucket != "" {
 		t.Errorf("Logs.Sink.Bucket = %q, want empty by default", c.Logs.Sink.Bucket)
 	}
+	if !c.Logs.PersistenceEnabled {
+		t.Error("Logs.PersistenceEnabled = false, want true by default")
+	}
+}
+
+// TestLoadServerReadsLogsPersistenceEnabledFromEnv checks the persistence toggle
+// binds from DEXAFLOW_LOGS_PERSISTENCE_ENABLED and legacy LEOFLOW_LOGS_PERSISTENCE_ENABLED.
+func TestLoadServerReadsLogsPersistenceEnabledFromEnv(t *testing.T) {
+	for _, env := range []string{"DEXAFLOW_LOGS_PERSISTENCE_ENABLED", "LEOFLOW_LOGS_PERSISTENCE_ENABLED"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv(env, "false")
+			c, err := LoadServer("", nil)
+			if err != nil {
+				t.Fatalf("LoadServer with %s: %v", env, err)
+			}
+			if c.Logs.PersistenceEnabled {
+				t.Errorf("%s=false: Logs.PersistenceEnabled = true, want false", env)
+			}
+		})
+	}
 }
 
 // TestLoadServerReadsLogsSinkS3FromEnv checks the S3 surface binds from

@@ -14,6 +14,11 @@ type LogsSection struct {
 	// Object storage is opt-in, Lite and every deployment that does not set this
 	// keep the exact on-disk path unchanged.
 	Backend string `mapstructure:"backend"`
+	// PersistenceEnabled indicates whether the log sink storage is backed by
+	// durable persistence (a PVC in Kubernetes or host disk in Lite). When false
+	// with backend "disk", logs are kept in an ephemeral emptyDir and will not
+	// survive a pod restart.
+	PersistenceEnabled bool `mapstructure:"persistence_enabled"`
 	// Sink configures the object-store backend; read only when Backend is "s3" or
 	// "gcs".
 	Sink ObjectLogSection `mapstructure:"sink"`
