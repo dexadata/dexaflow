@@ -7,6 +7,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/scheduler"
 	"github.com/dexadata/dexaflow/internal/storage"
@@ -64,5 +66,48 @@ func TestLeaderHealthReaderReflectsLockPresence(t *testing.T) {
 	}
 	if healthy, _ := reader.Heartbeat(); healthy {
 		t.Error("after the leader released the lock, the reader must report the scheduler unhealthy")
+	}
+}
+
+// TestLeaderHealthReaderIgnoresLockInAnotherDatabase pins #2049: advisory locks
+// are scoped to a database, but pg_locks lists the locks of every database on
+// the server. Two installs sharing one Postgres server must not see each other's
+// scheduler as healthy, so a session holding the leadership lock in another
+// database must not count.
+func TestLeaderHealthReaderIgnoresLockInAnotherDatabase(t *testing.T) {
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("DATABASE_URL must point at a migrated database for integration tests")
+	}
+	ctx := context.Background()
+
+	pg, err := storage.NewPostgres(ctx, config.DatabaseSection{URL: url})
+	if err != nil {
+		t.Fatalf("reader pool: %v", err)
+	}
+	t.Cleanup(pg.Close)
+	reader := scheduler.NewLeaderHealthReader(pg.Pool)
+
+	// Another install's scheduler: same server, the always-present "postgres"
+	// database, holding the same leadership lock on its own session.
+	other, err := pgx.ParseConfig(url)
+	if err != nil {
+		t.Fatalf("parse DATABASE_URL: %v", err)
+	}
+	if other.Database == "postgres" {
+		t.Skip(`DATABASE_URL must not be the "postgres" database, which this test uses as the other install`)
+	}
+	other.Database = "postgres"
+	conn, err := pgx.ConnectConfig(ctx, other)
+	if err != nil {
+		t.Fatalf("connect to the other database: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close(ctx) })
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, scheduler.LockID); err != nil {
+		t.Fatalf("hold the leadership lock in the other database: %v", err)
+	}
+
+	if healthy, _ := reader.Heartbeat(); healthy {
+		t.Error("the leadership lock held in another database must not make this install's scheduler healthy")
 	}
 }
