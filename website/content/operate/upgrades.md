@@ -1073,15 +1073,14 @@ storage (such as in local clusters or evaluation setups), the datastore has no
 persistence guarantees. Any pod recreation, node reboot, node drain, or
 Spot/preemptible reclamation destroys the database volume completely.
 
-Today a control plane whose database lost its schema refuses to boot
-(`schema_migrations is absent`) and its pods crash-loop until `helm upgrade`
-runs the migration hook again, which recreates an empty schema; the data does
-not come back
-([#1842](https://github.com/dexadata/dexaflow/issues/1842)). [ADR
-0090](/project/adrs/0090-database-replaced-under-a-running-release/) defines how
-a running release will treat a database that was emptied or replaced; that work
-is tracked in [#1846](https://github.com/dexadata/dexaflow/issues/1846). Only a
-restore from a backup brings the data back.
+Since 0.5.6 a Pro release notices it
+([ADR 0090](/project/adrs/0090-database-replaced-under-a-running-release/)):
+the database no longer carries the release's installation id, so the migration
+Job refuses to migrate it, a booting control plane waits not ready, and one that
+was serving exits and restarts into that wait
+([a replaced database](/operate/troubleshooting/#a-replaced-database)). Nothing
+recreates an empty schema in its place, and nothing brings the data back: only
+a restore from a backup of this installation does.
 
 `helm install` and `helm upgrade` print a warning in the release notes when
 `database.url` points at an in-cluster Postgres Service, since the chart cannot
