@@ -190,6 +190,62 @@ What the control plane reports after a restore, a failover or a changed
 The PR that hardens the Helm chart (#96) will add a `BACKUP.md` to the
 chart README pointing at the upstream guidance.
 
+## Regular restore drills
+
+A backup that has never been restored does not count as a backup. Restore a
+recent backup into a scratch environment on a schedule and check that:
+
+1. The archive or dump is complete and restores without errors.
+2. The control plane boots on it and `/readyz` returns 200.
+3. An admin can sign in and sees the DAGs and runs you expect.
+
+The repository runs the same drill every week and on every release candidate
+(`.github/workflows/restore-drill.yaml`, which runs
+`test/e2e/restore-drill-e2e.sh`).
+
+### Lite restore drill
+
+`dexaflow lite restore --force` replaces `~/.dexaflow`, so run the drill on
+another machine or in a throwaway container or VM, never on the install you
+backed up.
+
+```sh
+# On the install you protect: take a fresh backup.
+dexaflow lite backup --output /tmp/drill-snapshot.tar.gz
+
+# On the scratch machine: restore it and start Lite.
+dexaflow lite restore --input /tmp/drill-snapshot.tar.gz --force
+dexaflow lite &
+for _ in $(seq 1 60); do curl -fsS http://localhost:8080/readyz && break; sleep 1; done
+```
+
+### Pro (Helm) restore drill
+
+Restore into a separate database and point a throwaway release at it, so the
+production release never sees the drill. Use your own values file, so the
+release has the same `secretKey` and can decrypt the restored connections.
+
+```sh
+# Dump the production database and restore it into an empty scratch database.
+pg_dump --clean --if-exists -d "$DATABASE_URL" > /tmp/drill-backup.sql
+psql "$DRILL_DATABASE_URL" -v ON_ERROR_STOP=1 < /tmp/drill-backup.sql
+
+# Pause every DAG in the copy, so the drill release schedules nothing.
+psql "$DRILL_DATABASE_URL" -c "UPDATE dags SET is_paused = true"
+
+# Start a throwaway release on the restored database and check it is ready.
+kubectl create namespace dexaflow-drill
+helm install drill oci://ghcr.io/dexadata/charts/dexaflow -n dexaflow-drill \
+  -f values.yaml --set fullnameOverride=dexaflow-drill \
+  --set database.url="$DRILL_DATABASE_URL" --wait
+kubectl -n dexaflow-drill port-forward svc/dexaflow-drill 8081:8080 &
+curl -fsS http://127.0.0.1:8081/readyz
+
+# Clean up.
+helm uninstall drill -n dexaflow-drill
+kubectl delete namespace dexaflow-drill
+```
+
 ## Related issues
 
 - #137 — these commands.

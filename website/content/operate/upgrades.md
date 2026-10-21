@@ -1073,6 +1073,35 @@ That rolls back 049 and 048. A task that was
 waiting on an unavailable Kubernetes API at that moment falls back onto the
 dispatch-attempt budget of the previous release. No other data changes.
 
+## Ephemeral database loss (emptyDir Postgres)
+
+When evaluating Dexaflow with an in-cluster Postgres running on `emptyDir`
+storage (such as in local clusters or evaluation setups), the datastore has no
+persistence guarantees. Any pod recreation, node reboot, node drain, or
+Spot/preemptible reclamation destroys the database volume completely.
+
+Since 0.5.6 a Pro release notices it
+([ADR 0090](/project/adrs/0090-database-replaced-under-a-running-release/)):
+the database no longer carries the release's installation id, so the migration
+Job refuses to migrate it, a booting control plane waits not ready, and one that
+was serving exits and restarts into that wait
+([a replaced database](/operate/troubleshooting/#a-replaced-database)). Nothing
+recreates an empty schema in its place, and nothing brings the data back: only
+a restore from a backup of this installation does.
+
+`helm install` and `helm upgrade` print a warning in the release notes when
+`database.url` points at an in-cluster Postgres Service, since the chart cannot
+see whether that Postgres has a volume.
+
+To prevent data loss:
+- Never run production control planes against `emptyDir` datastores.
+- For in-cluster Postgres, always back the deployment with a
+  PersistentVolumeClaim (PVC).
+- For production environments, point `database.url` at managed services such as
+  AWS RDS, GCP Cloud SQL, or Azure Database for PostgreSQL.
+- Regularly exercise database backup and restore drills (see
+  [Backup and restore](/operate/backup-restore/#regular-restore-drills)).
+
 ## Related issues
 
 - #136 — this contract.
