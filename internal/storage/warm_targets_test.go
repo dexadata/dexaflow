@@ -128,3 +128,20 @@ func TestWarmTargetsSkipImagesOutsideTheAllowlist(t *testing.T) {
 		t.Fatalf("warmTargets(nil policy) = %+v, want both versions", got)
 	}
 }
+
+// TestWarmTargetsSkipsVersionWithNoWarmTask (#2065): a version none of whose
+// tasks may be placed on a warm worker (with executor.unit set, every task
+// declares resources or is larger than size 1) gets no warm target, run or
+// prewarm, so no idle warm pod sits next to the dedicated pods its tasks take.
+func TestWarmTargetsSkipsVersionWithNoWarmTask(t *testing.T) {
+	exec := config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 1, MaxPoolSize: 8}
+	versions := []activeWarmVersion{
+		{dagVersionID: "warm", image: "i", dagMinIdle: 2},
+		{dagVersionID: "sized", image: "i", dagMinIdle: 2, noWarmTask: true},
+		{dagVersionID: "sized-prewarm", image: "i", dagMinIdle: 2, prewarm: true, noWarmTask: true},
+	}
+	got := warmTargets(versions, exec, nil)
+	if len(got) != 1 || got[0].DagVersionID != "warm" {
+		t.Fatalf("warmTargets = %+v, want only the version with a warm-eligible task", got)
+	}
+}
