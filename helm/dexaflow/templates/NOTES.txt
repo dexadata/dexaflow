@@ -192,9 +192,8 @@ to the namespace default SA and the pull secrets will not apply.
 
 Migrations run as a pre-install/pre-upgrade Job using image
 "{{ .Values.migrations.image.repository }}:{{ .Values.migrations.image.tag | default .Chart.AppVersion }}",
-which bundles the Dexaflow migrations at "{{ .Values.migrations.path }}"
-(build/publish it with `make migrate-image`). Override migrations.image or set
-migrations.enabled=false to migrate out of band.
+which bundles the Dexaflow migrations at "{{ .Values.migrations.path }}".
+Override migrations.image or set migrations.enabled=false to migrate out of band.
 Index migrations (0.5.1 ships eight) run CONCURRENTLY: each waits for every
 transaction that was open in the database when it started, so the Job can take
 longer than usual behind a session idle in transaction or a long query. Upgrade

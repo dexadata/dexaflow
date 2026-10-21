@@ -280,13 +280,19 @@ and one changes the table's `fillfactor`.
 (named `<release>-migrate`, or `<release>-dexaflow-migrate` when the release
 name does not contain the chart name; its pod carries
 `app.kubernetes.io/component: migrate`) runs
-`migrate -path /migrations -database $(LEOFLOW_DATABASE_URL) up` with the
+`dexaflow-migrate -path /migrations -database $(LEOFLOW_DATABASE_URL) up` with the
 release's `ghcr.io/dexadata/dexaflow-migrate` image, which bundles the SQL
-files with the golang-migrate CLI, before the new control plane rolls out and
-while the old replicas keep serving (their readiness check tolerates a
-migration in flight above their own schema version). The Job has
-`backoffLimit: 3`, so a failed pod is retried three times, and a failed Job
-is kept for inspection:
+files with Dexaflow's wrapper over the golang-migrate library, before the new
+control plane rolls out and while the old replicas keep serving (their
+readiness check tolerates a migration in flight above their own schema
+version). The Job has `backoffLimit: 3`, so a failed pod is retried three
+times, except for a failure a retry cannot fix: a missing database, a refused
+password, an unusable `database.url`, a missing `sslrootcert` file or a dirty
+version exits with a code of its own, and on Kubernetes 1.31 or newer the
+Job's `podFailurePolicy` fails it on that first pod. A failed Job is kept for
+inspection, and its log names the cause and the value to change
+([troubleshooting](/operate/troubleshooting/#the-migration-job) lists each
+message):
 
 ```sh
 kubectl -n <namespace> logs -l app.kubernetes.io/component=migrate --tail=50
@@ -339,8 +345,10 @@ killed while it migrates: all of them leave the same two things behind.
 - **A dirty version.** golang-migrate writes the version a file moves to with
   `dirty = true` before it runs the file and clears the flag after it, so an
   interrupted file leaves `schema_migrations` at that version, dirty. Every
-  later run, the Job's three retries included, stops at
-  `Dirty database version N. Fix and force version.`; `dexaflow lite` refuses
+  later run stops at it: the hook Job says `schema_migrations is dirty at
+  version N: a migration was interrupted` and quotes golang-migrate's
+  `Dirty database version N. Fix and force version.` on its second line, and
+  fails without retrying on Kubernetes 1.31 or newer; `dexaflow lite` refuses
   to start with `database schema is marked dirty at version N`; a Pro control
   plane refuses to boot against a dirty version too, while the replicas that
   were already serving keep serving.
@@ -390,9 +398,10 @@ holds, then re-run.
 | 046 (`build_info`) | 46 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the column is not there yet | 45; retry when the table is quiet |
 | 048 (`dispatch_unavailable_since`) | 48 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the column is not there yet | 47; retry when the table is quiet |
 
-**How to run `migrate force`.** The hook image is the golang-migrate CLI plus
-the SQL files at `/migrations`, so the `version`, `force`, `goto` and `up`
-commands this page and the migration files name are all in it. From a
+**How to run `migrate force`.** The hook image is the `dexaflow-migrate`
+wrapper plus the SQL files at `/migrations`; it takes the golang-migrate CLI's
+`version`, `force`, `goto` and `up` with the same flags, so the commands this
+page and the migration files name all run in it. From a
 workstation that can reach the database, with the CLI (`go install -tags 'postgres'
 github.com/golang-migrate/migrate/v4/cmd/migrate@v4.20.1`, the version the
 image builds) and the repository checked out at the release tag:

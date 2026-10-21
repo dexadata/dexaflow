@@ -28,6 +28,9 @@ on:
       - ".github/ci/kind-datastores.yaml"
       - "deploy/Dockerfile.server"
       - "deploy/Dockerfile.migrate"
+      # The migrate image's binary: the kind install runs it as the hook Job.
+      - "cmd/dexaflow-migrate/**"
+      - "internal/migrator/**"
       - "migrations/**"
       # internal/config defines the LEOFLOW_* env contract (Viper struct
       # tags) the chart wires through. Renaming an env name there without
