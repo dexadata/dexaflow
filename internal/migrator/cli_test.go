@@ -40,6 +40,30 @@ func TestMainWithoutADatabase(t *testing.T) {
 		{name: "empty database url", args: []string{"-database=", "up"}, code: ExitBadDSN, stderr: []string{"database.url is empty"}},
 		{name: "wrong scheme", args: []string{"-database=mysql://u:p@db/app", "up"}, code: ExitBadDSN},
 		{
+			name:   "installation id without its ConfigMap",
+			args:   []string{"-database=postgres://u@db/app", "-installation-id=abc", "up"},
+			code:   ExitUsage,
+			stderr: []string{"-installation-id needs -installation-configmap"},
+		},
+		{
+			name:   "installation ConfigMap without a namespace",
+			args:   []string{"-database=postgres://u@db/app", "-installation-configmap=rel-installation", "up"},
+			code:   ExitUsage,
+			stderr: []string{"-installation-configmap needs -installation-namespace"},
+		},
+		{
+			name:   "installation id that is not a name",
+			args:   []string{"-database=postgres://u@db/app", "-installation-configmap=c", "-installation-namespace=n", "-installation-id=not an id", "up"},
+			code:   ExitUsage,
+			stderr: []string{`installation id "not an id"`},
+		},
+		{
+			name:   "installation outside a cluster",
+			args:   []string{"-database=postgres://u:p@127.0.0.1:1/app?sslmode=disable", "-installation-configmap=c", "-installation-namespace=n", "up"},
+			code:   ExitUsage,
+			stderr: []string{"Kubernetes API"},
+		},
+		{
 			name:   "missing CA file is caught before dialing",
 			args:   []string{"-database=postgres://u:p@127.0.0.1:1/app?sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/absent.crt", "up"},
 			code:   ExitMissingCA,

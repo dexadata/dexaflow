@@ -91,7 +91,7 @@ func main() {
 	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "dexaflow-server:", err)
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
 }
 
@@ -164,6 +164,10 @@ func run() error {
 	}
 	defer pg.Close()
 	defer releaseKeyLock()
+	// A readiness probe that finds the database replaced under this process
+	// stops it (ADR 0090 decision 5).
+	ctx, releaseReplaced := stopOnReplaced(ctx, pg)
+	defer releaseReplaced()
 
 	// Datastore for XCom + live-log tailing: Redis when configured (production,
 	// ADR 0006), or the embedded Postgres/in-process backends when no Redis is
@@ -279,7 +283,7 @@ func run() error {
 	metricsSrv := newHTTPServer(cfg.Server.MetricsAddr, api.ObservabilityHandler(tel.Registry, checks, observabilityOptions(cfg)...), cfg)
 
 	tel.Logger.Info("leoflow-server started", "role", cfg.Server.EffectiveRole(), "http_addr", cfg.Server.HTTPAddr, "metrics_addr", cfg.Server.MetricsAddr, "serves_api", servesAPI, "serves_scheduler", servesScheduler)
-	return keyLockExit(ctx, serveHTTP(ctx, tel.Logger, servesAPI, apiSrv, metricsSrv))
+	return serveExit(ctx, serveHTTP(ctx, tel.Logger, servesAPI, apiSrv, metricsSrv))
 }
 
 // observabilityOptions maps the observability.metrics config onto the metrics

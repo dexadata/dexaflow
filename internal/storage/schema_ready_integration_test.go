@@ -163,6 +163,13 @@ func TestSchemaReadyAgainstLiveDatabase(t *testing.T) {
 // seeding connection has its own search_path, so the DDL must qualify itself).
 func connectWithSearchPath(ctx context.Context, t *testing.T, admin *storage.Postgres, raw, schema string, seed ...string) *storage.Postgres {
 	t.Helper()
+	return connectAsInstallation(ctx, t, admin, raw, schema, "", seed...)
+}
+
+// connectAsInstallation is connectWithSearchPath for a release whose
+// installation id is installationID (database.installation_id).
+func connectAsInstallation(ctx context.Context, t *testing.T, admin *storage.Postgres, raw, schema, installationID string, seed ...string) *storage.Postgres {
+	t.Helper()
 	if _, err := admin.Pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+schema+" CASCADE"); err != nil {
 		skipOrFatal(t, "dropping stale scratch schema", err)
 	}
@@ -188,7 +195,7 @@ func connectWithSearchPath(ctx context.Context, t *testing.T, admin *storage.Pos
 	q.Set("search_path", schema)
 	u.RawQuery = q.Encode()
 
-	pg, err := storage.NewPostgres(ctx, config.DatabaseSection{URL: u.String()})
+	pg, err := storage.NewPostgres(ctx, config.DatabaseSection{URL: u.String(), InstallationID: installationID})
 	if err != nil {
 		t.Fatalf("connecting with search_path=%s: %v", schema, err)
 	}

@@ -37,6 +37,10 @@ const (
 	KindUnreachable
 	// KindLocked is another migration holding golang-migrate's lock.
 	KindLocked
+	// KindReplaced is a database that is not the one this release was
+	// installed on (ADR 0090 decision 3): emptied, restored from another
+	// installation, or repointed.
+	KindReplaced
 )
 
 // String is the kind's name, for logs and test output.
@@ -60,6 +64,8 @@ func (k Kind) String() string {
 		return "unreachable"
 	case KindLocked:
 		return "locked"
+	case KindReplaced:
+		return "replaced"
 	}
 	return fmt.Sprintf("kind(%d)", int(k))
 }
@@ -81,6 +87,9 @@ const (
 	ExitMissingCA = 6
 	// ExitDirty is a dirty schema, which needs a person.
 	ExitDirty = 7
+	// ExitReplaced is a database that is not this release's own, which needs
+	// a person to restore the right one or accept this one.
+	ExitReplaced = 8
 	// ExitTransient is a failure worth retrying: a server not reachable yet,
 	// not accepting connections, or another migration holding the lock. It is
 	// EX_TEMPFAIL from sysexits.h.
@@ -91,7 +100,7 @@ const (
 // migration Job lists the same set in its podFailurePolicy (a test keeps the
 // two equal).
 func DeterministicExitCodes() []int {
-	return []int{ExitUsage, ExitBadDSN, ExitMissingDatabase, ExitAuth, ExitMissingCA, ExitDirty}
+	return []int{ExitUsage, ExitBadDSN, ExitMissingDatabase, ExitAuth, ExitMissingCA, ExitDirty, ExitReplaced}
 }
 
 // Documentation the messages point at.
@@ -99,6 +108,7 @@ const (
 	docsBase       = "https://dexaflow.dexadata.ai"
 	docsDirty      = docsBase + "/operate/upgrades/#an-interrupted-migration"
 	docsJob        = docsBase + "/operate/troubleshooting/#the-migration-job"
+	docsReplaced   = docsBase + "/operate/troubleshooting/#a-replaced-database"
 	readmeBase     = "https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md"
 	readmeDatabase = readmeBase + "#datastore-compatibility"
 	readmeTLS      = readmeBase + "#verified-tls-to-managed-postgres-315"

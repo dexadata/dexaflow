@@ -125,6 +125,8 @@ func withProbeBudget(c *gin.Context) (context.Context, context.CancelFunc) {
 // answering 503 at all.
 func unreadyDetail(name string, err error, spent []depTiming) string {
 	switch {
+	case errors.Is(err, domain.ErrDatabaseReplaced):
+		return name + " database replaced"
 	case errors.Is(err, domain.ErrSchemaNotCurrent):
 		return name + " schema not current"
 	case errors.Is(err, context.DeadlineExceeded):
