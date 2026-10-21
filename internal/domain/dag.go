@@ -3,10 +3,12 @@
 package domain
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
@@ -350,6 +352,9 @@ func (d *DAGSpec) Validate() error {
 	if err := d.validateExecutionMetadata(); err != nil {
 		return err
 	}
+	if err := d.validateTaskPlacement(); err != nil {
+		return err
+	}
 	return d.validateResourceQuantities()
 }
 
@@ -440,4 +445,59 @@ func (d *DAGSpec) validateResourceQuantities() error {
 		}
 	}
 	return nil
+}
+
+// validateTaskPlacement validates structured Kubernetes placement fields
+// (tolerations, affinity, topologySpreadConstraints, resourceClaims) on each task,
+// failing loud at registration rather than silently dropping malformed entries
+// at pod build (#628).
+func (d *DAGSpec) validateTaskPlacement() error {
+	for _, t := range d.Tasks {
+		if t.Execution != nil {
+			if idx, err := decodeStrictSlice[corev1.Toleration](t.Execution.Tolerations); err != nil {
+				return fmt.Errorf("task %q declares invalid execution.tolerations[%d]: %w", t.TaskID, idx, err)
+			}
+			if len(t.Execution.Affinity) > 0 {
+				if err := decodeStrict[corev1.Affinity](t.Execution.Affinity); err != nil {
+					return fmt.Errorf("task %q declares invalid execution.affinity: %w", t.TaskID, err)
+				}
+			}
+			if idx, err := decodeStrictSlice[corev1.TopologySpreadConstraint](t.Execution.TopologySpreadConstraints); err != nil {
+				return fmt.Errorf("task %q declares invalid execution.topology_spread_constraints[%d]: %w", t.TaskID, idx, err)
+			}
+			if idx, err := decodeStrictSlice[corev1.PodResourceClaim](t.Execution.ResourceClaims); err != nil {
+				return fmt.Errorf("task %q declares invalid execution.resource_claims[%d]: %w", t.TaskID, idx, err)
+			}
+		}
+		if t.Resources != nil {
+			if idx, err := decodeStrictSlice[corev1.ResourceClaim](t.Resources.Claims); err != nil {
+				return fmt.Errorf("task %q declares invalid resources.claims[%d]: %w", t.TaskID, idx, err)
+			}
+		}
+	}
+	return nil
+}
+
+// decodeStrict decodes an untyped map into a typed Kubernetes struct T,
+// disallowing unknown fields so that typos fail loud at registration time.
+func decodeStrict[T any](m map[string]any) error {
+	b, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	var out T
+	return dec.Decode(&out)
+}
+
+// decodeStrictSlice decodes each element of a slice of untyped maps into T,
+// returning the index and error on the first malformed entry.
+func decodeStrictSlice[T any](slice []map[string]any) (int, error) {
+	for i, m := range slice {
+		if err := decodeStrict[T](m); err != nil {
+			return i, err
+		}
+	}
+	return -1, nil
 }

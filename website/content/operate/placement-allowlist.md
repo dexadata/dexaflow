@@ -16,6 +16,17 @@ these fields reach beyond the DAG:
   dedicated (tainted) node pool.
 - `labels` can match another team's NetworkPolicy or other selectors.
 
+The structured fields (`tolerations`, `affinity`,
+`topology_spread_constraints`, `resource_claims`, and `claims` under
+`resources`) are checked against the Kubernetes types when the DAG is
+registered, whatever the allowlist says. A misspelled key or a value of the
+wrong type refuses the push with `400`, naming the task and the field, for
+example `task "train" declares invalid execution.tolerations[0]: json: unknown
+field "keyy"`. Keys use the Kubernetes spelling (`tolerationSeconds`,
+`maxSkew`, `nodeAffinity`). Before this check such an entry was dropped when
+the pod was built, so the task ran without it
+([#628](https://github.com/dexadata/dexaflow/issues/628)).
+
 The execution allowlist lets the cluster operator decide which of these fields
 an author may set, and which priority classes. It is a cluster setting, like
 [task pod hardening](/operate/task-pod-hardening/): an author cannot widen it
