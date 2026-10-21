@@ -70,6 +70,9 @@ first such pod (`podFailurePolicy`) instead of retrying it three times.
 | `database.url is empty`, `database.url has scheme ...`, `database.url has no database name`, `database.url is not a valid postgres:// URL` | 3 | `database.url` must be `postgres://user:password@host:5432/dbname?sslmode=...`. The message never repeats the URL, since it holds the password. |
 | `database.url sets sslrootcert=/etc/leoflow/db-ca/ca.crt and that file is not present in this container` (older images: `unable to read CA file`) | 6 | The DSN names a CA file the pod does not have. Set `database.caConfigMap` to a ConfigMap holding the bundle under the key `ca.crt` (the chart mounts it at `/etc/leoflow/db-ca/ca.crt`), or use `sslrootcert=system` for a CA in the system store. A ConfigMap that does not exist keeps the pod in `ContainerCreating` instead: `kubectl -n <namespace> describe pod -l app.kubernetes.io/component=migrate` names it. |
 | `schema_migrations is dirty at version N`; the driver line is `Dirty database version N. Fix and force version.` | 7 | A migration was interrupted. Follow [an interrupted migration](/operate/upgrades/#an-interrupted-migration) to see what the file left behind and which version to `force`, then upgrade again. |
+| `database replaced: this release's installation id is "<id>", and the database has no schema` (or `carries no installation id`, or `carries installation id "<other>"`) | 8 | The database is not the one this release was installed on, so the Job migrated nothing. See [a replaced database](#a-replaced-database). |
+| `installation.id is "<id>", but the database carries installation id "<other>"`, or `installation.id was changed to "<id>", but the database carries installation id "<other>"` | 8 | `installation.id` names neither this database nor a database without an id. Set it to the id the database carries to adopt it, or point `database.url` at the database you meant. |
+| `reading the installation ConfigMap <namespace>/<release>-installation failed` (or `writing`) | 1 | The Job's ServiceAccount (`<release>-migrate`) cannot read or write the ConfigMap. The chart's Role grants it when `rbac.create` is true; with your own RBAC, give that account `create` on ConfigMaps in the release namespace and `get` and `update` on `<release>-installation`. |
 | `cannot reach Postgres at <host>:<port> yet`, with `connection refused`, `i/o timeout`, `no such host`, or `the database system is starting up` | 75 | Retried. The server is not up yet, or the pod cannot reach it: check the host and port in `database.url`, a NetworkPolicy, a firewall rule, or a managed instance's authorized networks. |
 | `another migration holds the schema_migrations lock` | 75 | Retried. A previous Job pod, or a second release on the same database, is migrating. Two releases must not share one database. |
 | anything else | 1 | Retried up to `backoffLimit`. The driver line has the detail. |
@@ -104,10 +107,69 @@ serving only the probes and metrics and checking again`, with `reason` and
 | `schema behind vN, requires vM` | The migrations of this release have not all run: a restore of an older backup, a lagging replica, or a rollout whose migration Job failed ([the migration Job](#the-migration-job)). Run the same `helm upgrade`. |
 | `schema dirty at vN` | A migration to a version other than the one this binary requires is marked dirty. It may still be running; if no migration Job is, follow [an interrupted migration](/operate/upgrades/#an-interrupted-migration). A version dirty at the one the binary requires stops boot with `schema is dirty at vN, the version this binary requires`. |
 | `schema unreadable` | The server reached the database at boot but cannot read the version now. The log line's `error` field has the cause. |
+| `database replaced: no schema`, `database replaced: no installation id`, `database replaced: another installation id` | The database is not the one this release was installed on. Migrating does not fix it, and the migration Job refuses it too: see [a replaced database](#a-replaced-database). |
 
 A pod that was serving when the database changed under it stays up and not
 ready too, with `postgres schema not current` on `/readyz`, and returns to
-ready when the schema is current again.
+ready when the schema is current again. When the database it finds is a
+replaced one, it exits instead, with code 3 and `the database was replaced
+under this process` in its log, so no cache outlives the old database; the
+restarted pod waits as above with a `database replaced` reason.
+
+## A replaced database
+
+Each Pro release records an installation id: the migration Job writes it into
+the database (the one-row `installation` table) and into a ConfigMap named
+`<release>-installation` that it creates in the release namespace, and the
+control plane reads it from the ConfigMap. When the database answers with
+another id, with none, or with no schema at all, the release does not treat it
+as a fresh install:
+
+- the migration Job migrates nothing and fails with exit code 8 (`database
+  replaced: ...`), so `helm upgrade` fails;
+- a control plane booting on it waits, not ready, with `database replaced:
+  no schema`, `no installation id` or `another installation id` on
+  `/readyz`, and `dexaflow_schema_ready{reason="database replaced"}` at 0;
+- a control plane that was serving exits with code 3 and restarts into that
+  wait.
+
+This is what an emptied database looks like (an `emptyDir` Postgres moved to
+another node, a volume lost), as well as a restore from another
+installation's backup and a `database.url` changed to another database. A
+restore of a backup of this same installation carries the same id and is not
+a replacement: it is checked as absent, behind or ahead as usual. The log
+line of the server and of the Job names both ids:
+
+```bash
+kubectl -n <namespace> get configmap <release>-installation -o jsonpath='{.data.installationId}'
+psql "$DATABASE_URL" -c 'SELECT id FROM installation'
+```
+
+What to do depends on which database you want:
+
+| You want | Do |
+|---|---|
+| The database this release had | Restore it or point `database.url` back at it ([backup and restore](/operate/backup-restore/)). The server checks again on its own and starts when the id matches. |
+| This database, which belongs to another installation | Adopt it: set `installation.id` to the id it carries and upgrade, `helm upgrade <release> oci://ghcr.io/dexadata/charts/dexaflow -n <namespace> --version <chart version> --reuse-values --set installation.id=<the id it carries>`. The Job migrates it and records that id in the ConfigMap. |
+| An empty database: the data is gone and you start over | Accept it with a new id: the same `helm upgrade` with `--set installation.id=$(uuidgen)`. The Job migrates the empty database and writes the new id into it and into the ConfigMap. |
+
+Changing `installation.id` rolls the control plane pods, so they read the new
+id. The acceptance applies once: the next replacement is refused again, with
+`installation.id` still set, until it is changed again. A new id is written
+only into a database that has none, so a database that belongs to an
+installation is never re-keyed by mistake.
+
+`helm uninstall` leaves the ConfigMap in place (the chart does not render
+it), so reinstalling into the same namespace against an empty database is
+reported as replaced too. When that is a fresh start on purpose, accept it
+with a new id as above, or delete the ConfigMap before installing. A backup
+taken before this installation recorded its id (before 0.5.6) restores
+without one and is reported as `no installation id`: accept it with a new id.
+
+On Lite, and on a chart install with `migrations.enabled: false`, no id is
+recorded and nothing is compared, unless your own migration step runs the
+`dexaflow-migrate` image with `-installation-configmap`,
+`-installation-namespace` and, to accept a replacement, `-installation-id`.
 
 ## `dexaflow lite` boot
 
@@ -308,7 +370,8 @@ kubectl logs deploy/<release> -c leoflow-server \
   runner, undispatchable counters; ADR 0007 has the catalogue).
 - **Schema readiness:** `dexaflow_schema_ready` is 1 when the database schema
   is one the binary can serve, and 0 while it is not, with a `reason` label
-  (`schema absent`, `schema behind`, `schema dirty`, `schema unreadable`; the
+  (`schema absent`, `schema behind`, `schema dirty`, `schema unreadable`,
+  `database replaced`; the
   versions are on `/readyz`). `dexaflow_schema_wait_seconds` is how long the
   process has been waiting, 0 when it is ready. Every role exports both. With
   the Prometheus Operator, `metrics.prometheusRule.enabled` renders the alert

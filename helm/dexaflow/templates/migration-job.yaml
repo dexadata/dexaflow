@@ -25,7 +25,9 @@ spec:
   The migrate image exits with a code of its own for each failure a retry
   cannot fix (#1020): 2 usage, 3 database.url is not a Postgres URL, 4 the
   database does not exist, 5 user or password refused, 6 the sslrootcert file
-  is missing, 7 the schema is dirty. FailJob stops the Job on the first such
+  is missing, 7 the schema is dirty, 8 the database is not this release's own
+  (ADR 0090 decision 3: emptied, restored from another installation, or
+  repointed). FailJob stops the Job on the first such
   pod instead of spending backoffLimit on it, so the useful error surfaces in
   one pod's log rather than after four ("failed: 4/1"). Transient failures
   (75: not reachable yet, lock held) and anything unrecognized (1) are retried
@@ -45,7 +47,7 @@ spec:
         onExitCodes:
           containerName: migrate
           operator: In
-          values: [2, 3, 4, 5, 6, 7]
+          values: [2, 3, 4, 5, 6, 7, 8]
   {{- end }}
   template:
     metadata:
@@ -62,12 +64,13 @@ spec:
         {{- include "leoflow.migratePodLabels" . | nindent 8 }}
     spec:
       restartPolicy: Never
-      # The migrate binary talks only to Postgres via LEOFLOW_DATABASE_URL and
-      # never calls the Kubernetes API, so it has no use for a projected
-      # ServiceAccount token. Declining the automount keeps this pod from being
-      # handed the namespace default SA's credential. Mirrors the task pod in
-      # internal/executor/kubernetes.go.
-      automountServiceAccountToken: false
+      # Its own account (migration-rbac.yaml), with the token mounted: the
+      # wrapper reads and writes the installation ConfigMap through the
+      # Kubernetes API (ADR 0090 decision 3). The account may get, create and
+      # update that ConfigMap and nothing else, so the token is not the
+      # namespace default account's credential #727 kept out of this pod.
+      serviceAccountName: {{ include "leoflow.migrateServiceAccountName" . }}
+      automountServiceAccountToken: true
       securityContext:
         {{- toYaml .Values.migrations.podSecurityContext | nindent 8 }}
       # Pod placement is INHERITED from the top-level values rather than given
@@ -103,6 +106,14 @@ spec:
           args:
             - "-path={{ .Values.migrations.path }}"
             - "-database=$(LEOFLOW_DATABASE_URL)"
+            # The installation id (ADR 0090 decision 3): the wrapper refuses a
+            # database that is not this release's own before migrating it, and
+            # records the id in the database and in this ConfigMap.
+            - "-installation-configmap={{ include "leoflow.installationConfigMapName" . }}"
+            - "-installation-namespace={{ .Release.Namespace }}"
+            {{- with include "leoflow.installationID" . }}
+            - "-installation-id={{ . }}"
+            {{- end }}
             - "up"
           env:
             - name: LEOFLOW_DATABASE_URL

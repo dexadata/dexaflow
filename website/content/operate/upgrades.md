@@ -407,6 +407,7 @@ holds, then re-run.
 | 045 (device sign-ins) | 45 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and the file is idempotent | 44 |
 | 046 (`build_info`) | 46 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the column is not there yet | 45; retry when the table is quiet |
 | 048 (`dispatch_unavailable_since`) | 48 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the column is not there yet | 47; retry when the table is quiet |
+| 049 (`installation`) | 49 | nothing: one transaction, rolled back, so the table is not there yet, and the file is idempotent | 48 |
 
 **How to run `migrate force`.** The hook image is the `dexaflow-migrate`
 wrapper plus the SQL files at `/migrations`; it takes the golang-migrate CLI's
@@ -1013,7 +1014,7 @@ for this change.
 
 ### Upgrading to 0.5.6
 
-0.5.6 applies two migrations, 047 and 048.
+0.5.6 applies three migrations, 047, 048 and 049.
 
 - **`047_removed_task_state`** adds the `removed` task state of
   [ADR 0086](/project/adrs/0086-clear-rebinds-a-finished-run-with-its-task-set/)
@@ -1034,11 +1035,25 @@ for this change.
   transaction rolls back, golang-migrate marks version 48 dirty and nothing
   changed: run `migrate force 47` and retry when the table is quiet. The
   statement can be repeated.
+- **`049_installation`** creates the one-row `installation` table of
+  [ADR 0090](/project/adrs/0090-database-replaced-under-a-running-release/),
+  a new table that locks nothing else. The SQL leaves it empty: on Pro the
+  migration Job writes the release's installation id into it after the
+  migrations, and into a ConfigMap, `<release>-installation`, that it creates
+  in the release namespace. On the upgrade to 0.5.6 the Job records an id for
+  the existing installation once; from then on a database that carries
+  another id, none, or no schema is refused as replaced instead of migrated
+  ([a replaced database](/operate/troubleshooting/#a-replaced-database)). The
+  Job now runs as its own ServiceAccount, `<release>-migrate`, with a Role on
+  that ConfigMap (rendered with `rbac.create`); with your own RBAC, grant it
+  before upgrading. On Lite the table stays empty and nothing is compared.
 
 **Rolling back 0.5.6.** On Pro, `helm rollback <release> <revision>` leaves
-the schema at 048, and the previous control plane boots against it with the
+the schema at 049, and the previous control plane boots against it with the
 warning `database schema is ahead of this binary; proceeding`: it never reads
-or writes the column. On Lite, the previous `dexaflow lite` refuses a database
+or writes the column or the `installation` table. The installation ConfigMap
+stays, so upgrading again finds the same id in the database and the
+ConfigMap. On Lite, the previous `dexaflow lite` refuses a database
 above its own schema, so run the down migration first, with the 0.5.6 CLI or
 migrate image (it took about 8 ms on the same table):
 
@@ -1046,7 +1061,7 @@ migrate image (it took about 8 ms on the same table):
 migrate -path migrations -database "$DATABASE_URL" goto 46
 ```
 
-That rolls back 048 and runs the no-op down of 047 (the file says what the
+That rolls back 049 and 048 and runs the no-op down of 047 (the file says what the
 previous release does with a `removed` task instance). A task that was
 waiting on an unavailable Kubernetes API at that moment falls back onto the
 dispatch-attempt budget of the previous release. No other data changes.

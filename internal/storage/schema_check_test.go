@@ -205,3 +205,31 @@ func TestReadyClassFollowsTheReadinessVerdict(t *testing.T) {
 		}
 	}
 }
+
+// replacedReason is ADR 0090 decision 3 on the server's side: with an
+// installation id configured, a database without a schema, without an id or
+// with another id is not this release's own. Without one (Lite, or a chart
+// install whose migration Job does not record it) nothing is checked.
+func TestReplacedReason(t *testing.T) {
+	cases := []struct {
+		name     string
+		expected string
+		exists   bool
+		dbID     string
+		want     string
+	}{
+		{"no id configured, empty database", "", false, "", ""},
+		{"no id configured, any id", "", true, "b", ""},
+		{"same id", "a", true, "a", ""},
+		{"emptied", "a", false, "", "database replaced: no schema"},
+		{"a schema without an id", "a", true, "", "database replaced: no installation id"},
+		{"another installation", "a", true, "b", "database replaced: another installation id"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := replacedReason(c.expected, c.exists, c.dbID); got != c.want {
+				t.Errorf("replacedReason = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
