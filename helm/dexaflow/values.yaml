@@ -933,6 +933,43 @@ ingress:
           pathType: Prefix
   # -- TLS configuration. Each entry maps hosts to a TLS Secret (typically a cert-manager Certificate Secret).
   tls: []
+  # Optional maintenance page (#1998): a small nginx Deployment and Service that
+  # ingress-nginx answers from while no server pod is ready, instead of its own
+  # error page. Other controllers: point their fallback at the
+  # `<release>-maintenance` Service (see the troubleshooting page).
+  maintenancePage:
+    # -- Deploy the maintenance page and set the ingress-nginx `default-backend` and `custom-http-errors: "502,504"` annotations on the Ingress. Needs `ingress.enabled`. Every path of the page answers 503, so API clients still see an outage status.
+    enabled: false
+    # -- Message shown on the page, rendered escaped. Empty shows a generic "unavailable, retrying" text.
+    message: ""
+    # -- Optional operator text shown under the message, rendered escaped.
+    operatorText: ""
+    # -- Optional status or support URL linked from the page; must start with `http://` or `https://`.
+    statusUrl: ""
+    # -- Label of the `statusUrl` link. Empty shows "Status page".
+    statusText: ""
+    # -- Seconds between automatic reloads of the page, also sent as `Retry-After`. 0 turns both off.
+    refreshSeconds: 10
+    # -- Replicas of the maintenance page Deployment.
+    replicas: 1
+    image:
+      # -- Image of the maintenance page: any unprivileged nginx listening on 8080 as uid 101.
+      repository: nginxinc/nginx-unprivileged
+      # -- Tag of the maintenance page image.
+      tag: 1.30.6-alpine-slim
+      # -- Digest appended to the tag (`sha256:...`) to pin the image. Empty pulls by tag.
+      digest: ""
+      # -- Pull policy of the maintenance page image.
+      pullPolicy: IfNotPresent
+    # -- Pull secrets for the maintenance page image, such as `[{name: regcred}]`.
+    imagePullSecrets: []
+    # -- Resources of the maintenance page container.
+    resources:
+      requests:
+        cpu: 10m
+        memory: 16Mi
+      limits:
+        memory: 32Mi
 
 # -- Extra annotations on the control-plane pod template. EKS/Karpenter opt-in: `karpenter.sh/do-not-disrupt: "true"` exempts the pod's node from Karpenter's voluntary disruption (consolidation, drift, expiration), trading maintenance friction — that node is never consolidated or upgraded by Karpenter while the pod runs — for eviction protection. Not set by default; a second replica plus the auto PDB is the platform-neutral answer.
 podAnnotations: {}
