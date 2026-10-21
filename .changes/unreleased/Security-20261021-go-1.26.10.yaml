@@ -1,8 +1,0 @@
-kind: Security
-body: |-
-  **Binaries and images are built with Go 1.26.10.** It fixes GO-2026-6809
-  (CVE-2026-111943) in `crypto/x509`: `Certificate.Verify` now refuses known
-  intermediate certificates that are no longer trusted, for hosts whose system
-  trust store was not updated. Dexaflow verifies TLS certificates on its
-  outbound connections (object storage, OIDC, registries), so the fix applies.
-time: 2026-10-21T01:30:00.000000000+00:00
