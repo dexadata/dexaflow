@@ -40,6 +40,7 @@ default**:
 | The `dexaflow` / `dexaflow-server` / `dexaflow-agent` binaries on `PATH` (and their `leoflow*` links) | Replaced by `install.sh`. |
 | `~/.dexaflow/python/` (managed CPython) | Pinned per release; replaced if the new release pins a different version. |
 | The SQL schema | The new binary applies any missing migrations on first start. |
+| `~/.dexaflow/docker-compose.yaml` (the Docker Postgres definition of a binary-only install) | The next `dexaflow lite` replaces it with the one the new binary ships and prints `↻ refreshed the managed compose (binary upgrade)`, as long as nobody edited it (a checksum of what was written is kept in `docker-compose.yaml.sha256`). An edited file is kept as is: Lite writes the new one beside it as `docker-compose.yaml.new` and warns once; merge what you need, or delete `docker-compose.yaml` and the next `dexaflow lite` writes the new one. A file written before the checksum existed is treated as edited unless it already equals the new one. |
 
 ## Drift detection
 

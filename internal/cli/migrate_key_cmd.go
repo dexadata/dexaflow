@@ -157,7 +157,7 @@ func bringUpDockerForKeys(ctx context.Context, cmd *cobra.Command, stateDir stri
 	port := devDBPort(devDir)
 	name := fmt.Sprintf("the Docker datastore (volume %s, localhost:%d)", volume, port)
 	wasRunning := dockerPostgresRunning(ctx, project)
-	cf, cerr := resolveComposeFile("")
+	cf, cerr := resolveComposeFile(cmd.OutOrStdout(), "")
 	if cerr != nil {
 		return keyDatastore{}, noop, false, cerr
 	}
