@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 )
@@ -183,7 +184,14 @@ func (b LocalDaemon) loginCommand(image string) string {
 	return LoginCommand(ref.Context().RegistryStr(), tool)
 }
 
-// run executes the tool with args.
+// localDaemonWaitDelay bounds how long the tool has to exit after the
+// interrupt a stop sends it, before it is killed.
+const localDaemonWaitDelay = 10 * time.Second
+
+// run executes the tool with args. A stop (ctx canceled, as Ctrl-C does to the
+// CLI) sends the tool an interrupt, which `docker build` and `docker push`
+// handle by canceling cleanly, and kills it after localDaemonWaitDelay, or at
+// once when the interrupt cannot be sent (Windows).
 func (b LocalDaemon) run(ctx context.Context, stdout, stderr io.Writer, args ...string) error {
 	return b.runEnv(ctx, stdout, stderr, nil, args...)
 }
@@ -193,6 +201,13 @@ func (b LocalDaemon) run(ctx context.Context, stdout, stderr io.Writer, args ...
 func (b LocalDaemon) runEnv(ctx context.Context, stdout, stderr io.Writer, env []string, args ...string) error {
 	//nolint:gosec // G204: the tool is the operator's choice by design (ADR 0015).
 	c := exec.CommandContext(ctx, b.tool(), args...)
+	c.Cancel = func() error {
+		if err := c.Process.Signal(os.Interrupt); err != nil {
+			return c.Process.Kill()
+		}
+		return nil
+	}
+	c.WaitDelay = localDaemonWaitDelay
 	c.Stdout, c.Stderr = stdout, stderr
 	if len(env) > 0 {
 		c.Env = append(os.Environ(), env...)

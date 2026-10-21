@@ -130,7 +130,9 @@ settings:
   database.url:
     edition: both
     description: >-
-      Postgres DSN.
+      Postgres DSN. On Lite, `dexaflow lite` sets it for the server to Lite's
+      own database and ignores one exported in the shell: Lite does not run on
+      another database, and `dexaflow db reset` refuses while it names one.
   database.max_open_conns:
     edition: both
     description: >-

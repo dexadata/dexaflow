@@ -488,7 +488,7 @@ Key column is the same setting's path in that file.
 
 | Variable | Key | Type | Default | Edition | Purpose |
 |---|---|---|---|---|---|
-| `DEXAFLOW_DATABASE_URL` | `database.url` | string | `postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable` | both | Postgres DSN. |
+| `DEXAFLOW_DATABASE_URL` | `database.url` | string | `postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable` | both | Postgres DSN. On Lite, `dexaflow lite` sets it for the server to Lite's own database and ignores one exported in the shell: Lite does not run on another database, and `dexaflow db reset` refuses while it names one. |
 | `DEXAFLOW_DATABASE_MAX_OPEN_CONNS` | `database.max_open_conns` | int | `25` | both | Max open connections in the Postgres pool. |
 | `DEXAFLOW_DATABASE_MAX_IDLE_CONNS` | `database.max_idle_conns` | int | `5` | both | Max idle connections retained in the pool. |
 | `DEXAFLOW_DATABASE_SCHEDULER_MAX_CONNS` | `database.scheduler_max_conns` | int | `0` | both | Size of a dedicated pool for the scheduler loop, its reapers and its janitors (`database.scheduler_max_conns`; Helm `database.schedulerMaxConns`), so API traffic that holds every main pool connection cannot stall a scheduler tick. It is opened in addition to the main pool, only by a process that runs the scheduler (`DEXAFLOW_SCHEDULER_ENABLED`). `0` keeps them on the main pool. |

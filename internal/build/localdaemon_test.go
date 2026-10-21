@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeTool writes a stand-in for docker that appends its argv to a log, one
@@ -374,5 +375,53 @@ func TestLocalDaemonNamesTheLoginWhenThePushFails(t *testing.T) {
 	want := "aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin 123456789012.dkr.ecr.eu-west-1.amazonaws.com"
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %v, want the login command %q", err, want)
+	}
+}
+
+// A stopped build (Ctrl-C reaching the CLI, #1061) interrupts the tool, the
+// signal `docker build` handles by canceling the build cleanly, rather than
+// killing it outright.
+func TestLocalDaemonInterruptsTheToolWhenStopped(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stubs are POSIX-only")
+	}
+	dir := t.TempDir()
+	tool := filepath.Join(dir, "docker")
+	started, interrupted := filepath.Join(dir, "started"), filepath.Join(dir, "interrupted")
+	script := "#!/bin/sh\n" +
+		"trap ': > \"" + interrupted + "\"; exit 130' INT\n" +
+		": > \"" + started + "\"\n" +
+		"while :; do sleep 0.05; done\n"
+	if err := os.WriteFile(tool, []byte(script), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := LocalDaemon{Tool: tool}.Build(ctx, request())
+		done <- err
+	}()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(started); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the tool never started")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a stopped build reported success")
+		}
+	case <-time.After(localDaemonWaitDelay + 5*time.Second):
+		t.Fatal("the build did not return after the stop")
+	}
+	if _, err := os.Stat(interrupted); err != nil {
+		t.Errorf("the tool was not sent an interrupt before it ended: %v", err)
 	}
 }

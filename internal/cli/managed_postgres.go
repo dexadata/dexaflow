@@ -47,10 +47,65 @@ func autoDatastore(cmd *cobra.Command, flag string) string {
 	if flag != datastoreAuto {
 		return flag
 	}
-	present := dockerAvailable()
-	mode := resolveDatastore(datastoreAuto, present && dockerResponsive())
-	devPrintln(cmd.OutOrStdout(), datastoreNote(mode, present))
+	host := probeDockerHost(dockerAvailable())
+	mode := resolveDatastore(datastoreAuto, host == dockerReady)
+	devPrintln(cmd.OutOrStdout(), datastoreNote(mode, host))
 	return mode
+}
+
+// dockerHost is what the auto datastore found of Docker on this host.
+type dockerHost int
+
+const (
+	// dockerAbsent: no `docker` on PATH.
+	dockerAbsent dockerHost = iota
+	// dockerUnresponsive: `docker` is on PATH, its daemon does not answer.
+	dockerUnresponsive
+	// dockerNoCompose: the daemon answers, the Compose v2 plugin is missing.
+	dockerNoCompose
+	// dockerReady: the daemon answers and `docker compose` works.
+	dockerReady
+)
+
+// probeDockerHost classifies Docker for the datastore: the daemon is pinged
+// only when docker is present, and the Compose v2 plugin only when the daemon
+// answers. The Docker Postgres is started with `docker compose`, so a daemon
+// without the plugin cannot run it (#759).
+func probeDockerHost(present bool) dockerHost {
+	switch {
+	case !present:
+		return dockerAbsent
+	case !dockerResponsive():
+		return dockerUnresponsive
+	case composeProbeFn() != nil:
+		return dockerNoCompose
+	default:
+		return dockerReady
+	}
+}
+
+// composeProbeFn probes the Docker Compose v2 plugin with `docker compose
+// version`, which the docker CLI answers without the daemon. Without the
+// plugin the CLI does not know `compose` and the probe fails. Package-level so
+// tests can substitute it, like dockerPingFn.
+var composeProbeFn = func() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, "docker", "compose", "version").Run()
+}
+
+// errNoComposePlugin is the error for a Docker Postgres asked for on a host
+// without the Compose v2 plugin, in place of the docker CLI's usage text.
+const errNoComposePlugin = "the Docker Compose v2 plugin is not installed (`docker compose version` failed), and the Docker Postgres is started with `docker compose`. " +
+	"Install the Docker Compose v2 plugin, or run `dexaflow lite --postgres managed` for a Docker-free Postgres"
+
+// requireComposePlugin returns an actionable error when the Compose v2 plugin
+// is missing, and nil when `docker compose` works.
+func requireComposePlugin() error {
+	if err := composeProbeFn(); err != nil {
+		return fmt.Errorf("%s: %w", errNoComposePlugin, err)
+	}
+	return nil
 }
 
 // dockerPingFn probes whether the Docker daemon actually answers — not just that
@@ -70,12 +125,15 @@ func dockerResponsive() bool { return dockerPingFn() == nil }
 
 // datastoreNote is the user-facing line for the resolved Postgres backend. It
 // distinguishes "no Docker at all" from "Docker present but not responding" so a
-// wedged daemon gets an actionable message instead of the misleading "no Docker".
-func datastoreNote(mode string, dockerPresent bool) string {
+// wedged daemon gets an actionable message instead of the misleading "no Docker",
+// and names a missing Compose v2 plugin the same way (#759).
+func datastoreNote(mode string, host dockerHost) string {
 	switch {
 	case mode == datastoreDocker:
 		return "▸ Docker detected — using the Docker Postgres (postgres:16). Pass --postgres managed for a Docker-free Postgres."
-	case dockerPresent:
+	case host == dockerNoCompose:
+		return "▸ Docker detected but the Compose v2 plugin is missing (`docker compose`), so using a managed Postgres (no Docker). Install the Compose v2 plugin for the Docker Postgres."
+	case host == dockerUnresponsive:
 		return "▸ Docker detected but not responding — using a managed Postgres (no Docker). Fix Docker, or pass --postgres docker to force it."
 	default:
 		return "▸ no Docker detected — using a managed Postgres (downloaded under ~/.dexaflow, no Docker). Install Docker for the postgres:16 container instead."
