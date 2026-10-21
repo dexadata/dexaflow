@@ -174,13 +174,13 @@ jobs:
   # waits on it. Dockerfile.migrate cross-compiles for the target from the
   # build platform, so the arm64 half needs no native runner.
   #
-  # Dockerfile.migrate builds golang-migrate's own CLI from the version in our
-  # go.mod (#1039) and copies migrations/ on top. GoReleaser's dockers block
-  # expects a pre-built artifact from a `builds:` entry, and this binary is not
-  # one of ours to stamp — it is a dependency's main package, cross-compiled
-  # inside the Dockerfile from go.mod alone. docker/build-push-action is the
-  # simpler shape, and it builds the same file the blocking Trivy gate in
-  # security.yaml scans on every PR.
+  # Dockerfile.migrate builds cmd/dexaflow-migrate, the wrapper over
+  # golang-migrate's library (#1020), cross-compiled inside the Dockerfile, and
+  # copies migrations/ on top. VERSION and GIT_COMMIT are passed as build args
+  # so `-version` names the release the way GoReleaser stamps the server (tag
+  # without the leading `v`). docker/build-push-action is the simpler shape
+  # than GoReleaser's dockers block, and it builds the same file the blocking
+  # Trivy gate in security.yaml scans on every PR.
   migrate-image:
     name: Build + push dexaflow-migrate image
     needs: chart-preflight
@@ -233,6 +233,15 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ github.ref_name }}
 
+      - name: Version stamp
+        id: stamp
+        env:
+          TAG: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "commit=${SHA:0:7}" >> "$GITHUB_OUTPUT"
+
       - name: Build + push (multi-arch)
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -243,6 +252,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.stamp.outputs.version }}
+            GIT_COMMIT=${{ steps.stamp.outputs.commit }}
 
       # Mirror the supply-chain posture of leoflow-server: keyless cosign sign
       # every published tag by digest (ADR 0014). Without `--yes` cosign would

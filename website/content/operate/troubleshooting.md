@@ -46,6 +46,37 @@ dexaflow-mcp --version
 | Control plane never becomes ready; logs show `remaining connection slots are reserved` or `too many connections` (SQLSTATE 53300) | Every control-plane pod opens `database.maxIdleConns` + 3 connections at boot and can grow to `database.maxOpenConns` + 3 under load, plus 1 for the migration Job. On a small managed Postgres (Cloud SQL `db-f1-micro`, the smallest RDS or Azure tiers, about 25 slots) that can exceed `max_connections`, or a per-role or per-database `CONNECTION LIMIT`. The boot error names the setting; lower `database.maxOpenConns` / `database.maxIdleConns` in the chart values, or raise the server's limit. `helm install` prints the estimated boot and peak demand in its notes. |
 | Control plane exits at boot with `executor type "kubernetes" requires a Kubernetes client to dispatch task pods, but none is available` | The scheduler runs on the Kubernetes executor (the default) and found neither an in-cluster config nor a kubeconfig. Older versions booted anyway and failed every task as undispatchable; the server now refuses to start instead. In a cluster, check that the pod mounts its ServiceAccount token. Outside one, point `KUBECONFIG` at the cluster, or set `DEXAFLOW_EXECUTOR_TYPE=subprocess` for a dev setup with no cluster. |
 
+## The migration Job
+
+On Pro, `helm install` and `helm upgrade` run the migrations in a
+pre-install/pre-upgrade hook Job. When it fails, Helm prints only
+`failed pre-install: resource Job/<namespace>/<release>-migrate not ready ...
+Job Failed`; the reason is in the pod's log:
+
+```bash
+kubectl -n <namespace> logs -l app.kubernetes.io/component=migrate --tail=50
+```
+
+The `dexaflow-migrate` image prints two lines: what happened and what to do,
+then the driver's own error (`driver error: ...`), which is what older images
+printed alone and what the rows below quote. Each failure a retry cannot fix
+exits with its own code, and on Kubernetes 1.31 or newer the Job fails on the
+first such pod (`podFailurePolicy`) instead of retrying it three times.
+
+| Log line | Exit | Cause / fix |
+|---|---|---|
+| `database "<name>" does not exist on <host>:<port>`; the driver line ends `database "<name>" does not exist (SQLSTATE 3D000)` (older images: `pq: database "<name>" does not exist`) | 4 | Dexaflow does not create the database. Create it (`CREATE DATABASE <name>;`, as a role allowed to) or point `database.url` at an existing one. The chart README's [Datastore compatibility](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md#datastore-compatibility) section has the supported versions. |
+| `Postgres at <host>:<port> rejected user "<user>"`, with `password authentication failed` (SQLSTATE 28P01) or `no pg_hba.conf entry` (SQLSTATE 28000) | 5 | The user or password in `database.url` is wrong, or the server does not accept this client. Fix the `databaseUrl` key of the chart Secret (or of `database.existingSecret`), or the server's `pg_hba` rules. Characters such as `@`, `:` or `/` in the password must be percent-encoded in the URL. |
+| `database.url is empty`, `database.url has scheme ...`, `database.url has no database name`, `database.url is not a valid postgres:// URL` | 3 | `database.url` must be `postgres://user:password@host:5432/dbname?sslmode=...`. The message never repeats the URL, since it holds the password. |
+| `database.url sets sslrootcert=/etc/leoflow/db-ca/ca.crt and that file is not present in this container` (older images: `unable to read CA file`) | 6 | The DSN names a CA file the pod does not have. Set `database.caConfigMap` to a ConfigMap holding the bundle under the key `ca.crt` (the chart mounts it at `/etc/leoflow/db-ca/ca.crt`), or use `sslrootcert=system` for a CA in the system store. A ConfigMap that does not exist keeps the pod in `ContainerCreating` instead: `kubectl -n <namespace> describe pod -l app.kubernetes.io/component=migrate` names it. |
+| `schema_migrations is dirty at version N`; the driver line is `Dirty database version N. Fix and force version.` | 7 | A migration was interrupted. Follow [an interrupted migration](/operate/upgrades/#an-interrupted-migration) to see what the file left behind and which version to `force`, then upgrade again. |
+| `cannot reach Postgres at <host>:<port> yet`, with `connection refused`, `i/o timeout`, `no such host`, or `the database system is starting up` | 75 | Retried. The server is not up yet, or the pod cannot reach it: check the host and port in `database.url`, a NetworkPolicy, a firewall rule, or a managed instance's authorized networks. |
+| `another migration holds the schema_migrations lock` | 75 | Retried. A previous Job pod, or a second release on the same database, is migrating. Two releases must not share one database. |
+| anything else | 1 | Retried up to `backoffLimit`. The driver line has the detail. |
+
+Exit code 2 is a command line the image cannot run, which only a changed
+`migrations.image` or hand-written args produce.
+
 ## `dexaflow lite` boot
 
 | Symptom | Cause / fix |

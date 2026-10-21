@@ -1,6 +1,7 @@
 {{- if .Values.migrations.enabled -}}
 {{/*
-Runs golang-migrate before the server starts, as a pre-install/pre-upgrade hook.
+Runs the dexaflow-migrate wrapper (golang-migrate underneath, #1020) before the
+server starts, as a pre-install/pre-upgrade hook.
 The default image (ghcr.io/dexadata/dexaflow-migrate, built from
 deploy/Dockerfile.migrate via `make migrate-image`) bundles the Dexaflow
 migrations at .Values.migrations.path. Override migrations.image to use your own,
@@ -20,6 +21,32 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   backoffLimit: 3
+  {{- /*
+  The migrate image exits with a code of its own for each failure a retry
+  cannot fix (#1020): 2 usage, 3 database.url is not a Postgres URL, 4 the
+  database does not exist, 5 user or password refused, 6 the sslrootcert file
+  is missing, 7 the schema is dirty. FailJob stops the Job on the first such
+  pod instead of spending backoffLimit on it, so the useful error surfaces in
+  one pod's log rather than after four ("failed: 4/1"). Transient failures
+  (75: not reachable yet, lock held) and anything unrecognized (1) are retried
+  as before. internal/migrator's TestChartFailsTheJobOnTheDeterministicCodes
+  keeps this list equal to migrator.DeterministicExitCodes.
+
+  podFailurePolicy is GA in Kubernetes 1.31, and Chart.yaml declares no
+  kubeVersion, so the field is rendered only where the apiserver serves it.
+  A `helm template` run without --kube-version renders against Helm's default
+  capabilities and may leave it out: that is the safe direction, the Job then
+  retries every failure as before.
+  */}}
+  {{- if semverCompare ">=1.31.0-0" .Capabilities.KubeVersion.Version }}
+  podFailurePolicy:
+    rules:
+      - action: FailJob
+        onExitCodes:
+          containerName: migrate
+          operator: In
+          values: [2, 3, 4, 5, 6, 7]
+  {{- end }}
   template:
     metadata:
       # NOT leoflow.selectorLabels (#1055). A Service selector matches every pod

@@ -1411,15 +1411,13 @@ jobs:
         run: bash scripts/check-trivyignore-entries.sh
 
   # ─────────────────────────────────────────────────────────────────────
-  # The migrate CLI we ship and the migrate CLI CI scans must be one binary.
-  # `deploy/Dockerfile.migrate` compiles golang-migrate's `cmd/migrate` from the
-  # version in our go.mod (#1039) and security.yaml runs govulncheck over that
-  # package — but golang-migrate registers its database drivers behind BUILD
-  # TAGS, so a tag on one side and not the other means govulncheck reports clean
-  # on a package that is not the one in the image. Same for the Go pin: Trivy
-  # keys stdlib findings to the toolchain in the binary. Both drifts stay green
-  # while the coverage stops meaning anything, which is the shape of the gap
-  # #1039 closed.
+  # The migrate binary we ship and the one CI scans must be one binary.
+  # `deploy/Dockerfile.migrate` compiles our `./cmd/dexaflow-migrate` (#1020),
+  # which security.yaml's `govulncheck ./...` covers only while the image keeps
+  # building that package with no build tags and the wrapper keeps importing
+  # its pgx5 driver. Same for the Go pin: Trivy keys stdlib findings to the
+  # toolchain in the binary. Each drift stays green while the coverage stops
+  # meaning anything, which is the shape of the gap #1039 closed.
   # ─────────────────────────────────────────────────────────────────────
   migrate-cli-build-tags:
     name: Shipped migrate CLI is the one CI scans

@@ -363,8 +363,10 @@ ServiceMonitor, NetworkPolicy):
 
 - **`dexaflow-server`** Deployment listening on HTTP `8080`, metrics `9090`,
   and agent gRPC `9091`.
-- A pre-install/pre-upgrade **Job** running `golang-migrate` against
-  `database.url` before the server starts.
+- A pre-install/pre-upgrade **Job** running the migrations (the
+  `dexaflow-migrate` image) against `database.url` before the server starts.
+  Dexaflow does not create the database: it must exist. When the Job fails,
+  see [the migration Job](/operate/troubleshooting/#the-migration-job).
 - A **ServiceAccount + Role/RoleBinding** letting the control plane create,
   watch, and delete **task pods** (and read their logs) in `taskNamespace`
   (default: the release namespace).
