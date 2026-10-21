@@ -154,7 +154,7 @@ func issuerSessionHandler(d issuerSessionDeps) gin.HandlerFunc {
 		}
 		setSessionCookie(c, token, d.tokenTTL, d.session)
 		d.record(c, auditIssuerLoginSuccess, user.TenantID, user.ID, user.Email, nil)
-		c.Redirect(http.StatusSeeOther, sanitizeNext(c.PostForm("next")))
+		c.Redirect(http.StatusSeeOther, sanitizeNext(c.PostForm("next"), c.Request.Host))
 	}
 }
 
