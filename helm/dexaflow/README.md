@@ -666,6 +666,19 @@ differ from what's committed.
 | ingress.className | string | `""` | Ingress class name (e.g. `nginx`). Leave empty to use the cluster default. |
 | ingress.enabled | bool | `false` | Enable an Ingress resource exposing the control plane via HTTP/HTTPS. Requires an Ingress controller (nginx/traefik/etc.) in the cluster. |
 | ingress.hosts | list | `[{"host":"leoflow.local","paths":[{"path":"/","pathType":"Prefix"}]}]` | Host + path rules. Each host maps to one or more path entries routed to the leoflow-server's `http` port. |
+| ingress.maintenancePage.enabled | bool | `false` | Deploy the maintenance page and set the ingress-nginx `default-backend` and `custom-http-errors: "502,504"` annotations on the Ingress. Needs `ingress.enabled`. Every path of the page answers 503, so API clients still see an outage status. |
+| ingress.maintenancePage.image.digest | string | `""` | Digest appended to the tag (`sha256:...`) to pin the image. Empty pulls by tag. |
+| ingress.maintenancePage.image.pullPolicy | string | `"IfNotPresent"` | Pull policy of the maintenance page image. |
+| ingress.maintenancePage.image.repository | string | `"nginxinc/nginx-unprivileged"` | Image of the maintenance page: any unprivileged nginx listening on 8080 as uid 101. |
+| ingress.maintenancePage.image.tag | string | `"1.30.6-alpine-slim"` | Tag of the maintenance page image. |
+| ingress.maintenancePage.imagePullSecrets | list | `[]` | Pull secrets for the maintenance page image, such as `[{name: regcred}]`. |
+| ingress.maintenancePage.message | string | `""` | Message shown on the page, rendered escaped. Empty shows a generic "unavailable, retrying" text. |
+| ingress.maintenancePage.operatorText | string | `""` | Optional operator text shown under the message, rendered escaped. |
+| ingress.maintenancePage.refreshSeconds | int | `10` | Seconds between automatic reloads of the page, also sent as `Retry-After`. 0 turns both off. |
+| ingress.maintenancePage.replicas | int | `1` | Replicas of the maintenance page Deployment. |
+| ingress.maintenancePage.resources | object | `{"limits":{"memory":"32Mi"},"requests":{"cpu":"10m","memory":"16Mi"}}` | Resources of the maintenance page container. |
+| ingress.maintenancePage.statusText | string | `""` | Label of the `statusUrl` link. Empty shows "Status page". |
+| ingress.maintenancePage.statusUrl | string | `""` | Optional status or support URL linked from the page; must start with `http://` or `https://`. |
 | ingress.tls | list | `[]` | TLS configuration. Each entry maps hosts to a TLS Secret (typically a cert-manager Certificate Secret). |
 | installation.id | string | `""` | Pins the installation id. Leave it empty: a first install generates one. Set it to accept a replaced database, once: to the id the database carries to adopt a database from another installation, or to a new id for an emptied database, which the migration Job then writes. 1 to 128 letters, digits, `.`, `_` or `-`. See [a replaced database](https://dexaflow.dexadata.ai/operate/troubleshooting/#a-replaced-database). |
 | logs.persistence.accessMode | string | `"ReadWriteOnce"` | PVC access mode — one of `ReadWriteOnce`, `ReadWriteMany`, `ReadWriteOncePod`; any other value (a typo, an empty string, or `ReadOnlyMany`, which the log-writing control plane cannot use) FAILS the render, because an unrecognized mode used to skip both the single-writer refusal and the `Recreate` auto-selection and fail at the apiserver instead. `ReadWriteOnce` (default) is fine for single-replica deployments. At `replicaCount > 1` (or an HPA / split with more than one mounter) the chart FAILS the render on `ReadWriteOnce` / `ReadWriteOncePod` — a single-writer volume Multi-Attach-deadlocks the extra pods silently — so HA needs either `ReadWriteMany` here or `persistence.enabled: false` + the object-store `sink`. Also drives `deployment.strategy`: an RWO/RWOP PVC auto-selects `Recreate` (a rolling upgrade would Multi-Attach-deadlock). |

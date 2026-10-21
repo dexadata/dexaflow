@@ -1,0 +1,182 @@
+suite: Optional maintenance page behind the Ingress (#1998)
+templates:
+  - ingress.yaml
+  - maintenance-page.yaml
+release:
+  name: leoflow
+set:
+  nameOverride: leoflow
+  database.url: postgresql://u:p@db:5432/d
+tests:
+  - it: renders nothing when disabled
+    template: maintenance-page.yaml
+    set:
+      ingress.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: sets no error annotations when disabled
+    template: ingress.yaml
+    set:
+      ingress.enabled: true
+    asserts:
+      - isNull:
+          path: metadata.annotations["nginx.ingress.kubernetes.io/custom-http-errors"]
+      - isNull:
+          path: metadata.annotations["nginx.ingress.kubernetes.io/default-backend"]
+
+  - it: renders nothing without an Ingress
+    template: maintenance-page.yaml
+    set:
+      ingress.maintenancePage.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: points the Ingress at the maintenance Service and leaves 503 to the server
+    template: ingress.yaml
+    set:
+      ingress.enabled: true
+      ingress.maintenancePage.enabled: true
+    asserts:
+      - equal:
+          path: metadata.annotations["nginx.ingress.kubernetes.io/custom-http-errors"]
+          value: "502,504"
+      - equal:
+          path: metadata.annotations["nginx.ingress.kubernetes.io/default-backend"]
+          value: leoflow-maintenance
+
+  - it: renders a ConfigMap, a Deployment and a Service named after the default backend
+    template: maintenance-page.yaml
+    set:
+      ingress.enabled: true
+      ingress.maintenancePage.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 3
+      - isKind:
+          of: ConfigMap
+        documentIndex: 0
+      - isKind:
+          of: Deployment
+        documentIndex: 1
+      - isKind:
+          of: Service
+        documentIndex: 2
+      - equal:
+          path: metadata.name
+          value: leoflow-maintenance
+        documentIndex: 2
+
+  - it: selects only its own pods, never the control plane's
+    template: maintenance-page.yaml
+    set:
+      ingress.enabled: true
+      ingress.maintenancePage.enabled: true
+    asserts:
+      - equal:
+          path: spec.selector["app.kubernetes.io/name"]
+          value: leoflow-maintenance
+        documentIndex: 2
+      - equal:
+          path: spec.template.metadata.labels["app.kubernetes.io/name"]
+          value: leoflow-maintenance
+        documentIndex: 1
+
+  - it: answers every path with 503 and the page, and runs unprivileged with a read-only root
+    template: maintenance-page.yaml
+    set:
+      ingress.enabled: true
+      ingress.maintenancePage.enabled: true
+    asserts:
+      - matchRegex:
+          path: data["default.conf"]
+          pattern: "return 503;"
+        documentIndex: 0
+      - matchRegex:
+          path: data["default.conf"]
+          pattern: "error_page 502 503 504 /maintenance.html;"
+        documentIndex: 0
+      - matchRegex:
+          path: data["maintenance.html"]
+          pattern: '<meta http-equiv="refresh" content="10">'
+        documentIndex: 0
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+        documentIndex: 1
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+        documentIndex: 1
+
+  - it: refreshSeconds 0 turns the reload and Retry-After off
+    template: maintenance-page.yaml
+    set:
+      ingress.enabled: true
+      ingress.maintenancePage.enabled: true
+      ingress.maintenancePage.refreshSeconds: 0
+    asserts:
+      - notMatchRegex:
+          path: data["maintenance.html"]
+          pattern: "http-equiv=\"refresh\""
+        documentIndex: 0
+      - notMatchRegex:
+          path: data["default.conf"]
+          pattern: "Retry-After"
+        documentIndex: 0
+
+  - it: renders the operator text, message and link escaped
+    template: maintenance-page.yaml
+    set:
+      ingress.enabled: true
+      ingress.maintenancePage.enabled: true
+      ingress.maintenancePage.message: "Database upgrade in progress & waiting"
+      ingress.maintenancePage.operatorText: "Contact <ops@example.com>"
+      ingress.maintenancePage.statusUrl: "https://status.example.com?team=ops&env=prod"
+      ingress.maintenancePage.statusText: "View System Status"
+      ingress.maintenancePage.refreshSeconds: 15
+    asserts:
+      - matchRegex:
+          path: data["maintenance.html"]
+          pattern: "Database upgrade in progress &amp; waiting"
+        documentIndex: 0
+      - matchRegex:
+          path: data["maintenance.html"]
+          pattern: "Contact &lt;ops@example.com&gt;"
+        documentIndex: 0
+      - matchRegex:
+          path: data["maintenance.html"]
+          pattern: 'https://status\.example\.com\?team=ops&amp;env=prod'
+        documentIndex: 0
+      - matchRegex:
+          path: data["maintenance.html"]
+          pattern: '<meta http-equiv="refresh" content="15">'
+        documentIndex: 0
+
+  - it: refuses a status link that is not http or https
+    template: maintenance-page.yaml
+    set:
+      ingress.enabled: true
+      ingress.maintenancePage.enabled: true
+      ingress.maintenancePage.statusUrl: "javascript:alert(1)"
+    asserts:
+      - failedTemplate:
+          errorPattern: "must be an http:// or https:// URL"
+
+  - it: explicit ingress.annotations win over the defaults
+    template: ingress.yaml
+    set:
+      ingress.enabled: true
+      ingress.maintenancePage.enabled: true
+      ingress.annotations:
+        nginx.ingress.kubernetes.io/custom-http-errors: "502,503"
+        nginx.ingress.kubernetes.io/default-backend: custom-backend
+    asserts:
+      - equal:
+          path: metadata.annotations["nginx.ingress.kubernetes.io/custom-http-errors"]
+          value: "502,503"
+      - equal:
+          path: metadata.annotations["nginx.ingress.kubernetes.io/default-backend"]
+          value: custom-backend
