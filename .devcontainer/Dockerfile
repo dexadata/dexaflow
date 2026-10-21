@@ -3,7 +3,7 @@
 # The Go tools, Hugo and k3d are installed by post-create.sh from the pins the
 # Makefile and the workflows already carry, so this file holds no second copy
 # of them.
-ARG GO_VERSION=1.26.9
+ARG GO_VERSION=1.26.10
 FROM golang:${GO_VERSION}-bookworm
 
 # python3 is 3.11 on bookworm, the version the parser CI runs first.

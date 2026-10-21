@@ -29,7 +29,7 @@ concurrency:
 env:
   # See e2e-gates.yaml: fall back to the module's source on any proxy error.
   GOPROXY: https://proxy.golang.org|direct
-  GO_VERSION: "1.26.9"
+  GO_VERSION: "1.26.10"
   PYTHON_VERSION: "3.11"
 
 jobs:

@@ -86,7 +86,7 @@ chaos-dogfood: ## Pre-Lima gate (#231) — Phase 1: run all suites on the host +
 	@bash scripts/chaos/run.sh
 
 CHAOS_IMAGE          ?= leoflow-chaos:local
-CHAOS_GO_VERSION     ?= 1.26.9
+CHAOS_GO_VERSION     ?= 1.26.10
 CHAOS_LINT_VERSION   ?= v2.12.2
 
 .PHONY: chaos-dogfood-docker
