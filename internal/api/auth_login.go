@@ -90,9 +90,14 @@ var loginPageTemplate = template.Must(template.New("login").Parse(`<!doctype htm
        body: JSON.stringify({username: f.username.value, password: f.password.value})
      });
      if (!r.ok) {
+       // 503 is an outage (the user store could not be reached), not a wrong
+       // password: saying "Invalid credentials" would send the user to retype
+       // a password that may be right (#1099).
        document.getElementById('e').textContent = r.status === 429
          ? 'Too many attempts. Wait about a minute, then try again.'
-         : 'Invalid credentials';
+         : r.status === 503
+           ? 'Sign-in is temporarily unavailable. Try again shortly.'
+           : 'Invalid credentials';
        return;
      }
      // The session cookie arrived with the response. The body still carries the

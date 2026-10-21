@@ -826,6 +826,9 @@ type TaskID = string
 // VariableKey defines model for VariableKey.
 type VariableKey = string
 
+// AuthUnavailable defines model for AuthUnavailable.
+type AuthUnavailable = Error
+
 // EncryptionUnavailable defines model for EncryptionUnavailable.
 type EncryptionUnavailable = Error
 
@@ -1248,7 +1251,7 @@ type ClientInterface interface {
 
 	// RenewToken Renew a still-valid JWT into a fresh short-lived token
 	//
-	// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again.
+	// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again. Returns 503 with Retry-After when the token could not be checked because the user store is unreachable; the token may still be good, so the client waits and retries instead of logging in again.
 	//
 	// Corresponds with POST /api/v2/auth/token/renew (the `RenewToken` operationId).
 	RenewToken(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1697,7 +1700,7 @@ func (c *Client) RevokeAPIToken(ctx context.Context, tokenId string, reqEditors 
 
 // RenewToken Renew a still-valid JWT into a fresh short-lived token
 //
-// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again.
+// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again. Returns 503 with Retry-After when the token could not be checked because the user store is unreachable; the token may still be good, so the client waits and retries instead of logging in again.
 //
 // Corresponds with POST /api/v2/auth/token/renew (the `RenewToken` operationId).
 func (c *Client) RenewToken(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -4656,7 +4659,7 @@ type ClientWithResponsesInterface interface {
 
 	// RenewTokenWithResponse Renew a still-valid JWT into a fresh short-lived token
 	//
-	// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again.
+	// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again. Returns 503 with Retry-After when the token could not be checked because the user store is unreachable; the token may still be good, so the client waits and retries instead of logging in again.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -5260,6 +5263,11 @@ func (r RevokeAPITokenResponse) ContentType() string {
 	return ""
 }
 
+// RenewTokenResponse503Headers the declared response headers of an HTTP 503 response for RenewToken
+type RenewTokenResponse503Headers struct {
+	RetryAfter *int
+}
+
 type RenewTokenResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5267,6 +5275,10 @@ type RenewTokenResponse struct {
 	JSON200 *TokenResponse
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *RenewTokenResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -5277,6 +5289,11 @@ func (r RenewTokenResponse) GetJSON200() *TokenResponse {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r RenewTokenResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RenewTokenResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -7043,6 +7060,11 @@ type IssueTokenResponse200Headers struct {
 	SetCookie *string
 }
 
+// IssueTokenResponse503Headers the declared response headers of an HTTP 503 response for IssueToken
+type IssueTokenResponse503Headers struct {
+	RetryAfter *int
+}
+
 type IssueTokenResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -7050,8 +7072,12 @@ type IssueTokenResponse struct {
 	JSON200 *TokenResponse
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
 	// Headers200 the parsed response headers for an HTTP 200 response
 	Headers200 *IssueTokenResponse200Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *IssueTokenResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -7062,6 +7088,11 @@ func (r IssueTokenResponse) GetJSON200() *TokenResponse {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r IssueTokenResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r IssueTokenResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -7223,7 +7254,7 @@ func (c *ClientWithResponses) RevokeAPITokenWithResponse(ctx context.Context, to
 
 // RenewTokenWithResponse Renew a still-valid JWT into a fresh short-lived token
 //
-// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again.
+// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again. Returns 503 with Retry-After when the token could not be checked because the user store is unreachable; the token may still be good, so the client waits and retries instead of logging in again.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -8118,6 +8149,26 @@ func ParseRenewTokenResponse(rsp *http.Response) (*RenewTokenResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers RenewTokenResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -9386,6 +9437,13 @@ func ParseIssueTokenResponse(rsp *http.Response) (*IssueTokenResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
 	}
 
 	switch {
@@ -9399,6 +9457,16 @@ func ParseIssueTokenResponse(rsp *http.Response) (*IssueTokenResponse, error) {
 			headers.SetCookie = &value
 		}
 		response.Headers200 = &headers
+	case rsp.StatusCode == 503:
+		var headers IssueTokenResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil

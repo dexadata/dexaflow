@@ -60,6 +60,8 @@ paths:
                 $ref: "#/components/schemas/TokenResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/auth/token/renew:
     post:
@@ -70,7 +72,10 @@ paths:
         measured from first login. Lets a long CLI/dev session avoid re-logging in
         every token TTL while keeping the access token short-lived. Returns 401
         when the presented token is invalid, expired, or past max_lifetime, in
-        which case the client must log in again.
+        which case the client must log in again. Returns 503 with Retry-After
+        when the token could not be checked because the user store is
+        unreachable; the token may still be good, so the client waits and
+        retries instead of logging in again.
       operationId: renewToken
       tags: [Auth]
       responses:
@@ -82,6 +87,8 @@ paths:
                 $ref: "#/components/schemas/TokenResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/auth/ciToken:
     post:
@@ -1544,6 +1551,20 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     NoContent:
       description: Deleted (no content)
+    AuthUnavailable:
+      description: >-
+        The credential could not be checked because a store or key source the
+        control plane needs is unreachable. It says nothing about the
+        credential, so the client should not sign in again: it waits the
+        Retry-After and retries.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying. A small fixed value.
+          schema:
+            type: integer
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Error" }
     EncryptionUnavailable:
       description: >-
         No encryption key configured, so secrets cannot be stored. Set

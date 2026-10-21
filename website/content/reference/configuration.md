@@ -1003,7 +1003,7 @@ status it stands for (`dexaflow.refusal_status` on the span), not as a `303`.
 | User linked in another tenant than the token names | `403` | `tenant_mismatch` |
 | Token for a tenant posted on another tenant's host ([host binding](#binding-sessions-to-tenant-hosts)) | `403` | `host_tenant_mismatch` |
 | Dexaflow could not look up the user or open the session | `500` | `server_error` |
-| The issuer's JWKS could not be downloaded, so the token was not checked | `503` | `server_error` |
+| The issuer's JWKS could not be downloaded, so the token was not checked | `503` (with `Retry-After` when answered as a problem) | `server_error` |
 
 A JWKS outage writes no `issuer.login.failure` audit row: the token was never
 checked, so it is not a failed sign-in. It is logged at error level instead.
@@ -1093,8 +1093,8 @@ Anything wrong answers `401`, the same as a bad Dexaflow token; the reason
 stays in the server log. A token that does not name the issuer and a bearer
 audience is refused before any signature check. When the token could not be
 checked at all, because the issuer's JWKS or Dexaflow's user store is
-unreachable, the answer is `503`, so the client retries instead of signing in
-again. A token that verified but names no active linked user in its tenant is
+unreachable, the answer is `503` with `Retry-After`, so the client waits and
+retries instead of signing in again. A token that verified but names no active linked user in its tenant is
 also recorded in the audit trail as `issuer.bearer.failure`. The bearer is read
 from the `Authorization` header only, never from the session cookie, and a
 handoff token is never accepted as a bearer, nor a bearer as a handoff.

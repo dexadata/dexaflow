@@ -161,7 +161,8 @@ func authTokenHandler(authn auth.Authenticator, limiter *auth.RateLimiter, ttlSe
 			// that the credentials are wrong. Answer 503 so operators/monitoring see an
 			// outage rather than a wall of "invalid credentials" (#843). It leaks
 			// nothing: it is returned regardless of whether the account exists.
-			AbortProblem(c, http.StatusServiceUnavailable, "service unavailable", "authentication temporarily unavailable")
+			// Retry-After tells the client how long to back off (#1100).
+			abortAuthUnavailable(c, nil)
 			return
 		}
 		if bg != nil {
@@ -221,10 +222,9 @@ func renewTokenHandler(renewer TokenRenewer, ttlSeconds, maxLifetimeSeconds int)
 			// against the database that is already down and reads to whoever is on
 			// call as an auth incident — the same conflation JWTAuth carried (#1087).
 			// Either way the renewal is refused; the cause goes to the log, never to
-			// the body.
-			if !errors.Is(err, auth.ErrInvalidToken) {
-				AbortProblemCause(c, http.StatusServiceUnavailable, "service unavailable",
-					"authentication temporarily unavailable", err)
+			// the body, and Retry-After tells the client how long to wait (#1100).
+			if authUnavailable(err) {
+				abortAuthUnavailable(c, err)
 				return
 			}
 			AbortProblemCause(c, http.StatusUnauthorized, "unauthorized", "token cannot be renewed; log in again", err)
