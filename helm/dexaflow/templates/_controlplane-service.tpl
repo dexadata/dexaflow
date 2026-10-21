@@ -35,9 +35,13 @@ spec:
       targetPort: metrics
       protocol: TCP
     {{- if or (eq .role "all") (eq .role "scheduler") }}
+    # #2079: the agent channel carries its own TLS. Without appProtocol a mesh
+    # infers plaintext gRPC from the name and the agent never connects; the
+    # name stays because targetPort and NetworkPolicies refer to it.
     - name: grpc
       port: {{ .ctx.Values.ports.grpc }}
       targetPort: grpc
       protocol: TCP
+      appProtocol: tcp
     {{- end }}
 {{- end -}}
