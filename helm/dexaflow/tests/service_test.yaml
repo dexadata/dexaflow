@@ -54,6 +54,16 @@ tests:
           path: spec.ports[2].targetPort
           value: grpc
 
+  - it: marks the agent gRPC port as opaque TCP for service meshes (#2079)
+    # The agent channel carries its own TLS. Without appProtocol, Istio infers
+    # plaintext gRPC from the port name and the agent never connects.
+    asserts:
+      - equal:
+          path: spec.ports[2].appProtocol
+          value: tcp
+      - notExists:
+          path: spec.ports[0].appProtocol
+
   - it: port numbers respect overrides
     set:
       ports.http: 18080
