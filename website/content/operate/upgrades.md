@@ -388,6 +388,7 @@ holds, then re-run.
 | 044 (deployer role, API tokens) | 44 | nothing: one transaction, rolled back, and the file is idempotent | 43 |
 | 045 (device sign-ins) | 45 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and the file is idempotent | 44 |
 | 046 (`build_info`) | 46 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the column is not there yet | 45; retry when the table is quiet |
+| 048 (unwritten tables) | 48 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the tables are still there | 47; retry when `task_instances` is quiet |
 
 **How to run `migrate force`.** The hook image is the golang-migrate CLI plus
 the SQL files at `/migrations`, so the `version`, `force`, `goto` and `up`
@@ -990,6 +991,69 @@ schema, and 0.5.6 drops them in a migration. A 0.5.5 control plane runs
 against either schema, so it keeps working through that migration and after a
 rollback from 0.5.6. Upgrading to 0.5.5 and rolling back to 0.5.4 need nothing
 for this change.
+
+### Upgrading to 0.5.6: three unused tables are dropped
+
+Migration **`048_drop_unwritten_tables`** drops `scheduler_loops`, `replicas`
+and `task_state_history`, with their indexes, sequences and the
+`trim_scheduler_loops()` function (#1186). They were created by migrations 003
+and 004 for observability and audit, and no Dexaflow release ever wrote a row
+to them: leader election uses an advisory lock, the scheduler tick is measured
+by `dexaflow_scheduler_loop_duration_seconds`, and a task instance's attempts
+are in `task_instance_history`. 0.5.5 already stopped touching them. On an
+install nobody touched by hand the three tables are empty and nothing is
+lost. **Any row someone inserted into them by hand is deleted by the
+upgrade**; to keep it, copy it out first. This shows whether there is
+anything to copy:
+
+```sql
+SELECT (SELECT count(*) FROM task_state_history) AS task_state_history,
+       (SELECT count(*) FROM scheduler_loops)    AS scheduler_loops,
+       (SELECT count(*) FROM replicas)           AS replicas;
+```
+
+The migration runs in one transaction, which took about 5 ms of SQL (40 ms
+with the CLI) on a database with 200,000 task instances: the tables are empty,
+so the drop does not depend on the size of the database. Dropping
+`task_state_history` removes its foreign key from `task_instances`, which
+takes an `ACCESS EXCLUSIVE` lock on `task_instances` until the transaction
+commits. The lock waits for every open transaction that touched the table,
+and reads and writes of task instances queue behind it while it waits. The
+migration waits at most 5 seconds for it. If it waits longer, the transaction
+rolls back, golang-migrate marks version 48 dirty and nothing changed: run
+`migrate force 47` and retry when the table is quiet. Every statement can be
+repeated.
+
+**While old replicas still run.** 0.5.5 never reads or writes the three
+tables, so 0.5.5 replicas keep working during the rollout. Upgrading straight
+from 0.5.4 is different: the 0.5.4 retention janitor deletes from
+`task_state_history`, so with `retention.dag_runs_days` set, a 0.5.4 leader
+running against the migrated schema fails every retention cycle that finds an
+expired run. It logs `retention cycle` at `ERROR` with
+`relation "task_state_history" does not exist`, deletes no run, and stops
+that cycle before the audit log too. Nothing is lost, and the cycle succeeds
+once a 0.5.6 replica leads. With retention off (the default) 0.5.4 never reads
+the three tables.
+
+**Rolling back 0.5.6 to 0.5.5.** On Pro, `helm rollback <release> <revision>`
+leaves the schema at 048, and the 0.5.5 control plane boots against it with
+the warning `database schema is ahead of this binary; proceeding` and needs
+nothing else. On Lite, `dexaflow lite` 0.5.5 refuses a database above 047, so
+go back with the snapshot from
+[How to test an upgrade safely](#how-to-test-an-upgrade-safely-recommended),
+or with the down migration from the 0.5.6 CLI or migrate image:
+
+```sh
+migrate -path migrations -database "$DATABASE_URL" goto 47
+```
+
+The down recreates the three tables, empty, exactly as before. It takes a
+lock on `task_instances` that blocks writes to it (not reads) for its few
+milliseconds, waiting at most 5 seconds as the up does; it took about 15 ms
+of SQL (50 ms with the CLI) on the same database. Rows deleted by the upgrade
+do not come back. Rolling back further, to 0.5.4 with
+`retention.dag_runs_days` set, needs that down migration too, so its retention
+finds `task_state_history` again.
 
 ## Related issues
 

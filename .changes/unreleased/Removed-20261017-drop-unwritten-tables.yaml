@@ -1,0 +1,16 @@
+kind: Removed
+body: |-
+  **The `scheduler_loops`, `replicas` and `task_state_history` tables are
+  dropped.** Migration 048 removes them, with their indexes, sequences and the
+  `trim_scheduler_loops()` function. They were created for observability and
+  audit and no release ever wrote a row to them, so the schema suggested data
+  that does not exist; the scheduler tick is measured by
+  `dexaflow_scheduler_loop_duration_seconds` and a task instance's attempts
+  are in `task_instance_history`. A row someone wrote to them by hand is
+  deleted by the upgrade. 0.5.5 already stopped touching them, so it keeps
+  running against the new schema during a rollout or after a rollback; the
+  down migration recreates them for a rollback to 0.5.4 with retention on. See
+  [Upgrading to
+  0.5.6](https://dexaflow.dexadata.ai/operate/upgrades/#upgrading-to-056-three-unused-tables-are-dropped).
+  (#1186)
+time: 2026-10-17T12:30:00.000000000-03:00
