@@ -1,12 +1,14 @@
-"""The task image trusts no CA that certifi has since removed (#2067).
+"""The certifi bundles in the task image drop emSign ECC Root CA - G3 (#2067).
 
 Every HTTPS call a task makes through ``requests`` or ``httpx`` verifies the
 server against certifi's bundle, not the system trust store. certifi reaches
 the image twice: as a site-packages install (a transitive dependency of the
 Task SDK, through ``requests`` and ``httpx``) and as the copy pip vendors in
-``pip/_vendor/certifi``. GHSA-6q48-6c7w-9gw2 drops emSign ECC Root CA - G3,
-whose intermediates were compromised, in certifi 2026.10.19; every older
-bundle still trusts it.
+``pip/_vendor/certifi``, which pip loads next to the system store. GHSA-6q48-6c7w-9gw2
+drops emSign ECC Root CA - G3, whose intermediates were compromised, in certifi
+2026.10.19; every older bundle still trusts it. The system trust store
+(``/etc/ssl/certs``, from the base image's ca-certificates) is out of scope
+here: it moves with the base image, not with these pins.
 
 Left to the resolver, the site-packages copy is whatever certifi was newest
 when the layer was built, and the vendored copy moves only with pip. So both
@@ -32,16 +34,23 @@ def _dockerfile() -> str:
 
 
 def _arg(text: str, name: str) -> tuple[int, ...]:
-    match = re.search(rf"^ARG {name}=(\S+)$", text, re.MULTILINE)
-    assert match, f"runtime/Dockerfile declares no ARG {name}"
+    """The numeric release of ``ARG name=X.Y.Z``, ignoring any PEP 440 suffix."""
+    match = re.search(rf"^ARG {name}=(\d+(?:\.\d+)*)", text, re.MULTILINE)
+    assert match, f"runtime/Dockerfile declares no numeric ARG {name}"
     return tuple(int(part) for part in match.group(1).split("."))
 
 
-def _first_line(text: str, needle: str) -> int:
-    for number, line in enumerate(text.splitlines(), start=1):
-        if line.startswith("RUN ") and needle in line:
-            return number
-    raise AssertionError(f"runtime/Dockerfile has no RUN line installing {needle!r}")
+def _run_instructions(text: str) -> list[str]:
+    """Every RUN instruction, with its backslash continuation lines joined."""
+    joined = re.sub(r"\\\n", " ", text)
+    return [line for line in joined.splitlines() if line.startswith("RUN ")]
+
+
+def _first_run(runs: list[str], pattern: str) -> int:
+    for index, run in enumerate(runs):
+        if re.search(pattern, run):
+            return index
+    raise AssertionError(f"runtime/Dockerfile has no RUN instruction matching {pattern!r}")
 
 
 def test_certifi_pin_drops_the_emsign_ecc_g3_root():
@@ -51,12 +60,13 @@ def test_certifi_pin_drops_the_emsign_ecc_g3_root():
 
 def test_certifi_is_installed_after_the_task_sdk_pulls_it_in():
     """Pinned after the Task SDK, so the pin is the version left in the image."""
-    text = _dockerfile()
-    sdk = _first_line(text, '"apache-airflow-task-sdk==${AIRFLOW_TASK_SDK_VERSION}"')
-    certifi = _first_line(text, '"certifi==${CERTIFI_VERSION}"')
-    assert certifi > sdk
+    runs = _run_instructions(_dockerfile())
+    sdk = _first_run(runs, r"apache-airflow-task-sdk==\$\{AIRFLOW_TASK_SDK_VERSION\}")
+    certifi = _first_run(runs, r"certifi==\$\{CERTIFI_VERSION\}")
+    # The same RUN is fine too: one resolver pass honors the pin.
+    assert certifi >= sdk
 
 
 def test_pip_pin_vendors_a_certifi_without_the_emsign_ecc_g3_root():
-    """pip/_vendor/certifi, which pip uses when a DAG image installs its requirements."""
+    """pip/_vendor/certifi, trusted (with the system store) for a DAG's requirements."""
     assert _arg(_dockerfile(), "PIP_VERSION") >= _PIP_FLOOR

@@ -120,9 +120,12 @@ COPY runtime/python /opt/leoflow-runtime
 # instead of four. It is upgraded first so every later install runs on it.
 #
 # 26.2.2 is the floor, not just the newest release: it is the first pip that
-# vendors certifi 2026.10.19, so pip's own downloads (a DAG image installing its
-# `requirements:`) no longer trust emSign ECC Root CA - G3
-# (GHSA-6q48-6c7w-9gw2, #2067). 26.2.1 vendors certifi 2026.6.17, which does.
+# vendors certifi 2026.10.19, which drops emSign ECC Root CA - G3
+# (GHSA-6q48-6c7w-9gw2, #2067); 26.2.1 vendors certifi 2026.6.17, which still
+# holds it. pip verifies its downloads (a DAG image installing its
+# `requirements:`) against that vendored bundle AND the system store through
+# truststore, so this pin removes the certifi half only; /etc/ssl/certs moves
+# with the base image's ca-certificates, not here.
 # tests/test_runtime_image_trust_store.py in runtime/python fails below it.
 #
 # pip 26 also ships a CycloneDX SBOM of the packages it vendors
@@ -142,11 +145,13 @@ RUN pip install --no-cache-dir /opt/leoflow-runtime
 ARG AIRFLOW_TASK_SDK_VERSION=1.3.1
 RUN pip install --no-cache-dir "apache-airflow-task-sdk==${AIRFLOW_TASK_SDK_VERSION}"
 
-# certifi is the CA bundle `requests` and `httpx` verify every task's HTTPS call
-# against, in place of the system trust store. It comes in transitively with the
-# Task SDK, so unpinned it is whatever release was newest when this layer was
-# built: 2026.7.22 in the published images, which still trusts emSign ECC Root
-# CA - G3, whose intermediates were compromised (GHSA-6q48-6c7w-9gw2, #2067).
+# certifi is the CA bundle `requests` and `httpx` verify a task's HTTPS calls
+# against, in place of the system trust store (other clients, such as urllib or
+# OpenSSL defaults, read /etc/ssl/certs and are not covered by this pin). It
+# comes in transitively with the Task SDK, so unpinned it is whatever release
+# was newest when this layer was built: 2026.7.22 in the published images,
+# which still trusts emSign ECC Root CA - G3, whose intermediates were
+# compromised (GHSA-6q48-6c7w-9gw2, #2067).
 # 2026.10.19 is the first release without it. Installed after the Task SDK so
 # the pin is the version left in the image, and exact like the pins above so a
 # rebuild does not move it; tests/test_runtime_image_trust_store.py in

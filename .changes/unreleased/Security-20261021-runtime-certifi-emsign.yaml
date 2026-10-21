@@ -1,9 +1,11 @@
 kind: Security
 body: |-
-  **The task runtime image no longer trusts emSign ECC Root CA - G3.** Its
-  intermediates were compromised (GHSA-6q48-6c7w-9gw2), and the certifi bundle
-  that `requests` and `httpx` verify a task's HTTPS calls against still held
-  it: 2026.7.22 in site-packages and 2026.6.17 inside pip 26.2.1. The image
-  now pins certifi 2026.10.19 and pip 26.2.2, which vendors it. Rebuild DAG
+  **The certifi CA bundles in the task runtime image no longer trust emSign
+  ECC Root CA - G3.** Its intermediates were compromised
+  (GHSA-6q48-6c7w-9gw2), and the certifi bundle that `requests` and `httpx`
+  verify a task's HTTPS calls against still held it: 2026.7.22 in
+  site-packages and 2026.6.17 inside pip 26.2.1. The image now pins certifi
+  2026.10.19 and pip 26.2.2, which vendors it. Clients that read the system
+  trust store (`/etc/ssl/certs`) are not changed by this pin. Rebuild DAG
   images on the new base to pick it up. (#2067)
 time: 2026-10-21T12:00:00.000000000+00:00
