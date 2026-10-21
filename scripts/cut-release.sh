@@ -151,6 +151,14 @@ sync_changelog_pr() { # <version>
   return 0
 }
 
+# commit_prepare <tag>: commits what is staged as the prepare commit, signed off
+# by its author (--signoff). The prepare PR runs the "DCO" check like every
+# pull request, and the cut waits for that PR green, so an unsigned prepare
+# commit stopped every cut once the check existed (#1575).
+commit_prepare() {
+  git commit -q --signoff -m "release: prepare $1"
+}
+
 self_test() {
   # A git hook exports these, and the fixture repositories below would follow
   # them to the repository being committed to.
@@ -678,6 +686,21 @@ JSON
   _eq "$(runs_started '[{"status":"completed","conclusion":"success"}]')" "yes" "a finished run has started"
   _eq "$(runs_started '[]')" "no" "no runs yet is not started"
   _eq "$(runs_started 'garbage')" "no" "an unreadable payload is not started"
+
+  # The prepare commit carries its author's DCO sign-off: the "DCO" check runs
+  # on the prepare PR like on any other, and the cut waits for it green.
+  local sp; sp="$(mktemp -d)"
+  if (cd "$sp" && export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null &&
+    git -c init.defaultBranch=main init -q . && git config user.name "Rel Ease" &&
+    git config user.email rel@example.invalid && echo x >f && git add f &&
+    commit_prepare v9.9.9) >/dev/null 2>&1; then
+    _eq "$(git -C "$sp" log -1 --format=%s)" "release: prepare v9.9.9" "the prepare commit names the tag"
+    _eq "$(git -C "$sp" log -1 --format=%B | git -C "$sp" interpret-trailers --parse | grep '^Signed-off-by:')" \
+      "Signed-off-by: Rel Ease <rel@example.invalid>" "the prepare commit is signed off by its author (DCO)"
+  else
+    _eq "commit failed" "committed" "commit_prepare commits the staged changes"
+  fi
+  rm -rf "$sp"
 
   if [ "$fail" = 0 ]; then echo "self-test: PASS"; else echo "self-test: FAIL"; return 1; fi
 }
@@ -1282,7 +1305,7 @@ main() {
   # to be folded in a second time at the next cut.
   git add helm/dexaflow/Chart.yaml helm/dexaflow/README.md CHANGELOG.md
   git add -A .changes 2>/dev/null || true
-  git commit -q -m "release: prepare $tag" || die "nothing to commit (already prepared?)"
+  commit_prepare "$tag" || die "nothing to commit (already prepared?)"
   git push -u origin "$branch" -q || die "pushing $branch failed"
 
   local title body
