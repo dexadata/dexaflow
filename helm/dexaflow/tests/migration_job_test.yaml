@@ -294,3 +294,62 @@ tests:
           path: spec.template.spec.tolerations
       - notExists:
           path: spec.template.spec.affinity
+
+  # #1020: the migrate image exits with its own code for each failure a retry
+  # cannot fix, and the Job fails on the first such pod instead of burning
+  # backoffLimit ("failed: 4/1"). The list is kept equal to the Go side by
+  # internal/migrator's TestChartFailsTheJobOnTheDeterministicCodes.
+  - it: fails the Job at once on the wrapper's deterministic exit codes (Kubernetes 1.31)
+    capabilities:
+      majorVersion: 1
+      minorVersion: 31
+    set:
+      database.url: postgres://h/d
+    asserts:
+      - equal:
+          path: spec.podFailurePolicy.rules[0].action
+          value: FailJob
+      - equal:
+          path: spec.podFailurePolicy.rules[0].onExitCodes
+          value:
+            containerName: migrate
+            operator: In
+            values: [2, 3, 4, 5, 6, 7]
+      # podFailurePolicy is only valid with restartPolicy Never, and the
+      # containerName must name the container that exits.
+      - equal:
+          path: spec.template.spec.restartPolicy
+          value: Never
+      - equal:
+          path: spec.template.spec.containers[0].name
+          value: migrate
+      - equal:
+          path: spec.backoffLimit
+          value: 3
+
+  - it: keeps the policy on newer apiservers
+    capabilities:
+      majorVersion: 1
+      minorVersion: 33
+    set:
+      database.url: postgres://h/d
+    asserts:
+      - equal:
+          path: spec.podFailurePolicy.rules[0].action
+          value: FailJob
+
+  # Chart.yaml declares no kubeVersion, so a 1.30 apiserver still installs the
+  # chart; it gets the Job without the field (retries as before) rather than a
+  # rejected hook.
+  - it: renders no podFailurePolicy below Kubernetes 1.31
+    capabilities:
+      majorVersion: 1
+      minorVersion: 30
+    set:
+      database.url: postgres://h/d
+    asserts:
+      - notExists:
+          path: spec.podFailurePolicy
+      - equal:
+          path: spec.backoffLimit
+          value: 3

@@ -211,20 +211,35 @@ is required.
 
 ## Migrations
 
-The pre-install/pre-upgrade Job runs `migrate -path <path> -database <url> up`
+The pre-install/pre-upgrade Job runs `dexaflow-migrate -path <path> -database <url> up`
 using the default image **`ghcr.io/dexadata/dexaflow-migrate`** (built from
 `deploy/Dockerfile.migrate`, published by `.github/workflows/release.yaml` on
 every tag), which bundles the Dexaflow `migrations/` at `migrations.path`. The
-`migrate` binary in it is golang-migrate's own CLI, compiled from the version
-pinned in Dexaflow's `go.mod` onto distroless static and running as UID 65532,
-rather than a third-party image pulled at build time (#1039).
+binary is Dexaflow's own wrapper over the golang-migrate library (#1020),
+compiled onto distroless static and running as UID 65532; it takes the
+golang-migrate CLI's `up`, `version`, `force N` and `goto N`, so the recovery
+steps of the [upgrade guide](https://dexaflow.dexadata.ai/operate/upgrades/#an-interrupted-migration)
+run in it unchanged.
 Override `migrations.image` to use your own, or set `migrations.enabled=false`
 to migrate out of band.
 
+When the Job fails, its log names the cause and the value to change, for
+example `database "dexaflow" does not exist on postgres:5432. Dexaflow does
+not create the database ...`. A failure a retry cannot fix (a missing
+database, a refused password, an unusable `database.url`, a missing
+`sslrootcert` file, a dirty schema) exits with a code of its own, and on
+Kubernetes 1.31 or newer the Job's `podFailurePolicy` fails it on the first
+pod instead of retrying it `backoffLimit` times. Read the log with
+`kubectl -n <namespace> logs -l app.kubernetes.io/component=migrate --tail=50`;
+each message is listed in
+[troubleshooting](https://dexaflow.dexadata.ai/operate/troubleshooting/#the-migration-job).
+
 ## Datastore compatibility
 
-The chart talks to external Postgres + Redis you provision. Versions
-we test against in CI and the minimums we support:
+The chart talks to external Postgres + Redis you provision. Dexaflow does
+not create the Postgres database: create it first (`CREATE DATABASE dexaflow;`,
+as a role allowed to) and name it in `database.url`; the migration Job creates
+the tables inside it. Versions we test against in CI and the minimums we support:
 
 | Datastore | Tested in CI | Recommended minimum | Notes |
 |---|---|---|---|
