@@ -91,7 +91,20 @@ type bootRun struct {
 // dsn in the "all" role and returns where it serves and how it ended.
 func bootAgainst(t *testing.T, dsn string) (httpAddr, metricsAddr string, reg *prometheus.Registry, run *bootRun) {
 	t.Helper()
-	cfg := &config.ServerConfig{Database: config.DatabaseSection{URL: dsn}}
+	return bootWith(t, config.DatabaseSection{URL: dsn})
+}
+
+// bootAs is bootAgainst for a release whose installation id is
+// installationID (database.installation_id).
+func bootAs(t *testing.T, dsn, installationID string) (httpAddr, metricsAddr string, reg *prometheus.Registry, run *bootRun) {
+	t.Helper()
+	return bootWith(t, config.DatabaseSection{URL: dsn, InstallationID: installationID})
+}
+
+// bootWith is bootAgainst with a whole database section.
+func bootWith(t *testing.T, db config.DatabaseSection) (httpAddr, metricsAddr string, reg *prometheus.Registry, run *bootRun) {
+	t.Helper()
+	cfg := &config.ServerConfig{Database: db}
 	cfg.Server.HTTPAddr = freeAddr(t)
 	cfg.Server.MetricsAddr = freeAddr(t)
 	reg = prometheus.NewRegistry()
@@ -239,5 +252,121 @@ func TestBootWaitsOnADirtySchemaAndRefusesOneDirtyAtItsLatest(t *testing.T) {
 		}
 	case <-time.After(45 * time.Second):
 		t.Fatal("boot kept waiting on a schema dirty at this binary's latest")
+	}
+}
+
+// ADR 0090 decisions 3 and 5 against a real Postgres: a server whose database
+// carries another installation id waits, not ready, with the reason database
+// replaced (and no ids) on /readyz and the metric; it boots once the right
+// database is back; and once serving, a readiness probe that finds the id
+// changed stops the process with errDatabaseReplaced.
+func TestBootWaitsOnAReplacedDatabaseAndAServingOneStops(t *testing.T) {
+	dsn := scratchDatabase(t)
+	var out, errOut strings.Builder
+	if code := migrator.Main(t.Context(), []string{"-database=" + dsn, "up"}, &out, &errOut, "test"); code != 0 {
+		t.Fatalf("migrate up: exit %d: %s", code, errOut.String())
+	}
+	conn, err := pgx.Connect(t.Context(), dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(context.Background())
+	setID := func(id string) {
+		t.Helper()
+		if _, err := conn.Exec(t.Context(), `INSERT INTO installation (id) VALUES ($1)
+ON CONFLICT (singleton) DO UPDATE SET id = EXCLUDED.id`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setID("someone-else")
+
+	_, metricsAddr, reg, run := bootAs(t, dsn, "this-release")
+	eventually(t, "the replaced reason on /readyz", func() bool {
+		code, body, err := get(metricsAddr, "/readyz")
+		return err == nil && code == http.StatusServiceUnavailable && strings.Contains(body, "database replaced: another installation id")
+	})
+	_, body, _ := get(metricsAddr, "/readyz")
+	if strings.Contains(body, "someone-else") || strings.Contains(body, "this-release") || !strings.Contains(body, "installation.id") {
+		t.Errorf("/readyz = %q, want how to accept the database and no installation ids", body)
+	}
+	if reason, v := schemaReadyGauge(t, reg); reason != storage.SchemaReasonReplaced || v != 0 {
+		t.Errorf("dexaflow_schema_ready = {reason=%q} %v, want {reason=database replaced} 0", reason, v)
+	}
+
+	setID("this-release")
+	select {
+	case <-run.done:
+		if run.err != nil {
+			t.Fatalf("boot on the restored database: %v", run.err)
+		}
+	case <-time.After(45 * time.Second):
+		t.Fatal("boot did not finish once the right database was back")
+	}
+
+	ctx, release := stopOnReplaced(t.Context(), run.pg)
+	defer release()
+	if err := run.pg.SchemaReady(ctx); err != nil {
+		t.Fatalf("readiness on this release's database: %v", err)
+	}
+	setID("someone-else")
+	if err := run.pg.SchemaReady(ctx); !errors.Is(err, domain.ErrDatabaseReplaced) {
+		t.Fatalf("readiness after the swap = %v, want domain.ErrDatabaseReplaced", err)
+	}
+	select {
+	case <-ctx.Done():
+		if !errors.Is(serveExit(ctx, nil), errDatabaseReplaced) {
+			t.Errorf("the server stopped with %v, want errDatabaseReplaced", context.Cause(ctx))
+		}
+	default:
+		t.Fatal("a readiness probe that found the database replaced did not stop the server")
+	}
+}
+
+// migrations.onBoot (ADR 0090 decision 4) against a real Postgres: a server
+// booted on an empty database migrates it itself and boots, with no Job.
+func TestBootMigratesItselfWithOnBoot(t *testing.T) {
+	dsn := scratchDatabase(t)
+	_, _, reg, run := bootWith(t, config.DatabaseSection{URL: dsn, MigrateOnBoot: true})
+	select {
+	case <-run.done:
+		if run.err != nil {
+			t.Fatalf("boot with onBoot on an empty database: %v", run.err)
+		}
+	case <-time.After(45 * time.Second):
+		t.Fatal("boot with onBoot did not finish on an empty database")
+	}
+	if err := run.pg.SchemaReady(t.Context()); err != nil {
+		t.Errorf("readiness after onBoot: %v", err)
+	}
+	if reason, v := schemaReadyGauge(t, reg); reason != "" || v != 1 {
+		t.Errorf("dexaflow_schema_ready = {reason=%q} %v, want {} 1", reason, v)
+	}
+}
+
+// onBoot never migrates a replaced database: an emptied database under an
+// established release stays empty and the server waits on it.
+func TestBootWithOnBootLeavesAReplacedDatabaseAlone(t *testing.T) {
+	dsn := scratchDatabase(t)
+	_, metricsAddr, _, run := bootWith(t, config.DatabaseSection{URL: dsn, MigrateOnBoot: true, InstallationID: "this-release"})
+	eventually(t, "the replaced reason on /readyz", func() bool {
+		code, body, err := get(metricsAddr, "/readyz")
+		return err == nil && code == http.StatusServiceUnavailable && strings.Contains(body, "database replaced: no schema")
+	})
+	select {
+	case <-run.done:
+		t.Fatalf("boot ended on a replaced database: %v", run.err)
+	default:
+	}
+	conn, err := pgx.Connect(t.Context(), dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(context.Background())
+	var tables int
+	if err := conn.QueryRow(t.Context(), "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'").Scan(&tables); err != nil {
+		t.Fatal(err)
+	}
+	if tables != 0 {
+		t.Errorf("onBoot created %d tables in a replaced database", tables)
 	}
 }

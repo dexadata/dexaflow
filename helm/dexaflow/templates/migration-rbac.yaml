@@ -1,0 +1,64 @@
+{{- if .Values.migrations.enabled -}}
+{{/*
+The migration Job's own account (ADR 0090 decision 3). The dexaflow-migrate
+wrapper keeps the installation id in a ConfigMap it creates and updates
+itself, so the chart renders no ConfigMap and needs no Helm lookup; this
+account may read, create and update that one ConfigMap and nothing else.
+
+Hooks with a lower weight than the Job (0), so they exist before the
+pre-install Job runs, and deleted with it once the hooks succeed. The control
+plane's account is not reused: it is a regular resource, which does not exist
+yet when a pre-install hook runs, and it holds the executor's grants.
+*/}}
+{{- $name := include "leoflow.migrateServiceAccountName" . }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "leoflow.labels" . | nindent 4 }}
+  annotations:
+    {{- include "leoflow.migrateRBACHookAnnotations" . | nindent 4 }}
+{{- if .Values.rbac.create }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "leoflow.labels" . | nindent 4 }}
+  annotations:
+    {{- include "leoflow.migrateRBACHookAnnotations" . | nindent 4 }}
+rules:
+  # create cannot be narrowed to a name in Kubernetes RBAC; the wrapper creates
+  # only the installation ConfigMap, once, on a first install or an upgrade
+  # from a release without it.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ include "leoflow.installationConfigMapName" . | quote }}]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "leoflow.labels" . | nindent 4 }}
+  annotations:
+    {{- include "leoflow.migrateRBACHookAnnotations" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end -}}

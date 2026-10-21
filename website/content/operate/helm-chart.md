@@ -100,6 +100,44 @@ A first-class values reference on this site is a TODO for a later migration phas
   covers. See
   [The in-cluster builder](/operate/builders/#the-in-cluster-builder).
 
+## Migrations and the installation id
+
+The chart migrates the database in a pre-install/pre-upgrade hook Job
+(`migrations.enabled`, on by default) that runs the `dexaflow-migrate` image.
+The Job also records the release's installation id
+([ADR 0090](/project/adrs/0090-database-replaced-under-a-running-release/)):
+it writes it into the database and into a ConfigMap,
+`<release>-installation`, that it creates and updates itself in the release
+namespace, and the control plane reads it from that ConfigMap
+(`DEXAFLOW_DATABASE_INSTALLATION_ID`). A database that carries another id,
+none, or no schema is then reported as replaced instead of migrated as if it
+were a fresh install; see
+[a replaced database](/operate/troubleshooting/#a-replaced-database).
+
+- The chart renders no ConfigMap, so `helm template`, Argo CD and Flux installs
+  behave like `helm install`, and `helm uninstall` leaves it in place.
+- The Job runs as its own ServiceAccount, `<release>-migrate`, with its token
+  mounted. With `rbac.create` the chart binds it a Role that may `create`
+  ConfigMaps in the release namespace and `get` and `update`
+  `<release>-installation`, nothing else. All three are hooks that run before
+  the Job and are deleted with it. With `rbac.create: false`, grant the same
+  to that account yourself.
+- `installation.id` is empty: a first install generates the id, and an upgrade
+  from a release before 0.5.6 records one the first time. Set it only to
+  accept a replaced database; changing it rolls the control plane pods.
+
+`migrations.onBoot` (default `false`) also lets the control plane apply the
+embedded migrations itself at boot, when the schema is absent or behind, and
+never when it is ahead or dirty or the database is reported as replaced. Only
+the `all` role, and in split mode the scheduler, carries it: the api role
+never migrates. The server's `database.url` must then be allowed to run DDL.
+golang-migrate's advisory lock serializes it with the Job and with other
+replicas. The Job stays the default and keeps the ordering an upgrade needs;
+`onBoot` covers what it cannot see, such as `migrations.enabled: false`
+installs and a `database.url` repointed between upgrades. With
+`migrations.enabled: false` no installation id is recorded, so `onBoot`
+migrates an empty database like a fresh one.
+
 ## Tuning the probes
 
 ### The startup gate

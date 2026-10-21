@@ -41,12 +41,17 @@ func (p *Postgres) SchemaVersion(ctx context.Context) (version uint, dirty, exis
 // yet (ADR 0090 decision 2), and the reason label of dexaflow_schema_ready
 // (decision 6). They carry no version, so a migration that moves the version
 // does not start a new series and restart an alert's wait; the versions are in
-// SchemaWait.Reason. Later slices add "database replaced" (decision 3).
+// SchemaWait.Reason.
 const (
 	SchemaReasonAbsent     = "schema absent"
 	SchemaReasonBehind     = "schema behind"
 	SchemaReasonDirty      = "schema dirty"
 	SchemaReasonUnreadable = "schema unreadable"
+	// SchemaReasonReplaced is a database that is not the one this release
+	// was installed on (decision 3): it carries another installation id,
+	// none, or no schema. It wins over every other reason, since migrating
+	// does not fix it.
+	SchemaReasonReplaced = "database replaced"
 )
 
 // SchemaWait is the boot gate's verdict: whether this binary can build the
@@ -63,6 +68,9 @@ type SchemaWait struct {
 	Ahead bool
 	// Err is why the schema could not be read, for the log line only.
 	Err error
+	// Detail is more for the log line only: for a replaced database, the
+	// installation ids on both sides, which /readyz does not carry.
+	Detail string
 }
 
 // Ready reports whether the schema is one this binary can serve.
@@ -90,6 +98,32 @@ func schemaWaitVerdict(dbVersion uint, exists, dirty bool, latest uint) (SchemaW
 	default:
 		return SchemaWait{Ahead: dbVersion > latest}, nil
 	}
+}
+
+// replacedReason is the server's side of ADR 0090 decision 3. With an
+// installation id configured (expected), a database without a schema,
+// without an installation id, or with another one is not this release's own,
+// and the reason says which; "" means it is, or that nothing is checked.
+func replacedReason(expected string, exists bool, dbID string) string {
+	switch {
+	case expected == "" || dbID == expected:
+		return ""
+	case !exists:
+		return SchemaReasonReplaced + ": no schema"
+	case dbID == "":
+		return SchemaReasonReplaced + ": no installation id"
+	default:
+		return SchemaReasonReplaced + ": another installation id"
+	}
+}
+
+// replacedDetail names both ids, for the log line.
+func replacedDetail(expected, dbID string) string {
+	found := "none"
+	if dbID != "" {
+		found = fmt.Sprintf("%q", dbID)
+	}
+	return fmt.Sprintf("this release's installation id is %q, the database carries %s", expected, found)
 }
 
 // readyClass names the reason a running pod's readiness fails, for
@@ -187,10 +221,15 @@ func checkSchemaReady(dbVersion uint, exists, dirty bool, latest uint) error {
 // The verdict is checkSchemaReady, NOT the boot gate — see there for the one
 // state where the two must disagree.
 func (p *Postgres) SchemaReady(ctx context.Context) error {
-	version, dirty, exists, latest, err := p.schemaState(ctx)
+	st, err := p.schemaState(ctx)
 	if err != nil {
 		return err
 	}
+	if reason := replacedReason(p.installationID, st.exists, st.installationID); reason != "" {
+		return p.reportReplaced(ctx, reason, replacedDetail(p.installationID, st.installationID))
+	}
+	p.replacedLogged.Store(false)
+	version, dirty, exists, latest := st.version, st.dirty, st.exists, st.latest
 	if dirtyAhead(version, exists, dirty, latest) {
 		// Worth one line, because it explains why this pod is serving against a
 		// schema its own boot gate would have waited on. Latched rather than
@@ -210,21 +249,42 @@ func (p *Postgres) SchemaReady(ctx context.Context) error {
 	return checkSchemaReady(version, exists, dirty, latest)
 }
 
+// reportReplaced is a readiness probe that found the database replaced under
+// a running process (ADR 0090 decision 5). It logs once per episode, feeds
+// dexaflow_schema_ready, and tells the process, which exits: a restart is the
+// only flush of every cache built on the old database.
+func (p *Postgres) reportReplaced(ctx context.Context, reason, detail string) error {
+	if p.replacedLogged.CompareAndSwap(false, true) {
+		slog.ErrorContext(ctx, "the database was replaced under this process; it stops so no cache outlives the old database",
+			"reason", reason, "detail", detail)
+	}
+	if p.schemaObserver != nil {
+		p.schemaObserver(SchemaReasonReplaced)
+	}
+	if p.onReplaced != nil {
+		p.onReplaced()
+	}
+	return fmt.Errorf("%w: %s (%s)", domain.ErrDatabaseReplaced, reason, detail)
+}
+
 // SchemaWaitState reads the schema and returns the boot gate's verdict
 // (schemaWaitVerdict). A read failure is not fatal: it comes back as the
 // SchemaReasonUnreadable class with the cause in Err, so the caller keeps
 // waiting. The only error is a schema dirty at this binary's latest.
 func (p *Postgres) SchemaWaitState(ctx context.Context) (SchemaWait, error) {
-	version, dirty, exists, latest, err := p.schemaState(ctx)
+	st, err := p.schemaState(ctx)
 	if err != nil {
 		return SchemaWait{Class: SchemaReasonUnreadable, Reason: SchemaReasonUnreadable, Err: err}, nil //nolint:nilerr // a read failure is a reason to keep waiting, carried in Err
 	}
-	w, err := schemaWaitVerdict(version, exists, dirty, latest)
+	if reason := replacedReason(p.installationID, st.exists, st.installationID); reason != "" {
+		return SchemaWait{Class: SchemaReasonReplaced, Reason: reason, Detail: replacedDetail(p.installationID, st.installationID)}, nil
+	}
+	w, err := schemaWaitVerdict(st.version, st.exists, st.dirty, st.latest)
 	if w.Ahead {
 		// Boot proceeds, but say so: this binary is older than the database
 		// (a rollout in progress or a rollback).
 		slog.WarnContext(ctx, "database schema is ahead of this binary; proceeding (expand-contract assumed backward-compatible)",
-			"db_version", version, "binary_latest", latest)
+			"db_version", st.version, "binary_latest", st.latest)
 	}
 	return w, err
 }
@@ -235,17 +295,66 @@ func (p *Postgres) SchemaWaitState(ctx context.Context) (SchemaWait, error) {
 // boot, before the probes run.
 func (p *Postgres) SetSchemaObserver(observe func(class string)) { p.schemaObserver = observe }
 
+// SetOnReplaced registers what a readiness probe calls when it finds the
+// database replaced under this process (ADR 0090 decision 5); the server
+// stops on it. Set it once, at boot, before the probes run.
+func (p *Postgres) SetOnReplaced(f func()) { p.onReplaced = f }
+
+// schemaSnapshot is both sides of the comparison: what the database says and
+// what this binary embeds.
+type schemaSnapshot struct {
+	version       uint
+	dirty, exists bool
+	latest        uint
+	// installationID is the id the database carries, "" for none. It is read
+	// only when this process has one to compare.
+	installationID string
+}
+
 // schemaState gathers both sides of the comparison (what the database says and
 // what this binary embeds), so the boot gate and the readiness probe cannot
 // drift apart on either the query or the required version.
-func (p *Postgres) schemaState(ctx context.Context) (version uint, dirty, exists bool, latest uint, err error) {
-	latest, err = migrations.Latest()
+func (p *Postgres) schemaState(ctx context.Context) (schemaSnapshot, error) {
+	latest, err := migrations.Latest()
 	if err != nil {
-		return 0, false, false, 0, fmt.Errorf("reading embedded schema version: %w", err)
+		return schemaSnapshot{}, fmt.Errorf("reading embedded schema version: %w", err)
 	}
-	version, dirty, exists, err = p.SchemaVersion(ctx)
+	st := schemaSnapshot{latest: latest}
+	if p.installationID == "" {
+		st.version, st.dirty, st.exists, err = p.SchemaVersion(ctx)
+	} else {
+		st.version, st.dirty, st.exists, st.installationID, err = p.schemaVersionAndInstallation(ctx)
+	}
 	if err != nil {
-		return 0, false, false, 0, fmt.Errorf("reading database schema version: %w", err)
+		return schemaSnapshot{}, fmt.Errorf("reading database schema version: %w", err)
 	}
-	return version, dirty, exists, latest, nil
+	return st, nil
+}
+
+// schemaVersionAndInstallation reads the version and the installation id in
+// one probe query (ADR 0090 decision 5). A database without either table
+// fails that query; the version is then read alone, which tells an absent
+// schema from one older than the installation table, and the id is none.
+func (p *Postgres) schemaVersionAndInstallation(ctx context.Context) (version uint, dirty, exists bool, id string, err error) {
+	var v int64
+	var d bool
+	var got *string
+	row := p.probePool().QueryRow(ctx,
+		"SELECT m.version, m.dirty, (SELECT i.id FROM installation i) FROM schema_migrations m LIMIT 1")
+	if scanErr := row.Scan(&v, &d, &got); scanErr != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(scanErr, &pgErr) && pgErr.Code == "42P01" {
+			version, dirty, exists, err = p.SchemaVersion(ctx)
+			return version, dirty, exists, "", err
+		}
+		return 0, false, false, "", scanErr
+	}
+	if v < 0 {
+		return 0, false, false, "", fmt.Errorf("schema_migrations.version is negative (%d)", v)
+	}
+	if got != nil {
+		id = *got
+	}
+	// #nosec G115 -- a migration version is a small, non-negative counter.
+	return uint(v), d, true, id, nil
 }
