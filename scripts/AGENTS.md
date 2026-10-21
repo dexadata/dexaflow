@@ -25,3 +25,5 @@ Rules for changing the scripts that gate CI and cut releases. The root
   `GIT_PREFIX`). A git hook exports them, and `git -C "$tmp"` or `git init`
   then writes the fixture's commits, tags and `core.bare` into the repository
   being committed to.
+  `scripts/pre-commit` unsets them before its tests for the same reason, and
+  `check-pre-commit-git-env.sh` fails if it stops doing so.
