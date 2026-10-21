@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/logs"
 	"github.com/dexadata/dexaflow/internal/taskoutcome"
 )
@@ -30,7 +31,7 @@ type LogReader interface {
 //
 // tasks is consulted only on the no-logs path, to explain an empty log view; it
 // may be nil, which keeps that view exactly as it was.
-func serveLogs(c *gin.Context, reader LogReader, tasks TaskInstanceRepository, try int) {
+func serveLogs(c *gin.Context, reader LogReader, tasks TaskInstanceRepository, try int, ephemeralLogs bool) {
 	if reader == nil {
 		AbortProblem(c, http.StatusNotFound, "not found", "logs are not available")
 		return
@@ -41,7 +42,7 @@ func serveLogs(c *gin.Context, reader LogReader, tasks TaskInstanceRepository, t
 		// No stored logs for this attempt (e.g. it never ran, or the logs aged
 		// out / predate a backend change). Serve a graceful "no logs" rather than
 		// a 404 the UI renders as a broken page.
-		serveNoLogs(c, tasks, try)
+		serveNoLogs(c, tasks, try, ephemeralLogs)
 		return
 	}
 	if err != nil {
@@ -171,11 +172,15 @@ func (s *replaySkipper) next(line string) (logs.Event, bool) {
 // cause, it is appended here as an error-level event — the log view is the one
 // place in the stock Airflow UI an operator is already looking when an attempt
 // failed with nothing to show.
-func serveNoLogs(c *gin.Context, tasks TaskInstanceRepository, try int) {
+func serveNoLogs(c *gin.Context, tasks TaskInstanceRepository, try int, ephemeralLogs bool) {
 	const msg = "No logs available for this attempt."
 	events := []structuredLogEvent{{Event: msg, Level: "info"}}
-	if reason := attemptFailureReason(c, tasks, try); reason != "" {
+	reason, ran := attemptDetails(c, tasks, try)
+	if reason != "" {
 		events = append(events, structuredLogEvent{Event: reason, Level: "error"})
+	}
+	if ephemeralLogs && ran {
+		events = append(events, structuredLogEvent{Event: ephemeralLogsMsg, Level: "warning"})
 	}
 	switch negotiateLogFormat(c) {
 	case logFormatNDJSON:
@@ -198,28 +203,42 @@ func serveNoLogs(c *gin.Context, tasks TaskInstanceRepository, try int) {
 	c.String(http.StatusOK, body.String())
 }
 
-// attemptFailureReason returns the recorded cause for exactly this attempt, or ""
-// when there is none, the repository is absent, or the lookup fails. It is purely
-// explanatory, so every uncertain path degrades to the plain no-logs view.
+// ephemeralLogsMsg explains an empty log view for an attempt that ran while task
+// logs live on a pod's emptyDir (#1024): a control-plane restart dropped them, or
+// another replica's emptyDir holds them.
+const ephemeralLogsMsg = "Task logs are kept on ephemeral storage (logs.persistence.enabled=false with logs.sink.provider=disk): " +
+	"if this attempt wrote logs, they were lost when a control-plane pod restarted, or another replica holds them."
+
+// attemptDetails returns the recorded cause for exactly this attempt and whether
+// it ran to an end, or ("", false) when there is none, the repository is absent,
+// or the lookup fails. An attempt "ran" when it started and is no longer live: a
+// retried try is archived as up_for_retry, and skipped or upstream_failed tasks
+// that never started wrote nothing to lose. It is purely explanatory, so every uncertain
+// path degrades to the plain no-logs view.
 //
 // It matches on try_number rather than taking the task's current reason: a task
 // that failed on try 2 must not make try 1's empty log view claim a cause that
 // belongs to a different attempt.
-func attemptFailureReason(c *gin.Context, tasks TaskInstanceRepository, try int) string {
+func attemptDetails(c *gin.Context, tasks TaskInstanceRepository, try int) (reason string, ran bool) {
 	if tasks == nil {
-		return ""
+		return "", false
 	}
 	attempts, err := tasks.ListTaskInstanceAttempts(c.Request.Context(), tenantOf(c),
 		c.Param("dag_id"), c.Param("dag_run_id"), c.Param("task_id"))
 	if err != nil {
-		return ""
+		return "", false
 	}
 	for _, a := range attempts {
-		if a.TryNumber == try && a.FailureReason != "" {
-			return taskoutcome.TruncateReason(a.FailureReason, maxFailureReasonLen)
+		if a.TryNumber == try {
+			var r string
+			if a.FailureReason != "" {
+				r = taskoutcome.TruncateReason(a.FailureReason, maxFailureReasonLen)
+			}
+			ended := a.EndedAt != nil || a.State.IsTerminal() || a.State == domain.TaskStateUpForRetry
+			return r, a.StartedAt != nil && ended
 		}
 	}
-	return ""
+	return "", false
 }
 
 // tailLogs streams live log lines to the client until the task stops producing

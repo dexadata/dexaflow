@@ -354,6 +354,10 @@ spec:
               value: {{ .ctx.Values.config.logsDir | quote }}
             - name: LEOFLOW_LOGS_TAIL_PUBLISH
               value: {{ (.ctx.Values.logs.tail).publish | default "always" | quote }}
+            {{- if and (not .ctx.Values.logs.persistence.enabled) (eq .ctx.Values.logs.sink.provider "disk") }}
+            - name: LEOFLOW_LOGS_PERSISTENCE_ENABLED
+              value: "false"
+            {{- end }}
             {{- if ne .ctx.Values.logs.sink.provider "disk" }}
             # Object-store log backend (opt-in, ADR 0035/0056 keyless-first). With
             # provider s3 or gcs, task logs ship to a bucket instead of the PVC; set
