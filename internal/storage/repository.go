@@ -119,6 +119,52 @@ func mapNotFound(err error) error {
 // pgUniqueViolation is the Postgres SQLSTATE for a unique-constraint violation.
 const pgUniqueViolation = "23505"
 
+// pgForeignKeyViolation is the Postgres SQLSTATE for a foreign-key constraint violation.
+const pgForeignKeyViolation = "23503"
+
+// isTenantFKViolation reports whether err is a Postgres foreign-key violation
+// (SQLSTATE 23503) on a tenant_id column, which is how a write with a stale
+// cached tenant id fails: Postgres names the referenced table in the detail
+// ("is not present in table "tenants"") and every such constraint is named
+// <table>_tenant_id_fkey.
+func isTenantFKViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != pgForeignKeyViolation {
+		return false
+	}
+	return strings.Contains(pgErr.Detail, `table "tenants"`) ||
+		strings.HasSuffix(pgErr.ConstraintName, "tenant_id_fkey")
+}
+
+// InvalidateTenant evicts a tenant from the tenant ID cache, so the next
+// lookup re-queries the database. Code that deletes or recreates a tenant
+// behind this process calls it; nothing in this repository deletes a tenant.
+func (r *Repository) InvalidateTenant(name string) {
+	if r.tenants != nil {
+		r.tenants.Delete(name)
+	}
+}
+
+// withTenantWrite runs op with tenant's resolved UUID. If op fails with a
+// Postgres foreign key violation against tenants (SQLSTATE 23503), the cached
+// tenant mapping is dropped and op is retried once with the re-resolved UUID.
+// This handles tenants that were recreated or restored behind a running process.
+func (r *Repository) withTenantWrite(ctx context.Context, tenant string, op func(tid pgtype.UUID) error) error {
+	tid, err := r.tenantID(ctx, tenant)
+	if err != nil {
+		return err
+	}
+	err = op(tid)
+	if err != nil && isTenantFKViolation(err) {
+		r.InvalidateTenant(tenant)
+		freshTID, ferr := r.tenantID(ctx, tenant)
+		if ferr == nil && freshTID != tid {
+			return op(freshTID)
+		}
+	}
+	return err
+}
+
 // mapConflict translates a Postgres unique-constraint violation into
 // domain.ErrConflict (which the API maps to 409), leaving other errors as is — so
 // a duplicate write (e.g. a second dag run for the same logical date) surfaces as
@@ -135,12 +181,14 @@ func mapConflict(err error) error {
 }
 
 // tenantID resolves a tenant name to its id. Nearly every repository method
-// starts with it, so a resolved id is cached for the life of the process: a
-// tenant is never renamed or deleted (no query does either), so name -> id
-// cannot change. A miss is not cached, so a tenant created later is found.
-// The one way the mapping changes under a running process is outside it:
-// restoring a backup whose tenants carry different ids. Restart the control
-// plane after such a restore, or every query keeps using the old ids.
+// starts with it, so a resolved id is cached for the life of the process; a
+// miss is not cached, so a tenant created later is found. The mapping changes
+// under a running process only from outside it: a tenant recreated behind it,
+// or a restored backup whose tenants carry other ids. The writes an operator
+// makes right after such a restore (variables, connections, pools) go through
+// withTenantWrite, which drops the stale entry on a tenant foreign-key
+// violation and retries once (#1614). Other queries keep the old id until a
+// restart, which is why the restore guide still says to restart.
 func (r *Repository) tenantID(ctx context.Context, name string) (pgtype.UUID, error) {
 	if r.tenants != nil {
 		if id, ok := r.tenants.Load(name); ok {
@@ -2477,20 +2525,18 @@ func (r *Repository) GetVariable(ctx context.Context, tenant, key string) (domai
 // storage tests and internal callers use; the tri-state API write path goes
 // through SetVariablePatch.
 func (r *Repository) SetVariable(ctx context.Context, tenant string, v domain.Variable) error {
-	tid, err := r.tenantID(ctx, tenant)
-	if err != nil {
-		return err
-	}
 	stored, err := r.sealVariable(v.Value)
 	if err != nil {
 		return err
 	}
-	if err := r.q.UpsertVariable(ctx, queries.UpsertVariableParams{
-		TenantID: tid, Key: v.Key, Value: stored, Description: strPtr(v.Description),
-	}); err != nil {
-		return fmt.Errorf("upserting variable: %w", err)
-	}
-	return nil
+	return r.withTenantWrite(ctx, tenant, func(tid pgtype.UUID) error {
+		if err := r.q.UpsertVariable(ctx, queries.UpsertVariableParams{
+			TenantID: tid, Key: v.Key, Value: stored, Description: strPtr(v.Description),
+		}); err != nil {
+			return fmt.Errorf("upserting variable: %w", err)
+		}
+		return nil
+	})
 }
 
 // SetVariablePatch upserts a variable with tri-state semantics on description
@@ -2501,10 +2547,6 @@ func (r *Repository) SetVariable(ctx context.Context, tenant string, v domain.Va
 // stored value before calling here, and Value is expected non-nil (a nil Value
 // defensively clears to empty rather than panicking).
 func (r *Repository) SetVariablePatch(ctx context.Context, tenant string, p domain.VariablePatch) error {
-	tid, err := r.tenantID(ctx, tenant)
-	if err != nil {
-		return err
-	}
 	value := ""
 	if p.Value != nil {
 		value = *p.Value
@@ -2513,12 +2555,14 @@ func (r *Repository) SetVariablePatch(ctx context.Context, tenant string, p doma
 	if err != nil {
 		return err
 	}
-	if err := r.q.UpsertVariable(ctx, queries.UpsertVariableParams{
-		TenantID: tid, Key: p.Key, Value: stored, Description: p.Description,
-	}); err != nil {
-		return fmt.Errorf("upserting variable: %w", err)
-	}
-	return nil
+	return r.withTenantWrite(ctx, tenant, func(tid pgtype.UUID) error {
+		if err := r.q.UpsertVariable(ctx, queries.UpsertVariableParams{
+			TenantID: tid, Key: p.Key, Value: stored, Description: p.Description,
+		}); err != nil {
+			return fmt.Errorf("upserting variable: %w", err)
+		}
+		return nil
+	})
 }
 
 // DeleteVariable removes a variable, returning ErrNotFound when none matched.
@@ -2556,10 +2600,6 @@ func (r *Repository) SetConnection(ctx context.Context, tenant string, c domain.
 	if r.cipher == nil {
 		return secrets.ErrNoKey
 	}
-	tid, err := r.tenantID(ctx, tenant)
-	if err != nil {
-		return err
-	}
 	encPass, err := r.encOrEmpty(c.Password)
 	if err != nil {
 		return fmt.Errorf("encrypting password: %w", err)
@@ -2573,10 +2613,12 @@ func (r *Repository) SetConnection(ctx context.Context, tenant string, c domain.
 		p := toInt32(*c.Port)
 		port = &p
 	}
-	return r.q.UpsertConnection(ctx, queries.UpsertConnectionParams{
-		TenantID: tid, ConnID: c.ConnID, ConnType: c.ConnType,
-		Host: strPtr(c.Host), ConnSchema: strPtr(c.Schema), Login: strPtr(c.Login),
-		Password: encPass, Port: port, Extra: encExtra, Description: strPtr(c.Description),
+	return r.withTenantWrite(ctx, tenant, func(tid pgtype.UUID) error {
+		return r.q.UpsertConnection(ctx, queries.UpsertConnectionParams{
+			TenantID: tid, ConnID: c.ConnID, ConnType: c.ConnType,
+			Host: strPtr(c.Host), ConnSchema: strPtr(c.Schema), Login: strPtr(c.Login),
+			Password: encPass, Port: port, Extra: encExtra, Description: strPtr(c.Description),
+		})
 	})
 }
 
@@ -2614,10 +2656,6 @@ func (r *Repository) SetConnectionPatch(ctx context.Context, tenant string, p do
 	if r.cipher == nil {
 		return secrets.ErrNoKey
 	}
-	tid, err := r.tenantID(ctx, tenant)
-	if err != nil {
-		return err
-	}
 	encPass, err := r.encPatch(p.Password)
 	if err != nil {
 		return fmt.Errorf("encrypting password: %w", err)
@@ -2631,10 +2669,12 @@ func (r *Repository) SetConnectionPatch(ctx context.Context, tenant string, p do
 		pp := toInt32(*p.Port)
 		port = &pp
 	}
-	return r.q.UpsertConnection(ctx, queries.UpsertConnectionParams{
-		TenantID: tid, ConnID: p.ConnID, ConnType: p.ConnType,
-		Host: p.Host, ConnSchema: p.Schema, Login: p.Login,
-		Password: encPass, Port: port, Extra: encExtra, Description: p.Description,
+	return r.withTenantWrite(ctx, tenant, func(tid pgtype.UUID) error {
+		return r.q.UpsertConnection(ctx, queries.UpsertConnectionParams{
+			TenantID: tid, ConnID: p.ConnID, ConnType: p.ConnType,
+			Host: p.Host, ConnSchema: p.Schema, Login: p.Login,
+			Password: encPass, Port: port, Extra: encExtra, Description: p.Description,
+		})
 	})
 }
 
@@ -2847,6 +2887,9 @@ func (r *Repository) EnsureTenant(ctx context.Context, name, displayName string,
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("committing ensure-tenant tx: %w", err)
+	}
+	if r.tenants != nil {
+		r.tenants.Store(name, t.ID)
 	}
 	return n > 0, nil
 }
