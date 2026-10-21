@@ -249,6 +249,12 @@ type Store interface {
 	// re-offered once the backoff elapses but never accumulates toward the
 	// dispatch_failed cap (ADR 0053).
 	RecordDispatchBackpressure(ctx context.Context, runID, taskID string, nextAt time.Time) error
+	// RecordDispatchUnavailable re-offers a task whose pod create met an
+	// unavailable Kubernetes API, WITHOUT incrementing dispatch_attempts, held
+	// for the time already spent in the outage clamped to [minDelay, maxDelay].
+	// It returns when the task's outage window started and the next attempt;
+	// applied is false when the task is no longer scheduled or queued (ADR 0093).
+	RecordDispatchUnavailable(ctx context.Context, runID, taskID string, now time.Time, minDelay, maxDelay time.Duration) (since, nextAt time.Time, applied bool, err error)
 	// FailDispatchExhausted fails a scheduled task as dispatch_failed once its
 	// dispatch-attempt budget is spent, so the run finalizes instead of looping.
 	FailDispatchExhausted(ctx context.Context, runID, taskID, reason string) error
@@ -1533,7 +1539,10 @@ func (s *Scheduler) launchQueued(ctx context.Context, run RunState, t PlannedTra
 // failing the user's task because the cluster asked it to slow down. The
 // disposition that split is decided on is classified on the execution layer and
 // arrives typed over the seam (ADR 0051 Phase 4), so the scheduler never inspects
-// Kubernetes error types itself.
+// Kubernetes error types itself. An unavailable Kubernetes API (a 503, a 504,
+// a 500, a connection refused or reset, the client deadline) is split out
+// too: it is re-offered off the budget as well, but bounded in time by
+// dispatchUnavailableWindow (ADR 0093, handleUnavailable).
 func (s *Scheduler) handleDispatchFailure(ctx context.Context, run RunState, taskID string, disp executor.Disposition, cause error) error {
 	if disp == executor.Deferred {
 		// The dispatch never left the control plane (the buffered dispatch queue
@@ -1547,6 +1556,9 @@ func (s *Scheduler) handleDispatchFailure(ctx context.Context, run RunState, tas
 	}
 	if disp == executor.Backpressure {
 		return s.backoffBackpressure(ctx, run, taskID, cause)
+	}
+	if disp == executor.Unavailable {
+		return s.handleUnavailable(ctx, run, taskID, cause)
 	}
 	if disp == executor.Refused {
 		// A permanent verdict (ADR 0066 §3): retrying cannot change it, so the

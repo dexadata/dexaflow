@@ -144,6 +144,17 @@ func (q *queuedRows) RequeueDispatch(_ context.Context, _, taskID string, countA
 	return true, nil
 }
 
+func (q *queuedRows) RecordDispatchUnavailable(_ context.Context, _, taskID string, now time.Time, minDelay, _ time.Duration) (since, nextAt time.Time, applied bool, err error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if _, ok := q.queued[taskID]; !ok {
+		return time.Time{}, time.Time{}, false, nil
+	}
+	delete(q.queued, taskID)
+	q.requeued[taskID] = true
+	return now, now.Add(minDelay), true, nil
+}
+
 func (q *queuedRows) MarkTaskDispatchFailed(context.Context, string, string, string) error {
 	return nil
 }

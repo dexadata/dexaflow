@@ -67,6 +67,10 @@ type fakeAsyncStore struct {
 	failed    []string
 	refused   []string
 	failNotes []string
+	// unavailableSince is the outage window the store returns for an
+	// unavailable re-offer; zero means the window starts at the call.
+	unavailableSince time.Time
+	unavailable      []asyncRequeue
 }
 
 type asyncRequeue struct {
@@ -82,6 +86,18 @@ func (f *fakeAsyncStore) DispatchAttempts(_ context.Context, _, _ string) (attem
 func (f *fakeAsyncStore) RequeueDispatch(_ context.Context, _, taskID string, countAttempt bool, nextAt time.Time) (bool, error) {
 	f.requeued = append(f.requeued, asyncRequeue{taskID, countAttempt, nextAt})
 	return true, nil
+}
+
+func (f *fakeAsyncStore) RecordDispatchUnavailable(_ context.Context, _, taskID string, now time.Time, minDelay, maxDelay time.Duration) (since, nextAt time.Time, applied bool, err error) {
+	if !f.active {
+		return time.Time{}, time.Time{}, false, nil
+	}
+	if f.unavailableSince.IsZero() {
+		f.unavailableSince = now
+	}
+	nextAt = now.Add(min(max(now.Sub(f.unavailableSince), minDelay), maxDelay))
+	f.unavailable = append(f.unavailable, asyncRequeue{taskID, false, nextAt})
+	return f.unavailableSince, nextAt, true, nil
 }
 
 func (f *fakeAsyncStore) FailDispatchRefused(_ context.Context, _, taskID, reason string) error {
