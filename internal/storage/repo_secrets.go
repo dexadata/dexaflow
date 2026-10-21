@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/secrets"
 	"github.com/dexadata/dexaflow/internal/storage/queries"
@@ -234,20 +236,18 @@ func (r *Repository) GetVariable(ctx context.Context, tenant, key string) (domai
 // storage tests and internal callers use; the tri-state API write path goes
 // through SetVariablePatch.
 func (r *Repository) SetVariable(ctx context.Context, tenant string, v domain.Variable) error {
-	tid, err := r.tenantID(ctx, tenant)
-	if err != nil {
-		return err
-	}
 	stored, err := r.sealVariable(v.Value)
 	if err != nil {
 		return err
 	}
-	if err := r.q.UpsertVariable(ctx, queries.UpsertVariableParams{
-		TenantID: tid, Key: v.Key, Value: stored, Description: strPtr(v.Description),
-	}); err != nil {
-		return fmt.Errorf("upserting variable: %w", err)
-	}
-	return nil
+	return r.withTenantWrite(ctx, tenant, func(tid pgtype.UUID) error {
+		if err := r.q.UpsertVariable(ctx, queries.UpsertVariableParams{
+			TenantID: tid, Key: v.Key, Value: stored, Description: strPtr(v.Description),
+		}); err != nil {
+			return fmt.Errorf("upserting variable: %w", err)
+		}
+		return nil
+	})
 }
 
 // SetVariablePatch upserts a variable with tri-state semantics on description
@@ -258,10 +258,6 @@ func (r *Repository) SetVariable(ctx context.Context, tenant string, v domain.Va
 // stored value before calling here, and Value is expected non-nil (a nil Value
 // defensively clears to empty rather than panicking).
 func (r *Repository) SetVariablePatch(ctx context.Context, tenant string, p domain.VariablePatch) error {
-	tid, err := r.tenantID(ctx, tenant)
-	if err != nil {
-		return err
-	}
 	value := ""
 	if p.Value != nil {
 		value = *p.Value
@@ -270,12 +266,14 @@ func (r *Repository) SetVariablePatch(ctx context.Context, tenant string, p doma
 	if err != nil {
 		return err
 	}
-	if err := r.q.UpsertVariable(ctx, queries.UpsertVariableParams{
-		TenantID: tid, Key: p.Key, Value: stored, Description: p.Description,
-	}); err != nil {
-		return fmt.Errorf("upserting variable: %w", err)
-	}
-	return nil
+	return r.withTenantWrite(ctx, tenant, func(tid pgtype.UUID) error {
+		if err := r.q.UpsertVariable(ctx, queries.UpsertVariableParams{
+			TenantID: tid, Key: p.Key, Value: stored, Description: p.Description,
+		}); err != nil {
+			return fmt.Errorf("upserting variable: %w", err)
+		}
+		return nil
+	})
 }
 
 // DeleteVariable removes a variable, returning ErrNotFound when none matched.
@@ -313,10 +311,6 @@ func (r *Repository) SetConnection(ctx context.Context, tenant string, c domain.
 	if r.cipher == nil {
 		return secrets.ErrNoKey
 	}
-	tid, err := r.tenantID(ctx, tenant)
-	if err != nil {
-		return err
-	}
 	encPass, err := r.encOrEmpty(c.Password)
 	if err != nil {
 		return fmt.Errorf("encrypting password: %w", err)
@@ -330,10 +324,12 @@ func (r *Repository) SetConnection(ctx context.Context, tenant string, c domain.
 		p := toInt32(*c.Port)
 		port = &p
 	}
-	return r.q.UpsertConnection(ctx, queries.UpsertConnectionParams{
-		TenantID: tid, ConnID: c.ConnID, ConnType: c.ConnType,
-		Host: strPtr(c.Host), ConnSchema: strPtr(c.Schema), Login: strPtr(c.Login),
-		Password: encPass, Port: port, Extra: encExtra, Description: strPtr(c.Description),
+	return r.withTenantWrite(ctx, tenant, func(tid pgtype.UUID) error {
+		return r.q.UpsertConnection(ctx, queries.UpsertConnectionParams{
+			TenantID: tid, ConnID: c.ConnID, ConnType: c.ConnType,
+			Host: strPtr(c.Host), ConnSchema: strPtr(c.Schema), Login: strPtr(c.Login),
+			Password: encPass, Port: port, Extra: encExtra, Description: strPtr(c.Description),
+		})
 	})
 }
 
@@ -371,10 +367,6 @@ func (r *Repository) SetConnectionPatch(ctx context.Context, tenant string, p do
 	if r.cipher == nil {
 		return secrets.ErrNoKey
 	}
-	tid, err := r.tenantID(ctx, tenant)
-	if err != nil {
-		return err
-	}
 	encPass, err := r.encPatch(p.Password)
 	if err != nil {
 		return fmt.Errorf("encrypting password: %w", err)
@@ -388,10 +380,12 @@ func (r *Repository) SetConnectionPatch(ctx context.Context, tenant string, p do
 		pp := toInt32(*p.Port)
 		port = &pp
 	}
-	return r.q.UpsertConnection(ctx, queries.UpsertConnectionParams{
-		TenantID: tid, ConnID: p.ConnID, ConnType: p.ConnType,
-		Host: p.Host, ConnSchema: p.Schema, Login: p.Login,
-		Password: encPass, Port: port, Extra: encExtra, Description: p.Description,
+	return r.withTenantWrite(ctx, tenant, func(tid pgtype.UUID) error {
+		return r.q.UpsertConnection(ctx, queries.UpsertConnectionParams{
+			TenantID: tid, ConnID: p.ConnID, ConnType: p.ConnType,
+			Host: p.Host, ConnSchema: p.Schema, Login: p.Login,
+			Password: encPass, Port: port, Extra: encExtra, Description: p.Description,
+		})
 	})
 }
 

@@ -76,6 +76,9 @@ func (r *Repository) EnsureTenant(ctx context.Context, name, displayName string,
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("committing ensure-tenant tx: %w", err)
 	}
+	if r.tenants != nil {
+		r.tenants.Store(name, t.ID)
+	}
 	return n > 0, nil
 }
 
