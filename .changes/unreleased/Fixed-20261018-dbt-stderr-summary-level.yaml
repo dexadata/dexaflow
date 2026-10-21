@@ -1,0 +1,9 @@
+kind: Fixed
+body: |-
+  **A dbt run summary line printed to stderr is no longer mislabeled as ERROR when there are no errors.**
+  dbt prints its end-of-run summary (e.g. `Done. PASS=24 WARN=0 ERROR=0 SKIP=0`) to stderr
+  in some environments, which caused the log level refiner to label successful tasks as ERROR
+  due to the presence of the `ERROR=0` substring. The refiner now recognizes dbt summary patterns,
+  coloring runs with `ERROR=0` as info (or warning when warnings are present) instead of forcing
+  them to error. (#870)
+time: 2026-10-18T20:48:00.000000000+00:00

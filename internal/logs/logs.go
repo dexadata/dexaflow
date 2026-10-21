@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -74,6 +75,9 @@ func RefineLevel(line, fallback string) string {
 // loggers) to avoid false positives from ordinary lowercase prose. error is
 // checked first so "ERROR" wins over a stray "INFO" later in the same line.
 func levelFromContent(line string) (string, bool) {
+	if lvl, ok := dbtSummaryLevel(line); ok {
+		return lvl, true
+	}
 	switch {
 	case containsAny(line, "ERROR", "CRITICAL", "FATAL", "Traceback", "Exception"):
 		return "error", true
@@ -86,6 +90,28 @@ func levelFromContent(line string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// dbtSummaryRe matches dbt's end-of-run counts, e.g.
+// "Done. PASS=24 WARN=0 ERROR=0 SKIP=0 TOTAL=24", capturing WARN (optional)
+// and ERROR.
+var dbtSummaryRe = regexp.MustCompile(`\bPASS=\d+\s+(?:WARN=(\d+)\s+)?ERROR=(\d+)\b`)
+
+// dbtSummaryLevel reports the severity of a dbt run summary line, which dbt
+// prints to stderr even on complete success (#870): info when ERROR=0 and
+// WARN=0, warning when only WARN is non-zero, error when ERROR is non-zero.
+func dbtSummaryLevel(line string) (string, bool) {
+	m := dbtSummaryRe.FindStringSubmatch(line)
+	if m == nil {
+		return "", false
+	}
+	switch {
+	case strings.TrimLeft(m[2], "0") != "":
+		return "error", true
+	case strings.TrimLeft(m[1], "0") != "":
+		return "warning", true
+	}
+	return "info", true
 }
 
 // containsAny reports whether s contains any of the given substrings.
