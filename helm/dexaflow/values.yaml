@@ -590,6 +590,16 @@ bootstrap:
 
 # migrations runs golang-migrate as a pre-install/pre-upgrade hook Job before the
 # server starts. The image must contain the migrations and migrate binary.
+# The installation id of ADR 0090 decision 3, which tells a database that was
+# emptied, restored from another installation or repointed from the one this
+# release was installed on. The migration Job keeps it in the database and in a
+# ConfigMap (<fullname>-installation) it creates itself; the control plane
+# reads it from there and stays not ready, with the reason `database replaced`,
+# when the database carries another id or none.
+installation:
+  # -- Pins the installation id. Leave it empty: a first install generates one. Set it to accept a replaced database, once: to the id the database carries to adopt a database from another installation, or to a new id for an emptied database, which the migration Job then writes. 1 to 128 letters, digits, `.`, `_` or `-`. See [a replaced database](https://dexaflow.dexadata.ai/operate/troubleshooting/#a-replaced-database).
+  id: ""
+
 migrations:
   enabled: true
   image:

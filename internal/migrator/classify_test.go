@@ -165,7 +165,7 @@ func TestDeterministicExitCodesExcludeTransientOnes(t *testing.T) {
 			t.Fatalf("deterministic set contains %d, which a retryable error returns", c)
 		}
 	}
-	want := map[int]bool{ExitUsage: true, ExitBadDSN: true, ExitMissingDatabase: true, ExitAuth: true, ExitMissingCA: true, ExitDirty: true}
+	want := map[int]bool{ExitUsage: true, ExitBadDSN: true, ExitMissingDatabase: true, ExitAuth: true, ExitMissingCA: true, ExitDirty: true, ExitReplaced: true}
 	got := DeterministicExitCodes()
 	if len(got) != len(want) {
 		t.Fatalf("DeterministicExitCodes() = %v, want the %d codes of %v", got, len(want), want)

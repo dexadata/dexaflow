@@ -132,6 +132,41 @@ and it is not a key any control-plane selector can match alone.
 scripts/check-migrate-pod-selection.sh renders the chart and asserts no
 Service/PDB selector is a subset of this map, in every mode.
 */}}
+{{/*
+Name of the installation ConfigMap (ADR 0090 decision 3). The migrate wrapper
+creates and updates it; the chart never renders it, so `helm uninstall` leaves
+it in place and a reinstall against an emptied database reads as a replaced
+one. The control plane reads its id through DEXAFLOW_DATABASE_INSTALLATION_ID.
+*/}}
+{{- define "leoflow.installationConfigMapName" -}}
+{{- printf "%s-installation" (include "leoflow.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{/* The migration Job's ServiceAccount, Role and RoleBinding name. */}}
+{{- define "leoflow.migrateServiceAccountName" -}}
+{{- printf "%s-migrate" (include "leoflow.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{/* Hook annotations of the migration Job's RBAC: before the Job (weight 0). */}}
+{{- define "leoflow.migrateRBACHookAnnotations" -}}
+"helm.sh/hook": pre-install,pre-upgrade
+"helm.sh/hook-weight": "-5"
+"helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+{{- end -}}
+
+{{/*
+installation.id, refused unless it is a name the wrapper accepts: 1 to 128
+letters, digits, '.', '_' or '-', starting with a letter or digit
+(internal/migrator validInstallationID).
+*/}}
+{{- define "leoflow.installationID" -}}
+{{- $id := (.Values.installation | default dict).id | default "" | toString -}}
+{{- if and $id (not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" $id)) -}}
+{{- fail (printf "installation.id %q is not 1 to 128 letters, digits, '.', '_' or '-', starting with a letter or digit" $id) -}}
+{{- end -}}
+{{- $id -}}
+{{- end -}}
+
 {{- define "leoflow.migratePodLabels" -}}
 app.kubernetes.io/name: {{ include "leoflow.migrateName" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}

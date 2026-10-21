@@ -283,6 +283,12 @@ type ImportError struct {
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
+type Installation struct {
+	Singleton  bool               `json:"singleton"`
+	ID         string             `json:"id"`
+	RecordedAt pgtype.Timestamptz `json:"recorded_at"`
+}
+
 type Permission struct {
 	ID          pgtype.UUID `json:"id"`
 	Action      string      `json:"action"`

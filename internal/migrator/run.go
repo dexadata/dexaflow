@@ -27,6 +27,18 @@ type options struct {
 	lockTimeout    time.Duration
 	prefetch       uint
 	connectTimeout time.Duration
+	// installConfigMap and installNamespace name the installation ConfigMap;
+	// installID is the chart's installation.id. Empty installConfigMap runs
+	// without the installation id.
+	installConfigMap string
+	installNamespace string
+	installID        string
+}
+
+// tracksInstallation reports whether this run checks and records the
+// installation id: a plain `up` with the ConfigMap named.
+func (o options) tracksInstallation(c command) bool {
+	return o.installConfigMap != "" && c.name == "up" && !c.hasN
 }
 
 // opened is a migrator ready to run a command, with the target it points at.
