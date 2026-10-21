@@ -33,28 +33,87 @@ ALLOWLIST="scripts/go-file-length-allowlist.txt"
 # is_candidate exits 0 when the repository-relative path $1 is a Go production
 # file: a .go file that is not a test and not under a testdata directory.
 is_candidate() { # <path>
-	return 2
+	case "$1" in
+	*_test.go | testdata/* | */testdata/*) return 1 ;;
+	*.go) return 0 ;;
+	esac
+	return 1
 }
 
 # is_generated reads Go source on stdin and exits 0 when it carries the
 # standard "// Code generated ... DO NOT EDIT." marker before the package
 # clause (https://go.dev/s/generatedcode).
 is_generated() {
-	return 2
+	awk '
+		/^\/\/ Code generated .* DO NOT EDIT\.$/ { found = 1; exit }
+		/^package[[:space:]]/ { exit }
+		END { exit !found }
+	'
 }
 
 # measure reads repository-relative paths on stdin and prints
 # "<path><TAB><lines>" for each one that is a Go production file, exists and is
 # not generated.
 measure() {
-	return 2
+	local path
+	while IFS= read -r path; do
+		is_candidate "$path" || continue
+		[ -f "$path" ] || continue
+		is_generated <"$path" && continue
+		printf '%s\t%s\n' "$path" "$(awk 'END { print NR }' "$path")"
+	done
 }
 
 # judge reads measure's output on stdin and the allowlist from $2, prints one
 # "FAIL: ..." line per violation of the rule above for limit $1, and exits
 # non-zero when there is any.
+#
+# Entries are "<path> <lines>", one per line; "#" starts a comment.
 judge() { # <limit> <allowlist>
-	return 2
+	awk -v limit="$1" -v list="$2" -v q="'" '
+		function fail(msg) { print "FAIL: " msg; bad = 1 }
+		BEGIN {
+			FS = "\t"
+			n = 0
+			while ((getline line < list) > 0) {
+				n++
+				sub(/#.*/, "", line)
+				sub(/[[:space:]]+$/, "", line)
+				sub(/^[[:space:]]+/, "", line)
+				if (line == "") continue
+				if (line !~ /^[^[:space:]]+[[:space:]]+[0-9]+$/) {
+					fail(list ":" n ": malformed entry \"" line "\"; want \"<path> <lines>\"")
+					continue
+				}
+				split(line, f, /[[:space:]]+/)
+				p = f[1]; c = f[2] + 0
+				if (p in allowed) { fail(list ":" n ": " p " is listed more than once"); continue }
+				allowed[p] = c
+				if (c <= limit) fail(list ":" n ": " p " is recorded at " c " lines, at or under the limit of " limit "; an entry is only for a file over it, so remove it")
+			}
+			close(list)
+		}
+		{
+			p = $1; c = $2 + 0
+			seen[p] = 1
+			if (!(p in allowed)) {
+				if (c > limit) fail(p " has " c " lines, over the limit of " limit ". Keep it at or under " limit ": split it by concern into files of the same package (#1580).")
+				next
+			}
+			if (allowed[p] <= limit) next
+			if (c > allowed[p]) {
+				fail(p " grew to " c " lines; " list " pins it at " allowed[p] ". Move the new code to another file of the package instead of growing this one.")
+			} else if (c <= limit) {
+				fail(p " is down to " c " lines, at or under the limit of " limit ": remove its entry from " list ".")
+			} else if (c < allowed[p]) {
+				fail(p " shrank to " c " lines from " allowed[p] ": lower its entry to " q p " " c q " in " list ", so it cannot grow back.")
+			}
+		}
+		END {
+			for (p in allowed) if (!(p in seen)) fail(list ": " p " is listed but is not a Go production file any more (deleted, renamed, a test or generated): remove its entry.")
+			exit bad
+		}
+	'
 }
 
 self_test() {
