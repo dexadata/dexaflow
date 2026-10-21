@@ -1215,6 +1215,10 @@ func patchTaskInstanceHandler(repo TaskInstanceRepository, runs DagRunRepository
 			abortNotAvailable(c, featureStateStore)
 			return
 		}
+		if action == "xcomEntries" || strings.HasPrefix(action, "xcomEntries/") {
+			abortNotAvailable(c, featureUpdateXCom)
+			return
+		}
 		dryRun := action == "dry_run" || strings.HasSuffix(action, "/dry_run")
 		var body markStateRequest
 		if err := c.ShouldBindJSON(&body); err != nil {
