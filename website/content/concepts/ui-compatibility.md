@@ -401,4 +401,19 @@ Known gaps the 3.3 UI exposes, none of them a crash:
     (`PUT`, `PATCH`) and deleting answer `501`.
   - Partitioned runs: `GET /ui/partitioned_dag_runs` answers an empty list and
     `GET /ui/pending_partitioned_dag_run/{dag_id}` answers `501`.
+  - Bulk actions on task instances (`PATCH .../dagRuns/{dag_run_id}/taskInstances`)
+    and deleting a task instance (`DELETE .../taskInstances/{task_id}`). Clear
+    or mark the task instances one at a time.
+  - Bulk edits of variables and connections (`PATCH /api/v2/variables`,
+    `PATCH /api/v2/connections`). Edit or delete them one at a time.
+  - Creating, updating and deleting XCom entries under
+    `.../taskInstances/{task_id}/xcomEntries`. Reading them works.
+  - Reparsing a DAG file (`PUT /api/v2/parseDagFile/{file_token}`). Dexaflow
+    registers DAGs with `dexaflow deploy` or `dexaflow push`, not by parsing a
+    DAGs folder.
+  - Asset events: `GET .../dagRuns/{dag_run_id}/upstreamAssetEvents` and the
+    queued event reads (`/api/v2/assets/{asset_id}/queuedEvents`,
+    `/api/v2/dags/{dag_id}/assets/queuedEvents` and
+    `/api/v2/dags/{dag_id}/assets/{asset_id}/queuedEvents`) answer empty
+    collections; clearing queued events (`DELETE` on those paths) answers `501`.
 
