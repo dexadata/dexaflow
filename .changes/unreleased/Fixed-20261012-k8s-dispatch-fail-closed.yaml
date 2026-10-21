@@ -1,3 +1,0 @@
-kind: Fixed
-body: '**The control plane now fails closed at boot when the Kubernetes executor has no Kubernetes client (#704).** A scheduler on `executor.type=kubernetes` (the default) that found neither an in-cluster config nor a kubeconfig logged a warning and booted with pod dispatch unwired, so `/readyz` stayed green while every task failed as undispatchable. It now refuses to start with an error naming the missing client, the same posture the `exchange` agent-token transport took in #700. A setup without a cluster sets `executor.type=subprocess`; the Compose demo stack and the clusterless e2e scripts now do.'
-time: 2026-10-12T12:00:00.000000+00:00
