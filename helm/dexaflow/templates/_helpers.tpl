@@ -845,3 +845,20 @@ release in the same namespace is never consulted.
 {{- end -}}
 {{- $found -}}
 {{- end -}}
+
+{{/*
+Labels of the optional maintenance page (#1998). Its own application name, so
+no control-plane Service or PodDisruptionBudget selects its pods.
+*/}}
+{{- define "leoflow.maintenanceSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "leoflow.suffixRole" (dict "base" (include "leoflow.name" .) "role" "maintenance") }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: maintenance
+{{- end -}}
+
+{{- define "leoflow.maintenanceLabels" -}}
+helm.sh/chart: {{ include "leoflow.chart" . }}
+{{ include "leoflow.maintenanceSelectorLabels" . }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
