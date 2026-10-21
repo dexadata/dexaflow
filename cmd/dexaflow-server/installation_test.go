@@ -91,3 +91,46 @@ func TestServeExit(t *testing.T) {
 		t.Errorf("serveExit = %v, want the lost key lock", err)
 	}
 }
+
+// migrations.onBoot (ADR 0090 decision 4) migrates only an absent or behind
+// schema: never one ahead, dirty or unreadable, and never a replaced
+// database, which migrating would turn into an empty, healthy control plane.
+func TestMigrateOnBootOnlyOnAbsentOrBehind(t *testing.T) {
+	cases := []struct {
+		verdict storage.SchemaWait
+		migrate bool
+	}{
+		{waitAbsent, true},
+		{waitBehind, true},
+		{waitReady, false},
+		{storage.SchemaWait{Ahead: true}, false},
+		{storage.SchemaWait{Class: storage.SchemaReasonDirty, Reason: "schema dirty at v40"}, false},
+		{storage.SchemaWait{Class: storage.SchemaReasonUnreadable, Reason: "schema unreadable"}, false},
+		{storage.SchemaWait{Class: storage.SchemaReasonReplaced, Reason: "database replaced: no schema"}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.verdict.Class+c.verdict.Reason, func(t *testing.T) {
+			var ran int
+			var logs bytes.Buffer
+			migrateOnBoot(t.Context(), &scriptedSchema{script: []storage.SchemaWait{c.verdict}},
+				func(context.Context) error { ran++; return nil }, slog.New(slog.NewJSONHandler(&logs, nil)))
+			if (ran == 1) != c.migrate {
+				t.Errorf("migrated %d times on %+v, want migrate=%v", ran, c.verdict, c.migrate)
+			}
+		})
+	}
+}
+
+// A failed self-migration is logged and boot goes on to wait, as it would
+// without onBoot: the hook Job may still bring the schema current.
+func TestMigrateOnBootFailureFallsBackToTheWait(t *testing.T) {
+	var logs bytes.Buffer
+	migrateOnBoot(t.Context(), &scriptedSchema{script: []storage.SchemaWait{waitBehind}},
+		func(context.Context) error { return errors.New("permission denied for schema public") },
+		slog.New(slog.NewJSONHandler(&logs, nil)))
+	lines := jsonLines(t, &logs)
+	last := lines[len(lines)-1]
+	if last["level"] != "WARN" || !strings.Contains(fmt.Sprint(last["error"]), "permission denied") {
+		t.Errorf("last log line = %v, want a WARN with the migration error", last)
+	}
+}

@@ -602,6 +602,8 @@ installation:
 
 migrations:
   enabled: true
+  # -- Let the control plane apply the embedded migrations itself at boot when the schema is absent or behind (ADR 0090 decision 4), never when it is ahead or dirty or the database is reported as replaced. Rendered on the `all` role, and in split mode on the scheduler only: the api role never migrates. The server's `database.url` must then be allowed to run DDL. The hook Job above stays the default path and keeps the ordering an upgrade needs; this covers what the hook cannot see, such as `migrations.enabled=false` installs and a `database.url` repointed between upgrades. golang-migrate's advisory lock serializes the two.
+  onBoot: false
   image:
     # -- leoflow-migrate image: the golang-migrate CLI compiled from the version in our `go.mod`, plus the Dexaflow SQL migrations, on distroless static. Published per release by `release.yaml`, signed with cosign, multi-arch (amd64 + arm64).
     repository: ghcr.io/dexadata/dexaflow-migrate

@@ -819,6 +819,12 @@ type DatabaseSection struct {
 	// makes a running server exit. Empty (the default, and Lite) checks
 	// nothing.
 	InstallationID string `mapstructure:"installation_id"`
+	// MigrateOnBoot (DEXAFLOW_DATABASE_MIGRATE_ON_BOOT, default false; Helm
+	// migrations.onBoot) applies the embedded migrations at boot when the
+	// schema is absent or behind, never when it is ahead, dirty or a replaced
+	// database (ADR 0090 decision 4). It needs a DSN that may run DDL, and the
+	// api role refuses it.
+	MigrateOnBoot bool `mapstructure:"migrate_on_boot"`
 }
 
 // RedisSection configures the Redis connection.
@@ -1325,6 +1331,9 @@ var serverDefaults = map[string]any{
 	// Empty by default: no installation id is compared (Lite, and installs
 	// whose migration step does not record one). The chart sets it.
 	"database.installation_id": "",
+	// Off by default: migrations run in the chart's hook Job (ADR 0090
+	// decision 4 makes self-migration opt-in).
+	"database.migrate_on_boot": false,
 	// Empty by default: no Redis configured selects the embedded edition (Lite —
 	// XCom on Postgres, in-process log tailer, ADR 0026). Production sets this
 	// explicitly via the Helm chart (external Redis).
@@ -1756,6 +1765,7 @@ func (c *ServerConfig) Validate() error {
 		c.validateDeployDefaults,
 		c.validateRequireDigest,
 		c.validateCIOIDC,
+		c.validateMigrateOnBoot,
 	} {
 		if err := check(); err != nil {
 			return err
@@ -1774,6 +1784,17 @@ func (c *ServerConfig) Validate() error {
 	// never expose an unauthenticated API off-host. Fail closed otherwise.
 	if c.Auth.DevNoAuth && !isLoopbackListenAddr(c.Server.HTTPAddr) {
 		return fmt.Errorf("auth.dev_no_auth disables authentication and is only permitted on a loopback http_addr (got %q); never enable it in production", c.Server.HTTPAddr)
+	}
+	return nil
+}
+
+// validateMigrateOnBoot refuses self-migration on the api role (ADR 0090
+// decision 4): that role runs on a restricted identity (ADR 0049) and never
+// migrates, whatever its DSN can do. In split mode the chart renders the
+// setting on the scheduler only.
+func (c *ServerConfig) validateMigrateOnBoot() error {
+	if c.Database.MigrateOnBoot && c.Server.EffectiveRole() == RoleAPI {
+		return errors.New("database.migrate_on_boot is set on the api role, which never migrates: set it on the all or scheduler role only (the chart's migrations.onBoot does)")
 	}
 	return nil
 }

@@ -748,6 +748,15 @@ spec:
                   name: {{ include "leoflow.installationConfigMapName" .ctx }}
                   key: installationId
                   optional: true
+            {{- if and .ctx.Values.migrations.onBoot (ne .role "api") }}
+            # Self-migration on boot (ADR 0090 decision 4): the embedded
+            # migrations, applied when the schema is absent or behind and never
+            # on a replaced database. Never on the api role, whatever its DSN can
+            # do; in split mode only the scheduler carries it. Stamped only when
+            # on, so an install that leaves it off renders the env it had.
+            - name: LEOFLOW_DATABASE_MIGRATE_ON_BOOT
+              value: "true"
+            {{- end }}
             - name: LEOFLOW_REDIS_URL
               valueFrom:
                 secretKeyRef:

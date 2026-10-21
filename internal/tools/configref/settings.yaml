@@ -185,6 +185,18 @@ settings:
       or no schema is reported as `database replaced`, boot waits not ready on
       it, and a running server exits with code 3 when its database changes
       under it. Empty checks nothing.
+  database.migrate_on_boot:
+    edition: '**Pro only**'
+    description: >-
+      Apply the embedded migrations at boot when the schema is absent or behind
+      (Helm `migrations.onBoot`, [ADR
+      0090](/project/adrs/0090-database-replaced-under-a-running-release/),
+      decision 4), while the probes already answer. Never when the schema is
+      ahead or dirty, or when the database is reported as `database replaced`.
+      It needs a `database.url` that may run DDL; golang-migrate's advisory lock
+      serializes it with the migration Job and other replicas. Refused on the
+      `api` role, which never migrates. `false` leaves migrations to the chart's
+      Job.
   redis.url:
     edition: '**Pro only**'
     description: >-

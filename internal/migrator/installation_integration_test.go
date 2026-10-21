@@ -148,3 +148,29 @@ func TestIntegrationInstallationAdoptAndOtherInstallation(t *testing.T) {
 		t.Fatalf("ConfigMap = %+v, want other", store.stored)
 	}
 }
+
+// Up is what the server runs in-process for migrations.onBoot (ADR 0090
+// decision 4): the embedded migrations, golang-migrate's lock, the same
+// classified failures as the image.
+func TestIntegrationUpInProcess(t *testing.T) {
+	dsn := createScratch(t, adminURL(t))
+	if err := Up(t.Context(), dsn, io.Discard); err != nil {
+		t.Fatalf("Up on an empty database: %v", err)
+	}
+	if err := Up(t.Context(), dsn, io.Discard); err != nil {
+		t.Fatalf("a second Up (no change): %v", err)
+	}
+	latest, err := migrations.Latest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, _ := mustRun(t, 0, "-database="+dsn, "version")
+	if want := strconv.FormatUint(uint64(latest), 10); stdout != want+"\n" {
+		t.Fatalf("version after Up = %q, want %s", stdout, want)
+	}
+	exec(t, dsn, "UPDATE schema_migrations SET dirty = true")
+	var f *Failure
+	if err := Up(t.Context(), dsn, io.Discard); !errors.As(err, &f) || f.Code != ExitDirty {
+		t.Fatalf("Up on a dirty schema = %v, want the dirty failure", err)
+	}
+}

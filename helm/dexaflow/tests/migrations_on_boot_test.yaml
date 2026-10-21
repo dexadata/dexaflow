@@ -1,0 +1,59 @@
+suite: migrations.onBoot (ADR 0090 decision 4)
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: rel
+set:
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: tls
+  agentTLS.caConfigMap: ca
+tests:
+  - it: is off by default, and renders nothing
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DATABASE_MIGRATE_ON_BOOT
+            value: "true"
+
+  - it: turns self-migration on for the all role
+    template: deployment.yaml
+    set:
+      migrations.onBoot: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DATABASE_MIGRATE_ON_BOOT
+            value: "true"
+
+  # The api role never migrates, whatever its DSN can do; the server refuses
+  # the setting there too.
+  - it: in split mode only the scheduler migrates
+    template: deployment.yaml
+    set:
+      migrations.onBoot: true
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DATABASE_MIGRATE_ON_BOOT
+            value: "true"
+        documentSelector:
+          path: metadata.name
+          value: rel-dexaflow-api
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DATABASE_MIGRATE_ON_BOOT
+            value: "true"
+        documentSelector:
+          path: metadata.name
+          value: rel-dexaflow-scheduler

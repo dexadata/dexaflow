@@ -151,6 +151,12 @@ func awaitSchema(ctx context.Context, cfg *config.ServerConfig, tel *observabili
 		return err
 	}
 	defer gate.Close()
+	if wantsMigrateOnBoot(cfg) {
+		// Behind the gate, so the probes answer while a long migration runs
+		// and the startup probe does not restart the pod into a dirty schema.
+		w.setDetail("applying the embedded migrations (migrations.onBoot)")
+		migrateOnBoot(ctx, probe, embeddedMigrate(cfg.Database.URL, tel.Logger), tel.Logger)
+	}
 	return w.wait(ctx)
 }
 
