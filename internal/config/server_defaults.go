@@ -203,6 +203,7 @@ var serverDefaults = map[string]any{
 	"execution.max_warm_pods_per_tenant": 100,
 	"logs.dir":                           "/var/log/leoflow",
 	"logs.backend":                       "disk",
+	"logs.persistence_enabled":           true,
 	"logs.tail.publish":                  LogTailPublishAlways,
 	"logs.sink.bucket":                   "",
 	"logs.sink.prefix":                   "",

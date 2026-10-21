@@ -290,6 +290,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 			Versions:       repo,
 			Xcoms:          xcomReader,
 			Logs:           storage.NewLogReader(pg, logSink, logTailer),
+			EphemeralLogs:  cfg.Logs.Backend == "disk" && !cfg.Logs.PersistenceEnabled,
 			Specs:          repo,
 			DagSources:     repo,
 			LatestRuns:     repo,

@@ -64,6 +64,22 @@ func warnStartup(cfg *config.ServerConfig, logger *slog.Logger) {
 	for _, w := range platformDefaultWarnings(cfg.Executor.Defaults) {
 		logger.Warn(w.Msg, "config_key", w.Key, "value", w.Value, "missing_config_key", w.MissingKey)
 	}
+	for _, w := range logPersistenceWarnings(cfg.Logs) {
+		logger.Warn(w.Msg, "config_key", w.Key, "value", w.Value)
+	}
+}
+
+// logPersistenceWarnings reports task logs configured on an ephemeral disk volume.
+func logPersistenceWarnings(c config.LogsSection) []configWarning {
+	const key = "logs.persistence_enabled"
+	if c.Backend == "disk" && !c.PersistenceEnabled {
+		return []configWarning{{
+			Msg:   key + " is false with backend disk: task logs are stored on ephemeral storage and will not survive a control plane restart",
+			Key:   key,
+			Value: "false",
+		}}
+	}
+	return nil
 }
 
 // configWarning is one boot WARN about an operator setting that is accepted but

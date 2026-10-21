@@ -638,6 +638,34 @@ tests:
             name: LEOFLOW_LOGS_TAIL_PUBLISH
             value: on_demand
 
+  - it: passes LEOFLOW_LOGS_PERSISTENCE_ENABLED=false when persistence is disabled with disk sink
+    template: deployment.yaml
+    set:
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+      logs.persistence.enabled: false
+      logs.sink.provider: disk
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_LOGS_PERSISTENCE_ENABLED
+            value: "false"
+
+  - it: does not set LEOFLOW_LOGS_PERSISTENCE_ENABLED when persistence is enabled
+    template: deployment.yaml
+    set:
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+      logs.persistence.enabled: true
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_LOGS_PERSISTENCE_ENABLED
+
   - it: wires the s3 log backend + keyless config when logs.sink.provider is s3
     template: deployment.yaml
     set:

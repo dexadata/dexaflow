@@ -835,6 +835,7 @@ and cannot do.
 |---|---|---|---|---|---|
 | `DEXAFLOW_LOGS_DIR` | `logs.dir` | string | `/var/log/leoflow` | both | Task-log sink directory (used by the default `disk` backend). |
 | `DEXAFLOW_LOGS_BACKEND` | `logs.backend` | string | `disk` | Pro | Durable task-log store: `disk` (default: the on-disk sink, unchanged; the only backend Lite uses), `s3` (AWS S3, MinIO, Ceph RGW), or `gcs` (Google Cloud Storage, native SDK). See [ADR 0056](/project/adrs/0056-task-log-object-sink/). |
+| `DEXAFLOW_LOGS_PERSISTENCE_ENABLED` | `logs.persistence_enabled` | bool | `true` | both | Whether task-log storage is backed by durable persistence (a PVC or host disk). When false with backend `disk`, task logs reside on an ephemeral emptyDir volume and do not survive a pod restart or upgrade. |
 | `DEXAFLOW_LOGS_SINK_BUCKET` | `logs.sink.bucket` | string | _(empty)_ | Pro | Target bucket. Required when the backend is `s3` or `gcs` (boot fails otherwise). |
 | `DEXAFLOW_LOGS_SINK_PREFIX` | `logs.sink.prefix` | string | _(empty)_ | Pro | Optional key prefix; objects are laid out at `{prefix}/{tenant}/{dag}/{run}/{task}/{try}.e{epoch}.log`, one object per execution of the try (an infra re-place or a reschedule poke runs the try again under a new epoch). Logs written before 0.5.1 keep `{try}.log`. The log endpoint serves all of a try's executions in order. |
 | `DEXAFLOW_LOGS_SINK_REGION` | `logs.sink.region` | string | _(empty)_ | Pro | **s3-only.** Store region (e.g. `us-east-1`). Required by AWS S3; ignored by some S3-compatible stores. |

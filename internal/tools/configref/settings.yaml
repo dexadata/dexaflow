@@ -1098,6 +1098,12 @@ settings:
       Durable task-log store: `disk` (default: the on-disk sink, unchanged; the
       only backend Lite uses), `s3` (AWS S3, MinIO, Ceph RGW), or `gcs` (Google
       Cloud Storage, native SDK). See [ADR 0056](/project/adrs/0056-task-log-object-sink/).
+  logs.persistence_enabled:
+    edition: both
+    description: >-
+      Whether task-log storage is backed by durable persistence (a PVC or host
+      disk). When false with backend `disk`, task logs reside on an ephemeral
+      emptyDir volume and do not survive a pod restart or upgrade.
   logs.tail.publish:
     edition: both
     description: >-

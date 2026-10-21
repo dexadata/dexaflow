@@ -287,7 +287,12 @@ type StoreDeps struct {
 	Versions DagVersionRepository
 	Xcoms    XComReader
 	Logs     LogReader
-	Specs    DagSpecReader
+	// EphemeralLogs indicates that task logs reside on an ephemeral storage volume
+	// (such as an emptyDir PVC fallback) that is lost on pod restart. When true,
+	// missing logs for terminal task instances explain that logs did not survive
+	// a control plane restart.
+	EphemeralLogs bool
+	Specs         DagSpecReader
 	// DagSources reads one version of a DAG with its spec, for the Code view
 	// (GET /api/v2/dagSources/{dag_id}). Nil leaves that route unregistered.
 	DagSources     DagSourceReader
