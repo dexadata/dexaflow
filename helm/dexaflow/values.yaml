@@ -882,8 +882,9 @@ networkPolicy:
   # -- Explicit egress rules. Empty = allow-all (DNS is ALWAYS allowed regardless). Lock down to your DB/Redis/kube-apiserver endpoints in regulated environments.
   egress: []
 
-# Prometheus Operator ServiceMonitor for /metrics (ADR 0010). Requires the
-# monitoring.coreos.com CRDs (kube-prometheus-stack).
+# Prometheus Operator ServiceMonitor for /metrics (ADR 0010) and an optional
+# PrometheusRule (ADR 0090). Both require the monitoring.coreos.com CRDs
+# (kube-prometheus-stack).
 metrics:
   serviceMonitor:
     # -- Enable ServiceMonitor for Prometheus scraping. Requires kube-prometheus-stack CRDs.
@@ -895,6 +896,13 @@ metrics:
     # -- Prometheus scrape timeout (must be ≤ interval).
     scrapeTimeout: 10s
     # -- Extra labels on the ServiceMonitor. Required when the Prometheus instance has a `serviceMonitorSelector` filter (e.g. `{release: kube-prometheus-stack}`).
+    additionalLabels: {}
+  prometheusRule:
+    # -- Render a PrometheusRule with the `DexaflowSchemaNotReady` alert: `dexaflow_schema_ready == 0` for 5 minutes, a warning, or critical when the reason is `database replaced` (ADR 0090). A control plane that waits for its schema stays up and not ready, so without an alert nobody may notice. Requires kube-prometheus-stack CRDs and a scrape of `/metrics` (`metrics.serviceMonitor.enabled`).
+    enabled: false
+    # -- Namespace for the PrometheusRule resource. Defaults to the release namespace.
+    namespace: ""
+    # -- Extra labels on the PrometheusRule. Required when the Prometheus instance has a `ruleSelector` filter (e.g. `{release: kube-prometheus-stack}`).
     additionalLabels: {}
 
 ingress:

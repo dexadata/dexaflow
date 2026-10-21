@@ -138,7 +138,11 @@ about to come up.
 
 It is deliberately generous, because the two directions are not symmetric. A boot
 that *fails* returns an error and the process exits 1, so `CrashLoopBackOff`
-reports it promptly whatever this budget says. The gate only bounds a boot that
+reports it promptly whatever this budget says. A database schema that is absent
+or behind is not such a failure: the process waits for it with `/healthz`
+answering 200, so the gate passes and this budget does not bound that wait
+([a control plane that is up but not ready](/operate/troubleshooting/#a-control-plane-that-is-up-but-not-ready)).
+Once the schema is current the rest of the boot runs under the liveness probe. The gate only bounds a boot that
 *hangs*, and restarting a hang is a lottery ticket rather than a fix. The cost of
 being too loose is a slower restart of something that was not going to recover
 anyway; the cost of being too tight is the restart loop back.
@@ -160,8 +164,9 @@ lost by the narrower gate, because readiness still gates endpoint membership on
 `/readyz` the moment the gate opens, so a pod never joins the Service on the
 strength of a bound listener alone.
 
-If a pod never passes the gate, read `/readyz` rather than guessing: it names the
-dependency that is not ready. The common causes are a database the pod cannot
+If a pod never passes the gate, or passes it and never turns ready, read
+`/readyz` rather than guessing: it names the dependency that is not ready, and
+for a schema that is absent, behind or dirty, the reason and what to run. The common causes are a database the pod cannot
 reach and a ServiceAccount that cannot `list`/`watch` pods in the task namespace.
 
 ### Timeouts under load
