@@ -302,9 +302,13 @@ const (
 // startStagingGC periodically reclaims per-run staging PVCs from the
 // metadatabase-tracked lifecycle: succeeded runs immediately, failed runs after
 // the TTL, orphaned volumes (run gone) on sight (ADR 0022).
-func startStagingGC(ctx context.Context, cs kubernetes.Interface, namespace string, store executor.StagingStore, leading func() bool, logger *slog.Logger) {
+func startStagingGC(ctx context.Context, cs kubernetes.Interface, namespace string, store executor.StagingStore, leading func() bool, logger *slog.Logger, rec executor.DecisionRecorder) {
 	exec := executor.NewKubernetesExecutor(cs, namespace)
 	exec.SetStagingStore(store)
+	exec.SetLogger(logger)
+	if rec != nil {
+		exec.SetDecisionRecorder(rec)
+	}
 	gatedtick.Start(ctx, "staging-gc", stagingGCInterval, leading, logger, func() {
 		gatedtick.RunLeaderTick(ctx, "staging gc", stagingGCInterval, gatedtick.LeaderTickPoll, leading, logger, func(tctx context.Context) error {
 			return exec.GCStagingClaims(tctx, stagingTTL)

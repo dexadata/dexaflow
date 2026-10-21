@@ -30,6 +30,10 @@ type KubernetesExecutor struct {
 	// teardown meters a reap teardown that fell back from stop-in-place to
 	// delete (ADR 0052 amendment); nil leaves it unmetered.
 	teardown DecisionRecorder
+	// decisions meters staging and executor decisions and errors; nil leaves it unmetered.
+	decisions DecisionRecorder
+	// logger logs operational warnings and errors; nil falls back to slog.Default().
+	logger *slog.Logger
 	// pods meters every task pod create (count by result, API latency); nil
 	// leaves it unmetered.
 	pods PodCreationRecorder
@@ -51,6 +55,28 @@ func (e *KubernetesExecutor) SetPodMetrics(r PodCreationRecorder) { e.pods = r }
 // reap_teardown_delete_fallback: a started pod a reap could not stop in place
 // (the patch was refused) and deleted instead.
 func (e *KubernetesExecutor) SetTeardownRecorder(r DecisionRecorder) { e.teardown = r }
+
+// SetDecisionRecorder wires the recorder that meters decisions and errors
+// (such as staging_pvc_delete_error).
+func (e *KubernetesExecutor) SetDecisionRecorder(r DecisionRecorder) { e.decisions = r }
+
+// SetLogger wires the logger used for executor operational messages.
+func (e *KubernetesExecutor) SetLogger(l *slog.Logger) { e.logger = l }
+
+func (e *KubernetesExecutor) recordDecision(reason string) {
+	if e.decisions != nil {
+		e.decisions.RecordSchedulerDecision(reason)
+	} else if e.teardown != nil {
+		e.teardown.RecordSchedulerDecision(reason)
+	}
+}
+
+func (e *KubernetesExecutor) log() *slog.Logger {
+	if e.logger != nil {
+		return e.logger
+	}
+	return slog.Default()
+}
 
 // SetStagingStore wires the metadatabase-backed staging-volume lifecycle store
 // (ADR 0022). With no store set, provisioning is not recorded and GC is a no-op.
