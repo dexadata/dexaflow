@@ -33,7 +33,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/spf13/cobra"
 
-	dexaflow "github.com/dexadata/dexaflow"
 	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/domain"
@@ -460,7 +459,7 @@ func bringUpDependencies(ctx context.Context, cmd *cobra.Command, o *devOptions)
 	if perr != nil {
 		return noop, perr
 	}
-	cf, err := resolveComposeFile(o.composeFile)
+	cf, err := resolveComposeFile(cmd.OutOrStdout(), o.composeFile)
 	if err != nil {
 		return noop, err
 	}
@@ -473,8 +472,9 @@ func bringUpDependencies(ctx context.Context, cmd *cobra.Command, o *devOptions)
 // Postgres (Lite is Redis-free — ADR 0026). An explicit --compose wins; else a docker-compose.dev.yaml in
 // the working dir (a source checkout) is used; else the compose embedded in the
 // binary is materialized under ~/.dexaflow, so a binary-only install runs with
-// `dexaflow lite` alone.
-func resolveComposeFile(flagValue string) (string, error) {
+// `dexaflow lite` alone, and refreshed there on a binary upgrade unless the
+// operator edited it (ensureManagedComposeIn, #981). Notices go to out.
+func resolveComposeFile(out io.Writer, flagValue string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
 	}
@@ -489,13 +489,7 @@ func resolveComposeFile(flagValue string) (string, error) {
 	if mkErr := os.MkdirAll(dir, 0o750); mkErr != nil {
 		return "", fmt.Errorf("creating %s: %w", dir, mkErr)
 	}
-	path := filepath.Join(dir, "docker-compose.yaml")
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		if wErr := os.WriteFile(path, dexaflow.DevCompose(), 0o600); wErr != nil {
-			return "", fmt.Errorf("writing managed compose %s: %w", path, wErr)
-		}
-	}
-	return path, nil
+	return ensureManagedComposeIn(dir, func(format string, args ...any) { devPrintf(out, format+"\n", args...) })
 }
 
 func newLiteCommand() *cobra.Command {
