@@ -30,6 +30,10 @@ type SchedulerStore struct {
 	// ActiveWarmTargets drops a version whose image it refuses, so no warm pod
 	// ever starts on an image dispatch would refuse. Nil allows every image.
 	warmPolicy *domain.ExecutionPolicy
+	// warmPlacement is the warm placement decision dispatch applies (ADR
+	// 0058, ADR 0066 §3). ActiveWarmTargets drops a version none of whose
+	// tasks it would place on a warm worker (#2065).
+	warmPlacement domain.WarmPolicy
 	// provisionalInfraMarks makes the reapers' infra marks provisional
 	// (infra_confirmed_at NULL) for the reconciler to confirm (ADR 0052
 	// amendment, part 2). Set only where a reconciler runs (Kubernetes); false
@@ -227,13 +231,16 @@ func (s *SchedulerStore) taskInstancesByRun(ctx context.Context, runs []queries.
 }
 
 // SetWarmExecution records the operator's warm-pool config so ActiveWarmTargets
-// can resolve each active dag_version's effective warm target, and the
-// execution allowlist so it skips a version whose image the allowlist refuses
-// (nil allows every image). main.go calls it only when warm pools are enabled;
-// left unset, warm pools read as off (every target 0).
-func (s *SchedulerStore) SetWarmExecution(exec config.ExecutionSection, policy *domain.ExecutionPolicy) {
+// can resolve each active dag_version's effective warm target, the execution
+// allowlist so it skips a version whose image the allowlist refuses (nil
+// allows every image), and the warm placement decision dispatch applies so it
+// skips a version none of whose tasks dispatch would place on a warm worker
+// (#2065). main.go calls it only when warm pools are enabled; left unset, warm
+// pools read as off (every target 0).
+func (s *SchedulerStore) SetWarmExecution(exec config.ExecutionSection, policy *domain.ExecutionPolicy, placement domain.WarmPolicy) {
 	s.warmExec = exec
 	s.warmPolicy = policy
+	s.warmPlacement = placement
 }
 
 // SetProvisionalInfraMarks makes every reaper infra mark provisional until the
@@ -308,13 +315,20 @@ type activeWarmVersion struct {
 	// active run (ADR 0082). It gets a target only when the DAG declares
 	// min_idle_workers and the resolved idle target is above 0.
 	prewarm bool
+	// noWarmTask marks a version none of whose tasks dispatch would place on
+	// a warm worker (domain.WarmPolicy.HasWarmTask): with executor.unit set,
+	// every task declares resources or is larger than size 1, say. Its idle
+	// warm workers would serve none of its tasks, so it gets no target
+	// (#2065).
+	noWarmTask bool
 }
 
 // warmTargets dedupes the active versions (many runs share one immutable
 // dag_version) and resolves each to its effective warm target through the
 // operator's clamp/fallback/flag gate (config.ExecutionSection.EffectiveMinIdle).
 // A version whose image the operator's execution allowlist refuses gets no
-// target (issue #537 C2), and a prewarm version (current, no active run) gets
+// target (issue #537 C2), nor does a version with no warm-eligible task
+// (#2065), and a prewarm version (current, no active run) gets
 // one only when its DAG declares min_idle_workers (ADR 0082 D3). The result is the
 // executor.WarmTargetSource contract: one entry per distinct dag_version kept.
 func warmTargets(versions []activeWarmVersion, exec config.ExecutionSection, policy *domain.ExecutionPolicy) []executor.WarmTarget {
@@ -336,6 +350,10 @@ func warmTargets(versions []activeWarmVersion, exec config.ExecutionSection, pol
 		if policy.CheckImage(v.image) != nil {
 			// Issue #537 C2: dispatch refuses this version's tasks, and a warm
 			// pod would run the disallowed image before any task reached it.
+			continue
+		}
+		if v.noWarmTask {
+			// #2065: dispatch places none of its tasks on a warm worker.
 			continue
 		}
 		minIdle := exec.EffectiveMinIdle(v.dagMinIdle)
@@ -377,7 +395,8 @@ func warmTargets(versions []activeWarmVersion, exec config.ExecutionSection, pol
 // N active runs sharing a version decode it once, and the effective target is
 // derived from the DAG author's min_idle_workers under the operator's
 // clamp/fallback. It implements executor.WarmTargetSource without the executor
-// importing storage. A run held by its paused DAG (#1705) keeps a target only
+// importing storage. A version none of whose tasks dispatch would place on a
+// warm worker gets no target (#2065). A run held by its paused DAG (#1705) keeps a target only
 // while one of its tasks is live, since nothing else of it is dispatched until
 // the unpause, and a paused DAG is not prewarmed.
 func (s *SchedulerStore) ActiveWarmTargets(ctx context.Context) ([]executor.WarmTarget, error) {
@@ -431,6 +450,8 @@ func (s *SchedulerStore) ActiveWarmTargets(ctx context.Context) ([]executor.Warm
 			staging:   spec.Staging != nil && spec.Staging.Enabled,
 			hasSource: spec.Source != "",
 			prewarm:   c.prewarm,
+			// #2065: the per-task half of the decision dispatch places with.
+			noWarmTask: !s.warmPlacement.HasWarmTask(spec.Tasks),
 		})
 	}
 	return warmTargets(versions, s.warmExec, s.warmPolicy), nil

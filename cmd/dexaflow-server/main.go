@@ -3264,7 +3264,10 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// them off it is never constructed, so no warm pod is ever created and dispatch
 	// stays byte-for-byte today's dedicated pod-per-task.
 	if cfg.Execution.WarmPoolsEnabled {
-		store.SetWarmExecution(cfg.Execution, executionPolicy(cfg.Executor.Defaults))
+		// warmPolicy(cfg) is the decision the dispatcher places with
+		// (warm_policy_test.go), so a version none of whose tasks it would
+		// place on a warm worker gets no warm pod (#2065).
+		store.SetWarmExecution(cfg.Execution, executionPolicy(cfg.Executor.Defaults), warmPolicy(cfg))
 		// The busy set (running attempts durably bound to a warm worker) makes the
 		// reconciler busy-aware (ADR 0058 N1d-b): it scales the IDLE buffer and never
 		// deletes a worker with an in-flight attempt. store implements it.
