@@ -1012,14 +1012,21 @@ against either schema, so it keeps working through that migration and after a
 rollback from 0.5.6. Upgrading to 0.5.5 and rolling back to 0.5.4 need nothing
 for this change.
 
-### Upgrading to 0.5.6
-
-0.5.6 applies three migrations, 047, 048 and 049.
+0.5.5 also applies one migration, 047.
 
 - **`047_removed_task_state`** adds the `removed` task state of
   [ADR 0086](/project/adrs/0086-clear-rebinds-a-finished-run-with-its-task-set/)
   (`ALTER TYPE ... ADD VALUE`, catalog only). Its down migration is a no-op:
-  the value stays.
+  the value stays. On Lite, the previous `dexaflow lite` refuses a database
+  above its own schema, so before rolling back to 0.5.4 run
+  `migrate -path migrations -database "$DATABASE_URL" goto 46` with the 0.5.5
+  CLI or migrate image; the file says what the previous release does with a
+  `removed` task instance.
+
+### Upgrading to 0.5.6
+
+0.5.6 applies two migrations, 048 and 049.
+
 - **`048_task_instance_dispatch_unavailable_since`** runs in one transaction,
   which took about 7 ms on a `task_instances` table of 1,000,000 rows. It adds
   the nullable `task_instances.dispatch_unavailable_since` column, where the
@@ -1058,11 +1065,10 @@ above its own schema, so run the down migration first, with the 0.5.6 CLI or
 migrate image (it took about 8 ms on the same table):
 
 ```sh
-migrate -path migrations -database "$DATABASE_URL" goto 46
+migrate -path migrations -database "$DATABASE_URL" goto 47
 ```
 
-That rolls back 049 and 048 and runs the no-op down of 047 (the file says what the
-previous release does with a `removed` task instance). A task that was
+That rolls back 049 and 048. A task that was
 waiting on an unavailable Kubernetes API at that moment falls back onto the
 dispatch-attempt budget of the previous release. No other data changes.
 
