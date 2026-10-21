@@ -148,7 +148,8 @@ func (r *Repository) RecordAuthEvent(ctx context.Context, tenant, actorUserID, a
 }
 
 // RecordSecretScopeWarning records that a task received the full tenant secret
-// set while it declared only a narrower subset (ADR 0045, ADR 0055): under
+// set while it declared only a narrower subset, possibly an empty one (#800)
+// (ADR 0045, ADR 0055): under
 // secret_scoping: enforce it would receive only its declared set. It is scoped to
 // the DAG resource so the event surfaces on the DAG's Audit Log tab, with the
 // kind ("variables" or "connections"), the run and task, and the declared/total

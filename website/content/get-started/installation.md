@@ -525,10 +525,10 @@ Under `enforce` a task receives **only** the Variables and Connections its
 declare nothing and would break on the flip. Land it the way any breaking
 security change lands: leave `permissive` on while your DAGs adopt
 [declarations](/author-dags/variables-connections/#declare-what-a-task-consumes),
-then flip. Note what the observation period can and cannot tell you — the
-scope-warning trail covers only DAGs whose declarations still resolve, so it
-sees neither a DAG that declares nothing nor one whose declared names have since
-been deleted from the vault
+then flip. The scope-warning trail lists every task that would receive less
+under `enforce`, including a DAG that declares nothing or whose declared names
+have since been deleted from the vault (recorded with `declared=0`); it only
+sees DAGs that ran during the observation period
 ([#800](https://github.com/dexadata/dexaflow/issues/800)).
 {{% /alert %}}
 
