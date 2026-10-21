@@ -1,0 +1,76 @@
+suite: optional PrometheusRule for the schema wait (ADR 0090 decision 6)
+templates:
+  - prometheusrule.yaml
+release:
+  name: dexaflow
+  namespace: data
+set:
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: dexaflow-tls
+  agentTLS.caConfigMap: dexaflow-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: s
+tests:
+  - it: renders nothing by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # An upgrade with --reuse-values from a release whose values predate the
+  # key carries no prometheusRule at all; the template must still render.
+  - it: renders nothing when the values predate the key
+    set:
+      metrics.prometheusRule: null
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: alerts when the schema stays not ready for 5 minutes
+    set:
+      metrics.prometheusRule.enabled: true
+    asserts:
+      - isKind:
+          of: PrometheusRule
+      - equal:
+          path: metadata.namespace
+          value: data
+      - equal:
+          path: spec.groups[0].rules[0].alert
+          value: DexaflowSchemaNotReady
+      - equal:
+          path: spec.groups[0].rules[0].expr
+          value: dexaflow_schema_ready{namespace="data"} == 0
+      - equal:
+          path: spec.groups[0].rules[0].for
+          value: 5m
+
+  # Critical only for a replaced database; every other reason is a warning.
+  # The label is a Prometheus template, so Helm must leave it unrendered.
+  - it: is critical only when the reason is database replaced
+    set:
+      metrics.prometheusRule.enabled: true
+    asserts:
+      - equal:
+          path: spec.groups[0].rules[0].labels.severity
+          value: '{{ if eq $labels.reason "database replaced" }}critical{{ else }}warning{{ end }}'
+      - matchRegex:
+          path: spec.groups[0].rules[0].annotations.description
+          pattern: '\{\{ \$labels\.reason \}\}'
+
+  - it: takes a namespace and the labels a ruleSelector needs
+    set:
+      metrics.prometheusRule.enabled: true
+      metrics.prometheusRule.namespace: monitoring
+      metrics.prometheusRule.additionalLabels:
+        release: kube-prometheus-stack
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: monitoring
+      - equal:
+          path: metadata.labels.release
+          value: kube-prometheus-stack
+      - equal:
+          path: spec.groups[0].rules[0].expr
+          value: dexaflow_schema_ready{namespace="data"} == 0
