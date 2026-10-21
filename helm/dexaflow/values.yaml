@@ -642,7 +642,8 @@ migrations:
       type: RuntimeDefault
   securityContext:
     allowPrivilegeEscalation: false
-    # migrate is a static Go binary writing only to the DB (advisory lock for
+    # migrate is a static Go binary writing only to the DB (and, through the
+    # Kubernetes API, the installation ConfigMap; advisory lock for
     # migration mutex). No /tmp writes, no log files. Safe to lock the root
     # FS read-only — tightest restricted-PSA posture. Verified against the
     # image this chart defaults to by applying all 26 migrations with
