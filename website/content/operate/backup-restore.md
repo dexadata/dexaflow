@@ -64,12 +64,34 @@ terminal first.
 ## Restore
 
 ```sh
-# Refuses to overwrite an existing ~/.dexaflow install:
+# Refuses to overwrite an install that already has a datastore:
 dexaflow lite restore --input ~/snapshots/before-upgrade.tar.gz
 
-# Use --force to overwrite explicitly (e.g. after `dexaflow uninstall`):
+# Use --force to overwrite it explicitly:
 dexaflow lite restore --input ~/snapshots/before-upgrade.tar.gz --force
 ```
+
+Lite does not need to be running, and does not need to have run before:
+`restore` provisions the managed Postgres itself, through the same path
+`dexaflow lite` uses (download it on first use, initialize its data dir,
+start it on its socket, create the Lite database). If this restore started
+the cluster, it stops it when it finishes; a cluster that was already running
+is left running. It logs each phase:
+
+```
+▸ decoding manifest from /home/me/snap.tar.gz …
+▸ provisioning the managed Postgres …
+▸ applying the datastore dump via psql …
+▸ restoring workspace to /home/me/dexaflow …
+✓ restore complete; run `dexaflow lite` to start.
+```
+
+The archive always holds a managed-Postgres datastore, since `backup` covers
+that path only. On a machine where Docker runs, a plain `dexaflow lite` picks
+the Docker Postgres instead
+([ADR 0030](/project/adrs/0030-lite-datastore-auto-select/)), so start the
+restored install with `dexaflow lite --postgres managed` there; the last line
+of the restore says so.
 
 The restore command refuses, with a clear error, when:
 
@@ -77,8 +99,12 @@ The restore command refuses, with a clear error, when:
    the restore is the inverse of the upgrade-time drift detector (see
    [Upgrades](/operate/upgrades/)). Loading rows into a DB the binary cannot read
    would corrupt them.
-2. **`~/.dexaflow/` already holds an install** and `--force` is not set.
-   Pass `--force` only after confirming you want to overwrite.
+2. **`~/.dexaflow/` already holds a datastore** (the managed
+   `~/.dexaflow/pgdata`, or a Docker datastore a Lite run used) and `--force`
+   is not set. Pass `--force` only after confirming you want to overwrite. A
+   home that only `dexaflow setup` filled has no datastore, so a restore on a
+   new machine needs no `--force`; the config it replaces is kept as
+   `config.yaml.pre-restore` (below).
 3. **The archive's `MANIFEST.json` is missing** or carries a `manifest_version`
    newer than this binary understands.
 
@@ -116,9 +142,12 @@ scp /tmp/snap.tar.gz user@new-host:~/
 
 # On the new machine, after `curl ... install.sh`:
 dexaflow setup           # provisions managed Python + binaries
-dexaflow lite restore --input ~/snap.tar.gz
+dexaflow lite restore --input ~/snap.tar.gz   # provisions the managed Postgres, then replays
 dexaflow lite            # boots with the restored datastore + workspace
 ```
+
+If Docker runs on the new machine, start with `dexaflow lite --postgres
+managed` instead (see [Restore](#restore)).
 
 ## Worked example: roll back a botched upgrade
 
@@ -129,7 +158,7 @@ dexaflow lite backup --output ~/snap-before-upgrade.tar.gz
 # Upgrade (re-run install.sh, restart dexaflow lite). Something breaks.
 
 # Wipe and restore. --purge removes the new install completely; restore
-# refuses without it because ~/.dexaflow is non-empty after the upgrade.
+# refuses without it because ~/.dexaflow still holds the upgraded datastore.
 dexaflow uninstall --purge
 # Re-install the previous version's binaries via install.sh's pin, then:
 dexaflow lite restore --input ~/snap-before-upgrade.tar.gz

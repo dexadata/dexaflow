@@ -15,7 +15,9 @@ import (
 )
 
 // restoreFixture builds a home with a current config.yaml and an archive whose
-// config differs, and returns the home's state dir and the archive path.
+// config differs and that carries a one-file workspace, fakes the restore's
+// datastore provisioning, and returns the home's state dir and the archive
+// path.
 func restoreFixture(t *testing.T) (dexaHome, archive string) {
 	t.Helper()
 	home := t.TempDir()
@@ -44,11 +46,40 @@ func restoreFixture(t *testing.T) (dexaHome, archive string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	archive = filepath.Join(t.TempDir(), "b.tar.gz")
-	if err := writeBackupArchive(archive, src, "", dump, mb); err != nil {
+	ws := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws, "dexaflow.yaml"), []byte("name: demo\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	archive = filepath.Join(t.TempDir(), "b.tar.gz")
+	if err := writeBackupArchive(archive, src, ws, dump, mb); err != nil {
+		t.Fatal(err)
+	}
+	fakeRestoreDatastore(t, nil)
 	return dexaHome, archive
+}
+
+// restoreDatastoreFake records what a restore did with its datastore.
+type restoreDatastoreFake struct {
+	events []string
+}
+
+// fakeRestoreDatastore replaces the managed Postgres provisioning and the
+// Docker probe of a restore, so no test downloads or starts a cluster. A
+// non-nil err makes the provisioning fail.
+func fakeRestoreDatastore(t *testing.T, err error) *restoreDatastoreFake {
+	t.Helper()
+	f := &restoreDatastoreFake{}
+	origProv, origDocker := restoreProvisionDatastore, restoreDockerUsable
+	t.Cleanup(func() { restoreProvisionDatastore, restoreDockerUsable = origProv, origDocker })
+	restoreProvisionDatastore = func(_ context.Context, cmd *cobra.Command) (func(), error) {
+		f.events = append(f.events, "provision")
+		if err != nil {
+			return func() {}, err
+		}
+		return func() { f.events = append(f.events, "stop") }, nil
+	}
+	restoreDockerUsable = func() bool { return false }
+	return f
 }
 
 func restoreCmd() (*cobra.Command, *bytes.Buffer) {
