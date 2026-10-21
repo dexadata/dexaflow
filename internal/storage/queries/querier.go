@@ -98,6 +98,7 @@ type Querier interface {
 	CountDagsByLatestRunState(ctx context.Context, tenantID pgtype.UUID) ([]CountDagsByLatestRunStateRow, error)
 	// Same newest-run lookup as ListDagsFiltered.
 	CountDagsFiltered(ctx context.Context, arg CountDagsFilteredParams) (int64, error)
+	CountDagsWithFilter(ctx context.Context, arg CountDagsWithFilterParams) (int64, error)
 	// The dry-run count for one tenant: the same predicate as
 	// LockExpiredSettledRuns, with no lock, through the same partial index, and
 	// stopped after max_runs runs so its cost stays bounded however long the
@@ -122,6 +123,7 @@ type Querier interface {
 	CountLocalPasswordUser(ctx context.Context, arg CountLocalPasswordUserParams) (int64, error)
 	CountPools(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CountTaskInstanceStatesInWindow(ctx context.Context, arg CountTaskInstanceStatesInWindowParams) ([]CountTaskInstanceStatesInWindowRow, error)
+	CountTenantDagTags(ctx context.Context, arg CountTenantDagTagsParams) (int64, error)
 	CountTenantDags(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CountUsers(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CountVariables(ctx context.Context, tenantID pgtype.UUID) (int64, error)
@@ -491,6 +493,11 @@ type Querier interface {
 	// one index probe each, instead of a DISTINCT ON over every run in the table.
 	// LEFT JOIN keeps DAGs without runs; they match no run_state filter.
 	ListDagsFiltered(ctx context.Context, arg ListDagsFilteredParams) ([]Dag, error)
+	// The Airflow 3.3 DAG list's search, tag, owner, favorite and sort controls
+	// (#1928). Patterns are SQL LIKE expressions matched case-insensitively; a
+	// display name is the dag_id. Sorting by next_dagrun is not done here: the next
+	// run is computed per DAG after the page is read, so it falls back to dag_id.
+	ListDagsWithFilter(ctx context.Context, arg ListDagsWithFilterParams) ([]ListDagsWithFilterRow, error)
 	// The DAG plus the LABEL of its current version. The UI's clear dialog compares
 	// this against the RUN's bundle_version and offers "Run with latest bundle
 	// version" only when they differ, so leaving it null either hides the control or
@@ -618,6 +625,7 @@ type Querier interface {
 	// come grouped by run and, within a run, in the same task_id order the per-run
 	// query returns, so the caller can split them without re-sorting.
 	ListTaskInstancesByRuns(ctx context.Context, dagRunIds []pgtype.UUID) ([]TaskInstance, error)
+	ListTenantDagTags(ctx context.Context, arg ListTenantDagTagsParams) ([]string, error)
 	// Retention janitor (performance item D5). Every statement is tenant scoped and
 	// bounded; the janitor in internal/retention paces and caps them.
 	ListTenantIDs(ctx context.Context) ([]pgtype.UUID, error)

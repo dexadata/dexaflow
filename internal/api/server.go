@@ -215,6 +215,7 @@ func newServer(deps Dependencies) *gin.Engine {
 	registerUIPools(r, deps.Stores.Pools, deps.Server.Edition == "pro", deps.Server.PoolsReadOnly)
 	registerUIFavorites(r, deps.Stores.Favorites)
 	registerImportErrors(r, deps.Stores.ImportErrors)
+	registerDagTags(r, deps.Stores.Dags)
 	registerIDE(r, deps.UI.Workspace, deps.UI.MonacoDir, deps.UI.ExamplesFS)
 	registerUIStubs(r)
 	registerAPIStubs(r)

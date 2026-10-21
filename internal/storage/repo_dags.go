@@ -243,3 +243,87 @@ func (r *Repository) ClearDagHistory(ctx context.Context, tenant, dagID string) 
 	}
 	return nil
 }
+
+// ListDagsWithFilter returns a page of active DAGs matching the given filter
+// criteria and the total count of matching DAGs.
+func (r *Repository) ListDagsWithFilter(ctx context.Context, tenant string, filter domain.DagFilter) ([]domain.DAG, int, error) {
+	tid, err := r.tenantID(ctx, tenant)
+	if err != nil {
+		return nil, 0, err
+	}
+	var rs *queries.DagRunState
+	if filter.LastDagRunState != "" {
+		s := queries.DagRunState(filter.LastDagRunState)
+		rs = &s
+	}
+	rows, err := r.q.ListDagsWithFilter(ctx, queries.ListDagsWithFilterParams{
+		TenantID:                    tid,
+		Limit:                       toInt32(filter.Limit),
+		Offset:                      toInt32(filter.Offset),
+		Paused:                      filter.Paused,
+		RunState:                    rs,
+		DagIDPattern:                strPtr(filter.DagIDPattern),
+		DagIDPrefixPattern:          strPtr(filter.DagIDPrefixPattern),
+		DagDisplayNamePattern:       strPtr(filter.DagDisplayNamePattern),
+		DagDisplayNamePrefixPattern: strPtr(filter.DagDisplayNamePrefixPattern),
+		Owners:                      filter.Owners,
+		Tags:                        filter.Tags,
+		TagsMatchMode:               strPtr(filter.TagsMatchMode),
+		IsFavorite:                  filter.IsFavorite,
+		UserID:                      strPtr(filter.UserID),
+		OrderBy:                     strPtr(filter.OrderBy),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing dags with filter: %w", err)
+	}
+	total, err := r.q.CountDagsWithFilter(ctx, queries.CountDagsWithFilterParams{
+		TenantID:                    tid,
+		Paused:                      filter.Paused,
+		RunState:                    rs,
+		DagIDPattern:                strPtr(filter.DagIDPattern),
+		DagIDPrefixPattern:          strPtr(filter.DagIDPrefixPattern),
+		DagDisplayNamePattern:       strPtr(filter.DagDisplayNamePattern),
+		DagDisplayNamePrefixPattern: strPtr(filter.DagDisplayNamePrefixPattern),
+		Owners:                      filter.Owners,
+		Tags:                        filter.Tags,
+		TagsMatchMode:               strPtr(filter.TagsMatchMode),
+		IsFavorite:                  filter.IsFavorite,
+		UserID:                      strPtr(filter.UserID),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("counting dags with filter: %w", err)
+	}
+	out := make([]domain.DAG, 0, len(rows))
+	for _, d := range rows {
+		out = append(out, mapDagWithFilter(d))
+	}
+	return out, int(total), nil
+}
+
+// ListDagTags returns a page of the tenant's distinct DAG tags, narrowed by an
+// optional pattern (anywhere in the name) and prefix pattern, and the total.
+func (r *Repository) ListDagTags(ctx context.Context, tenant, pattern, prefixPattern string, limit, offset int) (tags []string, total int, err error) {
+	tid, err := r.tenantID(ctx, tenant)
+	if err != nil {
+		return nil, 0, err
+	}
+	tList, err := r.q.ListTenantDagTags(ctx, queries.ListTenantDagTagsParams{
+		TenantID:             tid,
+		Limit:                toInt32(limit),
+		Offset:               toInt32(offset),
+		TagNamePattern:       strPtr(pattern),
+		TagNamePrefixPattern: strPtr(prefixPattern),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing dag tags: %w", err)
+	}
+	count, err := r.q.CountTenantDagTags(ctx, queries.CountTenantDagTagsParams{
+		TenantID:             tid,
+		TagNamePattern:       strPtr(pattern),
+		TagNamePrefixPattern: strPtr(prefixPattern),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("counting dag tags: %w", err)
+	}
+	return tList, int(count), nil
+}

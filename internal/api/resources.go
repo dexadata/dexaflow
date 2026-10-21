@@ -32,6 +32,8 @@ type DagRepository interface {
 	DeleteDag(ctx context.Context, tenant, dagID string) error
 	ClearDagHistory(ctx context.Context, tenant, dagID string) error
 	ListDagsFiltered(ctx context.Context, tenant, runState string, paused *bool, limit, offset int) ([]domain.DAG, int, error)
+	ListDagsWithFilter(ctx context.Context, tenant string, filter domain.DagFilter) ([]domain.DAG, int, error)
+	ListDagTags(ctx context.Context, tenant, pattern, prefixPattern string, limit, offset int) (tags []string, total int, err error)
 }
 
 // DagRunRepository reads and creates DAG runs.
@@ -260,7 +262,21 @@ func handleRepoError(c *gin.Context, err error) {
 func listDagsHandler(repo DagRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		limit, offset := pagination(c)
-		dags, total, err := repo.ListDags(c.Request.Context(), tenantOf(c), limit, offset)
+		filter := domain.DagFilter{
+			DagIDPattern:                c.Query("dag_id_pattern"),
+			DagIDPrefixPattern:          c.Query("dag_id_prefix_pattern"),
+			DagDisplayNamePattern:       c.Query("dag_display_name_pattern"),
+			DagDisplayNamePrefixPattern: c.Query("dag_display_name_prefix_pattern"),
+			LastDagRunState:             c.Query("last_dag_run_state"),
+			Paused:                      pausedFilter(c),
+			Tags:                        parseQueryStrings(c, "tags"),
+			TagsMatchMode:               c.Query("tags_match_mode"),
+			Owners:                      parseQueryStrings(c, "owners"),
+			OrderBy:                     c.Query("order_by"),
+			Limit:                       limit,
+			Offset:                      offset,
+		}
+		dags, total, err := repo.ListDagsWithFilter(c.Request.Context(), tenantOf(c), filter)
 		if err != nil {
 			handleRepoError(c, err)
 			return
@@ -272,6 +288,41 @@ func listDagsHandler(repo DagRepository) gin.HandlerFunc {
 		setPaginationLinks(c, total, limit, offset)
 		c.JSON(http.StatusOK, out)
 	}
+}
+
+// dagTagCollectionDTO is Airflow's DAGTagCollectionResponse: the tag names as
+// plain strings, which the UI's tag filter uses as both label and value.
+type dagTagCollectionDTO struct {
+	Tags         []string `json:"tags"`
+	TotalEntries int      `json:"total_entries"`
+}
+
+// listDagTagsHandler serves GET /api/v2/dagTags: the tenant's distinct DAG
+// tags, narrowed by tag_name_pattern (anywhere) and tag_name_prefix_pattern
+// (the UI's tag filter sends this one), with paging (#1927).
+func listDagTagsHandler(repo DagRepository) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		limit, offset := pagination(c)
+		tags, total, err := repo.ListDagTags(c.Request.Context(), tenantOf(c),
+			c.Query("tag_name_pattern"), c.Query("tag_name_prefix_pattern"), limit, offset)
+		if err != nil {
+			handleRepoError(c, err)
+			return
+		}
+		if tags == nil {
+			tags = []string{}
+		}
+		setPaginationLinks(c, total, limit, offset)
+		c.JSON(http.StatusOK, dagTagCollectionDTO{Tags: tags, TotalEntries: total})
+	}
+}
+
+func registerDagTags(r gin.IRouter, dags DagRepository) {
+	if dags == nil {
+		r.GET("/api/v2/dagTags", apiEmptyCollection("tags"))
+		return
+	}
+	r.GET("/api/v2/dagTags", RequirePermission("read", "dag"), listDagTagsHandler(dags))
 }
 
 func getDagHandler(repo DagRepository) gin.HandlerFunc {

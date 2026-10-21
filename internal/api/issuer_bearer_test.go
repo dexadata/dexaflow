@@ -45,6 +45,11 @@ func (r *tenantDagRepo) ListDags(_ context.Context, tenant string, _, _ int) ([]
 	return []domain.DAG{{DagID: "etl"}}, 1, nil
 }
 
+func (r *tenantDagRepo) ListDagsWithFilter(_ context.Context, tenant string, _ domain.DagFilter) ([]domain.DAG, int, error) {
+	r.tenant = tenant
+	return []domain.DAG{{DagID: "etl"}}, 1, nil
+}
+
 type bearerFixture struct {
 	srv    http.Handler
 	issuer *fakeBearerIssuer
