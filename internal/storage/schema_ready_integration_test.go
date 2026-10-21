@@ -82,21 +82,17 @@ func TestSchemaReadyAgainstLiveDatabase(t *testing.T) {
 
 	t.Run("boot and readiness agree on an empty schema", func(t *testing.T) {
 		// Outside the in-flight-migration case the two verdicts must not drift:
-		// whatever boot refuses to start against, readiness must refuse to be
-		// ready against.
+		// whatever boot waits on, readiness must refuse to be ready against.
 		other := connectWithSearchPath(ctx, t, pg, raw, "leoflow_probe_agree")
 		defer other.Close()
-		bootErr := other.CheckSchemaCurrent(ctx)
+		boot, bootErr := other.SchemaWaitState(ctx)
 		readyErr := other.SchemaReady(ctx)
-		if bootErr == nil || readyErr == nil {
-			t.Fatalf("both must reject an empty schema: boot=%v readiness=%v", bootErr, readyErr)
-		}
-		if bootErr.Error() != readyErr.Error() {
-			t.Errorf("boot and readiness disagree:\n boot: %v\n ready: %v", bootErr, readyErr)
+		if bootErr != nil || boot.Class != storage.SchemaReasonAbsent || readyErr == nil {
+			t.Fatalf("both must reject an empty schema: boot=%+v %v readiness=%v", boot, bootErr, readyErr)
 		}
 	})
 
-	t.Run("a migration in flight above this binary: boot refuses, readiness stays ready", func(t *testing.T) {
+	t.Run("a migration in flight above this binary: boot waits, readiness stays ready", func(t *testing.T) {
 		// The state that a `pre-upgrade` migration Job puts the database in while
 		// the OLD pods are still live and in the Service's endpoints:
 		// golang-migrate has committed dirty=true at a version this binary does
@@ -113,8 +109,8 @@ func TestSchemaReadyAgainstLiveDatabase(t *testing.T) {
 		if err := other.SchemaReady(ctx); err != nil {
 			t.Errorf("readiness must survive a forward migration in flight, got: %v", err)
 		}
-		if err := other.CheckSchemaCurrent(ctx); err == nil {
-			t.Error("boot must still refuse to START against a half-applied schema")
+		if w, err := other.SchemaWaitState(ctx); err != nil || w.Class != storage.SchemaReasonDirty {
+			t.Errorf("boot must wait, not START, against a half-applied schema: %+v %v", w, err)
 		}
 	})
 

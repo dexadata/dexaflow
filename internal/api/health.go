@@ -23,8 +23,8 @@ type HealthChecker interface {
 // schema-less dependencies do not, and keep the Ping-only contract.
 //
 // It exists because a Ping is not evidence of a usable database (#1023). The
-// invariant is enforced at boot, where the server refuses to start against a
-// database whose schema_migrations is absent or behind — but a boot check says
+// invariant is enforced at boot, where the server waits, not ready, until
+// schema_migrations is present and current (ADR 0090); but a boot check says
 // nothing about a database that changes UNDER a running pod, which is exactly
 // what an ephemeral-volume recycle, a restore from an older backup, a failover
 // to a lagging replica, or a repointed database.url does.
