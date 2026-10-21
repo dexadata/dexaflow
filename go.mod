@@ -2,7 +2,7 @@ module github.com/dexadata/dexaflow
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	cloud.google.com/go/auth v0.24.0
