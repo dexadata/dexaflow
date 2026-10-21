@@ -645,11 +645,18 @@ func (w *objectWriter) runFlusher(ctx context.Context) {
 		case <-w.stop:
 			return
 		case <-ticker.C:
-			w.flushMu.Lock()
-			w.maybeFlush(ctx)
-			w.flushMu.Unlock()
+			w.flushTick(ctx)
 		}
 	}
+}
+
+// flushTick is one beat of the flusher: it waits for any Put in flight, then
+// flushes if the tail is due. Split out so a test can drive a beat directly
+// instead of racing the ticker.
+func (w *objectWriter) flushTick(ctx context.Context) {
+	w.flushMu.Lock()
+	defer w.flushMu.Unlock()
+	w.maybeFlush(ctx)
 }
 
 // WriteEvent appends an event to the in-memory buffer as a JSON line, matching
