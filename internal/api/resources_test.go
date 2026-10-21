@@ -22,6 +22,7 @@ type fakeDagRepo struct {
 	dags        []domain.DAG
 	gotRunState string
 	gotPaused   *bool
+	gotFilter   domain.DagFilter
 	cleared     []string
 }
 
@@ -57,6 +58,90 @@ func (f *fakeDagRepo) ListDagsFiltered(_ context.Context, _, runState string, pa
 			continue
 		}
 		out = append(out, d)
+	}
+	return out, len(out), nil
+}
+
+func (f *fakeDagRepo) ListDagsWithFilter(_ context.Context, _ string, filter domain.DagFilter) ([]domain.DAG, int, error) {
+	f.gotFilter = filter
+	f.gotRunState = filter.LastDagRunState
+	f.gotPaused = filter.Paused
+	out := []domain.DAG{}
+	for _, d := range f.dags {
+		if filter.Paused != nil && d.IsPaused != *filter.Paused {
+			continue
+		}
+		if filter.DagIDPattern != "" && !strings.Contains(d.DagID, filter.DagIDPattern) {
+			continue
+		}
+		if filter.DagIDPrefixPattern != "" && !strings.HasPrefix(d.DagID, filter.DagIDPrefixPattern) {
+			continue
+		}
+		if filter.DagDisplayNamePattern != "" && !strings.Contains(d.DagID, filter.DagDisplayNamePattern) {
+			continue
+		}
+		if filter.DagDisplayNamePrefixPattern != "" && !strings.HasPrefix(d.DagID, filter.DagDisplayNamePrefixPattern) {
+			continue
+		}
+		if len(filter.Owners) > 0 {
+			matched := false
+			for _, o := range filter.Owners {
+				if d.Owner == o {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		if len(filter.Tags) > 0 {
+			tagMap := make(map[string]bool)
+			for _, t := range d.Tags {
+				tagMap[t] = true
+			}
+			if filter.TagsMatchMode == "all" {
+				allMatch := true
+				for _, req := range filter.Tags {
+					if !tagMap[req] {
+						allMatch = false
+						break
+					}
+				}
+				if !allMatch {
+					continue
+				}
+			} else {
+				anyMatch := false
+				for _, req := range filter.Tags {
+					if tagMap[req] {
+						anyMatch = true
+						break
+					}
+				}
+				if !anyMatch {
+					continue
+				}
+			}
+		}
+		out = append(out, d)
+	}
+	return out, len(out), nil
+}
+
+func (f *fakeDagRepo) ListDagTags(_ context.Context, _, pattern, prefix string, _, _ int) (tags []string, total int, err error) {
+	seen := make(map[string]bool)
+	var out []string
+	for _, d := range f.dags {
+		for _, t := range d.Tags {
+			if !seen[t] {
+				seen[t] = true
+				lt := strings.ToLower(t)
+				if (pattern == "" || strings.Contains(lt, strings.ToLower(pattern))) && (prefix == "" || strings.HasPrefix(lt, strings.ToLower(prefix))) {
+					out = append(out, t)
+				}
+			}
+		}
 	}
 	return out, len(out), nil
 }

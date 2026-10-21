@@ -68,6 +68,107 @@ func (q *Queries) CountDagsFiltered(ctx context.Context, arg CountDagsFilteredPa
 	return count, err
 }
 
+const countDagsWithFilter = `-- name: CountDagsWithFilter :one
+SELECT count(*)
+FROM dags d
+LEFT JOIN LATERAL (
+    SELECT r.state, r.started_at
+    FROM dag_runs r
+    WHERE r.dag_id = d.id
+    ORDER BY r.logical_date DESC
+    LIMIT 1
+) l ON true
+WHERE d.tenant_id = $1 AND d.is_active = true
+  AND ($2::bool IS NULL OR d.is_paused = $2)
+  AND ($3::dag_run_state IS NULL OR l.state = $3)
+  AND ($4::text IS NULL OR d.dag_id ILIKE '%' || $4 || '%')
+  AND ($5::text IS NULL OR d.dag_id ILIKE $5 || '%')
+  AND ($6::text IS NULL OR d.dag_id ILIKE '%' || $6 || '%')
+  AND ($7::text IS NULL OR d.dag_id ILIKE $7 || '%')
+  AND ($8::text[] IS NULL OR cardinality($8::text[]) = 0 OR d.owner = ANY($8::text[]))
+  AND (
+      $9::text[] IS NULL
+      OR cardinality($9::text[]) = 0
+      OR (
+          CASE WHEN $10::text = 'all'
+               THEN d.tags @> $9::text[]
+               ELSE d.tags && $9::text[]
+          END
+      )
+  )
+  AND (
+      $11::bool IS NULL
+      OR ($11 = true AND EXISTS (
+          SELECT 1 FROM dag_favorites f
+          WHERE f.tenant_id = $1 AND f.user_id = $12 AND f.dag_id = d.dag_id
+      ))
+      OR ($11 = false AND NOT EXISTS (
+          SELECT 1 FROM dag_favorites f
+          WHERE f.tenant_id = $1 AND f.user_id = $12 AND f.dag_id = d.dag_id
+      ))
+  )
+`
+
+type CountDagsWithFilterParams struct {
+	TenantID                    pgtype.UUID  `json:"tenant_id"`
+	Paused                      *bool        `json:"paused"`
+	RunState                    *DagRunState `json:"run_state"`
+	DagIDPattern                *string      `json:"dag_id_pattern"`
+	DagIDPrefixPattern          *string      `json:"dag_id_prefix_pattern"`
+	DagDisplayNamePattern       *string      `json:"dag_display_name_pattern"`
+	DagDisplayNamePrefixPattern *string      `json:"dag_display_name_prefix_pattern"`
+	Owners                      []string     `json:"owners"`
+	Tags                        []string     `json:"tags"`
+	TagsMatchMode               *string      `json:"tags_match_mode"`
+	IsFavorite                  *bool        `json:"is_favorite"`
+	UserID                      *string      `json:"user_id"`
+}
+
+func (q *Queries) CountDagsWithFilter(ctx context.Context, arg CountDagsWithFilterParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countDagsWithFilter,
+		arg.TenantID,
+		arg.Paused,
+		arg.RunState,
+		arg.DagIDPattern,
+		arg.DagIDPrefixPattern,
+		arg.DagDisplayNamePattern,
+		arg.DagDisplayNamePrefixPattern,
+		arg.Owners,
+		arg.Tags,
+		arg.TagsMatchMode,
+		arg.IsFavorite,
+		arg.UserID,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countTenantDagTags = `-- name: CountTenantDagTags :one
+WITH distinct_tags AS (
+    SELECT DISTINCT unnest(d.tags)::text AS name
+    FROM dags d
+    WHERE d.tenant_id = $1 AND d.is_active = true
+)
+SELECT count(*)
+FROM distinct_tags
+WHERE ($2::text IS NULL OR name ILIKE '%' || $2 || '%')
+  AND ($3::text IS NULL OR name ILIKE $3 || '%')
+`
+
+type CountTenantDagTagsParams struct {
+	TenantID             pgtype.UUID `json:"tenant_id"`
+	TagNamePattern       *string     `json:"tag_name_pattern"`
+	TagNamePrefixPattern *string     `json:"tag_name_prefix_pattern"`
+}
+
+func (q *Queries) CountTenantDagTags(ctx context.Context, arg CountTenantDagTagsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countTenantDagTags, arg.TenantID, arg.TagNamePattern, arg.TagNamePrefixPattern)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteDag = `-- name: DeleteDag :execrows
 DELETE FROM dags
 WHERE tenant_id = $1 AND dag_id = $2
@@ -531,6 +632,154 @@ func (q *Queries) ListDagsFiltered(ctx context.Context, arg ListDagsFilteredPara
 	return items, nil
 }
 
+const listDagsWithFilter = `-- name: ListDagsWithFilter :many
+SELECT d.id, d.tenant_id, d.dag_id, d.description, d.is_paused, d.is_active, d.owner, d.tags, d.schedule, d.schedule_timezone, d.start_date, d.end_date, d.max_active_runs, d.catchup, d.current_version_id, d.created_at, d.updated_at, v.version AS current_version_label
+FROM dags d
+LEFT JOIN dag_versions v ON v.id = d.current_version_id
+LEFT JOIN LATERAL (
+    SELECT r.state, r.started_at
+    FROM dag_runs r
+    WHERE r.dag_id = d.id
+    ORDER BY r.logical_date DESC
+    LIMIT 1
+) l ON true
+WHERE d.tenant_id = $1 AND d.is_active = true
+  AND ($4::bool IS NULL OR d.is_paused = $4)
+  AND ($5::dag_run_state IS NULL OR l.state = $5)
+  AND ($6::text IS NULL OR d.dag_id ILIKE '%' || $6 || '%')
+  AND ($7::text IS NULL OR d.dag_id ILIKE $7 || '%')
+  AND ($8::text IS NULL OR d.dag_id ILIKE '%' || $8 || '%')
+  AND ($9::text IS NULL OR d.dag_id ILIKE $9 || '%')
+  AND ($10::text[] IS NULL OR cardinality($10::text[]) = 0 OR d.owner = ANY($10::text[]))
+  AND (
+      $11::text[] IS NULL
+      OR cardinality($11::text[]) = 0
+      OR (
+          CASE WHEN $12::text = 'all'
+               THEN d.tags @> $11::text[]
+               ELSE d.tags && $11::text[]
+          END
+      )
+  )
+  AND (
+      $13::bool IS NULL
+      OR ($13 = true AND EXISTS (
+          SELECT 1 FROM dag_favorites f
+          WHERE f.tenant_id = $1 AND f.user_id = $14 AND f.dag_id = d.dag_id
+      ))
+      OR ($13 = false AND NOT EXISTS (
+          SELECT 1 FROM dag_favorites f
+          WHERE f.tenant_id = $1 AND f.user_id = $14 AND f.dag_id = d.dag_id
+      ))
+  )
+ORDER BY
+  CASE WHEN $15::text IN ('-dag_id', '-dag_display_name') THEN d.dag_id END DESC,
+  CASE WHEN $15::text = 'last_run_state' THEN l.state::text END ASC NULLS LAST,
+  CASE WHEN $15::text = '-last_run_state' THEN l.state::text END DESC NULLS LAST,
+  CASE WHEN $15::text = 'last_run_start_date' THEN l.started_at END ASC NULLS LAST,
+  CASE WHEN $15::text = '-last_run_start_date' THEN l.started_at END DESC NULLS LAST,
+  d.dag_id ASC
+LIMIT $2 OFFSET $3
+`
+
+type ListDagsWithFilterParams struct {
+	TenantID                    pgtype.UUID  `json:"tenant_id"`
+	Limit                       int32        `json:"limit"`
+	Offset                      int32        `json:"offset"`
+	Paused                      *bool        `json:"paused"`
+	RunState                    *DagRunState `json:"run_state"`
+	DagIDPattern                *string      `json:"dag_id_pattern"`
+	DagIDPrefixPattern          *string      `json:"dag_id_prefix_pattern"`
+	DagDisplayNamePattern       *string      `json:"dag_display_name_pattern"`
+	DagDisplayNamePrefixPattern *string      `json:"dag_display_name_prefix_pattern"`
+	Owners                      []string     `json:"owners"`
+	Tags                        []string     `json:"tags"`
+	TagsMatchMode               *string      `json:"tags_match_mode"`
+	IsFavorite                  *bool        `json:"is_favorite"`
+	UserID                      *string      `json:"user_id"`
+	OrderBy                     *string      `json:"order_by"`
+}
+
+type ListDagsWithFilterRow struct {
+	ID                  pgtype.UUID        `json:"id"`
+	TenantID            pgtype.UUID        `json:"tenant_id"`
+	DagID               string             `json:"dag_id"`
+	Description         *string            `json:"description"`
+	IsPaused            bool               `json:"is_paused"`
+	IsActive            bool               `json:"is_active"`
+	Owner               *string            `json:"owner"`
+	Tags                []string           `json:"tags"`
+	Schedule            *string            `json:"schedule"`
+	ScheduleTimezone    *string            `json:"schedule_timezone"`
+	StartDate           pgtype.Timestamptz `json:"start_date"`
+	EndDate             pgtype.Timestamptz `json:"end_date"`
+	MaxActiveRuns       int32              `json:"max_active_runs"`
+	Catchup             bool               `json:"catchup"`
+	CurrentVersionID    pgtype.UUID        `json:"current_version_id"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	CurrentVersionLabel *string            `json:"current_version_label"`
+}
+
+// The Airflow 3.3 DAG list's search, tag, owner, favorite and sort controls
+// (#1928). Patterns are SQL LIKE expressions matched case-insensitively; a
+// display name is the dag_id. Sorting by next_dagrun is not done here: the next
+// run is computed per DAG after the page is read, so it falls back to dag_id.
+func (q *Queries) ListDagsWithFilter(ctx context.Context, arg ListDagsWithFilterParams) ([]ListDagsWithFilterRow, error) {
+	rows, err := q.db.Query(ctx, listDagsWithFilter,
+		arg.TenantID,
+		arg.Limit,
+		arg.Offset,
+		arg.Paused,
+		arg.RunState,
+		arg.DagIDPattern,
+		arg.DagIDPrefixPattern,
+		arg.DagDisplayNamePattern,
+		arg.DagDisplayNamePrefixPattern,
+		arg.Owners,
+		arg.Tags,
+		arg.TagsMatchMode,
+		arg.IsFavorite,
+		arg.UserID,
+		arg.OrderBy,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDagsWithFilterRow{}
+	for rows.Next() {
+		var i ListDagsWithFilterRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.DagID,
+			&i.Description,
+			&i.IsPaused,
+			&i.IsActive,
+			&i.Owner,
+			&i.Tags,
+			&i.Schedule,
+			&i.ScheduleTimezone,
+			&i.StartDate,
+			&i.EndDate,
+			&i.MaxActiveRuns,
+			&i.Catchup,
+			&i.CurrentVersionID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CurrentVersionLabel,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDagsWithVersion = `-- name: ListDagsWithVersion :many
 SELECT d.id, d.tenant_id, d.dag_id, d.description, d.is_paused, d.is_active, d.owner, d.tags, d.schedule, d.schedule_timezone, d.start_date, d.end_date, d.max_active_runs, d.catchup, d.current_version_id, d.created_at, d.updated_at, v.version AS current_version_label
 FROM dags d
@@ -603,6 +852,54 @@ func (q *Queries) ListDagsWithVersion(ctx context.Context, arg ListDagsWithVersi
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTenantDagTags = `-- name: ListTenantDagTags :many
+WITH distinct_tags AS (
+    SELECT DISTINCT unnest(d.tags)::text AS name
+    FROM dags d
+    WHERE d.tenant_id = $1 AND d.is_active = true
+)
+SELECT name
+FROM distinct_tags
+WHERE ($4::text IS NULL OR name ILIKE '%' || $4 || '%')
+  AND ($5::text IS NULL OR name ILIKE $5 || '%')
+ORDER BY name
+LIMIT $2 OFFSET $3
+`
+
+type ListTenantDagTagsParams struct {
+	TenantID             pgtype.UUID `json:"tenant_id"`
+	Limit                int32       `json:"limit"`
+	Offset               int32       `json:"offset"`
+	TagNamePattern       *string     `json:"tag_name_pattern"`
+	TagNamePrefixPattern *string     `json:"tag_name_prefix_pattern"`
+}
+
+func (q *Queries) ListTenantDagTags(ctx context.Context, arg ListTenantDagTagsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listTenantDagTags,
+		arg.TenantID,
+		arg.Limit,
+		arg.Offset,
+		arg.TagNamePattern,
+		arg.TagNamePrefixPattern,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
