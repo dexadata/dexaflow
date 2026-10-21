@@ -103,16 +103,15 @@ The control plane's secret-delivery policy (`auth.secret_scoping`, [ADR
 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)) has two modes:
 
 - **`permissive`** (the shipped default) delivers the **whole tenant vault** to
-  every task regardless of declaration, and only logs a warning when a task's
-  declared set is narrower than what it received. An **undeclared** Variable or
-  Connection still resolves — `Variable.get` does **not** return empty under
-  this default. A clean warning trail proves only that no DAG whose
-  declarations still *resolve* is over-served; it does **not** prove that no DAG
-  would lose secrets under `enforce`. Two populations never appear in the trail:
-  a DAG that declares nothing, and a DAG whose declared names no longer exist in
-  the vault — the warning counts only declared names that actually resolve, so an
-  all-stale declaration counts as zero. Both receive the whole vault today and
-  nothing under `enforce`
+  every task regardless of declaration, and only logs a warning (and records a
+  `secret.scope_warning` audit event) when a task's declared set is narrower
+  than what it received. An **undeclared** Variable or Connection still
+  resolves: `Variable.get` does **not** return empty under this default. A task
+  that declares nothing, or whose declared names no longer exist in the vault,
+  is warned about with `declared=0`, because under `enforce` it would receive
+  nothing. The warning counts only declared names that actually resolve, so an
+  all-stale declaration counts as zero. The events are per delivery, not per
+  DAG: count distinct DAGs with `declared=0` to size the migration backlog
   ([#800](https://github.com/dexadata/dexaflow/issues/800)).
 - **`enforce`** delivers **only** the declared subset — an undeclared name is
   not delivered, and `Variable.get`/`BaseHook.get_connection` for it comes back

@@ -132,7 +132,7 @@ func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticat
 	// is capped by auth.max_attempt_credential_lifetime.
 	agentSrv.SetTokenRenewal(authn, attemptTokenTTL, maxAttemptLifetime)
 	// Scope-by-declaration policy (ADR 0055 D9). Default permissive: the whole
-	// tenant vault, warning on a narrow declaration but never denying.
+	// tenant vault, warning on a narrow or empty declaration but never denying.
 	agentSrv.SetSecretScoping(secretScoping)
 	// Bind secret delivery to task-instance liveness (ADR 0055 E2). The
 	// ExecutionStore is the read-only liveness predicate; the mode defaults to

@@ -337,7 +337,11 @@ func (s *Server) warnIfNarrowerScope(ctx context.Context, id *auth.AgentIdentity
 	if !warn {
 		return
 	}
-	slog.Warn("task received the full secret vault but declared a narrower set; under secret_scoping: enforce it would receive only its declared set",
+	msg := "task received the full secret vault but declared a narrower set; under secret_scoping: enforce it would receive only its declared set"
+	if declaredCount == 0 {
+		msg = "task received the full secret vault but declared no secrets; under secret_scoping: enforce it would receive zero secrets"
+	}
+	slog.Warn(msg,
 		"ti", id.TaskInstanceID, "tenant", id.TenantID, "dag", id.DagID, "run", id.RunID,
 		"task", id.TaskID, "kind", kind, "declared", declaredCount, "delivered", deliveredCount)
 	if s.secretAudit == nil {
@@ -352,14 +356,17 @@ func (s *Server) warnIfNarrowerScope(ctx context.Context, id *auth.AgentIdentity
 // scopeGap compares a task's declared secret names against the full tenant set it
 // is about to receive. It returns the count of declared names that are actually
 // delivered, the delivered total, and whether that declaration is a strict subset
-// (non-empty and covering fewer than all delivered secrets) — the condition the
-// warn phase records. E1a rejects declaring a name that does not exist, so a
-// declared name is expected to be delivered; a name that is not is simply not
+// (covering fewer than all delivered secrets, including an empty declaration), the
+// condition the warn phase records. E1a rejects declaring a name that does not exist,
+// so a declared name is expected to be delivered; a name that is not is simply not
 // counted, keeping the comparison robust.
 func scopeGap(declared []string, delivered map[string]string) (declaredCount, deliveredCount int, strictSubset bool) {
 	deliveredCount = len(delivered)
+	if deliveredCount == 0 {
+		return 0, 0, false
+	}
 	if len(declared) == 0 {
-		return 0, deliveredCount, false
+		return 0, deliveredCount, true
 	}
 	seen := make(map[string]struct{}, len(declared))
 	for _, name := range declared {
@@ -368,6 +375,6 @@ func scopeGap(declared []string, delivered map[string]string) (declaredCount, de
 		}
 	}
 	declaredCount = len(seen)
-	strictSubset = declaredCount > 0 && declaredCount < deliveredCount
+	strictSubset = declaredCount < deliveredCount
 	return declaredCount, deliveredCount, strictSubset
 }

@@ -361,7 +361,7 @@ settings:
     description: >-
       Scope-by-declaration policy ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)):
       `permissive` (delivers the whole tenant vault; warns when a DAG declares a
-      narrower set), `enforce` (delivers only the declared subset: empty declaration
+      narrower set, an empty one included), `enforce` (delivers only the declared subset: empty declaration
       ⇒ nothing), or `off` (no scoping). Operator-scoped, never author-settable.
       Helm: `auth.secretScoping`.
   auth.secret_liveness_mode:

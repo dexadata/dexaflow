@@ -121,8 +121,8 @@ type AuthSection struct {
 	LoginRateLimitPerMinute int `mapstructure:"login_rate_limit_per_minute"`
 	// SecretScoping is the operator scope-by-declaration policy (ADR 0055 D9):
 	// "permissive" | "enforce" | "off". permissive (the default) delivers the
-	// whole tenant vault when a DAG declares nothing and warns (but still
-	// delivers the whole vault) when a DAG declares a narrower set; enforce
+	// whole tenant vault and warns when a DAG declares a narrower set, an
+	// empty set included (#800); enforce
 	// delivers only the declared subset (empty declaration → nothing); off
 	// disables scoping. It is operator-scoped, NEVER author-settable. Empty = the
 	// permissive default.
