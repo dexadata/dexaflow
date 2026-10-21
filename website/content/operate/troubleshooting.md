@@ -77,6 +77,38 @@ first such pod (`podFailurePolicy`) instead of retrying it three times.
 Exit code 2 is a command line the image cannot run, which only a changed
 `migrations.image` or hand-written args produce.
 
+## A control plane that is up but not ready
+
+A Pro control plane that finds its database schema absent or behind does not
+exit. It stays up, `/healthz` answers 200 so Kubernetes does not restart it,
+and `/readyz` answers 503 with the reason and what to run. It serves nothing
+else meanwhile: every other request, the API and the UI included, gets the
+same 503, so nothing is written to the database. It checks again on its own,
+after 1 second at first, doubling up to every 30 seconds, and starts serving
+without a restart once the schema is current. This is what happens after the
+database was emptied, restored into a fresh instance or repointed, or when a
+rollout runs before its migration Job.
+
+```bash
+kubectl -n <namespace> get pods -l app.kubernetes.io/name=dexaflow   # Running, 0/1 ready
+kubectl -n <namespace> logs deploy/<release> --tail=20 | grep 'database schema'
+```
+
+The log has one line per change of reason, `database schema is not ready;
+serving only the probes and metrics and checking again`, with `reason` and
+`action` fields, and `database schema is current; starting` when it moves on.
+
+| `/readyz` reason | Cause / fix |
+|---|---|
+| `schema absent` | The database has no `schema_migrations` table: it is empty, or `database.url` points at another database. If the data should be there, restore it first ([backup and restore](/operate/backup-restore/)). To migrate it, run `helm upgrade <release> oci://ghcr.io/dexadata/charts/dexaflow -n <namespace> --version <chart version> --reuse-values`, which runs the migration Job again, or your own migration step when `migrations.enabled` is false. |
+| `schema behind vN, requires vM` | The migrations of this release have not all run: a restore of an older backup, a lagging replica, or a rollout whose migration Job failed ([the migration Job](#the-migration-job)). Run the same `helm upgrade`. |
+| `schema dirty at vN` | A migration to a version other than the one this binary requires is marked dirty. It may still be running; if no migration Job is, follow [an interrupted migration](/operate/upgrades/#an-interrupted-migration). A version dirty at the one the binary requires stops boot with `schema is dirty at vN, the version this binary requires`. |
+| `schema unreadable` | The server reached the database at boot but cannot read the version now. The log line's `error` field has the cause. |
+
+A pod that was serving when the database changed under it stays up and not
+ready too, with `postgres schema not current` on `/readyz`, and returns to
+ready when the schema is current again.
+
 ## `dexaflow lite` boot
 
 | Symptom | Cause / fix |
@@ -274,6 +306,21 @@ kubectl logs deploy/<release> -c leoflow-server \
 
 - **Metrics:** Prometheus at `:9090/metrics` (scheduler, dispatch, inline
   runner, undispatchable counters; ADR 0007 has the catalogue).
+- **Schema readiness:** `dexaflow_schema_ready` is 1 when the database schema
+  is one the binary can serve, and 0 while it is not, with a `reason` label
+  (`schema absent`, `schema behind`, `schema dirty`, `schema unreadable`; the
+  versions are on `/readyz`). `dexaflow_schema_wait_seconds` is how long the
+  process has been waiting, 0 when it is ready. Every role exports both. With
+  the Prometheus Operator, `metrics.prometheusRule.enabled` renders the alert
+  below; without it, add the same rule to your Prometheus:
+
+  ```yaml
+  - alert: DexaflowSchemaNotReady
+    expr: dexaflow_schema_ready == 0
+    for: 5m
+    labels:
+      severity: warning
+  ```
 - **Tracing:** OpenTelemetry — set `DEXAFLOW_OBSERVABILITY_OTEL_ENABLED=true`
   and `…_OTEL_ENDPOINT`.
 - **Logs:** structured `slog` (JSON by default), one line per HTTP request

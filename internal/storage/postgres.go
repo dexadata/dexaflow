@@ -46,6 +46,8 @@ type Postgres struct {
 	// period for the whole duration of a migration. SchemaReady clears it when
 	// the condition clears, so a later upgrade is reported again.
 	dirtyAheadLogged atomic.Bool
+	// schemaObserver hears each readiness schema verdict (SetSchemaObserver).
+	schemaObserver func(class string)
 	// health is a dedicated one-connection pool used by Ping and the schema
 	// read, so a probe never queues behind application traffic. See
 	// newHealthPool for why that matters. Nil only in tests that construct a

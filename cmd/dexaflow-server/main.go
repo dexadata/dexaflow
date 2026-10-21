@@ -95,19 +95,23 @@ func main() {
 	}
 }
 
-// openVerifiedPostgres opens the pool and fails fast when the schema is not
-// current, with an actionable message — instead of booting and erroring at the
-// first query against a missing/old table. The check is a read-only SELECT, so it
-// works for the migration-less role:api (ADR 0049); the blessed Helm path applies
-// migrations in a pre-install/upgrade Job before any role starts.
-func openVerifiedPostgres(ctx context.Context, cfg config.DatabaseSection) (*storage.Postgres, error) {
-	pg, err := storage.NewPostgres(ctx, cfg)
+// openVerifiedPostgres opens the pool and waits, serving only the probes and
+// metrics, until the schema is one this binary can serve (ADR 0090 decision
+// 1), instead of exiting into a crash loop on an absent or behind schema. The
+// check is a read-only SELECT, so it works for the migration-less role:api
+// (ADR 0049); the blessed Helm path applies migrations in a
+// pre-install/upgrade Job before any role starts.
+func openVerifiedPostgres(ctx context.Context, cfg *config.ServerConfig, tel *observability.Telemetry) (*storage.Postgres, error) {
+	pg, err := storage.NewPostgres(ctx, cfg.Database)
 	if err != nil {
 		return nil, err
 	}
-	if serr := pg.CheckSchemaCurrent(ctx); serr != nil {
+	// A pod that was serving keeps the metric current through its readiness
+	// probe, so an emptied database shows on dexaflow_schema_ready too.
+	pg.SetSchemaObserver(tel.Metrics.RecordSchemaState)
+	if werr := awaitSchema(ctx, cfg, tel, pg); werr != nil {
 		pg.Close()
-		return nil, serr
+		return nil, werr
 	}
 	return pg, nil
 }
@@ -154,9 +158,9 @@ func run() error {
 
 	// Lite only: the key-migration lock is held before anything reads or writes
 	// a stored secret, and the server stops if it is lost (ADR 0065 section 3).
-	pg, ctx, releaseKeyLock, err := openPostgresHoldingKeyLock(ctx, cfg, tel.Logger)
+	pg, ctx, releaseKeyLock, err := openPostgresHoldingKeyLock(ctx, cfg, tel)
 	if err != nil {
-		return err
+		return stoppedWhileWaiting(err, tel.Logger)
 	}
 	defer pg.Close()
 	defer releaseKeyLock()
