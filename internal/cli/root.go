@@ -2,10 +2,14 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -95,17 +99,44 @@ func Execute() int {
 	if notice := legacyNameNotice(os.Args[0]); notice != "" && stderrIsTerminal() {
 		fmt.Fprintln(os.Stderr, notice)
 	}
-	code, err := executeRoot(NewRootCommand())
+	code, err := executeWithSignals(NewRootCommand())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 	}
 	return code
 }
 
-// executeRoot runs root and returns the process exit code for its error,
-// together with the error.
-func executeRoot(root *cobra.Command) (int, error) {
-	err := root.Execute()
+// executeWithSignals runs root under a context that Ctrl-C (SIGINT) or SIGTERM
+// cancels, instead of letting the signal end the process (#1061). A command
+// that is waiting on a child (a `docker build` that takes minutes) sees its
+// context canceled, the child is stopped through it, and the command returns,
+// so its deferred cleanups run: the generated Dockerfile is removed and the
+// .dockerignore restored. Commands that install their own handler (lite,
+// deploy --watch, runs --follow) derive it from this context and keep working
+// as before.
+//
+// Only the first signal is caught. After it the default handling is back, so a
+// second Ctrl-C ends the process at once if a cleanup hangs.
+func executeWithSignals(root *cobra.Command) (int, error) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	return executeRoot(ctx, root)
+}
+
+// executeRoot runs root with ctx and returns the process exit code for its
+// error, together with the error. A command that failed because ctx was
+// canceled (a signal stopped it) exits with exitInterrupted, as a shell does
+// for a command Ctrl-C ended, unless its error carries a code of its own.
+func executeRoot(ctx context.Context, root *cobra.Command) (int, error) {
+	err := root.ExecuteContext(ctx)
+	var coded *exitCodeError
+	if err != nil && ctx.Err() != nil && !errors.As(err, &coded) {
+		return exitInterrupted, err
+	}
 	return exitCodeOf(err), err
 }
 

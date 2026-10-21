@@ -410,9 +410,11 @@ func ensureDockerignore(w io.Writer, dir string, cfg *domain.LeoflowConfig, ownD
 	if rerr != nil && !os.IsNotExist(rerr) {
 		return noop, nil, fmt.Errorf("reading %s: %w", path, rerr)
 	}
-	// A build killed before cleanup — Ctrl-C during a multi-minute `docker
-	// build`, which is THE interruption, not a rare one — leaves our merged
-	// file behind. Read back as-is it would look like the author's own work:
+	// A build killed before its cleanup ran leaves our merged file behind.
+	// Ctrl-C and SIGTERM no longer do (the CLI catches them and the cleanup
+	// runs, #1061), but SIGKILL, a crash or a second Ctrl-C while a cleanup
+	// hangs still can, and so could a release older than that fix. Read back
+	// as-is it would look like the author's own work:
 	// `had` would be true, and the next successful build would "restore" a
 	// leoflow block as if they had written it, permanently, still headed
 	// "removed after the build" and no longer tracking dexaflow.yaml.
