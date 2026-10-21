@@ -496,7 +496,7 @@ func (r *WarmPoolReconciler) notePoolChanges(ctx context.Context, targets []Warm
 		if r.draining[dagVersionID] {
 			continue
 		}
-		r.logger.InfoContext(ctx, "draining the warm pool of a version that is no longer kept (superseded, or no active run): idle workers are deleted, busy ones finish their attempt first",
+		r.logger.InfoContext(ctx, "draining the warm pool of a version that is no longer kept (superseded, no active run, or no warm-eligible task): idle workers are deleted, busy ones finish their attempt first",
 			"dag_version", dagVersionID, "pods", len(have))
 		r.record("warm_pool_drain_started")
 	}

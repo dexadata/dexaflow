@@ -451,10 +451,23 @@ func (s *SchedulerStore) ActiveWarmTargets(ctx context.Context) ([]executor.Warm
 			hasSource: spec.Source != "",
 			prewarm:   c.prewarm,
 			// #2065: the per-task half of the decision dispatch places with.
-			noWarmTask: !s.warmPlacement.HasWarmTask(spec.Tasks),
+			noWarmTask: noWarmTask(s.warmPlacement, s.warmPolicy, spec.Tasks),
 		})
 	}
 	return warmTargets(versions, s.warmExec, s.warmPolicy), nil
+}
+
+// noWarmTask reports whether dispatch would place none of tasks on a warm
+// worker (#2065): it refuses a task the execution allowlist refuses before
+// any placement, and offers the others to a warm worker only when
+// placement's per-task decision (domain.WarmPolicy.HasWarmTask) accepts them.
+func noWarmTask(placement domain.WarmPolicy, allow *domain.ExecutionPolicy, tasks []domain.TaskSpec) bool {
+	for i := range tasks {
+		if allow.CheckTask(tasks[i]) == nil && placement.HasWarmTask(tasks[i:i+1]) {
+			return false
+		}
+	}
+	return true
 }
 
 // candidateSpec reads a warm candidate's spec through the spec cache: a DAG's

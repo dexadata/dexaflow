@@ -145,7 +145,7 @@ func TestExecutionSummaryLines(t *testing.T) {
 			"  execution  every task runs on a dedicated pod: node_selector set\n  warm pool  2 idle warm workers\n"},
 		{"one task reason, no pool, previous pool draining", executionSummary{WarmPools: true,
 			Tasks: []taskExecution{task("a", "resources set (a warm pod is 1 unit)"), task("b", "resources set (a warm pod is 1 unit)")},
-			Pool: executionPool{State: "none", Detail: "no warm pool for this version: no task of it is warm-eligible; previous pool draining", PreviousPool: "draining"}},
+			Pool:  executionPool{State: "none", Detail: "no warm pool for this version: no task of it is warm-eligible; previous pool draining", PreviousPool: "draining"}},
 			"  execution  every task runs on a dedicated pod: resources set (a warm pod is 1 unit)\n  warm pool  no warm pool for this version: no task of it is warm-eligible; previous pool draining\n"},
 		{"no pool, mixed reasons", executionSummary{WarmPools: true, Tasks: []taskExecution{task("a", "no idle warm workers kept for this DAG"), task("b", "labels set")},
 			Pool: executionPool{State: "none", Detail: "no idle warm worker is kept"}},

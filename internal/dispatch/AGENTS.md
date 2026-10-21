@@ -23,8 +23,9 @@ decision logic on the scheduler's hot path.
   (node selector, tolerations, runtime class and the rest listed in
   `internal/domain/warm_placement_test.go`) takes the dedicated pod path
   instead. The rule lives in `domain.WarmPolicy.DedicatedReason`, the one
-  decision both `Dispatch` and the register response (#1707) use: change it
-  there, never with a check of its own in dispatch, and keep
+  decision `Dispatch`, the register response (#1707) and the warm targets
+  (`HasWarmTask`, its per-task half, in `ActiveWarmTargets`, #2065) use:
+  change it there, never with a check of its own in dispatch, and keep
   `Dispatcher.WarmPolicy` and the server's `warmPolicy(cfg)` equal
   (`warm_policy_test.go` here and in `cmd/dexaflow-server`).
 - **A refusal is permanent.** A task that may not run here (it does not fit
