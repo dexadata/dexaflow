@@ -389,6 +389,16 @@ jobs:
           # the HEAD upgrade below then applies every new migration to it.
           kubectl -n leoflow exec deploy/postgres -- psql -v ON_ERROR_STOP=1 \
             -U leoflow -d leoflow -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+          # The installation ConfigMap (ADR 0090 decision 3) is written by the
+          # migrate wrapper, not rendered by the chart, so `helm uninstall`
+          # leaves it in place by design: check that it did. It still holds
+          # the id of the database just emptied, and the HEAD upgrade below
+          # would rightly refuse the fresh database as replaced (exit 8). An
+          # operator upgrading from the previous release has no ConfigMap
+          # yet, so remove it to start from that namespace, as the
+          # troubleshooting page tells an operator starting over to do.
+          kubectl -n leoflow get configmap leoflow-installation -o name
+          kubectl -n leoflow delete configmap leoflow-installation --wait
           # No pinned version, which would go stale silently the first time
           # nobody remembered to bump it: the previous release is the newest
           # final chart of HEAD's own minor (#1403). Not the newest chart in the
