@@ -133,6 +133,25 @@ async function resolveUser() {
   };
   for (const r of routes) await step('route ' + r, async () => { await gotoRoute(r); });
 
+  // 1b) DAG list search and filter interaction.
+  await step('dags: search and filter interaction', async () => {
+    await page.goto(URL + '/dags', { waitUntil: 'networkidle' });
+    const search = page.locator('input[placeholder*="Search" i], input[type="search"]').first();
+    if (!(await search.count())) throw new Error('DAG search box not found');
+    // A term no DAG matches must reach the server as a filter and come back
+    // empty: before #1927 the filter params were ignored and every DAG returned.
+    const filtered = page.waitForResponse(
+      (r) => /\/dags\?/.test(r.url()) && /dag_display_name_(prefix_)?pattern=zz-no-such-dag/.test(r.url()),
+      { timeout: 10000 },
+    );
+    await search.fill('zz-no-such-dag');
+    const res = await filtered;
+    const body = await res.json();
+    if (res.status() !== 200 || body.total_entries !== 0) {
+      throw new Error(`search filter ignored: status ${res.status()}, total_entries ${body.total_entries}`);
+    }
+  });
+
   // 2) Connection form open (the bug that shipped broken).
   await step('connections: open Add form', async () => {
     await page.goto(URL + '/connections', { waitUntil: 'networkidle' });

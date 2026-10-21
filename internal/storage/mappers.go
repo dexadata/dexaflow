@@ -120,6 +120,19 @@ func mapDagWithVersion(d queries.GetDagWithVersionRow) domain.DAG {
 	return out
 }
 
+func mapDagWithFilter(d queries.ListDagsWithFilterRow) domain.DAG {
+	out := mapDag(queries.Dag{
+		DagID: d.DagID, Description: d.Description, Owner: d.Owner, Tags: d.Tags,
+		Schedule: d.Schedule, ScheduleTimezone: d.ScheduleTimezone, StartDate: d.StartDate,
+		IsPaused: d.IsPaused, IsActive: d.IsActive, MaxActiveRuns: d.MaxActiveRuns,
+		Catchup: d.Catchup, UpdatedAt: d.UpdatedAt,
+	})
+	if d.CurrentVersionLabel != nil {
+		out.CurrentVersion = *d.CurrentVersionLabel
+	}
+	return out
+}
+
 // mapDagRunWithVersion is mapDagRun plus the version label the joined query
 // carries, for the same reason as mapDagWithVersion.
 func mapDagRunWithVersion(r queries.GetDagRunWithVersionRow, dagID string) domain.DagRun {

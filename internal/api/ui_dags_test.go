@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -185,5 +186,136 @@ func TestUIDagsDefaultRunsLimit(t *testing.T) {
 	authGet(uiDagsServer([]domain.DAG{{DagID: "etl"}}, latest), http.MethodGet, "/ui/dags", "")
 	if latest.gotN != defaultDagRunsLimit {
 		t.Errorf("default dag_runs_limit = %d, want %d", latest.gotN, defaultDagRunsLimit)
+	}
+}
+
+func TestUIDagsSearchAndSortFilters(t *testing.T) {
+	repo := &fakeDagRepo{dags: []domain.DAG{
+		{DagID: "alpha_dag", Owner: "alice"},
+		{DagID: "beta_dag", Owner: "bob"},
+		{DagID: "gamma_dag", Owner: "alice"},
+	}}
+	srv := NewServer(Dependencies{
+		Logger:        discardLogger(),
+		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		CORSOrigins:   []string{"*"},
+		Dags:          repo,
+		LatestRuns:    &fakeLatestRuns{},
+	})
+
+	rec := authGet(srv, http.MethodGet, "/ui/dags?dag_id_pattern=alpha&order_by=-dag_id&owners=alice", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/ui/dags = %d", rec.Code)
+	}
+	if repo.gotFilter.DagIDPattern != "alpha" {
+		t.Errorf("expected DagIDPattern 'alpha', got %q", repo.gotFilter.DagIDPattern)
+	}
+	if repo.gotFilter.OrderBy != "-dag_id" {
+		t.Errorf("expected OrderBy '-dag_id', got %q", repo.gotFilter.OrderBy)
+	}
+	if len(repo.gotFilter.Owners) != 1 || repo.gotFilter.Owners[0] != "alice" {
+		t.Errorf("expected Owners ['alice'], got %v", repo.gotFilter.Owners)
+	}
+
+	var col dagWithRunsCollectionDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &col); err != nil {
+		t.Fatal(err)
+	}
+	if len(col.Dags) != 1 || col.Dags[0].DagID != "alpha_dag" {
+		t.Errorf("expected alpha_dag, got %+v", col.Dags)
+	}
+}
+
+func TestUIDagsTagFilters(t *testing.T) {
+	repo := &fakeDagRepo{dags: []domain.DAG{
+		{DagID: "d1", Tags: []string{"finance", "daily"}},
+		{DagID: "d2", Tags: []string{"finance", "hourly"}},
+		{DagID: "d3", Tags: []string{"marketing"}},
+	}}
+	srv := NewServer(Dependencies{
+		Logger:        discardLogger(),
+		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		CORSOrigins:   []string{"*"},
+		Dags:          repo,
+		LatestRuns:    &fakeLatestRuns{},
+	})
+
+	// Any mode
+	rec := authGet(srv, http.MethodGet, "/ui/dags?tags=finance,marketing&tags_match_mode=any", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/ui/dags = %d", rec.Code)
+	}
+	var col dagWithRunsCollectionDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &col); err != nil {
+		t.Fatal(err)
+	}
+	if len(col.Dags) != 3 {
+		t.Errorf("expected 3 DAGs matching tags 'finance' or 'marketing', got %d", len(col.Dags))
+	}
+
+	// All mode
+	recAll := authGet(srv, http.MethodGet, "/ui/dags?tags=finance,daily&tags_match_mode=all", "")
+	if recAll.Code != http.StatusOK {
+		t.Fatalf("/ui/dags = %d", recAll.Code)
+	}
+	var colAll dagWithRunsCollectionDTO
+	if err := json.Unmarshal(recAll.Body.Bytes(), &colAll); err != nil {
+		t.Fatal(err)
+	}
+	if len(colAll.Dags) != 1 || colAll.Dags[0].DagID != "d1" {
+		t.Errorf("expected only d1 matching both tags, got %+v", colAll.Dags)
+	}
+}
+
+func TestListDagTagsEndpoint(t *testing.T) {
+	repo := &fakeDagRepo{dags: []domain.DAG{
+		{DagID: "d1", Tags: []string{"alpha", "beta"}},
+		{DagID: "d2", Tags: []string{"beta", "gamma"}},
+	}}
+	srv := NewServer(Dependencies{
+		Logger:        discardLogger(),
+		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		CORSOrigins:   []string{"*"},
+		Dags:          repo,
+	})
+
+	rec := authGet(srv, http.MethodGet, "/api/v2/dagTags", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/v2/dagTags = %d", rec.Code)
+	}
+	// Airflow's DAGTagCollectionResponse: tags are plain strings, which the
+	// UI's tag filter maps to {label, value}; objects render "[object Object]".
+	var resp struct {
+		Tags         []string `json:"tags"`
+		TotalEntries int      `json:"total_entries"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("tags must be a list of strings: %v (%s)", err, rec.Body.String())
+	}
+	if resp.TotalEntries != 3 || strings.Join(resp.Tags, ",") != "alpha,beta,gamma" {
+		t.Errorf("expected alpha,beta,gamma, got tags=%v total=%d", resp.Tags, resp.TotalEntries)
+	}
+
+	for _, tc := range []struct{ query, want string }{
+		{"tag_name_pattern=et", "beta"},
+		{"tag_name_prefix_pattern=g", "gamma"},
+		{"tag_name_prefix_pattern=et", ""},
+	} {
+		rec := authGet(srv, http.MethodGet, "/api/v2/dagTags?"+tc.query, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /api/v2/dagTags?%s = %d", tc.query, rec.Code)
+		}
+		var got struct {
+			Tags []string `json:"tags"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(got.Tags, ",") != tc.want {
+			t.Errorf("?%s = %v, want %q", tc.query, got.Tags, tc.want)
+		}
 	}
 }

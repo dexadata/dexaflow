@@ -17,6 +17,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/secrets"
 	"github.com/dexadata/dexaflow/internal/storage"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // openRepo connects to the migrated test database or skips. It returns the
@@ -1329,5 +1330,200 @@ func TestCreateDagRunRespectsMaxActiveRunsIntegration(t *testing.T) {
 		LogicalDate: time.Now().UTC().Add(4 * time.Second),
 	}); err != nil {
 		t.Fatalf("after freeing a slot the trigger should succeed: %v", err)
+	}
+}
+
+func TestListDagsWithFilterAndTagsIntegration(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	prefix := fmt.Sprintf("filt_%d", time.Now().UnixNano())
+	dag1 := prefix + "_alpha"
+	dag2 := prefix + "_beta"
+	dag3 := prefix + "_gamma"
+
+	registerWithMeta := func(dagID, owner string, tags []string) {
+		spec := domain.DAGSpec{
+			SchemaVersion: "1.0",
+			DagID:         dagID,
+			DagVersion:    "v1",
+			Image:         "img:v1",
+			Owner:         owner,
+			Tags:          tags,
+			Tasks:         []domain.TaskSpec{{TaskID: "t1", Type: domain.TaskTypePython}},
+		}
+		hash, err := spec.CanonicalHash()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if created, rerr := repo.RegisterDagVersion(ctx, "default", spec, hash); rerr != nil || !created {
+			t.Fatalf("register %s: %v", dagID, rerr)
+		}
+	}
+
+	registerWithMeta(dag1, "alice", []string{"etl", "daily"})
+	registerWithMeta(dag2, "bob", []string{"etl", "hourly"})
+	registerWithMeta(dag3, "alice", []string{"ml", "weekly"})
+
+	// Pause dag2 to test paused filter
+	if _, err := repo.SetPausedBy(ctx, "default", "u1", dag2, true); err != nil {
+		t.Fatalf("SetPausedBy: %v", err)
+	}
+
+	// 1. Filter by dag_id_pattern
+	dags, total, err := repo.ListDagsWithFilter(ctx, "default", domain.DagFilter{
+		DagIDPattern: prefix + "_alpha",
+		Limit:        10,
+	})
+	if err != nil {
+		t.Fatalf("filter pattern: %v", err)
+	}
+	if total != 1 || len(dags) != 1 || dags[0].DagID != dag1 {
+		t.Errorf("expected dag1, got total=%d, dags=%+v", total, dags)
+	}
+
+	// 2. Filter by paused
+	isPaused := true
+	dags, total, err = repo.ListDagsWithFilter(ctx, "default", domain.DagFilter{
+		DagIDPrefixPattern: prefix,
+		Paused:             &isPaused,
+		Limit:              10,
+	})
+	if err != nil {
+		t.Fatalf("filter paused: %v", err)
+	}
+	if total != 1 || len(dags) != 1 || dags[0].DagID != dag2 {
+		t.Errorf("expected paused dag2, got total=%d, dags=%+v", total, dags)
+	}
+
+	// 3. Filter by tags - match any
+	dags, total, err = repo.ListDagsWithFilter(ctx, "default", domain.DagFilter{
+		DagIDPrefixPattern: prefix,
+		Tags:               []string{"daily", "weekly"},
+		TagsMatchMode:      "any",
+		Limit:              10,
+	})
+	if err != nil {
+		t.Fatalf("filter tags any: %v", err)
+	}
+	if total != 2 || len(dags) != 2 {
+		t.Errorf("expected 2 dags with daily/weekly, got total=%d, dags=%+v", total, dags)
+	}
+
+	// 4. Filter by tags - match all
+	dags, total, err = repo.ListDagsWithFilter(ctx, "default", domain.DagFilter{
+		DagIDPrefixPattern: prefix,
+		Tags:               []string{"etl", "daily"},
+		TagsMatchMode:      "all",
+		Limit:              10,
+	})
+	if err != nil {
+		t.Fatalf("filter tags all: %v", err)
+	}
+	if total != 1 || len(dags) != 1 || dags[0].DagID != dag1 {
+		t.Errorf("expected 1 dag matching both etl and daily, got total=%d, dags=%+v", total, dags)
+	}
+
+	// 5. Filter by owner
+	dags, total, err = repo.ListDagsWithFilter(ctx, "default", domain.DagFilter{
+		DagIDPrefixPattern: prefix,
+		Owners:             []string{"bob"},
+		Limit:              10,
+	})
+	if err != nil {
+		t.Fatalf("filter owners: %v", err)
+	}
+	if total != 1 || len(dags) != 1 || dags[0].DagID != dag2 {
+		t.Errorf("expected dag2 owned by bob, got total=%d, dags=%+v", total, dags)
+	}
+
+	// 6. Order by descending dag_id
+	dags, total, err = repo.ListDagsWithFilter(ctx, "default", domain.DagFilter{
+		DagIDPrefixPattern: prefix,
+		OrderBy:            "-dag_id",
+		Limit:              10,
+	})
+	if err != nil {
+		t.Fatalf("order by: %v", err)
+	}
+	if total != 3 || len(dags) != 3 || dags[0].DagID != dag3 || dags[2].DagID != dag1 {
+		t.Errorf("expected descending order (gamma, beta, alpha), got %+v", dags)
+	}
+
+	// 7. ListDagTags
+	tags, tagTotal, err := repo.ListDagTags(ctx, "default", "", "", 10, 0)
+	if err != nil {
+		t.Fatalf("ListDagTags: %v", err)
+	}
+	if tagTotal < 4 {
+		t.Errorf("expected at least 4 tags across dags, got %d tags (%v)", tagTotal, tags)
+	}
+
+	// ListDagTags with pattern
+	tags, tagTotal, err = repo.ListDagTags(ctx, "default", "hour", "", 10, 0)
+	if err != nil {
+		t.Fatalf("ListDagTags with pattern: %v", err)
+	}
+	if tagTotal != 1 || len(tags) != 1 || tags[0] != "hourly" {
+		t.Errorf("expected 1 tag 'hourly', got total=%d tags=%v", tagTotal, tags)
+	}
+	// The UI's tag filter sends tag_name_prefix_pattern: "week" matches
+	// "weekly", "eek" (a substring, not a prefix) matches nothing.
+	if tags, _, err = repo.ListDagTags(ctx, "default", "", "week", 10, 0); err != nil || len(tags) != 1 || tags[0] != "weekly" {
+		t.Errorf("prefix week: tags=%v err=%v", tags, err)
+	}
+	if tags, _, err = repo.ListDagTags(ctx, "default", "", "eek", 10, 0); err != nil || len(tags) != 0 {
+		t.Errorf("prefix eek must not match: tags=%v err=%v", tags, err)
+	}
+}
+
+// TestListDagsOrderByLatestRunIntegration covers the UI's sort options that
+// read the latest run (#1927): a DAG with no run sorts last both ways.
+func TestListDagsOrderByLatestRunIntegration(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	pool, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	prefix := fmt.Sprintf("ordrun_%d", time.Now().UnixNano())
+	early, late, never := prefix+"_a", prefix+"_b", prefix+"_c"
+	now := time.Now().UTC()
+	for _, id := range []string{early, late, never} {
+		registerSpec(t, repo, ctx, id, []domain.TaskSpec{{TaskID: "t", Type: domain.TaskTypePython}})
+	}
+	for i, tc := range []struct {
+		id    string
+		state string
+	}{{early, "success"}, {late, "failed"}} {
+		if _, err := repo.CreateDagRun(ctx, "default", tc.id, domain.DagRun{
+			RunID: "r1", State: domain.DagRunStateRunning, RunType: "manual", LogicalDate: now,
+		}); err != nil {
+			t.Fatalf("create run: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `UPDATE dag_runs SET state=$2::dag_run_state, started_at=$3 WHERE dag_id IN (SELECT id FROM dags WHERE dag_id=$1)`,
+			tc.id, tc.state, now.Add(time.Duration(i)*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, tc := range []struct{ orderBy, want string }{
+		{"last_run_start_date", early + "," + late + "," + never},
+		{"-last_run_start_date", late + "," + early + "," + never},
+		{"last_run_state", late + "," + early + "," + never},
+		{"-last_run_state", early + "," + late + "," + never},
+		{"-dag_display_name", never + "," + late + "," + early},
+	} {
+		dags, _, err := repo.ListDagsWithFilter(ctx, "default", domain.DagFilter{
+			DagIDPrefixPattern: prefix, OrderBy: tc.orderBy, Limit: 10,
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", tc.orderBy, err)
+		}
+		ids := make([]string, 0, len(dags))
+		for _, d := range dags {
+			ids = append(ids, d.DagID)
+		}
+		if got := strings.Join(ids, ","); got != tc.want {
+			t.Errorf("order_by=%s: got %s, want %s", tc.orderBy, got, tc.want)
+		}
 	}
 }
