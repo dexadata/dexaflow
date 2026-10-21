@@ -84,6 +84,7 @@ func TestRegisterVersionDryRunRefusesAsTheRegisterWould(t *testing.T) {
 		{name: "dag_id mismatch", path: "other", body: validSpecJSON, code: http.StatusBadRequest},
 		{name: "empty body", path: "etl", body: "{}", code: http.StatusBadRequest},
 		{name: "invalid spec", path: "etl", body: `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[]}`, code: http.StatusBadRequest},
+		{name: "malformed toleration (#628)", path: "etl", body: `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[{"task_id":"a","type":"python","entrypoint":"dag:a","execution":{"tolerations":[{"keyy":"gpu"}]}}]}`, code: http.StatusBadRequest},
 		{name: "image outside the allowlist", path: "etl", body: validSpecJSON, pol: policy, code: http.StatusBadRequest},
 		{name: "unknown connection", path: "etl", body: validSpecJSON, err: domain.Safef(domain.ErrValidation, "dag %q declares unknown connection(s) %s", "etl", "warehouse"), code: http.StatusBadRequest},
 		{name: "version conflict", path: "etl", body: validSpecJSON, err: domain.ErrConflict, code: http.StatusConflict},
