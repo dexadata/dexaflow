@@ -82,6 +82,12 @@ merge. They are not bureaucracy; they are why the codebase stays an A+.
 - **Go Report Card A+** — gofmt, govet, gocyclo ≤ 15, golint, ineffassign, misspell,
   license, plus the extended golangci-lint stack. `make lint` clean every commit.
   ([ADR 0012](/project/adrs/))
+- **Go files stay at or under 1,500 lines**, not counting tests and generated
+  code. `scripts/check-go-file-length.sh` fails CI on a longer file. The files
+  already over it are pinned at their length in
+  `scripts/go-file-length-allowlist.txt` and may not grow; a change that
+  shortens one lowers its number, and a split that brings it under the limit
+  removes its line.
 - **Every `//nolint` names its linters and says why**, as in
   `//nolint:gosec // G304: the user's own config file`; nolintlint refuses a
   bare or blanket directive.

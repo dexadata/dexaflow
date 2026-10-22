@@ -52,6 +52,13 @@ jobs:
         with:
           persist-credentials: false
 
+      # #1942: no Go production file over 1,500 lines (#1580), and the files
+      # already over it, pinned in scripts/go-file-length-allowlist.txt, never
+      # grow. Shares this job so the check costs no extra runner, and runs
+      # first because it takes milliseconds.
+      - name: Go files stay under the length limit
+        run: bash scripts/check-go-file-length.sh
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
