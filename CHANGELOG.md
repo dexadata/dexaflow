@@ -6,6 +6,8 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-10-22
+
 ### Added
 
 - **API tokens can be turned off.** `auth.api_tokens.disabled` (Helm
