@@ -12,7 +12,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/storage/queries"
 )
 
-// activeWarmVersion is one active dag_version's warm-relevant spec fields — the
+// activeWarmVersion is one active dag_version's warm-relevant spec fields: the
 // pure input to warmTargets, extracted so the projection is unit-testable without
 // a database.
 type activeWarmVersion struct {
