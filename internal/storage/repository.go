@@ -119,6 +119,52 @@ func mapNotFound(err error) error {
 // pgUniqueViolation is the Postgres SQLSTATE for a unique-constraint violation.
 const pgUniqueViolation = "23505"
 
+// pgForeignKeyViolation is the Postgres SQLSTATE for a foreign-key constraint violation.
+const pgForeignKeyViolation = "23503"
+
+// isTenantFKViolation reports whether err is a Postgres foreign-key violation
+// (SQLSTATE 23503) on a tenant_id column, which is how a write with a stale
+// cached tenant id fails: Postgres names the referenced table in the detail
+// ("is not present in table "tenants"") and every such constraint is named
+// <table>_tenant_id_fkey.
+func isTenantFKViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != pgForeignKeyViolation {
+		return false
+	}
+	return strings.Contains(pgErr.Detail, `table "tenants"`) ||
+		strings.HasSuffix(pgErr.ConstraintName, "tenant_id_fkey")
+}
+
+// InvalidateTenant evicts a tenant from the tenant ID cache, so the next
+// lookup re-queries the database. Code that deletes or recreates a tenant
+// behind this process calls it; nothing in this repository deletes a tenant.
+func (r *Repository) InvalidateTenant(name string) {
+	if r.tenants != nil {
+		r.tenants.Delete(name)
+	}
+}
+
+// withTenantWrite runs op with tenant's resolved UUID. If op fails with a
+// Postgres foreign key violation against tenants (SQLSTATE 23503), the cached
+// tenant mapping is dropped and op is retried once with the re-resolved UUID.
+// This handles tenants that were recreated or restored behind a running process.
+func (r *Repository) withTenantWrite(ctx context.Context, tenant string, op func(tid pgtype.UUID) error) error {
+	tid, err := r.tenantID(ctx, tenant)
+	if err != nil {
+		return err
+	}
+	err = op(tid)
+	if err != nil && isTenantFKViolation(err) {
+		r.InvalidateTenant(tenant)
+		freshTID, ferr := r.tenantID(ctx, tenant)
+		if ferr == nil && freshTID != tid {
+			return op(freshTID)
+		}
+	}
+	return err
+}
+
 // mapConflict translates a Postgres unique-constraint violation into
 // domain.ErrConflict (which the API maps to 409), leaving other errors as is — so
 // a duplicate write (e.g. a second dag run for the same logical date) surfaces as
@@ -135,12 +181,14 @@ func mapConflict(err error) error {
 }
 
 // tenantID resolves a tenant name to its id. Nearly every repository method
-// starts with it, so a resolved id is cached for the life of the process: a
-// tenant is never renamed or deleted (no query does either), so name -> id
-// cannot change. A miss is not cached, so a tenant created later is found.
-// The one way the mapping changes under a running process is outside it:
-// restoring a backup whose tenants carry different ids. Restart the control
-// plane after such a restore, or every query keeps using the old ids.
+// starts with it, so a resolved id is cached for the life of the process; a
+// miss is not cached, so a tenant created later is found. The mapping changes
+// under a running process only from outside it: a tenant recreated behind it,
+// or a restored backup whose tenants carry other ids. The writes an operator
+// makes right after such a restore (variables, connections, pools) go through
+// withTenantWrite, which drops the stale entry on a tenant foreign-key
+// violation and retries once (#1614). Other queries keep the old id until a
+// restart, which is why the restore guide still says to restart.
 func (r *Repository) tenantID(ctx context.Context, name string) (pgtype.UUID, error) {
 	if r.tenants != nil {
 		if id, ok := r.tenants.Load(name); ok {
@@ -544,6 +592,56 @@ func (r *Repository) ListDagRuns(ctx context.Context, tenant, dagID string, limi
 	return out, int(total), nil
 }
 
+// ListDagRunsWithFilter returns a page of runs for a DAG matching the given filter
+// criteria, and the matching total count.
+func (r *Repository) ListDagRunsWithFilter(ctx context.Context, tenant, dagID string, filter domain.DagRunFilter) (runs []domain.DagRun, total int, err error) {
+	dag, err := r.resolveDag(ctx, tenant, dagID)
+	if err != nil {
+		return nil, 0, err
+	}
+	states := filter.States
+	if states == nil {
+		states = []string{}
+	}
+	rows, err := r.q.ListDagRunsFiltered(ctx, queries.ListDagRunsFilteredParams{
+		TenantID:           dag.TenantID,
+		DagID:              dag.ID,
+		States:             states,
+		RowLimit:           toInt32(filter.Limit),
+		RowOffset:          toInt32(filter.Offset),
+		RunIDPattern:       strPtr(filter.RunIDPattern),
+		RunIDPrefixPattern: strPtr(filter.RunIDPrefixPattern),
+		RunType:            strPtr(filter.RunType),
+		StartDateGte:       ptrTimestamptz(filter.StartDateGte),
+		StartDateLte:       ptrTimestamptz(filter.StartDateLte),
+		EndDateGte:         ptrTimestamptz(filter.EndDateGte),
+		EndDateLte:         ptrTimestamptz(filter.EndDateLte),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing filtered dag runs: %w", err)
+	}
+	cnt, err := r.q.CountDagRunsFiltered(ctx, queries.CountDagRunsFilteredParams{
+		TenantID:           dag.TenantID,
+		DagID:              dag.ID,
+		States:             states,
+		RunIDPattern:       strPtr(filter.RunIDPattern),
+		RunIDPrefixPattern: strPtr(filter.RunIDPrefixPattern),
+		RunType:            strPtr(filter.RunType),
+		StartDateGte:       ptrTimestamptz(filter.StartDateGte),
+		StartDateLte:       ptrTimestamptz(filter.StartDateLte),
+		EndDateGte:         ptrTimestamptz(filter.EndDateGte),
+		EndDateLte:         ptrTimestamptz(filter.EndDateLte),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("counting filtered dag runs: %w", err)
+	}
+	out := make([]domain.DagRun, 0, len(rows))
+	for _, run := range rows {
+		out = append(out, mapDagRunWithVersion(queries.GetDagRunWithVersionRow(run), dagID))
+	}
+	return out, int(cnt), nil
+}
+
 // ListDagRunsPage is ListDagRuns without the total: it skips the COUNT over
 // every run of the DAG, for callers that never use it (the grid, the latest
 // run header, the in-memory run scans).
@@ -768,6 +866,51 @@ func (r *Repository) ListTaskInstances(ctx context.Context, tenant, dagID, runID
 		out = append(out, mapTaskInstance(ti, dagID, runID))
 	}
 	return out, len(out), nil
+}
+
+// ListTaskInstancesWithFilter returns the task instances of a run matching the given filter.
+func (r *Repository) ListTaskInstancesWithFilter(ctx context.Context, tenant, dagID, runID string, filter domain.TaskInstanceFilter) (tis []domain.TaskInstance, total int, err error) {
+	dag, err := r.resolveDag(ctx, tenant, dagID)
+	if err != nil {
+		return nil, 0, err
+	}
+	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{TenantID: dag.TenantID, DagID: dag.ID, RunID: runID})
+	if err != nil {
+		return nil, 0, mapNotFound(err)
+	}
+	states := filter.States
+	if states == nil {
+		states = []string{}
+	}
+	rows, err := r.q.ListTaskInstancesFiltered(ctx, queries.ListTaskInstancesFilteredParams{
+		TenantID:            run.TenantID,
+		DagRunID:            run.ID,
+		States:              states,
+		TaskIDPattern:       strPtr(filter.TaskIDPattern),
+		TaskIDPrefixPattern: strPtr(filter.TaskIDPrefixPattern),
+		Pool:                strPtr(filter.Pool),
+		RowOffset:           toInt32(filter.Offset),
+		RowLimit:            toInt32(filter.Limit),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing filtered task instances: %w", err)
+	}
+	cnt, err := r.q.CountTaskInstancesFiltered(ctx, queries.CountTaskInstancesFilteredParams{
+		TenantID:            run.TenantID,
+		DagRunID:            run.ID,
+		States:              states,
+		TaskIDPattern:       strPtr(filter.TaskIDPattern),
+		TaskIDPrefixPattern: strPtr(filter.TaskIDPrefixPattern),
+		Pool:                strPtr(filter.Pool),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("counting filtered task instances: %w", err)
+	}
+	out := make([]domain.TaskInstance, 0, len(rows))
+	for _, ti := range rows {
+		out = append(out, mapTaskInstance(ti, dagID, runID))
+	}
+	return out, int(cnt), nil
 }
 
 // ClearTaskInstances resets tasks to none for re-run. When onlyFailed is true,
@@ -2217,23 +2360,38 @@ func (r *Repository) ListDagTags(ctx context.Context, tenant, pattern, prefixPat
 
 // ListVariables returns a page of variables for the tenant and the total count.
 func (r *Repository) ListVariables(ctx context.Context, tenant string, limit, offset int) ([]domain.Variable, int, error) {
+	return r.ListVariablesFiltered(ctx, tenant, "", "", limit, offset)
+}
+
+// ListVariablesFiltered returns a page of variables matching patterns and the total count.
+func (r *Repository) ListVariablesFiltered(ctx context.Context, tenant, pattern, prefixPattern string, limit, offset int) (vars []domain.Variable, total int, err error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
 		return nil, 0, err
 	}
-	rows, err := r.q.ListVariables(ctx, queries.ListVariablesParams{TenantID: tid, Limit: toInt32(limit), Offset: toInt32(offset)})
+	rows, err := r.q.ListVariablesFiltered(ctx, queries.ListVariablesFilteredParams{
+		TenantID:         tid,
+		Limit:            toInt32(limit),
+		Offset:           toInt32(offset),
+		KeyPattern:       strPtr(pattern),
+		KeyPrefixPattern: strPtr(prefixPattern),
+	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing variables: %w", err)
+		return nil, 0, fmt.Errorf("listing filtered variables: %w", err)
 	}
-	total, err := r.q.CountVariables(ctx, tid)
+	cnt, err := r.q.CountVariablesFiltered(ctx, queries.CountVariablesFilteredParams{
+		TenantID:         tid,
+		KeyPattern:       strPtr(pattern),
+		KeyPrefixPattern: strPtr(prefixPattern),
+	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("counting variables: %w", err)
+		return nil, 0, fmt.Errorf("counting filtered variables: %w", err)
 	}
 	out := make([]domain.Variable, 0, len(rows))
 	for _, v := range rows {
 		out = append(out, r.listVariable(v.Key, v.Value, v.Description))
 	}
-	return out, int(total), nil
+	return out, int(cnt), nil
 }
 
 // TenantUUID resolves a tenant name to its UUID string — the form the agent
@@ -2477,20 +2635,18 @@ func (r *Repository) GetVariable(ctx context.Context, tenant, key string) (domai
 // storage tests and internal callers use; the tri-state API write path goes
 // through SetVariablePatch.
 func (r *Repository) SetVariable(ctx context.Context, tenant string, v domain.Variable) error {
-	tid, err := r.tenantID(ctx, tenant)
-	if err != nil {
-		return err
-	}
 	stored, err := r.sealVariable(v.Value)
 	if err != nil {
 		return err
 	}
-	if err := r.q.UpsertVariable(ctx, queries.UpsertVariableParams{
-		TenantID: tid, Key: v.Key, Value: stored, Description: strPtr(v.Description),
-	}); err != nil {
-		return fmt.Errorf("upserting variable: %w", err)
-	}
-	return nil
+	return r.withTenantWrite(ctx, tenant, func(tid pgtype.UUID) error {
+		if err := r.q.UpsertVariable(ctx, queries.UpsertVariableParams{
+			TenantID: tid, Key: v.Key, Value: stored, Description: strPtr(v.Description),
+		}); err != nil {
+			return fmt.Errorf("upserting variable: %w", err)
+		}
+		return nil
+	})
 }
 
 // SetVariablePatch upserts a variable with tri-state semantics on description
@@ -2501,10 +2657,6 @@ func (r *Repository) SetVariable(ctx context.Context, tenant string, v domain.Va
 // stored value before calling here, and Value is expected non-nil (a nil Value
 // defensively clears to empty rather than panicking).
 func (r *Repository) SetVariablePatch(ctx context.Context, tenant string, p domain.VariablePatch) error {
-	tid, err := r.tenantID(ctx, tenant)
-	if err != nil {
-		return err
-	}
 	value := ""
 	if p.Value != nil {
 		value = *p.Value
@@ -2513,12 +2665,14 @@ func (r *Repository) SetVariablePatch(ctx context.Context, tenant string, p doma
 	if err != nil {
 		return err
 	}
-	if err := r.q.UpsertVariable(ctx, queries.UpsertVariableParams{
-		TenantID: tid, Key: p.Key, Value: stored, Description: p.Description,
-	}); err != nil {
-		return fmt.Errorf("upserting variable: %w", err)
-	}
-	return nil
+	return r.withTenantWrite(ctx, tenant, func(tid pgtype.UUID) error {
+		if err := r.q.UpsertVariable(ctx, queries.UpsertVariableParams{
+			TenantID: tid, Key: p.Key, Value: stored, Description: p.Description,
+		}); err != nil {
+			return fmt.Errorf("upserting variable: %w", err)
+		}
+		return nil
+	})
 }
 
 // DeleteVariable removes a variable, returning ErrNotFound when none matched.
@@ -2556,10 +2710,6 @@ func (r *Repository) SetConnection(ctx context.Context, tenant string, c domain.
 	if r.cipher == nil {
 		return secrets.ErrNoKey
 	}
-	tid, err := r.tenantID(ctx, tenant)
-	if err != nil {
-		return err
-	}
 	encPass, err := r.encOrEmpty(c.Password)
 	if err != nil {
 		return fmt.Errorf("encrypting password: %w", err)
@@ -2573,10 +2723,12 @@ func (r *Repository) SetConnection(ctx context.Context, tenant string, c domain.
 		p := toInt32(*c.Port)
 		port = &p
 	}
-	return r.q.UpsertConnection(ctx, queries.UpsertConnectionParams{
-		TenantID: tid, ConnID: c.ConnID, ConnType: c.ConnType,
-		Host: strPtr(c.Host), ConnSchema: strPtr(c.Schema), Login: strPtr(c.Login),
-		Password: encPass, Port: port, Extra: encExtra, Description: strPtr(c.Description),
+	return r.withTenantWrite(ctx, tenant, func(tid pgtype.UUID) error {
+		return r.q.UpsertConnection(ctx, queries.UpsertConnectionParams{
+			TenantID: tid, ConnID: c.ConnID, ConnType: c.ConnType,
+			Host: strPtr(c.Host), ConnSchema: strPtr(c.Schema), Login: strPtr(c.Login),
+			Password: encPass, Port: port, Extra: encExtra, Description: strPtr(c.Description),
+		})
 	})
 }
 
@@ -2614,10 +2766,6 @@ func (r *Repository) SetConnectionPatch(ctx context.Context, tenant string, p do
 	if r.cipher == nil {
 		return secrets.ErrNoKey
 	}
-	tid, err := r.tenantID(ctx, tenant)
-	if err != nil {
-		return err
-	}
 	encPass, err := r.encPatch(p.Password)
 	if err != nil {
 		return fmt.Errorf("encrypting password: %w", err)
@@ -2631,10 +2779,12 @@ func (r *Repository) SetConnectionPatch(ctx context.Context, tenant string, p do
 		pp := toInt32(*p.Port)
 		port = &pp
 	}
-	return r.q.UpsertConnection(ctx, queries.UpsertConnectionParams{
-		TenantID: tid, ConnID: p.ConnID, ConnType: p.ConnType,
-		Host: p.Host, ConnSchema: p.Schema, Login: p.Login,
-		Password: encPass, Port: port, Extra: encExtra, Description: p.Description,
+	return r.withTenantWrite(ctx, tenant, func(tid pgtype.UUID) error {
+		return r.q.UpsertConnection(ctx, queries.UpsertConnectionParams{
+			TenantID: tid, ConnID: p.ConnID, ConnType: p.ConnType,
+			Host: p.Host, ConnSchema: p.Schema, Login: p.Login,
+			Password: encPass, Port: port, Extra: encExtra, Description: p.Description,
+		})
 	})
 }
 
@@ -2658,17 +2808,32 @@ func (r *Repository) GetConnection(ctx context.Context, tenant, connID string) (
 
 // ListConnections returns a page of connections (no passwords) and the total.
 func (r *Repository) ListConnections(ctx context.Context, tenant string, limit, offset int) ([]domain.Connection, int, error) {
+	return r.ListConnectionsFiltered(ctx, tenant, "", "", limit, offset)
+}
+
+// ListConnectionsFiltered returns a page of connections (no passwords) matching patterns and the total.
+func (r *Repository) ListConnectionsFiltered(ctx context.Context, tenant, pattern, prefixPattern string, limit, offset int) (conns []domain.Connection, total int, err error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
 		return nil, 0, err
 	}
-	rows, err := r.q.ListConnections(ctx, queries.ListConnectionsParams{TenantID: tid, Limit: toInt32(limit), Offset: toInt32(offset)})
+	rows, err := r.q.ListConnectionsFiltered(ctx, queries.ListConnectionsFilteredParams{
+		TenantID:                  tid,
+		Limit:                     toInt32(limit),
+		Offset:                    toInt32(offset),
+		ConnectionIDPattern:       strPtr(pattern),
+		ConnectionIDPrefixPattern: strPtr(prefixPattern),
+	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing connections: %w", err)
+		return nil, 0, fmt.Errorf("listing filtered connections: %w", err)
 	}
-	total, err := r.q.CountConnections(ctx, tid)
+	cnt, err := r.q.CountConnectionsFiltered(ctx, queries.CountConnectionsFilteredParams{
+		TenantID:                  tid,
+		ConnectionIDPattern:       strPtr(pattern),
+		ConnectionIDPrefixPattern: strPtr(prefixPattern),
+	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("counting connections: %w", err)
+		return nil, 0, fmt.Errorf("counting filtered connections: %w", err)
 	}
 	out := make([]domain.Connection, 0, len(rows))
 	for _, row := range rows {
@@ -2678,7 +2843,7 @@ func (r *Repository) ListConnections(ctx context.Context, tenant string, limit, 
 			Port: int32PtrToInt(row.Port), Description: strOrEmpty(row.Description),
 		}, row.Extra))
 	}
-	return out, int(total), nil
+	return out, int(cnt), nil
 }
 
 // toConnection completes a connection read alone with its decrypted extra. An
@@ -2788,6 +2953,39 @@ func (r *Repository) ListImportErrors(ctx context.Context, tenant string) ([]dom
 	return out, nil
 }
 
+// ListImportErrorsFiltered returns a page of import errors matching the filter criteria and total count.
+func (r *Repository) ListImportErrorsFiltered(ctx context.Context, tenant, filename, bundleName string, limit, offset int) (errs []domain.ImportError, total int, err error) {
+	rows, err := r.q.ListImportErrorsFiltered(ctx, queries.ListImportErrorsFilteredParams{
+		Tenant:     tenant,
+		Filename:   strPtr(filename),
+		BundleName: strPtr(bundleName),
+		Limit:      toInt32(limit),
+		Offset:     toInt32(offset),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing filtered import errors: %w", err)
+	}
+	cnt, err := r.q.CountImportErrorsFiltered(ctx, queries.CountImportErrorsFilteredParams{
+		Tenant:     tenant,
+		Filename:   strPtr(filename),
+		BundleName: strPtr(bundleName),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("counting filtered import errors: %w", err)
+	}
+	out := make([]domain.ImportError, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, domain.ImportError{
+			ID:         uuidToString(row.ID),
+			Filename:   row.Filename,
+			StackTrace: row.Stacktrace,
+			BundleName: strOrEmpty(row.BundleName),
+			Timestamp:  timeVal(row.CreatedAt),
+		})
+	}
+	return out, int(cnt), nil
+}
+
 // SetImportError records (or replaces) the parse/compile error for a file.
 func (r *Repository) SetImportError(ctx context.Context, tenant string, e domain.ImportError) error {
 	var bundle *string
@@ -2847,6 +3045,9 @@ func (r *Repository) EnsureTenant(ctx context.Context, name, displayName string,
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("committing ensure-tenant tx: %w", err)
+	}
+	if r.tenants != nil {
+		r.tenants.Store(name, t.ID)
 	}
 	return n > 0, nil
 }

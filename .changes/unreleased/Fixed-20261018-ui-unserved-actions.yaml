@@ -1,0 +1,10 @@
+kind: Fixed
+body: |-
+  **Airflow 3.3 UI actions degrade to 501 or empty collections instead of 404.**
+  Actions on the embedded UI screens answered 404 "API route not found" when
+  Dexaflow does not serve the underlying feature. Under ADR 0018, unserved writes
+  (bulk task instances, delete task instance, bulk variables and connections,
+  XCom mutations, and file reparsing) now answer 501 with a descriptive toast
+  message, while unserved list reads (upstream asset events and queued asset
+  events) answer empty collections (#1926).
+time: 2026-10-18T20:29:00.000000000-03:00

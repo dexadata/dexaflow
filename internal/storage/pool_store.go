@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/storage/queries"
 )
@@ -50,16 +52,14 @@ func (r *Repository) GetPool(ctx context.Context, tenant, name string) (domain.P
 // is_default flag is not writable through this path — only the seed migration
 // marks the implicit default pool.
 func (r *Repository) SetPool(ctx context.Context, tenant string, p domain.Pool) error {
-	tid, err := r.tenantID(ctx, tenant)
-	if err != nil {
-		return err
-	}
-	if err := r.q.UpsertPool(ctx, queries.UpsertPoolParams{
-		TenantID: tid, Name: p.Name, Slots: toInt32(p.Slots), Description: strPtr(p.Description),
-	}); err != nil {
-		return fmt.Errorf("upserting pool: %w", err)
-	}
-	return nil
+	return r.withTenantWrite(ctx, tenant, func(tid pgtype.UUID) error {
+		if err := r.q.UpsertPool(ctx, queries.UpsertPoolParams{
+			TenantID: tid, Name: p.Name, Slots: toInt32(p.Slots), Description: strPtr(p.Description),
+		}); err != nil {
+			return fmt.Errorf("upserting pool: %w", err)
+		}
+		return nil
+	})
 }
 
 // DeletePool removes a pool. It returns domain.ErrNotFound when none matched and

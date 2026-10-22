@@ -111,7 +111,7 @@ tests:
           content:
             apiGroups: [""]
             resources: ["persistentvolumeclaims"]
-            verbs: ["create", "delete"]
+            verbs: ["create", "delete", "list"]
 
   - it: Role grants deletecollection on pods only with executor.collectSettledRunPods
     documentIndex: 0

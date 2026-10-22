@@ -238,3 +238,45 @@ func TestEnsureTenantMarksALegacyDefaultPoolRow(t *testing.T) {
 		}
 	}
 }
+
+// TestAuditBTenantCacheStaleAfterRecreateIntegration covers #1614: when a tenant
+// is deleted and recreated (or database restored), the repository's cached
+// tenant ID points to a row that no longer exists. Writes that hit foreign key
+// violations against tenants must invalidate the cached entry, resolve the new ID,
+// and retry the operation once.
+func TestAuditBTenantCacheStaleAfterRecreateIntegration(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	pg, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pg.Close)
+
+	name := uniqueTenant("recreate")
+	if _, err := repo.EnsureTenant(ctx, name, "Original", 0, domain.TenantLimitsUpdate{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// First write caches the tenant ID.
+	if err := repo.SetVariable(ctx, name, domain.Variable{Key: "foo", Value: "bar"}); err != nil {
+		t.Fatalf("first SetVariable: %v", err)
+	}
+
+	// Delete and recreate the tenant directly in the database with a new UUID.
+	if _, err := pg.Exec(ctx, `DELETE FROM tenants WHERE name = $1`, name); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.Exec(ctx, `INSERT INTO tenants (name, display_name) VALUES ($1, $2)`, name, "Recreated"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second write uses the stale cached ID; it must recover, re-resolve the ID, and succeed.
+	if err := repo.SetVariable(ctx, name, domain.Variable{Key: "foo2", Value: "bar2"}); err != nil {
+		t.Fatalf("second SetVariable after tenant recreate: %v", err)
+	}
+
+	v, err := repo.GetVariable(ctx, name, "foo2")
+	if err != nil || v.Value != "bar2" {
+		t.Fatalf("GetVariable = %+v, %v; want foo2=bar2", v, err)
+	}
+}

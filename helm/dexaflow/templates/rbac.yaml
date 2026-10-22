@@ -40,9 +40,11 @@ rules:
   # The per-run staging volume (ADR 0022): ensureStagingClaim creates the PVC on
   # first use and the GC deletes it when the run ends. Create is idempotent by
   # tolerating AlreadyExists rather than reading first, so no `get` is needed.
+  # `list` lets the GC find, by the staging label, a claim that was created but
+  # never recorded in the metadatabase and reclaim it after the TTL (#1615).
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
-    verbs: ["create", "delete"]
+    verbs: ["create", "delete", "list"]
   # The warm-pool GC anchor (ADR 0058 D11): a per-dag-version ConfigMap that owns
   # the version's warm pods via an ownerReference, so on control-plane loss /
   # namespace teardown the pods are cascade-GC'd — the one orphan class the

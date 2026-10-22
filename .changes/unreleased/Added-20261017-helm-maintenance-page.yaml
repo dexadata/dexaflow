@@ -1,0 +1,10 @@
+kind: Added
+body: |-
+  **The Helm chart can show a maintenance page while no server pod is ready.**
+  Set `ingress.maintenancePage.enabled: true` to deploy a small unprivileged
+  nginx (`<release>-maintenance`) that answers with `503`, `Retry-After` and a
+  page that reloads by itself, and to point ingress-nginx's `default-backend`
+  at it, with `custom-http-errors: "502,504"`. The server's own 503 responses
+  still reach clients. The message, an operator note and a status link are
+  configurable and rendered escaped. (#1998)
+time: 2026-10-17T18:46:00.000000000+00:00

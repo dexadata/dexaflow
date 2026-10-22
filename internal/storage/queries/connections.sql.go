@@ -22,6 +22,26 @@ func (q *Queries) CountConnections(ctx context.Context, tenantID pgtype.UUID) (i
 	return count, err
 }
 
+const countConnectionsFiltered = `-- name: CountConnectionsFiltered :one
+SELECT count(*) FROM connections
+WHERE tenant_id = $1
+  AND ($2::text IS NULL OR conn_id ILIKE '%' || $2 || '%')
+  AND ($3::text IS NULL OR conn_id ILIKE $3 || '%')
+`
+
+type CountConnectionsFilteredParams struct {
+	TenantID                  pgtype.UUID `json:"tenant_id"`
+	ConnectionIDPattern       *string     `json:"connection_id_pattern"`
+	ConnectionIDPrefixPattern *string     `json:"connection_id_prefix_pattern"`
+}
+
+func (q *Queries) CountConnectionsFiltered(ctx context.Context, arg CountConnectionsFilteredParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countConnectionsFiltered, arg.TenantID, arg.ConnectionIDPattern, arg.ConnectionIDPrefixPattern)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteConnection = `-- name: DeleteConnection :execrows
 DELETE FROM connections WHERE tenant_id = $1 AND conn_id = $2
 `
@@ -254,6 +274,70 @@ func (q *Queries) ListConnections(ctx context.Context, arg ListConnectionsParams
 	items := []ListConnectionsRow{}
 	for rows.Next() {
 		var i ListConnectionsRow
+		if err := rows.Scan(
+			&i.ConnID,
+			&i.ConnType,
+			&i.Host,
+			&i.ConnSchema,
+			&i.Login,
+			&i.Port,
+			&i.Extra,
+			&i.Description,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listConnectionsFiltered = `-- name: ListConnectionsFiltered :many
+SELECT conn_id, conn_type, host, conn_schema, login, port, extra, description
+FROM connections
+WHERE tenant_id = $1
+  AND ($4::text IS NULL OR conn_id ILIKE '%' || $4 || '%')
+  AND ($5::text IS NULL OR conn_id ILIKE $5 || '%')
+ORDER BY conn_id
+LIMIT $2 OFFSET $3
+`
+
+type ListConnectionsFilteredParams struct {
+	TenantID                  pgtype.UUID `json:"tenant_id"`
+	Limit                     int32       `json:"limit"`
+	Offset                    int32       `json:"offset"`
+	ConnectionIDPattern       *string     `json:"connection_id_pattern"`
+	ConnectionIDPrefixPattern *string     `json:"connection_id_prefix_pattern"`
+}
+
+type ListConnectionsFilteredRow struct {
+	ConnID      string  `json:"conn_id"`
+	ConnType    string  `json:"conn_type"`
+	Host        *string `json:"host"`
+	ConnSchema  *string `json:"conn_schema"`
+	Login       *string `json:"login"`
+	Port        *int32  `json:"port"`
+	Extra       *string `json:"extra"`
+	Description *string `json:"description"`
+}
+
+func (q *Queries) ListConnectionsFiltered(ctx context.Context, arg ListConnectionsFilteredParams) ([]ListConnectionsFilteredRow, error) {
+	rows, err := q.db.Query(ctx, listConnectionsFiltered,
+		arg.TenantID,
+		arg.Limit,
+		arg.Offset,
+		arg.ConnectionIDPattern,
+		arg.ConnectionIDPrefixPattern,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListConnectionsFilteredRow{}
+	for rows.Next() {
+		var i ListConnectionsFilteredRow
 		if err := rows.Scan(
 			&i.ConnID,
 			&i.ConnType,

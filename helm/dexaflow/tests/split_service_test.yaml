@@ -38,6 +38,7 @@ tests:
             port: 9091
             targetPort: grpc
             protocol: TCP
+            appProtocol: tcp
 
   - it: the scheduler Service exposes grpc + metrics and selects only scheduler pods
     documentIndex: 1
@@ -56,6 +57,7 @@ tests:
             port: 9091
             targetPort: grpc
             protocol: TCP
+            appProtocol: tcp
       # The scheduler serves no HTTP API, so its Service exposes no http port.
       - notContains:
           path: spec.ports

@@ -1,0 +1,9 @@
+kind: Changed
+body: |-
+  **`helm install` and `helm upgrade` warn when `database.url` points at an
+  in-cluster Postgres Service.** The release notes say that a Postgres on
+  emptyDir loses every DAG version, run, secret and user when its pod moves,
+  and point at the upgrade guide. The backup guide now describes a regular
+  restore drill for Lite and for Helm, which the repository also runs every
+  week and on each release candidate. (#1995)
+time: 2026-10-19T20:30:00.000000000+00:00

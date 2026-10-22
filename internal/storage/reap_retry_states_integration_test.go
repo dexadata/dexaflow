@@ -106,7 +106,7 @@ func newBackdatedRun(t *testing.T, repo *storage.Repository, sched *storage.Sche
 		t.Fatalf("backdate run %s: %v", dagID, err)
 	}
 	t.Cleanup(func() {
-		_ = sched.SetRunState(ctx, runUUID, domain.DagRunStateFailed) //nolint:errcheck // best-effort test cleanup
+		_, _ = sched.SetRunState(ctx, runUUID, domain.DagRunStateRunning, domain.DagRunStateFailed) //nolint:errcheck // best-effort test cleanup
 	})
 	return runUUID
 }

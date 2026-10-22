@@ -1,0 +1,44 @@
+suite: in-cluster Postgres persistence warning (#1995, ADR 0090)
+templates:
+  - NOTES.txt
+release:
+  name: leoflow
+set:
+  nameOverride: leoflow
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+tests:
+  - it: warns when database.url points at the PoC in-cluster Postgres
+    template: NOTES.txt
+    set:
+      database.url: postgres://leoflow:leoflow-poc@pg-postgresql:5432/leoflow?sslmode=disable
+    asserts:
+      - matchRegexRaw:
+          pattern: "WARNING: database.url points at an in-cluster Postgres Service"
+
+  - it: warns when database.url points at the local-cluster Postgres Service
+    template: NOTES.txt
+    set:
+      database.url: postgres://leoflow:leoflow@postgres:5432/leoflow?sslmode=disable
+    asserts:
+      - matchRegexRaw:
+          pattern: "WARNING: database.url points at an in-cluster Postgres Service"
+
+  - it: does not warn when database.url is external
+    template: NOTES.txt
+    set:
+      database.url: postgres://user:pass@rds.example.com:5432/dexaflow
+    asserts:
+      - notMatchRegexRaw:
+          pattern: "WARNING: database.url points at an in-cluster Postgres Service"
+
+  - it: does not warn when the URL comes from an existing Secret
+    template: NOTES.txt
+    set:
+      database.existingSecret: db-credentials
+    asserts:
+      - notMatchRegexRaw:
+          pattern: "WARNING: database.url points at an in-cluster Postgres Service"

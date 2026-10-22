@@ -6,7 +6,19 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "leoflow.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
+  {{- $annotations := dict -}}
+  {{- /* #1998: with no ready server pod ingress-nginx answers from the
+  default backend; 502 and 504 (a pod lost mid-request) are sent there too.
+  503 is not intercepted, so the server's own outage page and API problems
+  (#1099) still reach the client while a pod answers. */ -}}
+  {{- if .Values.ingress.maintenancePage.enabled -}}
+    {{- $_ := set $annotations "nginx.ingress.kubernetes.io/custom-http-errors" "502,504" -}}
+    {{- $_ := set $annotations "nginx.ingress.kubernetes.io/default-backend" (include "leoflow.suffixRole" (dict "base" (include "leoflow.fullname" .) "role" "maintenance")) -}}
+  {{- end -}}
+  {{- with .Values.ingress.annotations -}}
+    {{- $annotations = merge (deepCopy .) $annotations -}}
+  {{- end }}
+  {{- with $annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}

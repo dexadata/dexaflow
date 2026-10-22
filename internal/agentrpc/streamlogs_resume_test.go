@@ -3,11 +3,13 @@ package agentrpc
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -105,15 +107,32 @@ func serveReplica(t *testing.T, addr string, sink LogSink) (*grpc.Server, contex
 	srv.SetLogSink(sink)
 	shutdown, begin := context.WithCancel(context.Background())
 	srv.SetShutdown(shutdown)
-	var lc net.ListenConfig
-	lis, err := lc.Listen(context.Background(), "tcp", addr)
-	if err != nil {
-		t.Fatalf("listen %s: %v", addr, err)
-	}
+	lis := listenAgain(t, addr)
 	gsrv := grpc.NewServer()
 	agentv1.RegisterAgentServiceServer(gsrv, srv)
 	go func() { _ = gsrv.Serve(lis) }()
 	return gsrv, begin
+}
+
+// listenAgain listens on addr, a port this test chose and released. While no
+// replica listens there, the agent keeps dialing it, and a dial from an
+// ephemeral port equal to addr's connects to itself and holds the port until
+// the client drops it; another package's test may also be handed the port for
+// a moment. So an address already in use is retried for a few seconds.
+func listenAgain(t *testing.T, addr string) net.Listener {
+	t.Helper()
+	var lc net.ListenConfig
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		lis, err := lc.Listen(context.Background(), "tcp", addr)
+		if err == nil {
+			return lis
+		}
+		if !errors.Is(err, syscall.EADDRINUSE) || time.Now().After(deadline) {
+			t.Fatalf("listen %s: %v", addr, err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // TestStreamLogsResumesAfterControlPlaneRestart is the end-to-end case of #912

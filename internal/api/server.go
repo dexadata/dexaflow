@@ -148,7 +148,12 @@ type Dependencies struct {
 	Versions DagVersionRepository
 	Xcoms    XComReader
 	Logs     LogReader
-	Specs    DagSpecReader
+	// EphemeralLogs indicates that task logs reside on an ephemeral storage volume
+	// (such as an emptyDir PVC fallback) that is lost on pod restart. When true,
+	// missing logs for terminal task instances explain that logs did not survive
+	// a control plane restart.
+	EphemeralLogs bool
+	Specs         DagSpecReader
 	// DagSources reads one version of a DAG with its spec, for the Code view
 	// (GET /api/v2/dagSources/{dag_id}). Nil leaves that route unregistered.
 	DagSources     DagSourceReader
@@ -351,7 +356,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	// cannot spend an address's password-login budget.
 	if deps.TokenRenewer != nil {
 		renewLimiter := auth.NewRateLimiter(renewRateLimitPerMinute, time.Minute)
-		r.POST("/api/v2/auth/token/renew", rateLimitByIP(renewLimiter), renewTokenHandler(deps.TokenRenewer, deps.TokenTTLSecs, deps.TokenMaxLifetimeSecs))
+		r.POST("/api/v2/auth/token/renew", rateLimitByIP(renewLimiter), renewTokenHandler(deps.TokenRenewer, deps.TokenTTLSecs, deps.TokenMaxLifetimeSecs, deps.sessionCookie()))
 	}
 	// The Airflow UI redirects unauthenticated users to GET /api/v2/auth/login.
 	r.GET("/api/v2/auth/logout", logoutHandler(deps.sessionCookie(), deps.ExternalSignOutURL))
@@ -439,7 +444,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	}
 
 	registerResources(r, deps)
-	registerUI(r, deps.TokenTTLSecs, deps.InstanceName, deps.UIAutoRefreshIntervalSeconds, deps.UITheme)
+	registerUI(r, deps.TokenTTLSecs, deps.InstanceName, deps.UIAutoRefreshIntervalSeconds, deps.UITheme, deps.sessionCookie())
 	registerUIViews(r, deps)
 	registerUIStructure(r, deps.Specs)
 	registerUISummaries(r, deps.TaskSummary, deps.UIETagRevalidation)

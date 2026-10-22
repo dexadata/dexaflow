@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-migrate/migrate/v4/database"
 	"github.com/jackc/pgx/v5"
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -151,9 +152,13 @@ func TestBootWaitsForAnEmptyDatabaseThenBoots(t *testing.T) {
 	dsn := scratchDatabase(t)
 	httpAddr, metricsAddr, reg, run := bootAgainst(t, dsn)
 
-	eventually(t, "the probe listeners", func() bool {
-		code, _, err := get(metricsAddr, "/readyz")
-		return err == nil && code == http.StatusServiceUnavailable
+	// The listeners answer 503 "checking the database schema" before the
+	// first probe has run, so wait for its verdict, not for the first 503.
+	eventually(t, "the absent reason on /readyz and in the gauge", func() bool {
+		code, body, err := get(metricsAddr, "/readyz")
+		reason, _ := schemaReadyGauge(t, reg)
+		return err == nil && code == http.StatusServiceUnavailable &&
+			strings.Contains(body, "schema absent") && reason == storage.SchemaReasonAbsent
 	})
 	for _, addr := range []string{httpAddr, metricsAddr} {
 		if code, _, err := get(addr, "/healthz"); err != nil || code != http.StatusOK {
@@ -205,7 +210,9 @@ func TestBootWaitsForAnEmptyDatabaseThenBoots(t *testing.T) {
 }
 
 // A schema dirty below this binary's latest may be a migration in flight, so
-// boot waits and says dirty; one dirty at the latest stops boot.
+// boot waits and says dirty; so does one dirty at the latest while the
+// migrator holds its lock; one dirty at the latest with no migrator stops
+// boot.
 func TestBootWaitsOnADirtySchemaAndRefusesOneDirtyAtItsLatest(t *testing.T) {
 	latest, err := migrations.Latest()
 	if err != nil {
@@ -240,9 +247,33 @@ func TestBootWaitsOnADirtySchemaAndRefusesOneDirtyAtItsLatest(t *testing.T) {
 		t.Errorf("dexaflow_schema_ready = {reason=%q} %v, want {reason=schema dirty} 0", reason, v)
 	}
 
-	// The in-flight migration reaches this binary's latest and is left dirty
-	// there: the one state no wait fixes.
+	// The migration reaches this binary's latest and marks it dirty while it
+	// applies it, holding the migrator's lock: boot keeps waiting.
+	drv, err := database.Open(migrator.DriverURL(dsn))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer drv.Close()
+	if err := drv.Lock(); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := conn.Exec(t.Context(), "UPDATE schema_migrations SET version = $1", int64(latest)); err != nil {
+		t.Fatal(err)
+	}
+	wantLatest := "schema dirty at v" + strconv.FormatUint(uint64(latest), 10)
+	eventually(t, "the dirty reason at the latest on /readyz", func() bool {
+		code, body, err := get(metricsAddr, "/readyz")
+		return err == nil && code == http.StatusServiceUnavailable && strings.Contains(body, wantLatest)
+	})
+	select {
+	case <-run.done:
+		t.Fatalf("boot ended while a migration still held the lock: %v", run.err)
+	default:
+	}
+
+	// The migration stops there and lets go of the lock, leaving the latest
+	// dirty: the one state no wait fixes.
+	if err := drv.Unlock(); err != nil {
 		t.Fatal(err)
 	}
 	select {
