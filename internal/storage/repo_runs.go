@@ -28,6 +28,56 @@ func (r *Repository) ListDagRuns(ctx context.Context, tenant, dagID string, limi
 	return out, int(total), nil
 }
 
+// ListDagRunsWithFilter returns a page of runs for a DAG matching the given filter
+// criteria, and the matching total count.
+func (r *Repository) ListDagRunsWithFilter(ctx context.Context, tenant, dagID string, filter domain.DagRunFilter) (runs []domain.DagRun, total int, err error) {
+	dag, err := r.resolveDag(ctx, tenant, dagID)
+	if err != nil {
+		return nil, 0, err
+	}
+	states := filter.States
+	if states == nil {
+		states = []string{}
+	}
+	rows, err := r.q.ListDagRunsFiltered(ctx, queries.ListDagRunsFilteredParams{
+		TenantID:           dag.TenantID,
+		DagID:              dag.ID,
+		States:             states,
+		RowLimit:           toInt32(filter.Limit),
+		RowOffset:          toInt32(filter.Offset),
+		RunIDPattern:       strPtr(filter.RunIDPattern),
+		RunIDPrefixPattern: strPtr(filter.RunIDPrefixPattern),
+		RunType:            strPtr(filter.RunType),
+		StartDateGte:       ptrTimestamptz(filter.StartDateGte),
+		StartDateLte:       ptrTimestamptz(filter.StartDateLte),
+		EndDateGte:         ptrTimestamptz(filter.EndDateGte),
+		EndDateLte:         ptrTimestamptz(filter.EndDateLte),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing filtered dag runs: %w", err)
+	}
+	cnt, err := r.q.CountDagRunsFiltered(ctx, queries.CountDagRunsFilteredParams{
+		TenantID:           dag.TenantID,
+		DagID:              dag.ID,
+		States:             states,
+		RunIDPattern:       strPtr(filter.RunIDPattern),
+		RunIDPrefixPattern: strPtr(filter.RunIDPrefixPattern),
+		RunType:            strPtr(filter.RunType),
+		StartDateGte:       ptrTimestamptz(filter.StartDateGte),
+		StartDateLte:       ptrTimestamptz(filter.StartDateLte),
+		EndDateGte:         ptrTimestamptz(filter.EndDateGte),
+		EndDateLte:         ptrTimestamptz(filter.EndDateLte),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("counting filtered dag runs: %w", err)
+	}
+	out := make([]domain.DagRun, 0, len(rows))
+	for _, run := range rows {
+		out = append(out, mapDagRunWithVersion(queries.GetDagRunWithVersionRow(run), dagID))
+	}
+	return out, int(cnt), nil
+}
+
 // ListDagRunsPage is ListDagRuns without the total: it skips the COUNT over
 // every run of the DAG, for callers that never use it (the grid, the latest
 // run header, the in-memory run scans).
@@ -252,6 +302,51 @@ func (r *Repository) ListTaskInstances(ctx context.Context, tenant, dagID, runID
 		out = append(out, mapTaskInstance(ti, dagID, runID))
 	}
 	return out, len(out), nil
+}
+
+// ListTaskInstancesWithFilter returns the task instances of a run matching the given filter.
+func (r *Repository) ListTaskInstancesWithFilter(ctx context.Context, tenant, dagID, runID string, filter domain.TaskInstanceFilter) (tis []domain.TaskInstance, total int, err error) {
+	dag, err := r.resolveDag(ctx, tenant, dagID)
+	if err != nil {
+		return nil, 0, err
+	}
+	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{TenantID: dag.TenantID, DagID: dag.ID, RunID: runID})
+	if err != nil {
+		return nil, 0, mapNotFound(err)
+	}
+	states := filter.States
+	if states == nil {
+		states = []string{}
+	}
+	rows, err := r.q.ListTaskInstancesFiltered(ctx, queries.ListTaskInstancesFilteredParams{
+		TenantID:            run.TenantID,
+		DagRunID:            run.ID,
+		States:              states,
+		TaskIDPattern:       strPtr(filter.TaskIDPattern),
+		TaskIDPrefixPattern: strPtr(filter.TaskIDPrefixPattern),
+		Pool:                strPtr(filter.Pool),
+		RowOffset:           toInt32(filter.Offset),
+		RowLimit:            toInt32(filter.Limit),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing filtered task instances: %w", err)
+	}
+	cnt, err := r.q.CountTaskInstancesFiltered(ctx, queries.CountTaskInstancesFilteredParams{
+		TenantID:            run.TenantID,
+		DagRunID:            run.ID,
+		States:              states,
+		TaskIDPattern:       strPtr(filter.TaskIDPattern),
+		TaskIDPrefixPattern: strPtr(filter.TaskIDPrefixPattern),
+		Pool:                strPtr(filter.Pool),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("counting filtered task instances: %w", err)
+	}
+	out := make([]domain.TaskInstance, 0, len(rows))
+	for _, ti := range rows {
+		out = append(out, mapTaskInstance(ti, dagID, runID))
+	}
+	return out, int(cnt), nil
 }
 
 // ClearTaskInstances resets tasks to none for re-run. When onlyFailed is true,

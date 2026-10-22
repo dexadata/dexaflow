@@ -1527,3 +1527,202 @@ func TestListDagsOrderByLatestRunIntegration(t *testing.T) {
 		}
 	}
 }
+
+func TestFilteredListQueriesIntegration(t *testing.T) {
+	repo, sched, ctx := openRepo(t)
+	c, err := secrets.NewAESGCM([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo.Configure(storage.WithCipher(c))
+
+	prefix := fmt.Sprintf("flq_%d_", time.Now().UnixNano())
+
+	// 1. Connections
+	c1 := prefix + "conn_alpha"
+	c2 := prefix + "conn_beta"
+	c3 := prefix + "other_gamma"
+	for _, cid := range []string{c1, c2, c3} {
+		if err := repo.SetConnectionPatch(ctx, "default", domain.ConnectionPatch{
+			ConnID: cid, ConnType: "http", Host: ptr("localhost"),
+		}); err != nil {
+			t.Fatalf("set connection %s: %v", cid, err)
+		}
+		t.Cleanup(func() { _ = repo.DeleteConnection(ctx, "default", cid) })
+	}
+
+	conns, total, err := repo.ListConnectionsFiltered(ctx, "default", "", prefix+"conn_", 10, 0)
+	if err != nil {
+		t.Fatalf("list connections prefix: %v", err)
+	}
+	if total != 2 || len(conns) != 2 {
+		t.Errorf("list connections prefix: got %d (len %d), want 2", total, len(conns))
+	}
+
+	conns, total, err = repo.ListConnectionsFiltered(ctx, "default", "beta", "", 10, 0)
+	if err != nil {
+		t.Fatalf("list connections substring: %v", err)
+	}
+	if total != 1 || len(conns) != 1 || conns[0].ConnID != c2 {
+		t.Errorf("list connections substring: got %d (len %d), want 1 (%s)", total, len(conns), c2)
+	}
+
+	// 2. Variables
+	v1 := prefix + "var_alpha"
+	v2 := prefix + "var_beta"
+	v3 := prefix + "other_gamma"
+	for _, k := range []string{v1, v2, v3} {
+		val := "val_" + k
+		if err := repo.SetVariablePatch(ctx, "default", domain.VariablePatch{
+			Key: k, Value: &val,
+		}); err != nil {
+			t.Fatalf("set variable %s: %v", k, err)
+		}
+		t.Cleanup(func() { _ = repo.DeleteVariable(ctx, "default", k) })
+	}
+
+	vars, total, err := repo.ListVariablesFiltered(ctx, "default", "", prefix+"var_", 10, 0)
+	if err != nil {
+		t.Fatalf("list variables prefix: %v", err)
+	}
+	if total != 2 || len(vars) != 2 {
+		t.Errorf("list variables prefix: got %d (len %d), want 2", total, len(vars))
+	}
+
+	vars, total, err = repo.ListVariablesFiltered(ctx, "default", "beta", "", 10, 0)
+	if err != nil {
+		t.Fatalf("list variables substring: %v", err)
+	}
+	if total != 1 || len(vars) != 1 || vars[0].Key != v2 {
+		t.Errorf("list variables substring: got %d (len %d), want 1 (%s)", total, len(vars), v2)
+	}
+
+	// 3. ImportErrors
+	f1 := prefix + "dag1.py"
+	f2 := prefix + "dag2.py"
+	if err := repo.SetImportError(ctx, "default", domain.ImportError{
+		Filename: f1, StackTrace: "err1", BundleName: prefix + "bundleA",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.ClearImportError(ctx, "default", f1) })
+	if err := repo.SetImportError(ctx, "default", domain.ImportError{
+		Filename: f2, StackTrace: "err2", BundleName: prefix + "bundleB",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.ClearImportError(ctx, "default", f2) })
+
+	errs, total, err := repo.ListImportErrorsFiltered(ctx, "default", f1, "", 10, 0)
+	if err != nil {
+		t.Fatalf("list import errors filename: %v", err)
+	}
+	if total != 1 || len(errs) != 1 || errs[0].Filename != f1 {
+		t.Errorf("list import errors filename: got %d (len %d), want 1 (%s)", total, len(errs), f1)
+	}
+
+	errs, total, err = repo.ListImportErrorsFiltered(ctx, "default", "", prefix+"bundleB", 10, 0)
+	if err != nil {
+		t.Fatalf("list import errors bundle: %v", err)
+	}
+	if total != 1 || len(errs) != 1 || errs[0].Filename != f2 {
+		t.Errorf("list import errors bundle: got %d (len %d), want 1 (%s)", total, len(errs), f2)
+	}
+
+	// 4. DAG Runs and Task Instances
+	dagID := prefix + "dag"
+	tasks := []domain.TaskSpec{
+		{TaskID: "extract", Type: domain.TaskTypePython, Pool: "pool_a"},
+		{TaskID: "transform", Type: domain.TaskTypePython, Pool: "pool_b"},
+	}
+	registerSpec(t, repo, ctx, dagID, tasks)
+	t.Cleanup(func() { _ = repo.DeleteDag(ctx, "default", dagID) })
+
+	r1 := "scheduled__1"
+	r2 := "manual__2"
+	t1 := time.Now().UTC().Add(-time.Hour)
+	t2 := time.Now().UTC()
+
+	if _, err := repo.CreateDagRun(ctx, "default", dagID, domain.DagRun{
+		RunID: r1, State: domain.DagRunStateRunning, RunType: "scheduled", LogicalDate: t1,
+	}); err != nil {
+		t.Fatalf("create r1: %v", err)
+	}
+	runUUID := ""
+	runsActive, _ := sched.ActiveRuns(ctx)
+	for _, r := range runsActive {
+		if r.DagID == dagID {
+			runUUID = r.RunID
+			break
+		}
+	}
+	if runUUID == "" {
+		t.Fatal("could not resolve runUUID for r1")
+	}
+	if err := sched.MaterializeTasks(ctx, runUUID, tasks); err != nil {
+		t.Fatalf("MaterializeTasks: %v", err)
+	}
+
+	if _, err := repo.CreateDagRun(ctx, "default", dagID, domain.DagRun{
+		RunID: r2, State: domain.DagRunStateFailed, RunType: "manual", LogicalDate: t2,
+	}); err != nil {
+		t.Fatalf("create r2: %v", err)
+	}
+
+	// DagRun filters
+	runs, total, err := repo.ListDagRunsWithFilter(ctx, "default", dagID, domain.DagRunFilter{
+		RunIDPrefixPattern: "manual__",
+		Limit:              10,
+	})
+	if err != nil {
+		t.Fatalf("list dag runs prefix: %v", err)
+	}
+	if total != 1 || len(runs) != 1 || runs[0].RunID != r2 {
+		t.Errorf("list dag runs prefix: got %d (len %d), want 1 (%s)", total, len(runs), r2)
+	}
+
+	runs, total, err = repo.ListDagRunsWithFilter(ctx, "default", dagID, domain.DagRunFilter{
+		RunType: "scheduled",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("list dag runs run_type: %v", err)
+	}
+	if total != 1 || len(runs) != 1 || runs[0].RunID != r1 {
+		t.Errorf("list dag runs run_type: got %d (len %d), want 1 (%s)", total, len(runs), r1)
+	}
+
+	runs, total, err = repo.ListDagRunsWithFilter(ctx, "default", dagID, domain.DagRunFilter{
+		States: []string{"failed"},
+		Limit:  10,
+	})
+	if err != nil {
+		t.Fatalf("list dag runs state: %v", err)
+	}
+	if total != 1 || len(runs) != 1 || runs[0].RunID != r2 {
+		t.Errorf("list dag runs state: got %d (len %d), want 1 (%s)", total, len(runs), r2)
+	}
+
+	// TaskInstance filters
+	tis, total, err := repo.ListTaskInstancesWithFilter(ctx, "default", dagID, r1, domain.TaskInstanceFilter{
+		TaskIDPrefixPattern: "ext",
+		Limit:               10,
+	})
+	if err != nil {
+		t.Fatalf("list tis prefix: %v", err)
+	}
+	if total != 1 || len(tis) != 1 || tis[0].TaskID != "extract" {
+		t.Errorf("list tis prefix: got %d (len %d), want 1 (extract)", total, len(tis))
+	}
+
+	tis, total, err = repo.ListTaskInstancesWithFilter(ctx, "default", dagID, r1, domain.TaskInstanceFilter{
+		Pool:  "pool_b",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("list tis pool: %v", err)
+	}
+	if total != 1 || len(tis) != 1 || tis[0].TaskID != "transform" {
+		t.Errorf("list tis pool: got %d (len %d), want 1 (transform)", total, len(tis))
+	}
+}

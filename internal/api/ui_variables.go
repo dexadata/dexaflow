@@ -14,6 +14,7 @@ import (
 // VariableStore reads and writes Airflow-style Variables for the Admin UI.
 type VariableStore interface {
 	ListVariables(ctx context.Context, tenant string, limit, offset int) ([]domain.Variable, int, error)
+	ListVariablesFiltered(ctx context.Context, tenant, pattern, prefixPattern string, limit, offset int) ([]domain.Variable, int, error)
 	GetVariable(ctx context.Context, tenant, key string) (domain.Variable, error)
 	SetVariablePatch(ctx context.Context, tenant string, p domain.VariablePatch) error
 	DeleteVariable(ctx context.Context, tenant, key string) error
@@ -109,7 +110,9 @@ func toVariableDTO(v domain.Variable) variableDTO {
 func listVariablesHandler(store VariableStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		limit, offset := pagination(c)
-		vars, total, err := store.ListVariables(c.Request.Context(), tenantOf(c), limit, offset)
+		prefixPattern := c.Query("variable_key_prefix_pattern")
+		pattern := c.Query("variable_key_pattern")
+		vars, total, err := store.ListVariablesFiltered(c.Request.Context(), tenantOf(c), pattern, prefixPattern, limit, offset)
 		if err != nil {
 			handleRepoError(c, err)
 			return
@@ -118,6 +121,7 @@ func listVariablesHandler(store VariableStore) gin.HandlerFunc {
 		for _, v := range vars {
 			out.Variables = append(out.Variables, toVariableDTO(v))
 		}
+		setPaginationLinks(c, total, limit, offset)
 		c.JSON(http.StatusOK, out)
 	}
 }

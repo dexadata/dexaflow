@@ -39,6 +39,7 @@ type DagRepository interface {
 // DagRunRepository reads and creates DAG runs.
 type DagRunRepository interface {
 	ListDagRuns(ctx context.Context, tenant, dagID string, limit, offset int) ([]domain.DagRun, int, error)
+	ListDagRunsWithFilter(ctx context.Context, tenant, dagID string, filter domain.DagRunFilter) ([]domain.DagRun, int, error)
 	GetDagRun(ctx context.Context, tenant, dagID, runID string) (domain.DagRun, error)
 	CreateDagRun(ctx context.Context, tenant, dagID string, run domain.DagRun) (domain.DagRun, error)
 	SetDagRunState(ctx context.Context, tenant, dagID, runID, state string) error
@@ -49,6 +50,7 @@ type DagRunRepository interface {
 // their state directly (the UI's mark-success/failed actions).
 type TaskInstanceRepository interface {
 	ListTaskInstances(ctx context.Context, tenant, dagID, runID string, limit, offset int) ([]domain.TaskInstance, int, error)
+	ListTaskInstancesWithFilter(ctx context.Context, tenant, dagID, runID string, filter domain.TaskInstanceFilter) ([]domain.TaskInstance, int, error)
 	// ListTaskInstanceAttempts returns every attempt for (run, task), oldest
 	// first — the current row UNIONed with the archived history. The UI's
 	// /tries endpoint needs all attempts to render its navigable tabs.
@@ -397,41 +399,82 @@ func deleteDagRunHandler(repo DagRunRepository) gin.HandlerFunc {
 	}
 }
 
-// listRunsFiltered returns a page of a DAG's runs, optionally restricted to the
-// given states (the UI's "failed runs" widget filters with ?state=failed). With
-// no state filter it pages directly; with one, it filters the full set first so
-// the page and total reflect the filter (run counts are small — a SQL-level
-// filter is a follow-up for scale).
-func listRunsFiltered(c *gin.Context, repo DagRunRepository, states []string, limit, offset int) ([]domain.DagRun, int, error) {
+// parseDagRunFilter reads the list filters the Airflow UI sends for a DAG's
+// runs (#1928). Patterns are SQL LIKE expressions matched case-insensitively,
+// and the date bounds are RFC 3339; a bound that does not parse is the
+// client's error, not an unfiltered page.
+func parseDagRunFilter(c *gin.Context, limit, offset int) (domain.DagRunFilter, error) {
+	states := c.QueryArray("state")
 	if len(states) == 0 {
-		return repo.ListDagRuns(c.Request.Context(), tenantOf(c), c.Param("dag_id"), limit, offset)
+		states = c.QueryArray("states")
 	}
-	want := make(map[string]bool, len(states))
-	for _, s := range states {
-		want[s] = true
+	prefix := c.Query("run_id_prefix_pattern")
+	if prefix == "" {
+		prefix = c.Query("dag_run_id_prefix_pattern")
 	}
-	all, err := listDagRunsPage(c, repo, c.Param("dag_id"), maxRunScan, 0)
-	if err != nil {
-		return nil, 0, err
+	pattern := c.Query("run_id_pattern")
+	if pattern == "" {
+		pattern = c.Query("dag_run_id_pattern")
 	}
-	filtered := make([]domain.DagRun, 0, len(all))
-	for _, r := range all {
-		if want[string(r.State)] {
-			filtered = append(filtered, r)
+	filter := domain.DagRunFilter{
+		RunIDPrefixPattern: prefix,
+		RunIDPattern:       pattern,
+		RunType:            c.Query("run_type"),
+		States:             states,
+		Limit:              limit,
+		Offset:             offset,
+	}
+	for _, b := range []struct {
+		name string
+		dst  **time.Time
+	}{
+		{"start_date_gte", &filter.StartDateGte},
+		{"start_date_lte", &filter.StartDateLte},
+		{"end_date_gte", &filter.EndDateGte},
+		{"end_date_lte", &filter.EndDateLte},
+	} {
+		raw := c.Query(b.name)
+		if raw == "" {
+			continue
 		}
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return domain.DagRunFilter{}, fmt.Errorf("%s must be an RFC 3339 timestamp: %q", b.name, raw)
+		}
+		*b.dst = &t
 	}
-	total := len(filtered)
-	if offset >= total {
-		return []domain.DagRun{}, total, nil
-	}
-	end := offset + limit
-	if end > total {
-		end = total
-	}
-	return filtered[offset:end], total, nil
+	return filter, nil
 }
 
-// maxRunScan caps the in-memory state-filter scan of a DAG's runs.
+// runListCursor applies the request's cursor to a run list: it answers a
+// keyset cursor itself (done) when the filter allows keyset paging, and
+// otherwise returns the offset the cursor carries, or offset when there is
+// none.
+func runListCursor(c *gin.Context, repo DagRunRepository, versions DagVersionLister, filter domain.DagRunFilter, keysetOK bool, offset int) (int, bool) {
+	raw := c.Query("cursor")
+	if raw == "" {
+		return offset, false
+	}
+	cur, err := decodeListCursor(raw)
+	if err != nil {
+		AbortProblem(c, http.StatusBadRequest, "bad request", err.Error())
+		return 0, true
+	}
+	if cur.Keyset != nil && keysetOK {
+		listDagRunsByCursor(c, repo, versions, *cur.Keyset, cur.Offset, filter.States, filter.Limit)
+		return 0, true
+	}
+	return cur.Offset, false
+}
+
+// narrowsBeyondState reports whether f filters on anything but the run state.
+// The keyset cursor only knows states, so such a list pages by offset.
+func narrowsBeyondState(f domain.DagRunFilter) bool {
+	return f.RunIDPattern != "" || f.RunIDPrefixPattern != "" || f.RunType != "" ||
+		f.StartDateGte != nil || f.StartDateLte != nil || f.EndDateGte != nil || f.EndDateLte != nil
+}
+
+// maxRunScan caps the in-memory scans of a DAG's runs.
 const maxRunScan = 10000
 
 // patchDagRunHandler implements PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}:
@@ -546,20 +589,19 @@ func listDagRunsHandler(repo DagRunRepository, versions DagVersionLister) gin.Ha
 			return
 		}
 		limit, offset := pagination(c)
-		states := c.QueryArray("state")
-		if raw := c.Query("cursor"); raw != "" {
-			cur, err := decodeListCursor(raw)
-			if err != nil {
-				AbortProblem(c, http.StatusBadRequest, "bad request", err.Error())
-				return
-			}
-			if cur.Keyset != nil {
-				listDagRunsByCursor(c, repo, versions, *cur.Keyset, cur.Offset, states, limit)
-				return
-			}
-			offset = cur.Offset
+		filter, ferr := parseDagRunFilter(c, limit, offset)
+		if ferr != nil {
+			AbortProblem(c, http.StatusBadRequest, "bad request", ferr.Error())
+			return
 		}
-		runs, total, err := listRunsFiltered(c, repo, states, limit, offset)
+		states := filter.States
+		keysetOK := !narrowsBeyondState(filter)
+		offset, done := runListCursor(c, repo, versions, filter, keysetOK, offset)
+		if done {
+			return
+		}
+		filter.Offset = offset
+		runs, total, err := repo.ListDagRunsWithFilter(c.Request.Context(), tenantOf(c), c.Param("dag_id"), filter)
 		if err != nil {
 			handleRepoError(c, err)
 			return
@@ -573,6 +615,7 @@ func listDagRunsHandler(repo DagRunRepository, versions DagVersionLister) gin.Ha
 		}
 		setPaginationLinks(c, total, limit, offset)
 		_, keyset := repo.(DagRunPageReader)
+		keyset = keyset && keysetOK
 		more := len(runs) > 0 && offset+len(runs) < total
 		if keyset && more {
 			setNextCursor(c, runCursor(runs[len(runs)-1]), false)
@@ -858,7 +901,22 @@ func listTaskInstancesHandler(repo TaskInstanceRepository, runs DagRunRepository
 			}
 			offset = cur.Offset
 		}
-		tis, total, err := repo.ListTaskInstances(c.Request.Context(), tenantOf(c), c.Param("dag_id"), c.Param("dag_run_id"), limit, offset)
+		states := c.QueryArray("state")
+		if len(states) == 0 {
+			states = c.QueryArray("states")
+		}
+		prefix := c.Query("task_id_prefix_pattern")
+		pattern := c.Query("task_id_pattern")
+		pool := c.Query("pool")
+		filter := domain.TaskInstanceFilter{
+			States:              states,
+			TaskIDPrefixPattern: prefix,
+			TaskIDPattern:       pattern,
+			Pool:                pool,
+			Limit:               limit,
+			Offset:              offset,
+		}
+		tis, total, err := repo.ListTaskInstancesWithFilter(c.Request.Context(), tenantOf(c), c.Param("dag_id"), c.Param("dag_run_id"), filter)
 		if err != nil {
 			handleRepoError(c, err)
 			return

@@ -15,23 +15,38 @@ import (
 
 // ListVariables returns a page of variables for the tenant and the total count.
 func (r *Repository) ListVariables(ctx context.Context, tenant string, limit, offset int) ([]domain.Variable, int, error) {
+	return r.ListVariablesFiltered(ctx, tenant, "", "", limit, offset)
+}
+
+// ListVariablesFiltered returns a page of variables matching patterns and the total count.
+func (r *Repository) ListVariablesFiltered(ctx context.Context, tenant, pattern, prefixPattern string, limit, offset int) (vars []domain.Variable, total int, err error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
 		return nil, 0, err
 	}
-	rows, err := r.q.ListVariables(ctx, queries.ListVariablesParams{TenantID: tid, Limit: toInt32(limit), Offset: toInt32(offset)})
+	rows, err := r.q.ListVariablesFiltered(ctx, queries.ListVariablesFilteredParams{
+		TenantID:         tid,
+		Limit:            toInt32(limit),
+		Offset:           toInt32(offset),
+		KeyPattern:       strPtr(pattern),
+		KeyPrefixPattern: strPtr(prefixPattern),
+	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing variables: %w", err)
+		return nil, 0, fmt.Errorf("listing filtered variables: %w", err)
 	}
-	total, err := r.q.CountVariables(ctx, tid)
+	cnt, err := r.q.CountVariablesFiltered(ctx, queries.CountVariablesFilteredParams{
+		TenantID:         tid,
+		KeyPattern:       strPtr(pattern),
+		KeyPrefixPattern: strPtr(prefixPattern),
+	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("counting variables: %w", err)
+		return nil, 0, fmt.Errorf("counting filtered variables: %w", err)
 	}
 	out := make([]domain.Variable, 0, len(rows))
 	for _, v := range rows {
 		out = append(out, r.listVariable(v.Key, v.Value, v.Description))
 	}
-	return out, int(total), nil
+	return out, int(cnt), nil
 }
 
 // SecretVariables returns the tenant's variables as key→value, for delivering to
@@ -409,17 +424,32 @@ func (r *Repository) GetConnection(ctx context.Context, tenant, connID string) (
 
 // ListConnections returns a page of connections (no passwords) and the total.
 func (r *Repository) ListConnections(ctx context.Context, tenant string, limit, offset int) ([]domain.Connection, int, error) {
+	return r.ListConnectionsFiltered(ctx, tenant, "", "", limit, offset)
+}
+
+// ListConnectionsFiltered returns a page of connections (no passwords) matching patterns and the total.
+func (r *Repository) ListConnectionsFiltered(ctx context.Context, tenant, pattern, prefixPattern string, limit, offset int) (conns []domain.Connection, total int, err error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
 		return nil, 0, err
 	}
-	rows, err := r.q.ListConnections(ctx, queries.ListConnectionsParams{TenantID: tid, Limit: toInt32(limit), Offset: toInt32(offset)})
+	rows, err := r.q.ListConnectionsFiltered(ctx, queries.ListConnectionsFilteredParams{
+		TenantID:                  tid,
+		Limit:                     toInt32(limit),
+		Offset:                    toInt32(offset),
+		ConnectionIDPattern:       strPtr(pattern),
+		ConnectionIDPrefixPattern: strPtr(prefixPattern),
+	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing connections: %w", err)
+		return nil, 0, fmt.Errorf("listing filtered connections: %w", err)
 	}
-	total, err := r.q.CountConnections(ctx, tid)
+	cnt, err := r.q.CountConnectionsFiltered(ctx, queries.CountConnectionsFilteredParams{
+		TenantID:                  tid,
+		ConnectionIDPattern:       strPtr(pattern),
+		ConnectionIDPrefixPattern: strPtr(prefixPattern),
+	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("counting connections: %w", err)
+		return nil, 0, fmt.Errorf("counting filtered connections: %w", err)
 	}
 	out := make([]domain.Connection, 0, len(rows))
 	for _, row := range rows {
@@ -429,7 +459,7 @@ func (r *Repository) ListConnections(ctx context.Context, tenant string, limit, 
 			Port: int32PtrToInt(row.Port), Description: strOrEmpty(row.Description),
 		}, row.Extra))
 	}
-	return out, int(total), nil
+	return out, int(cnt), nil
 }
 
 // toConnection completes a connection read alone with its decrypted extra. An
