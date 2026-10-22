@@ -82,7 +82,7 @@ func (w SchemaWait) Ready() bool { return w.Class == "" }
 // say so. A dirty version other than this binary's latest waits too: a
 // migration may be in flight. A dirty version equal to the latest is the one
 // error: the migration this binary needs is half applied and no wait finishes
-// it. A clean schema ahead of the binary is accepted, because expand-contract
+// it (SchemaWaitState first rules out a migrator still applying it). A clean schema ahead of the binary is accepted, because expand-contract
 // migrations keep older code working through a rollout or a `helm rollback`.
 func schemaWaitVerdict(dbVersion uint, exists, dirty bool, latest uint) (SchemaWait, error) {
 	switch {
@@ -270,7 +270,8 @@ func (p *Postgres) reportReplaced(ctx context.Context, reason, detail string) er
 // SchemaWaitState reads the schema and returns the boot gate's verdict
 // (schemaWaitVerdict). A read failure is not fatal: it comes back as the
 // SchemaReasonUnreadable class with the cause in Err, so the caller keeps
-// waiting. The only error is a schema dirty at this binary's latest.
+// waiting. The only error is a schema dirty at this binary's latest with no
+// migration in flight.
 func (p *Postgres) SchemaWaitState(ctx context.Context) (SchemaWait, error) {
 	st, err := p.schemaState(ctx)
 	if err != nil {
@@ -278,6 +279,18 @@ func (p *Postgres) SchemaWaitState(ctx context.Context) (SchemaWait, error) {
 	}
 	if reason := replacedReason(p.installationID, st.exists, st.installationID); reason != "" {
 		return SchemaWait{Class: SchemaReasonReplaced, Reason: reason, Detail: replacedDetail(p.installationID, st.installationID)}, nil
+	}
+	if st.exists && st.dirty && st.version == st.latest {
+		// The one fatal verdict, unless the migrator is still on it: it marks
+		// the latest dirty while applying it, so a probe during that window
+		// would stop a boot the migration is about to unblock.
+		inFlight, lockErr := p.migrationInFlight(ctx)
+		if lockErr != nil {
+			return SchemaWait{Class: SchemaReasonUnreadable, Reason: SchemaReasonUnreadable, Err: lockErr}, nil //nolint:nilerr // as above, a read failure keeps the gate waiting
+		}
+		if inFlight {
+			return SchemaWait{Class: SchemaReasonDirty, Reason: fmt.Sprintf("schema dirty at v%d", st.version)}, nil
+		}
 	}
 	w, err := schemaWaitVerdict(st.version, st.exists, st.dirty, st.latest)
 	if w.Ahead {
