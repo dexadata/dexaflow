@@ -7,8 +7,8 @@ Task SDK, through ``requests`` and ``httpx``) and as the copy pip vendors in
 ``pip/_vendor/certifi``, which pip loads next to the system store. GHSA-6q48-6c7w-9gw2
 drops emSign ECC Root CA - G3, whose intermediates were compromised, in certifi
 2026.10.19; every older bundle still trusts it. The system trust store
-(``/etc/ssl/certs``, from the base image's ca-certificates) is out of scope
-here: it moves with the base image, not with these pins.
+(``/etc/ssl/certs``) drops it in Debian's ca-certificates 20250419+deb13u1,
+which the image upgrades itself rather than waiting on the base image.
 
 Left to the resolver, the site-packages copy is whatever certifi was newest
 when the layer was built, and the vendored copy moves only with pip. So both
@@ -70,3 +70,17 @@ def test_certifi_is_installed_after_the_task_sdk_pulls_it_in():
 def test_pip_pin_vendors_a_certifi_without_the_emsign_ecc_g3_root():
     """pip/_vendor/certifi, trusted (with the system store) for a DAG's requirements."""
     assert _arg(_dockerfile(), "PIP_VERSION") >= _PIP_FLOOR
+
+
+def test_system_trust_store_is_upgraded_past_the_emsign_ecc_g3_root():
+    """/etc/ssl/certs, read by ``ssl``, ``urllib`` and pip's truststore.
+
+    Debian dropped the root in ca-certificates 20250419+deb13u1 (DSA-6572-1),
+    but the slim base image of a Python line keeps the ca-certificates it was
+    built with, and a line past its end of life (3.10 from October 2026) is not
+    rebuilt. So the image upgrades the package itself, on every line.
+    """
+    runs = _run_instructions(_dockerfile())
+    upgrade = _first_run(runs, r"apt-get install\b.*--only-upgrade\b.*\bca-certificates\b")
+    assert re.search(r"apt-get update\b", runs[upgrade]), "no fresh package index"
+    assert re.search(r"rm -rf /var/lib/apt/lists", runs[upgrade]), "the index stays in the layer"
