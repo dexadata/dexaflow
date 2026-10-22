@@ -88,8 +88,9 @@ the work, and the same DAG version runs many attempts.
   `service_account` other than the warm workers' falls back the same way. A
   value set under `defaults` (a project-wide `node_selector`, for example) is
   copied onto every task, so it sends every task of the project to a dedicated
-  pod; leave the warm pool off for such a project, since its warm pods would sit
-  idle.
+  pod. A version none of whose tasks is warm-eligible, for this or any reason
+  below, gets no warm pool at all, so no warm pod sits idle next to its
+  dedicated pods.
 - **Non-idempotent tasks.** Warm-pool recovery re-runs an attempt after a worker is
   lost, and the safety argument for "a re-run is harmless" holds only for
   idempotent tasks. This is the same assumption Airflow itself makes; it is a
@@ -140,11 +141,9 @@ The reasons a task takes a dedicated pod, in the order they are checked:
 
 A warm-eligible task still takes a dedicated pod when no warm worker of its
 version is free. The `warm pool` line says what the pool does: `off`, `none`
-(this version gets no warm worker: staging, source mode, an idle target of 0,
-or a server that runs no warm workers) or `on` (the idle workers kept and the
-cap). When the pool is `on`, the `warm pool` line is printed even if no task
-of the version is warm-eligible, since its idle workers then cost without
-serving it. `warming now` is said only for a DAG that declares
+(this version gets no warm worker: staging, source mode, no warm-eligible
+task, an idle target of 0, or a server that runs no warm workers) or `on`
+(the idle workers kept and the cap). `warming now` is said only for a DAG that declares
 `min_idle_workers`, the DAGs that are prewarmed. For a paused one the line
 says the workers start when the DAG is unpaused. For a DAG that declares
 none, whose idle workers come from `minIdleWorkers`, it says they start with

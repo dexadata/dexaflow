@@ -21,7 +21,8 @@ first-time contributors without a discussion issue first.
   The versions kept are the current version of each unpaused DAG that
   declares `min_idle_workers` and the versions of active runs that are
   still current (ADR 0082,
-  `warmCandidates` in `internal/storage`), so a deploy, a promote or a
+  `warmCandidates` in `internal/storage`), except a version none of whose
+  tasks dispatch would place on a warm worker (#2065), so a deploy, a promote or a
   rollback starts the new pool and drains the old one; the drain never
   deletes a busy worker (`warm_prewarm_integration_test.go`).
 - **The termination message is a contract.** `BuildPod` pins

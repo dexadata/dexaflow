@@ -74,6 +74,26 @@ func (p WarmPolicy) DedicatedReason(v WarmVersion, t TaskSpec) string {
 	if reason := p.VersionReason(v); reason != "" {
 		return reason
 	}
+	return p.taskReason(t)
+}
+
+// HasWarmTask reports whether at least one of tasks may be placed on a warm
+// worker of a version VersionReason accepts: the per-task half of
+// DedicatedReason. A version with no such task keeps no warm pool, since its
+// idle workers would serve none of its tasks (#2065); a version with no task
+// has none.
+func (p WarmPolicy) HasWarmTask(tasks []TaskSpec) bool {
+	for _, t := range tasks {
+		if p.taskReason(t) == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// taskReason says why task t takes a dedicated pod whatever its version, or
+// "" when it may be placed on a warm worker.
+func (p WarmPolicy) taskReason(t TaskSpec) string {
 	if reason := warmServiceAccountReason(t, p.ServiceAccount); reason != "" {
 		return reason
 	}
