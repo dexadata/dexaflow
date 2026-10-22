@@ -82,5 +82,5 @@ def test_system_trust_store_is_upgraded_past_the_emsign_ecc_g3_root():
     """
     runs = _run_instructions(_dockerfile())
     upgrade = _first_run(runs, r"apt-get install\b.*--only-upgrade\b.*\bca-certificates\b")
-    assert re.search(r"apt-get update\b", runs[upgrade]), "the upgrade runs without a fresh package index"
-    assert re.search(r"rm -rf /var/lib/apt/lists", runs[upgrade]), "the upgrade leaves the package index in the layer"
+    assert re.search(r"apt-get update\b", runs[upgrade]), "no fresh package index"
+    assert re.search(r"rm -rf /var/lib/apt/lists", runs[upgrade]), "the index stays in the layer"
