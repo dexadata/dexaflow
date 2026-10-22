@@ -122,11 +122,11 @@ func (f *flakyStore) RecordDispatchUnavailable(context.Context, string, string, 
 func (f *flakyStore) FailDispatchExhausted(context.Context, string, string, string) error { return nil }
 func (f *flakyStore) FailDispatchRefused(context.Context, string, string, string) error   { return nil }
 
-func (f *flakyStore) SetRunState(_ context.Context, runID string, state domain.DagRunState) error {
+func (f *flakyStore) SetRunState(_ context.Context, runID string, _, to domain.DagRunState) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.runStates[runID] = state
-	return nil
+	f.runStates[runID] = to
+	return true, nil
 }
 func (f *flakyStore) StartQueuedRun(_ context.Context, runID, _ string) (bool, error) {
 	f.mu.Lock()
