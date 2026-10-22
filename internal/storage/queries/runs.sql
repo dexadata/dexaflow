@@ -52,6 +52,35 @@ LIMIT sqlc.arg(row_limit);
 SELECT count(*) FROM dag_runs
 WHERE tenant_id = sqlc.arg(tenant_id) AND dag_id = sqlc.arg(dag_id) AND state::text = ANY(sqlc.arg(states)::text[]);
 
+-- name: ListDagRunsFiltered :many
+SELECT r.*, v.version AS dag_version_label
+FROM dag_runs r
+LEFT JOIN dag_versions v ON v.id = r.dag_version_id
+WHERE r.tenant_id = sqlc.arg(tenant_id) AND r.dag_id = sqlc.arg(dag_id)
+  AND (cardinality(sqlc.arg(states)::text[]) = 0 OR r.state::text = ANY(sqlc.arg(states)::text[]))
+  AND (sqlc.narg('run_id_pattern')::text IS NULL OR r.run_id ILIKE '%' || sqlc.narg('run_id_pattern') || '%')
+  AND (sqlc.narg('run_id_prefix_pattern')::text IS NULL OR r.run_id ILIKE sqlc.narg('run_id_prefix_pattern') || '%')
+  AND (sqlc.narg('run_type')::text IS NULL OR r.trigger::text = sqlc.narg('run_type'))
+  AND (sqlc.narg('start_date_gte')::timestamptz IS NULL OR r.started_at >= sqlc.narg('start_date_gte'))
+  AND (sqlc.narg('start_date_lte')::timestamptz IS NULL OR r.started_at <= sqlc.narg('start_date_lte'))
+  AND (sqlc.narg('end_date_gte')::timestamptz IS NULL OR r.ended_at >= sqlc.narg('end_date_gte'))
+  AND (sqlc.narg('end_date_lte')::timestamptz IS NULL OR r.ended_at <= sqlc.narg('end_date_lte'))
+ORDER BY r.logical_date DESC, r.run_id DESC
+LIMIT sqlc.arg(row_limit) OFFSET sqlc.arg(row_offset);
+
+-- name: CountDagRunsFiltered :one
+SELECT count(*)
+FROM dag_runs r
+WHERE r.tenant_id = sqlc.arg(tenant_id) AND r.dag_id = sqlc.arg(dag_id)
+  AND (cardinality(sqlc.arg(states)::text[]) = 0 OR r.state::text = ANY(sqlc.arg(states)::text[]))
+  AND (sqlc.narg('run_id_pattern')::text IS NULL OR r.run_id ILIKE '%' || sqlc.narg('run_id_pattern') || '%')
+  AND (sqlc.narg('run_id_prefix_pattern')::text IS NULL OR r.run_id ILIKE sqlc.narg('run_id_prefix_pattern') || '%')
+  AND (sqlc.narg('run_type')::text IS NULL OR r.trigger::text = sqlc.narg('run_type'))
+  AND (sqlc.narg('start_date_gte')::timestamptz IS NULL OR r.started_at >= sqlc.narg('start_date_gte'))
+  AND (sqlc.narg('start_date_lte')::timestamptz IS NULL OR r.started_at <= sqlc.narg('start_date_lte'))
+  AND (sqlc.narg('end_date_gte')::timestamptz IS NULL OR r.ended_at >= sqlc.narg('end_date_gte'))
+  AND (sqlc.narg('end_date_lte')::timestamptz IS NULL OR r.ended_at <= sqlc.narg('end_date_lte'));
+
 -- name: DeleteDagRun :execrows
 -- Removes one run; its task_instances and XCom rows cascade (ON DELETE CASCADE).
 DELETE FROM dag_runs WHERE tenant_id = $1 AND dag_id = $2 AND run_id = $3;
@@ -349,6 +378,24 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
 SELECT * FROM task_instances
 WHERE tenant_id = $1 AND dag_run_id = $2
 ORDER BY task_id;
+
+-- name: ListTaskInstancesFiltered :many
+SELECT * FROM task_instances
+WHERE tenant_id = sqlc.arg(tenant_id) AND dag_run_id = sqlc.arg(dag_run_id)
+  AND (cardinality(sqlc.arg(states)::text[]) = 0 OR state::text = ANY(sqlc.arg(states)::text[]))
+  AND (sqlc.narg('task_id_pattern')::text IS NULL OR task_id ILIKE '%' || sqlc.narg('task_id_pattern') || '%')
+  AND (sqlc.narg('task_id_prefix_pattern')::text IS NULL OR task_id ILIKE sqlc.narg('task_id_prefix_pattern') || '%')
+  AND (sqlc.narg('pool')::text IS NULL OR pool = sqlc.narg('pool'))
+ORDER BY task_id
+LIMIT sqlc.arg(row_limit) OFFSET sqlc.arg(row_offset);
+
+-- name: CountTaskInstancesFiltered :one
+SELECT count(*) FROM task_instances
+WHERE tenant_id = sqlc.arg(tenant_id) AND dag_run_id = sqlc.arg(dag_run_id)
+  AND (cardinality(sqlc.arg(states)::text[]) = 0 OR state::text = ANY(sqlc.arg(states)::text[]))
+  AND (sqlc.narg('task_id_pattern')::text IS NULL OR task_id ILIKE '%' || sqlc.narg('task_id_pattern') || '%')
+  AND (sqlc.narg('task_id_prefix_pattern')::text IS NULL OR task_id ILIKE sqlc.narg('task_id_prefix_pattern') || '%')
+  AND (sqlc.narg('pool')::text IS NULL OR pool = sqlc.narg('pool'));
 
 -- name: ListTaskInstancesByRuns :many
 -- The batched form of ListTaskInstancesByRun for the scheduler tick: every

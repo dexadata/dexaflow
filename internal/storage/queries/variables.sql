@@ -19,6 +19,21 @@ ORDER BY key;
 -- name: CountVariables :one
 SELECT count(*) FROM variables WHERE tenant_id = $1;
 
+-- name: ListVariablesFiltered :many
+SELECT key, value, description
+FROM variables
+WHERE tenant_id = $1
+  AND (sqlc.narg('key_pattern')::text IS NULL OR key ILIKE '%' || sqlc.narg('key_pattern') || '%')
+  AND (sqlc.narg('key_prefix_pattern')::text IS NULL OR key ILIKE sqlc.narg('key_prefix_pattern') || '%')
+ORDER BY key
+LIMIT $2 OFFSET $3;
+
+-- name: CountVariablesFiltered :one
+SELECT count(*) FROM variables
+WHERE tenant_id = $1
+  AND (sqlc.narg('key_pattern')::text IS NULL OR key ILIKE '%' || sqlc.narg('key_pattern') || '%')
+  AND (sqlc.narg('key_prefix_pattern')::text IS NULL OR key ILIKE sqlc.narg('key_prefix_pattern') || '%');
+
 -- name: GetVariable :one
 SELECT key, value, description
 FROM variables

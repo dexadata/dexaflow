@@ -26,6 +26,28 @@ func (f *fakeImportErrorStore) ListImportErrors(_ context.Context, _ string) ([]
 	return out, nil
 }
 
+func (f *fakeImportErrorStore) ListImportErrorsFiltered(_ context.Context, _ string, filename, bundleName string, limit, offset int) ([]domain.ImportError, int, error) {
+	out := make([]domain.ImportError, 0, len(f.errs))
+	for _, e := range f.errs {
+		if filename != "" && e.Filename != filename && !strings.Contains(e.Filename, filename) {
+			continue
+		}
+		if bundleName != "" && e.BundleName != bundleName {
+			continue
+		}
+		out = append(out, e)
+	}
+	total := len(out)
+	if offset >= total {
+		return []domain.ImportError{}, total, nil
+	}
+	end := offset + limit
+	if limit <= 0 || end > total {
+		end = total
+	}
+	return out[offset:end], total, nil
+}
+
 func (f *fakeImportErrorStore) SetImportError(_ context.Context, _ string, e domain.ImportError) error {
 	if f.errs == nil {
 		f.errs = map[string]domain.ImportError{}
@@ -127,4 +149,43 @@ func TestImportErrorsNilStoreServesEmpty(t *testing.T) {
 	if !strings.Contains(w.Body.String(), `"total_entries":0`) {
 		t.Fatalf("nil store should serve empty collection, got %s", w.Body.String())
 	}
+}
+
+func TestImportErrorsListFilters(t *testing.T) {
+	store := &fakeImportErrorStore{
+		errs: map[string]domain.ImportError{
+			"dags/broken/dag1.py": {Filename: "dags/broken/dag1.py", StackTrace: "SyntaxError", BundleName: "alpha"},
+			"dags/broken/dag2.py": {Filename: "dags/broken/dag2.py", StackTrace: "ImportError", BundleName: "beta"},
+			"dags/other/dag3.py":  {Filename: "dags/other/dag3.py", StackTrace: "TypeError", BundleName: "alpha"},
+		},
+	}
+	srv := importErrorServer(store)
+
+	t.Run("filter by filename", func(t *testing.T) {
+		w := authGet(srv, http.MethodGet, "/api/v2/importErrors?filename=dags/broken/dag1.py", "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("status %d", w.Code)
+		}
+		var got importErrorCollectionDTO
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.TotalEntries != 1 || len(got.ImportErrors) != 1 || got.ImportErrors[0].Filename != "dags/broken/dag1.py" {
+			t.Errorf("got %+v; want 1 entry with filename dags/broken/dag1.py", got)
+		}
+	})
+
+	t.Run("filter by bundle_name", func(t *testing.T) {
+		w := authGet(srv, http.MethodGet, "/api/v2/importErrors?bundle_name=beta", "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("status %d", w.Code)
+		}
+		var got importErrorCollectionDTO
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.TotalEntries != 1 || len(got.ImportErrors) != 1 || got.ImportErrors[0].Filename != "dags/broken/dag2.py" {
+			t.Errorf("got %+v; want 1 entry for beta bundle", got)
+		}
+	})
 }

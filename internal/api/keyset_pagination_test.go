@@ -163,6 +163,67 @@ func TestDagRunsCursorForwardsStateFilter(t *testing.T) {
 	}
 }
 
+// The keyset query knows only states, so a list narrowed by run id, type or
+// date pages by offset: every page keeps the filter (#1928).
+func TestDagRunsCursorKeepsNonStateFilters(t *testing.T) {
+	repo := &keysetRunRepo{fakeRunRepo: fakeRunRepo{runs: append(fiveRuns(),
+		domain.DagRun{DagID: "etl", RunID: "other", LogicalDate: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), State: domain.DagRunStateSuccess})}}
+	srv := keysetRunServer(repo)
+	// A keyset cursor issued by the unfiltered list must not drop the filter
+	// either: it is read for its offset.
+	keyset := encodeKeysetCursorAt(domain.PageCursor{At: time.Date(2026, 9, 1, 3, 0, 0, 0, time.UTC), Key: "r4"}, 2)
+	rec := authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns?limit=2&run_id_prefix_pattern=r&cursor=", "")
+	seen := []string{}
+	for page := 0; ; page++ {
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+		}
+		var body struct {
+			runPage
+			NextCursor *string `json:"next_cursor"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.TotalEntries != 5 {
+			t.Errorf("page %d total_entries = %d, want 5 (the filtered count)", page, body.TotalEntries)
+		}
+		for _, r := range body.DagRuns {
+			seen = append(seen, r.DagRunID)
+		}
+		if h := rec.Header().Get(nextCursorHeader); h != "" {
+			t.Errorf("page %d sent a keyset cursor header %q for a filtered list", page, h)
+		}
+		if body.NextCursor == nil {
+			break
+		}
+		if page > 5 {
+			t.Fatal("cursor never ran out")
+		}
+		rec = authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns?limit=2&run_id_prefix_pattern=r&cursor="+*body.NextCursor, "")
+	}
+	rec = authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns?limit=2&run_id_prefix_pattern=r&cursor="+keyset, "")
+	ids, _, _ := decodeRunPage(t, rec.Body.Bytes())
+	if strings.Join(ids, ",") != "r3,r2" {
+		t.Errorf("keyset cursor with a filter = %v, want r3,r2 (offset 2 of the filtered list)", ids)
+	}
+	if got := strings.Join(seen, ","); got != "r5,r4,r3,r2,r1" {
+		t.Fatalf("walked %s, want r5,r4,r3,r2,r1 (never \"other\")", got)
+	}
+	if repo.gotAfter != nil {
+		t.Errorf("a filtered list went through the keyset query, which drops the filter: %+v", repo.gotAfter)
+	}
+}
+
+// A date bound that does not parse is the client's error, not an unfiltered page.
+func TestDagRunsRejectsUnparsableDateBound(t *testing.T) {
+	srv := keysetRunServer(&keysetRunRepo{fakeRunRepo: fakeRunRepo{runs: fiveRuns()}})
+	rec := authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns?start_date_gte=yesterday", "")
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "start_date_gte") {
+		t.Fatalf("status = %d body=%s, want 400 naming start_date_gte", rec.Code, rec.Body.String())
+	}
+}
+
 // A malformed cursor is the client's error.
 func TestDagRunsCursorRejectsGarbage(t *testing.T) {
 	srv := keysetRunServer(&keysetRunRepo{fakeRunRepo: fakeRunRepo{runs: fiveRuns()}})

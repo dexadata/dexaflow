@@ -175,6 +175,56 @@ type fakeRunRepo struct {
 func (f *fakeRunRepo) ListDagRuns(context.Context, string, string, int, int) ([]domain.DagRun, int, error) {
 	return f.runs, len(f.runs), nil
 }
+
+func (f *fakeRunRepo) ListDagRunsWithFilter(_ context.Context, _, _ string, filter domain.DagRunFilter) ([]domain.DagRun, int, error) {
+	var out []domain.DagRun
+	for _, r := range f.runs {
+		if len(filter.States) > 0 {
+			matched := false
+			for _, s := range filter.States {
+				if string(r.State) == s {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		if filter.RunIDPrefixPattern != "" && !strings.HasPrefix(r.RunID, filter.RunIDPrefixPattern) {
+			continue
+		}
+		if filter.RunIDPattern != "" && !strings.Contains(r.RunID, filter.RunIDPattern) {
+			continue
+		}
+		if filter.RunType != "" && r.RunType != filter.RunType {
+			continue
+		}
+		if filter.StartDateGte != nil && r.StartedAt != nil && r.StartedAt.Before(*filter.StartDateGte) {
+			continue
+		}
+		if filter.StartDateLte != nil && r.StartedAt != nil && r.StartedAt.After(*filter.StartDateLte) {
+			continue
+		}
+		if filter.EndDateGte != nil && r.EndedAt != nil && r.EndedAt.Before(*filter.EndDateGte) {
+			continue
+		}
+		if filter.EndDateLte != nil && r.EndedAt != nil && r.EndedAt.After(*filter.EndDateLte) {
+			continue
+		}
+		out = append(out, r)
+	}
+	total := len(out)
+	if filter.Offset >= total {
+		return []domain.DagRun{}, total, nil
+	}
+	end := filter.Offset + filter.Limit
+	if filter.Limit <= 0 || end > total {
+		end = total
+	}
+	return out[filter.Offset:end], total, nil
+}
+
 func (f *fakeRunRepo) GetDagRun(_ context.Context, _, _, runID string) (domain.DagRun, error) {
 	for _, r := range f.runs {
 		if r.RunID == runID {
@@ -224,6 +274,43 @@ type fakeTaskRepo struct {
 
 func (f *fakeTaskRepo) ListTaskInstances(context.Context, string, string, string, int, int) ([]domain.TaskInstance, int, error) {
 	return f.tis, len(f.tis), nil
+}
+
+func (f *fakeTaskRepo) ListTaskInstancesWithFilter(_ context.Context, _, _, _ string, filter domain.TaskInstanceFilter) ([]domain.TaskInstance, int, error) {
+	var out []domain.TaskInstance
+	for _, ti := range f.tis {
+		if len(filter.States) > 0 {
+			matched := false
+			for _, s := range filter.States {
+				if string(ti.State) == s {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		if filter.TaskIDPrefixPattern != "" && !strings.HasPrefix(ti.TaskID, filter.TaskIDPrefixPattern) {
+			continue
+		}
+		if filter.TaskIDPattern != "" && !strings.Contains(ti.TaskID, filter.TaskIDPattern) {
+			continue
+		}
+		if filter.Pool != "" && ti.Pool != filter.Pool {
+			continue
+		}
+		out = append(out, ti)
+	}
+	total := len(out)
+	if filter.Offset >= total {
+		return []domain.TaskInstance{}, total, nil
+	}
+	end := filter.Offset + filter.Limit
+	if filter.Limit <= 0 || end > total {
+		end = total
+	}
+	return out[filter.Offset:end], total, nil
 }
 
 // ListTaskInstanceAttempts returns the same TIs as ListTaskInstances filtered
@@ -771,6 +858,122 @@ func TestListDagRunsStateFilter(t *testing.T) {
 	if n := decode(authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns", "")); n != 3 {
 		t.Errorf("no filter total = %d, want 3", n)
 	}
+}
+
+func TestListDagRunsAllFilters(t *testing.T) {
+	admin := &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}
+	t1 := time.Date(2026, 10, 10, 10, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 10, 15, 10, 0, 0, 0, time.UTC)
+	t3 := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: admin},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			DagRuns: &fakeRunRepo{runs: []domain.DagRun{
+				{DagID: "etl", RunID: "manual__2026-10-10", RunType: "manual", State: domain.DagRunStateSuccess, StartedAt: &t1, EndedAt: &t1},
+				{DagID: "etl", RunID: "scheduled__2026-10-15", RunType: "scheduled", State: domain.DagRunStateFailed, StartedAt: &t2, EndedAt: &t2},
+				{DagID: "etl", RunID: "scheduled__2026-10-20", RunType: "scheduled", State: domain.DagRunStateSuccess, StartedAt: &t3, EndedAt: &t3},
+			}},
+		},
+	})
+	decode := func(url string) dagRunCollectionDTO {
+		rec := authGet(srv, http.MethodGet, url, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d", url, rec.Code)
+		}
+		var got dagRunCollectionDTO
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return got
+	}
+
+	t.Run("prefix pattern filter", func(t *testing.T) {
+		got := decode("/api/v2/dags/etl/dagRuns?run_id_prefix_pattern=manual__")
+		if got.TotalEntries != 1 || len(got.DagRuns) != 1 || got.DagRuns[0].DagRunID != "manual__2026-10-10" {
+			t.Errorf("prefix filter = %+v, want manual__2026-10-10", got)
+		}
+	})
+
+	t.Run("run_type filter", func(t *testing.T) {
+		got := decode("/api/v2/dags/etl/dagRuns?run_type=scheduled")
+		if got.TotalEntries != 2 || len(got.DagRuns) != 2 {
+			t.Errorf("run_type filter = %+v, want 2 runs", got)
+		}
+	})
+
+	t.Run("date range filter", func(t *testing.T) {
+		got := decode("/api/v2/dags/etl/dagRuns?start_date_gte=2026-10-12T00:00:00Z&end_date_lte=2026-10-18T00:00:00Z")
+		if got.TotalEntries != 1 || len(got.DagRuns) != 1 || got.DagRuns[0].DagRunID != "scheduled__2026-10-15" {
+			t.Errorf("date range filter = %+v, want 1 run (2026-10-15)", got)
+		}
+	})
+}
+
+func TestListTaskInstancesFilters(t *testing.T) {
+	admin := &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: admin},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			DagRuns: &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1"}}},
+			Tasks: &fakeTaskRepo{tis: []domain.TaskInstance{
+				{TaskID: "extract_users", RunID: "r1", State: domain.TaskStateSuccess, Pool: "default_pool"},
+				{TaskID: "extract_orders", RunID: "r1", State: domain.TaskStateFailed, Pool: "default_pool"},
+				{TaskID: "transform", RunID: "r1", State: domain.TaskStateSuccess, Pool: "compute_pool"},
+			}},
+		},
+	})
+	decode := func(url string) taskInstanceCollectionDTO {
+		rec := authGet(srv, http.MethodGet, url, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d", url, rec.Code)
+		}
+		var got taskInstanceCollectionDTO
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return got
+	}
+
+	t.Run("state filter", func(t *testing.T) {
+		got := decode("/api/v2/dags/etl/dagRuns/r1/taskInstances?state=failed")
+		if got.TotalEntries != 1 || len(got.TaskInstances) != 1 || got.TaskInstances[0].TaskID != "extract_orders" {
+			t.Errorf("state filter = %+v, want extract_orders", got)
+		}
+	})
+
+	t.Run("task id prefix filter", func(t *testing.T) {
+		got := decode("/api/v2/dags/etl/dagRuns/r1/taskInstances?task_id_prefix_pattern=extract_")
+		if got.TotalEntries != 2 || len(got.TaskInstances) != 2 {
+			t.Errorf("task prefix filter = %+v, want 2 instances", got)
+		}
+	})
+
+	t.Run("pool filter", func(t *testing.T) {
+		got := decode("/api/v2/dags/etl/dagRuns/r1/taskInstances?pool=compute_pool")
+		if got.TotalEntries != 1 || len(got.TaskInstances) != 1 || got.TaskInstances[0].TaskID != "transform" {
+			t.Errorf("pool filter = %+v, want transform", got)
+		}
+	})
 }
 
 func TestDeleteDagClearsHistoryByDefault(t *testing.T) {

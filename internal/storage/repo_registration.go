@@ -542,6 +542,39 @@ func (r *Repository) ListImportErrors(ctx context.Context, tenant string) ([]dom
 	return out, nil
 }
 
+// ListImportErrorsFiltered returns a page of import errors matching the filter criteria and total count.
+func (r *Repository) ListImportErrorsFiltered(ctx context.Context, tenant, filename, bundleName string, limit, offset int) (errs []domain.ImportError, total int, err error) {
+	rows, err := r.q.ListImportErrorsFiltered(ctx, queries.ListImportErrorsFilteredParams{
+		Tenant:     tenant,
+		Filename:   strPtr(filename),
+		BundleName: strPtr(bundleName),
+		Limit:      toInt32(limit),
+		Offset:     toInt32(offset),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing filtered import errors: %w", err)
+	}
+	cnt, err := r.q.CountImportErrorsFiltered(ctx, queries.CountImportErrorsFilteredParams{
+		Tenant:     tenant,
+		Filename:   strPtr(filename),
+		BundleName: strPtr(bundleName),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("counting filtered import errors: %w", err)
+	}
+	out := make([]domain.ImportError, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, domain.ImportError{
+			ID:         uuidToString(row.ID),
+			Filename:   row.Filename,
+			StackTrace: row.Stacktrace,
+			BundleName: strOrEmpty(row.BundleName),
+			Timestamp:  timeVal(row.CreatedAt),
+		})
+	}
+	return out, int(cnt), nil
+}
+
 // SetImportError records (or replaces) the parse/compile error for a file.
 func (r *Repository) SetImportError(ctx context.Context, tenant string, e domain.ImportError) error {
 	var bundle *string
