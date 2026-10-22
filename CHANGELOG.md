@@ -497,6 +497,14 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- **The system trust store of the task runtime image no longer trusts emSign
+  ECC Root CA - G3 on any Python line.** The image now upgrades Debian's
+  ca-certificates to 20250419+deb13u1 (DSA-6572-1) itself instead of keeping
+  the one its slim base image was built with: the py3.10 image still held
+  20250419, because the 3.10 base image is no longer rebuilt. `ssl`, `urllib`
+  and pip read this store; the certifi pins already covered `requests` and
+  `httpx`. Rebuild DAG images on the new base to pick it up. (#2067)
+
 - **The certifi CA bundles in the task runtime image no longer trust emSign
   ECC Root CA - G3.** Its intermediates were compromised
   (GHSA-6q48-6c7w-9gw2), and the certifi bundle that `requests` and `httpx`
