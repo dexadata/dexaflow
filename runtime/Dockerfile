@@ -100,6 +100,18 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 # not kept is the silence: a filesystem permission that moves because a distro
 # default moved is the kind of drift that surfaces as an unexplained EACCES
 # three releases later, so it is now stated here and independent of the suite.
+# The system trust store (/etc/ssl/certs) is upgraded here, not left to the
+# base image. Debian removed emSign ECC Root CA - G3, whose intermediates were
+# compromised, in ca-certificates 20250419+deb13u1 (DSA-6572-1, #2067), but a
+# slim base image keeps the ca-certificates it was built with, and a Python
+# line past its end of life (3.10 from October 2026) is not rebuilt: the
+# v0.5.5-rc.2 py3.10 image still carried 20250419. ssl, urllib and pip's
+# truststore read this store; the certifi pins below cover requests and httpx.
+# tests/test_runtime_image_trust_store.py in runtime/python fails without it.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends --only-upgrade ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd --gid 65532 leoflow \
  && useradd --create-home --home-dir /home/leoflow --uid 65532 --gid 65532 leoflow \
  && chmod 0700 /home/leoflow
@@ -124,8 +136,8 @@ COPY runtime/python /opt/leoflow-runtime
 # (GHSA-6q48-6c7w-9gw2, #2067); 26.2.1 vendors certifi 2026.6.17, which still
 # holds it. pip verifies its downloads (a DAG image installing its
 # `requirements:`) against that vendored bundle AND the system store through
-# truststore, so this pin removes the certifi half only; /etc/ssl/certs moves
-# with the base image's ca-certificates, not here.
+# truststore, so this pin removes the certifi half only; /etc/ssl/certs is
+# the ca-certificates upgrade above.
 # tests/test_runtime_image_trust_store.py in runtime/python fails below it.
 #
 # pip 26 also ships a CycloneDX SBOM of the packages it vendors
