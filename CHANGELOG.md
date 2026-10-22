@@ -8,6 +8,14 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **API tokens can be turned off.** `auth.api_tokens.disabled` (Helm
+  `auth.apiTokens.disabled`, `false` by default) set to `true` stops serving
+  `/api/v2/apiTokens` and the API tokens screen, and refuses every `dxf_`
+  token with `401`, one created before included. It is for a platform in
+  front of Dexaflow that decides at each sign-in who may reach it, so no
+  Dexaflow credential outlives that decision; deploys go through CI OIDC or
+  the trusted issuer's deploy audience instead (#2056).
+
 - **Fuzz targets for the parsers of untrusted input.** `dexaflow.yaml`, `dag.json`
   and its schedule, the scheduler's slot planning, the agent's bearer token and
   termination message, and the API's cursor and paging parameters now have
@@ -295,6 +303,18 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A DAG version with no warm-eligible task no longer keeps an idle warm
+  pod.** The warm pool reconciler kept warm workers for every active or
+  prewarmed version without looking at its tasks. With `executor.unit` set,
+  a DAG whose tasks all declare `resources` or are all larger than size 1
+  (or, without a unit, all above the default limits, all pinning another
+  `service_account` or all setting a placement field) kept an idle warm pod
+  next to the dedicated pod each of its tasks takes, using namespace pod
+  quota. Such a version now gets no warm target, decided by the same check
+  dispatch places an attempt with, and the register response reports its
+  pool as `none` (#2065).
+- **Task agents now reach the control plane under a service mesh (#2079).** The chart named the agent gRPC port `grpc` without an `appProtocol`, so Istio treated the agent's own TLS channel as plaintext gRPC, the agent never connected, and every task stayed `queued` with no error. The port now renders with `appProtocol: tcp`, so meshes pass the TLS through untouched.
+
 - **The control plane now fails closed at boot when the Kubernetes executor has no Kubernetes client (#704).** A scheduler on `executor.type=kubernetes` (the default) that found neither an in-cluster config nor a kubeconfig logged a warning and booted with pod dispatch unwired, so `/readyz` stayed green while every task failed as undispatchable. It now refuses to start with an error naming the missing client, the same posture the `exchange` agent-token transport took in #700. A setup without a cluster sets `executor.type=subprocess`; the Compose demo stack and the clusterless e2e scripts now do.
 - **A warm worker that does not confirm the `/tmp` and `/dev/shm` sweep is now reported, and can be refused (#1678).** Under `execution.warm_read_only_root_filesystem` the sweep between attempts is done by the agent in the task image, so a DAG image built on a runtime older than v0.5.1 ran with the read-only root while nothing emptied those paths, and nothing in the server or the worker log said so. The warm worker now states in its registration whether it does the sweep. With the read-only root on, a worker that does not confirm it logs a WARN with `reason=attempt_home_sweep_unconfirmed` and counts in `dexaflow_scheduler_decisions_total{decision_type="warm_worker_sweep_unconfirmed"}`, and keeps serving, since images built on runtimes from v0.5.1 sweep without being able to confirm it. The new `execution.warm_require_attempt_home_sweep` (Helm: `execution.warmRequireAttemptHomeSweep`, default `false`) refuses such a worker instead, so that DAG version's attempts run on dedicated pods (`decision_type="warm_worker_refused_no_sweep"`). With the read-only root off nothing changes.
 - **A schedule that names a time zone and nothing else, or that never fires,
@@ -476,6 +496,15 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   applies on the version the run executes. (#2046)
 
 ### Security
+
+- **The certifi CA bundles in the task runtime image no longer trust emSign
+  ECC Root CA - G3.** Its intermediates were compromised
+  (GHSA-6q48-6c7w-9gw2), and the certifi bundle that `requests` and `httpx`
+  verify a task's HTTPS calls against still held it: 2026.7.22 in
+  site-packages and 2026.6.17 inside pip 26.2.1. The image now pins certifi
+  2026.10.19 and pip 26.2.2, which vendors it. Clients that read the system
+  trust store (`/etc/ssl/certs`) are not changed by this pin. Rebuild DAG
+  images on the new base to pick it up. (#2067)
 
 - **The control plane's Role in the task namespace gains `get` on
   `serviceaccounts`.** The register dry run reads the ServiceAccount each task
