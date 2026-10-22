@@ -592,6 +592,56 @@ func (r *Repository) ListDagRuns(ctx context.Context, tenant, dagID string, limi
 	return out, int(total), nil
 }
 
+// ListDagRunsWithFilter returns a page of runs for a DAG matching the given filter
+// criteria, and the matching total count.
+func (r *Repository) ListDagRunsWithFilter(ctx context.Context, tenant, dagID string, filter domain.DagRunFilter) (runs []domain.DagRun, total int, err error) {
+	dag, err := r.resolveDag(ctx, tenant, dagID)
+	if err != nil {
+		return nil, 0, err
+	}
+	states := filter.States
+	if states == nil {
+		states = []string{}
+	}
+	rows, err := r.q.ListDagRunsFiltered(ctx, queries.ListDagRunsFilteredParams{
+		TenantID:           dag.TenantID,
+		DagID:              dag.ID,
+		States:             states,
+		RowLimit:           toInt32(filter.Limit),
+		RowOffset:          toInt32(filter.Offset),
+		RunIDPattern:       strPtr(filter.RunIDPattern),
+		RunIDPrefixPattern: strPtr(filter.RunIDPrefixPattern),
+		RunType:            strPtr(filter.RunType),
+		StartDateGte:       ptrTimestamptz(filter.StartDateGte),
+		StartDateLte:       ptrTimestamptz(filter.StartDateLte),
+		EndDateGte:         ptrTimestamptz(filter.EndDateGte),
+		EndDateLte:         ptrTimestamptz(filter.EndDateLte),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing filtered dag runs: %w", err)
+	}
+	cnt, err := r.q.CountDagRunsFiltered(ctx, queries.CountDagRunsFilteredParams{
+		TenantID:           dag.TenantID,
+		DagID:              dag.ID,
+		States:             states,
+		RunIDPattern:       strPtr(filter.RunIDPattern),
+		RunIDPrefixPattern: strPtr(filter.RunIDPrefixPattern),
+		RunType:            strPtr(filter.RunType),
+		StartDateGte:       ptrTimestamptz(filter.StartDateGte),
+		StartDateLte:       ptrTimestamptz(filter.StartDateLte),
+		EndDateGte:         ptrTimestamptz(filter.EndDateGte),
+		EndDateLte:         ptrTimestamptz(filter.EndDateLte),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("counting filtered dag runs: %w", err)
+	}
+	out := make([]domain.DagRun, 0, len(rows))
+	for _, run := range rows {
+		out = append(out, mapDagRunWithVersion(queries.GetDagRunWithVersionRow(run), dagID))
+	}
+	return out, int(cnt), nil
+}
+
 // ListDagRunsPage is ListDagRuns without the total: it skips the COUNT over
 // every run of the DAG, for callers that never use it (the grid, the latest
 // run header, the in-memory run scans).
@@ -816,6 +866,51 @@ func (r *Repository) ListTaskInstances(ctx context.Context, tenant, dagID, runID
 		out = append(out, mapTaskInstance(ti, dagID, runID))
 	}
 	return out, len(out), nil
+}
+
+// ListTaskInstancesWithFilter returns the task instances of a run matching the given filter.
+func (r *Repository) ListTaskInstancesWithFilter(ctx context.Context, tenant, dagID, runID string, filter domain.TaskInstanceFilter) (tis []domain.TaskInstance, total int, err error) {
+	dag, err := r.resolveDag(ctx, tenant, dagID)
+	if err != nil {
+		return nil, 0, err
+	}
+	run, err := r.q.GetDagRun(ctx, queries.GetDagRunParams{TenantID: dag.TenantID, DagID: dag.ID, RunID: runID})
+	if err != nil {
+		return nil, 0, mapNotFound(err)
+	}
+	states := filter.States
+	if states == nil {
+		states = []string{}
+	}
+	rows, err := r.q.ListTaskInstancesFiltered(ctx, queries.ListTaskInstancesFilteredParams{
+		TenantID:            run.TenantID,
+		DagRunID:            run.ID,
+		States:              states,
+		TaskIDPattern:       strPtr(filter.TaskIDPattern),
+		TaskIDPrefixPattern: strPtr(filter.TaskIDPrefixPattern),
+		Pool:                strPtr(filter.Pool),
+		RowOffset:           toInt32(filter.Offset),
+		RowLimit:            toInt32(filter.Limit),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing filtered task instances: %w", err)
+	}
+	cnt, err := r.q.CountTaskInstancesFiltered(ctx, queries.CountTaskInstancesFilteredParams{
+		TenantID:            run.TenantID,
+		DagRunID:            run.ID,
+		States:              states,
+		TaskIDPattern:       strPtr(filter.TaskIDPattern),
+		TaskIDPrefixPattern: strPtr(filter.TaskIDPrefixPattern),
+		Pool:                strPtr(filter.Pool),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("counting filtered task instances: %w", err)
+	}
+	out := make([]domain.TaskInstance, 0, len(rows))
+	for _, ti := range rows {
+		out = append(out, mapTaskInstance(ti, dagID, runID))
+	}
+	return out, int(cnt), nil
 }
 
 // ClearTaskInstances resets tasks to none for re-run. When onlyFailed is true,
@@ -2265,23 +2360,38 @@ func (r *Repository) ListDagTags(ctx context.Context, tenant, pattern, prefixPat
 
 // ListVariables returns a page of variables for the tenant and the total count.
 func (r *Repository) ListVariables(ctx context.Context, tenant string, limit, offset int) ([]domain.Variable, int, error) {
+	return r.ListVariablesFiltered(ctx, tenant, "", "", limit, offset)
+}
+
+// ListVariablesFiltered returns a page of variables matching patterns and the total count.
+func (r *Repository) ListVariablesFiltered(ctx context.Context, tenant, pattern, prefixPattern string, limit, offset int) (vars []domain.Variable, total int, err error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
 		return nil, 0, err
 	}
-	rows, err := r.q.ListVariables(ctx, queries.ListVariablesParams{TenantID: tid, Limit: toInt32(limit), Offset: toInt32(offset)})
+	rows, err := r.q.ListVariablesFiltered(ctx, queries.ListVariablesFilteredParams{
+		TenantID:         tid,
+		Limit:            toInt32(limit),
+		Offset:           toInt32(offset),
+		KeyPattern:       strPtr(pattern),
+		KeyPrefixPattern: strPtr(prefixPattern),
+	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing variables: %w", err)
+		return nil, 0, fmt.Errorf("listing filtered variables: %w", err)
 	}
-	total, err := r.q.CountVariables(ctx, tid)
+	cnt, err := r.q.CountVariablesFiltered(ctx, queries.CountVariablesFilteredParams{
+		TenantID:         tid,
+		KeyPattern:       strPtr(pattern),
+		KeyPrefixPattern: strPtr(prefixPattern),
+	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("counting variables: %w", err)
+		return nil, 0, fmt.Errorf("counting filtered variables: %w", err)
 	}
 	out := make([]domain.Variable, 0, len(rows))
 	for _, v := range rows {
 		out = append(out, r.listVariable(v.Key, v.Value, v.Description))
 	}
-	return out, int(total), nil
+	return out, int(cnt), nil
 }
 
 // TenantUUID resolves a tenant name to its UUID string — the form the agent
@@ -2698,17 +2808,32 @@ func (r *Repository) GetConnection(ctx context.Context, tenant, connID string) (
 
 // ListConnections returns a page of connections (no passwords) and the total.
 func (r *Repository) ListConnections(ctx context.Context, tenant string, limit, offset int) ([]domain.Connection, int, error) {
+	return r.ListConnectionsFiltered(ctx, tenant, "", "", limit, offset)
+}
+
+// ListConnectionsFiltered returns a page of connections (no passwords) matching patterns and the total.
+func (r *Repository) ListConnectionsFiltered(ctx context.Context, tenant, pattern, prefixPattern string, limit, offset int) (conns []domain.Connection, total int, err error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
 		return nil, 0, err
 	}
-	rows, err := r.q.ListConnections(ctx, queries.ListConnectionsParams{TenantID: tid, Limit: toInt32(limit), Offset: toInt32(offset)})
+	rows, err := r.q.ListConnectionsFiltered(ctx, queries.ListConnectionsFilteredParams{
+		TenantID:                  tid,
+		Limit:                     toInt32(limit),
+		Offset:                    toInt32(offset),
+		ConnectionIDPattern:       strPtr(pattern),
+		ConnectionIDPrefixPattern: strPtr(prefixPattern),
+	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("listing connections: %w", err)
+		return nil, 0, fmt.Errorf("listing filtered connections: %w", err)
 	}
-	total, err := r.q.CountConnections(ctx, tid)
+	cnt, err := r.q.CountConnectionsFiltered(ctx, queries.CountConnectionsFilteredParams{
+		TenantID:                  tid,
+		ConnectionIDPattern:       strPtr(pattern),
+		ConnectionIDPrefixPattern: strPtr(prefixPattern),
+	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("counting connections: %w", err)
+		return nil, 0, fmt.Errorf("counting filtered connections: %w", err)
 	}
 	out := make([]domain.Connection, 0, len(rows))
 	for _, row := range rows {
@@ -2718,7 +2843,7 @@ func (r *Repository) ListConnections(ctx context.Context, tenant string, limit, 
 			Port: int32PtrToInt(row.Port), Description: strOrEmpty(row.Description),
 		}, row.Extra))
 	}
-	return out, int(total), nil
+	return out, int(cnt), nil
 }
 
 // toConnection completes a connection read alone with its decrypted extra. An
@@ -2826,6 +2951,39 @@ func (r *Repository) ListImportErrors(ctx context.Context, tenant string) ([]dom
 		})
 	}
 	return out, nil
+}
+
+// ListImportErrorsFiltered returns a page of import errors matching the filter criteria and total count.
+func (r *Repository) ListImportErrorsFiltered(ctx context.Context, tenant, filename, bundleName string, limit, offset int) (errs []domain.ImportError, total int, err error) {
+	rows, err := r.q.ListImportErrorsFiltered(ctx, queries.ListImportErrorsFilteredParams{
+		Tenant:     tenant,
+		Filename:   strPtr(filename),
+		BundleName: strPtr(bundleName),
+		Limit:      toInt32(limit),
+		Offset:     toInt32(offset),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing filtered import errors: %w", err)
+	}
+	cnt, err := r.q.CountImportErrorsFiltered(ctx, queries.CountImportErrorsFilteredParams{
+		Tenant:     tenant,
+		Filename:   strPtr(filename),
+		BundleName: strPtr(bundleName),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("counting filtered import errors: %w", err)
+	}
+	out := make([]domain.ImportError, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, domain.ImportError{
+			ID:         uuidToString(row.ID),
+			Filename:   row.Filename,
+			StackTrace: row.Stacktrace,
+			BundleName: strOrEmpty(row.BundleName),
+			Timestamp:  timeVal(row.CreatedAt),
+		})
+	}
+	return out, int(cnt), nil
 }
 
 // SetImportError records (or replaces) the parse/compile error for a file.
