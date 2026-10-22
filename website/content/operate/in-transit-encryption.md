@@ -43,7 +43,10 @@ not (see [Who may dial the gRPC port](#who-may-dial-the-agent-grpc-port)).
    container on localhost and mTLS on the wire.
 
 The agent's own server TLS on gRPC stays on; inside a mesh it is carried within
-the mTLS tunnel.
+the mTLS tunnel. The chart renders the gRPC port with `appProtocol: tcp`, so
+the mesh passes that TLS through as opaque TCP. A mesh that guesses the
+protocol from the port name `grpc` instead would parse the agent's TLS as
+plaintext gRPC, and every task would stay `queued`.
 
 ## Option B: TLS on the API listener (no mesh)
 
