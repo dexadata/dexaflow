@@ -405,7 +405,7 @@ func TestDashboardStatsIntegration(t *testing.T) {
 	if err := sched.ApplyTransition(ctx, failUUID, "b", domain.TaskStateFailed); err != nil {
 		t.Fatal(err)
 	}
-	if err := sched.SetRunState(ctx, failUUID, domain.DagRunStateFailed); err != nil {
+	if _, err := sched.SetRunState(ctx, failUUID, domain.DagRunStateRunning, domain.DagRunStateFailed); err != nil {
 		t.Fatal(err)
 	}
 	runUUID := mkRun(dagRun)
@@ -645,7 +645,7 @@ func TestListDagsFilteredIntegration(t *testing.T) {
 		}
 		for _, r := range runs {
 			if r.DagID == tc.id {
-				if serr := sched.SetRunState(ctx, r.RunID, tc.state); serr != nil {
+				if _, serr := sched.SetRunState(ctx, r.RunID, domain.DagRunStateRunning, tc.state); serr != nil {
 					t.Fatal(serr)
 				}
 			}

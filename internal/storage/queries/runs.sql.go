@@ -3877,25 +3877,32 @@ func (q *Queries) SetTaskInstanceStateByUser(ctx context.Context, arg SetTaskIns
 	return err
 }
 
-const stampDagRunState = `-- name: StampDagRunState :exec
+const stampDagRunState = `-- name: StampDagRunState :execrows
 UPDATE dag_runs
 SET state = $1::dag_run_state,
     started_at = CASE WHEN $1::dag_run_state = 'running' AND started_at IS NULL THEN now() ELSE started_at END,
     ended_at = CASE WHEN $1::dag_run_state IN ('success', 'failed') THEN now() ELSE ended_at END
-WHERE id = $2
+WHERE id = $2 AND state = $3::dag_run_state
 `
 
 type StampDagRunStateParams struct {
-	State DagRunState `json:"state"`
-	ID    pgtype.UUID `json:"id"`
+	State     DagRunState `json:"state"`
+	ID        pgtype.UUID `json:"id"`
+	FromState DagRunState `json:"from_state"`
 }
 
 // Transitions a run's state and stamps the run's own timestamps so the UI can
 // show its duration: started_at on first entry into 'running', ended_at on a
 // terminal state. Other timestamps are preserved (the scheduler may re-run).
-func (q *Queries) StampDagRunState(ctx context.Context, arg StampDagRunStateParams) error {
-	_, err := q.db.Exec(ctx, stampDagRunState, arg.State, arg.ID)
-	return err
+// Guarded on the state the caller read (from_state), as the tick's task-level
+// writes are (#1605): a run a clear re-opened or a user marked after the tick's
+// snapshot is left alone, and no row is affected (#2047).
+func (q *Queries) StampDagRunState(ctx context.Context, arg StampDagRunStateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, stampDagRunState, arg.State, arg.ID, arg.FromState)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const startQueuedRun = `-- name: StartQueuedRun :one

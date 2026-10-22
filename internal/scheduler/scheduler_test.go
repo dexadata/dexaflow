@@ -88,6 +88,11 @@ type fakeStore struct {
 	// user's mark or clear, an agent's report) so the write skips it.
 	batchFrom       map[string]domain.TaskState
 	batchSuperseded map[string]bool
+	// finalizeFrom records the run state each finalize write was guarded on;
+	// finalizeSuperseded makes that guard find the run already moved on (a
+	// clear re-opened it, a user marked it) so the write changes nothing.
+	finalizeFrom       map[string]domain.DagRunState
+	finalizeSuperseded map[string]bool
 }
 
 func newFakeStore(runs ...RunState) *fakeStore {
@@ -232,9 +237,16 @@ func (f *fakeStore) RedispatchReschedule(_ context.Context, runID, taskID string
 	f.redispatched = append(f.redispatched, transition{runID, taskID, domain.TaskStateNone})
 	return nil
 }
-func (f *fakeStore) SetRunState(_ context.Context, runID string, state domain.DagRunState) error {
-	f.runStates[runID] = state
-	return nil
+func (f *fakeStore) SetRunState(_ context.Context, runID string, from, to domain.DagRunState) (bool, error) {
+	if f.finalizeFrom == nil {
+		f.finalizeFrom = map[string]domain.DagRunState{}
+	}
+	f.finalizeFrom[runID] = from
+	if f.finalizeSuperseded[runID] {
+		return false, nil
+	}
+	f.runStates[runID] = to
+	return true, nil
 }
 
 // StartQueuedRun mirrors the guarded queued -> running write: it reports false,
