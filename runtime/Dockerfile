@@ -119,13 +119,22 @@ COPY runtime/python /opt/leoflow-runtime
 # version is user-visible: pinning it here gives every line the same resolver
 # instead of four. It is upgraded first so every later install runs on it.
 #
+# 26.2.2 is the floor, not just the newest release: it is the first pip that
+# vendors certifi 2026.10.19, which drops emSign ECC Root CA - G3
+# (GHSA-6q48-6c7w-9gw2, #2067); 26.2.1 vendors certifi 2026.6.17, which still
+# holds it. pip verifies its downloads (a DAG image installing its
+# `requirements:`) against that vendored bundle AND the system store through
+# truststore, so this pin removes the certifi half only; /etc/ssl/certs moves
+# with the base image's ca-certificates, not here.
+# tests/test_runtime_image_trust_store.py in runtime/python fails below it.
+#
 # pip 26 also ships a CycloneDX SBOM of the packages it vendors
 # (pip/_vendor/bom.cdx.json), which Trivy reads. That makes pip's vendored
 # urllib3 2.7.0, msgpack 1.1.2 and setuptools 70.3.0 (pkg_resources only) show
 # up as findings; older pips vendor the same or older copies without saying so.
 # No pip release vendors fixed versions yet, so those are accepted, by purl, in
 # .trivyignore.yaml with the reasoning; bump this pin when one does.
-ARG PIP_VERSION=26.2.1
+ARG PIP_VERSION=26.2.2
 RUN pip install --no-cache-dir "pip==${PIP_VERSION}"
 RUN pip install --no-cache-dir /opt/leoflow-runtime
 
@@ -135,6 +144,22 @@ RUN pip install --no-cache-dir /opt/leoflow-runtime
 # the 3.3.x line Dexaflow targets (ADR 0003 / parser SDK version).
 ARG AIRFLOW_TASK_SDK_VERSION=1.3.1
 RUN pip install --no-cache-dir "apache-airflow-task-sdk==${AIRFLOW_TASK_SDK_VERSION}"
+
+# certifi is the CA bundle `requests` and `httpx` verify a task's HTTPS calls
+# against, in place of the system trust store (other clients, such as urllib or
+# OpenSSL defaults, read /etc/ssl/certs and are not covered by this pin). It
+# comes in transitively with the Task SDK, so unpinned it is whatever release
+# was newest when this layer was built: 2026.7.22 in the published images,
+# which still trusts emSign ECC Root CA - G3, whose intermediates were
+# compromised (GHSA-6q48-6c7w-9gw2, #2067).
+# 2026.10.19 is the first release without it. Installed after the Task SDK so
+# the pin is the version left in the image, and exact like the pins above so a
+# rebuild does not move it; tests/test_runtime_image_trust_store.py in
+# runtime/python fails when it falls below that release or moves before the
+# Task SDK install. A DAG's own `requirements:` can still move certifi, as they
+# can move any package of this image.
+ARG CERTIFI_VERSION=2026.10.19
+RUN pip install --no-cache-dir "certifi==${CERTIFI_VERSION}"
 
 # setuptools is upgraded ONLY where the base image already ships it. The
 # python:3.10 and 3.11 slim images preinstall setuptools 79.0.1, whose vendored
