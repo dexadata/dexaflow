@@ -42,6 +42,8 @@ func (r *LeaderHealthReader) Heartbeat() (healthy bool, last time.Time) {
 	defer cancel()
 	// Same (classid, objid, objsubid=1) encoding of the 64-bit advisory key as
 	// Leader.HoldsLock, but WITHOUT the pid filter: any holder = a live leader.
+	// pg_locks lists every database on the server while advisory locks are per
+	// database, so the database filter keeps another install's leader out (#2049).
 	classid := int32(LockID >> 32)
 	objid := int32(LockID & 0xFFFFFFFF)
 	var held bool
@@ -49,6 +51,7 @@ func (r *LeaderHealthReader) Heartbeat() (healthy bool, last time.Time) {
 		`SELECT EXISTS (
 		   SELECT 1 FROM pg_locks
 		   WHERE locktype = 'advisory' AND classid = $1 AND objid = $2 AND objsubid = 1
+		     AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
 		 )`, classid, objid).Scan(&held)
 	if err != nil {
 		return false, time.Now().UTC()
