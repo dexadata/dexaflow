@@ -1141,7 +1141,10 @@ type Querier interface {
 	// Transitions a run's state and stamps the run's own timestamps so the UI can
 	// show its duration: started_at on first entry into 'running', ended_at on a
 	// terminal state. Other timestamps are preserved (the scheduler may re-run).
-	StampDagRunState(ctx context.Context, arg StampDagRunStateParams) error
+	// Guarded on the state the caller read (from_state), as the tick's task-level
+	// writes are (#1605): a run a clear re-opened or a user marked after the tick's
+	// snapshot is left alone, and no row is affected (#2047).
+	StampDagRunState(ctx context.Context, arg StampDagRunStateParams) (int64, error)
 	// Moves a queued run to running when the tick admits it (#1766), guarded on
 	// the run still being queued: a run a user marked success or failed, or
 	// deleted, after the tick read it is left alone, and no row comes back.

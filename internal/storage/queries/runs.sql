@@ -330,15 +330,18 @@ UPDATE dag_runs
 SET alerted_at = now(), next_alert_attempt_at = NULL
 WHERE id = $1 AND alert_attempts = sqlc.arg(attempt);
 
--- name: StampDagRunState :exec
+-- name: StampDagRunState :execrows
 -- Transitions a run's state and stamps the run's own timestamps so the UI can
 -- show its duration: started_at on first entry into 'running', ended_at on a
 -- terminal state. Other timestamps are preserved (the scheduler may re-run).
+-- Guarded on the state the caller read (from_state), as the tick's task-level
+-- writes are (#1605): a run a clear re-opened or a user marked after the tick's
+-- snapshot is left alone, and no row is affected (#2047).
 UPDATE dag_runs
 SET state = sqlc.arg(state)::dag_run_state,
     started_at = CASE WHEN sqlc.arg(state)::dag_run_state = 'running' AND started_at IS NULL THEN now() ELSE started_at END,
     ended_at = CASE WHEN sqlc.arg(state)::dag_run_state IN ('success', 'failed') THEN now() ELSE ended_at END
-WHERE id = sqlc.arg(id);
+WHERE id = sqlc.arg(id) AND state = sqlc.arg(from_state)::dag_run_state;
 
 -- name: StartQueuedRun :one
 -- Moves a queued run to running when the tick admits it (#1766), guarded on

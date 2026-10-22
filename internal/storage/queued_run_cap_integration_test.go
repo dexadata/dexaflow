@@ -33,7 +33,7 @@ func finishedRun(t *testing.T, ctx context.Context, repo *storage.Repository, st
 	if err := store.ApplyTransition(ctx, runUUID, "a", domain.TaskStateSuccess); err != nil {
 		t.Fatalf("finish task of %s: %v", runID, err)
 	}
-	if err := store.SetRunState(ctx, runUUID, domain.DagRunStateSuccess); err != nil {
+	if _, err := store.SetRunState(ctx, runUUID, domain.DagRunStateRunning, domain.DagRunStateSuccess); err != nil {
 		t.Fatalf("finish %s: %v", runID, err)
 	}
 	return runUUID
@@ -182,7 +182,7 @@ func TestPatchQueuedResetsStartedAtIntegration(t *testing.T) {
 	dagID := fmt.Sprintf("patch_queued_%d", time.Now().UnixNano())
 	registerSpec(t, repo, ctx, dagID, []domain.TaskSpec{{TaskID: "a", Type: domain.TaskTypePython}})
 	createRun(t, ctx, repo, dagID, "r1", domain.DagRunStateQueued)
-	if err := store.SetRunState(ctx, activeRuns(t, ctx, store, dagID)["r1"].RunID, domain.DagRunStateRunning); err != nil {
+	if _, err := store.SetRunState(ctx, activeRuns(t, ctx, store, dagID)["r1"].RunID, domain.DagRunStateQueued, domain.DagRunStateRunning); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.SetDagRunState(ctx, "default", dagID, "r1", string(domain.DagRunStateFailed)); err != nil {

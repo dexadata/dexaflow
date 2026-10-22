@@ -262,7 +262,11 @@ type Store interface {
 	// 0066 section 3) and spends its retry budget: the refusal is permanent, so
 	// the planner must not retry it.
 	FailDispatchRefused(ctx context.Context, runID, taskID, reason string) error
-	SetRunState(ctx context.Context, runID string, state domain.DagRunState) error
+	// SetRunState moves a run from the state the tick's snapshot read to
+	// another one, and reports whether it moved. False means the run moved on
+	// after the tick read it (a clear re-opened it, a user marked it), so the
+	// tick leaves it alone (#2047).
+	SetRunState(ctx context.Context, runID string, from, to domain.DagRunState) (bool, error)
 	// StartQueuedRun moves a queued run to running, guarded on the run still
 	// being queued, and reports whether it moved. False means the run moved on
 	// after the tick read it (a user marked or deleted it), so the tick leaves
@@ -1161,8 +1165,14 @@ func (s *Scheduler) advance(ctx context.Context, run RunState) (res advanced, er
 		}
 	}
 	if state, done := FinalizeRun(run); done {
-		if err = s.store.SetRunState(ctx, run.RunID, state); err != nil {
-			return res, fmt.Errorf("finalizing run: %w", err)
+		finalized, ferr := s.store.SetRunState(ctx, run.RunID, run.State, state)
+		if ferr != nil {
+			return res, fmt.Errorf("finalizing run: %w", ferr)
+		}
+		if !finalized {
+			s.logger.Debug("run moved on before its finalize; leaving it", "run", run.RunID, "dag", run.DagID)
+			s.record("finalize_run_superseded")
+			return res, nil
 		}
 		s.maybeAlertFailure(ctx, state, run)
 	}

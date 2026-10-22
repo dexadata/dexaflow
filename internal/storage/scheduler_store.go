@@ -886,16 +886,20 @@ func (s *SchedulerStore) RedispatchReschedule(ctx context.Context, runID, taskID
 	})
 }
 
-// SetRunState updates a run's state.
-func (s *SchedulerStore) SetRunState(ctx context.Context, runID string, state domain.DagRunState) error {
+// SetRunState moves a run from the state the caller read to another one. It
+// reports false when no row moved: the run is no longer in from (a clear
+// re-opened it, a user marked it), so it is left as it is (#2047).
+func (s *SchedulerStore) SetRunState(ctx context.Context, runID string, from, to domain.DagRunState) (bool, error) {
 	rid, err := parseUUID(runID)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return s.q.StampDagRunState(ctx, queries.StampDagRunStateParams{
-		ID:    rid,
-		State: queries.DagRunState(state),
+	n, err := s.q.StampDagRunState(ctx, queries.StampDagRunStateParams{
+		ID:        rid,
+		State:     queries.DagRunState(to),
+		FromState: queries.DagRunState(from),
 	})
+	return n > 0, err
 }
 
 // StartQueuedRun moves a queued run of the tenant to running, guarded on the
