@@ -161,7 +161,8 @@ func TestRegisterReportsWarmPoolsOff(t *testing.T) {
 // creates none, and on a server that runs no warm workers (the subprocess
 // executor, or pod dispatch disabled) none exists either: a task otherwise
 // warm-eligible is reported dedicated with that reason, while a task with a
-// reason of its own keeps it. A new DAG has no previous pool.
+// reason of its own keeps it. A version none of whose tasks is warm-eligible
+// gets no warm worker either (#2065). A new DAG has no previous pool.
 func TestRegisterReportsNoPool(t *testing.T) {
 	policy := domain.WarmPolicy{Enabled: true}
 	staging := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","staging":{"enabled":true},` +
@@ -169,6 +170,9 @@ func TestRegisterReportsNoPool(t *testing.T) {
 	twoTasks := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
 		`{"task_id":"a","type":"python","entrypoint":"dag:a"},` +
 		`{"task_id":"b","type":"python","entrypoint":"dag:b","execution":{"labels":{"team":"x"}}}]}`
+	noWarmTask := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
+		`{"task_id":"a","type":"python","entrypoint":"dag:a","execution":{"labels":{"team":"x"}}},` +
+		`{"task_id":"b","type":"bash","entrypoint":"echo b","execution":{"node_selector":{"pool":"db"}}}]}`
 	cases := []struct {
 		name, spec string
 		exec       config.ExecutionSection
@@ -180,6 +184,7 @@ func TestRegisterReportsNoPool(t *testing.T) {
 			[]string{"no idle warm workers kept for this DAG", "labels set"}},
 		{"no warm workers on the server", twoTasks, warmOn, "the subprocess executor runs no warm workers",
 			[]string{"the subprocess executor runs no warm workers", "labels set"}},
+		{"no warm-eligible task", noWarmTask, warmOn, "", []string{"labels set", "node_selector set"}},
 	}
 	for _, c := range cases {
 		rec := authGet(warmVersionServerAbsent(&fakeVersionRepo{created: true, dagCreated: true}, policy, c.exec, c.absent),

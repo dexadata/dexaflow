@@ -78,7 +78,7 @@ func (o ownTargets) ActiveWarmTargets(ctx context.Context) ([]executor.WarmTarge
 // the previous version the target again.
 func TestPrewarmFollowsTheCurrentVersionIntegration(t *testing.T) {
 	repo, sched, exec, ctx := openExec(t)
-	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 1, MaxPoolSize: 4}, nil)
+	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 1, MaxPoolSize: 4}, nil, domain.WarmPolicy{})
 	stamp := time.Now().UnixNano()
 	dagID := fmt.Sprintf("warm_prewarm_%d", stamp)
 	img1, img2 := fmt.Sprintf("prewarm-%d:v1", stamp), fmt.Sprintf("prewarm-%d:v2", stamp)
@@ -182,7 +182,7 @@ func TestPrewarmFollowsTheCurrentVersionIntegration(t *testing.T) {
 // the undeclared DAG's spec is never loaded.
 func TestPrewarmNeedsADeclaredMinIdleIntegration(t *testing.T) {
 	pg, repo, sched, _, ctx := openExecPG(t)
-	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 2, MaxPoolSize: 4}, nil)
+	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 2, MaxPoolSize: 4}, nil, domain.WarmPolicy{})
 	stamp := time.Now().UnixNano()
 	plainDag, plainImg := fmt.Sprintf("warm_plain_%d", stamp), fmt.Sprintf("plain-%d:v1", stamp)
 	declDag, declImg := fmt.Sprintf("warm_decl_%d", stamp), fmt.Sprintf("decl-%d:v1", stamp)
@@ -220,7 +220,7 @@ func TestPrewarmNeedsADeclaredMinIdleIntegration(t *testing.T) {
 // target (from the run, not prewarm), as before ADR 0082.
 func TestPausedDagRunningRunKeepsItsTargetIntegration(t *testing.T) {
 	repo, sched, _, ctx := openExec(t)
-	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 1, MaxPoolSize: 4}, nil)
+	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 1, MaxPoolSize: 4}, nil, domain.WarmPolicy{})
 	stamp := time.Now().UnixNano()
 	dagID, img := fmt.Sprintf("warm_paused_run_%d", stamp), fmt.Sprintf("paused-run-%d:v1", stamp)
 	registerWarmVersion(t, repo, ctx, dagID, "v1", img, 1)
