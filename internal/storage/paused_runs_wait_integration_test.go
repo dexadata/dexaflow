@@ -147,7 +147,7 @@ func TestPausedDagManualRunStartsOnUnpauseIntegration(t *testing.T) {
 // tasks can be dispatched; unpausing brings the target back (#1705).
 func TestWarmTargetsSkipQueuedRunsOfPausedDagIntegration(t *testing.T) {
 	repo, sched, ctx := openRepo(t)
-	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 1, MaxPoolSize: 8}, nil)
+	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 1, MaxPoolSize: 8}, nil, domain.WarmPolicy{})
 	dagID := fmt.Sprintf("paused_warm_%d", time.Now().UnixNano())
 	image := fmt.Sprintf("paused-warm-img-%d:v1", time.Now().UnixNano())
 	registerWarmSpec(t, repo, ctx, dagID, image, 2)
@@ -275,7 +275,7 @@ func TestClearedRunOfPausedDagKeepsItsPoolSlotIntegration(t *testing.T) {
 // it; once no task is live the target goes (#1705).
 func TestWarmTargetsKeepHeldRunWithLiveTaskIntegration(t *testing.T) {
 	repo, store, ctx := openRepo(t)
-	store.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 1, MaxPoolSize: 8}, nil)
+	store.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 1, MaxPoolSize: 8}, nil, domain.WarmPolicy{})
 	dagID := fmt.Sprintf("held_warm_%d", time.Now().UnixNano())
 	image := fmt.Sprintf("held-warm-img-%d:v1", time.Now().UnixNano())
 	registerWarmSpec(t, repo, ctx, dagID, image, 2)
