@@ -8,7 +8,5 @@
 # move the new code to another file of the package instead.
 #
 # <path> <lines>
-internal/agent/runner.go 1674
 internal/api/resources.go 1529
 internal/cli/dev.go 2523
-internal/scheduler/scheduler.go 1695
