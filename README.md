@@ -21,6 +21,7 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Code quality: golangci-lint A+](https://img.shields.io/badge/golangci--lint-A%2B-00ADD8?logo=go&logoColor=white)](https://dexaflow.dexadata.ai/project/adrs/0012-code-quality-standards/)
 [![CI](https://github.com/dexadata/dexaflow/actions/workflows/ci.yaml/badge.svg)](https://github.com/dexadata/dexaflow/actions/workflows/ci.yaml)
+[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdexadata%2Fdexaflow%2Fbadges%2Fcoverage.json)](https://github.com/dexadata/dexaflow/actions/workflows/ci.yaml?query=branch%3Amain)
 [![Security](https://github.com/dexadata/dexaflow/actions/workflows/security.yaml/badge.svg)](https://github.com/dexadata/dexaflow/actions/workflows/security.yaml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/dexadata/dexaflow/badge)](https://securityscorecards.dev/viewer/?uri=github.com/dexadata/dexaflow)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13068/badge)](https://www.bestpractices.dev/projects/13068)
