@@ -15,6 +15,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/dispatch"
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/executor"
+	"github.com/dexadata/dexaflow/internal/gatedtick"
 	"github.com/dexadata/dexaflow/internal/observability"
 )
 
@@ -69,8 +70,8 @@ func startWarmPoolReconciler(ctx context.Context, targets executor.WarmTargetSou
 	t := time.NewTicker(reconcileInterval)
 	go func() {
 		defer t.Stop()
-		runGatedTickerOrKick(ctx, "warm-pool-reconcile", t.C, kicks, warmKickMinGap, leading, logger, func() {
-			runLeaderTick(ctx, "warm pool reconcile", reconcileInterval, leaderTickPoll, leading, logger, rc.Reconcile)
+		gatedtick.RunOrKick(ctx, "warm-pool-reconcile", t.C, kicks, warmKickMinGap, leading, logger, func() {
+			gatedtick.RunLeaderTick(ctx, "warm pool reconcile", reconcileInterval, gatedtick.LeaderTickPoll, leading, logger, rc.Reconcile)
 		})
 	}()
 }

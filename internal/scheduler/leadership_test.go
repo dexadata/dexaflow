@@ -1,16 +1,12 @@
-package main
+package scheduler
 
 import (
 	"context"
 	"errors"
-	"io"
-	"log/slog"
 	"sync"
 	"testing"
 	"time"
 )
-
-func discardLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 // fakeChecker is a leadershipChecker with a fixed result, counting calls.
 type fakeChecker struct {
@@ -40,7 +36,7 @@ func TestWatchLeadershipStepsDownOnLostLock(t *testing.T) {
 	defer cancel()
 	chk := &fakeChecker{held: false}
 	done := make(chan struct{})
-	go func() { watchLeadership(ctx, chk, time.Millisecond, cancel, discardLog(), nil); close(done) }()
+	go func() { watchLeadership(ctx, chk, time.Millisecond, cancel, discardLogger(), nil); close(done) }()
 
 	select {
 	case <-ctx.Done(): // stepped down
@@ -58,7 +54,7 @@ func TestWatchLeadershipToleratesTransientErrors(t *testing.T) {
 	chk := &fakeChecker{err: errors.New("connection blip")}
 	start := time.Now()
 	done := make(chan struct{})
-	go func() { watchLeadership(ctx, chk, 10*time.Millisecond, cancel, discardLog(), nil); close(done) }()
+	go func() { watchLeadership(ctx, chk, 10*time.Millisecond, cancel, discardLogger(), nil); close(done) }()
 
 	select {
 	case <-ctx.Done():
@@ -100,7 +96,7 @@ func TestWatchLeadershipFiresOnStepDownWithReason(t *testing.T) {
 			tracker := func(reason string) {
 				mu.Lock()
 				reasons = append(reasons, reason)
-				// Contract: onStepDown fires BEFORE cancel() — the scheduler
+				// Contract: onStepDown fires BEFORE cancel(): the scheduler
 				// must have time to flip its steppingDown flag before the
 				// reapers see ctx-canceled. Capture ctx.Err() inside the
 				// callback to assert that ordering.
@@ -109,7 +105,7 @@ func TestWatchLeadershipFiresOnStepDownWithReason(t *testing.T) {
 			}
 			done := make(chan struct{})
 			go func() {
-				watchLeadership(ctx, tc.chk, tc.interval, cancel, discardLog(), tracker)
+				watchLeadership(ctx, tc.chk, tc.interval, cancel, discardLogger(), tracker)
 				close(done)
 			}()
 			select {
@@ -136,7 +132,7 @@ func TestWatchLeadershipStaysWhileHolding(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	chk := &fakeChecker{held: true}
 	done := make(chan struct{})
-	go func() { watchLeadership(ctx, chk, time.Millisecond, cancel, discardLog(), nil); close(done) }()
+	go func() { watchLeadership(ctx, chk, time.Millisecond, cancel, discardLogger(), nil); close(done) }()
 
 	time.Sleep(40 * time.Millisecond)
 	select {
@@ -182,7 +178,7 @@ func TestWatchLeadershipStepsDownWhenChecksHang(t *testing.T) {
 	)
 	done := make(chan struct{})
 	go func() {
-		watchLeadership(ctx, chk, 10*time.Millisecond, cancel, discardLog(), func(r string) {
+		watchLeadership(ctx, chk, 10*time.Millisecond, cancel, discardLogger(), func(r string) {
 			mu.Lock()
 			reason = r
 			mu.Unlock()
