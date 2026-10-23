@@ -108,6 +108,15 @@ settings:
       unlimited even when `server.max_request_body_bytes` is set, so a limit sized
       for JSON calls never refuses a deploy; a negative value fails boot. Helm: set
       it through `extraEnv`.
+  server.probe_budget:
+    edition: both
+    description: >-
+      How long `/readyz` may spend checking its dependencies, all checks sharing
+      one deadline; past it the probe answers `503` naming the slow dependency.
+      It must stay under the kubelet's readiness timeout, so the Helm chart sets
+      it to `probes.readiness.timeoutSeconds` minus one second: raise that value
+      to give a slow metadatabase more room. `0` means `2s`; a negative value fails
+      boot.
   server.read_timeout:
     edition: both
     description: >-

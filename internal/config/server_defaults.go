@@ -272,6 +272,8 @@ var serverDefaults = map[string]any{
 	// Gates (ADR 0062): 0 keeps the listeners without read or idle timeout.
 	"server.read_timeout": "0s",
 	"server.idle_timeout": "0s",
+	// The /readyz budget every earlier release hardcoded (#1050).
+	"server.probe_budget": "2s",
 	// Trace sampling gates (ADR 0062): the defaults trace every request.
 	"observability.otel.sample_ratio":     1.0,
 	"observability.otel.skip_probe_spans": false,
