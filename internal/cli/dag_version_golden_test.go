@@ -34,6 +34,7 @@ func goldenProject(t *testing.T) string {
 }
 
 func TestContentHashGolden(t *testing.T) {
+	t.Parallel()
 	if v := version.Get().Version; v != "dev" {
 		t.Skipf("the golden hash is for the dev build, not %s", v)
 	}

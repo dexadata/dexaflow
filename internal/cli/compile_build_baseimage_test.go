@@ -3,6 +3,7 @@ package cli
 import "testing"
 
 func TestReleaseBaseTag(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"v0.4.2":                  "v0.4.2",      // clean release tag → pin
 		"v0.4.3-rc.1":             "v0.4.3-rc.1", // rc tag is still a release
@@ -21,6 +22,7 @@ func TestReleaseBaseTag(t *testing.T) {
 }
 
 func TestBaseImageRef(t *testing.T) {
+	t.Parallel()
 	const repo = "ghcr.io/dexadata/dexaflow-runtime"
 	cases := map[string]string{
 		// GoReleaser stamps the CLI version WITHOUT the leading v; the published base

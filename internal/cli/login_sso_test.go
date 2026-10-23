@@ -250,15 +250,14 @@ func browserVisit(t *testing.T, target string) {
 
 var consentCSRF = regexp.MustCompile(`name="csrf" value="([^"]+)"`)
 
-// fakeBrowser replaces the system browser for one test and records the URLs
-// it was asked to open. visit runs in the background, as a real browser
-// does, and defaults to browserVisit.
-func fakeBrowser(t *testing.T, visit func(string)) *[]string {
+// fakeBrowser replaces the system browser of the commands run under d and
+// records the URLs it was asked to open. visit runs in the background, as a
+// real browser does, and defaults to browserVisit.
+func fakeBrowser(t *testing.T, d *cliDeps, visit func(string)) *[]string {
 	t.Helper()
 	var mu sync.Mutex
 	opened := &[]string{}
-	prev := openBrowser
-	openBrowser = func(u string) error {
+	d.openBrowser = func(u string) error {
 		mu.Lock()
 		*opened = append(*opened, u)
 		mu.Unlock()
@@ -269,7 +268,6 @@ func fakeBrowser(t *testing.T, visit func(string)) *[]string {
 		}
 		return nil
 	}
-	t.Cleanup(func() { openBrowser = prev })
 	return opened
 }
 
@@ -284,14 +282,15 @@ func savedToken(t *testing.T, cfgPath, server string) string {
 }
 
 func TestLoginSSOBrowserFlowSavesTheServerToken(t *testing.T) {
+	d := testDeps()
 	t.Setenv("LEOFLOW_USERNAME", "")
 	t.Setenv("LEOFLOW_PASSWORD", "")
 	idp := newSSOIDP(t)
 	cp := newSSOControlPlane(t, idp)
-	opened := fakeBrowser(t, nil)
+	opened := fakeBrowser(t, d, nil)
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 
-	out, _, err := run(t, "auth", "login", "--server", cp.URL, "--config", cfgPath)
+	out, _, err := runDeps(t, d, "auth", "login", "--server", cp.URL, "--config", cfgPath)
 	if err != nil {
 		t.Fatalf("login: %v\n%s", err, out)
 	}
@@ -349,9 +348,10 @@ func (w *urlWatcher) String() string {
 }
 
 func TestLoginSSONoBrowserPrintsTheURL(t *testing.T) {
+	d := testDeps()
 	idp := newSSOIDP(t)
 	cp := newSSOControlPlane(t, idp)
-	opened := fakeBrowser(t, func(string) {})
+	opened := fakeBrowser(t, d, func(string) {})
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	out := &urlWatcher{visit: func(u string) { browserVisit(t, u) }}
 
@@ -359,7 +359,7 @@ func TestLoginSSONoBrowserPrintsTheURL(t *testing.T) {
 	root.SetOut(out)
 	root.SetErr(io.Discard)
 	root.SetArgs([]string{"auth", "login", "--sso", "--no-browser", "--server", cp.URL, "--config", cfgPath})
-	if err := root.Execute(); err != nil {
+	if err := root.ExecuteContext(testCtx(d)); err != nil {
 		t.Fatalf("login: %v\n%s", err, out.String())
 	}
 	if len(*opened) != 0 {
@@ -412,8 +412,9 @@ func redirectWith(t *testing.T, q url.Values) func(string) {
 // A redirect with another state is not the sign-in the CLI waits for: it is
 // answered 400 and ignored, and the genuine one that follows still signs in.
 func TestLoginSSOIgnoresAWrongStateAndKeepsWaiting(t *testing.T) {
+	d := testDeps()
 	srv, exchanges := fakeCLIServer(t, http.StatusOK)
-	fakeBrowser(t, func(signIn string) {
+	fakeBrowser(t, d, func(signIn string) {
 		u, err := url.Parse(signIn)
 		if err != nil {
 			t.Error(err)
@@ -432,7 +433,7 @@ func TestLoginSSOIgnoresAWrongStateAndKeepsWaiting(t *testing.T) {
 	})
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 
-	if _, _, err := run(t, "auth", "login", "--server", srv.URL, "--config", cfgPath, "--timeout", "10s"); err != nil {
+	if _, _, err := runDeps(t, d, "auth", "login", "--server", srv.URL, "--config", cfgPath, "--timeout", "10s"); err != nil {
 		t.Fatalf("login after a forged redirect: %v", err)
 	}
 	if *exchanges != 1 || savedToken(t, cfgPath, srv.URL) != "jwt-sso" {
@@ -457,11 +458,12 @@ func httpGetStatus(t *testing.T, target string) int {
 }
 
 func TestLoginSSOWithOnlyAForgedStateNeverExchanges(t *testing.T) {
+	d := testDeps()
 	srv, exchanges := fakeCLIServer(t, http.StatusOK)
-	fakeBrowser(t, redirectWith(t, url.Values{"code": {"c"}, "state": {"forged-state-0123456789"}}))
+	fakeBrowser(t, d, redirectWith(t, url.Values{"code": {"c"}, "state": {"forged-state-0123456789"}}))
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 
-	_, _, err := run(t, "auth", "login", "--server", srv.URL, "--config", cfgPath, "--timeout", "500ms")
+	_, _, err := runDeps(t, d, "auth", "login", "--server", srv.URL, "--config", cfgPath, "--timeout", "500ms")
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("login with only a forged state: err = %v, want it to keep waiting until the timeout", err)
 	}
@@ -471,11 +473,12 @@ func TestLoginSSOWithOnlyAForgedStateNeverExchanges(t *testing.T) {
 }
 
 func TestLoginSSOReportsARefusedCode(t *testing.T) {
+	d := testDeps()
 	srv, exchanges := fakeCLIServer(t, http.StatusBadRequest)
-	fakeBrowser(t, redirectWith(t, url.Values{"code": {"expired-code"}}))
+	fakeBrowser(t, d, redirectWith(t, url.Values{"code": {"expired-code"}}))
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 
-	_, _, err := run(t, "auth", "login", "--server", srv.URL, "--config", cfgPath)
+	_, _, err := runDeps(t, d, "auth", "login", "--server", srv.URL, "--config", cfgPath)
 	if err == nil || !strings.Contains(err.Error(), "refused the sign-in code") {
 		t.Fatalf("login with an expired code: err = %v, want the refusal", err)
 	}
@@ -488,13 +491,14 @@ func TestLoginSSOReportsARefusedCode(t *testing.T) {
 }
 
 func TestLoginSSOReportsARefusedSignIn(t *testing.T) {
+	d := testDeps()
 	idp := newSSOIDP(t)
 	idp.deny = true
 	cp := newSSOControlPlane(t, idp)
-	fakeBrowser(t, nil)
+	fakeBrowser(t, d, nil)
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 
-	_, _, err := run(t, "auth", "login", "--server", cp.URL, "--config", cfgPath)
+	_, _, err := runDeps(t, d, "auth", "login", "--server", cp.URL, "--config", cfgPath)
 	if err == nil || !strings.Contains(err.Error(), "single sign-on was refused") {
 		t.Fatalf("login refused at the IdP: err = %v, want the refusal reported", err)
 	}
@@ -504,11 +508,12 @@ func TestLoginSSOReportsARefusedSignIn(t *testing.T) {
 }
 
 func TestLoginSSOTimesOut(t *testing.T) {
+	d := testDeps()
 	srv, _ := fakeCLIServer(t, http.StatusOK)
-	fakeBrowser(t, func(string) {})
+	fakeBrowser(t, d, func(string) {})
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 
-	_, _, err := run(t, "auth", "login", "--server", srv.URL, "--config", cfgPath, "--timeout", "200ms")
+	_, _, err := runDeps(t, d, "auth", "login", "--server", srv.URL, "--config", cfgPath, "--timeout", "200ms")
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("err = %v, want a timeout", err)
 	}
@@ -517,6 +522,7 @@ func TestLoginSSOTimesOut(t *testing.T) {
 // A username or password means a password login, even on a server that
 // offers single sign-on (the break-glass path).
 func TestLoginWithCredentialsUsesPasswordEvenWithSSO(t *testing.T) {
+	d := testDeps()
 	var methodsRead bool
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v2/auth/methods", func(w http.ResponseWriter, _ *http.Request) {
@@ -529,10 +535,10 @@ func TestLoginWithCredentialsUsesPasswordEvenWithSSO(t *testing.T) {
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
-	opened := fakeBrowser(t, func(string) {})
+	opened := fakeBrowser(t, d, func(string) {})
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 
-	if _, _, err := run(t, "auth", "login", "--server", srv.URL, "--username", "root@corp.example", "--password", "pw", "--config", cfgPath, "--timeout", "2s"); err != nil {
+	if _, _, err := runDeps(t, d, "auth", "login", "--server", srv.URL, "--username", "root@corp.example", "--password", "pw", "--config", cfgPath, "--timeout", "2s"); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 	if len(*opened) != 0 || methodsRead {
@@ -546,6 +552,7 @@ func TestLoginWithCredentialsUsesPasswordEvenWithSSO(t *testing.T) {
 // A server that predates the methods route, or does not offer single
 // sign-on, keeps the password login with its prompts and errors.
 func TestLoginFallsBackToPasswordWithoutSSO(t *testing.T) {
+	d := testDeps()
 	t.Setenv("LEOFLOW_USERNAME", "")
 	t.Setenv("LEOFLOW_PASSWORD", "")
 	for name, methods := range map[string]http.HandlerFunc{
@@ -557,8 +564,8 @@ func TestLoginFallsBackToPasswordWithoutSSO(t *testing.T) {
 		mux := http.NewServeMux()
 		mux.HandleFunc("/api/v2/auth/methods", methods)
 		srv := httptest.NewServer(mux)
-		opened := fakeBrowser(t, func(string) {})
-		_, _, err := run(t, "auth", "login", "--server", srv.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"), "--timeout", "2s")
+		opened := fakeBrowser(t, d, func(string) {})
+		_, _, err := runDeps(t, d, "auth", "login", "--server", srv.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"), "--timeout", "2s")
 		srv.Close()
 		if err == nil || !strings.Contains(err.Error(), "username required") {
 			t.Errorf("%s: err = %v, want the password login's missing-username error", name, err)
@@ -570,14 +577,15 @@ func TestLoginFallsBackToPasswordWithoutSSO(t *testing.T) {
 }
 
 func TestLoginSSOFlagNeedsAServerThatOffersIt(t *testing.T) {
+	d := testDeps()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v2/auth/methods", func(w http.ResponseWriter, _ *http.Request) {
 		writeTestJSON(w, map[string]bool{"sso": false, "password": true})
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
-	fakeBrowser(t, func(string) {})
-	_, _, err := run(t, "auth", "login", "--sso", "--server", srv.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"), "--timeout", "2s")
+	fakeBrowser(t, d, func(string) {})
+	_, _, err := runDeps(t, d, "auth", "login", "--sso", "--server", srv.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"), "--timeout", "2s")
 	if err == nil || !strings.Contains(err.Error(), "does not offer single sign-on") {
 		t.Fatalf("err = %v, want a clear refusal", err)
 	}
@@ -595,6 +603,7 @@ func discardTestLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.D
 // The loopback takes one redirect: a second one, from a replayed or forged
 // link, is refused and never replaces the first result.
 func TestLoopbackAcceptsOneRedirect(t *testing.T) {
+	t.Parallel()
 	results := make(chan loopbackResult, 1)
 	h := loopbackHandler("the-state-0123456789", results)
 	get := func(q string) int {
@@ -622,6 +631,7 @@ func TestLoopbackAcceptsOneRedirect(t *testing.T) {
 // answered as the sign-in, the others as already completed, and nothing
 // blocks or panics.
 func TestLoopbackCompletesOnceUnderConcurrentRedirects(t *testing.T) {
+	t.Parallel()
 	results := make(chan loopbackResult, 1)
 	h := loopbackHandler("the-state-0123456789", results)
 	const n = 32
@@ -657,10 +667,11 @@ func TestLoopbackCompletesOnceUnderConcurrentRedirects(t *testing.T) {
 }
 
 func TestLoginSaysWhichMethodAndWhy(t *testing.T) {
+	d := testDeps()
 	idp := newSSOIDP(t)
 	cp := newSSOControlPlane(t, idp)
-	fakeBrowser(t, nil)
-	out, _, err := run(t, "auth", "login", "--server", cp.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"))
+	fakeBrowser(t, d, nil)
+	out, _, err := runDeps(t, d, "auth", "login", "--server", cp.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"))
 	if err != nil || !strings.Contains(out, "Signing in with single sign-on (the server offers it") {
 		t.Errorf("SSO login said %q (%v), want the method and why", out, err)
 	}
@@ -671,7 +682,7 @@ func TestLoginSaysWhichMethodAndWhy(t *testing.T) {
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
-	out, _, err = run(t, "auth", "login", "--server", srv.URL, "--username", "root@corp.example", "--password", "pw", "--config", filepath.Join(t.TempDir(), "c.yaml"))
+	out, _, err = runDeps(t, d, "auth", "login", "--server", srv.URL, "--username", "root@corp.example", "--password", "pw", "--config", filepath.Join(t.TempDir(), "c.yaml"))
 	if err != nil || !strings.Contains(out, "Signing in with a password") || !strings.Contains(out, "break-glass") {
 		t.Errorf("password login said %q (%v), want the method, why, and the break-glass note", out, err)
 	}
@@ -698,6 +709,7 @@ func TestLoginRefusesAPasswordOverPlainHTTPToAnotherHost(t *testing.T) {
 }
 
 func TestSystemOpenBrowserRefusesNonWebURLs(t *testing.T) {
+	t.Parallel()
 	for _, target := range []string{"file:///etc/passwd", `C:\Windows\System32\calc.exe`, "javascript:alert(1)", "http:///nohost"} {
 		if isWebURL(target) {
 			t.Errorf("isWebURL(%q) = true, want a refusal", target)

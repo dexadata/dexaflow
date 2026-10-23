@@ -15,6 +15,12 @@ import (
 // none), with token in DEXAFLOW_TOKEN.
 func doctorAgainst(t *testing.T, server, token string) string {
 	t.Helper()
+	return doctorAgainstDeps(t, nil, server, token)
+}
+
+// doctorAgainstDeps is doctorAgainst under d (testDeps when nil).
+func doctorAgainstDeps(t *testing.T, d *cliDeps, server, token string) string {
+	t.Helper()
 	if token != "" {
 		t.Setenv("DEXAFLOW_TOKEN", token)
 	}
@@ -22,7 +28,7 @@ func doctorAgainst(t *testing.T, server, token string) string {
 	if server != "" {
 		args = append(args, "--server-url", server)
 	}
-	out, _, err := run(t, args...)
+	out, _, err := runDeps(t, d, args...)
 	if err != nil {
 		t.Fatalf("doctor: %v\n%s", err, out)
 	}

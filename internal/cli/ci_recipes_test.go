@@ -42,6 +42,7 @@ var (
 // `sh -c` argument, a Jenkins `sh` step) parses as POSIX sh. The docs flag
 // test checks the `dexaflow` commands in them.
 func TestCIRecipesParse(t *testing.T) {
+	t.Parallel()
 	page, err := os.ReadFile(filepath.Join("..", "..", "website", "content", "operate", "cicd-deploy.md"))
 	if err != nil {
 		t.Fatal(err)

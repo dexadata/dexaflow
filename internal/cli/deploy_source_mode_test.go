@@ -408,6 +408,7 @@ func TestDeployPlanInSourceMode(t *testing.T) {
 // TestCheckSourceModeSpec: a compiled dag.json on another image than the
 // runtime image, or with no source, is refused.
 func TestCheckSourceModeSpec(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	write := func(image, source string) string {
 		p := filepath.Join(dir, "dag.json")
@@ -523,6 +524,7 @@ func TestDeployInSourceModeLabelsTheRuntimeImage(t *testing.T) {
 // TestSourceModeLabelKeepsTheBuildLabel: the runtime image is hashed only in
 // source mode, so no label of a build moves.
 func TestSourceModeLabelKeepsTheBuildLabel(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeProjectFile(t, dir, "dexaflow.yaml", "dag_id: etl\n")
 	writeProjectFile(t, dir, "dag.py", "x = 1\n")
@@ -657,6 +659,7 @@ func TestDeployInSourceModeRefusesAMalformedImage(t *testing.T) {
 // TestSourceModeScan: what source mode refuses and what it only warns about,
 // walking the project as the label does (exclude_paths honored).
 func TestSourceModeScan(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		yaml   string
@@ -764,12 +767,12 @@ func TestDeployInSourceModeBuildFlags(t *testing.T) {
 // TestDeployWatchInSourceMode: a watch in source mode registers each saved
 // dag.py on the runtime image, with no build.
 func TestDeployWatchInSourceMode(t *testing.T) {
-	fastWatch(t, 20*time.Millisecond)
+	d := fastWatch(t, 20*time.Millisecond)
 	fake := newTrackingServer("")
 	srv := httptest.NewServer(fake)
 	defer srv.Close()
 	_, project, builder, log := sourceModeWorkspace(t, srv.URL, runtimeRef, "")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(testCtx(d))
 	w := &watchRun{out: &syncBuffer{}, errb: &syncBuffer{}, cancel: cancel, done: make(chan error, 1)}
 	root := NewRootCommand()
 	root.SetOut(w.out)

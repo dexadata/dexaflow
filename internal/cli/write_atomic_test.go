@@ -15,6 +15,7 @@ import (
 //
 // This one starts at 0644 on purpose.
 func TestWriteFileAtomicTightensAnExistingLooseFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(path, []byte("old\n"), 0o644); err != nil { //nolint:gosec // the loose mode is the point
@@ -44,6 +45,7 @@ func TestWriteFileAtomicTightensAnExistingLooseFile(t *testing.T) {
 // Nothing is left behind on success: a stray temp file beside config.yaml holds
 // the same secrets at an unmanaged name.
 func TestWriteFileAtomicLeavesNoTempBehind(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := writeFileAtomic(filepath.Join(dir, "config.yaml"), []byte("x\n")); err != nil {
 		t.Fatal(err)
@@ -65,6 +67,7 @@ func TestWriteFileAtomicLeavesNoTempBehind(t *testing.T) {
 // A rewrite must never record an empty key: that reads back as "configured and
 // empty" rather than "absent", and the real key is gone.
 func TestWriteLiteConfigNeverWritesAnEmptyKey(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	lc := liteSettings{Workspace: "/w", Executor: "subprocess", AdminEmail: "a@b.c", Port: 8088}
 	if err := writeLiteConfig(home, "parser", lc, "$2a$12$hash", liteFileSecrets{jwtSecret: "j"}); err != nil {
@@ -85,6 +88,7 @@ func TestWriteLiteConfigNeverWritesAnEmptyKey(t *testing.T) {
 // Running as root is not available here, so this asserts the property that is
 // testable: the owner does not change across the rewrite.
 func TestWriteFileAtomicKeepsTheOwner(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
@@ -118,6 +122,7 @@ func TestWriteFileAtomicKeepsTheOwner(t *testing.T) {
 // crash-injection tests stop the process between each of these stages, so they
 // happen in this order and each one is reported.
 func TestWriteFileAtomicStagesInOrder(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	var stages []string
@@ -134,6 +139,7 @@ func TestWriteFileAtomicStagesInOrder(t *testing.T) {
 // A new file (the pre-image) takes its owner from the file it copies, not from
 // whoever runs the command, so `sudo` does not leave a root-owned copy.
 func TestWriteFileAtomicOwnerFrom(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() != 0 {
 		t.Skip("needs root to chown")
 	}

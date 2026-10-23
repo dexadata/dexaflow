@@ -13,6 +13,7 @@ import (
 )
 
 func TestScaffoldProject(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "etl")
 	dagID, err := scaffoldProject(dir)
 	if err != nil {
@@ -40,6 +41,7 @@ type nopWriter struct{}
 func (nopWriter) Write(p []byte) (int, error) { return len(p), nil }
 
 func TestResolveLiteProjectExplicitArg(t *testing.T) {
+	t.Parallel()
 	// An explicit argument must point at a real project (a dir with dexaflow.yaml);
 	// a non-project arg now errors clearly instead of being swallowed as a path.
 	dir := t.TempDir()
@@ -96,6 +98,7 @@ func TestResolveLiteProjectNoArgUsesExistingProject(t *testing.T) {
 }
 
 func TestDevBasePythonPrefersManaged(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	home := filepath.Join(root, "dev") // home = ~/.leoflow/dev ; managed = ~/.leoflow/python/...
 	managed := filepath.Join(root, "python", "bin", "python3.11")

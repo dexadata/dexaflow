@@ -170,25 +170,25 @@ func devClusterSetup(ctx context.Context, cmd *cobra.Command, ws *WorkspaceSpec,
 	return env, makeReload, nil
 }
 
-// devRun and devOutput run external dev tools (k3d/docker/kubectl). They are
-// package variables so tests can stub the external-tool calls; devRun streams to
-// the command's output, devOutput captures combined output for inspection.
-var (
-	devRun = func(ctx context.Context, cmd *cobra.Command, name string, args ...string) error {
-		c := exec.CommandContext(ctx, name, args...) //nolint:gosec // dev tool invoking fixed external binaries
-		c.Stdout, c.Stderr = cmd.OutOrStdout(), cmd.ErrOrStderr()
-		return c.Run()
-	}
-	devOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-		return exec.CommandContext(ctx, name, args...).CombinedOutput() //nolint:gosec // dev tool invoking fixed external binaries
-	}
-)
+// runDevTool runs an external dev tool (k3d/docker/kubectl), streaming to the
+// command's output. Commands reach it as cliDeps.devRun, which tests stub.
+func runDevTool(ctx context.Context, cmd *cobra.Command, name string, args ...string) error {
+	c := exec.CommandContext(ctx, name, args...) //nolint:gosec // dev tool invoking fixed external binaries
+	c.Stdout, c.Stderr = cmd.OutOrStdout(), cmd.ErrOrStderr()
+	return c.Run()
+}
+
+// devToolOutput runs an external dev tool and captures its combined output for
+// inspection. Commands reach it as cliDeps.devOutput, which tests stub.
+func devToolOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, args...).CombinedOutput() //nolint:gosec // dev tool invoking fixed external binaries
+}
 
 // ensureBaseImage builds the task base image (runtime/Dockerfile) if it is not
 // already present, so DAG images can layer onto it. Requires the leoflow source
 // tree (it builds from runtime/Dockerfile with the repo as context).
 func ensureBaseImage(ctx context.Context, cmd *cobra.Command) error {
-	if _, err := devOutput(ctx, "docker", "image", "inspect", devBaseImage); err == nil {
+	if _, err := depsFrom(ctx).devOutput(ctx, "docker", "image", "inspect", devBaseImage); err == nil {
 		return nil
 	}
 	// The base image is built from runtime/Dockerfile with the repo as context;
@@ -202,7 +202,7 @@ func ensureBaseImage(ctx context.Context, cmd *cobra.Command) error {
 			"  (Cluster mode works when you run `dexaflow lite` from a Dexaflow source checkout.)")
 	}
 	devPrintln(cmd.OutOrStdout(), "▸ building task base image "+devBaseImage+" (first run) …")
-	if err := devRun(ctx, cmd, "docker", baseImageBuildArgs()...); err != nil {
+	if err := depsFrom(ctx).devRun(ctx, cmd, "docker", baseImageBuildArgs()...); err != nil {
 		return fmt.Errorf("building base image (run from the dexaflow source tree): %w", err)
 	}
 	return nil
@@ -210,12 +210,12 @@ func ensureBaseImage(ctx context.Context, cmd *cobra.Command) error {
 
 // ensureDevCluster creates the dedicated k3d cluster if it does not exist.
 func ensureDevCluster(ctx context.Context, cmd *cobra.Command) error {
-	out, _ := devOutput(ctx, "k3d", "cluster", "list", "--no-headers") //nolint:errcheck // absence is handled below
+	out, _ := depsFrom(ctx).devOutput(ctx, "k3d", "cluster", "list", "--no-headers") //nolint:errcheck // absence is handled below
 	if strings.Contains(string(out), devClusterName) {
 		return nil
 	}
 	devPrintln(cmd.OutOrStdout(), "▸ creating dedicated dev cluster "+devClusterName+" (first run) …")
-	if err := devRun(ctx, cmd, "k3d", k3dCreateArgs(devClusterName)...); err != nil {
+	if err := depsFrom(ctx).devRun(ctx, cmd, "k3d", k3dCreateArgs(devClusterName)...); err != nil {
 		return fmt.Errorf("creating k3d cluster %s (is k3d installed?): %w", devClusterName, err)
 	}
 	return nil
@@ -224,7 +224,7 @@ func ensureDevCluster(ctx context.Context, cmd *cobra.Command) error {
 // writeDevKubeconfig writes the dev cluster's kubeconfig to an isolated file so
 // the control plane only ever targets leoflow-dev, never the product cluster.
 func writeDevKubeconfig(ctx context.Context, _ *cobra.Command, path string) error {
-	out, err := devOutput(ctx, "k3d", "kubeconfig", "get", devClusterName)
+	out, err := depsFrom(ctx).devOutput(ctx, "k3d", "kubeconfig", "get", devClusterName)
 	if err != nil {
 		return fmt.Errorf("getting kubeconfig for %s: %w", devClusterName, err)
 	}
@@ -236,7 +236,7 @@ func writeDevKubeconfig(ctx context.Context, _ *cobra.Command, path string) erro
 
 // ensureDevNamespace creates the task-pod namespace in the dev cluster (idempotent).
 func ensureDevNamespace(ctx context.Context, _ *cobra.Command, kubeconfig string) error {
-	out, err := devOutput(ctx, "kubectl", kubectlNamespaceArgs(kubeconfig)...)
+	out, err := depsFrom(ctx).devOutput(ctx, "kubectl", kubectlNamespaceArgs(kubeconfig)...)
 	if err != nil && !strings.Contains(string(out), "already exists") {
 		return fmt.Errorf("creating namespace %s: %s: %w", devNamespace, strings.TrimSpace(string(out)), err)
 	}
@@ -247,7 +247,7 @@ func ensureDevNamespace(ctx context.Context, _ *cobra.Command, kubeconfig string
 // use it without a registry.
 func k3dImport(ctx context.Context, cmd *cobra.Command, image string) error {
 	devPrintln(cmd.OutOrStdout(), "▸ importing "+image+" into "+devClusterName+" …")
-	if err := devRun(ctx, cmd, "k3d", k3dImportArgs(devClusterName, image)...); err != nil {
+	if err := depsFrom(ctx).devRun(ctx, cmd, "k3d", k3dImportArgs(devClusterName, image)...); err != nil {
 		return fmt.Errorf("importing %s into %s: %w", image, devClusterName, err)
 	}
 	return nil

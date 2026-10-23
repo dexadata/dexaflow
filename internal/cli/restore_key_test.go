@@ -18,7 +18,7 @@ import (
 // config differs and that carries a one-file workspace, fakes the restore's
 // datastore provisioning, and returns the home's state dir and the archive
 // path.
-func restoreFixture(t *testing.T) (dexaHome, archive string) {
+func restoreFixture(t *testing.T, d *cliDeps) (dexaHome, archive string) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -54,7 +54,7 @@ func restoreFixture(t *testing.T) (dexaHome, archive string) {
 	if err := writeBackupArchive(archive, src, ws, dump, mb); err != nil {
 		t.Fatal(err)
 	}
-	fakeRestoreDatastore(t, nil)
+	fakeRestoreDatastore(t, d, nil)
 	return dexaHome, archive
 }
 
@@ -64,30 +64,29 @@ type restoreDatastoreFake struct {
 }
 
 // fakeRestoreDatastore replaces the managed Postgres provisioning and the
-// Docker probe of a restore, so no test downloads or starts a cluster. A
-// non-nil err makes the provisioning fail.
-func fakeRestoreDatastore(t *testing.T, err error) *restoreDatastoreFake {
+// Docker probe of a restore run under d, so no test downloads or starts a
+// cluster. A non-nil err makes the provisioning fail.
+func fakeRestoreDatastore(t *testing.T, d *cliDeps, err error) *restoreDatastoreFake {
 	t.Helper()
 	f := &restoreDatastoreFake{}
-	origProv, origDocker := restoreProvisionDatastore, restoreDockerUsable
-	t.Cleanup(func() { restoreProvisionDatastore, restoreDockerUsable = origProv, origDocker })
-	restoreProvisionDatastore = func(_ context.Context, cmd *cobra.Command) (func(), error) {
+	d.provisionForRestore = func(_ context.Context, cmd *cobra.Command) (func(), error) {
 		f.events = append(f.events, "provision")
 		if err != nil {
 			return func() {}, err
 		}
 		return func() { f.events = append(f.events, "stop") }, nil
 	}
-	restoreDockerUsable = func() bool { return false }
+	d.dockerUsable = func(context.Context) bool { return false }
 	return f
 }
 
-func restoreCmd() (*cobra.Command, *bytes.Buffer) {
+// restoreCmd is a command run under d, and its output.
+func restoreCmd(d *cliDeps) (*cobra.Command, *bytes.Buffer) {
 	var out bytes.Buffer
 	cmd := &cobra.Command{}
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetContext(context.Background())
+	cmd.SetContext(testCtx(d))
 	return cmd, &out
 }
 
@@ -96,13 +95,12 @@ func restoreCmd() (*cobra.Command, *bytes.Buffer) {
 // replay left the datastore under the current key and the config recording a
 // different one.
 func TestRestoreWithAFailedReplayKeepsTheCurrentConfig(t *testing.T) {
-	dexaHome, archive := restoreFixture(t)
+	d := testDeps()
+	dexaHome, archive := restoreFixture(t, d)
 	before, _ := os.ReadFile(filepath.Join(dexaHome, "config.yaml"))
-	orig := psqlRestore
-	t.Cleanup(func() { psqlRestore = orig })
-	psqlRestore = func(context.Context, string, []byte) error { return errors.New("disk full") }
+	d.psqlRestore = func(context.Context, string, []byte) error { return errors.New("disk full") }
 
-	cmd, _ := restoreCmd()
+	cmd, _ := restoreCmd(d)
 	if err := runRestore(cmd, archive, true); err == nil {
 		t.Fatal("a failed replay must fail the restore")
 	}
@@ -116,13 +114,12 @@ func TestRestoreWithAFailedReplayKeepsTheCurrentConfig(t *testing.T) {
 // removed on Lite's behalf), atomically at 0600, and keeps the config it
 // replaced as config.yaml.pre-restore, printing its path.
 func TestRestoreKeepsThePreviousConfigAsPreRestore(t *testing.T) {
-	dexaHome, archive := restoreFixture(t)
+	d := testDeps()
+	dexaHome, archive := restoreFixture(t, d)
 	before, _ := os.ReadFile(filepath.Join(dexaHome, "config.yaml"))
-	orig := psqlRestore
-	t.Cleanup(func() { psqlRestore = orig })
-	psqlRestore = func(context.Context, string, []byte) error { return nil }
+	d.psqlRestore = func(context.Context, string, []byte) error { return nil }
 
-	cmd, out := restoreCmd()
+	cmd, out := restoreCmd(d)
 	if err := runRestore(cmd, archive, true); err != nil {
 		t.Fatal(err)
 	}
@@ -150,17 +147,16 @@ func TestRestoreKeepsThePreviousConfigAsPreRestore(t *testing.T) {
 // Every config writer takes the config lock; a restore during a migration
 // refuses instead of interleaving with it.
 func TestRestoreRefusesWhileTheConfigIsLocked(t *testing.T) {
-	dexaHome, archive := restoreFixture(t)
+	d := testDeps()
+	dexaHome, archive := restoreFixture(t, d)
 	release, err := lockConfigDir(dexaHome, configLockExclusive, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer release()
-	orig := psqlRestore
-	t.Cleanup(func() { psqlRestore = orig })
 	replayed := false
-	psqlRestore = func(context.Context, string, []byte) error { replayed = true; return nil }
-	cmd, _ := restoreCmd()
+	d.psqlRestore = func(context.Context, string, []byte) error { replayed = true; return nil }
+	cmd, _ := restoreCmd(d)
 	if rerr := runRestore(cmd, archive, true); !errors.Is(rerr, errConfigLocked) {
 		t.Errorf("restore during a config write: %v, want errConfigLocked", rerr)
 	}
@@ -171,13 +167,14 @@ func TestRestoreRefusesWhileTheConfigIsLocked(t *testing.T) {
 
 // uninstall deletes config.yaml, so it takes the lock too.
 func TestUninstallRefusesWhileTheConfigIsLocked(t *testing.T) {
-	dexaHome, _ := restoreFixture(t)
+	d := testDeps()
+	dexaHome, _ := restoreFixture(t, d)
 	release, err := lockConfigDir(dexaHome, configLockExclusive, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer release()
-	cmd, _ := restoreCmd()
+	cmd, _ := restoreCmd(d)
 	if uerr := runUninstall(cmd, true, false); !errors.Is(uerr, errConfigLocked) {
 		t.Errorf("uninstall during a config write: %v, want errConfigLocked", uerr)
 	}
@@ -189,13 +186,14 @@ func TestUninstallRefusesWhileTheConfigIsLocked(t *testing.T) {
 // backup reads the config shared: an archive never pairs a post-commit
 // datastore with a pre-migration config.
 func TestBackupRefusesWhileTheConfigIsBeingRewritten(t *testing.T) {
-	dexaHome, _ := restoreFixture(t)
+	d := testDeps()
+	dexaHome, _ := restoreFixture(t, d)
 	release, err := lockConfigDir(dexaHome, configLockExclusive, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer release()
-	cmd, _ := restoreCmd()
+	cmd, _ := restoreCmd(d)
 	if berr := runBackup(cmd, filepath.Join(t.TempDir(), "x.tar.gz")); !errors.Is(berr, errConfigLocked) {
 		t.Errorf("backup during a config write: %v, want errConfigLocked", berr)
 	}
@@ -204,6 +202,7 @@ func TestBackupRefusesWhileTheConfigIsBeingRewritten(t *testing.T) {
 // setup writes the first config.yaml under the lock, and re-checks under it
 // that no config appeared meanwhile.
 func TestSetupFirstConfigTakesTheLock(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	release, err := lockConfigDir(dir, configLockExclusive, false)
 	if err != nil {
@@ -229,13 +228,14 @@ func TestSetupFirstConfigTakesTheLock(t *testing.T) {
 
 // reset-password rewrites config.yaml, so it takes the lock before anything.
 func TestResetPasswordRefusesWhileTheConfigIsLocked(t *testing.T) {
-	dexaHome, _ := restoreFixture(t)
+	d := testDeps()
+	dexaHome, _ := restoreFixture(t, d)
 	release, err := lockConfigDir(dexaHome, configLockExclusive, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer release()
-	cmd, _ := restoreCmd()
+	cmd, _ := restoreCmd(d)
 	if rerr := runResetPassword(cmd, ""); !errors.Is(rerr, errConfigLocked) {
 		t.Errorf("reset-password during a config write: %v, want errConfigLocked", rerr)
 	}

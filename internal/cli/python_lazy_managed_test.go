@@ -100,6 +100,7 @@ func (f failingTransport) RoundTrip(*http.Request) (*http.Response, error) {
 // lazy fetch: behind a proxy or offline it must say why a download happened and
 // name the two ways out, not just print the dial error.
 func TestProvisionManagedPythonOfflineMessage(t *testing.T) {
+	t.Parallel()
 	called := false
 	_, err := provisionManagedPython(context.Background(), io.Discard, t.TempDir(),
 		&http.Client{Transport: failingTransport{called: &called}})
@@ -121,6 +122,7 @@ func TestProvisionManagedPythonOfflineMessage(t *testing.T) {
 // downloaded now, but the reader is told a default 3.11 DAG fetches CPython 3.11
 // when its venv is built.
 func TestSetupPythonPlan(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		r       setup.Report
@@ -192,7 +194,7 @@ func TestRunSetupOnHostWithOnlyPython312(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
 	cmd.SetArgs([]string{"--workspace", filepath.Join(home, "ws")})
-	if err := cmd.Execute(); err != nil {
+	if err := cmd.ExecuteContext(testCtx(nil)); err != nil {
 		t.Fatalf("setup err = %v\n%s", err, out.String())
 	}
 	if strings.Contains(out.String(), "downloading relocatable CPython") {
@@ -271,6 +273,7 @@ func TestBasePythonForFallsBackWhenHostCannotVenv(t *testing.T) {
 // TestPythonCanVenv drives the real probe: an interpreter that can import venv
 // and ensurepip passes, one that cannot (the stub exits 1 on -c) fails.
 func TestPythonCanVenv(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	write := func(name, body string) string {
 		p := filepath.Join(dir, name)
@@ -293,6 +296,7 @@ func TestPythonCanVenv(t *testing.T) {
 // devBasePython builds probe the host for venv support and print the fallback
 // line to the command's output, so the fallback is not left to a test double.
 func TestDevBasePythonWiresTheVenvFallback(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	d := devBasePythonDeps(&out, t.TempDir())
 	if d.canVenv == nil || d.logf == nil || d.ensureManaged == nil {

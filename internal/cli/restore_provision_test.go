@@ -23,17 +23,16 @@ func freshRestoreHome(t *testing.T, dexaHome string) {
 // the managed Postgres itself, without --force, replays into it, stops what it
 // started, and logs each phase in order.
 func TestRestoreOnAFreshInstallProvisionsTheManagedPostgres(t *testing.T) {
-	dexaHome, archive := restoreFixture(t)
+	d := testDeps()
+	dexaHome, archive := restoreFixture(t, d)
 	freshRestoreHome(t, dexaHome)
-	f := fakeRestoreDatastore(t, nil)
-	orig := psqlRestore
-	t.Cleanup(func() { psqlRestore = orig })
-	psqlRestore = func(context.Context, string, []byte) error {
+	f := fakeRestoreDatastore(t, d, nil)
+	d.psqlRestore = func(context.Context, string, []byte) error {
 		f.events = append(f.events, "replay")
 		return nil
 	}
 
-	cmd, out := restoreCmd()
+	cmd, out := restoreCmd(d)
 	if err := runRestore(cmd, archive, false); err != nil {
 		t.Fatalf("restore on a fresh install: %v\n%s", err, out.String())
 	}
@@ -64,15 +63,14 @@ func TestRestoreOnAFreshInstallProvisionsTheManagedPostgres(t *testing.T) {
 // A failed provisioning stops the restore before anything is replayed or
 // written.
 func TestRestoreStopsWhenProvisioningFails(t *testing.T) {
-	dexaHome, archive := restoreFixture(t)
-	fakeRestoreDatastore(t, errors.New("no libicu"))
+	d := testDeps()
+	dexaHome, archive := restoreFixture(t, d)
+	fakeRestoreDatastore(t, d, errors.New("no libicu"))
 	before, _ := os.ReadFile(filepath.Join(dexaHome, "config.yaml"))
-	orig := psqlRestore
-	t.Cleanup(func() { psqlRestore = orig })
 	replayed := false
-	psqlRestore = func(context.Context, string, []byte) error { replayed = true; return nil }
+	d.psqlRestore = func(context.Context, string, []byte) error { replayed = true; return nil }
 
-	cmd, _ := restoreCmd()
+	cmd, _ := restoreCmd(d)
 	err := runRestore(cmd, archive, false)
 	if err == nil || !strings.Contains(err.Error(), "no libicu") {
 		t.Fatalf("restore with a failed provisioning: %v, want the provisioning error", err)
@@ -88,13 +86,12 @@ func TestRestoreStopsWhenProvisioningFails(t *testing.T) {
 
 // The cluster a restore started is stopped when the replay fails too.
 func TestRestoreStopsThePostgresItStartedWhenTheReplayFails(t *testing.T) {
-	_, archive := restoreFixture(t)
-	f := fakeRestoreDatastore(t, nil)
-	orig := psqlRestore
-	t.Cleanup(func() { psqlRestore = orig })
-	psqlRestore = func(context.Context, string, []byte) error { return errors.New("disk full") }
+	d := testDeps()
+	_, archive := restoreFixture(t, d)
+	f := fakeRestoreDatastore(t, d, nil)
+	d.psqlRestore = func(context.Context, string, []byte) error { return errors.New("disk full") }
 
-	cmd, _ := restoreCmd()
+	cmd, _ := restoreCmd(d)
 	if err := runRestore(cmd, archive, false); err == nil {
 		t.Fatal("a failed replay must fail the restore")
 	}
@@ -111,7 +108,8 @@ func TestRestoreRefusesAHomeWithADatastoreWithoutForce(t *testing.T) {
 		"docker":  filepath.Join("dev", "db-port"),
 	} {
 		t.Run(name, func(t *testing.T) {
-			dexaHome, archive := restoreFixture(t)
+			d := testDeps()
+			dexaHome, archive := restoreFixture(t, d)
 			p := filepath.Join(dexaHome, rel)
 			if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
 				t.Fatal(err)
@@ -119,8 +117,8 @@ func TestRestoreRefusesAHomeWithADatastoreWithoutForce(t *testing.T) {
 			if err := os.WriteFile(p, []byte("5433\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			f := fakeRestoreDatastore(t, nil)
-			cmd, _ := restoreCmd()
+			f := fakeRestoreDatastore(t, d, nil)
+			cmd, _ := restoreCmd(d)
 			err := runRestore(cmd, archive, false)
 			if err == nil || !strings.Contains(err.Error(), "would overwrite an existing install") {
 				t.Fatalf("restore over a %s datastore without --force: %v", name, err)
@@ -136,14 +134,13 @@ func TestRestoreRefusesAHomeWithADatastoreWithoutForce(t *testing.T) {
 // `dexaflow lite` picks the Docker Postgres (ADR 0030), so the closing line
 // names the flag that boots the restored data.
 func TestRestoreOnADockerHostNamesTheManagedFlag(t *testing.T) {
-	_, archive := restoreFixture(t)
-	fakeRestoreDatastore(t, nil)
-	restoreDockerUsable = func() bool { return true }
-	orig := psqlRestore
-	t.Cleanup(func() { psqlRestore = orig })
-	psqlRestore = func(context.Context, string, []byte) error { return nil }
+	d := testDeps()
+	_, archive := restoreFixture(t, d)
+	fakeRestoreDatastore(t, d, nil)
+	d.dockerUsable = func(context.Context) bool { return true }
+	d.psqlRestore = func(context.Context, string, []byte) error { return nil }
 
-	cmd, out := restoreCmd()
+	cmd, out := restoreCmd(d)
 	if err := runRestore(cmd, archive, false); err != nil {
 		t.Fatal(err)
 	}

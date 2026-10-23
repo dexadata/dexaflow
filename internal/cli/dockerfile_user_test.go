@@ -10,6 +10,7 @@ import (
 // base image decides; root, a name and a variable are told apart from a
 // numeric non-root id (#1889).
 func TestFinalStageUser(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, dockerfile string
 		kind             userKind

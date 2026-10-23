@@ -455,7 +455,7 @@ func copyImage(ctx context.Context, out io.Writer, image string, dest destImage,
 	if _, err := name.NewTag(dest.repo + ":" + label); err != nil {
 		tag = ""
 	}
-	got, err := registryFor(nil).Copy(ctx, image, dest.repo, tag)
+	got, err := registryFor(ctx, nil).Copy(ctx, image, dest.repo, tag)
 	if err != nil {
 		return fmt.Errorf("copying the image to %s: %w\n%s", dest.registry, err, copyLoginHint(image, dest.repo))
 	}

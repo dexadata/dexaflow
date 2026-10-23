@@ -18,6 +18,7 @@ import (
 // builds from config.yaml, and new rows would land under a key the file does
 // not record.
 func TestLiteServerEnvironIgnoresAnExportedKey(t *testing.T) {
+	t.Parallel()
 	base := []string{
 		"PATH=/bin",
 		"DEXAFLOW_SECRET_KEY=from-the-shell",
@@ -41,6 +42,7 @@ func TestLiteServerEnvironIgnoresAnExportedKey(t *testing.T) {
 
 // One line says the exported key was ignored, so nobody believes it was used.
 func TestEnvKeyNoteSaysAnExportedKeyIsIgnored(t *testing.T) {
+	t.Parallel()
 	env := map[string]string{"LEOFLOW_SECRET_KEY": "envkey"}
 	getenv := func(k string) string { return env[k] }
 	if note := envKeyNote("filekey", getenv); !strings.Contains(note, "LEOFLOW_SECRET_KEY") || !strings.Contains(note, "ignored") {
@@ -57,6 +59,7 @@ func TestEnvKeyNoteSaysAnExportedKeyIsIgnored(t *testing.T) {
 // Degenerate config: a predecessor with no secret_key is Legacy with an extra
 // predecessor, so the server must read with both (ADR 0065 section 6).
 func TestSecretKeyListLegacyWithAHandSetPredecessor(t *testing.T) {
+	t.Parallel()
 	if got := liteSecretKeyList("", "hand-set"); got != devSecretKey+",hand-set" {
 		t.Errorf("got %q, want the constant then the hand-set key", got)
 	}
@@ -76,6 +79,7 @@ func fakeServer(t *testing.T, versionOut string) string {
 // advertise the key-migration lock (an older binary found on PATH or passed
 // with --server-bin would ignore the setting and run unprotected).
 func TestCheckServerKeyLock(t *testing.T) {
+	t.Parallel()
 	ok := fakeServer(t, `dexaflow-server v0.5.1 (commit x)\ncapabilities: lite-key-lock\n`)
 	if err := checkServerKeyLock(context.Background(), ok); err != nil {
 		t.Errorf("a server advertising the lock was refused: %v", err)
@@ -90,6 +94,7 @@ func TestCheckServerKeyLock(t *testing.T) {
 // The owner's rule for restore: config.yaml.pre-restore is kept until the next
 // successful boot, then removed, and the boot says so.
 func TestRemovePreRestoreAfterABoot(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	p := filepath.Join(dir, preRestoreName)
 	if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
@@ -114,6 +119,7 @@ func TestRemovePreRestoreAfterABoot(t *testing.T) {
 // that the restored config's keys do not open (Stranded or Unreadable) keeps
 // config.yaml.pre-restore, since it may hold the key those secrets need.
 func TestPreRestoreKeptWhenTheBootScanIsNotClean(t *testing.T) {
+	t.Parallel()
 	for name, st := range map[string]keyState{
 		"stranded":   {stranded: 1},
 		"unreadable": {unreadable: 2},
@@ -141,6 +147,7 @@ func TestPreRestoreKeptWhenTheBootScanIsNotClean(t *testing.T) {
 // config.yaml.pre-restore. Only a scan covering every datastore (migrate-key)
 // may remove it.
 func TestPreRestoreKeptWhenAnotherDatastoreWasNotScanned(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	p := filepath.Join(dir, preRestoreName)
 	if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
@@ -159,6 +166,7 @@ func TestPreRestoreKeptWhenAnotherDatastoreWasNotScanned(t *testing.T) {
 // The boot sees two datastores on disk when the managed cluster exists and the
 // install has also used the Docker one.
 func TestBootSeesTwoDatastoresOnDisk(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if bootHasUnscannedDatastore(dir) {
 		t.Fatal("an empty home has no datastore")
@@ -187,6 +195,7 @@ func TestBootSeesTwoDatastoresOnDisk(t *testing.T) {
 // the way out: the cluster may belong to a running migration (ADR 0065 section
 // 3, "leave the cluster as found").
 func TestManagedCleanupOnlyStopsWhatItStarted(t *testing.T) {
+	t.Parallel()
 	stopped := false
 	stop := func() { stopped = true }
 	managedCleanup(false, stop)()
@@ -204,6 +213,7 @@ func TestManagedCleanupOnlyStopsWhatItStarted(t *testing.T) {
 // lost its lock session must stop `dexaflow lite` too, instead of leaving it
 // watching files for a control plane that is gone.
 func TestSuperviseServerStopsWithTheServer(t *testing.T) {
+	t.Parallel()
 	srv := exec.CommandContext(context.Background(), "sh", "-c", "exit 3")
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)

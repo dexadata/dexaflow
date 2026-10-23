@@ -14,6 +14,7 @@ import (
 // DAG stays in the UI forever — the exact symptom reported during the
 // prealpha.29 hands-on.
 func TestRemoveMissingDagsHappyPath(t *testing.T) {
+	t.Parallel()
 	lastSeen := map[string]struct{}{
 		"hello":   {},
 		"sales":   {},
@@ -64,6 +65,7 @@ func TestRemoveMissingDagsHappyPath(t *testing.T) {
 // the function sees it for the first time. Otherwise the very first tick of a
 // fresh Lite would try to delete every DAG it just discovered.
 func TestRemoveMissingDagsNewlyAdded(t *testing.T) {
+	t.Parallel()
 	lastSeen := map[string]struct{}{} // first tick, nothing seen yet
 	current := map[string]struct{}{"hello": {}, "sales": {}}
 	var deleted []string
@@ -90,6 +92,7 @@ func TestRemoveMissingDagsNewlyAdded(t *testing.T) {
 // thinks it's already gone and never retries. The contract: failures are
 // logged and the DAG stays "seen" so the next tick tries again.
 func TestRemoveMissingDagsRetryOnError(t *testing.T) {
+	t.Parallel()
 	lastSeen := map[string]struct{}{
 		"sticky": {},
 	}
@@ -129,6 +132,7 @@ func TestRemoveMissingDagsRetryOnError(t *testing.T) {
 // last tick is still present, so deleteDag must not be called and newSeen
 // must equal current.
 func TestRemoveMissingDagsNoChange(t *testing.T) {
+	t.Parallel()
 	lastSeen := map[string]struct{}{
 		"a": {},
 		"b": {},

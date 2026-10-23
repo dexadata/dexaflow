@@ -14,12 +14,13 @@ import (
 // (typically `dexaflow lite <path>` or `dexaflow validate <path>`) so the
 // onboarding loop terminates at a useful instruction rather than dead air.
 func TestInitCommandPrintsNextStep(t *testing.T) {
+	t.Parallel()
 	target := filepath.Join(t.TempDir(), "myproj")
 	cmd := newInitCommand()
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetArgs([]string{target})
-	if err := cmd.Execute(); err != nil {
+	if err := cmd.ExecuteContext(testCtx(nil)); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
@@ -36,6 +37,7 @@ func TestInitCommandPrintsNextStep(t *testing.T) {
 // user's project: the dag.py and dexaflow.yaml they scaffold carry no em dash,
 // the house style of every text the project ships (#1709).
 func TestScaffoldedFilesHaveNoEmDash(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "orders_report")
 	if _, err := scaffoldProject(dir); err != nil {
 		t.Fatalf("scaffoldProject: %v", err)

@@ -36,11 +36,9 @@ const defaultSSOTimeout = 5 * time.Minute
 // ssoCallbackPath is where the loopback listener receives the code.
 const ssoCallbackPath = "/callback"
 
-// openBrowser opens a URL in the user's browser. Tests replace it.
-var openBrowser = systemOpenBrowser
-
 // systemOpenBrowser starts the platform's URL opener and does not wait for
-// the browser.
+// the browser. Commands reach it as cliDeps.openBrowser, which tests
+// replace.
 func systemOpenBrowser(target string) error {
 	// Only a web URL reaches the opener: rundll32 and xdg-open would hand
 	// anything else (a file path, another scheme) to whatever handles it.
@@ -106,7 +104,7 @@ func ssoLogin(ctx context.Context, out io.Writer, serverURL string, opt ssoOptio
 	}()
 
 	signIn := ssoSignInURL(serverURL, redirect, state, oauth2.S256ChallengeFromVerifier(verifier))
-	announceSignIn(out, signIn, opt.noBrowser)
+	announceSignIn(ctx, out, signIn, opt.noBrowser)
 
 	code, err := waitForCode(ctx, results, opt.timeout)
 	if err != nil {
@@ -117,13 +115,13 @@ func ssoLogin(ctx context.Context, out io.Writer, serverURL string, opt ssoOptio
 
 // announceSignIn opens the browser unless told not to, and always prints the
 // URL so a person can open it when no browser starts.
-func announceSignIn(out io.Writer, signIn string, noBrowser bool) {
+func announceSignIn(ctx context.Context, out io.Writer, signIn string, noBrowser bool) {
 	if noBrowser {
 		devPrintf(out, "Open this URL in a browser to sign in:\n\n  %s\n\nWaiting for the sign-in...\n", signIn)
 		return
 	}
 	devPrintf(out, "Opening your browser to sign in. If it does not open, visit:\n\n  %s\n\nWaiting for the sign-in...\n", signIn)
-	if err := openBrowser(signIn); err != nil {
+	if err := depsFrom(ctx).openBrowser(signIn); err != nil {
 		devPrintf(out, "Could not open a browser (%v); open the URL above.\n", err)
 	}
 }

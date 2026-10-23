@@ -43,11 +43,11 @@ func resolveDatastore(flag string, dockerOK bool) string {
 
 // autoDatastore resolves an "auto" --postgres at run time (detecting Docker) and
 // prints which backend it chose; a non-auto value is returned unchanged.
-func autoDatastore(cmd *cobra.Command, flag string) string {
+func autoDatastore(ctx context.Context, cmd *cobra.Command, flag string) string {
 	if flag != datastoreAuto {
 		return flag
 	}
-	host := probeDockerHost(dockerAvailable())
+	host := probeDockerHost(ctx, dockerAvailable())
 	mode := resolveDatastore(datastoreAuto, host == dockerReady)
 	devPrintln(cmd.OutOrStdout(), datastoreNote(mode, host))
 	return mode
@@ -71,24 +71,24 @@ const (
 // only when docker is present, and the Compose v2 plugin only when the daemon
 // answers. The Docker Postgres is started with `docker compose`, so a daemon
 // without the plugin cannot run it (#759).
-func probeDockerHost(present bool) dockerHost {
+func probeDockerHost(ctx context.Context, present bool) dockerHost {
 	switch {
 	case !present:
 		return dockerAbsent
-	case !dockerResponsive():
+	case !dockerResponsive(ctx):
 		return dockerUnresponsive
-	case composeProbeFn() != nil:
+	case depsFrom(ctx).composeProbe() != nil:
 		return dockerNoCompose
 	default:
 		return dockerReady
 	}
 }
 
-// composeProbeFn probes the Docker Compose v2 plugin with `docker compose
+// probeCompose probes the Docker Compose v2 plugin with `docker compose
 // version`, which the docker CLI answers without the daemon. Without the
-// plugin the CLI does not know `compose` and the probe fails. Package-level so
-// tests can substitute it, like dockerPingFn.
-var composeProbeFn = func() error {
+// plugin the CLI does not know `compose` and the probe fails. Commands reach
+// it as cliDeps.composeProbe, which tests substitute.
+func probeCompose() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return exec.CommandContext(ctx, "docker", "compose", "version").Run()
@@ -101,18 +101,19 @@ const errNoComposePlugin = "the Docker Compose v2 plugin is not installed (`dock
 
 // requireComposePlugin returns an actionable error when the Compose v2 plugin
 // is missing, and nil when `docker compose` works.
-func requireComposePlugin() error {
-	if err := composeProbeFn(); err != nil {
+func requireComposePlugin(ctx context.Context) error {
+	if err := depsFrom(ctx).composeProbe(); err != nil {
 		return fmt.Errorf("%s: %w", errNoComposePlugin, err)
 	}
 	return nil
 }
 
-// dockerPingFn probes whether the Docker daemon actually answers — not just that
+// pingDocker probes whether the Docker daemon actually answers, not just that
 // the `docker` binary is on PATH. A wedged Docker Desktop resolves on PATH but
 // returns an error from its socket (the 500s seen on macOS, #403); the ping
-// catches that. Package-level so tests can substitute it.
-var dockerPingFn = func() error {
+// catches that. Commands reach it as cliDeps.dockerPing, which tests
+// substitute.
+func pingDocker() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return exec.CommandContext(ctx, "docker", "version").Run()
@@ -121,7 +122,7 @@ var dockerPingFn = func() error {
 // dockerResponsive reports whether the Docker daemon answered the ping. The auto
 // resolvers gate on this so a present-but-unresponsive daemon falls back to the
 // Docker-free path instead of failing later on `docker compose up` (#403).
-func dockerResponsive() bool { return dockerPingFn() == nil }
+func dockerResponsive(ctx context.Context) bool { return depsFrom(ctx).dockerPing() == nil }
 
 // datastoreNote is the user-facing line for the resolved Postgres backend. It
 // distinguishes "no Docker at all" from "Docker present but not responding" so a
@@ -348,7 +349,7 @@ func autoExecutor(cmd *cobra.Command, flag string) string {
 		return flag
 	}
 	present := dockerAvailable()
-	mode := resolveExecutor("auto", present && dockerResponsive())
+	mode := resolveExecutor("auto", present && dockerResponsive(cmdContext(cmd)))
 	devPrintln(cmd.OutOrStdout(), executorNote(mode, present))
 	return mode
 }

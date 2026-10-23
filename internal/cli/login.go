@@ -172,7 +172,8 @@ func chooseLoginMethod(cmd *cobra.Command, serverURL string, f loginFlags) (logi
 		devPrintf(out, "Signing in with a password (the server does not offer single sign-on)\n")
 		return methodPassword, nil
 	}
-	if headless, why := sessionHeadless(); headless && m.Device && outputIsTerminal(out) {
+	d := cmdDeps(cmd)
+	if headless, why := d.sessionHeadless(); headless && m.Device && d.outputIsTerminal(out) {
 		devPrintf(out, "Signing in with single sign-on on another device (the server offers it and this session has no browser: %s; "+
 			"pass --sso to use a browser on this machine)\n", why)
 		return methodDevice, nil

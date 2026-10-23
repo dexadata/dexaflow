@@ -9,6 +9,7 @@ import (
 )
 
 func TestDoctorHelpers(t *testing.T) {
+	t.Parallel()
 	if got := found(true, "/usr/bin/python3.11", "absent"); got != "found (/usr/bin/python3.11)" {
 		t.Errorf("found(present,path) = %q", got)
 	}
@@ -31,7 +32,7 @@ func TestDoctorCommand(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetArgs([]string{})
-	if err := cmd.Execute(); err != nil {
+	if err := cmd.ExecuteContext(testCtx(nil)); err != nil {
 		t.Fatalf("doctor err = %v", err)
 	}
 	if !strings.Contains(out.String(), "dexaflow doctor") || !strings.Contains(out.String(), "recommended executor") {
@@ -40,6 +41,7 @@ func TestDoctorCommand(t *testing.T) {
 }
 
 func TestRenderDoctor(t *testing.T) {
+	t.Parallel()
 	t.Run("docker host recommends k8s and shows python path", func(t *testing.T) {
 		var buf bytes.Buffer
 		renderDoctor(&buf, setup.Report{
@@ -92,6 +94,7 @@ func TestRenderDoctor(t *testing.T) {
 // the remaining download is the managed 3.11 a default DAG fetches when its
 // venv is built, and doctor must say that, and not cry wolf on a host with 3.11.
 func TestDoctorSetupPythonLine(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		r      setup.Report

@@ -152,6 +152,7 @@ func TestCreateTokenFlagErrors(t *testing.T) {
 }
 
 func TestParseTokenTTL(t *testing.T) {
+	t.Parallel()
 	for in, want := range map[string]time.Duration{
 		"90d": 90 * 24 * time.Hour, "1d": 24 * time.Hour, "12h": 12 * time.Hour, "1h30m": 90 * time.Minute,
 	} {

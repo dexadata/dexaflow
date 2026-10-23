@@ -69,6 +69,7 @@ func projectWithDag(t *testing.T) string {
 // build has to resolve it against the real project directory before using it.
 // Both shapes are covered: a linked directory on the way, and the file itself.
 func TestBuildRefusesAConfiguredDockerfileThatASymlinkTakesOutOfTheProject(t *testing.T) {
+	t.Parallel()
 	t.Run("linked directory", func(t *testing.T) {
 		dir := projectWithDag(t)
 		if err := os.Symlink(outsideDockerfile(t), filepath.Join(dir, "docker")); err != nil {
@@ -121,6 +122,7 @@ func assertRefusedOutsideProject(t *testing.T, seen string, err error, value str
 // project directory itself is reached through a symlink (a CI workspace often
 // is). Refusing any of these would break a project that builds today.
 func TestBuildKeepsAConfiguredDockerfileInsideTheProject(t *testing.T) {
+	t.Parallel()
 	t.Run("nested file", func(t *testing.T) {
 		dir := projectWithDag(t)
 		writeStubDockerfile(t, filepath.Join(dir, "docker", "Dockerfile.prod"))
@@ -178,6 +180,7 @@ func assertBuiltWith(t *testing.T, seen string, err error, want string) {
 // --dockerfile is the operator's own choice on the command line, not a value a
 // reviewed yaml carries, so it keeps meaning what it says.
 func TestTheDockerfileFlagIsNotConfinedToTheProject(t *testing.T) {
+	t.Parallel()
 	dir := projectWithDag(t)
 	outside := filepath.Join(outsideDockerfile(t), "Dockerfile")
 	builder, record := recordingBuilder(t)
@@ -207,6 +210,7 @@ func TestTheDockerfileFlagIsNotConfinedToTheProject(t *testing.T) {
 // `validate` refuses the lexical shapes for both config file names, before any
 // build is involved.
 func TestValidateCommandRefusesABuildDockerfileOutsideTheProject(t *testing.T) {
+	t.Parallel()
 	for _, configName := range []string{projectConfigFile, legacyProjectConfigFile} {
 		t.Run(configName, func(t *testing.T) {
 			dir := writePoisonedProject(t, configName, "build:\n  dockerfile: ../../other/Dockerfile\n")
@@ -214,7 +218,7 @@ func TestValidateCommandRefusesABuildDockerfileOutsideTheProject(t *testing.T) {
 			cmd.SetArgs([]string{dir})
 			cmd.SetOut(io.Discard)
 			cmd.SetErr(io.Discard)
-			err := cmd.Execute()
+			err := cmd.ExecuteContext(testCtx(nil))
 			if err == nil || !strings.Contains(err.Error(), "build.dockerfile") {
 				t.Fatalf("validate must refuse and name build.dockerfile, got: %v", err)
 			}

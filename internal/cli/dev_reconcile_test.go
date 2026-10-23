@@ -24,6 +24,7 @@ func set(ids ...string) map[string]struct{} {
 // metadata DB or a previous workspace, #404) are deregistered, so Lite self-heals
 // to match the workspace without manual cleanup.
 func TestReconcileStartup_DeregistersGhosts(t *testing.T) {
+	t.Parallel()
 	var deleted []string
 	del := func(id string) error { deleted = append(deleted, id); return nil }
 
@@ -42,6 +43,7 @@ func TestReconcileStartup_DeregistersGhosts(t *testing.T) {
 // fetched (control plane unreachable), reconcile deregisters NOTHING and keeps the
 // workspace IDs — never destructive on an unreliable control plane.
 func TestReconcileStartup_FetchErrorIsFailSafe(t *testing.T) {
+	t.Parallel()
 	called := false
 	del := func(string) error { called = true; return nil }
 
@@ -58,6 +60,7 @@ func TestReconcileStartup_FetchErrorIsFailSafe(t *testing.T) {
 // TestReconcileStartup_CleanIsNoop: when the control plane already matches the
 // workspace, nothing is deregistered.
 func TestReconcileStartup_CleanIsNoop(t *testing.T) {
+	t.Parallel()
 	called := false
 	reconcileStartup(set("hello"), nil, set("hello"), func(string) error { called = true; return nil }, func(string, ...any) {})
 	if called {
@@ -69,6 +72,7 @@ func TestReconcileStartup_CleanIsNoop(t *testing.T) {
 // set of dag_ids, and surfaces a non-200 as an error (so reconcile stays
 // fail-safe rather than treating an error page as "no DAGs registered").
 func TestFetchRegisteredDagIDs(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v2/dags" {
 			w.WriteHeader(http.StatusNotFound)
@@ -100,6 +104,7 @@ func TestFetchRegisteredDagIDs(t *testing.T) {
 // its file no longer exists (a removed broken DAG). A current broken DAG — file
 // present, under the workspace — is NOT stale: its error is real and must stay.
 func TestImportErrorStale(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	existing := filepath.Join(root, "good", "dag.py")
 	if err := os.MkdirAll(filepath.Dir(existing), 0o750); err != nil {
@@ -126,6 +131,7 @@ func TestImportErrorStale(t *testing.T) {
 
 // TestReconcileImportErrors_ClearsStale: only the stale entries are cleared.
 func TestReconcileImportErrors_ClearsStale(t *testing.T) {
+	t.Parallel()
 	stale := map[string]bool{"/a/stale.py": true, "/b/current.py": false, "/c/stale2.py": true}
 	var cleared []string
 	reconcileImportErrors(
@@ -142,6 +148,7 @@ func TestReconcileImportErrors_ClearsStale(t *testing.T) {
 
 // TestReconcileImportErrors_FetchErrorIsFailSafe: a list-fetch error clears nothing.
 func TestReconcileImportErrors_FetchErrorIsFailSafe(t *testing.T) {
+	t.Parallel()
 	called := false
 	reconcileImportErrors(nil, errors.New("unreachable"),
 		func(string) bool { return true },
@@ -155,6 +162,7 @@ func TestReconcileImportErrors_FetchErrorIsFailSafe(t *testing.T) {
 // TestFetchImportErrorFiles parses the control plane's GET /api/v2/importErrors
 // into the list of filenames; a non-200 is an error (fail-safe).
 func TestFetchImportErrorFiles(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"import_errors":[{"filename":"/ws/a/dag.py"},{"filename":"/ws/b/dag.py"}]}`))
 	}))

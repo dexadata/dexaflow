@@ -18,6 +18,7 @@ import (
 // never reached the gcp examples' images (#1709). A Dockerfile back in an
 // example fails here, as does an example whose yaml the generator refuses.
 func TestExamplesBuildFromGeneratedDockerfile(t *testing.T) {
+	t.Parallel()
 	repo, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)

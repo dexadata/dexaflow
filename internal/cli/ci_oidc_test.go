@@ -119,15 +119,16 @@ func TestCIInitChoosesTheAuth(t *testing.T) {
 				t.Setenv("DEXAFLOW_TOKEN", "dxf_cli_session")
 			}
 			root := ciWorkspace(t, "ghcr.io/acme/dags", "")
-			stubTagCommit(t)
-			stubImageDigest(t)
+			d := testDeps()
+			stubTagCommit(t, d)
+			stubImageDigest(t, d)
 			t.Chdir(root)
 			args := append([]string{"ci", "init", tc.system, "--stdout", "--config", emptyConfig(t)}, tc.args...)
 			if !strings.Contains(strings.Join(tc.args, " "), "--cli-version") {
 				args = append(args, "--cli-version", ciGoldenVersion)
 			}
 
-			out, stderr, err := run(t, args...)
+			out, stderr, err := runDeps(t, d, args...)
 
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {

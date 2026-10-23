@@ -88,26 +88,26 @@ func buildPlatforms(cfg *domain.LeoflowConfig) []string {
 func selectBuilder(ctx context.Context, dir, dockerfile string, o compileOptions, cfg *domain.LeoflowConfig, image string) (b build.Builder, reason string) {
 	split, noSplit := splitFor(ctx, dir, dockerfile, o, cfg, image)
 	opts := build.Options{Tool: o.builder, Reuse: o.reuse, Split: split, NoSplit: noSplit, Rebuild: o.rebuild,
-		Registry: registryFor(cfg), Push: o.push, Remote: remoteFor(cfg), RemoteSource: o.remoteSource, LocalOnly: cfg.Build.LocalOnly()}
+		Registry: registryFor(ctx, cfg), Push: o.push, Remote: remoteFor(ctx, cfg), RemoteSource: o.remoteSource, LocalOnly: cfg.Build.LocalOnly()}
 	return build.Select(ctx, opts, image, buildPlatforms(cfg))
 }
 
 // remoteFor is the remote builder build.remote_builder configures, reading
 // the pushed digest with the project's registry client, or nil when none is
 // configured.
-func remoteFor(cfg *domain.LeoflowConfig) build.Remote {
+func remoteFor(ctx context.Context, cfg *domain.LeoflowConfig) build.Remote {
 	if cfg.Build == nil || cfg.Build.RemoteBuilder == nil {
 		return nil
 	}
 	if bk := cfg.Build.RemoteBuilder.BuildKit; bk != nil {
-		return build.InCluster{Namespace: bk.Namespace, PodSelector: bk.Selector(), Context: bk.Context, Registry: registryFor(cfg)}
+		return build.InCluster{Namespace: bk.Namespace, PodSelector: bk.Selector(), Context: bk.Context, Registry: registryFor(ctx, cfg)}
 	}
 	cb := cfg.Build.RemoteBuilder.CloudBuild
 	if cb == nil {
 		return nil
 	}
 	return build.CloudBuild{Project: cb.Project, Region: cb.Region, WorkerPool: cb.WorkerPool, ServiceAccount: cb.ServiceAccount,
-		Registry: registryFor(cfg)}
+		Registry: registryFor(ctx, cfg)}
 }
 
 // printBuildSettings says what a build is about to do: the platforms and
