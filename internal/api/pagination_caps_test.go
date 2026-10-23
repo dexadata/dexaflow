@@ -33,15 +33,23 @@ func (p *pagedRunRepo) ListDagRunsPage(_ context.Context, _, _ string, limit, _ 
 }
 
 func pagedServer(runs DagRunRepository, latest DagLatestRunsReader, maxPage int) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		DagRuns:       runs,
-		Dags:          &fakeDagRepo{dags: []domain.DAG{{DagID: "d"}}},
-		LatestRuns:    latest,
-		MaxPageLimit:  maxPage,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins:  []string{"*"},
+			MaxPageLimit: maxPage,
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			DagRuns:    runs,
+			Dags:       &fakeDagRepo{dags: []domain.DAG{{DagID: "d"}}},
+			LatestRuns: latest,
+		},
 	})
 }
 
@@ -108,13 +116,21 @@ func (f *limitAuditReader) ListAuditLogs(_ context.Context, _, _ string, limit, 
 // every other list endpoint, serves at most server.max_page_limit entries.
 func TestEventLogsHonorTheConfiguredPageCap(t *testing.T) {
 	reader := &limitAuditReader{}
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		AuditLog:      reader,
-		MaxPageLimit:  100,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins:  []string{"*"},
+			MaxPageLimit: 100,
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			AuditLog: reader,
+		},
 	})
 	rec := authGet(srv, http.MethodGet, "/api/v2/eventLogs?limit=500", "")
 	if rec.Code != http.StatusOK {

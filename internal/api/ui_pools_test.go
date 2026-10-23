@@ -62,13 +62,21 @@ func poolServer(store PoolStore, edition string, roles ...string) *gin.Engine {
 	if len(roles) == 0 {
 		roles = []string{"admin"}
 	}
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: roles}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Pools:         store,
-		Edition:       edition,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+			Edition:     edition,
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: roles}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Pools: store,
+		},
 	})
 }
 
@@ -202,14 +210,22 @@ func TestPoolCreateRequiresNameAndSlots(t *testing.T) {
 // readOnlyPoolServer is poolServer with Dependencies.PoolsReadOnly set: the
 // tenant-facing pool API serves reads only, whatever role the caller holds.
 func readOnlyPoolServer(store PoolStore, user *auth.User) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: user},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Pools:         store,
-		Edition:       "pro",
-		PoolsReadOnly: true,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins:   []string{"*"},
+			Edition:       "pro",
+			PoolsReadOnly: true,
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: user},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Pools: store,
+		},
 	})
 }
 

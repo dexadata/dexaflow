@@ -23,15 +23,25 @@ func warmVersionServer(repo DagVersionRepository, policy domain.WarmPolicy, exec
 }
 
 func warmVersionServerAbsent(repo DagVersionRepository, policy domain.WarmPolicy, exec config.ExecutionSection, absent string) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:            discardLogger(),
-		Authenticator:     &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:       auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:       []string{"*"},
-		Versions:          repo,
-		WarmPolicy:        policy,
-		WarmPools:         exec,
-		WarmWorkersAbsent: absent,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Execution: ExecutionDeps{
+			WarmPolicy:        policy,
+			WarmPools:         exec,
+			WarmWorkersAbsent: absent,
+		},
+		Stores: StoreDeps{
+			Versions: repo,
+		},
 	})
 }
 

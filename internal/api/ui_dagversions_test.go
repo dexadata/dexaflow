@@ -20,13 +20,21 @@ func (f *fakeVersionLister) ListDagVersions(context.Context, string, string) ([]
 }
 
 func versionsServer(dags []domain.DAG, versions []domain.DagVersion) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Dags:          &fakeDagRepo{dags: dags},
-		DagVersions:   &fakeVersionLister{versions: versions},
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Dags:        &fakeDagRepo{dags: dags},
+			DagVersions: &fakeVersionLister{versions: versions},
+		},
 	})
 }
 

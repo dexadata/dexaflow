@@ -19,12 +19,12 @@ func withCIOIDC(deps api.Dependencies, cfg *config.ServerConfig, roles auth.Role
 		return deps
 	}
 	v := cioidc.New(cfg.Auth.CIOIDC.CIIssuers())
-	deps.Authenticator = auth.NewCISessionAuthenticator(deps.Authenticator, cfg.Auth.JWT.Secret, v, roles)
-	deps.CIOIDC = v
-	deps.CIOIDCRoles = roles
-	deps.CIOIDCSessionTTL = cfg.Auth.CIOIDC.SessionTTL()
+	deps.Auth.Authenticator = auth.NewCISessionAuthenticator(deps.Auth.Authenticator, cfg.Auth.JWT.Secret, v, roles)
+	deps.Issuers.CIOIDC = v
+	deps.Issuers.CIOIDCRoles = roles
+	deps.Issuers.CIOIDCSessionTTL = cfg.Auth.CIOIDC.SessionTTL()
 	if m != nil {
-		deps.CIOIDCExchanges = m
+		deps.Issuers.CIOIDCExchanges = m
 	}
 	return deps
 }

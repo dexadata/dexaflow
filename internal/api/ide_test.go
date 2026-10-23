@@ -23,13 +23,21 @@ func ideServer(fs WorkspaceFS) *gin.Engine {
 
 // ideServerWithMonaco is ideServer plus a Monaco assets directory to serve.
 func ideServerWithMonaco(fs WorkspaceFS, monacoDir string) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Workspace:     fs,
-		MonacoDir:     monacoDir,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		UI: UIDeps{
+			Workspace: fs,
+			MonacoDir: monacoDir,
+		},
 	})
 }
 

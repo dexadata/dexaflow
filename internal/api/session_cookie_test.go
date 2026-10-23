@@ -30,13 +30,19 @@ import (
 
 // cookieLoginServer serves the password path with credAuthn (password "right").
 func cookieLoginServer(insecure bool) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:                discardLogger(),
-		Authenticator:         credAuthn{},
-		RateLimiter:           auth.NewRateLimiter(50, time.Minute),
-		CORSOrigins:           []string{"*"},
-		TokenTTLSecs:          3600,
-		SessionCookieInsecure: insecure,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator:         credAuthn{},
+			RateLimiter:           auth.NewRateLimiter(50, time.Minute),
+			TokenTTLSecs:          3600,
+			SessionCookieInsecure: insecure,
+		},
 	})
 }
 
@@ -117,10 +123,18 @@ func TestRefusedPasswordLoginSetsNoSessionCookie(t *testing.T) {
 		}
 	})
 	t.Run("rate limited", func(t *testing.T) {
-		srv := NewServer(Dependencies{
-			Logger: discardLogger(), Authenticator: credAuthn{},
-			RateLimiter: auth.NewRateLimiter(1, time.Minute),
-			CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
+		srv := newTestServer(Dependencies{
+			Observability: ObservabilityDeps{
+				Logger: discardLogger(),
+			},
+			Server: ServerDeps{
+				CORSOrigins: []string{"*"},
+			},
+			Auth: AuthDeps{
+				Authenticator: credAuthn{},
+				RateLimiter:   auth.NewRateLimiter(1, time.Minute),
+				TokenTTLSecs:  3600,
+			},
 		})
 		do(srv, http.MethodPost, "/auth/token", bad) // burn the budget
 		rec := do(srv, http.MethodPost, "/auth/token", goodCreds)

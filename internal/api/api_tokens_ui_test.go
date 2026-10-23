@@ -158,10 +158,16 @@ func TestTokenRoutesAreScopedToTheCallersTenant(t *testing.T) {
 
 // tokenServerWith is tokenServer over any token store.
 func tokenServerWith(user *auth.User, store TokenStore) http.Handler {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: user},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		APITokens:     store,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: user},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			APITokens: store,
+		},
 	})
 }

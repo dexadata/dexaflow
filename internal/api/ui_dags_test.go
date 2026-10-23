@@ -34,14 +34,22 @@ func uiDagsServer(dags []domain.DAG, latest *fakeLatestRuns) *gin.Engine {
 // details endpoint can serve declared params. A nil reader reproduces the
 // param-free wiring exactly.
 func uiDagsServerWithSpecs(dags []domain.DAG, latest *fakeLatestRuns, specs DagSpecReader) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Dags:          &fakeDagRepo{dags: dags},
-		LatestRuns:    latest,
-		Specs:         specs,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Dags:       &fakeDagRepo{dags: dags},
+			LatestRuns: latest,
+			Specs:      specs,
+		},
 	})
 }
 
@@ -50,13 +58,21 @@ func TestUIDagsForwardsFilters(t *testing.T) {
 		{DagID: "active_dag", IsPaused: false},
 		{DagID: "paused_dag", IsPaused: true},
 	}}
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Dags:          repo,
-		LatestRuns:    &fakeLatestRuns{},
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Dags:       repo,
+			LatestRuns: &fakeLatestRuns{},
+		},
 	})
 
 	rec := authGet(srv, http.MethodGet, "/ui/dags?last_dag_run_state=failed&paused=false", "")
@@ -81,13 +97,21 @@ func TestUIDagsForwardsFilters(t *testing.T) {
 
 func TestUIDagsNoFiltersByDefault(t *testing.T) {
 	repo := &fakeDagRepo{dags: []domain.DAG{{DagID: "etl"}}}
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Dags:          repo,
-		LatestRuns:    &fakeLatestRuns{},
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Dags:       repo,
+			LatestRuns: &fakeLatestRuns{},
+		},
 	})
 	if rec := authGet(srv, http.MethodGet, "/ui/dags", ""); rec.Code != http.StatusOK {
 		t.Fatalf("/ui/dags = %d", rec.Code)

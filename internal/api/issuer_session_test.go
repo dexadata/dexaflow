@@ -66,14 +66,20 @@ func (f *fakeIssuerUsers) FindUserByOIDCSubject(_ context.Context, provider, sub
 func issuerSessionServer(t *testing.T, users *fakeIssuerUsers) http.Handler {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	return NewServer(Dependencies{
-		Logger:               discardLogger(),
-		RateLimiter:          auth.NewRateLimiter(100, time.Minute),
-		JWTSecret:            "test-secret",
-		TokenTTLSecs:         900,
-		TrustedIssuer:        fakeTrustedIssuer{issuer.Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme"}},
-		TrustedIssuerUsers:   users,
-		TrustedIssuerOrigins: []string{"https://portal.example.com"},
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			RateLimiter:  auth.NewRateLimiter(100, time.Minute),
+			JWTSecret:    "test-secret",
+			TokenTTLSecs: 900,
+		},
+		Issuers: IssuerDeps{
+			TrustedIssuer:        fakeTrustedIssuer{issuer.Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme"}},
+			TrustedIssuerUsers:   users,
+			TrustedIssuerOrigins: []string{"https://portal.example.com"},
+		},
 	})
 }
 
@@ -171,7 +177,7 @@ func TestIssuerSessionRejections(t *testing.T) {
 // without a trusted issuer the endpoint does not exist.
 func TestIssuerSessionRouteExistsOnlyWhenConfigured(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	h := NewServer(Dependencies{Logger: discardLogger(), RateLimiter: auth.NewRateLimiter(100, time.Minute)})
+	h := newTestServer(Dependencies{Observability: ObservabilityDeps{Logger: discardLogger()}, Auth: AuthDeps{RateLimiter: auth.NewRateLimiter(100, time.Minute)}})
 
 	rec := postSession(h, url.Values{"token": {"good"}})
 

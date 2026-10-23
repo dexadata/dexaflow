@@ -63,18 +63,26 @@ func (engineAndAPIToken) IssueToken(context.Context, auth.Credentials) (string, 
 func newDeployAudienceServer(t *testing.T, viaIssuer bool) http.Handler {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	return NewServer(Dependencies{
-		Logger:              discardLogger(),
-		Authenticator:       engineAndAPIToken{},
-		RateLimiter:         auth.NewRateLimiter(5, time.Minute),
-		TokenTTLSecs:        900,
-		Dags:                &fakeDagRepo{},
-		DagRuns:             &fakeRunRepo{},
-		Versions:            &fakeVersionRepo{},
-		TrustedIssuerBearer: deployIssuer{},
-		TrustedIssuerUsers:  &fakeIssuerUsers{user: linkedAdmin(), active: true},
-		AuthAudit:           &fakeAuthAudit{},
-		DeployViaIssuer:     viaIssuer,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			Authenticator: engineAndAPIToken{},
+			RateLimiter:   auth.NewRateLimiter(5, time.Minute),
+			TokenTTLSecs:  900,
+			AuthAudit:     &fakeAuthAudit{},
+		},
+		Issuers: IssuerDeps{
+			TrustedIssuerBearer: deployIssuer{},
+			TrustedIssuerUsers:  &fakeIssuerUsers{user: linkedAdmin(), active: true},
+			DeployViaIssuer:     viaIssuer,
+		},
+		Stores: StoreDeps{
+			Dags:     &fakeDagRepo{},
+			DagRuns:  &fakeRunRepo{},
+			Versions: &fakeVersionRepo{},
+		},
 	})
 }
 
@@ -138,11 +146,24 @@ func TestDeployAudienceBearerStillNeedsTheScope(t *testing.T) {
 	srv := newDeployAudienceServer(t, true)
 	refusedForScope(t, register, register.do(srv, "deploy:dexaflow:read"), "dexaflow:deploy")
 
-	reader := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: engineAndAPIToken{}, RateLimiter: auth.NewRateLimiter(5, time.Minute),
-		TokenTTLSecs: 900, Versions: &fakeVersionRepo{}, TrustedIssuerBearer: deployIssuer{},
-		TrustedIssuerUsers: &fakeIssuerUsers{user: linkedReader(), active: true}, AuthAudit: &fakeAuthAudit{},
-		DeployViaIssuer: true,
+	reader := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			Authenticator: engineAndAPIToken{},
+			RateLimiter:   auth.NewRateLimiter(5, time.Minute),
+			TokenTTLSecs:  900,
+			AuthAudit:     &fakeAuthAudit{},
+		},
+		Issuers: IssuerDeps{
+			TrustedIssuerBearer: deployIssuer{},
+			TrustedIssuerUsers:  &fakeIssuerUsers{user: linkedReader(), active: true},
+			DeployViaIssuer:     true,
+		},
+		Stores: StoreDeps{
+			Versions: &fakeVersionRepo{},
+		},
 	})
 	rec := register.do(reader, "deploy:dexaflow:deploy")
 	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "deploy:dag") {
@@ -224,9 +245,23 @@ func TestDeployAudienceOffKeepsDeletingADagAsToday(t *testing.T) {
 // bearer, so it cannot deploy either.
 func TestDeployAudienceRefusesDevNoAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: engineAndAPIToken{}, RateLimiter: auth.NewRateLimiter(5, time.Minute),
-		TokenTTLSecs: 900, Dags: &fakeDagRepo{}, Versions: &fakeVersionRepo{}, DevNoAuth: true, DeployViaIssuer: true,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			Authenticator: engineAndAPIToken{},
+			RateLimiter:   auth.NewRateLimiter(5, time.Minute),
+			TokenTTLSecs:  900,
+			DevNoAuth:     true,
+		},
+		Issuers: IssuerDeps{
+			DeployViaIssuer: true,
+		},
+		Stores: StoreDeps{
+			Dags:     &fakeDagRepo{},
+			Versions: &fakeVersionRepo{},
+		},
 	})
 	for _, c := range append([]scopeCall{deleteDag}, deployCalls...) {
 		refusedForIssuer(t, "dev no auth", c, c.do(srv, ""))
@@ -237,9 +272,22 @@ func TestDeployAudienceRefusesDevNoAuth(t *testing.T) {
 // sets DeployViaIssuer without the verifier refuses every deploy.
 func TestDeployAudienceWithoutABearerVerifierFailsClosed(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: engineAndAPIToken{}, RateLimiter: auth.NewRateLimiter(5, time.Minute),
-		TokenTTLSecs: 900, Dags: &fakeDagRepo{}, Versions: &fakeVersionRepo{}, DeployViaIssuer: true,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			Authenticator: engineAndAPIToken{},
+			RateLimiter:   auth.NewRateLimiter(5, time.Minute),
+			TokenTTLSecs:  900,
+		},
+		Issuers: IssuerDeps{
+			DeployViaIssuer: true,
+		},
+		Stores: StoreDeps{
+			Dags:     &fakeDagRepo{},
+			Versions: &fakeVersionRepo{},
+		},
 	})
 	for _, c := range deployCalls {
 		refusedForIssuer(t, "password token", c, c.do(srv, "engine"))
@@ -315,11 +363,25 @@ func TestDeployAudienceMixedAudienceTokenCannotDeploy(t *testing.T) {
 		TenantClaim: "tenant_id", AllowedTenants: []string{"acme"}, BearerAudiences: []string{"leoflow-mcp"},
 		DeployAudience: "dexaflow-deploy",
 	})
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: engineAndAPIToken{}, RateLimiter: auth.NewRateLimiter(5, time.Minute),
-		TokenTTLSecs: 900, Dags: &fakeDagRepo{}, Versions: &fakeVersionRepo{}, TrustedIssuerBearer: verifier,
-		TrustedIssuerUsers: &fakeIssuerUsers{user: linkedAdmin(), active: true}, AuthAudit: &fakeAuthAudit{},
-		DeployViaIssuer: true,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			Authenticator: engineAndAPIToken{},
+			RateLimiter:   auth.NewRateLimiter(5, time.Minute),
+			TokenTTLSecs:  900,
+			AuthAudit:     &fakeAuthAudit{},
+		},
+		Issuers: IssuerDeps{
+			TrustedIssuerBearer: verifier,
+			TrustedIssuerUsers:  &fakeIssuerUsers{user: linkedAdmin(), active: true},
+			DeployViaIssuer:     true,
+		},
+		Stores: StoreDeps{
+			Dags:     &fakeDagRepo{},
+			Versions: &fakeVersionRepo{},
+		},
 	})
 	mixed := keys.bearer(t, []string{"leoflow-mcp", "dexaflow-deploy"})
 	for _, c := range append([]scopeCall{deleteDag}, deployCalls...) {

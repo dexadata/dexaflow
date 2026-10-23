@@ -1456,27 +1456,27 @@ func stubHandler(feature string) gin.HandlerFunc {
 // registerResources mounts the /api/v2 resource routes whose repositories are
 // configured. Routes for nil repositories are omitted.
 func registerResources(r gin.IRouter, deps Dependencies) {
-	if deps.Dags != nil {
+	if deps.Stores.Dags != nil {
 		g := r.Group("/api/v2/dags")
-		g.GET("", RequireDeployRead(), listDagsHandler(deps.Dags))
-		g.GET("/:dag_id", RequireDeployRead(), getDagHandler(deps.Dags))
-		g.GET("/:dag_id/details", RequireDeployRead(), dagDetailsHandler(deps.Dags, deps.DagVersions, deps.Specs))
+		g.GET("", RequireDeployRead(), listDagsHandler(deps.Stores.Dags))
+		g.GET("/:dag_id", RequireDeployRead(), getDagHandler(deps.Stores.Dags))
+		g.GET("/:dag_id/details", RequireDeployRead(), dagDetailsHandler(deps.Stores.Dags, deps.Stores.DagVersions, deps.Stores.Specs))
 		// Pause and unpause are run control (ADR 0067). A change that lets this
 		// route set more than is_paused must revisit its scope.
-		g.PATCH("/:dag_id", RequireScopedPermission("write", "dag", auth.ScopeRun), patchDagHandler(deps.Dags))
-		g.DELETE("/:dag_id", RequireUndeployPermission(deps.DeployViaIssuer), deleteDagHandler(deps.Dags))
+		g.PATCH("/:dag_id", RequireScopedPermission("write", "dag", auth.ScopeRun), patchDagHandler(deps.Stores.Dags))
+		g.DELETE("/:dag_id", RequireUndeployPermission(deps.Issuers.DeployViaIssuer), deleteDagHandler(deps.Stores.Dags))
 	}
-	if deps.DagRuns != nil {
+	if deps.Stores.DagRuns != nil {
 		g := r.Group("/api/v2/dags/:dag_id/dagRuns")
-		g.GET("", RequirePermission("read", "dag_run"), listDagRunsHandler(deps.DagRuns, deps.DagVersions))
-		g.POST("", RequireScopedPermission("execute", "dag", auth.ScopeRun), createDagRunHandler(deps.DagRuns, deps.Specs, deps.Audit))
-		g.GET("/:dag_run_id", RequirePermission("read", "dag_run"), getDagRunHandler(deps.DagRuns, deps.DagVersions))
-		g.PATCH("/:dag_run_id", RequireScopedPermission("write", "dag_run", auth.ScopeRun), patchDagRunHandler(deps.DagRuns, deps.Audit))
-		g.DELETE("/:dag_run_id", RequirePermission("write", "dag_run"), deleteDagRunHandler(deps.DagRuns))
+		g.GET("", RequirePermission("read", "dag_run"), listDagRunsHandler(deps.Stores.DagRuns, deps.Stores.DagVersions))
+		g.POST("", RequireScopedPermission("execute", "dag", auth.ScopeRun), createDagRunHandler(deps.Stores.DagRuns, deps.Stores.Specs, deps.Stores.Audit))
+		g.GET("/:dag_run_id", RequirePermission("read", "dag_run"), getDagRunHandler(deps.Stores.DagRuns, deps.Stores.DagVersions))
+		g.PATCH("/:dag_run_id", RequireScopedPermission("write", "dag_run", auth.ScopeRun), patchDagRunHandler(deps.Stores.DagRuns, deps.Stores.Audit))
+		g.DELETE("/:dag_run_id", RequirePermission("write", "dag_run"), deleteDagRunHandler(deps.Stores.DagRuns))
 	}
-	if deps.Tasks != nil {
+	if deps.Stores.Tasks != nil {
 		r.GET("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/taskInstances",
-			RequirePermission("read", "task_instance"), listTaskInstancesHandler(deps.Tasks, deps.DagRuns, deps.DagVersions))
+			RequirePermission("read", "task_instance"), listTaskInstancesHandler(deps.Stores.Tasks, deps.Stores.DagRuns, deps.Stores.DagVersions))
 		// The "logs/:try_number" and ":map_index" routes share the :task_id
 		// parent; gin cannot mix a static and a wildcard child there, so one
 		// catch-all dispatches both (single task instance vs its logs). The
@@ -1487,42 +1487,42 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 		// RedirectTrailingSlash disabled in server.go and both routes
 		// registered, every hit reaches the handler through the no-store
 		// middleware.
-		actionH := taskInstanceActionHandler(deps.Tasks, deps.Logs, deps.Xcoms, deps.DagRuns, deps.DagVersions, deps.Specs)
+		actionH := taskInstanceActionHandler(deps.Stores.Tasks, deps.Stores.Logs, deps.Stores.Xcoms, deps.Stores.DagRuns, deps.Stores.DagVersions, deps.Stores.Specs)
 		r.GET("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/taskInstances/:task_id",
 			RequirePermission("read", "task_instance"), actionH)
 		r.GET("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/taskInstances/:task_id/*action",
 			RequirePermission("read", "task_instance"), actionH)
 		// Mark-success/failed: PATCH the task instance. The UI hits both the bare
 		// path and one carrying optional /{map_index} and /dry_run segments.
-		patchTI := patchTaskInstanceHandler(deps.Tasks, deps.DagRuns, deps.DagVersions, deps.Audit)
+		patchTI := patchTaskInstanceHandler(deps.Stores.Tasks, deps.Stores.DagRuns, deps.Stores.DagVersions, deps.Stores.Audit)
 		r.PATCH("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/taskInstances/:task_id", RequireScopedPermission("write", "task_instance", auth.ScopeRun), patchTI)
 		r.PATCH("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/taskInstances/:task_id/*action", RequireScopedPermission("write", "task_instance", auth.ScopeRun), patchTI)
 		r.POST("/api/v2/dags/:dag_id/clearTaskInstances",
-			RequireScopedPermission("write", "task_instance", auth.ScopeRun), clearTaskInstancesHandler(deps.Tasks, deps.DagRuns, deps.DagVersions, deps.Specs, deps.Audit))
-		if deps.DagRuns != nil {
+			RequireScopedPermission("write", "task_instance", auth.ScopeRun), clearTaskInstancesHandler(deps.Stores.Tasks, deps.Stores.DagRuns, deps.Stores.DagVersions, deps.Stores.Specs, deps.Stores.Audit))
+		if deps.Stores.DagRuns != nil {
 			r.POST("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/clear",
-				RequireScopedPermission("write", "task_instance", auth.ScopeRun), clearDagRunHandler(deps.Tasks, deps.DagRuns, deps.DagVersions, deps.Specs, deps.Audit))
+				RequireScopedPermission("write", "task_instance", auth.ScopeRun), clearDagRunHandler(deps.Stores.Tasks, deps.Stores.DagRuns, deps.Stores.DagVersions, deps.Stores.Specs, deps.Stores.Audit))
 		}
 	}
-	if deps.Versions != nil {
+	if deps.Stores.Versions != nil {
 		admission := specAdmission{
-			unit:            unitGate{deps.ResourceUnit, deps.UnitMisfits, deps.Logger},
-			digest:          digestGate{deps.RequireDigest, deps.UnpinnedImages, deps.Logger},
-			sourceModeImage: deps.SourceModeImage,
-			policy:          deps.ExecutionPolicy,
+			unit:            unitGate{deps.Execution.ResourceUnit, deps.Execution.UnitMisfits, deps.Observability.Logger},
+			digest:          digestGate{deps.Execution.RequireDigest, deps.Execution.UnpinnedImages, deps.Observability.Logger},
+			sourceModeImage: deps.Execution.SourceModeImage,
+			policy:          deps.Execution.ExecutionPolicy,
 		}
-		execution := executionReporter{policy: deps.WarmPolicy, pools: deps.WarmPools, absent: deps.WarmWorkersAbsent}
-		r.POST("/api/v2/dags/:dag_id/versions", RequireDeployPermission(deps.DeployViaIssuer), registerVersionHandler(deps.Versions, admission, execution))
+		execution := executionReporter{policy: deps.Execution.WarmPolicy, pools: deps.Execution.WarmPools, absent: deps.Execution.WarmWorkersAbsent}
+		r.POST("/api/v2/dags/:dag_id/versions", RequireDeployPermission(deps.Issuers.DeployViaIssuer), registerVersionHandler(deps.Stores.Versions, admission, execution))
 		// The dry run of a register (#1705): the same permission and scope,
 		// so it answers a deploy what the register would.
-		r.POST("/api/v2/dags/:dag_id/versions/dry_run", RequireDeployPermission(deps.DeployViaIssuer), dryRunVersionHandler(deps.Versions, admission, execution,
-			taskPodReporter{settings: deps.TaskPods, logger: deps.Logger}))
+		r.POST("/api/v2/dags/:dag_id/versions/dry_run", RequireDeployPermission(deps.Issuers.DeployViaIssuer), dryRunVersionHandler(deps.Stores.Versions, admission, execution,
+			taskPodReporter{settings: deps.Execution.TaskPods, logger: deps.Observability.Logger}))
 		// Making a registered version live again is a deploy decision: the same
 		// permission and scope as registering one (#1702).
-		r.PUT("/api/v2/dags/:dag_id/currentVersion", RequireDeployPermission(deps.DeployViaIssuer), setCurrentVersionHandler(deps.Versions, admission))
+		r.PUT("/api/v2/dags/:dag_id/currentVersion", RequireDeployPermission(deps.Issuers.DeployViaIssuer), setCurrentVersionHandler(deps.Stores.Versions, admission))
 	}
-	if deps.Xcoms != nil {
-		r.GET("/api/v2/xcoms/:dag_id/:dag_run_id/:task_id/:key", RequirePermission("read", "xcom"), xcomHandler(deps.Xcoms))
+	if deps.Stores.Xcoms != nil {
+		r.GET("/api/v2/xcoms/:dag_id/:dag_run_id/:task_id/:key", RequirePermission("read", "xcom"), xcomHandler(deps.Stores.Xcoms))
 	} else {
 		r.GET("/api/v2/xcoms/:dag_id/:dag_run_id/:task_id/:key", RequirePermission("read", "xcom"), stubHandler("XCom retrieval"))
 	}

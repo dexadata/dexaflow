@@ -18,6 +18,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/dexadata/dexaflow/internal/api"
+	"github.com/dexadata/dexaflow/internal/api/apitest"
 	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/domain"
@@ -77,10 +78,19 @@ func TestCIOIDCWiringFromConfigToSession(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	jwtAuthn := auth.NewJWTAuthenticator(nil, cfg.Auth.JWT.Secret, time.Hour)
 	deps := withCIOIDC(api.Dependencies{
-		Logger: logger, Authenticator: jwtAuthn, RateLimiter: auth.NewRateLimiter(5, time.Minute),
-		JWTSecret: cfg.Auth.JWT.Secret, DeployDefaults: domain.DeployDefaults{Registry: "ghcr.io/acme"},
+		Observability: api.ObservabilityDeps{
+			Logger: logger,
+		},
+		Auth: api.AuthDeps{
+			Authenticator: jwtAuthn,
+			RateLimiter:   auth.NewRateLimiter(5, time.Minute),
+			JWTSecret:     cfg.Auth.JWT.Secret,
+		},
+		Execution: api.ExecutionDeps{
+			DeployDefaults: domain.DeployDefaults{Registry: "ghcr.io/acme"},
+		},
 	}, cfg, ciRoles{}, nil)
-	srv := api.NewServer(deps)
+	srv := apitest.NewServer(deps)
 
 	now := time.Now()
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
@@ -122,7 +132,7 @@ func TestCIOIDCWiringFromConfigToSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u, err := deps.Authenticator.Authenticate(context.Background(), userTok); err != nil || u.TenantID != "acme" {
+	if u, err := deps.Auth.Authenticator.Authenticate(context.Background(), userTok); err != nil || u.TenantID != "acme" {
 		t.Errorf("a user token through the wrapped authenticator: %+v, %v", u, err)
 	}
 }
@@ -135,8 +145,8 @@ func TestCIOIDCWiringIsOffByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	authn := auth.NewJWTAuthenticator(nil, cfg.Auth.JWT.Secret, time.Hour)
-	deps := withCIOIDC(api.Dependencies{Authenticator: authn}, cfg, ciRoles{}, nil)
-	if deps.CIOIDC != nil || deps.CIOIDCRoles != nil || deps.Authenticator != auth.Authenticator(authn) {
+	deps := withCIOIDC(api.Dependencies{Auth: api.AuthDeps{Authenticator: authn}}, cfg, ciRoles{}, nil)
+	if deps.Issuers.CIOIDC != nil || deps.Issuers.CIOIDCRoles != nil || deps.Auth.Authenticator != auth.Authenticator(authn) {
 		t.Errorf("deps = %+v, want unchanged", deps)
 	}
 }

@@ -63,24 +63,32 @@ func newCrossTenantFixture(t *testing.T) crossTenantFixture {
 		}
 	}
 	server := func(tenant string) *gin.Engine {
-		return NewServer(Dependencies{
-			Logger:        discardLogger(),
-			Authenticator: &fakeAuthn{user: &auth.User{ID: "u-" + tenant, TenantID: tenant, Roles: []string{"admin"}}},
-			RateLimiter:   auth.NewRateLimiter(1000, time.Minute),
-			CORSOrigins:   []string{"*"},
-			TokenTTLSecs:  3600,
-			Edition:       "pro", // pools are mounted on Pro only
-			Dags:          repo,
-			DagRuns:       repo,
-			Tasks:         repo,
-			Versions:      repo,
-			Specs:         repo,
-			DagSources:    repo,
-			AuditLog:      repo,
-			Variables:     repo,
-			Connections:   repo,
-			Pools:         repo,
-			ImportErrors:  repo,
+		return newTestServer(Dependencies{
+			Observability: ObservabilityDeps{
+				Logger: discardLogger(),
+			},
+			Server: ServerDeps{
+				CORSOrigins: []string{"*"},
+				Edition:     "pro", // pools are mounted on Pro only
+			},
+			Auth: AuthDeps{
+				Authenticator: &fakeAuthn{user: &auth.User{ID: "u-" + tenant, TenantID: tenant, Roles: []string{"admin"}}},
+				RateLimiter:   auth.NewRateLimiter(1000, time.Minute),
+				TokenTTLSecs:  3600,
+			},
+			Stores: StoreDeps{
+				Dags:         repo,
+				DagRuns:      repo,
+				Tasks:        repo,
+				Versions:     repo,
+				Specs:        repo,
+				DagSources:   repo,
+				AuditLog:     repo,
+				Variables:    repo,
+				Connections:  repo,
+				Pools:        repo,
+				ImportErrors: repo,
+			},
 		})
 	}
 	f.a = server(f.tenantA)
