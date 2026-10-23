@@ -1084,3 +1084,26 @@ func TestValidateSessionCookieName(t *testing.T) {
 		})
 	}
 }
+
+// TestLoadServerTailReplayBudget pins #1621: logs.tail.replay_budget_bytes
+// defaults to 0 (no budget), binds from both prefixes, and refuses a negative
+// value at boot.
+func TestLoadServerTailReplayBudget(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil || c.Logs.Tail.ReplayBudgetBytes != 0 {
+		t.Fatalf("default replay budget = %d (%v), want 0", c.Logs.Tail.ReplayBudgetBytes, err)
+	}
+	t.Setenv("LEOFLOW_LOGS_TAIL_REPLAY_BUDGET_BYTES", "1048576")
+	if c, err = LoadServer("", nil); err != nil || c.Logs.Tail.ReplayBudgetBytes != 1<<20 {
+		t.Fatalf("LEOFLOW_ replay budget = %d (%v), want 1048576", c.Logs.Tail.ReplayBudgetBytes, err)
+	}
+	t.Setenv("DEXAFLOW_LOGS_TAIL_REPLAY_BUDGET_BYTES", "2097152")
+	if c, err = LoadServer("", nil); err != nil || c.Logs.Tail.ReplayBudgetBytes != 2<<20 {
+		t.Fatalf("DEXAFLOW_ replay budget = %d (%v), want 2097152 (new prefix wins)", c.Logs.Tail.ReplayBudgetBytes, err)
+	}
+	c.Auth.JWT.Secret = "set"
+	c.Logs.Tail.ReplayBudgetBytes = -1
+	if err := c.Validate(); err == nil {
+		t.Error("Validate() = nil with logs.tail.replay_budget_bytes -1, want error")
+	}
+}

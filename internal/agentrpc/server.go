@@ -160,6 +160,7 @@ type Server struct {
 	logs                 LogSink
 	tail                 LogPublisher
 	tailOnDemand         bool
+	tailBudget           *tailBudget
 	secrets              SecretsStore
 	secretAudit          SecretScopeAuditor
 	emptyScopeWarned     emptyScopeWarnings
@@ -280,9 +281,16 @@ func (s *Server) SetLogPublisher(p LogPublisher) { s.tail = p }
 // probe that found none (see tailGate).
 func (s *Server) SetTailPublishOnDemand(on bool) { s.tailOnDemand = on }
 
+// SetTailReplayBudget bounds what the on_demand gates of all streams hold for
+// replay together (logs.tail.replay_budget_bytes, see tailBudget); 0 bounds
+// nothing. meter, when set, receives the bytes held and the rings dropped.
+func (s *Server) SetTailReplayBudget(maxBytes int64, meter TailReplayMeter) {
+	s.tailBudget = newTailBudget(maxBytes, meter)
+}
+
 // tailGateFor builds the live-tail gate for one attempt's log stream.
 func (s *Server) tailGateFor(ref logs.Ref) *tailGate {
-	return newTailGate(s.tail, ref, time.Now, s.tailOnDemand)
+	return newTailGate(s.tail, ref, time.Now, s.tailOnDemand, s.tailBudget)
 }
 
 // Register acknowledges an agent's startup and returns the server clock.
@@ -621,6 +629,7 @@ func (s *Server) StreamLogs(stream agentv1.AgentService_StreamLogsServer) (err e
 	publish := func(string) {}
 	if s.tail != nil {
 		gate := s.tailGateFor(ref)
+		defer gate.close()
 		publish = func(line string) { gate.publish(stream.Context(), line) }
 	}
 	return writeLines(s.shutdown, w, stream.Recv, publish, attemptAttrs(id))
