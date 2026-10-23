@@ -258,7 +258,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{"reason"}),
 		RedisDialDuration: f.NewHistogram(prometheus.HistogramOpts{
 			Name:    "dexaflow_redis_dial_duration_seconds",
-			Help:    "Wall-clock time per Redis dial — TCP connect + (when rediss://) TLS handshake.",
+			Help:    "Wall-clock time per Redis dial: TCP connect plus, with rediss://, the TLS handshake.",
 			Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5},
 		}),
 		RedisPoolActive: f.NewGauge(prometheus.GaugeOpts{
@@ -276,7 +276,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 				"The listener keeps serving the last good certificate; alert on any increase (#637).",
 		}, []string{"listener"}),
 		RedisPoolTimeouts: f.NewCounter(prometheus.CounterOpts{
-			Name: "dexaflow_redis_pool_timeouts_total", Help: "Redis pool checkout timeouts — a caller waited PoolTimeout for an idle connection. A non-zero rate means the pool is too small or commands are too slow.",
+			Name: "dexaflow_redis_pool_timeouts_total", Help: "Redis pool checkout timeouts: a caller waited PoolTimeout for an idle connection. A non-zero rate means the pool is too small or commands are too slow.",
 		}),
 
 		LogTailReplayBytes: f.NewGauge(prometheus.GaugeOpts{
