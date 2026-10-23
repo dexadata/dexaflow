@@ -843,7 +843,8 @@ type Querier interface {
 	// scheduled->queued on next_dispatch_at alone, so setting it holds and re-offers
 	// the task without a counter bump. Guarded to 'scheduled' for the same reason as
 	// RecordDispatchFailure; try_number is untouched — this is infra, not a task
-	// failure.
+	// failure. The apiserver answered the create, so dispatch_unavailable_since is
+	// cleared as in RecordDispatchFailure.
 	RecordDispatchBackpressure(ctx context.Context, arg RecordDispatchBackpressureParams) error
 	// A synchronous dispatch attempt failed (ADR 0031 Amendment A). Increment the
 	// consecutive-failure counter and back off the next attempt to $3, so the planner
@@ -852,7 +853,9 @@ type Querier interface {
 	// a row that has since progressed. try_number is untouched: this is infra, not a
 	// task failure.
 	// last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
-	// ResetTaskInstanceToNone.
+	// ResetTaskInstanceToNone. The apiserver answered the create, so the outage
+	// window of ADR 0093 is closed: dispatch_unavailable_since is cleared, and a
+	// later unavailable failure starts a new window.
 	RecordDispatchFailure(ctx context.Context, arg RecordDispatchFailureParams) error
 	// A pod CREATE failed because the Kubernetes API was unavailable: a 503, a
 	// 504, a 500 (a fail-closed admission webhook that is down), a connection
@@ -977,7 +980,12 @@ type Querier interface {
 	// queued_at is cleared too, so the next queued episode stamps a fresh one:
 	// MarkTaskInstanceQueued only stamps a NULL queued_at, and a kept one would
 	// make the dispatch-lost reaper fail the re-offered task as soon as it is
-	// queued again.
+	// queued again. dispatch_unavailable_since is cleared when clear_unavailable
+	// is set, for a failure the apiserver answered (a rejection, backpressure), as
+	// in RecordDispatchFailure. It is kept for a failure that says nothing about
+	// the API (a buffer wait past its bound), so a saturated buffer during an
+	// outage cannot reset the window. It is not cleared when the row is marked
+	// queued either: a buffered row is queued before its create is sent.
 	RequeueDispatch(ctx context.Context, arg RequeueDispatchParams) (int64, error)
 	// Re-place a reclaimed warm assignment (ADR 0058 N1d-c, H2): a warm worker was
 	// handed this attempt but demonstrably will NOT run it (its stream ended holding
