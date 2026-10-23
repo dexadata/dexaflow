@@ -298,18 +298,24 @@ func oidcServer(t *testing.T, f *fakeIDP, cfg config.OIDCSection, store OIDCUser
 	if authn == nil {
 		authn = &fakeAuthn{}
 	}
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: authn,
-		RateLimiter:   auth.NewRateLimiter(50, time.Minute),
-		HealthChecks:  map[string]HealthChecker{},
-		CORSOrigins:   []string{"*"},
-		TokenTTLSecs:  3600,
-		OIDCFlow:      flow,
-		OIDCSettings:  cfg,
-		OIDCUsers:     store,
-		AuthAudit:     audit,
-		JWTSecret:     testHS256Secret,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger:       discardLogger(),
+			HealthChecks: map[string]HealthChecker{},
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: authn,
+			RateLimiter:   auth.NewRateLimiter(50, time.Minute),
+			TokenTTLSecs:  3600,
+			OIDCFlow:      flow,
+			OIDCSettings:  cfg,
+			OIDCUsers:     store,
+			AuthAudit:     audit,
+			JWTSecret:     testHS256Secret,
+		},
 	})
 }
 

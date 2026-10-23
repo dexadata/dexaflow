@@ -25,14 +25,22 @@ const hostCookie = "__Host-dexaflow"
 // credAuthn's password login mints "jwt", so the data plane is checked with
 // "good" and the login with its own cookie.
 func namedCookieServer(name string, authn auth.Authenticator) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:            discardLogger(),
-		Authenticator:     authn,
-		RateLimiter:       auth.NewRateLimiter(50, time.Minute),
-		CORSOrigins:       []string{"*"},
-		TokenTTLSecs:      3600,
-		UI:                ui.New(),
-		SessionCookieName: name,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator:     authn,
+			RateLimiter:       auth.NewRateLimiter(50, time.Minute),
+			TokenTTLSecs:      3600,
+			SessionCookieName: name,
+		},
+		UI: UIDeps{
+			SPA: ui.New(),
+		},
 	})
 }
 
@@ -109,15 +117,21 @@ func TestEmptyCookieNameKeepsToken(t *testing.T) {
 
 func TestIssuerHandoffSetsTheConfiguredCookieName(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	srv := NewServer(Dependencies{
-		Logger:               discardLogger(),
-		RateLimiter:          auth.NewRateLimiter(100, time.Minute),
-		JWTSecret:            "test-secret",
-		TokenTTLSecs:         900,
-		TrustedIssuer:        fakeTrustedIssuer{issuer.Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme"}},
-		TrustedIssuerUsers:   activeAcmeUser(),
-		TrustedIssuerOrigins: []string{"https://portal.example.com"},
-		SessionCookieName:    hostCookie,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			RateLimiter:       auth.NewRateLimiter(100, time.Minute),
+			JWTSecret:         "test-secret",
+			TokenTTLSecs:      900,
+			SessionCookieName: hostCookie,
+		},
+		Issuers: IssuerDeps{
+			TrustedIssuer:        fakeTrustedIssuer{issuer.Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme"}},
+			TrustedIssuerUsers:   activeAcmeUser(),
+			TrustedIssuerOrigins: []string{"https://portal.example.com"},
+		},
 	})
 	rec := postSession(srv, url.Values{"token": {"good"}, "next": {"/"}})
 	if rec.Code != http.StatusSeeOther {

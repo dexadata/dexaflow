@@ -54,7 +54,7 @@ var apiTokensPageCSP = "default-src 'none'; script-src " + apiTokensScriptHash +
 // session, which is sent to the sign-in page and back to the framed screen,
 // and a session the store could not check gets the outage page (#1099).
 func registerAPITokensPage(r gin.IRouter, deps Dependencies, hosts *hostBinding) {
-	if deps.APITokens == nil {
+	if deps.Stores.APITokens == nil {
 		return
 	}
 	r.GET(apiTokensPagePath, apiTokensPageHandler(deps, hosts))
@@ -63,8 +63,8 @@ func registerAPITokensPage(r gin.IRouter, deps Dependencies, hosts *hostBinding)
 func apiTokensPageHandler(deps Dependencies, hosts *hostBinding) gin.HandlerFunc {
 	session := deps.sessionCookie()
 	return func(c *gin.Context) {
-		if !deps.DevNoAuth {
-			if verdict := shellSession(c, deps.Authenticator, session.cookieName(), hosts); verdict != shellVerified {
+		if !deps.Auth.DevNoAuth {
+			if verdict := shellSession(c, deps.Auth.Authenticator, session.cookieName(), hosts); verdict != shellVerified {
 				refuseShell(c, verdict, session, hosts, apiTokensSPARoute)
 				return
 			}

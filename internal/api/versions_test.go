@@ -78,12 +78,20 @@ func (f *fakeVersionRepo) SetCurrentDagVersionAs(_ context.Context, tenant strin
 }
 
 func versionServer(repo DagVersionRepository) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Versions:      repo,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Versions: repo,
+		},
 	})
 }
 
@@ -167,13 +175,23 @@ func TestRegisterVersionRejectsATaskLargerThanItsSize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Versions:      &fakeVersionRepo{created: true},
-		ResourceUnit:  unit,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Execution: ExecutionDeps{
+			ResourceUnit: unit,
+		},
+		Stores: StoreDeps{
+			Versions: &fakeVersionRepo{created: true},
+		},
 	})
 	big := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
 		`{"task_id":"train","type":"python","entrypoint":"dag:a","resources":{"limits":{"cpu":"2"}}}]}`
@@ -203,14 +221,24 @@ func TestRegisterVersionWarnAcceptsAMisfitAndCountsIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	misfits := &fakeUnitMisfits{}
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Versions:      &fakeVersionRepo{created: true},
-		ResourceUnit:  unit,
-		UnitMisfits:   misfits,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Execution: ExecutionDeps{
+			ResourceUnit: unit,
+			UnitMisfits:  misfits,
+		},
+		Stores: StoreDeps{
+			Versions: &fakeVersionRepo{created: true},
+		},
 	})
 	big := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
 		`{"task_id":"train","type":"python","entrypoint":"dag:a","resources":{"limits":{"cpu":"2"}}}]}`
@@ -241,13 +269,23 @@ func TestRegisterVersionChecksSourceMode(t *testing.T) {
 		return string(b)
 	}
 	server := func(mode string) *gin.Engine {
-		return NewServer(Dependencies{
-			Logger:          discardLogger(),
-			Authenticator:   &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-			RateLimiter:     auth.NewRateLimiter(100, time.Minute),
-			CORSOrigins:     []string{"*"},
-			Versions:        &fakeVersionRepo{created: true},
-			SourceModeImage: mode,
+		return newTestServer(Dependencies{
+			Observability: ObservabilityDeps{
+				Logger: discardLogger(),
+			},
+			Server: ServerDeps{
+				CORSOrigins: []string{"*"},
+			},
+			Auth: AuthDeps{
+				Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+				RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			},
+			Execution: ExecutionDeps{
+				SourceModeImage: mode,
+			},
+			Stores: StoreDeps{
+				Versions: &fakeVersionRepo{created: true},
+			},
 		})
 	}
 	oversize := strings.Repeat("x", domain.MaxSourceModeBytes+1)
@@ -282,13 +320,23 @@ func TestRegisterVersionRejectsAnExecutionFieldOutsideTheAllowlist(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := NewServer(Dependencies{
-		Logger:          discardLogger(),
-		Authenticator:   &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:     auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:     []string{"*"},
-		Versions:        &fakeVersionRepo{created: true},
-		ExecutionPolicy: policy,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Execution: ExecutionDeps{
+			ExecutionPolicy: policy,
+		},
+		Stores: StoreDeps{
+			Versions: &fakeVersionRepo{created: true},
+		},
 	})
 	for want, execution := range map[string]string{
 		"execution.affinity":      `{"affinity":{"nodeAffinity":{}}}`,
@@ -317,13 +365,23 @@ func TestRegisterVersionRejectsAnImageOrServiceAccountOutsideTheAllowlist(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := NewServer(Dependencies{
-		Logger:          discardLogger(),
-		Authenticator:   &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:     auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:     []string{"*"},
-		Versions:        &fakeVersionRepo{created: true},
-		ExecutionPolicy: policy,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Execution: ExecutionDeps{
+			ExecutionPolicy: policy,
+		},
+		Stores: StoreDeps{
+			Versions: &fakeVersionRepo{created: true},
+		},
 	})
 	cases := map[string]string{
 		"img:v1": `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
@@ -438,13 +496,21 @@ func TestRegisterVersionIsPausedNeedsTheRunScope(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &fakeVersionRepo{created: true}
-			srv := NewServer(Dependencies{
-				Logger: discardLogger(),
-				Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"},
-					Scoped: true, Scopes: tc.scopes}},
-				RateLimiter: auth.NewRateLimiter(100, time.Minute),
-				CORSOrigins: []string{"*"},
-				Versions:    repo,
+			srv := newTestServer(Dependencies{
+				Observability: ObservabilityDeps{
+					Logger: discardLogger(),
+				},
+				Server: ServerDeps{
+					CORSOrigins: []string{"*"},
+				},
+				Auth: AuthDeps{
+					Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"},
+						Scoped: true, Scopes: tc.scopes}},
+					RateLimiter: auth.NewRateLimiter(100, time.Minute),
+				},
+				Stores: StoreDeps{
+					Versions: repo,
+				},
 			})
 			rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/versions"+tc.query, validSpecJSON)
 			if rec.Code != tc.wantCode {
@@ -561,13 +627,23 @@ func TestSetCurrentVersionAppliesTheRegisterChecks(t *testing.T) {
 		SchemaVersion: "1.0", DagID: "etl", DagVersion: "v1", Image: "img@sha256:aa",
 		Tasks: []domain.TaskSpec{{TaskID: "a", Type: "python", Entrypoint: "dag:a"}},
 	}}}
-	srv := NewServer(Dependencies{
-		Logger:          discardLogger(),
-		Authenticator:   &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:     auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:     []string{"*"},
-		Versions:        repo,
-		ExecutionPolicy: policy,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Execution: ExecutionDeps{
+			ExecutionPolicy: policy,
+		},
+		Stores: StoreDeps{
+			Versions: repo,
+		},
 	})
 	rec := authGet(srv, http.MethodPut, "/api/v2/dags/etl/currentVersion", `{"version":"v1"}`)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "img@sha256:aa") {
@@ -582,13 +658,21 @@ func TestSetCurrentVersionAppliesTheRegisterChecks(t *testing.T) {
 // change which version is live.
 func TestSetCurrentVersionNeedsWriteOnDags(t *testing.T) {
 	repo := &fakeVersionRepo{change: rollbackChange()}
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u2", TenantID: "default",
-			Permissions: []auth.Permission{{Action: "read", Resource: "dag"}}}},
-		RateLimiter: auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins: []string{"*"},
-		Versions:    repo,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u2", TenantID: "default",
+				Permissions: []auth.Permission{{Action: "read", Resource: "dag"}}}},
+			RateLimiter: auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Versions: repo,
+		},
 	})
 	rec := authGet(srv, http.MethodPut, "/api/v2/dags/etl/currentVersion", `{"version":"v1"}`)
 	if rec.Code != http.StatusForbidden {
@@ -615,14 +699,24 @@ func TestSetCurrentVersionCountsAMisfitAtItsOwnStage(t *testing.T) {
 		Tasks: []domain.TaskSpec{{TaskID: "train", Type: "python", Entrypoint: "dag:a",
 			Resources: &domain.Resources{Limits: &domain.ResourceQuantity{CPU: "2"}}}},
 	}}}
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Versions:      repo,
-		ResourceUnit:  unit,
-		UnitMisfits:   misfits,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Execution: ExecutionDeps{
+			ResourceUnit: unit,
+			UnitMisfits:  misfits,
+		},
+		Stores: StoreDeps{
+			Versions: repo,
+		},
 	})
 	if rec := authGet(srv, http.MethodPut, "/api/v2/dags/etl/currentVersion", `{"version":"v1"}`); rec.Code != http.StatusOK {
 		t.Fatalf("set current = %d %s", rec.Code, rec.Body.String())
@@ -649,12 +743,20 @@ func TestRegisterVersionIsPausedNeedsWriteOnDags(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &fakeVersionRepo{created: true}
-			srv := NewServer(Dependencies{
-				Logger:        discardLogger(),
-				Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Permissions: tc.perms}},
-				RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-				CORSOrigins:   []string{"*"},
-				Versions:      repo,
+			srv := newTestServer(Dependencies{
+				Observability: ObservabilityDeps{
+					Logger: discardLogger(),
+				},
+				Server: ServerDeps{
+					CORSOrigins: []string{"*"},
+				},
+				Auth: AuthDeps{
+					Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Permissions: tc.perms}},
+					RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+				},
+				Stores: StoreDeps{
+					Versions: repo,
+				},
 			})
 			rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/versions"+tc.query, validSpecJSON)
 			if rec.Code != tc.wantCode {

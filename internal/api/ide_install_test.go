@@ -32,13 +32,21 @@ func mockExamplesFS() fs.FS {
 // ideServerWithExamples wires the IDE routes including the install endpoint,
 // so the test can POST to /api/v2/ide/examples/install.
 func ideServerWithExamples(store WorkspaceFS, examples fs.FS) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Workspace:     store,
-		ExamplesFS:    examples,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		UI: UIDeps{
+			Workspace:  store,
+			ExamplesFS: examples,
+		},
 	})
 }
 

@@ -41,12 +41,20 @@ func (outageAuthn) Authenticate(_ context.Context, token string) (*auth.User, er
 }
 
 func shellOutageServer() *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: outageAuthn{},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		UI:            ui.New(),
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: outageAuthn{},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		UI: UIDeps{
+			SPA: ui.New(),
+		},
 	})
 }
 
@@ -164,13 +172,23 @@ func TestShellGateDuringAStoreOutage(t *testing.T) {
 // tenant the session belongs to.
 func TestShellOutagePageWithHostBinding(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	srv := NewServer(Dependencies{
-		Logger:                   discardLogger(),
-		Authenticator:            outageAuthn{},
-		RateLimiter:              auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:              []string{"*"},
-		UI:                       ui.New(),
-		TrustedIssuerHostPattern: tenantHostPattern,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: outageAuthn{},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Issuers: IssuerDeps{
+			TrustedIssuerHostPattern: tenantHostPattern,
+		},
+		UI: UIDeps{
+			SPA: ui.New(),
+		},
 	})
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/dags", http.NoBody)
 	req.Host = "acme.example.com"
@@ -191,11 +209,17 @@ func TestShellOutagePageWithHostBinding(t *testing.T) {
 // that could not be checked, the sign-in redirect for none.
 func TestAPITokensPageDuringAStoreOutage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: outageAuthn{},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		APITokens:     &fakeAPITokens{},
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			Authenticator: outageAuthn{},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			APITokens: &fakeAPITokens{},
+		},
 	})
 
 	rec := pageGet(t, srv, apiTokensPagePath, "down")

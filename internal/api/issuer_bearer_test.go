@@ -65,18 +65,26 @@ func newBearerFixture(t *testing.T, users *fakeIssuerUsers, withIssuer bool) *be
 	gin.SetMode(gin.TestMode)
 	f := &bearerFixture{issuer: &fakeBearerIssuer{}, users: users, audit: &fakeAuthAudit{}, dags: &tenantDagRepo{}}
 	deps := Dependencies{
-		Logger:             discardLogger(),
-		Authenticator:      &fakeAuthn{authErr: auth.ErrInvalidToken},
-		RateLimiter:        auth.NewRateLimiter(5, time.Minute),
-		TokenTTLSecs:       900,
-		Dags:               f.dags,
-		TrustedIssuerUsers: users,
-		AuthAudit:          f.audit,
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{authErr: auth.ErrInvalidToken},
+			RateLimiter:   auth.NewRateLimiter(5, time.Minute),
+			TokenTTLSecs:  900,
+			AuthAudit:     f.audit,
+		},
+		Issuers: IssuerDeps{
+			TrustedIssuerUsers: users,
+		},
+		Stores: StoreDeps{
+			Dags: f.dags,
+		},
 	}
 	if withIssuer {
-		deps.TrustedIssuerBearer = f.issuer
+		deps.Issuers.TrustedIssuerBearer = f.issuer
 	}
-	f.srv = NewServer(deps)
+	f.srv = newTestServer(deps)
 	return f
 }
 
@@ -215,13 +223,21 @@ func TestIssuerKeyOutageIs503(t *testing.T) {
 func TestEngineOutageDoesNotFallBackToTheIssuer(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	bearer := &fakeBearerIssuer{}
-	srv := NewServer(Dependencies{
-		Logger:              discardLogger(),
-		Authenticator:       &fakeAuthn{authErr: errors.New("database unreachable")},
-		RateLimiter:         auth.NewRateLimiter(5, time.Minute),
-		Dags:                &tenantDagRepo{},
-		TrustedIssuerBearer: bearer,
-		TrustedIssuerUsers:  &fakeIssuerUsers{user: linkedReader(), active: true},
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{authErr: errors.New("database unreachable")},
+			RateLimiter:   auth.NewRateLimiter(5, time.Minute),
+		},
+		Issuers: IssuerDeps{
+			TrustedIssuerBearer: bearer,
+			TrustedIssuerUsers:  &fakeIssuerUsers{user: linkedReader(), active: true},
+		},
+		Stores: StoreDeps{
+			Dags: &tenantDagRepo{},
+		},
 	})
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v2/dags", http.NoBody)
 	req.Header.Set("Authorization", "Bearer good")
@@ -281,13 +297,21 @@ func TestEngineTokenNeverReachesTheIssuer(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	bearer := &fakeBearerIssuer{}
 	dags := &tenantDagRepo{}
-	srv := NewServer(Dependencies{
-		Logger:              discardLogger(),
-		Authenticator:       &fakeAuthn{user: &auth.User{ID: "u-9", TenantID: "initech", Roles: []string{"admin"}}},
-		RateLimiter:         auth.NewRateLimiter(5, time.Minute),
-		Dags:                dags,
-		TrustedIssuerBearer: bearer,
-		TrustedIssuerUsers:  &fakeIssuerUsers{},
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u-9", TenantID: "initech", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(5, time.Minute),
+		},
+		Issuers: IssuerDeps{
+			TrustedIssuerBearer: bearer,
+			TrustedIssuerUsers:  &fakeIssuerUsers{},
+		},
+		Stores: StoreDeps{
+			Dags: dags,
+		},
 	})
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v2/dags", http.NoBody)
 	req.Header.Set("Authorization", "Bearer engine-token")

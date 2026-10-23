@@ -20,6 +20,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/dexadata/dexaflow/internal/api"
+	"github.com/dexadata/dexaflow/internal/api/apitest"
 	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/domain"
@@ -101,20 +102,26 @@ func newIsolationFixture(t *testing.T) *isolationFixture {
 	}
 
 	authn := auth.NewJWTAuthenticator(repo, isolationSecret, time.Hour)
-	apiSrv := httptest.NewServer(api.NewServer(api.Dependencies{
-		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Authenticator: authn,
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		TokenTTLSecs:  3600,
-		HealthChecks:  map[string]api.HealthChecker{},
-		Dags:          repo,
-		DagRuns:       repo,
-		Tasks:         repo,
-		Versions:      repo,
-		Specs:         repo,
-		DagSources:    repo,
-		DagVersions:   repo,
-		Logs:          storage.NewLogReader(pg, sink, nil),
+	apiSrv := httptest.NewServer(apitest.NewServer(api.Dependencies{
+		Observability: api.ObservabilityDeps{
+			Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+			HealthChecks: map[string]api.HealthChecker{},
+		},
+		Auth: api.AuthDeps{
+			Authenticator: authn,
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: api.StoreDeps{
+			Dags:        repo,
+			DagRuns:     repo,
+			Tasks:       repo,
+			Versions:    repo,
+			Specs:       repo,
+			DagSources:  repo,
+			DagVersions: repo,
+			Logs:        storage.NewLogReader(pg, sink, nil),
+		},
 	}))
 	t.Cleanup(apiSrv.Close)
 

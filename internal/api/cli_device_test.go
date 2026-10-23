@@ -189,20 +189,26 @@ func deviceServer(t *testing.T, f *fakeIDP, cfg config.OIDCSection, users OIDCUs
 	if logger == nil {
 		logger = discardLogger()
 	}
-	return NewServer(Dependencies{
-		Logger:        logger,
-		Authenticator: &fakeAuthn{},
-		RateLimiter:   auth.NewRateLimiter(50, time.Minute),
-		HealthChecks:  map[string]HealthChecker{},
-		CORSOrigins:   []string{"*"},
-		TokenTTLSecs:  3600,
-		OIDCFlow:      flow,
-		OIDCEnabled:   true,
-		OIDCSettings:  cfg,
-		OIDCUsers:     users,
-		AuthAudit:     audit,
-		JWTSecret:     testHS256Secret,
-		CLIDevices:    devices,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger:       logger,
+			HealthChecks: map[string]HealthChecker{},
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{},
+			RateLimiter:   auth.NewRateLimiter(50, time.Minute),
+			TokenTTLSecs:  3600,
+			OIDCFlow:      flow,
+			OIDCEnabled:   true,
+			OIDCSettings:  cfg,
+			OIDCUsers:     users,
+			AuthAudit:     audit,
+			JWTSecret:     testHS256Secret,
+			CLIDevices:    devices,
+		},
 	})
 }
 

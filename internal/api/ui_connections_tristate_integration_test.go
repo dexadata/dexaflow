@@ -44,14 +44,22 @@ func tristateServer(t *testing.T) (srv *gin.Engine, repo *storage.Repository, ct
 		t.Fatal(err)
 	}
 	repo = storage.NewRepository(pg, storage.WithCipher(cipher))
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(1000, time.Minute),
-		CORSOrigins:   []string{"*"},
-		TokenTTLSecs:  3600,
-		Connections:   repo,
-		Variables:     repo,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(1000, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			Connections: repo,
+			Variables:   repo,
+		},
 	}), repo, ctx
 }
 

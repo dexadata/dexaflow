@@ -43,13 +43,21 @@ func (f *fakeLogReader) Tail(context.Context, string, string, string, string, in
 }
 
 func logsServer(reader LogReader) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Tasks:         &fakeTaskRepo{},
-		Logs:          reader,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Tasks: &fakeTaskRepo{},
+			Logs:  reader,
+		},
 	})
 }
 
@@ -283,13 +291,21 @@ func TestLogsReadBadTryNumber(t *testing.T) {
 // logsServerWithTasks builds a logs-serving engine over a task repository, so the
 // no-logs path can consult the attempt's recorded failure reason.
 func logsServerWithTasks(reader LogReader, tasks TaskInstanceRepository) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Tasks:         tasks,
-		Logs:          reader,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Tasks: tasks,
+			Logs:  reader,
+		},
 	})
 }
 

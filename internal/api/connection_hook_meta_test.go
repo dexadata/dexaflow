@@ -12,11 +12,17 @@ import (
 // The connection-type catalog must render so the Add/Edit form is not empty: it
 // drives every standard field. Regression for the "edit shows empty" bug.
 func TestConnectionHookMeta(t *testing.T) {
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
 	})
 	rec := authGet(srv, http.MethodGet, "/ui/connections/hook_meta", "")
 	if rec.Code != http.StatusOK {
@@ -54,11 +60,17 @@ func TestConnectionHookMeta(t *testing.T) {
 // `type` drives the input) and a `value`. (The visual render of these inputs is
 // the one thing only a browser confirms; this guards everything up to the SPA.)
 func TestConnectionHookMetaExtraFieldsFlexibleFormShape(t *testing.T) {
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
 	})
 	rec := authGet(srv, http.MethodGet, "/ui/connections/hook_meta", "")
 	var meta []map[string]any

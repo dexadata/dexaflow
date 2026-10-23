@@ -22,18 +22,26 @@ import (
 // promoteServerAs is the API over a real repository for a caller of tenant.
 func promoteServerAs(t *testing.T, repo *storage.Repository, tenant string) *gin.Engine {
 	t.Helper()
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: tenant, Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		TokenTTLSecs:  3600,
-		Dags:          repo,
-		Versions:      repo,
-		Specs:         repo,
-		DagVersions:   repo,
-		DagSources:    repo,
-		Audit:         repo,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: tenant, Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			Dags:        repo,
+			Versions:    repo,
+			Specs:       repo,
+			DagVersions: repo,
+			DagSources:  repo,
+			Audit:       repo,
+		},
 	})
 }
 

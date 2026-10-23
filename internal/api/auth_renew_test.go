@@ -36,15 +36,21 @@ func (f *fakeRenewer) RenewUserToken(ctx context.Context, token string, ttl, max
 }
 
 func renewServer(r TokenRenewer) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:               discardLogger(),
-		Authenticator:        &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:          auth.NewRateLimiter(5, time.Minute),
-		HealthChecks:         map[string]HealthChecker{},
-		CORSOrigins:          []string{"*"},
-		TokenTTLSecs:         3600,
-		TokenRenewer:         r,
-		TokenMaxLifetimeSecs: 86400,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger:       discardLogger(),
+			HealthChecks: map[string]HealthChecker{},
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator:        &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:          auth.NewRateLimiter(5, time.Minute),
+			TokenTTLSecs:         3600,
+			TokenRenewer:         r,
+			TokenMaxLifetimeSecs: 86400,
+		},
 	})
 }
 
@@ -125,15 +131,21 @@ func TestRenewTokenDuringAnOutageIsNot401(t *testing.T) {
 	dbDown := errors.New("failed to connect to `user=leoflow database=leoflow`: dial tcp 10.0.0.1:5432: i/o timeout")
 
 	var logBuf bytes.Buffer
-	srv := NewServer(Dependencies{
-		Logger:               slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})),
-		Authenticator:        &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:          auth.NewRateLimiter(5, time.Minute),
-		HealthChecks:         map[string]HealthChecker{},
-		CORSOrigins:          []string{"*"},
-		TokenTTLSecs:         3600,
-		TokenRenewer:         &fakeRenewer{err: dbDown},
-		TokenMaxLifetimeSecs: 86400,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger:       slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})),
+			HealthChecks: map[string]HealthChecker{},
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator:        &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:          auth.NewRateLimiter(5, time.Minute),
+			TokenTTLSecs:         3600,
+			TokenRenewer:         &fakeRenewer{err: dbDown},
+			TokenMaxLifetimeSecs: 86400,
+		},
 	})
 	rec := postRenew(srv, "still-valid-token")
 
@@ -177,15 +189,21 @@ func TestRenewIsRateLimitedPerIP(t *testing.T) {
 // address out of password login (and everyone behind the same proxy).
 func TestRenewTrafficDoesNotSpendTheLoginBudget(t *testing.T) {
 	login := auth.NewRateLimiter(5, time.Minute)
-	srv := NewServer(Dependencies{
-		Logger:               discardLogger(),
-		Authenticator:        &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:          login,
-		HealthChecks:         map[string]HealthChecker{},
-		CORSOrigins:          []string{"*"},
-		TokenTTLSecs:         3600,
-		TokenRenewer:         &fakeRenewer{renewed: "new-token", ok: true},
-		TokenMaxLifetimeSecs: 86400,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger:       discardLogger(),
+			HealthChecks: map[string]HealthChecker{},
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator:        &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:          login,
+			TokenTTLSecs:         3600,
+			TokenRenewer:         &fakeRenewer{renewed: "new-token", ok: true},
+			TokenMaxLifetimeSecs: 86400,
+		},
 	})
 	for i := 0; i < renewRateLimitPerMinute+5; i++ {
 		postRenew(srv, "current-token")

@@ -179,12 +179,20 @@ func (f *fakeTaskRepo) SetTaskInstanceState(_ context.Context, _, _, _, taskID, 
 }
 
 func dagOnlyServer(repo DagRepository) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Dags:          repo,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Dags: repo,
+		},
 	})
 }
 
@@ -198,10 +206,22 @@ func TestClearIncludePastFutureFansAcrossRuns(t *testing.T) {
 	// fakeTaskRepo returns its single TI for any run, so the affected count equals
 	// the number of target runs the clear fans out to.
 	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", State: domain.TaskStateFailed}}}
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
-		Tasks: tasks, DagRuns: runs,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			Tasks:   tasks,
+			DagRuns: runs,
+		},
 	})
 	count := func(extra string) int {
 		body := `{"dag_run_id":"cur","task_ids":["extract"],"dry_run":true` + extra + `}`
@@ -330,10 +350,21 @@ func TestExpandTaskIDs(t *testing.T) {
 
 func TestMarkDagRunState(t *testing.T) {
 	runs := &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1", State: domain.DagRunStateRunning}}}
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
-		DagRuns: runs,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			DagRuns: runs,
+		},
 	})
 	rec := authGet(srv, http.MethodPatch, "/api/v2/dags/etl/dagRuns/r1", `{"state":"failed"}`)
 	if rec.Code != http.StatusOK {
@@ -355,10 +386,22 @@ func TestMarkDagRunState(t *testing.T) {
 func TestMarkDagRunStateRunningQueuesTheRun(t *testing.T) {
 	runs := &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1", State: domain.DagRunStateSuccess}}}
 	audit := &fakeAuditWriter{}
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
-		DagRuns: runs, Audit: audit,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			DagRuns: runs,
+			Audit:   audit,
+		},
 	})
 	rec := authGet(srv, http.MethodPatch, "/api/v2/dags/etl/dagRuns/r1", `{"state":"running"}`)
 	if rec.Code != http.StatusOK {
@@ -382,10 +425,22 @@ func TestMarkDagRunStateRunningOnRunningRunIsANoOp(t *testing.T) {
 	started := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	runs := &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1", State: domain.DagRunStateRunning, StartedAt: &started}}}
 	audit := &fakeAuditWriter{}
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
-		DagRuns: runs, Audit: audit,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			DagRuns: runs,
+			Audit:   audit,
+		},
 	})
 	rec := authGet(srv, http.MethodPatch, "/api/v2/dags/etl/dagRuns/r1", `{"state":"running"}`)
 	if rec.Code != http.StatusOK {
@@ -406,10 +461,22 @@ func TestMarkDagRunStateRunningOnRunningRunIsANoOp(t *testing.T) {
 
 func TestMarkTaskInstanceState(t *testing.T) {
 	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", RunID: "r1", State: domain.TaskStateFailed, MapIndex: -1}}}
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
-		Tasks: tasks, DagRuns: &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1"}}},
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			Tasks:   tasks,
+			DagRuns: &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1"}}},
+		},
 	})
 	// Real PATCH applies the state.
 	rec := authGet(srv, http.MethodPatch, "/api/v2/dags/etl/dagRuns/r1/taskInstances/extract/-1", `{"new_state":"success"}`)
@@ -473,10 +540,22 @@ func TestClearTaskInstancesDryRun(t *testing.T) {
 		{TaskID: "extract", RunID: "r1", State: domain.TaskStateFailed},
 		{TaskID: "load", RunID: "r1", State: domain.TaskStateSuccess},
 	}}
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
-		Tasks: tasks, DagRuns: &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1"}}},
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			Tasks:   tasks,
+			DagRuns: &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1"}}},
+		},
 	})
 	rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/clearTaskInstances", `{"dag_run_id":"r1","only_failed":true,"dry_run":true}`)
 	if rec.Code != http.StatusOK {
@@ -498,15 +577,23 @@ func TestClearTaskInstancesDryRun(t *testing.T) {
 func authedServer() *gin.Engine {
 	admin := &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}
 	sched := "0 5 * * *"
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: admin},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		TokenTTLSecs:  3600,
-		Dags:          &fakeDagRepo{dags: []domain.DAG{{DagID: "etl", Owner: "data", Schedule: &sched, Tags: []string{"x"}}}},
-		DagRuns:       &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1", State: domain.DagRunStateQueued}}},
-		Tasks:         &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", RunID: "r1", State: domain.TaskStateQueued}}},
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: admin},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			Dags:    &fakeDagRepo{dags: []domain.DAG{{DagID: "etl", Owner: "data", Schedule: &sched, Tags: []string{"x"}}}},
+			DagRuns: &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1", State: domain.DagRunStateQueued}}},
+			Tasks:   &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", RunID: "r1", State: domain.TaskStateQueued}}},
+		},
 	})
 }
 
@@ -527,10 +614,21 @@ func authGet(srv *gin.Engine, method, path, body string) *httptest.ResponseRecor
 func TestDeleteDagRun(t *testing.T) {
 	admin := &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}
 	runs := &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1", State: domain.DagRunStateSuccess}}}
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: &fakeAuthn{user: admin},
-		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
-		DagRuns: runs,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: admin},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			DagRuns: runs,
+		},
 	})
 	// The UI's "delete run" must succeed (204), not 404 as "API route not found".
 	rec := authGet(srv, http.MethodDelete, "/api/v2/dags/etl/dagRuns/r1", "")
@@ -550,14 +648,25 @@ func TestListDagRunsStateFilter(t *testing.T) {
 	// The "failed runs" widget filters with ?state=failed; the handler must honor
 	// it (it previously ignored the filter and returned every run).
 	admin := &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: &fakeAuthn{user: admin},
-		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
-		DagRuns: &fakeRunRepo{runs: []domain.DagRun{
-			{DagID: "etl", RunID: "r1", State: domain.DagRunStateSuccess},
-			{DagID: "etl", RunID: "r2", State: domain.DagRunStateFailed},
-			{DagID: "etl", RunID: "r3", State: domain.DagRunStateSuccess},
-		}},
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: admin},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			DagRuns: &fakeRunRepo{runs: []domain.DagRun{
+				{DagID: "etl", RunID: "r1", State: domain.DagRunStateSuccess},
+				{DagID: "etl", RunID: "r2", State: domain.DagRunStateFailed},
+				{DagID: "etl", RunID: "r3", State: domain.DagRunStateSuccess},
+			}},
+		},
 	})
 	decode := func(rec *httptest.ResponseRecorder) int {
 		var got struct {
@@ -836,12 +945,20 @@ func TestHandleRepoErrorClientCancel(t *testing.T) {
 func TestClearOnlyFailedForwarded(t *testing.T) {
 	admin := &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}
 	repo := &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", RunID: "r1", State: domain.TaskStateFailed, MapIndex: -1}}}
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: admin},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Tasks:         repo,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: admin},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Tasks: repo,
+		},
 	})
 
 	// dry_run is explicit here because an omitted one previews (#1137), and a
@@ -880,12 +997,20 @@ func TestXComStub(t *testing.T) {
 
 func TestListDagsLinkHeader(t *testing.T) {
 	admin := &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: admin},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Dags:          &fakeDagRepo{dags: []domain.DAG{{DagID: "a"}, {DagID: "b"}}},
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: admin},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Dags: &fakeDagRepo{dags: []domain.DAG{{DagID: "a"}, {DagID: "b"}}},
+		},
 	})
 	rec := authGet(srv, http.MethodGet, "/api/v2/dags?limit=1&offset=0", "")
 	if link := rec.Header().Get("Link"); !strings.Contains(link, `rel="next"`) {
@@ -963,10 +1088,22 @@ func clearSrv(t *testing.T) (*gin.Engine, *fakeTaskRepo) {
 	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{
 		{TaskID: "extract", RunID: "r1", State: domain.TaskStateFailed},
 	}}
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
-		Tasks: tasks, DagRuns: &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1"}}},
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			Tasks:   tasks,
+			DagRuns: &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1"}}},
+		},
 	})
 	return srv, tasks
 }
@@ -1104,16 +1241,28 @@ func TestTaskInstanceDagVersionCarriesTheRunsPinnedLabel(t *testing.T) {
 	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{
 		{TaskID: "extract", RunID: "r1", State: domain.TaskStateFailed},
 	}}
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
-		Tasks: tasks, DagRuns: runs,
-		DagVersions: &fakeVersionLister{versions: []domain.DagVersion{
-			// The DAG's latest is deliberately different from the run's pinned
-			// label: if the DTO followed this instead, the two would match and the
-			// dialog would hide the control.
-			{ID: "v-uuid", VersionNumber: 2, CreatedAt: time.Now().UTC(), Version: "v2-latest"},
-		}},
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			Tasks:   tasks,
+			DagRuns: runs,
+			DagVersions: &fakeVersionLister{versions: []domain.DagVersion{
+				// The DAG's latest is deliberately different from the run's pinned
+				// label: if the DTO followed this instead, the two would match and the
+				// dialog would hide the control.
+				{ID: "v-uuid", VersionNumber: 2, CreatedAt: time.Now().UTC(), Version: "v2-latest"},
+			}},
+		},
 	})
 	rec := authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns/r1/taskInstances", "")
 	if rec.Code != http.StatusOK {
@@ -1176,14 +1325,26 @@ func TestTaskInstanceDagVersionIsTheRunsVersion(t *testing.T) {
 	at := time.Date(2026, 10, 14, 0, 41, 33, 0, time.UTC)
 	runs := &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1", Version: "label-1"}}}
 	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", RunID: "r1", State: domain.TaskStateFailed, MapIndex: -1}}}
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
-		Tasks: tasks, DagRuns: runs,
-		DagVersions: &fakeVersionLister{versions: []domain.DagVersion{
-			{ID: "id-2", VersionNumber: 2, Version: "label-2", CreatedAt: at.Add(time.Minute), ImageReference: "img@sha256:bb", SpecHash: "h2"},
-			{ID: "id-1", VersionNumber: 1, Version: "label-1", CreatedAt: at, ImageReference: "img@sha256:aa", SpecHash: "h1", IsCurrent: true, CreatedBy: "7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a"},
-		}},
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			Tasks:   tasks,
+			DagRuns: runs,
+			DagVersions: &fakeVersionLister{versions: []domain.DagVersion{
+				{ID: "id-2", VersionNumber: 2, Version: "label-2", CreatedAt: at.Add(time.Minute), ImageReference: "img@sha256:bb", SpecHash: "h2"},
+				{ID: "id-1", VersionNumber: 1, Version: "label-1", CreatedAt: at, ImageReference: "img@sha256:aa", SpecHash: "h1", IsCurrent: true, CreatedBy: "7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a"},
+			}},
+		},
 	})
 	want := map[string]any{
 		"id": "id-1", "version_number": float64(1), "dag_id": "etl", "bundle_name": "leoflow",
@@ -1231,15 +1392,27 @@ func TestTaskInstanceDagVersionTieBreak(t *testing.T) {
 	at := time.Date(2026, 10, 14, 0, 41, 33, 0, time.UTC)
 	runs := &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1", Version: "dev"}}}
 	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", RunID: "r1", State: domain.TaskStateFailed, MapIndex: -1}}}
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
-		Tasks: tasks, DagRuns: runs,
-		DagVersions: &fakeVersionLister{versions: []domain.DagVersion{
-			{ID: "id-4", VersionNumber: 4, Version: "other", CreatedAt: at.Add(3 * time.Minute)},
-			{ID: "id-3", VersionNumber: 3, Version: "dev", CreatedAt: at.Add(2 * time.Minute)},
-			{ID: "id-2", VersionNumber: 2, Version: "dev", CreatedAt: at.Add(time.Minute)},
-		}},
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			Tasks:   tasks,
+			DagRuns: runs,
+			DagVersions: &fakeVersionLister{versions: []domain.DagVersion{
+				{ID: "id-4", VersionNumber: 4, Version: "other", CreatedAt: at.Add(3 * time.Minute)},
+				{ID: "id-3", VersionNumber: 3, Version: "dev", CreatedAt: at.Add(2 * time.Minute)},
+				{ID: "id-2", VersionNumber: 2, Version: "dev", CreatedAt: at.Add(time.Minute)},
+			}},
+		},
 	})
 	for _, path := range []string{"/api/v2/dags/etl/dagRuns/r1/taskInstances", "/api/v2/dags/etl/dagRuns/r1"} {
 		rec := authGet(srv, http.MethodGet, path, "")
@@ -1289,11 +1462,17 @@ func (p *pauseRecorder) SetPausedBy(ctx context.Context, tenant, actor, dagID st
 // user, so its audit entry names them (#1705).
 func TestPatchDagPassesTheUser(t *testing.T) {
 	repo := &pauseRecorder{fakeDagRepo: fakeDagRepo{dags: []domain.DAG{{DagID: "etl"}}}}
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		Dags:          repo,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Dags: repo,
+		},
 	})
 	if rec := authGet(srv, http.MethodPatch, "/api/v2/dags/etl", `{"is_paused":true}`); rec.Code != http.StatusOK {
 		t.Fatalf("PATCH = %d (%s)", rec.Code, rec.Body.String())
@@ -1310,11 +1489,17 @@ func TestPatchDagPassesTheUser(t *testing.T) {
 func TestPatchDagWithoutIsPausedIsRefused(t *testing.T) {
 	for _, body := range []string{`{}`, `{"is_paused":null}`, `{"description":"x"}`} {
 		repo := &pauseRecorder{fakeDagRepo: fakeDagRepo{dags: []domain.DAG{{DagID: "etl", IsPaused: true}}}}
-		srv := NewServer(Dependencies{
-			Logger:        discardLogger(),
-			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-			Dags:          repo,
+		srv := newTestServer(Dependencies{
+			Observability: ObservabilityDeps{
+				Logger: discardLogger(),
+			},
+			Auth: AuthDeps{
+				Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+				RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			},
+			Stores: StoreDeps{
+				Dags: repo,
+			},
 		})
 
 		rec := authGet(srv, http.MethodPatch, "/api/v2/dags/etl", body)

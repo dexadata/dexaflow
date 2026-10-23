@@ -19,13 +19,19 @@ import (
 // lives on the dedicated observability listener (ObservabilityHandler, the
 // metrics port), so an operator can firewall it separately from the API/UI.
 func TestMetricsNotServedOnAPIPort(t *testing.T) {
-	r := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Registry:      prometheus.NewRegistry(),
-		DevNoAuth:     true,
+	r := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger:   discardLogger(),
+			Registry: prometheus.NewRegistry(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			DevNoAuth:     true,
+		},
 	})
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/metrics", http.NoBody)
 	w := httptest.NewRecorder()
