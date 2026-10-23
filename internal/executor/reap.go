@@ -136,7 +136,9 @@ func (r *orphanReaper) reapOne(ctx context.Context, c ReapCandidate, quietBefore
 		r.record("orphan_teardown_gate_skip")
 		return
 	}
-	if derr := r.pods.DeleteRunPods(ctx, c.RunID); derr != nil {
+	td, derr := r.pods.DeleteRunPods(ctx, c.RunID)
+	recordPreserved(r.record, "orphan_terminal_pod_preserved", td)
+	if derr != nil {
 		r.logger.Error("deleting orphaned run pods", "run", c.RunID, "dag", c.DagID, "error", derr)
 		r.record("orphan_pod_delete_error")
 	}

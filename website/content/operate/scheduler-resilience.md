@@ -712,7 +712,8 @@ durable DB transition, each reaper tears the pod down:
   orphan-run reaper, which applies it per pod inside the run. No reaper's
   decision changes: a TI the reaper marked stays marked. Look for
   `reap teardown: task pod is already in a terminal phase` at INFO to see which
-  pods were left behind; a failed *delete* is the `*_pod_delete_error` decision
+  pods were left behind, with their phase, and the
+  `<reaper>_terminal_pod_preserved` decisions below for the rate; a failed *delete* is the `*_pod_delete_error` decision
   below, which is a different thing.
 - **A started pod is stopped in place, not deleted.** The teardown lowers its
   `activeDeadlineSeconds` to 1 second (the deadline counts from the pod's start,
@@ -810,6 +811,7 @@ your Prometheus dashboard:
 | `agent_lost_never_heartbeated` | Lite only: a `running` TI that never heartbeated, past the agent-lost threshold, whose agent and task process group are both gone, was failed as `agent_lost` |
 | `agent_lost_never_heartbeated_process_alive`, `agent_lost_never_heartbeated_process_query_error` | Lite only: such a TI's agent or task group is alive, or its liveness could not be read; the reaper deferred |
 | `agent_lost_pod_delete_error`, `dispatch_lost_pod_delete_error`, `orphan_pod_delete_error`, `pod_lost_pod_delete_error` | Pod teardown after a reap failed; the DB reap stands and the pod's `activeDeadlineSeconds`/GC are backstops |
+| `agent_lost_terminal_pod_preserved`, `dispatch_lost_terminal_pod_preserved`, `orphan_terminal_pod_preserved`, `pod_lost_terminal_pod_preserved`, `start_expired_terminal_pod_preserved` | One per pod the reaper's teardown left in place because it was already in a terminal phase or carried its outcome record, for the reconciler to settle ([#933](https://github.com/dexadata/dexaflow/issues/933)). Healthy as a trickle; a climbing rate means reapers mark attempts the reconciler is not settling |
 | `agent_lost_log_marker_error`, `pod_lost_log_marker_error`, `warm_worker_lost_log_marker_error` | The final `killed: <reason>` line could not be appended to the reaped attempt's log; the reap stands, and the reason is still in the task's error message and the server log |
 
 A sustained non-zero rate on any of these is worth investigating — reapers

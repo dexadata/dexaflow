@@ -468,7 +468,9 @@ func (r *agentLostReaper) reapOne(ctx context.Context, c AgentLostCandidate, now
 		r.record("agent_lost_teardown_gate_skip")
 		return
 	}
-	if derr := r.pods.DeleteTaskPod(ctx, c.attempt()); derr != nil {
+	td, derr := r.pods.DeleteTaskPod(ctx, c.attempt())
+	recordPreserved(r.record, "agent_lost_terminal_pod_preserved", td)
+	if derr != nil {
 		r.logger.Error("deleting agent-lost task pod",
 			"ti", c.TaskInstanceID, "run", c.DagRunID, "task", c.TaskID, "try", c.TryNumber, "error", derr)
 		r.record("agent_lost_pod_delete_error")

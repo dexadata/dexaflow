@@ -19,8 +19,12 @@ import (
 // (a warm attempt runs in a shared warm pod), so every presence read is Absent.
 type noTaskPods struct{}
 
-func (noTaskPods) DeleteTaskPod(context.Context, executor.Attempt) error { return nil }
-func (noTaskPods) DeleteRunPods(context.Context, string) error           { return nil }
+func (noTaskPods) DeleteTaskPod(context.Context, executor.Attempt) (executor.Teardown, error) {
+	return executor.Teardown{}, nil
+}
+func (noTaskPods) DeleteRunPods(context.Context, string) (executor.Teardown, error) {
+	return executor.Teardown{}, nil
+}
 func (noTaskPods) TaskPodPresence(context.Context, executor.Attempt) (executor.PodPresence, error) {
 	return executor.PodPresenceAbsent, nil
 }
