@@ -128,8 +128,11 @@ enableGitInfo = true
       enable = false
 
   [[params.versions]]
-    version = "v0.5.4 (latest)"
+    version = "v0.5.5 (latest)"
     url = "https://dexaflow.dexadata.ai/"
+  [[params.versions]]
+    version = "v0.5.4"
+    url = "https://dexaflow.dexadata.ai/v0.5.4/"
   [[params.versions]]
     version = "v0.5.3"
     url = "https://dexaflow.dexadata.ai/v0.5.3/"
