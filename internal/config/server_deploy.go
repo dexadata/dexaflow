@@ -129,8 +129,8 @@ func (c *ServerConfig) AdvertisedDeployDefaults() domain.DeployDefaults {
 	}
 	d.WarmPools = nil
 	if c.Deploy.Defaults.AdvertiseWarmPools {
-		d.WarmPools = &domain.WarmPoolDefaults{Enabled: c.Execution.WarmPoolsEnabled,
-			MinIdleWorkers: c.Execution.MinIdleWorkers, MaxPoolSize: c.Execution.MaxPoolSize}
+		w := c.Execution.WarmPoolDefaults()
+		d.WarmPools = &w
 	}
 	return d
 }

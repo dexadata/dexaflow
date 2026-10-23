@@ -111,6 +111,21 @@ linters:
               desc: "the Docker SDK is refused (ADR 0015)"
             - pkg: github.com/moby/moby
               desc: "the Docker SDK is refused (ADR 0015)"
+        # The API, the scheduler and the executor take their settings and
+        # stores as their own or domain types, mapped in cmd/dexaflow-server
+        # (#1948). Tests may still build them from config or storage.
+        layering:
+          list-mode: lax
+          files:
+            - "**/internal/api/**"
+            - "**/internal/scheduler/**"
+            - "**/internal/executor/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/dexadata/dexaflow/internal/config
+              desc: "map config onto api or domain types in cmd/dexaflow-server (#1948)"
+            - pkg: github.com/dexadata/dexaflow/internal/storage
+              desc: "depend on an interface the server wires a store into (#1948)"
     gocyclo:
       # ADR 0012: hard cap at 15. Critical paths target <=10 but that is not enforced here.
       min-complexity: 15

@@ -187,6 +187,8 @@ func newSSOControlPlaneWith(t *testing.T, idp *ssoIDP, devices api.CLIDeviceStor
 	if err != nil {
 		t.Fatalf("NewFlow: %v", err)
 	}
+	settings := api.OIDCSettings{Issuer: cfg.Issuer, RedirectURL: cfg.RedirectURL,
+		RoleMappings: cfg.RoleMappings, JITProvisioning: cfg.JITProvisioning}
 	srv.Config.Handler = apitest.NewServer(api.Dependencies{
 		Observability: api.ObservabilityDeps{
 			Logger:       discardTestLogger(),
@@ -198,7 +200,7 @@ func newSSOControlPlaneWith(t *testing.T, idp *ssoIDP, devices api.CLIDeviceStor
 			TokenTTLSecs:          3600,
 			OIDCFlow:              flow,
 			OIDCEnabled:           true,
-			OIDCSettings:          cfg,
+			OIDCSettings:          settings,
 			OIDCUsers:             &ssoUsers{},
 			JWTSecret:             ssoTestSecret,
 			SessionCookieInsecure: true,
