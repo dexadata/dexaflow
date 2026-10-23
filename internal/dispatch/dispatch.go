@@ -471,19 +471,61 @@ func (d *Dispatcher) WarmPolicy() domain.WarmPolicy {
 // taskResources picks the task pod's resources. With a resource unit the unit
 // sizes every task: its own values where it set them, the rest filled so
 // requests never exceed limits (see ResourceUnit.Apply, ADR 0066 §3). Without one, the task's
-// own resources win, then the L0 platform default (ADR 0023), else none.
+// own resources win per dimension, and the L0 platform default (ADR 0023)
+// fills each dimension the task left empty (#802).
 //
 // The default limits then fill any CPU or memory limit still empty (#537).
 func (d *Dispatcher) taskResources(task domain.TaskSpec) domain.Resources {
-	switch {
-	case d.defaults.Unit != nil:
+	if d.defaults.Unit != nil {
 		return *d.defaults.Unit.Apply(task)
-	case task.Resources != nil:
-		return d.defaults.Limits.Apply(*task.Resources)
-	case d.defaults.Resources != nil:
-		return d.defaults.Limits.Apply(*d.defaults.Resources)
 	}
-	return d.defaults.Limits.Apply(domain.Resources{})
+	var own domain.Resources
+	if task.Resources != nil {
+		own = *task.Resources
+	}
+	return d.defaults.Limits.Apply(fillDimensions(own, d.defaults.Resources))
+}
+
+// fillDimensions copies into r, for each of cpu, memory and ephemeral storage,
+// the request and limit of base when r sets neither for that dimension. A
+// dimension r sets at all stays entirely r's: taking base's request beside r's
+// own limit could ask for more than the limit, which the API server refuses.
+// Without this, a task declaring only an ephemeral-storage limit (ADR 0054)
+// dropped the platform cpu and memory default and ran BestEffort.
+func fillDimensions(r domain.Resources, base *domain.Resources) domain.Resources {
+	if base == nil {
+		return r
+	}
+	var req, lim, baseReq, baseLim domain.ResourceQuantity
+	if r.Requests != nil {
+		req = *r.Requests
+	}
+	if r.Limits != nil {
+		lim = *r.Limits
+	}
+	if base.Requests != nil {
+		baseReq = *base.Requests
+	}
+	if base.Limits != nil {
+		baseLim = *base.Limits
+	}
+	fill := func(req, lim *string, baseReq, baseLim string) {
+		if *req == "" && *lim == "" {
+			*req, *lim = baseReq, baseLim
+		}
+	}
+	fill(&req.CPU, &lim.CPU, baseReq.CPU, baseLim.CPU)
+	fill(&req.Memory, &lim.Memory, baseReq.Memory, baseLim.Memory)
+	fill(&req.EphemeralStorage, &lim.EphemeralStorage, baseReq.EphemeralStorage, baseLim.EphemeralStorage)
+	out := r
+	out.Requests, out.Limits = nil, nil
+	if req != (domain.ResourceQuantity{}) {
+		out.Requests = &req
+	}
+	if lim != (domain.ResourceQuantity{}) {
+		out.Limits = &lim
+	}
+	return out
 }
 
 // firstNonEmpty returns a if it is non-empty, otherwise b.
