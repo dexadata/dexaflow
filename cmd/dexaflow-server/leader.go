@@ -67,7 +67,7 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	// is otherwise silent. gRPC exposes no such number, so the counter rides on
 	// the interceptor chain and the stop func reads it.
 	inflight := agentrpc.NewInflightHandlers()
-	grpcSrv, agentSrv, gerr := startAgentGRPC(ctx, cfg.Server.GRPCAddr, authn, execStore, repo, xcomSvc, logSink, logTailer, cfg.Logs.Tail.Publish == config.LogTailPublishOnDemand, allowInsecureSecrets, cfg.Auth.SecretScoping, cfg.Auth.SecretLivenessMode, cfg.Auth.MaxAttemptCredentialLifetime, xchg, cfg.Server.GRPCTLSCert, cfg.Server.GRPCTLSKey, warmReg, inflight, metrics, logger)
+	grpcSrv, agentSrv, gerr := startAgentGRPC(ctx, cfg.Server.GRPCAddr, authn, execStore, repo, xcomSvc, logSink, logTailer, cfg.Logs.Tail.Publish == config.LogTailPublishOnDemand, cfg.Logs.Tail.ReplayBudgetBytes, allowInsecureSecrets, cfg.Auth.SecretScoping, cfg.Auth.SecretLivenessMode, cfg.Auth.MaxAttemptCredentialLifetime, xchg, cfg.Server.GRPCTLSCert, cfg.Server.GRPCTLSKey, warmReg, inflight, metrics, logger)
 	if gerr != nil {
 		return nil, false, nil, gerr
 	}

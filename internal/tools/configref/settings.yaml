@@ -1054,6 +1054,18 @@ settings:
       about a second late. Enable `on_demand` once every API replica runs a version
       that skips replayed lines, or followers on older replicas may see a few lines
       twice.
+  logs.tail.replay_budget_bytes:
+    edition: both
+    description: >-
+      With `logs.tail.publish: on_demand`, the most bytes the log streams of one
+      control-plane process hold together for a follower who may subscribe. Each
+      stream holds at most 1 MiB, so a thousand streams that went quiet after a
+      burst can hold about 500 MiB; over the budget the held lines of the stream
+      silent the longest are dropped first, and a follower of that stream reads
+      them from the stored log instead of the replay.
+      `dexaflow_log_tail_replay_bytes` reports what is held and
+      `dexaflow_log_tail_replay_evictions_total` the drops. `0` means no budget; a
+      negative value fails boot. Helm: set it through `extraEnv`.
   logs.sink.bucket:
     edition: Pro
     description: >-

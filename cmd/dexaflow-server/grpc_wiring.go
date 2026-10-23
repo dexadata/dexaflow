@@ -100,7 +100,7 @@ func stopGRPCWithin(srv grpcStopper, timeout time.Duration, logger *slog.Logger,
 // changes, so a renewed certificate is served without a restart (#637). The per-task bearer token in metadata authenticates
 // each call regardless. inflight (required) is installed on the interceptor
 // chain so the bounded stop can report the handlers it leaves running.
-func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticator, store *storage.ExecutionStore, secretsStore agentrpc.SecretsStore, xcomSvc agentrpc.XComService, logSink agentrpc.LogSink, logTailer agentrpc.LogPublisher, tailOnDemand bool, allowInsecureSecrets bool, secretScoping, secretLivenessMode string, maxAttemptLifetime time.Duration, exchange *tokenExchange, tlsCert, tlsKey string, warmPools *agentrpc.WorkerRegistry, inflight *agentrpc.InflightHandlers, metrics *observability.Metrics, logger *slog.Logger) (srv *grpc.Server, agentSrv *agentrpc.Server, err error) {
+func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticator, store *storage.ExecutionStore, secretsStore agentrpc.SecretsStore, xcomSvc agentrpc.XComService, logSink agentrpc.LogSink, logTailer agentrpc.LogPublisher, tailOnDemand bool, tailReplayBudget int64, allowInsecureSecrets bool, secretScoping, secretLivenessMode string, maxAttemptLifetime time.Duration, exchange *tokenExchange, tlsCert, tlsKey string, warmPools *agentrpc.WorkerRegistry, inflight *agentrpc.InflightHandlers, metrics *observability.Metrics, logger *slog.Logger) (srv *grpc.Server, agentSrv *agentrpc.Server, err error) {
 	secure := tlsCert != "" && tlsKey != ""
 	var creds credentials.TransportCredentials
 	if secure {
@@ -125,6 +125,7 @@ func startAgentGRPC(ctx context.Context, addr string, authn *auth.JWTAuthenticat
 	// logs.tail.publish: "always" (default) publishes every line; "on_demand"
 	// publishes only while someone follows the attempt.
 	agentSrv.SetTailPublishOnDemand(tailOnDemand)
+	agentSrv.SetTailReplayBudget(tailReplayBudget, metrics)
 	agentSrv.SetSecrets(secretsStore, allowInsecureSecrets)
 	// Refresh a live attempt's bearer on every heartbeat (ADR 0055 Fix #4) with the
 	// same short per-attempt TTL used at dispatch, so a long task keeps a working

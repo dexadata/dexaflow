@@ -3,6 +3,8 @@ package agentrpc
 import (
 	"context"
 	"log/slog"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dexadata/dexaflow/internal/logs"
@@ -61,28 +63,50 @@ var (
 // tail reader skips only flagged lines it already served from the stored log
 // (see the api package).
 //
-// A gate belongs to one stream's receive loop and is not safe for concurrent use.
+// A gate belongs to one stream's receive loop: publish and close are called
+// from that loop only. The one exception is the server's tailBudget, which may
+// empty the ring from another stream's loop (evict); mu guards the ring for it.
 type tailGate struct {
-	pub   LogPublisher
-	probe LogSubscriberProbe // nil: publish every line
-	ref   logs.Ref
-	now   func() time.Time
+	pub    LogPublisher
+	probe  LogSubscriberProbe // nil: publish every line
+	ref    logs.Ref
+	now    func() time.Time
+	budget *tailBudget // nil when the gate never holds
 
 	probedAt  time.Time
 	listening bool
-	held      replayRing
 	warned    bool
+
+	mu   sync.Mutex
+	held replayRing
+	// heldBytes and heldAt mirror the ring's size and when it last held a line
+	// (unix nanoseconds), for the budget to pick a ring without taking mu.
+	heldBytes atomic.Int64
+	heldAt    atomic.Int64
 }
 
 // newTailGate builds the gate for one attempt's stream. Unless onDemand is set
 // (logs.tail.publish: on_demand) the gate never probes and publishes every line
-// as it arrives.
-func newTailGate(pub LogPublisher, ref logs.Ref, now func() time.Time, onDemand bool) *tailGate {
+// as it arrives. A gate that may hold lines joins budget until close.
+func newTailGate(pub LogPublisher, ref logs.Ref, now func() time.Time, onDemand bool, budget *tailBudget) *tailGate {
 	g := &tailGate{pub: pub, ref: ref, now: now}
 	if probe, ok := pub.(LogSubscriberProbe); ok && onDemand {
 		g.probe = probe
+		if budget != nil {
+			g.budget = budget
+			budget.join(g)
+		}
 	}
 	return g
+}
+
+// close releases what the gate holds when its stream ends.
+func (g *tailGate) close() {
+	if g.budget == nil {
+		return
+	}
+	g.budget.leave(g)
+	g.evict()
 }
 
 // publish offers one encoded line to the live tail.
@@ -106,7 +130,12 @@ func (g *tailGate) probeDue(line string) bool {
 	if g.probedAt.IsZero() || g.now().Sub(g.probedAt) >= tailProbeInterval {
 		return true
 	}
-	return !g.listening && g.held.nearFull(line)
+	if g.listening {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.held.nearFull(line)
 }
 
 // refresh probes for subscribers and applies the transition: replay what was
@@ -123,16 +152,63 @@ func (g *tailGate) refresh(ctx context.Context) {
 		listening = true
 	}
 	if !listening {
-		g.held.reset()
+		g.evict()
 		g.listening = false
 		return
 	}
 	g.listening = true
-	g.held.drain(func(held string) { g.send(ctx, logs.MarkReplay(held)) })
+	// Sent outside mu, so a slow publish never holds up the budget.
+	for _, held := range g.take() {
+		g.send(ctx, logs.MarkReplay(held))
+	}
 }
 
-// hold keeps a line for a possible replay (see replayRing).
-func (g *tailGate) hold(line string) { g.held.push(line) }
+// hold keeps a line for a possible replay (see replayRing), then holds the
+// server's gates to their shared budget.
+func (g *tailGate) hold(line string) {
+	g.mu.Lock()
+	before := g.held.bytes
+	g.held.push(line)
+	g.heldAt.Store(g.now().UnixNano())
+	g.settle(before)
+	g.mu.Unlock()
+	if g.budget != nil {
+		g.budget.enforce(g)
+	}
+}
+
+// take empties the ring and returns what it held, oldest first.
+func (g *tailGate) take() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	before := g.held.bytes
+	var out []string
+	if g.held.n > 0 {
+		out = make([]string, 0, g.held.n)
+		g.held.drain(func(line string) { out = append(out, line) })
+	}
+	g.settle(before)
+	return out
+}
+
+// evict drops every held line: on a probe that found nobody, at close, or when
+// the budget picks this ring.
+func (g *tailGate) evict() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	before := g.held.bytes
+	g.held.reset()
+	g.settle(before)
+}
+
+// settle publishes the ring's new size to heldBytes and the budget. Called
+// with mu held, before the bytes the ring held.
+func (g *tailGate) settle(before int) {
+	g.heldBytes.Store(int64(g.held.bytes))
+	if g.budget != nil {
+		g.budget.charge(int64(g.held.bytes - before))
+	}
+}
 
 // replayRing holds the newest lines received since the last probe, within
 // tailReplayMaxLines and tailReplayMaxBytes, as a ring so that holding a line

@@ -47,7 +47,7 @@ func TestStartAgentGRPCPicksUpARotatedCert(t *testing.T) {
 	metrics := observability.NewMetrics(prometheus.NewRegistry())
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	srv, _, err := startAgentGRPC(context.Background(), addr, nil, nil, nil, nil, nil, nil, false, false, "", "", 0, nil,
+	srv, _, err := startAgentGRPC(context.Background(), addr, nil, nil, nil, nil, nil, nil, false, 0, false, "", "", 0, nil,
 		first.certPath, first.keyPath, nil, agentrpc.NewInflightHandlers(), metrics, logger)
 	if err != nil {
 		t.Fatalf("startAgentGRPC: %v", err)
@@ -85,7 +85,7 @@ func TestStartAgentGRPCPicksUpARotatedCert(t *testing.T) {
 // TestStartAgentGRPCFailsFastOnUnreadableCert: a missing pair is a boot error,
 // as it was before reloading existed.
 func TestStartAgentGRPCFailsFastOnUnreadableCert(t *testing.T) {
-	_, _, err := startAgentGRPC(context.Background(), freeAddr(t), nil, nil, nil, nil, nil, nil, false, false, "", "", 0, nil,
+	_, _, err := startAgentGRPC(context.Background(), freeAddr(t), nil, nil, nil, nil, nil, nil, false, 0, false, "", "", 0, nil,
 		"/nonexistent/tls.crt", "/nonexistent/tls.key", nil, agentrpc.NewInflightHandlers(), nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err == nil || !strings.Contains(err.Error(), "/nonexistent/tls.crt") {
 		t.Fatalf("startAgentGRPC with a missing cert = %v, want a boot error naming the file", err)
