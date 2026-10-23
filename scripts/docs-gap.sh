@@ -5,6 +5,7 @@
 #   scripts/docs-gap.sh 0.6.0            # changes on origin/main since v0.5.0
 #   scripts/docs-gap.sh 0.5.2 --fetch    # refresh the branch and the tags first
 #   scripts/docs-gap.sh 0.5.2 --offline  # no gh: judge by the skip file alone
+#   scripts/docs-gap.sh 0.5.2 --ref HEAD # judge this commit, not the branch tip (CI)
 #   scripts/docs-gap.sh --self-test      # fixture repository, no network
 #
 # The docs guard (scripts/check-docs-updated.sh) judges one pull request when it
@@ -218,24 +219,28 @@ self_test() {
 }
 
 main() {
-  local version="" fetch=0 arg base
-  for arg in "$@"; do
+  local version="" fetch=0 arg base ref=""
+  while [ "$#" -gt 0 ]; do
+    arg="$1"; shift
     case "$arg" in
       --self-test) self_test; exit $? ;;
       --fetch) fetch=1 ;;
       --offline) OFFLINE=1 ;;
+      --ref) [ "$#" -gt 0 ] || die "--ref needs a commit"; ref="$1"; shift ;;
       -*) die "unknown flag: $arg" ;;
       *) version="${arg#v}" ;;
     esac
   done
   version="${version%%-*}"
-  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "usage: docs-gap.sh <X.Y.Z> [--fetch] [--offline]"
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "usage: docs-gap.sh <X.Y.Z> [--fetch] [--offline] [--ref <commit>]"
   base="$(base_of "$version")"
   if [ "$fetch" = 1 ]; then
     git -C "$ROOT" fetch -q origin --tags "+refs/heads/$base:refs/remotes/origin/$base" || die "cannot reach origin"
   fi
+  # --ref judges one commit of the base branch instead of its tip: CI judges
+  # the commit it runs on, which a later push to the branch does not change.
   local out
-  out="$(gap "$ROOT" "$version" "origin/$base")" || exit 2
+  out="$(gap "$ROOT" "$version" "${ref:-origin/$base}")" || exit 2
   if [ -n "$out" ]; then
     printf '%s\n' "$out"
     printf 'docs-gap: %s user-facing change(s) on %s ship without docs, a justified skip-docs label, or a line in its %s\n' \
