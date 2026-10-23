@@ -263,7 +263,9 @@ func (r *podLostReaper) reapOne(ctx context.Context, c PodLostCandidate) {
 		r.record("pod_lost_teardown_gate_skip")
 		return
 	}
-	if derr := r.pods.DeleteTaskPod(ctx, c.attempt()); derr != nil {
+	td, derr := r.pods.DeleteTaskPod(ctx, c.attempt())
+	recordPreserved(r.record, "pod_lost_terminal_pod_preserved", td)
+	if derr != nil {
 		r.logger.Error("deleting pod-lost task pod",
 			"ti", c.TaskInstanceID, "run", c.DagRunID, "task", c.TaskID, "try", c.TryNumber, "error", derr)
 		r.record("pod_lost_pod_delete_error")

@@ -59,7 +59,7 @@ func TestTeardownStopsAStartedPodInPlace(t *testing.T) {
 	pod.Spec.ActiveDeadlineSeconds = &long
 	cs := fake.NewClientset(pod)
 	e := NewKubernetesExecutor(cs, "leoflow")
-	if err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}); err != nil {
+	if _, err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}); err != nil {
 		t.Fatalf("DeleteTaskPod: %v", err)
 	}
 	if !podNames(t, cs)["p"] {
@@ -83,7 +83,7 @@ func TestTeardownStopsAStartedPodInPlace(t *testing.T) {
 func TestTeardownDeletesANeverStartedPod(t *testing.T) {
 	cs := fake.NewClientset(taskPod("p", "run-a", "extract", 1, corev1.PodPending))
 	e := NewKubernetesExecutor(cs, "leoflow")
-	if err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}); err != nil {
+	if _, err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}); err != nil {
 		t.Fatalf("DeleteTaskPod: %v", err)
 	}
 	if podNames(t, cs)["p"] {
@@ -110,7 +110,7 @@ func TestTeardownFallsBackToDeleteWhenThePatchIsRefused(t *testing.T) {
 			e := NewKubernetesExecutor(cs, "leoflow")
 			rec := &decisions{}
 			e.SetTeardownRecorder(rec)
-			if err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}); err != nil {
+			if _, err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}); err != nil {
 				t.Fatalf("DeleteTaskPod: %v", err)
 			}
 			if podNames(t, cs)["p"] {
@@ -134,7 +134,7 @@ func TestTeardownToleratesAPodGoneBeforeThePatch(t *testing.T) {
 	e := NewKubernetesExecutor(cs, "leoflow")
 	rec := &decisions{}
 	e.SetTeardownRecorder(rec)
-	if err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}); err != nil {
+	if _, err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}); err != nil {
 		t.Fatalf("DeleteTaskPod: %v", err)
 	}
 	for _, a := range cs.Actions() {
@@ -152,7 +152,7 @@ func TestTeardownToleratesAPodGoneBeforeThePatch(t *testing.T) {
 func TestTeardownLeavesATerminalPodUntouched(t *testing.T) {
 	cs := fake.NewClientset(startedPod("p", "run-a", "extract", 1, corev1.PodFailed))
 	e := NewKubernetesExecutor(cs, "leoflow")
-	if err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}); err != nil {
+	if _, err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}); err != nil {
 		t.Fatalf("DeleteTaskPod: %v", err)
 	}
 	for _, a := range cs.Actions() {
@@ -170,7 +170,7 @@ func TestRunTeardownStopsStartedPodsInPlace(t *testing.T) {
 		taskPod("pending", "run-a", "load", 1, corev1.PodPending),
 	)
 	e := NewKubernetesExecutor(cs, "leoflow")
-	if err := e.DeleteRunPods(context.Background(), "run-a"); err != nil {
+	if _, err := e.DeleteRunPods(context.Background(), "run-a"); err != nil {
 		t.Fatalf("DeleteRunPods: %v", err)
 	}
 	got := podNames(t, cs)
@@ -199,7 +199,7 @@ func TestTeardownDoesNotMeterARecreatedPod(t *testing.T) {
 	e := NewKubernetesExecutor(cs, "leoflow")
 	rec := &decisions{}
 	e.SetTeardownRecorder(rec)
-	if err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}); err != nil {
+	if _, err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}); err != nil {
 		t.Fatalf("DeleteTaskPod: %v", err)
 	}
 	if len(rec.got) != 0 {
