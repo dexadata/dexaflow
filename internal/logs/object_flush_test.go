@@ -419,7 +419,7 @@ func TestDiskSinkPathUnchangedByObjectFlushTuning(t *testing.T) {
 	if cerr := w.Close(); cerr != nil {
 		t.Fatalf("Close() error = %v", cerr)
 	}
-	rc, err := sink.Read(sampleRef())
+	rc, err := sink.Read(t.Context(), sampleRef())
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}

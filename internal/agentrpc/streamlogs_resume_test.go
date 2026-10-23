@@ -81,7 +81,7 @@ func (w *countingWriter) WriteEvent(ev logs.Event) error {
 // storedMessages reads the attempt's stored log back through the sink.
 func storedMessages(t *testing.T, sink *logs.ObjectSink, ref logs.Ref) []string {
 	t.Helper()
-	rc, err := sink.Read(ref)
+	rc, err := sink.Read(t.Context(), ref)
 	if err != nil {
 		return nil
 	}

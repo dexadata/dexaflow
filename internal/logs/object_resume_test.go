@@ -99,7 +99,7 @@ func TestDiskSinkResumeAppends(t *testing.T) {
 	ref := sampleRef()
 	writeOneStream(t, sink.Open, ref, "first stream")
 	writeOneStream(t, sink.Resume, ref, "second stream")
-	rc, err := sink.Read(ref)
+	rc, err := sink.Read(t.Context(), ref)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
