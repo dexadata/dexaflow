@@ -58,6 +58,15 @@ summary() {
 	printf '\n</details>\n'
 }
 
+# badge_json <total>: a shields.io endpoint document for the README badge
+# (#1572), red below the floor, green from it and bright green from 90%. CI
+# publishes it on the badges branch for each push to main.
+badge_json() {
+	local color
+	color=$(awk -v t="$1" -v f="$FLOOR" 'BEGIN { print (t < f ? "red" : (t < 90 ? "green" : "brightgreen")) }')
+	printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$1" "$color"
+}
+
 self_test() {
 	local tmp fail=0 out
 	tmp=$(mktemp -d)
@@ -91,6 +100,12 @@ self_test() {
 	_expect "the summary names a total below the floor" "**79.5%** of statements (filtered), below the ${FLOOR}% floor"
 	out=$(summary 81.2 "$tmp/cover.out")
 	_expect "the summary names a total above the floor" "**81.2%** of statements (filtered), above the ${FLOOR}% floor"
+	out=$(badge_json 79.5)
+	_expect "a badge below the floor is red" '{"schemaVersion":1,"label":"coverage","message":"79.5%","color":"red"}'
+	out=$(badge_json "$FLOOR.0")
+	_expect "a badge at the floor is green" '"color":"green"'
+	out=$(badge_json 90.0)
+	_expect "a badge from 90% is bright green" '"color":"brightgreen"'
 	if [ "$fail" -eq 0 ]; then
 		echo "coverage-gate self-test: ok"
 		return 0
@@ -115,6 +130,9 @@ total="$(go tool cover -func="$filtered" | tail -1 | awk '{print $3}' | tr -d '%
 echo "Total coverage (filtered): ${total}% (floor: ${FLOOR}%)"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
 	summary "$total" "$filtered" >>"$GITHUB_STEP_SUMMARY"
+fi
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+	echo "badge=$(badge_json "$total")" >>"$GITHUB_OUTPUT"
 fi
 if awk -v t="$total" -v f="$FLOOR" 'BEGIN { exit !(t < f) }'; then
 	echo "::error::Coverage ${total}% is below floor ${FLOOR}% (see ADR 0011); add tests"

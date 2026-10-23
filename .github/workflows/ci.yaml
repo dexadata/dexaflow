@@ -182,6 +182,8 @@ jobs:
     name: Test + Coverage
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      badge: ${{ steps.gate.outputs.badge }}
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -214,6 +216,7 @@ jobs:
           go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Enforce coverage floor
+        id: gate
         # The floor and the exclude list live in scripts/coverage-gate.sh,
         # shared with the pre-commit hook so the two cannot drift (ADR 0011).
         run: scripts/coverage-gate.sh coverage.out
@@ -223,6 +226,44 @@ jobs:
         with:
           name: coverage-${{ github.sha }}
           path: coverage.out
+
+  # The README coverage badge (#1572): shields.io reads a one-file endpoint
+  # document from the badges branch, which this job replaces after each
+  # green test run on main. No service account, token or repository setting:
+  # the run's own token writes the branch, which no ruleset covers. The
+  # branch holds one parentless commit, so it never grows. A run whose commit
+  # is no longer main's head leaves the badge to the newer run. A failure
+  # here must not turn main red (cut-release.sh tags only a green run), so
+  # the job may fail on its own.
+  coverage-badge:
+    name: Coverage badge
+    needs: test
+    if: github.repository == 'dexadata/dexaflow' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      contents: write # replace the badges branch
+    steps:
+      - name: Publish coverage.json on the badges branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BADGE: ${{ needs.test.outputs.badge }}
+        run: |
+          set -euo pipefail
+          repo="repos/${GITHUB_REPOSITORY}"
+          head=$(gh api "$repo/git/ref/heads/main" --jq .object.sha)
+          if [ "$head" != "$GITHUB_SHA" ]; then
+            echo "::notice::main moved to ${head:0:8}; its run publishes the badge"
+            exit 0
+          fi
+          blob=$(gh api "$repo/git/blobs" -f content="$BADGE" -f encoding=utf-8 --jq .sha)
+          tree=$(jq -n --arg sha "$blob" '{tree: [{path: "coverage.json", mode: "100644", type: "blob", sha: $sha}]}' |
+            gh api "$repo/git/trees" --input - --jq .sha)
+          commit=$(gh api "$repo/git/commits" -f "message=coverage of ${GITHUB_SHA}" -f "tree=$tree" --jq .sha)
+          gh api -X PATCH "$repo/git/refs/heads/badges" -f "sha=$commit" -F force=true >/dev/null 2>&1 ||
+            gh api "$repo/git/refs" -f ref=refs/heads/badges -f "sha=$commit" >/dev/null
+          echo "badges branch at ${commit:0:8}: $BADGE"
 
   # ─────────────────────────────────────────────────────────────────────
   # Shell scripts drive CI and every release cut, and nothing linted them
