@@ -182,6 +182,11 @@ jobs:
     name: Test + Coverage
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read # the base branch's coverage artifact, for the delta
+    outputs:
+      badge: ${{ steps.gate.outputs.badge }}
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -213,16 +218,74 @@ jobs:
         run: |
           go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
+      # The per-package change in the job summary (#1572) compares against
+      # the profile the base branch's own run uploaded: the pull request's
+      # or merge queue's base commit, or the commit a push replaced, else
+      # the newest green push run of the branch. Without one the summary
+      # says so; this step never fails the job.
+      - name: Fetch the base branch's coverage profile
+        id: base
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          BASE_REF: ${{ github.base_ref || github.event.merge_group.base_ref || github.ref_name }}
+        run: |
+          label=$(BASE_REF="${BASE_REF#refs/heads/}" scripts/coverage-base.sh base-coverage.out)
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+
       - name: Enforce coverage floor
+        id: gate
         # The floor and the exclude list live in scripts/coverage-gate.sh,
         # shared with the pre-commit hook so the two cannot drift (ADR 0011).
-        run: scripts/coverage-gate.sh coverage.out
+        env:
+          BASE_LABEL: ${{ steps.base.outputs.label }}
+        run: scripts/coverage-gate.sh coverage.out base-coverage.out "$BASE_LABEL"
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-${{ github.sha }}
           path: coverage.out
+
+  # The README coverage badge (#1572): shields.io reads a one-file endpoint
+  # document from the badges branch, which this job replaces after each
+  # green test run on main. No service account, token or repository setting:
+  # the run's own token writes the branch, which no ruleset covers. The
+  # branch holds one parentless commit, so it never grows. A run whose commit
+  # is no longer main's head leaves the badge to the newer run. A failure
+  # here must not turn main red (cut-release.sh tags only a green run), so
+  # the job may fail on its own.
+  coverage-badge:
+    name: Coverage badge
+    needs: test
+    if: github.repository == 'dexadata/dexaflow' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      contents: write # replace the badges branch
+    steps:
+      - name: Publish coverage.json on the badges branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BADGE: ${{ needs.test.outputs.badge }}
+        run: |
+          set -euo pipefail
+          repo="repos/${GITHUB_REPOSITORY}"
+          head=$(gh api "$repo/git/ref/heads/main" --jq .object.sha)
+          if [ "$head" != "$GITHUB_SHA" ]; then
+            echo "::notice::main moved to ${head:0:8}; its run publishes the badge"
+            exit 0
+          fi
+          blob=$(gh api "$repo/git/blobs" -f content="$BADGE" -f encoding=utf-8 --jq .sha)
+          tree=$(jq -n --arg sha "$blob" '{tree: [{path: "coverage.json", mode: "100644", type: "blob", sha: $sha}]}' |
+            gh api "$repo/git/trees" --input - --jq .sha)
+          commit=$(gh api "$repo/git/commits" -f "message=coverage of ${GITHUB_SHA}" -f "tree=$tree" --jq .sha)
+          gh api -X PATCH "$repo/git/refs/heads/badges" -f "sha=$commit" -F force=true >/dev/null 2>&1 ||
+            gh api "$repo/git/refs" -f ref=refs/heads/badges -f "sha=$commit" >/dev/null
+          echo "badges branch at ${commit:0:8}: $BADGE"
 
   # ─────────────────────────────────────────────────────────────────────
   # Shell scripts drive CI and every release cut, and nothing linted them
@@ -243,59 +306,61 @@ jobs:
           git ls-files -z '*.sh' | xargs -0 shellcheck -S warning
 
   # ─────────────────────────────────────────────────────────────────────
-  # Dockerfile lint (#1572). Advisory until its findings are fixed, then
-  # required: continue-on-error keeps a finding from failing the run while
-  # the report stays on the job.
+  # Dockerfile lint (#1572). A warning or an error fails the job; the info
+  # findings (numeric USER, consecutive RUN) stay as a report. A finding
+  # that is deliberate carries a `# hadolint ignore=<rule>` with its reason
+  # in the Dockerfile.
   # ─────────────────────────────────────────────────────────────────────
   hadolint:
-    name: hadolint (advisory)
+    name: hadolint
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # One job with a step per Dockerfile, not a matrix: the runners are
-    # shared, and seven advisory jobs per pull request cost more than they
-    # report.
+    # shared, and seven jobs per pull request cost more than they report.
+    # Each step runs even when an earlier one failed, so one run reports
+    # every Dockerfile.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: hadolint deploy/Dockerfile.cli.release
-        continue-on-error: true
+        if: ${{ !cancelled() }}
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: deploy/Dockerfile.cli.release
           failure-threshold: warning
       - name: hadolint deploy/Dockerfile.mcp.release
-        continue-on-error: true
+        if: ${{ !cancelled() }}
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: deploy/Dockerfile.mcp.release
           failure-threshold: warning
       - name: hadolint deploy/Dockerfile.migrate
-        continue-on-error: true
+        if: ${{ !cancelled() }}
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: deploy/Dockerfile.migrate
           failure-threshold: warning
       - name: hadolint deploy/Dockerfile.server
-        continue-on-error: true
+        if: ${{ !cancelled() }}
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: deploy/Dockerfile.server
           failure-threshold: warning
       - name: hadolint deploy/Dockerfile.server.release
-        continue-on-error: true
+        if: ${{ !cancelled() }}
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: deploy/Dockerfile.server.release
           failure-threshold: warning
       - name: hadolint runtime/Dockerfile
-        continue-on-error: true
+        if: ${{ !cancelled() }}
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: runtime/Dockerfile
           failure-threshold: warning
       - name: hadolint scripts/chaos/Dockerfile
-        continue-on-error: true
+        if: ${{ !cancelled() }}
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: scripts/chaos/Dockerfile
