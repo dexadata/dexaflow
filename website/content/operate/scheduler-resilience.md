@@ -523,7 +523,13 @@ order turns a restart into a false reap. The one operator-tunable rung is
 TTL; boot fails naming the key if it does not. Setting it non-positive is
 accepted but disables the renewal ceiling, the task-pod `activeDeadlineSeconds`
 floor and the warm-pool attempt watchdog together, so boot logs a `WARN` naming
-the key.
+the key, with `event=resilience_backstop_disabled` and the key as `config_key`.
+The same posture is on `/metrics` for as long as the process runs:
+`dexaflow_resilience_backstop_disabled{config_key="auth.max_attempt_credential_lifetime"}`
+is `1` on a scheduler process that booted with the ceiling disabled and `0`
+otherwise, so `max(dexaflow_resilience_backstop_disabled) > 0` answers "is any
+replica running without the backstop" long after the log line has left
+retention.
 
 ### An attempt that outlives the credential ceiling fails
 
