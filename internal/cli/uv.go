@@ -13,10 +13,10 @@ import (
 	"strings"
 )
 
-// lookUV finds the uv binary of the daemonless dependency layer (ADR 0078).
-// It is a variable only so the tests of this package choose whether uv is
-// there (split_seam_test.go); nothing else assigns it.
-var lookUV = func() (string, error) { return exec.LookPath("uv") }
+// lookPathUV finds the uv binary of the daemonless dependency layer (ADR
+// 0078) on PATH. Commands reach it as cliDeps.lookUV, so the tests of this
+// package choose whether uv is there.
+func lookPathUV() (string, error) { return exec.LookPath("uv") }
 
 // uvKeptEnv are the variables uv runs with, from the CLI's environment:
 // where to find programs, the home and cache directories, and how to reach
@@ -46,7 +46,7 @@ type uvTool struct {
 // findUV returns uv when it is on PATH and answers --version, or nil and
 // why not.
 func findUV(ctx context.Context) (u *uvTool, why string) {
-	p, err := lookUV()
+	p, err := depsFrom(ctx).lookUV()
 	if err != nil {
 		return nil, "uv is not on PATH"
 	}

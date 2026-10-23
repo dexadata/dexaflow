@@ -42,6 +42,7 @@ func withoutCopies(dockerfile string) string {
 // so the dependency image plus the code layer is the image a full build
 // makes: same base, packages, environment and user.
 func TestDependencyDockerfileIsTheGeneratedOneWithoutItsCopies(t *testing.T) {
+	t.Parallel()
 	cases := map[string]*domain.LeoflowConfig{
 		"dag.py with packages": {DagID: "etl", DagSource: "dag.py", BaseImage: "base:1", Dependencies: []string{"pandas==2.2.3"}, SystemPackages: []string{"libpq5"}, IncludePaths: []string{"sql"}},
 		"dag.py alone":         {DagID: "etl", DagSource: "dag.py", BaseImage: "base:1"},
@@ -63,6 +64,7 @@ func TestDependencyDockerfileIsTheGeneratedOneWithoutItsCopies(t *testing.T) {
 }
 
 func TestDependencyDockerfileRefusesWhatTheGeneratedOneRefuses(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DagID: "etl", DagSource: "dag.py", Dependencies: []string{"pandas==1\nRUN curl x"}}
 	if _, err := dependencyDockerfile(cfg, "base:1"); err == nil {
 		t.Fatal("a dependency carrying a newline was rendered")
@@ -70,6 +72,7 @@ func TestDependencyDockerfileRefusesWhatTheGeneratedOneRefuses(t *testing.T) {
 }
 
 func TestDepsKeyCoversTheDockerfileAndThePlatforms(t *testing.T) {
+	t.Parallel()
 	k := depsKey("FROM a\n", []string{"linux/amd64", "linux/arm64"})
 	if len(k) != 64 {
 		t.Fatalf("key %q is not a sha256", k)
@@ -85,6 +88,7 @@ func TestDepsKeyCoversTheDockerfileAndThePlatforms(t *testing.T) {
 }
 
 func TestDepsImageIsATagInTheDAGRepository(t *testing.T) {
+	t.Parallel()
 	key := strings.Repeat("ab", 32)
 	cases := map[string]string{
 		"reg.io/team/etl:v1-abc":           "reg.io/team/etl:deps-" + key[:32],
@@ -100,6 +104,7 @@ func TestDepsImageIsATagInTheDAGRepository(t *testing.T) {
 }
 
 func TestUnpinnedDependencies(t *testing.T) {
+	t.Parallel()
 	deps := []string{
 		"pandas==2.2.3", "requests[socks]==2.32.3", "numpy>=2", "polars", "scipy==1.*",
 		"apache-airflow-providers-amazon", "Apache_Airflow.Providers-Amazon==9.1.0",
@@ -156,6 +161,7 @@ func layerPaths(files []build.LayerFile) []string {
 // the DAG source and include_paths, without .git, exclude_paths or
 // .dockerignore matches, with links kept and the execute bit known.
 func TestCodeLayerFilesAreWhatTheCopiesTake(t *testing.T) {
+	t.Parallel()
 	dir := layerProject(t)
 	cfg := &domain.LeoflowConfig{DagID: "etl", DagSource: "dag.py", IncludePaths: []string{".", "scripts", "conf/app/settings.yaml"}, ExcludePaths: []string{"*.secret"}}
 	files, err := codeLayerFiles(dir, cfg, filepath.Join(dir, "dag.json"))
@@ -171,6 +177,7 @@ func TestCodeLayerFilesAreWhatTheCopiesTake(t *testing.T) {
 // A dbt project ships its directory, with the files `dbt parse` writes
 // under target/ (as the COPY ships them) but without logs/ and .user.yml.
 func TestCodeLayerFilesOfADbtProject(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	for _, f := range []string{"transform/dbt_project.yml", "transform/models/a.sql", "transform/target/manifest.json", "transform/logs/dbt.log", "transform/.user.yml", "dag.py"} {
 		writeProjectFile(t, dir, f, "x\n")
@@ -187,6 +194,7 @@ func TestCodeLayerFilesOfADbtProject(t *testing.T) {
 }
 
 func TestCodeLayerFilesFailOnAMissingRoot(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeProjectFile(t, dir, "dag.py", "# dag\n")
 	cfg := &domain.LeoflowConfig{DagID: "etl", DagSource: "dag.py", IncludePaths: []string{"missing"}}
@@ -258,7 +266,7 @@ func splitProjectWith(t *testing.T, extraYAML string, deny *atomic.Bool) (dir, h
 	if err != nil {
 		t.Fatal(err)
 	}
-	pinned, err := baseReaderFor(cfg).Resolve(context.Background(), base)
+	pinned, err := baseReaderFor(testCtx(nil), cfg).Resolve(context.Background(), base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,6 +425,7 @@ func editYAML(t *testing.T, dir, old, replacement string) {
 // .dockerignore applies them: `**` at any depth, a pattern with a slash only
 // from the project root, a bare name at any depth.
 func TestCodeLayerFilesApplyExcludePathsAsDockerDoes(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	for _, f := range []string{"dag.py", "lib/a.py", "lib/certs/deep/k.pem", "lib/data/schema.json", "lib/cache/x.bin", "lib/sub/cache/y.bin"} {
 		writeProjectFile(t, dir, f, "x\n")
@@ -434,6 +443,7 @@ func TestCodeLayerFilesApplyExcludePathsAsDockerDoes(t *testing.T) {
 
 // A root the .dockerignore excludes fails, as its COPY would.
 func TestCodeLayerFilesFailOnAnExcludedRoot(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeProjectFile(t, dir, "dag.py", "# dag\n")
 	writeProjectFile(t, dir, "secrets/k", "x\n")

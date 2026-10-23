@@ -14,6 +14,7 @@ import (
 )
 
 func TestSetVariableReqSendsBodyAndReturnsVariable(t *testing.T) {
+	t.Parallel()
 	var gotMethod, gotPath, gotBody, gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod, gotPath = r.Method, r.URL.Path
@@ -196,6 +197,7 @@ func TestVariablesListCommand(t *testing.T) {
 }
 
 func TestGetVariableReq(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v2/variables/region" {
 			t.Errorf("path = %s, want /api/v2/variables/region", r.URL.Path)
@@ -215,6 +217,7 @@ func TestGetVariableReq(t *testing.T) {
 }
 
 func TestDeleteVariableReq(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete || r.URL.Path != "/api/v2/variables/region" {
 			t.Errorf("request = %s %s, want DELETE /api/v2/variables/region", r.Method, r.URL.Path)
@@ -229,6 +232,7 @@ func TestDeleteVariableReq(t *testing.T) {
 }
 
 func TestDeleteVariableReqNotFound(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
@@ -240,6 +244,7 @@ func TestDeleteVariableReqNotFound(t *testing.T) {
 }
 
 func TestPrintVariableListMasksEncryptedValues(t *testing.T) {
+	t.Parallel()
 	descA, descB := "region", "secret"
 	coll := &apiclient.VariableCollection{Variables: &[]apiclient.Variable{
 		{Key: "region", Value: "us-east-1", Description: &descA, IsEncrypted: false},
@@ -258,6 +263,7 @@ func TestPrintVariableListMasksEncryptedValues(t *testing.T) {
 }
 
 func TestPrintVariableListEmpty(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	if err := printVariableList(&buf, nil); err != nil {
 		t.Fatal(err)

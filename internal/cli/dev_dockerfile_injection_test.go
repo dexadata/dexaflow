@@ -20,6 +20,7 @@ import (
 // the poisoned file and every later `compile --build` would use it, bypassing
 // every guard the generated path has.
 func TestDevDockerfileRefusesTheSameInjections(t *testing.T) {
+	t.Parallel()
 	const inject = "\nRUN echo surprise"
 	cases := []struct {
 		name      string
@@ -50,6 +51,7 @@ func TestDevDockerfileRefusesTheSameInjections(t *testing.T) {
 // beginning with a dash stayed an OPTION to pip. `--dry-run` is the documented
 // silent-failure case: the build goes green with the package absent.
 func TestDevDockerfileQuotesDependenciesLikeCompileDoes(t *testing.T) {
+	t.Parallel()
 	df, err := devDockerfile("img", "dag.py", []string{"duckdb==1.1.3", "--dry-run"}, nil)
 	if err != nil {
 		t.Fatalf("a dash-leading specifier is pip's problem to reject, not a render error: %v", err)
@@ -75,6 +77,7 @@ func TestDevDockerfileQuotesDependenciesLikeCompileDoes(t *testing.T) {
 // build context, and because returning early is what let a poisoned sibling
 // group skip validation.
 func TestDevDockerfileHandlesTheDotGroup(t *testing.T) {
+	t.Parallel()
 	df, err := devDockerfile("img", "dag.py", nil, []string{".", "transform"})
 	if err != nil {
 		t.Fatal(err)
@@ -97,6 +100,7 @@ func TestDevDockerfileHandlesTheDotGroup(t *testing.T) {
 // catches it anyway. Only a value WITH a slash tells guarded from unguarded, and
 // that is the value the compile side already uses.
 func TestDevDockerfileRefusesADagSourceWhoseNewlineBaseWouldHide(t *testing.T) {
+	t.Parallel()
 	if _, err := devDockerfile("img", "x\nRUN evil/dag.py", nil, nil); err == nil {
 		t.Error("filepath.Base hid the newline instead of it being refused")
 	}
@@ -107,6 +111,7 @@ func TestDevDockerfileRefusesADagSourceWhoseNewlineBaseWouldHide(t *testing.T) {
 // Removing it left the suite green: the loop inside devDockerfile looks like
 // coverage and is not, for exactly the value that needs it.
 func TestEnsureProjectDockerfileRefusesARawDbtGroupPath(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()

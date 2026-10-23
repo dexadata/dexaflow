@@ -811,7 +811,7 @@ func runSyncInteractive(t *testing.T, stdin string, args ...string) (stdout, std
 	root.SetErr(&errb)
 	root.SetIn(strings.NewReader(stdin))
 	root.SetArgs(args)
-	err = root.Execute()
+	err = root.ExecuteContext(testCtx(nil))
 	return out.String(), errb.String(), err
 }
 

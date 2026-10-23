@@ -7,6 +7,7 @@ import (
 )
 
 func TestHintEmailUsername(t *testing.T) {
+	t.Parallel()
 	auth401 := fmt.Errorf("server returned 401: invalid credentials")
 
 	// A bare username + a 401 gets the e-mail hint.
@@ -34,6 +35,7 @@ func TestHintEmailUsername(t *testing.T) {
 // TestHintEmailUsernameNamesBothAdmins: the hint names the new bootstrap admin
 // and the one installs created before the rename keep.
 func TestHintEmailUsernameNamesBothAdmins(t *testing.T) {
+	t.Parallel()
 	got := hintEmailUsername("admin", fmt.Errorf("server returned 401: invalid credentials")).Error()
 	for _, want := range []string{"admin@dexaflow.local", "admin@leoflow.local"} {
 		if !strings.Contains(got, want) {

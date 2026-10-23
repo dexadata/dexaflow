@@ -30,6 +30,7 @@ func writeRuntimeFixture(t *testing.T, dir string, files map[string]string) stri
 // across runs and OSes — the marker check compares hex strings byte-for-byte, so
 // any nondeterminism would force gratuitous reinstalls (or skip needed ones).
 func TestRuntimeSrcChecksum_StableAcrossWalkOrder(t *testing.T) {
+	t.Parallel()
 	src := writeRuntimeFixture(t, t.TempDir(), map[string]string{
 		"__init__.py": "x = 1\n",
 		"runner.py":   "def run(): pass\n",
@@ -56,6 +57,7 @@ func TestRuntimeSrcChecksum_StableAcrossWalkOrder(t *testing.T) {
 // invariant Lima bug #239 needs (binary upgrade ships a new runner.py with
 // lifecycle log lines; the venv must pick it up).
 func TestRuntimeSrcChecksum_ChangesWithContent(t *testing.T) {
+	t.Parallel()
 	v1 := writeRuntimeFixture(t, t.TempDir(), map[string]string{
 		"runner.py": "def run(): pass\n",
 	})
@@ -73,6 +75,7 @@ func TestRuntimeSrcChecksum_ChangesWithContent(t *testing.T) {
 // must NOT affect the checksum. Otherwise a stray cache dir would force constant
 // reinstalls.
 func TestRuntimeSrcChecksum_IgnoresNonPyFiles(t *testing.T) {
+	t.Parallel()
 	src := writeRuntimeFixture(t, t.TempDir(), map[string]string{
 		"runner.py": "def run(): pass\n",
 	})
@@ -94,6 +97,7 @@ func TestRuntimeSrcChecksum_IgnoresNonPyFiles(t *testing.T) {
 // so a dexaflow.yaml that just reorders `dependencies:` does not force a needless
 // reinstall.
 func TestDevDepsSignatureOrderIndependent(t *testing.T) {
+	t.Parallel()
 	a := devDepsSignature([]string{"requests==2.31.0", "duckdb==1.4.4"})
 	b := devDepsSignature([]string{"duckdb==1.4.4", "requests==2.31.0"})
 	if a != b {
@@ -111,6 +115,7 @@ func TestDevDepsSignatureOrderIndependent(t *testing.T) {
 // is edited, without re-running pip for every other DAG in the workspace
 // (#346 — the issue with the shared single-venv layout).
 func TestDagVenvDepsRoundtrip(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	dagID := "etl"
 	venvDir := dagVenvDir(home, dagID)
@@ -143,6 +148,7 @@ func TestDagVenvDepsRoundtrip(t *testing.T) {
 // without this, a `dexaflow lite` rerun after `make dev-install` would keep
 // the previous build's runtime in the venv.
 func TestDagVenvRuntimeChecksumRoundtrip(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	dagID := "etl"
 	venvDir := dagVenvDir(home, dagID)

@@ -184,6 +184,7 @@ func TestWorkspaceDefaultsConfigureTheRemoteBuilder(t *testing.T) {
 
 // A bad remote_builder in the workspace file is refused when it loads.
 func TestWorkspaceFileRefusesABadRemoteBuilder(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), workspaceFileName)
 	writeTree(t, path, "targets:\n  dev: {server: https://dev.example, remote_builder: {cloud_build: {project: X}}}\n")
 	if _, err := parseWorkspaceFile(path); err == nil || !strings.Contains(err.Error(), `target "dev": remote_builder.cloud_build.project`) {
@@ -194,6 +195,7 @@ func TestWorkspaceFileRefusesABadRemoteBuilder(t *testing.T) {
 // Where the image is built is not an input of the image: configuring a
 // remote builder leaves the content label as it was.
 func TestRemoteBuilderDoesNotMoveTheContentLabel(t *testing.T) {
+	t.Parallel()
 	dir := versionProject(t, "build:\n  platforms: [linux/amd64]\n")
 	before := labelOf(t, dir)
 	editYAML(t, dir, "build:\n", "build:\n"+cloudBuildYAML)
@@ -309,6 +311,7 @@ func TestDeployPreflightRefusalIsANoteForAWholeRemoteBuild(t *testing.T) {
 // generated Dockerfile left out, and a <Dockerfile>.dockerignore next to a
 // project Dockerfile used in place of .dockerignore, as BuildKit does.
 func TestContextFilesListWhatADaemonReads(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		files      map[string]string
 		links      map[string]string
@@ -372,6 +375,7 @@ func TestContextFilesListWhatADaemonReads(t *testing.T) {
 // The warning names the bucket gcloud really stages into, also for a
 // domain-scoped project.
 func TestUploadedSecretsWarningNamesTheSourceBucket(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{Build: &domain.BuildConfig{RemoteBuilder: &domain.RemoteBuilderConfig{
 		CloudBuild: &domain.CloudBuildConfig{Project: "example.com:acme-ci"}}}}
 	var w strings.Builder

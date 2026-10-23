@@ -10,6 +10,7 @@ import (
 // against a database a newer binary has already upgraded — the alternative
 // (silent reads/writes under a stale schema) is data corruption.
 func TestDecideSchemaDrift(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		dbVersion uint

@@ -10,6 +10,7 @@ import (
 // there). Reports whether a venv was actually present so the caller can log it; a
 // missing venv is a no-op, not an error.
 func TestRemoveDagVenv(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	dir := dagVenvDir(home, "my_dag")
 	if err := os.MkdirAll(filepath.Join(dir, "bin"), 0o750); err != nil {

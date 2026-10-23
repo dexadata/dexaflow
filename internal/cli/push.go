@@ -127,7 +127,7 @@ func pinPushImage(cmd *cobra.Command, data []byte, spec *domain.DAGSpec, img pus
 	if !domain.IsDigestPinned(image) {
 		ctx, cancel := context.WithTimeout(cmdContext(cmd), pushTimeout)
 		defer cancel()
-		pinned, rerr := pushRegistry(cmd.ErrOrStderr(), img.project).Resolve(ctx, image)
+		pinned, rerr := pushRegistry(ctx, cmd.ErrOrStderr(), img.project).Resolve(ctx, image)
 		switch {
 		case rerr != nil && img.ref != "":
 			return nil, nil, fmt.Errorf("--image %q could not be pinned by digest: %w\n  %s", image, rerr, pinFix)
@@ -174,18 +174,18 @@ func pushProjectDir(flag, path string) string {
 // project config in dir asks for (registry.auth_method), or the default ones
 // when dir holds none. A config that does not parse is warned about on w,
 // and the defaults are used; a deprecated auth_method prints its note.
-func pushRegistry(w io.Writer, dir string) build.Registry {
+func pushRegistry(ctx context.Context, w io.Writer, dir string) build.Registry {
 	if !fileExists(projectConfigPath(dir)) {
-		return registryFor(nil)
+		return registryFor(ctx, nil)
 	}
 	cfg, err := loadProjectConfigLenient(dir)
 	if err != nil {
 		//nolint:errcheck // advisory
 		fmt.Fprintf(w, "warning: reading registry.auth_method: %v; the registry is read with the default credentials\n", err)
-		return registryFor(nil)
+		return registryFor(ctx, nil)
 	}
 	warnAuthMethod(w, cfg)
-	return registryFor(cfg)
+	return registryFor(ctx, cfg)
 }
 
 // explainUnpinned adds to err, a register the server refused, why the image

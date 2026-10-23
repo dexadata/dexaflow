@@ -12,6 +12,7 @@ import (
 // against a parser predating a feature like dbt. A drifted checksum marker forces
 // a re-extract; a matching marker is a no-op.
 func TestEnsurePysrcReextractsOnDrift(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "pysrc")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)

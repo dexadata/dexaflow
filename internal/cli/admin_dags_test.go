@@ -67,6 +67,7 @@ func (p *pauseRecorder) ids() []string {
 }
 
 func TestSetPausedForDAGsPatchesEach(t *testing.T) {
+	t.Parallel()
 	srv, rec := dagsPauseServer(t, []string{"a", "b", "c"})
 	defer srv.Close()
 

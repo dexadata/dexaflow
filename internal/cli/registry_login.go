@@ -16,11 +16,6 @@ import (
 	"github.com/dexadata/dexaflow/internal/build"
 )
 
-// verifyRegistryLogin checks a credential with its registry before it is
-// stored. It is a variable only so a test of the GHCR path, whose registry
-// is the real ghcr.io, can stand in for it; nothing else assigns it.
-var verifyRegistryLogin = build.VerifyLogin
-
 // ghcrHost is the GitHub Container Registry, the registry whose login can
 // exchange the gh CLI's session.
 const ghcrHost = "ghcr.io"
@@ -88,7 +83,9 @@ func runRegistryLogin(cmd *cobra.Command, host string, f registryLoginFlags) err
 	if uerr := checkRegistryUser(user); uerr != nil {
 		return uerr
 	}
-	if verr := verifyRegistryLogin(ctx, host, user, secret); verr != nil {
+	// cliDeps.verifyRegistryLogin is build.VerifyLogin; a test of the GHCR
+	// path, whose registry is the real ghcr.io, stands in for it.
+	if verr := depsFrom(ctx).verifyRegistryLogin(ctx, host, user, secret); verr != nil {
 		return fmt.Errorf("signing in to %s as %s: %w", host, user, verr)
 	}
 	where, err := build.StoreLogin(ctx, host, user, secret)

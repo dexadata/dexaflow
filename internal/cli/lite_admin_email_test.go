@@ -16,6 +16,7 @@ import (
 // no admin_email boots the server with the new default address, which the
 // server resolves to a legacy admin when that is the one the database has.
 func TestLoadLiteAdminDefaultsToTheDexaflowAdmin(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(path, []byte("admin_password_hash: \"$2a$12$hash\"\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -31,6 +32,7 @@ func TestLoadLiteAdminDefaultsToTheDexaflowAdmin(t *testing.T) {
 // bootstrapped, so a reinstall over a kept pre-rename database tells the user
 // to log in as admin@leoflow.local.
 func TestLiteLoginEmail(t *testing.T) {
+	t.Parallel()
 	legacyOnly := func(_ context.Context, email string) (auth.AdminState, error) {
 		if email == "admin@leoflow.local" {
 			return auth.UserIsAdmin, nil
@@ -59,6 +61,7 @@ func TestLiteLoginEmail(t *testing.T) {
 // TestDevTokenEmail: the in-process dev token names the admin the banner
 // names, and the default address under no-auth.
 func TestDevTokenEmail(t *testing.T) {
+	t.Parallel()
 	if got := devTokenEmail("admin@leoflow.local"); got != "admin@leoflow.local" {
 		t.Errorf("devTokenEmail(legacy) = %q, want the resolved admin", got)
 	}

@@ -102,13 +102,14 @@ func runRestore(cmd *cobra.Command, input string, force bool) error {
 	// bring it up through the path `dexaflow lite` uses, and stop it on the way
 	// out only when this restore started it.
 	devPrintln(out, "▸ provisioning the managed Postgres …")
-	stop, perr := restoreProvisionDatastore(cmd.Context(), cmd)
+	d := cmdDeps(cmd)
+	stop, perr := d.provisionForRestore(cmd.Context(), cmd)
 	if perr != nil {
 		return fmt.Errorf("provisioning the managed Postgres to restore into: %w; nothing was restored", perr)
 	}
 	defer stop()
 	devPrintln(out, "▸ applying the datastore dump via psql …")
-	if err := psqlRestore(cmd.Context(), leoflowHome, archive.Dump); err != nil {
+	if err := d.psqlRestore(cmd.Context(), leoflowHome, archive.Dump); err != nil {
 		return fmt.Errorf("%w; config.yaml was left as it was", err)
 	}
 	if err := restoreConfigFiles(out, leoflowHome, archive); err != nil {
@@ -127,7 +128,9 @@ func runRestore(cmd *cobra.Command, input string, force bool) error {
 		devPrintf(out, "✓ workspace restored to %s (%d files)\n", workspaceDir, len(archive.Workspace))
 	}
 
-	if restoreDockerUsable() {
+	// A plain `dexaflow lite` picks the Docker Postgres where Docker is
+	// usable (ADR 0030).
+	if d.dockerUsable(cmd.Context()) {
 		devPrintln(out, "✓ restore complete; run `dexaflow lite --postgres managed` to start "+
 			"(the archive holds a managed datastore, and with Docker present a plain `dexaflow lite` uses the Docker Postgres).")
 		return nil
@@ -135,19 +138,6 @@ func runRestore(cmd *cobra.Command, input string, force bool) error {
 	devPrintln(out, "✓ restore complete; run `dexaflow lite` to start.")
 	return nil
 }
-
-// psqlRestore replays a dump into the Lite database; a variable so tests can
-// make the replay fail or succeed without a managed Postgres.
-var psqlRestore = runPsqlRestore
-
-// restoreProvisionDatastore brings up the datastore a restore replays into
-// and returns the stop to defer; a variable so tests run without downloading
-// or starting a cluster.
-var restoreProvisionDatastore = provisionManagedForRestore
-
-// restoreDockerUsable reports whether a plain `dexaflow lite` would pick the
-// Docker Postgres here (ADR 0030); a variable so tests pin the host.
-var restoreDockerUsable = dockerUsable
 
 // provisionManagedForRestore downloads, initializes and starts the managed
 // Postgres exactly as `dexaflow lite` does (startManagedPostgres), then creates

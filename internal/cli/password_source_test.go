@@ -17,6 +17,7 @@ func newPasswordCmd() *cobra.Command {
 }
 
 func TestResolvePasswordStdinReadsOneLine(t *testing.T) {
+	t.Parallel()
 	cmd := newPasswordCmd()
 	cmd.SetIn(bytes.NewBufferString("s3cr3t\nignored second line\n"))
 	got, err := resolvePassword(cmd, "", true)
@@ -29,6 +30,7 @@ func TestResolvePasswordStdinReadsOneLine(t *testing.T) {
 }
 
 func TestResolvePasswordStdinConflictsWithExplicitFlag(t *testing.T) {
+	t.Parallel()
 	cmd := newPasswordCmd()
 	if err := cmd.Flags().Set("password", "onflag"); err != nil { // explicit --password
 		t.Fatal(err)
@@ -40,6 +42,7 @@ func TestResolvePasswordStdinConflictsWithExplicitFlag(t *testing.T) {
 }
 
 func TestResolvePasswordEnvDefaultDoesNotConflict(t *testing.T) {
+	t.Parallel()
 	// The flag carries its LEOFLOW_PASSWORD default but the user did not set it
 	// (Changed==false), so --password-stdin wins with no conflict.
 	cmd := newPasswordCmd()
@@ -54,6 +57,7 @@ func TestResolvePasswordEnvDefaultDoesNotConflict(t *testing.T) {
 }
 
 func TestResolvePasswordFlagPassthrough(t *testing.T) {
+	t.Parallel()
 	cmd := newPasswordCmd()
 	got, err := resolvePassword(cmd, "plain", false)
 	if err != nil || got != "plain" {
@@ -62,6 +66,7 @@ func TestResolvePasswordFlagPassthrough(t *testing.T) {
 }
 
 func TestReadPasswordStdinEmptyErrors(t *testing.T) {
+	t.Parallel()
 	// Both no bytes at all and a single empty line must error — never a silent
 	// empty password.
 	for name, in := range map[string]string{"no bytes": "", "empty line": "\n"} {

@@ -63,6 +63,7 @@ func registerAgainstAPI(t *testing.T, policy domain.WarmPolicy, pools config.Exe
 // and what the version's warm pool does; --output json carries the same
 // report.
 func TestDeployReportsExecutionModes(t *testing.T) {
+	t.Parallel()
 	pools := config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 2, MaxPoolSize: 4}
 	res, out := registerAgainstAPI(t, domain.WarmPolicy{Enabled: true}, pools, mixedDeploySpec)
 	for _, want := range []string{
@@ -108,6 +109,7 @@ func TestDeployReportsExecutionModes(t *testing.T) {
 // TestDeployReportsWarmPoolsOff: with warm pools off the deploy says, in one
 // line, that every task runs on a dedicated pod, and prints no pool line.
 func TestDeployReportsWarmPoolsOff(t *testing.T) {
+	t.Parallel()
 	_, out := registerAgainstAPI(t, domain.WarmPolicy{}, config.ExecutionSection{}, mixedDeploySpec)
 	if !strings.Contains(out, "  execution  every task runs on a dedicated pod: warm pools off\n") {
 		t.Errorf("deploy output lacks the one-line dedicated summary:\n%s", out)
@@ -119,6 +121,7 @@ func TestDeployReportsWarmPoolsOff(t *testing.T) {
 
 // TestExecutionSummaryLines covers the summary's wording.
 func TestExecutionSummaryLines(t *testing.T) {
+	t.Parallel()
 	task := func(id, reason string) taskExecution {
 		if reason == "" {
 			return taskExecution{TaskID: id, Mode: "warm"}
@@ -167,6 +170,7 @@ func TestExecutionSummaryLines(t *testing.T) {
 // those the preflight already printed from its dry run, so a warning is
 // printed once.
 func TestDeployPrintsTheRegisterWarningsOnce(t *testing.T) {
+	t.Parallel()
 	unit, err := domain.ParseResourceUnit(domain.ResourceUnitConfig{CPU: "250m", Memory: "512Mi", Enforce: domain.UnitEnforceWarn})
 	if err != nil {
 		t.Fatal(err)

@@ -28,7 +28,7 @@ func TestDeployFollowRefusesAll(t *testing.T) {
 // --follow` through the real command on the already-deployed path (no build):
 // it triggers, follows the run it started, and exits with the run-failed code.
 func TestDeployTriggerFollowExitsWithTheRunResult(t *testing.T) {
-	fastFollow(t)
+	d := fastFollow(t)
 	dir, builder, _ := deployFixture(t)
 	label := labelOf(t, dir)
 	deploys := &deployServer{current: label, registered: []string{label}}
@@ -44,7 +44,7 @@ func TestDeployTriggerFollowExitsWithTheRunResult(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	out, _, err := run(t, "deploy", dir, "--server", srv.URL, "--token", "x", "--yes", "--builder", builder, "--trigger", "--follow")
+	out, _, err := runDeps(t, d, "deploy", dir, "--server", srv.URL, "--token", "x", "--yes", "--builder", builder, "--trigger", "--follow")
 	if err == nil {
 		t.Fatalf("a failed run must fail deploy --follow:\n%s", out)
 	}
@@ -78,7 +78,7 @@ func pausedDeployServer(t *testing.T, dir string, runs *fakeRunServer) *httptest
 // says once that the run of a paused DAG waits until the unpause, and names
 // the command; with --follow the follower says it, and only once too.
 func TestDeployTriggerSaysAPausedRunWaits(t *testing.T) {
-	fastFollow(t)
+	d := fastFollow(t)
 	for _, follow := range []bool{false, true} {
 		dir, builder, _ := deployFixture(t)
 		runs := &fakeRunServer{paused: true, steps: successSteps()}
@@ -88,7 +88,7 @@ func TestDeployTriggerSaysAPausedRunWaits(t *testing.T) {
 			args = append(args, "--follow")
 		}
 
-		out, _, err := run(t, args...)
+		out, _, err := runDeps(t, d, args...)
 		if err != nil {
 			t.Fatalf("deploy --trigger (follow %t): %v\n%s", follow, err, out)
 		}

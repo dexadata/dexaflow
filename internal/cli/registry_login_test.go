@@ -109,12 +109,12 @@ func TestRegistryLoginToGHCRUsesTheGHSession(t *testing.T) {
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
 	fakeGH(t, "gho_session_token")
 	var verified []string
-	defer func(v func(context.Context, string, string, string) error) { verifyRegistryLogin = v }(verifyRegistryLogin)
-	verifyRegistryLogin = func(_ context.Context, host, user, secret string) error {
+	d := testDeps()
+	d.verifyRegistryLogin = func(_ context.Context, host, user, secret string) error {
 		verified = append(verified, host+" "+user+" "+secret)
 		return nil
 	}
-	out, errOut, err := runWithStdin(t, "", "registry", "login", "ghcr.io")
+	out, errOut, err := runWithStdinDeps(t, d, "", "registry", "login", "ghcr.io")
 	if err != nil {
 		t.Fatalf("registry login ghcr.io: %v\n%s", err, errOut)
 	}
@@ -195,8 +195,8 @@ func TestRunGHStopsAHangingGH(t *testing.T) {
 // colon would be stored as another user.
 func TestRegistryLoginRefusesABadRegistryOrUser(t *testing.T) {
 	var verified []string
-	defer func(v func(context.Context, string, string, string) error) { verifyRegistryLogin = v }(verifyRegistryLogin)
-	verifyRegistryLogin = func(_ context.Context, host, user, _ string) error {
+	d := testDeps()
+	d.verifyRegistryLogin = func(_ context.Context, host, user, _ string) error {
 		verified = append(verified, host+" "+user)
 		return nil
 	}
@@ -210,7 +210,7 @@ func TestRegistryLoginRefusesABadRegistryOrUser(t *testing.T) {
 	} {
 		dir := t.TempDir()
 		t.Setenv("DOCKER_CONFIG", dir)
-		_, _, err := runWithStdin(t, "tok-abc-123\n", "registry", "login", tc.host, "--username", tc.user, "--password-stdin")
+		_, _, err := runWithStdinDeps(t, d, "tok-abc-123\n", "registry", "login", tc.host, "--username", tc.user, "--password-stdin")
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%q as %q: err = %v, want it to say %q", tc.host, tc.user, err, tc.want)
 		}

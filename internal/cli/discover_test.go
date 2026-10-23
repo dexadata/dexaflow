@@ -23,6 +23,7 @@ import (
 // Each case builds a tmpdir, runs DiscoverProjects, and asserts a stable set
 // of project paths + dag_ids (sort-stable).
 func TestDiscoverProjects_TableDriven(t *testing.T) {
+	t.Parallel()
 	type want struct {
 		projects  []string // relative paths from workspace, sorted
 		dagIDs    []string // dag_ids in same order as projects

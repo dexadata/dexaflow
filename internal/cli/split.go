@@ -28,16 +28,12 @@ type baseReader interface {
 
 // baseReaderFor reads the base image of cfg's project, for the dependency
 // key and the dependency layer, with the project's registry credentials
-// (registryFor, registry.auth_method).
-func baseReaderFor(cfg *domain.LeoflowConfig) baseReader {
-	return wrapBaseReader(registryFor(cfg))
+// (registryFor, registry.auth_method). The tests of this package keep the
+// CLI off public registries (cliDeps.baseReader) while still reading
+// through the project's client.
+func baseReaderFor(ctx context.Context, cfg *domain.LeoflowConfig) baseReader {
+	return depsFrom(ctx).baseReader(registryFor(ctx, cfg))
 }
-
-// wrapBaseReader turns the registry client into the base reader. It is a
-// variable only so the tests of this package keep the CLI off public
-// registries (split_seam_test.go) while still reading through the
-// project's client; nothing else assigns it.
-var wrapBaseReader = func(r build.Registry) baseReader { return r }
 
 // depsKeyFormat versions the layout of the dependency image and of the code
 // layer. Bumping it gives every project a new dependency key.
@@ -85,7 +81,7 @@ func splitFor(ctx context.Context, dir, dockerfile string, o compileOptions, cfg
 		return nil, looseReason(loose, noWheels)
 	}
 	base := resolveBaseImage(cfg)
-	reader := baseReaderFor(cfg)
+	reader := baseReaderFor(ctx, cfg)
 	pinned, err := reader.Resolve(ctx, base)
 	if err != nil {
 		return nil, fmt.Sprintf("the digest of the base image %s could not be read (%v)", base, unwrapped(err))
@@ -98,7 +94,7 @@ func splitFor(ctx context.Context, dir, dockerfile string, o compileOptions, cfg
 		var plan *wheelPlan
 		if plan, noWheels = planWheels(ctx, uv, cfg, deps, reader, pinned, platforms); plan != nil {
 			wheels := plan.layer()
-			wheels.Registry = registryFor(cfg)
+			wheels.Registry = registryFor(ctx, cfg)
 			split := &build.Split{DepsImage: depsImage(image, plan.key()), Dockerfile: content, Wheels: wheels, Note: plan.note()}
 			if len(loose) == 0 {
 				split.DaemonDepsImage = depsImage(image, depsKey(depsKeyContent(content, cfg), platforms))

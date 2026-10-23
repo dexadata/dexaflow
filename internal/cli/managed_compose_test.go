@@ -48,6 +48,7 @@ func readFileT(t *testing.T, path string) []byte {
 // A fresh home gets the embedded compose and the checksum that marks it as
 // managed, silently.
 func TestEnsureManagedComposeFreshWrite(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	var log composeLog
 	path, err := ensureManagedComposeIn(dir, log.logf)
@@ -69,6 +70,7 @@ func TestEnsureManagedComposeFreshWrite(t *testing.T) {
 // wrote (it matches the recorded checksum), so it is replaced by this binary's
 // compose and the refresh is announced.
 func TestEnsureManagedComposeRefreshesAnUnchangedOldCompose(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	old := []byte("services:\n  postgres:\n    image: example.invalid/older-lite-db:1\n")
 	path := writeComposeState(t, dir, old, composeChecksum(old))
@@ -100,6 +102,7 @@ func TestEnsureManagedComposeRefreshesAnUnchangedOldCompose(t *testing.T) {
 // is written beside it, and the warning names both and says how to switch. It
 // is printed once per compose this binary ships, not on every start.
 func TestEnsureManagedComposeKeepsAnEditedComposeAndWarnsOnce(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	old := []byte("services:\n  postgres:\n    image: example.invalid/older-lite-db:1\n")
 	edited := append(append([]byte{}, old...), []byte("    shm_size: 1g\n")...)
@@ -158,6 +161,7 @@ func TestEnsureManagedComposeKeepsAnEditedComposeAndWarnsOnce(t *testing.T) {
 // choice: a file equal to this binary's compose is adopted silently (the
 // marker is recorded), and any other file is kept and treated as edited.
 func TestEnsureManagedComposeWithoutMarker(t *testing.T) {
+	t.Parallel()
 	t.Run("equal to the embed is adopted", func(t *testing.T) {
 		dir := t.TempDir()
 		writeComposeState(t, dir, dexaflow.DevCompose(), "")
