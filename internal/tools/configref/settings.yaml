@@ -979,15 +979,15 @@ settings:
   executor.defaults.resources_cpu:
     edition: Pro
     description: >-
-      Default CPU for a task that declares none of its own (a Kubernetes quantity,
-      e.g. `250m`). Applied as **both request and limit**. Guaranteed QoS needs
+      Default CPU for a task that sets no CPU request or limit of its own (a Kubernetes
+      quantity, e.g. `250m`). Applied as **both request and limit**. Guaranteed QoS needs
       the **memory** default set too: cpu alone leaves the task Burstable with
       no memory bound at all, and the control plane WARNs at boot naming the missing
       key; empty leaves it BestEffort unless the DAG sets its own. Helm: `executor.defaults.resources.cpu`.
   executor.defaults.resources_memory:
     edition: Pro
     description: >-
-      Default memory for a task that declares none of its own (e.g. `256Mi`). Applied
+      Default memory for a task that sets no memory request or limit of its own (e.g. `256Mi`). Applied
       as **both request and limit**. Set it together with the CPU default: either
       one alone is Burstable, not Guaranteed. Helm: `executor.defaults.resources.memory`.
   executor.defaults.limits_cpu:

@@ -1073,6 +1073,27 @@ That rolls back 049 and 048. A task that was
 waiting on an unavailable Kubernetes API at that moment falls back onto the
 dispatch-attempt budget of the previous release. No other data changes.
 
+### Upgrading to 0.5.7: platform resource defaults fill per dimension
+
+`executor.defaults.resources.cpu` and `executor.defaults.resources.memory` used
+to apply only to a task that declared no `resources` at all. A task that
+declared any part, for example only an `ephemeral_storage` limit or only a cpu
+request, got neither default and ran with no request or limit on the
+dimensions it left out. From 0.5.7 the control plane fills each of cpu, memory
+and ephemeral storage that a task leaves empty (neither request nor limit) with
+the platform default; a dimension the task sets at all is still entirely the
+task's ([#802](https://github.com/dexadata/dexaflow/issues/802)).
+
+Only clusters that set these defaults are affected, and only tasks that
+declare part of their resources. Those tasks now request more than before when
+they are next dispatched, which can leave them `Pending` on a cluster with no
+headroom. Before upgrading, find them: a task whose `resources` in `dag.json`
+names cpu but not memory, or the other way round, or only
+`ephemeral_storage`. Give the dimensions they leave out an explicit value if
+the platform default is too large for them. Nothing changes for a task with a
+resource unit (`executor.unit`), which sizes every task as before. Rolling
+back to 0.5.6 restores the old behavior with no other step.
+
 ## Ephemeral database loss (emptyDir Postgres)
 
 When evaluating Dexaflow with an in-cluster Postgres running on `emptyDir`
