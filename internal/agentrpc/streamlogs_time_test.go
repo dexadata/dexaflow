@@ -24,7 +24,7 @@ func TestWriteLineRefusesInvalidTimestamp(t *testing.T) {
 	forged := "real\n{\"ts\":\"2026-01-01T00:00:00Z\",\"level\":\"error\",\"stream\":\"stderr\",\"msg\":\"FORGED\"}"
 	stored := func(ref logs.Ref) string {
 		t.Helper()
-		rc, err := sink.Read(ref)
+		rc, err := sink.Read(t.Context(), ref)
 		if err != nil {
 			t.Fatalf("Read() error = %v", err)
 		}

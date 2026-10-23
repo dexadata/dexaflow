@@ -105,7 +105,7 @@ func TestObjectSinkRoundTrip(t *testing.T) {
 		t.Fatalf("Close() error = %v", cerr)
 	}
 
-	rc, err := sink.Read(ref)
+	rc, err := sink.Read(t.Context(), ref)
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
@@ -156,7 +156,7 @@ func TestObjectSinkAppendEventPreservesExisting(t *testing.T) {
 		t.Fatalf("AppendEvent() error = %v", aerr)
 	}
 
-	rc, err := sink.Read(ref)
+	rc, err := sink.Read(t.Context(), ref)
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
@@ -183,7 +183,7 @@ func TestObjectSinkAppendEventCreatesWhenAbsent(t *testing.T) {
 	if err := sink.AppendEvent(ref, Event{Level: "error", Message: "killed: agent_lost"}); err != nil {
 		t.Fatalf("AppendEvent(absent) error = %v", err)
 	}
-	rc, err := sink.Read(ref)
+	rc, err := sink.Read(t.Context(), ref)
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
@@ -225,14 +225,14 @@ func TestObjectSinkRejectsUnsafeRef(t *testing.T) {
 	if _, err := sink.Open(bad); !errors.Is(err, ErrUnsafeRef) {
 		t.Fatalf("Open(unsafe) error = %v, want ErrUnsafeRef", err)
 	}
-	if _, err := sink.Read(bad); !errors.Is(err, ErrUnsafeRef) {
+	if _, err := sink.Read(t.Context(), bad); !errors.Is(err, ErrUnsafeRef) {
 		t.Fatalf("Read(unsafe) error = %v, want ErrUnsafeRef", err)
 	}
 }
 
 func TestObjectSinkReadMissing(t *testing.T) {
 	sink := NewObjectSink(context.Background(), newMemStore(), "", nil)
-	if _, err := sink.Read(sampleRef()); !errors.Is(err, ErrObjectNotFound) {
+	if _, err := sink.Read(t.Context(), sampleRef()); !errors.Is(err, ErrObjectNotFound) {
 		t.Fatalf("Read(missing) error = %v, want ErrObjectNotFound", err)
 	}
 }

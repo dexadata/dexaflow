@@ -1,6 +1,7 @@
 package logs
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -78,7 +79,7 @@ func (t TryEpochs) pick(stored []int) ([]int, epochSpan) {
 // the try can span. StoredEpochs ignores ref.AttemptEpoch. An error means the
 // listing is unavailable, and the read falls back to probing.
 type EpochLister interface {
-	StoredEpochs(ref Ref) ([]int, error)
+	StoredEpochs(ctx context.Context, ref Ref) ([]int, error)
 }
 
 // ReadAttempts reads the log of one try as every execution of it stored,
@@ -100,9 +101,9 @@ type EpochLister interface {
 // sink's own absence error is returned, so the API still answers 404. A
 // failure to open the first streams fails the call; a later one ends the body
 // with that error, so a log is never served with a silent hole.
-func ReadAttempts(sink Sink, ref Ref, set TryEpochs) (io.ReadCloser, error) {
-	epochs, dropped, listed := selectEpochs(sink, ref, set)
-	a := &attemptStreams{sink: sink, ref: ref, pending: epochs}
+func ReadAttempts(ctx context.Context, sink Sink, ref Ref, set TryEpochs) (io.ReadCloser, error) {
+	epochs, dropped, listed := selectEpochs(ctx, sink, ref, set)
+	a := &attemptStreams{ctx: ctx, sink: sink, ref: ref, pending: epochs}
 	if listed {
 		a.total = len(epochs)
 	}
@@ -135,9 +136,9 @@ func ReadAttempts(sink Sink, ref Ref, set TryEpochs) (io.ReadCloser, error) {
 
 // selectEpochs returns the epochs to read, oldest first, the span the bound
 // dropped, and whether they come from a listing of the stored executions.
-func selectEpochs(sink Sink, ref Ref, set TryEpochs) ([]int, epochSpan, bool) {
+func selectEpochs(ctx context.Context, sink Sink, ref Ref, set TryEpochs) ([]int, epochSpan, bool) {
 	if l, ok := sink.(EpochLister); ok {
-		if stored, err := l.StoredEpochs(ref); err == nil {
+		if stored, err := l.StoredEpochs(ctx, ref); err == nil {
 			epochs, dropped := set.pick(stored)
 			if len(epochs) > 0 {
 				return epochs, dropped, true
@@ -158,6 +159,7 @@ type stream struct {
 
 // attemptStreams opens the try's executions in order, skipping absent ones.
 type attemptStreams struct {
+	ctx     context.Context // the caller's, so a read stops with its request
 	sink    Sink
 	ref     Ref
 	pending []int
@@ -177,7 +179,7 @@ func (a *attemptStreams) openNext() (*stream, error) {
 		a.pending = a.pending[1:]
 		r := a.ref
 		r.AttemptEpoch = epoch
-		rc, err := a.sink.Read(r)
+		rc, err := a.sink.Read(a.ctx, r)
 		switch {
 		case err == nil:
 			a.opened++

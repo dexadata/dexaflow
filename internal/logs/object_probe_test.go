@@ -136,7 +136,7 @@ func (f *failingKeyStore) Get(ctx context.Context, key string) (io.ReadCloser, e
 // error the read ended with, which the caller asserts on.
 func readUntilError(t *testing.T, sink *ObjectSink, ref Ref) (string, error) {
 	t.Helper()
-	rc, err := sink.Read(ref)
+	rc, err := sink.Read(t.Context(), ref)
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
@@ -234,7 +234,7 @@ func TestObjectSinkSegmentedReadReportsProbeOutage(t *testing.T) {
 	}
 
 	empty := &flakyStore{memStore: newMemStore(), failures: objectReadProbeAttempts, err: errSlowDown}
-	_, err := segmentedSink(empty, nil).Read(ref)
+	_, err := segmentedSink(empty, nil).Read(t.Context(), ref)
 	switch {
 	case err == nil:
 		t.Fatal("Read() during an outage returned a log")

@@ -79,7 +79,7 @@ func (r *LogReader) ReadLogs(ctx context.Context, tenant, dagID, runID, taskID s
 	if err != nil {
 		return nil, fmt.Errorf("resolving the try's attempt epochs: %w", err)
 	}
-	rc, err := logs.ReadAttempts(r.sink, logs.Ref{
+	rc, err := logs.ReadAttempts(ctx, r.sink, logs.Ref{
 		TenantID:  uuidToString(ref.TenantID),
 		DagID:     dagID,
 		RunID:     uuidToString(ref.DagRunID),
