@@ -1,10 +1,6 @@
 ####################################################################################
 # Dexaflow documentation site — Hugo + Docsy (CNCF/enterprise-grade toolchain).
 #
-# This is the PHASE 0 scaffold of the MkDocs-Material -> Hugo+Docsy migration. It is
-# a PARALLEL track: the live Material+mike site under ../docs, ../mkdocs.yml and the
-# docs*.yml workflows keeps shipping untouched until we reach full parity and cut over.
-#
 # Docsy is pulled in as a Hugo Module (see the [[module.imports]] block and go.mod);
 # fetch it with `hugo mod get github.com/google/docsy` before the first build.
 ####################################################################################
@@ -12,12 +8,13 @@
 baseURL = "https://dexaflow.dexadata.ai/"
 title = "Dexaflow"
 
-# GitHub Pages serves this project site under the /leoflow/ SUBPATH. Every internal
-# URL — page links, images, static assets (the Scalar page, screenshots), the
-# hand-written hero buttons, and Docsy shortcode `url=` params — must carry that
-# prefix. canonifyURLs rewrites every root-relative ("/…") href/src in the rendered
-# output to sit under baseURL, uniformly and post-render, so all URL shapes behave
-# the same. It pairs with disabling Goldmark's default link/image render hooks
+# The site is published at the root of its own domain, and each archived version
+# under a subpath of it (see website/scripts/ci/render-version-config.py). Every
+# internal URL (page links, images, static assets such as the Scalar page and the
+# screenshots, the hand-written hero buttons, and Docsy shortcode `url=` params)
+# must carry that leg's baseURL prefix. canonifyURLs rewrites every root-relative
+# ("/…") href/src in the rendered output to sit under baseURL, uniformly and
+# post-render, so all URL shapes behave the same. It pairs with disabling Goldmark's default link/image render hooks
 # (see [markup.goldmark.renderHooks] below): with the hooks OFF, markdown links stay
 # root-relative and canonify is the single, consistent thing that prefixes them —
 # turning the hooks ON would double-prefix them.
@@ -43,7 +40,7 @@ enableGitInfo = true
   [markup.goldmark.renderer]
     unsafe = true
   # Turn OFF Goldmark's default link/image render hooks. Those hooks resolve
-  # page-to-page markdown links to their RelPermalink (already /leoflow/-prefixed)
+  # page-to-page markdown links to their RelPermalink (already prefixed with the baseURL path)
   # but leave static-asset links, raw-HTML hrefs and shortcode url= params
   # un-prefixed — an inconsistent split that breaks images and buttons under the
   # subpath. With the hooks off, EVERY internal URL stays root-relative and
@@ -96,10 +93,9 @@ enableGitInfo = true
   url_latest_version = "https://dexaflow.dexadata.ai/"
 
   copyright = "@neoChaotic"
-  # Full-text search parity with the live Material site (which ships MkDocs'
-  # `search` plugin). Docsy's Lunr-based OFFLINE search builds a client-side index
+  # Full-text search. Docsy's Lunr-based OFFLINE search builds a client-side index
   # (assets/json/offline-search-index.json) at build time and needs no external
-  # service — it works on GitHub Pages under the /leoflow/ subpath. Setting this
+  # service, so it works on GitHub Pages under any subpath. Setting this
   # renders the navbar search box (partials/search-input.html gates on it) and
   # publishes the index resource. `sidebar_search_disable=false` (below) keeps the
   # sidebar box on too.

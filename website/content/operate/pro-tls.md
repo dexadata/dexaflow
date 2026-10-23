@@ -94,7 +94,7 @@ apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
   name: dexaflow-selfsigned
-  namespace: leoflow
+  namespace: dexaflow
 spec:
   selfSigned: {}
 ```
@@ -112,7 +112,7 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: dexaflow-agent-tls
-  namespace: leoflow
+  namespace: dexaflow
 spec:
   secretName: dexaflow-agent-tls          # == agentTLS.serverCertSecret
   duration: 2160h                        # 90d
@@ -121,19 +121,19 @@ spec:
     name: dexaflow-selfsigned
     kind: Issuer
   dnsNames:
-    - dexaflow.leoflow.svc                 # the control-plane Service DNS
-    - dexaflow.leoflow.svc.cluster.local
+    - dexaflow.dexaflow.svc                 # the control-plane Service DNS
+    - dexaflow.dexaflow.svc.cluster.local
     # When split.enabled=true (ADR 0049) the scheduler runs as its own
     # Service and task pods dial IT, not the api Service. The agent verifies
     # the server hostname, so the cert MUST also carry the scheduler DNS or
     # every task's connection fails verification and hangs. Drop these two
     # SANs only if you run the fused `all` role (split.enabled=false).
-    - dexaflow-scheduler.leoflow.svc
-    - dexaflow-scheduler.leoflow.svc.cluster.local
+    - dexaflow-scheduler.dexaflow.svc
+    - dexaflow-scheduler.dexaflow.svc.cluster.local
 ```
 
 > The Service names above assume a release named `dexaflow` in namespace
-> `leoflow`; both derive from the chart fullname. If you install under a
+> `dexaflow`; both derive from the chart fullname. If you install under a
 > different release/namespace, substitute `<fullname>` and `<fullname>-scheduler`
 > (run `helm template` and read the `Service` names) into every SAN.
 
@@ -153,7 +153,7 @@ a new CA later without a restart or failed tasks, see
 
 ```console
 $ helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
-    -n leoflow --create-namespace \
+    -n dexaflow --create-namespace \
     -f values-pro-tls.yaml
 ```
 

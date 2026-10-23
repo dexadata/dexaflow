@@ -79,7 +79,7 @@ That's it. With no arguments, `dexaflow lite`:
 ✓ Dexaflow Lite is ready
     open:    http://127.0.0.1:8088
     login:   admin@dexaflow.local
-    project: /home/you/leoflow
+    project: /home/you/dexaflow
 ```
 
 Open that URL, log in with the password from step 1, and the DAG shows up in the

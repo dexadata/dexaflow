@@ -19,7 +19,7 @@
 #   postgres:16-alpine  (Service: pg-postgresql)
 #   redis:7-alpine      (Service: redis-master)
 database:
-  url: postgres://leoflow:leoflow-poc@pg-postgresql:5432/leoflow?sslmode=disable
+  url: postgres://dexaflow:dexaflow-poc@pg-postgresql:5432/dexaflow?sslmode=disable
 redis:
   url: redis://redis-master:6379/0
 
@@ -34,10 +34,10 @@ redis:
 # with `openssl rand -hex 32` (64 hex chars = 32 bytes). NOT -hex 16: that
 # emits 32 chars, taken as 32 RAW bytes — 128 bits of entropy, silently.
 auth:
-  jwtSecret: leoflow-poc-jwt-please-replace-32B
-secretKey: leoflow-poc-replace-with-32B-key
+  jwtSecret: dexaflow-poc-jwt-please-replace-32B
+secretKey: dexaflow-poc-replace-with-32Bkey
 bootstrap:
-  password: leoflow-poc-admin
+  password: dexaflow-poc-admin
 
 # Single replica for evaluation. The scheduler leader-elects, so replicaCount
 # > 1 is HA-safe in production — but a single replica keeps the PoC light.

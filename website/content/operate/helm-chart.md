@@ -27,7 +27,7 @@ in [Build provenance and SBOMs](/get-started/installation/#build-provenance-and-
 
 ```bash
 helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> \
-  -n leoflow --create-namespace \
+  -n dexaflow --create-namespace \
   -f values.yaml
 ```
 

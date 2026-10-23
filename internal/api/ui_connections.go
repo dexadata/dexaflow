@@ -445,7 +445,7 @@ func deleteConnectionHandler(store ConnectionStore) gin.HandlerFunc {
 func handleConnWriteError(c *gin.Context, err error) {
 	if err.Error() == "no encryption key configured" {
 		AbortProblem(c, http.StatusServiceUnavailable, "encryption unavailable",
-			"set LEOFLOW_SECRET_KEY to manage connections (secrets are never stored in plaintext)")
+			"set DEXAFLOW_SECRET_KEY to manage connections (secrets are never stored in plaintext)")
 		return
 	}
 	handleRepoError(c, err)

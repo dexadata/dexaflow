@@ -2,7 +2,7 @@
 # across nodes, task logs in object storage, a PodDisruptionBudget that renders
 # itself, and a drain grace sized for the shutdown work that can actually finish.
 #
-# Use with:  helm install leoflow oci://ghcr.io/dexadata/charts/dexaflow -n leoflow \
+# Use with:  helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> -n dexaflow \
 #              -f values-ha.yaml
 #
 # Why HA. A single control-plane replica is evicted as ROUTINE cluster housekeeping
@@ -72,8 +72,8 @@ logs:
   sink:
     # `s3` for AWS S3 / MinIO / Ceph RGW, `gcs` for Google Cloud Storage.
     provider: s3
-    bucket: CHANGEME-leoflow-task-logs
-    prefix: leoflow
+    bucket: CHANGEME-dexaflow-task-logs
+    prefix: dexaflow
     # [s3] Required by AWS S3; ignored by most S3-compatible stores.
     region: us-east-1
 
@@ -85,13 +85,13 @@ logs:
 serviceAccount:
   annotations: {}
     # EKS (IRSA) for `s3`:
-    # eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/leoflow-control-plane
+    # eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/dexaflow-control-plane
     # EKS Pod Identity for `s3` — AWS's current recommendation, and it needs NO
     # annotation at all: leave `annotations` empty and create a Pod Identity
     # association between this ServiceAccount and the role instead
     # (`aws eks create-pod-identity-association`, or the EKS Pod Identity Agent addon).
     # GKE (Workload Identity) for `gcs`:
-    # iam.gke.io/gcp-service-account: leoflow-control-plane@PROJECT.iam.gserviceaccount.com
+    # iam.gke.io/gcp-service-account: dexaflow-control-plane@PROJECT.iam.gserviceaccount.com
 
 # ─── Memory sizing for the object sink ──────────────────────────────────────
 # The object sink keeps each running attempt's log in RAM until the attempt ends
@@ -172,14 +172,14 @@ deployment:
 # managed Redis with replicas): the control plane is only as available as the
 # stores it leader-elects on.
 database:
-  url: "postgres://leoflow:CHANGEME@postgres:5432/leoflow?sslmode=require"
+  url: "postgres://dexaflow:CHANGEME@postgres:5432/dexaflow?sslmode=require"
 redis:
   url: "redis://redis:6379/0"
 
 auth:
   jwtSecret: "CHANGEME-jwt-signing-secret"
 # 32 raw bytes or 64-char hex. Generate: openssl rand -hex 32
-secretKey: "CHANGEME-leoflow-secret-key-32by"
+secretKey: "CHANGEME-dexaflow-secret-key-32b"
 
 # Agent gRPC TLS: the auto-generated CA (default) is fine for a hand-driven install.
 # For GitOps (ArgoCD/Flux) use cert-manager instead — see values-pro-tls.yaml.
