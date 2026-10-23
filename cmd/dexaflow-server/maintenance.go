@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -17,6 +16,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/egress"
 	"github.com/dexadata/dexaflow/internal/executor"
 	"github.com/dexadata/dexaflow/internal/failurealert"
+	"github.com/dexadata/dexaflow/internal/gatedtick"
 	"github.com/dexadata/dexaflow/internal/logs"
 	"github.com/dexadata/dexaflow/internal/observability"
 	"github.com/dexadata/dexaflow/internal/retention"
@@ -52,7 +52,7 @@ func startCleanup(ctx context.Context, idx *storage.XComIndex, sink logs.Sink, d
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				safeCycle("cleanup", logger, func() {
+				gatedtick.SafeCycle("cleanup", logger, func() {
 					if err := idx.PurgeExpired(ctx); err != nil {
 						logger.Error("purging expired xcom index", "error", err)
 					}
@@ -81,19 +81,6 @@ func dirFreeBytes(dir string) (uint64, error) {
 		return 0, fmt.Errorf("statfs %s: %w", dir, err)
 	}
 	return st.Bavail * uint64(st.Bsize), nil //nolint:gosec // G115: a filesystem block size is never negative
-}
-
-// safeCycle runs one iteration of a periodic background loop, recovering any
-// panic so a single bad cycle logs and is retried next tick instead of crashing
-// the goroutine (and, since an unrecovered panic in any goroutine aborts the
-// program, the whole control plane). It changes no behavior on the happy path.
-func safeCycle(name string, logger *slog.Logger, fn func()) {
-	defer func() {
-		if r := recover(); r != nil {
-			logger.Error("recovered panic in background cycle", "cycle", name, "panic", r, "stack", string(debug.Stack()))
-		}
-	}()
-	fn()
 }
 
 // xcomSweepInterval is how often the embedded Postgres XCom store is swept of
@@ -130,7 +117,7 @@ func runCLIDeviceSweep(ctx context.Context, ticks <-chan time.Time, store cliDev
 		case <-ctx.Done():
 			return
 		case <-ticks:
-			safeCycle("cli-device-sweep", logger, func() {
+			gatedtick.SafeCycle("cli-device-sweep", logger, func() {
 				if n, err := store.DeleteExpiredCLIDeviceAuthorizations(ctx); err != nil {
 					logger.Error("sweeping expired cli device sign-ins", "error", err)
 				} else if n > 0 {
@@ -152,7 +139,7 @@ func startXComSweep(ctx context.Context, backend *xcom.PostgresBackend, logger *
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				safeCycle("xcom-sweep", logger, func() {
+				gatedtick.SafeCycle("xcom-sweep", logger, func() {
 					if n, err := backend.DeleteExpired(ctx); err != nil {
 						logger.Error("sweeping expired xcom", "error", err)
 					} else if n > 0 {
@@ -176,7 +163,7 @@ func startRetention(ctx context.Context, sec config.RetentionSection, store rete
 	j.SetLeading(leading)
 	logger.Info("retention janitor enabled", "dag_runs_days", sec.DagRunsDays, "audit_log_days", sec.AuditLogDays,
 		"dry_run", sec.DryRun, "interval", sec.Interval, "batch_size", sec.BatchSize, "max_rows_per_cycle", sec.MaxRowsPerCycle)
-	startGatedTicker(ctx, "retention", sec.Interval, leading, logger, func() { j.RunCycle(ctx) })
+	gatedtick.Start(ctx, "retention", sec.Interval, leading, logger, func() { j.RunCycle(ctx) })
 	return true
 }
 
@@ -185,59 +172,6 @@ func retentionConfig(sec config.RetentionSection) retention.Config {
 	return retention.Config{
 		DagRunsDays: sec.DagRunsDays, AuditLogDays: sec.AuditLogDays, DryRun: sec.DryRun,
 		BatchSize: sec.BatchSize, BatchPause: sec.BatchPause, MaxRowsPerCycle: sec.MaxRowsPerCycle,
-	}
-}
-
-// startGatedTicker runs fn every interval on a background goroutine, but only
-// while leading() reports this instance holds leadership. It stops when ctx is
-// done. The pod reconciler and staging GC mutate cluster state, so at
-// replicaCount>1 they must run on the leader alone (ADR 0009/0031); a nil gate
-// means "always run" (single-replica / no election).
-func startGatedTicker(ctx context.Context, name string, interval time.Duration, leading func() bool, logger *slog.Logger, fn func()) {
-	t := time.NewTicker(interval)
-	go func() {
-		defer t.Stop()
-		runGatedTicker(ctx, name, t.C, leading, logger, fn)
-	}()
-}
-
-// runGatedTicker is the loop of startGatedTicker with the tick source injected,
-// so the leadership gate is testable without a real timer. Each cycle is
-// panic-isolated by safeCycle. A tick that arrives while not leading is dropped,
-// not queued.
-func runGatedTicker(ctx context.Context, name string, ticks <-chan time.Time, leading func() bool, logger *slog.Logger, fn func()) {
-	runGatedTickerOrKick(ctx, name, ticks, nil, 0, leading, logger, fn)
-}
-
-// runGatedTickerOrKick is runGatedTicker that also runs the cycle on a signal
-// from kicks (event-driven warm-pool refill), under the same leadership gate. A
-// nil kicks channel never fires, which is exactly runGatedTicker. A kicked run
-// starts no sooner than minKickGap after the previous run, so a burst of events
-// (a deploy draining many workers) costs one reconcile instead of one per event;
-// kicks that arrive meanwhile coalesce into it. Ticks are never delayed.
-func runGatedTickerOrKick(ctx context.Context, name string, ticks <-chan time.Time, kicks <-chan struct{}, minKickGap time.Duration, leading func() bool, logger *slog.Logger, fn func()) {
-	var lastRun time.Time
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticks:
-		case <-kicks:
-			if wait := minKickGap - time.Since(lastRun); wait > 0 {
-				timer := time.NewTimer(wait)
-				select {
-				case <-ctx.Done():
-					timer.Stop()
-					return
-				case <-timer.C:
-				}
-			}
-		}
-		if leading != nil && !leading() {
-			continue
-		}
-		safeCycle(name, logger, fn)
-		lastRun = time.Now()
 	}
 }
 
@@ -274,7 +208,7 @@ func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace st
 		rec.SetPodSnapshotter(snapshotter)
 	}
 	reaper.SetLastSweepCompleted(rec.LastSweepCompletedAt)
-	startGatedTicker(ctx, "maintenance", reconcileInterval, leading, logger, func() {
+	gatedtick.Start(ctx, "maintenance", reconcileInterval, leading, logger, func() {
 		maintenanceCycle(ctx, maintenancePhaseTimeout, rec.Reconcile, reaper.ReapOnce, logger)
 	})
 }
@@ -371,8 +305,8 @@ const (
 func startStagingGC(ctx context.Context, cs kubernetes.Interface, namespace string, store executor.StagingStore, leading func() bool, logger *slog.Logger) {
 	exec := executor.NewKubernetesExecutor(cs, namespace)
 	exec.SetStagingStore(store)
-	startGatedTicker(ctx, "staging-gc", stagingGCInterval, leading, logger, func() {
-		runLeaderTick(ctx, "staging gc", stagingGCInterval, leaderTickPoll, leading, logger, func(tctx context.Context) error {
+	gatedtick.Start(ctx, "staging-gc", stagingGCInterval, leading, logger, func() {
+		gatedtick.RunLeaderTick(ctx, "staging gc", stagingGCInterval, gatedtick.LeaderTickPoll, leading, logger, func(tctx context.Context) error {
 			return exec.GCStagingClaims(tctx, stagingTTL)
 		})
 	})
@@ -465,7 +399,7 @@ func newLiteReaper(store executor.ReaperStore, procs executor.ProcessLiveness, l
 // leader-gated, at the pod path's cadence and under the same per-phase budget.
 // There is no reconcile phase because Lite has no pods to sweep.
 func startLiteMaintenance(ctx context.Context, reaper *executor.Reaper, leading func() bool, logger *slog.Logger) {
-	startGatedTicker(ctx, "lite-maintenance", reconcileInterval, leading, logger, func() {
+	gatedtick.Start(ctx, "lite-maintenance", reconcileInterval, leading, logger, func() {
 		runMaintenancePhase(ctx, "execution reaper", maintenancePhaseTimeout, reaper.ReapOnce, logger)
 	})
 }
