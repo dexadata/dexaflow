@@ -1619,6 +1619,15 @@ jobs:
       # so it cannot itself be cut-time-only.
       - name: Docs version menu agrees between versions.json and hugo.toml
         run: bash scripts/check-docs-version-menu.sh
+      # Two more of the same shape that never got their real check wired in:
+      # only their self-tests ran. CodeQL refuses to run when its init and
+      # analyze steps sit on different commits, which a per-sub-action
+      # Dependabot bump produces; the Playwright pin keeps the root
+      # package.json and the e2e-sso-login job's PLAYWRIGHT_VERSION on one version.
+      - name: Every codeql-action step is pinned to the same commit
+        run: bash scripts/check-codeql-action-pins.sh
+      - name: Playwright pin agrees between package.json and CI
+        run: bash scripts/check-playwright-pin.sh
 
   # ─────────────────────────────────────────────────────────────────────
   stale-deploy-path:
