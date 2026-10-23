@@ -98,6 +98,12 @@ type Metrics struct {
 	// and the served certificate will expire unless the files are fixed (#637).
 	TLSReloadFailures *prometheus.CounterVec
 
+	// LogTailReplayBytes is what the on_demand live-tail gates hold for replay
+	// together, and LogTailReplayEvictions the rings logs.tail.replay_budget_bytes
+	// dropped to stay under it (#1621).
+	LogTailReplayBytes     prometheus.Gauge
+	LogTailReplayEvictions prometheus.Counter
+
 	// ResilienceBackstopDisabled is 1 for each resilience backstop a boot
 	// setting removed and 0 for each one in place, set once at boot (#941).
 	ResilienceBackstopDisabled *prometheus.GaugeVec
@@ -273,6 +279,17 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "dexaflow_redis_pool_timeouts_total", Help: "Redis pool checkout timeouts — a caller waited PoolTimeout for an idle connection. A non-zero rate means the pool is too small or commands are too slow.",
 		}),
 
+		LogTailReplayBytes: f.NewGauge(prometheus.GaugeOpts{
+			Name: "dexaflow_log_tail_replay_bytes",
+			Help: "Bytes of task-log lines the on_demand live-tail gates hold for a follower who may subscribe, across all log streams. " +
+				"Bounded by logs.tail.replay_budget_bytes when set.",
+		}),
+		LogTailReplayEvictions: f.NewCounter(prometheus.CounterOpts{
+			Name: "dexaflow_log_tail_replay_evictions_total",
+			Help: "Live-tail replay rings dropped to keep the total under logs.tail.replay_budget_bytes, the longest silent stream first. " +
+				"A follower of a dropped stream reads the dropped lines from the stored log.",
+		}),
+
 		ResilienceBackstopDisabled: f.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "dexaflow_resilience_backstop_disabled",
 			Help: "1 when this process booted with the resilience backstop of config_key disabled, 0 when it is in place. " +
@@ -342,6 +359,24 @@ func (m *Metrics) UpdateRedisPoolStats(active, idle, total uint32) {
 // connection — the leading indicator that the pool is too small for the
 // command rate.
 func (m *Metrics) RecordRedisPoolTimeout() { m.RedisPoolTimeouts.Inc() }
+
+// SetLogTailReplayBytes reports what the live-tail gates hold for replay.
+// No-op on a nil receiver.
+func (m *Metrics) SetLogTailReplayBytes(n int64) {
+	if m == nil {
+		return
+	}
+	m.LogTailReplayBytes.Set(float64(n))
+}
+
+// RecordLogTailReplayEviction counts a replay ring the budget dropped. No-op
+// on a nil receiver.
+func (m *Metrics) RecordLogTailReplayEviction() {
+	if m == nil {
+		return
+	}
+	m.LogTailReplayEvictions.Inc()
+}
 
 // RecordResilienceBackstop sets the boot posture of the backstop of key:
 // disabled or in place. No-op on a nil receiver.
