@@ -31,6 +31,8 @@ type fakePodManager struct {
 	activeErr   error
 	deleteErr   error
 	deleteRunE  error
+	// preserved is the count every teardown reports as left in place.
+	preserved int
 }
 
 type deletedTask struct {
@@ -39,20 +41,20 @@ type deletedTask struct {
 	try    int
 }
 
-func (f *fakePodManager) DeleteTaskPod(_ context.Context, a Attempt) error {
+func (f *fakePodManager) DeleteTaskPod(_ context.Context, a Attempt) (Teardown, error) {
 	if f.deleteErr != nil {
-		return f.deleteErr
+		return Teardown{Preserved: f.preserved}, f.deleteErr
 	}
 	f.deletedTasks = append(f.deletedTasks, deletedTask{a.RunID, a.TaskID, a.TryNumber})
-	return nil
+	return Teardown{Preserved: f.preserved}, nil
 }
 
-func (f *fakePodManager) DeleteRunPods(_ context.Context, runID string) error {
+func (f *fakePodManager) DeleteRunPods(_ context.Context, runID string) (Teardown, error) {
 	if f.deleteRunE != nil {
-		return f.deleteRunE
+		return Teardown{Preserved: f.preserved}, f.deleteRunE
 	}
 	f.deletedRuns = append(f.deletedRuns, runID)
-	return nil
+	return Teardown{Preserved: f.preserved}, nil
 }
 
 // TaskPodPresence reports absence for a key in neither map, because most

@@ -296,7 +296,9 @@ func (r *dispatchLostReaper) reapOne(ctx context.Context, c StaleQueuedCandidate
 		r.record("dispatch_lost_teardown_gate_skip")
 		return
 	}
-	if derr := r.pods.DeleteTaskPod(ctx, c.attempt()); derr != nil {
+	td, derr := r.pods.DeleteTaskPod(ctx, c.attempt())
+	recordPreserved(r.record, "dispatch_lost_terminal_pod_preserved", td)
+	if derr != nil {
 		r.logger.Error("deleting dispatch-lost task pod",
 			"ti", c.TaskInstanceID, "run", c.DagRunID, "task", c.TaskID, "try", c.TryNumber, "error", derr)
 		r.record("dispatch_lost_pod_delete_error")
@@ -355,7 +357,9 @@ func (r *dispatchLostReaper) startExpired(ctx context.Context, c StaleQueuedCand
 		r.record("start_expired_teardown_gate_skip")
 		return true
 	}
-	if derr := r.pods.DeleteTaskPod(ctx, c.attempt()); derr != nil {
+	td, derr := r.pods.DeleteTaskPod(ctx, c.attempt())
+	recordPreserved(r.record, "start_expired_terminal_pod_preserved", td)
+	if derr != nil {
 		r.logger.Error("deleting start-expired task pod",
 			"ti", c.TaskInstanceID, "run", c.DagRunID, "task", c.TaskID, "try", c.TryNumber, "error", derr)
 		r.record("start_expired_pod_delete_error")
