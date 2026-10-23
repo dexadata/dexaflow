@@ -58,6 +58,9 @@ type Dependencies struct {
 	// Non-positive (the default) leaves those routes unlimited.
 	MaxRequestBodyBytes int64
 	MaxUploadBodyBytes  int64
+	// ProbeBudget (server.probe_budget) bounds /readyz and the dependency
+	// checks of /api/v2/monitor/health. Non-positive means 2s.
+	ProbeBudget time.Duration
 	// TokenRenewer re-mints a still-valid user bearer with a fresh short TTL so a
 	// long CLI/dev session need not re-login every TokenTTLSecs (aresta #5). Nil
 	// leaves the renew route unregistered (renewal simply unavailable). In practice
@@ -344,7 +347,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	}
 
 	r.GET("/healthz", livenessHandler)
-	r.GET("/readyz", readinessHandler(deps.HealthChecks))
+	r.GET("/readyz", readinessHandler(deps.HealthChecks, deps.ProbeBudget))
 	// /metrics is intentionally NOT served here (audit H2): scraping lives on the
 	// dedicated observability listener (ObservabilityHandler on the metrics port),
 	// which every role runs, so metrics can be firewalled separately from the
@@ -441,7 +444,7 @@ func NewServer(deps Dependencies) *gin.Engine {
 	}
 	// Any signed-in user may read these; a scoped token needs dexaflow:read
 	// (ADR 0067). The MCP's health resource reads all three.
-	r.GET("/api/v2/monitor/health", RequireScope(auth.ScopeRead), monitorHealthHandler(deps.HealthChecks, deps.SchedulerHealth))
+	r.GET("/api/v2/monitor/health", RequireScope(auth.ScopeRead), monitorHealthHandler(deps.HealthChecks, deps.SchedulerHealth, deps.ProbeBudget))
 	r.GET("/api/v2/monitor/executor", RequireScope(auth.ScopeRead), monitorExecutorHandler(deps.ExecutorInfo))
 	// What a deploy reads before it builds (#1704): the gate of the other
 	// deploy reads, so a dexaflow:deploy token reaches it (ADR 0074).

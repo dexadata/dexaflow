@@ -134,6 +134,13 @@ type ServerSection struct {
 	// 0 (the default) keeps idle connections open, as before, even when
 	// ReadTimeout is set (net/http alone would fall back to ReadTimeout).
 	IdleTimeout time.Duration `mapstructure:"idle_timeout"`
+	// ProbeBudget bounds the whole /readyz handler, every dependency check
+	// sharing one deadline, so the server answers 503 naming the slow
+	// dependency before the kubelet's own timeout cuts the probe off. The
+	// chart renders it as probes.readiness.timeoutSeconds minus one second
+	// (#1050). The default, 2s, is the budget every earlier release used, and
+	// 0 means the same; a negative value fails boot.
+	ProbeBudget time.Duration `mapstructure:"probe_budget"`
 	// HTTPTLSCert/HTTPTLSKey serve the API and UI listener (http_addr) over
 	// HTTPS with an operator-supplied PEM certificate and key (#638), so a load
 	// balancer can re-encrypt to the pod. Both must be set together; both empty
@@ -370,6 +377,9 @@ func (c *ServerConfig) validateNonNegative() error {
 	if c.Server.MaxRequestBodyBytes < 0 || c.Server.MaxUploadBodyBytes < 0 {
 		return fmt.Errorf("server.max_request_body_bytes and server.max_upload_body_bytes must not be negative (got %d and %d); 0 means no limit",
 			c.Server.MaxRequestBodyBytes, c.Server.MaxUploadBodyBytes)
+	}
+	if c.Server.ProbeBudget < 0 {
+		return fmt.Errorf("server.probe_budget must not be negative (got %s); it bounds /readyz and must stay under the kubelet's readiness timeout, and 0 means 2s", c.Server.ProbeBudget)
 	}
 	if c.Server.MaxPageLimit < 0 {
 		return fmt.Errorf("server.max_page_limit must not be negative (got %d); 0 leaves list pages uncapped", c.Server.MaxPageLimit)

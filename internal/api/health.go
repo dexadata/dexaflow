@@ -32,14 +32,15 @@ type SchemaChecker interface {
 	SchemaReady(ctx context.Context) error
 }
 
-// probeBudget bounds the WHOLE readiness handler, not one step of it, so a
-// wedged or slow dependency cannot hold it past the kubelet's own probe timeout
-// (the chart's probes.readiness.timeoutSeconds default is 3s; the chart refuses
-// to render a value that does not leave room for this one — see
-// leoflow.readinessTimeoutSeconds). Overrunning it turns a probe that should
-// report "not ready" into a probe that reports nothing at all, and a probe that
-// reports nothing writes no log line naming the dependency, which is the
-// diagnostic the #1023 fix exists to provide.
+// The probe budget (server.probe_budget) bounds the WHOLE readiness handler,
+// not one step of it, so a wedged or slow dependency cannot hold it past the
+// kubelet's own probe timeout. The chart renders it as
+// probes.readiness.timeoutSeconds minus one second (#1050), so raising the
+// kubelet's timeout for a slow metadatabase gives the server the same room,
+// and the server still gives up first. Overrunning the kubelet's timeout would
+// turn a probe that should report "not ready" into a probe that reports
+// nothing at all, and a probe that reports nothing writes no log line naming
+// the dependency, which is the diagnostic the #1023 fix exists to provide.
 //
 // It is one deadline shared by every step because a per-step allowance is not a
 // budget: bounding the schema query at 2s while leaving Ping unbounded, once per
@@ -48,7 +49,10 @@ type SchemaChecker interface {
 // the last dependency checked gets what the earlier ones left, which is the
 // honest accounting: the caller's timeout is a property of the request, not of
 // each thing the request happens to touch.
-const probeBudget = 2 * time.Second
+//
+// defaultProbeBudget is the budget when none is configured, the chart's default
+// timeoutSeconds of 3 minus one.
+const defaultProbeBudget = 2 * time.Second
 
 func livenessHandler(c *gin.Context) {
 	// Deliberately trivial, and deliberately NOT schema-aware: liveness decides
@@ -75,7 +79,7 @@ func checkDependency(ctx context.Context, hc HealthChecker) error {
 		return nil
 	}
 	// No timeout of its own: ctx already carries the handler's whole-probe
-	// deadline (probeBudget), and adding a second one here would restore the
+	// deadline (the probe budget), and adding a second one here would restore the
 	// per-step allowance this deliberately replaced.
 	return sc.SchemaReady(ctx)
 }
@@ -92,8 +96,12 @@ func checkDependency(ctx context.Context, hc HealthChecker) error {
 // hardcoded bound, so that endpoint's worst case is this budget plus the
 // heartbeat's. It is a dashboard rather than a probe, so nothing routes on it —
 // but the number is not 2s. Folding it in is tracked separately.
-func withProbeBudget(c *gin.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(c.Request.Context(), probeBudget)
+// A non-positive budget means the default.
+func withProbeBudget(c *gin.Context, budget time.Duration) (context.Context, context.CancelFunc) {
+	if budget <= 0 {
+		budget = defaultProbeBudget
+	}
+	return context.WithTimeout(c.Request.Context(), budget)
 }
 
 // unreadyDetail turns a dependency failure into the one phrase the caller is
@@ -101,7 +109,7 @@ func withProbeBudget(c *gin.Context) (context.Context, context.CancelFunc) {
 //
 // The distinction is operational, not cosmetic. The schema check reports through
 // a single error, but it answers two questions: "the schema is wrong" and "I
-// could not read the schema". A deadline exceeded against the handler's own 2s
+// could not read the schema". A deadline exceeded against the handler's own
 // bound, a reset connection, an exhausted pool — all arrive here as a non-nil
 // error from the schema call, and calling those "schema not current" points
 // whoever is paged at the migration Job for a connectivity problem. The runbook
@@ -185,9 +193,9 @@ func spentAttr(spent []depTiming) []any {
 	return out
 }
 
-func readinessHandler(checks map[string]HealthChecker) gin.HandlerFunc {
+func readinessHandler(checks map[string]HealthChecker, budget time.Duration) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ctx, cancel := withProbeBudget(c)
+		ctx, cancel := withProbeBudget(c, budget)
 		defer cancel()
 		spent := make([]depTiming, 0, len(checks))
 		for _, name := range probeOrder(checks) {

@@ -504,33 +504,34 @@ true
 {{- end -}}
 
 {{/*
-probes.readiness.timeoutSeconds, validated against the server's own probe
-budget.
+probes.readiness.timeoutSeconds, validated, and the server's probe budget
+derived from it.
 
-/readyz bounds its whole handler at 2s (api.probeBudget) and that number was
-chosen to sit UNDER the kubelet's timeout, because the two are one relationship
-read from both ends: the server has to give up first, or the kubelet cancels a
-probe that was about to answer and the operator gets a timeout with no log line
-naming the dependency instead of a 503 that names it.
+/readyz bounds its whole handler at server.probe_budget, and that budget has to
+sit UNDER the kubelet's timeout, because the two are one relationship read from
+both ends: the server has to give up first, or the kubelet cancels a probe that
+was about to answer and the operator gets a timeout with no log line naming the
+dependency instead of a 503 that names it (#1041).
 
-Nothing enforced the relationship. It was a comment in the Go source next to a
-plain, floorless chart value, so `--set probes.readiness.timeoutSeconds=1`
-rendered happily and inverted it: the kubelet gives up at 1s while the server is
-still willing to spend 2s answering, and every probe against a database slower
-than 1s becomes a silent timeout (#1041). Failing the render is the right end to
-fail at — the alternative is a cluster that installs and then reports nothing.
-
-The chart cannot read the Go constant, so scripts/check-readiness-probe-budget.sh
-asserts the two still agree.
+The chart renders the budget as the timeout minus one second
+(leoflow.readinessProbeBudget, #1050): a subtraction rather than a ratio, so the
+server always keeps one second of margin, and one value the operator sets, so
+raising the timeout for a slow metadatabase raises the budget with it. The
+floor of 3 keeps the budget at the 2s every earlier release used or more, so a
+timeout of 1 cannot render a budget of 0.
 */}}
 {{- define "leoflow.readinessTimeoutSeconds" -}}
 {{- $min := 3 -}}
 {{- $raw := .Values.probes.readiness.timeoutSeconds -}}
 {{- $v := int $raw -}}
 {{- if lt $v $min -}}
-{{- fail (printf "probes.readiness.timeoutSeconds=%v is below the %ds floor. The leoflow-server /readyz handler bounds itself at 2s so it answers before the kubelet gives up; a shorter kubelet timeout inverts that and turns every slow-dependency probe into a timeout that logs nothing, instead of a 503 naming the dependency. Raise it to %d or more. If you need the kubelet to react faster than 3s, lower probes.readiness.periodSeconds or failureThreshold instead — those shorten time-to-unready without cutting off the answer. See #1041." $raw $min $min) -}}
+{{- fail (printf "probes.readiness.timeoutSeconds=%v is below the %ds floor. The leoflow-server /readyz handler bounds itself at one second under this timeout, and at no less than 2s, so it answers before the kubelet gives up; a shorter kubelet timeout leaves it no room and turns every slow-dependency probe into a timeout that logs nothing, instead of a 503 naming the dependency. Raise it to %d or more. If you need the kubelet to react faster than 3s, lower probes.readiness.periodSeconds or failureThreshold instead: those shorten time-to-unready without cutting off the answer. See #1041." $raw $min $min) -}}
 {{- end -}}
 {{- $v -}}
+{{- end -}}
+
+{{- define "leoflow.readinessProbeBudget" -}}
+{{- printf "%ds" (sub (int (include "leoflow.readinessTimeoutSeconds" .)) 1) -}}
 {{- end -}}
 
 {{/*
