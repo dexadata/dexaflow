@@ -83,6 +83,7 @@ func mustContainNone(t *testing.T, got string, unwanted ...string) {
 }
 
 func TestWarnDeprecatedPythonDefaultPath(t *testing.T) {
+	t.Parallel()
 	d := deprecatedPythonLine(t)
 	got := warn(&domain.LeoflowConfig{PythonVersion: d.Version})
 	mustContainAll(t, got,
@@ -106,6 +107,7 @@ func TestWarnDeprecatedPythonDefaultPath(t *testing.T) {
 // This is the case the original test could not see: it built the config with
 // PythonVersion empty and asserted only that a warning fired.
 func TestWarnDeprecatedPythonPinnedBaseImageNamesBaseImage(t *testing.T) {
+	t.Parallel()
 	d := deprecatedPythonLine(t)
 	supported := supportedPythonLine(t)
 	for name, tc := range map[string]struct{ pinned, wantFixRef string }{
@@ -147,6 +149,7 @@ func TestWarnDeprecatedPythonPinnedBaseImageNamesBaseImage(t *testing.T) {
 // author most likely to still be sitting on an old base. `strings.Cut(ref, ":")`
 // read the tag as "py3.10@sha256" and skipped exactly that population.
 func TestWarnDeprecatedPythonDigestPinnedBase(t *testing.T) {
+	t.Parallel()
 	d := deprecatedPythonLine(t)
 	const digest = "@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	pinned := publishedBaseRepo + ":py" + d.Version + "-v0.4.5" + digest
@@ -165,6 +168,7 @@ func TestWarnDeprecatedPythonDigestPinnedBase(t *testing.T) {
 // A digest-ONLY pin names a manifest, not a line. Resolving it needs a registry
 // round-trip, so the warning stays silent rather than guessing.
 func TestWarnDeprecatedPythonSilentOnDigestOnlyPin(t *testing.T) {
+	t.Parallel()
 	d := deprecatedPythonLine(t)
 	ref := publishedBaseRepo + "@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	if got := warn(&domain.LeoflowConfig{PythonVersion: d.Version, BaseImage: ref}); got != "" {
@@ -174,6 +178,7 @@ func TestWarnDeprecatedPythonSilentOnDigestOnlyPin(t *testing.T) {
 
 // A registry port puts a ":" in the reference that is not the tag separator.
 func TestWarnDeprecatedPythonSilentOnPortedForeignRegistry(t *testing.T) {
+	t.Parallel()
 	d := deprecatedPythonLine(t)
 	ref := "registry.example.com:5000/team/base:py" + d.Version
 	if got := warn(&domain.LeoflowConfig{BaseImage: ref}); got != "" {
@@ -182,6 +187,7 @@ func TestWarnDeprecatedPythonSilentOnPortedForeignRegistry(t *testing.T) {
 }
 
 func TestSplitImageRef(t *testing.T) {
+	t.Parallel()
 	const dig = "sha256:abc"
 	cases := []struct{ in, repo, tag, digest string }{
 		{"ghcr.io/o/r:py3.10", "ghcr.io/o/r", "py3.10", ""},
@@ -201,6 +207,7 @@ func TestSplitImageRef(t *testing.T) {
 }
 
 func TestWarnDeprecatedPythonSilentOnSupported(t *testing.T) {
+	t.Parallel()
 	if got := warn(&domain.LeoflowConfig{PythonVersion: supportedPythonLine(t)}); got != "" {
 		t.Fatalf("a supported python_version produced a warning:\n%s", got)
 	}
@@ -210,6 +217,7 @@ func TestWarnDeprecatedPythonSilentOnSupported(t *testing.T) {
 // what the FROM is built from, so warning about it would be wrong and would
 // train the author to filter this message out.
 func TestWarnDeprecatedPythonSilentOnForeignBaseImage(t *testing.T) {
+	t.Parallel()
 	d := deprecatedPythonLine(t)
 	cfg := &domain.LeoflowConfig{PythonVersion: d.Version, BaseImage: "registry.example.com/team/base:2026-09"}
 	if got := warn(cfg); got != "" {
@@ -218,6 +226,7 @@ func TestWarnDeprecatedPythonSilentOnForeignBaseImage(t *testing.T) {
 }
 
 func TestWarnDeprecatedPythonSilentOnSupportedPin(t *testing.T) {
+	t.Parallel()
 	ref := publishedBaseRepo + ":py" + supportedPythonLine(t)
 	if got := warn(&domain.LeoflowConfig{BaseImage: ref}); got != "" {
 		t.Fatalf("a pin to a supported line produced a warning:\n%s", got)
@@ -225,6 +234,7 @@ func TestWarnDeprecatedPythonSilentOnSupportedPin(t *testing.T) {
 }
 
 func TestWarnDeprecatedPythonNilAndEmpty(t *testing.T) {
+	t.Parallel()
 	if got := warn(nil) + warn(&domain.LeoflowConfig{}); got != "" {
 		t.Fatalf("nil/empty config produced a warning:\n%s", got)
 	}
@@ -234,6 +244,7 @@ func TestWarnDeprecatedPythonNilAndEmpty(t *testing.T) {
 // THEN indented, so it rendered two columns over on the default path and much
 // wider on the base_image path, where the replacement reference is longer.
 func TestWarnDeprecatedPythonRespectsItsDeclaredWidth(t *testing.T) {
+	t.Parallel()
 	d := deprecatedPythonLine(t)
 	for name, cfg := range map[string]*domain.LeoflowConfig{
 		"python_version": {PythonVersion: d.Version},
@@ -275,6 +286,7 @@ func (errWriter) Write([]byte) (int, error) { return 0, errors.New("broken pipe"
 // renderer alone cannot show this — a caller is free to discard a returned
 // error — so the test drives the precondition gate the commands actually call.
 func TestDeprecationWarningIsNotFatalOnAFailingWriter(t *testing.T) {
+	t.Parallel()
 	d := deprecatedPythonLine(t)
 	dir := writeProject(t, "schema_version: \"1.0\"\ndag_id: sales\npython_version: \""+d.Version+"\"\n")
 	cfg, err := loadProjectConfig(dir)
@@ -295,6 +307,7 @@ func TestDeprecationWarningIsNotFatalOnAFailingWriter(t *testing.T) {
 // scrolls the warning off the top. The reminder puts it back where the eye
 // lands, and it must still name the field that has to change.
 func TestRemindDeprecatedPythonAfterBuild(t *testing.T) {
+	t.Parallel()
 	d := deprecatedPythonLine(t)
 	var out strings.Builder
 	remindDeprecatedPythonAfterBuild(&out, &domain.LeoflowConfig{PythonVersion: d.Version})
@@ -314,6 +327,7 @@ func TestRemindDeprecatedPythonAfterBuild(t *testing.T) {
 }
 
 func TestWrapWords(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		in   string
@@ -355,6 +369,7 @@ func TestWrapWords(t *testing.T) {
 // Driving the real cobra command rather than calling the helper is the point:
 // the bug was in the wiring, not in the renderer.
 func TestValidateWarnsAboutADeprecatedPythonLine(t *testing.T) {
+	t.Parallel()
 	d := deprecatedPythonLine(t)
 	dir := writeProject(t, "schema_version: \"1.0\"\ndag_id: sales\npython_version: \""+d.Version+"\"\n")
 	if err := os.WriteFile(filepath.Join(dir, "dag.py"), []byte("dag = None\n"), 0o600); err != nil {
@@ -368,13 +383,14 @@ func TestValidateWarnsAboutADeprecatedPythonLine(t *testing.T) {
 	// The dag.py syntax check may fail or be skipped depending on the host's
 	// interpreter; the warning is emitted before it either way, and asserting on
 	// the command's error would make this a test of the local Python install.
-	_ = cmd.Execute()
+	_ = cmd.ExecuteContext(testCtx(nil))
 	mustContainAll(t, stderr.String(), "warning:", "python_version "+d.Version+" is deprecated")
 }
 
 // A supported line must leave `validate` silent, or the warning is noise on
 // every run of the command an author runs most.
 func TestValidateSilentOnASupportedPythonLine(t *testing.T) {
+	t.Parallel()
 	dir := writeProject(t, "schema_version: \"1.0\"\ndag_id: sales\npython_version: \""+supportedPythonLine(t)+"\"\n")
 	if err := os.WriteFile(filepath.Join(dir, "dag.py"), []byte("dag = None\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -384,7 +400,7 @@ func TestValidateSilentOnASupportedPythonLine(t *testing.T) {
 	cmd.SetArgs([]string{dir})
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(&stderr)
-	_ = cmd.Execute()
+	_ = cmd.ExecuteContext(testCtx(nil))
 	if strings.Contains(stderr.String(), "is deprecated") {
 		t.Fatalf("validate warned about a supported line:\n%s", stderr.String())
 	}

@@ -13,6 +13,7 @@ import (
 )
 
 func TestLibcSuffix(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{"": "", "glibc": " (glibc)", "musl": " (musl)"}
 	for in, want := range cases {
 		if got := libcSuffix(in); got != want {
@@ -22,6 +23,7 @@ func TestLibcSuffix(t *testing.T) {
 }
 
 func TestWriteSetupManifest(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	want := setupManifest{
 		Python: "/p/python3.11", Workspace: "/w", Tier: "k8s",
@@ -62,7 +64,7 @@ func TestRunSetupVenvless(t *testing.T) {
 	cmd.SetErr(&out)
 	ws := filepath.Join(home, "ws")
 	cmd.SetArgs([]string{"--workspace", ws})
-	if err := cmd.Execute(); err != nil {
+	if err := cmd.ExecuteContext(testCtx(nil)); err != nil {
 		t.Fatalf("setup err = %v\n%s", err, out.String())
 	}
 	// Sources extracted, workspace + manifest + config created — no parser venv.
@@ -86,12 +88,13 @@ func TestRunSetupVenvless(t *testing.T) {
 }
 
 func TestRunSetupDryRun(t *testing.T) {
+	t.Parallel()
 	cmd := newSetupCommand()
 	var out, errb bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errb)
 	cmd.SetArgs([]string{"--dry-run"})
-	if err := cmd.Execute(); err != nil {
+	if err := cmd.ExecuteContext(testCtx(nil)); err != nil {
 		t.Fatalf("setup --dry-run err = %v", err)
 	}
 	s := out.String()
@@ -103,6 +106,7 @@ func TestRunSetupDryRun(t *testing.T) {
 }
 
 func TestWriteLiteConfig(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	lc := liteSettings{Workspace: "/ws", Executor: "subprocess", AdminEmail: "admin@leoflow.local", Port: 8088}
 	if err := writeLiteConfig(home, "env PYTHONPATH=/p python -m leoflow_parser", lc, "$2a$12$abcHASH", liteFileSecrets{jwtSecret: "deadbeef-jwt-secret", secretKey: "deadbeef-secret-key"}); err != nil {
@@ -134,6 +138,7 @@ func TestWriteLiteConfig(t *testing.T) {
 }
 
 func TestLoadManifestSettings(t *testing.T) {
+	t.Parallel()
 	def := liteSettings{Workspace: "/def", Executor: "subprocess", AdminEmail: "admin@leoflow.local", Port: 8088}
 
 	t.Run("missing manifest returns defaults", func(t *testing.T) {
@@ -184,7 +189,7 @@ func TestRunSetupReRunKeepsSettings(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
 	cmd.SetArgs([]string{})
-	if err := cmd.Execute(); err != nil {
+	if err := cmd.ExecuteContext(testCtx(nil)); err != nil {
 		t.Fatalf("re-run setup err = %v\n%s", err, out.String())
 	}
 	s := out.String()
@@ -200,6 +205,7 @@ func TestRunSetupReRunKeepsSettings(t *testing.T) {
 }
 
 func TestGatherLiteConfig(t *testing.T) {
+	t.Parallel()
 	def := liteSettings{Workspace: "/def/ws", Executor: "subprocess", AdminEmail: "admin@leoflow.local", Port: 8088}
 
 	t.Run("non-interactive returns defaults verbatim", func(t *testing.T) {
@@ -248,7 +254,7 @@ func TestRunSetupDefaultsToTheDexaflowAdmin(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
 	cmd.SetArgs([]string{"--dry-run"})
-	if err := cmd.Execute(); err != nil {
+	if err := cmd.ExecuteContext(testCtx(nil)); err != nil {
 		t.Fatalf("setup --dry-run err = %v", err)
 	}
 	if !strings.Contains(out.String(), "admin      admin@dexaflow.local\n") {

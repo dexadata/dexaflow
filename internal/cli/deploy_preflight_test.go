@@ -3,13 +3,14 @@ package cli
 import (
 	"encoding/base64"
 	"encoding/json"
-	"github.com/dexadata/dexaflow/internal/domain"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // noDockerCredentials points the registry keychain at an empty docker
@@ -355,6 +356,7 @@ func TestDeployPreflightFailureInTheJSONReport(t *testing.T) {
 // run may reach a replica that predates the route; it answers 404 and
 // registers nothing, and the deploy goes on with a note.
 func TestServerDryRunOfAnOlderReplicaIsANote(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/versions/dry_run") {
 			t.Errorf("dry run sent to %s", r.URL.Path)

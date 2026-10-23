@@ -855,7 +855,7 @@ func (d *deployRun) registeredImage(image string, built build.Result) (string, e
 	if d.sourceMode.on() {
 		return image, nil
 	}
-	return deployedDigest(d.cmd, registryFor(d.cfg), image, built)
+	return deployedDigest(d.cmd, registryFor(cmdContext(d.cmd), d.cfg), image, built)
 }
 
 // labelAndImage fills co.dagVersion with the default content label
@@ -914,12 +914,12 @@ func (d *deployRun) checkRegistry(ctx context.Context, image string, reuse bool)
 	if d.o.skipBuild || d.sourceMode.on() {
 		return nil, nil
 	}
-	reg := registryFor(d.cfg)
+	reg := registryFor(ctx, d.cfg)
 	if reuse && registryHolds(ctx, reg, image) {
 		return nil, nil
 	}
 	err = checkRegistryPush(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), reg, image, d.o.builder)
-	if err == nil || remoteFor(d.cfg) == nil {
+	if err == nil || remoteFor(ctx, d.cfg) == nil {
 		return nil, err
 	}
 	return err, nil
@@ -954,7 +954,7 @@ func (d *deployRun) dryRunImage(ctx context.Context, image string, reuse bool) d
 		return dryImage{ref: image, decides: true}
 	}
 	if d.o.skipBuild || reuse {
-		if p, err := registryFor(d.cfg).Resolve(ctx, image); err == nil {
+		if p, err := registryFor(ctx, d.cfg).Resolve(ctx, image); err == nil {
 			return dryImage{ref: p.Ref, decides: true}
 		}
 	}
@@ -983,7 +983,7 @@ func reusableImage(image, version string, origin labelOrigin) bool {
 func (d *deployRun) plan(ctx context.Context, version, image string, origin labelOrigin) error {
 	in := planInput{serverURL: d.serverURL, token: d.token, dagID: d.cfg.DagID, version: version, image: image,
 		origin: origin, skipBuild: d.o.skipBuild, sourceMode: d.sourceMode.on(), force: d.o.force, paused: d.o.pausedOverride(),
-		reuse: d.mayReuse(image, version, origin), platforms: buildPlatforms(d.cfg), registry: registryFor(d.cfg)}
+		reuse: d.mayReuse(image, version, origin), platforms: buildPlatforms(d.cfg), registry: registryFor(ctx, d.cfg)}
 	res, err := planDeploy(ctx, d.cmd.ErrOrStderr(), in)
 	if err != nil {
 		return err

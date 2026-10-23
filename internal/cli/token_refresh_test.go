@@ -36,6 +36,7 @@ func testJWT(t *testing.T, iat, exp time.Time) string {
 // fresh token is written back to the config file — no prompt, no re-login (aresta
 // #5). The renew call carries the current bearer.
 func TestAutoRefreshTokenRenewsNearExpiry(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	old := testJWT(t, now.Add(-55*time.Minute), now.Add(5*time.Minute)) // 5m left of a 60m TTL
 
@@ -79,6 +80,7 @@ func TestAutoRefreshTokenRenewsNearExpiry(t *testing.T) {
 // TestAutoRefreshTokenSkipsHealthyToken: a token with plenty of life left is not
 // renewed — no network call, config untouched.
 func TestAutoRefreshTokenSkipsHealthyToken(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	healthy := testJWT(t, now, now.Add(60*time.Minute)) // full life ahead
 
@@ -106,6 +108,7 @@ func TestAutoRefreshTokenSkipsHealthyToken(t *testing.T) {
 // untouched, so the command proceeds and its own 401 handling asks the user to log
 // in again — never worse than today's behavior.
 func TestAutoRefreshTokenFallsBackOnRenewFailure(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	old := testJWT(t, now.Add(-55*time.Minute), now.Add(5*time.Minute))
 
@@ -132,6 +135,7 @@ func TestAutoRefreshTokenFallsBackOnRenewFailure(t *testing.T) {
 // opaque CI token) is returned as-is with no network call — refresh only applies
 // to leoflow's own expiring JWTs.
 func TestAutoRefreshTokenIgnoresNonJWT(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("a non-JWT token must NOT trigger a renew call")
 	}))
@@ -173,6 +177,7 @@ func renewOutageServer(t *testing.T, retryAfter string, calls *int) *httptest.Se
 // the token, and the CLI waits that long and renews once more instead of
 // dropping the renewal. Driven through autoRefreshToken, the path commands use.
 func TestAutoRefreshTokenRetriesAfterAnOutage503(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	old := testJWT(t, now.Add(-55*time.Minute), now.Add(5*time.Minute))
 	var calls int
@@ -198,6 +203,7 @@ func TestAutoRefreshTokenRetriesAfterAnOutage503(t *testing.T) {
 // TestRenewTokenWaitsTheRetryAfter: the wait is the server's Retry-After, not
 // a guess of the client's.
 func TestRenewTokenWaitsTheRetryAfter(t *testing.T) {
+	t.Parallel()
 	var calls int
 	srv := renewOutageServer(t, "3", &calls)
 	var waited []time.Duration
@@ -221,6 +227,7 @@ func TestRenewTokenWaitsTheRetryAfter(t *testing.T) {
 // only helping: either way the command goes ahead with its current token, as it
 // did before.
 func TestRenewTokenDoesNotRetryWithoutABoundedRetryAfter(t *testing.T) {
+	t.Parallel()
 	for name, header := range map[string]string{
 		"no Retry-After":          "",
 		"above the bound":         strconv.Itoa(int(maxRenewRetryAfter/time.Second) + 1),
@@ -247,6 +254,7 @@ func TestRenewTokenDoesNotRetryWithoutABoundedRetryAfter(t *testing.T) {
 // TestRenewTokenStopsWaitingWhenTheCommandEnds: a canceled command neither
 // sits out the rest of the wait nor renews after it.
 func TestRenewTokenStopsWaitingWhenTheCommandEnds(t *testing.T) {
+	t.Parallel()
 	var calls int
 	srv := renewOutageServer(t, strconv.Itoa(int(maxRenewRetryAfter/time.Second)), &calls)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -268,6 +276,7 @@ func TestRenewTokenStopsWaitingWhenTheCommandEnds(t *testing.T) {
 
 // TestRenewTokenRetriesOnlyOnce: a second 503 ends the renewal.
 func TestRenewTokenRetriesOnlyOnce(t *testing.T) {
+	t.Parallel()
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++

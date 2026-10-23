@@ -27,6 +27,7 @@ func init() {
 // core.bare = true. A scratch repository stands in for that checkout here
 // and must come out unchanged.
 func TestGitTestsLeaveTheHookRepositoryAlone(t *testing.T) {
+	t.Parallel()
 	requireGit(t)
 	scratch := t.TempDir()
 	gitIn(t, scratch, "init", "-q")

@@ -13,6 +13,7 @@ import (
 // No config.yaml: the command refuses and names `dexaflow setup` first. It
 // does not invent a config, which is where attempt 3 lost keys.
 func TestMigrateKeyRefusesWithoutAConfig(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	var out bytes.Buffer
 	err := (&migrateKeyRun{out: &out, stateDir: dir, yes: true}).run(context.Background())
@@ -26,6 +27,7 @@ func TestMigrateKeyRefusesWithoutAConfig(t *testing.T) {
 
 // An unparseable config is a refusal, never "empty": nothing is written.
 func TestMigrateKeyRefusesAnUnparseableConfig(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.yaml")
 	body := "secret_key: [oops\n"
@@ -47,6 +49,7 @@ func TestMigrateKeyRefusesAnUnparseableConfig(t *testing.T) {
 
 // Declining the prompt changes nothing and says so truthfully.
 func TestMigrateKeyDeclinedPromptWritesNothing(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(cfg, []byte("workspace: /w\n"), 0o600); err != nil {
@@ -68,6 +71,7 @@ func TestMigrateKeyDeclinedPromptWritesNothing(t *testing.T) {
 // lite` waiting on that lock must not go on against a cluster that is being
 // stopped under it.
 func TestMigrateKeyLeavesItsDatastoresBeforeReleasingTheConfigLock(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	key := strings.Repeat("ab", 32)
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("secret_key: "+key+"\n"), 0o600); err != nil {
@@ -98,6 +102,7 @@ func TestMigrateKeyLeavesItsDatastoresBeforeReleasingTheConfigLock(t *testing.T)
 // scanned every datastore on disk under the config's key alone, so it removes
 // config.yaml.pre-restore. A dry run, or a run that does not finish, keeps it.
 func TestMigrateKeyRemovesPreRestoreOnlyAfterACleanFinish(t *testing.T) {
+	t.Parallel()
 	key := strings.Repeat("cd", 32)
 	setup := func(t *testing.T) (dir, pre string) {
 		t.Helper()

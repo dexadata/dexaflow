@@ -28,8 +28,8 @@ const (
 
 // followPollInterval is the shortest wait between two polls of a followed run.
 // While nothing changes the wait grows up to followMaxWaitFactor times this,
-// and a change brings it back. A variable so tests can poll fast.
-var followPollInterval = time.Second
+// and a change brings it back. Tests poll fast (cliDeps.followPollInterval).
+const followPollInterval = time.Second
 
 const (
 	// followMaxWaitFactor caps the backoff at this multiple of followPollInterval.
@@ -170,7 +170,8 @@ func followRun(ctx context.Context, out io.Writer, t followTarget, o followOptio
 	if err := f.header(ctx); err != nil {
 		return err
 	}
-	wait, failures := followPollInterval, 0
+	interval := depsFrom(ctx).followPollInterval
+	wait, failures := interval, 0
 	for {
 		state, changed, err := f.poll(ctx)
 		if f.werr != nil {
@@ -191,21 +192,21 @@ func followRun(ctx context.Context, out io.Writer, t followTarget, o followOptio
 			failures = 0
 			f.hintStall(ctx, state, stallAfter)
 		}
-		wait = nextFollowWait(wait, changed)
+		wait = nextFollowWait(interval, wait, changed)
 		if werr := f.sleep(ctx, wait); werr != nil {
 			return werr
 		}
 	}
 }
 
-// nextFollowWait resets the wait after a change and grows it by half while
-// nothing changes, up to followMaxWaitFactor times the poll interval.
-func nextFollowWait(prev time.Duration, changed bool) time.Duration {
+// nextFollowWait resets the wait to interval after a change and grows it by
+// half while nothing changes, up to followMaxWaitFactor times interval.
+func nextFollowWait(interval, prev time.Duration, changed bool) time.Duration {
 	if changed {
-		return followPollInterval
+		return interval
 	}
 	next := prev + prev/2
-	if limit := followPollInterval * followMaxWaitFactor; next > limit {
+	if limit := interval * followMaxWaitFactor; next > limit {
 		return limit
 	}
 	return next

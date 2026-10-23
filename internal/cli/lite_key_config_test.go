@@ -23,6 +23,7 @@ func writeCfg(t *testing.T, body string) string {
 // once read all three as empty, and a rewrite persisted the emptiness (ADR 0065,
 // attempt 2).
 func TestReadLiteKeyConfigParsesEveryValidSpelling(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		body     string
 		key      string
@@ -56,6 +57,7 @@ func TestReadLiteKeyConfigParsesEveryValidSpelling(t *testing.T) {
 // (gap 8). The same for a file it can parse but would read differently from
 // the loader: viper matches keys case-insensitively.
 func TestReadLiteKeyConfigRefusesWhatItCannotReadExactly(t *testing.T) {
+	t.Parallel()
 	for name, body := range map[string]string{
 		"unparseable":      "secret_key: [abc\n",
 		"not a mapping":    "- a\n- b\n",
@@ -73,6 +75,7 @@ func TestReadLiteKeyConfigRefusesWhatItCannotReadExactly(t *testing.T) {
 }
 
 func TestReadLiteKeyConfigReportsAMissingFile(t *testing.T) {
+	t.Parallel()
 	got, err := readLiteKeyConfig(filepath.Join(t.TempDir(), "config.yaml"))
 	if err != nil || got.exists {
 		t.Errorf("missing file: %+v %v, want exists=false and no error", got, err)
@@ -82,6 +85,7 @@ func TestReadLiteKeyConfigReportsAMissingFile(t *testing.T) {
 // The command promises to carry every other field over unchanged, which a
 // regenerated file cannot do (gap 8): the parsed document is edited instead.
 func TestSetLiteKeysCarriesEveryOtherFieldOver(t *testing.T) {
+	t.Parallel()
 	orig := "# Written by `dexaflow setup` (Dexaflow Lite).\n" +
 		"parser_cmd: \"env PYTHONPATH=/p python -m leoflow_parser\"\n" +
 		"workspace: \"/home/u/dexaflow\"\n" +
@@ -136,6 +140,7 @@ func TestSetLiteKeysCarriesEveryOtherFieldOver(t *testing.T) {
 // key of digits, `true`, `null`) is quoted, so the file reads back byte for
 // byte.
 func TestSetLiteKeysRoundTripsAwkwardValues(t *testing.T) {
+	t.Parallel()
 	for _, key := range []string{"0123456789012345678901234567890123456789012345678901234567890123", "true", "null", "a: b", "#x"} {
 		out, err := setLiteKeys([]byte("workspace: /w\n"), key, []string{key + "p"})
 		if err != nil {

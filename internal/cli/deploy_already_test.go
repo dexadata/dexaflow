@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/dexadata/dexaflow/internal/domain"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // deployServer fakes the control plane for a deploy and records what it was
@@ -237,6 +238,7 @@ func (s *deployServer) serveDryRun(w http.ResponseWriter, r *http.Request, body 
 }
 
 func TestCheckDeployed(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		fake     *deployServer
@@ -434,6 +436,7 @@ func TestDeployTakesADockerfileOutsideTheProject(t *testing.T) {
 }
 
 func TestRegisterDeployedDAGWarnsWhenNothingNewWasRegistered(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"dag_id":"etl","version":"v1","created":false}`)
 	}))

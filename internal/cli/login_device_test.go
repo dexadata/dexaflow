@@ -90,44 +90,39 @@ func (m *memDevices) PollCLIDeviceAuthorization(_ context.Context, deviceHash st
 	return auth.DevicePoll{Outcome: auth.DevicePollPending}, nil
 }
 
-// fastDevicePolls makes the CLI wait 10ms where the server asks for an
-// interval, and records each interval it was asked to wait.
-func fastDevicePolls(t *testing.T) *[]time.Duration {
+// fastDevicePolls makes the commands run under d wait 10ms where the server
+// asks for an interval, and records each interval they were asked to wait.
+func fastDevicePolls(t *testing.T, d *cliDeps) *[]time.Duration {
 	t.Helper()
 	var mu sync.Mutex
 	waits := &[]time.Duration{}
-	prev := devicePollWait
-	devicePollWait = func(d time.Duration) <-chan time.Time {
+	d.devicePollWait = func(wait time.Duration) <-chan time.Time {
 		mu.Lock()
-		*waits = append(*waits, d)
+		*waits = append(*waits, wait)
 		mu.Unlock()
 		return time.After(10 * time.Millisecond)
 	}
-	t.Cleanup(func() { devicePollWait = prev })
 	return waits
 }
 
-// headless makes the session look like one with no browser, or not, and its
-// output a terminal.
-func headless(t *testing.T, yes bool) {
+// headless makes the session of the commands run under d look like one with
+// no browser, or not, and its output a terminal.
+func headless(t *testing.T, d *cliDeps, yes bool) {
 	t.Helper()
-	interactive(t, true)
-	prev := sessionHeadless
-	sessionHeadless = func() (bool, string) {
+	interactive(t, d, true)
+	d.sessionHeadless = func() (bool, string) {
 		if yes {
 			return true, "an SSH session"
 		}
 		return false, ""
 	}
-	t.Cleanup(func() { sessionHeadless = prev })
 }
 
-// interactive makes the command's output look like a terminal, or not.
-func interactive(t *testing.T, yes bool) {
+// interactive makes the output of the commands run under d look like a
+// terminal, or not.
+func interactive(t *testing.T, d *cliDeps, yes bool) {
 	t.Helper()
-	prev := outputIsTerminal
-	outputIsTerminal = func(io.Writer) bool { return yes }
-	t.Cleanup(func() { outputIsTerminal = prev })
+	d.outputIsTerminal = func(io.Writer) bool { return yes }
 }
 
 var (
@@ -214,12 +209,13 @@ func approveOnAnotherDevice(t *testing.T, verifyURI, userCode string) {
 }
 
 func TestLoginDeviceFlowSavesTheServerToken(t *testing.T) {
+	d := testDeps()
 	t.Setenv("LEOFLOW_USERNAME", "")
 	t.Setenv("LEOFLOW_PASSWORD", "")
-	fastDevicePolls(t)
+	fastDevicePolls(t, d)
 	idp := newSSOIDP(t)
 	cp := newSSOControlPlaneWith(t, idp, &memDevices{})
-	opened := fakeBrowser(t, func(string) {})
+	opened := fakeBrowser(t, d, func(string) {})
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	out := &deviceWatcher{act: func(page, code string) { approveOnAnotherDevice(t, page, code) }}
 
@@ -227,7 +223,7 @@ func TestLoginDeviceFlowSavesTheServerToken(t *testing.T) {
 	root.SetOut(out)
 	root.SetErr(io.Discard)
 	root.SetArgs([]string{"auth", "login", "--device", "--server", cp.URL, "--config", cfgPath, "--timeout", "20s"})
-	if err := root.Execute(); err != nil {
+	if err := root.ExecuteContext(testCtx(d)); err != nil {
 		t.Fatalf("login: %v\n%s", err, out.String())
 	}
 	if len(*opened) != 0 {
@@ -298,12 +294,13 @@ var tokenAnswer = [2]string{"200", `{"access_token":"jwt-device","token_type":"b
 // With no flag and no browser on this machine, a server that serves the
 // device sign-in gets it, and the command says why.
 func TestLoginChoosesTheDeviceSignInWithoutABrowser(t *testing.T) {
-	fastDevicePolls(t)
-	headless(t, true)
+	d := testDeps()
+	fastDevicePolls(t, d)
+	headless(t, d, true)
 	srv, started := deviceCLIServer(t, true, [2]string{"400", "authorization_pending"}, tokenAnswer)
-	opened := fakeBrowser(t, func(string) {})
+	opened := fakeBrowser(t, d, func(string) {})
 	cfgPath := filepath.Join(t.TempDir(), "c.yaml")
-	out, _, err := run(t, "auth", "login", "--server", srv.URL, "--config", cfgPath, "--timeout", "5s")
+	out, _, err := runDeps(t, d, "auth", "login", "--server", srv.URL, "--config", cfgPath, "--timeout", "5s")
 	if err != nil {
 		t.Fatalf("login: %v\n%s", err, out)
 	}
@@ -326,11 +323,12 @@ func TestLoginChoosesTheDeviceSignInWithoutABrowser(t *testing.T) {
 // Output that is not a terminal (a script, a pipe) never gets the device
 // sign-in by itself: nobody may be reading the code.
 func TestLoginDoesNotPickTheDeviceSignInWithoutATerminal(t *testing.T) {
-	headless(t, true)
-	interactive(t, false)
+	d := testDeps()
+	headless(t, d, true)
+	interactive(t, d, false)
 	srv, started := deviceCLIServer(t, true)
-	opened := fakeBrowser(t, func(string) {})
-	_, _, _ = run(t, "auth", "login", "--server", srv.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"), "--timeout", "100ms")
+	opened := fakeBrowser(t, d, func(string) {})
+	_, _, _ = runDeps(t, d, "auth", "login", "--server", srv.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"), "--timeout", "100ms")
 	if *started != 0 || len(*opened) != 1 {
 		t.Errorf("device sign-ins %d, browsers opened %v; want the browser sign-in", *started, *opened)
 	}
@@ -340,9 +338,10 @@ func TestLoginDoesNotPickTheDeviceSignInWithoutATerminal(t *testing.T) {
 // warning: the server's public address may be misconfigured, or the answer
 // is not from the server the person meant.
 func TestLoginDeviceWarnsWhenThePageIsOnAnotherHost(t *testing.T) {
-	fastDevicePolls(t)
+	d := testDeps()
+	fastDevicePolls(t, d)
 	srv, _ := deviceCLIServer(t, true, tokenAnswer)
-	out, _, err := run(t, "auth", "login", "--device", "--server", srv.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"), "--timeout", "5s")
+	out, _, err := runDeps(t, d, "auth", "login", "--device", "--server", srv.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"), "--timeout", "5s")
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
@@ -359,10 +358,11 @@ func TestLoginKeepsTheBrowserSignInWhenItCanWork(t *testing.T) {
 		"older server": {true, false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			headless(t, tc.headless)
+			d := testDeps()
+			headless(t, d, tc.headless)
 			srv, started := deviceCLIServer(t, tc.device)
-			opened := fakeBrowser(t, func(string) {})
-			_, _, _ = run(t, "auth", "login", "--server", srv.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"), "--timeout", "100ms")
+			opened := fakeBrowser(t, d, func(string) {})
+			_, _, _ = runDeps(t, d, "auth", "login", "--server", srv.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"), "--timeout", "100ms")
 			if *started != 0 || len(*opened) != 1 {
 				t.Errorf("device sign-ins %d, browsers opened %v; want the browser sign-in", *started, *opened)
 			}
@@ -371,9 +371,10 @@ func TestLoginKeepsTheBrowserSignInWhenItCanWork(t *testing.T) {
 }
 
 func TestLoginDeviceSlowsDownWhenTold(t *testing.T) {
-	waits := fastDevicePolls(t)
+	d := testDeps()
+	waits := fastDevicePolls(t, d)
 	srv, _ := deviceCLIServer(t, true, [2]string{"400", "slow_down"}, [2]string{"400", "authorization_pending"}, tokenAnswer)
-	if _, _, err := run(t, "auth", "login", "--device", "--server", srv.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"), "--timeout", "5s"); err != nil {
+	if _, _, err := runDeps(t, d, "auth", "login", "--device", "--server", srv.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"), "--timeout", "5s"); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 	if len(*waits) != 3 || (*waits)[0] != 5*time.Second || (*waits)[1] != 10*time.Second || (*waits)[2] != 10*time.Second {
@@ -382,14 +383,15 @@ func TestLoginDeviceSlowsDownWhenTold(t *testing.T) {
 }
 
 func TestLoginDeviceReportsHowItEnded(t *testing.T) {
-	fastDevicePolls(t)
+	d := testDeps()
+	fastDevicePolls(t, d)
 	for answer, want := range map[string]string{
 		"access_denied": "canceled",
 		"expired_token": "expired",
 		"invalid_grant": "no longer",
 	} {
 		srv, _ := deviceCLIServer(t, true, [2]string{"400", answer})
-		_, _, err := run(t, "auth", "login", "--device", "--server", srv.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"), "--timeout", "5s")
+		_, _, err := runDeps(t, d, "auth", "login", "--device", "--server", srv.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"), "--timeout", "5s")
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: err = %v, want it to say %q", answer, err, want)
 		}
@@ -397,13 +399,14 @@ func TestLoginDeviceReportsHowItEnded(t *testing.T) {
 }
 
 func TestLoginDeviceTimesOut(t *testing.T) {
-	fastDevicePolls(t)
+	d := testDeps()
+	fastDevicePolls(t, d)
 	pending := make([][2]string, 1000)
 	for i := range pending {
 		pending[i] = [2]string{"400", "authorization_pending"}
 	}
 	srv, _ := deviceCLIServer(t, true, pending...)
-	_, _, err := run(t, "auth", "login", "--device", "--server", srv.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"), "--timeout", "200ms")
+	_, _, err := runDeps(t, d, "auth", "login", "--device", "--server", srv.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"), "--timeout", "200ms")
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("err = %v, want a timeout", err)
 	}
@@ -411,14 +414,15 @@ func TestLoginDeviceTimesOut(t *testing.T) {
 
 // The CLI stops waiting when the sign-in expires, even before --timeout.
 func TestLoginDeviceStopsWhenTheSignInExpires(t *testing.T) {
-	fastDevicePolls(t)
+	d := testDeps()
+	fastDevicePolls(t, d)
 	pending := make([][2]string, 1000)
 	for i := range pending {
 		pending[i] = [2]string{"400", "authorization_pending"}
 	}
 	srv, _ := deviceCLIServerExpiring(t, true, 1, pending...)
 	start := time.Now()
-	_, _, err := run(t, "auth", "login", "--device", "--server", srv.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"), "--timeout", "1m")
+	_, _, err := runDeps(t, d, "auth", "login", "--device", "--server", srv.URL, "--config", filepath.Join(t.TempDir(), "c.yaml"), "--timeout", "1m")
 	if err == nil || !strings.Contains(err.Error(), "timed out after 1s") || time.Since(start) > 10*time.Second {
 		t.Fatalf("err = %v after %s, want a timeout at the 1s expiry", err, time.Since(start))
 	}
@@ -442,6 +446,7 @@ func TestLoginDeviceFlagConflicts(t *testing.T) {
 }
 
 func TestSessionHeadlessDetection(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		env  map[string]string
 		goos string

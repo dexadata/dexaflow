@@ -25,6 +25,7 @@ func regCfg(url, name string) *domain.LeoflowConfig {
 // skipping it would mean a "build everything" that quietly built less than
 // everything.
 func TestBuildTargets(t *testing.T) {
+	t.Parallel()
 	t.Run("a project with a registry gets a derived image", func(t *testing.T) {
 		got, skipped := buildTargets([]Project{
 			{Path: "/ws/sales", DagID: "sales", Config: regCfg("reg.io/team", "sales")},

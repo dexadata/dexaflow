@@ -6,6 +6,7 @@ import (
 )
 
 func TestIsLoopback(t *testing.T) {
+	t.Parallel()
 	cases := map[string]bool{
 		"http://localhost:8080":   true,
 		"http://127.0.0.1":        true,
@@ -22,6 +23,7 @@ func TestIsLoopback(t *testing.T) {
 }
 
 func TestShouldConfirm(t *testing.T) {
+	t.Parallel()
 	// Prompt only when interactive, not --yes, and a real (non-loopback) server.
 	if !shouldConfirm("https://pro", false, true) {
 		t.Error("want confirm for an interactive deploy to a real server")
@@ -38,6 +40,7 @@ func TestShouldConfirm(t *testing.T) {
 }
 
 func TestConfirmDeploy(t *testing.T) {
+	t.Parallel()
 	for in, want := range map[string]bool{"y\n": true, "yes\n": true, "n\n": false, "\n": false, "nope\n": false} {
 		var out strings.Builder
 		if got := confirmDeploy(strings.NewReader(in), &out, "etl", "https://pro"); got != want {

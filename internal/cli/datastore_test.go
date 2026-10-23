@@ -15,6 +15,7 @@ import (
 // reconnects to the same volume) and distinct per path (so two users never share
 // or clobber a datastore).
 func TestProjectNameStableAndDistinct(t *testing.T) {
+	t.Parallel()
 	a1 := projectName("/home/alice/.leoflow")
 	a2 := projectName("/home/alice/.leoflow")
 	b := projectName("/home/bob/.leoflow")
@@ -41,6 +42,7 @@ func TestProjectNameStableAndDistinct(t *testing.T) {
 // it; later calls reuse the persisted port even if pick would choose another (the
 // running container holds it) — so separate processes agree.
 func TestResolveDevDBPortPersistsAndReuses(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	got, err := resolveDevDBPort(dir, func() int { return 5455 })
 	if err != nil || got != 5455 {
@@ -58,6 +60,7 @@ func TestResolveDevDBPortPersistsAndReuses(t *testing.T) {
 // TestDevDBPortDefault: with no persisted port (source checkout / explicit
 // --compose), the DSNs fall back to the standard 5432.
 func TestDevDBPortDefault(t *testing.T) {
+	t.Parallel()
 	if p := devDBPort(t.TempDir()); p != defaultDevDBPort {
 		t.Errorf("devDBPort with no db-port = %d, want %d", p, defaultDevDBPort)
 	}
@@ -67,6 +70,7 @@ func TestDevDBPortDefault(t *testing.T) {
 // regression would break the docker compose project name (datastore
 // reconnection) and the uninstall target on every machine.
 func TestLeoflowHomeUnderUserHome(t *testing.T) {
+	t.Parallel()
 	got, err := leoflowHome()
 	if err != nil {
 		t.Fatalf("leoflowHome: %v", err)
@@ -86,6 +90,7 @@ func TestLeoflowHomeUnderUserHome(t *testing.T) {
 // The string is the docker-compose project name; drift here would orphan the
 // Postgres volume of every existing install.
 func TestDevProjectNameStableAndShaped(t *testing.T) {
+	t.Parallel()
 	got := devProjectName()
 	if !strings.HasPrefix(got, "leoflow-") {
 		t.Errorf("devProjectName() = %q, must start with 'leoflow-'", got)
@@ -108,6 +113,7 @@ func TestDevProjectNameStableAndShaped(t *testing.T) {
 // resources) and the LEOFLOW_DB_PORT the compose file interpolates. A missing
 // either silently re-binds to the default port or clobbers another install.
 func TestComposeEnvCarriesProjectAndPort(t *testing.T) {
+	t.Parallel()
 	env := composeEnv()
 	var sawProject, sawPort bool
 	for _, kv := range env {
@@ -129,6 +135,7 @@ func TestComposeEnvCarriesProjectAndPort(t *testing.T) {
 // TestFirstFreePortSkipsBusy: a bound port is skipped and the next free one is
 // returned.
 func TestFirstFreePortSkipsBusy(t *testing.T) {
+	t.Parallel()
 	var lc net.ListenConfig
 	ln, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {

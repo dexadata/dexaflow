@@ -8,6 +8,7 @@ import "testing"
 // (#407). The HTTP call fails here (no server), but the mint must still happen per
 // call.
 func TestMakeDeleteDagRemintsToken(t *testing.T) {
+	t.Parallel()
 	var calls int
 	del := makeDeleteDag(func() string { calls++; return "" }, "http://127.0.0.1:0", t.TempDir(), func(string, ...any) {})
 	_ = del("a")
@@ -22,6 +23,7 @@ func TestMakeDeleteDagRemintsToken(t *testing.T) {
 // control plane is unreachable here, so the fetches fail and reconcile no-ops, but
 // the token must still be minted at the top of the pass.)
 func TestMakeBootReconcileMintsToken(t *testing.T) {
+	t.Parallel()
 	var calls int
 	boot := makeBootReconcile(
 		func() string { calls++; return "" },

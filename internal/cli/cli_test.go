@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,15 +14,11 @@ import (
 	yaml "go.yaml.in/yaml/v3"
 )
 
+// run runs the root command with args under testDeps and returns what it
+// printed.
 func run(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
-	root := NewRootCommand()
-	var out, errb bytes.Buffer
-	root.SetOut(&out)
-	root.SetErr(&errb)
-	root.SetArgs(args)
-	err = root.Execute()
-	return out.String(), errb.String(), err
+	return runDeps(t, nil, args...)
 }
 
 func TestVersionCommandPrintsInfo(t *testing.T) {

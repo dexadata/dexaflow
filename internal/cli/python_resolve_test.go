@@ -14,6 +14,7 @@ import (
 // `dexaflow setup` hint instead of being returned; and no interpreter at all is
 // reported as ("", nil) so callers can decide whether that is fatal.
 func TestResolvePython3(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	notFound := func(string) (string, error) { return "", os.ErrNotExist }
 	neverRun := func(context.Context, string) (int, int, error) {

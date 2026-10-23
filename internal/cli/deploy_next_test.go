@@ -7,6 +7,7 @@ import (
 )
 
 func TestNextStepLine(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 10, 13, 10, 30, 0, 0, time.UTC)
 	oct1 := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	nov1 := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
@@ -62,6 +63,7 @@ func TestNextStepLine(t *testing.T) {
 }
 
 func TestDagStateFromDetails(t *testing.T) {
+	t.Parallel()
 	never := "Never, external triggers only"
 	daily := "@daily"
 	start := "2026-10-01T00:00:00Z"

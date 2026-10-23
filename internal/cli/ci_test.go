@@ -31,19 +31,17 @@ const ciGoldenCommit = "0123456789abcdef0123456789abcdef01234567"
 
 // stubTagCommit makes the lookup of a release's commit answer
 // ciGoldenCommit for ciGoldenVersion, and fail for any other tag, without
-// the network.
-func stubTagCommit(t *testing.T) *[]string {
+// the network, for the commands run under d.
+func stubTagCommit(t *testing.T, d *cliDeps) *[]string {
 	t.Helper()
 	var asked []string
-	saved := ciTagCommit
-	ciTagCommit = func(_ context.Context, tag string) (string, error) {
+	d.tagCommit = func(_ context.Context, tag string) (string, error) {
 		asked = append(asked, tag)
 		if tag == ciGoldenVersion {
 			return ciGoldenCommit, nil
 		}
 		return "", errors.New("no such tag")
 	}
-	t.Cleanup(func() { ciTagCommit = saved })
 	return &asked
 }
 
@@ -52,17 +50,15 @@ func stubTagCommit(t *testing.T) *[]string {
 const ciGoldenImageDigest = "sha256:89abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567"
 
 // stubImageDigest makes the lookup of the dexaflow-cli image answer
-// ciGoldenImageDigest for any tag, without the network, and records the
-// images it was asked for.
-func stubImageDigest(t *testing.T) *[]string {
+// ciGoldenImageDigest for any tag, without the network, for the commands
+// run under d, and records the images it was asked for.
+func stubImageDigest(t *testing.T, d *cliDeps) *[]string {
 	t.Helper()
 	var asked []string
-	saved := ciImageDigest
-	ciImageDigest = func(_ context.Context, image string) (string, error) {
+	d.imageDigest = func(_ context.Context, image string) (string, error) {
 		asked = append(asked, image)
 		return ciGoldenImageDigest, nil
 	}
-	t.Cleanup(func() { ciImageDigest = saved })
 	return &asked
 }
 
@@ -107,12 +103,13 @@ func ciWorkspace(t *testing.T, registry, orders string) string {
 // ciInit runs `dexaflow ci init` in root with the golden version pinned.
 func ciInit(t *testing.T, root string, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
-	stubTagCommit(t)
-	stubImageDigest(t)
+	d := testDeps()
+	stubTagCommit(t, d)
+	stubImageDigest(t, d)
 	t.Chdir(root)
 	full := append([]string{"ci", "init"}, args...)
 	full = append(full, "--cli-version", ciGoldenVersion, "--config", emptyConfig(t))
-	return run(t, full...)
+	return runDeps(t, d, full...)
 }
 
 // ciWritten returns every file ci init added under root, by slash path,
@@ -980,17 +977,18 @@ func TestCIInitGitLabRunsInTheCLIImage(t *testing.T) {
 
 	isolateCLIEnv(t)
 	root := ciWorkspace(t, "registry.gitlab.com/acme/dags", "")
-	stubTagCommit(t)
-	asked := stubImageDigest(t)
+	d := testDeps()
+	stubTagCommit(t, d)
+	asked := stubImageDigest(t, d)
 	t.Chdir(root)
-	if _, _, err := run(t, "ci", "init", "gitlab", "--cli-version", "v0.7.0", "--stdout", "--config", emptyConfig(t)); err != nil {
+	if _, _, err := runDeps(t, d, "ci", "init", "gitlab", "--cli-version", "v0.7.0", "--stdout", "--config", emptyConfig(t)); err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{ciCLIImageRepo + ":v0.7.0"}; !slices.Equal(*asked, want) {
 		t.Errorf("looked up %v, want %v", *asked, want)
 	}
 	*asked = nil
-	out, _, err := run(t, "ci", "init", "gitlab", "--cli-version", "v0.5.3", "--stdout", "--config", emptyConfig(t))
+	out, _, err := runDeps(t, d, "ci", "init", "gitlab", "--cli-version", "v0.5.3", "--stdout", "--config", emptyConfig(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -998,7 +996,7 @@ func TestCIInitGitLabRunsInTheCLIImage(t *testing.T) {
 		t.Errorf("v0.5.3 ships no dexaflow-cli image, so the job keeps %s: looked up %v\n%s", ciPythonImage, *asked, out)
 	}
 	writeTree(t, filepath.Join(root, "dags", "orders", projectConfigFile), "dag_id: orders\nsystem_packages: [libpq-dev]\n")
-	out, _, err = run(t, "ci", "init", "gitlab", "--cli-version", "v0.7.0", "--stdout", "--config", emptyConfig(t))
+	out, _, err = runDeps(t, d, "ci", "init", "gitlab", "--cli-version", "v0.7.0", "--stdout", "--config", emptyConfig(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1007,14 +1005,14 @@ func TestCIInitGitLabRunsInTheCLIImage(t *testing.T) {
 	}
 	writeTree(t, filepath.Join(root, "dags", "orders", projectConfigFile), "dag_id: orders\n")
 
-	ciImageDigest = func(context.Context, string) (string, error) { return "latest", nil }
-	if _, _, err = run(t, "ci", "init", "gitlab", "--cli-version", "v0.7.0", "--stdout", "--config", emptyConfig(t)); err == nil ||
+	d.imageDigest = func(context.Context, string) (string, error) { return "latest", nil }
+	if _, _, err = runDeps(t, d, "ci", "init", "gitlab", "--cli-version", "v0.7.0", "--stdout", "--config", emptyConfig(t)); err == nil ||
 		!strings.Contains(err.Error(), "not a sha256 digest") {
 		t.Errorf("err = %v, want a refusal of an answer that is not a digest", err)
 	}
 
-	ciImageDigest = func(context.Context, string) (string, error) { return "", errors.New("unauthorized") }
-	_, _, err = run(t, "ci", "init", "gitlab", "--cli-version", "v0.7.0", "--stdout", "--config", emptyConfig(t))
+	d.imageDigest = func(context.Context, string) (string, error) { return "", errors.New("unauthorized") }
+	_, _, err = runDeps(t, d, "ci", "init", "gitlab", "--cli-version", "v0.7.0", "--stdout", "--config", emptyConfig(t))
 	if err == nil || !strings.Contains(err.Error(), ciCLIImageRepo+":v0.7.0") || !strings.Contains(err.Error(), "unauthorized") {
 		t.Errorf("err = %v, want a refusal naming the image whose digest could not be read, and why", err)
 	}
@@ -1038,10 +1036,11 @@ func TestCIInitGitHubInstallsWithTheAction(t *testing.T) {
 	}
 	isolateCLIEnv(t)
 	root := ciWorkspace(t, "ghcr.io/acme/dags", "")
-	asked := stubTagCommit(t)
-	stubImageDigest(t)
+	d := testDeps()
+	asked := stubTagCommit(t, d)
+	stubImageDigest(t, d)
 	t.Chdir(root)
-	_, _, err := run(t, "ci", "init", "github", "--cli-version", "v0.7.0", "--stdout", "--config", emptyConfig(t))
+	_, _, err := runDeps(t, d, "ci", "init", "github", "--cli-version", "v0.7.0", "--stdout", "--config", emptyConfig(t))
 	if err == nil || !strings.Contains(err.Error(), "v0.7.0") {
 		t.Errorf("err = %v, want a refusal naming the release whose commit is unknown", err)
 	}
@@ -1049,7 +1048,7 @@ func TestCIInitGitHubInstallsWithTheAction(t *testing.T) {
 		t.Errorf("looked up %v, want the commit of v0.7.0", *asked)
 	}
 	*asked = nil
-	if _, _, err := run(t, "ci", "init", "gitlab", "--cli-version", "v0.7.0", "--stdout", "--config", emptyConfig(t)); err != nil || len(*asked) > 0 {
+	if _, _, err := runDeps(t, d, "ci", "init", "gitlab", "--cli-version", "v0.7.0", "--stdout", "--config", emptyConfig(t)); err != nil || len(*asked) > 0 {
 		t.Errorf("only the GitHub workflow pins a commit: err %v, looked up %v", err, *asked)
 	}
 }
@@ -1057,6 +1056,7 @@ func TestCIInitGitHubInstallsWithTheAction(t *testing.T) {
 // TestTagCommitIn takes the commit an annotated tag points to, not the tag
 // object, and a lightweight tag's own entry.
 func TestTagCommitIn(t *testing.T) {
+	t.Parallel()
 	tagObj, commit := strings.Repeat("a", 40), strings.Repeat("b", 40)
 	annotated := tagObj + "\trefs/tags/v0.6.0\n" + commit + "\trefs/tags/v0.6.0^{}\n"
 	if got, err := tagCommitIn(annotated, "v0.6.0"); err != nil || got != commit {

@@ -30,6 +30,7 @@ func devTestCmd() *cobra.Command {
 }
 
 func TestDevBannerMarksEnvironment(t *testing.T) {
+	t.Parallel()
 	b := liteBanner("http://localhost:8080")
 	if !strings.Contains(b, "LITE") {
 		t.Errorf("banner must shout LITE, got:\n%s", b)
@@ -43,6 +44,7 @@ func TestDevBannerMarksEnvironment(t *testing.T) {
 }
 
 func TestMtimesChangedDetectsEdits(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	f := filepath.Join(dir, "dag.py")
 	if err := os.WriteFile(f, []byte("v1"), 0o600); err != nil {
@@ -66,6 +68,7 @@ func TestMtimesChangedDetectsEdits(t *testing.T) {
 }
 
 func TestMtimesChangedDetectsAddAndRemove(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	a := filepath.Join(dir, "dexaflow.yaml")
 	b := filepath.Join(dir, "dag.py")
@@ -113,6 +116,7 @@ func TestResolveBinaryExplicitAndFallback(t *testing.T) {
 // watcher now walks a workspace (Phase 3) instead of a single project pair,
 // so the contract is "every project's yaml+source + the workspace root".
 func TestWorkspaceWatchPaths(t *testing.T) {
+	t.Parallel()
 	ws := &WorkspaceSpec{
 		Path: "ws",
 		Projects: []Project{
@@ -146,6 +150,7 @@ func TestWorkspaceWatchPaths(t *testing.T) {
 }
 
 func TestDevReadyOnce(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -165,6 +170,7 @@ func TestDevReadyOnce(t *testing.T) {
 }
 
 func TestWaitForReadyReturnsWhenUp(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -175,6 +181,7 @@ func TestWaitForReadyReturnsWhenUp(t *testing.T) {
 }
 
 func TestWaitForReadyHonorsCancel(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	// Nothing is listening here and the context is already canceled.
@@ -184,6 +191,7 @@ func TestWaitForReadyHonorsCancel(t *testing.T) {
 }
 
 func TestNewDevCommandFlagDefaults(t *testing.T) {
+	t.Parallel()
 	cmd := newLiteCommand()
 	for flag, want := range map[string]string{
 		"compose": "", // empty = a managed compose under ~/.leoflow, materialized on first run
@@ -197,6 +205,7 @@ func TestNewDevCommandFlagDefaults(t *testing.T) {
 }
 
 func TestDevPrintHelpers(t *testing.T) {
+	t.Parallel()
 	var b bytes.Buffer
 	devPrintf(&b, "x=%d", 7)
 	devPrintln(&b, "line")
@@ -206,6 +215,7 @@ func TestDevPrintHelpers(t *testing.T) {
 }
 
 func TestRunDevValidatesProject(t *testing.T) {
+	t.Parallel()
 	cmd := devTestCmd()
 	// A discoverable project (it has a dag.py) whose dexaflow.yaml is invalid: an
 	// unknown alert type the schema rejects. runDev validates every project up
@@ -227,6 +237,7 @@ func TestRunDevValidatesProject(t *testing.T) {
 }
 
 func TestStartDevServerStartsAndErrors(t *testing.T) {
+	t.Parallel()
 	cmd := devTestCmd()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -246,6 +257,7 @@ func TestStartDevServerStartsAndErrors(t *testing.T) {
 }
 
 func TestDevWatchLoopExitsOnCancel(t *testing.T) {
+	t.Parallel()
 	cmd := devTestCmd()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already canceled: the loop must do its initial pass then return nil
@@ -264,6 +276,7 @@ func TestDevWatchLoopExitsOnCancel(t *testing.T) {
 }
 
 func TestVenvPythonOSAware(t *testing.T) {
+	t.Parallel()
 	home := filepath.FromSlash("/home/u/.leoflow/dev")
 	got := venvPython(home)
 	want := filepath.Join(home, "venv", "bin", "python")
@@ -276,12 +289,14 @@ func TestVenvPythonOSAware(t *testing.T) {
 }
 
 func TestDevDagImageRef(t *testing.T) {
+	t.Parallel()
 	if got := devDagImageRef("my_etl"); got != "leoflow-dev-my_etl:dev" {
 		t.Errorf("devDagImageRef = %q, want leoflow-dev-my_etl:dev", got)
 	}
 }
 
 func TestDevDockerfile(t *testing.T) {
+	t.Parallel()
 	df, derr := devDockerfile("leoflow-base:py3.11", "dag.py", nil, nil)
 	if derr != nil {
 		t.Fatal(derr)
@@ -311,6 +326,7 @@ func TestDevDockerfile(t *testing.T) {
 }
 
 func TestMergeLiteDefaults(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{LiteExecutor: "subprocess", LitePort: 9091}
 
 	t.Run("applies config when flags unset", func(t *testing.T) {
@@ -340,6 +356,7 @@ func TestMergeLiteDefaults(t *testing.T) {
 }
 
 func TestServerEnvBuilders(t *testing.T) {
+	t.Parallel()
 	sub := strings.Join(subprocessServerEnv(liteEnvParams{host: "127.0.0.1", port: 8088, adminHash: "", adminEmail: "", jwtSecret: ""}, "/bin/agent", "/proj", "/venv/py", "/h/venvs"), "\n")
 	// Lite binds its own HTTP/gRPC/metrics ports (distinct from the demo's 8080/9090/9091).
 	for _, must := range []string{"LEOFLOW_EXECUTOR_TYPE=subprocess", "LEOFLOW_EXECUTOR_AGENT_PATH=/bin/agent", "LEOFLOW_EXECUTOR_SUBPROCESS_WORKDIR=/proj", "LEOFLOW_PYTHON=/venv/py", "127.0.0.1:9099", "LEOFLOW_SERVER_HTTP_ADDR=127.0.0.1:8088", "LEOFLOW_SERVER_GRPC_ADDR=:9099", "LEOFLOW_SERVER_METRICS_ADDR=:9098"} {
@@ -376,6 +393,7 @@ func TestServerEnvBuilders(t *testing.T) {
 }
 
 func TestSharedServerEnvAuthModes(t *testing.T) {
+	t.Parallel()
 	// No admin configured -> dev no-auth fallback (loopback only).
 	noAdmin := strings.Join(sharedServerEnv(liteEnvParams{host: "127.0.0.1", port: 8088, adminHash: "", adminEmail: "", jwtSecret: ""}), "\n")
 	if !strings.Contains(noAdmin, "LEOFLOW_AUTH_DEV_NO_AUTH=true") {
@@ -417,6 +435,7 @@ func TestSharedServerEnvAuthModes(t *testing.T) {
 }
 
 func TestLiteEditorEnv(t *testing.T) {
+	t.Parallel()
 	env := strings.Join(liteEditorEnv("/home/u/proj", "/home/u/.leoflow"), "\n")
 	if !strings.Contains(env, "LEOFLOW_UI_WORKSPACE=/home/u/proj") {
 		t.Errorf("editor env missing workspace; got %q", env)
@@ -428,6 +447,7 @@ func TestLiteEditorEnv(t *testing.T) {
 }
 
 func TestK3dArgBuilders(t *testing.T) {
+	t.Parallel()
 	if got := strings.Join(k3dCreateArgs("leoflow-dev"), " "); got != "cluster create leoflow-dev --wait" {
 		t.Errorf("k3dCreateArgs = %q", got)
 	}
@@ -437,6 +457,7 @@ func TestK3dArgBuilders(t *testing.T) {
 }
 
 func TestDevKubeconfigPath(t *testing.T) {
+	t.Parallel()
 	home := filepath.FromSlash("/home/u/.leoflow/dev")
 	if got := devKubeconfigPath(home); got != filepath.Join(home, "kubeconfig") {
 		t.Errorf("devKubeconfigPath = %q", got)
@@ -444,6 +465,7 @@ func TestDevKubeconfigPath(t *testing.T) {
 }
 
 func TestEnsureProjectDockerfile(t *testing.T) {
+	t.Parallel()
 	cmd := devTestCmd()
 	cfg := &domain.LeoflowConfig{DagID: "p", DagSource: "dag.py"}
 
@@ -494,6 +516,7 @@ func TestDevSubprocessSetupMissingAgent(t *testing.T) {
 }
 
 func TestBaseImageBuildArgs(t *testing.T) {
+	t.Parallel()
 	got := strings.Join(baseImageBuildArgs(), " ")
 	for _, must := range []string{"build", "runtime/Dockerfile", "PYTHON_VERSION=" + devPyVersion, devBaseImage} {
 		if !strings.Contains(got, must) {
@@ -503,6 +526,7 @@ func TestBaseImageBuildArgs(t *testing.T) {
 }
 
 func TestKubectlNamespaceArgs(t *testing.T) {
+	t.Parallel()
 	got := strings.Join(kubectlNamespaceArgs("/kc"), " ")
 	if got != "--kubeconfig /kc create namespace "+devNamespace {
 		t.Errorf("kubectlNamespaceArgs = %q", got)
@@ -521,14 +545,13 @@ func TestDevClusterSetupStubbed(t *testing.T) {
 	}
 	t.Chdir(src)
 
-	origRun, origOut := devRun, devOutput
-	defer func() { devRun, devOutput = origRun, origOut }()
+	d := testDeps()
 	var runs []string
-	devRun = func(_ context.Context, _ *cobra.Command, name string, args ...string) error {
+	d.devRun = func(_ context.Context, _ *cobra.Command, name string, args ...string) error {
 		runs = append(runs, name+" "+strings.Join(args, " "))
 		return nil
 	}
-	devOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
+	d.devOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		switch {
 		case name == "docker": // image inspect → "absent" so the base image is built
 			return nil, errors.New("no such image")
@@ -559,7 +582,7 @@ func TestDevClusterSetupStubbed(t *testing.T) {
 			Config:     cfg,
 		}},
 	}
-	env, makeReload, err := devClusterSetup(context.Background(), devTestCmd(), ws, devOptions{}, home)
+	env, makeReload, err := devClusterSetup(testCtx(d), devTestCmd(), ws, devOptions{}, home)
 	if err != nil {
 		t.Fatalf("devClusterSetup: %v", err)
 	}
@@ -583,14 +606,14 @@ func TestDevClusterSetupStubbed(t *testing.T) {
 }
 
 func TestK3dImportStubbed(t *testing.T) {
-	origRun := devRun
-	defer func() { devRun = origRun }()
+	t.Parallel()
+	d := testDeps()
 	var got string
-	devRun = func(_ context.Context, _ *cobra.Command, name string, args ...string) error {
+	d.devRun = func(_ context.Context, _ *cobra.Command, name string, args ...string) error {
 		got = name + " " + strings.Join(args, " ")
 		return nil
 	}
-	if err := k3dImport(context.Background(), devTestCmd(), "leoflow-dev-etl:dev"); err != nil {
+	if err := k3dImport(testCtx(d), devTestCmd(), "leoflow-dev-etl:dev"); err != nil {
 		t.Fatalf("k3dImport: %v", err)
 	}
 	if !strings.Contains(got, "image import leoflow-dev-etl:dev") || !strings.Contains(got, "--cluster "+devClusterName) {
@@ -701,6 +724,7 @@ func TestResolveBinaryIgnoresDirectories(t *testing.T) {
 // test in the package. companionVersion is documented best-effort, so an
 // unresolvable binary simply yields "" — never a panic.
 func TestCompanionVersionNilContextDoesNotPanic(t *testing.T) {
+	t.Parallel()
 	missing := filepath.Join(t.TempDir(), "leoflow-server")
 	//nolint:staticcheck // SA1012: passing a nil context is exactly the guarded case under test.
 	if got := companionVersion(nil, missing); got != "" {
@@ -721,6 +745,7 @@ func writeFakeBinary(t *testing.T, path string) {
 // the image. The Lite subprocess loop reads from disk and never notices, which
 // is exactly why this went unseen: the gap only appears once something builds.
 func TestDevDockerfileCopiesDbtGroupProjects(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DbtGroups: map[string]*domain.DbtConfig{
 		"transform": {Project: "./transform"},
 		"marketing": {Project: "marketing"},

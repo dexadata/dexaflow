@@ -15,6 +15,7 @@ import (
 const conflictBody = `{"title":"conflict","status":409,"detail":"inserting version: conflict"}`
 
 func TestVersionConflictHintNamesTheWayOut(t *testing.T) {
+	t.Parallel()
 	base := apiStatusError(http.StatusConflict, []byte(conflictBody))
 	cases := []struct {
 		origin labelOrigin
@@ -42,6 +43,7 @@ func TestVersionConflictHintNamesTheWayOut(t *testing.T) {
 }
 
 func TestVersionConflictHintStaysOutOfOtherErrors(t *testing.T) {
+	t.Parallel()
 	for _, status := range []int{http.StatusBadRequest, http.StatusForbidden, http.StatusInternalServerError} {
 		err := versionConflictHint(apiStatusError(status, []byte("x")), "v1", labelDefault)
 		if strings.Contains(err.Error(), "hint:") {
@@ -76,6 +78,7 @@ func TestPushCommandExplainsA409(t *testing.T) {
 }
 
 func TestRegisterDeployedDAGExplainsA409(t *testing.T) {
+	t.Parallel()
 	srv := conflictServer(t)
 	out := filepath.Join(t.TempDir(), "dag.json")
 	if err := os.WriteFile(out, []byte(pushSpec), 0o600); err != nil {

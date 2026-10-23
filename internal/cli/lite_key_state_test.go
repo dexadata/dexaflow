@@ -35,6 +35,7 @@ func sealedValue(t *testing.T, key, label string) storage.SecretValue {
 // only what this boot just scanned; nothing here may claim a re-encryption, a
 // completion or a removed key.
 func TestKeyStateMessagesGolden(t *testing.T) {
+	t.Parallel()
 	const ds = "the managed datastore (~/.dexaflow/pgdata)"
 	cases := []struct {
 		name  string
@@ -122,6 +123,7 @@ func TestKeyStateMessagesGolden(t *testing.T) {
 
 // A malformed recorded key is reported, never treated as absent.
 func TestClassifyKeyStateRefusesAMalformedKey(t *testing.T) {
+	t.Parallel()
 	if _, err := classifyKeyState(liteKeyConfig{exists: true, secretKey: "short"}, nil); err == nil {
 		t.Error("a key that does not parse must be an error")
 	}

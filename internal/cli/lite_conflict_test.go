@@ -12,6 +12,7 @@ import (
 // while free ports pass. This turns "bind: address already in use" deep in the
 // server into an actionable message before anything starts.
 func TestPreflightDevPorts(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	// Grab a free port, then hold it so the preflight sees it as busy.
 	var lc net.ListenConfig
@@ -42,6 +43,7 @@ func TestPreflightDevPorts(t *testing.T) {
 // (LEOFLOW_DATABASE_URL)", which Lite never honored: it sets the server's
 // database URL itself (#1185). Lite owns its database, and the message says so.
 func TestComposeUpError(t *testing.T) {
+	t.Parallel()
 	base := errString("exit status 1")
 	portErr := composeUpError(base, "Error response from daemon: ... Bind for 0.0.0.0:5432 failed: port is already allocated")
 	for _, want := range []string{"5432", "--postgres managed", "Lite owns its database"} {

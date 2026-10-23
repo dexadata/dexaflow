@@ -104,6 +104,7 @@ func TestResetPasswordRotatesTheSessionSecret(t *testing.T) {
 // The command must say so rather than claim they are already signed out. An
 // error while checking is treated like a running server.
 func TestResetPasswordTellsARunningServerToRestart(t *testing.T) {
+	t.Parallel()
 	cases := map[string]*fakeResetStore{
 		"running":      {found: true, running: true},
 		"check failed": {found: true, runningErr: errors.New("boom")},
@@ -130,6 +131,7 @@ func TestResetPasswordTellsARunningServerToRestart(t *testing.T) {
 // is no per-install secret to rotate, so the command must not claim it signed
 // anyone out.
 func TestResetPasswordWithoutConfigSaysSessionsSurvive(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	var out bytes.Buffer
 	if err := resetPassword(context.Background(), &out, home, "", (&fakeResetStore{found: true}).open); err != nil {
@@ -143,6 +145,7 @@ func TestResetPasswordWithoutConfigSaysSessionsSurvive(t *testing.T) {
 // TestResetPasswordLeavesTheSecretWhenNoAdminMatched: a reset that changed no
 // password must not sign everyone out either.
 func TestResetPasswordLeavesTheSecretWhenNoAdminMatched(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	path := seedLiteHome(t, home, ".dexaflow")
 	err := resetPassword(context.Background(), &bytes.Buffer{}, home, "nobody@x.io", (&fakeResetStore{found: false}).open)
@@ -196,6 +199,7 @@ func TestResetPasswordFindsTheLegacyAdmin(t *testing.T) {
 // TestResetPasswordDefaultsToTheDexaflowAdmin: a fresh install resets the new
 // default admin.
 func TestResetPasswordDefaultsToTheDexaflowAdmin(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	store := &fakeResetStore{found: true, users: map[string]auth.AdminState{"admin@dexaflow.local": auth.UserIsAdmin}}
 	var out bytes.Buffer

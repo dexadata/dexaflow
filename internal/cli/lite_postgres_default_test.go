@@ -11,6 +11,7 @@ import (
 // Docker is present (the realistic case, since the k3d executor needs Docker
 // too), else the managed relocatable PG (Docker-free), with both forceable.
 func TestLitePostgresDefaultIsAuto(t *testing.T) {
+	t.Parallel()
 	f := newLiteCommand().Flags().Lookup("postgres")
 	if f == nil {
 		// Return after t.Fatal so staticcheck (SA5011) does not flag the
@@ -27,6 +28,7 @@ func TestLitePostgresDefaultIsAuto(t *testing.T) {
 // TestResolveDatastore: "auto" picks Docker when Docker is available, else the
 // managed relocatable PG; an explicit value is returned unchanged.
 func TestResolveDatastore(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		flag     string
 		dockerOK bool
@@ -48,15 +50,15 @@ func TestResolveDatastore(t *testing.T) {
 // answer. A wedged Docker Desktop (socket returns 500) makes the ping fail, which
 // is what lets Lite fall back to a Docker-free Postgres instead of aborting (#403).
 func TestDockerResponsive(t *testing.T) {
-	orig := dockerPingFn
-	defer func() { dockerPingFn = orig }()
-
-	dockerPingFn = func() error { return nil }
-	if !dockerResponsive() {
+	t.Parallel()
+	d := testDeps()
+	ctx := testCtx(d)
+	d.dockerPing = func() error { return nil }
+	if !dockerResponsive(ctx) {
 		t.Error("dockerResponsive() = false, want true when the daemon answers")
 	}
-	dockerPingFn = func() error { return errors.New("500 Internal Server Error") }
-	if dockerResponsive() {
+	d.dockerPing = func() error { return errors.New("500 Internal Server Error") }
+	if dockerResponsive(ctx) {
 		t.Error("dockerResponsive() = true, want false when the daemon errors (wedged)")
 	}
 }
@@ -65,6 +67,7 @@ func TestDockerResponsive(t *testing.T) {
 // distinguishing "no Docker at all" from "Docker present but not responding" so a
 // wedged daemon gets an actionable message, not the misleading "no Docker" one (#403).
 func TestDatastoreNote(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		mode    string
 		host    dockerHost
