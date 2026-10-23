@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -182,6 +183,9 @@ func run() error {
 	if lerr != nil {
 		return lerr
 	}
+	// Deferred before the scheduler side's stop, so it runs after the agent
+	// streams have drained and their writers made the last flush.
+	defer closeLogSink(logSink, tel.Logger)
 	// Secrets are served over the agent channel only when explicitly allowed
 	// insecure (dev) until gRPC TLS lands (issue #58); otherwise the handlers
 	// fail closed on a plaintext channel.
@@ -415,6 +419,18 @@ func buildLogSink(ctx context.Context, cfg *config.ServerConfig, logger *slog.Lo
 		return logs.NewDurableSink(ctx, "gcs", "", store, cfg.Logs.Sink.Prefix, logger, logs.WithObjectLayout(cfg.Logs.Sink.Layout))
 	default:
 		return nil, fmt.Errorf("unknown logs.backend %q", cfg.Logs.Backend)
+	}
+}
+
+// closeLogSink releases the client of a sink that holds one (the GCS object
+// store, #647). A failure is logged: the process is stopping anyway.
+func closeLogSink(sink logs.Sink, logger *slog.Logger) {
+	c, ok := sink.(io.Closer)
+	if !ok {
+		return
+	}
+	if err := c.Close(); err != nil {
+		logger.Warn("closing the task log sink failed", "error", err)
 	}
 }
 

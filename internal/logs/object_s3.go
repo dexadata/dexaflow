@@ -6,12 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 // S3Config configures the S3-compatible object store backing an ObjectSink. It
@@ -95,21 +98,47 @@ func (s *S3Store) Put(ctx context.Context, key string, r io.Reader) error {
 	return nil
 }
 
-// Get reads the object under key, translating S3's NoSuchKey into
-// ErrObjectNotFound so the read path maps a missing log to a 404.
+// Get reads the object under key, translating a missing key into
+// ErrObjectNotFound (see isS3NotFound) so the read path maps a missing log to a
+// 404.
 func (s *S3Store) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		var noKey *s3types.NoSuchKey
-		if errors.As(err, &noKey) {
+		if isS3NotFound(err) {
 			return nil, fmt.Errorf("%w: %s", ErrObjectNotFound, key)
 		}
 		return nil, fmt.Errorf("getting log object: %w", err)
 	}
 	return out.Body, nil
+}
+
+// isS3NotFound reports whether a GetObject error means the key is missing. AWS
+// answers with the modeled NoSuchKey, but S3-compatible stores do not all
+// follow it: some answer a 404 with no body or with another error code, which
+// the SDK decodes as a generic API error (#647). Not-found decides whether a
+// read is an absent log or a failure, and since #640 a transient error must not
+// pass for one, so the match stays on the status a store uses for a missing
+// object. A 404 for a missing bucket is a misconfiguration, not an absent log,
+// and stays an error.
+func isS3NotFound(err error) bool {
+	var noKey *s3types.NoSuchKey
+	if errors.As(err, &noKey) {
+		return true
+	}
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.ErrorCode() {
+		case "NoSuchKey", "NotFound":
+			return true
+		case "NoSuchBucket":
+			return false
+		}
+	}
+	var respErr *smithyhttp.ResponseError
+	return errors.As(err, &respErr) && respErr.HTTPStatusCode() == http.StatusNotFound
 }
 
 // maxListedKeys bounds one List call. A try's listing holds one entry per

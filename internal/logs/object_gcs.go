@@ -65,6 +65,14 @@ func NewGCSStore(ctx context.Context, cfg GCSConfig) (*GCSStore, error) {
 	return &GCSStore{client: client, bucket: cfg.Bucket}, nil
 }
 
+// Close closes the client and its connection pool.
+func (g *GCSStore) Close() error {
+	if err := g.client.Close(); err != nil {
+		return fmt.Errorf("closing gcs client: %w", err)
+	}
+	return nil
+}
+
 // Put writes the object under key. The GCS writer streams to the API, but a task
 // attempt's log is already fully buffered by the caller, so io.Copy adds no
 // unbounded cost. Close finalizes the object; an error there means the write did
