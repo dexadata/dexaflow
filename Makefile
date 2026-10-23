@@ -250,8 +250,8 @@ e2e-netpol-rwx: ## Pro split real-cluster verify (#526): kind + Calico enforces 
 .PHONY: test
 test: ## Run Go and Python tests with coverage
 	go test -race -coverprofile=coverage.out -covermode=atomic ./...
-	command -v pytest >/dev/null && (cd parser && pytest -v --cov=leoflow_parser) || echo "skip pytest (not installed)"
-	command -v pytest >/dev/null && (cd runtime/python && pytest -v --cov=leoflow_runtime) || echo "skip runtime pytest (not installed)"
+	@if command -v pytest >/dev/null; then cd parser && pytest -v --cov=leoflow_parser; else echo "skip pytest (not installed)"; fi
+	@if command -v pytest >/dev/null; then cd runtime/python && pytest -v --cov=leoflow_runtime; else echo "skip runtime pytest (not installed)"; fi
 
 .PHONY: test-db
 test-db: ## Create (if missing) and migrate the isolated integration-test database
@@ -272,8 +272,8 @@ cover: test ## Show total Go coverage
 lint: ## Run golangci-lint, ruff and shellcheck
 	golangci-lint run ./...
 	@if command -v shellcheck >/dev/null; then git ls-files -z '*.sh' | xargs -0 shellcheck -S warning; else echo "skip shellcheck (not installed)"; fi
-	command -v ruff >/dev/null && (cd parser && ruff check .) || echo "skip ruff (not installed)"
-	command -v ruff >/dev/null && (cd runtime/python && ruff check .) || echo "skip runtime ruff (not installed)"
+	@if command -v ruff >/dev/null; then cd parser && ruff check .; else echo "skip ruff (not installed)"; fi
+	@if command -v ruff >/dev/null; then cd runtime/python && ruff check .; else echo "skip runtime ruff (not installed)"; fi
 
 .PHONY: fmt
 fmt: ## Format Go code

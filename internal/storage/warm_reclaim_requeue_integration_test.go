@@ -110,18 +110,20 @@ func TestRequeueForRedispatchRestartsDispatchLostClock(t *testing.T) {
 	}
 
 	// Read the stamp straight from the row: the stale-queued list is capped to
-	// the oldest rows, so other tests' leftovers could hide this one.
-	var queuedAt time.Time
+	// the oldest rows, so other tests' leftovers could hide this one. The age is
+	// measured against the database's own clock, which stamped queued_at, so a
+	// database clock that drifts from the test process cannot fail it (#2104).
+	var queuedAt, dbNow time.Time
 	if err := pg.Pool.QueryRow(ctx,
-		`SELECT queued_at FROM task_instances WHERE dag_run_id = $1::uuid AND task_id = 'load'`,
-		runUUID).Scan(&queuedAt); err != nil {
+		`SELECT queued_at, now() FROM task_instances WHERE dag_run_id = $1::uuid AND task_id = 'load'`,
+		runUUID).Scan(&queuedAt, &dbNow); err != nil {
 		t.Fatalf("reading queued_at: %v", err)
 	}
-	if age := time.Since(queuedAt); age > time.Minute {
+	if age := dbNow.Sub(queuedAt); age > time.Minute {
 		t.Fatalf("re-dispatched attempt queued_at age = %s, want a fresh stamp: the first episode's queued_at was kept", age.Round(time.Second))
 	}
 	c := executor.StaleQueuedCandidate{DagRunID: runUUID, TaskID: "load", QueuedAt: queuedAt}
-	if executor.IsDispatchLost(c, executor.DefaultReaperConfig().DispatchLostThreshold, time.Now()) {
+	if executor.IsDispatchLost(c, executor.DefaultReaperConfig().DispatchLostThreshold, dbNow) {
 		t.Fatal("a reclaimed attempt queued again a moment ago is already dispatch-lost")
 	}
 }

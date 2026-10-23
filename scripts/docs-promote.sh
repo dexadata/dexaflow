@@ -149,9 +149,10 @@ docs_promote_pr() {
 		log "origin/main needs no docs promotion for $tag" >&2; _dp_cleanup; return 0
 	fi
 	# The subject is the one release-gap.sh and docs-gap.sh treat as release
-	# mechanics.
+	# mechanics. The sign-off is the DCO check's (#2103): the Docs promote
+	# workflow commits as github-actions[bot], which signs off as itself.
 	if ! { git -C "$wt" add -- "${DOCS_PROMOTE_FILES[@]}" &&
-		git -C "$wt" commit -q -m "docs: publish $tag at the documentation root" -- "${DOCS_PROMOTE_FILES[@]}"; }; then
+		git -C "$wt" commit -q --signoff -m "docs: publish $tag at the documentation root" -- "${DOCS_PROMOTE_FILES[@]}"; }; then
 		warn "could not commit the docs promotion"; _dp_cleanup; return 2
 	fi
 	sha="$(git -C "$wt" rev-parse HEAD)"
@@ -235,6 +236,8 @@ self_test() {
 	_eq "$(git -C "$tmp/origin.git" show docs/promote-v2.0.0:README.md 2>/dev/null)" 'helm install x --version 2.0.0' "and the bumped README pins in the same commit"
 	_eq "$(git -C "$tmp/origin.git" show docs/promote-v2.0.0:website/hugo.toml 2>/dev/null | grep -c 'v2.0.0 (latest)')" 1 "and the rendered hugo.toml menu"
 	_eq "$(git -C "$tmp/origin.git" log -1 --format=%s docs/promote-v2.0.0 2>/dev/null)" "docs: publish v2.0.0 at the documentation root" "with the subject release-gap.sh treats as mechanics"
+	_eq "$(git -C "$tmp/origin.git" log -1 --format='%ae|%(trailers:key=Signed-off-by,valueonly)' docs/promote-v2.0.0 2>/dev/null | sed '/^$/d')" \
+		"$(git -C "$tmp/origin.git" log -1 --format='%ae|%an <%ae>' docs/promote-v2.0.0 2>/dev/null)" "signed off by its author (DCO, #2103)"
 	_eq "$(grep -c -- 'pr create .*--base main .*--label skip-changelog' "$tmp/gh.log")" 1 "--pr opens one pull request to main with skip-changelog"
 	_eq "$(grep -c -- 'pr merge 42 .*--auto' "$tmp/gh.log")" 1 "--auto-merge enables auto-merge on it"
 	_eq "$(git -C "$r" rev-parse --abbrev-ref HEAD)|$(git -C "$r" status --porcelain)" "operator-branch|" "--pr leaves the caller's checkout alone"

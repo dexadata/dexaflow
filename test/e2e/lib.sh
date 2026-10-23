@@ -11,6 +11,11 @@
 # "failed to import" it emits to stderr despite the misleading success line),
 # failing loud instead of proceeding into ErrImagePull.
 #
+# Even a clean run has let a job ErrImagePull (#2105), so the import also
+# counts only once every image is listed in containerd on every node of the
+# cluster. A node whose image list cannot be read is reported and skipped, so
+# the check never fails an import it cannot see.
+#
 # Usage: k3d_import <cluster> <image> [image...]
 k3d_import() {
   local cluster="$1"; shift
@@ -18,7 +23,8 @@ k3d_import() {
   for attempt in 1 2 3; do
     out="$(k3d image import "$@" --cluster "$cluster" 2>&1)" && rc=0 || rc=$?
     if [ "$rc" -eq 0 ] && ! printf '%s\n' "$out" | grep -qiE 'failed to import|no such file or directory|ERRO\['; then
-      return 0
+      k3d_images_landed "$cluster" "$@" && return 0
+      out="k3d reported success, but an image is missing from a node"
     fi
     printf '%s\n' "$out" >&2
     printf 'k3d_import: attempt %d hit the import flake (k3d misreported success, rc=%s); retrying...\n' "$attempt" "$rc" >&2
@@ -26,6 +32,47 @@ k3d_import() {
   done
   printf 'FATAL: k3d image import failed to land images in cluster %q after 3 attempts (the tarball-not-found flake)\n' "$cluster" >&2
   return 1
+}
+
+# k3d_image_ref prints the reference containerd stores for an image name:
+# an image without a registry lives under docker.io, and one without a
+# namespace under docker.io/library, and one without a tag is :latest, as
+# `docker pull` resolves them.
+k3d_image_ref() {
+  local img="$1" first="${1%%/*}"
+  case "$img" in
+    */*) case "$first" in *.*|*:*|localhost) ;; *) img="docker.io/$img" ;; esac ;;
+    *) img="docker.io/library/$img" ;;
+  esac
+  case "${img##*/}" in *:*|*@*) ;; *) img="$img:latest" ;; esac
+  printf '%s\n' "$img"
+}
+
+# k3d_images_landed <cluster> <image> [image...]: every image is listed in the
+# k8s.io containerd namespace of every server and agent node of the cluster.
+k3d_images_landed() {
+  local cluster="$1"; shift
+  local nodes node listed img ref missing=0
+  nodes="$( { docker ps --filter "label=k3d.cluster=$cluster" --filter label=k3d.role=server --format '{{.Names}}'
+    docker ps --filter "label=k3d.cluster=$cluster" --filter label=k3d.role=agent --format '{{.Names}}'; } 2>/dev/null)"
+  if [ -z "$nodes" ]; then
+    printf 'k3d_import: could not list the nodes of cluster %q; not verifying the import\n' "$cluster" >&2
+    return 0
+  fi
+  for node in $nodes; do
+    if ! listed="$(docker exec "$node" ctr -n k8s.io images ls -q 2>/dev/null)"; then
+      printf 'k3d_import: could not read the images on node %s; not verifying it\n' "$node" >&2
+      continue
+    fi
+    for img in "$@"; do
+      ref="$(k3d_image_ref "$img")"
+      if ! printf '%s\n' "$listed" | grep -qxF "$ref"; then
+        printf 'k3d_import: %s is missing from node %s\n' "$ref" "$node" >&2
+        missing=1
+      fi
+    done
+  done
+  [ "$missing" -eq 0 ]
 }
 
 # unpause_dag unpauses a registered DAG the way an Airflow user does before a
