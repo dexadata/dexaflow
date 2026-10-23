@@ -76,7 +76,15 @@ func ParsePythonVersion(s string) (major, minor int, err error) {
 	if len(fields) < 2 {
 		return 0, 0, fmt.Errorf("unrecognized python version output %q", strings.TrimSpace(s))
 	}
-	ver := fields[len(fields)-1] // "3.11.15"
+	return PythonMajorMinor(fields[len(fields)-1]) // "3.11.15"
+}
+
+// PythonMajorMinor is the one parser for a dotted Python version: it returns
+// the numeric major and minor of "3.11", "3.11.15", "3.12.0rc1" or the
+// "3.13.1.final.0" a pyvenv.cfg records. Whatever follows the minor is ignored,
+// so callers that need a stricter form (the python_version field) check it
+// themselves before calling.
+func PythonMajorMinor(ver string) (major, minor int, err error) {
 	parts := strings.SplitN(ver, ".", 3)
 	if len(parts) < 2 {
 		return 0, 0, fmt.Errorf("unrecognized python version %q", ver)

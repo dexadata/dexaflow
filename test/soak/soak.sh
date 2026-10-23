@@ -180,7 +180,7 @@ FAULTS_FILE="$OUT_DIR/faults.jsonl"
 : > "$FAULTS_FILE"
 
 # `leoflow lite` sets LEOFLOW_DATABASE_URL itself, unconditionally, to the DSN it
-# derives from the running user's HOME (internal/cli/dev.go sharedServerEnv +
+# derives from the running user's HOME (internal/cli/dev_env.go sharedServerEnv +
 # internal/cli/dsn.go). A soak therefore cannot hand Lite a database URL. What it
 # CAN do is give Lite a private HOME containing a `db-port` file, which is the
 # supported knob Lite uses to find its datastore. That is how the soak gets its

@@ -99,30 +99,3 @@ func TestResolvePython3(t *testing.T) {
 		}
 	})
 }
-
-// TestParsePythonVersion covers extraction of major/minor from `--version` output.
-func TestParsePythonVersion(t *testing.T) {
-	cases := []struct {
-		in           string
-		major, minor int
-		wantErr      bool
-	}{
-		{"Python 3.11.15\n", 3, 11, false},
-		{"Python 3.9.18", 3, 9, false},
-		{"Python 3.12.0rc1", 3, 12, false},
-		{"garbage", 0, 0, true},
-		{"", 0, 0, true},
-	}
-	for _, tc := range cases {
-		maj, mnr, err := parsePythonVersion(tc.in)
-		if tc.wantErr {
-			if err == nil {
-				t.Errorf("parsePythonVersion(%q): err = nil, want error", tc.in)
-			}
-			continue
-		}
-		if err != nil || maj != tc.major || mnr != tc.minor {
-			t.Errorf("parsePythonVersion(%q) = (%d,%d,%v), want (%d,%d,nil)", tc.in, maj, mnr, err, tc.major, tc.minor)
-		}
-	}
-}

@@ -196,6 +196,43 @@ func TestPyvenvMinor(t *testing.T) {
 			t.Errorf("pyvenvMinor = (%d, %v), want (13, true)", got, ok)
 		}
 	})
+
+	t.Run("only the minor is read", func(t *testing.T) {
+		// The major of a pyvenv.cfg version has never been checked, so a bad
+		// one must not turn a readable minor into "unknown".
+		for cfg, want := range map[string]int{
+			"version = x.12.0\n": 12,
+			"version = .13\n":    13,
+			"version = 3.11\n":   11,
+		} {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "pyvenv.cfg"), []byte(cfg), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := pyvenvMinor(dir); !ok || got != want {
+				t.Errorf("pyvenvMinor(%q) = (%d, %v), want (%d, true)", cfg, got, ok, want)
+			}
+		}
+		for _, cfg := range []string{"version = 3\n", "version = 3.\n", "version = 3.x\n"} {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "pyvenv.cfg"), []byte(cfg), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := pyvenvMinor(dir); ok {
+				t.Errorf("pyvenvMinor(%q) = (%d, true), want ok=false", cfg, got)
+			}
+		}
+	})
+}
+
+// TestParsePythonMinorErrorText pins the message a malformed minor produces:
+// it wraps the strconv error alone, as it did before the shared parser.
+func TestParsePythonMinorErrorText(t *testing.T) {
+	_, err := parsePythonMinor("3.x")
+	want := `python_version "3.x" is not of the form 3.<minor> (e.g. "3.13"): strconv.Atoi: parsing "x": invalid syntax`
+	if err == nil || err.Error() != want {
+		t.Errorf("parsePythonMinor(%q) error = %v, want %q", "3.x", err, want)
+	}
 }
 
 func containsAll(s string, subs ...string) bool {

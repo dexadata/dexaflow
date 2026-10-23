@@ -236,7 +236,7 @@ func TestDeriveLiteMetricsURLAppliesLitesOwnOffset(t *testing.T) {
 // TestDataDirsAreSummedAcrossEveryTreeTheSoakWritesTo pins the disk budget
 // against every tree a weekend actually fills. The DuckDB scratch is not the
 // only one: Lite writes its task logs under the private soak HOME
-// (LEOFLOW_LOGS_DIR, internal/cli/dev.go sharedServerEnv) and the harness writes
+// (LEOFLOW_LOGS_DIR, internal/cli/dev_env.go sharedServerEnv) and the harness writes
 // its evidence under --out. A budget that sizes one of the three is not a budget.
 func TestDataDirsAreSummedAcrossEveryTreeTheSoakWritesTo(t *testing.T) {
 	a, b := t.TempDir(), t.TempDir()
