@@ -79,6 +79,9 @@ func newServer(deps Dependencies) *gin.Engine {
 	if deps.Server.MaxPageLimit > 0 {
 		r.Use(maxPageLimit(deps.Server.MaxPageLimit))
 	}
+	if deps.Server.MaxRequestBodyBytes > 0 || deps.Server.MaxUploadBodyBytes > 0 {
+		r.Use(BodyLimit(deps.Server.MaxRequestBodyBytes, deps.Server.MaxUploadBodyBytes))
+	}
 	if deps.Server.GzipResponses {
 		r.Use(GzipJSON())
 	}

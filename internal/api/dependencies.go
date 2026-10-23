@@ -66,6 +66,12 @@ type ServerDeps struct {
 	// endpoint and the dag_runs_limit of /ui/dags. Non-positive (the default)
 	// leaves them uncapped.
 	MaxPageLimit int
+	// MaxRequestBodyBytes (server.max_request_body_bytes) and
+	// MaxUploadBodyBytes (server.max_upload_body_bytes) cap request bodies,
+	// the second on the routes that take a DAG's code or spec (BodyLimit).
+	// Non-positive (the default) leaves those routes unlimited.
+	MaxRequestBodyBytes int64
+	MaxUploadBodyBytes  int64
 	// Edition marks the running edition ("pro", "lite", or empty). It gates
 	// Pro-only surfaces: named-pool CRUD is registered as real endpoints only when
 	// Edition == "pro" (ADR 0053), otherwise the Pools screen gets the graceful

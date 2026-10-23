@@ -205,12 +205,14 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 			SchedulerHealth: schedulerHealth,
 		},
 		Server: api.ServerDeps{
-			CORSOrigins:    cfg.Server.CORS.AllowedOrigins,
-			TrustedProxies: cfg.Server.TrustedProxies,
-			GzipResponses:  cfg.Server.GzipResponses,
-			MaxPageLimit:   cfg.Server.MaxPageLimit,
-			Edition:        cfg.UI.Edition,
-			PoolsReadOnly:  cfg.Server.PoolsReadOnly,
+			CORSOrigins:         cfg.Server.CORS.AllowedOrigins,
+			TrustedProxies:      cfg.Server.TrustedProxies,
+			GzipResponses:       cfg.Server.GzipResponses,
+			MaxPageLimit:        cfg.Server.MaxPageLimit,
+			MaxRequestBodyBytes: cfg.Server.MaxRequestBodyBytes,
+			MaxUploadBodyBytes:  cfg.Server.MaxUploadBodyBytes,
+			Edition:             cfg.UI.Edition,
+			PoolsReadOnly:       cfg.Server.PoolsReadOnly,
 		},
 		Auth: api.AuthDeps{
 			// withAPITokens puts the API tokens (ADR 0074) in front of it unless
