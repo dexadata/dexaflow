@@ -309,7 +309,7 @@ sync_pr() {
 	fi
 	if ! { git -C "$wt" checkout -q -B "$branch" &&
 		git -C "$wt" add -A CHANGELOG.md "$FRAGMENT_SUBDIR" &&
-		git -C "$wt" commit -q -m "changelog: sync v$ver to main"; }; then
+		git -C "$wt" commit -q --signoff -m "changelog: sync v$ver to main"; }; then
 		cs_log "could not commit the sync"; _cs_cleanup; return 2
 	fi
 	# The branch belongs to this script alone, so a re-run may replace it.
@@ -477,6 +477,8 @@ self_test() {
 	_eq "$(git -C "$r" rev-parse --abbrev-ref HEAD)|$(git -C "$r" status --porcelain)" "operator-branch|" "--pr leaves the operator's checkout alone"
 	_eq "$(git -C "$tmp/origin.git" show changelog/sync-v0.9.3:CHANGELOG.md 2>/dev/null | grep -c '^## \[0.9.3\]')" "1" "--pr pushes the synced CHANGELOG"
 	_eq "$(git -C "$tmp/origin.git" log -1 --format=%s changelog/sync-v0.9.3 2>/dev/null)" "changelog: sync v0.9.3 to main" "--pr commits with the subject release-gap.sh treats as mechanics"
+	_eq "$(git -C "$tmp/origin.git" log -1 --format='%ae|%(trailers:key=Signed-off-by,valueonly)' changelog/sync-v0.9.3 2>/dev/null | sed '/^$/d')" \
+		"$(git -C "$tmp/origin.git" log -1 --format='%ae|%an <%ae>' changelog/sync-v0.9.3 2>/dev/null)" "--pr signs the sync off as its author (DCO, #2103)"
 	_eq "$(grep -c -- 'pr create .*--label skip-changelog' "$tmp/gh.log")" "1" "--pr opens the PR with skip-changelog"
 	_eq "$(git -C "$r" worktree list | wc -l | tr -d ' ')" "1" "--pr removes its scratch worktree"
 	# Merge it, then re-run.
