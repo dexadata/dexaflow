@@ -33,6 +33,8 @@ type ServerConfig struct {
 	Secrets       SecretsSection       `mapstructure:"secrets"`
 	Retention     RetentionSection     `mapstructure:"retention"`
 	Deploy        DeploySection        `mapstructure:"deploy"`
+	Bootstrap     BootstrapSection     `mapstructure:"bootstrap"`
+	Agent         AgentSection         `mapstructure:"agent"`
 	// SecretKey (LEOFLOW_SECRET_KEY) encrypts connection secrets at rest (ADR
 	// 0019). Raw 32 chars, 64-char hex, or base64. Empty disables connection
 	// writes.
@@ -297,6 +299,7 @@ func LoadServer(configFile string, flags *pflag.FlagSet) (*ServerConfig, error) 
 	if err := refuseAdvertisedSourceModeImage(v); err != nil {
 		return nil, err
 	}
+	readInsecureSecretsAsBefore(v)
 
 	var c ServerConfig
 	if err := v.Unmarshal(&c); err != nil {
@@ -395,6 +398,7 @@ func (c *ServerConfig) Validate() error {
 		c.validateRequireDigest,
 		c.validateCIOIDC,
 		c.validateMigrateOnBoot,
+		c.validateBootstrap,
 	} {
 		if err := check(); err != nil {
 			return err
