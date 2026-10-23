@@ -98,6 +98,10 @@ type Metrics struct {
 	// and the served certificate will expire unless the files are fixed (#637).
 	TLSReloadFailures *prometheus.CounterVec
 
+	// ResilienceBackstopDisabled is 1 for each resilience backstop a boot
+	// setting removed and 0 for each one in place, set once at boot (#941).
+	ResilienceBackstopDisabled *prometheus.GaugeVec
+
 	// schema backs dexaflow_schema_ready and dexaflow_schema_wait_seconds
 	// (RecordSchemaState, ADR 0090 decision 6).
 	schema *schemaState
@@ -269,6 +273,12 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "dexaflow_redis_pool_timeouts_total", Help: "Redis pool checkout timeouts — a caller waited PoolTimeout for an idle connection. A non-zero rate means the pool is too small or commands are too slow.",
 		}),
 
+		ResilienceBackstopDisabled: f.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "dexaflow_resilience_backstop_disabled",
+			Help: "1 when this process booted with the resilience backstop of config_key disabled, 0 when it is in place. " +
+				"Set once at boot by processes that run the scheduler; alert on max(...) > 0.",
+		}, []string{"config_key"}),
+
 		RetentionRowsDeleted: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_retention_rows_deleted_total", Help: "Metadata rows the retention janitor deleted, by table.",
 		}, []string{"table"}),
@@ -332,6 +342,19 @@ func (m *Metrics) UpdateRedisPoolStats(active, idle, total uint32) {
 // connection — the leading indicator that the pool is too small for the
 // command rate.
 func (m *Metrics) RecordRedisPoolTimeout() { m.RedisPoolTimeouts.Inc() }
+
+// RecordResilienceBackstop sets the boot posture of the backstop of key:
+// disabled or in place. No-op on a nil receiver.
+func (m *Metrics) RecordResilienceBackstop(key string, disabled bool) {
+	if m == nil {
+		return
+	}
+	v := 0.0
+	if disabled {
+		v = 1
+	}
+	m.ResilienceBackstopDisabled.WithLabelValues(key).Set(v)
+}
 
 // RecordTLSReloadFailure counts one rotated certificate pair that failed to
 // load on the given listener. It is a no-op on a nil receiver so a caller
