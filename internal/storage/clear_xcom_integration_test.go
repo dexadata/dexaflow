@@ -76,7 +76,7 @@ func TestClearDeletesTheClearedAttemptsXCom(t *testing.T) {
 		t.Run(mode.name, func(t *testing.T) {
 			repo, sched, pg, ctx := openInfra(t)
 			deleter := &recordingXComDeleter{}
-			repo.SetXComBackend(deleter)
+			repo.Configure(storage.WithXComBackend(deleter))
 			dagID := fmt.Sprintf("clear_xcom_%d", time.Now().UnixNano())
 			tasks := []domain.TaskSpec{
 				{TaskID: "keep", Type: domain.TaskTypePython},
@@ -114,7 +114,7 @@ func TestClearDeletesTheClearedAttemptsXCom(t *testing.T) {
 // caller gets the error and can simply clear again.
 func TestClearIsAllOrNothingWhenXComCannotBeDeleted(t *testing.T) {
 	repo, sched, pg, ctx := openInfra(t)
-	repo.SetXComBackend(&recordingXComDeleter{err: errors.New("redis unavailable")})
+	repo.Configure(storage.WithXComBackend(&recordingXComDeleter{err: errors.New("redis unavailable")}))
 	dagID := fmt.Sprintf("clear_xcom_fail_%d", time.Now().UnixNano())
 	tasks := []domain.TaskSpec{{TaskID: "t", Type: domain.TaskTypePython}}
 	runUUID := seedClearRun(t, repo, sched, ctx,

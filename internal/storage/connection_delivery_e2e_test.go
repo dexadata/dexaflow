@@ -11,6 +11,7 @@ import (
 
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/secrets"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 // TestConnectionDeliveryChainOfCustodyIntegration is the rigorous companion to
@@ -69,7 +70,7 @@ func TestConnectionDeliveryChainOfCustodyIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			repo.SetCipher(cipher)
+			repo.Configure(storage.WithCipher(cipher))
 
 			connID := fmt.Sprintf("e2e_%s_%d", tc.connType, time.Now().UnixNano())
 			port := tc.defaultPort
@@ -165,7 +166,7 @@ func TestFileTransferConnectionURIShapeIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			repo.SetCipher(cipher)
+			repo.Configure(storage.WithCipher(cipher))
 
 			connID := fmt.Sprintf("e2e_%s_%d", tc.connType, time.Now().UnixNano())
 			port := tc.defaultPort
@@ -230,24 +231,24 @@ func TestSecretConnectionURIsSkipsUndecryptableIntegration(t *testing.T) {
 	goodID := fmt.Sprintf("e2e_good_%d", time.Now().UnixNano())
 	badID := fmt.Sprintf("e2e_bad_%d", time.Now().UnixNano())
 
-	repo.SetCipher(cipherA)
+	repo.Configure(storage.WithCipher(cipherA))
 	if cerr := repo.SetConnection(ctx, "default", domain.Connection{
 		ConnID: goodID, ConnType: "postgres", Host: "h", Port: &port, Login: "u", Password: "good", Schema: "db",
 	}); cerr != nil {
 		t.Fatalf("SetConnection(good): %v", cerr)
 	}
-	t.Cleanup(func() { repo.SetCipher(cipherA); _ = repo.DeleteConnection(ctx, "default", goodID) })
+	t.Cleanup(func() { repo.Configure(storage.WithCipher(cipherA)); _ = repo.DeleteConnection(ctx, "default", goodID) })
 
-	repo.SetCipher(cipherB)
+	repo.Configure(storage.WithCipher(cipherB))
 	if cerr := repo.SetConnection(ctx, "default", domain.Connection{
 		ConnID: badID, ConnType: "postgres", Host: "h", Port: &port, Login: "u", Password: "bad", Schema: "db",
 	}); cerr != nil {
 		t.Fatalf("SetConnection(bad): %v", cerr)
 	}
-	t.Cleanup(func() { repo.SetCipher(cipherB); _ = repo.DeleteConnection(ctx, "default", badID) })
+	t.Cleanup(func() { repo.Configure(storage.WithCipher(cipherB)); _ = repo.DeleteConnection(ctx, "default", badID) })
 
 	// Resolve with key A: the key-B connection is now undecryptable.
-	repo.SetCipher(cipherA)
+	repo.Configure(storage.WithCipher(cipherA))
 	tenantUUID, err := repo.TenantUUID(ctx, "default")
 	if err != nil {
 		t.Fatalf("TenantUUID: %v", err)
@@ -294,7 +295,7 @@ func TestSQLiteConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	connID := fmt.Sprintf("e2e_sqlite_%d", time.Now().UnixNano())
 	const dbPath = "/var/lib/leoflow/warehouse.db"
@@ -371,7 +372,7 @@ func TestHTTPConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const (
 		rawPassword = "p@ss/w0rd:!#$" //nolint:gosec // hardcoded test fixture, not a credential
@@ -455,7 +456,7 @@ func TestSnowflakeConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const (
 		rawPassword = "p@ss/w0rd:!#$" //nolint:gosec // hardcoded test fixture, not a credential
@@ -525,7 +526,7 @@ func TestSlackConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const (
 		rawToken = "xoxb-1/2+3:4@5#secret" //nolint:gosec // fixture, not a real token
@@ -587,7 +588,7 @@ func TestDatabricksConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const (
 		host    = "dbc-12345678-9abc.cloud.databricks.com"
@@ -655,7 +656,7 @@ func TestWasbConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const (
 		account  = "mystorageacct"
@@ -712,7 +713,7 @@ func TestSparkConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const (
 		host     = "spark-master.example.com"
@@ -764,7 +765,7 @@ func TestKafkaConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const rawExtra = `{"bootstrap.servers":"broker1:9092,broker2:9092","security.protocol":"SASL_SSL","sasl.username":"etl"}`
 	connID := fmt.Sprintf("e2e_kafka_%d", time.Now().UnixNano())
@@ -821,7 +822,7 @@ func TestAWSConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const (
 		accessKeyID = "AKIAIOSFODNN7EXAMPLE"

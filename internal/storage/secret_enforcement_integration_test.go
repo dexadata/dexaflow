@@ -97,7 +97,7 @@ func seedDeclaringRun(t *testing.T, repo *storage.Repository, sched *storage.Sch
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	for _, v := range []domain.Variable{{Key: "V_DECLARED", Value: "d"}, {Key: "V_OTHER", Value: "o"}} {
 		if err := repo.SetVariable(ctx, "default", v); err != nil {

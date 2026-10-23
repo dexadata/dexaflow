@@ -39,7 +39,7 @@ func TestRegisterNewDagPausedAtCreation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, _, ctx := openRepo(t)
-			repo.SetDagsArePausedAtCreation(tc.setting)
+			repo.Configure(storage.WithDagsArePausedAtCreation(tc.setting))
 			dagID := fmt.Sprintf("paused_create_%d", time.Now().UnixNano())
 			spec := registerTxSpec(dagID, "v1", "a", 3, false)
 			spec.IsPausedUponCreation = tc.dagSays
@@ -70,7 +70,7 @@ func TestRegisterRedeployNeverChangesPaused(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, _, ctx := openRepo(t)
-			repo.SetDagsArePausedAtCreation(true)
+			repo.Configure(storage.WithDagsArePausedAtCreation(true))
 			dagID := fmt.Sprintf("paused_redeploy_%d", time.Now().UnixNano())
 			registerTx(t, ctx, repo, registerTxSpec(dagID, "v1", "a", 3, false))
 			if !isPaused(t, repo, ctx, dagID) {
@@ -81,7 +81,7 @@ func TestRegisterRedeployNeverChangesPaused(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			repo.SetDagsArePausedAtCreation(tc.setting)
+			repo.Configure(storage.WithDagsArePausedAtCreation(tc.setting))
 			next := registerTxSpec(dagID, "v2", "bb", 7, true)
 			next.IsPausedUponCreation = tc.nextSays
 			if !registerTx(t, ctx, repo, next) {
