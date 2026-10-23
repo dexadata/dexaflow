@@ -1,9 +1,0 @@
-kind: Added
-body: |-
-  **`macros` and `logical_date` in the task context.** Templates and `@task`
-  functions can use `{{ macros.ds_add(ds, 1) }}`, `macros.ds_format`,
-  `macros.datetime` and the rest of the Task SDK's macros, and `{{ logical_date }}`,
-  the run's logical date as a timezone-aware datetime (`None` on a run without
-  one). Before, `macros` raised `UndefinedError` and `logical_date` rendered as
-  an empty string (#1843).
-time: 2026-10-16T12:00:00.000000000-03:00

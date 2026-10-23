@@ -1,3 +1,0 @@
-kind: Fixed
-body: '**Task agents now reach the control plane under a service mesh (#2079).** The chart named the agent gRPC port `grpc` without an `appProtocol`, so Istio treated the agent''s own TLS channel as plaintext gRPC, the agent never connected, and every task stayed `queued` with no error. The port now renders with `appProtocol: tcp`, so meshes pass the TLS through untouched.'
-time: 2026-10-21T20:30:00.000000+00:00
