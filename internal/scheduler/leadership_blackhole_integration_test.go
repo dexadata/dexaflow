@@ -1,9 +1,11 @@
 //go:build integration
 
-package main
+package scheduler_test
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
@@ -137,7 +139,7 @@ func TestLeaderStepsDownOnBlackholedSession(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		watchLeadership(runCtx, leader, 200*time.Millisecond, cancel, discardLog(),
+		scheduler.WatchLeadership(runCtx, leader, 200*time.Millisecond, cancel, slog.New(slog.NewTextHandler(io.Discard, nil)),
 			func(reason string) { stepped.Store(reason) })
 	}()
 	select {
@@ -159,7 +161,7 @@ func TestTryLeadershipBoundedOnBlackholedSession(t *testing.T) {
 	p.frozen.Store(true)
 
 	start := time.Now()
-	if ok, err := tryLeadership(context.Background(), leader, 300*time.Millisecond); err == nil || ok {
+	if ok, err := scheduler.TryLeadership(context.Background(), leader, 300*time.Millisecond); err == nil || ok {
 		t.Fatalf("tryLeadership on a frozen session = %v, %v; want an error", ok, err)
 	}
 	if elapsed := time.Since(start); elapsed > 3*time.Second {

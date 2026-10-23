@@ -1,4 +1,4 @@
-package main
+package gatedtick
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 
 // A leader-gated tick that is still running when this replica steps down must
 // stop, instead of creating and deleting warm pods (or staging volumes) next to
-// the new leader's own loop (#1602). runLeaderTick hands the cycle a context
+// the new leader's own loop (#1602). RunLeaderTick hands the cycle a context
 // that ends once leading() reports false.
 func TestRunLeaderTickStopsOnStepDown(t *testing.T) {
 	var leading atomic.Bool
@@ -18,7 +18,7 @@ func TestRunLeaderTickStopsOnStepDown(t *testing.T) {
 	started := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		runLeaderTick(context.Background(), "test", time.Hour, 5*time.Millisecond, leading.Load, discardLog(),
+		RunLeaderTick(context.Background(), "test", time.Hour, 5*time.Millisecond, leading.Load, discardLog(),
 			func(ctx context.Context) error {
 				close(started)
 				<-ctx.Done()
@@ -44,7 +44,7 @@ func TestRunLeaderTickHasDeadline(t *testing.T) {
 	var leading atomic.Bool
 	leading.Store(true)
 	var got error
-	runLeaderTick(context.Background(), "test", 20*time.Millisecond, time.Hour, leading.Load, discardLog(),
+	RunLeaderTick(context.Background(), "test", 20*time.Millisecond, time.Hour, leading.Load, discardLog(),
 		func(ctx context.Context) error {
 			<-ctx.Done()
 			got = ctx.Err()
@@ -58,7 +58,7 @@ func TestRunLeaderTickHasDeadline(t *testing.T) {
 // A cycle that finishes while leading is not disturbed.
 func TestRunLeaderTickRunsCycleWhileLeading(t *testing.T) {
 	ran := false
-	runLeaderTick(context.Background(), "test", time.Second, time.Millisecond, func() bool { return true }, discardLog(),
+	RunLeaderTick(context.Background(), "test", time.Second, time.Millisecond, func() bool { return true }, discardLog(),
 		func(ctx context.Context) error {
 			ran = ctx.Err() == nil
 			return nil
