@@ -175,6 +175,9 @@ func TestBootWaitsForAnEmptyDatabaseThenBoots(t *testing.T) {
 	if _, body, _ := get(metricsAddr, "/metrics"); !strings.Contains(body, `dexaflow_schema_ready{reason="schema absent"} 0`) {
 		t.Errorf("/metrics while waiting lacks the not-ready gauge:\n%s", body)
 	}
+	if _, body, _ := get(metricsAddr, "/metrics"); !strings.Contains(body, `dexaflow_db_pool_max_conns{pool="health"} 2`) {
+		t.Errorf("/metrics while waiting lacks the database pool series (#1049):\n%s", body)
+	}
 
 	var out, errOut strings.Builder
 	if code := migrator.Main(t.Context(), []string{"-database=" + dsn, "up"}, &out, &errOut, "test"); code != 0 {

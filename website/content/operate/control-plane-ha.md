@@ -438,6 +438,29 @@ dashboards). In order of preference:
 3. **Raise `max_connections`** on the server, if the instance has the memory
    for it (each connection is a backend process).
 
+**Watching the pools.** `/metrics` on the metrics port reports each pool by
+its `pool` label (`main`, `health`, and `scheduler` while
+`database.schedulerMaxConns` is set), read from the pool at scrape time:
+
+| Metric | Type | Meaning |
+|---|---|---|
+| `dexaflow_db_pool_acquired_conns` | gauge | connections lent out right now |
+| `dexaflow_db_pool_idle_conns` | gauge | idle connections |
+| `dexaflow_db_pool_total_conns` | gauge | open connections, idle, lent out or being opened |
+| `dexaflow_db_pool_max_conns` | gauge | the pool's size |
+| `dexaflow_db_pool_empty_acquires_total` | counter | callers that found no idle connection and waited |
+| `dexaflow_db_pool_canceled_acquires_total` | counter | callers that gave up waiting |
+| `dexaflow_db_pool_empty_acquire_wait_seconds_total` | counter | time spent waiting, in seconds |
+
+`/readyz` uses the health pool, so a pod whose request pool is fully lent out
+stays ready: readiness says the pod can serve, not that it has room. These
+series are where saturation shows. A steady
+`rate(dexaflow_db_pool_empty_acquires_total{pool="main"}[5m])` above zero, or
+`dexaflow_db_pool_acquired_conns` sitting at `dexaflow_db_pool_max_conns`,
+means requests are queueing for connections: raise `database.maxOpenConns`
+within the budget above, or add replicas. Any increase of
+`dexaflow_db_pool_canceled_acquires_total` means requests failed waiting.
+
 **PgBouncer.** A pooler in front of Postgres multiplexes many client
 connections over few server connections, but only in `transaction` pool mode,
 and two things in the control plane need a real session:
