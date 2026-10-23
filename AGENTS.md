@@ -70,7 +70,9 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
      the changelog of every patch already tagged (a minor cut refuses
      otherwise), and after a patch GA its `changelog: sync vX.Y.Z to main`
      pull request is merged
-     ([RELEASING.md](RELEASING.md#how-the-changelog-flows)).
+     ([RELEASING.md](RELEASING.md#how-the-changelog-flows)). The Changelog
+     sync workflow runs the same check on `main` every day; a green run
+     without a notice is the evidence.
    - `leoflow.yaml`, `LEOFLOW_*` variables and `~/.leoflow` still work next to
      `dexaflow.yaml`, `DEXAFLOW_*` and `~/.dexaflow`.
    - No commit in the range carries a `Co-Authored-By` trailer, a session link

@@ -20,6 +20,18 @@
 # still opens the pull request and says, in a warning, to close and reopen it,
 # which starts CI as the person who did; cut-release.sh, run by a person, says
 # the same when it finds a pull request whose checks never started.
+#
+# The changelog sync (#1937). A patch GA (vX.Y.Z, Z > 0) folds its changelog on
+# release-X.Y, and `changelog: sync vX.Y.Z to main` brings it back. Only the
+# cut opened that pull request, so v0.5.4, tagged from a terminal, needed it
+# by hand (#1923). The changelog-sync job runs the same
+# scripts/changelog-sync.sh --pr the cut runs, from main's copy of the script.
+# The sync needs no green release (the changelog is true once the tag
+# exists), but it waits for one here so a tag that never builds opens nothing
+# on main. When the cut already opened the pull request, the job leaves it
+# alone instead of replacing the cut's commit, and a sync main already carries
+# opens nothing. The same token rule applies: with DOCS_PROMOTE_TOKEN the pull
+# request runs CI, without it the job warns.
 name: Docs promote
 
 on:
@@ -103,6 +115,87 @@ jobs:
           fi
           pr="${ans%% *}"
           echo "Docs root promotion for $TAG: #$pr" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$HAS_PROMOTE_TOKEN" != true ]; then
+            echo "::warning::#$pr was opened with GITHUB_TOKEN, which starts no workflows: close and reopen it to run its checks, or set the DOCS_PROMOTE_TOKEN secret (RELEASING.md)."
+          fi
+
+  changelog-sync:
+    name: Open the changelog sync pull request
+    if: >-
+      github.repository == 'dexadata/dexaflow' && (
+        github.event_name == 'workflow_dispatch' || (
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'push'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # push changelog/sync-v<version>
+      pull-requests: write # open the pull request with its skip-changelog label
+    steps:
+      # A minor GA dated its section on main and an rc has nothing dated, so
+      # only a patch GA goes on; anything else ends here without a failure.
+      - name: Resolve the patch version
+        id: ver
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          tag="${INPUT_TAG:-$RUN_TAG}"
+          if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[1-9][0-9]*$ ]]; then
+            echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::'$tag' is not a patch GA tag (vX.Y.Z, Z > 0): there is no changelog to sync to main"
+          fi
+
+      # The sync reads the tag's CHANGELOG.md and the fragments deleted since
+      # vX.Y.0, so it needs the history and the tags. blob:none keeps the clone
+      # to commits and trees; git fetches the few files the sync reads.
+      - name: Checkout main
+        if: steps.ver.outputs.version != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          filter: blob:none
+          # The script pushes changelog/sync-v<version> with git.
+          persist-credentials: true
+          token: ${{ secrets.DOCS_PROMOTE_TOKEN || github.token }}
+
+      - name: Open or find the pull request
+        if: steps.ver.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_PROMOTE_TOKEN || github.token }}
+          HAS_PROMOTE_TOKEN: ${{ secrets.DOCS_PROMOTE_TOKEN != '' }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          # The cut opens the same pull request right after the tag push, long
+          # before the release is green. Re-running the sync would push a new
+          # commit over the cut's and start its CI again, so an open one stays.
+          pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "changelog/sync-v$VERSION" --state open --json number -q '.[0].number')"
+          if [ -n "$pr" ]; then
+            echo "Changelog sync of v$VERSION to main: #$pr (already open)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # changelog-sync.sh commits with --signoff as this identity (DCO).
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          set +e
+          bash scripts/changelog-sync.sh "$VERSION" --pr --fetch 2>&1 | tee "$RUNNER_TEMP/sync.log"
+          rc="${PIPESTATUS[0]}"
+          set -e
+          pr="$(sed -nE 's/.*pull request #([0-9]+).*/\1/p' "$RUNNER_TEMP/sync.log" | tail -1)"
+          case "$rc" in
+            0) ;;
+            1) echo "::warning::the sync kept a fragment for review (above): decide it in #${pr:-?} before merging" ;;
+            *) echo "::error::changelog-sync.sh $VERSION --pr failed (exit $rc, above). Recover with: scripts/changelog-sync.sh $VERSION --pr --fetch"; exit "$rc" ;;
+          esac
+          if [ -z "$pr" ]; then
+            echo "main already carries the changelog of v$VERSION: no sync pull request needed." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "Changelog sync of v$VERSION to main: #$pr" >> "$GITHUB_STEP_SUMMARY"
           if [ "$HAS_PROMOTE_TOKEN" != true ]; then
             echo "::warning::#$pr was opened with GITHUB_TOKEN, which starts no workflows: close and reopen it to run its checks, or set the DOCS_PROMOTE_TOKEN secret (RELEASING.md)."
           fi
