@@ -518,7 +518,7 @@ run_experiment() {
   stack_api_forward leoflow "$api_port"
   # The login identity is an EMAIL, not a name. FindUserByLogin calls
   # GetUserByEmail with whatever `username` carries
-  # (internal/storage/repository.go), and the bootstrap admin is created as
+  # (internal/storage/repo_users.go), and the bootstrap admin is created as
   # LEOFLOW_BOOTSTRAP_EMAIL or admin@dexaflow.local on the fresh stack this
   # script installs (cmd/dexaflow-server/bootstrap.go; a database from before the
   # rename keeps admin@leoflow.local, set WP_ADMIN_LOGIN for one). This passed
