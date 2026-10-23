@@ -261,7 +261,8 @@ func mapAuditLogEntry(row queries.ListAuditLogsRow) domain.AuditLogEntry {
 
 // ListAuditLogsAfter returns up to limit of the tenant's audit entries
 // strictly before the cursor, newest first, optionally filtered to one DAG, and
-// the number of entries matching the filter. It is the keyset form of
+// the number of entries matching the filter: the cursor's Total when it
+// carries one, else a COUNT. It is the keyset form of
 // ListAuditLogs; the cursor key is the entry id.
 func (r *Repository) ListAuditLogsAfter(ctx context.Context, tenant, dagID string, after domain.PageCursor, limit int) ([]domain.AuditLogEntry, int, error) {
 	afterID, err := strconv.ParseInt(after.Key, 10, 64)
@@ -283,9 +284,12 @@ func (r *Repository) ListAuditLogsAfter(ctx context.Context, tenant, dagID strin
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing audit logs: %w", err)
 	}
-	total, err := r.q.CountAuditLogs(ctx, queries.CountAuditLogsParams{TenantID: tid, DagID: dagFilter})
-	if err != nil {
-		return nil, 0, fmt.Errorf("counting audit logs: %w", err)
+	total := int64(after.Total)
+	if total <= 0 {
+		total, err = r.q.CountAuditLogs(ctx, queries.CountAuditLogsParams{TenantID: tid, DagID: dagFilter})
+		if err != nil {
+			return nil, 0, fmt.Errorf("counting audit logs: %w", err)
+		}
 	}
 	out := make([]domain.AuditLogEntry, 0, len(rows))
 	for _, row := range rows {

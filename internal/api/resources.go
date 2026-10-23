@@ -618,7 +618,7 @@ func listDagRunsHandler(repo DagRunRepository, versions DagVersionLister) gin.Ha
 		keyset = keyset && keysetOK
 		more := len(runs) > 0 && offset+len(runs) < total
 		if keyset && more {
-			setNextCursor(c, runCursor(runs[len(runs)-1]), false)
+			setNextCursor(c, runCursor(runs[len(runs)-1], total), false)
 		}
 		if cursorMode(c) {
 			if more {
@@ -626,7 +626,7 @@ func listDagRunsHandler(repo DagRunRepository, versions DagVersionLister) gin.Ha
 				// without keyset paging moves by offset.
 				next := encodeOffsetCursor(offset + len(runs))
 				if keyset && len(states) == 0 {
-					next = encodeKeysetCursorAt(runCursor(runs[len(runs)-1]), offset+len(runs))
+					next = encodeKeysetCursorAt(runCursor(runs[len(runs)-1], total), offset+len(runs))
 				}
 				out.NextCursor = &next
 			}

@@ -160,3 +160,38 @@ func TestListAuditLogsAfterMatchesOffsetOrderIntegration(t *testing.T) {
 		t.Error("a non-numeric audit cursor key was accepted")
 	}
 }
+
+// TestKeysetPagesTrustTheCursorTotalIntegration: a cursor that carries the
+// total its first page counted is answered with it, without a COUNT (#1612);
+// one without a total counts.
+func TestKeysetPagesTrustTheCursorTotalIntegration(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	dagID, _ := seedKeysetRuns(t, 3)
+	future := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name   string
+		states []string
+	}{{"all states", nil}, {"failed", []string{"failed"}}} {
+		_, total, err := repo.ListDagRunsAfter(ctx, "default", dagID, tc.states, domain.PageCursor{At: future, Total: 42}, 10)
+		if err != nil || total != 42 {
+			t.Errorf("%s: runs total with a carried 42 = %d, %v", tc.name, total, err)
+		}
+	}
+	_, total, err := repo.ListDagRunsAfter(ctx, "default", dagID, nil, domain.PageCursor{At: future}, 10)
+	if err != nil || total != 3 {
+		t.Errorf("runs total without a carried one = %d, %v, want the count 3", total, err)
+	}
+
+	auditDag := fmt.Sprintf("keyset_audit_total_%d", time.Now().UnixNano())
+	for i := range 2 {
+		if err := repo.RecordTaskActionAudit(ctx, "default", "", fmt.Sprintf("keyset.%d", i), auditDag, "run", "", 0); err != nil {
+			t.Fatalf("record audit: %v", err)
+		}
+	}
+	if _, n, err := repo.ListAuditLogsAfter(ctx, "default", auditDag, domain.PageCursor{At: future, Key: "0", Total: 42}, 10); err != nil || n != 42 {
+		t.Errorf("audit total with a carried 42 = %d, %v", n, err)
+	}
+	if _, n, err := repo.ListAuditLogsAfter(ctx, "default", auditDag, domain.PageCursor{At: future, Key: "0"}, 10); err != nil || n != 2 {
+		t.Errorf("audit total without a carried one = %d, %v, want the count 2", n, err)
+	}
+}

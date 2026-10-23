@@ -409,6 +409,7 @@ holds, then re-run.
 | 047 (`removed` task state) | 47 | nothing: one transaction, rolled back, so the value is not there yet, and `ADD VALUE IF NOT EXISTS` can be repeated | 46 |
 | 048 (`dispatch_unavailable_since`) | 48 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the column is not there yet | 47; retry when the table is quiet |
 | 049 (`installation`) | 49 | nothing: one transaction, rolled back, so the table is not there yet, and the file is idempotent | 48 |
+| 050 (index build) | 50 | `DROP INDEX CONCURRENTLY IF EXISTS idx_audit_resource;` | 49 |
 
 **How to run `migrate force`.** The hook image is the `dexaflow-migrate`
 wrapper plus the SQL files at `/migrations`; it takes the golang-migrate CLI's
@@ -1113,6 +1114,34 @@ now errors: write `tolerationSeconds` and `maxSkew`. Before upgrading, look
 through the placement fields of your DAGs for keys that do not use the
 Kubernetes spelling. Rolling back to 0.5.6 restores the old behavior with no
 other step.
+### Upgrading to 0.5.8
+
+0.5.8 applies one migration, 050.
+
+- **`050_audit_log_resource_index`** builds `idx_audit_resource` on
+  `audit_log (tenant_id, resource_id, occurred_at DESC, id DESC)`, the index the
+  event log filtered to one DAG reads; without it each page, and the count
+  beside it, read every audit entry of the tenant
+  ([#1612](https://github.com/dexadata/dexaflow/issues/1612)). It is built
+  `CONCURRENTLY`: reads and writes on `audit_log` keep going during the build,
+  which took about 0.15 s on 200,000 entries. Like 043, the build first waits
+  for every transaction already open in the database to finish, with no time
+  limit, and the hook waits with it (see "Why the hook can take longer than
+  usual" under [What the 0.5.1 migrations do](#what-the-051-migrations-do)).
+  If the build is interrupted, recover it as the table in
+  [An interrupted migration](#an-interrupted-migration) says.
+
+**Rolling back 0.5.8.** On Pro, `helm rollback <release> <revision>` leaves the
+schema at 050, and the previous control plane boots against it with the
+warning `database schema is ahead of this binary; proceeding`; it reads the
+event log through the new index without knowing it. On Lite, run the down
+migration first, with the 0.5.8 CLI or migrate image:
+
+```sh
+migrate -path migrations -database "$DATABASE_URL" goto 49
+```
+
+It drops the index `CONCURRENTLY`. No data changes.
 
 ## Ephemeral database loss (emptyDir Postgres)
 
