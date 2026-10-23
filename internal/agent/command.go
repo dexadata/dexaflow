@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
 
 const maxRetryAttempts = 5
@@ -71,6 +73,22 @@ func BuildCommand(operator, entrypoint, operatorClass string) ([]string, error) 
 	default:
 		return nil, fmt.Errorf("unsupported operator %q", operator)
 	}
+}
+
+// onFailureCallbackEnv signals the runtime to run the task's on_failure_callback
+// on its final failure (#424); the runtime imports dag.py for the callable only
+// when it is set. A captured operator is built from its args, which cannot carry
+// the callable, so its entrypoint names the dag.py module the runtime imports to
+// read it off the task (#484).
+func onFailureCallbackEnv(spec *agentv1.TaskSpec) []string {
+	if !spec.GetOnFailureCallback() {
+		return nil
+	}
+	env := []string{"LEOFLOW_ON_FAILURE_CALLBACK=1"}
+	if spec.GetOperator() == "airflow_operator" && spec.GetEntrypoint() != "" {
+		env = append(env, "LEOFLOW_CALLBACK_SOURCE="+spec.GetEntrypoint())
+	}
+	return env
 }
 
 // pythonInterpreter returns the Python executable the agent runs, from

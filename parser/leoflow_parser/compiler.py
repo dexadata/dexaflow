@@ -380,6 +380,10 @@ def _map_task(task, source: str, dag=None) -> dict[str, Any]:
             _check_literal_payload_size(task.task_id, "operator_args", operator_args)
             entry["operator_args"] = operator_args
     _check_callbacks(task, task_type, entry)
+    if task_type == "airflow_operator" and entry.get(_ON_FAILURE_CALLBACK):
+        # The callable cannot travel in operator_args, so the runtime imports
+        # this module on the final failed attempt and reads it off the task (#484).
+        entry["entrypoint"] = f"{Path(source).stem}:{task.task_id}"
     return entry
 
 
@@ -489,9 +493,10 @@ def _split_operator_args(task) -> tuple[dict[str, list[str]], dict[str, Any]]:
         if name in _SCHEDULING_ATTR_NAMES:
             continue
         # on_failure_callback cannot be serialised into dag.json, but it is
-        # SUPPORTED (#424 inc 4): the runtime re-imports dag.py and calls it in the
-        # task process on failure. Accept it here as a marker (see _has_callback)
-        # instead of the non-serialisable reject.
+        # SUPPORTED (#424 inc 4, #484): the runtime imports dag.py (the task's
+        # entrypoint) and calls it in the task process on the final failure.
+        # Accept it here as a marker (see _has_callback) instead of the
+        # non-serialisable reject.
         #
         # Both shapes, because Airflow 3 normalises the attribute to a list. Testing
         # only `callable` sent the list form on to the serialiser, which rejected it

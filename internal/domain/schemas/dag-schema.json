@@ -209,7 +209,7 @@
         },
         "on_failure_callback": {
           "type": "boolean",
-          "description": "Marks that the task declares an Airflow on_failure_callback (#424); the runtime runs it in the task process on failure. The callable itself is not carried."
+          "description": "Marks that the task declares an Airflow on_failure_callback (#424); the runtime runs it in the task process on the final failure. The callable itself is not carried: a @task reads it off its entrypoint, an operator off its task in the module its entrypoint names (#484)."
         },
         "depends_on": {
           "type": "array",
@@ -263,7 +263,7 @@
         },
         "entrypoint": {
           "type": "string",
-          "description": "For type=python: 'module.path:callable'. For type=bash: shell command."
+          "description": "For type=python: 'module.path:callable'. For type=bash: shell command. For type=airflow_operator with on_failure_callback: 'module:task_id', the DAG module the runtime imports on the final failed attempt to read the callback."
         },
         "env": {
           "type": "object",
