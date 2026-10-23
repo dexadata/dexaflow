@@ -150,6 +150,33 @@ What stands out:
   with warm pools on and has not been recorded yet: record it with the next k3d
   run of `deploy_p50 --warm`.
 
+## UI refresh cycle
+
+Experiment 4 (`test/load/ui_refresh`, #1196), recorded 2026-10-23 on `main` at
+`5bb7a7b` plus this experiment, on a 4 vCPU Intel Xeon at 2.80 GHz with 15 GB
+of RAM, Go 1.26.10 and Postgres 16.15 with default settings. The harness, one
+api role process (`ui.autoRefreshIntervalSeconds` irrelevant here: the harness
+paces itself) and Postgres shared the host. The database held 200 DAGs of 500
+hourly runs and 2 tasks each (100,000 runs, 200,000 task instances); the DAG
+replayed has a run in progress. 10 s per row.
+
+| Profile | Viewers | Cycles/s | Cycle p50 ms | Cycle p95 ms | DB transactions per cycle |
+|---|---:|---:|---:|---:|---:|
+| `dag` (9 requests) | 1 | 191.7 | 4.9 | 7.3 | 27.8 |
+| `dag` | 10 | 277.2 | 34.8 | 54.8 | 25.0 |
+| `dag` | 50 | 278.0 | 179.7 | 218.7 | 26.7 |
+| `run` (9 requests) | 1 | 185.5 | 5.0 | 7.6 | 28.4 |
+| `run` | 10 | 286.5 | 33.5 | 52.0 | 29.9 |
+| `run` | 50 | 301.9 | 163.4 | 205.2 | 33.1 |
+| `idle` (1 request) | 1 | 628.9 | 1.5 | 2.1 | 3.2 |
+| `idle` | 10 | 2,802.3 | 3.2 | 6.5 | 2.7 |
+| `idle` | 50 | 2,750.2 | 17.0 | 33.0 | 3.0 |
+
+Read as capacity: about 280 cycles/s on a page with a run in progress is about
+280 viewers of such a page at a 1 s interval, 1,400 at 5 s and 8,400 at 30 s,
+with the whole host shared. One such viewer costs about 27 transactions per
+interval, so 50 of them at 5 s are about 270 transactions per second.
+
 ## Targets
 
 The gates of the performance plan, against the rows above (v0.5.0). Two were

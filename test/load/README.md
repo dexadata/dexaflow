@@ -15,14 +15,15 @@ cluster and no executor, so they run on a laptop with just Postgres up.
 | 1 | Scheduler ceiling — per-tick cost vs. active runs `N` | [`scheduler_ceiling/`](scheduler_ceiling/) | ✅ implemented |
 | 2 | Dispatch throughput — queue depth vs. arrival rate | — | not yet (see _Adding an experiment_) |
 | 3 | Reaper cost — orphan/heartbeat sweep vs. run count | — | not yet |
-| 4 | API read fan-out — dashboard queries under many DAGs | — | not yet |
+| 4 | UI refresh cycle: what one auto-refresh of a page costs, and the viewers an interval allows | [`ui_refresh/`](ui_refresh/) | ✅ implemented |
 | 5 | Log tailer — SSE fan-out under many concurrent viewers | — | not yet |
 | 6 | Query plans at scale: hot queries on 1M runs and 5M task instances | [`query_plans/`](query_plans/) | ✅ implemented |
 | 7 | Code-only deploy: p50 of `dexaflow deploy` after a DAG code change, and the warm-up of the new version's pool | [`deploy_p50/`](deploy_p50/) | ✅ implemented |
 
-Experiments 1, 6 and 7 are built. The others are documented extension points.
-Experiment 7 is the exception to "no cluster": it drives the CLI against a
-running control plane, and its warm-up half needs a cluster with warm pools on.
+Experiments 1, 4, 6 and 7 are built. The others are documented extension points.
+Experiments 4 and 7 drive a running control plane instead of the packages:
+Experiment 4 needs only an api role process and its Postgres, Experiment 7
+the CLI, and its warm-up half a cluster with warm pools on.
 
 ## Prerequisites
 
@@ -88,6 +89,68 @@ duration into the same histogram object; the two measure the same work. `dexaflo
 **is** scraped from the live registry (it stays 0 here: leadership never churns in
 the harness). `dexaflow_dispatch_queue_depth` is a dispatcher gauge and is out of
 scope for Experiment 1 (no dispatcher is wired).
+
+## Experiment 4: UI refresh cycle
+
+The embedded UI polls. On a page whose data holds a run in progress it
+refetches a fixed set of queries every `ui.autoRefreshIntervalSeconds` (30 s
+on Pro, 1 s on Lite), so the load the UI puts on the control plane is that set
+times the viewers divided by the interval (#1196). Experiment 4 measures the
+set: it replays one page's refresh, a _profile_, against a running control
+plane as V viewers that each issue cycles back to back, and reports the cycles
+per second the control plane sustains, the latency of a cycle and, with
+`--db`, the database transactions one cycle costs. A viewer at interval I
+issues one cycle every I seconds, so the sustained rate times I is the number
+of viewers the control plane serves on that page at I.
+
+The profiles hold what the SPA repeats every interval in steady state. They
+were recorded from the Airflow 3.3.2 UI in headless Chromium against an api
+role process: the page load requests and the queries that refresh on a longer
+period are not in them.
+
+| Profile | Page | Requests per cycle |
+|---|---|---:|
+| `dag` | a DAG's grid while a run is in progress | 9 |
+| `run` | one run in progress, with its task instance table | 9 |
+| `idle` | a DAG's grid with no run in progress (only the latest run is polled) | 1 |
+
+The home dashboard and the DAG list did not repeat any request within 15 s at
+a 3 s interval in that recording: the dashboard only refreshes while runs are
+pending, and the DAG list refreshes every ten intervals while none of its DAGs
+has a run in progress.
+
+Start an api role process against a seeded database (any installation with a
+DAG that has a run in progress works), then:
+
+```sh
+DEXAFLOW_PASS=admin go run ./test/load/ui_refresh \
+  --url http://localhost:8080 --dag my_dag --profile dag --viewers 1,10,50 \
+  --db "$DATABASE_URL"
+```
+
+Flags:
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--url` | `$DEXAFLOW_URL`, then `$LEOFLOW_URL` | control plane URL |
+| `--user` | `admin@dexaflow.local` | user to sign in as |
+| `--pass` | `$DEXAFLOW_PASS`, then `$LEOFLOW_PASS` | password |
+| `--dag` | required | DAG whose pages are replayed |
+| `--run` | the DAG's newest run | run of the `run` profile |
+| `--profile` | `dag` | `dag`, `run` or `idle` |
+| `--viewers` | `1,10,50` | concurrent viewer counts, one row each |
+| `--window` | `10s` | measured window per row |
+| `--parallel` | `6` | requests one viewer has in flight, as a browser's 6 connections per host |
+| `--intervals` | `1,5,10,30` | intervals of the capacity table |
+| `--db` | `$DATABASE_URL`, then `$DEXAFLOW_DATABASE_URL`, then `$LEOFLOW_DATABASE_URL` | the control plane's database, to count transactions per cycle; optional |
+
+Output is a Markdown table per viewer count (cycles and requests per second,
+cycle p50, p95 and p99, database transactions per cycle, error rate) and the
+capacity table. The transaction count reads `pg_stat_database`, so it includes
+whatever else uses the database during the window: measure on a database the
+experiment has to itself. The harness, the control plane and Postgres share the
+host when run on a laptop, so the rate is a floor of what a dedicated control
+plane sustains. Recorded results live in [`BASELINE.md`](BASELINE.md).
 
 ## Experiment 6: query plans at scale
 
