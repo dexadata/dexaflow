@@ -193,6 +193,8 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		TokenTTLSecs:                 cfg.Auth.JWT.TokenTTLSeconds,
 		GzipResponses:                cfg.Server.GzipResponses,
 		MaxPageLimit:                 cfg.Server.MaxPageLimit,
+		MaxRequestBodyBytes:          cfg.Server.MaxRequestBodyBytes,
+		MaxUploadBodyBytes:           cfg.Server.MaxUploadBodyBytes,
 		TokenRenewer:                 authn,
 		TokenMaxLifetimeSecs:         cfg.Auth.JWT.MaxLifetimeSeconds,
 		InstanceName:                 cfg.UI.InstanceName,

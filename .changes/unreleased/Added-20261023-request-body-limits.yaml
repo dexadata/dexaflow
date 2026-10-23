@@ -1,0 +1,7 @@
+kind: Added
+body: |-
+  `server.max_request_body_bytes` and `server.max_upload_body_bytes` cap request
+  bodies on the API and UI listener, the second on the routes that take a DAG's
+  code or spec; a larger body is refused with `413`. Both default to `0`, no
+  limit, as before (#1613).
+time: 2026-10-23T12:00:00.000000+00:00

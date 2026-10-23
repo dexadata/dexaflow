@@ -265,6 +265,9 @@ var serverDefaults = map[string]any{
 	"server.gzip_responses": false,
 	// Gate (ADR 0062): 0 leaves list limits uncapped, as before.
 	"server.max_page_limit": 0,
+	// Gate (ADR 0062): 0 leaves request bodies unlimited, as before (#1613).
+	"server.max_request_body_bytes": int64(0),
+	"server.max_upload_body_bytes":  int64(0),
 	// Gates (ADR 0062): 0 keeps the listeners without read or idle timeout.
 	"server.read_timeout": "0s",
 	"server.idle_timeout": "0s",

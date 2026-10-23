@@ -52,6 +52,12 @@ type Dependencies struct {
 	// endpoint and the dag_runs_limit of /ui/dags. Non-positive (the default)
 	// leaves them uncapped.
 	MaxPageLimit int
+	// MaxRequestBodyBytes (server.max_request_body_bytes) and
+	// MaxUploadBodyBytes (server.max_upload_body_bytes) cap request bodies,
+	// the second on the routes that take a DAG's code or spec (BodyLimit).
+	// Non-positive (the default) leaves those routes unlimited.
+	MaxRequestBodyBytes int64
+	MaxUploadBodyBytes  int64
 	// TokenRenewer re-mints a still-valid user bearer with a fresh short TTL so a
 	// long CLI/dev session need not re-login every TokenTTLSecs (aresta #5). Nil
 	// leaves the renew route unregistered (renewal simply unavailable). In practice
@@ -324,6 +330,9 @@ func NewServer(deps Dependencies) *gin.Engine {
 	r.Use(NoStoreOnVolatileRoutes())
 	if deps.MaxPageLimit > 0 {
 		r.Use(maxPageLimit(deps.MaxPageLimit))
+	}
+	if deps.MaxRequestBodyBytes > 0 || deps.MaxUploadBodyBytes > 0 {
+		r.Use(BodyLimit(deps.MaxRequestBodyBytes, deps.MaxUploadBodyBytes))
 	}
 	if deps.GzipResponses {
 		r.Use(GzipJSON())
