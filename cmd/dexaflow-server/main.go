@@ -76,6 +76,10 @@ func openVerifiedPostgres(ctx context.Context, cfg *config.ServerConfig, tel *ob
 	if err != nil {
 		return nil, err
 	}
+	// Registered before the schema wait, so a pod that waits still shows its
+	// pools; the probe's own pool keeps readiness green while the request pool
+	// is exhausted, and these series are what shows it (#1049).
+	tel.Registry.MustRegister(storage.NewPoolCollector(pg))
 	// A pod that was serving keeps the metric current through its readiness
 	// probe, so an emptied database shows on dexaflow_schema_ready too.
 	pg.SetSchemaObserver(tel.Metrics.RecordSchemaState)

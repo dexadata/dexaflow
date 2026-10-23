@@ -64,6 +64,9 @@ type Postgres struct {
 	// newHealthPool for why that matters. Nil only in tests that construct a
 	// Postgres literal; probePool falls back to Pool in that case.
 	health *pgxpool.Pool
+	// schedulerPool is the dedicated scheduler pool while ForScheduler keeps
+	// one open, read by PoolCollector. Nil when the scheduler shares Pool.
+	schedulerPool atomic.Pointer[pgxpool.Pool]
 }
 
 // probePool returns the pool health checks must use: the dedicated one when it
@@ -432,7 +435,11 @@ func (p *Postgres) ForScheduler(ctx context.Context, cfg config.DatabaseSection)
 		return nil, nil, err
 	}
 	sched := &Postgres{Pool: pool, Queries: queries.New(pool), specs: sharedSpecCache(p)}
-	return sched, pool.Close, nil
+	p.trackSchedulerPool(pool)
+	return sched, func() {
+		p.trackSchedulerPool(nil)
+		pool.Close()
+	}, nil
 }
 
 // Ping checks database connectivity (used by /readyz). It goes through
