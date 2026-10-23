@@ -639,6 +639,32 @@ answers the same generic 403 it answers for every other failure. The server logs
 a WARN at boot when the secret is empty.
 {{% /alert %}}
 
+### Bootstrap admin (`bootstrap.*`)
+
+The admin user the server creates in tenant `default` at boot, or reconciles
+when a password hash is set. Nothing happens while both credentials are
+empty. The credentials are never logged.
+
+<!-- BEGIN GENERATED configref settings bootstrap. -->
+
+| Variable | Key | Type | Default | Edition | Purpose |
+|---|---|---|---|---|---|
+| `DEXAFLOW_BOOTSTRAP_EMAIL` | `bootstrap.email` | string | _(empty)_, means `admin@dexaflow.local` | both | Email of the admin user created at boot from `DEXAFLOW_BOOTSTRAP_PASSWORD` or `DEXAFLOW_BOOTSTRAP_PASSWORD_HASH`, in tenant `default`. Left empty, an install whose admin is the pre-rename `admin@leoflow.local` keeps that address. With a credential set, boot fails on an address with a space or a control character. |
+| `DEXAFLOW_BOOTSTRAP_PASSWORD` | `bootstrap.password` | string | _(empty)_ | both | Plaintext password of the bootstrap admin, used when `DEXAFLOW_BOOTSTRAP_PASSWORD_HASH` is empty. Unset, no admin is created. Prefer the hash. Boot fails on a password longer than the 72 bytes bcrypt accepts. Never logged. Helm: `bootstrap.password` or `bootstrap.existingSecret`. |
+| `DEXAFLOW_BOOTSTRAP_PASSWORD_HASH` | `bootstrap.password_hash` | string | _(empty)_ | both | Bcrypt hash of the bootstrap admin's password, so the plaintext never reaches the server. Takes precedence over `DEXAFLOW_BOOTSTRAP_PASSWORD` and reconciles: an existing admin with that email gets this password on every boot. Boot fails on a value that is not a bcrypt hash. Never logged. `dexaflow lite` sets it from its config file. |
+
+<!-- END GENERATED configref -->
+
+### Agent channel (`agent.*`)
+
+<!-- BEGIN GENERATED configref settings agent. -->
+
+| Variable | Key | Type | Default | Edition | Purpose |
+|---|---|---|---|---|---|
+| `DEXAFLOW_AGENT_ALLOW_INSECURE_SECRETS` | `agent.allow_insecure_secrets` | bool | `false` | dev-only | `true` lets the server deliver secrets to agents over a plaintext gRPC channel. Dev only: `dexaflow lite` sets it for its loopback agents, and the Pro edition refuses to boot with it. As in earlier releases, only the exact value `true` turns it on: any other value from the environment (`1`, `TRUE`, `yes`) reads as `false`, with a warning at boot. No Helm value on purpose. |
+
+<!-- END GENERATED configref -->
+
 ### DAG registration
 
 <!-- BEGIN GENERATED configref settings dags_are_paused_at_creation deploy.require_digest -->
@@ -1384,10 +1410,6 @@ works with the `LEOFLOW_` prefix.
 | Variable | Default | Purpose |
 |---|---|---|
 | `DEXAFLOW_CONFIG` | _(empty)_ | Path of the YAML config file `dexaflow-server` reads before the environment. Unset, the server runs on built-in defaults and environment variables alone. The Helm chart points it at a mounted ConfigMap when it has map-valued keys to deliver (`auth.oidc.tenant_claims`, `auth.oidc.role_mappings`). |
-| `DEXAFLOW_BOOTSTRAP_EMAIL` | `admin@leoflow.local` | Email of the admin user created at boot from `DEXAFLOW_BOOTSTRAP_PASSWORD` or `DEXAFLOW_BOOTSTRAP_PASSWORD_HASH`, in tenant `default`. |
-| `DEXAFLOW_BOOTSTRAP_PASSWORD` | _(empty)_ | Plaintext password of the bootstrap admin. The admin is created only when the `default` tenant has no user yet; an existing install is never changed. Unset, no admin is created. Prefer the hash below. |
-| `DEXAFLOW_BOOTSTRAP_PASSWORD_HASH` | _(empty)_ | Bcrypt hash of the bootstrap admin's password, so the plaintext never reaches the server. Takes precedence over `DEXAFLOW_BOOTSTRAP_PASSWORD` and reconciles: an existing admin with that email gets this password on every boot. `dexaflow lite` sets it from its config file. |
-| `DEXAFLOW_AGENT_ALLOW_INSECURE_SECRETS` | _(empty)_ | `true` lets the server deliver secrets to agents over a plaintext gRPC channel. Dev only: `dexaflow lite` sets it for its loopback agents, and the Pro edition refuses to boot with it. |
 | `DEXAFLOW_LITE_VENVS_ROOT` | _(empty)_ | Lite only, set by `dexaflow lite`: the directory holding one virtual environment per DAG (`<root>/<dag_id>/bin/python`). The subprocess executor runs each task with its DAG's interpreter. |
 
 <!-- END GENERATED configref -->

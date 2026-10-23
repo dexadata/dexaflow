@@ -162,7 +162,7 @@ func run() error {
 	xcomSvc := xcom.NewService(xcomBackend, storage.NewXComIndex(pg), xcom.DefaultTTL)
 	xcomReader := storage.NewXComReader(pg, xcomBackend)
 
-	if err := bootstrapAdmin(ctx, repo, tel.Logger); err != nil {
+	if err := bootstrapAdmin(ctx, repo, cfg.Bootstrap, tel.Logger); err != nil {
 		return err
 	}
 	// The name check needs the database, so it cannot live in warnStartup with the
@@ -192,7 +192,7 @@ func run() error {
 	// Secrets are served over the agent channel only when explicitly allowed
 	// insecure (dev) until gRPC TLS lands (issue #58); otherwise the handlers
 	// fail closed on a plaintext channel.
-	allowInsecureSecrets := os.Getenv("LEOFLOW_AGENT_ALLOW_INSECURE_SECRETS") == "true"
+	allowInsecureSecrets := cfg.Agent.AllowInsecureSecrets
 	// Edition-gated boot guards (#58, #281): a Pro deployment must not ship
 	// secrets over a plaintext channel (the insecure escape hatch) and must have
 	// TLS on the agent gRPC channel. Lite (edition=lite) and the unmarked default

@@ -560,7 +560,7 @@ func TestNameCheckRunsAfterTheBootstrapAdminExists(t *testing.T) {
 	}
 	body := string(src)
 	check := strings.Index(body, "\twarnOIDCNames(ctx, repo, cfg, tel.Logger)")
-	bootstrap := strings.Index(body, "\tif err := bootstrapAdmin(ctx, repo, tel.Logger); err != nil {")
+	bootstrap := strings.Index(body, "\tif err := bootstrapAdmin(ctx, repo, cfg.Bootstrap, tel.Logger); err != nil {")
 	if check < 0 || bootstrap < 0 {
 		t.Fatal("one of the two calls was renamed; this test guards the order between them and can no longer see it")
 	}

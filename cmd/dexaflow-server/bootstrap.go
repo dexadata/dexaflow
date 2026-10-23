@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
 // adminBootstrapper is what bootstrapAdmin needs from the user store.
@@ -17,18 +17,17 @@ type adminBootstrapper interface {
 }
 
 // bootstrapAdmin creates or reconciles the bootstrap admin from
-// LEOFLOW_BOOTSTRAP_PASSWORD_HASH or LEOFLOW_BOOTSTRAP_PASSWORD, under
-// LEOFLOW_BOOTSTRAP_EMAIL (default auth.DefaultAdminEmail). The default address
+// bootstrap.password_hash or bootstrap.password, under bootstrap.email (default
+// auth.DefaultAdminEmail). The default address
 // resolves to the legacy admin@leoflow.local when that is the install's admin
 // (auth.ResolveAdminEmail), so an install created before the rename keeps one
 // admin.
-func bootstrapAdmin(ctx context.Context, repo adminBootstrapper, logger *slog.Logger) error {
-	hash := os.Getenv("LEOFLOW_BOOTSTRAP_PASSWORD_HASH")
-	pw := os.Getenv("LEOFLOW_BOOTSTRAP_PASSWORD")
-	if hash == "" && pw == "" {
+func bootstrapAdmin(ctx context.Context, repo adminBootstrapper, cfg config.BootstrapSection, logger *slog.Logger) error {
+	if !cfg.Enabled() {
 		return nil
 	}
-	email, err := resolveBootstrapEmail(ctx, repo, logger)
+	hash, pw := cfg.PasswordHash, cfg.Password
+	email, err := resolveBootstrapEmail(ctx, repo, cfg.Email, logger)
 	if err != nil {
 		return err
 	}
@@ -49,10 +48,10 @@ func bootstrapAdmin(ctx context.Context, repo adminBootstrapper, logger *slog.Lo
 	return nil
 }
 
-// resolveBootstrapEmail resolves LEOFLOW_BOOTSTRAP_EMAIL to the address the
-// bootstrap admin lives under, and says so when it is not the address asked for.
-func resolveBootstrapEmail(ctx context.Context, repo adminBootstrapper, logger *slog.Logger) (string, error) {
-	res, err := auth.ResolveAdminEmail(ctx, os.Getenv("LEOFLOW_BOOTSTRAP_EMAIL"),
+// resolveBootstrapEmail resolves bootstrap.email to the address the bootstrap
+// admin lives under, and says so when it is not the address asked for.
+func resolveBootstrapEmail(ctx context.Context, repo adminBootstrapper, configured string, logger *slog.Logger) (string, error) {
+	res, err := auth.ResolveAdminEmail(ctx, configured,
 		func(ctx context.Context, email string) (auth.AdminState, error) {
 			return repo.AdminUserState(ctx, "default", email)
 		})
