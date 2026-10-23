@@ -44,12 +44,15 @@ type PodManager interface {
 	// after its mark without reading presence first — the guard is at the delete
 	// site, so it holds for every reaper including the ones (agent-lost,
 	// orphan-run) that read no presence at all.
-	DeleteTaskPod(ctx context.Context, a Attempt) error
+	//
+	// The Teardown result counts the pods skipped that way, so each reaper can
+	// record <reaper>_terminal_pod_preserved through its own recorder (#933).
+	DeleteTaskPod(ctx context.Context, a Attempt) (Teardown, error)
 	// DeleteRunPods deletes every task pod of one reaped run. Used by the
 	// orphan-run reaper, which abandons the whole run. The run-id is unique
 	// per run, so no other run's pod can match. Tolerates missing pods. The
 	// terminal-phase skip above applies per pod within the run (#928).
-	DeleteRunPods(ctx context.Context, runID string) error
+	DeleteRunPods(ctx context.Context, runID string) (Teardown, error)
 	// TaskPodPresence reports what the apiserver holds for exactly the
 	// (run, task, try, epoch) attempt: a live pod, a present-but-finished pod,
 	// or nothing. A reaper defers on a live pod: the dispatch landed, the node
@@ -64,6 +67,21 @@ type PodManager interface {
 	// agent that can no longer start with a live credential from one that
 	// already did (#1126).
 	TaskPodPending(ctx context.Context, a Attempt) (bool, error)
+}
+
+// Teardown reports what one reap teardown left in place.
+type Teardown struct {
+	// Preserved counts the pods skipped because they were already in a
+	// terminal phase or carried an outcome record (#928). A climbing rate is the
+	// signature of a reconciler that is marking but not settling (#933).
+	Preserved int
+}
+
+// recordPreserved records decision once for each pod td preserved.
+func recordPreserved(record func(string), decision string, td Teardown) {
+	for range td.Preserved {
+		record(decision)
+	}
 }
 
 // PodPresence is the three-way answer to "what does the apiserver hold for this

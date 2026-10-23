@@ -42,8 +42,12 @@ func (c *throttledCluster) hasPod(taskID string) bool {
 	return c.pods[taskID]
 }
 
-func (c *throttledCluster) DeleteTaskPod(context.Context, executor.Attempt) error { return nil }
-func (c *throttledCluster) DeleteRunPods(context.Context, string) error           { return nil }
+func (c *throttledCluster) DeleteTaskPod(context.Context, executor.Attempt) (executor.Teardown, error) {
+	return executor.Teardown{}, nil
+}
+func (c *throttledCluster) DeleteRunPods(context.Context, string) (executor.Teardown, error) {
+	return executor.Teardown{}, nil
+}
 func (c *throttledCluster) TaskPodPresence(_ context.Context, a executor.Attempt) (executor.PodPresence, error) {
 	if c.hasPod(a.TaskID) {
 		return executor.PodPresenceLive, nil
