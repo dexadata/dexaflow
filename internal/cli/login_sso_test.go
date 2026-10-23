@@ -26,6 +26,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/dexadata/dexaflow/internal/api"
+	"github.com/dexadata/dexaflow/internal/api/apitest"
 	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/oidc"
@@ -186,19 +187,23 @@ func newSSOControlPlaneWith(t *testing.T, idp *ssoIDP, devices api.CLIDeviceStor
 	if err != nil {
 		t.Fatalf("NewFlow: %v", err)
 	}
-	srv.Config.Handler = api.NewServer(api.Dependencies{
-		Logger:                discardTestLogger(),
-		Authenticator:         auth.NewJWTAuthenticator(nil, ssoTestSecret, time.Hour),
-		RateLimiter:           auth.NewRateLimiter(20, time.Minute),
-		HealthChecks:          map[string]api.HealthChecker{},
-		TokenTTLSecs:          3600,
-		OIDCFlow:              flow,
-		OIDCEnabled:           true,
-		OIDCSettings:          cfg,
-		OIDCUsers:             &ssoUsers{},
-		JWTSecret:             ssoTestSecret,
-		SessionCookieInsecure: true,
-		CLIDevices:            devices,
+	srv.Config.Handler = apitest.NewServer(api.Dependencies{
+		Observability: api.ObservabilityDeps{
+			Logger:       discardTestLogger(),
+			HealthChecks: map[string]api.HealthChecker{},
+		},
+		Auth: api.AuthDeps{
+			Authenticator:         auth.NewJWTAuthenticator(nil, ssoTestSecret, time.Hour),
+			RateLimiter:           auth.NewRateLimiter(20, time.Minute),
+			TokenTTLSecs:          3600,
+			OIDCFlow:              flow,
+			OIDCEnabled:           true,
+			OIDCSettings:          cfg,
+			OIDCUsers:             &ssoUsers{},
+			JWTSecret:             ssoTestSecret,
+			SessionCookieInsecure: true,
+			CLIDevices:            devices,
+		},
 	})
 	srv.Start()
 	t.Cleanup(srv.Close)

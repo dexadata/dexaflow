@@ -42,12 +42,20 @@ func TestDagSpecHandlerNotFound(t *testing.T) {
 // is not an integer is a 400 and an unknown version a 404 (#1708).
 func TestDagVersionSpecHandler(t *testing.T) {
 	sources := rolledBackSources()
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "acme", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		DagSources:    sources,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "acme", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			DagSources: sources,
+		},
 	})
 	for _, tc := range []struct {
 		number    string

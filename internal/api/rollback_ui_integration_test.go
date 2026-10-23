@@ -32,17 +32,25 @@ func rollbackUIServer(t *testing.T) *gin.Engine {
 	}
 	t.Cleanup(pg.Close)
 	repo := storage.NewRepository(pg)
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		TokenTTLSecs:  3600,
-		Dags:          repo,
-		Versions:      repo,
-		Specs:         repo,
-		DagVersions:   repo,
-		DagSources:    repo,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			Dags:        repo,
+			Versions:    repo,
+			Specs:       repo,
+			DagVersions: repo,
+			DagSources:  repo,
+		},
 	})
 }
 

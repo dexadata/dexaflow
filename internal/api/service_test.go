@@ -55,18 +55,26 @@ func serviceServerWith(t *testing.T, store *fakeServiceStore, withIssuer bool, a
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	deps := Dependencies{
-		ServiceAllowedTenants: allowed,
-		AuthAudit:             audit,
-		Logger:                discardLogger(),
-		Authenticator:         &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"viewer"}}},
-		RateLimiter:           auth.NewRateLimiter(100, time.Minute),
-		ServiceToken:          testServiceToken,
-		ServiceTenants:        store,
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			AuthAudit:     audit,
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"viewer"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Issuers: IssuerDeps{
+			ServiceAllowedTenants: allowed,
+			ServiceToken:          testServiceToken,
+			ServiceTenants:        store,
+		},
 	}
 	if withIssuer {
-		deps.TrustedIssuer = fakeTrustedIssuer{issuer.Identity{}}
+		deps.Issuers.TrustedIssuer = fakeTrustedIssuer{issuer.Identity{}}
+		deps.Issuers.TrustedIssuerUsers = &fakeIssuerUsers{}
+		deps.Auth.JWTSecret = testHS256Secret
 	}
-	return NewServer(deps)
+	return newTestServer(deps)
 }
 
 func callService(h http.Handler, method, path, token, body string) *httptest.ResponseRecorder {
@@ -104,8 +112,15 @@ func TestServiceAPIRequiresTheServiceToken(t *testing.T) {
 // token configured, no service routes.
 func TestServiceAPIAbsentWithoutAToken(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	h := NewServer(Dependencies{Logger: discardLogger(), RateLimiter: auth.NewRateLimiter(100, time.Minute),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}}})
+	h := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		},
+	})
 
 	rec := callService(h, http.MethodPut, "/api/v2/service/tenants/acme", testServiceToken, `{}`)
 

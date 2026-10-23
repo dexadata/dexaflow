@@ -31,18 +31,26 @@ type clearGuardFixture struct {
 }
 
 func clearGuardServer(repo *storage.Repository, tenant string) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u-" + tenant, TenantID: tenant, Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(1000, time.Minute),
-		CORSOrigins:   []string{"*"},
-		TokenTTLSecs:  3600,
-		Dags:          repo,
-		DagRuns:       repo,
-		Tasks:         repo,
-		Versions:      repo,
-		Specs:         repo,
-		DagVersions:   repo,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u-" + tenant, TenantID: tenant, Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(1000, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			Dags:        repo,
+			DagRuns:     repo,
+			Tasks:       repo,
+			Versions:    repo,
+			Specs:       repo,
+			DagVersions: repo,
+		},
 	})
 }
 

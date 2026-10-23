@@ -122,7 +122,7 @@ func TestGzipJSONLeavesOtherResponsesAlone(t *testing.T) {
 // TestGzipJSONIsOffByDefault pins the gate (server.gzip_responses): without
 // the option the API server sends identity bodies as before.
 func TestGzipJSONIsOffByDefault(t *testing.T) {
-	srv := NewServer(Dependencies{Logger: discardLogger(), CORSOrigins: []string{"*"}})
+	srv := newTestServer(Dependencies{Observability: ObservabilityDeps{Logger: discardLogger()}, Server: ServerDeps{CORSOrigins: []string{"*"}}})
 	rec := gzipGet(t, srv, "/api/v2/version", true)
 	if enc := rec.Header().Get("Content-Encoding"); enc != "" {
 		t.Errorf("Content-Encoding = %q with the gate off, want identity", enc)

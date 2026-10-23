@@ -87,17 +87,23 @@ type ciServer struct {
 // authenticator in front of a fake one, and the roles store.
 func newCIServer(v *fakeCIVerifier, roles fakeCIRoles) ciServer {
 	s := ciServer{exchanges: &fakeCIExchanges{}, audit: &fakeAuthAudit{}, logs: &bytes.Buffer{}}
-	s.srv = NewServer(Dependencies{
-		Logger:           slog.New(slog.NewJSONHandler(s.logs, nil)),
-		Authenticator:    auth.NewCISessionAuthenticator(&fakeAuthn{authErr: auth.ErrInvalidToken}, ciAPISecret, v, roles),
-		RateLimiter:      auth.NewRateLimiter(100, time.Minute),
-		TokenTTLSecs:     900,
-		JWTSecret:        ciAPISecret,
-		AuthAudit:        s.audit,
-		CIOIDC:           v,
-		CIOIDCRoles:      roles,
-		CIOIDCSessionTTL: 20 * time.Minute,
-		CIOIDCExchanges:  s.exchanges,
+	s.srv = newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: slog.New(slog.NewJSONHandler(s.logs, nil)),
+		},
+		Auth: AuthDeps{
+			Authenticator: auth.NewCISessionAuthenticator(&fakeAuthn{authErr: auth.ErrInvalidToken}, ciAPISecret, v, roles),
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  900,
+			JWTSecret:     ciAPISecret,
+			AuthAudit:     s.audit,
+		},
+		Issuers: IssuerDeps{
+			CIOIDC:           v,
+			CIOIDCRoles:      roles,
+			CIOIDCSessionTTL: 20 * time.Minute,
+			CIOIDCExchanges:  s.exchanges,
+		},
 	})
 	return s
 }
@@ -239,7 +245,7 @@ func TestCITokenRefusesABadBody(t *testing.T) {
 
 // TestCITokenIsOffWithoutIssuers: no verifier, no route.
 func TestCITokenIsOffWithoutIssuers(t *testing.T) {
-	srv := NewServer(Dependencies{Logger: discardLogger(), Authenticator: &fakeAuthn{}, RateLimiter: auth.NewRateLimiter(5, time.Minute)})
+	srv := newTestServer(Dependencies{Observability: ObservabilityDeps{Logger: discardLogger()}, Auth: AuthDeps{Authenticator: &fakeAuthn{}, RateLimiter: auth.NewRateLimiter(5, time.Minute)}})
 	if rec := postCIToken(srv, `{"token":"x"}`); rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rec.Code)
 	}
@@ -291,11 +297,17 @@ func TestCISessionIsNotABrowserSession(t *testing.T) {
 // sees no CI issuer of acme.
 func TestDeployDefaultsListsOnlyTheCallersTenant(t *testing.T) {
 	for tenant, want := range map[string]string{"acme": `"name":"github-acme"`, "globex": `"ci_oidc":null`} {
-		srv := NewServer(Dependencies{
-			Logger:        discardLogger(),
-			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: tenant, Roles: []string{"admin"}}},
-			RateLimiter:   auth.NewRateLimiter(5, time.Minute),
-			CIOIDC:        &fakeCIVerifier{},
+		srv := newTestServer(Dependencies{
+			Observability: ObservabilityDeps{
+				Logger: discardLogger(),
+			},
+			Auth: AuthDeps{
+				Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: tenant, Roles: []string{"admin"}}},
+				RateLimiter:   auth.NewRateLimiter(5, time.Minute),
+			},
+			Issuers: IssuerDeps{
+				CIOIDC: &fakeCIVerifier{},
+			},
 		})
 		rec := getDeployDefaults(srv, "tok")
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), want) {

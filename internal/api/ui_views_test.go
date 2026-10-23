@@ -18,12 +18,20 @@ func viewsServer(runs []domain.DagRun, user *auth.User) *gin.Engine {
 	if user == nil {
 		user = &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}
 	}
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: user},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		DagRuns:       &fakeRunRepo{runs: runs},
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: user},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			DagRuns: &fakeRunRepo{runs: runs},
+		},
 	})
 }
 

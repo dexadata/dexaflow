@@ -97,10 +97,23 @@ func TestRegisterVersionDryRunRefusesAsTheRegisterWould(t *testing.T) {
 				user = &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}
 			}
 			answer := func(dry bool) (int, string, string) {
-				srv := NewServer(Dependencies{
-					Logger: discardLogger(), Authenticator: &fakeAuthn{user: user},
-					RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"},
-					Versions: &fakeVersionRepo{created: true, err: tc.err}, ExecutionPolicy: tc.pol,
+				srv := newTestServer(Dependencies{
+					Observability: ObservabilityDeps{
+						Logger: discardLogger(),
+					},
+					Server: ServerDeps{
+						CORSOrigins: []string{"*"},
+					},
+					Auth: AuthDeps{
+						Authenticator: &fakeAuthn{user: user},
+						RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+					},
+					Execution: ExecutionDeps{
+						ExecutionPolicy: tc.pol,
+					},
+					Stores: StoreDeps{
+						Versions: &fakeVersionRepo{created: true, err: tc.err},
+					},
 				})
 				route := "/versions"
 				if dry {
@@ -139,14 +152,24 @@ func TestRegisterVersionDryRunReportsAMisfitWithoutCountingIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	misfits := &fakeUnitMisfits{}
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Versions:      &fakeVersionRepo{created: true},
-		ResourceUnit:  unit,
-		UnitMisfits:   misfits,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Execution: ExecutionDeps{
+			ResourceUnit: unit,
+			UnitMisfits:  misfits,
+		},
+		Stores: StoreDeps{
+			Versions: &fakeVersionRepo{created: true},
+		},
 	})
 	big := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
 		`{"task_id":"train","type":"python","entrypoint":"dag:a","resources":{"limits":{"cpu":"2"}}}]}`

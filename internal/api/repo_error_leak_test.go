@@ -323,13 +323,21 @@ func TestRegisterVersionUnmappedDriverErrorIsOpaque(t *testing.T) {
 // detail, bypassing the funnel entirely.
 func TestTriggerDagRunSpecReadDriverErrorIsOpaque(t *testing.T) {
 	fk := pgForeignKeyViolation()
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		DagRuns:       &fakeRunRepo{},
-		Specs:         &fakeSpecReader{err: fmt.Errorf("loading current spec: %w", fk)},
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			DagRuns: &fakeRunRepo{},
+			Specs:   &fakeSpecReader{err: fmt.Errorf("loading current spec: %w", fk)},
+		},
 	})
 	rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/dagRuns", `{"dag_run_id":"manual__1","conf":{"limit":5}}`)
 	if rec.Code != http.StatusInternalServerError {

@@ -46,10 +46,21 @@ func (f *keysetRunRepo) ListDagRuns(_ context.Context, _, _ string, limit, offse
 
 func keysetRunServer(repo DagRunRepository) *gin.Engine {
 	admin := &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}
-	return NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: &fakeAuthn{user: admin},
-		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
-		DagRuns: repo,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: admin},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			DagRuns: repo,
+		},
 	})
 }
 

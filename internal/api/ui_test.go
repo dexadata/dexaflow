@@ -19,12 +19,20 @@ import (
 )
 
 func uiServer() *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", Email: "admin@leoflow.local", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		UI:            ui.New(),
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", Email: "admin@leoflow.local", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		UI: UIDeps{
+			SPA: ui.New(),
+		},
 	})
 }
 
@@ -378,12 +386,20 @@ func TestUIServesStaticAndIndexShell(t *testing.T) {
 // #1099 such a request gets the static outage page (503) instead of the login
 // redirect, and still never the shell.
 func TestShellGateDeniesOnABackendError(t *testing.T) {
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{authErr: errors.New("dial tcp 10.0.0.1:5432: i/o timeout")},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		UI:            ui.New(),
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{authErr: errors.New("dial tcp 10.0.0.1:5432: i/o timeout")},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		UI: UIDeps{
+			SPA: ui.New(),
+		},
 	})
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/dags/etl/grid", http.NoBody)
 	req.AddCookie(&http.Cookie{Name: authTokenCookie, Value: "whatever"})

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dexadata/dexaflow/internal/api"
+	"github.com/dexadata/dexaflow/internal/api/apitest"
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
@@ -19,8 +20,19 @@ func TestPushPrintsTheDigestWarningAndRefusal(t *testing.T) {
 	image := missingRegistry(t) + "/team/etl:v1"
 	f := writePushSpec(t, image)
 	serve := func(mode domain.DigestRequirement) *httptest.Server {
-		return httptest.NewServer(api.NewServer(api.Dependencies{
-			Logger: discardTestLogger(), DevNoAuth: true, Versions: registerRepo{}, RequireDigest: mode,
+		return httptest.NewServer(apitest.NewServer(api.Dependencies{
+			Observability: api.ObservabilityDeps{
+				Logger: discardTestLogger(),
+			},
+			Auth: api.AuthDeps{
+				DevNoAuth: true,
+			},
+			Execution: api.ExecutionDeps{
+				RequireDigest: mode,
+			},
+			Stores: api.StoreDeps{
+				Versions: registerRepo{},
+			},
 		}))
 	}
 

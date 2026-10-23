@@ -27,14 +27,22 @@ func specWithParams(params map[string]domain.ParamSpec) domain.DAGSpec {
 func triggerServer(spec domain.DAGSpec) (srv *gin.Engine, runs *fakeRunRepo) {
 	admin := &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}
 	runs = &fakeRunRepo{}
-	e := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: admin},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		TokenTTLSecs:  3600,
-		DagRuns:       runs,
-		Specs:         &fakeSpecReader{spec: spec},
+	e := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: admin},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			DagRuns: runs,
+			Specs:   &fakeSpecReader{spec: spec},
+		},
 	})
 	return e, runs
 }
@@ -162,14 +170,22 @@ func TestTriggerTypedDefaultMaterialized(t *testing.T) {
 // error. (A missing version is handled separately by the create path.)
 func TestTriggerFailsLoudOnSpecReadError(t *testing.T) {
 	admin := &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}
-	e := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: admin},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		TokenTTLSecs:  3600,
-		DagRuns:       &fakeRunRepo{},
-		Specs:         &fakeSpecReader{err: errors.New("postgres briefly unreachable")},
+	e := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: admin},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			DagRuns: &fakeRunRepo{},
+			Specs:   &fakeSpecReader{err: errors.New("postgres briefly unreachable")},
+		},
 	})
 	rec := authGet(e, http.MethodPost, "/api/v2/dags/etl/dagRuns", `{"conf":{"x":1}}`)
 	if rec.Code != http.StatusInternalServerError {
