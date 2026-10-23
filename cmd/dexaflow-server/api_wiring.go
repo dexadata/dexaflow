@@ -172,6 +172,19 @@ func uiTheme(cfg *config.ServerConfig) json.RawMessage {
 	return json.RawMessage(cfg.UI.Theme)
 }
 
+// oidcSettings maps auth.oidc onto the settings the API reads.
+func oidcSettings(o config.OIDCSection) api.OIDCSettings {
+	return api.OIDCSettings{
+		Issuer:           o.Issuer,
+		RedirectURL:      o.RedirectURL,
+		RoleMappings:     o.RoleMappings,
+		DefaultRole:      o.DefaultRole,
+		BreakGlassEmails: o.BreakGlassEmails,
+		JITProvisioning:  o.JITProvisioning,
+		AutoRedirect:     o.AutoRedirect,
+	}
+}
+
 func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, authn *auth.JWTAuthenticator, pg *storage.Postgres, repo *storage.Repository, xcomReader *storage.XComReader, logSink logs.Sink, logTailer logs.Tailer, checks map[string]api.HealthChecker, executorInfo api.ExecutorInfo, schedulerHealth api.Heartbeater, oidcFlow *oidc.Flow, trustedIssuer api.TrustedIssuer) (*http.Server, error) {
 	if cfg.Auth.DevNoAuth {
 		tel.Logger.Warn("AUTHENTICATION DISABLED (auth.dev_no_auth): every request is treated as admin. Dev only: NEVER use in production")
@@ -213,7 +226,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 			// resolves/JIT-provisions identities and records auth-event audit.
 			OIDCFlow:           oidcFlow,
 			OIDCEnabled:        cfg.Auth.Provider == config.AuthProviderOIDC,
-			OIDCSettings:       cfg.Auth.OIDC,
+			OIDCSettings:       oidcSettings(cfg.Auth.OIDC),
 			ExternalSignInURL:  cfg.Auth.ExternalSignInURL,
 			ExternalSignOutURL: cfg.Auth.ExternalSignOutURL,
 			OIDCUsers:          repo,
@@ -264,7 +277,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 			RequireDigest:     cfg.Deploy.RequireDigest,
 			UnpinnedImages:    unpinnedImages(tel.Metrics),
 			WarmPolicy:        warmPolicy(cfg),
-			WarmPools:         cfg.Execution,
+			WarmPools:         cfg.Execution.WarmPoolDefaults(),
 			WarmWorkersAbsent: warmWorkersAbsent(cfg, executorInfo.PodDispatchEnabled),
 			TaskPods: taskPodSettings(cfg, executorInfo.PodDispatchEnabled, func() (kubernetes.Interface, error) {
 				return buildK8sClient(cfg.Executor.KubeClient)

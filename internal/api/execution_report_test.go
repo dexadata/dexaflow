@@ -36,7 +36,7 @@ func warmVersionServerAbsent(repo DagVersionRepository, policy domain.WarmPolicy
 		},
 		Execution: ExecutionDeps{
 			WarmPolicy:        policy,
-			WarmPools:         exec,
+			WarmPools:         exec.WarmPoolDefaults(),
 			WarmWorkersAbsent: absent,
 		},
 		Stores: StoreDeps{
@@ -254,5 +254,33 @@ func TestRegisterReportsUndeclaredMinIdleWaitsForFirstRun(t *testing.T) {
 	}
 	if p.State != "on" || strings.Contains(p.Detail, "warming now") {
 		t.Errorf("undeclared DAG: pool = %+v, want on and not warming", p)
+	}
+}
+
+// TestRegisterExecutionReportJSON pins the execution report the register
+// response carries, byte for byte, now that the warm pool settings reach the
+// API as domain.WarmPoolDefaults rather than the config section (#1948).
+func TestRegisterExecutionReportJSON(t *testing.T) {
+	policy := domain.WarmPolicy{Enabled: true, ServiceAccount: "dexaflow-task"}
+	rec := authGet(warmVersionServer(&fakeVersionRepo{created: true}, policy, warmOn), http.MethodPost,
+		"/api/v2/dags/etl/versions/dry_run", mixedDeclaredSpecJSON)
+	if rec.Code >= http.StatusMultipleChoices {
+		t.Fatalf("dry_run = %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Execution json.RawMessage `json:"execution"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"warm_pools":true,"tasks":[` +
+		`{"task_id":"extract","mode":"warm"},` +
+		`{"task_id":"load","mode":"dedicated","reason":"node_selector set"},` +
+		`{"task_id":"report","mode":"dedicated","reason":"service_account set"}],` +
+		`"pool":{"state":"on","detail":"2 idle warm workers (up to 5) warming now, kept while this version is the DAG's current version; ` +
+		`previous pool draining: its idle workers are removed now and busy ones finish their attempt first",` +
+		`"min_idle_workers":2,"max_pool_size":5,"previous_pool":"draining"}}`
+	if got := string(body.Execution); got != want {
+		t.Errorf("execution report =\n%s\nwant\n%s", got, want)
 	}
 }

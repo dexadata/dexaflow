@@ -13,7 +13,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/dexadata/dexaflow/internal/auth"
-	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/oidc"
 )
@@ -125,7 +124,7 @@ type AuthDeps struct {
 	OIDCEnabled bool
 	// OIDCSettings carries the role mappings, JIT policy, default_role, and
 	// break-glass allowlist the login flow and the credential gate read.
-	OIDCSettings config.OIDCSection
+	OIDCSettings OIDCSettings
 	// ExternalSignInURL and ExternalSignOutURL are auth.external_signin_url and
 	// auth.external_signout_url (#1288): the operator's own sign-in and
 	// sign-out, used in place of Dexaflow's pages. Empty keeps Dexaflow's.
@@ -264,9 +263,9 @@ type ExecutionDeps struct {
 	// register response reports each task's execution mode with it (#1707).
 	// The zero value reports warm pools off.
 	WarmPolicy domain.WarmPolicy
-	// WarmPools is the operator's execution section (warm pool sizes), read
+	// WarmPools are the operator's warm pool settings (execution.*), read
 	// for the pool state of the register response.
-	WarmPools config.ExecutionSection
+	WarmPools domain.WarmPoolDefaults
 	// WarmWorkersAbsent says why no warm worker runs although warm pools are
 	// on (the subprocess executor starts no warm pool reconciler; neither does
 	// a server whose pod dispatch is disabled), "" when they run. The register

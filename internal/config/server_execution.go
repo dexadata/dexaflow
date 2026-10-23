@@ -263,34 +263,16 @@ type ExecutionSection struct {
 	WarmPoolEventRefill bool `mapstructure:"warm_pool_event_refill"`
 }
 
-// EffectiveMinIdle resolves the warm-worker target for one dag_version under
-// model A2 (ADR 0058 N1b2b): the DAG author declares desired warmth per DAG
-// (dagMinIdle), the operator caps and floors it.
-//
-//   - Warm pools OFF => always 0. This is what makes a default deploy a
-//     byte-for-byte no-op: with warmth gated off no warm pod is ever targeted, so
-//     the reconciler (when it runs at all) reconciles every pool to zero.
-//   - The DAG author's value wins when set (> 0); when the DAG declares none (0)
-//     it falls back to the operator's execution.min_idle_workers floor.
-//   - The resolved value is clamped to [0, max_pool_size] so an author can never
-//     provision more warmth than the operator's per-version cap allows, and a
-//     nonsensical negative never underflows.
+// WarmPoolDefaults is e's warm pool settings as the domain carries them.
+func (e ExecutionSection) WarmPoolDefaults() domain.WarmPoolDefaults {
+	return domain.WarmPoolDefaults{Enabled: e.WarmPoolsEnabled, MinIdleWorkers: e.MinIdleWorkers, MaxPoolSize: e.MaxPoolSize}
+}
+
+// EffectiveMinIdle resolves the warm-worker target for one dag_version
+// (domain.WarmPoolDefaults.EffectiveMinIdle).
 func (e ExecutionSection) EffectiveMinIdle(dagMinIdle int) int {
-	if !e.WarmPoolsEnabled {
-		return 0
-	}
-	target := dagMinIdle
-	if target == 0 {
-		// The author declared no warmth; inherit the operator's floor.
-		target = e.MinIdleWorkers
-	}
-	if target < 0 {
-		target = 0
-	}
-	if e.MaxPoolSize > 0 && target > e.MaxPoolSize {
-		target = e.MaxPoolSize
-	}
-	return target
+	w := e.WarmPoolDefaults()
+	return w.EffectiveMinIdle(dagMinIdle)
 }
 
 // HTTPExecutorSection configures HTTP-related executor knobs.

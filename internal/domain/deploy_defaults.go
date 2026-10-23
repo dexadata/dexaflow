@@ -73,7 +73,7 @@ type CIOIDCIssuer struct {
 // WarmPoolDefaults are the warm pool settings of a cluster, as a deploy
 // reads them (#1890): a DAG that declares no min_idle_workers gets
 // MinIdleWorkers, and every value is capped at MaxPoolSize, while warm pools
-// are Enabled. They mirror config.ExecutionSection.EffectiveMinIdle.
+// are Enabled. EffectiveMinIdle resolves them for one version.
 type WarmPoolDefaults struct {
 	// Enabled is execution.warm_pools_enabled: off, no worker is kept warm
 	// whatever a DAG declares.
@@ -145,6 +145,37 @@ func (w *WarmPoolDefaults) validate(prefix string) error {
 		return fmt.Errorf("%s.max_pool_size is %d; want 0 or more", prefix, w.MaxPoolSize)
 	}
 	return nil
+}
+
+// EffectiveMinIdle resolves the warm-worker target for one dag_version under
+// model A2 (ADR 0058 N1b2b): the DAG author declares desired warmth per DAG
+// (dagMinIdle), the operator caps and floors it.
+//
+//   - Warm pools OFF (or w nil) => always 0. This is what makes a default
+//     deploy a byte-for-byte no-op: with warmth gated off no warm pod is ever
+//     targeted, so the reconciler (when it runs at all) reconciles every pool
+//     to zero.
+//   - The DAG author's value wins when set (> 0); when the DAG declares none (0)
+//     it falls back to the operator's execution.min_idle_workers floor.
+//   - The resolved value is clamped to [0, max_pool_size] so an author can never
+//     provision more warmth than the operator's per-version cap allows, and a
+//     nonsensical negative never underflows.
+func (w *WarmPoolDefaults) EffectiveMinIdle(dagMinIdle int) int {
+	if w == nil || !w.Enabled {
+		return 0
+	}
+	target := dagMinIdle
+	if target == 0 {
+		// The author declared no warmth; inherit the operator's floor.
+		target = w.MinIdleWorkers
+	}
+	if target < 0 {
+		target = 0
+	}
+	if w.MaxPoolSize > 0 && target > w.MaxPoolSize {
+		target = w.MaxPoolSize
+	}
+	return target
 }
 
 // CheckRegistryPrefix refuses a registry prefix that cannot start an image
