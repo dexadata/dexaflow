@@ -9,4 +9,3 @@
 #
 # <path> <lines>
 internal/api/resources.go 1529
-internal/cli/dev.go 2523

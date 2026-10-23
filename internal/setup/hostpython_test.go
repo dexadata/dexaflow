@@ -236,3 +236,69 @@ func TestDetectSetupPython(t *testing.T) {
 		})
 	}
 }
+
+// TestPythonMajorMinor covers the one dotted-version parser every caller goes
+// through: `--version` output (via ParsePythonVersion), a pyvenv.cfg version
+// and the python_version field. Anything past the minor is ignored; a missing
+// or non-numeric major or minor is an error.
+func TestPythonMajorMinor(t *testing.T) {
+	for _, tc := range []struct {
+		in           string
+		major, minor int
+		ok           bool
+	}{
+		{"3.11", 3, 11, true},
+		{"3.11.15", 3, 11, true},
+		{"3.12.0rc1", 3, 12, true},
+		{"3.13.1.final.0", 3, 13, true},
+		{"3.9.18", 3, 9, true},
+		{"4.0", 4, 0, true},
+		{"3", 0, 0, false},
+		{"", 0, 0, false},
+		{"3.", 0, 0, false},
+		{".12", 0, 0, false},
+		{"x.12", 0, 0, false},
+		{"3.x", 0, 0, false},
+		{"3.12rc1", 0, 0, false},
+		{"py3.13", 0, 0, false},
+	} {
+		major, minor, err := PythonMajorMinor(tc.in)
+		if !tc.ok {
+			if err == nil {
+				t.Errorf("PythonMajorMinor(%q) = (%d, %d), want an error", tc.in, major, minor)
+			}
+			continue
+		}
+		if err != nil || major != tc.major || minor != tc.minor {
+			t.Errorf("PythonMajorMinor(%q) = (%d, %d, %v), want (%d, %d, nil)", tc.in, major, minor, err, tc.major, tc.minor)
+		}
+	}
+}
+
+// TestParsePythonVersion covers extraction of major/minor from `--version`
+// output: the last field is the version token PythonMajorMinor parses.
+func TestParsePythonVersion(t *testing.T) {
+	for _, tc := range []struct {
+		in           string
+		major, minor int
+		ok           bool
+	}{
+		{"Python 3.11.15\n", 3, 11, true},
+		{"Python 3.9.18", 3, 9, true},
+		{"Python 3.12.0rc1", 3, 12, true},
+		{"garbage", 0, 0, false},
+		{"", 0, 0, false},
+		{"Python 3", 0, 0, false},
+	} {
+		major, minor, err := ParsePythonVersion(tc.in)
+		if !tc.ok {
+			if err == nil {
+				t.Errorf("ParsePythonVersion(%q) = (%d, %d), want an error", tc.in, major, minor)
+			}
+			continue
+		}
+		if err != nil || major != tc.major || minor != tc.minor {
+			t.Errorf("ParsePythonVersion(%q) = (%d, %d, %v), want (%d, %d, nil)", tc.in, major, minor, err, tc.major, tc.minor)
+		}
+	}
+}

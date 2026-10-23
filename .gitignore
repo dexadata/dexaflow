@@ -174,7 +174,7 @@ tests/load/*.json
 examples/**/dag.json
 test/**/dag.json
 # Lite's k3d mode writes a Dockerfile FROM its local base into the project
-# (internal/cli/dev.go ensureProjectDockerfile). The examples ship none: their
+# (internal/cli/dev_cluster.go ensureProjectDockerfile). The examples ship none: their
 # image is generated from dexaflow.yaml.
 examples/**/Dockerfile
 
