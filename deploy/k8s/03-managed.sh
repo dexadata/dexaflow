@@ -8,7 +8,7 @@
 # private IP (Private Services Access / VPC peering), then re-points the existing
 # Helm release at them.
 #
-# Prereqs: 00-create-cluster.sh, 01-install-addons.sh, 02-install-leoflow.sh have
+# Prereqs: 00-create-cluster.sh, 01-install-addons.sh, 02-install-dexaflow.sh have
 # run (02 created the agent-TLS cert + CA ConfigMap and the base secrets we reuse).
 #
 # Idempotent: API enable / address / peering / instance creates are guarded.
@@ -33,13 +33,13 @@ set -euo pipefail
 PROJECT="${PROJECT:-$(gcloud config get-value project 2>/dev/null)}"
 REGION="${REGION:-us-central1}"            # cheapest US region
 NETWORK="${NETWORK:-default}"              # the cluster's VPC (00 uses default)
-NAMESPACE="${NAMESPACE:-leoflow}"
-RELEASE="${RELEASE:-leoflow}"
-PSA_RANGE_NAME="${PSA_RANGE_NAME:-leoflow-psa}"   # allocated range for private services access
-PG_INSTANCE="${PG_INSTANCE:-leoflow-pg}"
+NAMESPACE="${NAMESPACE:-dexaflow}"
+RELEASE="${RELEASE:-dexaflow}"
+PSA_RANGE_NAME="${PSA_RANGE_NAME:-dexaflow-psa}"   # allocated range for private services access
+PG_INSTANCE="${PG_INSTANCE:-dexaflow-pg}"
 PG_TIER="${PG_TIER:-db-f1-micro}"          # cheapest; needs --edition=ENTERPRISE
-PG_DB="${PG_DB:-leoflow}"
-REDIS_INSTANCE="${REDIS_INSTANCE:-leoflow-redis}"
+PG_DB="${PG_DB:-dexaflow}"
+REDIS_INSTANCE="${REDIS_INSTANCE:-dexaflow-redis}"
 REDIS_SIZE="${REDIS_SIZE:-1}"             # GB (Basic tier)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -51,7 +51,7 @@ log() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 die() { printf '\n\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
 [ -n "$PROJECT" ] || die "No GCP project set."
-[ -f "$VALUES_LOCAL" ] || die "Missing $VALUES_LOCAL — run ./02-install-leoflow.sh first (it creates the agent-TLS cert/CA + base secrets this step reuses)."
+[ -f "$VALUES_LOCAL" ] || die "Missing $VALUES_LOCAL: run ./02-install-dexaflow.sh first (it creates the agent-TLS cert/CA + base secrets this step reuses)."
 kubectl cluster-info >/dev/null 2>&1 || die "No reachable cluster."
 
 # ---- 1. APIs ----------------------------------------------------------------
@@ -127,8 +127,8 @@ migrations:
 replicaCount: 1
 agentTLS:
   enabled: true
-  serverCertSecret: "leoflow-agent-tls"
-  caConfigMap: "leoflow-agent-ca"
+  serverCertSecret: "dexaflow-agent-tls"
+  caConfigMap: "dexaflow-agent-ca"
 logs:
   persistence:
     enabled: true
