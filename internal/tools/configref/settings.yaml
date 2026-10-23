@@ -91,6 +91,23 @@ settings:
       `dag_runs_limit` of `/ui/dags`; a larger request is served this many rows,
       like Airflow's `[api] maximum_page_limit`. `0` means no cap; a negative value
       fails boot. Helm: set it through `extraEnv`.
+  server.max_request_body_bytes:
+    edition: both
+    description: >-
+      Largest request body, in bytes, the API and UI listener accepts; a larger one
+      is refused with `413` and an RFC 7807 problem. The routes that take a DAG's
+      code or spec (registering a version, its dry run, writing an IDE file) use
+      `server.max_upload_body_bytes` instead. `0` means no limit; a negative value
+      fails boot. Helm: set it through `extraEnv`.
+  server.max_upload_body_bytes:
+    edition: both
+    description: >-
+      Largest request body, in bytes, of the routes that take a DAG's code or spec
+      (`POST /api/v2/dags/{dag_id}/versions`, its `dry_run`, and `PUT` or `POST
+      /api/v2/ide/file`); a larger one is refused with `413`. `0` leaves those routes
+      unlimited even when `server.max_request_body_bytes` is set, so a limit sized
+      for JSON calls never refuses a deploy; a negative value fails boot. Helm: set
+      it through `extraEnv`.
   server.read_timeout:
     edition: both
     description: >-

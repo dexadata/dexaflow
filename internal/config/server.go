@@ -115,6 +115,17 @@ type ServerSection struct {
 	// Airflow's [api] maximum_page_limit. 0 (the default, ADR 0062 gate) keeps
 	// today's behavior: no cap.
 	MaxPageLimit int `mapstructure:"max_page_limit"`
+	// MaxRequestBodyBytes caps the body of a request to the API and UI
+	// listener; a larger one is refused with 413 (#1613). The routes that take
+	// a DAG's code or spec (registering a version, its dry run, writing an IDE
+	// file) use MaxUploadBodyBytes instead. 0 (the default, ADR 0062 gate)
+	// means no limit, as before.
+	MaxRequestBodyBytes int64 `mapstructure:"max_request_body_bytes"`
+	// MaxUploadBodyBytes caps the body of the routes that take a DAG's code or
+	// spec. 0 (the default) leaves them unlimited even when
+	// MaxRequestBodyBytes is set, so a cap sized for JSON calls cannot refuse
+	// a deploy.
+	MaxUploadBodyBytes int64 `mapstructure:"max_upload_body_bytes"`
 	// ReadTimeout bounds reading a whole request, headers and body, on the API
 	// and metrics listeners: a slow client cannot hold a connection open by
 	// trickling a body. Set it above the slowest legitimate upload. It never
@@ -360,6 +371,10 @@ func decodeDottedOIDCMaps(configFile string, c *ServerConfig) error {
 // validateNonNegative refuses settings where a negative value would silently
 // read as "off" instead of failing boot.
 func (c *ServerConfig) validateNonNegative() error {
+	if c.Server.MaxRequestBodyBytes < 0 || c.Server.MaxUploadBodyBytes < 0 {
+		return fmt.Errorf("server.max_request_body_bytes and server.max_upload_body_bytes must not be negative (got %d and %d); 0 means no limit",
+			c.Server.MaxRequestBodyBytes, c.Server.MaxUploadBodyBytes)
+	}
 	if c.Server.MaxPageLimit < 0 {
 		return fmt.Errorf("server.max_page_limit must not be negative (got %d); 0 leaves list pages uncapped", c.Server.MaxPageLimit)
 	}
