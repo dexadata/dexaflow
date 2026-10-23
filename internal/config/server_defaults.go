@@ -42,6 +42,15 @@ var serverDefaults = map[string]any{
 	// Off by default: migrations run in the chart's hook Job (ADR 0090
 	// decision 4 makes self-migration opt-in).
 	"database.migrate_on_boot": false,
+	// Empty by default: the process was not installed by the Helm chart, and
+	// the recovery hint keeps its placeholders. The chart sets all of them.
+	"helm.release":       "",
+	"helm.namespace":     "",
+	"helm.chart_version": "",
+	// True by default, the chart's own default, so a release that sets only
+	// helm.release is told to run the migration Job again.
+	"helm.migrations_enabled": true,
+	"helm.migrate_image":      "",
 	// Empty by default: no Redis configured selects the embedded edition (Lite,
 	// XCom on Postgres, in-process log tailer, ADR 0026). Production sets this
 	// explicitly via the Helm chart (external Redis).

@@ -510,6 +510,24 @@ Key column is the same setting's path in that file.
 
 <!-- END GENERATED configref -->
 
+### Helm release (`helm.*`)
+
+The chart sets these on every control plane pod. They only fill in the
+recovery command a pod waiting for its schema names; see
+[a control plane that is up but not ready](/operate/troubleshooting/#a-control-plane-that-is-up-but-not-ready).
+
+<!-- BEGIN GENERATED configref settings helm. -->
+
+| Variable | Key | Type | Default | Edition | Purpose |
+|---|---|---|---|---|---|
+| `DEXAFLOW_HELM_RELEASE` | `helm.release` | string | _(empty)_ | **Pro only** | The Helm release name. The chart sets it, with the four settings below, so that a control plane waiting for its schema names the exact command that migrates this release on `/readyz` and in its log ([ADR 0090](/project/adrs/0090-database-replaced-under-a-running-release/), decision 2). Nothing else reads it; do not set it by hand. Empty keeps the hint with `<release>`, `<namespace>` and `<chart version>` placeholders. |
+| `DEXAFLOW_HELM_NAMESPACE` | `helm.namespace` | string | _(empty)_ | **Pro only** | The release namespace, set by the chart for the recovery hint. |
+| `DEXAFLOW_HELM_CHART_VERSION` | `helm.chart_version` | string | _(empty)_ | **Pro only** | The version of the chart that rendered the pod, set by the chart, so the hint's `helm upgrade --version` reruns the same chart. |
+| `DEXAFLOW_HELM_MIGRATIONS_ENABLED` | `helm.migrations_enabled` | bool | `true` | **Pro only** | The chart's `migrations.enabled`, set by the chart. When `false` there is no migration Job to run again, and the hint names your own migration step and the migrate image instead of `helm upgrade`. |
+| `DEXAFLOW_HELM_MIGRATE_IMAGE` | `helm.migrate_image` | string | _(empty)_ | **Pro only** | The `dexaflow-migrate` image and tag of this release (`migrations.image`), set by the chart and named by the hint when `migrations.enabled` is false. |
+
+<!-- END GENERATED configref -->
+
 ### Redis (`redis.*`)
 
 <!-- BEGIN GENERATED configref settings redis. -->

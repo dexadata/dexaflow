@@ -83,6 +83,8 @@ func openVerifiedPostgres(ctx context.Context, cfg *config.ServerConfig, tel *ob
 	// A pod that was serving keeps the metric current through its readiness
 	// probe, so an emptied database shows on dexaflow_schema_ready too.
 	pg.SetSchemaObserver(tel.Metrics.RecordSchemaState)
+	// Its readiness log names the same command as the boot gate.
+	pg.SetRecoveryHint(newRecoveryHint(cfg).forClass)
 	if werr := awaitSchema(ctx, cfg, tel, pg); werr != nil {
 		pg.Close()
 		return nil, werr

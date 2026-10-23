@@ -1,0 +1,81 @@
+suite: the control plane knows its release for the recovery hint (ADR 0090 decision 2)
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: rel
+  namespace: data
+chart:
+  version: 9.8.7
+  appVersion: 9.8.7
+set:
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: tls
+  agentTLS.caConfigMap: ca
+tests:
+  # A pod waiting for its schema names `helm upgrade rel ... -n data
+  # --version 9.8.7 --reuse-values`, which reruns the migration Job.
+  - it: passes the release, namespace, chart version and migration settings
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_HELM_RELEASE
+            value: rel
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_HELM_NAMESPACE
+            value: data
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_HELM_CHART_VERSION
+            value: 9.8.7
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_HELM_MIGRATIONS_ENABLED
+            value: "true"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_HELM_MIGRATE_IMAGE
+            value: ghcr.io/dexadata/dexaflow-migrate:9.8.7
+
+  # With no migration Job the hint names the operator's own step and the
+  # migrate image, which a pinned tag overrides.
+  - it: says when migrations are off, and names a pinned migrate tag
+    template: deployment.yaml
+    set:
+      migrations.enabled: false
+      migrations.image.tag: v1.2.3
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_HELM_MIGRATIONS_ENABLED
+            value: "false"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_HELM_MIGRATE_IMAGE
+            value: ghcr.io/dexadata/dexaflow-migrate:v1.2.3
+
+  - it: both split roles carry it
+    template: deployment.yaml
+    set:
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+    asserts:
+      - hasDocuments:
+          count: 2
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_HELM_RELEASE
+            value: rel

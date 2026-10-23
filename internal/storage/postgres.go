@@ -48,6 +48,9 @@ type Postgres struct {
 	dirtyAheadLogged atomic.Bool
 	// schemaObserver hears each readiness schema verdict (SetSchemaObserver).
 	schemaObserver func(class string)
+	// recoveryHint is what a schema readiness failure says to run
+	// (SetRecoveryHint); nil uses defaultSchemaHint.
+	recoveryHint func(class string) string
 	// installationID is database.installation_id: when set, the schema reads
 	// also read the database's installation id and compare it (ADR 0090
 	// decision 3). Empty checks nothing.
