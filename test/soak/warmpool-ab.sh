@@ -9,7 +9,7 @@
 #
 # ── The comparison is NOT one variable, and this script does not pretend it is ─
 #
-# internal/config/server.go fails boot closed unless execution.warm_pools_enabled
+# internal/config/server_execution.go fails boot closed unless execution.warm_pools_enabled
 # is accompanied by auth.agent_token_transport=exchange AND
 # auth.secret_liveness_mode=enforce (ADR 0058 D2). Warm pools are a security
 # decision before they are a performance one. So the arms are:
