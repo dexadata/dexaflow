@@ -291,6 +291,9 @@ func provisionLite(cmd *cobra.Command, out io.Writer, leoflowHome string, r setu
 	}
 
 	// The parser is pure Python with vendored deps (ADR 0024) — no venv, no Airflow.
+	// It executes dag.py, so this interpreter's grammar judges the author's
+	// syntax. compile swaps it for the project's declared python_version when
+	// it is older, which relies on this exact shape (parseForDeclaredPython, #1095).
 	parserCmd := fmt.Sprintf("env PYTHONPATH=%s %s -m leoflow_parser", filepath.Join(pysrcDir, "parser"), pyPath)
 
 	// On first setup, generate the admin password, store ONLY its hash, and return

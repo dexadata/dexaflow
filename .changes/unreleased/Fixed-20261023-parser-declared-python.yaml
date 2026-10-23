@@ -1,0 +1,13 @@
+kind: Fixed
+body: |-
+  **`dexaflow compile` parses `dag.py` on the declared `python_version`.** The
+  parser executes `dag.py`, and it ran on whatever interpreter `dexaflow setup`
+  found, so a project declaring `python_version: "3.13"` on a host whose setup
+  picked 3.11 got a `SyntaxError` for 3.12+ syntax (`type X[T] = ...`) that the
+  cluster runs fine. When the setup parser is older than the declared minor and
+  that minor is installed, `compile` and `validate --parse` now parse on it. If
+  `dag.py` imports a module installed only for the setup interpreter, the parse
+  runs once more there and keeps that result, with a warning naming the module
+  and both interpreters. A custom `parser_cmd` of any other shape runs as
+  configured. (#1095)
+time: 2026-10-23T04:40:00.000000000-03:00

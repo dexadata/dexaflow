@@ -137,13 +137,21 @@ Three things follow from this that are worth knowing:
   interpreter, syntax that only the newer one accepts passes here and then fails
   on the task image. Installing the minor you declare is what makes the check
   exact; the fallback only guarantees that what it rejects is genuinely wrong.
-- **`dexaflow compile` does not honour it yet.** The parser *executes* your
-  `dag.py`, so its own interpreter decides which syntax is legal, and today that
-  is whichever interpreter `dexaflow setup` baked into `parser_cmd`. A project
-  declaring a newer minor can still see a `SyntaxError` from `compile` for code
-  the cluster runs
-  ([#1095](https://github.com/dexadata/dexaflow/issues/1095)). Running
-  `dexaflow setup` under the minor you declare is the workaround.
+- **`dexaflow compile` and `validate --parse` parse on it when the parser is
+  older.** The parser *executes* your `dag.py`, so its own interpreter decides
+  which syntax is legal, and that is whichever interpreter `dexaflow setup`
+  baked into `parser_cmd`. When that interpreter is older than the minor you
+  declare and the declared minor is installed, the parse runs on the declared
+  minor instead
+  ([#1095](https://github.com/dexadata/dexaflow/issues/1095)). Only a
+  `parser_cmd` of the shape setup writes (`[env VAR=value ...] python3[.N] -m
+  leoflow_parser`) is changed; any other runs as configured. Because the
+  parser imports `dag.py`, a module installed only for the configured
+  interpreter is missing on the declared one: the parse then runs once more on
+  the configured parser and, when that succeeds, keeps its result with a
+  warning naming the module and both interpreters. If the declared minor is not
+  installed, the configured parser runs with a warning that newer syntax is
+  reported as an error.
 - **The three exemptions are the same everywhere.** A version you never wrote is
   not a statement (the default applies), a declared `base_image` makes the field
   inert because you chose the `FROM` by hand, and a deprecated version warns

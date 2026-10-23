@@ -298,7 +298,7 @@ func runCompile(cmd *cobra.Command, dir string, o compileOptions) error {
 	if ierr := checkImageFlags(cmd, o, image); ierr != nil {
 		return ierr
 	}
-	if rerr := runParser(cmd, command, parserArgs{
+	if rerr := parseForDeclaredPython(cmd, command, parserArgs{
 		source:        dagSourcePath(dir, cfg),
 		config:        projectConfigPath(dir),
 		output:        o.output,
@@ -906,6 +906,10 @@ type parserArgs struct {
 	// which is what compile wants; validate --parse discards it, because the
 	// parser announces a scratch file the user never asked for.
 	stdout io.Writer
+	// stderr receives the parser's stderr. Nil means the command's stderr.
+	// parseForDeclaredPython holds a retargeted run's output back until it
+	// knows whether that run is the one to report.
+	stderr io.Writer
 }
 
 // parserConfigEnv is the env var that carries the resolved project config
@@ -1011,7 +1015,11 @@ func runParser(cmd *cobra.Command, command string, a parserArgs) error {
 	// the returned error — surfaced both in the dev terminal and the UI's import
 	// error banner, not just an opaque "exit status 1".
 	var stderr bytes.Buffer
-	pc.Stderr = io.MultiWriter(cmd.ErrOrStderr(), &stderr)
+	streamTo := cmd.ErrOrStderr()
+	if a.stderr != nil {
+		streamTo = a.stderr
+	}
+	pc.Stderr = io.MultiWriter(streamTo, &stderr)
 	if err := pc.Run(); err != nil {
 		raw := strings.TrimSpace(stderr.String())
 		detail := lastLines(raw, 20)
