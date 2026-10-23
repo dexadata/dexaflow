@@ -115,7 +115,7 @@ The chart ships a complete overlay,
 
 ```bash
 helm upgrade --install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> \
-  -n leoflow -f values-ha.yaml
+  -n dexaflow -f values-ha.yaml
 ```
 
 It sets, and documents why:

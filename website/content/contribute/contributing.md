@@ -141,7 +141,7 @@ code. This avoids misaligned designs and wasted effort.
 
 ```bash
 # 1. Fork on GitHub, then clone YOUR fork and add the upstream remote
-git clone https://github.com/<you>/leoflow.git
+git clone https://github.com/<you>/dexaflow.git
 cd dexaflow
 git remote add upstream https://github.com/dexadata/dexaflow.git
 
@@ -288,7 +288,7 @@ with live reload:
 
 ```bash
 cd website
-hugo server     # serves at http://localhost:1313/leoflow/ (the subpath matters)
+hugo server     # serves at http://localhost:1313/
 ```
 
 The CLI and Go references are **generated, not written**: `website/scripts/gen-cli.sh`

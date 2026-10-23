@@ -90,13 +90,13 @@ func (r *Repository) SecretConnectionURIs(ctx context.Context, tenantID string) 
 		// connection still fails, correctly, but every other task keeps working.
 		pass, derr := r.decryptExtra(row.Password)
 		if derr != nil {
-			slog.Warn("skipping connection: password decrypt failed (key rotated or wrong LEOFLOW_SECRET_KEY?)",
+			slog.Warn("skipping connection: password decrypt failed (key rotated or wrong DEXAFLOW_SECRET_KEY?)",
 				"conn_id", row.ConnID, "error", derr)
 			continue
 		}
 		extra, eerr := r.decryptExtra(row.Extra)
 		if eerr != nil {
-			slog.Warn("skipping connection: extra decrypt failed (key rotated or wrong LEOFLOW_SECRET_KEY?)",
+			slog.Warn("skipping connection: extra decrypt failed (key rotated or wrong DEXAFLOW_SECRET_KEY?)",
 				"conn_id", row.ConnID, "error", eerr)
 			continue
 		}
@@ -157,13 +157,13 @@ func (r *Repository) SecretConnectionURIsScoped(ctx context.Context, tenantID st
 	for _, row := range rows {
 		pass, derr := r.decryptExtra(row.Password)
 		if derr != nil {
-			slog.Warn("skipping connection: password decrypt failed (key rotated or wrong LEOFLOW_SECRET_KEY?)",
+			slog.Warn("skipping connection: password decrypt failed (key rotated or wrong DEXAFLOW_SECRET_KEY?)",
 				"conn_id", row.ConnID, "error", derr)
 			continue
 		}
 		extra, eerr := r.decryptExtra(row.Extra)
 		if eerr != nil {
-			slog.Warn("skipping connection: extra decrypt failed (key rotated or wrong LEOFLOW_SECRET_KEY?)",
+			slog.Warn("skipping connection: extra decrypt failed (key rotated or wrong DEXAFLOW_SECRET_KEY?)",
 				"conn_id", row.ConnID, "error", eerr)
 			continue
 		}

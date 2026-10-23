@@ -38,7 +38,7 @@ func newLoginCommand() *cobra.Command {
 			"gets the device sign-in instead, as with --device: login prints a page and a short code, you open the page " +
 			"in a browser on any device, sign in and confirm the code, and login waits for that approval; --sso keeps the " +
 			"browser sign-in. " +
-			"A username or a password (flags, LEOFLOW_USERNAME/LEOFLOW_PASSWORD or --password-stdin) " +
+			"A username or a password (flags, DEXAFLOW_USERNAME/DEXAFLOW_PASSWORD or --password-stdin) " +
 			"signs in with a password, as does a server without single sign-on. A password is not " +
 			"sent over plain http to a server that is not on this machine without --allow-insecure-password.",
 		Args: cobra.NoArgs,
@@ -275,7 +275,7 @@ func resolveCredentials(cmd *cobra.Command, username, password string) (user, pa
 	interactive := cmdInteractive(cmd)
 	if user == "" {
 		if !interactive {
-			return "", "", fmt.Errorf("username required: pass --username or set LEOFLOW_USERNAME")
+			return "", "", fmt.Errorf("username required: pass --username or set DEXAFLOW_USERNAME")
 		}
 		if user, err = promptValue(cmd.InOrStdin(), cmd.OutOrStdout(), "Username: "); err != nil {
 			return "", "", err
@@ -283,7 +283,7 @@ func resolveCredentials(cmd *cobra.Command, username, password string) (user, pa
 	}
 	if pass == "" {
 		if !interactive {
-			return "", "", fmt.Errorf("password required: pass --password or set LEOFLOW_PASSWORD")
+			return "", "", fmt.Errorf("password required: pass --password or set DEXAFLOW_PASSWORD")
 		}
 		if pass, err = promptPassword(cmd.InOrStdin(), cmd.OutOrStdout()); err != nil {
 			return "", "", err

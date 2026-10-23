@@ -23,14 +23,15 @@ import (
 	"github.com/dexadata/dexaflow/internal/setup"
 )
 
-// leoflowLogo is the wordmark shown atop `dexaflow setup` on a terminal (figlet
+// setupWordmark is the wordmark shown atop `dexaflow setup` on a terminal (figlet
 // "standard"). It is plain ASCII so it renders anywhere; printed only with color
-// (TTY), so piped/CI output stays clean.
-const leoflowLogo = ` _                __ _
-| |    ___  ___  / _| | _____      __
-| |   / _ \/ _ \| |_| |/ _ \ \ /\ / /
-| |__|  __/ (_) |  _| | (_) \ V  V /
-|_____\___|\___/|_| |_|\___/ \_/\_/`
+// (TTY), so piped/CI output stays clean. The glyphs contain a backquote, which a
+// raw string cannot hold, so it is concatenated in.
+const setupWordmark = ` ____                  __ _
+|  _ \  _____  ____ _ / _| | _____      __
+| | | |/ _ \ \/ / _` + "`" + ` | |_| |/ _ \ \ /\ / /
+| |_| |  __/>  < (_| |  _| | (_) \ V  V /
+|____/ \___/_/\_\__,_|_| |_|\___/ \_/\_/`
 
 // liteSettings are the Lite-edition choices the setup wizard gathers.
 type liteSettings struct {
@@ -75,7 +76,7 @@ func gatherLiteConfig(interactive bool, in *bufio.Reader, out io.Writer, def lit
 		return def
 	}
 	p := newPalette(colorEnabled(out))
-	_, _ = fmt.Fprintf(out, "\n%sLeoflow Lite setup%s — press Enter to accept each [default].\n", p.bold, p.reset) //nolint:errcheck // best-effort
+	_, _ = fmt.Fprintf(out, "\n%sDexaflow Lite setup%s: press Enter to accept each [default].\n", p.bold, p.reset) //nolint:errcheck // best-effort
 	s := def
 	s.Workspace = promptLine(in, out, p, "Where should your DAGs live (workspace)", def.Workspace)
 	// Run mode, in plain language — not the internal "subprocess|k8s" jargon a
@@ -199,7 +200,7 @@ func runSetup(cmd *cobra.Command, workspaceFlag string, dryRun bool) error {
 
 	pal := newPalette(colorEnabled(out))
 	if pal.cyan != "" { // only on a real terminal — keep CI/pipe output clean
-		_, _ = fmt.Fprintf(out, "%s%s%s\n", pal.cyan, leoflowLogo, pal.reset) //nolint:errcheck // best-effort terminal output
+		_, _ = fmt.Fprintf(out, "%s%s%s\n", pal.cyan, setupWordmark, pal.reset) //nolint:errcheck // best-effort terminal output
 	}
 	_, _ = fmt.Fprintf(out, "dexaflow setup\n\n  platform   %s/%s%s\n", r.OS, r.Arch, libcSuffix(r.Libc)) //nolint:errcheck // best-effort terminal output
 

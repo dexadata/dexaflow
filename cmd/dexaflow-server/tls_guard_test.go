@@ -6,7 +6,7 @@ import (
 )
 
 // TestRefuseInsecureSecretsInProd: a Pro chart deployment (edition=pro)
-// MUST NOT boot with LEOFLOW_AGENT_ALLOW_INSECURE_SECRETS=true. The dev-only
+// MUST NOT boot with DEXAFLOW_AGENT_ALLOW_INSECURE_SECRETS=true. The dev-only
 // escape hatch is fine on Lite, but inside a real cluster shipping secrets over
 // a plaintext gRPC channel is the kind of mistake that should be loud (#58).
 //
@@ -22,7 +22,7 @@ func TestRefuseInsecureSecretsInProd(t *testing.T) {
 		{name: "lite + insecure: allowed (dev/inner loop)", edition: "lite", allowInsecure: true},
 		{name: "empty edition + insecure: allowed (dev fallback)", edition: "", allowInsecure: true},
 		{name: "pro + insecure: REFUSED", edition: "pro", allowInsecure: true,
-			wantErrSubstring: "LEOFLOW_AGENT_ALLOW_INSECURE_SECRETS"},
+			wantErrSubstring: "DEXAFLOW_AGENT_ALLOW_INSECURE_SECRETS"},
 		{name: "pro + NO insecure: allowed (default secure)", edition: "pro", allowInsecure: false},
 		{name: "lite + NO insecure: allowed", edition: "lite", allowInsecure: false},
 	}
@@ -58,9 +58,9 @@ func TestRefuseProWithoutTLS(t *testing.T) {
 	}{
 		{name: "pro + cert+key: OK", edition: "pro", cert: "/c.pem", key: "/k.pem"},
 		{name: "pro + no cert: REFUSED", edition: "pro", cert: "", key: "/k.pem",
-			wantErrSubstring: "LEOFLOW_SERVER_GRPC_TLS_CERT"},
+			wantErrSubstring: "DEXAFLOW_SERVER_GRPC_TLS_CERT"},
 		{name: "pro + no key: REFUSED", edition: "pro", cert: "/c.pem", key: "",
-			wantErrSubstring: "LEOFLOW_SERVER_GRPC_TLS_KEY"},
+			wantErrSubstring: "DEXAFLOW_SERVER_GRPC_TLS_KEY"},
 		{name: "pro + neither: names the chart value", edition: "pro", cert: "", key: "",
 			wantErrSubstring: "agentTLS.enabled"},
 		{name: "lite + no TLS: allowed (dev)", edition: "lite", cert: "", key: ""},

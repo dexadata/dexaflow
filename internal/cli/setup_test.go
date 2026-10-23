@@ -225,6 +225,14 @@ func TestGatherLiteConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("interactive header names the product", func(t *testing.T) {
+		var out strings.Builder
+		gatherLiteConfig(true, bufio.NewReader(strings.NewReader("\n\n\n\n")), &out, def)
+		if !strings.Contains(out.String(), "Dexaflow Lite setup") || strings.Contains(out.String(), "Leoflow") {
+			t.Errorf("setup header must say Dexaflow Lite setup, got:\n%s", out.String())
+		}
+	})
+
 	t.Run("interactive with all-blank keeps defaults", func(t *testing.T) {
 		in := bufio.NewReader(strings.NewReader("\n\n\n\n"))
 		got := gatherLiteConfig(true, in, io.Discard, def)
@@ -259,5 +267,15 @@ func TestRunSetupDefaultsToTheDexaflowAdmin(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "admin      admin@dexaflow.local\n") {
 		t.Errorf("first setup should default the admin to admin@dexaflow.local:\n%s", out.String())
+	}
+}
+
+// TestSetupWordmarkIsDexaflow: the figlet wordmark atop `dexaflow setup` spells
+// the current name, whose capital D opens the first line.
+func TestSetupWordmarkIsDexaflow(t *testing.T) {
+	t.Parallel()
+	first := strings.SplitN(setupWordmark, "\n", 2)[0]
+	if !strings.HasPrefix(first, " ____") || !strings.Contains(setupWordmark, "|____/") {
+		t.Errorf("wordmark does not open with the figlet D of Dexaflow:\n%s", setupWordmark)
 	}
 }

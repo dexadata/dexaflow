@@ -32,8 +32,8 @@ func devTestCmd() *cobra.Command {
 func TestDevBannerMarksEnvironment(t *testing.T) {
 	t.Parallel()
 	b := liteBanner("http://localhost:8080")
-	if !strings.Contains(b, "LITE") {
-		t.Errorf("banner must shout LITE, got:\n%s", b)
+	if !strings.Contains(b, "DEXAFLOW LITE") || strings.Contains(b, "LEOFLOW") {
+		t.Errorf("banner must shout DEXAFLOW LITE, got:\n%s", b)
 	}
 	if !strings.Contains(b, "http://localhost:8080") {
 		t.Errorf("banner must show the UI url, got:\n%s", b)

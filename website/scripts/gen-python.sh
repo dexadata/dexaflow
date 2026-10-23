@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # Generate the Python runtime API reference for the Hugo site with pdoc.
 #
-# The LOCKED decision (this repo's own): the live MkDocs site rendered the
-# leoflow_runtime docstrings with mkdocstrings; the Hugo migration renders them
-# with pdoc into a SELF-CONTAINED static subsite. pdoc's default HTML does not
+# The leoflow_runtime docstrings (the module keeps its pre-rename name) are
+# rendered with pdoc into a SELF-CONTAINED static subsite. pdoc's default HTML does not
 # share Docsy's Bootstrap theming, so rather than fight it we publish the pdoc
 # output verbatim under website/static/python-api/ (served at /python-api/) and
 # LINK to it from the content page reference/python-api.md. pdoc's internal
-# links are relative, so the subsite works fine under the GitHub-Pages subpath.
+# links are relative, so the subsite works under any baseURL path.
 #
 # A dedicated, git-ignored venv (website/.pdoc-venv) keeps pdoc + the runtime
 # package off the host Python. Override the interpreter with PYTHON=... .

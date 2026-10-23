@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # Refresh the OpenAPI spec the Hugo site's Scalar reference reads.
 #
-# Parity with the live MkDocs pipeline (.github/workflows/docs.yml), which does
-#   cp docs/api/openapi.yaml docs/openapi.yaml
-# so Scalar can fetch the spec from the site root. Here the source-of-truth spec
+# Scalar fetches the spec from the site root, so the source-of-truth spec
 # is copied into website/static/ so Hugo publishes it at /openapi.yaml, next to
 # the hand-written static Scalar page (website/static/api-reference.html, which
 # loads it via data-url="openapi.yaml"). The content page reference/api.md links
