@@ -1,0 +1,65 @@
+name: E2E replaced database
+
+# A database emptied under a running chart install (#1996, ADR 0090): the
+# control plane waits not ready with the reason, exports it, refuses to migrate
+# it until the operator accepts it with installation.id, and recovers after.
+# It crosses the chart, the probes, the migration Job and the server, so it runs
+# on a real cluster. Heavy for the runner queue, so it runs nightly, on demand,
+# and on pull requests that change this test, not on every pull request.
+on:
+  schedule:
+    - cron: "30 4 * * *"
+  workflow_dispatch: {}
+  pull_request:
+    branches: [main, "release-*"]
+    paths:
+      - "test/e2e/replaced-database-e2e.sh"
+      - ".github/workflows/e2e-replaced-database.yaml"
+
+permissions:
+  contents: read
+
+# A newer push to the same pull request supersedes this run, so the older one
+# is cancelled instead of holding runners the newer one needs. Every other run
+# (schedules, manual runs) gets a group of its own, keyed by run id: a shared
+# group would still cancel a WAITING run when a third one arrives, whatever
+# cancel-in-progress says, and cut-release.sh refuses to tag a commit whose run
+# was cancelled.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('{0}-run-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GOPROXY: https://proxy.golang.org|direct
+  GO_VERSION: "1.26.10"
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  replaced-database:
+    name: kind, database emptied under the release
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/docker-hub-mirror
+        with:
+          python-versions: none
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.2.0
+      - uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        with:
+          cluster_name: dexaflow-replaced-db
+      - name: Empty the database under the release, then accept it
+        env:
+          DEXAFLOW_E2E_KIND_CLUSTER: dexaflow-replaced-db
+        run: bash test/e2e/replaced-database-e2e.sh
