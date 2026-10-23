@@ -89,7 +89,7 @@ rarely run it by hand.
 {{% tab header="Streamable HTTP — the Pro service" %}}
 
 ```bash
-dexaflow-mcp --transport http --listen :9099 --server https://leoflow.internal
+dexaflow-mcp --transport http --listen :9099 --server https://dexaflow.internal
 ```
 
 The HTTP transport serves `POST /mcp` (plus `GET /healthz`) and is **stateless**:
@@ -104,7 +104,7 @@ Each release also publishes the server as a signed image,
 
 ```bash
 docker run --rm -p 9099:9099 ghcr.io/dexadata/dexaflow-mcp:v<version>@sha256:<digest> \
-  --transport http --listen :9099 --server https://leoflow.internal
+  --transport http --listen :9099 --server https://dexaflow.internal
 ```
 {{% /tab %}}
 {{< /tabpane >}}

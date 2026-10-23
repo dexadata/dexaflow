@@ -61,7 +61,7 @@ Each script is idempotent and documents itself in a header comment. What they do
 
 ```bash
 cd website
-hugo server                 # live-reload preview at http://localhost:1313/leoflow/
+hugo server                 # live-reload preview at http://localhost:1313/
 ```
 
 To produce the exact artifact CI publishes:
@@ -101,8 +101,8 @@ The MkDocs site this one replaced served flat `.html` URLs
 (`use_directory_urls: false`), and the Hugo IA moved most pages into sections. To
 keep bookmarks and external links alive, each moved page carries a **Hugo
 `aliases:`** block in its front matter, so Hugo renders a redirecting stub at the
-old path with no server config needed (it works on GitHub Pages under the
-`/leoflow/` subpath).
+old path with no server config needed (it works on GitHub Pages, at the site root
+and under each archived version's subpath).
 
 That block is generated, not hand-maintained:
 

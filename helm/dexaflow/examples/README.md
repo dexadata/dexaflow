@@ -33,20 +33,20 @@ plain Postgres + Redis pods first, then pointing the chart at them.
 ### 1. Namespace
 
 ```bash
-kubectl create namespace leoflow-poc
+kubectl create namespace dexaflow-poc
 ```
 
 ### 2. Postgres + Redis (plain official images, emptyDir)
 
 ```bash
-kubectl apply -n leoflow-poc -f - <<'EOF'
+kubectl apply -n dexaflow-poc -f - <<'EOF'
 apiVersion: v1
 kind: Secret
 metadata:
   name: pg-postgresql
 type: Opaque
 stringData:
-  password: leoflow-poc
+  password: dexaflow-poc
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -64,8 +64,8 @@ spec:
         - name: postgres
           image: postgres:16-alpine
           env:
-            - { name: POSTGRES_USER,     value: leoflow }
-            - { name: POSTGRES_DB,       value: leoflow }
+            - { name: POSTGRES_USER,     value: dexaflow }
+            - { name: POSTGRES_DB,       value: dexaflow }
             - { name: POSTGRES_PASSWORD, valueFrom: { secretKeyRef: { name: pg-postgresql, key: password } } }
             - { name: PGDATA,            value: /var/lib/postgresql/data/pgdata }
           ports: [{ containerPort: 5432 }]
@@ -73,7 +73,7 @@ spec:
             requests: { cpu: 100m, memory: 128Mi }
             limits:   { cpu: "1",  memory: 512Mi }
           readinessProbe:
-            exec: { command: ["pg_isready", "-U", "leoflow", "-d", "leoflow"] }
+            exec: { command: ["pg_isready", "-U", "dexaflow", "-d", "dexaflow"] }
             initialDelaySeconds: 5
             periodSeconds: 5
           volumeMounts:
@@ -125,8 +125,8 @@ EOF
 Wait for both to be ready:
 
 ```bash
-kubectl -n leoflow-poc rollout status deploy/pg-postgresql --timeout=180s
-kubectl -n leoflow-poc rollout status deploy/redis-master  --timeout=120s
+kubectl -n dexaflow-poc rollout status deploy/pg-postgresql --timeout=180s
+kubectl -n dexaflow-poc rollout status deploy/redis-master  --timeout=120s
 ```
 
 - **Service names** `pg-postgresql` + `redis-master` deliberately match the
@@ -141,34 +141,34 @@ kubectl -n leoflow-poc rollout status deploy/redis-master  --timeout=120s
 ### 3. Dexaflow
 
 ```bash
-helm install leoflow ./helm/dexaflow \
-  -n leoflow-poc \
+helm install dexaflow ./helm/dexaflow \
+  -n dexaflow-poc \
   -f helm/dexaflow/examples/poc.yaml
 ```
 
 The `poc.yaml` file in this directory carries the matching `database.url` /
 `redis.url` plus fixture credentials.
 
-Wait for it: `kubectl -n leoflow-poc rollout status deploy/leoflow --timeout=240s`.
+Wait for it: `kubectl -n dexaflow-poc rollout status deploy/dexaflow --timeout=240s`.
 
 ## Verify
 
 ```bash
-kubectl -n leoflow-poc port-forward svc/leoflow 8080:8080 &
+kubectl -n dexaflow-poc port-forward svc/dexaflow 8080:8080 &
 curl -fsS http://127.0.0.1:8080/readyz
 ```
 
 Open `http://127.0.0.1:8080/` for the UI. Log in with `admin@dexaflow.local` /
-`leoflow-poc-admin` (the `bootstrap.password` from the values file).
+`dexaflow-poc-admin` (the `bootstrap.password` from the values file).
 
 ## Teardown
 
 ```bash
-helm uninstall -n leoflow-poc leoflow
-kubectl delete -n leoflow-poc deploy/pg-postgresql deploy/redis-master \
+helm uninstall -n dexaflow-poc dexaflow
+kubectl delete -n dexaflow-poc deploy/pg-postgresql deploy/redis-master \
                               svc/pg-postgresql   svc/redis-master    \
                               secret/pg-postgresql
-kubectl delete namespace leoflow-poc
+kubectl delete namespace dexaflow-poc
 ```
 
 No PVCs to clean up — emptyDir storage is per-pod.
@@ -179,13 +179,13 @@ Drop the kubectl-apply step and the PoC values file. Point at managed
 datastores via either inline values or existing Secrets:
 
 ```bash
-helm install leoflow ./helm/dexaflow -n leoflow \
-  --set database.url='postgres://...@<managed-pg>:5432/leoflow?sslmode=require' \
+helm install dexaflow ./helm/dexaflow -n dexaflow \
+  --set database.url='postgres://...@<managed-pg>:5432/dexaflow?sslmode=require' \
   --set redis.url='rediss://...@<managed-redis>:6380/0' \
   --set auth.jwtSecret="$(openssl rand -base64 64)" \
   --set secretKey="$(openssl rand -hex 32)"  # 64 hex chars -> 32 bytes
 ```
 
 See the main chart README (`helm/dexaflow/README.md`) for the full values
-reference, and `docs/upgrades.md` / `docs/backup-restore.md` for ongoing
+reference, and [upgrades](https://dexaflow.dexadata.ai/operate/upgrades/) / [backup and restore](https://dexaflow.dexadata.ai/operate/backup-restore/) for ongoing
 operations.

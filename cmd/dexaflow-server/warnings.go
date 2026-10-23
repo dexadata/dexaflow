@@ -620,7 +620,7 @@ func oidcClientSecretWarnings(c config.AuthSection) []configWarning {
 			"which a confidential client rejects with invalid_client. Google Workspace and Entra always register a server-side " +
 			"application as confidential; Okta and Keycloak do unless the client is explicitly public. The callback answers a " +
 			"generic 403 on failure, so the login breaks with nothing naming this. Set it via the " +
-			"LEOFLOW_AUTH_OIDC_CLIENT_SECRET environment variable (never in the config file), or ignore this if the IdP client " +
+			"DEXAFLOW_AUTH_OIDC_CLIENT_SECRET environment variable (never in the config file), or ignore this if the IdP client " +
 			"is registered as public",
 		Key:        key,
 		Value:      "",

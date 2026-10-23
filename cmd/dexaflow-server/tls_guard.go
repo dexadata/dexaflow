@@ -18,7 +18,7 @@ func guardInsecureSecretsForEdition(edition string, allowInsecure bool) error {
 	if edition != "pro" {
 		return nil
 	}
-	return errors.New("LEOFLOW_AGENT_ALLOW_INSECURE_SECRETS=true is not allowed in the Pro edition: " +
+	return errors.New("DEXAFLOW_AGENT_ALLOW_INSECURE_SECRETS=true is not allowed in the Pro edition: " +
 		"a Pro deployment ships secrets only over the TLS-enabled gRPC channel — " +
 		"either set agentTLS.enabled=true in the Helm values (with cert-manager) or unset the env var " +
 		"(see ADR 0014 and issue #58)")
@@ -50,7 +50,7 @@ func guardTLSForEdition(edition, grpcTLSCert, grpcTLSKey string) error {
 		return nil
 	}
 	return errors.New("the Pro edition requires TLS on the agent gRPC channel, but it is off: " +
-		"set both LEOFLOW_SERVER_GRPC_TLS_CERT and LEOFLOW_SERVER_GRPC_TLS_KEY (the Helm chart " +
+		"set both DEXAFLOW_SERVER_GRPC_TLS_CERT and DEXAFLOW_SERVER_GRPC_TLS_KEY (the Helm chart " +
 		"sets them from agentTLS.enabled=true + cert-manager). Booting without them would look " +
 		"healthy but every secrets RPC to a task pod would fail (PermissionDenied: refusing to " +
 		"send secrets over an insecure channel), leaving tasks stuck. See ADR 0014, #58, #281")

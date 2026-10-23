@@ -235,6 +235,10 @@ func TestConnectionWriteWithoutKeyReturns503(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("write without key = %d, want 503", rec.Code)
 	}
+	// The detail tells the operator what to set, under the current name.
+	if body := rec.Body.String(); !strings.Contains(body, "DEXAFLOW_SECRET_KEY") || strings.Contains(body, "LEOFLOW_") {
+		t.Errorf("503 detail must name DEXAFLOW_SECRET_KEY only, got %s", body)
+	}
 }
 
 // TestConnectionUpdateTriState locks the #887 write semantics on the PATCH path:
