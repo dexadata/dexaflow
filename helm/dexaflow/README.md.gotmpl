@@ -29,9 +29,9 @@ Every release tag publishes this chart as a signed **OCI artifact** to
 pinned version without cloning the repo:
 
 ```bash
-kubectl create namespace leoflow
-helm install lf oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> -n leoflow \
-  --set database.url='postgres://user:pass@postgres:5432/leoflow?sslmode=disable' \
+kubectl create namespace dexaflow
+helm install lf oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> -n dexaflow \
+  --set database.url='postgres://user:pass@postgres:5432/dexaflow?sslmode=disable' \
   --set redis.url='redis://redis:6379/0' \
   --set auth.jwtSecret='change-me' \
   --set bootstrap.password='admin'
@@ -46,8 +46,8 @@ To install from a source checkout instead (e.g. an unreleased branch), point
 Helm at the chart directory:
 
 ```bash
-helm install lf ./helm/dexaflow -n leoflow \
-  --set database.url='postgres://user:pass@postgres:5432/leoflow?sslmode=disable' \
+helm install lf ./helm/dexaflow -n dexaflow \
+  --set database.url='postgres://user:pass@postgres:5432/dexaflow?sslmode=disable' \
   --set redis.url='redis://redis:6379/0' \
   --set auth.jwtSecret='change-me' \
   --set bootstrap.password='admin'
@@ -157,7 +157,7 @@ recommended HA log path; a `ReadWriteMany` PVC is the alternative), auto PDB,
 memory sized for the object sink's per-attempt buffer, and the longer drain grace:
 
 ```bash
-helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> -n leoflow \
+helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> -n dexaflow \
   -f helm/dexaflow/examples/values-ha.yaml
 ```
 
@@ -182,16 +182,16 @@ Without the CA bundle mounted, the strongest TLS posture you can pin is
 
    ```bash
    kubectl create configmap managed-pg-ca \
-     -n leoflow --from-file=ca.crt=server-ca.pem
+     -n dexaflow --from-file=ca.crt=server-ca.pem
    ```
 
 2. Reference it from `database.caConfigMap` and point the DSN at the mounted
    path:
 
    ```bash
-   helm upgrade --install dexaflow ./helm/dexaflow -n leoflow \
+   helm upgrade --install dexaflow ./helm/dexaflow -n dexaflow \
      --set database.caConfigMap=managed-pg-ca \
-     --set database.url='postgres://user:pass@cloudsql-private-ip:5432/leoflow?sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt'
+     --set database.url='postgres://user:pass@cloudsql-private-ip:5432/dexaflow?sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt'
    ```
 
 The chart mounts the ConfigMap readonly at `/etc/leoflow/db-ca/ca.crt`. pgx
@@ -271,7 +271,7 @@ Set `redis.caConfigMap` to a ConfigMap holding the provider CA as
 
 ```bash
 kubectl create configmap dexaflow-redis-ca \
-  --from-file=ca.crt=./memorystore-server-ca.pem -n leoflow
+  --from-file=ca.crt=./memorystore-server-ca.pem -n dexaflow
 ```
 
 ```yaml
@@ -410,7 +410,7 @@ auth:
     issuer: "https://accounts.google.com"
     clientId: "…apps.googleusercontent.com"
     existingSecret: dexaflow-idp          # key: oidcClientSecret
-    redirectUrl: "https://leoflow.example.com/api/v2/auth/oidc/callback"
+    redirectUrl: "https://dexaflow.example.com/api/v2/auth/oidc/callback"
     tenantClaim: "hd"                    # `tid` on Entra
     tenantClaims:
       "example.com": "default"
@@ -479,7 +479,7 @@ the production-shaped command.
 
 ```bash
 helm lint ./helm/dexaflow
-helm template lf ./helm/dexaflow -n leoflow \
+helm template lf ./helm/dexaflow -n dexaflow \
   --set database.url=postgres://x \
   --set redis.url=redis://r/0 \
   --set auth.jwtSecret=s \

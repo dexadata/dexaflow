@@ -403,7 +403,7 @@ func devPrintln(w io.Writer, a ...any) {
 // liteBanner renders a high-visibility Lite-environment banner so a developer
 // never mistakes the local loop for production. url is the served UI address.
 func liteBanner(uiURL string) string {
-	line := fmt.Sprintf(" LEOFLOW LITE — local — %s ", uiURL)
+	line := fmt.Sprintf(" DEXAFLOW LITE (local) %s ", uiURL)
 	bar := ""
 	for range line {
 		bar += "─"

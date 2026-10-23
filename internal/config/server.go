@@ -436,7 +436,7 @@ func (c *ServerConfig) Validate() error {
 	// Both providers mint the app's own HS256 _token (oidc mints it after the IdP
 	// verify), so the JWT secret is required for either.
 	if (c.Auth.Provider == AuthProviderJWT || c.Auth.Provider == AuthProviderOIDC) && c.Auth.JWT.Secret == "" {
-		return errors.New("auth.jwt.secret is required (set LEOFLOW_AUTH_JWT_SECRET)")
+		return errors.New("auth.jwt.secret is required (set DEXAFLOW_AUTH_JWT_SECRET)")
 	}
 	// auth.dev_no_auth disables authentication entirely; permit it only when the
 	// HTTP API binds to loopback, so a misconfigured (or accidental) dev bypass can

@@ -22,7 +22,7 @@ Exchange credentials for a bearer token ([ADR 0008](/project/adrs/0008-jwt-auth/
 Use a dedicated service account with only the `execute:dag` permission it needs.
 
 ```bash
-TOKEN=$(curl -sS -X POST https://leoflow.example.com/auth/token \
+TOKEN=$(curl -sS -X POST https://dexaflow.example.com/auth/token \
   -H 'Content-Type: application/json' \
   -d '{"username":"ci-bot","password":"'"$DEXAFLOW_PASSWORD"'"}' \
   | jq -r .access_token)
@@ -45,7 +45,7 @@ parameters — reachable in tasks as `{{ params.x }}` / `context["params"]`. `co
 must be a JSON **object**; an array or scalar is rejected with `400`.
 
 ```bash
-curl -sS -X POST https://leoflow.example.com/api/v2/dags/sales/dagRuns \
+curl -sS -X POST https://dexaflow.example.com/api/v2/dags/sales/dagRuns \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"conf": {"date": "2026-01-01", "limit": 100}}'
@@ -82,7 +82,7 @@ state (`success` / `failed`):
 
 ```bash
 RUN_ID=$(... # the dag_run_id from step 2)
-curl -sS https://leoflow.example.com/api/v2/dags/sales/dagRuns/"$RUN_ID" \
+curl -sS https://dexaflow.example.com/api/v2/dags/sales/dagRuns/"$RUN_ID" \
   -H "Authorization: Bearer $TOKEN" | jq -r .state
 ```
 

@@ -1,6 +1,6 @@
 # values-oidc-google.yaml, SSO with Google Workspace.
 #
-# Use with:  helm install leoflow leoflow/leoflow -n leoflow -f values-oidc-google.yaml
+# Use with:  helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> -n dexaflow -f values-oidc-google.yaml
 #
 # Google Workspace is the example because it is the awkward one: its tenant claim
 # is `hd`, whose value is a DOMAIN, and a domain is dotted. viper's config key
@@ -23,14 +23,14 @@
 
 # External datastores are mandatory for Pro (the embedded ones are Lite-only).
 database:
-  url: "postgres://leoflow:CHANGEME@postgres:5432/leoflow?sslmode=require"
+  url: "postgres://dexaflow:CHANGEME@postgres:5432/dexaflow?sslmode=require"
 redis:
   url: "redis://redis:6379/0"
 
 agentTLS:
   enabled: true
-  serverCertSecret: "leoflow-agent-tls"
-  caConfigMap: "leoflow-agent-ca"
+  serverCertSecret: "dexaflow-agent-tls"
+  caConfigMap: "dexaflow-agent-ca"
 
 auth:
   # SSO does NOT replace the JWT signing secret: OIDC is the login flow, and the
@@ -44,15 +44,15 @@ auth:
     issuer: "https://accounts.google.com"
     clientId: "1234567890-abcdefghijklmnop.apps.googleusercontent.com"
     # Prefer an out-of-band Secret in anything that is not a scratch cluster:
-    #   kubectl -n leoflow create secret generic leoflow-idp \
+    #   kubectl -n dexaflow create secret generic dexaflow-idp \
     #     --from-literal=oidcClientSecret='GOCSPX-...'
-    #   then: existingSecret: leoflow-idp   (and drop clientSecret below)
+    #   then: existingSecret: dexaflow-idp   (and drop clientSecret below)
     clientSecret: "GOCSPX-CHANGEME"
     existingSecret: ""
 
     # Must match the Authorized redirect URI registered above, character for
     # character, including the scheme and any trailing path.
-    redirectUrl: "https://leoflow.example.com/api/v2/auth/oidc/callback"
+    redirectUrl: "https://dexaflow.example.com/api/v2/auth/oidc/callback"
 
     # The tenant pin. `hd` is the Google Workspace domain of the signed-in user,
     # and it is present ONLY for Workspace accounts, a personal @gmail.com
@@ -87,7 +87,7 @@ auth:
     # The address must belong to an account that ALREADY EXISTS with a password:
     # the list is an allowlist, not an account. On a fresh install the only such
     # account is the bootstrap admin, whose address is admin@dexaflow.local (the
-    # chart does not set LEOFLOW_BOOTSTRAP_EMAIL), created by the bootstrap
+    # chart does not set DEXAFLOW_BOOTSTRAP_EMAIL), created by the bootstrap
     # password at the bottom of this file. An install whose database predates
     # the rename keeps its admin@leoflow.local: list that address there instead.
     # Listing an address with no user row leaves the escape hatch pointing at
@@ -127,11 +127,11 @@ ingress:
   enabled: true
   className: "nginx"
   hosts:
-    - host: leoflow.example.com
+    - host: dexaflow.example.com
       paths:
         - path: /
           pathType: Prefix
   tls:
-    - secretName: leoflow-ingress-tls
+    - secretName: dexaflow-ingress-tls
       hosts:
-        - leoflow.example.com
+        - dexaflow.example.com

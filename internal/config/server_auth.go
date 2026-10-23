@@ -456,7 +456,7 @@ func tenantPinHint(c *ServerConfig) string {
 	}
 	return ". The tenant pin decides whether any login can succeed: a claim value that is absent or not mapped is rejected with 403 (audited as tenant_not_allowed) and never falls back to the default tenant, so without it every SSO login fails. " +
 		"The pin is two settings: auth.oidc.tenant_claim names the claim carrying the tenant (tid on Entra, hd on Google Workspace), and auth.oidc.tenant_claims maps each value of it you accept to a Dexaflow tenant. " +
-		"auth.oidc.tenant_claims is a map, so it loads ONLY from the YAML config file named by LEOFLOW_CONFIG; no LEOFLOW_AUTH_OIDC_* environment variable can carry it. " +
+		"auth.oidc.tenant_claims is a map, so it loads ONLY from the YAML config file named by DEXAFLOW_CONFIG; no DEXAFLOW_AUTH_OIDC_* environment variable can carry it. " +
 		"To keep serving password logins while SSO is configured, set auth.provider: jwt"
 }
 

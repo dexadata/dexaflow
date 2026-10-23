@@ -42,12 +42,12 @@ connection:
 
 | Field | Value |
 |---|---|
-| `hostPort` | `http://leoflow:8080` |
+| `hostPort` | `http://dexaflow:8080` |
 | `apiVersion` | `auto` |
 | Auth | Basic, with the service account's username and password |
 
 `hostPort` must be the **bare root**. OpenMetadata appends `api` and the version
-itself, so it requests `http://leoflow:8080/api/v2/version`. Adding `/api`
+itself, so it requests `http://dexaflow:8080/api/v2/version`. Adding `/api`
 yourself produces `/api/api/v2/...`, which 404s; with `apiVersion: auto` that
 404 makes version detection fall through to `v1` and every later call 404s too.
 The symptom is a service that looks entirely unreachable.

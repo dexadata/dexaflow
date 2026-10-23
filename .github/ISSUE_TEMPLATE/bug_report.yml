@@ -31,8 +31,9 @@ body:
       label: How are you running Dexaflow?
       options:
         - Demo (docker compose --profile demo)
-        - Dev (leoflow dev)
-        - Local server (make dev-up + bin/leoflow-server)
+        - Lite (dexaflow lite)
+        - Pro (Helm chart on Kubernetes)
+        - Local server (make dev-up + bin/dexaflow-server)
         - Other (describe in Environment)
     validations:
       required: true

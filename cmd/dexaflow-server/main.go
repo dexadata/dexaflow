@@ -258,7 +258,7 @@ func run() error {
 	// HTTP port.
 	metricsSrv := newHTTPServer(cfg.Server.MetricsAddr, api.ObservabilityHandler(tel.Registry, checks, observabilityOptions(cfg)...), cfg)
 
-	tel.Logger.Info("leoflow-server started", "role", cfg.Server.EffectiveRole(), "http_addr", cfg.Server.HTTPAddr, "metrics_addr", cfg.Server.MetricsAddr, "serves_api", servesAPI, "serves_scheduler", servesScheduler)
+	tel.Logger.Info("dexaflow-server started", "role", cfg.Server.EffectiveRole(), "http_addr", cfg.Server.HTTPAddr, "metrics_addr", cfg.Server.MetricsAddr, "serves_api", servesAPI, "serves_scheduler", servesScheduler)
 	return serveExit(ctx, serveHTTP(ctx, tel.Logger, servesAPI, apiSrv, metricsSrv))
 }
 
@@ -331,7 +331,7 @@ func secretCipher(secretKey string, logger *slog.Logger) (secrets.Cipher, error)
 		// setting one will go looking at the wrong thing. One bad entry disables
 		// encryption even when the first key is perfect, so naming it matters
 		// more here than it did with a single key.
-		logger.Warn("no usable LEOFLOW_SECRET_KEY; connection management disabled (Variables still work)",
+		logger.Warn("no usable DEXAFLOW_SECRET_KEY; connection management disabled (Variables still work)",
 			"error", kerr)
 		return nil, nil //nolint:nilerr,nilnil // a missing/unusable key is non-fatal: run without connection encryption
 	}
@@ -367,7 +367,7 @@ func secretCipher(secretKey string, logger *slog.Logger) (secrets.Cipher, error)
 		if trimmed == "" || !secrets.LooksLikeHalfEntropyHexKey(trimmed) {
 			continue
 		}
-		logger.Warn("a LEOFLOW_SECRET_KEY entry looks like `openssl rand -hex 16` output: "+
+		logger.Warn("a DEXAFLOW_SECRET_KEY entry looks like `openssl rand -hex 16` output: "+
 			"32 hex characters are consumed as 32 raw bytes, giving 128 bits of entropy where AES-256 expects 256. "+
 			"Generate a replacement with `openssl rand -hex 32` (64 characters) and re-encrypt existing connections",
 			"key_position", i+1, "key_length", len(trimmed))

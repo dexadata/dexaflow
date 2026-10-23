@@ -119,7 +119,7 @@ func run() int {
 		}
 		return runHTTP(mcp.HTTPHandler(srv, pr), listen, server)
 	}
-	slog.Info("leoflow-mcp starting", "server", server, "transport", "stdio", "version", version)
+	slog.Info("dexaflow-mcp starting", "server", server, "transport", "stdio", "version", version)
 	if err := srv.Run(context.Background(), &mcpsdk.StdioTransport{}); err != nil {
 		slog.Error("mcp server exited", "error", err)
 		return 1
@@ -147,7 +147,7 @@ func runHTTP(handler http.Handler, listen, server string) int {
 		}
 	}()
 
-	slog.Info("leoflow-mcp starting", "server", server, "transport", "http", "listen", listen, "version", version)
+	slog.Info("dexaflow-mcp starting", "server", server, "transport", "http", "listen", listen, "version", version)
 	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("http server exited", "error", err)
 		return 1

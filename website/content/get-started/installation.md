@@ -259,8 +259,8 @@ external Postgres and Redis and go:
 
 ```bash
 helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
-  -n leoflow --create-namespace \
-  --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full' \
+  -n dexaflow --create-namespace \
+  --set database.url='postgres://USER:PASS@HOST:5432/dexaflow?sslmode=verify-full' \
   --set redis.url='rediss://HOST:6380/0' \
   --set auth.jwtSecret="$(openssl rand -base64 64)" \
   --set secretKey="$(openssl rand -hex 32)" \
@@ -289,13 +289,13 @@ Publish the provider's CA bundle as a ConfigMap with the key `ca.crt`, point
 `database.caConfigMap` at it, and add `sslrootcert` to the DSN:
 
 ```bash
-kubectl create namespace leoflow
-kubectl -n leoflow create configmap rds-ca --from-file=ca.crt=./global-bundle.pem
+kubectl create namespace dexaflow
+kubectl -n dexaflow create configmap rds-ca --from-file=ca.crt=./global-bundle.pem
 
 helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
-  -n leoflow --create-namespace \
+  -n dexaflow --create-namespace \
   --set database.caConfigMap=rds-ca \
-  --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt' \
+  --set database.url='postgres://USER:PASS@HOST:5432/dexaflow?sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt' \
   ...
 ```
 
@@ -339,10 +339,10 @@ this is only needed when you want `main`. Same required values, from the
 git clone --depth 1 https://github.com/dexadata/dexaflow   # current main
 cd dexaflow
 
-helm install lf ./helm/dexaflow -n leoflow --create-namespace \
+helm install lf ./helm/dexaflow -n dexaflow --create-namespace \
   --set image.tag={{< latest-version v >}} \
   --set migrations.image.tag={{< latest-version v >}} \
-  --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full' \
+  --set database.url='postgres://USER:PASS@HOST:5432/dexaflow?sslmode=verify-full' \
   --set redis.url='rediss://HOST:6380/0' \
   --set auth.jwtSecret="$(openssl rand -base64 64)" \
   --set secretKey="$(openssl rand -hex 32)" \
@@ -439,7 +439,7 @@ External Secrets, etc.) and point the chart at them:
 When **every** credential comes from an existing Secret, the chart creates
 no Secret of its own. The `checksum/secret` annotation on the pod template
 only sees the chart-managed Secret, so rotation of an
-`existingSecret` requires a manual `kubectl rollout restart deploy/lf-leoflow`.
+`existingSecret` requires a manual `kubectl rollout restart deploy/lf-dexaflow`.
 
 ### Production hardening
 
@@ -633,8 +633,8 @@ networking, autoscaling, secret wiring. Treat it as the source of truth.
 ### Uninstalling Pro
 
 ```bash
-helm uninstall lf -n leoflow
-kubectl delete namespace leoflow
+helm uninstall lf -n dexaflow
+kubectl delete namespace dexaflow
 ```
 
 This removes the chart-managed resources. PVCs (e.g. for control-plane logs
