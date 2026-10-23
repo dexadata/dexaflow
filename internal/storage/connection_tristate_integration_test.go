@@ -10,6 +10,7 @@ import (
 
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/secrets"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 // ptr is a tiny helper for building tri-state patch fields in these tests.
@@ -39,7 +40,7 @@ func tristateCipher(t *testing.T) secrets.Cipher {
 // handler maps the mask to a nil Password, exercised here as the nil case.
 func TestConnectionPatchTriState(t *testing.T) {
 	repo, _, ctx := openRepo(t)
-	repo.SetCipher(tristateCipher(t))
+	repo.Configure(storage.WithCipher(tristateCipher(t)))
 
 	connID := fmt.Sprintf("tristate_%d", time.Now().UnixNano())
 	port := 5432

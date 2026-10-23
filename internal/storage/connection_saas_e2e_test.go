@@ -10,6 +10,7 @@ import (
 
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/secrets"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 // saasDeliver runs the shared chain-of-custody hop for a single Connection and
@@ -29,7 +30,7 @@ func saasDeliver(t *testing.T, seed byte, conn domain.Connection) *url.URL {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	if cerr := repo.SetConnection(ctx, "default", conn); cerr != nil {
 		t.Fatalf("SetConnection: %v", cerr)

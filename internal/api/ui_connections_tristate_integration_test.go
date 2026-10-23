@@ -35,7 +35,6 @@ func tristateServer(t *testing.T) (srv *gin.Engine, repo *storage.Repository, ct
 		t.Fatalf("connect: %v", err)
 	}
 	t.Cleanup(pg.Close)
-	repo = storage.NewRepository(pg)
 	key := make([]byte, 32)
 	for i := range key {
 		key[i] = byte(i + 23)
@@ -44,7 +43,7 @@ func tristateServer(t *testing.T) (srv *gin.Engine, repo *storage.Repository, ct
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo = storage.NewRepository(pg, storage.WithCipher(cipher))
 	return NewServer(Dependencies{
 		Logger:        discardLogger(),
 		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
