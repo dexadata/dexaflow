@@ -1,0 +1,10 @@
+kind: Fixed
+body: |-
+  **Task log reads on S3-compatible stores and canceled requests behave.** A
+  store that answers a missing log object with a 404 other than the modeled
+  `NoSuchKey` (no body, `NotFound`, or a store-specific code) now reads as "no
+  logs" instead of a server error; a missing bucket still fails loudly. A log
+  read now runs its object store calls under the request's context, so a
+  client that goes away cancels its in-flight GETs, and the server closes the
+  GCS client at shutdown (#647).
+time: 2026-10-23T01:30:00.000000000-03:00

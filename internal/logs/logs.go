@@ -4,6 +4,7 @@ package logs
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -212,7 +213,7 @@ type LineWriter interface {
 // Sink stores and retrieves task logs.
 type Sink interface {
 	Open(ref Ref) (LogWriter, error)
-	Read(ref Ref) (io.ReadCloser, error)
+	Read(ctx context.Context, ref Ref) (io.ReadCloser, error)
 }
 
 // MarkerSink appends a single event to an attempt's existing log while
@@ -385,7 +386,7 @@ func (d *DiskSink) Prune(now time.Time, retention time.Duration) error {
 // StoredEpochs lists the attempt epochs with a log file for ref's try, with
 // one directory read (see EpochLister). A task directory that does not exist
 // yet holds none.
-func (d *DiskSink) StoredEpochs(ref Ref) ([]int, error) {
+func (d *DiskSink) StoredEpochs(_ context.Context, ref Ref) ([]int, error) {
 	if err := ref.validate(); err != nil {
 		return nil, err
 	}
@@ -415,7 +416,7 @@ func (d *DiskSink) StoredEpochs(ref Ref) ([]int, error) {
 }
 
 // Read opens the log file for reading.
-func (d *DiskSink) Read(ref Ref) (io.ReadCloser, error) {
+func (d *DiskSink) Read(_ context.Context, ref Ref) (io.ReadCloser, error) {
 	if err := ref.validate(); err != nil {
 		return nil, err
 	}

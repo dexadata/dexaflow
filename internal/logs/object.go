@@ -142,7 +142,7 @@ var errNoObjectList = errors.New("object store cannot list")
 // either layout, with one listing of the {try}. prefix (see EpochLister). A
 // store without ObjectLister, or a failed listing (S3 without s3:ListBucket),
 // returns an error and the caller probes instead.
-func (o *ObjectSink) StoredEpochs(ref Ref) ([]int, error) {
+func (o *ObjectSink) StoredEpochs(ctx context.Context, ref Ref) ([]int, error) {
 	if err := ref.validate(); err != nil {
 		return nil, err
 	}
@@ -151,7 +151,7 @@ func (o *ObjectSink) StoredEpochs(ref Ref) ([]int, error) {
 		return nil, errNoObjectList
 	}
 	dir := path.Join(o.prefix, ref.TenantID, ref.DagID, ref.RunID, ref.TaskID) + "/"
-	keys, err := lister.List(o.ctx, dir+fmt.Sprintf("%d.", ref.TryNumber), "/")
+	keys, err := lister.List(ctx, dir+fmt.Sprintf("%d.", ref.TryNumber), "/")
 	if err != nil {
 		o.logger.Debug("listing a try's log objects failed; probing each execution",
 			"prefix", logSafe(dir), "error", logSafe(err.Error()))
@@ -306,6 +306,17 @@ func (o *ObjectSink) getRetrying(ctx context.Context, key string, attempts int) 
 	}
 }
 
+// Close releases the object store's client when it holds one (GCSStore keeps
+// an HTTP/2 connection pool), and does nothing for a store without Close. Call
+// it once no writer or reader of the sink is left: the server does so at
+// shutdown, after the agent streams have drained (#647).
+func (o *ObjectSink) Close() error {
+	if c, ok := o.store.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
+}
+
 // Read returns the attempt's stored log in either layout: its segments in order
 // followed by the single object, which holds the whole log of an attempt written
 // in the single layout and only the reaper's markers of a segmented one. A
@@ -323,19 +334,19 @@ func (o *ObjectSink) getRetrying(ctx context.Context, key string, attempts int) 
 // that object is missing as well, the probe's failure is what the caller gets,
 // not an absent log, so a store outage does not read as a task that logged
 // nothing.
-func (o *ObjectSink) Read(ref Ref) (io.ReadCloser, error) {
+func (o *ObjectSink) Read(ctx context.Context, ref Ref) (io.ReadCloser, error) {
 	if err := ref.validate(); err != nil {
 		return nil, err
 	}
 	if o.layout != ObjectLayoutSegmented {
-		rc, err := o.store.Get(o.ctx, o.key(ref))
+		rc, err := o.store.Get(ctx, o.key(ref))
 		if err == nil {
 			return rc, nil
 		}
 		if !errors.Is(err, ErrObjectNotFound) {
 			return nil, fmt.Errorf("reading log object: %w", err)
 		}
-		first, serr := o.store.Get(o.ctx, o.segmentKey(ref, 0))
+		first, serr := o.store.Get(ctx, o.segmentKey(ref, 0))
 		if serr != nil {
 			if !errors.Is(serr, ErrObjectNotFound) {
 				o.logger.Debug("probing log segment failed; treating the log as missing",
@@ -343,18 +354,18 @@ func (o *ObjectSink) Read(ref Ref) (io.ReadCloser, error) {
 			}
 			return nil, fmt.Errorf("reading log object: %w", err)
 		}
-		return &segmentReader{sink: o, ref: ref, cur: first, next: 1}, nil
+		return &segmentReader{ctx: ctx, sink: o, ref: ref, cur: first, next: 1}, nil
 	}
-	first, err := o.getRetrying(o.ctx, o.segmentKey(ref, 0), objectReadProbeAttempts)
+	first, err := o.getRetrying(ctx, o.segmentKey(ref, 0), objectReadProbeAttempts)
 	if err == nil {
-		return &segmentReader{sink: o, ref: ref, cur: first, next: 1}, nil
+		return &segmentReader{ctx: ctx, sink: o, ref: ref, cur: first, next: 1}, nil
 	}
 	probeFailed := !errors.Is(err, ErrObjectNotFound)
 	if probeFailed {
 		o.logger.Warn("probing log segment failed; reading the single object",
 			"key", logSafe(o.segmentKey(ref, 0)), "error", logSafe(err.Error()))
 	}
-	rc, gerr := o.store.Get(o.ctx, o.key(ref))
+	rc, gerr := o.store.Get(ctx, o.key(ref))
 	if gerr != nil {
 		if probeFailed && errors.Is(gerr, ErrObjectNotFound) {
 			// Nothing says the attempt has no log: the probe failed for a reason
@@ -371,6 +382,7 @@ func (o *ObjectSink) Read(ref Ref) (io.ReadCloser, error) {
 // the previous one is drained, then the single object (the reaper's markers) if
 // one exists.
 type segmentReader struct {
+	ctx    context.Context // the reader's, so later segments stop with its request
 	sink   *ObjectSink
 	ref    Ref
 	cur    io.ReadCloser
@@ -420,7 +432,7 @@ func (r *segmentReader) advance() error {
 		return nil
 	}
 	key := r.sink.segmentKey(r.ref, r.next)
-	rc, err := r.sink.getRetrying(r.sink.ctx, key, objectReadProbeAttempts)
+	rc, err := r.sink.getRetrying(r.ctx, key, objectReadProbeAttempts)
 	if err == nil {
 		r.cur, r.next = rc, r.next+1
 		return nil
@@ -431,7 +443,7 @@ func (r *segmentReader) advance() error {
 		return fmt.Errorf("probing log segment %d after %d served: %w", r.next, r.next, err)
 	}
 	r.tailed = true
-	rc, err = r.sink.getRetrying(r.sink.ctx, r.sink.key(r.ref), objectReadProbeAttempts)
+	rc, err = r.sink.getRetrying(r.ctx, r.sink.key(r.ref), objectReadProbeAttempts)
 	switch {
 	case err == nil:
 		r.cur = rc

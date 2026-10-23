@@ -49,7 +49,7 @@ func setSegmentBytes(t *testing.T, n int) {
 // readAll reads an attempt back through the sink's public read path.
 func readAll(t *testing.T, sink *ObjectSink, ref Ref) string {
 	t.Helper()
-	rc, err := sink.Read(ref)
+	rc, err := sink.Read(t.Context(), ref)
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}

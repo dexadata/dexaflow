@@ -37,7 +37,7 @@ func TestDiskSinkAppendEventPreservesExisting(t *testing.T) {
 	if aerr := sink.AppendEvent(ref(), Event{Level: "error", Stream: "system", Message: "killed: agent_lost"}); aerr != nil {
 		t.Fatalf("AppendEvent() error = %v", aerr)
 	}
-	rc, err := sink.Read(ref())
+	rc, err := sink.Read(t.Context(), ref())
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
@@ -71,7 +71,7 @@ func TestDiskSinkWriteThenReadBack(t *testing.T) {
 
 	// The file persists after the writer is closed (i.e. past pod termination)
 	// and is stored as JSONL; decoding each line recovers the messages.
-	rc, err := sink.Read(ref())
+	rc, err := sink.Read(t.Context(), ref())
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestDecodeLineRoundTripAndLegacy(t *testing.T) {
 		t.Fatal(werr)
 	}
 	_ = w.Close()
-	rc, _ := NewDiskSink(dir).Read(ref())
+	rc, _ := NewDiskSink(dir).Read(t.Context(), ref())
 	defer rc.Close()
 	data, _ := io.ReadAll(rc)
 	ev := DecodeLine(strings.TrimSpace(string(data)))
@@ -131,7 +131,7 @@ func TestDiskSinkPathLayout(t *testing.T) {
 }
 
 func TestDiskSinkReadMissing(t *testing.T) {
-	if _, err := NewDiskSink(t.TempDir()).Read(ref()); err == nil {
+	if _, err := NewDiskSink(t.TempDir()).Read(t.Context(), ref()); err == nil {
 		t.Error("reading a non-existent log should error")
 	}
 }
@@ -169,7 +169,7 @@ func TestDiskSinkPruneKeepsRecentAndMissingRoot(t *testing.T) {
 	if err := sink.Prune(time.Now(), 30*24*time.Hour); err != nil {
 		t.Fatalf("Prune recent: %v", err)
 	}
-	if _, err := sink.Read(ref()); err != nil {
+	if _, err := sink.Read(t.Context(), ref()); err != nil {
 		t.Errorf("recent log should be kept: %v", err)
 	}
 	// A never-written root must not error.
@@ -291,7 +291,7 @@ func TestDiskSinkRejectsPathEscapingComponents(t *testing.T) {
 				_ = w.Close()
 				t.Fatalf("Open accepted an escaping ref; wrote outside %s", root)
 			}
-			if _, rerr := sink.Read(tc.ref); rerr == nil {
+			if _, rerr := sink.Read(t.Context(), tc.ref); rerr == nil {
 				t.Error("Read accepted an escaping ref")
 			}
 			// Nothing may exist above the root, whether or not Open errored.
