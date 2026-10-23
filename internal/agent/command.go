@@ -9,12 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 )
-
-const maxRetryAttempts = 5
 
 // NewReturnValuePath returns a unique, agent-owned path for this task's return
 // value, plus a cleanup. The agent runs one task per process, so a per-process
@@ -116,13 +113,4 @@ func ReadReturnValue(path string) (value []byte, ok bool, err error) {
 		return nil, false, fmt.Errorf("reading return value: %w", rerr)
 	}
 	return data, true, nil
-}
-
-// Backoff returns the delay before retry attempt n (1-based: 1s, 2s, 4s, 8s,
-// 16s). ok is false once the maximum number of attempts is exceeded.
-func Backoff(attempt int) (delay time.Duration, ok bool) {
-	if attempt < 1 || attempt > maxRetryAttempts {
-		return 0, false
-	}
-	return (1 << (attempt - 1)) * time.Second, true
 }
