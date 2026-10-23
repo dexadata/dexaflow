@@ -736,3 +736,82 @@ def test_main_operator_rejects_bad_args_json(monkeypatch, capsys):
 
     assert __main__.main(["--operator", "pkg.mod.MyOperator"]) == 2
     assert "invalid LEOFLOW_OPERATOR_ARGS JSON" in capsys.readouterr().err
+
+
+# A dag.py whose operator declares the callback as a constructor kwarg, the way
+# authors write it, with a DAG bound to a module variable (the Airflow-free path;
+# the auto-registered `with DAG():` shape runs in test_task_sdk_operator_callback.py).
+_FAKE_DAG_MODULE = '''
+from {ops} import EchoOperator
+
+SENT = []
+
+
+def notify(context):
+    SENT.append(repr(context.get("exception")))
+
+
+class Boom(EchoOperator):
+    def __init__(self, task_id, on_failure_callback=None, **kwargs):
+        super().__init__(task_id, **kwargs)
+        self.on_failure_callback = on_failure_callback
+
+    def execute(self, context):
+        raise RuntimeError("boom")
+
+
+class FakeDag:
+    def __init__(self, dag_id, *ops):
+        self.dag_id = dag_id
+        self.task_dict = {{op.task_id: op for op in ops}}
+
+
+other = FakeDag("other", Boom("q"))
+dag = FakeDag("report", Boom("q", on_failure_callback=[notify]))
+'''
+
+
+def _write_dag_module(tmp_path, monkeypatch) -> str:
+    ops = _write_operator_module(tmp_path, monkeypatch)
+    name = f"fakedag_{next(_counter)}"
+    (tmp_path / f"{name}.py").write_text(_FAKE_DAG_MODULE.format(ops=ops))
+    return name
+
+
+@pytest.mark.parametrize("try_number,fired", [("2", True), ("1", False)])
+def test_run_operator_reads_the_callback_off_its_task_in_dag_py(
+        tmp_path, monkeypatch, try_number, fired):
+    # The args carry no callable, so the instance run_operator builds has no
+    # callback; it is read off the task in dag.py, on the last attempt only (#484).
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(tmp_path / "rv.json"))
+    monkeypatch.setenv("LEOFLOW_TASK_ID", "q")
+    monkeypatch.setenv("LEOFLOW_DAG_ID", "report")
+    monkeypatch.setenv("LEOFLOW_ON_FAILURE_CALLBACK", "1")
+    monkeypatch.setenv("LEOFLOW_TRY_NUMBER", try_number)
+    monkeypatch.setenv("LEOFLOW_MAX_TRIES", "2")
+    dag = _write_dag_module(tmp_path, monkeypatch)
+    monkeypatch.setenv("LEOFLOW_CALLBACK_SOURCE", f"{dag}:q")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        runner.run_operator(f"{dag}.Boom", {})
+
+    sent = importlib.import_module(dag).SENT
+    assert sent == (["RuntimeError('boom')"] if fired else [])
+
+
+def test_run_operator_callback_source_that_fails_to_import_keeps_the_error(
+        tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(tmp_path / "rv.json"))
+    monkeypatch.setenv("LEOFLOW_ON_FAILURE_CALLBACK", "1")
+    monkeypatch.setenv("LEOFLOW_CALLBACK_SOURCE", "no_such_dag_module:q")
+    mod = _write_operator_module(tmp_path, monkeypatch)
+    (tmp_path / "boom_only.py").write_text(
+        f"from {mod} import EchoOperator\n"
+        "class Boom(EchoOperator):\n"
+        "    def execute(self, context):\n"
+        "        raise RuntimeError('own error')\n")
+
+    with pytest.raises(RuntimeError, match="own error"):
+        runner.run_operator("boom_only.Boom", {})
+
+    assert "importing no_such_dag_module for on_failure_callback raised" in capsys.readouterr().out

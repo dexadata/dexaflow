@@ -186,6 +186,14 @@ those **loudly** rather than dropping the callback silently:
   any provider operator (declare `connectors: [http]`); the old inline path ran in
   the control-plane process and is being removed.
 
+**On a provider operator**, the pod builds the operator from the arguments in
+`dag.json`, which cannot carry a Python callable. So on the final failed attempt
+the runtime imports your `dag.py` again, as Airflow loads it, and reads the
+callback off the task with the same `task_id`. Top-level code in `dag.py` runs
+once more in the pod on that attempt, as it does for every `@task`. Before 0.5.7
+the callback on an operator never ran (#484); a DAG compiled by an older CLI
+keeps that behavior until it is compiled and deployed again.
+
 `on_success_callback` and `on_retry_callback` aren't wired yet — they're a loud
 compile error everywhere, never a silent drop. Reach for the `alerts:` block or a
 downstream `@task` with a `trigger_rule` instead.

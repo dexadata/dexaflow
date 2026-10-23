@@ -638,6 +638,13 @@ def _maybe_fire_on_failure_callback(context, on_failure_callback) -> None:
     max_tries defaults to try_number (treat as final). Fully guarded — never raises."""
     if os.environ.get("LEOFLOW_ON_FAILURE_CALLBACK") != "1":
         return
+    try_number, max_tries = _attempt_numbers()
+    _run_on_failure_callback(on_failure_callback, context, try_number, max_tries)
+
+
+def _attempt_numbers() -> tuple[int, int]:
+    """Return (try_number, max_tries) from the env. A missing or invalid
+    max_tries defaults to try_number, so the attempt is treated as the last."""
     try:
         try_number = int(os.environ.get("LEOFLOW_TRY_NUMBER", "1"))
     except ValueError:
@@ -646,7 +653,93 @@ def _maybe_fire_on_failure_callback(context, on_failure_callback) -> None:
         max_tries = int(os.environ.get("LEOFLOW_MAX_TRIES", str(try_number)))
     except ValueError:
         max_tries = try_number
-    _run_on_failure_callback(on_failure_callback, context, try_number, max_tries)
+    return try_number, max_tries
+
+
+def _operator_failure_callback(op):
+    """Return the on_failure_callback of a captured operator's task (#484).
+
+    run_operator builds the operator from LEOFLOW_OPERATOR_ARGS, and the compiler
+    cannot carry a callable there, so the instance it builds has none. The
+    callback lives on the task as dag.py declares it: when the compiler marked
+    one, the agent passes that file's module in LEOFLOW_CALLBACK_SOURCE, and on
+    the terminal attempt the module is imported to read the callback off the
+    task with this task_id. Earlier attempts skip the import, as no callback
+    runs on them. An operator that sets the callback itself still wins."""
+    own = _on_failure_from_task_object(op)
+    if _normalize_callbacks(own):
+        return own
+    source = os.environ.get("LEOFLOW_CALLBACK_SOURCE", "")
+    if not source or os.environ.get("LEOFLOW_ON_FAILURE_CALLBACK") != "1":
+        return own
+    try_number, max_tries = _attempt_numbers()
+    if try_number < max_tries:
+        return own
+    module_name = source.partition(":")[0]
+    return _callback_from_dag_module(module_name, os.environ.get("LEOFLOW_DAG_ID", ""), op.task_id)
+
+
+def _callback_from_dag_module(module_name: str, dag_id: str, task_id: str):
+    """Import the DAG module and return the on_failure_callback of its task
+    task_id, or None when it cannot be read. Never raises: a callback that
+    cannot be loaded is logged, and the task fails with its own error."""
+    _lifecycle(f"loading on_failure_callback of {task_id} from {module_name}")
+    try:
+        dags = _import_dags(module_name)
+    except Exception as exc:  # noqa: BLE001 (the task's own failure must stand)
+        _lifecycle(f"importing {module_name} for on_failure_callback raised "
+                   f"{type(exc).__name__}: {exc} (callback not run)")
+        return None
+    # dag_id first, as one file can declare several DAGs; then any DAG with the task.
+    ordered = sorted(dags, key=lambda d: getattr(d, "dag_id", None) != dag_id)
+    for dag in ordered:
+        task = dag.task_dict.get(task_id)
+        if task is not None:
+            return getattr(task, "on_failure_callback", None)
+    _lifecycle(f"no task {task_id} in the DAGs of {module_name} (callback not run)")
+    return None
+
+
+def _dag_context():
+    """Return Airflow's DagContext (Task SDK first, then Airflow 2), or None."""
+    for name in ("airflow.sdk.definitions._internal.contextmanager", "airflow.models.dag"):
+        try:
+            context = getattr(importlib.import_module(name), "DagContext", None)
+        except ImportError:
+            continue
+        if context is not None and hasattr(context, "current_autoregister_module_name"):
+            return context
+    return None
+
+
+def _import_dags(module_name: str) -> list:
+    """Import module_name and return the DAGs it declares. A `with DAG():` or a
+    called @dag is usually bound to no module variable, so the import runs the
+    way Airflow's DagBag runs it: with DagContext auto-registering every DAG
+    the module closes. DAGs bound to module variables are added as well."""
+    dag_context = _dag_context()
+    if dag_context is not None:
+        previous = dag_context.current_autoregister_module_name
+        dag_context.current_autoregister_module_name = module_name
+    try:
+        # A module imported earlier ran with no DagContext watching (dag.py can
+        # define the operator class itself), so it runs again to register.
+        module = sys.modules.get(module_name)
+        if module is not None:
+            module = importlib.reload(module)
+        else:
+            module = importlib.import_module(module_name)
+    finally:
+        if dag_context is not None:
+            dag_context.current_autoregister_module_name = previous
+    dags = []
+    if dag_context is not None:
+        dags = [dag for dag, mod in list(dag_context.autoregistered_dags) if mod is module]
+    for value in vars(module).values():
+        bound = isinstance(getattr(value, "task_dict", None), dict)
+        if bound and all(value is not d for d in dags):
+            dags.append(value)
+    return dags
 
 
 def run_operator(operator_class: str, args: dict) -> None:
@@ -675,7 +768,7 @@ def run_operator(operator_class: str, args: dict) -> None:
         # with the raw template text would send it to the external system.
         _lifecycle(str(exc))
         context["exception"] = exc
-        _maybe_fire_on_failure_callback(context, _on_failure_from_task_object(op))
+        _maybe_fire_on_failure_callback(context, _operator_failure_callback(op))
         raise
 
     _lifecycle(f"executing {class_name}.execute()")
@@ -691,10 +784,10 @@ def run_operator(operator_class: str, args: dict) -> None:
                 f"the operator runs synchronously in the pod (poke-style).") from exc
         # A genuine failure (not a reschedule/deferral): run the on_failure_callback
         # on the terminal attempt before re-raising, so the task's failed state is
-        # unchanged (#424 inc 4b). The operator instance carries the (list-normalised)
-        # callback as an attribute, and gets the error as context["exception"].
+        # unchanged (#424 inc 4b). The callback comes from the task in dag.py
+        # (#484), and gets the error as context["exception"].
         context["exception"] = exc
-        _maybe_fire_on_failure_callback(context, _on_failure_from_task_object(op))
+        _maybe_fire_on_failure_callback(context, _operator_failure_callback(op))
         raise
     _write_return(result)
     _write_extra_links(op, context["ti"].pushed)
