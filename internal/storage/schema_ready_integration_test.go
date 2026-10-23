@@ -80,6 +80,25 @@ func TestSchemaReadyAgainstLiveDatabase(t *testing.T) {
 		}
 	})
 
+	t.Run("a not-ready schema carries the registered recovery hint", func(t *testing.T) {
+		// ADR 0090 decision 2: a running pod's readiness log names the same
+		// command for its install method as the boot gate.
+		other := connectWithSearchPath(ctx, t, pg, raw, "leoflow_probe_hint")
+		defer other.Close()
+		if err := other.SchemaReady(ctx); err == nil || !strings.Contains(err.Error(), "dexaflow db migrate") {
+			t.Errorf("without a registered hint, want the default one, got: %v", err)
+		}
+		var got string
+		other.SetRecoveryHint(func(class string) string { got = class; return "run the exact command" })
+		err := other.SchemaReady(ctx)
+		if !errors.Is(err, domain.ErrSchemaNotCurrent) || !strings.HasSuffix(err.Error(), "; run the exact command") {
+			t.Errorf("SchemaReady = %v, want ErrSchemaNotCurrent ending with the registered hint", err)
+		}
+		if got != storage.SchemaReasonAbsent {
+			t.Errorf("the hint was asked for class %q, want %q", got, storage.SchemaReasonAbsent)
+		}
+	})
+
 	t.Run("boot and readiness agree on an empty schema", func(t *testing.T) {
 		// Outside the in-flight-migration case the two verdicts must not drift:
 		// whatever boot waits on, readiness must refuse to be ready against.
