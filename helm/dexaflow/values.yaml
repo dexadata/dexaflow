@@ -113,12 +113,12 @@ taskPodSecurity:
 # always wins, keeping the dag.json artifact portable across clusters.
 executor:
   defaults:
-    # -- Default CPU **and** memory for a task that declares none of its own. Set
+    # -- Default CPU **and** memory, each for a task that sets none of its own. Set
     # BOTH: the control plane applies each value as its own request AND limit, and
     # Kubernetes grants Guaranteed QoS (least likely to be throttled/evicted under
     # node pressure) only when requests == limits for cpu AND memory. Setting just
     # one lands the task in **Burstable** with NO request or limit at all on the
-    # other dimension — nothing else fills it in — and the control plane logs a boot
+    # other dimension (nothing else fills it in), and the control plane logs a boot
     # WARN naming the missing key (#802). Empty (default) leaves tasks with no
     # platform resource floor, i.e. BestEffort QoS unless the DAG sets its own
     # (#725). Kubernetes quantities.

@@ -3,6 +3,7 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -280,6 +281,82 @@ func TestDispatchWarmPlacementWithDefaultLimits(t *testing.T) {
 			}
 			if gotWarm := placer.calls == 1; gotWarm != c.wantWarm {
 				t.Errorf("placed warm = %v, want %v", gotWarm, c.wantWarm)
+			}
+		})
+	}
+}
+
+// TestDispatchFillsTheDimensionsATaskLeavesEmpty (#802): the L0 platform
+// default fills each of cpu, memory and ephemeral storage that the task's own
+// resources leave empty, and never a dimension the task sets in part. A task
+// that declares only an ephemeral-storage limit used to drop the cpu and
+// memory default and run BestEffort.
+func TestDispatchFillsTheDimensionsATaskLeavesEmpty(t *testing.T) {
+	l0 := &domain.Resources{
+		Requests: &domain.ResourceQuantity{CPU: "250m", Memory: "512Mi"},
+		Limits:   &domain.ResourceQuantity{CPU: "250m", Memory: "512Mi"},
+	}
+	q := func(cpu, mem, eph string) *domain.ResourceQuantity {
+		return &domain.ResourceQuantity{CPU: cpu, Memory: mem, EphemeralStorage: eph}
+	}
+	cases := []struct {
+		name         string
+		task         *domain.Resources
+		wantRequests *domain.ResourceQuantity
+		wantLimits   *domain.ResourceQuantity
+	}{
+		{
+			name:         "only an ephemeral-storage limit",
+			task:         &domain.Resources{Limits: q("", "", "2Gi")},
+			wantRequests: q("250m", "512Mi", ""),
+			wantLimits:   q("250m", "512Mi", "2Gi"),
+		},
+		{
+			name:         "only a cpu request and limit",
+			task:         &domain.Resources{Requests: q("1", "", ""), Limits: q("1", "", "")},
+			wantRequests: q("1", "512Mi", ""),
+			wantLimits:   q("1", "512Mi", ""),
+		},
+		{
+			// The task owns cpu: L0's 250m request is not paired with its 100m
+			// limit, which would ask for more than the limit.
+			name:         "a cpu limit below the default request",
+			task:         &domain.Resources{Limits: q("100m", "", "")},
+			wantRequests: q("", "512Mi", ""),
+			wantLimits:   q("100m", "512Mi", ""),
+		},
+		{
+			name:         "an empty resources object",
+			task:         &domain.Resources{},
+			wantRequests: q("250m", "512Mi", ""),
+			wantLimits:   q("250m", "512Mi", ""),
+		},
+		{
+			name:         "both dimensions declared",
+			task:         &domain.Resources{Requests: q("2", "4Gi", ""), Limits: q("2", "4Gi", "")},
+			wantRequests: q("2", "4Gi", ""),
+			wantLimits:   q("2", "4Gi", ""),
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			exec := &fakeExecutor{}
+			d := newDispatcher(&fakeResolver{resolved: Resolved{TaskInstanceID: "ti", Image: "etl:v1"}}, &fakeIssuer{token: "t"}, exec)
+			d.SetPlatformDefaults(PlatformDefaults{Resources: l0})
+			before := fmt.Sprintf("%+v %+v", c.task.Requests, c.task.Limits)
+			task := domain.TaskSpec{TaskID: "t", Type: domain.TaskTypePython, Entrypoint: "dag:t", Resources: c.task}
+			if _, err := d.Dispatch(context.Background(), "run", "etl", "", task); err != nil {
+				t.Fatalf("Dispatch: %v", err)
+			}
+			got := exec.req.Resources
+			if got.Requests == nil || *got.Requests != *c.wantRequests {
+				t.Errorf("requests = %+v; want %+v", got.Requests, c.wantRequests)
+			}
+			if got.Limits == nil || *got.Limits != *c.wantLimits {
+				t.Errorf("limits = %+v; want %+v", got.Limits, c.wantLimits)
+			}
+			if after := fmt.Sprintf("%+v %+v", c.task.Requests, c.task.Limits); after != before {
+				t.Errorf("dispatch wrote through to the task's resources: %+v", c.task)
 			}
 		})
 	}
