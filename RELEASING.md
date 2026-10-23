@@ -59,7 +59,14 @@ the model Kubernetes uses:
   for every rc and GA and refuses while the list is not empty. The docs guard
   applies the same rule to each PR when it is opened, so the list is normally
   empty; it catches what the per-PR check could not, such as a skip with no
-  reason or a docs PR that was promised and never merged.
+  reason or a docs PR that was promised and never merged. The Docs gap
+  workflow (`docs-gap.yaml`, #1938) runs it before the cut too, on every push
+  to `release-X.Y` (for the next patch) and on every rc tag, together with
+  `check-stale-versions.sh --candidate` for the same version, and fails with
+  the list in its job summary. Its run on the candidate's commit is the
+  evidence of the Docs line in the release's tracking issue. A `Skip-docs:`
+  line added to a pull request afterwards needs a re-run of that job, or
+  `gh workflow run docs-gap.yaml --ref <branch> -f version=X.Y.Z`.
 - **Only the newest release branch takes patches.** An older one gets a
   security fix only when the owner decides so for that fix.
 
