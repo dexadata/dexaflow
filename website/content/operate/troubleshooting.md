@@ -100,6 +100,12 @@ kubectl -n <namespace> logs deploy/<release> --tail=20 | grep 'database schema'
 The log has one line per change of reason, `database schema is not ready;
 serving only the probes and metrics and checking again`, with `reason` and
 `action` fields, and `database schema is current; starting` when it moves on.
+On a chart install the action names this release's own command, with its
+release name, namespace and chart version filled in, or, with
+`migrations.enabled: false`, your own migration step and the
+`dexaflow-migrate` image of the release. Which case you are in, and what to
+run for each, is on
+[database lost, restored or repointed](/operate/database-lost-restored-repointed/).
 
 | `/readyz` reason | Cause / fix |
 |---|---|
@@ -110,8 +116,9 @@ serving only the probes and metrics and checking again`, with `reason` and
 | `database replaced: no schema`, `database replaced: no installation id`, `database replaced: another installation id` | The database is not the one this release was installed on. Migrating does not fix it, and the migration Job refuses it too: see [a replaced database](#a-replaced-database). |
 
 A pod that was serving when the database changed under it stays up and not
-ready too, with `postgres schema not current` on `/readyz`, and returns to
-ready when the schema is current again. When the database it finds is a
+ready too, with `postgres schema not current` on `/readyz` and the same
+action at the end of its readiness log line, and returns to ready when the
+schema is current again. When the database it finds is a
 replaced one, it exits instead, with code 3 and `the database was replaced
 under this process` in its log, so no cache outlives the old database; the
 restarted pod waits as above with a `database replaced` reason.

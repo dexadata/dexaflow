@@ -35,6 +35,7 @@ applies too; the step by step is in the
   which is the one whose schema the database holds when the file is cut
   short. Read it off the file: a single transaction rolls back, a
   concurrent index build leaves an INVALID index, a statement after the
-  `COMMIT` leaves the first part applied.
+  `COMMIT` leaves the first part applied. `TestEveryMigrationHasARecoveryRow`
+  fails while a file has no row.
 - After a schema change, regenerate the queries with `make sqlc` and test with
   `make test-integration`.

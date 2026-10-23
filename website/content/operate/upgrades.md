@@ -406,6 +406,7 @@ holds, then re-run.
 | 044 (deployer role, API tokens) | 44 | nothing: one transaction, rolled back, and the file is idempotent | 43 |
 | 045 (device sign-ins) | 45 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and the file is idempotent | 44 |
 | 046 (`build_info`) | 46 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the column is not there yet | 45; retry when the table is quiet |
+| 047 (`removed` task state) | 47 | nothing: one transaction, rolled back, so the value is not there yet, and `ADD VALUE IF NOT EXISTS` can be repeated | 46 |
 | 048 (`dispatch_unavailable_since`) | 48 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the column is not there yet | 47; retry when the table is quiet |
 | 049 (`installation`) | 49 | nothing: one transaction, rolled back, so the table is not there yet, and the file is idempotent | 48 |
 

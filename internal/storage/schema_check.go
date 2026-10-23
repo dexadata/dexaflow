@@ -184,12 +184,12 @@ func dirtyAhead(dbVersion uint, exists, dirty bool, latest uint) bool {
 func checkSchemaReady(dbVersion uint, exists, dirty bool, latest uint) error {
 	switch {
 	case !exists:
-		return fmt.Errorf("%w: schema_migrations is absent — migrations have not run (apply them: the Helm pre-upgrade migration Job, or `dexaflow db migrate` for Lite); schema v%d is required",
+		return fmt.Errorf("%w: schema_migrations is absent, migrations have not run; schema v%d is required",
 			domain.ErrSchemaNotCurrent, latest)
 	case dbVersion < latest:
 		// Also covers dirty-and-behind: a migration in flight that has not yet
 		// reached what this binary needs cannot serve it either.
-		return fmt.Errorf("%w: schema is at v%d but this binary requires v%d — run the pending migrations (the Helm pre-upgrade migration Job, or `dexaflow db migrate` for Lite)",
+		return fmt.Errorf("%w: schema is at v%d but this binary requires v%d",
 			domain.ErrSchemaNotCurrent, dbVersion, latest)
 	case dirtyAhead(dbVersion, exists, dirty, latest):
 		// The whole divergence, expressed through the one predicate so the gate
@@ -243,11 +243,40 @@ func (p *Postgres) SchemaReady(ctx context.Context) error {
 	} else {
 		p.dirtyAheadLogged.Store(false)
 	}
+	class := readyClass(version, exists, dirty, latest)
 	if p.schemaObserver != nil {
-		p.schemaObserver(readyClass(version, exists, dirty, latest))
+		p.schemaObserver(class)
 	}
-	return checkSchemaReady(version, exists, dirty, latest)
+	if err := checkSchemaReady(version, exists, dirty, latest); err != nil {
+		// The readiness log line carries what to run; /readyz itself names
+		// only the dependency (internal/api unreadyDetail).
+		return fmt.Errorf("%w; %s", err, p.schemaHint(class))
+	}
+	return nil
 }
+
+// defaultSchemaHint is the action of a schema readiness failure when the
+// server registered none (SetRecoveryHint): tests, and tools that open a
+// Postgres without the server's configuration.
+func defaultSchemaHint(class string) string {
+	if class == SchemaReasonDirty {
+		return "follow the interrupted-migration steps of the upgrade guide"
+	}
+	return "apply the migrations: the Helm pre-upgrade migration Job, or `dexaflow db migrate` for Lite"
+}
+
+func (p *Postgres) schemaHint(class string) string {
+	if p.recoveryHint != nil {
+		return p.recoveryHint(class)
+	}
+	return defaultSchemaHint(class)
+}
+
+// SetRecoveryHint registers what a schema readiness failure says to run for
+// each reason class, so a running pod's log names the same command for its
+// install method as the boot gate (ADR 0090 decision 2). Set it once, at
+// boot, before the probes run.
+func (p *Postgres) SetRecoveryHint(hint func(class string) string) { p.recoveryHint = hint }
 
 // reportReplaced is a readiness probe that found the database replaced under
 // a running process (ADR 0090 decision 5). It logs once per episode, feeds

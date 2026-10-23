@@ -35,6 +35,7 @@ type ServerConfig struct {
 	Deploy        DeploySection        `mapstructure:"deploy"`
 	Bootstrap     BootstrapSection     `mapstructure:"bootstrap"`
 	Agent         AgentSection         `mapstructure:"agent"`
+	Helm          HelmSection          `mapstructure:"helm"`
 	// SecretKey (LEOFLOW_SECRET_KEY) encrypts connection secrets at rest (ADR
 	// 0019). Raw 32 chars, 64-char hex, or base64. Empty disables connection
 	// writes.

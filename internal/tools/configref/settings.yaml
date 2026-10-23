@@ -197,6 +197,37 @@ settings:
       serializes it with the migration Job and other replicas. Refused on the
       `api` role, which never migrates. `false` leaves migrations to the chart's
       Job.
+  helm.release:
+    edition: '**Pro only**'
+    description: >-
+      The Helm release name. The chart sets it, with the four settings below,
+      so that a control plane waiting for its schema names the exact command
+      that migrates this release on `/readyz` and in its log ([ADR
+      0090](/project/adrs/0090-database-replaced-under-a-running-release/),
+      decision 2). Nothing else reads it; do not set it by hand. Empty keeps
+      the hint with `<release>`, `<namespace>` and `<chart version>`
+      placeholders.
+  helm.namespace:
+    edition: '**Pro only**'
+    description: >-
+      The release namespace, set by the chart for the recovery hint.
+  helm.chart_version:
+    edition: '**Pro only**'
+    description: >-
+      The version of the chart that rendered the pod, set by the chart, so the
+      hint's `helm upgrade --version` reruns the same chart.
+  helm.migrations_enabled:
+    edition: '**Pro only**'
+    description: >-
+      The chart's `migrations.enabled`, set by the chart. When `false` there
+      is no migration Job to run again, and the hint names your own migration
+      step and the migrate image instead of `helm upgrade`.
+  helm.migrate_image:
+    edition: '**Pro only**'
+    description: >-
+      The `dexaflow-migrate` image and tag of this release
+      (`migrations.image`), set by the chart and named by the hint when
+      `migrations.enabled` is false.
   redis.url:
     edition: '**Pro only**'
     description: >-

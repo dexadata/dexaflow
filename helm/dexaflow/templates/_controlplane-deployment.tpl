@@ -755,6 +755,19 @@ spec:
                   name: {{ include "leoflow.installationConfigMapName" .ctx }}
                   key: installationId
                   optional: true
+            # The release, so a pod waiting for its schema names the exact
+            # command that migrates it (ADR 0090 decision 2). Read by nothing
+            # else.
+            - name: LEOFLOW_HELM_RELEASE
+              value: {{ .ctx.Release.Name | quote }}
+            - name: LEOFLOW_HELM_NAMESPACE
+              value: {{ .ctx.Release.Namespace | quote }}
+            - name: LEOFLOW_HELM_CHART_VERSION
+              value: {{ .ctx.Chart.Version | quote }}
+            - name: LEOFLOW_HELM_MIGRATIONS_ENABLED
+              value: {{ .ctx.Values.migrations.enabled | toString | quote }}
+            - name: LEOFLOW_HELM_MIGRATE_IMAGE
+              value: {{ printf "%s:%s" .ctx.Values.migrations.image.repository (.ctx.Values.migrations.image.tag | default .ctx.Chart.AppVersion) | quote }}
             {{- if and .ctx.Values.migrations.onBoot (ne .role "api") }}
             # Self-migration on boot (ADR 0090 decision 4): the embedded
             # migrations, applied when the schema is absent or behind and never

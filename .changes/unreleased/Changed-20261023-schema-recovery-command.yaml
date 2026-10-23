@@ -1,0 +1,19 @@
+kind: Changed
+body: |-
+  **A Pro control plane waiting for its schema names this release's own
+  recovery command.** The reason on `/readyz` and in the boot log said
+  `helm upgrade <release> ... -n <namespace> --version <chart version>
+  --reuse-values` with placeholders, and offered `dexaflow db migrate` for
+  Lite on a Helm install. The chart now passes the release name, namespace,
+  chart version, `migrations.enabled` and the migrate image to the pods
+  (`LEOFLOW_HELM_*`), so the reason reads `helm upgrade dexaflow
+  oci://ghcr.io/dexadata/charts/dexaflow -n dexaflow --version 0.5.6
+  --reuse-values` for that release; with `migrations.enabled: false`, which
+  runs no Job, it names your own migration step and the `dexaflow-migrate`
+  image tag instead, and on Lite it names `dexaflow db migrate`. A pod that
+  was already serving logs the same command when its readiness finds the
+  schema absent or behind. A new operate page, database lost, restored or
+  repointed, says what the release reports and what to run in each case, on
+  Helm and on Lite, and the interrupted-migration table of the upgrade guide
+  gains its missing 047 row (#1846, #1619, ADR 0090).
+time: 2026-10-23T10:00:00.000000000-03:00
