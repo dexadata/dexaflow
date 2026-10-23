@@ -39,7 +39,7 @@ type Repository struct {
 	// does not say. The zero value is false (new DAGs registered active), which
 	// is what tools and tests that build a Repository directly get; the server
 	// sets it from its configuration (default true) through
-	// SetDagsArePausedAtCreation.
+	// WithDagsArePausedAtCreation.
 	pausedAtCreation bool
 	xcomValues       XComValueDeleter
 	specs            *specCache
@@ -54,11 +54,6 @@ type XComValueDeleter interface {
 	Delete(ctx context.Context, key string) error
 }
 
-// SetXComBackend attaches the XCom value store, so a clear deletes the values of
-// the attempts it clears and not only their index rows (#1131). Without it a
-// clear removes only the index rows.
-func (r *Repository) SetXComBackend(b XComValueDeleter) { r.xcomValues = b }
-
 // externalSecretCoverage reports whether a declared name is served by a
 // configured external secret backend (operator config, ADR 0060). The D6
 // registration check consults it to accept an externally-backed declared name
@@ -69,28 +64,23 @@ type externalSecretCoverage interface {
 	CoversConnection(name string) bool
 }
 
-// NewRepository builds a Repository backed by the given Postgres connection.
-func NewRepository(pg *Postgres) *Repository {
-	return &Repository{q: pg.Queries, pool: pg.Pool, specs: sharedSpecCache(pg), tenants: &sync.Map{}}
+// NewRepository builds a Repository backed by the given Postgres connection,
+// configured by opts. Every option is optional here: tools and tests that need
+// none of them get the zero behavior each option documents. The server builds
+// its repository through NewServerRepository, which also checks that the
+// dependencies it must decide were given.
+func NewRepository(pg *Postgres, opts ...Option) *Repository {
+	var c repoConfig
+	for _, o := range opts {
+		o(&c)
+	}
+	r := &Repository{q: pg.Queries, pool: pg.Pool, specs: sharedSpecCache(pg), tenants: &sync.Map{}}
+	r.apply(c)
+	return r
 }
 
-// SetDagsArePausedAtCreation sets whether a DAG registered for the first time
-// starts paused when its spec has no is_paused_upon_creation (the server's
-// dags_are_paused_at_creation, #1705). It never affects a DAG that exists.
-func (r *Repository) SetDagsArePausedAtCreation(paused bool) { r.pausedAtCreation = paused }
-
-// DagsArePausedAtCreation reports the setting SetDagsArePausedAtCreation set.
+// DagsArePausedAtCreation reports the setting WithDagsArePausedAtCreation gave.
 func (r *Repository) DagsArePausedAtCreation() bool { return r.pausedAtCreation }
-
-// SetCipher attaches the encryption cipher used for connection secrets (ADR
-// 0019). Without it, connection writes fail rather than storing plaintext.
-func (r *Repository) SetCipher(c secrets.Cipher) { r.cipher = c }
-
-// SetExternalSecretCoverage attaches the operator-configured external-backend
-// coverage used by the D6 registration check (ADR 0060 B1). Without it, the check
-// is the pre-0060 vault-existence check (a declared name must exist in the
-// vault). It must be wired from operator/Helm config, never from a DAG.
-func (r *Repository) SetExternalSecretCoverage(c externalSecretCoverage) { r.extCoverage = c }
 
 func toInt32(n int) int32 {
 	switch {

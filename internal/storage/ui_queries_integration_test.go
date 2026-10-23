@@ -821,7 +821,7 @@ func TestConnectionsIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	connID := fmt.Sprintf("uiq_conn_%d", time.Now().UnixNano())
 	port := 5432
@@ -880,7 +880,7 @@ func TestSecretDeliveryByTenantUUIDIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	varKey := fmt.Sprintf("sd_var_%d", time.Now().UnixNano())
 	connID := fmt.Sprintf("sd_conn_%d", time.Now().UnixNano())
@@ -925,7 +925,7 @@ func TestSecretDeliveryByTenantUUIDIntegration(t *testing.T) {
 // refused rather than storing a credential in plaintext.
 func TestConnectionWriteRequiresCipherIntegration(t *testing.T) {
 	repo, _, ctx := openRepo(t)
-	// no SetCipher
+	// no WithCipher
 	err := repo.SetConnection(ctx, "default", domain.Connection{ConnID: "x", ConnType: "postgres", Password: "p"})
 	if !errors.Is(err, secrets.ErrNoKey) {
 		t.Errorf("write without cipher = %v, want ErrNoKey", err)
@@ -1534,7 +1534,7 @@ func TestFilteredListQueriesIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(c)
+	repo.Configure(storage.WithCipher(c))
 
 	prefix := fmt.Sprintf("flq_%d_", time.Now().UnixNano())
 

@@ -39,7 +39,7 @@ func auditCount(t *testing.T, repo *storage.Repository, dagID string) int {
 // and leaves no DAG, version or audit entry behind (#1705).
 func TestRegisterDryRunOfANewDagWritesNothing(t *testing.T) {
 	repo, _, ctx := openRepo(t)
-	repo.SetDagsArePausedAtCreation(true)
+	repo.Configure(storage.WithDagsArePausedAtCreation(true))
 	dagID := fmt.Sprintf("dry_new_%d", time.Now().UnixNano())
 	spec := registerTxSpec(dagID, "v1", "a", 3, false)
 	got, err := dryRegister(ctx, repo, spec, nil)
@@ -66,7 +66,7 @@ func TestRegisterDryRunOfANewDagWritesNothing(t *testing.T) {
 func TestRegisterDryRunOfARedeployWritesNothing(t *testing.T) {
 	yes := true
 	repo, _, ctx := openRepo(t)
-	repo.SetDagsArePausedAtCreation(false)
+	repo.Configure(storage.WithDagsArePausedAtCreation(false))
 	dagID := fmt.Sprintf("dry_redeploy_%d", time.Now().UnixNano())
 	registerAs(t, ctx, repo, "", registerTxSpec(dagID, "v1", "a", 3, false), nil)
 	audits := auditCount(t, repo, dagID)

@@ -23,7 +23,7 @@ func TestReencryptMovesRowsOntoThePrimaryKey(t *testing.T) {
 	newCipher := mustCipher(t, "a-fresh-per-install-key-32byte!!")
 
 	// A connection written by the previous install, under the old key only.
-	repo.SetCipher(oldCipher)
+	repo.Configure(storage.WithCipher(oldCipher))
 	if err := repo.SetConnection(ctx, "default", domain.Connection{
 		ConnID: "prod_db", ConnType: "postgres", Host: "db.internal",
 		Login: "svc", Password: "hunter2", Extra: `{"sslmode":"require"}`,
@@ -33,7 +33,7 @@ func TestReencryptMovesRowsOntoThePrimaryKey(t *testing.T) {
 
 	// Rotation: the new key encrypts, the old one only decrypts.
 	rotating := secrets.WithFallback(newCipher, oldCipher)
-	repo.SetCipher(rotating)
+	repo.Configure(storage.WithCipher(rotating))
 
 	res, err := repo.ReencryptSecrets(ctx)
 	if err != nil {
@@ -45,7 +45,7 @@ func TestReencryptMovesRowsOntoThePrimaryKey(t *testing.T) {
 
 	// The decisive assertion: the row now opens under the NEW key ALONE. If it
 	// does not, the old key can never be retired and the rotation is cosmetic.
-	repo.SetCipher(newCipher)
+	repo.Configure(storage.WithCipher(newCipher))
 	got, gerr := repo.GetConnection(ctx, "default", "prod_db")
 	if gerr != nil {
 		t.Fatalf("reading with the new key alone: %v; the rotation did not move the row", gerr)
@@ -56,7 +56,7 @@ func TestReencryptMovesRowsOntoThePrimaryKey(t *testing.T) {
 
 	// And a second pass has nothing to do: re-encrypting on every boot would
 	// rewrite every row forever.
-	repo.SetCipher(rotating)
+	repo.Configure(storage.WithCipher(rotating))
 	again, aerr := repo.ReencryptSecrets(ctx)
 	if aerr != nil {
 		t.Fatalf("second pass: %v", aerr)
@@ -74,17 +74,17 @@ func TestReencryptLeavesUnreadableRowsUntouched(t *testing.T) {
 	clearConnections(t, repo, ctx)
 
 	strangerCipher := mustCipher(t, "a-key-nobody-configured-32bytes!")
-	repo.SetCipher(strangerCipher)
+	repo.Configure(storage.WithCipher(strangerCipher))
 	if err := repo.SetConnection(ctx, "default", domain.Connection{
 		ConnID: "orphan", ConnType: "postgres", Password: "secret",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	repo.SetCipher(secrets.WithFallback(
+	repo.Configure(storage.WithCipher(secrets.WithFallback(
 		mustCipher(t, "a-fresh-per-install-key-32byte!!"),
 		mustCipher(t, "the-old-published-key-32bytes!!!"),
-	))
+	)))
 	res, err := repo.ReencryptSecrets(ctx)
 	if err == nil {
 		t.Error("a row no configured key can open must be reported, not passed over in silence")
@@ -94,7 +94,7 @@ func TestReencryptLeavesUnreadableRowsUntouched(t *testing.T) {
 	}
 
 	// Still readable with its own key: nothing was destroyed.
-	repo.SetCipher(strangerCipher)
+	repo.Configure(storage.WithCipher(strangerCipher))
 	if _, gerr := repo.GetConnection(ctx, "default", "orphan"); gerr != nil {
 		t.Errorf("the untouched row is no longer readable with its own key: %v", gerr)
 	}
@@ -154,19 +154,19 @@ func TestReencryptReportsSkippedRows(t *testing.T) {
 
 	oldCipher := mustCipher(t, "the-old-published-key-32bytes!!!")
 	newCipher := mustCipher(t, "a-fresh-per-install-key-32byte!!")
-	repo.SetCipher(oldCipher)
+	repo.Configure(storage.WithCipher(oldCipher))
 	if err := repo.SetConnection(ctx, "default", domain.Connection{ConnID: "prod_db", ConnType: "postgres", Password: "a"}); err != nil {
 		t.Fatal(err)
 	}
-	writer.SetCipher(newCipher)
-	repo.SetCipher(&racingReader{
+	writer.Configure(storage.WithCipher(newCipher))
+	repo.Configure(storage.WithCipher(&racingReader{
 		StaleReader: secrets.WithFallback(newCipher, oldCipher),
 		race: func() {
 			if err := writer.SetConnection(ctx, "default", domain.Connection{ConnID: "prod_db", ConnType: "postgres", Password: "b"}); err != nil {
 				t.Errorf("racing write: %v", err)
 			}
 		},
-	})
+	}))
 	res, err := repo.ReencryptSecrets(ctx)
 	if err != nil {
 		t.Fatalf("ReencryptSecrets: %v", err)

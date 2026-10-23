@@ -53,7 +53,7 @@ func countAudits(t *testing.T, repo *storage.Repository, dagID, action string) i
 func TestRegisterPausedOverrideOnCreation(t *testing.T) {
 	yes, no := true, false
 	repo, _, ctx := openRepo(t)
-	repo.SetDagsArePausedAtCreation(true)
+	repo.Configure(storage.WithDagsArePausedAtCreation(true))
 	dagID := fmt.Sprintf("override_create_%d", time.Now().UnixNano())
 	spec := registerTxSpec(dagID, "v1", "a", 3, false)
 	spec.IsPausedUponCreation = &yes
@@ -80,7 +80,7 @@ func TestRegisterPausedOverrideOnCreation(t *testing.T) {
 func TestRegisterPausedOverrideOnRedeploy(t *testing.T) {
 	no := false
 	repo, _, ctx := openRepo(t)
-	repo.SetDagsArePausedAtCreation(true)
+	repo.Configure(storage.WithDagsArePausedAtCreation(true))
 	user, err := repo.CreateUser(ctx, "default", fmt.Sprintf("pauser-%d@example.com", time.Now().UnixNano()), "pw-123456789", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -144,7 +144,7 @@ func pauseKnownContent(t *testing.T, ctx context.Context, repo *storage.Reposito
 func TestRegisterPausedOverrideRolledBackWithARefusedVersion(t *testing.T) {
 	no := false
 	repo, _, ctx := openRepo(t)
-	repo.SetDagsArePausedAtCreation(true)
+	repo.Configure(storage.WithDagsArePausedAtCreation(true))
 	dagID := fmt.Sprintf("override_conflict_%d", time.Now().UnixNano())
 	registerAs(t, ctx, repo, "", registerTxSpec(dagID, "v1", "a", 3, false), nil)
 	clash := registerTxSpec(dagID, "v1", "bb", 3, false)
@@ -168,7 +168,7 @@ func TestRegisterPausedOverrideRolledBackWithARefusedVersion(t *testing.T) {
 // state the DAG is already in records nothing (#1705).
 func TestSetPausedByAudits(t *testing.T) {
 	repo, _, ctx := openRepo(t)
-	repo.SetDagsArePausedAtCreation(true)
+	repo.Configure(storage.WithDagsArePausedAtCreation(true))
 	user, err := repo.CreateUser(ctx, "default", fmt.Sprintf("toggler-%d@example.com", time.Now().UnixNano()), "pw-123456789", nil)
 	if err != nil {
 		t.Fatal(err)
