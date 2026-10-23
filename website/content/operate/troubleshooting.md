@@ -413,8 +413,8 @@ reason in the server logs and metrics. The image is
 
 ## Observability
 
-- **Metrics:** Prometheus at `:9090/metrics` (scheduler, dispatch, inline
-  runner, undispatchable counters; ADR 0007 has the catalogue).
+- **Metrics:** Prometheus at `:9090/metrics`. The [metrics reference](/reference/metrics/)
+  lists every family with its type and labels.
 - **Schema readiness:** `dexaflow_schema_ready` is 1 when the database schema
   is one the binary can serve, and 0 while it is not, with a `reason` label
   (`schema absent`, `schema behind`, `schema dirty`, `schema unreadable`,
