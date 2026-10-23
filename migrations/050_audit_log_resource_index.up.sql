@@ -1,0 +1,20 @@
+-- Index the audit log by tenant and resource, newest first, for the event log
+-- filtered to one DAG (#1612). ListAuditLogs, ListAuditLogsAfter and
+-- CountAuditLogs filter on resource_id, which no index covered: a DAG's
+-- entries were found by reading every entry of the tenant through
+-- idx_audit_tenant. The column order matches the list's ORDER BY, so a page is
+-- one index range scan whatever its depth.
+--
+-- CONCURRENTLY so the build does not block writes to audit_log. It cannot run
+-- inside a transaction, so this file holds this one statement and no
+-- BEGIN/COMMIT: golang-migrate sends the file as a single simple-protocol
+-- statement, which Postgres runs outside any transaction block.
+--
+-- No IF NOT EXISTS, on purpose: if the build is interrupted, Postgres leaves
+-- an INVALID index behind and golang-migrate marks version 50 dirty, and a
+-- retry must fail loudly instead of keeping the invalid index. Drop it first:
+--
+--   DROP INDEX CONCURRENTLY IF EXISTS idx_audit_resource;
+--   migrate -path migrations -database "$DATABASE_URL" force 49
+--   migrate -path migrations -database "$DATABASE_URL" up
+CREATE INDEX CONCURRENTLY idx_audit_resource ON audit_log (tenant_id, resource_id, occurred_at DESC, id DESC);

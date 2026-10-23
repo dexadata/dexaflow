@@ -147,6 +147,47 @@ func TestDagRunsCursorWalksEveryRunOnce(t *testing.T) {
 	if repo.gotAfter == nil || repo.gotAfter.Key != "r2" || repo.gotLimit != 3 {
 		t.Errorf("last cursor call = %+v limit %d, want after r2 with limit+1", repo.gotAfter, repo.gotLimit)
 	}
+	// The first page counted; every cursor after it carries that total, so
+	// the store skips the COUNT (#1612).
+	if repo.gotAfter != nil && repo.gotAfter.Total != 5 {
+		t.Errorf("cursor total = %d, want the first page's 5", repo.gotAfter.Total)
+	}
+}
+
+// The body cursors of cursor mode carry the total too, and a cursor issued
+// before they did still opens its page, which then counts.
+func TestDagRunsBodyCursorCarriesTotal(t *testing.T) {
+	repo := &keysetRunRepo{fakeRunRepo: fakeRunRepo{runs: fiveRuns()}}
+	srv := keysetRunServer(repo)
+	rec := authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns?limit=2&cursor=", "")
+	var body struct {
+		NextCursor *string `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.NextCursor == nil {
+		t.Fatalf("first cursor page = %s (%v)", rec.Body.String(), err)
+	}
+	rec = authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns?limit=2&cursor="+*body.NextCursor, "")
+	if rec.Code != http.StatusOK || repo.gotAfter == nil || repo.gotAfter.Total != 5 {
+		t.Fatalf("status %d, cursor call %+v, want the first page's total 5", rec.Code, repo.gotAfter)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.NextCursor == nil {
+		t.Fatalf("second cursor page = %s (%v)", rec.Body.String(), err)
+	}
+	if cur, err := decodeCursor(*body.NextCursor); err != nil || cur.Total != 5 {
+		t.Errorf("second page's next cursor = %+v (%v), want total 5 kept", cur, err)
+	}
+	old := encodeWire(cursorWire{At: "2026-09-01T03:00:00Z", Key: "r4"})
+	rec = authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns?limit=2&cursor="+old, "")
+	if rec.Code != http.StatusOK || repo.gotAfter == nil || repo.gotAfter.Total != 0 {
+		t.Fatalf("status %d, cursor call %+v, want an old cursor accepted with no total", rec.Code, repo.gotAfter)
+	}
+}
+
+// A cursor whose total is negative was not issued by this server.
+func TestDecodeCursorRejectsNegativeTotal(t *testing.T) {
+	if _, err := decodeCursor(encodeWire(cursorWire{At: "2026-09-01T03:00:00Z", Key: "r4", Total: -1})); err == nil {
+		t.Fatal("accepted a cursor with a negative total")
+	}
 }
 
 // The state filter reaches the keyset query instead of the in-memory scan.
@@ -314,8 +355,8 @@ func TestEventLogsCursorWalksEveryEntryOnce(t *testing.T) {
 	if rec.Header().Get(nextCursorHeader) != "" {
 		t.Error("next cursor on the last page")
 	}
-	if reader.gotDag != "etl" || reader.gotAfter == nil || reader.gotAfter.Key != "20" {
-		t.Errorf("cursor call dag=%q after=%+v", reader.gotDag, reader.gotAfter)
+	if reader.gotDag != "etl" || reader.gotAfter == nil || reader.gotAfter.Key != "20" || reader.gotAfter.Total != 3 {
+		t.Errorf("cursor call dag=%q after=%+v, want after 20 carrying the total 3", reader.gotDag, reader.gotAfter)
 	}
 }
 

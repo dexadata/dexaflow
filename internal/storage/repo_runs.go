@@ -105,7 +105,8 @@ func (r *Repository) listDagRunsPage(ctx context.Context, dag queries.Dag, dagID
 
 // ListDagRunsAfter returns up to limit of a DAG's runs strictly before the
 // cursor, newest first, and the number of runs matching states (all runs when
-// states is empty). It is the keyset form of ListDagRuns: the same order, but a
+// states is empty): the cursor's Total when it carries one, else a COUNT. It
+// is the keyset form of ListDagRuns: the same order, but a
 // deep page is an index range scan instead of a scan past every skipped row.
 func (r *Repository) ListDagRunsAfter(ctx context.Context, tenant, dagID string, states []string, after domain.PageCursor, limit int) ([]domain.DagRun, int, error) {
 	dag, err := r.resolveDag(ctx, tenant, dagID)
@@ -122,10 +123,13 @@ func (r *Repository) ListDagRunsAfter(ctx context.Context, tenant, dagID string,
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing dag runs: %w", err)
 	}
-	var total int64
-	if len(states) == 0 {
+	total := int64(after.Total)
+	switch {
+	case total > 0:
+		// The cursor carries the total its first page counted (#1612).
+	case len(states) == 0:
 		total, err = r.q.CountDagRunsByDag(ctx, queries.CountDagRunsByDagParams{DagID: dag.ID, TenantID: dag.TenantID})
-	} else {
+	default:
 		total, err = r.q.CountDagRunsByDagStates(ctx, queries.CountDagRunsByDagStatesParams{TenantID: dag.TenantID, DagID: dag.ID, States: states})
 	}
 	if err != nil {

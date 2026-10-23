@@ -143,8 +143,14 @@ func runCases(ctx context.Context, pool *pgxpool.Pool, tenant string, queries ma
 			selected[n] = true
 		}
 	}
+	// The keyset dag run case reads a DAG by its row id, not its name.
+	var probeDag string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM dags WHERE tenant_id = $1::uuid AND dag_id = $2`,
+		tenant, probeDagID).Scan(&probeDag); err != nil {
+		return nil, fmt.Errorf("look up %s: %w", probeDagID, err)
+	}
 	var results []result
-	for _, c := range cases(tenant) {
+	for _, c := range cases(tenant, probeDag) {
 		if len(selected) > 0 && !selected[c.name] {
 			continue
 		}
@@ -171,9 +177,17 @@ type queryCase struct {
 	args   []any
 }
 
-func cases(tenant string) []queryCase {
+// probeDagID is the DAG the per-DAG cases read.
+const probeDagID = "qp_dag_00002"
+
+// cases lists the measured calls; dag is probeDagID's row id. The keyset
+// cases open a page deep in the list, where an offset page would skip every
+// row before it, and run without the COUNT their first page paid (#1612).
+func cases(tenant, dag string) []queryCase {
 	now := time.Now()
 	weekAgo := now.Add(-7 * 24 * time.Hour)
+	deepRun := now.Add(-500 * time.Hour)  // runs are hourly, runs-per-dag back
+	deepAudit := now.Add(-24 * time.Hour) // audit rows are a second apart
 	return []queryCase{
 		{"ListDagsFiltered (state)", "ListDagsFiltered", "/ui/dags state chip", []any{tenant, 50, 0, nil, "failed"}},
 		{"ListDagsFiltered", "ListDagsFiltered", "/ui/dags", []any{tenant, 50, 0, nil, nil}},
@@ -185,8 +199,10 @@ func cases(tenant string) []queryCase {
 		{"ListRunningTasks", "ListRunningTasks", "pod-lost reaper", []any{60.0, time.Unix(0, 0), "00000000-0000-0000-0000-000000000000", 100}},
 		{"ListActiveStagingVolumes", "ListActiveStagingVolumes", "staging GC", nil},
 		{"PoolSlotUsage", "PoolSlotUsage", "/api/v2/pools", []any{tenant}},
-		{"CountAuditLogs (dag)", "CountAuditLogs", "audit page", []any{tenant, "qp_dag_00002"}},
-		{"ListAuditLogs (dag)", "ListAuditLogs", "audit page", []any{tenant, 50, 0, "qp_dag_00002"}},
+		{"CountAuditLogs (dag)", "CountAuditLogs", "audit page", []any{tenant, probeDagID}},
+		{"ListAuditLogs (dag)", "ListAuditLogs", "audit page", []any{tenant, 50, 0, probeDagID}},
+		{"ListAuditLogsAfter (dag)", "ListAuditLogsAfter", "audit page by cursor", []any{tenant, probeDagID, deepAudit, int64(1 << 62), 51}},
+		{"ListDagRunsByDagAfter", "ListDagRunsByDagAfter", "/api/v2 dag runs by cursor", []any{tenant, dag, []string{}, deepRun, "~", 51}},
 		{"DeleteDag", "DeleteDag", "DAG deletion", []any{tenant, deleteTarget}},
 	}
 }
