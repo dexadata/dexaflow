@@ -291,6 +291,40 @@ settings:
       `config.dagsArePausedAtCreation` (not `extraEnv`); the chart always renders this
       variable. A DAG deleted and deployed again comes back paused. See [New DAGs
       start paused](/concepts/core-concepts/#new-dags-start-paused).
+  bootstrap.email:
+    edition: both
+    default_note: means `admin@dexaflow.local`
+    description: >-
+      Email of the admin user created at boot from `DEXAFLOW_BOOTSTRAP_PASSWORD`
+      or `DEXAFLOW_BOOTSTRAP_PASSWORD_HASH`, in tenant `default`. Left empty, an
+      install whose admin is the pre-rename `admin@leoflow.local` keeps that
+      address. With a credential set, boot fails on an address with a space or
+      a control character.
+  bootstrap.password:
+    edition: both
+    description: >-
+      Plaintext password of the bootstrap admin, used when
+      `DEXAFLOW_BOOTSTRAP_PASSWORD_HASH` is empty. Unset, no admin is created.
+      Prefer the hash. Boot fails on a password longer than the 72 bytes bcrypt
+      accepts. Never logged. Helm: `bootstrap.password` or
+      `bootstrap.existingSecret`.
+  bootstrap.password_hash:
+    edition: both
+    description: >-
+      Bcrypt hash of the bootstrap admin's password, so the plaintext never
+      reaches the server. Takes precedence over `DEXAFLOW_BOOTSTRAP_PASSWORD`
+      and reconciles: an existing admin with that email gets this password on
+      every boot. Boot fails on a value that is not a bcrypt hash. Never
+      logged. `dexaflow lite` sets it from its config file.
+  agent.allow_insecure_secrets:
+    edition: dev-only
+    description: >-
+      `true` lets the server deliver secrets to agents over a plaintext gRPC
+      channel. Dev only: `dexaflow lite` sets it for its loopback agents, and
+      the Pro edition refuses to boot with it. As in earlier releases, only the
+      exact value `true` turns it on: any other value from the environment
+      (`1`, `TRUE`, `yes`) reads as `false`, with a warning at boot. No Helm
+      value on purpose.
   auth.secret_scoping:
     edition: both
     description: >-
@@ -1388,31 +1422,6 @@ environment:
       variables alone. The Helm chart points it at a mounted ConfigMap when it
       has map-valued keys to deliver (`auth.oidc.tenant_claims`,
       `auth.oidc.role_mappings`).
-  - name: BOOTSTRAP_EMAIL
-    group: server
-    default: admin@leoflow.local
-    description: >-
-      Email of the admin user created at boot from `DEXAFLOW_BOOTSTRAP_PASSWORD`
-      or `DEXAFLOW_BOOTSTRAP_PASSWORD_HASH`, in tenant `default`.
-  - name: BOOTSTRAP_PASSWORD
-    group: server
-    description: >-
-      Plaintext password of the bootstrap admin. The admin is created only when
-      the `default` tenant has no user yet; an existing install is never
-      changed. Unset, no admin is created. Prefer the hash below.
-  - name: BOOTSTRAP_PASSWORD_HASH
-    group: server
-    description: >-
-      Bcrypt hash of the bootstrap admin's password, so the plaintext never
-      reaches the server. Takes precedence over `DEXAFLOW_BOOTSTRAP_PASSWORD`
-      and reconciles: an existing admin with that email gets this password on
-      every boot. `dexaflow lite` sets it from its config file.
-  - name: AGENT_ALLOW_INSECURE_SECRETS
-    group: server
-    description: >-
-      `true` lets the server deliver secrets to agents over a plaintext gRPC
-      channel. Dev only: `dexaflow lite` sets it for its loopback agents, and
-      the Pro edition refuses to boot with it.
   - name: LITE_VENVS_ROOT
     group: server
     description: >-

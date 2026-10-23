@@ -312,4 +312,11 @@ var serverDefaults = map[string]any{
 	"retention.batch_size":         1000,
 	"retention.batch_pause":        "100ms",
 	"retention.max_rows_per_cycle": 100000,
+	// #1952: read straight from the environment before, now bound under both
+	// prefixes. Empty and false keep that behavior: no bootstrap admin, and no
+	// secrets over a plaintext agent channel.
+	"bootstrap.email":              "",
+	"bootstrap.password":           "",
+	"bootstrap.password_hash":      "",
+	"agent.allow_insecure_secrets": false,
 }
