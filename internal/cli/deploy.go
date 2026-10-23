@@ -572,6 +572,12 @@ func resolveServerChoiceTokenFor(cmd *cobra.Command, serverFlag, tokenFlag strin
 		resolvedTarget.configured = store.ServerURL
 	}
 	resolvedTarget.fromConfig = source == tokenLegacy || withheld
+	resolvedTarget.expiredAt = time.Time{}
+	if source == tokenSession || source == tokenLegacy {
+		if _, exp, ok := tokenIssuedExpiry(token); ok && !exp.After(time.Now()) {
+			resolvedTarget.expiredAt = exp
+		}
+	}
 	return choice, token, nil
 }
 
