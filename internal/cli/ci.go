@@ -74,11 +74,6 @@ const ciCLIImageRepo = "ghcr.io/dexadata/dexaflow-cli"
 // ciCLIImageMinVersion is the first release that publishes ciCLIImageRepo.
 const ciCLIImageMinVersion = "v0.5.4"
 
-// ciImageDigest reads the digest an image reference names in its registry.
-// It is a variable only so the tests of this package answer without the
-// network; nothing else assigns it.
-var ciImageDigest = lookupImageDigest
-
 // lookupImageDigest asks the registry of image (a tag reference) for the
 // digest it names, with the CLI's registry client, which computes it from
 // the manifest returned. The dexaflow-cli package is public, so no
@@ -102,7 +97,7 @@ func ciCLIImage(ctx context.Context, cliVersion string) (string, error) {
 		return "", nil
 	}
 	image := ciCLIImageRepo + ":" + cliVersion
-	digest, err := ciImageDigest(ctx, image)
+	digest, err := depsFrom(ctx).imageDigest(ctx, image)
 	if err != nil {
 		return "", fmt.Errorf("finding the digest of %s, to pin the image the GitLab job runs in: %w", image, err)
 	}
@@ -121,13 +116,9 @@ const ciReleaseRepo = "https://github.com/dexadata/dexaflow.git"
 // ciCommitRe matches a full commit SHA.
 var ciCommitRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
-// ciTagCommit finds the commit release tag points to, for pinning the
-// setup-dexaflow action by commit. It is a variable only so the tests of
-// this package answer without the network; nothing else assigns it.
-var ciTagCommit = lookupTagCommit
-
-// lookupTagCommit asks the repository which commit tag points to, with
-// git ls-remote: the peeled entry of an annotated tag, else the tag itself.
+// lookupTagCommit finds the commit release tag points to, for pinning the
+// setup-dexaflow action by commit. It asks the repository with git
+// ls-remote: the peeled entry of an annotated tag, else the tag itself.
 func lookupTagCommit(ctx context.Context, tag string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -176,7 +167,7 @@ func ciActionCommit(ctx context.Context, cliVersion string) (string, error) {
 	if "v"+strings.TrimPrefix(info.Version, "v") == cliVersion && ciCommitRe.MatchString(info.GitCommit) {
 		return info.GitCommit, nil
 	}
-	sha, err := ciTagCommit(ctx, cliVersion)
+	sha, err := depsFrom(ctx).tagCommit(ctx, cliVersion)
 	if err != nil {
 		return "", fmt.Errorf("finding the commit of %s, to pin the setup-dexaflow action by: %w", cliVersion, err)
 	}

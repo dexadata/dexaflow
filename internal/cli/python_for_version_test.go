@@ -19,6 +19,7 @@ import (
 // task runs on and a silent coercion is exactly the class this fix exists to
 // remove.
 func TestParsePythonMinor(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		in   string
 		want int
@@ -57,6 +58,7 @@ func TestParsePythonMinor(t *testing.T) {
 // trusted by PATH when nothing was asked for, and must be version-CHECKED when
 // something was. Trusting the path is what produced the skew.
 func TestResolvePythonForVersion(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	absent := func(string) (string, error) { return "", os.ErrNotExist }
 
@@ -164,6 +166,7 @@ func TestResolvePythonForVersion(t *testing.T) {
 // interpreter forever: ensureDagVenv short-circuits on the interpreter file
 // existing, so the declared version would apply only to venvs that never existed.
 func TestPyvenvMinor(t *testing.T) {
+	t.Parallel()
 	t.Run("reads the version line", func(t *testing.T) {
 		dir := t.TempDir()
 		cfg := "home = /opt/python/bin\ninclude-system-site-packages = false\nversion = 3.12.0\n"
@@ -228,6 +231,7 @@ func TestPyvenvMinor(t *testing.T) {
 // TestParsePythonMinorErrorText pins the message a malformed minor produces:
 // it wraps the strconv error alone, as it did before the shared parser.
 func TestParsePythonMinorErrorText(t *testing.T) {
+	t.Parallel()
 	_, err := parsePythonMinor("3.x")
 	want := `python_version "3.x" is not of the form 3.<minor> (e.g. "3.13"): strconv.Atoi: parsing "x": invalid syntax`
 	if err == nil || err.Error() != want {
@@ -283,6 +287,7 @@ func writeFakeDagVenv(t *testing.T, home, dagID, builtOn string) (dir, py string
 // after reverting the edit, and the reload path keeps serving the last
 // registered DAG either way.
 func TestDagVenvRebuiltWhenDeclaredMinorChanges(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("sh stub is POSIX-only")
 	}
@@ -308,6 +313,7 @@ func TestDagVenvRebuiltWhenDeclaredMinorChanges(t *testing.T) {
 // path. A venv already on the declared minor must be left exactly as it was —
 // no rebuild, no reinstall, and no interpreter resolution at all.
 func TestDagVenvKeptWhenDeclaredMinorMatches(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("sh stub is POSIX-only")
 	}
@@ -335,6 +341,7 @@ func TestDagVenvKeptWhenDeclaredMinorMatches(t *testing.T) {
 // alone rather than rebuilt, because "unknown" read as "wrong" would mean a full
 // reinstall on every single boot — a worse failure than the skew.
 func TestDagVenvKeptWhenPyvenvCfgUnreadable(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("sh stub is POSIX-only")
 	}
@@ -361,6 +368,7 @@ func TestDagVenvKeptWhenPyvenvCfgUnreadable(t *testing.T) {
 // for the parser and fetches nothing, so only the lazy managed fetch (or
 // installing 3.11) produces it.
 func TestInstallHintNeverOffersSetup(t *testing.T) {
+	t.Parallel()
 	for _, want := range []int{minPythonMinor, minPythonMinor + 2} {
 		got := installHint(want)
 		if strings.Contains(got, "dexaflow setup") {
@@ -388,6 +396,7 @@ func TestInstallHintNeverOffersSetup(t *testing.T) {
 // Nothing is inconsistent in that case: the task image is py3.11 because the
 // same default chose it, so dev and the cluster already agree.
 func TestDevEnforcedPythonVersion(t *testing.T) {
+	t.Parallel()
 	cmd := devTestCmd()
 
 	t.Run("a defaulted version is not enforced", func(t *testing.T) {

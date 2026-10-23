@@ -18,6 +18,7 @@ import (
 // anyone who set the field expecting the documented "files copied into the
 // image". Adding is the reading that cannot break a working build.
 func TestIncludePathsCopiesExtraPaths(t *testing.T) {
+	t.Parallel()
 	base := func() *domain.LeoflowConfig {
 		c := &domain.LeoflowConfig{DagID: "d"}
 		c.ApplyDefaults()
@@ -97,6 +98,7 @@ func TestIncludePathsCopiesExtraPaths(t *testing.T) {
 // where a credential leaves unnoticed — the precise failure that warning exists
 // to prevent.
 func TestIncludePathsAreScannedForSecrets(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
 	cfg.IncludePaths = []string{"conf"}

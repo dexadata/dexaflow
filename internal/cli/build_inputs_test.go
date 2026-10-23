@@ -27,6 +27,7 @@ func lookupFrom(env map[string]string) func(string) (string, bool) {
 // build secret, mounted for that one RUN, so the URL and its credentials
 // never land in a layer, an ENV or the image history.
 func TestGeneratedDockerfileInstallsFromThePackageIndexSecret(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DagID: "etl", PythonVersion: "3.12", Dependencies: []string{"pandas==2.2.3"},
 		Build: &domain.BuildConfig{PackageIndex: &domain.PackageIndex{URL: "https://pypi.example.com/simple"}}}
 	want := `RUN --mount=type=secret,id=dexaflow_index_url,required=true PIP_INDEX_URL="$(cat /run/secrets/dexaflow_index_url)" pip install --no-cache-dir -- 'pandas==2.2.3'`
@@ -58,6 +59,7 @@ func TestGeneratedDockerfileInstallsFromThePackageIndexSecret(t *testing.T) {
 // that holds it, and the index URL composed from its credentials, handed to
 // the tool through one variable of its environment.
 func TestResolveBuildInputs(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{Build: &domain.BuildConfig{
 		Args:    map[string]string{"APP_ENV": "prod"},
 		Secrets: []domain.BuildSecret{{ID: "github_token", Env: "GITHUB_TOKEN"}},
@@ -86,6 +88,7 @@ func TestResolveBuildInputs(t *testing.T) {
 // A secret or a credential whose variable is not set fails the build with
 // the variable named, rather than building without it.
 func TestResolveBuildInputsNamesAMissingVariable(t *testing.T) {
+	t.Parallel()
 	secret := &domain.LeoflowConfig{Build: &domain.BuildConfig{Secrets: []domain.BuildSecret{{ID: "github_token", Env: "GITHUB_TOKEN"}}}}
 	if in := resolveBuildInputs(secret, lookupFrom(nil)); in.err == nil || !strings.Contains(in.err.Error(), "GITHUB_TOKEN") ||
 		!strings.Contains(in.err.Error(), "github_token") {
@@ -101,6 +104,7 @@ func TestResolveBuildInputsNamesAMissingVariable(t *testing.T) {
 // uv installs from the package index through its environment, never its
 // argv, and a message it prints never carries the credential.
 func TestUVInstallsFromThePackageIndex(t *testing.T) {
+	t.Parallel()
 	env := uvEnv("https://ci:tok@pypi.example.com/simple")
 	if !slices.Contains(env, "UV_DEFAULT_INDEX=https://ci:tok@pypi.example.com/simple") {
 		t.Errorf("uv env = %q, want the index", env)
@@ -118,6 +122,7 @@ func TestUVInstallsFromThePackageIndex(t *testing.T) {
 // The key of a dependency image built by the daemon covers the index, so an
 // image built from one index is never reused for a build from another.
 func TestDepsKeyCoversThePackageIndex(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{Build: &domain.BuildConfig{PackageIndex: &domain.PackageIndex{URL: "https://a.example.com/simple"}}}
 	a := depsKey(depsKeyContent("FROM x\n", cfg), []string{"linux/amd64"})
 	cfg.Build.PackageIndex.URL = "https://b.example.com/simple"
@@ -270,6 +275,7 @@ func TestContentLabelCoversTheBuildInputs(t *testing.T) {
 // dependency confusion the index is there to prevent: uv also gets the
 // index as UV_INDEX_URL, which every release reads, with the same value.
 func TestUVGetsTheIndexUnderBothVariables(t *testing.T) {
+	t.Parallel()
 	const index = "https://ci:tok@pypi.example.com/simple"
 	env := uvEnv(index)
 	for _, want := range []string{"UV_DEFAULT_INDEX=" + index, "UV_INDEX_URL=" + index} {

@@ -11,6 +11,7 @@ import (
 // TestResolveBindHost is the security guard: a no-auth fallback must never bind
 // beyond loopback, while real auth honors the requested host.
 func TestResolveBindHost(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		host, adminHash, want string
 	}{
@@ -29,6 +30,7 @@ func TestResolveBindHost(t *testing.T) {
 
 // TestSharedServerEnvBindsRequestedHost ties it together at the env level.
 func TestSharedServerEnvBindsRequestedHost(t *testing.T) {
+	t.Parallel()
 	withAuth := strings.Join(sharedServerEnv(liteEnvParams{host: "0.0.0.0", port: 8088, adminHash: "$2a$hash", adminEmail: "admin@x", jwtSecret: ""}), "\n")
 	if !strings.Contains(withAuth, "LEOFLOW_SERVER_HTTP_ADDR=0.0.0.0:8088") {
 		t.Errorf("real auth should bind the requested host:\n%s", withAuth)
@@ -40,6 +42,7 @@ func TestSharedServerEnvBindsRequestedHost(t *testing.T) {
 }
 
 func TestDisplayURL(t *testing.T) {
+	t.Parallel()
 	if got := displayURL("127.0.0.1", 8088); got != "http://127.0.0.1:8088" {
 		t.Errorf("loopback display = %q", got)
 	}

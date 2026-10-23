@@ -16,15 +16,14 @@ import (
 )
 
 // deployWatchInterval is how often deploy --watch polls the project files,
-// as Lite does (devPollInterval). A variable so tests can poll faster; do NOT
-// change it outside _test.go.
-var deployWatchInterval = devPollInterval
+// as Lite does (devPollInterval). Tests poll faster (cliDeps.watchInterval).
+const deployWatchInterval = devPollInterval
 
 // deployWatchSettle is how long deploy --watch waits after a save for the
 // files to stop moving, so a burst of saves (an editor's "save all", a
-// formatter on save) is one redeploy. A variable so tests can shorten it; do
-// NOT change it outside _test.go.
-var deployWatchSettle = 500 * time.Millisecond
+// formatter on save) is one redeploy. Tests shorten it
+// (cliDeps.watchSettle).
+const deployWatchSettle = 500 * time.Millisecond
 
 // checkDeployWatch refuses the flags that make no sense on every save.
 func checkDeployWatch(o deployOptions) error {
@@ -192,7 +191,8 @@ func runDeployWatch(cmd *cobra.Command, args []string, o deployOptions) error {
 	snap, _ := w.scan()
 	if ctx.Err() == nil {
 		devPrintf(out, "watching %s: save a file to redeploy what changed (Ctrl-C to stop)\n", w.root())
-		saveWatcher{interval: deployWatchInterval, settle: deployWatchSettle, scan: w.scan, onSave: w.redeploy}.run(ctx, snap)
+		d := depsFrom(ctx)
+		saveWatcher{interval: d.watchInterval, settle: d.watchSettle, scan: w.scan, onSave: w.redeploy}.run(ctx, snap)
 	}
 	devPrintln(out, "\nstopped watching")
 	return nil

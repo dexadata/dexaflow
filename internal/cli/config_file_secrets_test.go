@@ -39,6 +39,7 @@ func TestConfigFileSecretsIgnoreTheEnvironment(t *testing.T) {
 // A missing file yields empties rather than an error: the caller is a
 // best-effort config sync, and an absent config is not a failure.
 func TestConfigFileSecretsToleratesAMissingFile(t *testing.T) {
+	t.Parallel()
 	got := configFileSecrets(filepath.Join(t.TempDir(), "nope.yaml"))
 	if got.secretKey != "" || got.jwtSecret != "" {
 		t.Errorf("a missing file must yield empties, got %+v", got)
@@ -49,6 +50,7 @@ func TestConfigFileSecretsToleratesAMissingFile(t *testing.T) {
 // exactly the rows the migration exists to save, and the command that does it
 // is a password reset, which no user expects to touch their credentials.
 func TestWriteLiteConfigKeepsThePredecessor(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	lc := liteSettings{Workspace: "/w", Executor: "subprocess", AdminEmail: "a@b.c", Port: 8088}
 	sec := liteFileSecrets{jwtSecret: "j", secretKey: "k", secretKeyPrevious: "older-key"}
@@ -67,6 +69,7 @@ func TestWriteLiteConfigKeepsThePredecessor(t *testing.T) {
 // An install with nothing left under a predecessor must not carry the published
 // constant forward forever.
 func TestWriteLiteConfigOmitsAnAbsentPredecessor(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	lc := liteSettings{Workspace: "/w", Executor: "subprocess", AdminEmail: "a@b.c", Port: 8088}
 	if err := writeLiteConfig(home, "parser", lc, "$2a$12$hash", liteFileSecrets{jwtSecret: "j", secretKey: "k"}); err != nil {
@@ -82,6 +85,7 @@ func TestWriteLiteConfigOmitsAnAbsentPredecessor(t *testing.T) {
 // line-matching reader returned empty for all but the first, and a rewrite then
 // persisted the emptiness, destroying the only copy of the key.
 func TestConfigFileSecretsParsesEveryValidYAMLSpelling(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, line string }{
 		{"double quoted", `secret_key: "abc123"`},
 		{"unquoted", `secret_key: abc123`},

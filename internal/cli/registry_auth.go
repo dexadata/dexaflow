@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 
@@ -8,18 +9,13 @@ import (
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
-// registryCloud is the cloud session the registry client reads; nil reads
-// the cloud CLIs on PATH (build.CloudCLI). It is a variable only so the
-// tests of this package stand in a fake session for a local registry;
-// nothing else assigns it.
-var registryCloud build.CloudKeychain
-
 // registryFor is the registry client of a project: its credentials are
-// read as cfg's registry.auth_method says (ADR 0080). Validate has refused
-// any value ParseAuthMethod does not know; a config that was not validated
-// reads as auto.
-func registryFor(cfg *domain.LeoflowConfig) build.Registry {
-	return build.Registry{Auth: authMethodOf(cfg), Cloud: registryCloud}
+// read as cfg's registry.auth_method says (ADR 0080), the cloud session
+// from cliDeps.registryCloud. Validate has refused any value
+// ParseAuthMethod does not know; a config that was not validated reads as
+// auto.
+func registryFor(ctx context.Context, cfg *domain.LeoflowConfig) build.Registry {
+	return build.Registry{Auth: authMethodOf(cfg), Cloud: depsFrom(ctx).registryCloud}
 }
 
 // authMethodOf is cfg's registry.auth_method, auto when unset or unknown.

@@ -6,6 +6,7 @@ import (
 )
 
 func TestComposeImageRef(t *testing.T) {
+	t.Parallel()
 	if got := composeImageRef("ghcr.io/org", "etl", "abc"); got != "ghcr.io/org/etl:abc" {
 		t.Errorf("ref = %q, want ghcr.io/org/etl:abc", got)
 	}
@@ -16,6 +17,7 @@ func TestComposeImageRef(t *testing.T) {
 }
 
 func TestResolveImageTagByStrategy(t *testing.T) {
+	t.Parallel()
 	inGit := gitRevision{sha: "sha9", exactTag: "v1.0+rc/1"}
 	noGit := gitRevision{}
 	untagged := gitRevision{sha: "sha9"}
@@ -52,6 +54,7 @@ func TestResolveImageTagByStrategy(t *testing.T) {
 }
 
 func TestTagStrategyFallbackWarning(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		strategy string
 		rev      gitRevision

@@ -7,6 +7,7 @@ import (
 )
 
 func TestDbtProfileConn(t *testing.T) {
+	t.Parallel()
 	got := dbtProfileConn("python -m leoflow_runtime --dbt-profile warehouse_pg shop && dbt run --select stg")
 	if got != "warehouse_pg" {
 		t.Errorf("dbtProfileConn = %q, want warehouse_pg", got)
@@ -20,6 +21,7 @@ func TestDbtProfileConn(t *testing.T) {
 // managed connection the profile step depends on (#10 regression guard): it is
 // re-added, while the author's extra connection is still applied.
 func TestApplyTaskOverrideKeepsDbtConnection(t *testing.T) {
+	t.Parallel()
 	task := &domain.TaskSpec{
 		TaskID:      "stg",
 		Entrypoint:  "python -m leoflow_runtime --dbt-profile warehouse_pg shop && dbt run --select stg",
@@ -38,6 +40,7 @@ func TestApplyTaskOverrideKeepsDbtConnection(t *testing.T) {
 // A non-dbt task keeps the documented replace semantics — no phantom connection
 // is invented.
 func TestApplyTaskOverrideNonDbtReplaces(t *testing.T) {
+	t.Parallel()
 	task := &domain.TaskSpec{
 		TaskID:      "t",
 		Entrypoint:  "python -m leoflow_runtime run",

@@ -119,6 +119,7 @@ func TestDBResetConfirmationNamesTheTarget(t *testing.T) {
 // inherited DEXAFLOW_DATABASE_URL would beat the LEOFLOW_DATABASE_URL Lite
 // sets and the server would run on the operator's other database.
 func TestLiteServerEnvironIgnoresAnExportedDatabaseURL(t *testing.T) {
+	t.Parallel()
 	base := []string{
 		"PATH=/bin",
 		"DEXAFLOW_DATABASE_URL=postgres://u:p@db.example.com:5432/warehouse",

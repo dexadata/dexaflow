@@ -12,6 +12,7 @@ import (
 // generated password in the install log (#122). Plain-text (no color) here so
 // the assertion is stable on non-TTY (the buffer is not a *os.File).
 func TestPrintSetupSummaryHighlightsCredentials(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	lc := liteSettings{AdminEmail: "admin@leoflow.local", Workspace: "/tmp/x", Port: 8088}
 	printSetupSummary(&buf, lc, "blueturtle42")
@@ -37,6 +38,7 @@ func TestPrintSetupSummaryHighlightsCredentials(t *testing.T) {
 // TestPrintSetupSummaryOnRerun: when the admin already exists (no generated
 // password), the summary points at reset-password instead of showing the block.
 func TestPrintSetupSummaryOnRerun(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	printSetupSummary(&buf, liteSettings{AdminEmail: "admin@leoflow.local", Port: 8088}, "")
 	out := buf.String()

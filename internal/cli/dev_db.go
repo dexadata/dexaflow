@@ -31,7 +31,7 @@ func bringUpDependencies(ctx context.Context, cmd *cobra.Command, o *devOptions)
 	if o.noUp {
 		return noop, nil
 	}
-	o.postgres = autoDatastore(cmd, o.postgres)
+	o.postgres = autoDatastore(ctx, cmd, o.postgres)
 	if o.postgres == datastoreManaged {
 		// Managed relocatable Postgres, no Docker at all: Lite is Redis-free (XCom
 		// on Postgres, in-process log tailer, ADR 0026), so nothing comes up via
@@ -94,7 +94,7 @@ func resolveComposeFile(out io.Writer, flagValue string) (string, error) {
 func devComposeUp(ctx context.Context, cmd *cobra.Command, o devOptions, services ...string) error {
 	// Without the plugin, `docker compose -f ... up` fails with the docker CLI's
 	// usage text (#759); say what to do instead.
-	if err := requireComposePlugin(); err != nil {
+	if err := requireComposePlugin(ctx); err != nil {
 		return err
 	}
 	devPrintln(cmd.OutOrStdout(), "▸ starting dependencies (docker compose) …")

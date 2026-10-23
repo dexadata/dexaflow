@@ -76,7 +76,7 @@ func runBuildCmd(t *testing.T, args ...string) (stdout string, err error) {
 	root.SetOut(&out)
 	root.SetErr(&errOut)
 	root.SetArgs(args)
-	err = root.Execute()
+	err = root.ExecuteContext(testCtx(nil))
 	return out.String(), err
 }
 

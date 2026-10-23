@@ -179,13 +179,6 @@ func devCompileAndRegister(ctx context.Context, cmd *cobra.Command, dir string, 
 	return nil
 }
 
-// devCompileAndRegisterFn is the per-project compile-and-register entry point
-// used by devCompileAndRegisterAll. It is a package-level variable so tests
-// can substitute a mock that records calls without spinning up the parser +
-// HTTP server (the same pattern devRun / devOutput follow). Production code
-// keeps the default; do NOT swap it outside _test.go.
-var devCompileAndRegisterFn = devCompileAndRegister
-
 // devCompileAndRegisterAll compiles + registers every project in the workspace.
 // Each project is processed independently (one bad DAG does not stop the
 // others), and per-project errors are reported through the Airflow import-
@@ -206,6 +199,10 @@ func devCompileAndRegisterAll(ctx context.Context, cmd *cobra.Command, ws *Works
 		devPrintf(cmd.OutOrStdout(), "▸ no DAGs in workspace %s; drop a `dag.py` into a subdirectory and save\n", path)
 		return nil
 	}
+	// The per-project step is cliDeps.compileAndRegister
+	// (devCompileAndRegister), which tests replace with a mock that records
+	// calls without the parser and the HTTP server.
+	compile := depsFrom(ctx).compileAndRegister
 	var lastErr error
 	successes := 0
 	for _, p := range ws.Projects {
@@ -215,7 +212,7 @@ func devCompileAndRegisterAll(ctx context.Context, cmd *cobra.Command, ws *Works
 		}
 		devPrintf(cmd.OutOrStdout(), "▸ compiling %q (config: %s)\n", p.DagID, cfgSource)
 		dagPyPath := filepath.Join(p.Path, p.Config.DagSource)
-		if err := devCompileAndRegisterFn(ctx, cmd, p.Path, baseOpts, token, afterCompile, uiURL); err != nil {
+		if err := compile(ctx, cmd, p.Path, baseOpts, token, afterCompile, uiURL); err != nil {
 			devPrintf(cmd.ErrOrStderr(), "✗ %s: %v\n", p.DagID, err)
 			_ = reportImportError(ctx, uiURL, token, dagPyPath, err.Error()) //nolint:errcheck // best-effort UI hint; user already sees the terminal error
 			lastErr = err

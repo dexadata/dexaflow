@@ -1,12 +1,13 @@
 package cli
 
 import (
-	"github.com/dexadata/dexaflow/internal/config"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
 func writeTree(t *testing.T, path, content string) {
@@ -35,6 +36,7 @@ defaults:
 `
 
 func TestFindWorkspaceWalksUpFromASubfolder(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	writeTree(t, filepath.Join(root, workspaceFileName), sampleWorkspace)
 	deep := filepath.Join(root, "dags", "orders", "sql")
@@ -57,6 +59,7 @@ func TestFindWorkspaceWalksUpFromASubfolder(t *testing.T) {
 }
 
 func TestFindWorkspaceAcceptsTheLegacyName(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	writeTree(t, filepath.Join(root, legacyWorkspaceFileName), sampleWorkspace)
 	ws, err := findWorkspace(root)
@@ -69,6 +72,7 @@ func TestFindWorkspaceAcceptsTheLegacyName(t *testing.T) {
 }
 
 func TestFindWorkspacePrefersTheCurrentName(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	writeTree(t, filepath.Join(root, legacyWorkspaceFileName), "targets: {old: {server: https://old}}\n")
 	writeTree(t, filepath.Join(root, workspaceFileName), sampleWorkspace)
@@ -79,6 +83,7 @@ func TestFindWorkspacePrefersTheCurrentName(t *testing.T) {
 }
 
 func TestFindWorkspaceNoneIsNil(t *testing.T) {
+	t.Parallel()
 	ws, err := findWorkspace(t.TempDir())
 	if err != nil || ws != nil {
 		t.Errorf("findWorkspace = %+v, %v; want nil, nil", ws, err)
@@ -86,6 +91,7 @@ func TestFindWorkspaceNoneIsNil(t *testing.T) {
 }
 
 func TestWorkspaceFileRejectsBadContent(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"unknown key":             "targts: {}\n",
 		"target without server":   "targets: {dev: {registry: x}}\n",
@@ -110,6 +116,7 @@ func TestWorkspaceFileRejectsBadContent(t *testing.T) {
 }
 
 func TestEditWorkspaceTargetsKeepsComments(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	path := filepath.Join(root, workspaceFileName)
 	writeTree(t, path, sampleWorkspace)
@@ -143,6 +150,7 @@ func TestEditWorkspaceTargetsKeepsComments(t *testing.T) {
 }
 
 func TestEditWorkspaceAddsToAnEmptyFlowMapping(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	path := filepath.Join(root, workspaceFileName)
 	writeTree(t, path, workspaceFileTemplate)
@@ -159,6 +167,7 @@ func TestEditWorkspaceAddsToAnEmptyFlowMapping(t *testing.T) {
 }
 
 func TestGitRootOf(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
@@ -181,6 +190,7 @@ func TestGitRootOf(t *testing.T) {
 }
 
 func TestFindWorkspaceResolvesSymlinks(t *testing.T) {
+	t.Parallel()
 	target := t.TempDir()
 	writeTree(t, filepath.Join(target, workspaceFileName), sampleWorkspace)
 	link := filepath.Join(t.TempDir(), "via-link")
@@ -202,6 +212,7 @@ func TestFindWorkspaceResolvesSymlinks(t *testing.T) {
 // in a parent folder (a shared /tmp, a multi-user host) is ignored, like git's
 // safe.directory.
 func TestFindWorkspaceIgnoresAFileOfAnotherUser(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() != 0 {
 		t.Skip("changing a file's owner needs root")
 	}
@@ -222,6 +233,7 @@ func TestFindWorkspaceIgnoresAFileOfAnotherUser(t *testing.T) {
 }
 
 func TestEditWorkspaceKeepsBlankLines(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	path := filepath.Join(root, workspaceFileName)
 	writeTree(t, path, workspaceFileTemplate)

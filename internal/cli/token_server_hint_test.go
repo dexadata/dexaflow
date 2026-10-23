@@ -18,6 +18,7 @@ import (
 // persisted token along, the other server rejected it, and the user got a bare
 // 401 with no way to tell an expired token from a token for somewhere else.
 func TestTokenServerHint(t *testing.T) {
+	t.Parallel()
 	unauth := errors.New("server returned 401: {\"title\":\"unauthorized\"}")
 
 	t.Run("names both servers when the token came from config", func(t *testing.T) {

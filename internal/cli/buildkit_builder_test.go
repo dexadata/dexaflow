@@ -161,6 +161,7 @@ func TestDeployPreflightRefusalStopsAnInClusterBuild(t *testing.T) {
 // The warning about secret-looking files says where the context goes: the
 // in-cluster builder, whose cache everyone bound to it shares.
 func TestUploadedSecretsWarningNamesTheInClusterBuilder(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{Build: &domain.BuildConfig{RemoteBuilder: &domain.RemoteBuilderConfig{
 		BuildKit: &domain.BuildKitConfig{Namespace: "dexaflow-builder"}}}}
 	var w strings.Builder

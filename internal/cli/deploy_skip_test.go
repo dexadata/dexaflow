@@ -62,6 +62,7 @@ func TestDeployBuildsWhenReuseIsNotAllowed(t *testing.T) {
 }
 
 func TestReusableImageNeedsTheDefaultContentLabelAsTag(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		image, version string
 		origin         labelOrigin

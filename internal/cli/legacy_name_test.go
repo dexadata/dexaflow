@@ -17,6 +17,7 @@ func TestRootCommandIsNamedDexaflow(t *testing.T) {
 // to the same binary). Running it must keep working and say, once, what the
 // command is called now. No removal is announced: the old name stays.
 func TestLegacyNameNotice(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		argv0 string
 		want  bool

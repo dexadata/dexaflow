@@ -22,10 +22,16 @@ func deployTo(t *testing.T, fake *deployServer, args ...string) (dir, stdout, st
 // deployDir runs a whole deploy of dir with builder against fake.
 func deployDir(t *testing.T, fake *deployServer, dir, builder string, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
+	return deployDirDeps(t, nil, fake, dir, builder, args...)
+}
+
+// deployDirDeps is deployDir under d (testDeps when nil).
+func deployDirDeps(t *testing.T, d *cliDeps, fake *deployServer, dir, builder string, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
 	all := append([]string{"deploy", dir, "--server", srv.URL, "--token", "x", "--yes", "--builder", builder}, args...)
-	return run(t, all...)
+	return runDeps(t, d, all...)
 }
 
 // TestDeployPausedAndActiveSetIsPaused: --paused and --active reach the

@@ -51,6 +51,7 @@ func TestAdminUsersList(t *testing.T) {
 // TestCollectUsers pins the client-facing collection helper: it honors the
 // limit/offset it is handed and returns the decoded accounts.
 func TestCollectUsers(t *testing.T) {
+	t.Parallel()
 	srv := usersServer(t)
 	defer srv.Close()
 
@@ -69,6 +70,7 @@ func TestCollectUsers(t *testing.T) {
 // TestRenderUsers pins the table shape and the comma-joined roles column
 // without a server in the loop.
 func TestRenderUsers(t *testing.T) {
+	t.Parallel()
 	users := []apiclient.UserListItem{
 		{Id: "u-1", Email: "alice@example.com", Roles: []string{"admin", "operator"}, IsActive: true, CreatedAt: time.Now()},
 	}
@@ -87,6 +89,7 @@ func TestRenderUsers(t *testing.T) {
 // TestRenderUsersEmpty covers the empty control plane (e.g. a Lite install):
 // an empty collection is a friendly note, never an error.
 func TestRenderUsersEmpty(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	if err := renderUsers(&buf, nil); err != nil {
 		t.Fatalf("renderUsers(empty): %v", err)

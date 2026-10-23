@@ -328,6 +328,7 @@ func TestPushFindsTheProjectConfig(t *testing.T) {
 // pushProjectDir picks --project, then the dag.json's directory when it has
 // a project file, then the working directory.
 func TestPushProjectDir(t *testing.T) {
+	t.Parallel()
 	withCfg := t.TempDir()
 	writeProjectFile(t, withCfg, "dexaflow.yaml", "dag_id: etl\n")
 	bare := t.TempDir()

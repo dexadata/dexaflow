@@ -12,6 +12,7 @@ import (
 // TestResolveBaseImageExplicitWins verifies an explicit base_image in the config
 // is used verbatim, overriding the python_version-derived default.
 func TestResolveBaseImageExplicitWins(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{BaseImage: "ghcr.io/acme/base:custom", PythonVersion: "3.12"}
 	if got := resolveBaseImage(cfg); got != "ghcr.io/acme/base:custom" {
 		t.Errorf("resolveBaseImage() = %q, want the explicit base_image", got)
@@ -23,6 +24,7 @@ func TestResolveBaseImageExplicitWins(t *testing.T) {
 // base_image is unset, so a yaml-driven build produces an image that builds
 // anywhere — no locally-built leoflow-base needed.
 func TestResolveBaseImageDefaultsToPublishedBase(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{PythonVersion: "3.11"}
 	if got := resolveBaseImage(cfg); got != "ghcr.io/dexadata/dexaflow-runtime:py3.11" {
 		t.Errorf("resolveBaseImage() = %q, want ghcr.io/dexadata/dexaflow-runtime:py3.11", got)
@@ -32,6 +34,7 @@ func TestResolveBaseImageDefaultsToPublishedBase(t *testing.T) {
 // TestResolveBuildImageFlagWins verifies the --image flag overrides the registry
 // config so a caller can always pin an explicit tag.
 func TestResolveBuildImageFlagWins(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{Registry: &domain.RegistryConfig{URL: "ghcr.io/acme", ImageName: "etl"}}
 	if got := resolveBuildImage("myreg/explicit:v1", cfg, "abc123", gitRevision{}); got != "myreg/explicit:v1" {
 		t.Errorf("resolveBuildImage() = %q, want the explicit flag value", got)
@@ -41,6 +44,7 @@ func TestResolveBuildImageFlagWins(t *testing.T) {
 // TestResolveBuildImageFromRegistry verifies the image is derived from the
 // registry block (url/image_name:version) when no --image flag is given.
 func TestResolveBuildImageFromRegistry(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{Registry: &domain.RegistryConfig{URL: "ghcr.io/acme", ImageName: "etl"}}
 	if got := resolveBuildImage("", cfg, "v1.2.3", gitRevision{}); got != "ghcr.io/acme/etl:v1.2.3" {
 		t.Errorf("resolveBuildImage() = %q, want ghcr.io/acme/etl:v1.2.3", got)
@@ -50,6 +54,7 @@ func TestResolveBuildImageFromRegistry(t *testing.T) {
 // TestResolveBuildImageEmptyWhenNothing verifies that with neither a flag nor a
 // complete registry block the resolver returns "" so the caller can error.
 func TestResolveBuildImageEmptyWhenNothing(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{Registry: &domain.RegistryConfig{URL: "ghcr.io/acme"}}
 	if got := resolveBuildImage("", cfg, "v1", gitRevision{}); got != "" {
 		t.Errorf("resolveBuildImage() = %q, want empty (image_name missing)", got)
@@ -60,6 +65,7 @@ func TestResolveBuildImageEmptyWhenNothing(t *testing.T) {
 // canonical order: FROM base, system packages, pip dependencies (connectors
 // expanded), then the DAG source COPY with PYTHONPATH.
 func TestGeneratedDockerfileLayers(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{
 		PythonVersion:  "3.11",
 		SystemPackages: []string{"git"},
@@ -93,6 +99,7 @@ func TestGeneratedDockerfileLayers(t *testing.T) {
 // (#769). The dbt task runs `dbt --project-dir <project>` from WORKDIR
 // /home/leoflow, so the project must land at /home/leoflow/<project>.
 func TestGeneratedDockerfileDbtCopiesProject(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{
 		PythonVersion: "3.11",
 		Dependencies:  []string{"dbt-duckdb==1.8.0"},
@@ -123,6 +130,7 @@ func TestGeneratedDockerfileDbtCopiesProject(t *testing.T) {
 // leading ./ lands at a clean /home/leoflow/<project> path matching the baked
 // --project-dir, so `dbt --project-dir ./transform` resolves inside the image.
 func TestGeneratedDockerfileDbtProjectPathCleaned(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{PythonVersion: "3.11", Dbt: &domain.DbtConfig{Project: "./transform"}}
 	df, err := generatedDockerfile(cfg, "dag.py")
 	if err != nil {
@@ -136,6 +144,7 @@ func TestGeneratedDockerfileDbtProjectPathCleaned(t *testing.T) {
 // TestEnsureDockerfileDbtUsesExisting verifies a dbt project that ships its own
 // Dockerfile still wins — ensureDockerfile honors it verbatim and never generates.
 func TestEnsureDockerfileDbtUsesExisting(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	existing := filepath.Join(dir, "Dockerfile")
 	if err := os.WriteFile(existing, []byte("FROM ghcr.io/acme/dbt:custom\n"), 0o600); err != nil {
@@ -156,6 +165,7 @@ func TestEnsureDockerfileDbtUsesExisting(t *testing.T) {
 // fails generation loudly (it cannot resolve to a pip package) rather than
 // silently producing an image that ModuleNotFoundErrors at run time.
 func TestGeneratedDockerfileUnknownConnectorErrors(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{PythonVersion: "3.11", Connectors: []string{"nope_not_a_connector"}}
 	if _, err := generatedDockerfile(cfg, "dag.py"); err == nil {
 		t.Fatal("generatedDockerfile() expected an error for an unknown connector, got nil")
@@ -165,6 +175,7 @@ func TestGeneratedDockerfileUnknownConnectorErrors(t *testing.T) {
 // TestEnsureDockerfileUsesExisting verifies a project-supplied Dockerfile is used
 // as-is (no generation) and is not removed by the cleanup.
 func TestEnsureDockerfileUsesExisting(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	existing := filepath.Join(dir, "Dockerfile")
 	if err := os.WriteFile(existing, []byte("FROM scratch\n"), 0o600); err != nil {
@@ -188,6 +199,7 @@ func TestEnsureDockerfileUsesExisting(t *testing.T) {
 // TestEnsureDockerfileGeneratesWhenAbsent verifies that with no Dockerfile present
 // one is generated from the config, and the cleanup removes the generated file.
 func TestEnsureDockerfileGeneratesWhenAbsent(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfg := &domain.LeoflowConfig{PythonVersion: "3.11", Dependencies: []string{"pandas==2.2.0"}}
 	path, cleanup, err := ensureDockerfile(dir, "Dockerfile", cfg, "dag.py")
@@ -211,6 +223,7 @@ func TestEnsureDockerfileGeneratesWhenAbsent(t *testing.T) {
 // dbt land on PATH, not ~/.local/bin) and drop back to the non-root runtime USER,
 // keeping the COPYed project root-owned/read-only (#852).
 func TestGeneratedDockerfileInstallsAsRoot(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{
 		PythonVersion: "3.11",
 		Dependencies:  []string{"dbt-postgres==1.9.0"},
@@ -243,6 +256,7 @@ func TestGeneratedDockerfileInstallsAsRoot(t *testing.T) {
 // A pure-Python DAG with NO deps needs no root switch (nothing to install) and
 // stays on the base's non-root USER.
 func TestGeneratedDockerfileNoDepsNoRootSwitch(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{PythonVersion: "3.11"}
 	df, err := generatedDockerfile(cfg, "dag.py")
 	if err != nil {
@@ -263,6 +277,7 @@ func TestGeneratedDockerfileNoDepsNoRootSwitch(t *testing.T) {
 // after a green compile and a green Lite run (Lite reads from disk, so the gap
 // only appears once there is an image).
 func TestGeneratedDockerfileMixedCopiesDagSourceAndEveryGroupProject(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{
 		PythonVersion: "3.11",
 		Dependencies:  []string{"dbt-postgres==1.9.0"},
@@ -308,6 +323,7 @@ func TestGeneratedDockerfileMixedCopiesDagSourceAndEveryGroupProject(t *testing.
 // iteration, so emitting COPY lines in range order would produce a different
 // Dockerfile per compile — a cache-thrashing, unreproducible image.
 func TestGeneratedDockerfileMixedGroupCopiesAreDeterministic(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{
 		PythonVersion: "3.11",
 		DbtGroups: map[string]*domain.DbtConfig{
@@ -336,6 +352,7 @@ func TestGeneratedDockerfileMixedGroupCopiesAreDeterministic(t *testing.T) {
 // /home/leoflow itself. That single COPY already carries dag.py, so emitting a
 // separate one would be redundant.
 func TestGeneratedDockerfileMixedGroupProjectDotEmitsOneCopy(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{
 		PythonVersion: "3.11",
 		DbtGroups:     map[string]*domain.DbtConfig{"transform": {Project: "."}},
@@ -359,6 +376,7 @@ func TestGeneratedDockerfileMixedGroupProjectDotEmitsOneCopy(t *testing.T) {
 // at the same directory (different granularity or selectors over one project).
 // A duplicate COPY is a wasted layer and a diff that looks like a bug.
 func TestGeneratedDockerfileMixedDeduplicatesSharedProjectDir(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{
 		PythonVersion: "3.11",
 		DbtGroups: map[string]*domain.DbtConfig{
@@ -387,6 +405,7 @@ func TestGeneratedDockerfileMixedDeduplicatesSharedProjectDir(t *testing.T) {
 // one caller. So this asserts the two paths AGREE rather than asserting either
 // one in isolation, which is the only assertion that would have caught it.
 func TestBuildAndDeployAgreeOnTheImageTag(t *testing.T) {
+	t.Parallel()
 	const (
 		version = "gcpexp1"
 		sha     = "e28574c"

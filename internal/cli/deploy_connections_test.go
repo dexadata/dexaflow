@@ -9,6 +9,7 @@ import (
 )
 
 func TestCollectConnIDs(t *testing.T) {
+	t.Parallel()
 	dagJSON := []byte(`{
 		"dag_id":"etl",
 		"tasks":[
@@ -27,12 +28,14 @@ func TestCollectConnIDs(t *testing.T) {
 }
 
 func TestCollectConnIDsNoneWhenAbsent(t *testing.T) {
+	t.Parallel()
 	if got := collectConnIDs([]byte(`{"dag_id":"x","tasks":[{"task_id":"a","type":"python"}]}`)); len(got) != 0 {
 		t.Errorf("expected no conn ids, got %v", got)
 	}
 }
 
 func TestSurfaceConnectionsPrintsReminder(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	out := filepath.Join(dir, "dag.json")
 	if err := os.WriteFile(out, []byte(`{"dag_id":"etl","tasks":[{"task_id":"q","type":"airflow_operator","operator_args":{"conn_id":"sf"}}]}`), 0o600); err != nil {
@@ -46,6 +49,7 @@ func TestSurfaceConnectionsPrintsReminder(t *testing.T) {
 }
 
 func TestSurfaceConnectionsSilentWhenNone(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	out := filepath.Join(dir, "dag.json")
 	if err := os.WriteFile(out, []byte(`{"dag_id":"etl","tasks":[{"task_id":"a","type":"python"}]}`), 0o600); err != nil {

@@ -54,6 +54,7 @@ func drainServer(t *testing.T, runningPolls int32) (*httptest.Server, *pauseReco
 }
 
 func TestWaitForRunsToDrainClears(t *testing.T) {
+	t.Parallel()
 	// Running for the first poll round, empty afterwards.
 	srv, _, _ := drainServer(t, 1)
 	defer srv.Close()
@@ -72,6 +73,7 @@ func TestWaitForRunsToDrainClears(t *testing.T) {
 }
 
 func TestWaitForRunsToDrainTimesOut(t *testing.T) {
+	t.Parallel()
 	// A very high running-poll count means runs never drain within the window.
 	srv, _, _ := drainServer(t, 1000)
 	defer srv.Close()

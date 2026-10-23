@@ -164,6 +164,7 @@ func TestDeployPrintsServerLinksAndChecks(t *testing.T) {
 // zero-width characters, line and paragraph separators) and the C1 controls
 // such as CSI (U+009B).
 func TestPrintableDropsFormatCharacters(t *testing.T) {
+	t.Parallel()
 	in := "a\u202eb\u2066c\u200bd\u200de\u2028f\u2029g\u009bh\ufeffi\x1bj"
 	if got := printable(in); got != "abcdefghij" {
 		t.Errorf("printable(%q) = %q, want %q", in, got, "abcdefghij")
@@ -176,6 +177,7 @@ func TestPrintableDropsFormatCharacters(t *testing.T) {
 // TestServerLinksAreHTTPOnly: a link is printed and reported only when it is
 // an http or https URL.
 func TestServerLinksAreHTTPOnly(t *testing.T) {
+	t.Parallel()
 	e := readServerExtras([]byte(`{"links":{"js":"javascript:alert(1)","file":"file:///etc/passwd","up":"HTTPS://x.example/1",` +
 		`"plain":"http://y.example/2","bare":"not a url","data":"data:text/html,x","rel":"/dags/etl","opaque":"https:x.example"}}`))
 	if len(e.Links) != 2 || e.Links["up"] != "HTTPS://x.example/1" || e.Links["plain"] != "http://y.example/2" {
@@ -208,6 +210,7 @@ func TestStatusSendsTheCLIUserAgent(t *testing.T) {
 // place (cliHTTPClient, cliAPIClient), whose transport sets the headers that
 // name it, so no client can be built without them.
 func TestEveryClientSetsTheCLIHeaders(t *testing.T) {
+	t.Parallel()
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)

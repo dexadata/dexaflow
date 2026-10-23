@@ -9,6 +9,7 @@ import (
 )
 
 func TestDefaultDAGVersionHashesSymlinksWithoutFollowing(t *testing.T) {
+	t.Parallel()
 	dir := versionProject(t, "")
 	writeProjectFile(t, dir, "Dockerfile", "FROM scratch\nCOPY . /app\n")
 	writeProjectFile(t, dir, "data/a.txt", "a\n")
@@ -33,6 +34,7 @@ func TestDefaultDAGVersionHashesSymlinksWithoutFollowing(t *testing.T) {
 }
 
 func TestDefaultDAGVersionNamesTheWayOutOfAnUnreadableFile(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a mode-000 file")
 	}
@@ -53,6 +55,7 @@ func TestDefaultDAGVersionNamesTheWayOutOfAnUnreadableFile(t *testing.T) {
 }
 
 func TestReadErrorHintNamesTheWayOut(t *testing.T) {
+	t.Parallel()
 	err := hashReadError("p/secret.txt", os.ErrPermission)
 	if !strings.Contains(err.Error(), "exclude_paths") || !strings.Contains(err.Error(), "--dag-version") || !strings.Contains(err.Error(), "p/secret.txt") {
 		t.Errorf("err = %v", err)
@@ -60,6 +63,7 @@ func TestReadErrorHintNamesTheWayOut(t *testing.T) {
 }
 
 func TestDefaultDAGVersionDbtShippedInputs(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name, yaml, prefix string
 	}{
@@ -95,6 +99,7 @@ func TestDefaultDAGVersionDbtShippedInputs(t *testing.T) {
 }
 
 func TestDefaultDAGVersionAppliesDockerignore(t *testing.T) {
+	t.Parallel()
 	dir := versionProject(t, "")
 	writeProjectFile(t, dir, "Dockerfile", "FROM scratch\nCOPY . /app\n")
 	writeProjectFile(t, dir, ".dockerignore", "notes\n**/*.log\n!notes/keep.md\n")
@@ -120,6 +125,7 @@ func TestDefaultDAGVersionAppliesDockerignore(t *testing.T) {
 }
 
 func TestDefaultDAGVersionHashesAManifestOutsideTheProject(t *testing.T) {
+	t.Parallel()
 	// The dbt compile reads dbt.manifest wherever it points, including outside
 	// every directory the image copies.
 	dir := t.TempDir()
@@ -134,6 +140,7 @@ func TestDefaultDAGVersionHashesAManifestOutsideTheProject(t *testing.T) {
 }
 
 func TestDockerignoreMatcher(t *testing.T) {
+	t.Parallel()
 	m := parseDockerignore([]byte("# comment\n\n/build\n*.tmp\n**/cache\ndocs/*.md\n!docs/README.md\n"))
 	cases := map[string]bool{
 		"build":          true,
@@ -192,6 +199,7 @@ func TestDefaultDAGVersionIgnoresInheritedGitEnv(t *testing.T) {
 }
 
 func TestDefaultDAGVersionHashesADockerfileTheDockerignoreLists(t *testing.T) {
+	t.Parallel()
 	dir := versionProject(t, "")
 	writeProjectFile(t, dir, "Dockerfile", "FROM scratch\nCOPY . /app\n")
 	writeProjectFile(t, dir, ".dockerignore", "Dockerfile\n")
@@ -203,6 +211,7 @@ func TestDefaultDAGVersionHashesADockerfileTheDockerignoreLists(t *testing.T) {
 }
 
 func TestDefaultDAGVersionFollowsSymlinkedRoots(t *testing.T) {
+	t.Parallel()
 	t.Run("dag_source", func(t *testing.T) {
 		dir := versionProject(t, "dag_source: dag.py\n")
 		writeProjectFile(t, dir, "real.py", "# v1\n")
@@ -247,6 +256,7 @@ func TestDefaultDAGVersionFollowsSymlinkedRoots(t *testing.T) {
 }
 
 func TestDefaultDAGVersionHashesDockerignoreOnlyWithAProjectDockerfile(t *testing.T) {
+	t.Parallel()
 	dir := versionProject(t, "")
 	writeProjectFile(t, dir, ".dockerignore", "notes\n")
 	before := labelOf(t, dir)
@@ -257,6 +267,7 @@ func TestDefaultDAGVersionHashesDockerignoreOnlyWithAProjectDockerfile(t *testin
 }
 
 func TestDockerignoreReincludeDescendsOnlyWhereItCan(t *testing.T) {
+	t.Parallel()
 	m := parseDockerignore([]byte("notes\nbuild\n!notes/keep.md\n"))
 	if !m.mayReinclude("notes") {
 		t.Error("notes holds a re-included file; the walk must descend")
@@ -280,6 +291,7 @@ func TestDockerignoreReincludeDescendsOnlyWhereItCan(t *testing.T) {
 }
 
 func TestDockerignoreClassNeverMatchesASlash(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		pattern, path string
 		want          bool
@@ -298,6 +310,7 @@ func TestDockerignoreClassNeverMatchesASlash(t *testing.T) {
 }
 
 func TestDefaultDAGVersionHashesADockerfileOutsideTheProject(t *testing.T) {
+	t.Parallel()
 	t.Run("--dockerfile ../X", func(t *testing.T) {
 		parent := t.TempDir()
 		dir := filepath.Join(parent, "proj")
@@ -337,6 +350,7 @@ func TestDefaultDAGVersionHashesADockerfileOutsideTheProject(t *testing.T) {
 }
 
 func TestDefaultDAGVersionSeesAFileAGlobNegationReincludes(t *testing.T) {
+	t.Parallel()
 	dir := versionProject(t, "")
 	writeProjectFile(t, dir, "Dockerfile", "FROM scratch\nCOPY . /app\n")
 	writeProjectFile(t, dir, ".dockerignore", "data\n!*/keep.txt\n")
