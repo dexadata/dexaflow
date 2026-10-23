@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/dexadata/dexaflow/internal/observability"
 	"github.com/gin-gonic/gin"
@@ -31,7 +32,7 @@ func ObservabilityHandler(registry *prometheus.Registry, checks map[string]Healt
 	}
 	r := gin.New()
 	r.GET("/healthz", livenessHandler)
-	r.GET("/readyz", readinessHandler(checks))
+	r.GET("/readyz", readinessHandler(checks, o.probeBudget))
 	if registry != nil {
 		// By default every dexaflow_* family is also published under its
 		// pre-rename leoflow_* name, so existing dashboards and alerts keep
@@ -50,6 +51,13 @@ type ObservabilityOption func(*observabilityOptions)
 
 type observabilityOptions struct {
 	legacyNames bool
+	probeBudget time.Duration
+}
+
+// WithProbeBudget bounds /readyz on the metrics listener with the same
+// server.probe_budget as the API listener's. Without it the budget is 2s.
+func WithProbeBudget(d time.Duration) ObservabilityOption {
+	return func(o *observabilityOptions) { o.probeBudget = d }
 }
 
 // WithoutLegacyMetricNames serves each metric family once, under its dexaflow_

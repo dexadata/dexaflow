@@ -203,6 +203,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 			HealthChecks:    checks,
 			ExecutorInfo:    executorInfo,
 			SchedulerHealth: schedulerHealth,
+			ProbeBudget:     cfg.Server.ProbeBudget,
 		},
 		Server: api.ServerDeps{
 			CORSOrigins:         cfg.Server.CORS.AllowedOrigins,

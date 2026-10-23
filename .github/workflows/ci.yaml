@@ -1602,17 +1602,15 @@ jobs:
         run: bash scripts/check-runtime-data-pins.sh
       - name: Embedded Airflow UI pin agrees with the committed bundle
         run: bash scripts/check-airflow-ui-pin.sh
-      # Both of these landed with a self-test wired into `Script self-tests` and
-      # their REAL check reachable only through cut-release.sh's run_gates().
-      # That is too late to be useful: a PR lowering api.probeBudget under the
-      # chart's floor, or drifting HUGO_VERSION between the two website
-      # workflows, stayed green all the way to the release cut, where the
-      # failure lands on whoever is cutting rather than whoever caused it. Same
-      # argument that put the golangci-lint pin in this job.
-      - name: Readiness probe budget sits under the chart's floor
-        run: bash scripts/check-readiness-probe-budget.sh
       - name: Startup probe budget covers the boot bounds the code states
         run: bash scripts/check-startup-probe-budget.sh
+      # The Hugo pin check landed with a self-test wired into `Script
+      # self-tests` and its REAL check reachable only through cut-release.sh's
+      # run_gates(). That is too late to be useful: drifting HUGO_VERSION
+      # between the two website workflows stayed green all the way to the
+      # release cut, where the failure lands on whoever is cutting rather than
+      # whoever caused it. Same argument that put the golangci-lint pin in this
+      # job.
       - name: Hugo pin agrees between the website build and deploy
         run: bash scripts/check-hugo-version-pin.sh
       # Same shape again: landed with a self-test in `Script self-tests` and its

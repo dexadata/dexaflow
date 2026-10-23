@@ -815,16 +815,11 @@ tests:
           path: spec.template.spec.containers[0].readinessProbe.periodSeconds
           value: 15
 
-  # #1041 — the readiness timeout has a floor because /readyz bounds its own work
-  # at 2s (api.probeBudget) so it answers before the kubelet gives up. A shorter
-  # kubelet timeout inverts that and turns every slow-dependency probe into a bare
-  # timeout, with no log line naming the dependency.
-  #
-  # Asserted here rather than only in scripts/check-readiness-probe-budget.sh,
-  # because that gate reads the helper's definition and cannot see whether the
-  # template still CALLS it: reverting this line to the raw value leaves the
-  # helper defined, $min at 3, the gate green, and the floor silently gone. It
-  # also runs per-PR, while the gate script's real check runs only at cut time.
+  # #1041: the readiness timeout has a floor because /readyz bounds its own work
+  # at one second under it, and at no less than 2s, so it answers before the
+  # kubelet gives up. A shorter kubelet timeout leaves it no room and turns every
+  # slow-dependency probe into a bare timeout, with no log line naming the
+  # dependency.
   - it: refuses to render a readiness timeout below the server's own probe budget
     template: deployment.yaml
     set:
@@ -834,7 +829,7 @@ tests:
       probes.readiness.timeoutSeconds: 1
     asserts:
       - failedTemplate:
-          errorMessage: "probes.readiness.timeoutSeconds=1 is below the 3s floor. The leoflow-server /readyz handler bounds itself at 2s so it answers before the kubelet gives up; a shorter kubelet timeout inverts that and turns every slow-dependency probe into a timeout that logs nothing, instead of a 503 naming the dependency. Raise it to 3 or more. If you need the kubelet to react faster than 3s, lower probes.readiness.periodSeconds or failureThreshold instead — those shorten time-to-unready without cutting off the answer. See #1041."
+          errorMessage: "probes.readiness.timeoutSeconds=1 is below the 3s floor. The leoflow-server /readyz handler bounds itself at one second under this timeout, and at no less than 2s, so it answers before the kubelet gives up; a shorter kubelet timeout leaves it no room and turns every slow-dependency probe into a timeout that logs nothing, instead of a 503 naming the dependency. Raise it to 3 or more. If you need the kubelet to react faster than 3s, lower probes.readiness.periodSeconds or failureThreshold instead: those shorten time-to-unready without cutting off the answer. See #1041."
 
   # Argo CD's helm.parameters and `helm --set-string` pass every override as a
   # string, so the floor has to hold for "1" as well as 1 — the same reason
@@ -848,7 +843,7 @@ tests:
       probes.readiness.timeoutSeconds: "2"
     asserts:
       - failedTemplate:
-          errorMessage: "probes.readiness.timeoutSeconds=2 is below the 3s floor. The leoflow-server /readyz handler bounds itself at 2s so it answers before the kubelet gives up; a shorter kubelet timeout inverts that and turns every slow-dependency probe into a timeout that logs nothing, instead of a 503 naming the dependency. Raise it to 3 or more. If you need the kubelet to react faster than 3s, lower probes.readiness.periodSeconds or failureThreshold instead — those shorten time-to-unready without cutting off the answer. See #1041."
+          errorMessage: "probes.readiness.timeoutSeconds=2 is below the 3s floor. The leoflow-server /readyz handler bounds itself at one second under this timeout, and at no less than 2s, so it answers before the kubelet gives up; a shorter kubelet timeout leaves it no room and turns every slow-dependency probe into a timeout that logs nothing, instead of a 503 naming the dependency. Raise it to 3 or more. If you need the kubelet to react faster than 3s, lower probes.readiness.periodSeconds or failureThreshold instead: those shorten time-to-unready without cutting off the answer. See #1041."
 
   - it: renders a readiness timeout at or above the floor unchanged
     template: deployment.yaml
@@ -861,6 +856,39 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.timeoutSeconds
           value: 10
+
+  # #1050: the server's probe budget is the kubelet's readiness timeout minus one
+  # second, so raising the timeout for a slow database gives /readyz the same
+  # room. The default timeout of 3 renders the 2s every earlier release used.
+  - it: renders the probe budget one second under the default readiness timeout
+    template: deployment.yaml
+    set:
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SERVER_PROBE_BUDGET
+            value: "2s"
+
+  - it: raises the probe budget with the readiness timeout, string-typed or not
+    template: deployment.yaml
+    set:
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+      probes.readiness.timeoutSeconds: "10"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.timeoutSeconds
+          value: 10
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SERVER_PROBE_BUDGET
+            value: "9s"
 
   - it: defaults the control-plane resource requests high enough to answer probes under load
     template: deployment.yaml

@@ -44,6 +44,9 @@ type ObservabilityDeps struct {
 	// SchedulerHealth reports the scheduler's heartbeat for /monitor/health.
 	// When nil the component reports healthy (single-process role assumption).
 	SchedulerHealth Heartbeater
+	// ProbeBudget (server.probe_budget) bounds /readyz and the dependency
+	// checks of /api/v2/monitor/health. Non-positive means 2s.
+	ProbeBudget time.Duration
 	// ExecutorInfo is served on /api/v2/monitor/executor.
 	ExecutorInfo ExecutorInfo
 }

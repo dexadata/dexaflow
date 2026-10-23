@@ -224,11 +224,23 @@ Error: probes.readiness.timeoutSeconds=1 is below the 3s floor. [...]
 ```
 
 `/readyz` checks the database connection *and* asserts the schema is the one
-this binary requires, and it bounds that whole check at 2s so it always answers
-before the kubelet stops listening. Setting the kubelet's timeout below that
-inverts the relationship: the kubelet cancels a probe that was about to reply,
-so instead of a `503` whose log line names the failing dependency, you get a
-bare timeout that names nothing — precisely when you most need to know which
+this binary requires, and it bounds that whole check at one second under
+`probes.readiness.timeoutSeconds`, so it always answers before the kubelet stops
+listening. The chart passes that budget to the server as
+`LEOFLOW_SERVER_PROBE_BUDGET` (`server.probe_budget`): 2s with the default
+timeout of 3. On a slow metadatabase, such as a cross-region managed Postgres,
+raise the timeout and the server gets the same extra room:
+
+```yaml
+probes:
+  readiness:
+    timeoutSeconds: 10  # /readyz may now spend 9s on its checks
+```
+
+A timeout under the floor would leave the server less than the 2s it has always
+had, or nothing at all: the kubelet cancels a probe that was about to reply, so
+instead of a `503` whose log line names the failing dependency, you get a bare
+timeout that names nothing, precisely when you most need to know which
 dependency is slow. The chart refuses the value rather than installing a cluster
 that will go quiet under stress.
 

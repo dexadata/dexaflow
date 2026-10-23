@@ -92,7 +92,7 @@ func newServer(deps Dependencies) *gin.Engine {
 	}
 
 	r.GET("/healthz", livenessHandler)
-	r.GET("/readyz", readinessHandler(deps.Observability.HealthChecks))
+	r.GET("/readyz", readinessHandler(deps.Observability.HealthChecks, deps.Observability.ProbeBudget))
 	// /metrics is intentionally NOT served here (audit H2): scraping lives on the
 	// dedicated observability listener (ObservabilityHandler on the metrics port),
 	// which every role runs, so metrics can be firewalled separately from the
@@ -189,7 +189,7 @@ func newServer(deps Dependencies) *gin.Engine {
 	}
 	// Any signed-in user may read these; a scoped token needs dexaflow:read
 	// (ADR 0067). The MCP's health resource reads all three.
-	r.GET("/api/v2/monitor/health", RequireScope(auth.ScopeRead), monitorHealthHandler(deps.Observability.HealthChecks, deps.Observability.SchedulerHealth))
+	r.GET("/api/v2/monitor/health", RequireScope(auth.ScopeRead), monitorHealthHandler(deps.Observability.HealthChecks, deps.Observability.SchedulerHealth, deps.Observability.ProbeBudget))
 	r.GET("/api/v2/monitor/executor", RequireScope(auth.ScopeRead), monitorExecutorHandler(deps.Observability.ExecutorInfo))
 	// What a deploy reads before it builds (#1704): the gate of the other
 	// deploy reads, so a dexaflow:deploy token reaches it (ADR 0074).
