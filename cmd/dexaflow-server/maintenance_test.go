@@ -3,10 +3,16 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/dexadata/dexaflow/internal/gatedtick"
 )
+
+func discardLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 // TestMaintenanceCycleReconcilesBeforeReaping: one maintenance cycle runs the
 // reconciler's sweep and THEN the reapers, in that order, every time. The
@@ -60,7 +66,7 @@ func TestMaintenanceLoopHonorsLeaderGate(t *testing.T) {
 		ticks = make(chan time.Time)
 		ran = make(chan string, 8)
 		ctx, cancel := context.WithCancel(context.Background())
-		go runGatedTicker(ctx, "maintenance", ticks, leading.Load, discardLog(), func() {
+		go gatedtick.Run(ctx, "maintenance", ticks, leading.Load, discardLog(), func() {
 			maintenanceCycle(ctx, time.Second,
 				func(context.Context) error { ran <- "reconcile"; return nil },
 				func(context.Context) error { ran <- "reap"; return nil },
