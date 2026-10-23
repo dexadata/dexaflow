@@ -215,11 +215,7 @@ func TestDexaflowTokenIsAnExternalToken(t *testing.T) {
 	isolateCLIEnv(t)
 	t.Chdir(t.TempDir())
 	t.Setenv("DEXAFLOW_TOKEN", "env-tok")
-	resolvedTarget = struct {
-		server     string
-		configured string
-		fromConfig bool
-	}{}
+	resolvedTarget = targetRecord{}
 	cfg := filepath.Join(t.TempDir(), "config.yaml")
 	writeTree(t, cfg, "server_url: http://127.0.0.1:8088\n")
 	_, tok, err := resolveVia(t, "dags", "list", "--config", cfg, "--server", "https://prod.example")

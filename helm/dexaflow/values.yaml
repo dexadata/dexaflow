@@ -393,7 +393,7 @@ auth:
   jwtSecret: ""
   # -- Name of a Secret with key `jwtSecret` (takes precedence over `jwtSecret`).
   existingSecret: ""
-  # -- API + agent JWT lifetime in seconds. Default 1h; raise for longer agent sessions.
+  # -- Lifetime, in seconds, of a user session token (UI, API and CLI). Default 1h. The UI and the CLI renew it while in use, up to `sessionMaxLifetimeSeconds`. Task agent tokens have their own short per-attempt lifetime and do not use this value. Sets `auth.jwt.token_ttl_seconds`.
   tokenTtlSeconds: 3600
   # -- Ceiling, in seconds, on the total age of a renewed user session, measured from first login and kept across every `POST /api/v2/auth/token/renew` (#801). Past it, renewal is refused and the user logs in again. `tokenTtlSeconds` is what bounds a stolen token; this only caps how long a live session may keep refreshing. `0` disables the ceiling. Sets `auth.jwt.max_lifetime_seconds`.
   sessionMaxLifetimeSeconds: 86400
