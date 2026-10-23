@@ -64,6 +64,38 @@ func TestBuildEnvSignalsOnFailureCallback(t *testing.T) {
 	}
 }
 
+// TestBuildEnvPointsAnOperatorCallbackAtItsSource: a captured operator is
+// rebuilt from its args, which carry no callable, so the agent passes the task's
+// entrypoint for the runtime to import dag.py from (#484). A @task already runs
+// its entrypoint, and an operator without the marker gets nothing.
+func TestBuildEnvPointsAnOperatorCallbackAtItsSource(t *testing.T) {
+	r := newRunner(&fakeClient{}, &fakeCmd{}, &recordingSink{})
+	cases := []struct {
+		name string
+		spec *agentv1.TaskSpec
+		want string
+	}{
+		{"operator with a callback", &agentv1.TaskSpec{Operator: "airflow_operator", Entrypoint: "dag:q", OnFailureCallback: true}, "LEOFLOW_CALLBACK_SOURCE=dag:q"},
+		{"operator without a callback", &agentv1.TaskSpec{Operator: "airflow_operator", Entrypoint: "dag:q"}, ""},
+		{"python task with a callback", &agentv1.TaskSpec{Operator: "python", Entrypoint: "dag:fn", OnFailureCallback: true}, ""},
+	}
+	for _, c := range cases {
+		env, err := r.buildEnv(context.Background(), c.spec)
+		if err != nil {
+			t.Fatalf("%s: buildEnv: %v", c.name, err)
+		}
+		got := ""
+		for _, kv := range env {
+			if strings.HasPrefix(kv, "LEOFLOW_CALLBACK_SOURCE=") {
+				got = kv
+			}
+		}
+		if got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
 // TestBuildEnvInjectsReturnValuePath: the runner tells the runtime where to write
 // the return value (the agent's per-task path), and injects nothing when there is
 // no return path.

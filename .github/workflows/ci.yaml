@@ -1826,3 +1826,7 @@ jobs:
       # RuntimeTaskInstance (#1843): a pin bump that widens the gap fails here.
       - name: Task context contract
         run: python -m pytest runtime/python/tests/test_task_sdk_context_contract.py -q
+      # A captured operator's on_failure_callback, read off its task in a real
+      # dag.py (#484): the Airflow-free runtime job cannot import one.
+      - name: Operator callback contract
+        run: python -m pytest runtime/python/tests/test_task_sdk_operator_callback.py -q
