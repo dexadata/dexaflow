@@ -103,6 +103,14 @@ Docker daemon answers but the Compose v2 plugin is not installed, and says so.
 An explicit `--postgres docker` on such a host stops with what to do: install
 the Compose v2 plugin, or use `--postgres managed`.
 
+The managed Postgres has builds for Linux (glibc and musl) and macOS; Ubuntu
+22.04 and 24.04 are tested on bare containers. It links libxml2, Kerberos,
+OpenSSL 3, zstd and lz4 from the host, and the musl build also links ICU 74.
+Desktop installs have them; on a bare container or a minimal server Lite stops
+before starting Postgres, names each missing library and, on Debian, Ubuntu and
+Alpine, prints the command that installs them. The glibc build does not use ICU,
+so the host's ICU release does not matter.
+
 Lite **owns its database**: it runs only on the Postgres it starts, and it does
 not read `DEXAFLOW_DATABASE_URL` (or `LEOFLOW_DATABASE_URL`). One exported in
 your shell is not passed to the Lite server, and `dexaflow lite` prints a note
