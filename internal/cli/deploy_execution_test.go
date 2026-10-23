@@ -47,7 +47,7 @@ func registerAgainstAPI(t *testing.T, policy domain.WarmPolicy, pools config.Exe
 		},
 		Execution: api.ExecutionDeps{
 			WarmPolicy: policy,
-			WarmPools:  pools,
+			WarmPools:  pools.WarmPoolDefaults(),
 		},
 		Stores: api.StoreDeps{
 			Versions: registerRepo{},

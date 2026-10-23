@@ -3,7 +3,6 @@ package api
 import (
 	"fmt"
 
-	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
@@ -57,7 +56,7 @@ const noIdleWorkersReason = "no idle warm workers kept for this DAG"
 // dispatch places with and the operator's warm pool settings.
 type executionReporter struct {
 	policy domain.WarmPolicy
-	pools  config.ExecutionSection
+	pools  domain.WarmPoolDefaults
 	// absent says why this server runs no warm worker at all although warm
 	// pools are on (no reconciler: the subprocess executor, or pod dispatch
 	// disabled), "" when it runs them.

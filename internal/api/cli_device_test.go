@@ -203,7 +203,7 @@ func deviceServer(t *testing.T, f *fakeIDP, cfg config.OIDCSection, users OIDCUs
 			TokenTTLSecs:  3600,
 			OIDCFlow:      flow,
 			OIDCEnabled:   true,
-			OIDCSettings:  cfg,
+			OIDCSettings:  testOIDCSettings(cfg),
 			OIDCUsers:     users,
 			AuthAudit:     audit,
 			JWTSecret:     testHS256Secret,

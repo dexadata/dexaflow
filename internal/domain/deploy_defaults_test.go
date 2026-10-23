@@ -140,3 +140,12 @@ func TestDeployDefaultsBuilderServiceAccountAndWarmPools(t *testing.T) {
 		})
 	}
 }
+
+// TestWarmPoolDefaultsEffectiveMinIdleNil: nil settings keep no worker warm,
+// whatever the DAG declares.
+func TestWarmPoolDefaultsEffectiveMinIdleNil(t *testing.T) {
+	var w *WarmPoolDefaults
+	if got := w.EffectiveMinIdle(3); got != 0 {
+		t.Fatalf("nil EffectiveMinIdle(3) = %d, want 0", got)
+	}
+}
