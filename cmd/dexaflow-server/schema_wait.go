@@ -61,11 +61,13 @@ type schemaWaiter struct {
 	record schemaRecorder
 	logger *slog.Logger
 	after  func(time.Duration) <-chan time.Time
+	// hint is what to do about each reason (recoveryHint.forClass).
+	hint   func(class string) string
 	detail atomic.Pointer[string]
 }
 
 func newSchemaWaiter(probe schemaProber, record schemaRecorder, logger *slog.Logger) *schemaWaiter {
-	w := &schemaWaiter{probe: probe, record: record, logger: logger, after: time.After}
+	w := &schemaWaiter{probe: probe, record: record, logger: logger, after: time.After, hint: recoveryHint{}.forClass}
 	w.setDetail("checking the database schema")
 	return w
 }
@@ -97,7 +99,7 @@ func (w *schemaWaiter) wait(ctx context.Context) error {
 			return nil
 		}
 		w.record.RecordSchemaState(verdict.Class)
-		action := schemaRecoveryHint(verdict.Class)
+		action := w.hint(verdict.Class)
 		w.setDetail(verdict.Reason + ": " + action)
 		if verdict.Reason != last {
 			attrs := []any{"reason", verdict.Reason, "action", action}
@@ -119,33 +121,12 @@ func (w *schemaWaiter) wait(ctx context.Context) error {
 	}
 }
 
-// schemaRecoveryHint is what to do about each reason. It names no Job to copy
-// with `kubectl create job --from`, since the hook Job is deleted once it
-// succeeds. ADR 0090 decision 2 makes it name the exact command for the
-// install method from the release the chart passes in; until then it names
-// the command with placeholders.
-func schemaRecoveryHint(class string) string {
-	switch class {
-	case storage.SchemaReasonDirty:
-		return "a migration may be in flight; if none is running, follow the interrupted-migration steps of the upgrade guide"
-	case storage.SchemaReasonUnreadable:
-		return "check that the database is reachable with database.url; the server checks again on its own"
-	case storage.SchemaReasonReplaced:
-		// Migrating does not fix it: the migration Job refuses this database
-		// too, and the server must never write to it unacknowledged.
-		return "this is not the database this release was installed on (emptied, restored from another installation, or database.url changed); " +
-			"restore the right database or point database.url back at it, or accept this one by setting installation.id " +
-			"(see the troubleshooting page, a replaced database); the server checks again on its own"
-	default:
-		return "apply the migrations: on Helm, `helm upgrade <release> oci://ghcr.io/dexadata/charts/dexaflow -n <namespace> --version <chart version> --reuse-values` runs the migration Job again; on Lite, `dexaflow db migrate`; the server checks again on its own"
-	}
-}
-
 // awaitSchema binds the probe listeners, waits until the schema is current
 // and closes them, so the rest of boot runs as before and binds the real
 // listeners on the same ports.
 func awaitSchema(ctx context.Context, cfg *config.ServerConfig, tel *observability.Telemetry, probe schemaProber) error {
 	w := newSchemaWaiter(probe, tel.Metrics, tel.Logger)
+	w.hint = newRecoveryHint(cfg).forClass
 	gate, err := startSchemaGate(ctx, cfg, tel, w.Detail)
 	if err != nil {
 		return err

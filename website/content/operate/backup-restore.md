@@ -183,6 +183,10 @@ plane pods (`kubectl rollout restart deployment`). Each pod caches tenant ids
 for its lifetime, and a restored database whose tenants carry different ids
 would otherwise be queried with the old ones.
 
+What the control plane reports after a restore, a failover or a changed
+`database.url`, and the command that recovers each case, is on
+[database lost, restored or repointed](/operate/database-lost-restored-repointed/).
+
 The PR that hardens the Helm chart (#96) will add a `BACKUP.md` to the
 chart README pointing at the upstream guidance.
 
