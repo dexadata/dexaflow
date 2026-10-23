@@ -8,7 +8,6 @@
 # move the new code to another file of the package instead.
 #
 # <path> <lines>
-cmd/dexaflow-server/main.go 3434
 internal/agent/runner.go 1674
 internal/api/resources.go 1529
 internal/cli/dev.go 2523

@@ -520,7 +520,7 @@ run_experiment() {
   # GetUserByEmail with whatever `username` carries
   # (internal/storage/repository.go), and the bootstrap admin is created as
   # LEOFLOW_BOOTSTRAP_EMAIL or admin@dexaflow.local on the fresh stack this
-  # script installs (cmd/dexaflow-server/main.go; a database from before the
+  # script installs (cmd/dexaflow-server/bootstrap.go; a database from before the
   # rename keeps admin@leoflow.local, set WP_ADMIN_LOGIN for one). This passed
   # "admin" and got a 401 that the first real run spent a cluster to discover.
   local admin_login="${WP_ADMIN_LOGIN:-admin@dexaflow.local}"
