@@ -77,14 +77,16 @@ type asyncRequeue struct {
 	taskID  string
 	counted bool
 	nextAt  time.Time
+	// cleared is whether the re-offer closed the outage window (ADR 0093).
+	cleared bool
 }
 
 func (f *fakeAsyncStore) DispatchAttempts(_ context.Context, _, _ string) (attempts int, active bool, err error) {
 	return f.attempts, f.active, f.readErr
 }
 
-func (f *fakeAsyncStore) RequeueDispatch(_ context.Context, _, taskID string, countAttempt bool, nextAt time.Time) (bool, error) {
-	f.requeued = append(f.requeued, asyncRequeue{taskID, countAttempt, nextAt})
+func (f *fakeAsyncStore) RequeueDispatch(_ context.Context, _, taskID string, countAttempt, clearUnavailable bool, nextAt time.Time) (bool, error) {
+	f.requeued = append(f.requeued, asyncRequeue{taskID, countAttempt, nextAt, clearUnavailable})
 	return true, nil
 }
 
@@ -96,7 +98,7 @@ func (f *fakeAsyncStore) RecordDispatchUnavailable(_ context.Context, _, taskID 
 		f.unavailableSince = now
 	}
 	nextAt = now.Add(min(max(now.Sub(f.unavailableSince), minDelay), maxDelay))
-	f.unavailable = append(f.unavailable, asyncRequeue{taskID, false, nextAt})
+	f.unavailable = append(f.unavailable, asyncRequeue{taskID, false, nextAt, false})
 	return f.unavailableSince, nextAt, true, nil
 }
 
@@ -132,8 +134,8 @@ func TestAsyncDispatchFailureMirrorsTheSyncPath(t *testing.T) {
 		if len(st.failed) != 0 || len(st.requeued) != 1 {
 			t.Fatalf("failed=%v requeued=%v, want one uncounted re-offer", st.failed, st.requeued)
 		}
-		if r := st.requeued[0]; r.counted || !r.nextAt.Equal(now.Add(dispatchBackoff(3))) {
-			t.Errorf("re-offer = %+v, want uncounted at now+%v", r, dispatchBackoff(3))
+		if r := st.requeued[0]; r.counted || !r.nextAt.Equal(now.Add(dispatchBackoff(3))) || !r.cleared {
+			t.Errorf("re-offer = %+v, want uncounted at now+%v, closing the outage window", r, dispatchBackoff(3))
 		}
 	})
 
@@ -147,8 +149,8 @@ func TestAsyncDispatchFailureMirrorsTheSyncPath(t *testing.T) {
 		if len(st.failed) != 0 || len(st.requeued) != 1 {
 			t.Fatalf("failed=%v requeued=%v, want one counted re-offer", st.failed, st.requeued)
 		}
-		if r := st.requeued[0]; !r.counted || !r.nextAt.Equal(now.Add(dispatchBackoff(2))) {
-			t.Errorf("re-offer = %+v, want counted at now+%v", r, dispatchBackoff(2))
+		if r := st.requeued[0]; !r.counted || !r.nextAt.Equal(now.Add(dispatchBackoff(2))) || !r.cleared {
+			t.Errorf("re-offer = %+v, want counted at now+%v, closing the outage window", r, dispatchBackoff(2))
 		}
 	})
 

@@ -562,8 +562,10 @@ func (s *SchedulerStore) MarkQueued(ctx context.Context, runID, taskID string, e
 
 // RequeueDispatch re-offers a task whose buffered dispatch failed in the worker:
 // back to scheduled, held until nextAt, with one more dispatch attempt when
-// countAttempt. It reports false when the task is no longer scheduled or queued.
-func (s *SchedulerStore) RequeueDispatch(ctx context.Context, runID, taskID string, countAttempt bool, nextAt time.Time) (bool, error) {
+// countAttempt. clearUnavailable closes the outage window of ADR 0093 (the
+// apiserver answered the create). It reports false when the task is no longer
+// scheduled or queued.
+func (s *SchedulerStore) RequeueDispatch(ctx context.Context, runID, taskID string, countAttempt, clearUnavailable bool, nextAt time.Time) (bool, error) {
 	rid, err := parseUUID(runID)
 	if err != nil {
 		return false, err
@@ -577,6 +579,7 @@ func (s *SchedulerStore) RequeueDispatch(ctx context.Context, runID, taskID stri
 		TaskID:           taskID,
 		NextDispatchAt:   pgtype.Timestamptz{Time: nextAt, Valid: true},
 		AttemptIncrement: inc,
+		ClearUnavailable: clearUnavailable,
 	})
 	return n > 0, err
 }

@@ -58,7 +58,9 @@ Two more facts shaped the decision:
    time.** Both dispatch paths (the tick and the buffered workers) re-offer
    the task without incrementing `dispatch_attempts`. The task fails as
    `dispatch_failed` once the API has been unavailable to it for **15
-   minutes**, measured from its first unavailable failure, with the reason
+   minutes**, measured from the first of its consecutive unavailable
+   failures (a create the API answers ends the outage, see point 4), with
+   the reason
    `dispatch_failed: Kubernetes API unavailable for <duration>: <cause>`.
    Fifteen minutes outlasts a managed control plane upgrade or an etcd leader
    change; an API that stays down longer is an outage an operator must see,
@@ -74,9 +76,15 @@ Two more facts shaped the decision:
    `task_instances.dispatch_unavailable_since`. The first unavailable failure
    of a dispatch episode stamps it and later ones keep it; it is reset with
    `dispatch_attempts` (a retry, an infra re-place, a clear) and on a
-   reschedule re-dispatch. This follows the DB-as-truth rule of ADR 0031 and
-   the reason Amendment A gave for its own columns. An in-memory map would
-   restart the window on every restart or leader change. No existing column
+   reschedule re-dispatch. It is also cleared when the API answers a create
+   with cluster backpressure or a rejection, on both paths, so the next
+   unavailable failure starts a new window. A dispatch that never reached
+   the API (the client rate limiter's refusal, a buffer wait past its bound)
+   keeps it, and so does the write that marks the row `queued`, which on the
+   buffered path lands before the create is sent. This follows the
+   DB-as-truth rule of ADR 0031 and the reason Amendment A gave for its own
+   columns. An in-memory map would restart the window on every restart or
+   leader change. No existing column
    can carry the value: `scheduled_at` also covers a wait on cluster
    backpressure, which is unbounded, and `first_reschedule_at` belongs to
    sensors. The column is added without a default, so the migration only

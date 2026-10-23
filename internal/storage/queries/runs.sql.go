@@ -3028,7 +3028,8 @@ func (q *Queries) MarkTaskStartExpired(ctx context.Context, arg MarkTaskStartExp
 
 const recordDispatchBackpressure = `-- name: RecordDispatchBackpressure :exec
 UPDATE task_instances
-SET next_dispatch_at = $3
+SET next_dispatch_at = $3,
+    dispatch_unavailable_since = NULL
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled'
 `
 
@@ -3046,7 +3047,8 @@ type RecordDispatchBackpressureParams struct {
 // scheduled->queued on next_dispatch_at alone, so setting it holds and re-offers
 // the task without a counter bump. Guarded to 'scheduled' for the same reason as
 // RecordDispatchFailure; try_number is untouched — this is infra, not a task
-// failure.
+// failure. The apiserver answered the create, so dispatch_unavailable_since is
+// cleared as in RecordDispatchFailure.
 func (q *Queries) RecordDispatchBackpressure(ctx context.Context, arg RecordDispatchBackpressureParams) error {
 	_, err := q.db.Exec(ctx, recordDispatchBackpressure, arg.DagRunID, arg.TaskID, arg.NextDispatchAt)
 	return err
@@ -3056,6 +3058,7 @@ const recordDispatchFailure = `-- name: RecordDispatchFailure :exec
 UPDATE task_instances
 SET dispatch_attempts = dispatch_attempts + 1,
     next_dispatch_at = $3,
+    dispatch_unavailable_since = NULL,
     last_heartbeat_at = NULL,
     attempt_epoch = attempt_epoch + 1
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled'
@@ -3074,7 +3077,9 @@ type RecordDispatchFailureParams struct {
 // a row that has since progressed. try_number is untouched: this is infra, not a
 // task failure.
 // last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
-// ResetTaskInstanceToNone.
+// ResetTaskInstanceToNone. The apiserver answered the create, so the outage
+// window of ADR 0093 is closed: dispatch_unavailable_since is cleared, and a
+// later unavailable failure starts a new window.
 func (q *Queries) RecordDispatchFailure(ctx context.Context, arg RecordDispatchFailureParams) error {
 	_, err := q.db.Exec(ctx, recordDispatchFailure, arg.DagRunID, arg.TaskID, arg.NextDispatchAt)
 	return err
@@ -3351,18 +3356,21 @@ UPDATE task_instances
 SET state = 'scheduled',
     next_dispatch_at = $1,
     dispatch_attempts = dispatch_attempts + $2::int,
+    dispatch_unavailable_since = CASE WHEN $3::bool
+                                      THEN NULL ELSE dispatch_unavailable_since END,
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
     attempt_epoch = attempt_epoch + 1,
     queued_at = NULL
-WHERE dag_run_id = $3
-  AND task_id = $4
+WHERE dag_run_id = $4
+  AND task_id = $5
   AND state IN ('scheduled', 'queued')
 `
 
 type RequeueDispatchParams struct {
 	NextDispatchAt   pgtype.Timestamptz `json:"next_dispatch_at"`
 	AttemptIncrement int32              `json:"attempt_increment"`
+	ClearUnavailable bool               `json:"clear_unavailable"`
 	DagRunID         pgtype.UUID        `json:"dag_run_id"`
 	TaskID           string             `json:"task_id"`
 }
@@ -3380,11 +3388,17 @@ type RequeueDispatchParams struct {
 // queued_at is cleared too, so the next queued episode stamps a fresh one:
 // MarkTaskInstanceQueued only stamps a NULL queued_at, and a kept one would
 // make the dispatch-lost reaper fail the re-offered task as soon as it is
-// queued again.
+// queued again. dispatch_unavailable_since is cleared when clear_unavailable
+// is set, for a failure the apiserver answered (a rejection, backpressure), as
+// in RecordDispatchFailure. It is kept for a failure that says nothing about
+// the API (a buffer wait past its bound), so a saturated buffer during an
+// outage cannot reset the window. It is not cleared when the row is marked
+// queued either: a buffered row is queued before its create is sent.
 func (q *Queries) RequeueDispatch(ctx context.Context, arg RequeueDispatchParams) (int64, error) {
 	result, err := q.db.Exec(ctx, requeueDispatch,
 		arg.NextDispatchAt,
 		arg.AttemptIncrement,
+		arg.ClearUnavailable,
 		arg.DagRunID,
 		arg.TaskID,
 	)

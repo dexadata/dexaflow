@@ -134,7 +134,7 @@ func (q *queuedRows) DispatchAttempts(_ context.Context, _, taskID string) (atte
 	return 0, active, nil
 }
 
-func (q *queuedRows) RequeueDispatch(_ context.Context, _, taskID string, countAttempt bool, _ time.Time) (bool, error) {
+func (q *queuedRows) RequeueDispatch(_ context.Context, _, taskID string, countAttempt, _ bool, _ time.Time) (bool, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if _, ok := q.queued[taskID]; !ok {

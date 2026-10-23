@@ -226,4 +226,7 @@ func TestAsyncDeferredDispatchIsNotCounted(t *testing.T) {
 	if st.requeued[0].counted {
 		t.Errorf("a deferred dispatch must not count toward the budget, got %+v", st.requeued[0])
 	}
+	if st.requeued[0].cleared {
+		t.Errorf("a deferred dispatch never reached the API and must keep the outage window, got %+v", st.requeued[0])
+	}
 }
