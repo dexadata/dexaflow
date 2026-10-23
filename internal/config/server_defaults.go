@@ -196,6 +196,7 @@ var serverDefaults = map[string]any{
 	"logs.backend":                       "disk",
 	"logs.persistence_enabled":           true,
 	"logs.tail.publish":                  LogTailPublishAlways,
+	"logs.tail.replay_budget_bytes":      int64(0), // gate (ADR 0062): no budget, as before (#1621)
 	"logs.sink.bucket":                   "",
 	"logs.sink.prefix":                   "",
 	"logs.sink.region":                   "",

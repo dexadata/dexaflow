@@ -44,6 +44,13 @@ type LogTailSection struct {
 	// a new follower may see its first live lines up to about a second late).
 	// Bind via DEXAFLOW_LOGS_TAIL_PUBLISH (legacy LEOFLOW_LOGS_TAIL_PUBLISH).
 	Publish string `mapstructure:"publish"`
+	// ReplayBudgetBytes bounds what the on_demand gates of all log streams hold
+	// for replay together (#1621). Each stream holds at most 1 MiB, so without
+	// it a thousand silent streams can hold about 500 MiB; over the budget the
+	// longest silent stream's held lines are dropped first, and a follower of
+	// that stream reads them from the stored log. 0 (the default) bounds
+	// nothing, as before. Read only with Publish "on_demand".
+	ReplayBudgetBytes int64 `mapstructure:"replay_budget_bytes"`
 }
 
 // ObjectLogSection configures the object-store log backend for both the "s3" and
@@ -116,6 +123,9 @@ func (c *ServerConfig) validateLogs() error {
 	case "", LogTailPublishAlways, LogTailPublishOnDemand:
 	default:
 		return fmt.Errorf(`unknown logs.tail.publish %q (want %q or %q)`, c.Logs.Tail.Publish, LogTailPublishAlways, LogTailPublishOnDemand)
+	}
+	if c.Logs.Tail.ReplayBudgetBytes < 0 {
+		return fmt.Errorf("logs.tail.replay_budget_bytes must not be negative (got %d); 0 means no budget", c.Logs.Tail.ReplayBudgetBytes)
 	}
 	switch c.Logs.Backend {
 	case "", "disk":
