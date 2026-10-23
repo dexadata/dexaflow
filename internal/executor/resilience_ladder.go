@@ -196,6 +196,20 @@ func ValidateResilienceLadder(l ResilienceLadder) error {
 	return nil
 }
 
+// EventResilienceBackstopDisabled is the event attribute of the boot WARN for
+// a ladder setting that removes a resilience backstop. An alert rule matches on
+// it rather than on config_key, which names the knob and not the event, so a
+// second rung warning about the same key does not make the rule over-match
+// (#941).
+const EventResilienceBackstopDisabled = "resilience_backstop_disabled"
+
+// ResilienceBackstopKeys lists the config keys whose setting can remove a
+// resilience backstop, so the boot posture gauge exports a series for each,
+// 0 while the backstop is on.
+func ResilienceBackstopKeys() []string {
+	return []string{maxAttemptCredentialLifetimeKey}
+}
+
 // ResilienceLadderWarnings reports the ladder settings that are valid but
 // remove a resilience backstop, so the server can surface them as boot WARNs.
 // ValidateResilienceLadder deliberately accepts a non-positive credential
@@ -217,6 +231,7 @@ func ResilienceLadderWarnings(l ResilienceLadder) []LadderWarning {
 		warnings = append(warnings, LadderWarning{
 			Msg: fmt.Sprintf("%s is disabled (%v): heartbeat renewal of an attempt's credential is unbounded, task pods with no declared execution_timeout get no activeDeadlineSeconds floor, and with warm pools enabled the per-attempt watchdog is off — a wedged or partitioned task pod has no wall-clock bound of its own",
 				maxAttemptCredentialLifetimeKey, l.MaxAttemptCredentialLifetime),
+			Event: EventResilienceBackstopDisabled,
 			Key:   maxAttemptCredentialLifetimeKey,
 			Value: l.MaxAttemptCredentialLifetime,
 		})
@@ -236,6 +251,9 @@ func ResilienceLadderWarnings(l ResilienceLadder) []LadderWarning {
 type LadderWarning struct {
 	// Msg is the human-readable sentence: what is off and what it costs.
 	Msg string
+	// Event names what happened, a stable low-cardinality constant
+	// (EventResilienceBackstopDisabled), while Key distinguishes the rungs.
+	Event string
 	// Key is the config key an operator would set to restore the backstop —
 	// the attribute an alert rule matches on.
 	Key string

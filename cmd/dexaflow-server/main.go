@@ -127,6 +127,7 @@ func run() error {
 	// every remaining site and takes nothing away from injection.
 	slog.SetDefault(tel.Logger)
 	warnStartup(cfg, tel.Logger)
+	recordResiliencePosture(cfg, tel.Metrics)
 
 	// Lite only: the key-migration lock is held before anything reads or writes
 	// a stored secret, and the server stops if it is lost (ADR 0065 section 3).

@@ -11,6 +11,7 @@ import (
 
 	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/executor"
+	"github.com/dexadata/dexaflow/internal/observability"
 )
 
 // validateStartup runs every boot-time invariant check before any subsystem
@@ -59,13 +60,34 @@ func warnStartup(cfg *config.ServerConfig, logger *slog.Logger) {
 		return
 	}
 	for _, w := range executor.ResilienceLadderWarnings(resilienceLadder(cfg)) {
-		logger.Warn(w.Msg, "config_key", w.Key, "value", w.Value)
+		logger.Warn(w.Msg, "event", w.Event, "config_key", w.Key, "value", w.Value)
 	}
 	for _, w := range platformDefaultWarnings(cfg.Executor.Defaults) {
 		logger.Warn(w.Msg, "config_key", w.Key, "value", w.Value, "missing_config_key", w.MissingKey)
 	}
 	for _, w := range logPersistenceWarnings(cfg.Logs) {
 		logger.Warn(w.Msg, "config_key", w.Key, "value", w.Value)
+	}
+}
+
+// recordResiliencePosture exports the boot posture the ladder WARN describes as
+// dexaflow_resilience_backstop_disabled, one series per backstop key. A
+// disabled backstop stays disabled for the life of the process, while its log
+// record scrolls out of retention, so "is any replica running with a backstop
+// off" needs a gauge, not a log search (#941). Gated like the WARN: only a
+// process that runs the scheduler implements the backstops.
+func recordResiliencePosture(cfg *config.ServerConfig, m *observability.Metrics) {
+	if !cfg.Server.ServesScheduler() {
+		return
+	}
+	disabled := map[string]bool{}
+	for _, w := range executor.ResilienceLadderWarnings(resilienceLadder(cfg)) {
+		if w.Event == executor.EventResilienceBackstopDisabled {
+			disabled[w.Key] = true
+		}
+	}
+	for _, key := range executor.ResilienceBackstopKeys() {
+		m.RecordResilienceBackstop(key, disabled[key])
 	}
 }
 
