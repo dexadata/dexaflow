@@ -107,7 +107,7 @@ unset.
 |---|---|---|---|---|
 | `retries`, `retry_delay_seconds`, `execution_timeout_seconds` | ✅ | ✅ (`defaults`) | — | |
 | `env` | ✅ (merged) | — | — | merged over compiled env |
-| `resources` | ✅ | ✅ (`defaults`; both `cpu` and `memory` required) | ✅ | L0 substitution is object-level, not field-level: it applies only when the task declares no `resources` at all (#802) |
+| `resources` | ✅ | ✅ (`defaults`; both `cpu` and `memory` required) | ✅ | L0 fills per dimension: each of cpu, memory and ephemeral storage the task leaves empty (neither request nor limit) gets the platform request and limit; a dimension the task sets at all stays the task's (#802) |
 | `execution` (node selector, tolerations, SA, pull policy) | ✅ | — | — | |
 | `staging` (size, storage_class) | ❌ | ✅ | ✅ | **DAG-level only**: one RWX volume is shared atomically by the whole run (ADR 0022); per-task staging would break that semantic. L0 defaults size/class per cluster. |
 

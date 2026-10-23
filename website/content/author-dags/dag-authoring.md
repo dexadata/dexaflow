@@ -496,9 +496,10 @@ task override (tasks.<id>)  >  DAG default (defaults)  >  platform default (serv
 
 - `tasks.<id>` is merged at **compile** time onto the task in `dag.json`.
 - Platform defaults are applied at **dispatch** time, filling gaps the artifact
-  left empty (keeps the artifact portable across clusters) — but **wholesale**:
-  if a task declares any `resources` at all, even only `ephemeral_storage`, the
-  platform cpu/memory default does not apply to it
+  left empty (keeps the artifact portable across clusters), one resource
+  dimension at a time: a task that declares only `ephemeral_storage`, or only
+  cpu, still gets the platform default for the dimensions it left out. A
+  dimension the task sets at all (a request or a limit) is entirely the task's
   ([#802](https://github.com/dexadata/dexaflow/issues/802)).
 - **`staging` is DAG-level only** — one RWX volume is shared atomically by the
   whole run, so it cannot be per-task.
