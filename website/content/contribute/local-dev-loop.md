@@ -313,7 +313,7 @@ This is **not** an install path. Real users still install via
    a `pkill -f "dexaflow lite"` fallback).
 4. **Swaps the binaries in both locations** `dexaflow lite` resolves
    them from — `./bin/` (the repo's local bin, preferred by
-   `resolveBinary` in `internal/cli/dev.go`) and `~/.dexaflow/bin/` (the
+   `resolveBinary` in `internal/cli/dev_binaries.go`) and `~/.dexaflow/bin/` (the
    user-install location). Keeping them in lockstep is critical: if
    only one is updated the stale one silently runs and the dev loop
    becomes confusing fast (this happened — see the commit that added
