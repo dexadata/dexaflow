@@ -1,16 +1,11 @@
 package setup
 
 import (
-	"context"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 )
-
-// Runner runs an external command; injected so venv provisioning is testable
-// without a real Python.
-type Runner func(ctx context.Context, name string, args ...string) error
 
 // ExtractFS writes every file in fsys into dest, preserving the directory
 // structure. It is used to materialize the embedded Python sources into
@@ -36,20 +31,4 @@ func ExtractFS(fsys fs.FS, dest string) error {
 		}
 		return nil
 	})
-}
-
-// ProvisionVenv creates a virtualenv at venvDir using pythonPath, then pip
-// installs pipPackages into it, and returns the venv's interpreter path. The
-// heavy work (notably the parser's Airflow dependency) happens once; reruns are
-// the caller's responsibility to gate. The runner is injected for testing.
-func ProvisionVenv(ctx context.Context, run Runner, pythonPath, venvDir string, pipPackages []string) (string, error) {
-	if err := run(ctx, pythonPath, "-m", "venv", venvDir); err != nil {
-		return "", fmt.Errorf("creating venv at %s: %w", venvDir, err)
-	}
-	venvPy := filepath.Join(venvDir, "bin", "python")
-	args := append([]string{"-m", "pip", "install", "-q"}, pipPackages...)
-	if err := run(ctx, venvPy, args...); err != nil {
-		return "", fmt.Errorf("installing packages into venv: %w", err)
-	}
-	return venvPy, nil
 }

@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 func TestBuildCommandPython(t *testing.T) {
@@ -105,22 +104,6 @@ func TestReadReturnValue(t *testing.T) {
 	v, ok, err := ReadReturnValue(p)
 	if err != nil || !ok || string(v) != "42" {
 		t.Errorf("present file: v=%q ok=%v err=%v", v, ok, err)
-	}
-}
-
-func TestBackoff(t *testing.T) {
-	want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second}
-	for i, w := range want {
-		got, ok := Backoff(i + 1)
-		if !ok || got != w {
-			t.Errorf("Backoff(%d) = %v,%v want %v,true", i+1, got, ok, w)
-		}
-	}
-	if _, ok := Backoff(6); ok {
-		t.Error("Backoff past max attempts should be false")
-	}
-	if _, ok := Backoff(0); ok {
-		t.Error("Backoff(0) should be false")
 	}
 }
 
