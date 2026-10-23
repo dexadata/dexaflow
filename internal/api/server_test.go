@@ -36,13 +36,19 @@ func (f *fakeAuthn) Authenticate(context.Context, string) (*auth.User, error) {
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 func testServer(authn auth.Authenticator) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: authn,
-		RateLimiter:   auth.NewRateLimiter(5, time.Minute),
-		HealthChecks:  map[string]HealthChecker{},
-		CORSOrigins:   []string{"*"},
-		TokenTTLSecs:  3600,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger:       discardLogger(),
+			HealthChecks: map[string]HealthChecker{},
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: authn,
+			RateLimiter:   auth.NewRateLimiter(5, time.Minute),
+			TokenTTLSecs:  3600,
+		},
 	})
 }
 

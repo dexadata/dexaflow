@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/dexadata/dexaflow/internal/api"
+	"github.com/dexadata/dexaflow/internal/api/apitest"
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
@@ -44,8 +45,19 @@ func (r *recordingVersions) registered() []string {
 func enforcingServer(t *testing.T) (*httptest.Server, *recordingVersions) {
 	t.Helper()
 	repo := &recordingVersions{}
-	srv := httptest.NewServer(api.NewServer(api.Dependencies{
-		Logger: discardTestLogger(), DevNoAuth: true, Versions: repo, RequireDigest: domain.DigestRequireEnforce,
+	srv := httptest.NewServer(apitest.NewServer(api.Dependencies{
+		Observability: api.ObservabilityDeps{
+			Logger: discardTestLogger(),
+		},
+		Auth: api.AuthDeps{
+			DevNoAuth: true,
+		},
+		Execution: api.ExecutionDeps{
+			RequireDigest: domain.DigestRequireEnforce,
+		},
+		Stores: api.StoreDeps{
+			Versions: repo,
+		},
 	}))
 	t.Cleanup(srv.Close)
 	return srv, repo
@@ -245,7 +257,7 @@ func TestDeployStopsWhenThePushedDigestCannotBeRead(t *testing.T) {
 func TestPushRefusesAnInvalidImageFlag(t *testing.T) {
 	f := writePushSpec(t, pushSpecImage)
 	repo := &recordingVersions{}
-	srv := httptest.NewServer(api.NewServer(api.Dependencies{Logger: discardTestLogger(), DevNoAuth: true, Versions: repo}))
+	srv := httptest.NewServer(apitest.NewServer(api.Dependencies{Observability: api.ObservabilityDeps{Logger: discardTestLogger()}, Auth: api.AuthDeps{DevNoAuth: true}, Stores: api.StoreDeps{Versions: repo}}))
 	defer srv.Close()
 	for bad, why := range map[string]string{
 		"ghcr.io/Acme/etl:v1":                                 "not a valid reference",
@@ -269,7 +281,7 @@ func TestPushRefusesAnInvalidImageFlag(t *testing.T) {
 func TestPushImageFlagTagThatDoesNotResolveFails(t *testing.T) {
 	f := writePushSpec(t, pushSpecImage)
 	srv, repo := enforcingServer(t)
-	off := httptest.NewServer(api.NewServer(api.Dependencies{Logger: discardTestLogger(), DevNoAuth: true, Versions: repo}))
+	off := httptest.NewServer(apitest.NewServer(api.Dependencies{Observability: api.ObservabilityDeps{Logger: discardTestLogger()}, Auth: api.AuthDeps{DevNoAuth: true}, Stores: api.StoreDeps{Versions: repo}}))
 	defer off.Close()
 	for _, s := range []*httptest.Server{srv, off} {
 		_, _, err := run(t, "push", f, "--image", missingRegistry(t)+"/team/etl:v9", "--server", s.URL, "--token", "x")

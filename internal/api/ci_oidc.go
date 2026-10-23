@@ -93,16 +93,16 @@ type ciTokenDeps struct {
 
 // newCITokenDeps builds the exchange from deps, nil when CI OIDC is off.
 func newCITokenDeps(deps Dependencies) *ciTokenDeps {
-	if deps.CIOIDC == nil || deps.CIOIDCRoles == nil {
+	if deps.Issuers.CIOIDC == nil || deps.Issuers.CIOIDCRoles == nil {
 		return nil
 	}
-	ttl := deps.CIOIDCSessionTTL
+	ttl := deps.Issuers.CIOIDCSessionTTL
 	if ttl <= 0 {
 		ttl = time.Hour
 	}
 	return &ciTokenDeps{
-		verifier: deps.CIOIDC, roles: deps.CIOIDCRoles, secret: deps.JWTSecret, ttl: ttl,
-		exchanges: deps.CIOIDCExchanges, audit: deps.AuthAudit, logger: deps.Logger,
+		verifier: deps.Issuers.CIOIDC, roles: deps.Issuers.CIOIDCRoles, secret: deps.Auth.JWTSecret, ttl: ttl,
+		exchanges: deps.Issuers.CIOIDCExchanges, audit: deps.Auth.AuthAudit, logger: deps.Observability.Logger,
 		limiter: auth.NewRateLimiter(ciTokenFailuresPerMinute, time.Minute), now: time.Now,
 	}
 }

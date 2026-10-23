@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/dexadata/dexaflow/internal/api"
+	"github.com/dexadata/dexaflow/internal/api/apitest"
 	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/domain"
 )
@@ -37,12 +38,20 @@ const mixedDeploySpec = `{"schema_version":"1.0","dag_id":"etl","dag_version":"v
 
 func registerAgainstAPI(t *testing.T, policy domain.WarmPolicy, pools config.ExecutionSection, spec string) (res deployResult, out string) {
 	t.Helper()
-	srv := httptest.NewServer(api.NewServer(api.Dependencies{
-		Logger:     discardTestLogger(),
-		DevNoAuth:  true,
-		Versions:   registerRepo{},
-		WarmPolicy: policy,
-		WarmPools:  pools,
+	srv := httptest.NewServer(apitest.NewServer(api.Dependencies{
+		Observability: api.ObservabilityDeps{
+			Logger: discardTestLogger(),
+		},
+		Auth: api.AuthDeps{
+			DevNoAuth: true,
+		},
+		Execution: api.ExecutionDeps{
+			WarmPolicy: policy,
+			WarmPools:  pools,
+		},
+		Stores: api.StoreDeps{
+			Versions: registerRepo{},
+		},
 	}))
 	defer srv.Close()
 	path := filepath.Join(t.TempDir(), "dag.json")
@@ -175,8 +184,19 @@ func TestDeployPrintsTheRegisterWarningsOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(api.NewServer(api.Dependencies{
-		Logger: discardTestLogger(), DevNoAuth: true, Versions: registerRepo{}, ResourceUnit: unit,
+	srv := httptest.NewServer(apitest.NewServer(api.Dependencies{
+		Observability: api.ObservabilityDeps{
+			Logger: discardTestLogger(),
+		},
+		Auth: api.AuthDeps{
+			DevNoAuth: true,
+		},
+		Execution: api.ExecutionDeps{
+			ResourceUnit: unit,
+		},
+		Stores: api.StoreDeps{
+			Versions: registerRepo{},
+		},
 	}))
 	defer srv.Close()
 	spec := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v2","image":"img:v2","tasks":[` +

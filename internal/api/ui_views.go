@@ -169,15 +169,15 @@ func latestRunHandler(repo DagRunRepository) gin.HandlerFunc {
 // /api/v2/version) whose repositories are configured.
 func registerUIViews(r gin.IRouter, deps Dependencies) {
 	r.GET("/api/v2/version", RequireScope(auth.ScopeRead), versionHandler())
-	if deps.DagRuns != nil {
-		r.GET("/ui/grid/runs/:dag_id", RequirePermission("read", "dag_run"), gridRunsHandler(deps.DagRuns))
-		r.GET("/ui/dags/:dag_id/latest_run", RequirePermission("read", "dag_run"), latestRunHandler(deps.DagRuns))
+	if deps.Stores.DagRuns != nil {
+		r.GET("/ui/grid/runs/:dag_id", RequirePermission("read", "dag_run"), gridRunsHandler(deps.Stores.DagRuns))
+		r.GET("/ui/dags/:dag_id/latest_run", RequirePermission("read", "dag_run"), latestRunHandler(deps.Stores.DagRuns))
 	}
-	if deps.Dags != nil && deps.LatestRuns != nil {
-		r.GET("/ui/dags", RequirePermission("read", "dag"), uiDagsHandler(deps.Dags, deps.LatestRuns, deps.Favorites))
+	if deps.Stores.Dags != nil && deps.Stores.LatestRuns != nil {
+		r.GET("/ui/dags", RequirePermission("read", "dag"), uiDagsHandler(deps.Stores.Dags, deps.Stores.LatestRuns, deps.Stores.Favorites))
 	}
-	if deps.DagVersions != nil {
-		r.GET("/api/v2/dags/:dag_id/dagVersions", RequireDeployRead(), dagVersionsHandler(deps.DagVersions))
-		r.GET("/api/v2/dags/:dag_id/dagVersions/:version_number", RequireDeployRead(), dagVersionHandler(deps.DagVersions))
+	if deps.Stores.DagVersions != nil {
+		r.GET("/api/v2/dags/:dag_id/dagVersions", RequireDeployRead(), dagVersionsHandler(deps.Stores.DagVersions))
+		r.GET("/api/v2/dags/:dag_id/dagVersions/:version_number", RequireDeployRead(), dagVersionHandler(deps.Stores.DagVersions))
 	}
 }

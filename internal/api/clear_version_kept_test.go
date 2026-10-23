@@ -158,10 +158,22 @@ func TestClearAcrossRunsReportsOnlyTheRunsThatKeepTheirVersion(t *testing.T) {
 		{DagID: "etl", RunID: "future", LogicalDate: now.Add(time.Hour)},
 	}}
 	tasks := &fakeTaskRepo{kept: []domain.ClearVersionKept{{RunID: "future", Reason: keptReason}}}
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
-		Tasks: tasks, DagRuns: runs,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			Tasks:   tasks,
+			DagRuns: runs,
+		},
 	})
 	rec := authGet(srv, http.MethodPost, "/api/v2/dags/etl/clearTaskInstances",
 		`{"dag_run_id":"cur","include_future":true,"run_on_latest_version":true,"dry_run":false}`)

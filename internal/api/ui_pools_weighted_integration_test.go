@@ -72,13 +72,21 @@ func TestPoolsAPIReportsWeightedSlots(t *testing.T) {
 		t.Fatalf("run b: %v", err)
 	}
 
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Pools:         repo,
-		Edition:       "pro",
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+			Edition:     "pro",
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Pools: repo,
+		},
 	})
 	rec := authGet(srv, http.MethodGet, "/api/v2/pools/"+poolName, "")
 	if rec.Code != http.StatusOK {

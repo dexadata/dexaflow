@@ -40,13 +40,21 @@ func (f *fakeSpecReader) GetDagVersionSpec(_ context.Context, _, _ string, n int
 
 func structureServer(specs DagSpecReader) *gin.Engine {
 	sources, _ := specs.(DagSourceReader)
-	return NewServer(Dependencies{
-		DagSources:    sources,
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Specs:         specs,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			DagSources: sources,
+			Specs:      specs,
+		},
 	})
 }
 

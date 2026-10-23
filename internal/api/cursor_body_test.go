@@ -153,10 +153,22 @@ func TestTaskInstancesBodyCursorsWalkBothWays(t *testing.T) {
 	tasks := &pagedTaskRepo{fakeTaskRepo{tis: []domain.TaskInstance{
 		{TaskID: "a", RunID: "r1"}, {TaskID: "b", RunID: "r1"}, {TaskID: "c", RunID: "r1"},
 	}}}
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
-		Tasks: tasks, DagRuns: &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1"}}},
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			Tasks:   tasks,
+			DagRuns: &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1"}}},
+		},
 	})
 	get := func(p string) (int, []byte) {
 		rec := authGet(srv, http.MethodGet, p, "")

@@ -58,7 +58,10 @@ func startAPISide(ctx context.Context, cfg *config.ServerConfig, tel *observabil
 		startCLIDeviceSweep(ctx, repo, tel.Logger)
 	}
 	//nolint:contextcheck // buildAPIServer wires per-request handlers; each request carries its own context
-	srv := buildAPIServer(cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, oidcFlow, newTrustedIssuer(ctx, cfg))
+	srv, err := buildAPIServer(cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, oidcFlow, newTrustedIssuer(ctx, cfg))
+	if err != nil {
+		return nil, err
+	}
 	// Optional HTTPS on the API listener (#638); plain HTTP when unset.
 	if err := configureAPITLS(srv, cfg.Server, tel.Metrics); err != nil {
 		return nil, err
@@ -169,7 +172,7 @@ func uiTheme(cfg *config.ServerConfig) json.RawMessage {
 	return json.RawMessage(cfg.UI.Theme)
 }
 
-func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, authn *auth.JWTAuthenticator, pg *storage.Postgres, repo *storage.Repository, xcomReader *storage.XComReader, logSink logs.Sink, logTailer logs.Tailer, checks map[string]api.HealthChecker, executorInfo api.ExecutorInfo, schedulerHealth api.Heartbeater, oidcFlow *oidc.Flow, trustedIssuer api.TrustedIssuer) *http.Server {
+func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, authn *auth.JWTAuthenticator, pg *storage.Postgres, repo *storage.Repository, xcomReader *storage.XComReader, logSink logs.Sink, logTailer logs.Tailer, checks map[string]api.HealthChecker, executorInfo api.ExecutorInfo, schedulerHealth api.Heartbeater, oidcFlow *oidc.Flow, trustedIssuer api.TrustedIssuer) (*http.Server, error) {
 	if cfg.Auth.DevNoAuth {
 		tel.Logger.Warn("AUTHENTICATION DISABLED (auth.dev_no_auth): every request is treated as admin. Dev only: NEVER use in production")
 	}
@@ -178,112 +181,127 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 	go uiSrv.Precompress()
 
 	// CI OIDC (ADR 0092): unchanged deps unless auth.ci_oidc lists an issuer.
-	handler := api.NewServer(withCIOIDC(withAPITokens(api.Dependencies{
-		Logger: tel.Logger,
-		// withAPITokens puts the API tokens (ADR 0074) in front of it unless
-		// auth.api_tokens.disabled is true.
-		Authenticator:                authn,
-		RateLimiter:                  auth.NewRateLimiter(loginRateLimit(cfg), time.Minute),
-		Registry:                     tel.Registry,
-		Metrics:                      tel.Metrics,
-		Tracer:                       tel.Tracer,
-		HealthChecks:                 checks,
-		CORSOrigins:                  cfg.Server.CORS.AllowedOrigins,
-		TrustedProxies:               cfg.Server.TrustedProxies,
-		TokenTTLSecs:                 cfg.Auth.JWT.TokenTTLSeconds,
-		GzipResponses:                cfg.Server.GzipResponses,
-		MaxPageLimit:                 cfg.Server.MaxPageLimit,
-		MaxRequestBodyBytes:          cfg.Server.MaxRequestBodyBytes,
-		MaxUploadBodyBytes:           cfg.Server.MaxUploadBodyBytes,
-		ProbeBudget:                  cfg.Server.ProbeBudget,
-		TokenRenewer:                 authn,
-		TokenMaxLifetimeSecs:         cfg.Auth.JWT.MaxLifetimeSeconds,
-		InstanceName:                 cfg.UI.InstanceName,
-		UIAutoRefreshIntervalSeconds: cfg.UI.AutoRefreshIntervalSeconds,
-		UITheme:                      uiTheme(cfg),
-		UIETagRevalidation:           cfg.UI.ETagRevalidation,
-		DevNoAuth:                    cfg.Auth.DevNoAuth,
-		Edition:                      cfg.UI.Edition,
-		PoolsReadOnly:                cfg.Server.PoolsReadOnly,
-		ResourceUnit:                 resourceUnit(cfg),
-		UnitMisfits:                  unitMisfits(tel.Metrics),
-		SourceModeImage:              cfg.Execution.SourceMode.RuntimeImage(),
-		ExecutionPolicy:              executionPolicy(cfg.Executor.Defaults),
-		DeployDefaults:               cfg.AdvertisedDeployDefaults(),
-		RequireDigest:                cfg.Deploy.RequireDigest,
-		UnpinnedImages:               unpinnedImages(tel.Metrics),
-		WarmPolicy:                   warmPolicy(cfg),
-		WarmPools:                    cfg.Execution,
-		WarmWorkersAbsent:            warmWorkersAbsent(cfg, executorInfo.PodDispatchEnabled),
-		TaskPods: taskPodSettings(cfg, executorInfo.PodDispatchEnabled, func() (kubernetes.Interface, error) {
-			return buildK8sClient(cfg.Executor.KubeClient)
-		}, tel.Logger),
+	handler, err := api.NewServer(withCIOIDC(withAPITokens(api.Dependencies{
+		Observability: api.ObservabilityDeps{
+			Logger:          tel.Logger,
+			Registry:        tel.Registry,
+			Metrics:         tel.Metrics,
+			Tracer:          tel.Tracer,
+			HealthChecks:    checks,
+			ExecutorInfo:    executorInfo,
+			SchedulerHealth: schedulerHealth,
+			ProbeBudget:     cfg.Server.ProbeBudget,
+		},
+		Server: api.ServerDeps{
+			CORSOrigins:         cfg.Server.CORS.AllowedOrigins,
+			TrustedProxies:      cfg.Server.TrustedProxies,
+			GzipResponses:       cfg.Server.GzipResponses,
+			MaxPageLimit:        cfg.Server.MaxPageLimit,
+			MaxRequestBodyBytes: cfg.Server.MaxRequestBodyBytes,
+			MaxUploadBodyBytes:  cfg.Server.MaxUploadBodyBytes,
+			Edition:             cfg.UI.Edition,
+			PoolsReadOnly:       cfg.Server.PoolsReadOnly,
+		},
+		Auth: api.AuthDeps{
+			// withAPITokens puts the API tokens (ADR 0074) in front of it unless
+			// auth.api_tokens.disabled is true.
+			Authenticator:        authn,
+			RateLimiter:          auth.NewRateLimiter(loginRateLimit(cfg), time.Minute),
+			TokenTTLSecs:         cfg.Auth.JWT.TokenTTLSeconds,
+			TokenRenewer:         authn,
+			TokenMaxLifetimeSecs: cfg.Auth.JWT.MaxLifetimeSeconds,
+			DevNoAuth:            cfg.Auth.DevNoAuth,
 
-		Dags:            repo,
-		DagRuns:         repo,
-		Tasks:           repo,
-		Versions:        repo,
-		Xcoms:           xcomReader,
-		Logs:            storage.NewLogReader(pg, logSink, logTailer),
-		EphemeralLogs:   cfg.Logs.Backend == "disk" && !cfg.Logs.PersistenceEnabled,
-		Specs:           repo,
-		DagSources:      repo,
-		LatestRuns:      repo,
-		TaskSummary:     repo,
-		DagVersions:     repo,
-		DashboardStats:  repo,
-		AuditLog:        repo,
-		Variables:       repo,
-		Users:           repo,
-		UserAudit:       repo,
-		Connections:     repo,
-		Pools:           repo,
-		Favorites:       repo,
-		ImportErrors:    repo,
-		Audit:           repo,
-		ExecutorInfo:    executorInfo,
-		SchedulerHealth: schedulerHealth,
-		UI:              uiSrv,
-		Workspace:       editorFS,
-		MonacoDir:       cfg.UI.MonacoDir,
-		ExamplesFS:      dexaflow.ExampleDAGs(),
+			// OIDC/SSO login flow (nil in JWT mode → routes not registered). The repo
+			// resolves/JIT-provisions identities and records auth-event audit.
+			OIDCFlow:           oidcFlow,
+			OIDCEnabled:        cfg.Auth.Provider == config.AuthProviderOIDC,
+			OIDCSettings:       cfg.Auth.OIDC,
+			ExternalSignInURL:  cfg.Auth.ExternalSignInURL,
+			ExternalSignOutURL: cfg.Auth.ExternalSignOutURL,
+			OIDCUsers:          repo,
+			AuthAudit:          repo,
+			JWTSecret:          cfg.Auth.JWT.Secret,
+			// The device sign-in of the CLI (ADR 0081) keeps its pending
+			// sign-ins in the database, shared by every replica.
+			CLIDevices: repo,
 
-		// OIDC/SSO login flow (nil in JWT mode → routes not registered). The repo
-		// resolves/JIT-provisions identities and records auth-event audit.
-		OIDCFlow:           oidcFlow,
-		OIDCEnabled:        cfg.Auth.Provider == config.AuthProviderOIDC,
-		OIDCSettings:       cfg.Auth.OIDC,
-		ExternalSignInURL:  cfg.Auth.ExternalSignInURL,
-		ExternalSignOutURL: cfg.Auth.ExternalSignOutURL,
-		OIDCUsers:          repo,
-		AuthAudit:          repo,
-		JWTSecret:          cfg.Auth.JWT.Secret,
-		// The device sign-in of the CLI (ADR 0081) keeps its pending
-		// sign-ins in the database, shared by every replica.
-		CLIDevices: repo,
-
-		// Trusted-issuer handoff (#1284): nil unless auth.trusted_issuer is set,
-		// which leaves POST /api/v2/auth/session unregistered.
-		TrustedIssuer:        trustedIssuer,
-		TrustedIssuerUsers:   repo,
-		TrustedIssuerOrigins: cfg.Auth.TrustedIssuer.AllowedOrigins,
-		// Host binding (#1463): empty unless auth.trusted_issuer.host_pattern is set.
-		TrustedIssuerHostPattern: cfg.Auth.TrustedIssuer.HostPattern,
-		// Trusted-issuer bearer (#1468): nil unless bearer audiences are set.
-		TrustedIssuerBearer: issuerBearer(trustedIssuer),
-		// Deploys through the issuer only (#1773): off unless
-		// auth.trusted_issuer.deploy_audience is set.
-		DeployViaIssuer: cfg.Auth.TrustedIssuer.DeployAudience != "",
-		// Operator service API (#1283): off unless auth.service_token is set.
-		ServiceToken:   cfg.Auth.ServiceToken,
-		ServiceTenants: repo,
-		// The service API links users only in tenants the issuer may sign in to.
-		ServiceAllowedTenants: cfg.Auth.TrustedIssuer.AllowedTenants,
-
-		SessionCookieInsecure: cfg.Auth.SessionCookieInsecure,
-		SessionCookieName:     cfg.Auth.SessionCookieName,
+			SessionCookieInsecure: cfg.Auth.SessionCookieInsecure,
+			SessionCookieName:     cfg.Auth.SessionCookieName,
+		},
+		Issuers: api.IssuerDeps{
+			// Trusted-issuer handoff (#1284): nil unless auth.trusted_issuer is set,
+			// which leaves POST /api/v2/auth/session unregistered.
+			TrustedIssuer:        trustedIssuer,
+			TrustedIssuerUsers:   repo,
+			TrustedIssuerOrigins: cfg.Auth.TrustedIssuer.AllowedOrigins,
+			// Host binding (#1463): empty unless auth.trusted_issuer.host_pattern is set.
+			TrustedIssuerHostPattern: cfg.Auth.TrustedIssuer.HostPattern,
+			// Trusted-issuer bearer (#1468): nil unless bearer audiences are set.
+			TrustedIssuerBearer: issuerBearer(trustedIssuer),
+			// Deploys through the issuer only (#1773): off unless
+			// auth.trusted_issuer.deploy_audience is set.
+			DeployViaIssuer: cfg.Auth.TrustedIssuer.DeployAudience != "",
+			// Operator service API (#1283): off unless auth.service_token is set.
+			ServiceToken:   cfg.Auth.ServiceToken,
+			ServiceTenants: repo,
+			// The service API links users only in tenants the issuer may sign in to.
+			ServiceAllowedTenants: cfg.Auth.TrustedIssuer.AllowedTenants,
+		},
+		UI: api.UIDeps{
+			InstanceName:               cfg.UI.InstanceName,
+			AutoRefreshIntervalSeconds: cfg.UI.AutoRefreshIntervalSeconds,
+			Theme:                      uiTheme(cfg),
+			ETagRevalidation:           cfg.UI.ETagRevalidation,
+			SPA:                        uiSrv,
+			Workspace:                  editorFS,
+			MonacoDir:                  cfg.UI.MonacoDir,
+			ExamplesFS:                 dexaflow.ExampleDAGs(),
+		},
+		Execution: api.ExecutionDeps{
+			ResourceUnit:      resourceUnit(cfg),
+			UnitMisfits:       unitMisfits(tel.Metrics),
+			SourceModeImage:   cfg.Execution.SourceMode.RuntimeImage(),
+			ExecutionPolicy:   executionPolicy(cfg.Executor.Defaults),
+			DeployDefaults:    cfg.AdvertisedDeployDefaults(),
+			RequireDigest:     cfg.Deploy.RequireDigest,
+			UnpinnedImages:    unpinnedImages(tel.Metrics),
+			WarmPolicy:        warmPolicy(cfg),
+			WarmPools:         cfg.Execution,
+			WarmWorkersAbsent: warmWorkersAbsent(cfg, executorInfo.PodDispatchEnabled),
+			TaskPods: taskPodSettings(cfg, executorInfo.PodDispatchEnabled, func() (kubernetes.Interface, error) {
+				return buildK8sClient(cfg.Executor.KubeClient)
+			}, tel.Logger),
+		},
+		Stores: api.StoreDeps{
+			Dags:           repo,
+			DagRuns:        repo,
+			Tasks:          repo,
+			Versions:       repo,
+			Xcoms:          xcomReader,
+			Logs:           storage.NewLogReader(pg, logSink, logTailer),
+			EphemeralLogs:  cfg.Logs.Backend == "disk" && !cfg.Logs.PersistenceEnabled,
+			Specs:          repo,
+			DagSources:     repo,
+			LatestRuns:     repo,
+			TaskSummary:    repo,
+			DagVersions:    repo,
+			DashboardStats: repo,
+			AuditLog:       repo,
+			Variables:      repo,
+			Users:          repo,
+			UserAudit:      repo,
+			Connections:    repo,
+			Pools:          repo,
+			Favorites:      repo,
+			ImportErrors:   repo,
+			Audit:          repo,
+		},
 	}, cfg, repo), cfg, repo, tel.Metrics))
-	return newHTTPServer(cfg.Server.HTTPAddr, handler, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return newHTTPServer(cfg.Server.HTTPAddr, handler, cfg), nil
 }
 
 // newHTTPServer builds an HTTP listener with the configured timeouts. The

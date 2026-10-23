@@ -103,11 +103,15 @@ func TestSignOutWithoutExternalURLIsTodaysBehavior(t *testing.T) {
 // TestNewServerWiresExternalAuthURLs locks the wiring from Dependencies to the
 // routes, so the settings cannot be accepted and then dropped.
 func TestNewServerWiresExternalAuthURLs(t *testing.T) {
-	h := NewServer(Dependencies{
-		Logger:             discardLogger(),
-		RateLimiter:        auth.NewRateLimiter(100, time.Minute),
-		ExternalSignInURL:  "https://portal.example.com/engine",
-		ExternalSignOutURL: "https://portal.example.com/signout",
+	h := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			RateLimiter:        auth.NewRateLimiter(100, time.Minute),
+			ExternalSignInURL:  "https://portal.example.com/engine",
+			ExternalSignOutURL: "https://portal.example.com/signout",
+		},
 	})
 	login := httptest.NewRecorder()
 	logout := httptest.NewRecorder()

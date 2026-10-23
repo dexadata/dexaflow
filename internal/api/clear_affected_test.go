@@ -24,12 +24,24 @@ func droppedTaskServer(t *testing.T, tis []domain.TaskInstance, kept []domain.Cl
 	t.Helper()
 	tasks := &fakeTaskRepo{tis: tis, kept: kept}
 	audit := &fakeAuditWriter{}
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
-		Tasks: tasks, DagRuns: &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1"}}},
-		Specs: &fakeSpecReader{spec: domain.DAGSpec{DagID: "etl", Tasks: []domain.TaskSpec{{TaskID: "a"}}}},
-		Audit: audit,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			Tasks:   tasks,
+			DagRuns: &fakeRunRepo{runs: []domain.DagRun{{DagID: "etl", RunID: "r1"}}},
+			Specs:   &fakeSpecReader{spec: domain.DAGSpec{DagID: "etl", Tasks: []domain.TaskSpec{{TaskID: "a"}}}},
+			Audit:   audit,
+		},
 	})
 	return srv, tasks, audit
 }

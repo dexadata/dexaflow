@@ -430,17 +430,21 @@ func TestCLILoginLogsNoCodeOrToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := NewServer(Dependencies{
-		Logger:        slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
-		Authenticator: &fakeAuthn{},
-		RateLimiter:   auth.NewRateLimiter(50, time.Minute),
-		HealthChecks:  map[string]HealthChecker{},
-		TokenTTLSecs:  3600,
-		OIDCFlow:      flow,
-		OIDCSettings:  cfg,
-		OIDCUsers:     store,
-		AuthAudit:     &fakeAuthAudit{},
-		JWTSecret:     testHS256Secret,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger:       slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+			HealthChecks: map[string]HealthChecker{},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{},
+			RateLimiter:   auth.NewRateLimiter(50, time.Minute),
+			TokenTTLSecs:  3600,
+			OIDCFlow:      flow,
+			OIDCSettings:  cfg,
+			OIDCUsers:     store,
+			AuthAudit:     &fakeAuthAudit{},
+			JWTSecret:     testHS256Secret,
+		},
 	})
 	pk := newCLIPKCE()
 	code := driveCLILogin(t, srv, f, cfg, pk)
@@ -503,9 +507,19 @@ func TestAuthMethodsMatchTheLoginPage(t *testing.T) {
 	sso := func(breakGlass []string) http.Handler {
 		c := cfg
 		c.BreakGlassEmails = breakGlass
-		return NewServer(Dependencies{
-			Logger: discardLogger(), Authenticator: &fakeAuthn{}, RateLimiter: auth.NewRateLimiter(5, time.Minute),
-			OIDCFlow: flow, OIDCEnabled: true, OIDCSettings: c, JWTSecret: testHS256Secret,
+		return newTestServer(Dependencies{
+			Observability: ObservabilityDeps{
+				Logger: discardLogger(),
+			},
+			Auth: AuthDeps{
+				Authenticator: &fakeAuthn{},
+				RateLimiter:   auth.NewRateLimiter(5, time.Minute),
+				OIDCFlow:      flow,
+				OIDCEnabled:   true,
+				OIDCSettings:  c,
+				OIDCUsers:     newFakeOIDCStore(),
+				JWTSecret:     testHS256Secret,
+			},
 		})
 	}
 	if got := read(sso(nil)); got != (authMethods{SSO: true}) {

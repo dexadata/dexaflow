@@ -110,12 +110,20 @@ func (f *fakeConnStore) DeleteConnection(_ context.Context, _, id string) error 
 }
 
 func connServer(store ConnectionStore) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Connections:   store,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Connections: store,
+		},
 	})
 }
 

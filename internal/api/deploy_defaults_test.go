@@ -17,12 +17,18 @@ import (
 // deployDefaultsServer is the full API with the given cluster deploy defaults
 // and the given signed-in user.
 func deployDefaultsServer(user *auth.User, d domain.DeployDefaults) http.Handler {
-	return NewServer(Dependencies{
-		Logger:         discardLogger(),
-		Authenticator:  &fakeAuthn{user: user},
-		RateLimiter:    auth.NewRateLimiter(100, time.Minute),
-		TokenTTLSecs:   900,
-		DeployDefaults: d,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: user},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  900,
+		},
+		Execution: ExecutionDeps{
+			DeployDefaults: d,
+		},
 	})
 }
 

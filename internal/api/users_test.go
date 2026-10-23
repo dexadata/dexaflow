@@ -84,13 +84,21 @@ func userServer(store UserStore, user *auth.User) *gin.Engine {
 }
 
 func userServerAudit(store UserStore, audit UserAuditWriter, user *auth.User) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: user},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Users:         store,
-		UserAudit:     audit,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: user},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Users:     store,
+			UserAudit: audit,
+		},
 	})
 }
 

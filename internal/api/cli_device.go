@@ -245,31 +245,31 @@ type cliDeviceDeps struct {
 // the server's public origin. It returns nil otherwise. The router fills in
 // codes, which the device consent shares with the loopback sign-in.
 func newCLIDeviceDeps(deps Dependencies) *cliDeviceDeps {
-	if deps.OIDCFlow == nil || deps.CLIDevices == nil {
+	if deps.Auth.OIDCFlow == nil || deps.Auth.CLIDevices == nil {
 		return nil
 	}
-	verify := deviceVerifyURI(deps.OIDCSettings.RedirectURL)
+	verify := deviceVerifyURI(deps.Auth.OIDCSettings.RedirectURL)
 	if verify == "" {
-		if deps.Logger != nil {
-			deps.Logger.Warn("oidc: the device sign-in of the CLI is off: the OIDC redirect URL names no public origin")
+		if deps.Observability.Logger != nil {
+			deps.Observability.Logger.Warn("oidc: the device sign-in of the CLI is off: the OIDC redirect URL names no public origin")
 		}
 		return nil
 	}
-	if len(deps.TrustedProxies) == 0 && deps.Logger != nil {
-		deps.Logger.Warn("oidc: the device sign-in of the CLI is served with no server.trusted_proxies: " +
+	if len(deps.Server.TrustedProxies) == 0 && deps.Observability.Logger != nil {
+		deps.Observability.Logger.Warn("oidc: the device sign-in of the CLI is served with no server.trusted_proxies: " +
 			"behind a proxy or ingress every caller has its address, so they share its rate limits and the consent page cannot say where a sign-in started")
 	}
 	return &cliDeviceDeps{
-		store:       deps.CLIDevices,
-		hashKey:     newDeviceHashKey(deps.JWTSecret),
-		flow:        deps.OIDCFlow,
-		audit:       deps.AuthAudit,
-		logger:      deps.Logger,
-		insecure:    deps.SessionCookieInsecure,
+		store:       deps.Auth.CLIDevices,
+		hashKey:     newDeviceHashKey(deps.Auth.JWTSecret),
+		flow:        deps.Auth.OIDCFlow,
+		audit:       deps.Auth.AuthAudit,
+		logger:      deps.Observability.Logger,
+		insecure:    deps.Auth.SessionCookieInsecure,
 		verifyURI:   verify,
-		idpOrigin:   originOf(deps.OIDCFlow.AuthEndpoint()),
-		jwtSecret:   deps.JWTSecret,
-		tokenTTL:    time.Duration(deps.TokenTTLSecs) * time.Second,
+		idpOrigin:   originOf(deps.Auth.OIDCFlow.AuthEndpoint()),
+		jwtSecret:   deps.Auth.JWTSecret,
+		tokenTTL:    time.Duration(deps.Auth.TokenTTLSecs) * time.Second,
 		pollLimiter: auth.NewRateLimiter(devicePollRateLimitPerMinute, time.Minute),
 
 		signInLimiter: auth.NewRateLimiter(deviceSignInRateLimitPerMinute, time.Minute),

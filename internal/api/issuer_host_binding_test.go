@@ -39,19 +39,29 @@ func (tenantAuthn) Authenticate(_ context.Context, token string) (*auth.User, er
 func hostBoundServer(t *testing.T, pattern string, trustedProxies []string, audit AuthAuditWriter) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	return NewServer(Dependencies{
-		Logger:                   discardLogger(),
-		Authenticator:            tenantAuthn{},
-		RateLimiter:              auth.NewRateLimiter(100, time.Minute),
-		JWTSecret:                "test-secret",
-		TokenTTLSecs:             900,
-		UI:                       ui.New(),
-		AuthAudit:                audit,
-		TrustedProxies:           trustedProxies,
-		TrustedIssuer:            fakeTrustedIssuer{issuer.Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme"}},
-		TrustedIssuerUsers:       activeAcmeUser(),
-		TrustedIssuerOrigins:     []string{"https://portal.example.com"},
-		TrustedIssuerHostPattern: pattern,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			TrustedProxies: trustedProxies,
+		},
+		Auth: AuthDeps{
+			Authenticator: tenantAuthn{},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			JWTSecret:     "test-secret",
+			TokenTTLSecs:  900,
+			AuthAudit:     audit,
+		},
+		Issuers: IssuerDeps{
+			TrustedIssuer:            fakeTrustedIssuer{issuer.Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme"}},
+			TrustedIssuerUsers:       activeAcmeUser(),
+			TrustedIssuerOrigins:     []string{"https://portal.example.com"},
+			TrustedIssuerHostPattern: pattern,
+		},
+		UI: UIDeps{
+			SPA: ui.New(),
+		},
 	})
 }
 
@@ -202,15 +212,23 @@ func TestForwardedHostOnlyFromATrustedProxy(t *testing.T) {
 func TestHostBindingClearsTheConfiguredSessionCookie(t *testing.T) {
 	const name = "__Host-dexaflow"
 	gin.SetMode(gin.TestMode)
-	srv := NewServer(Dependencies{
-		Logger:                   discardLogger(),
-		Authenticator:            tenantAuthn{},
-		RateLimiter:              auth.NewRateLimiter(100, time.Minute),
-		JWTSecret:                "test-secret",
-		TokenTTLSecs:             900,
-		UI:                       ui.New(),
-		TrustedIssuerHostPattern: tenantHostPattern,
-		SessionCookieName:        name,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			Authenticator:     tenantAuthn{},
+			RateLimiter:       auth.NewRateLimiter(100, time.Minute),
+			JWTSecret:         "test-secret",
+			TokenTTLSecs:      900,
+			SessionCookieName: name,
+		},
+		Issuers: IssuerDeps{
+			TrustedIssuerHostPattern: tenantHostPattern,
+		},
+		UI: UIDeps{
+			SPA: ui.New(),
+		},
 	})
 	serve := func(path, host string) *httptest.ResponseRecorder {
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, http.NoBody)
@@ -246,17 +264,23 @@ func TestHostBindingClearsTheConfiguredSessionCookie(t *testing.T) {
 // (#1288) the browser goes back there with error=host_tenant_mismatch.
 func TestHandoffOnAnotherTenantsHostRedirectsToExternalSignIn(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	srv := NewServer(Dependencies{
-		Logger:                   discardLogger(),
-		Authenticator:            tenantAuthn{},
-		RateLimiter:              auth.NewRateLimiter(100, time.Minute),
-		JWTSecret:                "test-secret",
-		TokenTTLSecs:             900,
-		TrustedIssuer:            fakeTrustedIssuer{issuer.Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme"}},
-		TrustedIssuerUsers:       activeAcmeUser(),
-		TrustedIssuerOrigins:     []string{"https://portal.example.com"},
-		TrustedIssuerHostPattern: tenantHostPattern,
-		ExternalSignInURL:        operatorSignIn,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			Authenticator:     tenantAuthn{},
+			RateLimiter:       auth.NewRateLimiter(100, time.Minute),
+			JWTSecret:         "test-secret",
+			TokenTTLSecs:      900,
+			ExternalSignInURL: operatorSignIn,
+		},
+		Issuers: IssuerDeps{
+			TrustedIssuer:            fakeTrustedIssuer{issuer.Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme"}},
+			TrustedIssuerUsers:       activeAcmeUser(),
+			TrustedIssuerOrigins:     []string{"https://portal.example.com"},
+			TrustedIssuerHostPattern: tenantHostPattern,
+		},
 	})
 
 	rec := postSessionOnHost(srv, "globex.example.com")

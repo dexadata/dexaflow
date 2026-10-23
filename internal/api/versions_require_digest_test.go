@@ -33,14 +33,24 @@ func (f *fakeUnpinned) RecordUnpinnedImage(stage, outcome string) {
 
 // digestServer is a register server under mode, logging to logs.
 func digestServer(repo DagVersionRepository, mode domain.DigestRequirement, counts *fakeUnpinned, logs *bytes.Buffer) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:         slog.New(slog.NewJSONHandler(logs, nil)),
-		Authenticator:  &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:    auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:    []string{"*"},
-		Versions:       repo,
-		RequireDigest:  mode,
-		UnpinnedImages: counts,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: slog.New(slog.NewJSONHandler(logs, nil)),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Execution: ExecutionDeps{
+			RequireDigest:  mode,
+			UnpinnedImages: counts,
+		},
+		Stores: StoreDeps{
+			Versions: repo,
+		},
 	})
 }
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dexadata/dexaflow/internal/api"
+	"github.com/dexadata/dexaflow/internal/api/apitest"
 	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/config"
 )
@@ -69,8 +70,8 @@ func createStatus(t *testing.T, deps api.Dependencies, secret string) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deps.Logger = slog.New(slog.DiscardHandler)
-	srv := httptest.NewServer(api.NewServer(deps))
+	deps.Observability.Logger = slog.New(slog.DiscardHandler)
+	srv := httptest.NewServer(apitest.NewServer(deps))
 	defer srv.Close()
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/api/v2/apiTokens", strings.NewReader(`{"name":"ci","scope":"read"}`))
 	if err != nil {
@@ -97,12 +98,12 @@ func TestAPITokensAreOnByDefault(t *testing.T) {
 	repo := tokenRepo{plain: plain}
 	authn := auth.NewJWTAuthenticator(nil, cfg.Auth.JWT.Secret, time.Hour)
 
-	deps := withAPITokens(api.Dependencies{Authenticator: authn}, cfg, repo)
+	deps := withAPITokens(api.Dependencies{Auth: api.AuthDeps{Authenticator: authn}}, cfg, repo)
 
-	if deps.APITokens == nil {
+	if deps.Stores.APITokens == nil {
 		t.Fatal("the token routes are off by default")
 	}
-	u, err := deps.Authenticator.Authenticate(context.Background(), plain)
+	u, err := deps.Auth.Authenticator.Authenticate(context.Background(), plain)
 	if err != nil || u.TenantID != "acme" || !u.Scoped {
 		t.Fatalf("a live API token: %+v, %v; want acme's scoped user", u, err)
 	}
@@ -118,9 +119,9 @@ func TestAPITokensOnForAZeroConfig(t *testing.T) {
 	repo := tokenRepo{}
 	authn := auth.NewJWTAuthenticator(nil, strings.Repeat("s", 40), time.Hour)
 
-	deps := withAPITokens(api.Dependencies{Authenticator: authn}, &config.ServerConfig{}, repo)
+	deps := withAPITokens(api.Dependencies{Auth: api.AuthDeps{Authenticator: authn}}, &config.ServerConfig{}, repo)
 
-	if deps.APITokens == nil || deps.Authenticator == auth.Authenticator(authn) {
+	if deps.Stores.APITokens == nil || deps.Auth.Authenticator == auth.Authenticator(authn) {
 		t.Error("a zero ServerConfig turned the API tokens off")
 	}
 }
@@ -138,22 +139,22 @@ func TestAPITokensOffServeNoRouteAndAcceptNoToken(t *testing.T) {
 	repo := tokenRepo{plain: plain}
 	authn := auth.NewJWTAuthenticator(nil, cfg.Auth.JWT.Secret, time.Hour)
 
-	deps := withAPITokens(api.Dependencies{Authenticator: authn, APITokens: repo}, cfg, repo)
+	deps := withAPITokens(api.Dependencies{Auth: api.AuthDeps{Authenticator: authn}, Stores: api.StoreDeps{APITokens: repo}}, cfg, repo)
 
-	if deps.APITokens != nil {
+	if deps.Stores.APITokens != nil {
 		t.Error("the token routes are still registered")
 	}
-	if deps.Authenticator != auth.Authenticator(authn) {
+	if deps.Auth.Authenticator != auth.Authenticator(authn) {
 		t.Error("the authenticator still checks API tokens")
 	}
-	if _, authErr := deps.Authenticator.Authenticate(context.Background(), plain); !errors.Is(authErr, auth.ErrInvalidToken) {
+	if _, authErr := deps.Auth.Authenticator.Authenticate(context.Background(), plain); !errors.Is(authErr, auth.ErrInvalidToken) {
 		t.Errorf("a live API token with the switch off: %v, want ErrInvalidToken", authErr)
 	}
 	userTok, err := auth.MintUserToken(cfg.Auth.JWT.Secret, time.Hour, auth.User{ID: auth.DevTokenSubject, TenantID: "acme", Roles: []string{"admin"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u, err := deps.Authenticator.Authenticate(context.Background(), userTok); err != nil || u.TenantID != "acme" {
+	if u, err := deps.Auth.Authenticator.Authenticate(context.Background(), userTok); err != nil || u.TenantID != "acme" {
 		t.Errorf("a user token with the switch off: %+v, %v", u, err)
 	}
 

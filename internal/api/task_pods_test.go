@@ -35,13 +35,23 @@ func (f *fakeServiceAccounts) ImagePullSecrets(_ context.Context, name string) (
 
 // taskPodsServer is a register server whose task pods are pods.
 func taskPodsServer(pods TaskPodSettings) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Versions:      &fakeVersionRepo{created: true},
-		TaskPods:      pods,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Execution: ExecutionDeps{
+			TaskPods: pods,
+		},
+		Stores: StoreDeps{
+			Versions: &fakeVersionRepo{created: true},
+		},
 	})
 }
 

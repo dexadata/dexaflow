@@ -21,10 +21,10 @@ type apiTokenRepo interface {
 // token it did not mint, and /api/v2/apiTokens is not served (#2056).
 func withAPITokens(deps api.Dependencies, cfg *config.ServerConfig, repo apiTokenRepo) api.Dependencies {
 	if cfg.Auth.APITokens.Disabled {
-		deps.APITokens = nil
+		deps.Stores.APITokens = nil
 		return deps
 	}
-	deps.Authenticator = auth.NewAPITokenAuthenticator(deps.Authenticator, repo, repo)
-	deps.APITokens = repo
+	deps.Auth.Authenticator = auth.NewAPITokenAuthenticator(deps.Auth.Authenticator, repo, repo)
+	deps.Stores.APITokens = repo
 	return deps
 }
