@@ -370,6 +370,14 @@ gen-config-reference: ## Regenerate the configuration reference tables from inte
 gen-config-reference-check: ## Fail when website/content/reference/configuration.md is stale (also run by go test)
 	go run ./internal/tools/configref -check
 
+.PHONY: gen-metrics-reference
+gen-metrics-reference: ## Regenerate the metrics reference table from the registered collectors
+	go run ./internal/tools/metricsref
+
+.PHONY: gen-metrics-reference-check
+gen-metrics-reference-check: ## Fail when website/content/reference/metrics.md is stale (also run by go test)
+	go run ./internal/tools/metricsref -check
+
 .PHONY: clean
 clean: ## Remove build artifacts
 	rm -rf $(BIN_DIR) coverage.out
