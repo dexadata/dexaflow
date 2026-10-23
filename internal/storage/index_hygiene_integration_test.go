@@ -85,6 +85,20 @@ func TestDagRunsVersionForeignKeyIsIndexed(t *testing.T) {
 	t.Error("dag_runs has no index leading with dag_version_id")
 }
 
+// TestAuditLogResourceFilterIsIndexed guards the event log filtered to one
+// DAG: its list, keyset page and count filter on resource_id, and without an
+// index leading with (tenant_id, resource_id) each reads every audit entry of
+// the tenant (#1612).
+func TestAuditLogResourceFilterIsIndexed(t *testing.T) {
+	pool, ctx := openSchemaPool(t)
+	for _, ix := range indexesOf(t, ctx, pool, "audit_log") {
+		if !ix.partial && slices.Equal(ix.columns, []string{"tenant_id", "resource_id", "occurred_at", "id"}) {
+			return
+		}
+	}
+	t.Error("audit_log has no index on (tenant_id, resource_id, occurred_at, id)")
+}
+
 // TestTaskInstanceIndexesAreNotRedundant guards write cost on the hottest
 // table: a plain index whose key columns are a leading prefix of another
 // full index's key columns serves no lookup the longer one cannot, and every
@@ -171,6 +185,7 @@ func TestConcurrentIndexMigrationsFailOverInvalidIndex(t *testing.T) {
 		{"028_drop_ti_run_index.down.sql", "idx_ti_run", "task_instances", "dag_run_id bigint"},
 		{"029_drop_ti_task_index.down.sql", "idx_ti_task", "task_instances", "dag_run_id bigint, task_id text"},
 		{"030_drop_ti_running_heartbeat_index.down.sql", "idx_ti_running_heartbeat", "task_instances", "last_heartbeat_at timestamptz, state text"},
+		{"050_audit_log_resource_index.up.sql", "idx_audit_resource", "audit_log", "tenant_id uuid, resource_id text, occurred_at timestamptz, id bigint"},
 	}
 	pool, ctx := openSchemaPool(t)
 	for _, tc := range cases {

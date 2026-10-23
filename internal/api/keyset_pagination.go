@@ -41,15 +41,18 @@ type AuditLogPageReader interface {
 // list; the query that reads it stays tenant and DAG scoped. A keyset cursor
 // carries t and k; an offset cursor carries only o. A keyset cursor issued for
 // a response body (see cursorMode) also carries o, the offset of the page it opens,
-// so that page can name its previous page.
+// so that page can name its previous page. A keyset cursor also carries n,
+// the list's total when it was issued, so the page it opens skips the COUNT;
+// a cursor without it is still accepted and that page counts.
 type cursorWire struct {
 	At     string `json:"t,omitempty"`
 	Key    string `json:"k,omitempty"`
 	Offset *int   `json:"o,omitempty"`
+	Total  int    `json:"n,omitempty"`
 }
 
 func encodeCursor(cur domain.PageCursor) string {
-	return encodeWire(cursorWire{At: cur.At.UTC().Format(time.RFC3339Nano), Key: cur.Key})
+	return encodeWire(cursorWire{At: cur.At.UTC().Format(time.RFC3339Nano), Key: cur.Key, Total: cur.Total})
 }
 
 func encodeWire(w cursorWire) string {
@@ -65,7 +68,7 @@ func encodeOffsetCursor(offset int) string {
 // encodeKeysetCursorAt is a keyset cursor that also records the offset of the
 // page it opens.
 func encodeKeysetCursorAt(cur domain.PageCursor, offset int) string {
-	return encodeWire(cursorWire{At: cur.At.UTC().Format(time.RFC3339Nano), Key: cur.Key, Offset: &offset})
+	return encodeWire(cursorWire{At: cur.At.UTC().Format(time.RFC3339Nano), Key: cur.Key, Offset: &offset, Total: cur.Total})
 }
 
 // listCursor is a decoded body cursor: a keyset position, an offset, or both.
@@ -131,22 +134,24 @@ func decodeCursor(raw string) (domain.PageCursor, error) {
 		return domain.PageCursor{}, errBadCursor
 	}
 	var w cursorWire
-	if jerr := json.Unmarshal(b, &w); jerr != nil || w.At == "" || w.Key == "" {
+	if jerr := json.Unmarshal(b, &w); jerr != nil || w.At == "" || w.Key == "" || w.Total < 0 {
 		return domain.PageCursor{}, errBadCursor
 	}
 	at, err := time.Parse(time.RFC3339Nano, w.At)
 	if err != nil {
 		return domain.PageCursor{}, errBadCursor
 	}
-	return domain.PageCursor{At: at, Key: w.Key}, nil
+	return domain.PageCursor{At: at, Key: w.Key, Total: w.Total}, nil
 }
 
-func runCursor(r domain.DagRun) domain.PageCursor {
-	return domain.PageCursor{At: r.LogicalDate, Key: r.RunID}
+// runCursor is the cursor after r in a list of total runs.
+func runCursor(r domain.DagRun, total int) domain.PageCursor {
+	return domain.PageCursor{At: r.LogicalDate, Key: r.RunID, Total: total}
 }
 
-func auditCursor(e domain.AuditLogEntry) domain.PageCursor {
-	return domain.PageCursor{At: e.When, Key: strconv.FormatInt(e.ID, 10)}
+// auditCursor is the cursor after e in a list of total entries.
+func auditCursor(e domain.AuditLogEntry, total int) domain.PageCursor {
+	return domain.PageCursor{At: e.When, Key: strconv.FormatInt(e.ID, 10), Total: total}
 }
 
 // setNextCursor names the next page's cursor in the response header and, on a
@@ -202,7 +207,7 @@ func listDagRunsByCursor(c *gin.Context, repo DagRunRepository, versions DagVers
 		out.DagRuns = append(out.DagRuns, dto)
 	}
 	if more {
-		last := runCursor(runs[len(runs)-1])
+		last := runCursor(runs[len(runs)-1], total)
 		setNextCursor(c, last, true)
 		next := encodeCursor(last)
 		if offset >= 0 {
@@ -233,7 +238,7 @@ func listAuditLogsByCursor(c *gin.Context, reader AuditLogReader, raw string, li
 		out.EventLogs = append(out.EventLogs, toEventLogDTO(e))
 	}
 	if more {
-		setNextCursor(c, auditCursor(entries[len(entries)-1]), true)
+		setNextCursor(c, auditCursor(entries[len(entries)-1], total), true)
 	}
 	c.JSON(http.StatusOK, out)
 }

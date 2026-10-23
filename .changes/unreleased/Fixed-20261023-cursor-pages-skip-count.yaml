@@ -1,0 +1,8 @@
+kind: Fixed
+body: |-
+  Cursor pages of `GET /api/v2/dags/{dag_id}/dagRuns` and `GET /api/v2/eventLogs`
+  no longer count the whole filtered list on every page: the cursor carries the
+  total its first page counted. Migration 050 adds an index on
+  `audit_log (tenant_id, resource_id, occurred_at, id)`, so the event log
+  filtered to one DAG no longer reads every entry of the tenant (#1612).
+time: 2026-10-23T12:00:00.000000+00:00

@@ -95,7 +95,8 @@ curl -sS -H "Authorization: Bearer $TOKEN" \
 ```
 
 Runs that share a logical date are ordered by run id, so both modes return
-stable pages. With a `state` filter the two modes can report different
-`total_entries` for a DAG with more than 10000 runs: offset paging filters and
-counts the newest 10000 runs, cursor paging every run of the DAG. Browsers on
+stable pages, and both count every run that matches the filters. A cursor
+page does not count again: it reports the `total_entries` of the page that
+issued its cursor, so the total holds still while you page, and rows added
+since show on the next walk from the first page. Browsers on
 an allowed CORS origin can read the `Dexaflow-Next-Cursor` and `Link` headers.
