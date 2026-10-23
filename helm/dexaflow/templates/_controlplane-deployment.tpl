@@ -164,6 +164,11 @@ spec:
             # the served SPA shell, mirroring Lite's silver LITE pill.
             - name: LEOFLOW_UI_EDITION
               value: "pro"
+            # /readyz bounds its dependency checks at one second under the
+            # kubelet's readiness timeout, so raising that timeout for a slow
+            # database gives the server the same room (#1050).
+            - name: LEOFLOW_SERVER_PROBE_BUDGET
+              value: {{ include "leoflow.readinessProbeBudget" .ctx | quote }}
             {{- if (.ctx.Values.goMemLimit | default dict).enabled }}
             # Soft memory limit for the Go GC, a fraction of the container's
             # hard limit (leoflow.goMemLimit). Omitted when off.

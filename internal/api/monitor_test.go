@@ -59,7 +59,7 @@ func TestMonitorHealthReflectsSchedulerHeartbeat(t *testing.T) {
 
 	serve := func(hb Heartbeater) map[string]map[string]string {
 		r := gin.New()
-		r.GET("/h", monitorHealthHandler(nil, hb))
+		r.GET("/h", monitorHealthHandler(nil, hb, defaultProbeBudget))
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/h", http.NoBody)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
@@ -101,7 +101,7 @@ func TestMonitorHealthAssertsSchemaInvariant(t *testing.T) {
 	status := func(t *testing.T, pg HealthChecker) string {
 		t.Helper()
 		r := gin.New()
-		r.GET("/h", monitorHealthHandler(map[string]HealthChecker{"postgres": pg}, nil))
+		r.GET("/h", monitorHealthHandler(map[string]HealthChecker{"postgres": pg}, nil, defaultProbeBudget))
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/h", http.NoBody))
 		var h map[string]map[string]string

@@ -262,13 +262,14 @@ func run() error {
 	return serveExit(ctx, serveHTTP(ctx, tel.Logger, servesAPI, apiSrv, metricsSrv))
 }
 
-// observabilityOptions maps the observability.metrics config onto the metrics
-// listener.
+// observabilityOptions maps the observability.metrics config and
+// server.probe_budget onto the metrics listener.
 func observabilityOptions(cfg *config.ServerConfig) []api.ObservabilityOption {
+	opts := []api.ObservabilityOption{api.WithProbeBudget(cfg.Server.ProbeBudget)}
 	if cfg.Observability.Metrics.DropLegacyNames {
-		return []api.ObservabilityOption{api.WithoutLegacyMetricNames()}
+		opts = append(opts, api.WithoutLegacyMetricNames())
 	}
-	return nil
+	return opts
 }
 
 // awaitShutdown blocks until a server errors or the context is canceled, then

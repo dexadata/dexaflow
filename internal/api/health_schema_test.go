@@ -48,7 +48,7 @@ func TestReadinessHandlerAssertsSchemaInvariant(t *testing.T) {
 	readyz := func(t *testing.T, checks map[string]HealthChecker) *httptest.ResponseRecorder {
 		t.Helper()
 		r := gin.New()
-		r.GET("/readyz", readinessHandler(checks))
+		r.GET("/readyz", readinessHandler(checks, defaultProbeBudget))
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", http.NoBody))
 		return rec
@@ -161,7 +161,7 @@ func TestReadinessDistinguishesSchemaFromUnavailable(t *testing.T) {
 		r := gin.New()
 		r.GET("/readyz", readinessHandler(map[string]HealthChecker{
 			"postgres": &fakeSchemaHealthCheck{schemaErr: schemaErr},
-		}))
+		}, defaultProbeBudget))
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", http.NoBody))
 		return rec
