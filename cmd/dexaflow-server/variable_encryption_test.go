@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -25,7 +24,7 @@ func TestConfigureSecretsVariableEncryptionNeedsAKey(t *testing.T) {
 		{config.VariableEncryptionOn, true}, {config.VariableEncryptionDecrypt, true},
 	} {
 		cfg := &config.ServerConfig{VariableEncryption: tc.mode}
-		err := configureSecrets(context.Background(), &storage.Repository{}, cfg, logger)
+		_, _, err := secretOptions(cfg, logger)
 		if (err != nil) != tc.wantErr {
 			t.Errorf("variable_encryption %q without a key: err = %v, wantErr %v", tc.mode, err, tc.wantErr)
 		}

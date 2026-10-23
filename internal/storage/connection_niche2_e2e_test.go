@@ -10,6 +10,7 @@ import (
 
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/secrets"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 // TestSMTPConnectionURIShapeIntegration walks the full delivery chain for an
@@ -29,7 +30,7 @@ func TestSMTPConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const (
 		rawPassword = "p@ss/w0rd:!#$" //nolint:gosec // hardcoded test fixture, not a credential
@@ -96,7 +97,7 @@ func TestIMAPConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const rawPassword = "p@ss/w0rd:!#$" //nolint:gosec // hardcoded test fixture, not a credential
 	connID := fmt.Sprintf("e2e_imap_%d", time.Now().UnixNano())
@@ -159,7 +160,7 @@ func TestOpsgenieConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const rawPassword = "api-key/1+2" //nolint:gosec // hardcoded test fixture, not a credential
 	connID := fmt.Sprintf("e2e_opsgenie_%d", time.Now().UnixNano())
@@ -216,7 +217,7 @@ func TestZendeskConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const (
 		rawPassword = "api-token/1+2" //nolint:gosec // hardcoded test fixture, not a credential
@@ -281,7 +282,7 @@ func TestSambaConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const (
 		rawPassword = "p@ss/w0rd:!#$" //nolint:gosec // hardcoded test fixture, not a credential
@@ -348,7 +349,7 @@ func TestGCPSSHConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const rawPassword = "p@ss/w0rd:!#$" //nolint:gosec // hardcoded test fixture, not a credential
 	connID := fmt.Sprintf("e2e_gcpssh_%d", time.Now().UnixNano())

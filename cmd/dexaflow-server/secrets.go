@@ -10,62 +10,65 @@ import (
 	"github.com/dexadata/dexaflow/internal/storage"
 )
 
-// configureSecrets wires connection-secret encryption (the AES-256-GCM cipher)
-// and the external-secrets D6 registration relaxation (ADR 0060) onto the repo.
+// secretOptions builds the repository options for connection-secret
+// encryption (the AES-256-GCM cipher), Variable encryption (#507) and the
+// external-secrets D6 registration relaxation (ADR 0060), and returns the
+// Variable encryption mode for convergeSecrets.
 //
-// The boot sweep runs only when SecretKeyReencryptOnBoot is on (the default,
+// "on" and "decrypt" both need the key, and asking for either without one fails
+// the boot: encrypting nothing, or leaving sealed rows sealed, while the
+// operator believes otherwise is the silent downgrade ADR 0019 rules out.
+// "off", the default, needs no key and changes nothing, as before.
+func secretOptions(cfg *config.ServerConfig, logger *slog.Logger) ([]storage.Option, storage.VariableEncryption, error) {
+	cipher, err := secretCipher(cfg.SecretKey, logger)
+	if err != nil {
+		return nil, "", err
+	}
+	mode, err := storage.ParseVariableEncryption(cfg.VariableEncryption)
+	if err != nil {
+		return nil, "", err
+	}
+	if mode != storage.VariableEncryptionOff && cipher == nil {
+		return nil, "", fmt.Errorf("variable_encryption=%s requires a usable DEXAFLOW_SECRET_KEY (or LEOFLOW_SECRET_KEY); "+
+			"set the key, or set variable_encryption=off", mode)
+	}
+	coverage, err := secretsCoverage(cfg.Secrets)
+	if err != nil {
+		return nil, "", err
+	}
+	return append(coverage, storage.WithCipher(cipher), storage.WithVariableEncryption(mode)), mode, nil
+}
+
+// convergeSecrets runs the boot sweeps over the stored secrets: the key
+// rotation, and the conversion of stored Variables to the configured mode.
+//
+// The key rotation runs only when SecretKeyReencryptOnBoot is on (the default,
 // Pro). `dexaflow lite` switches it off, because a Lite install moves keys only
 // through `dexaflow lite migrate-key` (ADR 0065): a sweep at boot would migrate
 // a config holding a predecessor implicitly, under no lock, with no
 // verification before commit.
-func configureSecrets(ctx context.Context, repo *storage.Repository, cfg *config.ServerConfig, logger *slog.Logger) error {
-	if err := configureSecretCipher(repo, cfg.SecretKey, logger); err != nil {
-		return err
-	}
-	if cfg.SecretKeyReencryptOnBoot {
-		finishKeyRotation(ctx, repo, logger)
-	}
-	if err := configureVariableEncryption(ctx, repo, cfg.VariableEncryption, logger); err != nil {
-		return err
-	}
-	return configureSecretsCoverage(cfg.Secrets, repo)
-}
-
-// configureVariableEncryption sets how Variable values are stored (#507) and
-// converges the stored rows to it. "on" and "decrypt" both need the key, and
-// asking for either without one fails the boot: encrypting nothing, or leaving
-// sealed rows sealed, while the operator believes otherwise is the silent
-// downgrade ADR 0019 rules out. "off", the default, needs no key and changes
-// nothing, as before.
 //
-// The sweep itself is never fatal, like the key rotation: every row stays
+// The Variable sweep is never fatal, like the key rotation: every row stays
 // readable either way, and a write after boot already takes the configured
 // form. It runs in Lite too: it only seals plaintext under the current key, or
 // opens sealed values, and never moves a value between keys.
-func configureVariableEncryption(ctx context.Context, repo *storage.Repository, setting string, logger *slog.Logger) error {
-	mode, err := storage.ParseVariableEncryption(setting)
-	if err != nil {
-		return err
+func convergeSecrets(ctx context.Context, repo *storage.Repository, cfg *config.ServerConfig, mode storage.VariableEncryption, logger *slog.Logger) {
+	if cfg.SecretKeyReencryptOnBoot {
+		finishKeyRotation(ctx, repo, logger)
 	}
-	if mode != storage.VariableEncryptionOff && !repo.HasCipher() {
-		return fmt.Errorf("variable_encryption=%s requires a usable DEXAFLOW_SECRET_KEY (or LEOFLOW_SECRET_KEY); "+
-			"set the key, or set variable_encryption=off", mode)
-	}
-	repo.SetVariableEncryption(mode)
 	if mode == storage.VariableEncryptionOff {
-		return nil
+		return
 	}
 	res, serr := repo.ConvergeVariableEncryption(ctx)
 	msg, level := variableSweepOutcome(mode, res, serr)
 	if msg == "" {
-		return nil
+		return
 	}
 	attrs := []any{"variable_encryption", string(mode), "rewritten", res.Migrated, "skipped", res.Skipped, "unreadable", res.Unreadable}
 	if serr != nil {
 		attrs = append(attrs, "error", serr)
 	}
 	logger.Log(ctx, level, msg, attrs...)
-	return nil
 }
 
 // variableSweepOutcome is the one line the variable_encryption boot sweep logs,
@@ -148,18 +151,17 @@ func (c backendCoverage) CoversConnection(string) bool {
 	return c.b.Covers(secretsource.KindConnection)
 }
 
-// configureSecretsCoverage relaxes the D6 registration check so a declared name
-// covered by the configured external backend registers without a provider call
-// (ADR 0060 B1). No-op when no backend is configured; fails closed on a malformed
-// config rather than silently disabling it.
-func configureSecretsCoverage(sec config.SecretsSection, repo *storage.Repository) error {
+// secretsCoverage relaxes the D6 registration check so a declared name covered
+// by the configured external backend registers without a provider call (ADR
+// 0060 B1). No option when no backend is configured; fails closed on a
+// malformed config rather than silently disabling it.
+func secretsCoverage(sec config.SecretsSection) ([]storage.Option, error) {
 	cfg, enabled, err := secretsource.ParseBackendConfig(sec.Backend, secretsKwargsJSON(sec))
 	if err != nil {
-		return fmt.Errorf("secrets backend config: %w", err)
+		return nil, fmt.Errorf("secrets backend config: %w", err)
 	}
 	if !enabled {
-		return nil
+		return nil, nil
 	}
-	repo.SetExternalSecretCoverage(backendCoverage{b: cfg.Routing})
-	return nil
+	return []storage.Option{storage.WithExternalSecretCoverage(backendCoverage{b: cfg.Routing})}, nil
 }

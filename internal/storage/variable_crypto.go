@@ -49,10 +49,6 @@ func ParseVariableEncryption(s string) (VariableEncryption, error) {
 	}
 }
 
-// SetVariableEncryption sets how Variable values are written and which way the
-// boot sweep converges them. The default is off.
-func (r *Repository) SetVariableEncryption(m VariableEncryption) { r.varEncryption = m }
-
 // HasCipher reports whether a secret key is configured.
 func (r *Repository) HasCipher() bool { return r.cipher != nil }
 

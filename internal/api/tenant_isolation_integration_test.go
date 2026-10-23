@@ -45,7 +45,6 @@ func newCrossTenantFixture(t *testing.T) crossTenantFixture {
 		t.Fatalf("connect: %v", err)
 	}
 	t.Cleanup(pg.Close)
-	repo := storage.NewRepository(pg)
 	key := make([]byte, 32)
 	for i := range key {
 		key[i] = byte(i + 41)
@@ -54,7 +53,7 @@ func newCrossTenantFixture(t *testing.T) crossTenantFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo := storage.NewRepository(pg, storage.WithCipher(cipher))
 
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	f := crossTenantFixture{repo: repo, ctx: ctx, tenantA: "xt_a_" + suffix, tenantB: "xt_b_" + suffix, suffix: suffix}

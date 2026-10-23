@@ -40,7 +40,7 @@ func snapshotCiphertexts(t *testing.T, conn *pgx.Conn) map[string]string {
 
 func seedConn(t *testing.T, repo *storage.Repository, c secrets.Cipher, conn domain.Connection) {
 	t.Helper()
-	repo.SetCipher(c)
+	repo.Configure(storage.WithCipher(c))
 	if err := repo.SetConnection(context.Background(), "default", conn); err != nil {
 		t.Fatalf("seeding %s: %v", conn.ConnID, err)
 	}
@@ -83,14 +83,14 @@ func TestMigrateSecretValuesMovesEveryColumnOntoTheNewKey(t *testing.T) {
 	seedConn(t, repo, published, domain.Connection{ConnID: "both_old", ConnType: "postgres", Password: "pw-a", Extra: `{"a":1}`})
 	seedConn(t, repo, published, domain.Connection{ConnID: "mixed", ConnType: "postgres", Password: "pw-b", Extra: `{"b":2}`})
 	// Password re-entered under the new key, extra still under the old one.
-	repo.SetCipher(fresh)
+	repo.Configure(storage.WithCipher(fresh))
 	pw := "pw-b"
 	if err := repo.SetConnectionPatch(ctx, "default", domain.ConnectionPatch{ConnID: "mixed", ConnType: "postgres", Password: &pw}); err != nil {
 		t.Fatal(err)
 	}
 	seedConn(t, repo, published, domain.Connection{ConnID: "no_secrets", ConnType: "http"})
 	empty := ""
-	repo.SetCipher(published)
+	repo.Configure(storage.WithCipher(published))
 	if err := repo.SetConnectionPatch(ctx, "default", domain.ConnectionPatch{ConnID: "cleared", ConnType: "http", Password: &empty, Extra: &empty}); err != nil {
 		t.Fatal(err)
 	}

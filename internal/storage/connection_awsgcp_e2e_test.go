@@ -10,6 +10,7 @@ import (
 
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/secrets"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 // TestRedshiftConnectionURIShapeIntegration pins the **host-bearing** shape for
@@ -29,7 +30,7 @@ func TestRedshiftConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const rawPassword = "p@ss/w0rd:!#$" //nolint:gosec // hardcoded test fixture, not a credential
 	connID := fmt.Sprintf("e2e_redshift_%d", time.Now().UnixNano())
@@ -97,7 +98,7 @@ func TestAthenaConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const (
 		rawPassword = "wJalrXUtnFEMI/K7+EXAMPLEKEY" //nolint:gosec // hardcoded test fixture, not a credential
@@ -161,7 +162,7 @@ func TestEmrConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const rawExtra = `{"region_name":"eu-central-1"}`
 	connID := fmt.Sprintf("e2e_emr_%d", time.Now().UnixNano())
@@ -216,7 +217,7 @@ func TestGcpbigqueryConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const rawExtra = `{"project":"my-proj","location":"EU"}`
 	connID := fmt.Sprintf("e2e_gcpbigquery_%d", time.Now().UnixNano())
@@ -272,7 +273,7 @@ func TestGcpcloudsqlConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const rawExtra = `{"database_type":"postgres","project_id":"my-proj","location":"europe-west1","instance":"my-inst"}`
 	connID := fmt.Sprintf("e2e_gcpcloudsql_%d", time.Now().UnixNano())
@@ -327,7 +328,7 @@ func TestGoogleAdsConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const rawExtra = `{"developer_token":"abc123","client_id":"x","client_secret":"y/1+2","refresh_token":"z"}`
 	connID := fmt.Sprintf("e2e_google_ads_%d", time.Now().UnixNano())

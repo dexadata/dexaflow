@@ -153,13 +153,9 @@ func run() error {
 	}
 	defer dsCleanup()
 
-	repo := storage.NewRepository(pg)
-	// A clear deletes the stored XCom of the attempts it clears, not just their
-	// index rows, since agents fetch values by key (#1131).
-	repo.SetXComBackend(xcomBackend)
-	configureRegistration(repo, cfg)
-	if serr := configureSecrets(ctx, repo, cfg, tel.Logger); serr != nil {
-		return serr
+	repo, err := newServerRepository(ctx, cfg, pg, xcomBackend, tel.Logger)
+	if err != nil {
+		return err
 	}
 	authn := auth.NewJWTAuthenticator(repo, cfg.Auth.JWT.Secret, time.Duration(cfg.Auth.JWT.TokenTTLSeconds)*time.Second)
 	execStore := storage.NewExecutionStore(pg)
@@ -321,10 +317,10 @@ func liteEditorFS(cfg *config.ServerConfig, logger *slog.Logger) api.WorkspaceFS
 	return fs
 }
 
-// configureSecretCipher wires the AES-256-GCM cipher for connection secrets
-// (ADR 0019). Without a key the connection store stays plaintext-incapable:
-// writes are refused, never silently stored in the clear.
-func configureSecretCipher(repo *storage.Repository, secretKey string, logger *slog.Logger) error {
+// secretCipher builds the AES-256-GCM cipher for connection secrets (ADR
+// 0019), or nil without a usable key. Without a key the connection store stays
+// plaintext-incapable: writes are refused, never silently stored in the clear.
+func secretCipher(secretKey string, logger *slog.Logger) (secrets.Cipher, error) {
 	keys, kerr := secrets.ParseKeys(secretKey)
 	if kerr != nil {
 		// The reason, not just the outcome. ParseKeys says WHICH entry of the
@@ -334,13 +330,13 @@ func configureSecretCipher(repo *storage.Repository, secretKey string, logger *s
 		// more here than it did with a single key.
 		logger.Warn("no usable LEOFLOW_SECRET_KEY; connection management disabled (Variables still work)",
 			"error", kerr)
-		return nil //nolint:nilerr // a missing/unusable key is non-fatal: run without connection encryption
+		return nil, nil //nolint:nilerr,nilnil // a missing/unusable key is non-fatal: run without connection encryption
 	}
 	ciphers := make([]secrets.Cipher, 0, len(keys))
 	for i, k := range keys {
 		c, cerr := secrets.NewAESGCM(k)
 		if cerr != nil {
-			return fmt.Errorf("building secret cipher from key %d: %w", i+1, cerr)
+			return nil, fmt.Errorf("building secret cipher from key %d: %w", i+1, cerr)
 		}
 		ciphers = append(ciphers, c)
 	}
@@ -348,7 +344,7 @@ func configureSecretCipher(repo *storage.Repository, secretKey string, logger *s
 	// previous key wrote instead of orphaning it (#486). Nothing is ever written
 	// under a later key, which is what makes the rotation real rather than
 	// cosmetic.
-	repo.SetCipher(secrets.WithFallback(ciphers[0], ciphers[1:]...))
+	cipher := secrets.WithFallback(ciphers[0], ciphers[1:]...)
 	if len(ciphers) > 1 {
 		logger.Info("secret key rotation: the first key encrypts, the rest only decrypt",
 			"decrypt_only_keys", len(ciphers)-1)
@@ -374,7 +370,7 @@ func configureSecretCipher(repo *storage.Repository, secretKey string, logger *s
 			"key_position", i+1, "key_length", len(trimmed))
 	}
 	logger.Info("connection secret encryption enabled (AES-256-GCM)")
-	return nil
+	return cipher, nil
 }
 
 // discoverOIDCFlow discovers the IdP and builds the Authorization Code + PKCE
@@ -531,9 +527,28 @@ func logEnvCompat(r envcompat.Report) {
 	}
 }
 
-// configureRegistration applies the settings DAG registration reads: whether a
-// DAG registered for the first time starts paused (dags_are_paused_at_creation,
+// newServerRepository builds the control plane's repository with every
+// dependency it reads given at construction (#1949), then runs the boot sweeps
+// over the stored secrets.
+func newServerRepository(ctx context.Context, cfg *config.ServerConfig, pg *storage.Postgres, xcomBackend storage.XComValueDeleter, logger *slog.Logger) (*storage.Repository, error) {
+	secretOpts, varMode, err := secretOptions(cfg, logger)
+	if err != nil {
+		return nil, err
+	}
+	// A clear deletes the stored XCom of the attempts it clears, not just their
+	// index rows, since agents fetch values by key (#1131).
+	repo, err := storage.NewServerRepository(pg, append(secretOpts,
+		storage.WithXComBackend(xcomBackend), registrationOption(cfg))...)
+	if err != nil {
+		return nil, err
+	}
+	convergeSecrets(ctx, repo, cfg, varMode, logger)
+	return repo, nil
+}
+
+// registrationOption is the setting DAG registration reads: whether a DAG
+// registered for the first time starts paused (dags_are_paused_at_creation,
 // #1705). A DAG's own is_paused_upon_creation still wins over it.
-func configureRegistration(repo *storage.Repository, cfg *config.ServerConfig) {
-	repo.SetDagsArePausedAtCreation(cfg.DagsArePausedAtCreation)
+func registrationOption(cfg *config.ServerConfig) storage.Option {
+	return storage.WithDagsArePausedAtCreation(cfg.DagsArePausedAtCreation)
 }
