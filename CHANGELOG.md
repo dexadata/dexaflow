@@ -6,6 +6,8 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-10-23
+
 ### Added
 
 - **A Pro release tells a replaced database from a fresh one, and can migrate
