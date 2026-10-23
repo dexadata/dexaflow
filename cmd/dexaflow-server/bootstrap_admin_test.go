@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/config"
 )
 
 // fakeAdminStore records the bootstrap calls and answers AdminUserState from a
@@ -37,7 +38,7 @@ func (f *fakeAdminStore) BootstrapAdmin(_ context.Context, _, email, _ string) (
 	return f.users[email] == auth.UserAbsent, nil
 }
 
-// TestBootstrapAdminEmail drives bootstrapAdmin through the environment the
+// TestBootstrapAdminEmail drives bootstrapAdmin with the bootstrap settings the
 // chart, docker-compose and Lite set, and checks which account it reconciles
 // and what it logs about the choice.
 func TestBootstrapAdminEmail(t *testing.T) {
@@ -45,8 +46,8 @@ func TestBootstrapAdminEmail(t *testing.T) {
 	const both = "users exist under both bootstrap admin addresses"
 	cases := []struct {
 		name     string
-		email    string // LEOFLOW_BOOTSTRAP_EMAIL
-		hash     bool   // LEOFLOW_BOOTSTRAP_PASSWORD_HASH instead of the plaintext
+		email    string // bootstrap.email
+		hash     bool   // bootstrap.password_hash instead of the plaintext
 		existing map[string]auth.AdminState
 		want     string
 		logs     []string
@@ -72,17 +73,15 @@ func TestBootstrapAdminEmail(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("LEOFLOW_BOOTSTRAP_EMAIL", tc.email)
-			t.Setenv("LEOFLOW_BOOTSTRAP_PASSWORD_HASH", "")
-			t.Setenv("LEOFLOW_BOOTSTRAP_PASSWORD", "")
+			cfg := config.BootstrapSection{Email: tc.email}
 			if tc.hash {
-				t.Setenv("LEOFLOW_BOOTSTRAP_PASSWORD_HASH", "$2a$12$hash")
+				cfg.PasswordHash = "$2a$12$hash"
 			} else {
-				t.Setenv("LEOFLOW_BOOTSTRAP_PASSWORD", "pw")
+				cfg.Password = "pw"
 			}
 			store := &fakeAdminStore{users: tc.existing}
 			var logs bytes.Buffer
-			if err := bootstrapAdmin(t.Context(), store, slog.New(slog.NewTextHandler(&logs, nil))); err != nil {
+			if err := bootstrapAdmin(t.Context(), store, cfg, slog.New(slog.NewTextHandler(&logs, nil))); err != nil {
 				t.Fatalf("bootstrapAdmin: %v", err)
 			}
 			got := store.pwFor
@@ -109,12 +108,9 @@ func TestBootstrapAdminEmail(t *testing.T) {
 // TestBootstrapAdminWithoutPasswordTouchesNothing: no bootstrap credential
 // means no bootstrap, and no database lookup either.
 func TestBootstrapAdminWithoutPasswordTouchesNothing(t *testing.T) {
-	t.Setenv("LEOFLOW_BOOTSTRAP_EMAIL", "")
-	t.Setenv("LEOFLOW_BOOTSTRAP_PASSWORD_HASH", "")
-	t.Setenv("LEOFLOW_BOOTSTRAP_PASSWORD", "")
 	store := &fakeAdminStore{}
 	var logs bytes.Buffer
-	if err := bootstrapAdmin(t.Context(), store, slog.New(slog.NewTextHandler(&logs, nil))); err != nil {
+	if err := bootstrapAdmin(t.Context(), store, config.BootstrapSection{Email: "ops@corp.example"}, slog.New(slog.NewTextHandler(&logs, nil))); err != nil {
 		t.Fatalf("bootstrapAdmin: %v", err)
 	}
 	if store.lookedUp != 0 || store.hashFor != "" || store.pwFor != "" {
