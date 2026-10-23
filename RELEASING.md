@@ -59,7 +59,14 @@ the model Kubernetes uses:
   for every rc and GA and refuses while the list is not empty. The docs guard
   applies the same rule to each PR when it is opened, so the list is normally
   empty; it catches what the per-PR check could not, such as a skip with no
-  reason or a docs PR that was promised and never merged.
+  reason or a docs PR that was promised and never merged. The Docs gap
+  workflow (`docs-gap.yaml`, #1938) runs it before the cut too, on every push
+  to `release-X.Y` (for the next patch) and on every rc tag, together with
+  `check-stale-versions.sh --candidate` for the same version, and fails with
+  the list in its job summary. Its run on the candidate's commit is the
+  evidence of the Docs line in the release's tracking issue. A `Skip-docs:`
+  line added to a pull request afterwards needs a re-run of that job, or
+  `gh workflow run docs-gap.yaml --ref <branch> -f version=X.Y.Z`.
 - **Only the newest release branch takes patches.** An older one gets a
   security fix only when the owner decides so for that fix.
 
@@ -107,6 +114,12 @@ this section is the whole lifecycle.
    on the release workflows reaching PUBLISHED: the changelog is true once
    the tag exists. The milestone guard exempts the branch, and
    `release-gap.sh` and `docs-gap.sh` treat its commit as release mechanics.
+   When the tag's Release workflow completes green, the Docs promote
+   workflow's `changelog-sync` job runs the same command unless the sync pull
+   request is already open, so a patch tagged without the cut, as v0.5.4 was,
+   gets its pull request too (#1937). Its commit is signed off by
+   `github-actions[bot]`, and with the `DOCS_PROMOTE_TOKEN` secret its checks
+   start on their own (see [Publishing the docs root](#publishing-the-docs-root-ga)).
 6. **`X.Y.0` is cut from `main`.** Steps 3 and 4 happen on `main` itself, so
    there is nothing to sync. This is the cut that would publish an unsynced
    patch's fragments a second time, which is why it checks first (below).
@@ -130,7 +143,7 @@ What checks it, and when:
 |---|---|---|
 | `check-changelog-entry.sh` (CHANGELOG guard) | The pull request adds a fragment or edits `[Unreleased]`, or carries `skip-changelog` | Every pull request to `main` and `release-*` |
 | `check-changelog-structure.sh` (CHANGELOG structure) | One `[Unreleased]`, first; every other heading `## [X.Y.Z] - YYYY-MM-DD`, strictly descending; only declared kinds, once each, in order, none empty (from 0.4.7 on); every GA tag of a minor the file records has its section, except the newest tag of each minor while its sync pull request is open; every fragment parses, has a declared `kind` and a non-empty `body`, and is not already an entry of a dated section | Pull requests to `main` and `release-*` that touch the changelog, the fragments or these scripts; and every cut, as one of the `check-*.sh` gates |
-| `changelog-sync.sh --check-all` | `main` carries the changelog of the newest patch of every minor: no missing section, no fragment the release consumed | Preflight of every cut. A minor cut (from `main`) refuses; a patch cut warns, because its own sync repairs the earlier ones |
+| `changelog-sync.sh --check-all` | `main` carries the changelog of the newest patch of every minor: no missing section, no fragment the release consumed | Preflight of every cut. A minor cut (from `main`) refuses; a patch cut warns, because its own sync repairs the earlier ones. Also daily on `main`, and on pushes to `main` that change `CHANGELOG.md` (the Changelog sync workflow, `changelog-sync-check.yaml`): it fails while a patch lacks its sync and no sync pull request is open, and reports an open one as a notice |
 | `changelog-fold.sh` | The fold drops no line of the file | Every cut |
 
 ### When the changelog drifts
@@ -139,7 +152,10 @@ What checks it, and when:
   about the release is affected. From any checkout:
   `scripts/changelog-sync.sh X.Y.Z --pr --fetch`. It works from the tag in a
   scratch worktree of `origin/main`, never switches your checkout, and
-  re-running it updates the same branch and pull request.
+  re-running it updates the same branch and pull request. Or run the Docs
+  promote workflow with the tag (`gh workflow run docs-promote.yaml -f
+  tag=vX.Y.Z`), which opens it when none is open. The Changelog sync workflow
+  fails every day until one is.
 - **A patch was synced late or never.** Syncing the newest patch of the minor
   also inserts every earlier section the minor is missing, so
   `scripts/changelog-sync.sh <newest X.Y.Z> --pr --fetch` repairs them all.
@@ -321,7 +337,9 @@ Two things run it (#1935):
 - **The Docs promote workflow** (`.github/workflows/docs-promote.yaml`), when
   the Release workflow of a tag push completes green, which includes its
   `promote` job. It enables auto-merge on the PR. This is what moves the root
-  when the tag was pushed without the cut, as v0.5.4 was.
+  when the tag was pushed without the cut, as v0.5.4 was. For a patch GA the
+  same run also opens the changelog sync pull request
+  ([How the changelog flows](#how-the-changelog-flows), step 5).
 - **`cut-release.sh`**, after it watched the release to PUBLISHED. It opens the
   PR or finds the workflow's, waits for it green and merges it.
 

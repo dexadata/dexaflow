@@ -21,7 +21,9 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
 1. **Docs.** `scripts/docs-gap.sh` is clean for the version being cut (#1478),
    `scripts/check-stale-versions.sh --candidate X.Y.Z` is clean on the
    candidate's commit (#1934), and the pages for every user-facing change read
-   correctly on the docs site.
+   correctly on the docs site. The Docs gap workflow runs both checks on every
+   push to `release-X.Y` and on rc tags (#1938): link its green run on the
+   candidate's commit as the evidence.
 2. **Algorithm.** Every change to scheduling, dispatch, state transitions,
    retries, pools or any other decision logic was read against its ADR and its
    tests, edge cases included.
@@ -70,7 +72,9 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
      the changelog of every patch already tagged (a minor cut refuses
      otherwise), and after a patch GA its `changelog: sync vX.Y.Z to main`
      pull request is merged
-     ([RELEASING.md](RELEASING.md#how-the-changelog-flows)).
+     ([RELEASING.md](RELEASING.md#how-the-changelog-flows)). The Changelog
+     sync workflow runs the same check on `main` every day; a green run
+     without a notice is the evidence.
    - `leoflow.yaml`, `LEOFLOW_*` variables and `~/.leoflow` still work next to
      `dexaflow.yaml`, `DEXAFLOW_*` and `~/.dexaflow`.
    - No commit in the range carries a `Co-Authored-By` trailer, a session link
