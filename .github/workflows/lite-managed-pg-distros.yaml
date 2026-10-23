@@ -1,0 +1,72 @@
+# Cold start of `dexaflow lite --postgres managed` on bare Ubuntu 22.04 and
+# 24.04 containers (#279): the bare image either boots, or Lite names the
+# missing system libraries with an apt-get command, and after running that
+# command it boots to /readyz. The relocatable PostgreSQL links libxml2,
+# Kerberos, OpenSSL 3, zstd and lz4 from the host and carries no ICU of its
+# own, so this is the gate that the pinned build keeps running on both LTS
+# releases. test/e2e/lite-managed-pg-distros.sh has the detail and runs the
+# same check locally.
+#
+# Path-filtered to what can change the outcome, because the Actions queue is
+# small (AGENTS.md, CI hygiene). Weekly as well, since an image tag moves under
+# the same name.
+name: Lite managed Postgres on Ubuntu
+
+on:
+  pull_request:
+    branches: [main, "release-*"]
+    paths:
+      - "internal/setup/postgres.go"
+      - "internal/setup/install_postgres.go"
+      - "internal/cli/managed_postgres*.go"
+      - "test/e2e/lite-managed-pg-distros.sh"
+      - ".github/workflows/lite-managed-pg-distros.yaml"
+  push:
+    branches: [main]
+    paths:
+      - "internal/setup/postgres.go"
+      - "internal/setup/install_postgres.go"
+      - "internal/cli/managed_postgres*.go"
+      - "test/e2e/lite-managed-pg-distros.sh"
+      - ".github/workflows/lite-managed-pg-distros.yaml"
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('{0}-run-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GOPROXY: https://proxy.golang.org|direct
+  GO_VERSION: "1.26.10"
+
+jobs:
+  cold-start:
+    name: managed Postgres cold start (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - mirror.gcr.io/library/ubuntu:22.04
+          - mirror.gcr.io/library/ubuntu:24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      # A step timeout so a hang fails as exit 124 naming the command, rather
+      # than running the job out of budget into a `cancelled` (#975).
+      - name: Boot Lite on the bare image
+        timeout-minutes: 12
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: timeout --kill-after=30 660 bash test/e2e/lite-managed-pg-distros.sh "$IMAGE"

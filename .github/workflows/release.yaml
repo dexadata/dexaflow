@@ -610,6 +610,9 @@ jobs:
   # this smoke in the first place: docker-compose health vs. TCP accept).
   # Runs on the GitHub-hosted ubuntu-latest runner so Docker is already
   # available — no `container:` field needed.
+  # The managed path is gated on bare ubuntu:22.04 and ubuntu:24.04 by
+  # lite-managed-pg-distros.yaml (#279):
+  # the missing libraries were libxml2 and Kerberos, never the ICU release.
   lite-cold-start-smoke:
     name: Lite cold-start (boot + /readyz, docker PG)
     needs: release
