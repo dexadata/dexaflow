@@ -61,6 +61,15 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A task is no longer failed as `dispatch_failed` by a second Kubernetes API
+  blip.** After one blip (a 503 while an apiserver restarts), a task that then
+  waited on ResourceQuota backpressure, or had a create rejected, kept the
+  start of that outage, so the next blip, 15 minutes or more later, failed it
+  at once as `dispatch_failed` with its retries spent, although the API had
+  answered every create in between. The 15-minute unavailable window now
+  counts only consecutive unavailable answers: a create the API answers ends
+  the outage, and the next blip starts a new window.
+
 - **The bootstrap admin can no longer be left without the admin role.** Startup
   created the admin user and granted it the admin role in two separate steps, so
   a server killed between them left an admin that could log in but had no role.
