@@ -17,7 +17,9 @@ run it on your machine or a trusted internal network — see [Editions](/concept
 - **One of the following** for the datastores:
     - **Docker** running (preferred — Lite spins up `postgres:16` automatically), OR
     - **Nothing** — Lite falls back to an embedded managed Postgres downloaded
-      under `~/.dexaflow` (no Docker, no system Postgres needed). See
+      under `~/.dexaflow` (no Docker, no system Postgres needed). It uses a
+      few common system libraries (libxml2, Kerberos); on a bare container
+      Lite names any that are missing and the command that installs them. See
       [Editions § Datastores](/concepts/editions/) for the auto-selection logic.
 - Linux or macOS (incl. WSL2). No system Python needed: Lite installs a managed
   one. See [Installation](/get-started/installation/) for details.
