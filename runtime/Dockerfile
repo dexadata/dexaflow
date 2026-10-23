@@ -108,6 +108,10 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 # v0.5.5-rc.2 py3.10 image still carried 20250419. ssl, urllib and pip's
 # truststore read this store; the certifi pins below cover requests and httpx.
 # tests/test_runtime_image_trust_store.py in runtime/python fails without it.
+# DL3008 (pin apt versions) is ignored on purpose: the point of the step is the
+# newest ca-certificates of the base's Debian release, and a pinned version
+# would freeze the store this step exists to refresh.
+# hadolint ignore=DL3008
 RUN apt-get update \
  && apt-get install -y --no-install-recommends --only-upgrade ca-certificates \
  && rm -rf /var/lib/apt/lists/*

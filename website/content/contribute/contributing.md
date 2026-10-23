@@ -92,8 +92,9 @@ merge. They are not bureaucracy; they are why the codebase stays an A+.
   `//nolint:gosec // G304: the user's own config file`; nolintlint refuses a
   bare or blanket directive.
 - **Shell scripts pass shellcheck** at warning severity (`make lint` runs it
-  when shellcheck is installed; CI always does). Dockerfiles get an advisory
-  hadolint report on every PR.
+  when shellcheck is installed; CI always does). **Dockerfiles pass hadolint**
+  at warning severity; a finding that is deliberate gets a
+  `# hadolint ignore=<rule>` line with the reason in the comment above it.
 - **GoDocs on every exported identifier** — starting with the name, ending with a period.
 - **English** for all code, comments, commit messages, and docs.
 - **No new dependency** without justification; the supply-chain scans
@@ -240,7 +241,7 @@ accepted from first-time contributors** — open a discussion issue first.
 Every PR runs, and must pass: the **build + unit/integration tests** with the
 per-package coverage floor (the total and each package's coverage are in the
 "Test + Coverage" job summary), **golangci-lint** (the A+ stack),
-**shellcheck**, the
+**shellcheck**, **hadolint**, the
 **security** suite (govulncheck, gosec, Trivy, CodeQL, gitleaks), the
 **CHANGELOG guard** (a fragment, a hand-written entry, or a `Skip-changelog:`
 line or label), the **docs guard** (an edit under `website/content/`, or a

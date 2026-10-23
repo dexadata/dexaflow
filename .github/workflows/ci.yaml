@@ -243,59 +243,61 @@ jobs:
           git ls-files -z '*.sh' | xargs -0 shellcheck -S warning
 
   # ─────────────────────────────────────────────────────────────────────
-  # Dockerfile lint (#1572). Advisory until its findings are fixed, then
-  # required: continue-on-error keeps a finding from failing the run while
-  # the report stays on the job.
+  # Dockerfile lint (#1572). A warning or an error fails the job; the info
+  # findings (numeric USER, consecutive RUN) stay as a report. A finding
+  # that is deliberate carries a `# hadolint ignore=<rule>` with its reason
+  # in the Dockerfile.
   # ─────────────────────────────────────────────────────────────────────
   hadolint:
-    name: hadolint (advisory)
+    name: hadolint
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # One job with a step per Dockerfile, not a matrix: the runners are
-    # shared, and seven advisory jobs per pull request cost more than they
-    # report.
+    # shared, and seven jobs per pull request cost more than they report.
+    # Each step runs even when an earlier one failed, so one run reports
+    # every Dockerfile.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: hadolint deploy/Dockerfile.cli.release
-        continue-on-error: true
+        if: ${{ !cancelled() }}
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: deploy/Dockerfile.cli.release
           failure-threshold: warning
       - name: hadolint deploy/Dockerfile.mcp.release
-        continue-on-error: true
+        if: ${{ !cancelled() }}
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: deploy/Dockerfile.mcp.release
           failure-threshold: warning
       - name: hadolint deploy/Dockerfile.migrate
-        continue-on-error: true
+        if: ${{ !cancelled() }}
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: deploy/Dockerfile.migrate
           failure-threshold: warning
       - name: hadolint deploy/Dockerfile.server
-        continue-on-error: true
+        if: ${{ !cancelled() }}
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: deploy/Dockerfile.server
           failure-threshold: warning
       - name: hadolint deploy/Dockerfile.server.release
-        continue-on-error: true
+        if: ${{ !cancelled() }}
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: deploy/Dockerfile.server.release
           failure-threshold: warning
       - name: hadolint runtime/Dockerfile
-        continue-on-error: true
+        if: ${{ !cancelled() }}
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: runtime/Dockerfile
           failure-threshold: warning
       - name: hadolint scripts/chaos/Dockerfile
-        continue-on-error: true
+        if: ${{ !cancelled() }}
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: scripts/chaos/Dockerfile
