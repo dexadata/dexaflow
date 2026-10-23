@@ -239,9 +239,9 @@ accepted from first-time contributors** — open a discussion issue first.
 ## 6. The CI gates
 
 Every PR runs, and must pass: the **build + unit/integration tests** with the
-per-package coverage floor (the total and each package's coverage are in the
-"Test + Coverage" job summary, and main's total is the README's coverage
-badge), **golangci-lint** (the A+ stack),
+per-package coverage floor (the total, each package's coverage and its change
+against the base branch are in the "Test + Coverage" job summary, and main's
+total is the README's coverage badge), **golangci-lint** (the A+ stack),
 **shellcheck**, **hadolint**, the
 **security** suite (govulncheck, gosec, Trivy, CodeQL, gitleaks), the
 **CHANGELOG guard** (a fragment, a hand-written entry, or a `Skip-changelog:`
