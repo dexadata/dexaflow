@@ -111,7 +111,7 @@ func eventLogsHandler(reader AuditLogReader) gin.HandlerFunc {
 			out.EventLogs = append(out.EventLogs, toEventLogDTO(e))
 		}
 		if _, ok := reader.(AuditLogPageReader); ok && len(entries) > 0 && offset+len(entries) < total {
-			setNextCursor(c, auditCursor(entries[len(entries)-1]), false)
+			setNextCursor(c, auditCursor(entries[len(entries)-1], total), false)
 		}
 		c.JSON(http.StatusOK, out)
 	}
