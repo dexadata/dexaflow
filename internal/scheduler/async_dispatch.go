@@ -2,10 +2,12 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/dexadata/dexaflow/internal/dispatch"
 	"github.com/dexadata/dexaflow/internal/executor"
 )
 
@@ -15,8 +17,9 @@ type AsyncDispatchStore interface {
 	// is still scheduled or queued; active is false once it has moved on.
 	DispatchAttempts(ctx context.Context, runID, taskID string) (attempts int, active bool, err error)
 	// RequeueDispatch moves a scheduled or queued task back to scheduled, held
-	// until nextAt, adding one dispatch attempt when countAttempt.
-	RequeueDispatch(ctx context.Context, runID, taskID string, countAttempt bool, nextAt time.Time) (bool, error)
+	// until nextAt, adding one dispatch attempt when countAttempt, and clearing
+	// the start of an outage window (ADR 0093) when clearUnavailable.
+	RequeueDispatch(ctx context.Context, runID, taskID string, countAttempt, clearUnavailable bool, nextAt time.Time) (bool, error)
 	MarkTaskDispatchFailed(ctx context.Context, runID, taskID, reason string) error
 	// FailDispatchRefused fails a refused task and spends its retry budget, as
 	// on the sync path.
@@ -97,11 +100,17 @@ func (a *AsyncDispatchFailures) HandleDispatchFailure(ctx context.Context, runID
 			"run", runID, "task", taskID, "attempts", attempts+1, "error", cause)
 		return a.store.MarkTaskDispatchFailed(ctx, runID, taskID, reason)
 	}
+	// A rejection or cluster backpressure is an answer from the apiserver, so
+	// it ends an outage window (ADR 0093). A Deferred refusal and a buffer wait
+	// past its bound (reported as Backpressure) never reached the API and keep
+	// it, or a saturated buffer during an outage would reset it forever.
+	clearUnavailable := disp == executor.Rejected ||
+		(disp == executor.Backpressure && !errors.Is(cause, dispatch.ErrBufferWaitExceeded))
 	nextAt := a.now().Add(dispatchBackoff(attempts + 1))
 	a.logger.Warn("buffered dispatch failed; re-offering the task after a backoff",
 		"run", runID, "task", taskID, "disposition", disp.String(), "counted", counted,
 		"next_dispatch_at", nextAt, "error", cause)
-	if _, err := a.store.RequeueDispatch(ctx, runID, taskID, counted, nextAt); err != nil {
+	if _, err := a.store.RequeueDispatch(ctx, runID, taskID, counted, clearUnavailable, nextAt); err != nil {
 		return fmt.Errorf("re-offering %s: %w", taskID, err)
 	}
 	return nil
