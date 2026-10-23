@@ -9,7 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/dexadata/dexaflow/internal/auth"
-	"github.com/dexadata/dexaflow/internal/config"
 )
 
 // emailPassAuthn issues a token only for one specific email+password, so the
@@ -44,7 +43,7 @@ func breakGlassServer(allow []string, authn auth.Authenticator, audit AuthAuditW
 			TokenTTLSecs:  3600,
 			AuthAudit:     audit,
 			OIDCEnabled:   true,
-			OIDCSettings:  config.OIDCSection{BreakGlassEmails: allow},
+			OIDCSettings:  OIDCSettings{BreakGlassEmails: allow},
 		},
 	})
 }

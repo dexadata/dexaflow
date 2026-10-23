@@ -14,7 +14,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/dexadata/dexaflow/internal/auth"
-	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/oidc"
 )
@@ -61,12 +60,35 @@ type AuthAuditWriter interface {
 	RecordAuthEvent(ctx context.Context, tenant, actorUserID, action, email, outcome string, extra map[string]string) error
 }
 
+// OIDCSettings are the auth.oidc settings the login flow and the credential
+// gate read; the ID token checks live in the oidc.Flow.
+type OIDCSettings struct {
+	// Issuer is auth.oidc.issuer, the pinned issuer of every ID token.
+	Issuer string
+	// RedirectURL is auth.oidc.redirect_url, this server's callback URL.
+	RedirectURL string
+	// RoleMappings is auth.oidc.role_mappings: an IdP group to a role name.
+	RoleMappings map[string]string
+	// DefaultRole is auth.oidc.default_role, granted to a user no mapping
+	// gives a role; empty grants none.
+	DefaultRole string
+	// BreakGlassEmails is auth.oidc.break_glass_emails, the local password
+	// logins permitted while provider is "oidc".
+	BreakGlassEmails []string
+	// JITProvisioning is auth.oidc.jit_provisioning: create a user on first
+	// OIDC login.
+	JITProvisioning bool
+	// AutoRedirect is auth.oidc.auto_redirect: start the login flow on the
+	// sign-in page instead of rendering it.
+	AutoRedirect bool
+}
+
 // oidcDeps bundles what the callback handler needs beyond the flow itself.
 type oidcDeps struct {
 	flow      *oidc.Flow
 	users     OIDCUserStore
 	audit     AuthAuditWriter
-	cfg       config.OIDCSection
+	cfg       OIDCSettings
 	jwtSecret string
 	tokenTTL  time.Duration
 	logger    *slog.Logger
