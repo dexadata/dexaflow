@@ -87,14 +87,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+      - uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           languages: ${{ matrix.language }}
           queries: security-extended,security-and-quality
 
-      - uses: github/codeql-action/autobuild@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+      - uses: github/codeql-action/autobuild@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
 
-      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+      - uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           category: "/language:${{ matrix.language }}"
 
@@ -194,7 +194,7 @@ jobs:
       # so a PR run cannot collide with or overwrite the main branch baseline under
       # the shared trivy-fs category (#437).
       - name: Upload Trivy SARIF to GitHub Security
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         if: always() && github.event_name != 'pull_request'
         with:
           sarif_file: trivy-fs.sarif
@@ -323,7 +323,7 @@ jobs:
       # upload only off pull_request, so a PR run cannot overwrite the main
       # branch baseline under a shared category.
       - name: Upload Trivy SARIF to GitHub Security
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         if: always() && github.event_name != 'pull_request'
         with:
           sarif_file: trivy-server-image.sarif
@@ -421,7 +421,7 @@ jobs:
       # Same rule as every other scan here (#437): gate on every event, upload
       # only off pull_request so a PR run cannot overwrite the main baseline.
       - name: Upload Trivy SARIF to GitHub Security
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         if: always() && github.event_name != 'pull_request'
         with:
           sarif_file: trivy-migrate-image.sarif
