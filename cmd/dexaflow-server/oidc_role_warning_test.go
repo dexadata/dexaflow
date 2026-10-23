@@ -50,7 +50,7 @@ func warnLineFor(out, key string) string {
 // Role resolution is IdP-authoritative: resolveUser computes the login's roles
 // from role_mappings (plus default_role) and hands the result to
 // ReconcileUserRoles, which sets the DB rows to EXACTLY that set, so an empty set
-// is a full clear (internal/storage/repository.go, locked by
+// is a full clear (internal/storage/repo_users.go, locked by
 // TestReconcileUserRolesEmptyIntegration). With neither role_mappings nor
 // default_role configured, every OIDC login resolves to zero roles, and a
 // pre-provisioned admin's first SSO login strips the grants they logged in with.
