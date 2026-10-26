@@ -1,0 +1,31 @@
+# Top-level packages of the dexaflow-runtime "data" variant (py3.11-data-*):
+# the base runtime plus the connectors a managed platform needs on day one.
+# Compiled with hashes into requirements.txt (see runtime/data/README.md); edit
+# this file, then recompile. The first two lines are the base image's own pins
+# (runtime/Dockerfile), so the lock cannot move them.
+apache-airflow-task-sdk==1.3.1
+certifi==2026.10.19
+# 80.x keeps pkg_resources, as the base does (runtime/Dockerfile SETUPTOOLS_VERSION).
+setuptools==80.10.2
+
+# Airflow providers: hooks and operators for the connection types the data
+# variant supports (internal/connectors/catalog.json).
+apache-airflow-providers-common-sql
+apache-airflow-providers-postgres
+apache-airflow-providers-mysql
+apache-airflow-providers-amazon
+apache-airflow-providers-databricks
+apache-airflow-providers-snowflake
+apache-airflow-providers-http
+
+# Google Cloud: the full provider (BigQuery, GCS and the other hooks). It pulls
+# ray, litellm and scipy and roughly doubles the image; the client libraries
+# alone (google-cloud-bigquery, google-cloud-storage) would not.
+apache-airflow-providers-google
+
+# dbt and the adapters leoflow_runtime/dbt.py maps a connection to.
+dbt-core
+dbt-postgres
+dbt-snowflake
+dbt-bigquery
+dbt-databricks
