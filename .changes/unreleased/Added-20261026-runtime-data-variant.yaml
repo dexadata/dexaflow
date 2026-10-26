@@ -1,0 +1,11 @@
+kind: Added
+body: |-
+  **A data variant of the task runtime image.** Each release also publishes
+  `dexaflow-runtime:py3.11-data-<tag>`, signed and scanned like the base. It is
+  the base plus the Airflow providers for Postgres, MySQL, Amazon, Google,
+  Databricks, Snowflake, HTTP and common SQL, and dbt with its Postgres,
+  Snowflake, BigQuery and Databricks adapters, all pinned with hashes in
+  `runtime/data/requirements.txt`. It gives source mode, where a DAG runs on
+  the runtime image with no build, a runtime that can reach databases and
+  warehouses.
+time: 2026-10-26T16:30:00.000000000-03:00

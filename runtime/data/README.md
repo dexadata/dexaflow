@@ -1,0 +1,56 @@
+# runtime/data
+
+The package list of the **data variant** of the task image,
+`ghcr.io/dexadata/dexaflow-runtime:py3.11-data-<tag>`: the base image
+(`runtime/Dockerfile`, stage `runtime-base`) plus Airflow providers (Google's
+included) and dbt, for a platform that runs DAGs on the runtime
+image as is, with no image build (source mode, ADR 0067).
+
+- `requirements.in`: the top-level packages. Edit this file.
+- `overrides.txt`: dependency bounds the lock overrides on purpose, each with
+  its reason and when to drop it.
+- `requirements.txt`: the lock the image installs with
+  `pip --no-deps --require-hashes`. Generated; never edit it by hand.
+
+## Recompile the lock
+
+```sh
+uv pip compile --python-version 3.11 --python-platform x86_64-manylinux_2_28 \
+  --generate-hashes --no-header --emit-index-url \
+  --override runtime/data/overrides.txt \
+  runtime/data/requirements.in -o runtime/data/requirements.txt
+```
+
+The image is built for amd64 and arm64 from this one lock. After a recompile,
+check that arm64 resolves to the same versions:
+
+```sh
+uv pip compile --python-version 3.11 --python-platform aarch64-manylinux_2_28 \
+  --no-header --override runtime/data/overrides.txt \
+  runtime/data/requirements.in -c runtime/data/requirements.txt
+```
+
+Its output should list exactly the versions of `requirements.txt`.
+
+## Rules
+
+- **Python 3.11 only.** The lock is resolved for 3.11, and the build fails on
+  any other `PYTHON_VERSION`.
+- **The base's pins come first.** `requirements.in` repeats the Task SDK and
+  certifi pins of `runtime/Dockerfile`; bump them in both.
+- **setuptools is the one exception.** The base stays on 80.x so older DAG code
+  can still import `pkg_resources`. The data variant is new, takes a current
+  setuptools (no `pkg_resources`), and so carries none of 80.x's advisories.
+  Before adding a package, check it does not import `pkg_resources` without a
+  fallback (`grep -rn "import pkg_resources"` over an installed venv).
+- **Mind the size.** `apache-airflow-providers-google` alone pulls ray,
+  litellm, scipy and pyarrow, and roughly doubles the image (about 1.6 GB
+  installed). Check `du` and the advisories (`pip-audit -r requirements.txt`)
+  before adding another provider.
+- **Every promised import is checked at build time.** The `runtime-data` stage
+  of `runtime/Dockerfile` imports each provider, driver and dbt adapter, and
+  runs `dbt --version`. When you add a package here, add its import there.
+- **Overrides are debts.** The image skips pip's resolver (`--no-deps`), so a
+  line in `overrides.txt` is the only way a bound gets broken, and `pip check`
+  in the image reports exactly those lines. Remove one as soon as the upstream
+  package lifts its bound, and recompile.
