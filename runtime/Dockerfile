@@ -224,7 +224,8 @@ ENTRYPOINT ["dexaflow-agent"]
 # Every package comes from runtime/data/requirements.txt, compiled with hashes
 # from requirements.in (runtime/data/README.md), so a rebuild installs the same
 # files and pip refuses anything else. The lock repeats the base's own pins
-# (Task SDK, certifi, setuptools), so nothing above moves. The lock is complete
+# (Task SDK, certifi), so nothing above moves; only setuptools moves, to a
+# release without pkg_resources (runtime/data/README.md). The lock is complete
 # and was resolved with runtime/data/overrides.txt, which lifts one declared
 # bound on purpose, so pip installs it as is (--no-deps) instead of resolving
 # again and refusing that bound.
