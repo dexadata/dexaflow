@@ -34,7 +34,7 @@ dexaflow lite [path] [flags]
       --image string         placeholder image recorded in dag.json (subprocess mode only) (default "leoflow-dev:local")
       --no-up                skip docker compose (Lite's own Postgres is already running; this does not point Lite at another database); the dev DB + venv are still provisioned
       --port int             HTTP/UI port (dev default 8088, distinct from the demo's 8080) (default 8088)
-      --postgres string      Postgres backend: 'auto' (default; the Docker postgres:16 when the Docker daemon answers and has the Compose v2 plugin, else a managed relocatable PG under ~/.dexaflow on a Unix socket, no Docker), 'docker', or 'managed' (best on full distros; minimal hosts may lack its system libs) (default "auto")
+      --postgres string      Postgres backend: 'auto' (default; the managed PG when a restore or an earlier --postgres managed pinned this install to it, else the Docker postgres:16 when the Docker daemon answers and has the Compose v2 plugin, else a managed relocatable PG under ~/.dexaflow on a Unix socket, no Docker), 'docker', or 'managed' (best on full distros; minimal hosts may lack its system libs) (default "auto")
       --runtime-src string   source of the leoflow_runtime package installed into the dev venv (default "runtime/python")
       --server-bin string    dexaflow-server binary (default: PATH, then ./bin)
 ```

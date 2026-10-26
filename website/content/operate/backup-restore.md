@@ -87,11 +87,12 @@ is left running. It logs each phase:
 ```
 
 The archive always holds a managed-Postgres datastore, since `backup` covers
-that path only. On a machine where Docker runs, a plain `dexaflow lite` picks
-the Docker Postgres instead
-([ADR 0030](/project/adrs/0030-lite-datastore-auto-select/)), so start the
-restored install with `dexaflow lite --postgres managed` there; the last line
-of the restore says so.
+that path only. The restore pins the install to the managed Postgres, so a
+plain `dexaflow lite` starts the restored data even on a machine where Docker
+runs ([ADR 0094](/project/adrs/0094-lite-auto-follows-the-pinned-datastore/)).
+To move the install to the Docker Postgres later, run
+`dexaflow lite --postgres docker` once; that starts an empty Docker datastore
+and pins the install to it.
 
 The restore command refuses, with a clear error, when:
 
