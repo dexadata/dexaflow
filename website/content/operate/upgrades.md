@@ -1094,6 +1094,26 @@ the platform default is too large for them. Nothing changes for a task with a
 resource unit (`executor.unit`), which sizes every task as before. Rolling
 back to 0.5.6 restores the old behavior with no other step.
 
+### Upgrading to 0.5.7: malformed placement fields are refused
+
+A task's `tolerations`, `affinity`, `topology_spread_constraints`,
+`resource_claims` and `resources.claims` used to be accepted as written and
+decoded only when the pod was built, where an entry with a misspelled key or a
+value of the wrong type was dropped and the task ran without it. From 0.5.7
+registration checks them against the Kubernetes types and refuses the DAG with
+`400`, naming the task and the field
+([#628](https://github.com/dexadata/dexaflow/issues/628),
+[placement allowlist](/operate/placement-allowlist/)).
+
+Versions registered before the upgrade keep running as they are. The next push
+of a DAG with such an entry, `dexaflow deploy` or a reload in `dexaflow dev`,
+is refused until it is fixed. Keys use the Kubernetes spelling, so
+`toleration_seconds` or `max_skew` written in `dexaflow.yaml` or `dag.py` are
+now errors: write `tolerationSeconds` and `maxSkew`. Before upgrading, look
+through the placement fields of your DAGs for keys that do not use the
+Kubernetes spelling. Rolling back to 0.5.6 restores the old behavior with no
+other step.
+
 ## Ephemeral database loss (emptyDir Postgres)
 
 When evaluating Dexaflow with an in-cluster Postgres running on `emptyDir`
