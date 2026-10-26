@@ -92,7 +92,7 @@ func suspendTenantHandler(deps Dependencies) gin.HandlerFunc {
 			abortSuspensionError(c, err, "the tenant is suspended, but its suspension could not be read back")
 			return
 		}
-		deps.Observability.Logger.Info("service api: tenant suspended", "tenant", logSafe(name), "mode", body.Mode)
+		deps.Observability.Logger.Info("service api: tenant suspended", "tenant", logSafe(name), "mode", logSafe(string(stored.Mode)))
 		c.JSON(http.StatusOK, newSuspensionResponse(name, stored))
 	}
 }
