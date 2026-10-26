@@ -1427,9 +1427,12 @@ settings:
   ui.edition:
     edition: both
     description: >-
-      Edition badge in the UI shell: `lite` shows the silver LITE badge, `pro` the
-      gold PRO badge (independent of the auth mode; also gates `auth.provider: oidc`).
-      Empty/other shows no badge.
+      The edition the server runs as ([ADR 0027](/project/adrs/0027-product-editions-executors-delivery/)):
+      `cluster` for the Helm chart on Kubernetes, `lite` for the installable binary.
+      `pro` is the earlier name of `cluster` and is still accepted. `cluster` turns
+      on named pools, allows `auth.provider: oidc`, enforces TLS on the agent channel
+      and shows the gold CLUSTER badge; `lite` shows the silver LITE badge. Empty or
+      any other value shows no badge.
   ui.workspace:
     edition: both
     description: >-

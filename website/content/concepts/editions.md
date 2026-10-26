@@ -26,6 +26,14 @@ versions with a migration note (ADR 0037). Read the release notes before
 upgrading; that is the caveat, not an unsupported edition.
 {{% /alert %}}
 
+{{% alert title="Pro is now called Cluster" color="info" %}}
+The Helm edition is being renamed from **Pro** to **Cluster**. Both names mean
+the same edition and the same features, and the server accepts
+`ui.edition: cluster` and `ui.edition: pro` alike. The chart keeps setting `pro`
+until every supported server accepts `cluster`; this page and the rest of the
+docs move to the new name over the next releases.
+{{% /alert %}}
+
 ## Editions at a glance (packaging & posture)
 
 | | **Lite** | **Pro** |

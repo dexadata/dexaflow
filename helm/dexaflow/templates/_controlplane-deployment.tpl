@@ -156,6 +156,9 @@ spec:
             - name: LEOFLOW_SERVER_ROLE
               value: {{ .role | quote }}
             {{- end }}
+            # "pro" is the earlier name of the cluster edition; the server reads
+            # both the same (config.IsClusterEdition). The chart keeps "pro"
+            # until every supported server accepts "cluster" (#2173).
             # Mark this deployment as the Pro edition. The control plane uses
             # this signal for two things: (a) refuse the
             # LEOFLOW_AGENT_ALLOW_INSECURE_SECRETS=true dev escape hatch at boot
