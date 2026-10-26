@@ -36,8 +36,13 @@ Its output should list exactly the versions of `requirements.txt`.
 
 - **Python 3.11 only.** The lock is resolved for 3.11, and the build fails on
   any other `PYTHON_VERSION`.
-- **The base's pins come first.** `requirements.in` repeats the Task SDK,
-  certifi and setuptools pins of `runtime/Dockerfile`; bump them in both.
+- **The base's pins come first.** `requirements.in` repeats the Task SDK and
+  certifi pins of `runtime/Dockerfile`; bump them in both.
+- **setuptools is the one exception.** The base stays on 80.x so older DAG code
+  can still import `pkg_resources`. The data variant is new, takes a current
+  setuptools (no `pkg_resources`), and so carries none of 80.x's advisories.
+  Before adding a package, check it does not import `pkg_resources` without a
+  fallback (`grep -rn "import pkg_resources"` over an installed venv).
 - **Mind the size.** `apache-airflow-providers-google` alone pulls ray,
   litellm, scipy and pyarrow, and roughly doubles the image (about 1.6 GB
   installed). Check `du` and the advisories (`pip-audit -r requirements.txt`)
