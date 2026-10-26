@@ -29,6 +29,10 @@ func TestSchedulerAndDispatchRecordersMoveTheirCollectors(t *testing.T) {
 	if got := histogramCount(t, m.SchedulerLoopDuration); got != 1 {
 		t.Errorf("dexaflow_scheduler_loop_duration_seconds samples = %d, want 1", got)
 	}
+	m.ObserveScheduleDelay(0)
+	if got := histogramCount(t, m.ScheduleDelay); got != 1 {
+		t.Errorf("dexaflow_scheduler_schedule_delay_seconds samples = %d, want 1", got)
+	}
 	m.RecordTaskRetry("etl", "extract")
 	if got := counterValue(t, m.TaskRetries.WithLabelValues("etl", "extract")); got != 1 {
 		t.Errorf("dexaflow_task_retries_total = %v, want 1", got)

@@ -102,7 +102,15 @@ WHERE d.tenant_id = sqlc.arg(tenant_id) AND d.dag_run_id IN (
      OR (sqlc.arg(first_run_always)::boolean AND sized.running = sized.n));
 
 -- name: DeleteDagRunsByID :execrows
--- Removes the locked runs whose children are all gone, up to row_limit.
+-- Removes the locked runs whose children are all gone, up to row_limit. The
+-- stored next due time of each DAG they belong to is cleared (#2175), in case
+-- a run removed was the DAG's latest; a DAG whose run stays is only listed
+-- once more.
+WITH invalidate AS (
+  UPDATE dags d SET next_run_at = NULL, schedule_epoch = d.schedule_epoch + 1
+  WHERE d.tenant_id = sqlc.arg(tenant_id)
+    AND d.id IN (SELECT r.dag_id FROM dag_runs r WHERE r.tenant_id = sqlc.arg(tenant_id) AND r.id = ANY(sqlc.arg(run_ids)::uuid[]))
+)
 DELETE FROM dag_runs
 WHERE id IN (
   SELECT r.id FROM dag_runs r

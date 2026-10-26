@@ -726,10 +726,10 @@ func (s *SchedulerStore) MarkRunAlertDelivered(ctx context.Context, runID string
 	})
 }
 
-// ScheduledDAGs returns active, unpaused, cron-scheduled DAGs with the logical
-// date of their most recent run.
-func (s *SchedulerStore) ScheduledDAGs(ctx context.Context) ([]scheduler.ScheduledDAG, error) {
-	rows, err := s.q.ListScheduledDags(ctx)
+// ScheduledDAGs lists the scheduled DAGs that may be due at now: those with no
+// stored next due time and those whose time is at or before now (#2175).
+func (s *SchedulerStore) ScheduledDAGs(ctx context.Context, now time.Time) ([]scheduler.ScheduledDAG, error) {
+	rows, err := s.q.ListScheduledDags(ctx, pgtype.Timestamptz{Time: now, Valid: true})
 	if err != nil {
 		return nil, fmt.Errorf("listing scheduled dags: %w", err)
 	}
@@ -743,9 +743,27 @@ func (s *SchedulerStore) ScheduledDAGs(ctx context.Context) ([]scheduler.Schedul
 			StartDate:     timePtr(r.StartDate),
 			Catchup:       r.Catchup,
 			MaxActiveRuns: int(r.MaxActiveRuns),
+			NextRunAt:     timePtr(r.NextRunAt),
+			ScheduleEpoch: r.ScheduleEpoch,
 		})
 	}
 	return out, nil
+}
+
+// SetNextRunAt stores when the DAG is next due, unless its schedule epoch
+// moved past epoch since it was listed: a new version or a deleted run cleared
+// the time, and the next tick computes it again from the DAG as it is now.
+func (s *SchedulerStore) SetNextRunAt(ctx context.Context, tenantID, dagID string, epoch int64, at time.Time) error {
+	tid, err := parseUUID(tenantID)
+	if err != nil {
+		return fmt.Errorf("next run tenant id %q: %w", tenantID, err)
+	}
+	if err := s.q.SetDagNextRunAt(ctx, queries.SetDagNextRunAtParams{
+		NextRunAt: pgtype.Timestamptz{Time: at, Valid: true}, TenantID: tid, DagID: dagID, ScheduleEpoch: epoch,
+	}); err != nil {
+		return fmt.Errorf("storing next run: %w", err)
+	}
+	return nil
 }
 
 // CreateScheduledRun inserts a scheduled run for the DAG dagID owned by the

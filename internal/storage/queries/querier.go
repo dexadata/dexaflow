@@ -64,6 +64,7 @@ type Querier interface {
 	// duplicate dispatch cannot move the epoch of the live attempt. The row is the
 	// task's latest try, matching how the dispatcher has always resolved it.
 	ClaimAttemptEpoch(ctx context.Context, arg ClaimAttemptEpochParams) (ClaimAttemptEpochRow, error)
+	// The DAG's stored next due time goes with its runs (#2175).
 	ClearDagRuns(ctx context.Context, arg ClearDagRunsParams) (int64, error)
 	// The reconciler confirms a provisional infra mark (ADR 0052 amendment, part
 	// 2): the attempt's pods show no SUCCESS record and no task container still
@@ -164,8 +165,13 @@ type Querier interface {
 	DeleteConnection(ctx context.Context, arg DeleteConnectionParams) (int64, error)
 	DeleteDag(ctx context.Context, arg DeleteDagParams) (int64, error)
 	// Removes one run; its task_instances and XCom rows cascade (ON DELETE CASCADE).
+	// The DAG's stored next due time is cleared in the same statement (#2175): the
+	// deleted run may have been its latest, which the time was computed from.
 	DeleteDagRun(ctx context.Context, arg DeleteDagRunParams) (int64, error)
-	// Removes the locked runs whose children are all gone, up to row_limit.
+	// Removes the locked runs whose children are all gone, up to row_limit. The
+	// stored next due time of each DAG they belong to is cleared (#2175), in case
+	// a run removed was the DAG's latest; a DAG whose run stays is only listed
+	// once more.
 	DeleteDagRunsByID(ctx context.Context, arg DeleteDagRunsByIDParams) (int64, error)
 	// Forgets device sign-ins that expired more than ten minutes ago, with the
 	// address each was started from. Run before each create and by a sweep
@@ -586,7 +592,10 @@ type Querier interface {
 	// owning tenant is returned because a dag_id is unique only within its tenant
 	// (#209). The DAGs of a suspended tenant are left out (#2181); a suspension
 	// that lands after this read is refused when the run is created.
-	ListScheduledDags(ctx context.Context) ([]ListScheduledDagsRow, error)
+	// Only the DAGs that may be due are listed (#2175): no stored next_run_at yet,
+	// or one at or before now, the scheduler's clock. idx_dags_next_run (054)
+	// holds exactly the DAGs the first four conditions keep.
+	ListScheduledDags(ctx context.Context, now pgtype.Timestamptz) ([]ListScheduledDagsRow, error)
 	// Of the given (tenant, run) pairs, the settled runs: run in success or failed
 	// and no task instance outside success, failed, skipped, upstream_failed and
 	// removed.
@@ -1146,7 +1155,12 @@ type Querier interface {
 	// Revokes a live token of the tenant; owner_id NULL revokes any owner's. A
 	// revoked token matches no row, so it is not revoked or audited twice.
 	RevokeAPIToken(ctx context.Context, arg RevokeAPITokenParams) (RevokeAPITokenRow, error)
+	// A new current version can change the schedule, start_date or catchup, so the
+	// stored next due time is cleared and the schedule epoch bumped (#2175).
 	SetCurrentDagVersion(ctx context.Context, arg SetCurrentDagVersionParams) error
+	// Stores when the DAG is next due, unless a change
+	// bumped its schedule_epoch since the scheduler listed it (#2175).
+	SetDagNextRunAt(ctx context.Context, arg SetDagNextRunAtParams) error
 	SetDagPaused(ctx context.Context, arg SetDagPausedParams) (Dag, error)
 	SetTaskInstanceNote(ctx context.Context, arg SetTaskInstanceNoteParams) error
 	// The mark-state endpoint's write (mark success / mark failed). Same stamping
