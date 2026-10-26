@@ -198,7 +198,19 @@ type SourceModeSection struct {
 	// source-mode versions name as their image. Bind via
 	// DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE (legacy LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE).
 	Image string `mapstructure:"image"`
+	// WarmPools lets a source-mode version run on warm workers, which receive
+	// its dag.py with each assignment instead of in the pod spec (ADR 0095).
+	// Default false: source-mode versions run on dedicated pods. Turn it on
+	// once the runtime image carries an agent from 0.5.7 or later; a worker
+	// on an older agent never gets a source-mode attempt, which then takes a
+	// dedicated pod. Bind via DEXAFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS
+	// (legacy LEOFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS).
+	WarmPools bool `mapstructure:"warm_pools"`
 }
+
+// WarmPoolsOn reports whether source-mode versions may run on warm workers:
+// source mode is on and so is its warm_pools setting.
+func (s SourceModeSection) WarmPoolsOn() bool { return s.Enabled && s.WarmPools }
 
 // RuntimeImage returns the runtime image when source mode is on, and "" when
 // it is off, the form the dispatcher and the register check take.

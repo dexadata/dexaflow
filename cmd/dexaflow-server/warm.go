@@ -237,6 +237,7 @@ func warmPolicy(cfg *config.ServerConfig) domain.WarmPolicy {
 	policy.ServiceAccount = cfg.Executor.TaskServiceAccount
 	policy.Unit = resourceUnit(cfg)
 	policy.SourceModeImage = cfg.Execution.SourceMode.RuntimeImage()
+	policy.SourceModeWarm = cfg.Execution.SourceMode.WarmPoolsOn()
 	return policy
 }
 

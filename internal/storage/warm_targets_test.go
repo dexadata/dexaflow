@@ -103,6 +103,13 @@ func TestWarmTargetsExcludesSourceModeVersion(t *testing.T) {
 	if got := warmTargets(versions, exec, nil); len(got) != 3 {
 		t.Errorf("with source mode off every version keeps its target, got %+v", got)
 	}
+
+	// ADR 0095: with the mode's warm pools on, the dag.py goes with each
+	// assignment, so the source-mode version keeps its target too.
+	exec.SourceMode.Enabled, exec.SourceMode.WarmPools = true, true
+	if got := warmTargets(versions, exec, nil); len(got) != 3 {
+		t.Errorf("with source_mode.warm_pools on every version keeps its target, got %+v", got)
+	}
 }
 
 // A version whose image is outside the operator's image allowlist (issue #537

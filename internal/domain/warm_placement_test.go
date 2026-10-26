@@ -78,6 +78,7 @@ func TestWarmPlacementReasonVersion(t *testing.T) {
 		{"staging", WarmPolicy{Enabled: true}, WarmVersion{Image: "etl:v1", Staging: &StagingConfig{Enabled: true}}, "staging enabled"},
 		{"staging block off", WarmPolicy{Enabled: true}, WarmVersion{Image: "etl:v1", Staging: &StagingConfig{}}, "node_selector set"},
 		{"source mode", WarmPolicy{Enabled: true, SourceModeImage: "rt@sha256:1"}, WarmVersion{Image: "rt@sha256:1", HasSource: true}, "source mode"},
+		{"source mode with warm pools", WarmPolicy{Enabled: true, SourceModeImage: "rt@sha256:1", SourceModeWarm: true}, WarmVersion{Image: "rt@sha256:1", HasSource: true}, "node_selector set"},
 		{"runtime image without source", WarmPolicy{Enabled: true, SourceModeImage: "rt@sha256:1"}, WarmVersion{Image: "rt@sha256:1"}, "node_selector set"},
 		{"other image with source", WarmPolicy{Enabled: true, SourceModeImage: "rt@sha256:1"}, WarmVersion{Image: "etl:v1", HasSource: true}, "node_selector set"},
 	}

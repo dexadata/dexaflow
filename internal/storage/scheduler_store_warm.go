@@ -67,8 +67,10 @@ func warmTargets(versions []activeWarmVersion, exec config.ExecutionSection, pol
 			// ADR 0058 D5: staging versions never get a warm pool.
 			continue
 		}
-		if domain.SourceModeApplies(exec.SourceMode.RuntimeImage(), v.image, v.hasSource) {
-			// ADR 0067 §3: source-mode versions always run on cold pods.
+		if !exec.SourceMode.WarmPoolsOn() && domain.SourceModeApplies(exec.SourceMode.RuntimeImage(), v.image, v.hasSource) {
+			// ADR 0067 §3: source-mode versions run on cold pods unless
+			// execution.source_mode.warm_pools delivers their dag.py to warm
+			// workers (ADR 0095).
 			continue
 		}
 		if policy.CheckImage(v.image) != nil {
