@@ -1210,6 +1210,29 @@ func TestStagingVolumesIntegration(t *testing.T) {
 			t.Errorf("deleted volume %s still listed active", pvc)
 		}
 	}
+
+	// A cleared and re-run run recreates the same deterministic PVC: recording it
+	// again must bring the row back to active, or the orphan sweep (#1615) sees
+	// a live run's claim as unrecorded and deletes it once the TTL passes.
+	if err := store.RecordStagingVolume(ctx, tenantUUID, dagID, runUUID, pvc, "5Gi"); err != nil {
+		t.Fatalf("record after delete: %v", err)
+	}
+	vols, err = store.ListActiveStagingVolumes(ctx)
+	if err != nil {
+		t.Fatalf("list after re-record: %v", err)
+	}
+	revived := false
+	for _, v := range vols {
+		if v.PVCName == pvc {
+			revived = true
+			if time.Since(v.CreatedAt) > time.Minute {
+				t.Errorf("revived volume kept its old created_at %v; the orphan TTL must restart", v.CreatedAt)
+			}
+		}
+	}
+	if !revived {
+		t.Fatalf("re-recorded volume %s not listed active after a re-run", pvc)
+	}
 }
 
 // TestClearRebindsRunToCurrentVersion guards the OPT-IN mutability rule

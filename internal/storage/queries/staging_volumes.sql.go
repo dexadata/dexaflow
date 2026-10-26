@@ -77,7 +77,9 @@ func (q *Queries) MarkStagingDeleted(ctx context.Context, arg MarkStagingDeleted
 const recordStagingVolume = `-- name: RecordStagingVolume :exec
 INSERT INTO staging_volumes (tenant_id, dag_id, run_id, pvc_name, size, state)
 VALUES ($1, $2, $3, $4, $5, 'active')
-ON CONFLICT (pvc_name) DO NOTHING
+ON CONFLICT (pvc_name) DO UPDATE
+SET state = 'active', size = EXCLUDED.size, created_at = now(), deleted_at = NULL, delete_reason = NULL
+WHERE staging_volumes.state = 'deleted'
 `
 
 type RecordStagingVolumeParams struct {
@@ -88,6 +90,10 @@ type RecordStagingVolumeParams struct {
 	Size     string      `json:"size"`
 }
 
+// Idempotent per task of a run: an active row is left as it is. A deleted row is
+// brought back to active with a fresh created_at, because a cleared and re-run
+// run recreates the same deterministic PVC after GC freed it; left deleted, the
+// orphan sweep would take the live claim for an unrecorded one.
 func (q *Queries) RecordStagingVolume(ctx context.Context, arg RecordStagingVolumeParams) error {
 	_, err := q.db.Exec(ctx, recordStagingVolume,
 		arg.TenantID,
