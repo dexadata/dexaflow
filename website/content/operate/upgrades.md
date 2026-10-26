@@ -410,6 +410,7 @@ holds, then re-run.
 | 048 (`dispatch_unavailable_since`) | 48 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the column is not there yet | 47; retry when the table is quiet |
 | 049 (`installation`) | 49 | nothing: one transaction, rolled back, so the table is not there yet, and the file is idempotent | 48 |
 | 050 (index build) | 50 | `DROP INDEX CONCURRENTLY IF EXISTS idx_audit_resource;` | 49 |
+| 051 (unwritten tables) | 51 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the tables are still there | 50; retry when `task_instances` is quiet |
 
 **How to run `migrate force`.** The hook image is the `dexaflow-migrate`
 wrapper plus the SQL files at `/migrations`; it takes the golang-migrate CLI's
@@ -1116,7 +1117,7 @@ Kubernetes spelling. Rolling back to 0.5.6 restores the old behavior with no
 other step.
 ### Upgrading to 0.5.8
 
-0.5.8 applies one migration, 050.
+0.5.8 applies two migrations, 050 and 051.
 
 - **`050_audit_log_resource_index`** builds `idx_audit_resource` on
   `audit_log (tenant_id, resource_id, occurred_at DESC, id DESC)`, the index the
@@ -1130,18 +1131,70 @@ other step.
   usual" under [What the 0.5.1 migrations do](#what-the-051-migrations-do)).
   If the build is interrupted, recover it as the table in
   [An interrupted migration](#an-interrupted-migration) says.
+- **`051_drop_unwritten_tables`** drops `scheduler_loops`, `replicas` and
+  `task_state_history`, described below.
+
+#### Three unused tables are dropped
+
+Migration **`051_drop_unwritten_tables`** drops `scheduler_loops`, `replicas`
+and `task_state_history`, with their indexes, sequences and the
+`trim_scheduler_loops()` function (#1186). They were created by migrations 003
+and 004 for observability and audit, and no Dexaflow release ever wrote a row
+to them: leader election uses an advisory lock, the scheduler tick is measured
+by `dexaflow_scheduler_loop_duration_seconds`, and a task instance's attempts
+are in `task_instance_history`. Since 0.5.5 no release reads them either. On
+an install nobody touched by hand the three tables are empty and nothing is
+lost. **Any row someone inserted into them by hand is deleted by the
+upgrade**; to keep it, copy it out first. This shows whether there is
+anything to copy:
+
+```sql
+SELECT (SELECT count(*) FROM task_state_history) AS task_state_history,
+       (SELECT count(*) FROM scheduler_loops)    AS scheduler_loops,
+       (SELECT count(*) FROM replicas)           AS replicas;
+```
+
+The migration runs in one transaction, which took about 5 ms of SQL (40 ms
+with the CLI) on a database with 200,000 task instances: the tables are empty,
+so the drop does not depend on the size of the database. Dropping
+`task_state_history` removes its foreign key from `task_instances`, which
+takes an `ACCESS EXCLUSIVE` lock on `task_instances` until the transaction
+commits. The lock waits for every open transaction that touched the table,
+and reads and writes of task instances queue behind it while it waits. The
+migration waits at most 5 seconds for it. If it waits longer, the transaction
+rolls back, golang-migrate marks version 51 dirty and nothing changed: run
+`migrate force 50` and retry when the table is quiet. Every statement can be
+repeated.
+
+**While old replicas still run.** 0.5.5 and later never read or write the
+three tables, so their replicas keep working during the rollout. Upgrading
+straight from 0.5.4 is different: the 0.5.4 retention janitor deletes from
+`task_state_history`, so with `retention.dag_runs_days` set, a 0.5.4 leader
+running against the migrated schema fails every retention cycle that finds an
+expired run. It logs `retention cycle` at `ERROR` with
+`relation "task_state_history" does not exist`, deletes no run, and stops
+that cycle before the audit log too. Nothing is lost, and the cycle succeeds
+once a 0.5.8 replica leads. With retention off (the default) 0.5.4 never reads
+the three tables.
 
 **Rolling back 0.5.8.** On Pro, `helm rollback <release> <revision>` leaves the
-schema at 050, and the previous control plane boots against it with the
+schema at 051, and the previous control plane boots against it with the
 warning `database schema is ahead of this binary; proceeding`; it reads the
-event log through the new index without knowing it. On Lite, run the down
-migration first, with the 0.5.8 CLI or migrate image:
+event log through the new index without knowing it, and never touches the
+three tables. On Lite, run the down migrations first, with the 0.5.8 CLI or
+migrate image:
 
 ```sh
 migrate -path migrations -database "$DATABASE_URL" goto 49
 ```
 
-It drops the index `CONCURRENTLY`. No data changes.
+That recreates the three tables, empty, exactly as before, and drops the
+index `CONCURRENTLY`. Recreating the tables takes a lock on `task_instances`
+that blocks writes to it (not reads) for its few milliseconds, waiting at most
+5 seconds as the up does; it took about 15 ms of SQL (50 ms with the CLI) on
+the same database. Rows deleted by the upgrade do not come back. Rolling back
+further, to 0.5.4 with `retention.dag_runs_days` set, needs that down
+migration too, so its retention finds `task_state_history` again.
 
 ## Ephemeral database loss (emptyDir Postgres)
 
