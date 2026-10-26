@@ -50,6 +50,16 @@ const execWaitDelay = 10 * time.Second
 type execRunner struct {
 	waitDelay   time.Duration
 	groupRecord string
+	// dir is the task's working directory; empty inherits the agent's.
+	dir string
+}
+
+// InDir returns the runner with the task's working directory set to dir. A
+// warm worker runs a source-mode attempt from the directory it wrote the
+// assignment's dag.py to (ADR 0095).
+func (r execRunner) InDir(dir string) CommandRunner {
+	r.dir = dir
+	return r
 }
 
 // NewExecRunner returns a CommandRunner that executes tasks as child processes.
@@ -91,6 +101,7 @@ func (r execRunner) Run(ctx context.Context, argv, env []string, stdout, stderr 
 	}
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // argv is derived from the validated task spec
 	cmd.Env = env
+	cmd.Dir = r.dir
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

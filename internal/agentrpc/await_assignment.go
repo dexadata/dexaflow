@@ -244,7 +244,8 @@ func (s *Server) registerFromStream(stream agentv1.AgentService_AwaitAssignmentS
 	// binding degrades to per-pod liveness for this worker, never a refusal.
 	podName := reg.GetPodName()
 	send := make(chan *agentv1.WorkAssignment, 1)
-	worker, err := s.warmPools.Register(identity, dagVersion, podName, send, stream.Context().Done())
+	info := WorkerInfo{PodName: podName, SourceDelivery: reg.GetSourceDelivery()}
+	worker, err := s.warmPools.RegisterWorker(identity, dagVersion, info, send, stream.Context().Done())
 	if err != nil {
 		// One live registration per identity: a second stream for a worker whose
 		// first stream is still connected and heartbeating is refused, so two

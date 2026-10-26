@@ -832,6 +832,7 @@ and cannot do.
 |---|---|---|---|---|---|
 | `DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED` | `execution.source_mode.enabled` | bool | `false` | Pro | Turn source mode on. Off, Pro ignores a version's source, as before. Helm: `execution.sourceMode.enabled`. |
 | `DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE` | `execution.source_mode.image` | string | _(empty)_ | Pro | The runtime image source-mode versions name as their `image`, pinned by a full digest (`image@sha256:` and 64 hex characters). Required when source mode is on; the server refuses to start with a tag alone or a short digest. Helm: `execution.sourceMode.image`; the chart refuses to render the same values the server refuses. |
+| `DEXAFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS` | `execution.source_mode.warm_pools` | bool | `false` | Pro | Let source-mode versions run on warm workers: the control plane sends the version's `dag.py` with each warm assignment and the worker runs the attempt from it ([ADR 0095](/project/adrs/0095-source-mode-on-warm-workers/)). Needs `DEXAFLOW_EXECUTION_WARM_POOLS_ENABLED` and a runtime image whose agent is from 0.5.7 or later; a worker on an older agent never gets a source-mode attempt, which then takes a dedicated pod, and is counted in `dexaflow_scheduler_decisions_total{decision_type="warm_worker_no_source_delivery"}`. Ignored while source mode is off. See [Source mode](/operate/source-mode/#warm-workers). Helm: `execution.sourceMode.warmPools`. |
 
 <!-- END GENERATED configref -->
 

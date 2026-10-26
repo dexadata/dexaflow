@@ -204,12 +204,14 @@ A `400` names the problem: no source, or a source over the cap.
 - **128 KiB at most.** Registering a version on the runtime image answers
   `400` when its source is empty or over 131072 bytes. The cap is fixed,
   not a setting.
-- **Cold pods only.** A [warm worker](/operate/warm-pools/) is started before
-  its task is known, so it cannot carry the file. Source-mode versions get no
-  warm pool and every task attempt gets its own pod.
-- **Read-only working directory.** The task runs from the directory that
-  holds `dag.py`, which is read only. Write to `$TMPDIR`, `/tmp` or
-  [`/staging`](/operate/staging-volume/), as on any task pod.
+- **Cold pods, unless warm pools are on for source mode.** By default every
+  task attempt gets its own pod. With
+  [`warm_pools`](#warm-workers) on, attempts can also run on
+  [warm workers](/operate/warm-pools/), which receive the `dag.py` with each
+  assignment.
+- **Read-only working directory.** On a dedicated pod the task runs from the
+  directory that holds `dag.py`, which is read only. Write to `$TMPDIR`,
+  `/tmp` or [`/staging`](/operate/staging-volume/), as on any task pod.
 
 A DAG that needs more builds an image, as today.
 
@@ -237,6 +239,60 @@ engine's access control:
   `kubernetes` filter and Vector's `kubernetes_logs` source both do by
   default, so every log line of a source-mode task carries up to 128 KiB of
   source, which multiplies log volume and puts the code in the log store.
+
+## Warm workers
+
+A [warm worker](/operate/warm-pools/) is started before its task is known, so
+its pod cannot carry the `dag.py` annotation. By default a source-mode version
+therefore gets no warm pool, and the register's execution report says
+`no warm pool for this version: source mode`.
+
+`execution.source_mode.warm_pools` (Helm: `execution.sourceMode.warmPools`,
+environment `DEXAFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS`, default `false`)
+lets source-mode versions use warm pools
+([ADR 0095](/project/adrs/0095-source-mode-on-warm-workers/)). It needs
+`execution.warm_pools_enabled` too. The control plane then sends the
+version's `dag.py` with each warm assignment, over the worker's
+authenticated assignment stream, together with its SHA-256:
+
+- the worker checks the text against the SHA-256 and refuses the assignment
+  when they differ, so the attempt is placed again. This catches a copy
+  damaged on the way; it is the same stored source a dedicated pod gets, so
+  it says nothing about who wrote it;
+- it writes the file as `dag.py` into a directory of its per-attempt scratch
+  and runs the attempt from there, as a dedicated pod runs from its projected
+  file. A worker that cannot write it ends, and the pool replaces it;
+- it removes the file with the rest of the attempt's scratch once the attempt
+  is done, before it takes the next one.
+
+On a warm worker the source never goes in a pod annotation, so it does not
+reach pod readers, the audit log or a log shipper the way the annotation
+does. The working directory differs from a dedicated pod's: it is a writable
+directory under the worker's scratch, not `/opt/leoflow/source`, so `__file__`
+names that path, and it is wiped after every attempt. A DAG that reads files
+next to `dag.py` by an absolute `/opt/leoflow/source` path behaves
+differently there; build paths from `__file__` instead.
+
+The worker has to run an agent from 0.5.7 or later, which says so when it
+registers. The agent comes with the runtime image, so every warm worker of a
+version runs the agent of that version's image, and recycling a worker does
+not change it. To turn the setting on:
+
+1. Rebuild your runtime image on a runtime from 0.5.7 or later and set
+   `execution.source_mode.image` to its new digest.
+2. Deploy every source-mode DAG again, so its versions name the new image. A
+   version on the old digest no longer matches the runtime image, so it no
+   longer runs in source mode and its tasks would run without their `dag.py`.
+3. Turn `execution.source_mode.warm_pools` on.
+
+A warm worker that does not confirm source delivery is never given a
+source-mode attempt: the attempt takes a dedicated pod, and the server logs a
+warning with `reason=warm_worker_no_source_delivery` and counts it once per
+worker in
+`dexaflow_scheduler_decisions_total{decision_type="warm_worker_no_source_delivery"}`.
+Such a pool never serves its version, since its workers all run the same
+image: when the counter moves, redeploy the DAG on the new image or turn the
+setting off.
 
 Exclude the annotation in your log shipper before turning source mode on, for
 example:

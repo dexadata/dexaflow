@@ -164,6 +164,7 @@ func configureK8sDispatcher(dispatcher *dispatch.Dispatcher, cfg *config.ServerC
 	// Pro source mode (ADR 0067 §3): a version on the runtime image runs from
 	// its registered dag.py. "" (the default) keeps it off.
 	dispatcher.SetSourceModeImage(cfg.Execution.SourceMode.RuntimeImage())
+	dispatcher.SetSourceModeWarm(cfg.Execution.SourceMode.WarmPoolsOn())
 	// Warm placement seam (ADR 0058 N1b1-place): the dispatcher Assign()s onto the
 	// SAME registry the gRPC handler serves. nil when warm pools are off.
 	setWarmPlacer(dispatcher, warmPools)
