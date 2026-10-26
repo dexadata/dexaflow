@@ -529,6 +529,8 @@ execution:
     enabled: false
     # -- The runtime image source-mode versions name as their `image`, pinned by a full digest: `name@sha256:` and 64 lowercase hex characters. A source-mode version must name this exact string as its image, byte for byte (pass it to `dexaflow compile` as the image). Required when `enabled`; the chart refuses a tag alone or a short digest, as the server does at boot. Ignored while `enabled` is false.
     image: ""
+    # -- Let source-mode versions run on warm workers (ADR 0095): the control plane sends the version's `dag.py` with each warm assignment, and the worker runs the attempt from it, as a dedicated source-mode pod runs from its projected `dag.py`. OFF by default: source-mode versions run on dedicated pods. Needs `warmPoolsEnabled` and a runtime `image` whose agent is from 0.5.7 or later; a warm worker on an older agent is never given a source-mode attempt, which then takes a dedicated pod, and is logged and counted in `dexaflow_scheduler_decisions_total{decision_type="warm_worker_no_source_delivery"}`. Rendered as `LEOFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS` only when on. Ignored while `enabled` is false.
+    warmPools: false
   # -- Refill warm pools on events instead of every 30s: read the warm fleet from a pod informer instead of a LIST per tick, react at once when a warm pod is deleted, fails or is claimed, and create replacements in parallel (up to 4). The periodic tick stays as a backstop. Ignored while `warmPoolsEnabled` is false.
   warmPoolEventRefill: false
 

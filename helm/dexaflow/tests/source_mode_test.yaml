@@ -136,3 +136,35 @@ tests:
           count: 2
       - notExists:
           path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED")]
+
+  # ADR 0095: warm pools for source-mode versions are a separate opt-in, off
+  # by default, and only reach the server with the mode itself on.
+  - it: renders no warm-pools variable unless asked
+    template: deployment.yaml
+    set:
+      execution.sourceMode.enabled: true
+      execution.sourceMode.image: ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS")]
+
+  - it: renders the warm-pools variable when on with the mode on
+    template: deployment.yaml
+    set:
+      execution.sourceMode.enabled: true
+      execution.sourceMode.image: ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      execution.sourceMode.warmPools: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS
+            value: "true"
+
+  - it: renders no warm-pools variable while the mode is off
+    template: deployment.yaml
+    set:
+      execution.sourceMode.warmPools: true
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS")]

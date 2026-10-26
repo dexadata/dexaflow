@@ -2,6 +2,8 @@ package dispatch
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"testing"
 
@@ -54,8 +56,8 @@ func TestDispatchSourceMode(t *testing.T) {
 	}
 }
 
-// A warm worker that would accept is still never offered a source-mode
-// attempt: its pod was built before the task was known and has no dag.py.
+// With execution.source_mode.warm_pools off (the default), a warm worker that
+// would accept is still never offered a source-mode attempt (ADR 0067 §3).
 func TestDispatchSourceModeNeverGoesWarm(t *testing.T) {
 	res := &fakeResolver{resolved: Resolved{TaskInstanceID: "ti-1", Image: runtimeImage, Source: "print(1)\n"}}
 	exec := &fakeExecutor{}
@@ -70,6 +72,59 @@ func TestDispatchSourceModeNeverGoesWarm(t *testing.T) {
 	if placer.calls != 0 || !exec.req.SourceMode {
 		t.Errorf("placer calls = %d, SourceMode = %v; want 0 and a cold source-mode pod", placer.calls, exec.req.SourceMode)
 	}
+}
+
+// With execution.source_mode.warm_pools on (ADR 0095), a source-mode attempt
+// is offered to a warm worker with its dag.py and the SHA-256 the worker
+// checks it against; on a miss it still takes a cold source-mode pod.
+func TestDispatchSourceModeGoesWarmWithItsSource(t *testing.T) {
+	const src = "print(1)\n"
+	for _, free := range []bool{true, false} {
+		res := &fakeResolver{resolved: Resolved{TaskInstanceID: "ti-1", Image: runtimeImage, Source: src}}
+		exec := &fakeExecutor{}
+		placer := &fakePlacer{ok: free}
+		d := newDispatcher(res, &fakeIssuer{token: "t"}, exec)
+		d.SetWarmPlacer(placer)
+		d.SetSourceModeImage(runtimeImage)
+		d.SetSourceModeWarm(true)
+
+		if _, err := d.Dispatch(context.Background(), "run-1", "etl", "ver-1", pythonTask()); err != nil {
+			t.Fatalf("Dispatch: %v", err)
+		}
+		if placer.calls != 1 {
+			t.Fatalf("free=%v: placer calls = %d, want 1", free, placer.calls)
+		}
+		if got := placer.last; string(got.GetDagSource()) != src ||
+			got.GetDagSourceSha256() != sha256Hex(src) {
+			t.Errorf("free=%v: assignment source %q (sha %q), want %q with its SHA-256", free, got.GetDagSource(), got.GetDagSourceSha256(), src)
+		}
+		if gotPod := exec.req.TaskID != ""; gotPod == free || (gotPod && !exec.req.SourceMode) {
+			t.Errorf("free=%v: dedicated pod = %v (source mode %v), want one only on a miss, in source mode", free, gotPod, exec.req.SourceMode)
+		}
+	}
+}
+
+// An attempt outside source mode carries no source, even with the mode's warm
+// pools on: its image holds the DAG.
+func TestDispatchWarmAssignmentCarriesNoSourceOutsideSourceMode(t *testing.T) {
+	res := &fakeResolver{resolved: Resolved{TaskInstanceID: "ti-1", Image: "etl:v1", Source: "print(1)\n"}}
+	placer := &fakePlacer{ok: true}
+	d := newDispatcher(res, &fakeIssuer{token: "t"}, &fakeExecutor{})
+	d.SetWarmPlacer(placer)
+	d.SetSourceModeImage(runtimeImage)
+	d.SetSourceModeWarm(true)
+
+	if _, err := d.Dispatch(context.Background(), "run-1", "etl", "ver-1", pythonTask()); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if len(placer.last.GetDagSource()) != 0 || placer.last.GetDagSourceSha256() != "" {
+		t.Errorf("assignment outside source mode carries a source: %+v", placer.last)
+	}
+}
+
+func sha256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }
 
 // A version registered on the runtime image before source mode was turned on

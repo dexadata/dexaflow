@@ -28,18 +28,20 @@ func TestDispatchPlacesWhatItsWarmPolicySays(t *testing.T) {
 		return task
 	}
 	cases := []struct {
-		name     string
-		placer   bool
-		unit     *domain.ResourceUnit
-		limits   *domain.DefaultLimits
-		resolved Resolved
-		task     domain.TaskSpec
-		want     string
+		name       string
+		placer     bool
+		sourceWarm bool
+		unit       *domain.ResourceUnit
+		limits     *domain.DefaultLimits
+		resolved   Resolved
+		task       domain.TaskSpec
+		want       string
 	}{
 		{name: "eligible", placer: true, task: plain, want: ""},
 		{name: "warm pools off", task: plain, want: domain.DedicatedWarmPoolsOff},
 		{name: "staging", placer: true, resolved: Resolved{Staging: &domain.StagingConfig{Enabled: true}}, task: plain, want: domain.DedicatedStaging},
 		{name: "source mode", placer: true, resolved: Resolved{Image: runtimeImage, Source: "print(1)\n"}, task: plain, want: domain.DedicatedSourceMode},
+		{name: "source mode with warm pools", placer: true, sourceWarm: true, resolved: Resolved{Image: runtimeImage, Source: "print(1)\n"}, task: plain, want: ""},
 		{name: "pinned service account", placer: true, task: with(func(t *domain.TaskSpec) {
 			t.Execution = &domain.Execution{ServiceAccount: "custom-sa"}
 		}), want: "service_account set"},
@@ -76,6 +78,7 @@ func TestDispatchPlacesWhatItsWarmPolicySays(t *testing.T) {
 			}
 			d.SetDefaultTaskServiceAccount("dexaflow-task")
 			d.SetSourceModeImage(runtimeImage)
+			d.SetSourceModeWarm(c.sourceWarm)
 			d.SetPlatformDefaults(PlatformDefaults{Unit: c.unit, Limits: c.limits})
 
 			reason := d.WarmPolicy().DedicatedReason(domain.WarmVersion{Image: r.Image, HasSource: r.Source != "", Staging: r.Staging}, c.task)
