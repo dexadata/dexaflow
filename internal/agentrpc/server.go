@@ -162,6 +162,7 @@ type Server struct {
 	tailOnDemand         bool
 	secrets              SecretsStore
 	secretAudit          SecretScopeAuditor
+	emptyScopeWarned     emptyScopeWarnings
 	liveness             TaskLivenessChecker
 	livenessMode         string
 	livenessAudit        SecretLivenessAuditor

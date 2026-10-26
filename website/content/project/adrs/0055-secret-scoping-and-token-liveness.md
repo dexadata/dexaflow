@@ -261,7 +261,10 @@ implementation.
     is the **warn phase**: every task still receives the whole tenant vault
     (today's behavior), and a task whose non-empty declaration is a strict subset
     of that vault gets a warn + audit event (E1b) — delivery is NOT subset under
-    permissive. This is deliberate: declarations are populated from static analysis
+    permissive. (Amended for 0.5.7, #800: a task that declares nothing is warned
+    too, with `declared=0`, since enforce would deliver it nothing; that warning
+    is recorded once per DAG version and kind per control plane process, so
+    every undeclared DAG does not write an audit row on each attempt.) This is deliberate: declarations are populated from static analysis
     and may be incomplete, so the warn phase surfaces gaps WITHOUT breaking a task
     that under-declared. `enforce` is the least-privilege flip: a task receives ONLY
     its declared subset (empty declaration ⇒ nothing); it is the operator's
