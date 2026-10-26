@@ -128,11 +128,11 @@ func runRestore(cmd *cobra.Command, input string, force bool) error {
 		devPrintf(out, "✓ workspace restored to %s (%d files)\n", workspaceDir, len(archive.Workspace))
 	}
 
-	// A plain `dexaflow lite` picks the Docker Postgres where Docker is
-	// usable (ADR 0030).
-	if d.dockerUsable(cmd.Context()) {
-		devPrintln(out, "✓ restore complete; run `dexaflow lite --postgres managed` to start "+
-			"(the archive holds a managed datastore, and with Docker present a plain `dexaflow lite` uses the Docker Postgres).")
+	// The restored data lives in the managed Postgres: pin the install to it,
+	// so a plain `dexaflow lite` boots it on a host with Docker too (ADR 0094).
+	if err := writeDatastorePin(filepath.Join(leoflowHome, "dev"), datastoreManaged); err != nil {
+		devPrintf(out, "! %v\n", err)
+		devPrintln(out, "✓ restore complete; run `dexaflow lite --postgres managed` to start.")
 		return nil
 	}
 	devPrintln(out, "✓ restore complete; run `dexaflow lite` to start.")

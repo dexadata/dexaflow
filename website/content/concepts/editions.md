@@ -103,6 +103,12 @@ Docker daemon answers but the Compose v2 plugin is not installed, and says so.
 An explicit `--postgres docker` on such a host stops with what to do: install
 the Compose v2 plugin, or use `--postgres managed`.
 
+An install restored with `dexaflow lite restore` is pinned to the managed
+Postgres, where the restored data lives, so a plain `dexaflow lite` starts it
+even where Docker runs. An explicit `--postgres docker` or `--postgres managed`
+pins the install the same way, and later runs follow it until another explicit
+choice ([ADR 0094](/project/adrs/0094-lite-auto-follows-the-pinned-datastore/)).
+
 The managed Postgres has builds for Linux (glibc and musl) and macOS; Ubuntu
 22.04 and 24.04 are tested on bare containers. It links libxml2, Kerberos,
 OpenSSL 3, zstd and lz4 from the host, and the musl build also links ICU 74.

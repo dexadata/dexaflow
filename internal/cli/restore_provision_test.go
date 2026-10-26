@@ -130,12 +130,12 @@ func TestRestoreRefusesAHomeWithADatastoreWithoutForce(t *testing.T) {
 	}
 }
 
-// The archive holds a managed datastore. With Docker present a plain
-// `dexaflow lite` picks the Docker Postgres (ADR 0030), so the closing line
-// names the flag that boots the restored data.
-func TestRestoreOnADockerHostNamesTheManagedFlag(t *testing.T) {
+// The archive holds a managed datastore. The restore pins the install to it,
+// so a plain `dexaflow lite` boots the restored data on a host with Docker too
+// (ADR 0094, #1997), and the closing line needs no flag.
+func TestRestorePinsTheManagedDatastore(t *testing.T) {
 	d := testDeps()
-	_, archive := restoreFixture(t, d)
+	dexaHome, archive := restoreFixture(t, d)
 	fakeRestoreDatastore(t, d, nil)
 	d.dockerUsable = func(context.Context) bool { return true }
 	d.psqlRestore = func(context.Context, string, []byte) error { return nil }
@@ -144,7 +144,10 @@ func TestRestoreOnADockerHostNamesTheManagedFlag(t *testing.T) {
 	if err := runRestore(cmd, archive, false); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "dexaflow lite --postgres managed") {
-		t.Errorf("closing line on a Docker host does not name --postgres managed:\n%s", out.String())
+	if got := readDatastorePin(filepath.Join(dexaHome, "dev")); got != datastoreManaged {
+		t.Errorf("datastore pin after a restore = %q, want %q", got, datastoreManaged)
+	}
+	if !strings.Contains(out.String(), "run `dexaflow lite` to start") || strings.Contains(out.String(), "--postgres managed") {
+		t.Errorf("closing line must name a plain `dexaflow lite`:\n%s", out.String())
 	}
 }
