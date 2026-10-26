@@ -336,6 +336,8 @@ type Querier interface {
 	// (GetRoleByName), so the tenant predicate is on that lookup.
 	GetRolePermissionsByID(ctx context.Context, roleID pgtype.UUID) ([]GetRolePermissionsByIDRow, error)
 	GetTenantByName(ctx context.Context, name string) (GetTenantByNameRow, error)
+	// The suspension is read with the limits, so run creation learns both from
+	// the one row it already reads (#2181).
 	GetTenantLimits(ctx context.Context, id pgtype.UUID) (GetTenantLimitsRow, error)
 	// The id of a user of the tenant: no row when the user is gone or belongs to
 	// another tenant, so a stale token's subject records no creator.
@@ -582,7 +584,8 @@ type Querier interface {
 	// should I backfill on this tick?" (catchup + start_date, see #129), and
 	// "may this DAG take another active run?" (max_active_runs, see #200). The
 	// owning tenant is returned because a dag_id is unique only within its tenant
-	// (#209).
+	// (#209). The DAGs of a suspended tenant are left out (#2181); a suspension
+	// that lands after this read is refused when the run is created.
 	ListScheduledDags(ctx context.Context) ([]ListScheduledDagsRow, error)
 	// Of the given (tenant, run) pairs, the settled runs: run in success or failed
 	// and no task instance outside success, failed, skipped, upstream_failed and
@@ -1129,6 +1132,8 @@ type Querier interface {
 	// plans and runs. Each execution's log is kept apart by its epoch-keyed object.
 	ResetTaskInstanceToNone(ctx context.Context, arg ResetTaskInstanceToNoneParams) error
 	ResolveRunRef(ctx context.Context, arg ResolveRunRefParams) (ResolveRunRefRow, error)
+	// Lifts a tenant's suspension; a tenant that is not suspended is unchanged.
+	ResumeTenant(ctx context.Context, id pgtype.UUID) error
 	// Revokes the user's expired, unrevoked tokens with this name, so an expired
 	// token does not hold its name forever, and returns them so the create audits
 	// each one as api_token.retire_expired rather than leaving it to read as a
@@ -1179,6 +1184,9 @@ type Querier interface {
 	// overridden mark (the reaper's reason prefix) and the attempt's log location;
 	// no row means nothing was overridden.
 	SucceedTaskInstanceOverInfraMark(ctx context.Context, arg SucceedTaskInstanceOverInfraMarkParams) (SucceedTaskInstanceOverInfraMarkRow, error)
+	// Sets or changes a tenant's suspension (#2181). A tenant already suspended
+	// keeps its suspended_at, so changing the reason does not restart the clock.
+	SuspendTenant(ctx context.Context, arg SuspendTenantParams) error
 	// The per-attempt fields the agent spec carries from the task instance row.
 	// first_reschedule_at is the time a reschedule-mode sensor first entered
 	// reschedule (NULL until it does), delivered to each re-dispatched pod so
