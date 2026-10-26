@@ -1589,17 +1589,28 @@ func (x *HeartbeatRequest) GetCustomMetrics() map[string]float64 {
 // attempt_token and generates assignment_id; the worker replies with an
 // AssignmentAck referencing assignment_id.
 type WorkAssignment struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	AssignmentId  string                 `protobuf:"bytes,1,opt,name=assignment_id,json=assignmentId,proto3" json:"assignment_id,omitempty"` // control-plane-generated correlation id for this hand-off
-	AttemptToken  string                 `protobuf:"bytes,2,opt,name=attempt_token,json=attemptToken,proto3" json:"attempt_token,omitempty"` // per-attempt agent JWT the worker adopts for this attempt; NEVER logged
-	DagRunId      string                 `protobuf:"bytes,3,opt,name=dag_run_id,json=dagRunId,proto3" json:"dag_run_id,omitempty"`
-	TaskId        string                 `protobuf:"bytes,4,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	TryNumber     int32                  `protobuf:"varint,5,opt,name=try_number,json=tryNumber,proto3" json:"try_number,omitempty"`
-	DagVersionId  string                 `protobuf:"bytes,6,opt,name=dag_version_id,json=dagVersionId,proto3" json:"dag_version_id,omitempty"` // the pool identity this assignment belongs to
-	LeaseSeconds  int64                  `protobuf:"varint,7,opt,name=lease_seconds,json=leaseSeconds,proto3" json:"lease_seconds,omitempty"`  // ack deadline: unacked within it => the attempt is reclaimed
-	AttemptEpoch  int64                  `protobuf:"varint,8,opt,name=attempt_epoch,json=attemptEpoch,proto3" json:"attempt_epoch,omitempty"`  // the execution of try_number this assignment is (ADR 0051 amendment); also carried in attempt_token, which is what the control plane fences on
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	AssignmentId string                 `protobuf:"bytes,1,opt,name=assignment_id,json=assignmentId,proto3" json:"assignment_id,omitempty"` // control-plane-generated correlation id for this hand-off
+	AttemptToken string                 `protobuf:"bytes,2,opt,name=attempt_token,json=attemptToken,proto3" json:"attempt_token,omitempty"` // per-attempt agent JWT the worker adopts for this attempt; NEVER logged
+	DagRunId     string                 `protobuf:"bytes,3,opt,name=dag_run_id,json=dagRunId,proto3" json:"dag_run_id,omitempty"`
+	TaskId       string                 `protobuf:"bytes,4,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	TryNumber    int32                  `protobuf:"varint,5,opt,name=try_number,json=tryNumber,proto3" json:"try_number,omitempty"`
+	DagVersionId string                 `protobuf:"bytes,6,opt,name=dag_version_id,json=dagVersionId,proto3" json:"dag_version_id,omitempty"` // the pool identity this assignment belongs to
+	LeaseSeconds int64                  `protobuf:"varint,7,opt,name=lease_seconds,json=leaseSeconds,proto3" json:"lease_seconds,omitempty"`  // ack deadline: unacked within it => the attempt is reclaimed
+	AttemptEpoch int64                  `protobuf:"varint,8,opt,name=attempt_epoch,json=attemptEpoch,proto3" json:"attempt_epoch,omitempty"`  // the execution of try_number this assignment is (ADR 0051 amendment); also carried in attempt_token, which is what the control plane fences on
+	// dag_source is the version's dag.py when the version runs in source mode
+	// (ADR 0067 §3, ADR 0095), empty otherwise. The worker writes it as dag.py
+	// into a per-attempt directory and runs the attempt from there, as a
+	// dedicated source-mode pod runs from its projected dag.py. Only a worker
+	// that registered with source_delivery is sent one. At most
+	// MaxSourceModeBytes (128 KiB), the cap register and dispatch apply.
+	DagSource []byte `protobuf:"bytes,9,opt,name=dag_source,json=dagSource,proto3" json:"dag_source,omitempty"`
+	// dag_source_sha256 is the lowercase hex SHA-256 of dag_source, set with
+	// it. The worker refuses the assignment when the text it received does not
+	// match.
+	DagSourceSha256 string `protobuf:"bytes,10,opt,name=dag_source_sha256,json=dagSourceSha256,proto3" json:"dag_source_sha256,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *WorkAssignment) Reset() {
@@ -1686,6 +1697,20 @@ func (x *WorkAssignment) GetAttemptEpoch() int64 {
 		return x.AttemptEpoch
 	}
 	return 0
+}
+
+func (x *WorkAssignment) GetDagSource() []byte {
+	if x != nil {
+		return x.DagSource
+	}
+	return nil
+}
+
+func (x *WorkAssignment) GetDagSourceSha256() string {
+	if x != nil {
+		return x.DagSourceSha256
+	}
+	return ""
 }
 
 // WorkerMessage is everything a warm worker sends UP the AwaitAssignment stream:
@@ -1812,8 +1837,14 @@ type WorkerRegister struct {
 	// when execution.warm_require_attempt_home_sweep is on too, so attempts run
 	// on dedicated pods instead of on a worker that would leak those paths.
 	AttemptHomeSweep bool `protobuf:"varint,3,opt,name=attempt_home_sweep,json=attemptHomeSweep,proto3" json:"attempt_home_sweep,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// source_delivery confirms that this worker writes a WorkAssignment's
+	// dag_source as dag.py and runs the attempt from it (ADR 0095). A worker
+	// built on an older runtime never sets it, and the control plane never
+	// places a source-mode attempt on such a worker: the attempt takes a
+	// dedicated pod instead.
+	SourceDelivery bool `protobuf:"varint,4,opt,name=source_delivery,json=sourceDelivery,proto3" json:"source_delivery,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *WorkerRegister) Reset() {
@@ -1863,6 +1894,13 @@ func (x *WorkerRegister) GetPodName() string {
 func (x *WorkerRegister) GetAttemptHomeSweep() bool {
 	if x != nil {
 		return x.AttemptHomeSweep
+	}
+	return false
+}
+
+func (x *WorkerRegister) GetSourceDelivery() bool {
+	if x != nil {
+		return x.SourceDelivery
 	}
 	return false
 }
@@ -2164,7 +2202,7 @@ const file_agent_proto_rawDesc = "" +
 	"\x0ecustom_metrics\x18\x02 \x03(\v25.leoflow.agent.v1.HeartbeatRequest.CustomMetricsEntryR\rcustomMetrics\x1a@\n" +
 	"\x12CustomMetricsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x01R\x05value:\x028\x01\"\xa0\x02\n" +
+	"\x05value\x18\x02 \x01(\x01R\x05value:\x028\x01\"\xeb\x02\n" +
 	"\x0eWorkAssignment\x12#\n" +
 	"\rassignment_id\x18\x01 \x01(\tR\fassignmentId\x12#\n" +
 	"\rattempt_token\x18\x02 \x01(\tR\fattemptToken\x12\x1c\n" +
@@ -2175,16 +2213,21 @@ const file_agent_proto_rawDesc = "" +
 	"try_number\x18\x05 \x01(\x05R\ttryNumber\x12$\n" +
 	"\x0edag_version_id\x18\x06 \x01(\tR\fdagVersionId\x12#\n" +
 	"\rlease_seconds\x18\a \x01(\x03R\fleaseSeconds\x12#\n" +
-	"\rattempt_epoch\x18\b \x01(\x03R\fattemptEpoch\"\xc6\x01\n" +
+	"\rattempt_epoch\x18\b \x01(\x03R\fattemptEpoch\x12\x1d\n" +
+	"\n" +
+	"dag_source\x18\t \x01(\fR\tdagSource\x12*\n" +
+	"\x11dag_source_sha256\x18\n" +
+	" \x01(\tR\x0fdagSourceSha256\"\xc6\x01\n" +
 	"\rWorkerMessage\x12>\n" +
 	"\bregister\x18\x01 \x01(\v2 .leoflow.agent.v1.WorkerRegisterH\x00R\bregister\x123\n" +
 	"\x03ack\x18\x02 \x01(\v2\x1f.leoflow.agent.v1.AssignmentAckH\x00R\x03ack\x129\n" +
 	"\tslot_free\x18\x03 \x01(\v2\x1a.leoflow.agent.v1.SlotFreeH\x00R\bslotFreeB\x05\n" +
-	"\x03msg\"\x7f\n" +
+	"\x03msg\"\xa8\x01\n" +
 	"\x0eWorkerRegister\x12$\n" +
 	"\x0edag_version_id\x18\x01 \x01(\tR\fdagVersionId\x12\x19\n" +
 	"\bpod_name\x18\x02 \x01(\tR\apodName\x12,\n" +
-	"\x12attempt_home_sweep\x18\x03 \x01(\bR\x10attemptHomeSweep\"N\n" +
+	"\x12attempt_home_sweep\x18\x03 \x01(\bR\x10attemptHomeSweep\x12'\n" +
+	"\x0fsource_delivery\x18\x04 \x01(\bR\x0esourceDelivery\"N\n" +
 	"\rAssignmentAck\x12#\n" +
 	"\rassignment_id\x18\x01 \x01(\tR\fassignmentId\x12\x18\n" +
 	"\astarted\x18\x02 \x01(\bR\astarted\"\n" +

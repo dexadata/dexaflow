@@ -5,6 +5,8 @@ package dispatch
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -182,8 +184,12 @@ type Dispatcher struct {
 	misfits UnitMisfitRecorder
 	// sourceModeImage is the operator's runtime image when source mode is on
 	// (ADR 0067 §3), "" when it is off. A version on that image that carries a
-	// source dispatches in source mode, always on a cold pod.
+	// source dispatches in source mode, on a cold pod unless sourceModeWarm.
 	sourceModeImage string
+	// sourceModeWarm is execution.source_mode.warm_pools: a source-mode
+	// attempt may go to a warm worker, which receives the dag.py with the
+	// assignment (ADR 0095).
+	sourceModeWarm bool
 }
 
 // UnitMisfitRecorder counts a task that does not fit the resource unit but is
@@ -247,6 +253,11 @@ func (d *Dispatcher) SetWarmPlacer(p WarmPlacer) { d.placer = p }
 // §3); "" leaves it off, today's behavior. Lite does not set it: the subprocess
 // executor always runs from the source.
 func (d *Dispatcher) SetSourceModeImage(image string) { d.sourceModeImage = image }
+
+// SetSourceModeWarm lets source-mode attempts run on warm workers, which
+// receive the version's dag.py with each assignment (ADR 0095). Off, the
+// default, keeps every source-mode attempt on a dedicated pod.
+func (d *Dispatcher) SetSourceModeWarm(on bool) { d.sourceModeWarm = on }
 
 // SetAgentTLSCAConfigMap configures the CA ConfigMap mounted into task pods so
 // agents verify the control plane's gRPC TLS cert (issue #58). Empty = the agent
@@ -320,7 +331,8 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	// Which attempts may go warm is domain.WarmPolicy.DedicatedReason, the
 	// decision the register response reports per task: warm pools on; no
 	// staging (a warm worker has no per-run /staging mount, ADR 0058 D5); no
-	// source mode (a warm pod cannot carry the task's dag.py, ADR 0067 §3);
+	// source mode unless execution.source_mode.warm_pools is on, and then the
+	// assignment carries the dag.py (ADR 0067 §3, ADR 0095);
 	// the warm workers' ServiceAccount; none of the task's own placement or pod
 	// metadata; and a size that fits a warm pod (one unit, ADR 0066 §3, or the
 	// default limits, #537). Any other attempt takes the dedicated path below.
@@ -335,6 +347,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 			DagVersionId: dagVersionID,
 			LeaseSeconds: warmLeaseSeconds,
 			AttemptEpoch: int64(r.AttemptEpoch),
+		}
+		if sourceMode {
+			setAssignmentSource(wa, r.Source)
 		}
 		if d.placer.Assign(dagVersionID, wa) {
 			return executor.Dispatched, nil
@@ -465,7 +480,18 @@ func (d *Dispatcher) WarmPolicy() domain.WarmPolicy {
 		Unit:            d.defaults.Unit,
 		Limits:          d.defaults.Limits,
 		SourceModeImage: d.sourceModeImage,
+		SourceModeWarm:  d.sourceModeWarm,
 	}
+}
+
+// setAssignmentSource puts a source-mode version's dag.py on a warm
+// assignment, with its SHA-256 so the worker can detect a copy damaged on the
+// way (ADR 0095). It is the same text a dedicated pod would get. The registry only hands such an assignment to a worker that
+// registered with source_delivery.
+func setAssignmentSource(wa *agentv1.WorkAssignment, source string) {
+	sum := sha256.Sum256([]byte(source))
+	wa.DagSource = []byte(source)
+	wa.DagSourceSha256 = hex.EncodeToString(sum[:])
 }
 
 // taskResources picks the task pod's resources. With a resource unit the unit
