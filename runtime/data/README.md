@@ -7,14 +7,17 @@ included) and dbt, for a platform that runs DAGs on the runtime
 image as is, with no image build (source mode, ADR 0067).
 
 - `requirements.in`: the top-level packages. Edit this file.
-- `requirements.txt`: the lock the image installs with `pip --require-hashes`.
-  Generated; never edit it by hand.
+- `overrides.txt`: dependency bounds the lock overrides on purpose, each with
+  its reason and when to drop it.
+- `requirements.txt`: the lock the image installs with
+  `pip --no-deps --require-hashes`. Generated; never edit it by hand.
 
 ## Recompile the lock
 
 ```sh
 uv pip compile --python-version 3.11 --python-platform x86_64-manylinux_2_28 \
   --generate-hashes --no-header --emit-index-url \
+  --override runtime/data/overrides.txt \
   runtime/data/requirements.in -o runtime/data/requirements.txt
 ```
 
@@ -23,7 +26,8 @@ check that arm64 resolves to the same versions:
 
 ```sh
 uv pip compile --python-version 3.11 --python-platform aarch64-manylinux_2_28 \
-  --no-header runtime/data/requirements.in -c runtime/data/requirements.txt
+  --no-header --override runtime/data/overrides.txt \
+  runtime/data/requirements.in -c runtime/data/requirements.txt
 ```
 
 Its output should list exactly the versions of `requirements.txt`.
@@ -41,3 +45,7 @@ Its output should list exactly the versions of `requirements.txt`.
 - **Every promised import is checked at build time.** The `runtime-data` stage
   of `runtime/Dockerfile` imports each provider, driver and dbt adapter, and
   runs `dbt --version`. When you add a package here, add its import there.
+- **Overrides are debts.** The image skips pip's resolver (`--no-deps`), so a
+  line in `overrides.txt` is the only way a bound gets broken, and `pip check`
+  in the image reports exactly those lines. Remove one as soon as the upstream
+  package lifts its bound, and recompile.

@@ -629,12 +629,9 @@ jobs:
           images: |
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/leoflow-runtime
-          # Only the immutable per-release pin (py3.11-v0.0.2-rc.1). The moving
-          # line tag (py3.11), which the docs and a development build's
-          # generated Dockerfile default to, is re-pointed by `promote` after
-          # the gate, for a GA of the newest minor only (ADR 0071). Pushing it
-          # here moved it on every rc and before any smoke ran (#1684). No bare
-          # `:latest`: the tag must always name a Python version.
+          # Only the immutable per-release pin (py3.11-data-v0.0.2-rc.1). The
+          # data variant has no moving tag: a platform pins it by release, and
+          # `promote` re-points only the base `py3.N` lines.
           tags: |
             type=raw,value=py3.11-data-${{ github.ref_name }}
 
