@@ -307,18 +307,6 @@ type Pool struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
-type Replica struct {
-	ID              pgtype.UUID        `json:"id"`
-	Hostname        string             `json:"hostname"`
-	ProcessID       int32              `json:"process_id"`
-	Version         string             `json:"version"`
-	StartedAt       pgtype.Timestamptz `json:"started_at"`
-	LastHeartbeatAt pgtype.Timestamptz `json:"last_heartbeat_at"`
-	IsLeader        bool               `json:"is_leader"`
-	Role            string             `json:"role"`
-	Metadata        []byte             `json:"metadata"`
-}
-
 type Role struct {
 	ID          pgtype.UUID        `json:"id"`
 	TenantID    pgtype.UUID        `json:"tenant_id"`
@@ -332,18 +320,6 @@ type RolePermission struct {
 	RoleID       pgtype.UUID        `json:"role_id"`
 	PermissionID pgtype.UUID        `json:"permission_id"`
 	GrantedAt    pgtype.Timestamptz `json:"granted_at"`
-}
-
-type SchedulerLoop struct {
-	ID             int64              `json:"id"`
-	ReplicaID      pgtype.UUID        `json:"replica_id"`
-	StartedAt      pgtype.Timestamptz `json:"started_at"`
-	EndedAt        pgtype.Timestamptz `json:"ended_at"`
-	DurationMs     int32              `json:"duration_ms"`
-	DagsExamined   int32              `json:"dags_examined"`
-	RunsCreated    int32              `json:"runs_created"`
-	TasksScheduled int32              `json:"tasks_scheduled"`
-	Errors         int32              `json:"errors"`
 }
 
 type StagingVolume struct {
@@ -415,16 +391,6 @@ type TaskInstanceHistory struct {
 	Note            *string            `json:"note"`
 	ArchivedAt      pgtype.Timestamptz `json:"archived_at"`
 	AttemptEpoch    int32              `json:"attempt_epoch"`
-}
-
-type TaskStateHistory struct {
-	ID             int64              `json:"id"`
-	TaskInstanceID pgtype.UUID        `json:"task_instance_id"`
-	FromState      *TaskState         `json:"from_state"`
-	ToState        TaskState          `json:"to_state"`
-	TransitionedAt pgtype.Timestamptz `json:"transitioned_at"`
-	Reason         *string            `json:"reason"`
-	Actor          *string            `json:"actor"`
 }
 
 type Tenant struct {
