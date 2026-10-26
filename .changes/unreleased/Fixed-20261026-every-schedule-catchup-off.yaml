@@ -1,0 +1,9 @@
+kind: Fixed
+body: |-
+  **An `@every` schedule with `catchup: false` runs once per interval again.**
+  Since 0.5.5 a DAG on `@every 1h` with catchup off, the default, got a new run
+  on every scheduler tick, held back only by `max_active_runs`. Its slots are
+  now the steps of the interval after the last run (or the start_date), and the
+  scheduler creates the latest one that is due, as it does for a cron
+  expression. (#2187)
+time: 2026-10-26T20:50:00.000000000+00:00
