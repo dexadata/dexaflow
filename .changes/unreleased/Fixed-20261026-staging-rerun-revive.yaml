@@ -1,0 +1,10 @@
+kind: Fixed
+body: |-
+  **A cleared and re-run run keeps its staging volume.** When a run succeeded, GC
+  freed its staging PVC and marked the volume deleted. Clearing and re-running the
+  run recreated the same PVC, but the volume stayed marked deleted, so the
+  unrecorded staging sweep added in this release (#1615) took the live claim for an
+  orphan and deleted it 24 hours after it was created, while the run could still be
+  using it. Recording the volume again now marks it active with a fresh creation
+  time. (#1615)
+time: 2026-10-26T20:40:00.000000000+00:00

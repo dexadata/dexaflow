@@ -1,7 +1,13 @@
 -- name: RecordStagingVolume :exec
+-- Idempotent per task of a run: an active row is left as it is. A deleted row is
+-- brought back to active with a fresh created_at, because a cleared and re-run
+-- run recreates the same deterministic PVC after GC freed it; left deleted, the
+-- orphan sweep would take the live claim for an unrecorded one.
 INSERT INTO staging_volumes (tenant_id, dag_id, run_id, pvc_name, size, state)
 VALUES (sqlc.arg(tenant_id), sqlc.arg(dag_id), sqlc.arg(run_id), sqlc.arg(pvc_name), sqlc.arg(size), 'active')
-ON CONFLICT (pvc_name) DO NOTHING;
+ON CONFLICT (pvc_name) DO UPDATE
+SET state = 'active', size = EXCLUDED.size, created_at = now(), deleted_at = NULL, delete_reason = NULL
+WHERE staging_volumes.state = 'deleted';
 
 -- name: MarkStagingDeleted :exec
 UPDATE staging_volumes
