@@ -66,6 +66,16 @@ short digest, so every source-mode task runs the exact image you vetted. Use
 the runtime image your release ships, or your own image built on it with the
 packages your teams need.
 
+A source-mode DAG can import only what the image holds, and the base runtime
+holds the Task SDK and little else. From v0.5.7, each release
+also ships a **data variant**, `dexaflow-runtime:py3.11-data-v<X.Y.Z>`: the
+base plus the Airflow providers for Postgres, MySQL, Amazon, Google,
+Databricks, Snowflake, HTTP and common SQL, and dbt with its Postgres,
+Snowflake, BigQuery and Databricks adapters. Its pinned list, with hashes, is
+[`runtime/data/requirements.txt`](https://github.com/dexadata/dexaflow/blob/main/runtime/data/requirements.txt).
+It is about 1.6 GB installed (about 500 MB compressed), against about 200 MB
+for the base, so a task pod on a fresh node pulls more.
+
 ## Deploying in source mode
 
 `dexaflow deploy` registers a source-mode version when the target it deploys

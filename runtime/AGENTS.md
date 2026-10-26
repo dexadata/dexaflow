@@ -32,5 +32,10 @@ authoring packages). The root [AGENTS.md](../AGENTS.md) applies too, and
   explain what that means for compatibility.
 - **No third-party runtime dependencies.** `python/pyproject.toml` declares
   `dependencies = []` so the base images stay small.
+- **The data variant is the one exception, and it is a separate image.**
+  `RUNTIME_VARIANT=data` adds the hash-pinned packages of
+  `runtime/data/requirements.txt` on top of the base, for Python 3.11 only.
+  Never move a package from it into the base; see `data/README.md` to change
+  the list.
 - **Before pushing:** `ruff check .` and `pytest --cov=leoflow_runtime` in
   `python/`; CI fails under 90% coverage.
