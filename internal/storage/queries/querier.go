@@ -903,6 +903,10 @@ type Querier interface {
 	// One audit entry per scope a retention cycle purged audit rows from, so the
 	// purge itself is on the record. tenant_id NULL is the system rows.
 	RecordRetentionPurge(ctx context.Context, arg RecordRetentionPurgeParams) error
+	// Idempotent per task of a run: an active row is left as it is. A deleted row is
+	// brought back to active with a fresh created_at, because a cleared and re-run
+	// run recreates the same deterministic PVC after GC freed it; left deleted, the
+	// orphan sweep would take the live claim for an unrecorded one.
 	RecordStagingVolume(ctx context.Context, arg RecordStagingVolumeParams) error
 	// Stamps last_heartbeat_at on the active TI of an attempt. Bounded by the
 	// (dag_run_id, task_id, try_number) tuple to match the agent's identity. The
