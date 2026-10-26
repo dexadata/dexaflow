@@ -20,8 +20,9 @@ apache-airflow-providers-http
 
 # Google Cloud: the full provider (BigQuery, GCS and the other hooks). It pulls
 # ray, litellm and scipy and roughly doubles the image; the client libraries
-# alone (google-cloud-bigquery, google-cloud-storage) would not.
-apache-airflow-providers-google
+# alone (google-cloud-bigquery, google-cloud-storage) would not. The floor keeps
+# the resolver from trading the provider down to satisfy overrides.txt.
+apache-airflow-providers-google>=22.6.0
 
 # dbt and the adapters leoflow_runtime/dbt.py maps a connection to.
 dbt-core

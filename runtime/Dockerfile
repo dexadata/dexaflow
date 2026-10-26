@@ -224,7 +224,10 @@ ENTRYPOINT ["dexaflow-agent"]
 # Every package comes from runtime/data/requirements.txt, compiled with hashes
 # from requirements.in (runtime/data/README.md), so a rebuild installs the same
 # files and pip refuses anything else. The lock repeats the base's own pins
-# (Task SDK, certifi, setuptools), so nothing above moves.
+# (Task SDK, certifi, setuptools), so nothing above moves. The lock is complete
+# and was resolved with runtime/data/overrides.txt, which lifts one declared
+# bound on purpose, so pip installs it as is (--no-deps) instead of resolving
+# again and refusing that bound.
 #
 # mysqlclient (apache-airflow-providers-mysql) ships only as a source
 # distribution: it builds against libmariadb here, in the same layer that then
@@ -237,11 +240,11 @@ RUN test "$(python -c 'import sys; print("%d.%d" % sys.version_info[:2])')" = 3.
  && apt-get update \
  && apt-get install -y --no-install-recommends libmariadb3 \
  && apt-get install -y --no-install-recommends gcc libc6-dev pkg-config libmariadb-dev \
- && pip install --no-cache-dir --require-hashes -r /opt/dexaflow-data/requirements.txt \
+ && pip install --no-cache-dir --no-deps --require-hashes -r /opt/dexaflow-data/requirements.txt \
  && apt-get purge -y --auto-remove gcc libc6-dev pkg-config libmariadb-dev \
  && rm -rf /var/lib/apt/lists/*
 # Fail the build, not a customer's task, when a promised import is missing.
-RUN python -c "import airflow.providers.postgres, airflow.providers.mysql, airflow.providers.amazon, airflow.providers.databricks, airflow.providers.snowflake, airflow.providers.http, airflow.providers.google.cloud.hooks.bigquery, airflow.providers.common.sql, psycopg2, MySQLdb, boto3, google.cloud.bigquery, google.cloud.storage, databricks.sql, snowflake.connector, dbt.cli.main, dbt.adapters.postgres, dbt.adapters.snowflake, dbt.adapters.bigquery, dbt.adapters.databricks" \
+RUN python -c "import airflow.providers.postgres, airflow.providers.mysql, airflow.providers.amazon, airflow.providers.databricks, airflow.providers.snowflake, airflow.providers.http, airflow.providers.google.cloud.hooks.bigquery, airflow.providers.common.sql, psycopg2, MySQLdb, boto3, google.cloud.bigquery, google.cloud.storage, databricks.sql, snowflake.connector, dbt.cli.main, dbt.adapters.postgres, dbt.adapters.snowflake, dbt.adapters.bigquery, dbt.adapters.bigquery.clients, dbt.adapters.databricks" \
  && dbt --version
 USER 65532:65532
 
