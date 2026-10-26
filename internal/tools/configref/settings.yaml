@@ -1090,6 +1090,19 @@ settings:
       the server refuses to start with a tag alone or a short digest. Helm:
       `execution.sourceMode.image`; the chart refuses to render the same values the
       server refuses.
+  execution.source_mode.warm_pools:
+    edition: Pro
+    description: >-
+      Let source-mode versions run on warm workers: the control plane sends the
+      version's `dag.py` with each warm assignment and the worker runs the attempt
+      from it ([ADR 0095](/project/adrs/0095-source-mode-on-warm-workers/)). Needs
+      `DEXAFLOW_EXECUTION_WARM_POOLS_ENABLED` and a runtime image whose agent is
+      from 0.5.7 or later; a worker on an older agent never gets a source-mode
+      attempt, which then takes a dedicated pod, and is counted in
+      `dexaflow_scheduler_decisions_total{decision_type="warm_worker_no_source_delivery"}`.
+      Ignored while source mode is off. See [Source
+      mode](/operate/source-mode/#warm-workers). Helm:
+      `execution.sourceMode.warmPools`.
   logs.dir:
     edition: both
     description: >-

@@ -396,6 +396,8 @@ func (w *WarmRunner) connect(ctx context.Context, dagVersionID string) (agentv1.
 // worker empties /tmp and /dev/shm around every attempt: AttemptHome with both
 // paths known, the condition resetScratch sweeps them on. The control plane
 // checks it when warm workers run with a read-only root (#1678).
+// source_delivery states that it runs a source-mode attempt from the dag.py
+// its assignment carries (ADR 0095).
 func (w *WarmRunner) registerMessage(dagVersionID string) *agentv1.WorkerMessage {
 	return &agentv1.WorkerMessage{
 		Msg: &agentv1.WorkerMessage_Register{
@@ -403,6 +405,7 @@ func (w *WarmRunner) registerMessage(dagVersionID string) *agentv1.WorkerMessage
 				DagVersionId:     dagVersionID,
 				PodName:          w.PodName,
 				AttemptHomeSweep: w.AttemptHome && w.SharedTmpDir != "" && w.SharedMemDir != "",
+				SourceDelivery:   w.sourceDelivery(),
 			},
 		},
 	}
@@ -570,6 +573,20 @@ func (w *WarmRunner) serveAssignment(ctx context.Context, stream agentv1.AgentSe
 		return fmt.Errorf("resetting scratch for assignment %q: %w", a.GetAssignmentId(), err)
 	}
 
+	// A source-mode attempt brings its dag.py (ADR 0095). Written into the
+	// fresh scratch before the ack, so a source that does not match its digest
+	// is refused and reclaimed rather than run, and the worker keeps serving.
+	// Any other failure to stage it is fail-closed like the reset above.
+	cmd, serr := w.attemptCommand(a)
+	if errors.Is(serr, errSourceMismatch) {
+		slog.Warn("refusing a warm assignment whose dag.py does not match its digest",
+			"assignment", a.GetAssignmentId(), "error", serr)
+		return w.refuseAssignment(stream, a)
+	}
+	if serr != nil {
+		return fmt.Errorf("staging the dag.py of assignment %q: %w", a.GetAssignmentId(), serr)
+	}
+
 	// Claim the lease now that we have committed to running: the control plane
 	// holds the attempt for us until this ack and reclaims it if we do not ack
 	// within lease_seconds. Sent after the scratch reset so "started" is truthful.
@@ -592,6 +609,7 @@ func (w *WarmRunner) serveAssignment(ctx context.Context, stream agentv1.AgentSe
 	// another attempt's secrets, XCom, or run-context env.
 	sink := w.openSink(ctx)
 	r := w.attemptRunner(sink)
+	r.Cmd = cmd
 
 	// H3 per-attempt watchdog: a hard ceiling on this attempt, INDEPENDENT of the
 	// task's execution_timeout (which runOneAttempt still honors inside). A task that
@@ -634,6 +652,8 @@ func (w *WarmRunner) serveAssignment(ctx context.Context, stream agentv1.AgentSe
 		if err := w.resetScratch(); err != nil {
 			return fmt.Errorf("sweeping after assignment %q: %w", a.GetAssignmentId(), err)
 		}
+	} else if err := w.removeAttemptSource(); err != nil {
+		return fmt.Errorf("removing the dag.py of assignment %q: %w", a.GetAssignmentId(), err)
 	}
 
 	// Signal availability so the control plane may dispatch the next assignment.
