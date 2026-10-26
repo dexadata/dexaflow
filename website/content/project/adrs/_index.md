@@ -108,6 +108,7 @@ this page.
 - [ADR 0093: an unavailable Kubernetes API is ridden out for a bounded time, off the dispatch-attempt budget](/project/adrs/0093-unavailable-api-dispatch-window/)
 - [ADR 0094: Lite's auto datastore follows the datastore the install is pinned to](/project/adrs/0094-lite-auto-follows-the-pinned-datastore/)
 - [ADR 0095: a source-mode version runs on warm workers, which receive its dag.py with each assignment](/project/adrs/0095-source-mode-on-warm-workers/)
+- [ADR 0096: every finished task attempt writes a usage event in the same transaction, read through the service API](/project/adrs/0096-task-attempt-usage-events/)
 
 ## Template
 
