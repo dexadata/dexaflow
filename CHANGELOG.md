@@ -6,6 +6,8 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-10-27
+
 ### Added
 
 - **Structured task placement fields are now validated at DAG registration.**
