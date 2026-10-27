@@ -13,6 +13,7 @@ import (
 type Metrics struct {
 	// Scheduler
 	SchedulerLoopDuration prometheus.Histogram
+	ScheduleDelay         prometheus.Histogram
 	SchedulerWokenTicks   prometheus.Counter
 	SchedulerDecisions    *prometheus.CounterVec
 	TasksUndispatchable   *prometheus.CounterVec
@@ -121,6 +122,11 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		schema: newSchemaState(f),
 		SchedulerLoopDuration: f.NewHistogram(prometheus.HistogramOpts{
 			Name: "dexaflow_scheduler_loop_duration_seconds", Help: "Duration of one scheduler loop iteration.",
+		}),
+		ScheduleDelay: f.NewHistogram(prometheus.HistogramOpts{
+			Name:    "dexaflow_scheduler_schedule_delay_seconds",
+			Help:    "Time from a scheduled run's slot to its creation, for the latest slot a tick created for a DAG.",
+			Buckets: []float64{0.5, 1, 2, 5, 10, 30, 60, 300, 900, 3600},
 		}),
 		SchedulerDecisions: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_scheduler_decisions_total", Help: "Scheduler decisions by type.",
@@ -443,6 +449,12 @@ func (m *Metrics) ObserveSchedulerReacquire(d time.Duration) {
 // scheduler.Recorder.
 func (m *Metrics) ObserveSchedulerLoop(d time.Duration) {
 	m.SchedulerLoopDuration.Observe(d.Seconds())
+}
+
+// ObserveScheduleDelay records how late a scheduled run was created, from its
+// slot to its creation (#2175). It satisfies scheduler.Recorder.
+func (m *Metrics) ObserveScheduleDelay(d time.Duration) {
+	m.ScheduleDelay.Observe(d.Seconds())
 }
 
 // RecordTaskRetry counts one retry the scheduler released for a task (its

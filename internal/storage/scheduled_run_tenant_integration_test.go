@@ -57,7 +57,7 @@ func TestScheduledRunLandsInTheOwningTenantIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dags, err := store.ScheduledDAGs(ctx)
+	dags, err := store.ScheduledDAGs(ctx, time.Now())
 	if err != nil {
 		t.Fatalf("ScheduledDAGs: %v", err)
 	}

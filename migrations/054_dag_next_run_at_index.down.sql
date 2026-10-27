@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS idx_dags_next_run;
