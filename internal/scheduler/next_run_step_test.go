@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -153,7 +154,7 @@ func TestStepStoresTheHorizonForADAGWithNothingToSchedule(t *testing.T) {
 
 			// Assert
 			w, ok := store.nextRuns[dagRef{tenantA, "etl"}]
-			if !ok || !w.at.Equal(nextRunNow.Add(nextRunHorizon)) {
+			if !ok || !w.at.Equal(nextRunNow.Add(horizonOf(tenantA, "etl"))) {
 				t.Errorf("next run write = %+v (written %v), want the horizon", w, ok)
 			}
 		})
@@ -172,7 +173,7 @@ func TestStepStoresTheHorizonAfterTheOnceRun(t *testing.T) {
 
 	// Assert
 	w, ok := store.nextRuns[dagRef{tenantA, "etl"}]
-	if len(store.createdLogical) != 1 || !ok || !w.at.Equal(nextRunNow.Add(nextRunHorizon)) {
+	if len(store.createdLogical) != 1 || !ok || !w.at.Equal(nextRunNow.Add(horizonOf(tenantA, "etl"))) {
 		t.Errorf("created %v, next run write %+v (written %v); want one run, then the horizon", store.createdLogical, w, ok)
 	}
 }
@@ -210,7 +211,41 @@ func TestStepCapsADistantNextRunAtTheHorizon(t *testing.T) {
 	stepAt(t, store, nil)
 
 	// Assert
-	if w := store.nextRuns[dagRef{tenantA, "etl"}]; !w.at.Equal(nextRunNow.Add(nextRunHorizon)) {
-		t.Errorf("next run stored = %s, want the horizon %s", w.at, nextRunNow.Add(nextRunHorizon))
+	if w := store.nextRuns[dagRef{tenantA, "etl"}]; !w.at.Equal(nextRunNow.Add(horizonOf(tenantA, "etl"))) {
+		t.Errorf("next run stored = %s, want the horizon %s", w.at, nextRunNow.Add(horizonOf(tenantA, "etl")))
+	}
+}
+
+// TestStepSpreadsTheHorizonAcrossDAGs: DAGs first listed in the same tick,
+// as every DAG is after the upgrade, must not all come back in the same tick
+// an hour later, and then every hour after that. Each DAG's horizon is fixed
+// for that DAG and falls between half the horizon and the horizon, so a
+// change that did not clear the stored time is still picked up within the
+// hour and the idle DAGs are spread over the second half of it.
+func TestStepSpreadsTheHorizonAcrossDAGs(t *testing.T) {
+	// Arrange
+	const n = 1000
+	store := newFakeStore()
+	for i := 0; i < n; i++ {
+		store.scheduled = append(store.scheduled, ScheduledDAG{TenantID: tenantA, DagID: fmt.Sprintf("dag-%04d", i), Schedule: "@daily", LastLogical: hourAt(0), MaxActiveRuns: 16})
+	}
+
+	// Act
+	stepAt(t, store, nil)
+
+	// Assert
+	perMinute := map[int64]int{}
+	for i := 0; i < n; i++ {
+		w, ok := store.nextRuns[dagRef{tenantA, fmt.Sprintf("dag-%04d", i)}]
+		ahead := w.at.Sub(nextRunNow)
+		if !ok || ahead < nextRunHorizon/2 || ahead > nextRunHorizon {
+			t.Fatalf("dag-%04d stored %s ahead (written %v), want between %s and %s", i, ahead, ok, nextRunHorizon/2, nextRunHorizon)
+		}
+		perMinute[int64(ahead/time.Minute)]++
+	}
+	for minute, count := range perMinute {
+		if count > n/10 {
+			t.Errorf("%d of %d DAGs come back in minute %d; the horizon does not spread them", count, n, minute)
+		}
 	}
 }

@@ -124,3 +124,44 @@ func TestNextRunIsClearedByAChangeDuringATick(t *testing.T) {
 		})
 	}
 }
+
+// TestSetNextRunAtSkipsALockedDAG: a register or a retention delete holds the
+// DAG's row lock until it commits. The tick's write is only a hint, so it must
+// not wait for that lock: it skips the DAG, which keeps the earlier time it
+// had (never later than the truth), and returns at once.
+func TestSetNextRunAtSkipsALockedDAG(t *testing.T) {
+	// Arrange
+	repo, sched, ctx := openRepo(t)
+	hourly := "@hourly"
+	tenant := limitedTenant(ctx, t, repo, "nextrunlocked", domain.TenantLimitsUpdate{})
+	if err := registerIn(ctx, t, repo, tenant, "etl", "v1", &hourly); err != nil {
+		t.Fatal(err)
+	}
+	tid := tenantUUID(ctx, t, tenant)
+	now := time.Now().UTC().Truncate(time.Second)
+	listed := listedIn(ctx, t, sched, tid, now)["etl"]
+	tx, err := adminPool(ctx, t).Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM dags WHERE tenant_id = $1 AND dag_id = 'etl' FOR NO KEY UPDATE`, tid); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	err = sched.SetNextRunAt(writeCtx, tid, "etl", listed.ScheduleEpoch, now.Add(time.Hour))
+
+	// Assert
+	if err != nil {
+		t.Fatalf("SetNextRunAt on a locked DAG: %v, want it skipped at once", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if d := listedIn(ctx, t, sched, tid, now)["etl"]; d.NextRunAt != nil {
+		t.Errorf("stored %s through a lock, want the write skipped", d.NextRunAt)
+	}
+}

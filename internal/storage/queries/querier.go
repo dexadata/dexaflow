@@ -1159,7 +1159,10 @@ type Querier interface {
 	// stored next due time is cleared and the schedule epoch bumped (#2175).
 	SetCurrentDagVersion(ctx context.Context, arg SetCurrentDagVersionParams) error
 	// Stores when the DAG is next due, unless a change
-	// bumped its schedule_epoch since the scheduler listed it (#2175).
+	// bumped its schedule_epoch since the scheduler listed it (#2175). SKIP LOCKED:
+	// a register or a retention delete holding the row would otherwise stall the
+	// tick until it commits. The time is only a hint, so a skipped write leaves the
+	// earlier one, and such a change usually clears it anyway.
 	SetDagNextRunAt(ctx context.Context, arg SetDagNextRunAtParams) error
 	SetDagPaused(ctx context.Context, arg SetDagPausedParams) (Dag, error)
 	SetTaskInstanceNote(ctx context.Context, arg SetTaskInstanceNoteParams) error

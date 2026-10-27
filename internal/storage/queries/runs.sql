@@ -532,11 +532,18 @@ WHERE d.is_active = true AND d.is_paused = false
 
 -- name: SetDagNextRunAt :exec
 -- Stores when the DAG is next due, unless a change
--- bumped its schedule_epoch since the scheduler listed it (#2175).
-UPDATE dags
+-- bumped its schedule_epoch since the scheduler listed it (#2175). SKIP LOCKED:
+-- a register or a retention delete holding the row would otherwise stall the
+-- tick until it commits. The time is only a hint, so a skipped write leaves the
+-- earlier one, and such a change usually clears it anyway.
+UPDATE dags d
 SET next_run_at = sqlc.arg(next_run_at)::timestamptz
-WHERE tenant_id = sqlc.arg(tenant_id) AND dag_id = sqlc.arg(dag_id)
-  AND schedule_epoch = sqlc.arg(schedule_epoch)::bigint;
+WHERE d.id = (
+  SELECT x.id FROM dags x
+  WHERE x.tenant_id = sqlc.arg(tenant_id) AND x.dag_id = sqlc.arg(dag_id)
+    AND x.schedule_epoch = sqlc.arg(schedule_epoch)::bigint
+  FOR NO KEY UPDATE SKIP LOCKED
+);
 
 -- name: CreateScheduledRunByDagID :execrows
 -- Zero rows means the slot's run already exists (or the DAG has no current

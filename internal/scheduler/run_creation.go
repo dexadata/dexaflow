@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"runtime/debug"
 	"time"
 
@@ -65,7 +66,7 @@ func (s *Scheduler) createDueRuns(ctx context.Context, activeByDAG map[dagRef]in
 			continue
 		}
 		if next, settled := s.scheduleDAG(ctx, d, now, activeByDAG, createdThisTick, capped); settled {
-			s.storeNextRun(ctx, d, capNextRun(next, now))
+			s.storeNextRun(ctx, d, capNextRun(d, next, now))
 		}
 	}
 	return nil
@@ -142,7 +143,8 @@ func (s *Scheduler) scheduleDAG(ctx context.Context, d ScheduledDAG, now time.Ti
 	return next, true
 }
 
-// nextRunHorizon is the latest a stored next due time may be from now. A DAG
+// nextRunHorizon is the latest a stored next due time may be from now
+// (horizonOf spreads each DAG's own between half of it and all of it). A DAG
 // due later, or never (a manual, continuous or spent @once DAG, a schedule
 // that cannot fire), is looked at again after this long. It bounds what a
 // change that did not clear the stored time can cost, such as a version
@@ -151,13 +153,28 @@ func (s *Scheduler) scheduleDAG(ctx context.Context, d ScheduledDAG, now time.Ti
 // every idle DAG once an hour is a small fraction of a tick's work.
 const nextRunHorizon = time.Hour
 
-// capNextRun returns next, or now plus nextRunHorizon when next is later or
-// never (the zero time).
-func capNextRun(next, now time.Time) time.Time {
-	if limit := now.Add(nextRunHorizon); next.IsZero() || next.After(limit) {
+// capNextRun returns next, or now plus the DAG's horizon when next is later
+// or never (the zero time).
+func capNextRun(d ScheduledDAG, next, now time.Time) time.Time {
+	if limit := now.Add(horizonOf(d.TenantID, d.DagID)); next.IsZero() || next.After(limit) {
 		return limit
 	}
 	return next
+}
+
+// horizonOf is the DAG's own horizon, between half of nextRunHorizon and
+// nextRunHorizon, whole seconds, fixed by its tenant and id. Every DAG is
+// listed in the first tick after the upgrade, and most are then stored at the
+// horizon (an idle DAG, or a daily one hours from its slot); with one horizon
+// for all they would come back in a single tick every hour, each with a
+// write. Spreading them keeps that tick the size of an ordinary one.
+func horizonOf(tenantID, dagID string) time.Duration {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(tenantID))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(dagID))
+	half := int64(nextRunHorizon / 2 / time.Second)
+	return nextRunHorizon/2 + time.Duration(int64(h.Sum32())%(half+1))*time.Second
 }
 
 // storeNextRun stores when the DAG is next due, unless the list already
