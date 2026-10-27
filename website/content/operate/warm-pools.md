@@ -9,8 +9,8 @@ weight: 80
 description: Cut task start latency with pre-warmed worker pods.
 ---
 
-{{% alert title="Pro · off by default" color="info" %}}
-Warm worker pools are a **Pro** feature, gated behind
+{{% alert title="Cluster · off by default" color="info" %}}
+Warm worker pools are a **Cluster** feature, gated behind
 `execution.warm_pools_enabled` (default **`false`**). With the flag off,
 Dexaflow runs a **dedicated pod per task attempt** — the historical behavior
 ([ADR 0002](/project/adrs/0002-pod-per-task/)), byte-for-byte unchanged. Lite ignores
@@ -112,7 +112,7 @@ task reported warm-eligible runs on a warm worker when one is free.
 ```console
 $ dexaflow deploy
 …
-Deployed etl -> https://pro.example.com
+Deployed etl -> https://cluster.example.com
   image ghcr.io/acme/etl@sha256:4e1f…
   registered version v1.4.0-3f9c2a1b7d4e
   execution  2 tasks warm-eligible; load on a dedicated pod: node_selector set

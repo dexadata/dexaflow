@@ -79,14 +79,14 @@ a `pymysql` connection, and writes 20 rows. The example's
 [README](https://github.com/dexadata/dexaflow/tree/main/examples/mysql_load/README.md)
 walks through Docker spin-up, Connection setup, and verification.
 
-## Lite vs Pro caveats
+## Lite vs Cluster caveats
 
 - **Lite (subprocess)** runs the task on the host. The Connection URI's
   `host` resolves against the host's name lookup — `localhost` works
   for a host-bound Docker container.
 - **Lite (k3d)** runs the task in a pod. Use `host.k3d.internal` to
   reach a host-bound port.
-- **Pro (Kubernetes)** runs the task in a pod. The target MySQL must be
+- **Cluster (Kubernetes)** runs the task in a pod. The target MySQL must be
   reachable via cluster DNS (a `Service`) or external DNS the pod's
   network policy permits.
 

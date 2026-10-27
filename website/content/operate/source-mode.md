@@ -1,15 +1,15 @@
 ---
 title: Source mode
 weight: 112
-description: Run a Pro DAG straight from its dag.py on a shared runtime image, with no image build.
+description: Run a Cluster DAG straight from its dag.py on a shared runtime image, with no image build.
 ---
 
-Status: **Pro**, off by default ([ADR 0067](/project/adrs/0067-mcp-run-control-scopes-source-mode/),
+Status: **Cluster**, off by default ([ADR 0067](/project/adrs/0067-mcp-run-control-scopes-source-mode/),
 issue #1475).
 
 ## What it is
 
-In Pro, every DAG normally runs on an image that carries its `dag.py`, built
+In Cluster, every DAG normally runs on an image that carries its `dag.py`, built
 and pushed before the version is registered. Source mode lets a simple DAG
 skip that build: the version names the operator's **runtime image** and
 carries its `dag.py` as the version's `source`, and each task pod gets that
@@ -21,7 +21,7 @@ A version runs in source mode when all three hold:
 - the version's `image` is exactly `execution.source_mode.image`;
 - the version carries a `source`.
 
-Every other version runs exactly as before, and with the mode off Pro ignores
+Every other version runs exactly as before, and with the mode off Cluster ignores
 a version's source, as it always has.
 
 Turning the mode on also applies to versions already registered on the runtime
@@ -75,12 +75,12 @@ to names the runtime image as `source_mode_image`. Set it on the target in
 ```yaml
 targets:
   dev:
-    server: https://pro.example.com
+    server: https://cluster.example.com
     source_mode_image: ghcr.io/dexadata/dexaflow-runtime:py3.11-{{< latest-version v >}}@sha256:<digest>
 ```
 
 or on a target of your config file (`dexaflow target add dev
-https://pro.example.com --source-mode-image <image>`, with `--global` inside
+https://cluster.example.com --source-mode-image <image>`, with `--global` inside
 a workspace). The value must be `execution.source_mode.image` byte for byte;
 `deploy` and `target add` refuse an image that is not pinned by a full
 digest, since the server never runs one in source mode.
@@ -124,7 +124,7 @@ control and format characters removed.
 Before anything else the deploy prints the image and where it came from:
 
 ```text
-server:     https://pro.example.com (target dev, from default_target in /work/dags/dexaflow.workspace.yaml)
+server:     https://cluster.example.com (target dev, from default_target in /work/dags/dexaflow.workspace.yaml)
 image:      ghcr.io/dexadata/dexaflow-runtime:py3.11-{{< latest-version v >}}@sha256:<digest> (source mode, from target "dev" in /work/dags/dexaflow.workspace.yaml): dag.py runs on this runtime image, nothing is built or pushed
 ```
 
@@ -184,7 +184,7 @@ Any deploy flow of your own can register the same version without
 3. Register it:
 
    ```bash
-   dexaflow push dag.json --server https://pro.example.com
+   dexaflow push dag.json --server https://cluster.example.com
    ```
 
    `push` sends the file as it is to `POST /api/v2/dags/{dag_id}/versions`.

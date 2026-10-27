@@ -52,7 +52,7 @@ latest failed run of `sales`."* Read-only, scoped to the caller's token — its 
 radius is your own API rights.
 {{% /blocks/feature %}}
 
-{{% blocks/feature icon="fa-solid fa-gears" title="Operate" url="/operate/first-pro-dag/" url_text="Deploy & operate" %}}
+{{% blocks/feature icon="fa-solid fa-gears" title="Operate" url="/operate/first-cluster-dag/" url_text="Deploy & operate" %}}
 Go from `dexaflow lite` on one host to a Kubernetes control plane. CI/CD deploy,
 Helm, upgrades, backup/restore, scheduler resilience, and warm worker pools.
 {{% /blocks/feature %}}
@@ -70,7 +70,7 @@ changes.
 
 **New here?** [Quickstart](/get-started/quickstart/) gets Dexaflow Lite running in
 two commands. **Evaluating?** [Why Dexaflow](/why-dexaflow/) and
-[Editions & modes](/concepts/editions/) lay out the model and the Lite/Pro split.
+[Editions & modes](/concepts/editions/) lay out the model and the Lite/Cluster split.
 **Building?** The [Reference](/reference/) has the HTTP API, CLI, Go packages, and
 every `DEXAFLOW_*` config key.
 {{% /blocks/section %}}

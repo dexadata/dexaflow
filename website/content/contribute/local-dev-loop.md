@@ -155,7 +155,7 @@ only the engine that hosts the local k3d cluster — never an executor.
 |---|---|---|
 | Speed (per task, reload) | fastest — host process, no build | slower — image build + pod schedule |
 | Isolation | **none** (shared host venv) | real pods (limits, RBAC) |
-| Pro fidelity | low | **high** (identical path to prod) |
+| Cluster fidelity | low | **high** (identical path to prod) |
 | Moving parts that can break | few (just the venv) | more (cluster, scheduler, registry, PVC) |
 | Shared `/staging` volume (ADR 0022) | **not provided** (`DEXAFLOW_STAGING_DIR` unset; tasks have direct host-disk access instead) | **yes** — per-run PVC at `/staging`, `DEXAFLOW_STAGING_DIR` set, GC'd |
 
@@ -226,9 +226,9 @@ Open it to see the offending file, its bundle, and the full traceback:
 Fix the file and save — the watcher registers the next good version and the banner
 **clears automatically** (~2 s). No restart, no manual cleanup.
 
-{{% alert title="Lite vs Pro" color="info" %}}
+{{% alert title="Lite vs Cluster" color="info" %}}
 This banner is driven by a control-plane feed (`GET /api/v2/importErrors`) and
-works in any environment. In **Pro** you rarely see it: DAGs are
+works in any environment. In **Cluster** you rarely see it: DAGs are
 immutable artifacts and a broken DAG fails `dexaflow compile` in **CI** before it
 is ever deployed — CI is the safety net there. In **Lite**, where you edit live,
 the `dexaflow lite` watcher publishes the error so you catch it in the UI, not
@@ -261,7 +261,7 @@ The provider SDKs find these through their default credential chains, exactly as
 you ran the task by hand — so iterating on a DAG that touches your *real* cloud
 accounts needs no extra credential wiring locally.
 
-> In **Pro / cluster mode**, task pods are isolated and do **not** inherit your
+> In **Cluster** mode, task pods are isolated and do **not** inherit your
 > local env — there you deliver credentials through managed **Connections** (see
 > [Variables & Connections](/author-dags/variables-connections/)). Same DAG, two credential
 > sources: local env for the Lite loop, managed Connections in production.

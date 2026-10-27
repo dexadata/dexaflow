@@ -14,7 +14,7 @@ each case and what to run. The design is
 
 ## What the control plane does
 
-On a Pro (Helm) install the control plane never crash-loops on its schema and
+On a Cluster (Helm) install the control plane never crash-loops on its schema and
 never migrates a database it does not recognize:
 
 - **It waits instead of exiting.** A pod that finds the schema absent or

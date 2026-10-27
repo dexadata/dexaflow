@@ -7,5 +7,6 @@ body: |-
   turns on (named pools, the OIDC provider, the TLS boot guards on the agent
   channel and the edition badge, which now reads CLUSTER) behaves the same under
   either name. The chart switches to `cluster` in a later release, after every
-  supported server accepts it, and `pro` gets a deprecation warning then. (#2173)
+  supported server accepts it, and `pro` gets a deprecation warning then. The
+  documentation now calls the Helm edition Cluster. (#2173)
 time: 2026-10-26T20:10:00.000000000+00:00

@@ -7,7 +7,7 @@ linkTitle: "deploy"
 weight: 41
 ---
 
-Build, push, and register a DAG to a control plane (Pro).
+Build, push, and register a DAG to a control plane (Cluster).
 
 ```
 dexaflow deploy [path | dag_id] [flags]
