@@ -376,7 +376,7 @@ func TestCLICodeRefusalsLookAlike(t *testing.T) {
 		"unknown":        exchangeCLICode(srv, "not-a-code", pk.verifier, testCLIRedirect),
 		"used":           exchangeCLICode(srv, used, pk.verifier, testCLIRedirect),
 		"wrong verifier": exchangeCLICode(srv, fresh, pk.verifier, testCLIRedirect),
-		"tampered":       exchangeCLICode(srv, fresh[:len(fresh)-2]+"AA", pk2.verifier, testCLIRedirect),
+		"tampered":       exchangeCLICode(srv, tamperCode(fresh), pk2.verifier, testCLIRedirect),
 	}
 	var first string
 	for name, rec := range refusals {
@@ -390,6 +390,20 @@ func TestCLICodeRefusalsLookAlike(t *testing.T) {
 			t.Errorf("%s: body %s differs from %s; a refusal must not say which check failed", name, rec.Body.String(), first)
 		}
 	}
+}
+
+// tamperCode changes one character in the middle of a sealed code. Every
+// character there carries six bits of the ciphertext, so the result never
+// decodes to the original. Rewriting the last two characters did not hold:
+// they also carry the unpadded tail, and when the sealed bytes already ended
+// the way the rewrite did, the "tampered" code was the real one.
+func tamperCode(code string) string {
+	i := len(code) / 2
+	replacement := byte('A')
+	if code[i] == replacement {
+		replacement = 'B'
+	}
+	return code[:i] + string(replacement) + code[i+1:]
 }
 
 func TestCLICodeExpires(t *testing.T) {
