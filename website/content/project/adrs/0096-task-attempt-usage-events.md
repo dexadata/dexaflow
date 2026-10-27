@@ -2,12 +2,12 @@
 title: "ADR 0096: every finished task attempt writes a usage event in the same transaction, read through the service API"
 linkTitle: "0096 · Task attempt usage events"
 weight: 960
-description: "ADR 0096: a trigger on task_instances writes one row to a usage_events table each time an attempt reaches an attempt-ending state, in the transaction that moves it there, with the tenant, the task, the try, the attempt epoch, the state, the size and the times. An operator reads the table in order through a service API route with a cursor, and the retention janitor prunes it. Per-tenant counters are derived from the same rows. Events are delivered at least once and keyed by attempt and revision."
+description: "ADR 0096: a trigger on task_instances writes one row to a usage_events table each time an attempt reaches an attempt-ending state, in the transaction that moves it there, with the tenant, the task, the try, the attempt epoch, the state, the size and the times. An operator reads the table in order through a service API route with a cursor, and the retention janitor prunes it. Per-tenant counters are derived from the same rows. Events are delivered at least once and keyed by attempt and revision. Recording is off until an operator enables it."
 ---
 
 **Status:** Proposed
 **Date:** 2026-10-26
-**Relates:** ADR 0051 (orchestration and execution state machines, the attempt epoch), ADR 0066 (weighted pool slots, a task's size), ADR 0068 (new settings default to off)
+**Relates:** ADR 0051 (orchestration and execution state machines, the attempt epoch), ADR 0066 (weighted pool slots, a task's size), ADR 0068 (patch safety bar: inert until used, additive migrations)
 **Issues:** #2174
 
 ## Context
@@ -46,10 +46,17 @@ try can have several executions.
    `upstream_failed`, `removed`, `up_for_reschedule`) and differs from the
    old one. It runs in the transaction of the write that moved the state,
    whichever of the paths above it is, so an event exists if and only if the
-   change committed. A new path cannot forget to emit.
+   change committed. A new path cannot forget to emit. Task instances are
+   created in `none` today (`CreateTaskInstance`, the COPY of
+   `MaterializeTasks` and the rebind of a clear), so `UPDATE` covers every
+   path; a test asserts that no insert path writes an attempt-ending state,
+   so a future one fails loudly instead of under-counting.
 
-2. **What an event holds.** A monotonic `id` (a sequence), the tenant, the
-   DAG id, the run id, the task id, `map_index`, `try_number`, `attempt_epoch`, the new
+2. **What an event holds.** A sequence `id`, the writing transaction's id
+   (`xid8`, from `pg_current_xact_id()`), the tenant, the run id
+   (`dag_run_id`; the DAG id is resolved when the row is served, so the
+   trigger reads only the row it fires on), the task instance id, the task
+   id, `map_index`, `try_number`, `attempt_epoch`, the revision, the new
    state, the previous state, `pool_slots`, `started_at`, `ended_at`,
    `last_failure_kind` (an infra failure is told apart from the task's own),
    and `recorded_at`. The duration is `ended_at` minus
@@ -62,33 +69,64 @@ try can have several executions.
    overridden to success) has the next revision. `failed` to `up_for_retry`
    is not attempt-ending and writes nothing. The idempotency key a consumer
    dedupes on is the attempt plus the revision, and the latest revision is
-   the attempt's state.
+   the attempt's state. The trigger finds the previous revision through an
+   index on `(task_instance_id, try_number, attempt_epoch)`; the row lock the
+   state change already holds on `task_instances` serializes two writers of
+   the same attempt, so revisions do not collide.
+   A reschedule bumps `attempt_epoch` (`RedispatchRescheduledTaskInstance`),
+   so each sensor poke that ends in `up_for_reschedule` is its own attempt
+   with revision 0. This differs from #2174, which asked for no event on a
+   reschedule: a poke holds a slot and runs a pod, so it is usage. A consumer
+   that bills by try groups on `(task_instance_id, try_number)`.
 
 4. **Delivery is at least once, in id order.** The service API gains
    `GET /api/v2/service/usage?after=<id>&limit=<n>`, service token only. It
    returns events with an id above the cursor, in order, at most `limit`
    (default 500, at most 5000), and only those whose transaction is visible
-   to every reader: it stops below the oldest id still in flight
-   (`pg_snapshot_xmin`), so a slow transaction never makes the reader skip
-   an id. A consumer stores the last id it processed and dedupes on the key
-   of point 3.
+   to every reader. A sequence value is taken at insert and the row becomes
+   visible at commit, so ids commit out of order: a reader that saw id 11
+   and moved its cursor past it would never see id 10 committing later, and
+   `pg_snapshot_xmin` is a transaction id, not a sequence value, so it cannot
+   bound ids. The route therefore serves only rows whose `xid` is below
+   `pg_snapshot_xmin(pg_current_snapshot())`, so every transaction that
+   wrote them has finished, in `(xid, id)` order, and the cursor is that
+   pair, encoded as an opaque string. Every row written later has an xid at
+   or above that horizon, so it sorts after the cursor. A consumer stores
+   the last cursor it processed and dedupes on the key of point 3. A long
+   write transaction anywhere in the database holds the horizon back: events
+   are delayed, never lost, and `dexaflow_usage_events_lag_seconds` (age of
+   the oldest unserved row) shows it.
 
 5. **Retention.** The retention janitor deletes events older than
    `retention.usage_events_days`, default 30, so a consumer that is down for
-   a while can catch up and the table does not grow without bound.
+   a while can catch up and the table does not grow without bound. A cursor
+   older than the oldest kept row gets `410 Gone` with the oldest available
+   cursor, so a consumer learns that it lost events instead of resuming past
+   the gap silently.
 
 6. **Per-tenant counters.** `dexaflow_task_attempts_total{tenant,state}` and
    `dexaflow_task_slot_seconds_total{tenant}` (size times duration) are
    advanced by the leader from the same table, after its own cursor, so they
-   and the API never disagree. Their cardinality is bounded by the number of
-   tenants. `observability.usage_metrics` turns them off for an install with
-   many tenants.
+   and the API never disagree. A leader that takes over starts its cursor at
+   the current horizon, not at the oldest row, so a failover is a counter
+   reset and never replays 30 days. Their cardinality is the number of
+   tenants, which on a shared install is unbounded, so they are off by
+   default and `observability.usage_metrics` turns them on.
 
-7. **The trigger is always on.** It costs one insert per finished attempt,
-   the same order as the `task_instance_history` row a retry or clear already
-   writes. A setting that turns the trigger off would need either DDL at run
-   time or a lookup in every trigger call, and an install that does not read
-   the table pays only the retention delete.
+7. **Off until enabled.** ADR 0068 section 2 point 2 asks a patch to be
+   inert for a workload that does not use it, and an insert on every settle
+   path is not inert. The trigger is declared with
+   `WHEN (NEW.state IS DISTINCT FROM OLD.state AND NEW.state IN (...))`, so
+   it is not even called for the other writes, and the function returns at
+   once unless the one row of `usage_events_switch` says `enabled`. The
+   leader writes that row at startup from `usage.events.enabled` (default
+   `false`). A row read, not a session variable, because PgBouncer in
+   transaction mode (a supported setup) drops custom startup parameters, and
+   not DDL at run time, because creating or dropping a trigger locks
+   `task_instances` (see Consequences). The leader's setting wins when replicas disagree,
+   and the startup log says which value it wrote. With the switch off the
+   service route answers `404`, so a consumer cannot mistake an install that
+   records nothing for one with no usage.
 
 ## Alternatives considered
 
@@ -110,11 +148,19 @@ try can have several executions.
 ## Consequences
 
 - A migration creates `usage_events`, its sequence, the trigger function and
-  the trigger. The table is indexed by `id` (its primary key) and by
-  `recorded_at` for retention.
-- Every write that moves a task instance into an attempt-ending state does
-  one more insert in its transaction. The settle path benchmark in
-  `test/load` measures it before the change is accepted.
+  the trigger. The table is indexed by `id` (its primary key), by
+  `(xid, id)` for the route, by the attempt key for revisions, and by
+  `recorded_at` for retention. `CREATE TRIGGER` takes a `SHARE ROW EXCLUSIVE`
+  lock on `task_instances`, so the migration sets `lock_timeout` as 051
+  does: the statement is instant, but it waits behind every open
+  transaction on the table, and writes queue behind the wait.
+- With the setting on, every write that moves a task instance into an
+  attempt-ending state does one more insert in its transaction. Bulk writes
+  (an upstream failure cascade, a clear of a large run) fire the row trigger
+  once per row; the settle path benchmark in `test/load` measures a single
+  settle and a 1,000-row cascade, on and off, before the change is
+  accepted, and a statement-level trigger with transition tables is the
+  fallback if the row trigger misses the budget.
 - The service API documents the route, the cursor rule and the key; the
   operate docs describe how to consume it.
 - The trigger is the one piece of logic in the schema; the migration's
