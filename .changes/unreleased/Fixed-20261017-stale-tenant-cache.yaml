@@ -1,9 +1,0 @@
-kind: Fixed
-body: |-
-  **Saving a variable, connection or pool no longer fails after its tenant was
-  recreated or the database restored under a running server.** The server
-  caches each tenant's id; such a write failed with a foreign-key violation
-  against `tenants` (SQLSTATE 23503) until a restart. It now drops the stale
-  id and retries once. Other queries still need the restart the backup guide
-  describes. (#1614)
-time: 2026-10-17T18:00:00.000000000+00:00

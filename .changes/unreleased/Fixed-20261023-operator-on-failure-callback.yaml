@@ -1,3 +1,0 @@
-kind: Fixed
-body: 'An `on_failure_callback` on a provider operator now runs on the final failed attempt; it compiled but never fired (#484). The runtime reads it from the task in `dag.py`, so DAGs compiled by an older CLI need a new compile and deploy.'
-time: 2026-10-23T06:00:00Z
