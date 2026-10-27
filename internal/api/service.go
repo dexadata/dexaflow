@@ -29,17 +29,26 @@ type ServiceTenantStore interface {
 	// EnsureIssuerUser makes sure a passwordless user linked to (provider,
 	// subject) exists in tenant with exactly roles.
 	EnsureIssuerUser(ctx context.Context, tenant, email, provider, subject string, roles []string) (*auth.User, bool, error)
+	// SuspendTenant suspends tenant or changes its suspension (#2181);
+	// ResumeTenant lifts it, and TenantSuspension reads it (the zero value is
+	// a tenant that is not suspended). An unknown tenant is ErrNotFound.
+	SuspendTenant(ctx context.Context, tenant string, s domain.TenantSuspension) error
+	ResumeTenant(ctx context.Context, tenant string) error
+	TenantSuspension(ctx context.Context, tenant string) (domain.TenantSuspension, error)
 }
 
 // serviceTenantName is a tenant name the service API accepts: lowercase
 // letters, digits and '-', so it can travel in a URL, a claim and a label.
 var serviceTenantName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
-// Audit actions for the operator service API (#1283). Both create or change
-// accounts and roles, so every call that reaches the store is recorded.
+// Audit actions for the operator service API (#1283). Each creates or changes
+// accounts, roles or whether a tenant may run, so every call that reaches the
+// store is recorded.
 const (
-	auditServiceTenantEnsure = "service.tenant.ensure"
-	auditServiceUserEnsure   = "service.user.ensure"
+	auditServiceTenantEnsure  = "service.tenant.ensure"
+	auditServiceUserEnsure    = "service.user.ensure"
+	auditServiceTenantSuspend = "service.tenant.suspend"
+	auditServiceTenantResume  = "service.tenant.resume"
 )
 
 // recordService writes one service API audit event. A failed write is logged,
@@ -70,6 +79,9 @@ func registerService(r gin.IRouter, deps Dependencies) {
 	g := r.Group("/api/v2/service", serviceAuth(deps.Issuers.ServiceToken))
 	g.PUT("/tenants/:tenant", ensureTenantHandler(deps))
 	g.PUT("/tenants/:tenant/users/:subject", ensureIssuerUserHandler(deps))
+	g.PUT("/tenants/:tenant/suspension", suspendTenantHandler(deps))
+	g.GET("/tenants/:tenant/suspension", tenantSuspensionHandler(deps))
+	g.DELETE("/tenants/:tenant/suspension", resumeTenantHandler(deps))
 }
 
 // serviceAuth accepts only `Authorization: Bearer <service token>`. The

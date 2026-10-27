@@ -41,8 +41,12 @@ type fakeStore struct {
 	scheduledErr error
 	// limitedTenants answers CreateScheduledRun with a tenant-limit refusal for
 	// these tenants, as the store does once a tenant's daily run cap is reached.
-	limitedTenants       map[string]bool
-	limitedCalls         int
+	limitedTenants map[string]bool
+	limitedCalls   int
+	// suspendedTenants answers CreateScheduledRun with a suspension refusal
+	// for these tenant UUIDs, as a suspension that lands mid tick does.
+	suspendedTenants     map[string]bool
+	suspendedCalls       int
 	dispatchFailures     []transition
 	dispatchBackpressure []transition
 	dispatchExhausted    []string
@@ -119,6 +123,10 @@ func (f *fakeStore) PoolBudgets(context.Context) (map[string]int, error) {
 func (f *fakeStore) CreateScheduledRun(_ context.Context, tenantID, dagID string, logical time.Time) error {
 	if f.createErr {
 		return errors.New("create scheduled run failed")
+	}
+	if f.suspendedTenants[tenantID] {
+		f.suspendedCalls++
+		return domain.Safef(domain.ErrTenantSuspended, "the tenant is suspended: contract ended")
 	}
 	if f.limitedTenants[tenantID] {
 		f.limitedCalls++

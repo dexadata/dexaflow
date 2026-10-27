@@ -51,8 +51,9 @@ func (s *Scheduler) createDueRuns(ctx context.Context, activeByDAG map[dagRef]in
 	}
 	now := time.Now().UTC()
 	createdThisTick := make(map[dagRef]int, len(dags))
-	// capped holds the tenants whose daily run limit refused a run this tick;
-	// their other due slots wait for a later tick instead of each asking again.
+	// capped holds the tenants whose daily run limit or suspension refused a
+	// run this tick; their other due slots wait for a later tick instead of
+	// each asking again.
 	capped := map[string]bool{}
 	for _, d := range dags {
 		key := dagRef{d.TenantID, d.DagID}
@@ -151,11 +152,27 @@ func (s *Scheduler) recordCapSkip(d ScheduledDAG) {
 // logged once per tenant and UTC day. The slot stays due, so it is created on
 // a later tick once the UTC day turns (catchup decides whether the slots
 // missed in between are created too).
+//
+// A tenant suspension is handled the same way. The scheduled DAG list already
+// leaves suspended tenants out, so the store only refuses a run as suspended
+// when the suspension lands between the list and the insert; the warning is
+// logged once per tenant and reason, and the slot is created by the first
+// tick after the suspension is lifted.
 func (s *Scheduler) createScheduledRun(ctx context.Context, d ScheduledDAG, logical time.Time, capped map[string]bool) bool {
 	err := s.store.CreateScheduledRun(ctx, d.TenantID, d.DagID, logical)
 	switch {
 	case err == nil:
 		s.record("create_run")
+		delete(s.warnedSuspensions, d.TenantID)
+	case errors.Is(err, domain.ErrTenantSuspended):
+		capped[d.TenantID] = true
+		s.record("tenant_suspended")
+		if reason := err.Error(); s.warnedSuspensions[d.TenantID] != reason {
+			s.logger.Warn("skipping scheduled runs: the tenant is suspended",
+				"tenant", d.TenantID, "dag", d.DagID, "logical_date", logical, "reason", reason)
+			s.warnedSuspensions[d.TenantID] = reason
+		}
+		return true
 	case errors.Is(err, domain.ErrLimitExceeded):
 		capped[d.TenantID] = true
 		s.record("tenant_daily_run_cap")

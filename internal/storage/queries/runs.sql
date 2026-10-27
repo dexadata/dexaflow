@@ -508,12 +508,15 @@ RETURNING *;
 -- should I backfill on this tick?" (catchup + start_date, see #129), and
 -- "may this DAG take another active run?" (max_active_runs, see #200). The
 -- owning tenant is returned because a dag_id is unique only within its tenant
--- (#209).
+-- (#209). The DAGs of a suspended tenant are left out (#2181); a suspension
+-- that lands after this read is refused when the run is created.
 SELECT d.tenant_id, d.dag_id, d.schedule, d.catchup, d.start_date, d.max_active_runs,
   (SELECT max(dr.logical_date) FROM dag_runs dr WHERE dr.dag_id = d.id) AS last_logical
 FROM dags d
+JOIN tenants t ON t.id = d.tenant_id
 WHERE d.is_active = true AND d.is_paused = false
-  AND d.schedule IS NOT NULL AND d.current_version_id IS NOT NULL;
+  AND d.schedule IS NOT NULL AND d.current_version_id IS NOT NULL
+  AND t.suspended_at IS NULL;
 
 -- name: CreateScheduledRunByDagID :execrows
 -- Zero rows means the slot's run already exists (or the DAG has no current
