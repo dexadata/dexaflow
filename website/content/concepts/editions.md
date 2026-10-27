@@ -7,7 +7,7 @@ aliases:
 title: Editions & operating modes
 linkTitle: Editions & modes
 weight: 10
-description: The two editions (Lite and Cluster) and the three runtime modes (Lite · Cluster · Demo): one engine, one UI, one DAG format.
+description: "The two editions (Lite and Cluster) and the three runtime modes (Lite · Cluster · Demo): one engine, one UI, one DAG format."
 ---
 
 Dexaflow ships in **two editions** that share the same engine, the same
