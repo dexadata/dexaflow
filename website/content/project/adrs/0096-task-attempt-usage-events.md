@@ -5,7 +5,7 @@ weight: 960
 description: "ADR 0096: a trigger on task_instances writes one row to a usage_events table each time an attempt reaches an attempt-ending state, in the transaction that moves it there, with the tenant, the task, the try, the attempt epoch, the state, the size and the times. An operator reads the table in order through a service API route with a cursor, and the retention janitor prunes it. Per-tenant counters are derived from the same rows. Events are delivered at least once and keyed by attempt and revision. Recording is off until an operator enables it."
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-26
 **Relates:** ADR 0051 (orchestration and execution state machines, the attempt epoch), ADR 0066 (weighted pool slots, a task's size), ADR 0068 (patch safety bar: inert until used, additive migrations)
 **Issues:** #2174
