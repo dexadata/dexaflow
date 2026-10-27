@@ -32,6 +32,32 @@ type fakeServiceStore struct {
 	gotLimits                                 domain.TenantLimitsUpdate
 	gotUserTenant, gotEmail, gotProv, gotSubj string
 	gotRoles                                  []string
+
+	suspension               domain.TenantSuspension
+	suspendErr, resumeErr    error
+	readSuspensionErr        error
+	gotSuspended, gotResumed string
+	gotSuspension            domain.TenantSuspension
+}
+
+func (f *fakeServiceStore) SuspendTenant(_ context.Context, tenant string, s domain.TenantSuspension) error {
+	f.gotSuspended, f.gotSuspension = tenant, s
+	if f.suspendErr == nil {
+		f.suspension = domain.TenantSuspension{Mode: s.Mode, Reason: s.Reason, Since: time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)}
+	}
+	return f.suspendErr
+}
+
+func (f *fakeServiceStore) ResumeTenant(_ context.Context, tenant string) error {
+	f.gotResumed = tenant
+	if f.resumeErr == nil {
+		f.suspension = domain.TenantSuspension{}
+	}
+	return f.resumeErr
+}
+
+func (f *fakeServiceStore) TenantSuspension(_ context.Context, _ string) (domain.TenantSuspension, error) {
+	return f.suspension, f.readSuspensionErr
 }
 
 func (f *fakeServiceStore) EnsureTenant(_ context.Context, name, displayName string, defaultPoolSlots int, limits domain.TenantLimitsUpdate) (bool, error) {

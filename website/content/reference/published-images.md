@@ -14,7 +14,7 @@ tag is the part people get wrong.
 | --- | --- | --- |
 | `ghcr.io/dexadata/dexaflow-server` | the control plane: API, scheduler, UI | the Helm chart, and `docker compose` for the demo |
 | `ghcr.io/dexadata/dexaflow-migrate` | schema migrations, run as a Helm pre-install and pre-upgrade hook | the chart's migration Job |
-| `ghcr.io/dexadata/dexaflow-runtime` | the task base image, one per supported Python line | your DAG image's `FROM`, at `dexaflow compile --build` |
+| `ghcr.io/dexadata/dexaflow-runtime` | the task base image, one per supported Python line; plus a `data` variant on Python 3.11 with connector providers and dbt | your DAG image's `FROM`, at `dexaflow compile --build`; the data variant, a [source mode](/operate/source-mode/) runtime |
 | `ghcr.io/dexadata/dexaflow-mcp` | the [MCP server](/mcp/), for running it as a service with `--transport http` | your own Deployment or `docker run` |
 | `ghcr.io/dexadata/dexaflow-cli` | the `dexaflow` CLI with Python 3.13, git and uv, no Docker (from `v0.5.4`) | [pipelines that run a job in a container](/operate/cicd-deploy/#the-dexaflow-cli-image): GitLab CI, an Argo CD hook |
 | `oci://ghcr.io/dexadata/charts/dexaflow` | the Helm chart | `helm install` / `helm upgrade` |
@@ -45,6 +45,7 @@ thing.)
 | `dexaflow-cli` | `{{< latest-version >}}` **and** `{{< latest-version v >}}` | no |
 | `dexaflow-runtime` | `py3.11-{{< latest-version v >}}` | no |
 | `dexaflow-runtime` | `py3.11` | **yes**, moved by every GA of the newest minor |
+| `dexaflow-runtime` (data variant) | `py3.11-data-v<X.Y.Z>`, from v0.5.7 | no; it has no moving tag |
 | the chart | `{{< latest-version >}}` | no |
 
 The server, migrate, MCP and CLI images carry both the bare and the `v`-prefixed tag, and

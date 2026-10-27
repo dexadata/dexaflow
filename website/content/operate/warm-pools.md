@@ -131,7 +131,7 @@ The reasons a task takes a dedicated pod, in the order they are checked:
 |---|---|
 | `warm pools off` | `execution.warm_pools_enabled` is off. |
 | `staging enabled` | The DAG uses the staging volume, which a warm pod cannot mount. |
-| `source mode` | The version runs in [source mode](/operate/source-mode/); a warm pod cannot carry its `dag.py`. |
+| `source mode` | The version runs in [source mode](/operate/source-mode/) and `execution.source_mode.warm_pools` is off; a warm pod cannot carry its `dag.py`. With it on, the `dag.py` goes with each assignment ([source mode on warm workers](/operate/source-mode/#warm-workers)). |
 | `service_account set` | The task pins a `service_account` other than the warm workers'. |
 | `<field> set` | The task sets a placement field or pod metadata (`node_selector`, `tolerations`, `affinity`, `topology_spread_constraints`, `priority_class_name`, `runtime_class_name`, `termination_grace_period_seconds`, `resource_claims`, `labels`, `annotations`). |
 | `size N is above the warm pod's 1 unit`, `resources set (a warm pod is 1 unit)` | With `executor.unit` a warm pod is one unit, so only a task of size 1 without its own `resources` fits. |
@@ -141,7 +141,7 @@ The reasons a task takes a dedicated pod, in the order they are checked:
 
 A warm-eligible task still takes a dedicated pod when no warm worker of its
 version is free. The `warm pool` line says what the pool does: `off`, `none`
-(this version gets no warm worker: staging, source mode, no warm-eligible
+(this version gets no warm worker: staging, source mode without its warm pools, no warm-eligible
 task, an idle target of 0, or a server that runs no warm workers) or `on`
 (the idle workers kept and the cap). `warming now` is said only for a DAG that declares
 `min_idle_workers`, the DAGs that are prewarmed. For a paused one the line
@@ -723,6 +723,7 @@ others is read — the deployment is byte-for-byte pod-per-task.
 | `maxWarmPodsPerTenant` | `MAX_WARM_PODS_PER_TENANT` | int (pods) | `100` | Cap on total warm pods a **single tenant** may hold across all its DAG versions (M4). Reserve-then-ration; the idle floors of versions with an active run are always honored, and prewarmed versions share what is left. Must be ≥ 1. |
 | `warmReadOnlyRootFilesystem` | `WARM_READ_ONLY_ROOT_FILESYSTEM` | bool | `false` | Read-only warm root, a per-attempt `$HOME` and XDG dirs, and `/tmp` and `/dev/shm` emptied around each attempt (see [isolation](#isolation-between-attempts)). Applies to warm pods created after it is turned on. Dedicated task pods are not affected. |
 | `warmPoolEventRefill` | `WARM_POOL_EVENT_REFILL` | bool | `false` | Event-driven refill from a warm-pod informer, with parallel creates (up to 4). Off = the 30s polling reconciler with a pod list per tick. |
+| `sourceMode.warmPools` | `SOURCE_MODE_WARM_POOLS` | bool | `false` | Let [source-mode](/operate/source-mode/#warm-workers) versions run on warm workers, which receive the `dag.py` with each assignment. Needs a runtime image whose agent is from 0.5.7 or later. Ignored while source mode is off. |
 
 Durations accept Go duration strings (`"90s"`, `"5m"`, `"1h"`). When
 `warmPoolsEnabled` is on, the server **validates these at boot and refuses to start**

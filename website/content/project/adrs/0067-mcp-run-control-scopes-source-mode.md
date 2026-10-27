@@ -9,6 +9,7 @@ description: "ADR 0067: the MCP gains trigger, clear, pause and unpause behind a
 **Date:** 2026-10-08 (proposed and accepted the same day by the project owner)
 **Amends:** ADR 0050 D7 (the side-effect tier and phase 4) and its open question 1 (scope enforcement). ADR 0050 D5 and D6 stay as written: the engine MCP does not author or deploy.
 **Relates:** ADR 0002 (pod-per-task), ADR 0003 and ADR 0041 (DAG-as-image, build/push/register), ADR 0024 (the shim compiles `dag.py` to `dag.json`), ADR 0048 (no user code in the control plane), ADR 0058 (warm worker pools), ADR 0011 (strict TDD).
+**Amended by:** ADR 0095 (source mode on warm workers, section 3)
 **Issues:** #1472 (this ADR), #1473 (scope claim), #1474 (run control tools), #1475 (Pro source mode), #1468 (trusted-issuer bearer tokens, merged first).
 
 ## Context
@@ -199,7 +200,8 @@ Operator config `execution.source_mode.enabled` (default false) and
   check is a possible later hardening.
 - **Warm workers.** A warm worker (ADR 0058) is started before its task is
   known, so its pod cannot carry the annotation. Source-mode tasks always get a
-  cold pod.
+  cold pod. (Amended by ADR 0095: with `execution.source_mode.warm_pools` on,
+  the source goes with each warm assignment instead.)
 - **Limits, stated in the operate docs.** One file, only the packages in the
   runtime image, and no `dexaflow.yaml` build steps. A DAG that needs more
   builds an image as today.

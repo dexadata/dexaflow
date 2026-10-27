@@ -102,6 +102,11 @@ var dbtSummaryRe = regexp.MustCompile(`\bPASS=\d+\s+(?:WARN=(\d+)\s+)?ERROR=(\d+
 // prints to stderr even on complete success (#870): info when ERROR=0 and
 // WARN=0, warning when only WARN is non-zero, error when ERROR is non-zero.
 func dbtSummaryLevel(line string) (string, bool) {
+	// Every streamed line passes here; the substring check keeps the regex off
+	// the lines that cannot match, which is nearly all of them.
+	if !strings.Contains(line, "PASS=") {
+		return "", false
+	}
 	m := dbtSummaryRe.FindStringSubmatch(line)
 	if m == nil {
 		return "", false

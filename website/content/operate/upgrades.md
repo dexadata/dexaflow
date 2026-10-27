@@ -411,6 +411,7 @@ holds, then re-run.
 | 049 (`installation`) | 49 | nothing: one transaction, rolled back, so the table is not there yet, and the file is idempotent | 48 |
 | 050 (index build) | 50 | `DROP INDEX CONCURRENTLY IF EXISTS idx_audit_resource;` | 49 |
 | 051 (unwritten tables) | 51 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the tables are still there | 50; retry when `task_instances` is quiet |
+| 052 (tenant suspension) | 52 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 51 |
 
 **How to run `migrate force`.** The hook image is the `dexaflow-migrate`
 wrapper plus the SQL files at `/migrations`; it takes the golang-migrate CLI's
@@ -1096,9 +1097,29 @@ the platform default is too large for them. Nothing changes for a task with a
 resource unit (`executor.unit`), which sizes every task as before. Rolling
 back to 0.5.6 restores the old behavior with no other step.
 
+### Upgrading to 0.5.7: malformed placement fields are refused
+
+A task's `tolerations`, `affinity`, `topology_spread_constraints`,
+`resource_claims` and `resources.claims` used to be accepted as written and
+decoded only when the pod was built, where an entry with a misspelled key or a
+value of the wrong type was dropped and the task ran without it. From 0.5.7
+registration checks them against the Kubernetes types and refuses the DAG with
+`400`, naming the task and the field
+([#628](https://github.com/dexadata/dexaflow/issues/628),
+[placement allowlist](/operate/placement-allowlist/)).
+
+Versions registered before the upgrade keep running as they are. The next push
+of a DAG with such an entry, `dexaflow deploy` or a reload in `dexaflow dev`,
+is refused until it is fixed. Keys use the Kubernetes spelling, so
+`toleration_seconds` or `max_skew` written in `dexaflow.yaml` or `dag.py` are
+now errors: write `tolerationSeconds` and `maxSkew`. Before upgrading, look
+through the placement fields of your DAGs for keys that do not use the
+Kubernetes spelling. Rolling back to 0.5.6 restores the old behavior with no
+other step.
+
 ### Upgrading to 0.5.8
 
-0.5.8 applies two migrations, 050 and 051.
+0.5.8 applies three migrations, 050, 051 and 052.
 
 - **`050_audit_log_resource_index`** builds `idx_audit_resource` on
   `audit_log (tenant_id, resource_id, occurred_at DESC, id DESC)`, the index the
@@ -1114,6 +1135,13 @@ back to 0.5.6 restores the old behavior with no other step.
   [An interrupted migration](#an-interrupted-migration) says.
 - **`051_drop_unwritten_tables`** drops `scheduler_loops`, `replicas` and
   `task_state_history`, described below.
+- **`052_tenant_suspension`** adds `suspended_at`, `suspension_mode` and
+  `suspension_reason` to `tenants`, for the service API's tenant suspension
+  ([#2181](https://github.com/dexadata/dexaflow/issues/2181)). The columns are
+  empty or have a constant default, so nothing is rewritten; the transaction
+  waits at most 5 seconds for its lock on `tenants`. Previous releases never
+  read the columns and keep running against the schema, but they do not
+  honor a suspension: suspend a tenant only once every replica runs 0.5.8.
 
 #### Three unused tables are dropped
 
@@ -1159,18 +1187,20 @@ once a 0.5.8 replica leads. With retention off (the default) 0.5.4 never reads
 the three tables.
 
 **Rolling back 0.5.8.** On Cluster, `helm rollback <release> <revision>` leaves the
-schema at 051, and the previous control plane boots against it with the
+schema at 052, and the previous control plane boots against it with the
 warning `database schema is ahead of this binary; proceeding`; it reads the
-event log through the new index without knowing it, and never touches the
-three tables. On Lite, run the down migrations first, with the 0.5.8 CLI or
+event log through the new index without knowing it, never touches the three
+tables, and ignores tenant suspensions: a suspended tenant gets runs again
+until 0.5.8 is back. On Lite, run the down migrations first, with the 0.5.8 CLI or
 migrate image:
 
 ```sh
 migrate -path migrations -database "$DATABASE_URL" goto 49
 ```
 
-That recreates the three tables, empty, exactly as before, and drops the
-index `CONCURRENTLY`. Recreating the tables takes a lock on `task_instances`
+That drops the suspension columns (every suspended tenant runs again),
+recreates the three tables, empty, exactly as before, and drops the index
+`CONCURRENTLY`. Recreating the tables takes a lock on `task_instances`
 that blocks writes to it (not reads) for its few milliseconds, waiting at most
 5 seconds as the up does; it took about 15 ms of SQL (50 ms with the CLI) on
 the same database. Rows deleted by the upgrade do not come back. Rolling back

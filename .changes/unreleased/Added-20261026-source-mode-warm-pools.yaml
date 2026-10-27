@@ -1,0 +1,13 @@
+kind: Added
+body: |-
+  **Source-mode versions can run on warm workers.** With the new
+  `execution.source_mode.warm_pools` (Helm: `execution.sourceMode.warmPools`,
+  default `false`) and warm pools on, a source-mode version gets a warm pool:
+  the control plane sends its `dag.py` and SHA-256 with each warm assignment,
+  and the worker checks it, runs the attempt from it and removes it afterwards.
+  The runtime image needs an agent from 0.5.7 or later; a warm worker on an
+  older agent is never given a source-mode attempt, which then takes a
+  dedicated pod, and is counted in
+  `dexaflow_scheduler_decisions_total{decision_type="warm_worker_no_source_delivery"}`
+  (ADR 0095). (#2159)
+time: 2026-10-26T19:30:00.000000000+00:00

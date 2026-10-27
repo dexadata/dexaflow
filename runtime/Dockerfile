@@ -20,6 +20,12 @@
 # this default when it falls behind (#1036).
 ARG GO_VERSION=1.26.10
 ARG PYTHON_VERSION=3.11
+# RUNTIME_VARIANT picks the published image: `base` (the default, the image
+# every DAG image starts FROM) or `data`, the base plus the connector providers
+# and dbt of runtime/data/requirements.txt, for a
+# platform that runs DAGs on the runtime as is, with no image build (engine
+# source mode). `data` is built for PYTHON_VERSION 3.11 only: its lock is.
+ARG RUNTIME_VARIANT=base
 
 # ── Stage 1: build the static agent binary ───────────────────────────────────
 # Deliberately still bookworm while stage 2 is trixie — do not "fix" the
@@ -75,7 +81,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
 # against: the compiler emits `apt-get install` into the generated DAG image
 # (internal/cli/compile_build.go), so the package versions a DAG gets move with
 # this line. That makes it a user-visible change, not an internal one.
-FROM python:${PYTHON_VERSION}-slim-trixie
+FROM python:${PYTHON_VERSION}-slim-trixie AS runtime-base
 
 LABEL org.opencontainers.image.source="https://github.com/dexadata/dexaflow"
 LABEL org.opencontainers.image.description="Dexaflow task base image (agent + Python runtime)"
@@ -213,3 +219,36 @@ WORKDIR /home/leoflow
 
 # The agent is PID 1; it fetches the task spec and runs the user code.
 ENTRYPOINT ["dexaflow-agent"]
+
+# ── Stage 3 (variant `data`): the base plus connectors and dbt ───────────────
+# Every package comes from runtime/data/requirements.txt, compiled with hashes
+# from requirements.in (runtime/data/README.md), so a rebuild installs the same
+# files and pip refuses anything else. The lock repeats the base's own pins
+# (Task SDK, certifi), so nothing above moves; only setuptools moves, to a
+# release without pkg_resources (runtime/data/README.md). The lock is complete
+# and was resolved with runtime/data/overrides.txt, which lifts one declared
+# bound on purpose, so pip installs it as is (--no-deps) instead of resolving
+# again and refusing that bound.
+#
+# mysqlclient (apache-airflow-providers-mysql) ships only as a source
+# distribution: it builds against libmariadb here, in the same layer that then
+# removes the compiler and headers, so only the shared library stays.
+FROM runtime-base AS runtime-data
+USER 0:0
+COPY runtime/data/requirements.txt /opt/dexaflow-data/requirements.txt
+# hadolint ignore=DL3008
+RUN test "$(python -c 'import sys; print("%d.%d" % sys.version_info[:2])')" = 3.11 \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends libmariadb3 \
+ && apt-get install -y --no-install-recommends gcc libc6-dev pkg-config libmariadb-dev \
+ && pip install --no-cache-dir --no-deps --require-hashes -r /opt/dexaflow-data/requirements.txt \
+ && apt-get purge -y --auto-remove gcc libc6-dev pkg-config libmariadb-dev \
+ && rm -rf /var/lib/apt/lists/*
+# Fail the build, not a customer's task, when a promised import is missing.
+RUN python -c "import airflow.providers.postgres, airflow.providers.mysql, airflow.providers.amazon, airflow.providers.databricks, airflow.providers.snowflake, airflow.providers.http, airflow.providers.google.cloud.hooks.bigquery, airflow.providers.common.sql, psycopg2, MySQLdb, boto3, google.cloud.bigquery, google.cloud.storage, databricks.sql, snowflake.connector, dbt.cli.main, dbt.adapters.postgres, dbt.adapters.snowflake, dbt.adapters.bigquery, dbt.adapters.bigquery.clients, dbt.adapters.databricks" \
+ && dbt --version
+USER 65532:65532
+
+# The published image: the variant RUNTIME_VARIANT names.
+# hadolint ignore=DL3006
+FROM runtime-${RUNTIME_VARIANT}

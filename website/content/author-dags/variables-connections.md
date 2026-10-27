@@ -110,8 +110,10 @@ The control plane's secret-delivery policy (`auth.secret_scoping`, [ADR
   that declares nothing, or whose declared names no longer exist in the vault,
   is warned about with `declared=0`, because under `enforce` it would receive
   nothing. The warning counts only declared names that actually resolve, so an
-  all-stale declaration counts as zero. The events are per delivery, not per
-  DAG: count distinct DAGs with `declared=0` to size the migration backlog
+  all-stale declaration counts as zero. A DAG that declares nothing at all is
+  warned about once per DAG version and kind on each control plane replica, not
+  on every attempt; the other warnings are per delivery. Count distinct DAGs
+  with `declared=0` to size the migration backlog
   ([#800](https://github.com/dexadata/dexaflow/issues/800)).
 - **`enforce`** delivers **only** the declared subset — an undeclared name is
   not delivered, and `Variable.get`/`BaseHook.get_connection` for it comes back

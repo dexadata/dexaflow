@@ -749,6 +749,12 @@ spec:
               value: "true"
             - name: LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE
               value: {{ .ctx.Values.execution.sourceMode.image | quote }}
+            {{- if .ctx.Values.execution.sourceMode.warmPools }}
+            # Source-mode versions on warm workers, which receive the dag.py
+            # with each assignment (ADR 0095). Stamped only when on.
+            - name: LEOFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS
+              value: "true"
+            {{- end }}
             {{- end }}
             - name: LEOFLOW_DATABASE_URL
               valueFrom:

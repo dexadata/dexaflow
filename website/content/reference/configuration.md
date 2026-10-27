@@ -835,6 +835,7 @@ and cannot do.
 |---|---|---|---|---|---|
 | `DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED` | `execution.source_mode.enabled` | bool | `false` | Cluster | Turn source mode on. Off, Cluster ignores a version's source, as before. Helm: `execution.sourceMode.enabled`. |
 | `DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE` | `execution.source_mode.image` | string | _(empty)_ | Cluster | The runtime image source-mode versions name as their `image`, pinned by a full digest (`image@sha256:` and 64 hex characters). Required when source mode is on; the server refuses to start with a tag alone or a short digest. Helm: `execution.sourceMode.image`; the chart refuses to render the same values the server refuses. |
+| `DEXAFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS` | `execution.source_mode.warm_pools` | bool | `false` | Cluster | Let source-mode versions run on warm workers: the control plane sends the version's `dag.py` with each warm assignment and the worker runs the attempt from it ([ADR 0095](/project/adrs/0095-source-mode-on-warm-workers/)). Needs `DEXAFLOW_EXECUTION_WARM_POOLS_ENABLED` and a runtime image whose agent is from 0.5.7 or later; a worker on an older agent never gets a source-mode attempt, which then takes a dedicated pod, and is counted in `dexaflow_scheduler_decisions_total{decision_type="warm_worker_no_source_delivery"}`. Ignored while source mode is off. See [Source mode](/operate/source-mode/#warm-workers). Helm: `execution.sourceMode.warmPools`. |
 
 <!-- END GENERATED configref -->
 
@@ -1265,8 +1266,8 @@ not a deploy, so an operator can still stop a DAG without the platform.
 An operator that serves several organizations from one Dexaflow (a hosting
 provider, an internal platform team) creates tenants and their users from its
 own automation instead of writing to the database. With `auth.service_token`
-set, two idempotent endpoints accept `Authorization: Bearer <service token>`;
-a user session never reaches them.
+set, the endpoints below accept `Authorization: Bearer <service token>`; a
+user session never reaches them. Each is idempotent.
 
 `PUT /api/v2/service/tenants/{tenant}` with an optional
 `{"display_name": "Acme Corp"}` creates the tenant (1-63 lowercase letters,
@@ -1354,10 +1355,36 @@ used by another user of the tenant, such as a password account. A tenant the
 trusted issuer may not sign in to (`auth.trusted_issuer.allowed_tenants`) is
 `403`. The user signs in only through the trusted issuer's handoff.
 
+`PUT /api/v2/service/tenants/{tenant}/suspension` with
+`{"mode": "hold", "reason": "contract ended"}` suspends the tenant. From then
+on it gets no new run: a triggered run answers `409` with the reason, for
+example `the tenant is suspended: contract ended`, and the scheduler leaves
+the tenant's DAGs out of its list. Work already queued or running finishes.
+The tenant's DAGs keep their own paused flag, so nothing about them changes
+and lifting the suspension restores exactly what the tenant had. Its users
+still sign in and read; DAG versions can still be registered.
+
+`hold` is the only mode today; `drain` and `stop` answer `400`. The reason is
+optional, at most 500 bytes, and is shown to the tenant's users in the refusal,
+so it should say what they can do, not why internally. A second call changes
+the reason and keeps the time the suspension started. The answer, and
+`GET` on the same path, is
+`{"tenant": "acme", "suspended": true, "mode": "hold", "reason": "...", "suspended_at": "..."}`,
+or `{"tenant": "acme", "suspended": false}`. `DELETE` on the same path lifts
+the suspension and answers `204`, also when the tenant was not suspended; each
+DAG's due slot is created on the next scheduler tick, and with `catchup` the
+slots missed while suspended are created too. An unknown tenant is `404`.
+
+A suspension that lands while the scheduler is creating runs for the tenant is
+caught when the run is created: the run is not created, the scheduler logs one
+warning for the tenant and counts it in
+`dexaflow_scheduler_decisions_total{decision_type="tenant_suspended"}`.
+
 Every call that reaches the database is recorded in the audit trail, as
-`service.tenant.ensure` (with whether the tenant was created) and
+`service.tenant.ensure` (with whether the tenant was created),
 `service.user.ensure` (with the subject, email, roles and whether the user was
-created), each with outcome `success` or `failure`.
+created), `service.tenant.suspend` (with the mode and reason) and
+`service.tenant.resume`, each with outcome `success` or `failure`.
 
 The service token is a root-level credential: whoever holds it can create
 tenants and grant any role, `admin` included, in every tenant the trusted
