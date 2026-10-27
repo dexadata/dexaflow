@@ -69,10 +69,12 @@ func get(addr, path string) (int, string, error) {
 	return resp.StatusCode, string(b), nil
 }
 
-// eventually polls until cond holds or ten seconds pass.
+// eventually polls until cond holds or thirty seconds pass.
 func eventually(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	// The boot under test shares the CI runner with the rest of the -race
+	// integration suite, and a 10s deadline there was missed.
+	deadline := time.Now().Add(30 * time.Second)
 	for !cond() {
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s", what)
