@@ -1,9 +1,0 @@
-kind: Fixed
-body: |-
-  **A plain `dexaflow lite` after `dexaflow lite restore` starts the restored
-  data on a host with Docker.** The restore pins the install to the managed
-  Postgres it replayed into, and `--postgres auto` follows that pin instead of
-  starting an empty Docker Postgres. An explicit `--postgres docker` or
-  `--postgres managed` pins the install the same way; installs without a pin
-  keep the old auto rule (ADR 0094). (#1997)
-time: 2026-10-26T12:00:00.000000000+00:00
