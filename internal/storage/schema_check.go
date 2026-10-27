@@ -313,6 +313,9 @@ func (p *Postgres) SchemaWaitState(ctx context.Context) (SchemaWait, error) {
 		// The one fatal verdict, unless the migrator is still on it: it marks
 		// the latest dirty while applying it, so a probe during that window
 		// would stop a boot the migration is about to unblock.
+		if p.beforeLockCheck != nil {
+			p.beforeLockCheck()
+		}
 		inFlight, lockErr := p.migrationInFlight(ctx)
 		if lockErr != nil {
 			return SchemaWait{Class: SchemaReasonUnreadable, Reason: SchemaReasonUnreadable, Err: lockErr}, nil //nolint:nilerr // as above, a read failure keeps the gate waiting
@@ -320,6 +323,14 @@ func (p *Postgres) SchemaWaitState(ctx context.Context) (SchemaWait, error) {
 		if inFlight {
 			return SchemaWait{Class: SchemaReasonDirty, Reason: fmt.Sprintf("schema dirty at v%d", st.version)}, nil
 		}
+		// The version was read before the lock: a migrator that finished the
+		// latest in between has cleared dirty and released the lock, so the
+		// first read is stale. Read it again before the fatal verdict.
+		again, rereadErr := p.schemaState(ctx)
+		if rereadErr != nil {
+			return SchemaWait{Class: SchemaReasonUnreadable, Reason: SchemaReasonUnreadable, Err: rereadErr}, nil //nolint:nilerr // as above, a read failure keeps the gate waiting
+		}
+		st = again
 	}
 	w, err := schemaWaitVerdict(st.version, st.exists, st.dirty, st.latest)
 	if w.Ahead {

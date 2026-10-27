@@ -59,6 +59,10 @@ type Postgres struct {
 	// (SetOnReplaced), and replacedLogged latches its log line.
 	onReplaced     func()
 	replacedLogged atomic.Bool
+	// beforeLockCheck runs in SchemaWaitState between the read of a schema
+	// dirty at the latest and the migration lock check. Nil outside tests,
+	// which use it to finish a migration in that window.
+	beforeLockCheck func()
 	// health is a dedicated one-connection pool used by Ping and the schema
 	// read, so a probe never queues behind application traffic. See
 	// newHealthPool for why that matters. Nil only in tests that construct a
