@@ -230,6 +230,8 @@ type Dag struct {
 	CurrentVersionID pgtype.UUID        `json:"current_version_id"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	NextRunAt        pgtype.Timestamptz `json:"next_run_at"`
+	ScheduleEpoch    int64              `json:"schedule_epoch"`
 }
 
 type DagFavorite struct {

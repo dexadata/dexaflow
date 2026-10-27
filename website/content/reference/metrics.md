@@ -69,6 +69,7 @@ The table is generated from the collectors the server registers: run
 | `dexaflow_scheduler_decisions_total` | counter | `decision_type` | Scheduler decisions by type. |
 | `dexaflow_scheduler_loop_duration_seconds` | histogram | _(none)_ | Duration of one scheduler loop iteration. |
 | `dexaflow_scheduler_reacquire_seconds` | histogram | _(none)_ | Wall-clock seconds between a leader step-down and the same replica reacquiring leadership. A growing P99 signals leader churn that affects scheduling latency (#311). |
+| `dexaflow_scheduler_schedule_delay_seconds` | histogram | _(none)_ | Time from a scheduled run's slot to its creation, for the latest slot a tick created for a DAG. |
 | `dexaflow_scheduler_step_downs_total` | counter | `reason` | Scheduler leadership step-downs by reason (lock_released, check_timeout, shutdown). Operators alert on rate(...[5m]); a sudden uptick usually indicates a Postgres connection-stability issue (#311). |
 | `dexaflow_scheduler_woken_ticks_total` | counter | _(none)_ | Scheduler ticks started early by a task completion instead of the loop interval (scheduler.eager_promotion). |
 | `dexaflow_schema_ready` | gauge | `reason` | 1 when the database schema is one this binary can serve, 0 while it waits for it, with the reason (schema absent, schema behind, schema dirty, schema unreadable). Alert on 0 for 5 minutes. |

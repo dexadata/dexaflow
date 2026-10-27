@@ -412,6 +412,8 @@ holds, then re-run.
 | 050 (index build) | 50 | `DROP INDEX CONCURRENTLY IF EXISTS idx_audit_resource;` | 49 |
 | 051 (unwritten tables) | 51 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the tables are still there | 50; retry when `task_instances` is quiet |
 | 052 (tenant suspension) | 52 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 51 |
+| 053 (`next_run_at`) | 53 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the columns are not there yet | 52; retry when `dags` is quiet |
+| 054 (index build) | 54 | `DROP INDEX CONCURRENTLY IF EXISTS idx_dags_next_run;` | 53 |
 
 **How to run `migrate force`.** The hook image is the `dexaflow-migrate`
 wrapper plus the SQL files at `/migrations`; it takes the golang-migrate CLI's
@@ -1118,7 +1120,7 @@ Kubernetes spelling. Rolling back to 0.5.6 restores the old behavior with no
 other step.
 ### Upgrading to 0.5.8
 
-0.5.8 applies three migrations, 050, 051 and 052.
+0.5.8 applies five migrations, 050 to 054.
 
 - **`050_audit_log_resource_index`** builds `idx_audit_resource` on
   `audit_log (tenant_id, resource_id, occurred_at DESC, id DESC)`, the index the
@@ -1141,6 +1143,18 @@ other step.
   waits at most 5 seconds for its lock on `tenants`. Previous releases never
   read the columns and keep running against the schema, but they do not
   honor a suspension: suspend a tenant only once every replica runs 0.5.8.
+- **`053_dag_next_run_at`** adds `next_run_at` and `schedule_epoch` to `dags`,
+  and **`054_dag_next_run_at_index`** builds `idx_dags_next_run` on it
+  `CONCURRENTLY` ([#2175](https://github.com/dexadata/dexaflow/issues/2175)).
+  The scheduler stores when each scheduled DAG is next due, at most an hour
+  ahead, and each tick lists only the DAGs that may be due instead of every
+  scheduled DAG. Nothing is backfilled: the first tick of a 0.5.8 leader
+  lists every scheduled DAG once, as before, and stores their times. 053
+  waits at most 5 seconds for its lock on `dags`; 054, like 050, first waits
+  for every open transaction to finish. Previous releases never read the
+  columns. During a rolling upgrade, a version registered or a run deleted
+  through a 0.5.7 replica does not clear the stored time, so the change
+  reaches the scheduler within the hour instead of on the next tick.
 
 #### Three unused tables are dropped
 
@@ -1186,7 +1200,7 @@ once a 0.5.8 replica leads. With retention off (the default) 0.5.4 never reads
 the three tables.
 
 **Rolling back 0.5.8.** On Pro, `helm rollback <release> <revision>` leaves the
-schema at 052, and the previous control plane boots against it with the
+schema at 054, and the previous control plane boots against it with the
 warning `database schema is ahead of this binary; proceeding`; it reads the
 event log through the new index without knowing it, never touches the three
 tables, and ignores tenant suspensions: a suspended tenant gets runs again
@@ -1197,7 +1211,8 @@ migrate image:
 migrate -path migrations -database "$DATABASE_URL" goto 49
 ```
 
-That drops the suspension columns (every suspended tenant runs again),
+That drops the next due times and their index, drops the suspension columns
+(every suspended tenant runs again),
 recreates the three tables, empty, exactly as before, and drops the index
 `CONCURRENTLY`. Recreating the tables takes a lock on `task_instances`
 that blocks writes to it (not reads) for its few milliseconds, waiting at most

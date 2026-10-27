@@ -150,7 +150,7 @@ func wantSuspended(t *testing.T, what string, err error, phrase string) {
 // scheduledTenants returns the tenant UUIDs the scheduled DAG list holds.
 func scheduledTenants(ctx context.Context, t *testing.T, sched *storage.SchedulerStore) map[string]bool {
 	t.Helper()
-	dags, err := sched.ScheduledDAGs(ctx)
+	dags, err := sched.ScheduledDAGs(ctx, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
