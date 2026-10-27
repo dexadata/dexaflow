@@ -99,6 +99,11 @@ func (q *Queries) CountExpiredTenantAuditLog(ctx context.Context, arg CountExpir
 }
 
 const deleteDagRunsByID = `-- name: DeleteDagRunsByID :execrows
+WITH invalidate AS (
+  UPDATE dags d SET next_run_at = NULL, schedule_epoch = d.schedule_epoch + 1
+  WHERE d.tenant_id = $1
+    AND d.id IN (SELECT r.dag_id FROM dag_runs r WHERE r.tenant_id = $1 AND r.id = ANY($2::uuid[]))
+)
 DELETE FROM dag_runs
 WHERE id IN (
   SELECT r.id FROM dag_runs r
@@ -114,7 +119,10 @@ type DeleteDagRunsByIDParams struct {
 	RowLimit int32         `json:"row_limit"`
 }
 
-// Removes the locked runs whose children are all gone, up to row_limit.
+// Removes the locked runs whose children are all gone, up to row_limit. The
+// stored next due time of each DAG they belong to is cleared (#2175), in case
+// a run removed was the DAG's latest; a DAG whose run stays is only listed
+// once more.
 func (q *Queries) DeleteDagRunsByID(ctx context.Context, arg DeleteDagRunsByIDParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteDagRunsByID, arg.TenantID, arg.RunIds, arg.RowLimit)
 	if err != nil {
