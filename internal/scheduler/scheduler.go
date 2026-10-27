@@ -393,6 +393,10 @@ type Scheduler struct {
 	// to the UTC date it was last logged for, so a capped tenant logs once a
 	// day, not on every tick that retries its due slot. Tick-only, no lock.
 	warnedRunCaps map[string]string
+	// warnedSuspensions dedupes the "tenant is suspended" warning: tenant UUID
+	// to the refusal it was last logged with, cleared once the tenant gets a
+	// run again. Tick-only, no lock.
+	warnedSuspensions map[string]string
 	// poolsEnabled turns on the cross-DAG named-pool admission gate (ADR 0053
 	// Stage 3). Pro-only: main calls EnablePools() only when the edition is "pro".
 	// While false (Lite / non-Pro), Step never loads pool budgets and never
@@ -425,14 +429,15 @@ type Scheduler struct {
 // NewScheduler builds a Scheduler over the given store, ticking every interval.
 func NewScheduler(store Store, logger *slog.Logger, interval time.Duration) *Scheduler {
 	return &Scheduler{
-		store:           store,
-		logger:          logger,
-		interval:        interval,
-		stepTimeout:     defaultStepTimeout(interval),
-		warnedSchedules: map[dagRef]string{},
-		warnedRunCaps:   map[string]string{},
-		alertSem:        make(chan struct{}, defaultAlertConcurrency),
-		clock:           time.Now,
+		store:             store,
+		logger:            logger,
+		interval:          interval,
+		stepTimeout:       defaultStepTimeout(interval),
+		warnedSchedules:   map[dagRef]string{},
+		warnedRunCaps:     map[string]string{},
+		warnedSuspensions: map[string]string{},
+		alertSem:          make(chan struct{}, defaultAlertConcurrency),
+		clock:             time.Now,
 		// The budget is on by default: the stall it prevents is reachable with
 		// default settings (synchronous dispatch, client QPS 5).
 		dispatchTickBudget: DefaultDispatchTickBudget,

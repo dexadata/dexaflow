@@ -405,6 +405,9 @@ type Tenant struct {
 	RunsDay                    pgtype.Date        `json:"runs_day"`
 	RunsDayCount               int32              `json:"runs_day_count"`
 	MaxTaskPoolSlots           int32              `json:"max_task_pool_slots"`
+	SuspendedAt                pgtype.Timestamptz `json:"suspended_at"`
+	SuspensionMode             *string            `json:"suspension_mode"`
+	SuspensionReason           string             `json:"suspension_reason"`
 }
 
 type User struct {
