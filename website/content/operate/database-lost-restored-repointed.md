@@ -27,7 +27,7 @@ never migrates a database it does not recognize:
   a release `dexaflow` in the namespace `dexaflow` the reason reads:
 
   ```text
-  schema absent: apply the migrations: `helm upgrade dexaflow oci://ghcr.io/dexadata/charts/dexaflow -n dexaflow --version 0.5.6 --reuse-values` runs the migration Job again; the server checks again on its own
+  schema absent: apply the migrations: `helm upgrade dexaflow oci://ghcr.io/dexadata/charts/dexaflow -n dexaflow --version {{< latest-version >}} --reuse-values` runs the migration Job again; the server checks again on its own
   ```
 
   With `migrations.enabled: false` it names your own migration step and the
