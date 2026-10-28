@@ -9,7 +9,7 @@ description: Get Dexaflow Lite running locally in two commands — the fastest p
 ---
 
 Get Dexaflow **Lite** running locally in two commands. Lite is the local edition
-(Pro is chart-installable and in validation — see [Operating modes](/concepts/editions/));
+(Cluster is chart-installable and in validation, see [Operating modes](/concepts/editions/));
 run it on your machine or a trusted internal network — see [Editions](/concepts/editions/).
 
 ## Prerequisites
@@ -44,7 +44,7 @@ each `[default]`:
 - **Where your DAGs live** (workspace) — default `~/dexaflow`
 - **How tasks run** — `subprocess` (each task as a process on this machine — simple,
   no Docker, recommended) or `k8s` (real pod-per-task on a local mini-Kubernetes —
-  mirrors Pro, needs Docker). The wizard also accepts the friendly aliases `local`
+  mirrors Cluster, needs Docker). The wizard also accepts the friendly aliases `local`
   (= `subprocess`) and `cluster` (= `k8s`).
 - **Admin email**: default `admin@dexaflow.local` (an install created before the
   rename keeps `admin@leoflow.local`)
@@ -132,4 +132,4 @@ dexaflow uninstall                    # remove the install (--purge for workspac
 - [DAG authoring](/author-dags/dag-authoring/) — the dialect, `dexaflow.yaml`, overrides.
 - [The `dexaflow lite` workflow](/contribute/local-dev-loop/) — the edit→reload loop, executors.
 - [CI/CD & deploy examples](/operate/cicd-deploy/) — ship it.
-- [Editions](/concepts/editions/) — Lite (now) vs Pro (in validation).
+- [Editions](/concepts/editions/): Lite (now) vs Cluster (in validation).

@@ -42,7 +42,7 @@ Then open **<http://localhost:8080>** and log in as **`admin@dexaflow.local`** /
 {{% alert title="What you're looking at" color="success" %}}
 One process serves the API (`/api/v2`), the internal UI API (`/ui/*`), and the
 React UI (ADR 0017). It auto-applies migrations and seeds the admin user on
-first boot. The three operating modes (Lite · Pro-soon · Demo) are
+first boot. The three operating modes (Lite · Cluster · Demo) are
 described in [Operating modes](/concepts/editions/).
 {{% /alert %}}
 
@@ -120,7 +120,7 @@ Comment on the issue to claim it before starting, so effort isn't duplicated.
 
 Open a [new issue](https://github.com/dexadata/dexaflow/issues/new/choose) and
 pick **Bug report**. The form asks for repro steps, how you're running Dexaflow
-(Lite / Pro / Demo), and environment — fill it in fully so we can
+(Lite / Cluster / Demo), and environment; fill it in fully so we can
 reproduce.
 {{% /tab %}}
 {{% tab header="Propose a feature" %}}

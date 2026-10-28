@@ -15,7 +15,7 @@ How Dexaflow works, and why it is shaped the way it is.
   <a class="lf-card" href="/concepts/editions/">
     <span class="lf-card__icon"><i class="fa-solid fa-layer-group"></i></span>
     <span class="lf-card__title">Editions &amp; operating modes</span>
-    <span class="lf-card__desc">The Lite/Pro split and the Lite · Pro · Demo runtime modes.</span>
+    <span class="lf-card__desc">The Lite/Cluster split and the Lite · Cluster · Demo runtime modes.</span>
     <span class="lf-card__more">Compare editions →</span>
   </a>
   <a class="lf-card" href="/concepts/core-concepts/">

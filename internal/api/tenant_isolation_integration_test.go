@@ -69,7 +69,7 @@ func newCrossTenantFixture(t *testing.T) crossTenantFixture {
 			},
 			Server: ServerDeps{
 				CORSOrigins: []string{"*"},
-				Edition:     "pro", // pools are mounted on Pro only
+				Pools:       true, // pools are mounted on the cluster edition only
 			},
 			Auth: AuthDeps{
 				Authenticator: &fakeAuthn{user: &auth.User{ID: "u-" + tenant, TenantID: tenant, Roles: []string{"admin"}}},

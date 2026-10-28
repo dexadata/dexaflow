@@ -6,15 +6,21 @@ aliases:
 title: Helm chart
 linkTitle: Helm chart
 weight: 30
-description: Install and configure the Dexaflow Pro control plane on Kubernetes with the official Helm chart.
+description: Install and configure the Dexaflow Cluster control plane on Kubernetes with the official Helm chart.
 ---
 
-The **Pro** control plane installs on Kubernetes via the official Helm chart. The
+The **Cluster** control plane installs on Kubernetes via the official Helm chart. The
 chart is chart-test gated, publishes multi-arch images per release, and signs them
 with cosign. It runs on any cluster with an external Postgres + Redis.
 
+The chart runs the server as the cluster edition. It still sets
+`LEOFLOW_UI_EDITION=pro`: `pro` is the earlier name of `ui.edition: cluster`,
+the server accepts both with the same features, and the chart switches to
+`cluster` once every supported server accepts it. See
+[Editions](/concepts/editions/).
+
 To try the chart on your machine first, with throwaway datastores and a local
-registry, see [Try Pro on a local cluster](/operate/local-cluster/) (for testing
+registry, see [Try the cluster edition on a local cluster](/operate/local-cluster/) (for testing
 only, not for production).
 
 ## Install from the published OCI chart
@@ -85,7 +91,7 @@ A first-class values reference on this site is a TODO for a later migration phas
   `taskServiceAccount: true` and `warmPools: true`, the task ServiceAccount and
   warm pool settings a deploy reports. See
   [Cluster deploy defaults](/operate/workspaces-and-targets/#cluster-deploy-defaults).
-- TLS termination via cert-manager — see [Pro TLS](/operate/pro-tls/).
+- TLS termination via cert-manager: see [Cluster TLS](/operate/cluster-tls/).
 - OIDC/SSO login (`auth.oidc.*`), off by default: turning it on renders the
   ConfigMap the two map settings need and makes `auth.provider: oidc` reachable
   from values, rather than requiring a hand-mounted config file. See
@@ -287,9 +293,9 @@ track, such as cgo allocations and page cache.
 
 ## Related
 
-- [Editions & operating modes](/concepts/editions/) — what Pro gives you and its
+- [Editions & operating modes](/concepts/editions/): what Cluster gives you and its
   validation status.
-- [Deploy your first Pro DAG](/operate/first-pro-dag/) — the promotion walkthrough.
+- [Deploy your first Cluster DAG](/operate/first-cluster-dag/): the promotion walkthrough.
 - [Upgrades](/operate/upgrades/) — upgrading a chart release safely.
 - [In-transit encryption](/operate/in-transit-encryption/): a service mesh with
   mTLS, or `httpTLS` for HTTPS on the API listener, and `networkPolicy.grpcFrom`.

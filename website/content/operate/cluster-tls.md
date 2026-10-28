@@ -3,14 +3,15 @@
 aliases:
   - /pro-tls.html
 # --- end AUTO redirect aliases ---
-title: Pro TLS (cert-manager)
-linkTitle: Pro TLS
+  - /operate/pro-tls/
+title: Cluster TLS (cert-manager)
+linkTitle: Cluster TLS
 weight: 100
-description: Terminate TLS on the Pro control plane with cert-manager.
+description: Terminate TLS on the Cluster control plane with cert-manager.
 ---
 
-The Pro control plane delivers secrets (Connections, Variables) to task pods over
-gRPC. In Pro that channel **must be TLS** — the server refuses to boot without it
+The Cluster control plane delivers secrets (Connections, Variables) to task pods over
+gRPC. In Cluster that channel **must be TLS**: the server refuses to boot without it
 (#281).
 
 {{% alert title="You don't need this for a default install" color="info" %}}
@@ -163,12 +164,12 @@ reference for `./helm/dexaflow`.)
 
 ## Troubleshooting
 
-- **`the Pro edition requires TLS on the agent gRPC channel, but it is off`** — the
+- **`the cluster edition requires TLS on the agent gRPC channel, but it is off`**: the
   server refused to boot because `DEXAFLOW_SERVER_GRPC_TLS_CERT`/`_KEY` are unset:
   the cert Secret didn't mount, or the server was started outside this chart.
   Provide the cert as above (#281).
 - **`agentTLS.enabled=false is not a supported configuration`** — helm refused the
-  install. This chart only deploys the Pro edition, and that edition cannot boot
+  install. This chart only deploys the cluster edition, and that edition cannot boot
   without a cert, so turning TLS off buys a `CrashLoopBackOff`, not a plaintext
   deployment. Provision the cert as above; for a plaintext local loop use the Lite
   dev server (`dexaflow lite`), not this chart (#459).
