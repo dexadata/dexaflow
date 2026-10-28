@@ -45,7 +45,7 @@ func TestServiceSuspendTenantStoresHold(t *testing.T) {
 	}
 }
 
-// TestServiceSuspendTenantRefusesBadInput: a mode other than hold, a body that
+// TestServiceSuspendTenantRefusesBadInput: an unknown mode, a body that
 // is not JSON, a bad tenant name and an unknown tenant never suspend anything.
 func TestServiceSuspendTenantRefusesBadInput(t *testing.T) {
 	for _, tc := range []struct {
@@ -55,7 +55,7 @@ func TestServiceSuspendTenantRefusesBadInput(t *testing.T) {
 		phrase           string
 		reachesStore     bool
 	}{
-		{name: "drain", path: suspensionPath, body: `{"mode": "drain"}`, code: http.StatusBadRequest, phrase: "not supported yet"},
+		{name: "unknown mode", path: suspensionPath, body: `{"mode": "pause"}`, code: http.StatusBadRequest, phrase: "not supported"},
 		{name: "no mode", path: suspensionPath, body: `{}`, code: http.StatusBadRequest, phrase: `use \"hold\"`},
 		{name: "long reason", path: suspensionPath, body: `{"mode": "hold", "reason": "` + strings.Repeat("x", domain.MaxSuspensionReasonLength+1) + `"}`, code: http.StatusBadRequest, phrase: "above the limit"},
 		{name: "not json", path: suspensionPath, body: `hold`, code: http.StatusBadRequest, phrase: "body must be"},
@@ -148,5 +148,25 @@ func TestTenantSuspendedIsConflict(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "the tenant is suspended: contract ended") {
 		t.Errorf("body does not carry the reason: %s", rec.Body.String())
+	}
+}
+
+// TestServiceSuspendTenantStoresDrainAndStop: drain and stop are applied
+// modes and reach the store as given (#2181).
+func TestServiceSuspendTenantStoresDrainAndStop(t *testing.T) {
+	for _, mode := range []domain.SuspensionMode{domain.SuspensionDrain, domain.SuspensionStop} {
+		t.Run(string(mode), func(t *testing.T) {
+			// Arrange
+			store := &fakeServiceStore{}
+			h := serviceServer(t, store, false)
+
+			// Act
+			rec := callService(h, http.MethodPut, suspensionPath, testServiceToken, `{"mode": "`+string(mode)+`"}`)
+
+			// Assert
+			if rec.Code != http.StatusOK || store.gotSuspension.Mode != mode {
+				t.Errorf("status = %d, store got %+v; want 200 and mode %s (%s)", rec.Code, store.gotSuspension, mode, rec.Body.String())
+			}
+		})
 	}
 }
