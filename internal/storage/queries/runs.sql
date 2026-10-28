@@ -213,14 +213,21 @@ WHERE id = sqlc.arg(id)
 -- hash every row of dags, a cost that grows with the number of DAGs (about 10
 -- ms against 2 ms for 500 active runs over 20000 DAGs), while the scan stays
 -- on idx_dag_runs_state and the probe keeps the cost proportional to the
--- active runs.
+-- active runs. tenant_suspension_mode is the suspension mode of the run's
+-- tenant, '' when it is not suspended (#2181): under drain or stop the tick
+-- dispatches nothing of the run and does not start it. It is a second
+-- primary-key probe, of tenants, for the same reason.
 SELECT sqlc.embed(dag_runs),
   COALESCE(d.is_paused, false)::boolean AS dag_paused,
-  COALESCE(d.max_active_runs, 0)::integer AS dag_max_active_runs
+  COALESCE(d.max_active_runs, 0)::integer AS dag_max_active_runs,
+  COALESCE(tn.suspension_mode, '')::text AS tenant_suspension_mode
 FROM dag_runs
 LEFT JOIN LATERAL (
   SELECT dags.is_paused, dags.max_active_runs FROM dags WHERE dags.id = dag_runs.dag_id LIMIT 1
 ) d ON true
+LEFT JOIN LATERAL (
+  SELECT tenants.suspension_mode FROM tenants WHERE tenants.id = dag_runs.tenant_id LIMIT 1
+) tn ON true
 WHERE dag_runs.state IN ('queued', 'running')
 ORDER BY dag_runs.queued_at;
 
@@ -1984,3 +1991,24 @@ WHERE (r.tenant_id, r.id) IN (
     SELECT 1 FROM task_instances ti
     WHERE ti.dag_run_id = r.id
       AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed', 'removed'));
+
+-- name: FailStoppedTenantTaskInstances :execrows
+-- Fails the queued and running task instances of a tenant suspended in stop
+-- mode (#2181), as a user's mark failed does: the row is the verdict, so the
+-- attempt's next heartbeat or state report matches no live row, the agent is
+-- told to terminate and kills its task process group. The tenants join keeps
+-- it a no-op once the suspension is lifted or changed to another mode, so the
+-- service API and every scheduler tick can run it. Scheduled task instances
+-- are left alone: nothing dispatches them while the tenant is suspended, and
+-- they run once it is resumed. idx_ti_active_tenant serves the scan.
+UPDATE task_instances ti
+SET state = 'failed',
+    ended_at = now(),
+    error_message = 'stopped: the tenant was suspended in stop mode',
+    last_failure_kind = NULL,
+    infra_confirmed_at = now()
+FROM tenants t
+WHERE t.id = ti.tenant_id
+  AND ti.tenant_id = sqlc.arg(tenant_id)
+  AND t.suspension_mode = 'stop'
+  AND ti.state IN ('queued', 'running');

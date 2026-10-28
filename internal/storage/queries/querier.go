@@ -252,6 +252,15 @@ type Querier interface {
 	// the sync path refuses a scheduled task, the buffered path a scheduled or
 	// queued one, and a row that moved on is left alone.
 	FailDispatchRefused(ctx context.Context, arg FailDispatchRefusedParams) error
+	// Fails the queued and running task instances of a tenant suspended in stop
+	// mode (#2181), as a user's mark failed does: the row is the verdict, so the
+	// attempt's next heartbeat or state report matches no live row, the agent is
+	// told to terminate and kills its task process group. The tenants join keeps
+	// it a no-op once the suspension is lifted or changed to another mode, so the
+	// service API and every scheduler tick can run it. Scheduled task instances
+	// are left alone: nothing dispatches them while the tenant is suspended, and
+	// they run once it is resumed. idx_ti_active_tenant serves the scan.
+	FailStoppedTenantTaskInstances(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	// Settle a task instance failed from the pod reconciler, guarded by id,
 	// try_number and attempt_epoch (ADR 0052, ADR 0051 amendment): try_number bumps
 	// IN PLACE on retry (same row id), and an infra re-place or reschedule keeps the
@@ -437,7 +446,10 @@ type Querier interface {
 	// hash every row of dags, a cost that grows with the number of DAGs (about 10
 	// ms against 2 ms for 500 active runs over 20000 DAGs), while the scan stays
 	// on idx_dag_runs_state and the probe keeps the cost proportional to the
-	// active runs.
+	// active runs. tenant_suspension_mode is the suspension mode of the run's
+	// tenant, '' when it is not suspended (#2181): under drain or stop the tick
+	// dispatches nothing of the run and does not start it. It is a second
+	// primary-key probe, of tenants, for the same reason.
 	ListActiveDagRuns(ctx context.Context) ([]ListActiveDagRunsRow, error)
 	// run_id is the dag_run's UUID (StagingClaimName uses it), so join on dag_runs.id,
 	// which is globally unique. run_state is NULL only when the run row is truly gone.
