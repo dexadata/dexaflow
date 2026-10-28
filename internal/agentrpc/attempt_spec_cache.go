@@ -1,6 +1,7 @@
 package agentrpc
 
 import (
+	"container/list"
 	"context"
 	"sync"
 	"time"
@@ -61,6 +62,7 @@ func attemptKeyOf(id auth.AgentIdentity) attemptKey {
 }
 
 type attemptSpecEntry struct {
+	key     attemptKey
 	spec    attemptSpec
 	expires time.Time
 }
@@ -69,28 +71,37 @@ type attemptSpecEntry struct {
 // not reload the full task spec (a run lookup and a reschedule lookup) on every
 // call. An entry is dropped when the attempt reports a terminal state or a
 // reschedule, when it expires, or when the cache is full.
+//
+// Every entry lives ttl from its last put, so the order of the last puts is the
+// order of expiry: order holds the entries oldest first, and eviction takes
+// from its front instead of scanning the map (#1621).
 type attemptSpecCache struct {
 	mu      sync.Mutex
 	max     int
 	ttl     time.Duration
 	now     func() time.Time
-	entries map[attemptKey]attemptSpecEntry
+	entries map[attemptKey]*list.Element // of *attemptSpecEntry
+	order   *list.List
 }
 
 func newAttemptSpecCache(maxEntries int, ttl time.Duration, now func() time.Time) *attemptSpecCache {
-	return &attemptSpecCache{max: maxEntries, ttl: ttl, now: now, entries: make(map[attemptKey]attemptSpecEntry)}
+	return &attemptSpecCache{
+		max: maxEntries, ttl: ttl, now: now,
+		entries: make(map[attemptKey]*list.Element), order: list.New(),
+	}
 }
 
 func (c *attemptSpecCache) get(id auth.AgentIdentity) (attemptSpec, bool) {
 	k := attemptKeyOf(id)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	e, ok := c.entries[k]
+	el, ok := c.entries[k]
 	if !ok {
 		return attemptSpec{}, false
 	}
+	e := entryAt(el)
 	if !c.now().Before(e.expires) {
-		delete(c.entries, k)
+		c.removeLocked(el)
 		return attemptSpec{}, false
 	}
 	return e.spec, true
@@ -101,37 +112,56 @@ func (c *attemptSpecCache) put(id auth.AgentIdentity, spec attemptSpec) {
 	now := c.now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, ok := c.entries[k]; !ok && len(c.entries) >= c.max {
+	if el, ok := c.entries[k]; ok {
+		e := entryAt(el)
+		e.spec, e.expires = spec, now.Add(c.ttl)
+		c.order.MoveToBack(el)
+		return
+	}
+	if len(c.entries) >= c.max {
 		c.evictLocked(now)
 	}
-	c.entries[k] = attemptSpecEntry{spec: spec, expires: now.Add(c.ttl)}
+	c.entries[k] = c.order.PushBack(&attemptSpecEntry{key: k, spec: spec, expires: now.Add(c.ttl)})
 }
 
-// evictLocked drops every expired entry and, if the cache is still full, the
-// one closest to expiring (the oldest). It runs only when a new attempt
-// arrives at a full cache.
+// evictLocked drops the expired entries at the front of order and, if the
+// cache is still full, the oldest one. It runs only when a new attempt arrives
+// at a full cache, and touches only the entries it drops.
 func (c *attemptSpecCache) evictLocked(now time.Time) {
-	var oldest attemptKey
-	var oldestAt time.Time
-	first := true
-	for k, e := range c.entries {
-		if !now.Before(e.expires) {
-			delete(c.entries, k)
-			continue
+	for el := c.order.Front(); el != nil; el = c.order.Front() {
+		if now.Before(entryAt(el).expires) {
+			break
 		}
-		if first || e.expires.Before(oldestAt) {
-			oldest, oldestAt, first = k, e.expires, false
+		c.removeLocked(el)
+	}
+	if len(c.entries) >= c.max {
+		if el := c.order.Front(); el != nil {
+			c.removeLocked(el)
 		}
 	}
-	if len(c.entries) >= c.max && !first {
-		delete(c.entries, oldest)
+}
+
+// entryAt returns the entry an element of order holds. Only put adds to
+// order, always a *attemptSpecEntry; anything else reads as an expired entry,
+// so the next get or eviction drops it.
+func entryAt(el *list.Element) *attemptSpecEntry {
+	if e, ok := el.Value.(*attemptSpecEntry); ok {
+		return e
 	}
+	return &attemptSpecEntry{}
+}
+
+func (c *attemptSpecCache) removeLocked(el *list.Element) {
+	c.order.Remove(el)
+	delete(c.entries, entryAt(el).key)
 }
 
 func (c *attemptSpecCache) drop(id auth.AgentIdentity) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	delete(c.entries, attemptKeyOf(id))
+	if el, ok := c.entries[attemptKeyOf(id)]; ok {
+		c.removeLocked(el)
+	}
 }
 
 func (c *attemptSpecCache) len() int {
