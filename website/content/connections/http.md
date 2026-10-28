@@ -105,13 +105,13 @@ dep. The example's
 [README](https://github.com/dexadata/dexaflow/tree/main/examples/http_load/README.md)
 walks through Connection setup and verification.
 
-## Lite vs Pro caveats
+## Lite vs Cluster caveats
 
 - **Lite (subprocess)** runs the task on the host. Outbound HTTP follows
   the host's network. CORS, proxy, and DNS are the host's problem.
 - **Lite (k3d)** runs the task in a pod. Outbound calls go through the
   k3d cluster network; for host-side services use `host.k3d.internal`.
-- **Pro (Kubernetes)** typical pattern is a NetworkPolicy gating outbound
+- **Cluster (Kubernetes)** typical pattern is a NetworkPolicy gating outbound
   traffic and a sidecar proxy (Envoy / Istio) for retries and mTLS. The
   Dexaflow Connection itself is unchanged.
 

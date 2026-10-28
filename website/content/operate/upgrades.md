@@ -82,9 +82,9 @@ Before installing a newer tag on a Lite install you depend on:
    downgrade case.
 3. If anything looks off, restore from the tarball.
 
-## Pro — upgrade path
+## Cluster: upgrade path
 
-The Pro control plane upgrades with the standard Helm flow: re-run
+The Cluster control plane upgrades with the standard Helm flow: re-run
 `helm upgrade` against the same release, pointing the pinned image tag at the
 newer version.
 
@@ -134,7 +134,7 @@ Keeping a values file under version control and passing `-f` is better still.
 The chart runs a **pre-upgrade migrations Job** (`golang-migrate` against
 `database.url`) before the new `dexaflow-server` rolls out, so the schema is
 brought to parity before any new binary serves traffic. The same startup
-**drift detector** described above protects a Pro control plane from being run
+**drift detector** described above protects a Cluster control plane from being run
 against a database a newer binary already migrated. Use `--version <VERSION>`
 with the chart version — the [latest release](https://github.com/dexadata/dexaflow/releases)
 tag with the leading `v` stripped.
@@ -276,7 +276,7 @@ and one changes the table's `fillfactor`.
 | `039_infra_confirmed_at` | Adds `task_instances.infra_confirmed_at` and then, in a second transaction, stamps the infra failures that already exist as confirmed (#1406). | `ALTER TABLE` with `lock_timeout` 5 s, then an `UPDATE` |
 | `040_tenant_limits` | Adds the per-tenant limit columns and the daily run counter to `tenants`; every default means unlimited. | `ALTER TABLE` in a transaction |
 
-**Where they run.** On Pro, the chart's pre-install/pre-upgrade hook Job
+**Where they run.** On Cluster, the chart's pre-install/pre-upgrade hook Job
 (named `<release>-migrate`, or `<release>-dexaflow-migrate` when the release
 name does not contain the chart name; its pod carries
 `app.kubernetes.io/component: migrate`) runs
@@ -357,7 +357,7 @@ killed while it migrates: all of them leave the same two things behind.
   version N: a migration was interrupted` and quotes golang-migrate's
   `Dirty database version N. Fix and force version.` on its second line, and
   fails without retrying on Kubernetes 1.31 or newer; `dexaflow lite` refuses
-  to start with `database schema is marked dirty at version N`; a Pro control
+  to start with `database schema is marked dirty at version N`; a Cluster control
   plane refuses to boot against a version dirty at the one it requires, and
   waits, not ready, on one dirty at any other version, since a migration may
   be in flight there, while the replicas that were already serving keep
@@ -488,7 +488,7 @@ the same way a retried up does.
 
 ### Rolling back 0.5.1 to 0.5.0
 
-**Pro.** `helm rollback <release> <revision>` rolls the chart and the images
+**Cluster.** `helm rollback <release> <revision>` rolls the chart and the images
 back and leaves the schema where 0.5.1 left it. That is supported: the 0.5.0
 control plane boots against a schema ahead of its own with a warning
 (`database schema is ahead of this binary; proceeding`), because every 0.5.1
@@ -514,7 +514,7 @@ backup page has the
 [worked example](/operate/backup-restore/#worked-example-roll-back-a-botched-upgrade).
 
 **Restoring the 0.5.0 schema.** Where you need the exact 0.5.0 schema back
-(Lite without a snapshot, or Pro before a `helm upgrade` to 0.5.0 with the
+(Lite without a snapshot, or Cluster before a `helm upgrade` to 0.5.0 with the
 hook on), run the down migrations from the highest migration your 0.5.1 build
 carries (040) to 026, with the CLI or
 the 0.5.1 migrate image, which carry the down files; the 0.5.0 image does not:
@@ -692,7 +692,7 @@ table, and existing tenants get `0`, which is unlimited. On a database with
 about one million task instances the migration took under 100 ms in the
 release review, and its down about 20 ms.
 
-**Rolling back 0.5.2 to 0.5.1.** On Pro, `helm rollback <release> <revision>`
+**Rolling back 0.5.2 to 0.5.1.** On Cluster, `helm rollback <release> <revision>`
 is supported and leaves the schema at 041: the 0.5.1 control plane boots
 against it with the warning `database schema is ahead of this binary;
 proceeding` and never reads the new column. As with 0.5.1, prefer it to a
@@ -725,7 +725,7 @@ and every tenant is unlimited again. Rows in every table are preserved.
 - **Migrated Airflow DAGs with `pool_slots` above 1 become weighted** (#1467).
   The next push of such a DAG makes each of those tasks take that many slots
   of its pool, so a pool sized for task count admits fewer of them at once.
-  DAGs that do not set `pool_slots` plan exactly as before. Pro only.
+  DAGs that do not set `pool_slots` plan exactly as before. Cluster only.
 - **Error messages no longer leak local detail.** A failed alert names its
   endpoint by scheme and host only, without the webhook URL (#1370), and a
   tenant schema error no longer names the server's working directory (#1402).
@@ -762,7 +762,7 @@ The migration waits at most 5 seconds for its lock. If a long transaction holds
 version 42 dirty and nothing changed: run `migrate force 41` and retry. Every
 statement can be repeated.
 
-**Rolling back 0.5.3 to 0.5.2.** On Pro, `helm rollback <release> <revision>`
+**Rolling back 0.5.3 to 0.5.2.** On Cluster, `helm rollback <release> <revision>`
 is supported and leaves the schema at 042: the 0.5.2 control plane boots
 against it with the warning `database schema is ahead of this binary;
 proceeding`, never reads the new column, and its inserts get the default. As
@@ -826,7 +826,7 @@ The down drops the column and its check. No other data changes.
   nothing changed: run `migrate force 45` and retry when the table is quiet.
   The statement can be repeated.
 
-**Rolling back 0.5.4 to 0.5.3.** On Pro, `helm rollback <release> <revision>`
+**Rolling back 0.5.4 to 0.5.3.** On Cluster, `helm rollback <release> <revision>`
 is supported and leaves the schema at 046: the 0.5.3 control plane boots
 against it with the warning `database schema is ahead of this binary;
 proceeding`. It ignores the new index, the `deployer` role, the API tokens,
@@ -1050,7 +1050,7 @@ for this change.
   statement can be repeated.
 - **`049_installation`** creates the one-row `installation` table of
   [ADR 0090](/project/adrs/0090-database-replaced-under-a-running-release/),
-  a new table that locks nothing else. The SQL leaves it empty: on Pro the
+  a new table that locks nothing else. The SQL leaves it empty: on Cluster the
   migration Job writes the release's installation id into it after the
   migrations, and into a ConfigMap, `<release>-installation`, that it creates
   in the release namespace. On the upgrade to 0.5.6 the Job records an id for
@@ -1061,7 +1061,7 @@ for this change.
   that ConfigMap (rendered with `rbac.create`); with your own RBAC, grant it
   before upgrading. On Lite the table stays empty and nothing is compared.
 
-**Rolling back 0.5.6.** On Pro, `helm rollback <release> <revision>` leaves
+**Rolling back 0.5.6.** On Cluster, `helm rollback <release> <revision>` leaves
 the schema at 049, and the previous control plane boots against it with the
 warning `database schema is ahead of this binary; proceeding`: it never reads
 or writes the column or the `installation` table. The installation ConfigMap
@@ -1199,7 +1199,7 @@ that cycle before the audit log too. Nothing is lost, and the cycle succeeds
 once a 0.5.8 replica leads. With retention off (the default) 0.5.4 never reads
 the three tables.
 
-**Rolling back 0.5.8.** On Pro, `helm rollback <release> <revision>` leaves the
+**Rolling back 0.5.8.** On Cluster, `helm rollback <release> <revision>` leaves the
 schema at 054, and the previous control plane boots against it with the
 warning `database schema is ahead of this binary; proceeding`; it reads the
 event log through the new index without knowing it, never touches the three
@@ -1228,7 +1228,7 @@ storage (such as in local clusters or evaluation setups), the datastore has no
 persistence guarantees. Any pod recreation, node reboot, node drain, or
 Spot/preemptible reclamation destroys the database volume completely.
 
-Since 0.5.6 a Pro release notices it
+Since 0.5.6 a Cluster release notices it
 ([ADR 0090](/project/adrs/0090-database-replaced-under-a-running-release/)):
 the database no longer carries the release's installation id, so the migration
 Job refuses to migrate it, a booting control plane waits not ready, and one that

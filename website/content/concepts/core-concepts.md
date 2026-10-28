@@ -129,7 +129,7 @@ reaching for a generic "pack tasks together" switch (there isn't one — see bel
 |---|---|---|
 | **Iterating on DAG logic locally** | `dexaflow lite --executor subprocess` | Runs tasks as host processes — **no pods, no image build** — the fast inner loop. (`--executor auto`, the default, uses a real k3d pod-per-task when Docker is present, for fidelity.) Dev-only, unsandboxed. |
 | **A dbt project with many models** | [`dbt_group()`](/author-dags/dbt/) with `granularity: level` or `folder` | Packs the project's models into **grouped tasks** (each group is one `dbt build` = one pod) that dbt orchestrates internally, so *N* models needn't be *N* pods. The default `granularity: node` is one pod per model. |
-| **Amortizing cold start across attempts** | [Warm worker pools](/operate/warm-pools/) (Pro, operator-set) | Reuse **one pod across many attempts of the same DAG version** ([ADR 0058](/project/adrs/0058-warm-worker-pools/)). An operator knob, not a DAG attribute — by design; it never groups *different* tasks. |
+| **Amortizing cold start across attempts** | [Warm worker pools](/operate/warm-pools/) (Cluster, operator-set) | Reuse **one pod across many attempts of the same DAG version** ([ADR 0058](/project/adrs/0058-warm-worker-pools/)). An operator knob, not a DAG attribute, by design; it never groups *different* tasks. |
 
 {{% alert title="There is no generic pack-tasks-into-one-pod knob" color="info" %}}
 Fusing arbitrary operators into a single pod (a generic fused `TaskGroup`) is
