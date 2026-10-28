@@ -150,7 +150,7 @@ Mostly **no**, but a few small adjustments make the seam cleaner once Strategy A
 
 ### 4.1 Today's GCP example DAG — should it stop using its inline helper?
 
-The inline helper in `examples/gcp_gcs_load/dag.py` is **the right shape for today**, before the shim exists. It works on Lite and Pro identically and is the only way for a user to consume our `key_secret_name` extension without the shim.
+The inline helper in `examples/gcp_gcs_load/dag.py` is **the right shape for today**, before the shim exists. It works on Lite and Cluster identically and is the only way for a user to consume our `key_secret_name` extension without the shim.
 
 **After Strategy A.0 lands** (the shim with the GCP resolver), the example should be **rewritten in two halves**:
 

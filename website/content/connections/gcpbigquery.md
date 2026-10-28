@@ -80,7 +80,7 @@ connectors:
 ## Security notes
 
 - **Keyless (Workload Identity / ADC).** No service-account key in the
-  Connection. On Pro/GKE the task pod runs as a Kubernetes SA bound to a GCP
+  Connection. On Cluster/GKE the task pod runs as a Kubernetes SA bound to a GCP
   service account (Workload Identity); on Lite (subprocess) the host's ADC is
   used ([ADR 0035](/project/adrs/0035-cloud-connector-auth-keyless-first/)). The
   Connection carries only project + location.

@@ -1,6 +1,10 @@
 package main
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/dexadata/dexaflow/internal/config"
+)
 
 // guardInsecureSecretsForEdition refuses the dev-only insecure-secrets escape
 // hatch when the chart marks the deployment as the Pro edition (#58, Pro alpha
@@ -15,11 +19,11 @@ func guardInsecureSecretsForEdition(edition string, allowInsecure bool) error {
 	if !allowInsecure {
 		return nil
 	}
-	if edition != "pro" {
+	if !config.IsClusterEdition(edition) {
 		return nil
 	}
-	return errors.New("DEXAFLOW_AGENT_ALLOW_INSECURE_SECRETS=true is not allowed in the Pro edition: " +
-		"a Pro deployment ships secrets only over the TLS-enabled gRPC channel — " +
+	return errors.New("DEXAFLOW_AGENT_ALLOW_INSECURE_SECRETS=true is not allowed in the cluster edition: " +
+		"a cluster deployment ships secrets only over the TLS-enabled gRPC channel: " +
 		"either set agentTLS.enabled=true in the Helm values (with cert-manager) or unset the env var " +
 		"(see ADR 0014 and issue #58)")
 }
@@ -43,13 +47,13 @@ func guardEditionSecurity(edition string, allowInsecure bool, grpcTLSCert, grpcT
 // this. Fail loudly at boot instead. Lite (edition=lite) and the unmarked default
 // keep the plaintext dev loop.
 func guardTLSForEdition(edition, grpcTLSCert, grpcTLSKey string) error {
-	if edition != "pro" {
+	if !config.IsClusterEdition(edition) {
 		return nil
 	}
 	if grpcTLSCert != "" && grpcTLSKey != "" {
 		return nil
 	}
-	return errors.New("the Pro edition requires TLS on the agent gRPC channel, but it is off: " +
+	return errors.New("the cluster edition requires TLS on the agent gRPC channel, but it is off: " +
 		"set both DEXAFLOW_SERVER_GRPC_TLS_CERT and DEXAFLOW_SERVER_GRPC_TLS_KEY (the Helm chart " +
 		"sets them from agentTLS.enabled=true + cert-manager). Booting without them would look " +
 		"healthy but every secrets RPC to a task pod would fail (PermissionDenied: refusing to " +
