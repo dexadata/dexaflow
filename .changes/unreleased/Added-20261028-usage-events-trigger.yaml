@@ -1,0 +1,11 @@
+kind: Added
+body: |-
+  **The database can record one usage event per finished task attempt.**
+  With `usage.events.enabled` on, every write that finishes an attempt also
+  writes a row to `usage_events` in the same transaction: the tenant, the
+  run, the task, the try, the attempt epoch, a revision for a later re-mark,
+  the state, the size and the times (ADR 0096). Migration 055 adds the table
+  and the trigger; recording is off by default and the scheduler leader
+  applies the setting. The service API route that reads the events comes
+  next. (#2174)
+time: 2026-10-28T20:00:00.000000000+00:00

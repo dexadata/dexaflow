@@ -938,6 +938,25 @@ keys; set them through `extraEnv`.
 
 <!-- END GENERATED configref -->
 
+### Usage events (`usage.*`)
+
+With `usage.events.enabled` on, every write that finishes a task attempt also
+writes one row to `usage_events`, in the same transaction
+([ADR 0096](/project/adrs/0096-task-attempt-usage-events/)): the tenant, the
+run, the task, the try, the attempt epoch, a revision for a later re-mark,
+the state, the size (`pool_slots`) and the times. The scheduler leader writes
+the setting to the database within 10 seconds of taking leadership and keeps
+it there, so every replica records the same way. Turning it off stops the recording; the rows already
+written stay. The chart has no value for this key; set it through `extraEnv`.
+
+<!-- BEGIN GENERATED configref settings usage. -->
+
+| Variable | Key | Type | Default | Edition | Purpose |
+|---|---|---|---|---|---|
+| `DEXAFLOW_USAGE_EVENTS_ENABLED` | `usage.events.enabled` | bool | `false` | both | Record one usage event per finished task attempt, in the transaction that finishes it ([ADR 0096](/project/adrs/0096-task-attempt-usage-events/)). The scheduler leader writes this value to the database within 10 seconds of taking leadership and keeps it there, so the leader's setting wins when replicas disagree; its log says which value it wrote. Off by default. |
+
+<!-- END GENERATED configref -->
+
 ### Observability (`observability.*`)
 
 <!-- BEGIN GENERATED configref settings observability. -->

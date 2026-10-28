@@ -19,8 +19,9 @@ cluster and no executor, so they run on a laptop with just Postgres up.
 | 5 | Log tailer — SSE fan-out under many concurrent viewers | — | not yet |
 | 6 | Query plans at scale: hot queries on 1M runs and 5M task instances | [`query_plans/`](query_plans/) | ✅ implemented |
 | 7 | Code-only deploy: p50 of `dexaflow deploy` after a DAG code change, and the warm-up of the new version's pool | [`deploy_p50/`](deploy_p50/) | ✅ implemented |
+| 8 | Usage event trigger: what recording a usage event adds to a settle and to a 1,000-task cascade | [`usage_settle/`](usage_settle/) | ✅ implemented |
 
-Experiments 1, 4, 6 and 7 are built. The others are documented extension points.
+Experiments 1, 4, 6, 7 and 8 are built. The others are documented extension points.
 Experiments 4 and 7 drive a running control plane instead of the packages:
 Experiment 4 needs only an api role process and its Postgres, Experiment 7
 the CLI, and its warm-up half a cluster with warm pools on.
@@ -284,6 +285,25 @@ Output is a Markdown table with one row per deploy (time, builder path,
 registry requests, and with `--warm` the warm worker's appearance, Ready time
 and image pull), the p50, p95 and maximum, and a `PASS` or `FAIL` line; the
 exit code is 1 on `FAIL`. Recorded results live in [`BASELINE.md`](BASELINE.md).
+
+## Experiment 8: usage event trigger
+
+With `usage.events.enabled` on, the trigger of migration 055 inserts one
+`usage_events` row in the transaction of every write that finishes a task
+attempt ([ADR 0096](../../website/content/project/adrs/0096-task-attempt-usage-events.md)).
+The harness registers a DAG of `--tasks` independent tasks, starts them all,
+and times through `SchedulerStore.ApplyTransitions`, switch off then on:
+
+- a single settle, one task from `running` to `success`;
+- a cascade, every task to `upstream_failed` in one statement, the shape of an
+  upstream failure.
+
+The tasks go back to `running` between samples, which records nothing. It
+cleans up its DAG and events and leaves the switch off.
+
+```sh
+go run ./test/load/usage_settle --tasks 1000 --samples 20
+```
 
 ## Adding an experiment
 

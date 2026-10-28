@@ -177,6 +177,27 @@ Read as capacity: about 280 cycles/s on a page with a run in progress is about
 with the whole host shared. One such viewer costs about 27 transactions per
 interval, so 50 of them at 5 s are about 270 transactions per second.
 
+## Usage event trigger
+
+Experiment 8 (#2174), measured when migration 055 landed on a 4 vCPU
+container with Postgres 16 on the same host, `--tasks 1000 --samples 20`,
+the range of the medians over five runs on an idle database (a run right
+after the integration suite read 10 times higher, so measure on a quiet one):
+
+| Case | Switch off | Switch on |
+|---|---:|---:|
+| Single settle, median | 0.65 to 0.86 ms | 0.83 to 1.2 ms |
+| Cascade of 1,000 tasks, median | 20 to 22 ms | 47 to 50 ms |
+
+With the switch off (the default) the trigger's `WHEN` clause keeps it from
+being called for any other write, and for these it returns after reading the
+switch row: the off column is the cost of a release without the trigger.
+With it on, a single settle pays a few tenths of a millisecond, and a
+cascade about 27 µs per task for the revision lookup and the insert. ADR 0096 names a
+statement-level trigger as the fallback, but its transition tables would be
+built for every update of `task_instances`, with the switch off too, so it
+would move a cost onto installs that do not record; the row trigger stays.
+
 ## Targets
 
 The gates of the performance plan, against the rows above (v0.5.0). Two were

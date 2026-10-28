@@ -1172,6 +1172,10 @@ type Querier interface {
 	// user marks failed is neither re-placed nor overridden by a late SUCCESS
 	// record (ADR 0052 amendment).
 	SetTaskInstanceStateByUser(ctx context.Context, arg SetTaskInstanceStateByUserParams) error
+	// Writes the one row of usage_events_switch that the usage event trigger
+	// reads (ADR 0096 point 7). It reports a row only when the value moved, so
+	// the leader can log a change and stay quiet when it rewrites the same value.
+	SetUsageEventsEnabled(ctx context.Context, enabled bool) (int64, error)
 	// Transitions a run's state and stamps the run's own timestamps so the UI can
 	// show its duration: started_at on first entry into 'running', ended_at on a
 	// terminal state. Other timestamps are preserved (the scheduler may re-run).

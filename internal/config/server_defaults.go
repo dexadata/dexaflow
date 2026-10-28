@@ -320,6 +320,9 @@ var serverDefaults = map[string]any{
 	// Digest-pinned images at register (#1703). off keeps every register as
 	// it was.
 	"deploy.require_digest": string(domain.DigestRequireOff),
+	// Task attempt usage events (ADR 0096): off, so the trigger of migration
+	// 055 records nothing until an operator turns it on.
+	"usage.events.enabled": false,
 	// Retention (the leader-only janitor). Every class ships off: nothing is
 	// deleted until an operator sets a window. The pacing values apply once one is.
 	"retention.dag_runs_days":      0,
