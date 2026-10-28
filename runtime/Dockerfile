@@ -226,9 +226,9 @@ ENTRYPOINT ["dexaflow-agent"]
 # files and pip refuses anything else. The lock repeats the base's own pins
 # (Task SDK, certifi), so nothing above moves; only setuptools moves, to a
 # release without pkg_resources (runtime/data/README.md). The lock is complete
-# and was resolved with runtime/data/overrides.txt, which lifts one declared
-# bound on purpose, so pip installs it as is (--no-deps) instead of resolving
-# again and refusing that bound.
+# and was resolved with runtime/data/overrides.txt, which lifts declared
+# bounds on purpose, so pip installs it as is (--no-deps) instead of resolving
+# again and refusing those bounds.
 #
 # mysqlclient (apache-airflow-providers-mysql) ships only as a source
 # distribution: it builds against libmariadb here, in the same layer that then
