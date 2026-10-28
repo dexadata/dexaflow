@@ -212,7 +212,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 			MaxPageLimit:        cfg.Server.MaxPageLimit,
 			MaxRequestBodyBytes: cfg.Server.MaxRequestBodyBytes,
 			MaxUploadBodyBytes:  cfg.Server.MaxUploadBodyBytes,
-			Pools:               cfg.ClusterEdition(),
+			Pools:               cfg.PoolsEnabled(),
 			PoolsReadOnly:       cfg.Server.PoolsReadOnly,
 		},
 		Auth: api.AuthDeps{
