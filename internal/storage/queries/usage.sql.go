@@ -81,6 +81,112 @@ func (q *Queries) DeleteExpiredUsageEvents(ctx context.Context, arg DeleteExpire
 	return count, err
 }
 
+const getUsageEventsState = `-- name: GetUsageEventsState :one
+SELECT s.enabled, p.xid AS pruned_xid, p.event_id AS pruned_id
+FROM usage_events_switch s
+CROSS JOIN usage_events_pruned p
+WHERE s.id AND p.id
+`
+
+type GetUsageEventsStateRow struct {
+	Enabled   bool          `json:"enabled"`
+	PrunedXid pgtype.Uint64 `json:"pruned_xid"`
+	PrunedID  *int64        `json:"pruned_id"`
+}
+
+// Whether recording is on and the pruned mark, read in the snapshot of the
+// page they decide.
+func (q *Queries) GetUsageEventsState(ctx context.Context) (GetUsageEventsStateRow, error) {
+	row := q.db.QueryRow(ctx, getUsageEventsState)
+	var i GetUsageEventsStateRow
+	err := row.Scan(&i.Enabled, &i.PrunedXid, &i.PrunedID)
+	return i, err
+}
+
+const listUsageEvents = `-- name: ListUsageEvents :many
+SELECT e.id, e.xid, t.name AS tenant, COALESCE(d.dag_id, '')::text AS dag_id, COALESCE(r.run_id, '')::text AS run_id,
+       e.task_instance_id, e.task_id, e.map_index, e.try_number, e.attempt_epoch, e.revision,
+       e.state, e.previous_state, e.pool_slots, e.started_at, e.ended_at, e.last_failure_kind, e.recorded_at
+FROM usage_events e
+JOIN tenants t ON t.id = e.tenant_id
+LEFT JOIN dag_runs r ON r.id = e.dag_run_id
+LEFT JOIN dags d ON d.id = r.dag_id
+WHERE e.xid < pg_snapshot_xmin(pg_current_snapshot())
+  AND (e.xid, e.id) > ($1::xid8, $2::bigint)
+ORDER BY e.xid, e.id
+LIMIT $3::int
+`
+
+type ListUsageEventsParams struct {
+	AfterXid pgtype.Uint64 `json:"after_xid"`
+	AfterID  int64         `json:"after_id"`
+	RowLimit int32         `json:"row_limit"`
+}
+
+type ListUsageEventsRow struct {
+	ID              int64              `json:"id"`
+	Xid             pgtype.Uint64      `json:"xid"`
+	Tenant          string             `json:"tenant"`
+	DagID           string             `json:"dag_id"`
+	RunID           string             `json:"run_id"`
+	TaskInstanceID  pgtype.UUID        `json:"task_instance_id"`
+	TaskID          string             `json:"task_id"`
+	MapIndex        int32              `json:"map_index"`
+	TryNumber       int32              `json:"try_number"`
+	AttemptEpoch    int32              `json:"attempt_epoch"`
+	Revision        int32              `json:"revision"`
+	State           TaskState          `json:"state"`
+	PreviousState   TaskState          `json:"previous_state"`
+	PoolSlots       int32              `json:"pool_slots"`
+	StartedAt       pgtype.Timestamptz `json:"started_at"`
+	EndedAt         pgtype.Timestamptz `json:"ended_at"`
+	LastFailureKind *string            `json:"last_failure_kind"`
+	RecordedAt      pgtype.Timestamptz `json:"recorded_at"`
+}
+
+// The events after the cursor in serving order, (xid, id), among those whose
+// writing transaction is below the snapshot's xmin: every transaction that
+// wrote them has finished, and every row written later sorts after them. The
+// DAG and run ids are resolved here; they are empty once the run is deleted.
+func (q *Queries) ListUsageEvents(ctx context.Context, arg ListUsageEventsParams) ([]ListUsageEventsRow, error) {
+	rows, err := q.db.Query(ctx, listUsageEvents, arg.AfterXid, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUsageEventsRow{}
+	for rows.Next() {
+		var i ListUsageEventsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Xid,
+			&i.Tenant,
+			&i.DagID,
+			&i.RunID,
+			&i.TaskInstanceID,
+			&i.TaskID,
+			&i.MapIndex,
+			&i.TryNumber,
+			&i.AttemptEpoch,
+			&i.Revision,
+			&i.State,
+			&i.PreviousState,
+			&i.PoolSlots,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.LastFailureKind,
+			&i.RecordedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setUsageEventsEnabled = `-- name: SetUsageEventsEnabled :execrows
 UPDATE usage_events_switch
 SET enabled = $1, updated_at = now()
@@ -96,4 +202,19 @@ func (q *Queries) SetUsageEventsEnabled(ctx context.Context, enabled bool) (int6
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const usageEventsLagSeconds = `-- name: UsageEventsLagSeconds :one
+SELECT COALESCE(EXTRACT(EPOCH FROM now() - min(e.recorded_at)), 0)::float8 AS lag_seconds
+FROM usage_events e
+WHERE e.xid >= pg_snapshot_xmin(pg_current_snapshot())
+`
+
+// The age in seconds of the oldest event the route cannot serve yet, because
+// a transaction older than it is still open; 0 when there is none.
+func (q *Queries) UsageEventsLagSeconds(ctx context.Context) (float64, error) {
+	row := q.db.QueryRow(ctx, usageEventsLagSeconds)
+	var lag_seconds float64
+	err := row.Scan(&lag_seconds)
+	return lag_seconds, err
 }

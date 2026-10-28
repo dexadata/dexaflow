@@ -93,6 +93,11 @@ type Metrics struct {
 	RetentionRowsEligible  *prometheus.GaugeVec
 	RetentionCycleDuration prometheus.Histogram
 
+	// UsageEventsLag is the age of the oldest usage event (ADR 0096) the
+	// service API cannot serve yet because an older transaction is still
+	// open, set by the leader; 0 while recording is off.
+	UsageEventsLag prometheus.Gauge
+
 	// TLSReloadFailures counts certificate or key files that changed on disk
 	// but failed to load, by listener (api, agent_grpc). The listener keeps
 	// serving the last good pair, so a non-zero rate means a rotation is stuck
@@ -313,7 +318,16 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help:    "Wall-clock duration of one retention janitor cycle, pauses included.",
 			Buckets: []float64{0.1, 1, 10, 30, 60, 300, 900, 1800},
 		}),
+		UsageEventsLag: f.NewGauge(prometheus.GaugeOpts{
+			Name: "dexaflow_usage_events_lag_seconds",
+			Help: "Age of the oldest usage event the service API cannot serve yet because an older transaction is still open; 0 while usage events are not recorded. Set by the scheduler leader.",
+		}),
 	}
+}
+
+// SetUsageEventsLag sets the age of the oldest usage event held back.
+func (m *Metrics) SetUsageEventsLag(d time.Duration) {
+	m.UsageEventsLag.Set(d.Seconds())
 }
 
 // RecordRetentionDeleted counts n rows the retention janitor deleted from table.

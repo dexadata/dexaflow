@@ -14,29 +14,45 @@ import (
 // setting takes to apply it.
 const usageSwitchInterval = 10 * time.Second
 
-// usageSwitch is the store the leader writes usage.events.enabled to.
+// usageSwitch is the store the leader writes usage.events.enabled to, and
+// reads the usage events lag from.
 type usageSwitch interface {
 	SetEventsEnabled(ctx context.Context, enabled bool) (bool, error)
+	EventsLag(ctx context.Context) (time.Duration, error)
+}
+
+// usageLagGauge receives dexaflow_usage_events_lag_seconds.
+type usageLagGauge interface {
+	SetUsageEventsLag(d time.Duration)
 }
 
 // usageSwitchWriter writes this replica's usage.events.enabled to the row the
 // usage event trigger reads (ADR 0096 point 7). Only the leader writes, so its
-// setting wins when replicas disagree.
+// setting wins when replicas disagree. Each write also exports the lag of the
+// events the service API cannot serve yet.
 type usageSwitchWriter struct {
 	enabled bool
 	store   usageSwitch
+	lag     usageLagGauge
 	logger  *slog.Logger
 	written bool
 	failing bool
 }
 
-func newUsageSwitchWriter(enabled bool, store usageSwitch, logger *slog.Logger) *usageSwitchWriter {
-	return &usageSwitchWriter{enabled: enabled, store: store, logger: logger}
+// newUsageSwitchWriter builds the writer; a nil lag drops the gauge.
+func newUsageSwitchWriter(enabled bool, store usageSwitch, lag usageLagGauge, logger *slog.Logger) *usageSwitchWriter {
+	return &usageSwitchWriter{enabled: enabled, store: store, lag: lag, logger: logger}
 }
 
-// write stores the setting. It logs the first write of this process and every
-// write that moved the stored value, and warns once per run of failures.
+// write stores the setting and exports the lag. It logs the first write of
+// this process and every write that moved the stored value, and warns once
+// per run of failures.
 func (w *usageSwitchWriter) write(ctx context.Context) {
+	w.writeSwitch(ctx)
+	w.exportLag(ctx)
+}
+
+func (w *usageSwitchWriter) writeSwitch(ctx context.Context) {
 	changed, err := w.store.SetEventsEnabled(ctx, w.enabled)
 	if err != nil {
 		if !w.failing {
@@ -52,9 +68,28 @@ func (w *usageSwitchWriter) write(ctx context.Context) {
 	w.written = true
 }
 
+// exportLag sets the lag gauge: 0 while recording is off, and otherwise the
+// age of the oldest event held back by an older open transaction. A failed
+// read keeps the last value; the switch write already reports an outage.
+func (w *usageSwitchWriter) exportLag(ctx context.Context) {
+	if w.lag == nil {
+		return
+	}
+	if !w.enabled {
+		w.lag.SetUsageEventsLag(0)
+		return
+	}
+	d, err := w.store.EventsLag(ctx)
+	if err != nil {
+		w.logger.Debug("could not read the usage events lag", "error", err)
+		return
+	}
+	w.lag.SetUsageEventsLag(d)
+}
+
 // startUsageSwitch writes the setting every usageSwitchInterval while this
 // replica leads, so a new leader applies its own within one interval.
-func startUsageSwitch(ctx context.Context, enabled bool, store usageSwitch, leading func() bool, logger *slog.Logger) {
-	w := newUsageSwitchWriter(enabled, store, logger)
+func startUsageSwitch(ctx context.Context, enabled bool, store usageSwitch, lag usageLagGauge, leading func() bool, logger *slog.Logger) {
+	w := newUsageSwitchWriter(enabled, store, lag, logger)
 	gatedtick.Start(ctx, "usage-switch", usageSwitchInterval, leading, logger, func() { w.write(ctx) })
 }
