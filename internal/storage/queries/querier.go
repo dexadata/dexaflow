@@ -407,6 +407,13 @@ type Querier interface {
 	//
 	// The epoch term is the heartbeat's: exact for a token carrying attempt_epoch,
 	// absent for a claim-less one (ADR 0051 amendment).
+	//
+	// 'scheduled' is live too, for a token whose epoch matches (#2201), as in
+	// BindWarmAttempt: the dispatcher claims the epoch and hands the attempt out
+	// before it records queued, and a subprocess agent or a warm worker can ask for
+	// its secrets in that gap. Only the claim mints that epoch and every later
+	// dispatch moves it, so the match names the attempt just handed out. A token
+	// without an epoch cannot be pinned that way and needs queued or running.
 	IsTaskInstanceLive(ctx context.Context, arg IsTaskInstanceLiveParams) (bool, error)
 	LatestRunsForDags(ctx context.Context, arg LatestRunsForDagsParams) ([]LatestRunsForDagsRow, error)
 	// The tenant's unrevoked tokens, newest first; owner_id NULL lists every
