@@ -99,3 +99,9 @@ func validateAgainst(sch *jsonschema.Schema, v any) error {
 	}
 	return nil
 }
+
+// DAGSchemaJSON returns a copy of the embedded dag.json JSON Schema that
+// DAGSpec.Validate applies (pkg/dagspec serves it, #1877).
+func DAGSchemaJSON() []byte {
+	return bytes.Clone(dagSchemaJSON)
+}
