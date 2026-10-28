@@ -31,8 +31,9 @@ func TestRetentionKeepsUsageEventsThirtyDays(t *testing.T) {
 	}
 }
 
-// TestRetentionUsageEventsWindowIsChecked: a negative window fails boot, and 0
-// keeps every event, so recording alone no longer starts the janitor.
+// TestRetentionUsageEventsWindowIsChecked: a negative window fails boot, 0
+// keeps every event, so recording alone no longer starts the janitor, and the
+// pacing is checked only when the window has work.
 func TestRetentionUsageEventsWindowIsChecked(t *testing.T) {
 	// Arrange
 	negative := RetentionSection{UsageEventsDays: -1}
@@ -49,7 +50,10 @@ func TestRetentionUsageEventsWindowIsChecked(t *testing.T) {
 		t.Error("Active(true) with usage_events_days 0 = true, want false")
 	}
 	pacing := RetentionSection{UsageEventsDays: 30}
-	if err := pacing.Validate(); err == nil || !strings.Contains(err.Error(), "retention.batch_size") {
-		t.Errorf("Validate() with the usage window on and zero pacing = %v, want the pacing checked", err)
+	if err := pacing.ValidateWith(true); err == nil || !strings.Contains(err.Error(), "retention.batch_size") {
+		t.Errorf("ValidateWith(true) with the usage window on and zero pacing = %v, want the pacing checked", err)
+	}
+	if err := pacing.ValidateWith(false); err != nil {
+		t.Errorf("ValidateWith(false) with zero pacing = %v, want nil: an install that does not record starts no janitor", err)
 	}
 }

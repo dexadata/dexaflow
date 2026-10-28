@@ -16,6 +16,7 @@ SELECT count(*) FROM (
     SELECT bool_and(h.recorded_at < $1::timestamptz) OVER (ORDER BY h.xid, h.id) AS expired
     FROM (
         SELECT e.xid, e.id, e.recorded_at FROM usage_events e
+        WHERE e.xid < pg_snapshot_xmin(pg_current_snapshot())
         ORDER BY e.xid, e.id
         LIMIT $2::int
     ) h
@@ -42,6 +43,7 @@ WITH head AS (
     SELECT h.xid, h.id, bool_and(h.recorded_at < $1::timestamptz) OVER (ORDER BY h.xid, h.id) AS expired
     FROM (
         SELECT e.xid, e.id, e.recorded_at FROM usage_events e
+        WHERE e.xid < pg_snapshot_xmin(pg_current_snapshot())
         ORDER BY e.xid, e.id
         LIMIT $2::int
     ) h
@@ -59,7 +61,7 @@ mark AS (
     UPDATE usage_events_pruned p
     SET xid = l.xid, event_id = l.id, pruned_at = now()
     FROM last_gone l
-    WHERE p.id
+    WHERE p.id AND (p.xid IS NULL OR (l.xid, l.id) > (p.xid, p.event_id))
     RETURNING p.id
 )
 SELECT count(*) FROM gone
@@ -72,8 +74,10 @@ type DeleteExpiredUsageEventsParams struct {
 
 // Deletes the oldest usage events in serving order, (xid, id), up to
 // row_limit, stopping at the first one recorded at or after the cutoff, so the
-// deleted rows are always a prefix of what the service API serves. The pruned
-// mark moves to the last one in the same statement.
+// deleted rows are always a prefix of what the service API serves. Only
+// events the API can serve are considered, and the pruned mark moves to the
+// last one deleted in the same statement, forward only: an event a very long
+// transaction commits below the mark is deleted without moving it back.
 func (q *Queries) DeleteExpiredUsageEvents(ctx context.Context, arg DeleteExpiredUsageEventsParams) (int64, error) {
 	row := q.db.QueryRow(ctx, deleteExpiredUsageEvents, arg.Cutoff, arg.RowLimit)
 	var count int64

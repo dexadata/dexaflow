@@ -381,10 +381,15 @@ func (r RetentionSection) Active(usageRecording bool) bool {
 	return r.Enabled() || (usageRecording && r.UsageEventsDays > 0)
 }
 
-// Validate rejects a negative window always, and pacing that would make the
-// janitor unbounded or a busy loop when a class is on (the usage events
-// window included, which is on by default).
-func (r RetentionSection) Validate() error {
+// Validate is ValidateWith for an install that does not record usage events.
+func (r RetentionSection) Validate() error { return r.ValidateWith(false) }
+
+// ValidateWith rejects a negative window always, and pacing that would make
+// the janitor unbounded or a busy loop when it has work (Active): a run or
+// audit class, or the usage events window while usageRecording is on. So the
+// default 30 day window checks nothing new on an install that does not
+// record.
+func (r RetentionSection) ValidateWith(usageRecording bool) error {
 	if r.DagRunsDays < 0 {
 		return fmt.Errorf("retention.dag_runs_days must be >= 0 (got %d); 0 keeps every run", r.DagRunsDays)
 	}
@@ -394,7 +399,7 @@ func (r RetentionSection) Validate() error {
 	if r.UsageEventsDays < 0 {
 		return fmt.Errorf("retention.usage_events_days must be >= 0 (got %d); 0 keeps every usage event", r.UsageEventsDays)
 	}
-	if !r.Enabled() && r.UsageEventsDays == 0 {
+	if !r.Active(usageRecording) {
 		return nil
 	}
 	if r.BatchSize < 1 || r.BatchSize > maxRetentionBatchSize {

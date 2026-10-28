@@ -46,16 +46,20 @@ func usageEventsOf(t *testing.T, pg *storage.Postgres, ctx context.Context, runU
 	return got
 }
 
-// enableUsageEvents turns recording on for the test and off again after it,
-// the state every other test of the database expects.
-func enableUsageEvents(t *testing.T, usage *storage.UsageStore, ctx context.Context) {
+// enableUsageEvents turns recording on for the test and puts back the value
+// it found after it.
+func enableUsageEvents(t *testing.T, pg *storage.Postgres, usage *storage.UsageStore, ctx context.Context) {
 	t.Helper()
+	var was bool
+	if err := pg.Pool.QueryRow(ctx, `SELECT enabled FROM usage_events_switch WHERE id`).Scan(&was); err != nil {
+		t.Fatalf("read usage_events_switch: %v", err)
+	}
 	if _, err := usage.SetEventsEnabled(ctx, true); err != nil {
 		t.Fatalf("SetEventsEnabled(true): %v", err)
 	}
 	t.Cleanup(func() {
-		if _, err := usage.SetEventsEnabled(context.Background(), false); err != nil {
-			t.Errorf("SetEventsEnabled(false): %v", err)
+		if _, err := usage.SetEventsEnabled(context.Background(), was); err != nil {
+			t.Errorf("SetEventsEnabled(%v): %v", was, err)
 		}
 	})
 }
@@ -86,6 +90,38 @@ func TestUsageEventsSwitchIsOffByDefault(t *testing.T) {
 	}
 }
 
+// TestUsageEventsRevisionSurvivesDeletedEvents: the next revision of an
+// attempt does not depend on the events still kept, so a mark after
+// retention deleted the earlier events never reuses a revision a consumer
+// already saw; and a mark over a running task records the time of the mark
+// as its end.
+func TestUsageEventsRevisionSurvivesDeletedEvents(t *testing.T) {
+	// Arrange
+	pg, repo, sched, _, ctx := openExecPG(t)
+	usage := storage.NewUsageStore(pg)
+	enableUsageEvents(t, pg, usage, ctx)
+	dagID := fmt.Sprintf("usage_pruned_revision_%d", time.Now().UnixNano())
+	runUUID := seedRunningTask(t, repo, sched, ctx, dagID, "load")
+	if err := sched.ApplyTransition(ctx, runUUID, "load", domain.TaskStateSuccess); err != nil {
+		t.Fatalf("ApplyTransition: %v", err)
+	}
+	if _, err := pg.Pool.Exec(ctx, `DELETE FROM usage_events WHERE dag_run_id = $1::uuid`, runUUID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	markErr := sched.ApplyTransition(ctx, runUUID, "load", domain.TaskStateFailed)
+
+	// Assert
+	if markErr != nil {
+		t.Fatalf("ApplyTransition: %v", markErr)
+	}
+	got := usageEventsOf(t, pg, ctx, runUUID)
+	if len(got) != 1 || got[0].Revision != 1 || got[0].State != "failed" || !got[0].HasEnd {
+		t.Errorf("events = %+v, want revision 1 in failed with an end time", got)
+	}
+}
+
 // TestUsageEventsRecordEachAttemptAndRevision covers ADR 0096 points 1 to 3 on
 // the real write paths: the agent's result is revision 0 of the attempt, a
 // user's mark over it is revision 1, and the relabel to up_for_retry writes
@@ -94,7 +130,7 @@ func TestUsageEventsRecordEachAttemptAndRevision(t *testing.T) {
 	// Arrange
 	pg, repo, sched, exec, ctx := openExecPG(t)
 	usage := storage.NewUsageStore(pg)
-	enableUsageEvents(t, usage, ctx)
+	enableUsageEvents(t, pg, usage, ctx)
 	dagID := fmt.Sprintf("usage_revisions_%d", time.Now().UnixNano())
 	runUUID := seedRunningTask(t, repo, sched, ctx, dagID, "load")
 	id := auth.AgentIdentity{TenantID: defaultTenantID(), DagID: dagID, RunID: runUUID, TaskID: "load", TryNumber: 1}
@@ -132,7 +168,7 @@ func TestUsageEventsRescheduleIsItsOwnAttempt(t *testing.T) {
 	// Arrange
 	pg, repo, sched, exec, ctx := openExecPG(t)
 	usage := storage.NewUsageStore(pg)
-	enableUsageEvents(t, usage, ctx)
+	enableUsageEvents(t, pg, usage, ctx)
 	dagID := fmt.Sprintf("usage_reschedule_%d", time.Now().UnixNano())
 	runUUID := seedRunningTask(t, repo, sched, ctx, dagID, "wait")
 	id := auth.AgentIdentity{TenantID: defaultTenantID(), DagID: dagID, RunID: runUUID, TaskID: "wait", TryNumber: 1}
@@ -168,8 +204,8 @@ func TestUsageEventsRescheduleIsItsOwnAttempt(t *testing.T) {
 		t.Fatalf("events = %+v, want one per poke", got)
 	}
 	for i, e := range got {
-		if e.State != "up_for_reschedule" || e.Revision != 0 || e.TryNumber != 1 {
-			t.Errorf("event %d = %+v, want revision 0 of try 1 in up_for_reschedule", i, e)
+		if e.State != "up_for_reschedule" || e.Revision != 0 || e.TryNumber != 1 || !e.HasStart || !e.HasEnd {
+			t.Errorf("event %d = %+v, want revision 0 of try 1 in up_for_reschedule, with its start and end", i, e)
 		}
 	}
 	if got[1].AttemptEpoch <= got[0].AttemptEpoch {
@@ -184,7 +220,7 @@ func TestUsageEventsFollowTheTransaction(t *testing.T) {
 	// Arrange
 	pg, repo, sched, _, ctx := openExecPG(t)
 	usage := storage.NewUsageStore(pg)
-	enableUsageEvents(t, usage, ctx)
+	enableUsageEvents(t, pg, usage, ctx)
 	dagID := fmt.Sprintf("usage_tx_%d", time.Now().UnixNano())
 	tasks := []domain.TaskSpec{{TaskID: "a", Type: domain.TaskTypePython}, {TaskID: "b", Type: domain.TaskTypePython}, {TaskID: "c", Type: domain.TaskTypePython}}
 	registerSpec(t, repo, ctx, dagID, tasks)

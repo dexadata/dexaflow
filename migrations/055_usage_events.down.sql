@@ -8,6 +8,7 @@ SET LOCAL lock_timeout = '5s';
 
 DROP TRIGGER IF EXISTS task_instances_usage_event ON task_instances;
 DROP FUNCTION IF EXISTS record_usage_event();
+DROP TABLE IF EXISTS usage_event_revisions;
 DROP TABLE IF EXISTS usage_events;
 DROP TABLE IF EXISTS usage_events_switch;
 
