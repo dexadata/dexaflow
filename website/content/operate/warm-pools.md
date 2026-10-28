@@ -9,8 +9,8 @@ weight: 80
 description: Cut task start latency with pre-warmed worker pods.
 ---
 
-{{% alert title="Pro · off by default" color="info" %}}
-Warm worker pools are a **Pro** feature, gated behind
+{{% alert title="Cluster · off by default" color="info" %}}
+Warm worker pools are a **Cluster** feature, gated behind
 `execution.warm_pools_enabled` (default **`false`**). With the flag off,
 Dexaflow runs a **dedicated pod per task attempt** — the historical behavior
 ([ADR 0002](/project/adrs/0002-pod-per-task/)), byte-for-byte unchanged. Lite ignores
@@ -88,8 +88,9 @@ the work, and the same DAG version runs many attempts.
   `service_account` other than the warm workers' falls back the same way. A
   value set under `defaults` (a project-wide `node_selector`, for example) is
   copied onto every task, so it sends every task of the project to a dedicated
-  pod; leave the warm pool off for such a project, since its warm pods would sit
-  idle.
+  pod. A version none of whose tasks is warm-eligible, for this or any reason
+  below, gets no warm pool at all, so no warm pod sits idle next to its
+  dedicated pods.
 - **Non-idempotent tasks.** Warm-pool recovery re-runs an attempt after a worker is
   lost, and the safety argument for "a re-run is harmless" holds only for
   idempotent tasks. This is the same assumption Airflow itself makes; it is a
@@ -111,7 +112,7 @@ task reported warm-eligible runs on a warm worker when one is free.
 ```console
 $ dexaflow deploy
 …
-Deployed etl -> https://pro.example.com
+Deployed etl -> https://cluster.example.com
   image ghcr.io/acme/etl@sha256:4e1f…
   registered version v1.4.0-3f9c2a1b7d4e
   execution  2 tasks warm-eligible; load on a dedicated pod: node_selector set
@@ -130,7 +131,7 @@ The reasons a task takes a dedicated pod, in the order they are checked:
 |---|---|
 | `warm pools off` | `execution.warm_pools_enabled` is off. |
 | `staging enabled` | The DAG uses the staging volume, which a warm pod cannot mount. |
-| `source mode` | The version runs in [source mode](/operate/source-mode/); a warm pod cannot carry its `dag.py`. |
+| `source mode` | The version runs in [source mode](/operate/source-mode/) and `execution.source_mode.warm_pools` is off; a warm pod cannot carry its `dag.py`. With it on, the `dag.py` goes with each assignment ([source mode on warm workers](/operate/source-mode/#warm-workers)). |
 | `service_account set` | The task pins a `service_account` other than the warm workers'. |
 | `<field> set` | The task sets a placement field or pod metadata (`node_selector`, `tolerations`, `affinity`, `topology_spread_constraints`, `priority_class_name`, `runtime_class_name`, `termination_grace_period_seconds`, `resource_claims`, `labels`, `annotations`). |
 | `size N is above the warm pod's 1 unit`, `resources set (a warm pod is 1 unit)` | With `executor.unit` a warm pod is one unit, so only a task of size 1 without its own `resources` fits. |
@@ -140,11 +141,9 @@ The reasons a task takes a dedicated pod, in the order they are checked:
 
 A warm-eligible task still takes a dedicated pod when no warm worker of its
 version is free. The `warm pool` line says what the pool does: `off`, `none`
-(this version gets no warm worker: staging, source mode, an idle target of 0,
-or a server that runs no warm workers) or `on` (the idle workers kept and the
-cap). When the pool is `on`, the `warm pool` line is printed even if no task
-of the version is warm-eligible, since its idle workers then cost without
-serving it. `warming now` is said only for a DAG that declares
+(this version gets no warm worker: staging, source mode without its warm pools, no warm-eligible
+task, an idle target of 0, or a server that runs no warm workers) or `on`
+(the idle workers kept and the cap). `warming now` is said only for a DAG that declares
 `min_idle_workers`, the DAGs that are prewarmed. For a paused one the line
 says the workers start when the DAG is unpaused. For a DAG that declares
 none, whose idle workers come from `minIdleWorkers`, it says they start with
@@ -200,11 +199,33 @@ leader saw: after a leader change the new leader logs and counts each
 prewarmed or draining pool it finds once more.
 
 **Cost.** Each unpaused DAG that declares `min_idle_workers: N` keeps N idle
-warm pods (at most `maxPoolSize`) even with no run. `maxWarmPodsPerTenant`
-does not bound them: the [per-tenant cap](#per-tenant-cap) never starves a
-promised idle floor and raises the tenant's budget to the sum of the floors.
-`min_idle_workers` is not in the authoring schema yet, so today only a
-`dag.json` that carries it is prewarmed.
+warm pods (at most `maxPoolSize`) even with no run, within the tenant's
+`maxWarmPodsPerTenant`: prewarmed pools share what the
+[per-tenant cap](#per-tenant-cap) leaves after the idle floors of the
+tenant's versions with an active run, and the DAGs last by id get fewer
+workers when they do not all fit (a pool whose share drops shrinks with
+`workerIdleTtl`, not at once; a run's idle floor is created at once on top
+of it, so until then the tenant can hold more than the cap, see
+[Per-tenant cap](#per-tenant-cap)).
+
+**Declaring it.** `min_idle_workers` is a top-level key of `dexaflow.yaml`
+(an integer from 0 to 100; the server clamps it to `maxPoolSize`). The
+compile copies it into `dag.json`, where the reconciler reads it:
+
+```yaml title="dexaflow.yaml"
+dag_id: orders
+min_idle_workers: 2
+```
+
+A DAG with `staging.enabled` cannot be warm, so the compile refuses the key
+on one. With warm pools off the key does nothing.
+
+`min_idle_workers` is part of `dexaflow.yaml`, which the
+[version label](/operate/deploy-prerequisites/#8-the-version-label-and-its-409)
+hashes, so changing it makes a new version: a new image tag, and the previous
+version's pool drains like on any deploy. A server older than 0.5.4 accepts
+the key but applies it only while a run of the version is active; it does not
+prewarm.
 
 The practical consequence: the benefit tracks **attempts per version**. A DAG that
 runs thousands of attempts on a stable version pools well; a DAG that ships a new
@@ -410,6 +431,22 @@ path) fails with it on, and a task that reads config baked into the image's home
 dir must point at it explicitly, for example with `DBT_PROFILES_DIR`. The setting
 takes effect on warm pods created after it is turned on: running warm pods keep
 their spec until they recycle (`workerIdleTtl`, `maxWorkerLifetime`).
+
+The sweep is done by the agent inside the task image, so it **needs a task image
+built on runtime v0.5.1 or later**. Each warm worker states in its registration
+whether it does the sweep. With the setting on, a worker that does not confirm
+it (an image built before the confirmation existed, or a pod created before the
+setting was turned on) logs a `warm worker does not confirm it empties /tmp and
+/dev/shm` warning with `reason=attempt_home_sweep_unconfirmed` and counts in
+`dexaflow_scheduler_decisions_total{decision_type="warm_worker_sweep_unconfirmed"}`,
+but still serves attempts, because images built on runtimes from v0.5.1 sweep
+without being able to say so. Once your task images are rebuilt, set
+**`execution.warm_require_attempt_home_sweep`** (Helm:
+`execution.warmRequireAttemptHomeSweep`) to refuse such a worker instead: that
+DAG version's attempts run on dedicated pods, and each refusal counts as
+`decision_type="warm_worker_refused_no_sweep"`. A refused worker exits and the
+pool replaces it, so an image that does not confirm the sweep keeps cycling warm
+pods until it is rebuilt.
 {{% /alert %}}
 
 Because a fresh scrubbed child and a fresh per-attempt token are mandatory, there is
@@ -540,6 +577,36 @@ It is a **reserve-then-ration budget, never a starvation lever**:
   reconciler raises the effective budget to the floor sum and **meters the
   misconfiguration** (so you can see a tenant whose floors overcommit its cap)
   rather than silently starving a promised floor.
+- A **prewarmed** version (a DAG's current version with no active run, see
+  [Prewarm and drain on deploy](#prewarm-and-drain-on-deploy)) does not raise the
+  budget. The tenant's prewarm floors share what the cap leaves after the floors
+  of its versions with an active run, served by DAG id: each takes its
+  `min_idle_workers` or what is left. The order is stable, so the same DAGs keep
+  their pools on every reconcile. When a version's share drops below the idle
+  workers it has (a DAG whose id sorts first is deployed, or a run of another
+  version needs its floor), no worker is deleted: the version stops creating,
+  and its idle workers retire with `workerIdleTtl` and are not replaced. A
+  run's floor does not wait for them: it is created at once, so the tenant
+  exceeds the cap by those idle workers for at most one `workerIdleTtl` after
+  each share drop (a worker's idle TTL runs from when it connected or
+  finished its last attempt). The bound is per drop: a run version with no
+  prewarm of its own drains when its run ends, the prewarmed pool refills,
+  and the next run exceeds the cap again, each time for at most the shorter
+  of the run and one `workerIdleTtl`. Each reconcile that creates such
+  workers logs `creating a run's idle floor past the per-tenant cap` and
+  meters `warm_pool_run_floor_over_retiring_prewarm`. A DAG whose id sorts
+  first gets the room once they have retired. When the floors do not all
+  fit, the server logs the versions that got less (at most 10, and how many
+  more) and meters `warm_pool_prewarm_rationed`, once each time that set
+  changes ([ADR 0082](/project/adrs/0082-warm-pool-follows-the-current-version/)
+  D7).
+  When busy workers already hold the tenant's budget, the floors of versions
+  with an active run take the room that is left before any prewarmed version,
+  whatever their version ids, and what they miss is created on a later
+  reconcile.
+  A rationed version gets its full floor again once one of its runs is active,
+  and a version rationed to no worker logs its prewarm start when it later gets
+  a share.
 - The cap is enforced **only by refusing to create new** warm pods once a tenant is
   at its budget — **never** by deleting a busy worker.
 
@@ -653,9 +720,10 @@ others is read — the deployment is byte-for-byte pod-per-task.
 | `maxAttemptsPerWorker` | `MAX_ATTEMPTS_PER_WORKER` | int (attempts) | `50` | Attempts a worker serves before it drains + recycles. Must be ≥ 1. Bounds stale-image / leaked-credential exposure. |
 | `maxWorkerLifetime` | `MAX_WORKER_LIFETIME` | duration | `1h` | Wall-clock ceiling on a worker before it drains + recycles, independent of attempt count. Must be > 0. |
 | `workerIdleTtl` | `WORKER_IDLE_TTL` | duration | `5m` | How long an idle worker is kept before recycle. Must be > 0. |
-| `maxWarmPodsPerTenant` | `MAX_WARM_PODS_PER_TENANT` | int (pods) | `100` | Cap on total warm pods a **single tenant** may hold across all its DAG versions (M4). Reserve-then-ration; promised idle floors are always honored. Must be ≥ 1. |
+| `maxWarmPodsPerTenant` | `MAX_WARM_PODS_PER_TENANT` | int (pods) | `100` | Cap on total warm pods a **single tenant** may hold across all its DAG versions (M4). Reserve-then-ration; the idle floors of versions with an active run are always honored, and prewarmed versions share what is left. Must be ≥ 1. |
 | `warmReadOnlyRootFilesystem` | `WARM_READ_ONLY_ROOT_FILESYSTEM` | bool | `false` | Read-only warm root, a per-attempt `$HOME` and XDG dirs, and `/tmp` and `/dev/shm` emptied around each attempt (see [isolation](#isolation-between-attempts)). Applies to warm pods created after it is turned on. Dedicated task pods are not affected. |
 | `warmPoolEventRefill` | `WARM_POOL_EVENT_REFILL` | bool | `false` | Event-driven refill from a warm-pod informer, with parallel creates (up to 4). Off = the 30s polling reconciler with a pod list per tick. |
+| `sourceMode.warmPools` | `SOURCE_MODE_WARM_POOLS` | bool | `false` | Let [source-mode](/operate/source-mode/#warm-workers) versions run on warm workers, which receive the `dag.py` with each assignment. Needs a runtime image whose agent is from 0.5.7 or later. Ignored while source mode is off. |
 
 Durations accept Go duration strings (`"90s"`, `"5m"`, `"1h"`). When
 `warmPoolsEnabled` is on, the server **validates these at boot and refuses to start**

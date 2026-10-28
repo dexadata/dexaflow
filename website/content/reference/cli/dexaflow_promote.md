@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_promote/
 title: "dexaflow promote"
 linkTitle: "promote"
-weight: 49
+weight: 52
 ---
 
 Register on one target the exact version another target runs (same digest, no build).

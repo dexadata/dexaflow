@@ -22,6 +22,26 @@ func (q *Queries) CountVariables(ctx context.Context, tenantID pgtype.UUID) (int
 	return count, err
 }
 
+const countVariablesFiltered = `-- name: CountVariablesFiltered :one
+SELECT count(*) FROM variables
+WHERE tenant_id = $1
+  AND ($2::text IS NULL OR key ILIKE '%' || $2 || '%')
+  AND ($3::text IS NULL OR key ILIKE $3 || '%')
+`
+
+type CountVariablesFilteredParams struct {
+	TenantID         pgtype.UUID `json:"tenant_id"`
+	KeyPattern       *string     `json:"key_pattern"`
+	KeyPrefixPattern *string     `json:"key_prefix_pattern"`
+}
+
+func (q *Queries) CountVariablesFiltered(ctx context.Context, arg CountVariablesFilteredParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countVariablesFiltered, arg.TenantID, arg.KeyPattern, arg.KeyPrefixPattern)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteVariable = `-- name: DeleteVariable :execrows
 DELETE FROM variables WHERE tenant_id = $1 AND key = $2
 `
@@ -125,6 +145,56 @@ func (q *Queries) ListVariables(ctx context.Context, arg ListVariablesParams) ([
 	items := []ListVariablesRow{}
 	for rows.Next() {
 		var i ListVariablesRow
+		if err := rows.Scan(&i.Key, &i.Value, &i.Description); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVariablesFiltered = `-- name: ListVariablesFiltered :many
+SELECT key, value, description
+FROM variables
+WHERE tenant_id = $1
+  AND ($4::text IS NULL OR key ILIKE '%' || $4 || '%')
+  AND ($5::text IS NULL OR key ILIKE $5 || '%')
+ORDER BY key
+LIMIT $2 OFFSET $3
+`
+
+type ListVariablesFilteredParams struct {
+	TenantID         pgtype.UUID `json:"tenant_id"`
+	Limit            int32       `json:"limit"`
+	Offset           int32       `json:"offset"`
+	KeyPattern       *string     `json:"key_pattern"`
+	KeyPrefixPattern *string     `json:"key_prefix_pattern"`
+}
+
+type ListVariablesFilteredRow struct {
+	Key         string  `json:"key"`
+	Value       string  `json:"value"`
+	Description *string `json:"description"`
+}
+
+func (q *Queries) ListVariablesFiltered(ctx context.Context, arg ListVariablesFilteredParams) ([]ListVariablesFilteredRow, error) {
+	rows, err := q.db.Query(ctx, listVariablesFiltered,
+		arg.TenantID,
+		arg.Limit,
+		arg.Offset,
+		arg.KeyPattern,
+		arg.KeyPrefixPattern,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListVariablesFilteredRow{}
+	for rows.Next() {
+		var i ListVariablesFilteredRow
 		if err := rows.Scan(&i.Key, &i.Value, &i.Description); err != nil {
 			return nil, err
 		}

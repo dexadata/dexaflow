@@ -2,6 +2,7 @@ package agentrpc
 
 import (
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -66,7 +67,14 @@ type registeredWorker struct {
 	// sourced from the downward API). It is the durable key a started attempt is
 	// bound to; distinct from identity, which is the authenticated stream credential.
 	podName string
-	send    chan *agentv1.WorkAssignment
+	// sourceDelivery is the worker's WorkerRegister.source_delivery: it runs a
+	// source-mode attempt from the dag_source its assignment carries (ADR
+	// 0095). Only such a worker is handed a source-mode assignment.
+	sourceDelivery bool
+	// warnedNoSource records that this entry was already reported as passed
+	// over for a source-mode attempt, so the warning comes once per worker.
+	warnedNoSource bool
+	send           chan *agentv1.WorkAssignment
 	// busy is set once the worker acks an assignment as started; it is cleared
 	// when the worker signals SlotFree.
 	busy bool
@@ -155,7 +163,51 @@ type WorkerRegistry struct {
 	tombstoneFor time.Duration
 	// now is the clock the liveness grace is measured on. Injectable for tests.
 	now func() time.Time
+	// sweepPolicy is what a registration that does not confirm the /tmp and
+	// /dev/shm sweep gets (#1678); sweepDecisions meters each one.
+	sweepPolicy    SweepPolicy
+	sweepDecisions DecisionRecorder
 }
+
+// DecisionRecorder meters a control-plane decision by type. The production
+// implementation is observability.Metrics (dexaflow_scheduler_decisions_total).
+type DecisionRecorder interface {
+	RecordSchedulerDecision(decisionType string)
+}
+
+// SweepPolicy is how the registry treats a warm worker whose register does not
+// confirm attempt_home_sweep (#1678).
+type SweepPolicy int
+
+const (
+	// SweepIgnore accepts every worker without looking (the read-only root is
+	// off, so no sweep is expected).
+	SweepIgnore SweepPolicy = iota
+	// SweepWarn accepts the worker, logs a warning and meters it.
+	SweepWarn
+	// SweepRefuse refuses the registration, logs and meters it, so the worker
+	// never joins the pool and its DAG version's attempts run on dedicated pods.
+	SweepRefuse
+)
+
+// DecisionWarmWorkerSweepUnconfirmed is the decision type metered when a warm
+// worker that does not confirm the attempt home sweep is accepted (SweepWarn).
+const DecisionWarmWorkerSweepUnconfirmed = "warm_worker_sweep_unconfirmed"
+
+// DecisionWarmWorkerRefusedNoSweep is the decision type metered when a warm
+// worker is refused because it does not confirm the attempt home sweep
+// (SweepRefuse).
+const DecisionWarmWorkerRefusedNoSweep = "warm_worker_refused_no_sweep"
+
+// DecisionWarmWorkerNoSourceDelivery is the decision type metered, once per
+// worker, when a source-mode attempt passes over a free warm worker that did
+// not register with source_delivery (ADR 0095): its agent predates it, and
+// the attempt takes a dedicated pod unless another worker can run it.
+const DecisionWarmWorkerNoSourceDelivery = "warm_worker_no_source_delivery"
+
+// ReasonAttemptHomeSweepUnconfirmed is the stable reason logged for a warm
+// worker that does not confirm the sweep, and carried by its refusal.
+const ReasonAttemptHomeSweepUnconfirmed = "attempt_home_sweep_unconfirmed"
 
 // NewWorkerRegistry builds a registry whose reclaim events are delivered to
 // onReclaim (may be nil).
@@ -182,6 +234,33 @@ func (r *WorkerRegistry) SetOnClaim(fn func()) {
 	r.onClaim = fn
 }
 
+// SetSweepPolicy sets how the registry treats a warm worker whose register
+// does not confirm attempt_home_sweep (#1678). With
+// execution.warm_read_only_root_filesystem on, isolation between attempts
+// relies on the agent in the task image to empty /tmp and /dev/shm, and an
+// agent built on an older runtime silently does not. rec (may be nil) meters
+// each unconfirmed worker. Call it before the registry serves workers.
+func (r *WorkerRegistry) SetSweepPolicy(p SweepPolicy, rec DecisionRecorder) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sweepPolicy = p
+	r.sweepDecisions = rec
+}
+
+// SweepPolicy reports the policy SetSweepPolicy set (SweepIgnore by default).
+func (r *WorkerRegistry) SweepPolicy() SweepPolicy {
+	p, _ := r.sweepPolicyAndRecorder()
+	return p
+}
+
+// sweepPolicyAndRecorder reports the sweep policy and the recorder its
+// decisions are metered on.
+func (r *WorkerRegistry) sweepPolicyAndRecorder() (SweepPolicy, DecisionRecorder) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sweepPolicy, r.sweepDecisions
+}
+
 // claimed runs the onClaim hook, if any, outside the registry lock.
 func (r *WorkerRegistry) claimed() {
 	r.mu.Lock()
@@ -206,6 +285,22 @@ func (r *WorkerRegistry) claimed() {
 // for longer than the grace; in the stale case the old entry's superseded
 // channel is closed so its handler ends. The fresh entry starts free.
 func (r *WorkerRegistry) Register(identity, dagVersion, podName string, send chan *agentv1.WorkAssignment, streamDone <-chan struct{}) (*registeredWorker, error) {
+	return r.RegisterWorker(identity, dagVersion, WorkerInfo{PodName: podName}, send, streamDone)
+}
+
+// WorkerInfo is what a warm worker's registration says about it besides its
+// identity and pool: the locator a started attempt is bound to, and what it
+// can run.
+type WorkerInfo struct {
+	// PodName is WorkerRegister.pod_name.
+	PodName string
+	// SourceDelivery is WorkerRegister.source_delivery (ADR 0095).
+	SourceDelivery bool
+}
+
+// RegisterWorker is Register with everything the registration states about
+// the worker.
+func (r *WorkerRegistry) RegisterWorker(identity, dagVersion string, info WorkerInfo, send chan *agentv1.WorkAssignment, streamDone <-chan struct{}) (*registeredWorker, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := r.now()
@@ -219,13 +314,14 @@ func (r *WorkerRegistry) Register(identity, dagVersion, podName string, send cha
 		close(old.superseded)
 	}
 	w := &registeredWorker{
-		identity:   identity,
-		dagVersion: dagVersion,
-		podName:    podName,
-		send:       send,
-		streamDone: streamDone,
-		lastSeen:   now,
-		superseded: make(chan struct{}),
+		identity:       identity,
+		dagVersion:     dagVersion,
+		podName:        info.PodName,
+		sourceDelivery: info.SourceDelivery,
+		send:           send,
+		streamDone:     streamDone,
+		lastSeen:       now,
+		superseded:     make(chan struct{}),
 	}
 	r.workers[identity] = w
 	r.addFreeLocked(w)
@@ -297,13 +393,36 @@ func (r *WorkerRegistry) Deregister(w *registeredWorker) {
 	}
 }
 
+// retireIfIdle takes w off the free set and reports true when it is idle: still
+// this identity's entry, not busy with an acked attempt, and holding no
+// assignment that awaits its ack. An expired lease kept as a tombstone counts as
+// awaiting its ack: the worker may still ack it late and run it (#1600). It
+// reports false, changing nothing, for a
+// worker that is serving or about to serve. The caller ends the worker's stream
+// on true, so taking it off the free set in the same step keeps an assignment
+// from being handed to a stream that is closing.
+func (r *WorkerRegistry) retireIfIdle(w *registeredWorker) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.workers[w.identity] != w || w.busy {
+		return false
+	}
+	for _, ls := range r.leases {
+		if ls.worker == w {
+			return false
+		}
+	}
+	r.removeFreeLocked(w)
+	return true
+}
+
 // Assign hands a WorkAssignment to some free worker of dagVersion by pushing it
 // onto that worker's outbound channel and starting its lease. It returns false
 // when no free worker of that dag_version exists (nothing was handed out and no
 // lease was started).
 func (r *WorkerRegistry) Assign(dagVersion string, a *agentv1.WorkAssignment) bool {
 	r.mu.Lock()
-	w := r.takeFreeLocked(dagVersion)
+	w := r.takeFreeLocked(dagVersion, len(a.GetDagSource()) > 0)
 	if w == nil {
 		r.mu.Unlock()
 		return false
@@ -488,9 +607,31 @@ func (r *WorkerRegistry) removeFreeLocked(w *registeredWorker) {
 	}
 }
 
-func (r *WorkerRegistry) takeFreeLocked(dagVersion string) *registeredWorker {
+// warnNoSourceDeliveryLocked logs and meters, once per worker entry, that a
+// source-mode attempt passed w over.
+func (r *WorkerRegistry) warnNoSourceDeliveryLocked(w *registeredWorker) {
+	if w.warnedNoSource {
+		return
+	}
+	w.warnedNoSource = true
+	slog.Warn("warm worker passed over for a source-mode attempt: its agent does not confirm source delivery; rebuild the source mode runtime image on a runtime from 0.5.7 or later",
+		"reason", DecisionWarmWorkerNoSourceDelivery, "identity", w.identity, "dag_version", w.dagVersion, "pod_name", w.podName)
+	if r.sweepDecisions != nil {
+		r.sweepDecisions.RecordSchedulerDecision(DecisionWarmWorkerNoSourceDelivery)
+	}
+}
+
+// takeFreeLocked removes and returns a free worker of dagVersion, nil when
+// none is free. With needSource only a worker that registered with
+// source_delivery qualifies (ADR 0095): an older worker would run a
+// source-mode attempt without its dag.py.
+func (r *WorkerRegistry) takeFreeLocked(dagVersion string, needSource bool) *registeredWorker {
 	set := r.free[dagVersion]
 	for id, w := range set {
+		if needSource && !w.sourceDelivery {
+			r.warnNoSourceDeliveryLocked(w)
+			continue
+		}
 		delete(set, id)
 		if len(set) == 0 {
 			delete(r.free, dagVersion)

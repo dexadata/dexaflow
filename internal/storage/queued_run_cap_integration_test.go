@@ -33,7 +33,7 @@ func finishedRun(t *testing.T, ctx context.Context, repo *storage.Repository, st
 	if err := store.ApplyTransition(ctx, runUUID, "a", domain.TaskStateSuccess); err != nil {
 		t.Fatalf("finish task of %s: %v", runID, err)
 	}
-	if err := store.SetRunState(ctx, runUUID, domain.DagRunStateSuccess); err != nil {
+	if _, err := store.SetRunState(ctx, runUUID, domain.DagRunStateRunning, domain.DagRunStateSuccess); err != nil {
 		t.Fatalf("finish %s: %v", runID, err)
 	}
 	return runUUID
@@ -182,7 +182,7 @@ func TestPatchQueuedResetsStartedAtIntegration(t *testing.T) {
 	dagID := fmt.Sprintf("patch_queued_%d", time.Now().UnixNano())
 	registerSpec(t, repo, ctx, dagID, []domain.TaskSpec{{TaskID: "a", Type: domain.TaskTypePython}})
 	createRun(t, ctx, repo, dagID, "r1", domain.DagRunStateQueued)
-	if err := store.SetRunState(ctx, activeRuns(t, ctx, store, dagID)["r1"].RunID, domain.DagRunStateRunning); err != nil {
+	if _, err := store.SetRunState(ctx, activeRuns(t, ctx, store, dagID)["r1"].RunID, domain.DagRunStateQueued, domain.DagRunStateRunning); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.SetDagRunState(ctx, "default", dagID, "r1", string(domain.DagRunStateFailed)); err != nil {
@@ -232,4 +232,47 @@ func TestRunActionAuditKeepsRequestedStateIntegration(t *testing.T) {
 		}
 	}
 	t.Errorf("no dagrun.mark.queued entry with requested_state running and run_id r1: %+v", entries)
+}
+
+// TestStartQueuedRunStampsTheStartSoTheReaperSparesItIntegration: a run can
+// wait in queued under the max_active_runs start cap for longer than the orphan
+// reaper's quiet window. Its task instances are all none until the tick after
+// the start plans them, so the started_at that StartQueuedRun stamps is the
+// only fresh activity the reaper sees, and it must keep the reaper from
+// failing a run that has just started. Once that start is old too, the same
+// run is reaped, so the window the test uses does reap a quiet run.
+func TestStartQueuedRunStampsTheStartSoTheReaperSparesItIntegration(t *testing.T) {
+	repo, store, pg, ctx := openInfra(t)
+	dagID := fmt.Sprintf("queued_start_stamp_%d", time.Now().UnixNano())
+	registerSpec(t, repo, ctx, dagID, []domain.TaskSpec{{TaskID: "a", Type: domain.TaskTypePython, Entrypoint: "dag:a"}})
+	createRun(t, ctx, repo, dagID, "r1", domain.DagRunStateQueued)
+	run := activeRuns(t, ctx, store, dagID)["r1"]
+	if _, err := pg.Pool.Exec(ctx, `UPDATE dag_runs SET queued_at = now() - interval '1 hour', started_at = NULL
+		WHERE id = $1::uuid`, run.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MaterializeTasks(ctx, run.RunID, run.Tasks); err != nil {
+		t.Fatal(err)
+	}
+	started, err := store.StartQueuedRun(ctx, run.RunID, run.TenantID)
+	if err != nil || !started {
+		t.Fatalf("start: started=%v err=%v", started, err)
+	}
+	quietBefore := time.Now().Add(-time.Minute)
+	reaped, err := store.ReapRun(ctx, run.RunID, quietBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reaped {
+		t.Fatal("a run started a moment ago was reaped as an orphan: its start was not stamped")
+	}
+	if st := dagRunStateOf(t, ctx, repo, dagID, "r1"); st != domain.DagRunStateRunning {
+		t.Fatalf("the started run: state %q, want running", st)
+	}
+	if _, err := pg.Pool.Exec(ctx, `UPDATE dag_runs SET started_at = now() - interval '1 hour' WHERE id = $1::uuid`, run.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if reaped, err := store.ReapRun(ctx, run.RunID, quietBefore); err != nil || !reaped {
+		t.Errorf("control: a run quiet for an hour is reaped: reaped=%v err=%v", reaped, err)
+	}
 }

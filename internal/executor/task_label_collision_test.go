@@ -64,7 +64,7 @@ func TestTaskIDLabelCollisionDoesNotCrossTasks(t *testing.T) {
 			if pres != PodPresenceAbsent {
 				t.Errorf("presence of %s, which has no pod, = %v; the sibling's pod must not count", reaped, pres)
 			}
-			if err = e.DeleteTaskPod(ctx, attemptOfTask(reaped)); err != nil {
+			if _, err = e.DeleteTaskPod(ctx, attemptOfTask(reaped)); err != nil {
 				t.Fatal(err)
 			}
 			got, err := cs.CoreV1().Pods("leoflow").Get(ctx, other.Name, metav1.GetOptions{})
@@ -124,7 +124,7 @@ func TestPodWithoutRawTaskIDKeepsLabelMatching(t *testing.T) {
 	if pres, err := e.TaskPodPresence(ctx, attemptOfTask("load_a")); err != nil || pres != PodPresenceLive {
 		t.Errorf("a pre-annotation pod must still read live for its task, got %v err=%v", pres, err)
 	}
-	if err := e.DeleteTaskPod(ctx, attemptOfTask("load_a")); err != nil {
+	if _, err := e.DeleteTaskPod(ctx, attemptOfTask("load_a")); err != nil {
 		t.Fatal(err)
 	}
 	got, err := cs.CoreV1().Pods("leoflow").Get(ctx, legacy.Name, metav1.GetOptions{})

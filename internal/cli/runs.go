@@ -339,7 +339,7 @@ func streamTaskLogs(ctx context.Context, w io.Writer, prefix, base, token, dagID
 	}
 	// No client timeout: a followed stream is intentionally long-lived, and an
 	// un-followed read completes as soon as the body is drained.
-	resp, err := (&http.Client{}).Do(req)
+	resp, err := cliHTTPClient(0).Do(req)
 	if err != nil {
 		return fmt.Errorf("requesting %s: %w", url, err)
 	}
@@ -401,7 +401,7 @@ func apiRequest(ctx context.Context, method, url, token string, body []byte) (st
 	if err != nil {
 		return 0, nil, err
 	}
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	resp, err := cliHTTPClient(30 * time.Second).Do(req)
 	if err != nil {
 		return 0, nil, fmt.Errorf("requesting %s: %w", url, err)
 	}

@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_workspace_init/
 title: "dexaflow workspace init"
 linkTitle: "workspace init"
-weight: 75
+weight: 80
 ---
 
 Create a workspace: dexaflow.workspace.yaml, dags/ and .gitignore.

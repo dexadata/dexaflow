@@ -41,6 +41,33 @@ already `running`, a PATCH to `running` changes nothing and answers with the
 run as it is. Setting `queued` also clears the run's start date, so the
 scheduler stamps a new one when it starts the run.
 
+## Clearing on the latest version
+
+`POST /api/v2/dags/{dag_id}/clearTaskInstances` and
+`POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear` take
+`run_on_latest_version`, as Airflow 3.2 does. With `true`, a finished run
+(`success` or `failed`, no task instance `queued` or `running`) moves to the
+DAG's current version: the clear creates the task instances of the tasks that
+version adds and marks `removed` the ones of the tasks it dropped. A run that
+is still running keeps its DAG version, and the cleared tasks re-run on that
+version. Both routes, dry run included, then add the Dexaflow field
+`run_on_latest_version_not_applied`, one entry per such run with its
+`dag_run_id` and the `reason`; the field is left out when every run moved or
+the option was not asked:
+
+```json
+"run_on_latest_version_not_applied": [
+  {"dag_run_id": "manual__2026-10-16T09:00:00+00:00",
+   "reason": "the run is running: only a finished run moves to the current version"}
+]
+```
+
+To move such a run, wait for it to finish (or mark it failed or success and
+let its running tasks end), then clear again. [Clearing a run that is still
+running](/author-dags/dag-authoring/#clearing-a-run-that-is-still-running) has
+the steps and an example. An unknown `dag_run_id` answers `404` before anything
+is cleared.
+
 ## Paging
 
 List endpoints page with `limit` and `offset`, as Airflow 3.2 does, and keep
@@ -68,7 +95,8 @@ curl -sS -H "Authorization: Bearer $TOKEN" \
 ```
 
 Runs that share a logical date are ordered by run id, so both modes return
-stable pages. With a `state` filter the two modes can report different
-`total_entries` for a DAG with more than 10000 runs: offset paging filters and
-counts the newest 10000 runs, cursor paging every run of the DAG. Browsers on
+stable pages, and both count every run that matches the filters. A cursor
+page does not count again: it reports the `total_entries` of the page that
+issued its cursor, so the total holds still while you page, and rows added
+since show on the next walk from the first page. Browsers on
 an allowed CORS origin can read the `Dexaflow-Next-Cursor` and `Link` headers.

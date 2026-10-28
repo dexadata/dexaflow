@@ -42,7 +42,7 @@ Then open **<http://localhost:8080>** and log in as **`admin@dexaflow.local`** /
 {{% alert title="What you're looking at" color="success" %}}
 One process serves the API (`/api/v2`), the internal UI API (`/ui/*`), and the
 React UI (ADR 0017). It auto-applies migrations and seeds the admin user on
-first boot. The three operating modes (Lite · Pro-soon · Demo) are
+first boot. The three operating modes (Lite · Cluster · Demo) are
 described in [Operating modes](/concepts/editions/).
 {{% /alert %}}
 
@@ -77,9 +77,24 @@ merge. They are not bureaucracy; they are why the codebase stays an A+.
 - **Strict TDD** — every line of production code is written against a *failing*
   test (red → green → refactor). The preferred shape is two commits: a `test:`
   commit that fails, then the `feat:`/`fix:` that makes it pass. ([ADR 0011](/project/adrs/))
+- **Every bug fix ships a regression test** that reproduces the bug, fails
+  without the fix and passes with it. ([Fix a bug](/contribute/recipes/fix-a-bug/))
 - **Go Report Card A+** — gofmt, govet, gocyclo ≤ 15, golint, ineffassign, misspell,
   license, plus the extended golangci-lint stack. `make lint` clean every commit.
   ([ADR 0012](/project/adrs/))
+- **Go files stay at or under 1,500 lines**, not counting tests and generated
+  code. `scripts/check-go-file-length.sh` fails CI on a longer file. The files
+  already over it are pinned at their length in
+  `scripts/go-file-length-allowlist.txt` and may not grow; a change that
+  shortens one lowers its number, and a split that brings it under the limit
+  removes its line.
+- **Every `//nolint` names its linters and says why**, as in
+  `//nolint:gosec // G304: the user's own config file`; nolintlint refuses a
+  bare or blanket directive.
+- **Shell scripts pass shellcheck** at warning severity (`make lint` runs it
+  when shellcheck is installed; CI always does). **Dockerfiles pass hadolint**
+  at warning severity; a finding that is deliberate gets a
+  `# hadolint ignore=<rule>` line with the reason in the comment above it.
 - **GoDocs on every exported identifier** — starting with the name, ending with a period.
 - **English** for all code, comments, commit messages, and docs.
 - **No new dependency** without justification; the supply-chain scans
@@ -105,7 +120,7 @@ Comment on the issue to claim it before starting, so effort isn't duplicated.
 
 Open a [new issue](https://github.com/dexadata/dexaflow/issues/new/choose) and
 pick **Bug report**. The form asks for repro steps, how you're running Dexaflow
-(Lite / Pro / Demo), and environment — fill it in fully so we can
+(Lite / Cluster / Demo), and environment; fill it in fully so we can
 reproduce.
 {{% /tab %}}
 {{% tab header="Propose a feature" %}}
@@ -126,7 +141,7 @@ code. This avoids misaligned designs and wasted effort.
 
 ```bash
 # 1. Fork on GitHub, then clone YOUR fork and add the upstream remote
-git clone https://github.com/<you>/leoflow.git
+git clone https://github.com/<you>/dexaflow.git
 cd dexaflow
 git remote add upstream https://github.com/dexadata/dexaflow.git
 
@@ -145,6 +160,11 @@ git push -u origin fix/clear-error-message
 ```
 
 - **Branch names:** `feat/…`, `fix/…`, `docs/…`, `test/…`, `refactor/…`, `chore/…`.
+- **Sign-off (DCO):** every commit ends with `Signed-off-by: Your Name
+  <you@example.com>`, the author's name and email, under the
+  [Developer Certificate of Origin](https://developercertificate.org).
+  `git commit -s` adds it, and so does the hook `make setup` installs; the
+  "DCO" check on the pull request names any commit without it.
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) —
   `feat: add XCom schema validation`, `fix: handle pod OOMKilled`, `test: failing
   test for retry backoff`.
@@ -219,7 +239,10 @@ accepted from first-time contributors** — open a discussion issue first.
 ## 6. The CI gates
 
 Every PR runs, and must pass: the **build + unit/integration tests** with the
-per-package coverage floor, **golangci-lint** (the A+ stack), the
+per-package coverage floor (the total, each package's coverage and its change
+against the base branch are in the "Test + Coverage" job summary, and main's
+total is the README's coverage badge), **golangci-lint** (the A+ stack),
+**shellcheck**, **hadolint**, the
 **security** suite (govulncheck, gosec, Trivy, CodeQL, gitleaks), the
 **CHANGELOG guard** (a fragment, a hand-written entry, or a `Skip-changelog:`
 line or label), the **docs guard** (an edit under `website/content/`, or a
@@ -265,7 +288,7 @@ with live reload:
 
 ```bash
 cd website
-hugo server     # serves at http://localhost:1313/leoflow/ (the subpath matters)
+hugo server     # serves at http://localhost:1313/
 ```
 
 The CLI and Go references are **generated, not written**: `website/scripts/gen-cli.sh`

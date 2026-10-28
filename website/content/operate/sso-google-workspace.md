@@ -46,7 +46,7 @@ auth:
     issuer: https://accounts.google.com
     clientId: "<client-id>.apps.googleusercontent.com"
     existingSecret: dexaflow-google-oidc   # key: oidcClientSecret
-    redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
+    redirectUrl: https://dexaflow.example.com/api/v2/auth/oidc/callback
 
     # The tenant pin. On Google the claim is hd and its value is the Workspace
     # domain. A login whose hd is absent or not listed here is rejected, and it
@@ -162,8 +162,8 @@ Nothing changes at the IdP for this: the redirect URL Google calls is still
 - `--sso` asks for single sign-on in a browser explicitly and fails when the
   server does not offer it. `--timeout` (default 5m) bounds the wait for the
   approval. The command prints which method it chose and why.
-- `--username`, `--password` or `--password-stdin` (or `LEOFLOW_USERNAME` /
-  `LEOFLOW_PASSWORD`) sign in with a password instead, which is the
+- `--username`, `--password` or `--password-stdin` (or `DEXAFLOW_USERNAME` /
+  `DEXAFLOW_PASSWORD`) sign in with a password instead, which is the
   break-glass path when single sign-on is broken. A password is not sent
   over plain `http://` to a server that is not on this machine unless you
   pass `--allow-insecure-password`.

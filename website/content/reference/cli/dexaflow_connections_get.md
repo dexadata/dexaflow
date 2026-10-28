@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_connections_get/
 title: "dexaflow connections get"
 linkTitle: "connections get"
-weight: 28
+weight: 31
 ---
 
 Show a connection (password omitted, extra masked).

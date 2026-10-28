@@ -9,7 +9,7 @@ weight: 560
 description: "ADR 0056: Task-log object sink — native dual-SDK (S3 + GCS), keyless-first"
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-08-18
 **Relates:** ADR 0035 (cloud-connector auth — keyless-first; §5 "no cloud SDK in core" is scoped here), ADR 0014 (supply-chain stack — the scans these dependencies pass), ADR 0022 (per-run staging volume), ADR 0049 (api/scheduler split — the control-plane role that writes logs), #227 (durable task logs / log PVC)
 

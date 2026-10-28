@@ -136,7 +136,7 @@ func (s *simStore) ApplyTransitions(ctx context.Context, runID string, taskIDs [
 
 // ScheduledDAGs reports one cron DAG that is always due, so a tick that reaches
 // createDueRuns creates a run.
-func (s *simStore) ScheduledDAGs(ctx context.Context) ([]ScheduledDAG, error) {
+func (s *simStore) ScheduledDAGs(ctx context.Context, _ time.Time) ([]ScheduledDAG, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

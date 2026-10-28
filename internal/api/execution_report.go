@@ -3,7 +3,6 @@ package api
 import (
 	"fmt"
 
-	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
@@ -57,7 +56,7 @@ const noIdleWorkersReason = "no idle warm workers kept for this DAG"
 // dispatch places with and the operator's warm pool settings.
 type executionReporter struct {
 	policy domain.WarmPolicy
-	pools  config.ExecutionSection
+	pools  domain.WarmPoolDefaults
 	// absent says why this server runs no warm worker at all although warm
 	// pools are on (no reconciler: the subprocess executor, or pod dispatch
 	// disabled), "" when it runs them.
@@ -74,7 +73,6 @@ func (e executionReporter) report(spec *domain.DAGSpec, newVersion, paused bool)
 	version := domain.WarmVersion{Image: spec.Image, HasSource: spec.Source != "", Staging: spec.Staging}
 	pool, noWorker := e.pool(spec, version, paused)
 	r := &executionReport{WarmPools: e.policy.Enabled, Tasks: make([]taskExecution, 0, len(spec.Tasks)), Pool: pool}
-	eligible := 0
 	for _, task := range spec.Tasks {
 		reason := e.policy.DedicatedReason(version, task)
 		if reason == "" {
@@ -83,12 +81,8 @@ func (e executionReporter) report(spec *domain.DAGSpec, newVersion, paused bool)
 		mode := domain.ExecutionModeDedicated
 		if reason == "" {
 			mode = domain.ExecutionModeWarm
-			eligible++
 		}
 		r.Tasks = append(r.Tasks, taskExecution{TaskID: task.TaskID, Mode: mode, Reason: reason})
-	}
-	if r.Pool.State == poolStateOn && eligible == 0 {
-		r.Pool.Detail += "; no task of this version is warm-eligible, so they serve none of its tasks"
 	}
 	if newVersion && e.couldKeepWorkers(spec) {
 		r.Pool.PreviousPool = previousPoolDraining
@@ -107,7 +101,8 @@ func (e executionReporter) couldKeepWorkers(spec *domain.DAGSpec) bool {
 // pool is the warm pool of version, and the reason a task otherwise
 // warm-eligible takes a dedicated pod because no warm worker of the version
 // can exist ("" when one can): off with warm pools off; none for a version
-// excluded as a whole, on a server that runs no warm workers, or when no
+// excluded as a whole or with no warm-eligible task (#2065), on a server
+// that runs no warm workers, or when no
 // idle worker is kept for it; else the idle workers it keeps
 // (EffectiveMinIdle, the reconciler's target) up to max_pool_size while it is
 // the DAG's current version, starting when poolStart says (ADR 0082).
@@ -117,6 +112,10 @@ func (e executionReporter) pool(spec *domain.DAGSpec, version domain.WarmVersion
 	}
 	if reason := e.policy.VersionReason(version); reason != "" {
 		return poolReport{State: poolStateNone, Detail: "no warm pool for this version: " + reason}, ""
+	}
+	if !e.policy.HasWarmTask(spec.Tasks) {
+		// The reconciler keeps no pool for it either (#2065).
+		return poolReport{State: poolStateNone, Detail: "no warm pool for this version: no task of it is warm-eligible"}, ""
 	}
 	if e.absent != "" {
 		return poolReport{State: poolStateNone, Detail: "no warm pool: " + e.absent}, e.absent

@@ -82,8 +82,11 @@ func clusterLayer(ctx context.Context, serverURL, token string) (*defaultsLayer,
 		return nil, nil //nolint:nilnil // no defaults advertised is a normal outcome, not an error.
 	}
 	return &defaultsLayer{
-		values: deployDefaults{Registry: d.Registry, Platforms: d.Platforms, BaseImage: d.BaseImage},
-		name:   "the deploy defaults of " + serverURL,
+		values: deployDefaults{Registry: d.Registry, Platforms: d.Platforms, BaseImage: d.BaseImage, SourceModeImage: d.SourceModeImage,
+			RemoteBuilder: d.RemoteBuilder},
+		name:               "the deploy defaults of " + serverURL,
+		taskServiceAccount: d.TaskServiceAccount,
+		warmPools:          d.WarmPools,
 	}, nil
 }
 
@@ -93,17 +96,16 @@ func clusterLayer(ctx context.Context, serverURL, token string) (*defaultsLayer,
 // should never send (an error status, a body that is not the documented
 // object, a value no deploy could use) is an error.
 func fetchClusterDefaults(ctx context.Context, serverURL, token string) (d domain.DeployDefaults, found bool, err error) {
-	c, err := apiclient.NewClient(serverURL, apiclient.WithHTTPClient(&http.Client{Timeout: 15 * time.Second}))
+	c, err := cliBareAPIClient(serverURL, 15*time.Second)
 	if err != nil {
 		return d, false, fmt.Errorf("building the client: %w", err)
 	}
-	var editors []apiclient.RequestEditorFn
-	if token != "" {
-		editors = append(editors, func(_ context.Context, req *http.Request) error {
+	editors := []apiclient.RequestEditorFn{func(_ context.Context, req *http.Request) error {
+		if token != "" {
 			req.Header.Set("Authorization", "Bearer "+token)
-			return nil
-		})
-	}
+		}
+		return nil
+	}}
 	got, err := c.GetDeployDefaults(ctx, editors...)
 	if errors.Is(err, apiclient.ErrDeployDefaultsNotServed) {
 		return d, false, nil
@@ -111,9 +113,31 @@ func fetchClusterDefaults(ctx context.Context, serverURL, token string) (d domai
 	if err != nil {
 		return d, false, err
 	}
-	d = domain.DeployDefaults{Registry: got.Registry, Platforms: got.Platforms, BaseImage: got.BaseImage}
+	d = domain.DeployDefaults{Registry: got.Registry, Platforms: got.Platforms, BaseImage: got.BaseImage, SourceModeImage: got.SourceModeImage,
+		RemoteBuilder: remoteBuilderOf(got.RemoteBuilder), TaskServiceAccount: got.TaskServiceAccount}
+	if w := got.WarmPools; w != nil {
+		d.WarmPools = &domain.WarmPoolDefaults{Enabled: w.Enabled, MinIdleWorkers: w.MinIdleWorkers, MaxPoolSize: w.MaxPoolSize}
+	}
 	if verr := d.Validate("deploy.defaults"); verr != nil {
 		return domain.DeployDefaults{}, false, verr
 	}
 	return d, true, nil
+}
+
+// remoteBuilderOf is the remote builder a deployDefaults answer advertises,
+// nil when none. One with no backend is kept, so Validate refuses it.
+func remoteBuilderOf(rb *apiclient.DeployRemoteBuilder) *domain.RemoteBuilderConfig {
+	if rb == nil {
+		return nil
+	}
+	out := &domain.RemoteBuilderConfig{}
+	if cb := rb.CloudBuild; cb != nil {
+		out.CloudBuild = &domain.CloudBuildConfig{Project: cb.Project, Region: cb.Region, WorkerPool: cb.WorkerPool, ServiceAccount: cb.ServiceAccount}
+	}
+	if bk := rb.BuildKit; bk != nil {
+		// No kubeconfig context: a server cannot know the names of this
+		// machine's contexts, so the current one reaches the builder.
+		out.BuildKit = &domain.BuildKitConfig{Namespace: bk.Namespace, PodSelector: bk.PodSelector}
+	}
+	return out
 }

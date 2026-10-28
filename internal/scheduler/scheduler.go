@@ -23,10 +23,10 @@ import (
 // later). Surfacing those as ERROR pages on a non-event (#311).
 //
 // When context.Canceled appears OUTSIDE a known step-down (someone else
-// canceled the loop — a bug, a misconfig, a shutdown race), we KEEP it at
+// canceled the loop, a bug, a misconfig, a shutdown race), we KEEP it at
 // ERROR. The tripwire is what catches an unexpected cancel that the downgrade
 // would otherwise have silently swallowed. DeadlineExceeded is also kept at
-// ERROR — a deadline IS a real stall worth seeing, not a deliberate cancel.
+// ERROR, a deadline IS a real stall worth seeing, not a deliberate cancel.
 func logSchedulerError(logger *slog.Logger, msg string, err error, inStepDown bool) {
 	if inStepDown && errors.Is(err, context.Canceled) {
 		logger.Warn(msg+" canceled (leader step-down in progress)",
@@ -43,7 +43,7 @@ type RunState struct {
 	// token and the log sink key on, so it must not be swapped for the
 	// user-facing id.
 	RunID string
-	// DisplayRunID is the dag_runs.run_id column — the identifier an operator
+	// DisplayRunID is the dag_runs.run_id column, the identifier an operator
 	// sees in the UI and passes to the API ("manual__2026-07-30T12:00:00+00:00").
 	// Alerts render this one: a UUID is not something anyone can act on.
 	DisplayRunID string
@@ -70,6 +70,11 @@ type RunState struct {
 	// 0053, ADR 0066). A clear on a running run puts it back in queued while
 	// other tasks of it may still run, so a queued held run can hold slots.
 	Held bool
+	// Suspension is the suspension mode of the run's tenant, empty when it is
+	// not suspended (#2181). Under drain or stop the tick dispatches nothing
+	// of the run and does not start it while it is queued; under stop it also
+	// fails the run's queued and running task instances (stopSuspended).
+	Suspension domain.SuspensionMode
 	// MaxActiveRuns is the DAG's max_active_runs, read from its dags row (the
 	// same value run creation caps on). The tick starts a queued run only
 	// while fewer than this many runs of the DAG are running, oldest logical
@@ -94,7 +99,7 @@ type RunState struct {
 	RetryDelaySeconds map[string]int
 	// RescheduleAt holds the next-poke time per task (only meaningful for tasks in
 	// up_for_reschedule). The planner re-dispatches such a task once Now >=
-	// reschedule_at — without consuming retry budget (#380). Absent/zero entries
+	// reschedule_at, without consuming retry budget (#380). Absent/zero entries
 	// re-dispatch immediately (preserves the test seam, like EndedAt).
 	RescheduleAt map[string]*time.Time
 	// NextDispatchAt holds the earliest time a `scheduled` task may be dispatched
@@ -103,13 +108,13 @@ type RunState struct {
 	// Absent/zero entries dispatch immediately (the common case: never failed).
 	NextDispatchAt map[string]*time.Time
 	// DispatchAttempts counts consecutive synchronous dispatch failures per task.
-	// It is a separate counter from try_number — a dispatch failure is infra, not
-	// a task failure — and drives the dispatch_failed give-up at
+	// It is a separate counter from try_number, a dispatch failure is infra, not
+	// a task failure, and drives the dispatch_failed give-up at
 	// dispatchMaxAttempts. Absent entries mean zero.
 	DispatchAttempts map[string]int
 	// InfraFailed marks a `failed` task whose failure was infra-caused (agent/pod/
 	// dispatch lost), from the durable last_failure_kind signal. Such a task
-	// re-places without consuming the task's retry budget (ADR 0051 Phase 1) — an
+	// re-places without consuming the task's retry budget (ADR 0051 Phase 1), an
 	// infrastructure fault is not the user's task failing.
 	InfraFailed map[string]bool
 	// InfraProvisional marks an InfraFailed task whose mark the pod reconciler
@@ -118,7 +123,7 @@ type RunState struct {
 	// task is active: no re-place and no downstream condemnation, so a durable
 	// SUCCESS record can still settle it. Absent entries mean confirmed.
 	InfraProvisional map[string]bool
-	// InfraAttempts counts asynchronous infra re-placements per task — the
+	// InfraAttempts counts asynchronous infra re-placements per task, the
 	// try_number-free analog of DispatchAttempts for agent/pod/dispatch-lost faults.
 	// It bounds the re-place at infraMaxAttempts so a poison placement cannot loop
 	// forever. Absent entries mean zero.
@@ -133,7 +138,7 @@ type RunState struct {
 	Alerts *domain.AlertsConfig
 	// MaxActiveTasks is the DAG's per-DAG task-concurrency cap (Airflow's
 	// max_active_tasks, ADR 0053 Stage 1), loaded from the spec. Zero or negative
-	// means unlimited — the admission gate is a no-op, so a DAG that never sets it
+	// means unlimited, the admission gate is a no-op, so a DAG that never sets it
 	// (and all of Lite) plans exactly as before.
 	MaxActiveTasks int
 	// ActiveTaskCount is the DAG-wide number of currently non-terminal (queued or
@@ -194,6 +199,13 @@ type ScheduledDAG struct {
 	// skipped on this tick (issue #200). Starting a queued run is capped
 	// separately, on the running runs alone (RunState.MaxActiveRuns, #1766).
 	MaxActiveRuns int
+	// NextRunAt is the next due time the scheduler stored for the DAG
+	// (SetNextRunAt, #2175), nil when none is stored. ScheduleEpoch counts the
+	// changes that invalidate it (a new current version, a deleted run); a
+	// write conditioned on the epoch the list returned is dropped when the DAG
+	// changed in between.
+	NextRunAt     *time.Time
+	ScheduleEpoch int64
 }
 
 // Store is the scheduler's view of persistent state. The concrete
@@ -201,7 +213,7 @@ type ScheduledDAG struct {
 type Store interface {
 	ActiveRuns(ctx context.Context) ([]RunState, error)
 	// PoolBudgets returns every named pool's slot cap keyed by PoolKey(tenant,
-	// pool) — the cross-DAG admission budget the pool gate enforces (ADR 0053
+	// pool), the cross-DAG admission budget the pool gate enforces (ADR 0053
 	// Stage 3). Called once per tick, and ONLY on the Pro path (poolsEnabled);
 	// Lite never invokes it.
 	PoolBudgets(ctx context.Context) (map[string]int, error)
@@ -230,7 +242,7 @@ type Store interface {
 	// phantom retry on a lost race.
 	ResetForRetry(ctx context.Context, runID, taskID string) (bool, error)
 	// ResetForInfraReplace returns a task a reaper failed as infra to 'none' for a
-	// re-run, PRESERVING try_number and bumping infra_attempts instead — an infra
+	// re-run, PRESERVING try_number and bumping infra_attempts instead, an infra
 	// fault must not consume the retry budget (ADR 0051 Phase 1). Guarded to the
 	// failed+infra source; the bool reports whether the reset fired (false = no
 	// longer a failed-infra candidate) so the caller does not record a phantom
@@ -249,6 +261,12 @@ type Store interface {
 	// re-offered once the backoff elapses but never accumulates toward the
 	// dispatch_failed cap (ADR 0053).
 	RecordDispatchBackpressure(ctx context.Context, runID, taskID string, nextAt time.Time) error
+	// RecordDispatchUnavailable re-offers a task whose pod create met an
+	// unavailable Kubernetes API, WITHOUT incrementing dispatch_attempts, held
+	// for the time already spent in the outage clamped to [minDelay, maxDelay].
+	// It returns when the task's outage window started and the next attempt;
+	// applied is false when the task is no longer scheduled or queued (ADR 0093).
+	RecordDispatchUnavailable(ctx context.Context, runID, taskID string, now time.Time, minDelay, maxDelay time.Duration) (since, nextAt time.Time, applied bool, err error)
 	// FailDispatchExhausted fails a scheduled task as dispatch_failed once its
 	// dispatch-attempt budget is spent, so the run finalizes instead of looping.
 	FailDispatchExhausted(ctx context.Context, runID, taskID, reason string) error
@@ -256,7 +274,11 @@ type Store interface {
 	// 0066 section 3) and spends its retry budget: the refusal is permanent, so
 	// the planner must not retry it.
 	FailDispatchRefused(ctx context.Context, runID, taskID, reason string) error
-	SetRunState(ctx context.Context, runID string, state domain.DagRunState) error
+	// SetRunState moves a run from the state the tick's snapshot read to
+	// another one, and reports whether it moved. False means the run moved on
+	// after the tick read it (a clear re-opened it, a user marked it), so the
+	// tick leaves it alone (#2047).
+	SetRunState(ctx context.Context, runID string, from, to domain.DagRunState) (bool, error)
 	// StartQueuedRun moves a queued run to running, guarded on the run still
 	// being queued, and reports whether it moved. False means the run moved on
 	// after the tick read it (a user marked or deleted it), so the tick leaves
@@ -265,7 +287,7 @@ type Store interface {
 	// ClaimAlertAttempt atomically claims ONE on-failure send attempt, reporting
 	// true iff this call won it. It refuses when the episode was already
 	// delivered, when the attempt budget is spent, or when the backoff has not
-	// elapsed — so a dead endpoint stops being retried instead of being hit once
+	// elapsed, so a dead endpoint stops being retried instead of being hit once
 	// per tick for the life of the run (#431, and the delivery split below).
 	// It returns the attempt number won, or 0 when the claim was refused.
 	ClaimAlertAttempt(ctx context.Context, runID string, maxAttempts int, backoff time.Duration) (int, error)
@@ -275,7 +297,13 @@ type Store interface {
 	// call because the send is detached from the tick: an operator clear can start
 	// a new episode mid-send, and a stamp from the superseded one must not land.
 	MarkRunAlertDelivered(ctx context.Context, runID string, attempt int) error
-	ScheduledDAGs(ctx context.Context) ([]ScheduledDAG, error)
+	// ScheduledDAGs lists the scheduled DAGs the tick must look at: those with
+	// no stored next due time and those whose time is at or before now, which
+	// is the scheduler's clock so the store's own clock never delays a run.
+	ScheduledDAGs(ctx context.Context, now time.Time) ([]ScheduledDAG, error)
+	// SetNextRunAt stores when the DAG is next due, unless its schedule epoch
+	// is no longer epoch.
+	SetNextRunAt(ctx context.Context, tenantID, dagID string, epoch int64, at time.Time) error
 	CreateScheduledRun(ctx context.Context, tenantID, dagID string, logical time.Time) error
 	// SetTaskNote attaches operational context to a task instance (shown in the
 	// UI), e.g. why it is queued but not running.
@@ -288,7 +316,7 @@ type Recorder interface {
 	RecordTaskTransition(from, to, dagID string)
 	// RecordUndispatchable counts tasks queued with no executor to launch them.
 	RecordUndispatchable(reason string)
-	// RecordSchedulerStepDown counts a leader step-down by reason — the rate
+	// RecordSchedulerStepDown counts a leader step-down by reason, the rate
 	// of this counter is the operator-facing SLI for leader-churn (#311). A
 	// nil Recorder is tolerated by the scheduler so tests need not stub it.
 	RecordSchedulerStepDown(reason string)
@@ -308,6 +336,10 @@ type Recorder interface {
 	// RecordSchedulerWokenTick counts a tick started early by Wake
 	// (scheduler.eager_promotion) instead of by the loop interval.
 	RecordSchedulerWokenTick()
+	// ObserveScheduleDelay records how late a scheduled run was created: the
+	// time from its slot to its creation, for the latest slot a tick created
+	// for a DAG (#2175).
+	ObserveScheduleDelay(d time.Duration)
 }
 
 // Dispatcher launches a task instance for execution. The scheduler dispatches a
@@ -373,7 +405,7 @@ type Scheduler struct {
 	lastTick     atomic.Int64 // unix-nano of the last loop iteration; 0 = not yet ticked
 	leading      atomic.Bool  // true only while this instance holds leadership and ticks
 	leaderSince  atomic.Int64 // unix-nano when leadership was last acquired; 0 = not leading. Drives the execution reaper's leader-settling gate
-	steppingDown atomic.Bool  // true only during a leader step-down — the campaign loop sets it before canceling the run-context so the expected cancel-fanout logs at WARN, not ERROR (#311 tripwire preserved when it's false)
+	steppingDown atomic.Bool  // true only during a leader step-down, the campaign loop sets it before canceling the run-context so the expected cancel-fanout logs at WARN, not ERROR (#311 tripwire preserved when it's false)
 	// warnedSchedules dedupes the "unparseable schedule" warning per (tenant,
 	// dag_id), keyed by the offending expression, so a bad cron logs once, not
 	// every tick. Accessed only from the single-threaded tick (createDueRuns),
@@ -383,8 +415,12 @@ type Scheduler struct {
 	// to the UTC date it was last logged for, so a capped tenant logs once a
 	// day, not on every tick that retries its due slot. Tick-only, no lock.
 	warnedRunCaps map[string]string
+	// warnedSuspensions dedupes the "tenant is suspended" warning: tenant UUID
+	// to the refusal it was last logged with, cleared once the tenant gets a
+	// run again. Tick-only, no lock.
+	warnedSuspensions map[string]string
 	// poolsEnabled turns on the cross-DAG named-pool admission gate (ADR 0053
-	// Stage 3). Pro-only: main calls EnablePools() only when the edition is "pro".
+	// Stage 3). Cluster edition only: main calls EnablePools() only on the cluster edition.
 	// While false (Lite / non-Pro), Step never loads pool budgets and never
 	// threads pool occupancy, so PlanRun's pool gate is a no-op and Lite plans
 	// byte-identically. Set once at construction (before ticking), read on the
@@ -415,14 +451,15 @@ type Scheduler struct {
 // NewScheduler builds a Scheduler over the given store, ticking every interval.
 func NewScheduler(store Store, logger *slog.Logger, interval time.Duration) *Scheduler {
 	return &Scheduler{
-		store:           store,
-		logger:          logger,
-		interval:        interval,
-		stepTimeout:     defaultStepTimeout(interval),
-		warnedSchedules: map[dagRef]string{},
-		warnedRunCaps:   map[string]string{},
-		alertSem:        make(chan struct{}, defaultAlertConcurrency),
-		clock:           time.Now,
+		store:             store,
+		logger:            logger,
+		interval:          interval,
+		stepTimeout:       defaultStepTimeout(interval),
+		warnedSchedules:   map[dagRef]string{},
+		warnedRunCaps:     map[string]string{},
+		warnedSuspensions: map[string]string{},
+		alertSem:          make(chan struct{}, defaultAlertConcurrency),
+		clock:             time.Now,
 		// The budget is on by default: the stall it prevents is reachable with
 		// default settings (synchronous dispatch, client QPS 5).
 		dispatchTickBudget: DefaultDispatchTickBudget,
@@ -504,8 +541,8 @@ func (s *Scheduler) LeaderSince() time.Time {
 }
 
 // IsLeading reports whether this instance currently holds scheduler leadership.
-// Background sweeps that mutate cluster state — the pod reconciler and the
-// staging-volume GC — gate on this so that at replicaCount>1 only the leader
+// Background sweeps that mutate cluster state, the pod reconciler and the
+// staging-volume GC, gate on this so that at replicaCount>1 only the leader
 // sweeps; otherwise every replica would reconcile and delete the same pods.
 func (s *Scheduler) IsLeading() bool {
 	return s.leading.Load()
@@ -517,7 +554,7 @@ func (s *Scheduler) IsLeading() bool {
 // at WARN (expected) instead of ERROR. It also increments the step-down
 // counter labeled by reason, so operators can alert on the *rate* of churn
 // (rate(...[5m])) instead of grep'ing log content. ClearSteppingDown closes
-// the window; outside it, context.Canceled stays ERROR — the tripwire that
+// the window; outside it, context.Canceled stays ERROR, the tripwire that
 // catches an unexpected cancel a flat downgrade would silently swallow.
 func (s *Scheduler) MarkSteppingDown(reason string) {
 	s.steppingDown.Store(true)
@@ -527,13 +564,13 @@ func (s *Scheduler) MarkSteppingDown(reason string) {
 }
 
 // ClearSteppingDown ends the step-down window opened by MarkSteppingDown.
-// Idempotent — calling it when no step-down is active is a no-op.
+// Idempotent, calling it when no step-down is active is a no-op.
 func (s *Scheduler) ClearSteppingDown() { s.steppingDown.Store(false) }
 
 // RecordReacquireSince records the time spent stepped down (#311). It is
 // called by the campaign loop immediately after a successful re-acquire, with
 // the timestamp captured at the moment of step-down. A zero stepDownAt (no
-// prior step-down — first acquisition at boot) is ignored.
+// prior step-down, first acquisition at boot) is ignored.
 func (s *Scheduler) RecordReacquireSince(stepDownAt time.Time) {
 	if stepDownAt.IsZero() || s.recorder == nil {
 		return
@@ -555,8 +592,8 @@ func (s *Scheduler) SetRecorder(r Recorder) { s.recorder = r }
 func (s *Scheduler) SetDispatcher(d Dispatcher) { s.dispatcher = d }
 
 // EnablePools turns on the cross-DAG named-pool admission gate (ADR 0053 Stage
-// 3). It is Pro-only: main calls it exactly when the edition is "pro". Left
-// unset in Lite/non-Pro, where the pool gate stays a no-op and the tick never
+// 3). It belongs to the cluster edition: main calls it exactly there. Left
+// unset in Lite, where the pool gate stays a no-op and the tick never
 // queries pool budgets, so Lite plans byte-identically. Call once before the
 // scheduler starts ticking.
 func (s *Scheduler) EnablePools() { s.poolsEnabled = true }
@@ -584,7 +621,7 @@ func (s *Scheduler) SetAlertConcurrency(n int) {
 // the failed state. Implementations resolve each rule's managed connection to an
 // endpoint and send (Slack/webhook). The scheduler calls it from a detached
 // goroutine, so an implementation may block on network I/O without stalling the
-// tick; it MUST treat every send as best-effort — a delivery failure is logged,
+// tick; it MUST treat every send as best-effort, a delivery failure is logged,
 // never propagated, so alerting can never fail a run.
 type Alerter interface {
 	// AlertRunFailed sends every on_failure rule and reports whether all of them
@@ -595,7 +632,7 @@ type Alerter interface {
 
 // Run drives the scheduling loop until ctx is canceled. The loop is crash-proof:
 // a panic or error in a tick is recovered and logged, so the scheduler keeps
-// ticking — it may fall behind, but it never dies (the critical invariant).
+// ticking, it may fall behind, but it never dies (the critical invariant).
 //
 // With eager promotion on, a Wake also starts a tick, no sooner than wakeGap
 // after the start of the previous one, and restarts the interval so it stays
@@ -665,7 +702,7 @@ func (s *Scheduler) record(decision string) {
 
 // Heartbeat reports whether the scheduling loop is live and when it last ticked.
 // Only a leader is expected to tick, so a non-leader (a follower, or an instance
-// that stepped down after losing the lock) reports healthy without ticking — it
+// that stepped down after losing the lock) reports healthy without ticking, it
 // is correctly idle, not stalled. A leader is healthy during the startup grace
 // (before its first tick) and while ticks stay within a small multiple of the
 // loop interval; a stalled leader goes unhealthy so the UI/monitor surfaces it.
@@ -684,7 +721,7 @@ func (s *Scheduler) Heartbeat() (bool, time.Time) {
 // Step runs one deterministic scheduling iteration over every active run. Each
 // run is advanced in isolation (see advanceSafely): a panic or error in one
 // run is contained, so it never blocks the other runs or new-run creation.
-// The reaper runs independently of createDueRuns success — they share no
+// The reaper runs independently of createDueRuns success, they share no
 // dependency, and silencing the reaper when scheduling has a hiccup would let
 // orphans accumulate exactly when the operator is most likely to notice the
 // counter is wrong. The first non-nil infra-level error is returned (logged
@@ -707,17 +744,18 @@ func (s *Scheduler) Step(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listing active runs: %w", err)
 	}
+	s.stopSuspended(ctx, runs)
 	activeByDAG := make(map[dagRef]int, len(runs))
 	// Per-DAG task-admission budget (max_active_tasks, ADR 0053 Stage 1).
 	// activeTasksByDAG is the snapshot of currently non-terminal (queued+running)
 	// TIs per DAG; admittedTasksByDAG folds in what earlier sibling runs already
-	// promoted this tick so a single tick cannot breach the cap across runs —
+	// promoted this tick so a single tick cannot breach the cap across runs,
 	// mirroring how createDueRuns folds justCreated into the max_active_runs cap.
 	activeTasksByDAG := activeTaskCounts(runs)
 	admittedTasksByDAG := make(map[dagRef]int, len(runs))
 	// Cross-DAG named-pool budget (ADR 0053 Stage 3, Pro only). Loaded once per
 	// tick; poolOccupied starts at the current cross-DAG occupancy and each run's
-	// admissions fold back in — the same within-tick threading as the per-DAG cap,
+	// admissions fold back in, the same within-tick threading as the per-DAG cap,
 	// generalized to a per-pool map. Left nil on the Lite path, where no pool query
 	// runs and the pool gate is a no-op.
 	poolBudgets, poolOccupied, err := s.loadPoolBudget(ctx, runs)
@@ -772,10 +810,12 @@ func (s *Scheduler) Step(ctx context.Context) error {
 }
 
 // waitsForUnpause reports whether the tick must leave the run untouched: a
-// queued run of a paused DAG is not started until the DAG is unpaused (#1705).
-// It stays in the snapshot the caps are computed from (see RunState.Held).
+// queued run of a paused DAG is not started until the DAG is unpaused (#1705),
+// nor one of a tenant suspended in drain or stop mode until it is resumed
+// (#2181). It stays in the snapshot the caps are computed from (see
+// RunState.Held).
 func (r RunState) waitsForUnpause() bool {
-	return r.Held && r.State == domain.DagRunStateQueued
+	return (r.Held || r.Suspension.HoldsDispatch()) && r.State == domain.DagRunStateQueued
 }
 
 // startableQueuedRuns returns the queued runs this tick moves to running, by
@@ -842,12 +882,18 @@ func (s *Scheduler) openDispatchWindow() {
 }
 
 // holdDispatch reports whether the tick must leave run's next ready task
-// scheduled instead of dispatching it: an earlier dispatch this tick was
+// scheduled instead of dispatching it: the run's tenant is suspended in drain
+// or stop mode, an earlier dispatch this tick was
 // deferred, the tick's dispatch budget is spent, or the run's tenant used its
 // dispatches for this tick. A held task is not touched, so it costs no dispatch
 // attempt and no backoff, and the next tick offers it again. When the budget
 // runs out, run is remembered so the next tick starts after it.
 func (s *Scheduler) holdDispatch(run RunState) bool {
+	// A tenant suspended in drain or stop mode gets no dispatch (#2181). The
+	// task stays scheduled and is offered again once the tenant is resumed.
+	if run.Suspension.HoldsDispatch() {
+		return true
+	}
 	if s.deferredRun != "" {
 		return true
 	}
@@ -880,7 +926,7 @@ func rotateAfter(runs []RunState, deferredRun string) int {
 }
 
 // activeTaskCounts tallies, per DAG, the task instances that already occupy a
-// max_active_tasks slot — those in a non-terminal active state (queued or
+// max_active_tasks slot, those in a non-terminal active state (queued or
 // running) across every active run of the DAG. It is the snapshot the admission
 // gate subtracts from max_active_tasks to size per-run headroom (ADR 0053 Stage
 // 1). Reuses the runs Step already loaded, so it adds no per-tick query.
@@ -910,8 +956,8 @@ type dagRef struct{ tenantID, dagID string }
 // loadPoolBudget prepares the cross-DAG named-pool admission state for a tick
 // (ADR 0053 Stage 3): the per-pool slot caps (queried once) and the current
 // per-pool occupancy (derived from the runs already loaded). It is a strict
-// no-op on the Lite/non-Pro path — it returns nil maps and issues NO pool query
-// — so a Lite tick is byte-identical to the pre-pool behavior. A query error is
+// no-op on the Lite/non-Pro path, it returns nil maps and issues NO pool query,
+// so a Lite tick is byte-identical to the pre-pool behavior. A query error is
 // returned so the tick surfaces it rather than silently disabling the gate.
 func (s *Scheduler) loadPoolBudget(ctx context.Context, runs []RunState) (budgets, occupied map[string]int, err error) {
 	if !s.poolsEnabled {
@@ -941,168 +987,6 @@ func activePoolCounts(runs []RunState, budgets map[string]int, confine bool) map
 		}
 	}
 	return counts
-}
-
-// advanceSafely advances one run, isolating it: a panic or error in a single run
-// is recovered, logged, and metered, but never aborts the tick. This keeps one
-// poison run (a malformed spec, a panicking dispatcher, a transient per-run DB
-// error) from stalling every other run or crashing the process — the scheduler
-// may fall behind on that run, but it stays alive and keeps the rest moving. It
-// returns how many tasks it admitted to queued (zero on a panic or error), the
-// per-pool breakdown of those admissions (nil unless the pool gate is on),
-// which the caller folds into the per-DAG max_active_tasks and per-pool budgets
-// for sibling runs, and the tasks held only by their pool (ADR 0066 §4).
-func (s *Scheduler) advanceSafely(ctx context.Context, run RunState) (res advanced) {
-	defer func() {
-		if r := recover(); r != nil {
-			s.logger.Error("scheduler run panic recovered",
-				"run", run.RunID, "dag", run.DagID, "panic", r, "stack", string(debug.Stack()))
-			s.record("panic")
-			res = advanced{}
-		}
-	}()
-	res, err := s.advance(ctx, run)
-	if err != nil {
-		s.logger.Error("advancing run", "run", run.RunID, "dag", run.DagID, "error", err)
-		s.record("run_error")
-		return advanced{}
-	}
-	return res
-}
-
-// createDueRuns creates a new run for each scheduled DAG whose next cron slot
-// after its latest run has arrived. activeByDAG carries the count of already-
-// active runs per DAG so the per-DAG max_active_runs cap is honored (#200): a
-// DAG that has reached its cap is skipped this tick, and a backfill that would
-// exceed the cap is truncated to the remaining headroom. The local
-// `createdThisTick` map folds creations made in this same tick into the cap
-// so a single tick cannot itself breach the limit.
-func (s *Scheduler) createDueRuns(ctx context.Context, activeByDAG map[dagRef]int) error {
-	dags, err := s.store.ScheduledDAGs(ctx)
-	if err != nil {
-		return fmt.Errorf("listing scheduled dags: %w", err)
-	}
-	now := time.Now().UTC()
-	createdThisTick := make(map[dagRef]int, len(dags))
-	// capped holds the tenants whose daily run limit refused a run this tick;
-	// their other due slots wait for a later tick instead of each asking again.
-	capped := map[string]bool{}
-	for _, d := range dags {
-		key := dagRef{d.TenantID, d.DagID}
-		if capped[d.TenantID] {
-			continue
-		}
-		if domain.IsOnceSchedule(d.Schedule) {
-			// @once: fire exactly one run on first sight, then never again. Once
-			// the run exists, the DAG's LastLogical is non-nil and this is
-			// skipped — that single-shot semantic already prevents any cap
-			// breach, so no headroom check is needed here.
-			if d.LastLogical == nil && !s.createScheduledRun(ctx, d, now, capped) {
-				createdThisTick[key]++
-			}
-			continue
-		}
-		if domain.IsCronlessSchedule(d.Schedule) {
-			// Manual-only or @continuous: nothing to cron-schedule — skip quietly.
-			continue
-		}
-		// A non-empty but unparseable schedule (a 4-field cron, a typo) would
-		// otherwise be swallowed silently: nextScheduledRun returns "not due" and
-		// the DAG never runs, with nothing logged. Surface it (once per bad
-		// expression) so the operator sees why a scheduled DAG sits idle. Compile
-		// validation (domain.ValidateSchedule) catches this earlier; this is the
-		// backstop for DAGs registered before the fix.
-		if !scheduleParseable(d.Schedule) {
-			if s.warnedSchedules[key] != d.Schedule {
-				s.logger.Warn("DAG has an unparseable cron schedule; it will not run on a schedule until fixed",
-					"tenant", d.TenantID, "dag", d.DagID, "schedule", d.Schedule)
-				s.warnedSchedules[key] = d.Schedule
-			}
-			continue
-		}
-		for _, logical := range dueSlots(d, now) {
-			if !s.hasHeadroom(d, key, activeByDAG, createdThisTick) {
-				s.recordCapSkip(d)
-				break
-			}
-			if s.createScheduledRun(ctx, d, logical, capped) {
-				break
-			}
-			createdThisTick[key]++
-		}
-	}
-	return nil
-}
-
-// dueSlots returns the logical dates of a cron DAG's runs that are due now, in
-// order. First-run with no start_date keeps the legacy single-slot semantics
-// (most recent slot at or before now): backfilling unbounded history for a
-// fresh DAG would be unsafe by default. The catchup helper opts in only when
-// there is either a last_logical or a start_date floor.
-func dueSlots(d ScheduledDAG, now time.Time) []time.Time {
-	if d.LastLogical == nil && d.StartDate == nil {
-		if logical, due := nextScheduledRun(d.Schedule, d.LastLogical, now); due {
-			return []time.Time{logical}
-		}
-		return nil
-	}
-	return dueScheduledSlots(d.Schedule, d.LastLogical, d.StartDate, now, d.Catchup, maxCatchupSlotsPerTick)
-}
-
-// hasHeadroom reports whether the DAG may take another active run without
-// exceeding its max_active_runs cap. A non-positive cap is treated as
-// "unlimited" — a defensive guard for hand-edited rows: the column is
-// `NOT NULL DEFAULT 16` (migration 002) and the repository upsert defaults
-// missing values to 16 (`repository.go:509`), so a zero only appears via a
-// direct DB write. Diverging from Airflow's "missing == default 16" makes
-// the scheduler fail open rather than locking the DAG out forever when a
-// bad row is encountered. Callers pass `justCreated` so a single tick
-// folds in its own creations and cannot itself breach the cap.
-func (s *Scheduler) hasHeadroom(d ScheduledDAG, key dagRef, active, justCreated map[dagRef]int) bool {
-	if d.MaxActiveRuns <= 0 {
-		return true
-	}
-	return active[key]+justCreated[key] < d.MaxActiveRuns
-}
-
-// recordCapSkip logs (once per DAG between successful creations) and meters
-// that a due slot was skipped because the DAG is at its max_active_runs cap.
-// We use a single metric label so dashboards can see "is concurrency the
-// bottleneck right now?" without per-DAG cardinality.
-func (s *Scheduler) recordCapSkip(d ScheduledDAG) {
-	s.logger.Debug("skipping due run; DAG is at max_active_runs cap", "tenant", d.TenantID, "dag", d.DagID)
-	s.record("max_active_runs_cap")
-}
-
-// createScheduledRun creates one scheduled run for a DAG, isolating per-DAG
-// failures: a single DAG's creation error is logged and metered but never blocks
-// run creation for the other scheduled DAGs in this tick.
-//
-// It reports whether the tenant's daily run limit (max_runs_per_day) refused
-// the run. That is not an error: the slot is skipped, the tenant is added to
-// capped so the rest of the tick leaves it alone, and the skip is metered and
-// logged once per tenant and UTC day. The slot stays due, so it is created on
-// a later tick once the UTC day turns (catchup decides whether the slots
-// missed in between are created too).
-func (s *Scheduler) createScheduledRun(ctx context.Context, d ScheduledDAG, logical time.Time, capped map[string]bool) bool {
-	err := s.store.CreateScheduledRun(ctx, d.TenantID, d.DagID, logical)
-	switch {
-	case err == nil:
-		s.record("create_run")
-	case errors.Is(err, domain.ErrLimitExceeded):
-		capped[d.TenantID] = true
-		s.record("tenant_daily_run_cap")
-		if day := time.Now().UTC().Format(time.DateOnly); s.warnedRunCaps[d.TenantID] != day {
-			s.logger.Warn("skipping scheduled runs: the tenant reached its daily run limit",
-				"tenant", d.TenantID, "dag", d.DagID, "logical_date", logical, "reason", err)
-			s.warnedRunCaps[d.TenantID] = day
-		}
-		return true
-	default:
-		s.logger.Error("creating scheduled run", "tenant", d.TenantID, "dag", d.DagID, "error", err)
-		s.record("create_run_error")
-	}
-	return false
 }
 
 // advance plans and applies one run's transitions, returning how many tasks it
@@ -1155,8 +1039,14 @@ func (s *Scheduler) advance(ctx context.Context, run RunState) (res advanced, er
 		}
 	}
 	if state, done := FinalizeRun(run); done {
-		if err = s.store.SetRunState(ctx, run.RunID, state); err != nil {
-			return res, fmt.Errorf("finalizing run: %w", err)
+		finalized, ferr := s.store.SetRunState(ctx, run.RunID, run.State, state)
+		if ferr != nil {
+			return res, fmt.Errorf("finalizing run: %w", ferr)
+		}
+		if !finalized {
+			s.logger.Debug("run moved on before its finalize; leaving it", "run", run.RunID, "dag", run.DagID)
+			s.record("finalize_run_superseded")
+			return res, nil
 		}
 		s.maybeAlertFailure(ctx, state, run)
 	}
@@ -1219,448 +1109,6 @@ func taskPools(run RunState) map[string]poolCharge {
 	return m
 }
 
-// alertMaxAttempts bounds how many times one failure episode may be sent before
-// Dexaflow gives up. A failed run stays failed forever, so without a ceiling a dead
-// alert endpoint is retried once per scheduler tick for the life of the run — the
-// alert path would DoS the very endpoint it is trying to reach. Five attempts
-// spread over the backoff below survives a restart or a brief outage of the
-// channel without becoming a hammer.
-const alertMaxAttempts = 5
-
-// alertRetryBackoff is the wait between attempts for one episode. Deliberately far
-// longer than the scheduler tick (1s by default): the retry exists to ride out a
-// transient channel outage, and an outage of the alert channel is frequently
-// correlated with the incident being reported, so retrying hard makes both worse.
-const alertRetryBackoff = 2 * time.Minute
-
-// alertAttemptUnknown is the attempt number used when the claim itself errored
-// and we alert anyway (fail open). It is deliberately outside the real attempt
-// range so the delivery stamp, which is guarded on the attempt, matches no row —
-// the page goes out, but a bookkeeping write derived from an unknown attempt
-// never overwrites state we cannot reason about.
-const alertAttemptUnknown = -1
-
-// maybeAlertFailure fires the DAG's on-failure alert rules when a run finalizes
-// failed. It runs in a detached goroutine (WithoutCancel) so a slow endpoint
-// never stalls the tick, and the alerter's own best-effort contract means a
-// delivery failure cannot fail the run. A nil alerter or a DAG without rules is
-// a no-op.
-func (s *Scheduler) maybeAlertFailure(ctx context.Context, state domain.DagRunState, run RunState) {
-	if state != domain.DagRunStateFailed || s.alerter == nil {
-		return
-	}
-	if run.Alerts == nil || len(run.Alerts.OnFailure) == 0 {
-		return
-	}
-	// Claim one ATTEMPT for this failure episode. The claim no longer means
-	// "paged" — it means "we are about to try" — so a send that fails leaves the
-	// episode claimable and the next tick retries it after the backoff. Refused
-	// when already delivered, out of budget, or still backing off. Fail OPEN on a
-	// store error: a missed page is worse than a rare duplicate.
-	attempt, err := s.store.ClaimAlertAttempt(ctx, run.RunID, alertMaxAttempts, alertRetryBackoff)
-	if err != nil {
-		s.logger.Error("claiming on-failure alert attempt (alerting anyway)",
-			"dag", run.DagID, "run", run.RunID, "error", err)
-		attempt = alertAttemptUnknown
-	} else if attempt == 0 {
-		return
-	}
-	// The last attempt is the one nobody hears about if it fails, so say so while
-	// it is still happening. Without this, a run whose every attempt failed is
-	// indistinguishable in the database from one that has not been tried — the
-	// alerting system failing silently, which is the same shape as the failure it
-	// exists to report.
-	if attempt >= alertMaxAttempts {
-		s.logger.Warn("final on-failure alert attempt for this run; no further retries after this one",
-			"dag", run.DagID, "run", run.RunID, "attempt", attempt, "max", alertMaxAttempts)
-	}
-	// Acquire a dispatch slot without blocking the tick. A saturated semaphore
-	// means a burst of failures is already sending; dropping this one (with a
-	// warning) is the best-effort trade-off that protects the scheduler.
-	select {
-	case s.alertSem <- struct{}{}:
-		go func() {
-			defer func() { <-s.alertSem }()
-			// Stamp delivery only when every rule landed. On anything less the
-			// episode stays unstamped, so the next tick retries it once the
-			// backoff elapses — until the attempt budget runs out.
-			detached := context.WithoutCancel(ctx)
-			if !s.alerter.AlertRunFailed(detached, run) {
-				if attempt >= alertMaxAttempts {
-					// Terminal: the budget is spent and nothing got through. This is
-					// the line an operator needs when asking "why was I never paged",
-					// so it says exactly that rather than reporting a failed send.
-					s.logger.Error("on-failure alert GAVE UP: no attempt was delivered, nobody was paged",
-						"dag", run.DagID, "run", run.RunID, "attempts", attempt)
-					return
-				}
-				s.logger.Warn("on-failure alert not fully delivered; will retry after backoff",
-					"dag", run.DagID, "run", run.RunID,
-					"attempt", attempt, "max", alertMaxAttempts, "backoff", alertRetryBackoff)
-				return
-			}
-			if err := s.store.MarkRunAlertDelivered(detached, run.RunID, attempt); err != nil {
-				// The page went out; failing to record it costs a duplicate on the
-				// next tick, which is the trade-off this path already prefers.
-				s.logger.Error("recording on-failure alert delivery",
-					"dag", run.DagID, "run", run.RunID, "error", err)
-			}
-		}()
-	default:
-		s.logger.Warn("dropping on-failure alert: dispatch saturated",
-			"dag", run.DagID, "run", run.RunID, "limit", cap(s.alertSem))
-		// Record the drop per rule (mirrors the dispatcher's per-rule sent/failed),
-		// so a burst of saturation-drops is a metric operators can alert on, not
-		// just a log line (#435). Best-effort: a nil recorder is a no-op.
-		if s.recorder != nil {
-			for _, rule := range run.Alerts.OnFailure {
-				s.recorder.RecordAlert(run.DagID, rule.Type, alertResultDropped)
-			}
-		}
-	}
-}
-
-// alertResultDropped is the RecordAlert result for an on-failure alert the
-// scheduler drops because its dispatch semaphore is saturated (#435). It sits
-// alongside the dispatcher's "sent"/"failed" on the same metric.
-const alertResultDropped = "dropped"
-
-// applyPlanned routes one planned transition. The queued rail launches the task
-// (a dispatch side effect) and the none rail runs the guarded retry/reschedule/
-// infra-replace resets — both stay per-task, applied in plan order. Every other
-// transition is a plain state set with no side effect beyond the write and its
-// metric, so it is collected into the batch and flushed grouped by source and
-// target state after the loop.
-func (s *Scheduler) applyPlanned(ctx context.Context, run RunState, t PlannedTransition, batch *transitionBatch) error {
-	switch t.To {
-	case domain.TaskStateQueued:
-		return s.launchQueued(ctx, run, t)
-	case domain.TaskStateNone:
-		// A → none transition is a retry release (bump try_number), a reschedule
-		// re-dispatch (preserve try_number), or an infra re-placement (preserve
-		// try_number, bump infra_attempts) — keyed on the from-state.
-		if run.States[t.TaskID] == domain.TaskStateUpForReschedule {
-			return s.redispatchReschedule(ctx, run, t.TaskID)
-		}
-		if run.States[t.TaskID] == domain.TaskStateFailed && run.InfraFailed[t.TaskID] {
-			return s.resetForInfraReplace(ctx, run, t.TaskID)
-		}
-		return s.resetForRetry(ctx, run, t.TaskID)
-	default:
-		batch.add(run.States[t.TaskID], t.To, t.TaskID)
-		return nil
-	}
-}
-
-// transitionBatch groups a tick's plain state-set transitions by source and
-// target state so each group can be flushed in one UPDATE
-// (SchedulerStore.ApplyTransitions) rather than one per task. It carries only
-// side-effect-free transitions; the queued (dispatch) and none (guarded reset)
-// rails never enter it.
-type transitionBatch struct {
-	// order lists (from, to) groups in first-seen order so the flush (and the
-	// metrics it emits) is deterministic regardless of Go's map iteration.
-	order []transitionKey
-	byKey map[transitionKey][]string
-	// applied holds, per group, the task ids the flush actually moved; a row
-	// the source-state guard left alone (#1605) is absent from it.
-	applied map[transitionKey][]string
-}
-
-// transitionKey is one batched group: the state the tick's snapshot read for
-// the task (the write's guard) and the state it moves to.
-type transitionKey struct {
-	from, to domain.TaskState
-}
-
-// newTransitionBatch builds an empty batch.
-func newTransitionBatch() *transitionBatch {
-	return &transitionBatch{
-		byKey:   make(map[transitionKey][]string),
-		applied: make(map[transitionKey][]string),
-	}
-}
-
-// add records that taskID, read in state from, transitions to the given target
-// state this tick.
-func (b *transitionBatch) add(from, to domain.TaskState, taskID string) {
-	k := transitionKey{from: from, to: to}
-	if _, seen := b.byKey[k]; !seen {
-		b.order = append(b.order, k)
-	}
-	b.byKey[k] = append(b.byKey[k], taskID)
-}
-
-// flushTransitions applies each collected (from, to) group in one guarded
-// UPDATE, then records the per-task metrics for the rows that actually moved.
-// A row a concurrent writer moved after the tick's snapshot is not touched
-// (#1605) and is counted as a superseded decision instead, the same "record
-// nothing we did not persist" contract the queued write follows.
-func (s *Scheduler) flushTransitions(ctx context.Context, run RunState, b *transitionBatch) error {
-	for _, k := range b.order {
-		taskIDs := b.byKey[k]
-		applied, err := s.store.ApplyTransitions(ctx, run.RunID, taskIDs, k.from, k.to)
-		if err != nil {
-			return fmt.Errorf("applying %s transitions: %w", k.to, err)
-		}
-		b.applied[k] = applied
-		if skipped := len(taskIDs) - len(applied); skipped > 0 {
-			s.logger.Debug("batched transition superseded; the task already moved on",
-				"run", run.RunID, "from", k.from, "to", k.to, "superseded", skipped)
-		}
-		if s.recorder == nil {
-			continue
-		}
-		for range applied {
-			s.recorder.RecordSchedulerDecision(string(k.to))
-			s.recorder.RecordTaskTransition(string(k.from), string(k.to), run.DagID)
-		}
-		for i := len(applied); i < len(taskIDs); i++ {
-			s.recorder.RecordSchedulerDecision(string(k.to) + "_superseded")
-		}
-	}
-	return nil
-}
-
-// resetForRetry returns a task to 'none' with an incremented try number so the
-// next tick re-evaluates and re-runs it.
-func (s *Scheduler) resetForRetry(ctx context.Context, run RunState, taskID string) error {
-	applied, err := s.store.ResetForRetry(ctx, run.RunID, taskID)
-	if err != nil {
-		return fmt.Errorf("resetting %s for retry: %w", taskID, err)
-	}
-	// The guarded reset no-ops when the TI is no longer up_for_retry — a stale
-	// decision that raced a concurrent writer (e.g. a re-dispatch). Do not record
-	// a retry we did not perform; surface the lost race instead.
-	if !applied {
-		if s.recorder != nil {
-			s.recorder.RecordSchedulerDecision("retry_noop")
-		}
-		return nil
-	}
-	if s.recorder != nil {
-		s.recorder.RecordSchedulerDecision("retry")
-		s.recorder.RecordTaskRetry(run.DagID, taskID)
-		s.recorder.RecordTaskTransition(string(run.States[taskID]), string(domain.TaskStateNone), run.DagID)
-	}
-	return nil
-}
-
-// resetForInfraReplace returns a task a reaper failed as infra to 'none' for a
-// re-run, preserving try_number and bumping infra_attempts — an infrastructure
-// fault (agent/pod/dispatch lost) is not a task failure and must not consume the
-// user's retry budget (ADR 0051 Phase 1).
-func (s *Scheduler) resetForInfraReplace(ctx context.Context, run RunState, taskID string) error {
-	applied, err := s.store.ResetForInfraReplace(ctx, run.RunID, taskID)
-	if err != nil {
-		return fmt.Errorf("re-placing infra-failed %s: %w", taskID, err)
-	}
-	// The guarded reset no-ops when the TI is no longer a failed-infra candidate
-	// (a late terminal report, or an app failure raced the reap). Do not record a
-	// re-placement we did not perform; surface the lost race instead.
-	if !applied {
-		if s.recorder != nil {
-			s.recorder.RecordSchedulerDecision("infra_replace_noop")
-		}
-		return nil
-	}
-	if s.recorder != nil {
-		// A re-place of a mark the reconciler never confirmed means the
-		// liveness valve opened (ADR 0052 amendment, part 2): the planner acted
-		// on the guess without the record's evidence.
-		if run.InfraProvisional[taskID] {
-			s.recorder.RecordSchedulerDecision("infra_confirm_valve_open")
-		}
-		s.recorder.RecordSchedulerDecision("infra_replace")
-		s.recorder.RecordTaskTransition(string(run.States[taskID]), string(domain.TaskStateNone), run.DagID)
-	}
-	return nil
-}
-
-// redispatchReschedule returns a reschedule-mode sensor to 'none' for re-dispatch
-// once its reschedule_at has passed, preserving try_number (no attempt consumed).
-func (s *Scheduler) redispatchReschedule(ctx context.Context, run RunState, taskID string) error {
-	if err := s.store.RedispatchReschedule(ctx, run.RunID, taskID); err != nil {
-		return fmt.Errorf("re-dispatching rescheduled %s: %w", taskID, err)
-	}
-	if s.recorder != nil {
-		s.recorder.RecordSchedulerDecision("reschedule")
-		s.recorder.RecordTaskTransition(string(run.States[taskID]), string(domain.TaskStateNone), run.DagID)
-	}
-	return nil
-}
-
-// launchQueued routes a queued task to the dispatcher (pod path), recording the
-// appropriate transition. A transient failure leaves the task scheduled so the
-// next tick retries.
-func (s *Scheduler) launchQueued(ctx context.Context, run RunState, t PlannedTransition) error {
-	task, ok := findTask(run, t.TaskID)
-	if !ok {
-		return fmt.Errorf("task %s not found in run %s", t.TaskID, run.RunID)
-	}
-	if s.dispatcher != nil {
-		if s.holdDispatch(run) {
-			// Leave the task scheduled, untouched, for the next tick.
-			return nil
-		}
-		s.tenantDispatches[run.TenantID]++
-		disp, err := s.dispatcher.Dispatch(ctx, run.RunID, run.DagID, run.DagVersionID, task)
-		if err != nil {
-			return s.handleDispatchFailure(ctx, run, t.TaskID, disp, err)
-		}
-		return s.recordQueued(ctx, run, t.TaskID)
-	}
-	return s.failUndispatchable(ctx, run, t.TaskID, task.Type)
-}
-
-// failUndispatchable fails a task that has no executor to run it (pod dispatch
-// disabled). The condition is deterministic for the process lifetime, so failing
-// fast — with the reason on the task note for the UI — beats leaving the run
-// "running" forever (#46, #50).
-// handleDispatchFailure records a synchronous dispatch failure: it backs the task
-// off for a growing interval, or fails it as dispatch_failed once the attempt
-// budget is spent (ADR 0031 Amendment A). It returns nil in both cases — the
-// failure is recorded in the DB, not propagated, so one task's dispatch trouble
-// does not abort the tick. A dispatch failure is infrastructure, not a task
-// failure, so it never consumes the task's try_number.
-//
-// A Deferred dispatch (the buffered dispatch queue was full) is split out first:
-// nothing was attempted, so nothing is recorded and the next tick re-offers it.
-// Cluster backpressure (a ResourceQuota 403 or an APF 429) is split out next
-// (ADR 0053): it is retriable-forever, so it is backed off WITHOUT touching the
-// dispatch-attempt counter and can never reach the dispatch_failed give-up below.
-// Dexaflow holds the task and re-offers it until the cluster has room, rather than
-// failing the user's task because the cluster asked it to slow down. The
-// disposition that split is decided on is classified on the execution layer and
-// arrives typed over the seam (ADR 0051 Phase 4), so the scheduler never inspects
-// Kubernetes error types itself.
-func (s *Scheduler) handleDispatchFailure(ctx context.Context, run RunState, taskID string, disp executor.Disposition, cause error) error {
-	if disp == executor.Deferred {
-		// The dispatch never left the control plane (the buffered dispatch queue
-		// is full or draining). Leave the task scheduled and write nothing: the
-		// next tick re-offers it, and local backpressure must never spend the
-		// dispatch-attempt budget or drive the task to dispatch_failed.
-		s.logger.Debug("dispatch deferred; buffer at capacity, re-offering next tick",
-			"run", run.RunID, "task", taskID, "error", cause)
-		s.deferredRun = run.RunID
-		return nil
-	}
-	if disp == executor.Backpressure {
-		return s.backoffBackpressure(ctx, run, taskID, cause)
-	}
-	if disp == executor.Refused {
-		// A permanent verdict (ADR 0066 §3): retrying cannot change it, so the
-		// task fails now and spends neither a dispatch retry nor its own retries.
-		s.logger.Error("dispatch refused; failing task",
-			"run", run.RunID, "task", taskID, "error", cause)
-		if err := s.store.FailDispatchRefused(ctx, run.RunID, taskID, refusedReason(cause)); err != nil {
-			s.logger.Error("failing refused task", "run", run.RunID, "task", taskID, "error", err)
-		}
-		return nil
-	}
-	attempts := run.DispatchAttempts[taskID] + 1
-	if attempts >= dispatchMaxAttempts {
-		reason := fmt.Sprintf("dispatch_failed after %d attempts: %v", attempts, cause)
-		s.logger.Error("dispatch attempts exhausted; failing task",
-			"run", run.RunID, "task", taskID, "attempts", attempts, "error", cause)
-		if err := s.store.FailDispatchExhausted(ctx, run.RunID, taskID, reason); err != nil {
-			s.logger.Error("failing dispatch-exhausted task", "run", run.RunID, "task", taskID, "error", err)
-		}
-		return nil
-	}
-	now := run.Now
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	nextAt := now.Add(dispatchBackoff(attempts))
-	s.logger.Warn("dispatch failed; backing off before re-attempt",
-		"run", run.RunID, "task", taskID, "attempt", attempts, "next_dispatch_at", nextAt, "error", cause)
-	if err := s.store.RecordDispatchFailure(ctx, run.RunID, taskID, nextAt); err != nil {
-		s.logger.Error("recording dispatch failure", "run", run.RunID, "task", taskID, "error", err)
-	}
-	return nil
-}
-
-// backoffBackpressure handles a retriable-forever dispatch failure caused by
-// cluster backpressure (ADR 0053). It sets next_dispatch_at so the planner holds
-// the task `scheduled` and re-offers it once the backoff elapses, but it does NOT
-// increment dispatch_attempts — backpressure is a temporary "no room," not a
-// poison placement, so it must never accumulate toward the dispatch_failed cap.
-//
-// The backoff reuses dispatchBackoff over the task's EXISTING (un-incremented)
-// attempt count: a task hitting only backpressure keeps a steady base-interval
-// re-offer cadence rather than a growing one — the right trade-off for a
-// condition expected to clear, since it recovers fast when the cluster frees room
-// without hammering the apiserver every tick, and without inflating a counter
-// that could later fail the task. Returns nil: like every dispatch outcome, the
-// result is recorded, never propagated, so one task's backpressure cannot abort
-// the tick.
-func (s *Scheduler) backoffBackpressure(ctx context.Context, run RunState, taskID string, cause error) error {
-	now := run.Now
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	nextAt := now.Add(dispatchBackoff(run.DispatchAttempts[taskID] + 1))
-	s.logger.Warn("dispatch hit cluster backpressure; backing off and re-offering (not counted against dispatch budget)",
-		"run", run.RunID, "task", taskID, "next_dispatch_at", nextAt, "error", cause)
-	if err := s.store.RecordDispatchBackpressure(ctx, run.RunID, taskID, nextAt); err != nil {
-		s.logger.Error("recording dispatch backpressure", "run", run.RunID, "task", taskID, "error", err)
-	}
-	return nil
-}
-
-func (s *Scheduler) failUndispatchable(ctx context.Context, run RunState, taskID string, taskType domain.TaskType) error {
-	s.logger.Warn("task has no available executor; failing it (it can never run)",
-		"run", run.RunID, "dag", run.DagID, "task", taskID, "task_type", taskType,
-		"reason", "no_executor",
-		"hint", "pod dispatch disabled (no kubeconfig) or no executor handles this task type")
-	if s.recorder != nil {
-		s.recorder.RecordUndispatchable("no_executor")
-	}
-	note := fmt.Sprintf("Failed: no executor available for a %q task. "+
-		"Pod dispatch is disabled (no Kubernetes config).", taskType)
-	if nerr := s.store.SetTaskNote(ctx, run.RunID, taskID, note); nerr != nil {
-		s.logger.Warn("setting task note", "run", run.RunID, "task", taskID, "error", nerr)
-	}
-	return s.recordTransition(ctx, run, taskID, domain.TaskStateFailed)
-}
-
-// recordQueued writes scheduled -> queued after an accepted dispatch, guarded to
-// the slot this tick planned. With buffered dispatch the worker may already have
-// failed or re-offered the task, or the agent reported on it; the write then
-// touches nothing and no transition is recorded.
-func (s *Scheduler) recordQueued(ctx context.Context, run RunState, taskID string) error {
-	applied, err := s.store.MarkQueued(ctx, run.RunID, taskID, run.NextDispatchAt[taskID])
-	if err != nil {
-		return fmt.Errorf("applying transition for %s: %w", taskID, err)
-	}
-	if !applied {
-		s.logger.Debug("queued write superseded; the task already moved on", "run", run.RunID, "task", taskID)
-		if s.recorder != nil {
-			s.recorder.RecordSchedulerDecision("queued_superseded")
-		}
-		return nil
-	}
-	if s.recorder != nil {
-		s.recorder.RecordSchedulerDecision(string(domain.TaskStateQueued))
-		s.recorder.RecordTaskTransition(string(run.States[taskID]), string(domain.TaskStateQueued), run.DagID)
-	}
-	return nil
-}
-
-// recordTransition persists a task transition and records its metrics.
-func (s *Scheduler) recordTransition(ctx context.Context, run RunState, taskID string, to domain.TaskState) error {
-	from := run.States[taskID]
-	if err := s.store.ApplyTransition(ctx, run.RunID, taskID, to); err != nil {
-		return fmt.Errorf("applying transition for %s: %w", taskID, err)
-	}
-	if s.recorder != nil {
-		s.recorder.RecordSchedulerDecision(string(to))
-		s.recorder.RecordTaskTransition(string(from), string(to), run.DagID)
-	}
-	return nil
-}
-
 // findTask returns the task with the given ID from the run topology. It looks
 // the task up through the run's task index, so dispatching a whole fan-out is
 // linear in its width rather than quadratic.
@@ -1670,4 +1118,59 @@ func findTask(run RunState, taskID string) (domain.TaskSpec, bool) {
 		return domain.TaskSpec{}, false
 	}
 	return run.Tasks[i], true
+}
+
+// TenantStopper is the optional store seam of the stop suspension mode
+// (#2181): it fails the queued and running task instances of a tenant
+// suspended in stop mode and returns how many it failed. A store without it
+// leaves stop applying only what drain does.
+type TenantStopper interface {
+	FailStoppedTenantTaskInstances(ctx context.Context, tenantID string) (int64, error)
+}
+
+// stopSuspended fails, once per tenant, the queued and running task
+// instances of every tenant the snapshot shows suspended in stop mode with
+// such a task instance. The service API already did it when it suspended the
+// tenant; the tick repeats it so an attempt dispatched while that call ran is
+// stopped too. The attempt learns it on its next heartbeat, which matches no
+// live row, and the agent kills its task. This tick still sees the old states;
+// the next one plans from the failed rows (a retry stays scheduled under the
+// suspension). A failure is logged and retried next tick, it does not abort
+// the tick.
+func (s *Scheduler) stopSuspended(ctx context.Context, runs []RunState) {
+	stopper, ok := s.store.(TenantStopper)
+	if !ok {
+		return
+	}
+	done := map[string]bool{}
+	for i := range runs {
+		r := &runs[i]
+		if r.Suspension != domain.SuspensionStop || done[r.TenantID] || !hasActiveTask(r.States) {
+			continue
+		}
+		done[r.TenantID] = true
+		n, err := stopper.FailStoppedTenantTaskInstances(ctx, r.TenantID)
+		if err != nil {
+			s.logger.Warn("could not stop the task instances of a tenant suspended in stop mode; retrying next tick",
+				"tenant_id", r.TenantID, "error", err)
+			s.record("tenant_stop_error")
+			continue
+		}
+		if n > 0 {
+			s.logger.Info("stopped the task instances of a tenant suspended in stop mode",
+				"tenant_id", r.TenantID, "task_instances", n)
+			s.record("tenant_stopped")
+		}
+	}
+}
+
+// hasActiveTask reports whether a task instance of states is queued or
+// running.
+func hasActiveTask(states map[string]domain.TaskState) bool {
+	for _, st := range states {
+		if st == domain.TaskStateQueued || st == domain.TaskStateRunning {
+			return true
+		}
+	}
+	return false
 }

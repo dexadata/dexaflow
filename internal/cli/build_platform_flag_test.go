@@ -15,9 +15,9 @@ const amd64Only = `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.ind
 
 const amd64AndArm64 = `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{"platform":{"os":"linux","architecture":"amd64"}},{"platform":{"os":"linux","architecture":"arm64"}}]}`
 
-// argvBuilder stands in for docker: it appends every argv to log, one call
-// per line, and succeeds. The digest of what it "pushed" comes from the
-// project's registry (platformProjectWith), never from the tool.
+// argvBuilder stands in for docker without buildx: it appends every argv to
+// log, one call per line, and succeeds. It reports no digest for its push, so
+// the digest comes from the project's registry (platformProjectWith).
 func argvBuilder(t *testing.T) (builder, log string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -27,6 +27,7 @@ func argvBuilder(t *testing.T) (builder, log string) {
 	builder = filepath.Join(dir, "docker")
 	log = filepath.Join(dir, "argv.log")
 	script := "#!/bin/sh\n" +
+		noBuildx +
 		"echo \"$*\" >> \"" + log + "\"\n" +
 		"exit 0\n"
 	if err := os.WriteFile(builder, []byte(script), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
@@ -34,6 +35,10 @@ func argvBuilder(t *testing.T) (builder, log string) {
 	}
 	return builder, log
 }
+
+// noBuildx is the first line of a fake docker that has no buildx plugin,
+// unlogged, so the build and push it logs are the classic two calls.
+const noBuildx = "if [ \"$1 $2\" = \"buildx version\" ]; then exit 1; fi\n"
 
 // argvLines returns the logged builder calls, nil when it never ran.
 func argvLines(t *testing.T, log string) []string {

@@ -172,16 +172,26 @@ func TestStepRecordsEachQueuedRunHeldByTheStartCap(t *testing.T) {
 	if got := strings.Count(strings.Join(rec.decisions, ","), "max_active_runs_start_cap"); got != 2 {
 		t.Errorf("two queued runs held by the cap: %d max_active_runs_start_cap decisions, want 2 (%v)", got, rec.decisions)
 	}
+	if strings.Contains(strings.Join(rec.decisions, ","), "start_run_superseded") {
+		t.Errorf("a run that started is not metered as superseded: %v", rec.decisions)
+	}
 }
 
 // TestStepLeavesQueuedRunThatMovedOnBeforeItsStart: the queued -> running
 // write is guarded on the run still being queued. When a user marked the run
-// after the tick read it, nothing starts and no task of it is planned.
+// after the tick read it, nothing starts, no task of it is planned, and the
+// superseded start is metered as start_run_superseded.
 func TestStepLeavesQueuedRunThatMovedOnBeforeItsStart(t *testing.T) {
 	store := newFakeStore(clearedRun("marked", "2026-01-01T00:00:00Z", 16))
 	store.startSuperseded = map[string]bool{"marked": true}
-	if err := newScheduler(store).Step(context.Background()); err != nil {
+	rec := &fakeRecorder{}
+	s := newScheduler(store)
+	s.SetRecorder(rec)
+	if err := s.Step(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if got := strings.Count(strings.Join(rec.decisions, ","), "start_run_superseded"); got != 1 {
+		t.Errorf("a start that found the run moved on is metered once: %d start_run_superseded decisions, want 1 (%v)", got, rec.decisions)
 	}
 	if st, ok := store.runStates["marked"]; ok {
 		t.Errorf("a run that moved on is not stamped: run state %q", st)

@@ -3,6 +3,7 @@ package build
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -203,6 +204,29 @@ func TestCloudBuildRefusesADigestThatIsNotTheBuilds(t *testing.T) {
 	}
 }
 
+// A registry that cannot be read after Cloud Build pushed is a pin read
+// failure, with the pushed tag in the result; a digest that is not the
+// build's is not one.
+func TestCloudBuildUnreadableDigestIsAPinRead(t *testing.T) {
+	tool, _ := fakeGcloud(t)
+	b := CloudBuild{Project: "acme-ci", Tool: tool, Registry: &fakeRegistry{err: errors.New("manifest unknown")}}
+	req := cloudRequest(t)
+	res, err := b.Build(context.Background(), req)
+	if !errors.Is(err, ErrPinRead) || !strings.Contains(err.Error(), "manifest unknown") {
+		t.Fatalf("Build = %v, want ErrPinRead with the registry failure", err)
+	}
+	if !res.Pushed || res.Image != req.Image || res.Ref != "" {
+		t.Errorf("result = %+v, want the pushed tag, unpinned", res)
+	}
+
+	tool, dir := fakeGcloud(t)
+	setDescribe(t, dir, "SUCCESS", "sha256:fromthebuild")
+	b = CloudBuild{Project: "acme-ci", Tool: tool, Registry: &fakeRegistry{ref: "reg.io/team/etl@sha256:other", manifest: singleManifest}}
+	if _, err := b.Build(context.Background(), cloudRequest(t)); err == nil || errors.Is(err, ErrPinRead) {
+		t.Errorf("a digest that is not the build's = %v, want a refusal that is not ErrPinRead", err)
+	}
+}
+
 // A custom service account logs to Cloud Logging only, which gcloud cannot
 // stream: the build is described until it ends, and its log is named.
 func TestCloudBuildWithAServiceAccountPollsAndNamesTheLog(t *testing.T) {
@@ -330,7 +354,7 @@ func TestCloudBuildRefusesAnOversizedContext(t *testing.T) {
 func TestCloudBuildWithoutGcloudSaysHowToInstallIt(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	b := CloudBuild{Project: "acme-ci", Registry: &fakeRegistry{}}
-	if err := b.Ready(); err == nil || !strings.Contains(err.Error(), "gcloud is not on PATH") || !strings.Contains(err.Error(), "cloud.google.com/sdk") {
+	if err := b.Ready(context.Background()); err == nil || !strings.Contains(err.Error(), "gcloud is not on PATH") || !strings.Contains(err.Error(), "cloud.google.com/sdk") {
 		t.Errorf("Ready = %v, want gcloud missing and where to get it", err)
 	}
 	if _, err := b.Build(context.Background(), cloudRequest(t)); err == nil || !strings.Contains(err.Error(), "gcloud is not on PATH") {

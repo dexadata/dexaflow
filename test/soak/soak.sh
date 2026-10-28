@@ -79,8 +79,87 @@ Fault kinds:
 USAGE
 }
 
+# self_test interrupts a real run of this script before it has a verdict and
+# checks that it exits 2 and tears down once. An interrupted soak used to exit
+# with whatever status the interrupted command left (0 when the signal reached
+# the harness alone, so an interrupted `make soak` read as a pass) and ran its
+# teardown twice (#1921). docker and go are stubs on PATH, so nothing is
+# provisioned: the run blocks in a stubbed `go build` until the signal lands.
+self_test() {
+  local tmp rc=0
+  tmp="$(mktemp -d)" || return 1
+  mkdir -p "$tmp/stub"
+  cat > "$tmp/stub/docker" <<'STUB'
+#!/usr/bin/env bash
+echo "docker $*" >> "${SOAK_STUB_LOG:?}"
+STUB
+  cat > "$tmp/stub/go" <<'STUB'
+#!/usr/bin/env bash
+echo "go $*" >> "${SOAK_STUB_LOG:?}"
+[ "${1:-}" = build ] && sleep "${SOAK_STUB_BUILD_SECONDS:?}"
+exit 0
+STUB
+  chmod +x "$tmp/stub/docker" "$tmp/stub/go"
+  # Ctrl-C signals the whole foreground process group, the build included. The
+  # watchdog's `kill -TERM $$` reaches the harness alone, which acts on it once
+  # the build it is waiting for returns 0.
+  _selftest_interrupt "$tmp" ctrl-c INT group 30 || rc=1
+  _selftest_interrupt "$tmp" watchdog TERM harness 2 || rc=1
+  rm -rf "$tmp"
+  return "$rc"
+}
+
+# _selftest_interrupt runs one interrupted soak: <tmp> <case> <signal>
+# <group|harness> <seconds the stubbed build blocks>.
+_selftest_interrupt() {
+  local tmp="$1" name="$2" sig="$3" target="$4" build_s="$5" dir code teardowns rc=0
+  dir="$tmp/$name"; mkdir -p "$dir/home"
+  # High ports picked at random, so the preflight's port checks pass anywhere.
+  local base=$((40000 + RANDOM % 10000))
+  (
+    # Job control gives the run its own process group and, unlike a plain `&`
+    # in a script, leaves SIGINT deliverable to it.
+    set -m
+    SOAK_STUB_LOG="$dir/calls.log" SOAK_STUB_BUILD_SECONDS="$build_s" \
+      SOAK_HOME="$dir/home" SOAK_OUT_ROOT="$dir/out" \
+      SOAK_API_PORT="$base" SOAK_FIXTURE_PORT="$((base + 1))" SOAK_PG_PORT="$((base + 2))" \
+      PATH="$tmp/stub:$PATH" \
+      bash "${BASH_SOURCE[0]}" --duration 1m --label "selftest-$name" > "$dir/run.log" 2>&1 &
+    pid=$!
+    for _ in $(seq 1 100); do
+      grep -q '^go build' "$dir/calls.log" 2>/dev/null && break
+      sleep 0.1
+    done
+    if [ "$target" = group ]; then
+      kill -"$sig" -- "-$pid" 2>/dev/null
+    else
+      kill -"$sig" "$pid" 2>/dev/null
+    fi
+    wait "$pid"
+    echo "$?" > "$dir/code"
+  )
+  code="$(cat "$dir/code" 2>/dev/null)"
+  teardowns="$(grep -c 'tearing down' "$dir/run.log")"
+  if ! grep -q '^go build' "$dir/calls.log" 2>/dev/null; then
+    echo "FAIL $name: the run never reached the stubbed build"; rc=1
+  fi
+  if [ "$code" != 2 ]; then
+    echo "FAIL $name: a soak interrupted by SIG$sig before a verdict must exit 2, got '$code'"; rc=1
+  fi
+  if [ "$teardowns" != 1 ]; then
+    echo "FAIL $name: teardown must run once, it ran $teardowns times"; rc=1
+  fi
+  if [ "$rc" = 0 ]; then
+    echo "ok $name: SIG$sig before a verdict exits 2 with one teardown"
+  else
+    sed 's/^/    run: /' "$dir/run.log"
+  fi
+  return "$rc"
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
+    --self-test) self_test; exit $? ;;
     --duration) DURATION="$2"; shift 2 ;;
     --faults)   FAULTS="$2"; shift 2 ;;
     --mode)     MODE="$2"; shift 2 ;;
@@ -101,7 +180,7 @@ FAULTS_FILE="$OUT_DIR/faults.jsonl"
 : > "$FAULTS_FILE"
 
 # `leoflow lite` sets LEOFLOW_DATABASE_URL itself, unconditionally, to the DSN it
-# derives from the running user's HOME (internal/cli/dev.go sharedServerEnv +
+# derives from the running user's HOME (internal/cli/dev_env.go sharedServerEnv +
 # internal/cli/dsn.go). A soak therefore cannot hand Lite a database URL. What it
 # CAN do is give Lite a private HOME containing a `db-port` file, which is the
 # supported knob Lite uses to find its datastore. That is how the soak gets its
@@ -175,7 +254,14 @@ cleanup() {
   [ -f "$OUT_DIR/summary.md" ] && sed -n '1,6p' "$OUT_DIR/summary.md"
   exit "$([ "$VERDICT_CODE" != 2 ] && echo "$VERDICT_CODE" || echo "$code")"
 }
-trap cleanup EXIT INT TERM
+# A signal only exits, with 2, and the EXIT trap tears down once. Trapping INT
+# and TERM with cleanup itself ran the teardown twice (its own `exit` fired the
+# EXIT trap again) and exited with whatever status the interrupted command left,
+# 0 when the signal reached the harness alone: an interrupted soak read as a
+# pass (#1921). A verdict already reached still wins, in cleanup.
+on_signal() { exit 2; }
+trap cleanup EXIT
+trap on_signal INT TERM
 
 collect_evidence() {
   # Everything here is best-effort: collection must never be the reason a soak
@@ -303,8 +389,9 @@ export SOAK_DATABASE_URL="$DB_URL"
 #
 # `leoflow db reset --yes` always drops the database named `leoflow_dev` on the
 # port in <HOME>/.dexaflow/dev/db-port (internal/cli/db.go dropDevDatabase ->
-# devDSNs -> devDBPort), and it ignores LEOFLOW_DATABASE_URL entirely (#1185).
-# So the only thing standing between this harness and the developer's own
+# devDSNs -> devDBPort). It never drops the database LEOFLOW_DATABASE_URL names:
+# since #1185 it refuses while that variable names another one, and this script
+# does not set it. So the only thing standing between this harness and the developer's own
 # database is that file, under a HOME that is not the developer's. Re-reading
 # the file the script just wrote proves nothing; these four checks are the ones
 # that can actually fail, and they run before the drop, not after it.

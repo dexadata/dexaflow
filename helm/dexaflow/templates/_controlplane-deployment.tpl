@@ -79,6 +79,14 @@ spec:
         # it has today rather than gaining a constant-valued one.
         checksum/oidc-config: {{ include (print .ctx.Template.BasePath "/oidc-config.yaml") .ctx | sha256sum }}
         {{- end }}
+        {{- with include "leoflow.installationID" .ctx }}
+        # A changed installation.id accepts a replaced database (ADR 0090
+        # decision 3). The migration Job writes it into the ConfigMap the
+        # pods read at start, and this rolls them so they do; a pod still
+        # waiting on the old id would otherwise wait for good. Rendered only
+        # when set, so an install that never pins one keeps its annotations.
+        dexaflow.dexadata.ai/installation-id: {{ . | quote }}
+        {{- end }}
         {{- with .ctx.Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -148,6 +156,9 @@ spec:
             - name: LEOFLOW_SERVER_ROLE
               value: {{ .role | quote }}
             {{- end }}
+            # "pro" is the earlier name of the cluster edition; the server reads
+            # both the same (config.IsClusterEdition). The chart keeps "pro"
+            # until every supported server accepts "cluster" (#2173).
             # Mark this deployment as the Pro edition. The control plane uses
             # this signal for two things: (a) refuse the
             # LEOFLOW_AGENT_ALLOW_INSECURE_SECRETS=true dev escape hatch at boot
@@ -156,6 +167,11 @@ spec:
             # the served SPA shell, mirroring Lite's silver LITE pill.
             - name: LEOFLOW_UI_EDITION
               value: "pro"
+            # /readyz bounds its dependency checks at one second under the
+            # kubelet's readiness timeout, so raising that timeout for a slow
+            # database gives the server the same room (#1050).
+            - name: LEOFLOW_SERVER_PROBE_BUDGET
+              value: {{ include "leoflow.readinessProbeBudget" .ctx | quote }}
             {{- if (.ctx.Values.goMemLimit | default dict).enabled }}
             # Soft memory limit for the Go GC, a fraction of the container's
             # hard limit (leoflow.goMemLimit). Omitted when off.
@@ -244,6 +260,13 @@ spec:
             - name: LEOFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS
               value: {{ join "," .allowedCIDRs | quote }}
             {{- end }}
+            {{- end }}
+            {{- if eq (toString (dig "apiTokens" "disabled" false .ctx.Values.auth)) "true" }}
+            # No API tokens (auth.api_tokens.disabled): their routes and screen
+            # are not served and every dxf_ bearer is refused. Omitted when
+            # false, which keeps the server default (served).
+            - name: LEOFLOW_AUTH_API_TOKENS_DISABLED
+              value: "true"
             {{- end }}
             {{- if .ctx.Values.config.poolsReadOnly }}
             # Tenant-facing pool API serves reads only (server.pools_read_only):
@@ -339,6 +362,10 @@ spec:
               value: {{ .ctx.Values.config.logsDir | quote }}
             - name: LEOFLOW_LOGS_TAIL_PUBLISH
               value: {{ (.ctx.Values.logs.tail).publish | default "always" | quote }}
+            {{- if and (not .ctx.Values.logs.persistence.enabled) (eq .ctx.Values.logs.sink.provider "disk") }}
+            - name: LEOFLOW_LOGS_PERSISTENCE_ENABLED
+              value: "false"
+            {{- end }}
             {{- if ne .ctx.Values.logs.sink.provider "disk" }}
             # Object-store log backend (opt-in, ADR 0035/0056 keyless-first). With
             # provider s3 or gcs, task logs ship to a bucket instead of the PVC; set
@@ -477,6 +504,16 @@ spec:
             {{- end }}
             {{- end }}
             {{- end }}
+            {{- with .ctx.Values.auth.ciOidc }}
+            {{- if .issuers }}
+            # CI OIDC issuers (ADR 0092, #1882). Rendered only when an entry is
+            # set; the server validates every entry at boot.
+            - name: LEOFLOW_AUTH_CI_OIDC_ISSUERS
+              value: {{ toJson .issuers | quote }}
+            - name: LEOFLOW_AUTH_CI_OIDC_SESSION_TTL_SECONDS
+              value: {{ .sessionTtlSeconds | quote }}
+            {{- end }}
+            {{- end }}
             - name: LEOFLOW_OBSERVABILITY_LOG_FORMAT
               value: {{ .ctx.Values.observability.logFormat | quote }}
             - name: LEOFLOW_OBSERVABILITY_LOG_LEVEL
@@ -608,6 +645,12 @@ spec:
             - name: LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
               value: {{ .ctx.Values.execution.warmReadOnlyRootFilesystem | quote }}
             {{- end }}
+            {{- if .ctx.Values.execution.warmRequireAttemptHomeSweep }}
+            # Stamped only when on, so enabling warm pools alone renders the same
+            # env it did before this knob existed (the server default is false).
+            - name: LEOFLOW_EXECUTION_WARM_REQUIRE_ATTEMPT_HOME_SWEEP
+              value: {{ .ctx.Values.execution.warmRequireAttemptHomeSweep | quote }}
+            {{- end }}
             {{- if .ctx.Values.execution.warmPoolEventRefill }}
             # Stamped only when on, so enabling warm pools alone renders the same
             # env it did before this knob existed (the server default is false).
@@ -636,6 +679,59 @@ spec:
             {{- end }}
             {{- end }}
             {{- end }}
+            {{- if $deployDefaults.sourceMode }}
+            # Advertise the source mode runtime image on /api/v2/deployDefaults
+            # (#1772). The server serves execution.source_mode.image itself;
+            # deployment.yaml has already refused this while source mode is off.
+            - name: LEOFLOW_DEPLOY_DEFAULTS_SOURCE_MODE
+              value: "true"
+            {{- end }}
+            {{- with ($deployDefaults.remoteBuilder | default dict).cloudBuild }}
+            # Cluster remote builder (#1890), served on /api/v2/deployDefaults
+            # for deploys whose project, target and workspace name none. Each
+            # value is stamped only when set; deployment.yaml has already
+            # refused a value the server refuses at boot.
+            {{- if .project }}
+            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT
+              value: {{ .project | quote }}
+            {{- end }}
+            {{- if .region }}
+            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_REGION
+              value: {{ .region | quote }}
+            {{- end }}
+            {{- if .workerPool }}
+            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_WORKER_POOL
+              value: {{ .workerPool | quote }}
+            {{- end }}
+            {{- if .serviceAccount }}
+            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_SERVICE_ACCOUNT
+              value: {{ .serviceAccount | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if and .ctx.Values.builder.enabled .ctx.Values.builder.advertise }}
+            # Advertise the in-cluster builder (#1883) as the cluster's remote
+            # builder: a deploy that needs a real build runs it there with
+            # buildctl over kubectl exec. deployment.yaml has already refused
+            # it next to a Cloud Build default.
+            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_NAMESPACE
+              value: {{ include "leoflow.builderNamespace" .ctx | quote }}
+            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_POD_SELECTOR
+              value: {{ printf "app.kubernetes.io/instance=%s,app.kubernetes.io/component=builder" .ctx.Release.Name | quote }}
+            {{- end }}
+            {{- if $deployDefaults.taskServiceAccount }}
+            # Advertise the task ServiceAccount (#1890): the server serves its
+            # own executor.task_service_account; deployment.yaml has already
+            # refused this when the chart sets none.
+            - name: LEOFLOW_DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT
+              value: "true"
+            {{- end }}
+            {{- if $deployDefaults.warmPools }}
+            # Advertise the warm pool settings (#1890): the server serves its
+            # own execution.warm_pools_enabled, min_idle_workers and
+            # max_pool_size.
+            - name: LEOFLOW_DEPLOY_DEFAULTS_WARM_POOLS
+              value: "true"
+            {{- end }}
             {{- $requireDigest := (.ctx.Values.deploy | default dict).requireDigest | default "off" | toString }}
             {{- if ne $requireDigest "off" }}
             # Digest-pinned images at register (#1703). Stamped only when warn
@@ -653,12 +749,52 @@ spec:
               value: "true"
             - name: LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE
               value: {{ .ctx.Values.execution.sourceMode.image | quote }}
+            {{- if .ctx.Values.execution.sourceMode.warmPools }}
+            # Source-mode versions on warm workers, which receive the dag.py
+            # with each assignment (ADR 0095). Stamped only when on.
+            - name: LEOFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS
+              value: "true"
+            {{- end }}
             {{- end }}
             - name: LEOFLOW_DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ .ctx.Values.database.existingSecret | default (include "leoflow.credentialsSecretName" .ctx) }}
                   key: databaseUrl
+            # The installation id the migration Job keeps (ADR 0090 decision
+            # 3): the server serves only a database that carries it. Read from
+            # the ConfigMap, never rendered from installation.id, so a rollback
+            # (which runs no hook) still reads the id the database carries.
+            # Optional: with migrations.enabled false there is no ConfigMap,
+            # and nothing is compared.
+            - name: LEOFLOW_DATABASE_INSTALLATION_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "leoflow.installationConfigMapName" .ctx }}
+                  key: installationId
+                  optional: true
+            # The release, so a pod waiting for its schema names the exact
+            # command that migrates it (ADR 0090 decision 2). Read by nothing
+            # else.
+            - name: LEOFLOW_HELM_RELEASE
+              value: {{ .ctx.Release.Name | quote }}
+            - name: LEOFLOW_HELM_NAMESPACE
+              value: {{ .ctx.Release.Namespace | quote }}
+            - name: LEOFLOW_HELM_CHART_VERSION
+              value: {{ .ctx.Chart.Version | quote }}
+            - name: LEOFLOW_HELM_MIGRATIONS_ENABLED
+              value: {{ .ctx.Values.migrations.enabled | toString | quote }}
+            - name: LEOFLOW_HELM_MIGRATE_IMAGE
+              value: {{ printf "%s:%s" .ctx.Values.migrations.image.repository (.ctx.Values.migrations.image.tag | default .ctx.Chart.AppVersion) | quote }}
+            {{- if and .ctx.Values.migrations.onBoot (ne .role "api") }}
+            # Self-migration on boot (ADR 0090 decision 4): the embedded
+            # migrations, applied when the schema is absent or behind and never
+            # on a replaced database. Never on the api role, whatever its DSN can
+            # do; in split mode only the scheduler carries it. Stamped only when
+            # on, so an install that leaves it off renders the env it had.
+            - name: LEOFLOW_DATABASE_MIGRATE_ON_BOOT
+              value: "true"
+            {{- end }}
             - name: LEOFLOW_REDIS_URL
               valueFrom:
                 secretKeyRef:

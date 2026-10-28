@@ -1,0 +1,92 @@
+# Fails when main does not carry the changelog of a patch release already
+# tagged (scripts/changelog-sync.sh --check-all), so a missed
+# `changelog: sync vX.Y.Z to main` shows up the day after, not at the next
+# minor cut, which refuses it (#1937).
+#
+# Until this workflow the check ran only in the preflight of a cut. CI ran the
+# script's self-test (changelog-structure.yaml), which reads fixtures and never
+# main. A patch tag drifts main without any push to main, so the schedule is
+# what catches it; the push trigger re-checks when a change to CHANGELOG.md can
+# close the drift, such as the sync pull request merging.
+#
+# A patch whose sync pull request is open is reported as a notice and passes:
+# the post-release workflow (docs-promote.yaml) or the cut opened it, and it
+# only waits for a merge. Every other drift fails, with the check's output in
+# the job summary.
+name: Changelog sync
+
+on:
+  schedule:
+    - cron: "23 7 * * *" # daily, 07:23 UTC
+  push:
+    branches: [main]
+    paths:
+      - CHANGELOG.md
+      - scripts/changelog-sync.sh
+      - .github/workflows/changelog-sync-check.yaml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# A scheduled or manual run supersedes the one before it. A push to main gets
+# a group of its own, keyed by run id, as in ci.yaml: the prepare commit of a
+# minor cut changes CHANGELOG.md, and cut-release.sh refuses to tag a commit
+# with a cancelled run.
+concurrency:
+  group: ${{ github.event_name == 'push' && format('{0}-run-{1}', github.workflow, github.run_id) || github.workflow }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
+jobs:
+  check-all:
+    name: main carries the changelog of every patch release
+    # A fork has no release tags of its own to compare with.
+    if: ${{ github.repository == 'dexadata/dexaflow' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # find the open sync pull request of a drifted patch
+    steps:
+      # The check reads each patch tag's CHANGELOG.md and the fragments
+      # deleted since vX.Y.0, so it needs the history and the tags. blob:none
+      # keeps the clone to commits and trees.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+
+      - name: Check main against every patch tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rc=0
+          out="$(bash scripts/changelog-sync.sh --check-all --fetch 2>&1)" || rc=$?
+          printf '%s\n' "$out"
+          if [ "$rc" = 0 ]; then
+            echo "main carries the changelog of every patch release." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          [ "$rc" = 1 ] || { echo "::error::changelog-sync.sh --check-all could not run (exit $rc, above)"; exit "$rc"; }
+          summary="$RUNNER_TEMP/summary.md"
+          printf '## main lacks the changelog of a patch release\n\n' > "$summary"
+          versions="$(printf '%s\n' "$out" | sed -nE 's/^origin\/main is not in sync with v([0-9]+\.[0-9]+\.[0-9]+):$/\1/p')"
+          missing=0
+          [ -n "$versions" ] || { echo "::error::changelog-sync.sh --check-all found drift but named no version (above)"; missing=1; }
+          for v in $versions; do
+            pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "changelog/sync-v$v" --state open --json number -q '.[0].number')"
+            if [ -n "$pr" ]; then
+              echo "- v$v: its sync pull request #$pr is open; merge it." >> "$summary"
+              echo "::notice::main does not carry v$v yet; its sync pull request #$pr is open"
+            else
+              echo "- v$v: no sync pull request is open. Run \`scripts/changelog-sync.sh $v --pr --fetch\`, or the Docs promote workflow with tag v$v." >> "$summary"
+              echo "::error::main lacks the changelog of v$v and no sync pull request is open: scripts/changelog-sync.sh $v --pr --fetch"
+              missing=1
+            fi
+          done
+          { echo; echo '```'; printf '%s\n' "$out"; echo '```'; } >> "$summary"
+          cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+          exit "$missing"

@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_connections_list/
 title: "dexaflow connections list"
 linkTitle: "connections list"
-weight: 29
+weight: 32
 ---
 
 List connections (secrets never shown).

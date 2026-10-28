@@ -28,7 +28,11 @@ func (g *gatedStore) Put(ctx context.Context, key string, r io.Reader) error {
 	case g.entered <- struct{}{}:
 	default:
 	}
-	<-g.release
+	select {
+	case <-g.release:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	return g.memStore.Put(ctx, key, r)
 }
 
@@ -45,7 +49,7 @@ func setSegmentBytes(t *testing.T, n int) {
 // readAll reads an attempt back through the sink's public read path.
 func readAll(t *testing.T, sink *ObjectSink, ref Ref) string {
 	t.Helper()
-	rc, err := sink.Read(ref)
+	rc, err := sink.Read(t.Context(), ref)
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
@@ -72,39 +76,76 @@ func messages(body string) []string {
 // cadence flush used to hold the buffer lock across the network Put, so a slow
 // store stalled every WriteEvent and, through it, the agent's log stream. A Put
 // in flight must not keep a new line from being buffered.
+//
+// The flush is triggered explicitly with flushTick, never by the ticker: with a
+// short interval, a WriteEvent that runs after the interval elapsed finds the
+// tail due and runs the gated Put itself, on the test goroutine, which then
+// waits forever for a release only it would send (#2050). Every step that can
+// block is bounded by one deadline, so a regression fails fast instead of
+// hanging until the test binary times out.
 func TestObjectWriterFlusherPutDoesNotBlockWriter(t *testing.T) {
-	setFlushTuning(t, 1<<20, 5*time.Millisecond)
+	// Neither threshold can fire on its own during the test: no WriteEvent flushes
+	// inline and the flusher's ticker never beats.
+	setFlushTuning(t, 1<<20, time.Hour)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	store := newGatedStore()
 	t.Cleanup(store.open)
 	sink := NewObjectSink(context.Background(), store, "", nil)
-	w, err := sink.Open(sampleRef())
+	lw, err := sink.Open(sampleRef())
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	if werr := w.WriteEvent(Event{Message: "first"}); werr != nil {
-		t.Fatalf("WriteEvent() error = %v", werr)
-	}
+	w := lw.(*objectWriter)
+	within(ctx, t, "WriteEvent(first)", func() error { return w.WriteEvent(Event{Message: "first"}) })
+
+	// Make the tail due on the cadence, then run one flusher beat: it takes
+	// flushMu and parks in the gated Put.
+	w.mu.Lock()
+	w.lastFlush = time.Now().Add(-2 * objectFlushInterval)
+	w.mu.Unlock()
+	tick := make(chan struct{})
+	go func() {
+		defer close(tick)
+		w.flushTick(context.Background())
+	}()
 	select {
 	case <-store.entered:
-	case <-time.After(2 * time.Second):
-		t.Fatal("the flusher never started a Put")
+	case <-ctx.Done():
+		t.Fatal("the flusher beat never started a Put")
 	}
-	done := make(chan error, 1)
-	go func() { done <- w.WriteEvent(Event{Message: "second"}) }()
-	select {
-	case werr := <-done:
-		if werr != nil {
-			t.Fatalf("WriteEvent() error = %v", werr)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("WriteEvent blocked behind the flusher's in-flight Put")
-	}
+
+	// The tail is due, but the Put in flight owns flushMu: the write must buffer
+	// its line and return without waiting for it.
+	within(ctx, t, "WriteEvent(second) behind the flusher's in-flight Put", func() error {
+		return w.WriteEvent(Event{Message: "second"})
+	})
+
 	store.open()
-	if cerr := w.Close(); cerr != nil {
-		t.Fatalf("Close() error = %v", cerr)
+	select {
+	case <-tick:
+	case <-ctx.Done():
+		t.Fatal("the flusher beat did not finish after the store was released")
 	}
+	within(ctx, t, "Close()", w.Close)
 	if got := messages(readAll(t, sink, sampleRef())); strings.Join(got, ",") != "first,second" {
 		t.Fatalf("read back %v, want [first second]", got)
+	}
+}
+
+// within runs fn and fails the test if it errors or is still running when ctx
+// ends, so a step that blocks fails fast instead of hanging the test binary.
+func within(ctx context.Context, t *testing.T, what string, fn func() error) {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- fn() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("%s error = %v", what, err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("%s blocked: %v", what, ctx.Err())
 	}
 }
 

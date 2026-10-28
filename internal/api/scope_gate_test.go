@@ -62,7 +62,6 @@ var scopelessReads = map[string]bool{
 	"GET /ui/dags/:dag_id/deadlineAlerts":                true,
 	"GET /ui/dags/:dag_id/dagRuns/:dag_run_id/deadlines": true,
 	"GET /ui/dags/:dag_id/dagRuns/:dag_run_id/stats":     true,
-	"GET /api/v2/dagTags":                                true,
 	// A token never lists tokens (ADR 0074).
 	"GET /api/v2/apiTokens":            true,
 	"GET /api/v2/dagWarnings":          true,
@@ -76,10 +75,14 @@ var scopelessReads = map[string]bool{
 	"GET /api/v2/config":               true,
 	"GET /api/v2/dags/:dag_id/dagRuns/:dag_run_id/hitlDetails": true,
 	// Airflow 3.3 calls Dexaflow does not serve (airflow33_unserved.go).
-	"GET /api/v2/assets/:asset_id/state-store":      true,
-	"GET /api/v2/assets/:asset_id/state-store/:key": true,
-	"GET /ui/partitioned_dag_runs":                  true,
-	"GET /ui/pending_partitioned_dag_run/:dag_id":   true,
+	"GET /api/v2/assets/:asset_id/state-store":                         true,
+	"GET /api/v2/assets/:asset_id/state-store/:key":                    true,
+	"GET /ui/partitioned_dag_runs":                                     true,
+	"GET /ui/pending_partitioned_dag_run/:dag_id":                      true,
+	"GET /api/v2/dags/:dag_id/dagRuns/:dag_run_id/upstreamAssetEvents": true,
+	"GET /api/v2/dags/:dag_id/assets/queuedEvents":                     true,
+	"GET /api/v2/dags/:dag_id/assets/:asset_id/queuedEvents":           true,
+	"GET /api/v2/assets/:asset_id/queuedEvents":                        true,
 }
 
 // newFullScopeServer wires every optional dependency that adds routes, so the
@@ -88,38 +91,50 @@ func newFullScopeServer(t *testing.T) *gin.Engine {
 	t.Helper()
 	ws, _ := newWorkspace(t)
 	sched := "0 5 * * *"
-	return NewServer(Dependencies{
-		Logger:              discardLogger(),
-		Authenticator:       engineAdmin{},
-		RateLimiter:         auth.NewRateLimiter(1000, time.Minute),
-		TokenTTLSecs:        900,
-		Edition:             "pro",
-		Dags:                &fakeDagRepo{dags: []domain.DAG{{DagID: "etl", Schedule: &sched}}},
-		DagRuns:             &fakeRunRepo{},
-		Tasks:               &fakeTaskRepo{},
-		Versions:            &fakeVersionRepo{},
-		Xcoms:               &fakeXComReader{},
-		Specs:               &fakeSpecReader{},
-		LatestRuns:          &fakeLatestRuns{},
-		TaskSummary:         &fakeTaskSummary{},
-		DagVersions:         &fakeVersionLister{},
-		DagSources:          rolledBackSources(),
-		DashboardStats:      &fakeStatsReader{},
-		AuditLog:            &fakeAuditReader{},
-		Variables:           &fakeVariableStore{},
-		Users:               &fakeUserStore{},
-		UserAudit:           &fakeUserAudit{},
-		Connections:         &fakeConnStore{},
-		ConnectionTest:      &fakeConnTester{},
-		Pools:               &fakePoolStore{},
-		Favorites:           &fakeFavoriteStore{},
-		ImportErrors:        &fakeImportErrorStore{},
-		Workspace:           ws,
-		ExamplesFS:          fstest.MapFS{},
-		TrustedIssuerBearer: scopedIssuer{},
-		TrustedIssuerUsers:  &fakeIssuerUsers{user: linkedAdmin(), active: true},
-		AuthAudit:           &fakeAuthAudit{},
-		APITokens:           &fakeAPITokens{},
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			Pools: true,
+		},
+		Auth: AuthDeps{
+			Authenticator: engineAdmin{},
+			RateLimiter:   auth.NewRateLimiter(1000, time.Minute),
+			TokenTTLSecs:  900,
+			AuthAudit:     &fakeAuthAudit{},
+		},
+		Issuers: IssuerDeps{
+			TrustedIssuerBearer: scopedIssuer{},
+			TrustedIssuerUsers:  &fakeIssuerUsers{user: linkedAdmin(), active: true},
+		},
+		UI: UIDeps{
+			Workspace:  ws,
+			ExamplesFS: fstest.MapFS{},
+		},
+		Stores: StoreDeps{
+			Dags:           &fakeDagRepo{dags: []domain.DAG{{DagID: "etl", Schedule: &sched}}},
+			DagRuns:        &fakeRunRepo{},
+			Tasks:          &fakeTaskRepo{},
+			Versions:       &fakeVersionRepo{},
+			Xcoms:          &fakeXComReader{},
+			Specs:          &fakeSpecReader{},
+			LatestRuns:     &fakeLatestRuns{},
+			TaskSummary:    &fakeTaskSummary{},
+			DagVersions:    &fakeVersionLister{},
+			DagSources:     rolledBackSources(),
+			DashboardStats: &fakeStatsReader{},
+			AuditLog:       &fakeAuditReader{},
+			Variables:      &fakeVariableStore{},
+			Users:          &fakeUserStore{},
+			UserAudit:      &fakeUserAudit{},
+			Connections:    &fakeConnStore{},
+			ConnectionTest: &fakeConnTester{},
+			Pools:          &fakePoolStore{},
+			Favorites:      &fakeFavoriteStore{},
+			ImportErrors:   &fakeImportErrorStore{},
+			APITokens:      &fakeAPITokens{},
+		},
 	})
 }
 

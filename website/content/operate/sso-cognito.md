@@ -89,7 +89,7 @@ auth:
     issuer: https://cognito-idp.us-east-1.amazonaws.com/us-east-1_aBcDeFgHi
     clientId: "<app client id>"
     existingSecret: cognito-oidc      # key: oidcClientSecret
-    redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
+    redirectUrl: https://dexaflow.example.com/api/v2/auth/oidc/callback
 
     tenantClaim: iss
     tenantClaims:

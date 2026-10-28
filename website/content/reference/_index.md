@@ -15,8 +15,9 @@ menu:
 
 References for every Dexaflow surface. The HTTP API, CLI, Go, and Python references
 are **generated from source on every push**, so they never drift from the code. The
-[Configuration](/reference/configuration/) page is hand-maintained against
-`internal/config` — treat the server source as the final authority.
+tables of the [Configuration](/reference/configuration/) and
+[Metrics](/reference/metrics/) pages are generated from `internal/config` and
+from the registered collectors, and a test fails while either page is stale.
 
 <div class="lf-cards">
   <a class="lf-card" href="/reference/api/">
@@ -48,6 +49,12 @@ are **generated from source on every push**, so they never drift from the code. 
     <span class="lf-card__title">Configuration</span>
     <span class="lf-card__desc">The <code>DEXAFLOW_*</code> environment variables and config keys for the server.</span>
     <span class="lf-card__more">Configuration →</span>
+  </a>
+  <a class="lf-card" href="/reference/metrics/">
+    <span class="lf-card__icon"><i class="fa-solid fa-chart-line"></i></span>
+    <span class="lf-card__title">Metrics</span>
+    <span class="lf-card__desc">Every Prometheus family the control plane exports at <code>/metrics</code>, with its type and labels.</span>
+    <span class="lf-card__more">Metrics →</span>
   </a>
   <a class="lf-card" href="/mcp/">
     <span class="lf-card__icon"><i class="fa-solid fa-robot"></i></span>

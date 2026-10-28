@@ -22,9 +22,9 @@ func newAdminCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "admin",
 		Short: "Operate a running control plane (health, pause, drain, runs).",
-		Long: "Operator commands for a running Dexaflow control plane (Pro). These act " +
-			"over the /api/v2 API — checking health, pausing DAGs, draining the control " +
-			"plane before maintenance, and inspecting runs — and reuse the same " +
+		Long: "Operator commands for a running Dexaflow control plane (Cluster). These act " +
+			"over the /api/v2 API (checking health, pausing DAGs, draining the control " +
+			"plane before maintenance, and inspecting runs) and reuse the same " +
 			"--server/--token/config precedence as `dexaflow deploy`.",
 	}
 	cmd.AddCommand(
@@ -59,7 +59,7 @@ func adminClient(cmd *cobra.Command, f adminFlags) (client *apiclient.ClientWith
 	if rerr != nil {
 		return nil, "", rerr
 	}
-	c, nerr := apiclient.New(serverURL, token)
+	c, nerr := cliAPIClient(serverURL, token)
 	if nerr != nil {
 		return nil, "", nerr
 	}

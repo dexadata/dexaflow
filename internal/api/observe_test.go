@@ -26,12 +26,18 @@ func (f *fakeMetrics) RecordHTTPRequest(method, path string, status int, _ time.
 
 func TestObserveRecordsHTTPMetrics(t *testing.T) {
 	m := &fakeMetrics{}
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{},
-		RateLimiter:   auth.NewRateLimiter(5, time.Minute),
-		Metrics:       m,
-		CORSOrigins:   []string{"*"},
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger:  discardLogger(),
+			Metrics: m,
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{},
+			RateLimiter:   auth.NewRateLimiter(5, time.Minute),
+		},
 	})
 	do(srv, http.MethodGet, "/healthz", "")
 	if m.calls != 1 {

@@ -103,6 +103,13 @@ func TestWarmTargetsExcludesSourceModeVersion(t *testing.T) {
 	if got := warmTargets(versions, exec, nil); len(got) != 3 {
 		t.Errorf("with source mode off every version keeps its target, got %+v", got)
 	}
+
+	// ADR 0095: with the mode's warm pools on, the dag.py goes with each
+	// assignment, so the source-mode version keeps its target too.
+	exec.SourceMode.Enabled, exec.SourceMode.WarmPools = true, true
+	if got := warmTargets(versions, exec, nil); len(got) != 3 {
+		t.Errorf("with source_mode.warm_pools on every version keeps its target, got %+v", got)
+	}
 }
 
 // A version whose image is outside the operator's image allowlist (issue #537
@@ -126,5 +133,48 @@ func TestWarmTargetsSkipImagesOutsideTheAllowlist(t *testing.T) {
 	// Without a policy (the default) both keep their warm pools.
 	if got := warmTargets(versions, exec, nil); len(got) != 2 {
 		t.Fatalf("warmTargets(nil policy) = %+v, want both versions", got)
+	}
+}
+
+// TestWarmTargetsSkipsVersionWithNoWarmTask (#2065): a version none of whose
+// tasks may be placed on a warm worker (with executor.unit set, every task
+// declares resources or is larger than size 1) gets no warm target, run or
+// prewarm, so no idle warm pod sits next to the dedicated pods its tasks take.
+func TestWarmTargetsSkipsVersionWithNoWarmTask(t *testing.T) {
+	exec := config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 1, MaxPoolSize: 8}
+	versions := []activeWarmVersion{
+		{dagVersionID: "warm", image: "i", dagMinIdle: 2},
+		{dagVersionID: "sized", image: "i", dagMinIdle: 2, noWarmTask: true},
+		{dagVersionID: "sized-prewarm", image: "i", dagMinIdle: 2, prewarm: true, noWarmTask: true},
+	}
+	got := warmTargets(versions, exec, nil)
+	if len(got) != 1 || got[0].DagVersionID != "warm" {
+		t.Fatalf("warmTargets = %+v, want only the version with a warm-eligible task", got)
+	}
+}
+
+// TestNoWarmTaskHonorsTheAllowlist (#2065): dispatch refuses a task the
+// execution allowlist refuses before it offers it to a warm worker, so such a
+// task does not keep its version's warm pool either. Here the only task that
+// fits a warm pod pins the warm workers' own ServiceAccount, which an
+// allowlist set after the DAG was registered no longer allows.
+func TestNoWarmTaskHonorsTheAllowlist(t *testing.T) {
+	placement := domain.WarmPolicy{Enabled: true, ServiceAccount: "dexaflow-task"}
+	allow, err := domain.ParseExecutionPolicy(domain.ExecutionPolicyConfig{ServiceAccounts: []string{"reporting"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks := []domain.TaskSpec{
+		{TaskID: "pinned", Execution: &domain.Execution{ServiceAccount: "dexaflow-task"}},
+		{TaskID: "placed", Execution: &domain.Execution{Labels: map[string]string{"team": "x"}}},
+	}
+	if !noWarmTask(placement, allow, tasks) {
+		t.Error("a version whose only warm-fitting task the allowlist refuses keeps a warm target")
+	}
+	if noWarmTask(placement, nil, tasks) {
+		t.Error("without an allowlist the pinned task fits a warm pod, but the version lost its target")
+	}
+	if !noWarmTask(placement, nil, nil) {
+		t.Error("a version with no task keeps a warm target")
 	}
 }

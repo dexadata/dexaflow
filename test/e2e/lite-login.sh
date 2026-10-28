@@ -22,11 +22,14 @@ echo "==> building binaries"
 go build -o "$HOME_DIR/leoflow" ./cmd/dexaflow
 go build -o "$HOME_DIR/leoflow-server" ./cmd/dexaflow-server
 
-# A fake python3.11 on PATH so `setup` uses it instead of downloading a CPython
-# (the parser is not exercised by this login test).
+# A fake python3.12 on PATH so `setup` uses it instead of downloading a CPython
+# (the parser is not exercised by this login test). Setup takes a host
+# interpreter only on the version it reports, so the fake has to answer
+# --version, and it is a 3.12 because a host without 3.11 must not download
+# anything at setup time (#1700).
 mkdir -p "$HOME_DIR/bin"
-printf '#!/bin/sh\n' > "$HOME_DIR/bin/python3.11"
-chmod +x "$HOME_DIR/bin/python3.11"
+printf '#!/bin/sh\necho "Python 3.12.4"\n' > "$HOME_DIR/bin/python3.12"
+chmod +x "$HOME_DIR/bin/python3.12"
 export PATH="$HOME_DIR/bin:$PATH"
 
 echo "==> resetting the leoflow_dev database (migrated, empty)"
@@ -63,11 +66,12 @@ LEOFLOW_UI_EDITION="lite" \
 LEOFLOW_UI_WORKSPACE="$HOME_DIR/ws" \
 LEOFLOW_UI_MONACO_DIR="$HOME_DIR/monaco" \
 LEOFLOW_LOGS_DIR="$HOME_DIR/logs" \
+LEOFLOW_EXECUTOR_TYPE="subprocess" \
   "$HOME_DIR/leoflow-server" >"$HOME_DIR/server.log" 2>&1 &
 SERVER_PID=$!
 
 echo "==> waiting for readiness"
-for i in $(seq 1 40); do
+for _ in $(seq 1 40); do
   code="$(curl -s -o /dev/null -w '%{http_code}' "${BASE}/readyz" || true)"
   [ "$code" = "200" ] && break
   kill -0 "$SERVER_PID" 2>/dev/null || fail "server exited early:\n$(cat "$HOME_DIR/server.log")"

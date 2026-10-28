@@ -68,7 +68,7 @@ func apiTokenFlags(scope, name, ttl string) (*apiTokenRequest, error) {
 // createAPIToken asks the server for an API token with the bearer of a
 // signed-in user and returns it.
 func createAPIToken(ctx context.Context, serverURL, bearer string, req *apiTokenRequest) (*apiclient.CreatedAPIToken, error) {
-	c, err := apiclient.New(serverURL, bearer)
+	c, err := cliAPIClient(serverURL, bearer)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +149,7 @@ func newTokensListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c, err := apiclient.New(server, bearer)
+			c, err := cliAPIClient(server, bearer)
 			if err != nil {
 				return err
 			}
@@ -204,7 +204,7 @@ func newTokensRevokeCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c, err := apiclient.New(server, bearer)
+			c, err := cliAPIClient(server, bearer)
 			if err != nil {
 				return err
 			}

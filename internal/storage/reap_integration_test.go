@@ -171,7 +171,7 @@ func TestReapRunIgnoresTerminalRunIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Move the run to its natural terminal state.
-	if err := sched.SetRunState(ctx, runUUID, domain.DagRunStateSuccess); err != nil {
+	if _, err := sched.SetRunState(ctx, runUUID, domain.DagRunStateRunning, domain.DagRunStateSuccess); err != nil {
 		t.Fatal(err)
 	}
 
@@ -225,4 +225,43 @@ func mustActive(t *testing.T, sched *storage.SchedulerStore, ctx context.Context
 		t.Fatalf("ActiveRuns: %v", err)
 	}
 	return runs
+}
+
+// TestReapCandidateIgnoresRemovedTaskInstancesIntegration: a task instance a
+// clear marked removed (ADR 0086) is settled, so a running run whose other
+// task instances are settled is still an orphan candidate and is reaped.
+func TestReapCandidateIgnoresRemovedTaskInstancesIntegration(t *testing.T) {
+	repo, sched, ctx := openRepo(t)
+	dagID := fmt.Sprintf("reap_removed_%d", time.Now().UnixNano())
+	tasks := []domain.TaskSpec{
+		{TaskID: "extract", Type: domain.TaskTypePython},
+		{TaskID: "dropped", Type: domain.TaskTypePython},
+	}
+	registerSpec(t, repo, ctx, dagID, tasks)
+	if _, err := repo.CreateDagRun(ctx, "default", dagID, domain.DagRun{
+		RunID: "r1", State: domain.DagRunStateRunning, RunType: "manual", LogicalDate: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	runUUID := resolveRunUUID(t, sched, ctx, dagID)
+	if err := sched.MaterializeTasks(ctx, runUUID, tasks); err != nil {
+		t.Fatalf("MaterializeTasks: %v", err)
+	}
+	if err := sched.ApplyTransition(ctx, runUUID, "extract", domain.TaskStateSuccess); err != nil {
+		t.Fatal(err)
+	}
+	if err := sched.ApplyTransition(ctx, runUUID, "dropped", domain.TaskStateRemoved); err != nil {
+		t.Fatal(err)
+	}
+	cands, err := sched.ListReapCandidates(ctx)
+	if err != nil {
+		t.Fatalf("ListReapCandidates: %v", err)
+	}
+	if findCandidate(cands, runUUID) == nil {
+		t.Fatalf("a running run with only settled and removed task instances must be a candidate; got %+v", cands)
+	}
+	reaped, err := sched.ReapRun(ctx, runUUID, time.Now())
+	if err != nil || !reaped {
+		t.Fatalf("ReapRun = %v, %v; want the run reaped", reaped, err)
+	}
 }

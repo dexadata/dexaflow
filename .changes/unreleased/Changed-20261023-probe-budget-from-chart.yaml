@@ -1,0 +1,8 @@
+kind: Changed
+body: |-
+  `/readyz` bounds its dependency checks at `server.probe_budget`, which the Helm
+  chart renders as `probes.readiness.timeoutSeconds` minus one second, so raising
+  the readiness timeout for a slow metadatabase now gives the server the same
+  room instead of failing at a fixed 2s. The default timeout of 3 keeps the 2s
+  budget (#1050).
+time: 2026-10-23T12:00:00.000000+00:00

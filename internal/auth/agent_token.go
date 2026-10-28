@@ -175,14 +175,15 @@ func (a *JWTAuthenticator) RenewAgentToken(token string, ttl, maxLifetime time.D
 }
 
 // AuthenticateAgent validates an agent bearer token and returns the task
-// instance it identifies.
+// instance it identifies. A rejection's error matches ErrInvalidToken and
+// carries an *AgentTokenRejection saying why (#1125).
 func (a *JWTAuthenticator) AuthenticateAgent(token string) (*AgentIdentity, error) {
 	var c agentClaims
 	parsed, err := jwt.ParseWithClaims(token, &c, func(*jwt.Token) (any, error) {
 		return a.secret, nil
 	}, jwt.WithIssuer(tokenIssuer), jwt.WithAudience(audienceAgent), jwt.WithValidMethods([]string{"HS256"}), jwt.WithTimeFunc(a.clock))
 	if err != nil || !parsed.Valid {
-		return nil, errors.Join(ErrInvalidToken, err)
+		return nil, errors.Join(ErrInvalidToken, agentTokenRejection(err, &c), err)
 	}
 	id := identityFromClaims(c)
 	return &id, nil

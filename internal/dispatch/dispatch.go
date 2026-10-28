@@ -5,6 +5,8 @@ package dispatch
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -182,8 +184,12 @@ type Dispatcher struct {
 	misfits UnitMisfitRecorder
 	// sourceModeImage is the operator's runtime image when source mode is on
 	// (ADR 0067 §3), "" when it is off. A version on that image that carries a
-	// source dispatches in source mode, always on a cold pod.
+	// source dispatches in source mode, on a cold pod unless sourceModeWarm.
 	sourceModeImage string
+	// sourceModeWarm is execution.source_mode.warm_pools: a source-mode
+	// attempt may go to a warm worker, which receives the dag.py with the
+	// assignment (ADR 0095).
+	sourceModeWarm bool
 }
 
 // UnitMisfitRecorder counts a task that does not fit the resource unit but is
@@ -247,6 +253,11 @@ func (d *Dispatcher) SetWarmPlacer(p WarmPlacer) { d.placer = p }
 // §3); "" leaves it off, today's behavior. Lite does not set it: the subprocess
 // executor always runs from the source.
 func (d *Dispatcher) SetSourceModeImage(image string) { d.sourceModeImage = image }
+
+// SetSourceModeWarm lets source-mode attempts run on warm workers, which
+// receive the version's dag.py with each assignment (ADR 0095). Off, the
+// default, keeps every source-mode attempt on a dedicated pod.
+func (d *Dispatcher) SetSourceModeWarm(on bool) { d.sourceModeWarm = on }
 
 // SetAgentTLSCAConfigMap configures the CA ConfigMap mounted into task pods so
 // agents verify the control plane's gRPC TLS cert (issue #58). Empty = the agent
@@ -320,7 +331,8 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	// Which attempts may go warm is domain.WarmPolicy.DedicatedReason, the
 	// decision the register response reports per task: warm pools on; no
 	// staging (a warm worker has no per-run /staging mount, ADR 0058 D5); no
-	// source mode (a warm pod cannot carry the task's dag.py, ADR 0067 §3);
+	// source mode unless execution.source_mode.warm_pools is on, and then the
+	// assignment carries the dag.py (ADR 0067 §3, ADR 0095);
 	// the warm workers' ServiceAccount; none of the task's own placement or pod
 	// metadata; and a size that fits a warm pod (one unit, ADR 0066 §3, or the
 	// default limits, #537). Any other attempt takes the dedicated path below.
@@ -335,6 +347,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 			DagVersionId: dagVersionID,
 			LeaseSeconds: warmLeaseSeconds,
 			AttemptEpoch: int64(r.AttemptEpoch),
+		}
+		if sourceMode {
+			setAssignmentSource(wa, r.Source)
 		}
 		if d.placer.Assign(dagVersionID, wa) {
 			return executor.Dispatched, nil
@@ -465,25 +480,78 @@ func (d *Dispatcher) WarmPolicy() domain.WarmPolicy {
 		Unit:            d.defaults.Unit,
 		Limits:          d.defaults.Limits,
 		SourceModeImage: d.sourceModeImage,
+		SourceModeWarm:  d.sourceModeWarm,
 	}
+}
+
+// setAssignmentSource puts a source-mode version's dag.py on a warm
+// assignment, with its SHA-256 so the worker can detect a copy damaged on the
+// way (ADR 0095). It is the same text a dedicated pod would get. The registry only hands such an assignment to a worker that
+// registered with source_delivery.
+func setAssignmentSource(wa *agentv1.WorkAssignment, source string) {
+	sum := sha256.Sum256([]byte(source))
+	wa.DagSource = []byte(source)
+	wa.DagSourceSha256 = hex.EncodeToString(sum[:])
 }
 
 // taskResources picks the task pod's resources. With a resource unit the unit
 // sizes every task: its own values where it set them, the rest filled so
 // requests never exceed limits (see ResourceUnit.Apply, ADR 0066 §3). Without one, the task's
-// own resources win, then the L0 platform default (ADR 0023), else none.
+// own resources win per dimension, and the L0 platform default (ADR 0023)
+// fills each dimension the task left empty (#802).
 //
 // The default limits then fill any CPU or memory limit still empty (#537).
 func (d *Dispatcher) taskResources(task domain.TaskSpec) domain.Resources {
-	switch {
-	case d.defaults.Unit != nil:
+	if d.defaults.Unit != nil {
 		return *d.defaults.Unit.Apply(task)
-	case task.Resources != nil:
-		return d.defaults.Limits.Apply(*task.Resources)
-	case d.defaults.Resources != nil:
-		return d.defaults.Limits.Apply(*d.defaults.Resources)
 	}
-	return d.defaults.Limits.Apply(domain.Resources{})
+	var own domain.Resources
+	if task.Resources != nil {
+		own = *task.Resources
+	}
+	return d.defaults.Limits.Apply(fillDimensions(own, d.defaults.Resources))
+}
+
+// fillDimensions copies into r, for each of cpu, memory and ephemeral storage,
+// the request and limit of base when r sets neither for that dimension. A
+// dimension r sets at all stays entirely r's: taking base's request beside r's
+// own limit could ask for more than the limit, which the API server refuses.
+// Without this, a task declaring only an ephemeral-storage limit (ADR 0054)
+// dropped the platform cpu and memory default and ran BestEffort.
+func fillDimensions(r domain.Resources, base *domain.Resources) domain.Resources {
+	if base == nil {
+		return r
+	}
+	var req, lim, baseReq, baseLim domain.ResourceQuantity
+	if r.Requests != nil {
+		req = *r.Requests
+	}
+	if r.Limits != nil {
+		lim = *r.Limits
+	}
+	if base.Requests != nil {
+		baseReq = *base.Requests
+	}
+	if base.Limits != nil {
+		baseLim = *base.Limits
+	}
+	fill := func(req, lim *string, baseReq, baseLim string) {
+		if *req == "" && *lim == "" {
+			*req, *lim = baseReq, baseLim
+		}
+	}
+	fill(&req.CPU, &lim.CPU, baseReq.CPU, baseLim.CPU)
+	fill(&req.Memory, &lim.Memory, baseReq.Memory, baseLim.Memory)
+	fill(&req.EphemeralStorage, &lim.EphemeralStorage, baseReq.EphemeralStorage, baseLim.EphemeralStorage)
+	out := r
+	out.Requests, out.Limits = nil, nil
+	if req != (domain.ResourceQuantity{}) {
+		out.Requests = &req
+	}
+	if lim != (domain.ResourceQuantity{}) {
+		out.Limits = &lim
+	}
+	return out
 }
 
 // firstNonEmpty returns a if it is non-empty, otherwise b.

@@ -60,6 +60,8 @@ paths:
                 $ref: "#/components/schemas/TokenResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/auth/token/renew:
     post:
@@ -70,7 +72,10 @@ paths:
         measured from first login. Lets a long CLI/dev session avoid re-logging in
         every token TTL while keeping the access token short-lived. Returns 401
         when the presented token is invalid, expired, or past max_lifetime, in
-        which case the client must log in again.
+        which case the client must log in again. Returns 503 with Retry-After
+        when the token could not be checked because the user store is
+        unreachable; the token may still be good, so the client waits and
+        retries instead of logging in again.
       operationId: renewToken
       tags: [Auth]
       responses:
@@ -82,6 +87,64 @@ paths:
                 $ref: "#/components/schemas/TokenResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
+
+  /api/v2/auth/ciToken:
+    post:
+      summary: Exchange a CI provider's OIDC token for a deploy session (Dexaflow)
+      description: >-
+        A CI job (GitHub Actions, GitLab CI, Google Cloud Build) posts the
+        OIDC token its provider minted for it. The token is checked against
+        the issuer entry of the server's auth.ci_oidc whose issuer and
+        audience it names (signature, issuer, audience, expiry, lifetime),
+        and the entry's rules map its claims to a role of the entry's tenant;
+        the first matching rule decides (ADR 0092). The tenant is the
+        entry's, never a claim's. The answer is a dxci_ session token for
+        that role, narrowed to the rule's scopes (dexaflow:deploy by
+        default), for the Authorization header only. Public: the token in
+        the body authenticates the caller. Served only when an issuer is
+        configured; 404 otherwise. Refused exchanges are limited per client
+        address.
+      operationId: exchangeCIToken
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CITokenRequest" }
+      responses:
+        "200":
+          description: A session for the role the matching rule names
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CITokenResponse" }
+        "400":
+          description: The body is not a JSON object with a token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          description: The token was not minted by a trusted CI issuer for this server, or is expired
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: No rule of the issuer admits the job, or the role it names does not exist in the tenant
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: Too many refused exchanges from this address
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: The provider's signing keys or the database could not be read
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/v2/auth/methods:
     get:
@@ -1043,7 +1106,9 @@ paths:
         "200":
           description: >-
             With dry_run (the default), the task instances the clear would
-            reset; otherwise the cleared run.
+            reset; otherwise the cleared run. Either carries
+            run_on_latest_version_not_applied when run_on_latest_version was
+            asked and the run keeps its version.
           content:
             application/json:
               schema:
@@ -1061,6 +1126,14 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: >-
+            Not answered since ADR 0086, which replaced the refusal of a clear
+            onto a version with other tasks by the full re-bind. Kept declared
+            because Airflow declares it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances:
     parameters:
@@ -1190,11 +1263,22 @@ paths:
               $ref: "#/components/schemas/ClearTaskInstancesRequest"
       responses:
         "200":
-          description: List of cleared task instances
+          description: >-
+            The task instances cleared, or with dry_run (the default) the ones
+            the clear would reset. Carries run_on_latest_version_not_applied
+            when run_on_latest_version was asked and a run keeps its version.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaskInstanceCollection"
+        "409":
+          description: >-
+            Not answered since ADR 0086, which replaced the refusal of a clear
+            onto a version with other tasks by the full re-bind. Kept declared
+            because Airflow declares it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/v2/xcoms/{dag_id}/{dag_run_id}/{task_id}/{key}:
     parameters:
@@ -1331,11 +1415,15 @@ paths:
     get:
       summary: Cluster deploy defaults (Dexaflow)
       description: >-
-        The registry prefix, build platforms and base image the operator set
-        in the server's deploy.defaults. dexaflow deploy applies them to
-        whatever the project, its workspace, its target and the CLI config
-        leave unset. The values are the cluster's, the same for every tenant,
-        and none is a secret. Every field is always present; an unset one is
+        The registry prefix, build platforms, base image and remote builder
+        the operator set in the server's deploy.defaults, the source mode
+        runtime image when deploy.defaults.source_mode advertises it, and the
+        task service account and warm pools when their switches advertise
+        them. dexaflow deploy applies the build values to whatever the
+        project, its workspace, its target and the CLI config leave unset,
+        and reports the task service account and warm pools. The values are the cluster's, the same for every tenant,
+        and none is a secret, except ci_oidc, the CI OIDC issuers of the
+        caller's tenant. Every field is always present; an unset one is
         empty. A server without this route answers 404, and the CLI then
         deploys with its local settings only. Needs read on dags (scope
         dexaflow:read or dexaflow:deploy).
@@ -1463,6 +1551,20 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     NoContent:
       description: Deleted (no content)
+    AuthUnavailable:
+      description: >-
+        The credential could not be checked because a store or key source the
+        control plane needs is unreachable. It says nothing about the
+        credential, so the client should not sign in again: it waits the
+        Retry-After and retries.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying. A small fixed value.
+          schema:
+            type: integer
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Error" }
     EncryptionUnavailable:
       description: >-
         No encryption key configured, so secrets cannot be stored. Set
@@ -1898,6 +2000,45 @@ components:
           items: { type: string }
           description: What the register lets through with a warning (a task that does not fit its size under executor.unit.enforce=warn, an image not pinned by digest under deploy.require_digest=warn). Always sent by the dry run route; sent by a register only when it has a warning to give.
         execution: { $ref: "#/components/schemas/ExecutionReport" }
+        task_pods: { $ref: "#/components/schemas/TaskPodsReport" }
+
+    TaskPodsReport:
+      type: object
+      description: >-
+        What the version's task pods would run as (Dexaflow), sent by the dry
+        run route only, absent from a register. A server that starts no task
+        pods sends run_as_non_root false and no service account.
+      required: [run_as_non_root, service_accounts]
+      properties:
+        run_as_non_root:
+          type: boolean
+          description: >-
+            True when task pods refuse an image that runs as root or as a user
+            name rather than a number (executor.run_tasks_as_non_root).
+        service_accounts:
+          type: array
+          description: >-
+            Each ServiceAccount a task pod of the version would run as (the
+            task's execution.service_account, else executor.task_service_account,
+            else the namespace's default), sorted by name. A dry run looks up at
+            most 8.
+          items: { $ref: "#/components/schemas/TaskServiceAccountCheck" }
+
+    TaskServiceAccountCheck:
+      type: object
+      required: [name, tasks, state]
+      properties:
+        name: { type: string }
+        tasks: { type: array, items: { type: string }, description: The tasks whose pods run as it. }
+        state:
+          type: string
+          description: >-
+            One of found, missing or unchecked. found: it exists in the task namespace. missing: it does not, and
+            the pods of these tasks would not be created; when its name is not a valid ServiceAccount name (a
+            DNS-1123 subdomain), it is not looked up and detail says so. unchecked: the server
+            could not look it up (detail says why).
+        image_pull_secrets: { type: integer, description: "How many imagePullSecrets it carries; sent with state found." }
+        detail: { type: string, description: "Why it is unchecked, or why a missing name is not valid." }
 
     ExecutionReport:
       type: object
@@ -2014,6 +2155,106 @@ components:
         base_image:
           type: string
           description: Base image for projects that set none; empty when unset.
+        source_mode_image:
+          type: string
+          description: >-
+            Runtime image, pinned by digest, a deploy registers a DAG's dag.py on
+            with no build (source mode, ADR 0067), for deploys that name none of
+            their own. It is the server's execution.source_mode.image, served
+            only when deploy.defaults.source_mode is on; empty otherwise. Absent
+            from servers that predate it.
+        remote_builder:
+          type: object
+          nullable: true
+          description: >-
+            Remote builder (ADR 0083) a deploy uses for builds no daemonless
+            path covers, for projects, targets and workspaces that name none:
+            the server's deploy.defaults.remote_builder, with one backend.
+            Null when unset.
+            Absent from servers that predate it.
+          properties:
+            cloud_build:
+              type: object
+              properties:
+                project: { type: string, description: Google Cloud project the build runs in. }
+                region: { type: string, description: Cloud Build region; absent when unset. }
+                worker_pool: { type: string, description: "Private pool, projects/<project>/locations/<region>/workerPools/<name>; absent when unset." }
+                service_account: { type: string, description: "Account the build runs as, projects/<project>/serviceAccounts/<email>; absent when unset." }
+            buildkit:
+              type: object
+              description: >-
+                The in-cluster BuildKit builder the Helm chart runs
+                (builder.enabled, #1883), which a deploy reaches with buildctl
+                over kubectl exec. Absent from servers that predate it.
+              properties:
+                namespace: { type: string, description: Namespace of the builder. }
+                pod_selector: { type: string, description: "Label selector of the builder pod, key=value pairs separated by commas; absent when unset." }
+        task_service_account:
+          type: string
+          description: >-
+            ServiceAccount task pods run as when a task sets no
+            execution.service_account: the server's
+            executor.task_service_account, served only when
+            deploy.defaults.task_service_account is on; empty otherwise. A
+            deploy reports it and never writes it into dag.json. Absent from
+            servers that predate it.
+        warm_pools:
+          type: object
+          nullable: true
+          description: >-
+            The server's warm pool settings (ADR 0058), served only when
+            deploy.defaults.warm_pools is on; null otherwise. A DAG that
+            declares no min_idle_workers gets min_idle_workers, every value
+            is capped at max_pool_size, and nothing is kept warm while
+            enabled is false. Absent from servers that predate it.
+          required: [enabled, min_idle_workers, max_pool_size]
+          properties:
+            enabled: { type: boolean, description: execution.warm_pools_enabled. }
+            min_idle_workers: { type: integer, description: execution.min_idle_workers. }
+            max_pool_size: { type: integer, description: execution.max_pool_size; 0 sets no cap. }
+        ci_oidc:
+          type: object
+          nullable: true
+          description: >-
+            The CI OIDC issuers (auth.ci_oidc, ADR 0092) of the caller's
+            tenant, which dexaflow ci init reads to write a pipeline that
+            deploys with its provider's token instead of a stored deploy
+            token; null when the tenant has none. Unlike the other fields it
+            depends on the caller. Absent from servers that predate it.
+          required: [issuers]
+          properties:
+            issuers:
+              type: array
+              items: { $ref: "#/components/schemas/CIOIDCIssuer" }
+    CIOIDCIssuer:
+      type: object
+      required: [name, provider, issuer, audience]
+      properties:
+        name: { type: string, description: The entry's name in auth.ci_oidc.issuers. }
+        provider: { type: string, enum: [github, gitlab, cloudbuild, other], description: The CI provider. }
+        issuer: { type: string, description: The exact iss of the provider's tokens. }
+        audience: { type: string, description: The aud a pipeline asks its token for. }
+    CITokenRequest:
+      type: object
+      required: [token]
+      additionalProperties: false
+      properties:
+        token: { type: string, description: The OIDC token the CI provider minted for the job. }
+    CITokenResponse:
+      type: object
+      required: [access_token, token_type, expires_in, expires_at, issuer, tenant, role, scopes]
+      properties:
+        access_token: { type: string, description: "The session token (dxci_...), for the Authorization header." }
+        token_type: { type: string, enum: [Bearer] }
+        expires_in: { type: integer, description: Seconds the session lives (auth.ci_oidc.session_ttl_seconds). }
+        expires_at: { type: string, format: date-time }
+        issuer: { type: string, description: The issuer entry that verified the token. }
+        tenant: { type: string, description: "The entry's tenant, which the session acts in." }
+        role: { type: string, description: The role the matching rule names. }
+        scopes:
+          type: array
+          items: { type: string }
+          description: The scopes the session is narrowed to.
 
     VersionInfo:
       type: object
@@ -2033,6 +2274,7 @@ components:
     DAGRun:
       type: object
       properties:
+        run_on_latest_version_not_applied: { $ref: "#/components/schemas/ClearVersionNotApplied" }
         dag_id: { type: string }
         dag_run_id: { type: string }
         logical_date: { type: string, format: date-time }
@@ -2087,7 +2329,7 @@ components:
         state:
           type: string
           nullable: true
-          enum: [scheduled, queued, running, success, failed, skipped, upstream_failed, up_for_retry, none]
+          enum: [scheduled, queued, running, success, failed, skipped, upstream_failed, up_for_retry, removed, none]
         operator: { type: string }
         start_date: { type: string, format: date-time, nullable: true }
         end_date: { type: string, format: date-time, nullable: true }
@@ -2113,9 +2355,30 @@ components:
             token; check the control plane's RBAC for tokenreviews and the
             configured token audience.
 
+    ClearVersionNotApplied:
+      type: array
+      description: >-
+        Dexaflow-only. The runs a clear with run_on_latest_version keeps on
+        their own version, each with the reason (ADR 0086): only a finished
+        run with no task instance queued or running moves to the current
+        version. The clear still applies to these runs, on their version.
+        Left out when every run moved or the option was not asked, and on
+        every response other than the two clear routes.
+      items:
+        type: object
+        required: [dag_run_id, reason]
+        properties:
+          dag_run_id: { type: string }
+          reason:
+            type: string
+            description: >-
+              Why the run keeps its version, for example "the run is running:
+              only a finished run moves to the current version".
+
     TaskInstanceCollection:
       type: object
       properties:
+        run_on_latest_version_not_applied: { $ref: "#/components/schemas/ClearVersionNotApplied" }
         task_instances:
           type: array
           items: { $ref: "#/components/schemas/TaskInstance" }
@@ -2167,8 +2430,13 @@ components:
           nullable: true
           description: >-
             Which version the re-run executes. Unset or false keeps the version
-            the run was created with; true re-binds the run to the DAG's current
-            registered version.
+            the run was created with. true moves a finished run (success or
+            failed, with no task instance queued or running) to the DAG's
+            current registered version, creating the task instances of the
+            tasks that version adds and marking removed the ones of the tasks
+            it dropped. A run that has not finished keeps its version, as in
+            Airflow; the response then lists it in
+            run_on_latest_version_not_applied with the reason (ADR 0086).
         note:
           type: string
           nullable: true
@@ -2212,8 +2480,13 @@ components:
             Airflow) keeps the version the run was created with, so the re-run
             executes the image that produced the original attempt. true re-binds
             the run to the DAG's current registered version, so the re-run picks up
-            the newest image and config — use it to re-run a failed task against a
-            fix without creating a new run.
+            the newest image and config. Use it to re-run a failed task against a
+            fix without creating a new run. Only a finished run (success or
+            failed, with no task instance queued or running) moves: the clear
+            creates the task instances of the tasks the version adds and marks
+            removed the ones of the tasks it dropped. A run that has not
+            finished keeps its version, as in Airflow, and the response lists
+            it in run_on_latest_version_not_applied with the reason (ADR 0086).
         dry_run:
           type: boolean
           default: true

@@ -91,7 +91,11 @@ WHERE d.id = sqlc.arg(dag_id) AND d.tenant_id = sqlc.arg(tenant_id)
 RETURNING *;
 
 -- name: SetCurrentDagVersion :exec
-UPDATE dags SET current_version_id = $2, updated_at = now() WHERE id = $1 AND tenant_id = $3;
+-- A new current version can change the schedule, start_date or catchup, so the
+-- stored next due time is cleared and the schedule epoch bumped (#2175).
+UPDATE dags
+SET current_version_id = $2, next_run_at = NULL, schedule_epoch = schedule_epoch + 1, updated_at = now()
+WHERE id = $1 AND tenant_id = $3;
 
 -- name: GetCurrentDagSpec :one
 SELECT v.spec
@@ -152,7 +156,12 @@ WHERE d.tenant_id = $1 AND d.is_active = true
   AND (sqlc.narg('run_state')::dag_run_state IS NULL OR l.state = sqlc.narg('run_state'));
 
 -- name: ClearDagRuns :execrows
-DELETE FROM dag_runs WHERE tenant_id = $1 AND dag_id = $2;
+-- The DAG's stored next due time goes with its runs (#2175).
+WITH invalidate AS (
+  UPDATE dags d SET next_run_at = NULL, schedule_epoch = d.schedule_epoch + 1
+  WHERE d.tenant_id = sqlc.arg(tenant_id) AND d.id = sqlc.arg(dag_id)
+)
+DELETE FROM dag_runs r WHERE r.tenant_id = sqlc.arg(tenant_id) AND r.dag_id = sqlc.arg(dag_id);
 
 -- name: GetTenantUserID :one
 -- The id of a user of the tenant: no row when the user is gone or belongs to
@@ -183,3 +192,120 @@ CROSS JOIN LATERAL (
 ) m
 WHERE ((@prewarm::boolean AND d.is_active AND NOT d.is_paused) OR d.id = ANY(@dag_ids::uuid[]))
   AND ((@prewarm::boolean AND d.is_active AND NOT d.is_paused AND m.min_idle > 0) OR d.id = ANY(@dag_ids::uuid[]));
+
+-- name: ListDagsWithFilter :many
+-- The Airflow 3.3 DAG list's search, tag, owner, favorite and sort controls
+-- (#1928). Patterns are SQL LIKE expressions matched case-insensitively; a
+-- display name is the dag_id. Sorting by next_dagrun is not done here: the next
+-- run is computed per DAG after the page is read, so it falls back to dag_id.
+SELECT d.*, v.version AS current_version_label
+FROM dags d
+LEFT JOIN dag_versions v ON v.id = d.current_version_id
+LEFT JOIN LATERAL (
+    SELECT r.state, r.started_at
+    FROM dag_runs r
+    WHERE r.dag_id = d.id
+    ORDER BY r.logical_date DESC
+    LIMIT 1
+) l ON true
+WHERE d.tenant_id = $1 AND d.is_active = true
+  AND (sqlc.narg('paused')::bool IS NULL OR d.is_paused = sqlc.narg('paused'))
+  AND (sqlc.narg('run_state')::dag_run_state IS NULL OR l.state = sqlc.narg('run_state'))
+  AND (sqlc.narg('dag_id_pattern')::text IS NULL OR d.dag_id ILIKE '%' || sqlc.narg('dag_id_pattern') || '%')
+  AND (sqlc.narg('dag_id_prefix_pattern')::text IS NULL OR d.dag_id ILIKE sqlc.narg('dag_id_prefix_pattern') || '%')
+  AND (sqlc.narg('dag_display_name_pattern')::text IS NULL OR d.dag_id ILIKE '%' || sqlc.narg('dag_display_name_pattern') || '%')
+  AND (sqlc.narg('dag_display_name_prefix_pattern')::text IS NULL OR d.dag_id ILIKE sqlc.narg('dag_display_name_prefix_pattern') || '%')
+  AND (sqlc.narg('owners')::text[] IS NULL OR cardinality(sqlc.narg('owners')::text[]) = 0 OR d.owner = ANY(sqlc.narg('owners')::text[]))
+  AND (
+      sqlc.narg('tags')::text[] IS NULL
+      OR cardinality(sqlc.narg('tags')::text[]) = 0
+      OR (
+          CASE WHEN sqlc.narg('tags_match_mode')::text = 'all'
+               THEN d.tags @> sqlc.narg('tags')::text[]
+               ELSE d.tags && sqlc.narg('tags')::text[]
+          END
+      )
+  )
+  AND (
+      sqlc.narg('is_favorite')::bool IS NULL
+      OR (sqlc.narg('is_favorite') = true AND EXISTS (
+          SELECT 1 FROM dag_favorites f
+          WHERE f.tenant_id = $1 AND f.user_id = sqlc.narg('user_id') AND f.dag_id = d.dag_id
+      ))
+      OR (sqlc.narg('is_favorite') = false AND NOT EXISTS (
+          SELECT 1 FROM dag_favorites f
+          WHERE f.tenant_id = $1 AND f.user_id = sqlc.narg('user_id') AND f.dag_id = d.dag_id
+      ))
+  )
+ORDER BY
+  CASE WHEN sqlc.narg('order_by')::text IN ('-dag_id', '-dag_display_name') THEN d.dag_id END DESC,
+  CASE WHEN sqlc.narg('order_by')::text = 'last_run_state' THEN l.state::text END ASC NULLS LAST,
+  CASE WHEN sqlc.narg('order_by')::text = '-last_run_state' THEN l.state::text END DESC NULLS LAST,
+  CASE WHEN sqlc.narg('order_by')::text = 'last_run_start_date' THEN l.started_at END ASC NULLS LAST,
+  CASE WHEN sqlc.narg('order_by')::text = '-last_run_start_date' THEN l.started_at END DESC NULLS LAST,
+  d.dag_id ASC
+LIMIT $2 OFFSET $3;
+
+-- name: CountDagsWithFilter :one
+SELECT count(*)
+FROM dags d
+LEFT JOIN LATERAL (
+    SELECT r.state, r.started_at
+    FROM dag_runs r
+    WHERE r.dag_id = d.id
+    ORDER BY r.logical_date DESC
+    LIMIT 1
+) l ON true
+WHERE d.tenant_id = $1 AND d.is_active = true
+  AND (sqlc.narg('paused')::bool IS NULL OR d.is_paused = sqlc.narg('paused'))
+  AND (sqlc.narg('run_state')::dag_run_state IS NULL OR l.state = sqlc.narg('run_state'))
+  AND (sqlc.narg('dag_id_pattern')::text IS NULL OR d.dag_id ILIKE '%' || sqlc.narg('dag_id_pattern') || '%')
+  AND (sqlc.narg('dag_id_prefix_pattern')::text IS NULL OR d.dag_id ILIKE sqlc.narg('dag_id_prefix_pattern') || '%')
+  AND (sqlc.narg('dag_display_name_pattern')::text IS NULL OR d.dag_id ILIKE '%' || sqlc.narg('dag_display_name_pattern') || '%')
+  AND (sqlc.narg('dag_display_name_prefix_pattern')::text IS NULL OR d.dag_id ILIKE sqlc.narg('dag_display_name_prefix_pattern') || '%')
+  AND (sqlc.narg('owners')::text[] IS NULL OR cardinality(sqlc.narg('owners')::text[]) = 0 OR d.owner = ANY(sqlc.narg('owners')::text[]))
+  AND (
+      sqlc.narg('tags')::text[] IS NULL
+      OR cardinality(sqlc.narg('tags')::text[]) = 0
+      OR (
+          CASE WHEN sqlc.narg('tags_match_mode')::text = 'all'
+               THEN d.tags @> sqlc.narg('tags')::text[]
+               ELSE d.tags && sqlc.narg('tags')::text[]
+          END
+      )
+  )
+  AND (
+      sqlc.narg('is_favorite')::bool IS NULL
+      OR (sqlc.narg('is_favorite') = true AND EXISTS (
+          SELECT 1 FROM dag_favorites f
+          WHERE f.tenant_id = $1 AND f.user_id = sqlc.narg('user_id') AND f.dag_id = d.dag_id
+      ))
+      OR (sqlc.narg('is_favorite') = false AND NOT EXISTS (
+          SELECT 1 FROM dag_favorites f
+          WHERE f.tenant_id = $1 AND f.user_id = sqlc.narg('user_id') AND f.dag_id = d.dag_id
+      ))
+  );
+
+-- name: ListTenantDagTags :many
+WITH distinct_tags AS (
+    SELECT DISTINCT unnest(d.tags)::text AS name
+    FROM dags d
+    WHERE d.tenant_id = $1 AND d.is_active = true
+)
+SELECT name
+FROM distinct_tags
+WHERE (sqlc.narg('tag_name_pattern')::text IS NULL OR name ILIKE '%' || sqlc.narg('tag_name_pattern') || '%')
+  AND (sqlc.narg('tag_name_prefix_pattern')::text IS NULL OR name ILIKE sqlc.narg('tag_name_prefix_pattern') || '%')
+ORDER BY name
+LIMIT $2 OFFSET $3;
+
+-- name: CountTenantDagTags :one
+WITH distinct_tags AS (
+    SELECT DISTINCT unnest(d.tags)::text AS name
+    FROM dags d
+    WHERE d.tenant_id = $1 AND d.is_active = true
+)
+SELECT count(*)
+FROM distinct_tags
+WHERE (sqlc.narg('tag_name_pattern')::text IS NULL OR name ILIKE '%' || sqlc.narg('tag_name_pattern') || '%')
+  AND (sqlc.narg('tag_name_prefix_pattern')::text IS NULL OR name ILIKE sqlc.narg('tag_name_prefix_pattern') || '%');

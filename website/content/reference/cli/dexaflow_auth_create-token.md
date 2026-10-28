@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_auth_create-token/
 title: "dexaflow auth create-token"
 linkTitle: "auth create-token"
-weight: 13
+weight: 14
 ---
 
 Obtain a session JWT, or with --scope create a long-lived API token.

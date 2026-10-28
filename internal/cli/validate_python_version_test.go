@@ -21,6 +21,7 @@ import (
 //
 // It now asks the same question `dexaflow lite` asks, with the same exemptions.
 func TestValidateEnforcesTheDeclaredPythonVersion(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		cfg  *domain.LeoflowConfig
@@ -60,6 +61,7 @@ func TestValidateEnforcesTheDeclaredPythonVersion(t *testing.T) {
 // and refusing to lint until the author installs an interpreter we are telling
 // them to abandon helps nobody. Same exemption `dexaflow lite` makes.
 func TestValidateDoesNotEnforceADeprecatedVersion(t *testing.T) {
+	t.Parallel()
 	// 3.10 is the version the schema marks deprecated (see .changie/the schema's
 	// x-leoflow-python-deprecations); skip if that ever stops being true rather
 	// than asserting against a moving list.
@@ -78,6 +80,7 @@ func TestValidateDoesNotEnforceADeprecatedVersion(t *testing.T) {
 // exist. A message that sends someone looking for a package that was never
 // published is worse than no message, because it reads as authoritative.
 func TestValidateSkipWarningNamesAnInstallableInterpreter(t *testing.T) {
+	t.Parallel()
 	cmd := devTestCmd()
 	cmd.SetContext(context.Background())
 	// A minor nothing on any machine reports, so the unreachable branch is the
@@ -105,6 +108,7 @@ func TestValidateSkipWarningNamesAnInstallableInterpreter(t *testing.T) {
 // project declares is what produced #1094; linting under a NEWER one accepts
 // everything the declared minor accepts, so a syntax error there is real.
 func TestSyntaxCheckTrustsAnInterpreterAtLeastAsNew(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		want, have int
 		trust      bool
@@ -131,6 +135,7 @@ func TestSyntaxCheckTrustsAnInterpreterAtLeastAsNew(t *testing.T) {
 // is most of them. CI is one: it has no python3.11, and this is the shape that
 // failed there.
 func TestSyntaxCheckStillCatchesABrokenDagUnderANewerInterpreter(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 not on PATH; this asserts the fallback, which needs one")
 	}
@@ -151,6 +156,7 @@ func TestSyntaxCheckStillCatchesABrokenDagUnderANewerInterpreter(t *testing.T) {
 // the build on a syntax error that the older interpreter may simply not
 // understand. Warn and skip, which is #1094's fix.
 func TestSyntaxCheckSkipsRatherThanJudgeUnderAnOlderInterpreter(t *testing.T) {
+	t.Parallel()
 	dag := filepath.Join(t.TempDir(), "dag.py")
 	if err := os.WriteFile(dag, []byte("this is not valid python\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -225,6 +231,7 @@ func TestValidateActuallyConsultsPythonVersion(t *testing.T) {
 // drift silently. Nothing enforced that: every test drove one of them. Run both
 // over the same configs so the claim is true.
 func TestValidateAndDevAgreeOnTheEnforcedVersion(t *testing.T) {
+	t.Parallel()
 	cfgs := []*domain.LeoflowConfig{
 		{PythonVersion: "3.13"},
 		{PythonVersion: "3.12"},

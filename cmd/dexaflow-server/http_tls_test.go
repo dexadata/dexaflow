@@ -126,7 +126,7 @@ func okHandler() http.Handler {
 // behavior (#638).
 func TestConfigureAPITLSLeavesPlainHTTPByDefault(t *testing.T) {
 	srv := &http.Server{Addr: freeAddr(t), Handler: okHandler(), ReadHeaderTimeout: time.Second}
-	if err := configureAPITLS(srv, config.ServerSection{}); err != nil {
+	if err := configureAPITLS(srv, config.ServerSection{}, nil); err != nil {
 		t.Fatalf("configureAPITLS: %v", err)
 	}
 	if srv.TLSConfig != nil {
@@ -149,7 +149,7 @@ func TestConfigureAPITLSLeavesPlainHTTPByDefault(t *testing.T) {
 func TestConfigureAPITLSServesHTTPS(t *testing.T) {
 	cert := writeTestCert(t, t.TempDir(), 1)
 	srv := &http.Server{Addr: freeAddr(t), Handler: okHandler(), ReadHeaderTimeout: time.Second}
-	if err := configureAPITLS(srv, config.ServerSection{HTTPTLSCert: cert.certPath, HTTPTLSKey: cert.keyPath}); err != nil {
+	if err := configureAPITLS(srv, config.ServerSection{HTTPTLSCert: cert.certPath, HTTPTLSKey: cert.keyPath}, nil); err != nil {
 		t.Fatalf("configureAPITLS: %v", err)
 	}
 	startServing(t, srv)
@@ -189,7 +189,7 @@ func TestConfigureAPITLSServesHTTPS(t *testing.T) {
 func TestConfigureAPITLSFailsFastOnUnreadableFiles(t *testing.T) {
 	dir := t.TempDir()
 	missing := config.ServerSection{HTTPTLSCert: filepath.Join(dir, "nope.crt"), HTTPTLSKey: filepath.Join(dir, "nope.key")}
-	err := configureAPITLS(&http.Server{}, missing)
+	err := configureAPITLS(&http.Server{}, missing, nil)
 	if err == nil {
 		t.Fatal("configureAPITLS with missing files = nil, want a boot error")
 	}
@@ -201,7 +201,7 @@ func TestConfigureAPITLSFailsFastOnUnreadableFiles(t *testing.T) {
 	if werr := os.WriteFile(garbage, []byte("not pem"), 0o600); werr != nil {
 		t.Fatal(werr)
 	}
-	if err := configureAPITLS(&http.Server{}, config.ServerSection{HTTPTLSCert: garbage, HTTPTLSKey: garbage}); err == nil {
+	if err := configureAPITLS(&http.Server{}, config.ServerSection{HTTPTLSCert: garbage, HTTPTLSKey: garbage}, nil); err == nil {
 		t.Error("configureAPITLS with invalid PEM = nil, want a boot error")
 	}
 }
@@ -213,7 +213,7 @@ func TestConfigureAPITLSPicksUpARotatedCert(t *testing.T) {
 	dir := t.TempDir()
 	first := writeTestCert(t, dir, 1)
 	srv := &http.Server{Addr: freeAddr(t), Handler: okHandler(), ReadHeaderTimeout: time.Second}
-	if err := configureAPITLS(srv, config.ServerSection{HTTPTLSCert: first.certPath, HTTPTLSKey: first.keyPath}); err != nil {
+	if err := configureAPITLS(srv, config.ServerSection{HTTPTLSCert: first.certPath, HTTPTLSKey: first.keyPath}, nil); err != nil {
 		t.Fatalf("configureAPITLS: %v", err)
 	}
 	startServing(t, srv)
@@ -242,7 +242,7 @@ func TestConfigureAPITLSKeepsServingWhenARotationIsHalfWritten(t *testing.T) {
 	dir := t.TempDir()
 	first := writeTestCert(t, dir, 1)
 	srv := &http.Server{Addr: freeAddr(t), Handler: okHandler(), ReadHeaderTimeout: time.Second}
-	if err := configureAPITLS(srv, config.ServerSection{HTTPTLSCert: first.certPath, HTTPTLSKey: first.keyPath}); err != nil {
+	if err := configureAPITLS(srv, config.ServerSection{HTTPTLSCert: first.certPath, HTTPTLSKey: first.keyPath}, nil); err != nil {
 		t.Fatalf("configureAPITLS: %v", err)
 	}
 	startServing(t, srv)
@@ -318,7 +318,7 @@ func TestStartAPISideWiresHTTPTLS(t *testing.T) {
 func TestCertReloaderParsesABrokenPairOnceAndWarns(t *testing.T) {
 	dir := t.TempDir()
 	first := writeTestCert(t, dir, 1)
-	r, err := newCertReloader(first.certPath, first.keyPath)
+	r, err := newCertReloader(tlsListenerAPI, first.certPath, first.keyPath, nil)
 	if err != nil {
 		t.Fatalf("newCertReloader: %v", err)
 	}

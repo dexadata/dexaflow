@@ -146,12 +146,13 @@ func (s *fakeRunServer) logReadCount(key string) int {
 	return n
 }
 
-// fastFollow makes the follower poll every few milliseconds for the test.
-func fastFollow(t *testing.T) {
+// fastFollow returns test dependencies whose follower polls every few
+// milliseconds.
+func fastFollow(t *testing.T) *cliDeps {
 	t.Helper()
-	prev := followPollInterval
-	followPollInterval = 2 * time.Millisecond
-	t.Cleanup(func() { followPollInterval = prev })
+	d := testDeps()
+	d.followPollInterval = 2 * time.Millisecond
+	return d
 }
 
 func successSteps() []runStep {
@@ -174,13 +175,13 @@ func newFakeRun(t *testing.T, fake *fakeRunServer) *httptest.Server {
 // prints each task state change, the logs of each task once it finishes, the
 // UI link of the run, and exits 0 when the run succeeds.
 func TestRunsTriggerFollowSucceeds(t *testing.T) {
-	fastFollow(t)
+	d := fastFollow(t)
 	fake := &fakeRunServer{steps: successSteps(), logs: map[string]string{
 		"extract/1": "extracted 10 rows\n", "load/1": "loaded 10 rows\n",
 	}}
 	srv := newFakeRun(t, fake)
 
-	out, _, err := run(t, "runs", "trigger", "etl", "--follow", "--server", srv.URL, "--token", "x")
+	out, _, err := runDeps(t, d, "runs", "trigger", "etl", "--follow", "--server", srv.URL, "--token", "x")
 	if err != nil {
 		t.Fatalf("runs trigger --follow: %v\n%s", err, out)
 	}
@@ -205,14 +206,14 @@ func TestRunsTriggerFollowSucceeds(t *testing.T) {
 // TestRunsTriggerFollowFailedRun: a failed run exits with the run-failed code
 // and names the failing task and the tasks that did not run because of it.
 func TestRunsTriggerFollowFailedRun(t *testing.T) {
-	fastFollow(t)
+	d := fastFollow(t)
 	fake := &fakeRunServer{steps: []runStep{
 		{state: "running", tis: []fakeTI{{task: "extract", state: "running", try: 1}, {task: "report"}}},
 		{state: "failed", tis: []fakeTI{{task: "extract", state: "failed", try: 1}, {task: "report", state: "upstream_failed"}}},
 	}, logs: map[string]string{"extract/1": "Traceback: boom\n"}}
 	srv := newFakeRun(t, fake)
 
-	out, _, err := run(t, "runs", "trigger", "etl", "--follow", "--server", srv.URL, "--token", "x")
+	out, _, err := runDeps(t, d, "runs", "trigger", "etl", "--follow", "--server", srv.URL, "--token", "x")
 	if err == nil {
 		t.Fatalf("a failed run must fail the command:\n%s", out)
 	}
@@ -232,11 +233,11 @@ func TestRunsTriggerFollowFailedRun(t *testing.T) {
 // TestRunsTriggerFollowTimeout: --timeout stops following with its own exit
 // code, says the run keeps going, and never cancels the run.
 func TestRunsTriggerFollowTimeout(t *testing.T) {
-	fastFollow(t)
+	d := fastFollow(t)
 	fake := &fakeRunServer{steps: []runStep{{state: "running", tis: []fakeTI{{task: "extract", state: "running", try: 1}}}}}
 	srv := newFakeRun(t, fake)
 
-	_, _, err := run(t, "runs", "trigger", "etl", "--follow", "--timeout", "50ms", "--server", srv.URL, "--token", "x")
+	_, _, err := runDeps(t, d, "runs", "trigger", "etl", "--follow", "--timeout", "50ms", "--server", srv.URL, "--token", "x")
 	if err == nil {
 		t.Fatal("following past --timeout must fail")
 	}
@@ -254,10 +255,11 @@ func TestRunsTriggerFollowTimeout(t *testing.T) {
 // TestFollowRunInterruptLeavesTheRun: Ctrl-C (a canceled context) stops
 // following with the interrupt code and leaves the run alone.
 func TestFollowRunInterruptLeavesTheRun(t *testing.T) {
-	fastFollow(t)
+	t.Parallel()
+	d := fastFollow(t)
 	fake := &fakeRunServer{steps: []runStep{{state: "running", tis: []fakeTI{{task: "extract", state: "running", try: 1}}}}}
 	srv := newFakeRun(t, fake)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	ctx, cancel := context.WithTimeout(testCtx(d), 30*time.Millisecond)
 	defer cancel()
 
 	err := followRun(ctx, io.Discard, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"}, followOptions{})
@@ -276,12 +278,13 @@ func TestFollowRunInterruptLeavesTheRun(t *testing.T) {
 // included, waits in queued until the DAG is unpaused (Airflow semantics), and
 // the follower says so with the command that unpauses it.
 func TestFollowRunSaysTheDAGIsPaused(t *testing.T) {
-	fastFollow(t)
+	t.Parallel()
+	d := fastFollow(t)
 	fake := &fakeRunServer{paused: true, steps: successSteps()}
 	srv := newFakeRun(t, fake)
 	var out strings.Builder
 
-	err := followRun(context.Background(), &out, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"}, followOptions{})
+	err := followRun(testCtx(d), &out, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"}, followOptions{})
 	if err != nil {
 		t.Fatalf("followRun: %v", err)
 	}
@@ -298,7 +301,7 @@ func TestFollowRunSaysTheDAGIsPaused(t *testing.T) {
 // TestRunsTriggerSaysAPausedRunWaits: `runs trigger` on a paused DAG says
 // once that the run waits until the unpause, with or without --follow.
 func TestRunsTriggerSaysAPausedRunWaits(t *testing.T) {
-	fastFollow(t)
+	d := fastFollow(t)
 	for _, follow := range []bool{false, true} {
 		srv := newFakeRun(t, &fakeRunServer{paused: true, steps: successSteps()})
 		args := []string{"runs", "trigger", "etl", "--server", srv.URL, "--token", "x"}
@@ -306,7 +309,7 @@ func TestRunsTriggerSaysAPausedRunWaits(t *testing.T) {
 			args = append(args, "--follow")
 		}
 
-		out, _, err := run(t, args...)
+		out, _, err := runDeps(t, d, args...)
 		if err != nil {
 			t.Fatalf("runs trigger (follow %t): %v\n%s", follow, err, out)
 		}
@@ -320,11 +323,12 @@ func TestRunsTriggerSaysAPausedRunWaits(t *testing.T) {
 // because its DAG is paused, the stall note names the pause as the cause and
 // the unpause command, not the agent or max_active_runs.
 func TestFollowRunNamesThePauseOfAStalledRun(t *testing.T) {
-	fastFollow(t)
+	t.Parallel()
+	d := fastFollow(t)
 	fake := &fakeRunServer{paused: true, steps: []runStep{{state: "queued", tis: []fakeTI{{task: "extract"}}}}}
 	srv := newFakeRun(t, fake)
 	var out strings.Builder
-	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	ctx, cancel := context.WithTimeout(testCtx(d), 80*time.Millisecond)
 	defer cancel()
 
 	_ = followRun(ctx, &out, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"},
@@ -344,11 +348,12 @@ func TestFollowRunNamesThePauseOfAStalledRun(t *testing.T) {
 // TestFollowRunHintsAtAStalledQueue: a run that stays queued gets one hint
 // instead of a silent wait.
 func TestFollowRunHintsAtAStalledQueue(t *testing.T) {
-	fastFollow(t)
+	t.Parallel()
+	d := fastFollow(t)
 	fake := &fakeRunServer{steps: []runStep{{state: "queued", tis: []fakeTI{{task: "extract"}}}}}
 	srv := newFakeRun(t, fake)
 	var out strings.Builder
-	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	ctx, cancel := context.WithTimeout(testCtx(d), 80*time.Millisecond)
 	defer cancel()
 
 	_ = followRun(ctx, &out, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"},
@@ -361,11 +366,12 @@ func TestFollowRunHintsAtAStalledQueue(t *testing.T) {
 // TestFollowRunRidesOutTransientErrors: a 503 while polling is retried, not
 // fatal.
 func TestFollowRunRidesOutTransientErrors(t *testing.T) {
-	fastFollow(t)
+	t.Parallel()
+	d := fastFollow(t)
 	fake := &fakeRunServer{failReads: 2, steps: successSteps()}
 	srv := newFakeRun(t, fake)
 
-	if err := followRun(context.Background(), io.Discard, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"}, followOptions{}); err != nil {
+	if err := followRun(testCtx(d), io.Discard, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"}, followOptions{}); err != nil {
 		t.Fatalf("followRun after two 503s: %v", err)
 	}
 }
@@ -373,10 +379,11 @@ func TestFollowRunRidesOutTransientErrors(t *testing.T) {
 // TestFollowRunGivesUpOnAPersistentError: an error that keeps coming back
 // (here a 404: the run was deleted) ends the follow instead of polling forever.
 func TestFollowRunGivesUpOnAPersistentError(t *testing.T) {
-	fastFollow(t)
+	t.Parallel()
+	d := fastFollow(t)
 	srv := newFakeRun(t, &fakeRunServer{steps: successSteps()})
 
-	err := followRun(context.Background(), io.Discard, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "nope"}, followOptions{})
+	err := followRun(testCtx(d), io.Discard, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "nope"}, followOptions{})
 	if err == nil || !strings.Contains(err.Error(), "404") {
 		t.Fatalf("err = %v, want the 404", err)
 	}
@@ -388,7 +395,8 @@ func TestFollowRunGivesUpOnAPersistentError(t *testing.T) {
 // TestFollowRunPrintsEveryAttemptsLogs: a task that fails and is retried shows
 // the logs of the failed attempt and of the retry.
 func TestFollowRunPrintsEveryAttemptsLogs(t *testing.T) {
-	fastFollow(t)
+	t.Parallel()
+	d := fastFollow(t)
 	fake := &fakeRunServer{steps: []runStep{
 		{state: "running", tis: []fakeTI{{task: "extract", state: "running", try: 1}}},
 		{state: "running", tis: []fakeTI{{task: "extract", state: "up_for_retry", try: 1}}},
@@ -398,7 +406,7 @@ func TestFollowRunPrintsEveryAttemptsLogs(t *testing.T) {
 	srv := newFakeRun(t, fake)
 	var out strings.Builder
 
-	if err := followRun(context.Background(), &out, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"}, followOptions{}); err != nil {
+	if err := followRun(testCtx(d), &out, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"}, followOptions{}); err != nil {
 		t.Fatalf("followRun: %v", err)
 	}
 	for _, want := range []string{"extract  up_for_retry", "| first try failed", "extract  running  (try 2)", "| second try worked"} {
@@ -411,6 +419,7 @@ func TestFollowRunPrintsEveryAttemptsLogs(t *testing.T) {
 // TestExitCodeOf pins the mapping Execute uses: 0 for no error, the carried
 // code when one is wrapped anywhere in the chain, 1 otherwise.
 func TestExitCodeOf(t *testing.T) {
+	t.Parallel()
 	coded := &exitCodeError{code: exitFollowTimeout, err: errors.New("timeout")}
 	cases := []struct {
 		err  error
@@ -472,11 +481,11 @@ func TestRunsLogsSkipsTasksThatNeverRan(t *testing.T) {
 // TestRunsLogsFollowWithoutTaskFollowsTheRun: `runs logs <dag> --follow`
 // follows the whole run, like `runs trigger --follow` does.
 func TestRunsLogsFollowWithoutTaskFollowsTheRun(t *testing.T) {
-	fastFollow(t)
+	d := fastFollow(t)
 	fake := &fakeRunServer{steps: successSteps(), logs: map[string]string{"load/1": "loaded 10 rows\n"}}
 	srv := newFakeRun(t, fake)
 
-	out, _, err := run(t, "runs", "logs", "etl", "run-1", "--follow", "--server", srv.URL, "--token", "x")
+	out, _, err := runDeps(t, d, "runs", "logs", "etl", "run-1", "--follow", "--server", srv.URL, "--token", "x")
 	if err != nil {
 		t.Fatalf("runs logs --follow: %v", err)
 	}
@@ -497,14 +506,14 @@ func TestRunsLogsTryNeedsATask(t *testing.T) {
 // the process exit code: the root command's error keeps its code through
 // executeRoot, which Execute returns to main.
 func TestExecuteRootExitsWithTheRunResult(t *testing.T) {
-	fastFollow(t)
+	d := fastFollow(t)
 	fake := &fakeRunServer{steps: []runStep{{state: "failed", tis: []fakeTI{{task: "extract", state: "failed", try: 1}}}}}
 	srv := newFakeRun(t, fake)
 	root := NewRootCommand()
 	root.SetOut(io.Discard)
 	root.SetArgs([]string{"runs", "trigger", "etl", "--follow", "--server", srv.URL, "--token", "x"})
 
-	got, err := executeRoot(root)
+	got, err := executeRoot(testCtx(d), root)
 	if got != exitRunFailed {
 		t.Errorf("exit code = %d, want %d", got, exitRunFailed)
 	}
@@ -545,10 +554,11 @@ func (w *failingWriter) Write(p []byte) (int, error) {
 // TestFollowRunStopsOnAWriteError: when the output goes away (a closed pipe),
 // the follow ends with that error instead of polling on with nobody reading.
 func TestFollowRunStopsOnAWriteError(t *testing.T) {
-	fastFollow(t)
+	t.Parallel()
+	d := fastFollow(t)
 	fake := &fakeRunServer{steps: []runStep{{state: "running", tis: []fakeTI{{task: "extract", state: "running", try: 1}}}}}
 	srv := newFakeRun(t, fake)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(testCtx(d), 2*time.Second)
 	defer cancel()
 
 	err := followRun(ctx, &failingWriter{n: 1}, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"}, followOptions{})
@@ -577,7 +587,7 @@ func assertNoControl(t *testing.T, out string) {
 // that prints them strips terminal control characters (the follow, every task
 // of a run, and one task's attempt).
 func TestTaskLogsAreSanitized(t *testing.T) {
-	fastFollow(t)
+	d := fastFollow(t)
 	steps := []runStep{{state: "success", tis: []fakeTI{{task: "extract", state: "success", try: 1}}}}
 	srv := newFakeRun(t, &fakeRunServer{steps: steps, logs: map[string]string{"extract/1": hostileLog}})
 	for _, args := range [][]string{
@@ -585,7 +595,7 @@ func TestTaskLogsAreSanitized(t *testing.T) {
 		{"runs", "logs", "etl", "run-1"},
 		{"runs", "logs", "etl", "run-1", "extract", "--try", "1"},
 	} {
-		out, _, err := run(t, append(args, "--server", srv.URL, "--token", "x")...)
+		out, _, err := runDeps(t, d, append(args, "--server", srv.URL, "--token", "x")...)
 		if err != nil {
 			t.Fatalf("%v: %v", args, err)
 		}
@@ -596,14 +606,15 @@ func TestTaskLogsAreSanitized(t *testing.T) {
 // TestFollowRunPrintsALineLongerThanAnyBuffer: a log line over 1 MiB is
 // printed whole, and the lines after it too.
 func TestFollowRunPrintsALineLongerThanAnyBuffer(t *testing.T) {
-	fastFollow(t)
+	t.Parallel()
+	d := fastFollow(t)
 	long := strings.Repeat("a", 2<<20)
 	fake := &fakeRunServer{steps: []runStep{{state: "success", tis: []fakeTI{{task: "extract", state: "success", try: 1}}}},
 		logs: map[string]string{"extract/1": long + "\nafter\n"}}
 	srv := newFakeRun(t, fake)
 	var out strings.Builder
 
-	if err := followRun(context.Background(), &out, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"}, followOptions{}); err != nil {
+	if err := followRun(testCtx(d), &out, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"}, followOptions{}); err != nil {
 		t.Fatalf("followRun: %v", err)
 	}
 	if !strings.Contains(out.String(), "    | "+long+"\n") || !strings.Contains(out.String(), "    | after\n") {
@@ -614,7 +625,8 @@ func TestFollowRunPrintsALineLongerThanAnyBuffer(t *testing.T) {
 // TestFollowRunPrintsTriesItDidNotSee: when the polls miss the up_for_retry
 // state, the logs of the earlier attempt still print.
 func TestFollowRunPrintsTriesItDidNotSee(t *testing.T) {
-	fastFollow(t)
+	t.Parallel()
+	d := fastFollow(t)
 	fake := &fakeRunServer{steps: []runStep{
 		{state: "running", tis: []fakeTI{{task: "extract", state: "running", try: 1}}},
 		{state: "running", tis: []fakeTI{{task: "extract", state: "running", try: 2}}},
@@ -623,7 +635,7 @@ func TestFollowRunPrintsTriesItDidNotSee(t *testing.T) {
 	srv := newFakeRun(t, fake)
 	var out strings.Builder
 
-	if err := followRun(context.Background(), &out, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"}, followOptions{}); err != nil {
+	if err := followRun(testCtx(d), &out, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"}, followOptions{}); err != nil {
 		t.Fatalf("followRun: %v", err)
 	}
 	for _, want := range []string{"| first try failed", "| second try worked"} {
@@ -639,12 +651,12 @@ func TestFollowRunPrintsTriesItDidNotSee(t *testing.T) {
 // TestFollowTimeoutIsAHardBound: --timeout holds even while a request hangs
 // (here the logs of a finished task).
 func TestFollowTimeoutIsAHardBound(t *testing.T) {
-	fastFollow(t)
+	d := fastFollow(t)
 	fake := &fakeRunServer{hangLogs: true, steps: []runStep{{state: "running", tis: []fakeTI{{task: "extract", state: "success", try: 1}}}}}
 	srv := newFakeRun(t, fake)
 	start := time.Now()
 
-	_, _, err := run(t, "runs", "trigger", "etl", "--follow", "--timeout", "100ms", "--server", srv.URL, "--token", "x")
+	_, _, err := runDeps(t, d, "runs", "trigger", "etl", "--follow", "--timeout", "100ms", "--server", srv.URL, "--token", "x")
 	if got := exitCodeOf(err); got != exitFollowTimeout {
 		t.Errorf("exit code = %d (err %v), want %d", got, err, exitFollowTimeout)
 	}
@@ -712,13 +724,14 @@ func TestRunsLogsHelpNamesTheExitCodes(t *testing.T) {
 // TestFollowRunEndsALogWithoutNewline: a log whose last line has no newline
 // does not run into the next line of output.
 func TestFollowRunEndsALogWithoutNewline(t *testing.T) {
-	fastFollow(t)
+	t.Parallel()
+	d := fastFollow(t)
 	fake := &fakeRunServer{steps: []runStep{{state: "success", tis: []fakeTI{{task: "extract", state: "success", try: 1}}}},
 		logs: map[string]string{"extract/1": "no newline at the end"}}
 	srv := newFakeRun(t, fake)
 	var out strings.Builder
 
-	if err := followRun(context.Background(), &out, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"}, followOptions{}); err != nil {
+	if err := followRun(testCtx(d), &out, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"}, followOptions{}); err != nil {
 		t.Fatalf("followRun: %v", err)
 	}
 	if !strings.Contains(out.String(), "    | no newline at the end\nRun run-1 succeeded") {

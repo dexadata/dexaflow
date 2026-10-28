@@ -37,7 +37,7 @@ func TestDiskSinkAppendEventPreservesExisting(t *testing.T) {
 	if aerr := sink.AppendEvent(ref(), Event{Level: "error", Stream: "system", Message: "killed: agent_lost"}); aerr != nil {
 		t.Fatalf("AppendEvent() error = %v", aerr)
 	}
-	rc, err := sink.Read(ref())
+	rc, err := sink.Read(t.Context(), ref())
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
@@ -71,7 +71,7 @@ func TestDiskSinkWriteThenReadBack(t *testing.T) {
 
 	// The file persists after the writer is closed (i.e. past pod termination)
 	// and is stored as JSONL; decoding each line recovers the messages.
-	rc, err := sink.Read(ref())
+	rc, err := sink.Read(t.Context(), ref())
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestDecodeLineRoundTripAndLegacy(t *testing.T) {
 		t.Fatal(werr)
 	}
 	_ = w.Close()
-	rc, _ := NewDiskSink(dir).Read(ref())
+	rc, _ := NewDiskSink(dir).Read(t.Context(), ref())
 	defer rc.Close()
 	data, _ := io.ReadAll(rc)
 	ev := DecodeLine(strings.TrimSpace(string(data)))
@@ -131,7 +131,7 @@ func TestDiskSinkPathLayout(t *testing.T) {
 }
 
 func TestDiskSinkReadMissing(t *testing.T) {
-	if _, err := NewDiskSink(t.TempDir()).Read(ref()); err == nil {
+	if _, err := NewDiskSink(t.TempDir()).Read(t.Context(), ref()); err == nil {
 		t.Error("reading a non-existent log should error")
 	}
 }
@@ -169,7 +169,7 @@ func TestDiskSinkPruneKeepsRecentAndMissingRoot(t *testing.T) {
 	if err := sink.Prune(time.Now(), 30*24*time.Hour); err != nil {
 		t.Fatalf("Prune recent: %v", err)
 	}
-	if _, err := sink.Read(ref()); err != nil {
+	if _, err := sink.Read(t.Context(), ref()); err != nil {
 		t.Errorf("recent log should be kept: %v", err)
 	}
 	// A never-written root must not error.
@@ -193,6 +193,18 @@ func TestRefineLevel(t *testing.T) {
 		{"processed 42 rows", "info", "info"},
 		{"raw stderr noise", "error", "error"},
 		{"", "info", "info"},
+
+		// Issue #870: dbt summary lines printed to stderr must not be colored error
+		// when ERROR=0.
+		{"Done. PASS=24 WARN=0 ERROR=0 SKIP=0 TOTAL=24", "error", "info"},
+		{"Done. PASS=1 WARN=0 ERROR=0 SKIP=0", "error", "info"},
+		{"Done. PASS=20 WARN=2 ERROR=0 SKIP=0 TOTAL=22", "error", "warning"},
+		{"Done. PASS=20 WARN=0 ERROR=1 SKIP=0 TOTAL=21", "error", "error"},
+		{"\x1b[0m\x1b[32mDone. PASS=24 WARN=0 ERROR=0 SKIP=0\x1b[0m", "error", "info"},
+		{"Done. PASS=5 WARN=10 ERROR=0 SKIP=0 NO-OP=0 TOTAL=15", "error", "warning"},
+		{"Done. PASS=3 WARN=0 ERROR=10 SKIP=0 TOTAL=13", "error", "error"},
+		// Not a dbt summary: "Done." next to an ERROR token stays an error.
+		{"Done. ERROR=0 rows rejected by the loader", "info", "error"},
 	}
 	for _, c := range cases {
 		if got := RefineLevel(c.msg, c.fallback); got != c.want {
@@ -279,7 +291,7 @@ func TestDiskSinkRejectsPathEscapingComponents(t *testing.T) {
 				_ = w.Close()
 				t.Fatalf("Open accepted an escaping ref; wrote outside %s", root)
 			}
-			if _, rerr := sink.Read(tc.ref); rerr == nil {
+			if _, rerr := sink.Read(t.Context(), tc.ref); rerr == nil {
 				t.Error("Read accepted an escaping ref")
 			}
 			// Nothing may exist above the root, whether or not Open errored.

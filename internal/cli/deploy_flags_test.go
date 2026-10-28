@@ -22,10 +22,16 @@ func deployTo(t *testing.T, fake *deployServer, args ...string) (dir, stdout, st
 // deployDir runs a whole deploy of dir with builder against fake.
 func deployDir(t *testing.T, fake *deployServer, dir, builder string, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
+	return deployDirDeps(t, nil, fake, dir, builder, args...)
+}
+
+// deployDirDeps is deployDir under d (testDeps when nil).
+func deployDirDeps(t *testing.T, d *cliDeps, fake *deployServer, dir, builder string, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
 	all := append([]string{"deploy", dir, "--server", srv.URL, "--token", "x", "--yes", "--builder", builder}, args...)
-	return run(t, all...)
+	return runDeps(t, d, all...)
 }
 
 // TestDeployPausedAndActiveSetIsPaused: --paused and --active reach the
@@ -116,7 +122,8 @@ func TestDeployRefusesAnImplicitLocalhost(t *testing.T) {
 	if err == nil {
 		t.Fatal("deploy with no server configured must fail")
 	}
-	for _, want := range []string{"no control plane", "--server", "DEXAFLOW_SERVER_URL", "dexaflow target add"} {
+	for _, want := range []string{"no control plane", "--server", "DEXAFLOW_SERVER_URL", "dexaflow target add",
+		"For the local Lite server, pass --server http://localhost:8088"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not say %q", err, want)
 		}
@@ -136,8 +143,8 @@ func TestDeployToLiteKeepsTheLocalDefault(t *testing.T) {
 	if err != nil && strings.Contains(err.Error(), "no control plane") {
 		t.Fatalf("a Lite install refused its local server: %v", err)
 	}
-	if !strings.Contains(out, "server:") || !strings.Contains(out, "localhost") {
-		t.Errorf("output %q does not name the local server", out)
+	if !strings.Contains(out, "server:     http://localhost:1 (lite_port in ") {
+		t.Errorf("output %q does not name the Lite server on lite_port (#1912)", out)
 	}
 }
 

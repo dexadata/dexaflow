@@ -18,13 +18,20 @@ import (
 // dag_version to project.
 func registerWarmSpec(t *testing.T, repo *storage.Repository, ctx context.Context, dagID, image string, minIdle int) {
 	t.Helper()
+	registerWarmTasks(t, repo, ctx, dagID, image, minIdle, []domain.TaskSpec{{TaskID: "a", Type: domain.TaskTypePython}})
+}
+
+// registerWarmTasks registers a DAG version like registerWarmSpec, with the
+// given tasks.
+func registerWarmTasks(t *testing.T, repo *storage.Repository, ctx context.Context, dagID, image string, minIdle int, tasks []domain.TaskSpec) {
+	t.Helper()
 	spec := domain.DAGSpec{
 		SchemaVersion:  "1.0",
 		DagID:          dagID,
 		DagVersion:     "v1",
 		Image:          image,
 		MinIdleWorkers: minIdle,
-		Tasks:          []domain.TaskSpec{{TaskID: "a", Type: domain.TaskTypePython}},
+		Tasks:          tasks,
 	}
 	hash, err := spec.CanonicalHash()
 	if err != nil {
@@ -40,7 +47,7 @@ func registerWarmSpec(t *testing.T, repo *storage.Repository, ctx context.Contex
 // effective count is resolved through the operator's clamp (min_idle 20, cap 8 => 8).
 func TestActiveWarmTargetsIntegration(t *testing.T) {
 	repo, sched, ctx := openRepo(t)
-	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 1, MaxPoolSize: 8}, nil)
+	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 1, MaxPoolSize: 8}, nil, domain.WarmPolicy{})
 
 	dagID := fmt.Sprintf("warm_tgt_%d", time.Now().UnixNano())
 	image := fmt.Sprintf("warm-img-%d:v1", time.Now().UnixNano())
@@ -73,7 +80,7 @@ func TestActiveWarmTargetsIntegration(t *testing.T) {
 	}
 
 	// With warm pools off the same active version reports a zero target (the gate).
-	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: false, MinIdleWorkers: 5, MaxPoolSize: 8}, nil)
+	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: false, MinIdleWorkers: 5, MaxPoolSize: 8}, nil, domain.WarmPolicy{})
 	offTargets, err := sched.ActiveWarmTargets(ctx)
 	if err != nil {
 		t.Fatalf("ActiveWarmTargets (off): %v", err)
@@ -94,7 +101,7 @@ func TestActiveWarmTargetsSkipsDisallowedImageIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 1, MaxPoolSize: 8}, policy)
+	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 1, MaxPoolSize: 8}, policy, domain.WarmPolicy{})
 
 	suffix := time.Now().UnixNano()
 	rogueDag, rogueImage := fmt.Sprintf("warm_rogue_%d", suffix), fmt.Sprintf("ghcr.io/someone/tool-%d:latest", suffix)
@@ -124,5 +131,52 @@ func TestActiveWarmTargetsSkipsDisallowedImageIntegration(t *testing.T) {
 	}
 	if !sawOK {
 		t.Errorf("no warm target for allowed image %s in %+v", okImage, targets)
+	}
+}
+
+// TestActiveWarmTargetsSkipsVersionWithNoWarmTaskIntegration (#2065): with
+// executor.unit set a warm pod is one unit, so a DAG whose tasks all declare
+// resources, or are all of size 2, has an active run yet surfaces no warm
+// target, while a DAG with one size-1 task without resources keeps its pool.
+func TestActiveWarmTargetsSkipsVersionWithNoWarmTaskIntegration(t *testing.T) {
+	repo, sched, ctx := openRepo(t)
+	unit, err := domain.ParseResourceUnit(domain.ResourceUnitConfig{CPU: "250m", Memory: "512Mi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sched.SetWarmExecution(config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 1, MaxPoolSize: 8}, nil,
+		domain.WarmPolicy{Enabled: true, Unit: unit})
+
+	suffix := time.Now().UnixNano()
+	sized := &domain.Resources{Requests: &domain.ResourceQuantity{CPU: "100m"}}
+	dags := map[string][]domain.TaskSpec{
+		"sized": {{TaskID: "a", Type: domain.TaskTypePython, Resources: sized}, {TaskID: "b", Type: domain.TaskTypeBash, Resources: sized}},
+		"wide":  {{TaskID: "a", Type: domain.TaskTypePython, PoolSlots: 2}},
+		"mixed": {{TaskID: "a", Type: domain.TaskTypePython, PoolSlots: 2}, {TaskID: "b", Type: domain.TaskTypeBash}},
+	}
+	images := make(map[string]string, len(dags))
+	for name, tasks := range dags {
+		dagID, image := fmt.Sprintf("warm_%s_%d", name, suffix), fmt.Sprintf("warm-%s-%d:v1", name, suffix)
+		images[image] = name
+		registerWarmTasks(t, repo, ctx, dagID, image, 2, tasks)
+		if _, err := repo.CreateDagRun(ctx, "default", dagID, domain.DagRun{
+			RunID: "r1", State: domain.DagRunStateQueued, RunType: "manual", LogicalDate: time.Now().UTC(),
+		}); err != nil {
+			t.Fatalf("create run for %s: %v", dagID, err)
+		}
+	}
+
+	targets, err := sched.ActiveWarmTargets(ctx)
+	if err != nil {
+		t.Fatalf("ActiveWarmTargets: %v", err)
+	}
+	got := map[string]bool{}
+	for _, tgt := range targets {
+		if name, ok := images[tgt.Image]; ok {
+			got[name] = true
+		}
+	}
+	if got["sized"] || got["wide"] || !got["mixed"] {
+		t.Errorf("warm targets for %v, want only mixed (the only DAG with a warm-eligible task)", got)
 	}
 }

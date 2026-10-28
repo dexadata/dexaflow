@@ -19,10 +19,11 @@ dexaflow init dags/my_pipeline
 
 ## Run one locally with hot reload
 ```
-leoflow dev dags/hello          # cluster-mode (real pods, isolated k3d)
-leoflow dev --executor=subprocess dags/hello   # fast host loop
+dexaflow lite dags/hello                        # k3d if Docker is present, else the host
+dexaflow lite --executor=k8s dags/hello         # real pods on an isolated k3d cluster
+dexaflow lite --executor=subprocess dags/hello  # fast host loop, unsandboxed
 ```
-Open the DEV-marked UI at http://localhost:8088.
+Open the LITE-marked UI at http://localhost:8088.
 
 Generated artifacts (`Dockerfile`, `dag.json`) are git-ignored so your project
 stays clean — Dexaflow regenerates them on demand.

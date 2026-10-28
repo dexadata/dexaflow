@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -303,4 +304,90 @@ func TestPodLostReaper_UnreadableApiserverFailsClosed(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestReaperSetLogSinkReachesEveryKillingReaper locks the wiring: the one sink
+// the server hands the Reaper must reach every reaper that fails a running
+// attempt whose log would otherwise stop mid-line (#861).
+func TestReaperSetLogSinkReachesEveryKillingReaper(t *testing.T) {
+	r := NewReaper(&fakeReaperStore{}, nil, nil, nil, nil, reapTestLogger(), DefaultReaperConfig(), nil)
+	sink := &fakeLogSink{}
+	r.SetLogSink(sink)
+	if r.agentLost.sink != sink || r.podLost.sink != sink || r.warmWorkerLost.sink != sink {
+		t.Fatalf("SetLogSink must wire agent-lost, pod-lost and warm-worker-lost")
+	}
+}
+
+// TestPodLostReaper_WritesKilledMarker: a TI failed as pod_lost gets exactly one
+// final "killed: pod_lost" line on its own attempt's log stream, so the log a
+// user tails ends with the reason instead of a silent truncation (#861). A noop
+// mark (a late terminal report won the race) writes nothing, and a sink error
+// never blocks the reap.
+func TestPodLostReaper_WritesKilledMarker(t *testing.T) {
+	const grace = 60 * time.Second
+	since := time.Now().UTC().Add(-2 * time.Minute)
+	cand := PodLostCandidate{
+		TaskInstanceID: "lost", TenantID: "tenant-1", DagRunID: "run-a", DagID: "dag-x",
+		TaskID: "work", TryNumber: 2, AttemptEpoch: 3, RunningSince: since,
+	}
+	newReaper := func(store PodLostReapStore, sink logSink, rec DecisionRecorder) *podLostReaper {
+		r := newPodLostReaper(store, reapTestLogger(), grace, rec)
+		r.pods = &fakePodManager{active: map[string]bool{}}
+		r.sink = sink
+		return r
+	}
+
+	t.Run("reaped attempt ends with the marker", func(t *testing.T) {
+		sink := &fakeLogSink{}
+		refs := &refRecordingSink{}
+		store := &fakePodLostStore{candidates: []PodLostCandidate{cand}}
+		if err := newReaper(store, sink, nil).run(context.Background()); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		evs := sink.events["tenant-1/dag-x/run-a/work/2"]
+		if len(evs) != 1 {
+			t.Fatalf("want exactly one marker on the attempt's log, got %v", sink.events)
+		}
+		ev := evs[0]
+		if !strings.HasPrefix(ev.Message, "killed: pod_lost") || !strings.Contains(ev.Message, grace.String()) {
+			t.Errorf("marker = %q, want a killed: pod_lost line naming the %s grace", ev.Message, grace)
+		}
+		if ev.Stream != "system" || ev.Level != "error" {
+			t.Errorf("marker stream/level = %q/%q, want system/error", ev.Stream, ev.Level)
+		}
+		// The marker lands on the exact execution, epoch included.
+		r := newReaper(&fakePodLostStore{candidates: []PodLostCandidate{cand}}, refs, nil)
+		if err := r.run(context.Background()); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		if len(refs.refs) != 1 || refs.refs[0].AttemptEpoch != 3 || refs.refs[0].TryNumber != 2 {
+			t.Errorf("marker refs = %+v, want one ref at try 2 epoch 3", refs.refs)
+		}
+	})
+
+	t.Run("a noop mark writes no marker", func(t *testing.T) {
+		sink := &fakeLogSink{}
+		store := &fakePodLostStore{candidates: []PodLostCandidate{cand}, markNoop: true}
+		if err := newReaper(store, sink, nil).run(context.Background()); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		if len(sink.events) != 0 {
+			t.Fatalf("a TI that settled on its own must not get a killed marker, got %v", sink.events)
+		}
+	})
+
+	t.Run("a sink error is metered and the reap stands", func(t *testing.T) {
+		rec := &capturingRecorder{}
+		store := &fakePodLostStore{candidates: []PodLostCandidate{cand}}
+		sink := &fakeLogSink{appendErr: errors.New("object store down")}
+		if err := newReaper(store, sink, rec).run(context.Background()); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		if len(store.marked) != 1 {
+			t.Fatalf("the reap must stand when the marker fails, marked = %v", store.marked)
+		}
+		if got := rec.count("pod_lost_log_marker_error"); got != 1 {
+			t.Errorf("pod_lost_log_marker_error = %d, want 1", got)
+		}
+	})
 }

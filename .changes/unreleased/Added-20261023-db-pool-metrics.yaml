@@ -1,0 +1,14 @@
+kind: Added
+body: |-
+  **Database pool exhaustion is visible on `/metrics`.** Since readiness got
+  its own pool (#1046), a request pool that is fully lent out leaves `/readyz`
+  green while every API call queues. The server now exports the pgxpool
+  statistics of its main, health and (when `database.scheduler_max_conns` is
+  set) scheduler pools, labelled `pool`: `dexaflow_db_pool_acquired_conns`,
+  `dexaflow_db_pool_idle_conns`, `dexaflow_db_pool_total_conns`,
+  `dexaflow_db_pool_max_conns`, and the counters
+  `dexaflow_db_pool_empty_acquires_total` (a caller had to wait for a
+  connection), `dexaflow_db_pool_canceled_acquires_total` (a caller gave up)
+  and `dexaflow_db_pool_empty_acquire_wait_seconds_total`, each also published
+  under its `leoflow_` name (#1049).
+time: 2026-10-23T00:30:00.000000000-03:00

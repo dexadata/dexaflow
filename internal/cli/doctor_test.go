@@ -9,6 +9,7 @@ import (
 )
 
 func TestDoctorHelpers(t *testing.T) {
+	t.Parallel()
 	if got := found(true, "/usr/bin/python3.11", "absent"); got != "found (/usr/bin/python3.11)" {
 		t.Errorf("found(present,path) = %q", got)
 	}
@@ -31,7 +32,7 @@ func TestDoctorCommand(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetArgs([]string{})
-	if err := cmd.Execute(); err != nil {
+	if err := cmd.ExecuteContext(testCtx(nil)); err != nil {
 		t.Fatalf("doctor err = %v", err)
 	}
 	if !strings.Contains(out.String(), "dexaflow doctor") || !strings.Contains(out.String(), "recommended executor") {
@@ -40,6 +41,7 @@ func TestDoctorCommand(t *testing.T) {
 }
 
 func TestRenderDoctor(t *testing.T) {
+	t.Parallel()
 	t.Run("docker host recommends k8s and shows python path", func(t *testing.T) {
 		var buf bytes.Buffer
 		renderDoctor(&buf, setup.Report{
@@ -83,52 +85,59 @@ func TestRenderDoctor(t *testing.T) {
 	})
 }
 
-// TestDoctorWarnsWhenOnlyANewerPythonIsPresent is the regression test for the
-// first-run gap in #1224.
+// TestDoctorSetupPythonLine is the regression test for #1224 and #1700.
 //
-// The two components disagree on purpose and both are right. Detect accepts
-// 3.11, 3.12 or 3.13 because the Lite parser shim is stdlib-only, so any of
-// them can parse a dag.py. setup.EnsurePython resolves the host interpreter
-// with LookPath("python3.11") and nothing else, because the runtime is pinned.
-//
-// The bug was the SENTENCE, not either rule: doctor reported the 3.12 as found
-// and said nothing more, so a machine with only 3.12 was told its system Python
-// was fine and then watched setup download a CPython it had not been warned
-// about. Behind a proxy that is a hard failure at a step doctor called green.
-func TestDoctorWarnsWhenOnlyANewerPythonIsPresent(t *testing.T) {
-	var buf bytes.Buffer
-	renderDoctor(&buf, setup.Report{
-		OS: "darwin", Arch: "arm64",
-		PythonAvailable: true,
-		PythonPath:      "/opt/homebrew/bin/python3.12",
-		// No python3.11 on this host: this is the whole fixture.
-		Python311Path: "",
-		Tier:          setup.TierSubprocess,
-	})
-	out := buf.String()
-
-	if !strings.Contains(out, "python3.12") {
-		t.Errorf("doctor no longer names the interpreter that can parse:\n%s", out)
+// doctor's "python 3.11+" line reports what can PARSE a dag.py; the line under
+// it reports what `dexaflow setup` will use and whether anything is downloaded,
+// from the same probe setup runs. #1224 was a green line followed by a download
+// nobody was told about. #1700 made a host 3.12 or 3.13 enough for setup, so
+// the remaining download is the managed 3.11 a default DAG fetches when its
+// venv is built, and doctor must say that, and not cry wolf on a host with 3.11.
+func TestDoctorSetupPythonLine(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		r      setup.Report
+		want   []string
+		reject []string
+	}{
+		{
+			name: "only python3.12: used by setup, 3.11 DAGs fetch lazily",
+			r: setup.Report{PythonAvailable: true, PythonPath: "/opt/homebrew/bin/python3.12",
+				SetupPython: setup.HostPython{Path: "/opt/homebrew/bin/python3.12", Minor: 12}},
+			want:   []string{"will use /opt/homebrew/bin/python3.12 (Python 3.12)", "nothing to download", "python_version 3.11", "when its venv is first built", "Install python3.11"},
+			reject: []string{"needs python3.11 specifically"},
+		},
+		{
+			name: "python3.11 present: no download warning",
+			r: setup.Report{PythonAvailable: true, PythonPath: "/usr/bin/python3.11", Python311Path: "/usr/bin/python3.11",
+				SetupPython: setup.HostPython{Path: "/usr/bin/python3.11", Minor: 11}},
+			want:   []string{"will use /usr/bin/python3.11 (Python 3.11)"},
+			reject: []string{"downloads", "will download"},
+		},
+		{
+			name:   "only an untested minor: setup downloads",
+			r:      setup.Report{PythonAvailable: true, PythonPath: "/usr/bin/python3.14"},
+			want:   []string{"/usr/bin/python3.14", "will download a managed CPython 3.11", "outbound network"},
+			reject: []string{"nothing to download"},
+		},
 	}
-	if !strings.Contains(out, "download") {
-		t.Errorf("doctor reported a green Python and never mentioned the download setup will do:\n%s", out)
-	}
-	if !strings.Contains(out, "python3.11") {
-		t.Errorf("doctor does not say which interpreter would avoid the download:\n%s", out)
-	}
-
-	// And it must NOT cry wolf on a host that has 3.11: a warning that fires
-	// when nothing will be downloaded trains the reader to ignore it, which is
-	// the failure mode of the line it replaces.
-	buf.Reset()
-	renderDoctor(&buf, setup.Report{
-		OS: "linux", Arch: "amd64",
-		PythonAvailable: true,
-		PythonPath:      "/usr/bin/python3.11",
-		Python311Path:   "/usr/bin/python3.11",
-		Tier:            setup.TierSubprocess,
-	})
-	if strings.Contains(buf.String(), "will download") {
-		t.Errorf("doctor warned about a download on a host that has python3.11:\n%s", buf.String())
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			tc.r.OS, tc.r.Arch, tc.r.Tier = "linux", "amd64", setup.TierSubprocess
+			renderDoctor(&buf, tc.r)
+			out := buf.String()
+			for _, w := range tc.want {
+				if !strings.Contains(out, w) {
+					t.Errorf("doctor output missing %q:\n%s", w, out)
+				}
+			}
+			for _, w := range tc.reject {
+				if strings.Contains(out, w) {
+					t.Errorf("doctor output must not say %q:\n%s", w, out)
+				}
+			}
+		})
 	}
 }

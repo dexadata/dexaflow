@@ -21,6 +21,7 @@ func newAuthCommand() *cobra.Command {
 	auth.AddCommand(newLoginCommand())
 	auth.AddCommand(newCreateUserCommand())
 	auth.AddCommand(newTokensCommand())
+	auth.AddCommand(newCITokenCommand())
 	return auth
 }
 
@@ -73,7 +74,7 @@ func newCreateUserCommand() *cobra.Command {
 // admin bearer, and returns the created user. It mirrors requestToken's use of
 // the generated client (ADR 0050 D8) rather than hand-rolling HTTP.
 func createUser(ctx context.Context, serverURL, token, email, password string, roles []string) (apiclient.User, error) {
-	c, err := apiclient.New(serverURL, token)
+	c, err := cliAPIClient(serverURL, token)
 	if err != nil {
 		return apiclient.User{}, err
 	}
@@ -155,7 +156,7 @@ func newCreateTokenCommand() *cobra.Command {
 // via the shared typed /api/v2 client (ADR 0050 D8). No token is presented to
 // obtain a token, so New is called with an empty bearer.
 func requestToken(ctx context.Context, serverURL, username, password string) (string, error) {
-	c, err := apiclient.New(serverURL, "")
+	c, err := cliAPIClient(serverURL, "")
 	if err != nil {
 		return "", err
 	}

@@ -28,8 +28,16 @@ by hand.
 3. **Run the end-to-end gates on the candidate's commit.** `make rc-smoke` runs
    the gates and the k3d suites. The performance gates workflow
    (`.github/workflows/e2e-gates.yaml`) and the soak smoke run nightly on `main`
-   and on rc tags only, so start both with `workflow_dispatch` on the
-   `release-X.Y` commit before the cut.
+   and on rc tags, and the daemonless deploy workflow
+   (`.github/workflows/e2e-daemonless-deploy.yaml`: `dexaflow deploy` of
+   `examples/taskflow_sales` from the `dexaflow-cli` image with no container
+   daemon, then a run on k3d) on rc tags only, so start all three with
+   `workflow_dispatch` on the `release-X.Y` commit before the cut.
+   On a machine where another project owns port 5432, run
+   `DEXAFLOW_DEV_DB_PORT=55432 make rc-smoke`: the dev Postgres, the
+   migrations, the integration tests, the k3d suites and the UI smoke all use
+   that port, and the battery never resets a database it did not start.
+   `make soak` already runs on its own Postgres on port 55433 (`SOAK_PG_PORT`).
 4. **Record every review** of
    [AGENTS.md section 1](https://github.com/dexadata/dexaflow/blob/main/AGENTS.md#1-release-candidate-reviews)
    in the tracking issue of the `vX.Y.Z` milestone: one line each, with who did

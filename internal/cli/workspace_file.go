@@ -62,6 +62,11 @@ type deployDefaults struct {
 	Platforms []string `yaml:"platforms,omitempty"`
 	// BaseImage replaces base_image for projects that set none.
 	BaseImage string `yaml:"base_image,omitempty"`
+	// SourceModeImage is the runtime image, pinned by digest, a deploy
+	// registers dag.py on with no build or push (source mode, ADR 0067,
+	// #1772). It must be the server's execution.source_mode.image byte for
+	// byte.
+	SourceModeImage string `yaml:"source_mode_image,omitempty"`
 	// RemoteBuilder replaces build.remote_builder for projects that set
 	// none (ADR 0083).
 	RemoteBuilder *domain.RemoteBuilderConfig `yaml:"remote_builder,omitempty"`

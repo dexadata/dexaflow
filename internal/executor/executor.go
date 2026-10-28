@@ -159,9 +159,9 @@ type Request struct {
 // Executor runs or dispatches a task. For asynchronous executors
 // (Kubernetes/Docker/subprocess) the return reflects dispatch only, and the
 // agent reports the final state over gRPC. The Disposition tells the scheduler
-// WHY a dispatch failed — transient cluster Backpressure vs a permanent
-// Rejected — so the orchestration layer never has to inspect runtime-specific
-// error types itself (ADR 0051 Phase 4). A successful dispatch returns
+// WHY a dispatch failed (transient cluster Backpressure, an Unavailable API, a
+// permanent Rejected, among others), so the orchestration layer never has to
+// inspect runtime-specific error types itself (ADR 0051 Phase 4). A successful dispatch returns
 // (Dispatched, nil); a failure returns the classified disposition alongside the
 // non-nil cause (its text feeds the scheduler's note/log).
 type Executor interface {

@@ -2,59 +2,55 @@ package storage
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
-// checkSchemaCurrent is the pure boot-time gate: given the DB's schema state and
-// the binary's embedded latest version, it fails fast with an actionable message
-// rather than letting the server boot and error at the first query that touches a
-// missing/old table (ADR 0060 S1). It runs even under role:api (a read-only
-// SELECT), which skips migrations by design (ADR 0049).
-func TestCheckSchemaCurrent(t *testing.T) {
+// schemaWaitVerdict is the boot gate of ADR 0090 decision 1: an absent or
+// behind schema, or one dirty at a version other than this binary's latest, is
+// a reason to wait, not to exit. Only a dirty version equal to the latest stops
+// boot, because the migration this binary needs is half applied and waiting
+// does not finish it.
+func TestSchemaWaitVerdict(t *testing.T) {
 	const latest = 26
+	cases := []struct {
+		name          string
+		version       uint
+		exists, dirty bool
+		class, reason string
+		ahead         bool
+	}{
+		{"current and clean", latest, true, false, "", "", false},
+		{"clean ahead (rollback must not crash)", latest + 1, true, false, "", "", true},
+		{"absent", 0, false, false, SchemaReasonAbsent, "schema absent", false},
+		{"behind", latest - 3, true, false, SchemaReasonBehind, "schema behind v23, requires v26", false},
+		{"dirty behind (a migration may be in flight)", latest - 1, true, true, SchemaReasonDirty, "schema dirty at v25", false},
+		{"dirty ahead (a newer release is migrating)", latest + 1, true, true, SchemaReasonDirty, "schema dirty at v27", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := schemaWaitVerdict(c.version, c.exists, c.dirty, latest)
+			if err != nil {
+				t.Fatalf("a state to wait through stopped boot: %v", err)
+			}
+			if got.Class != c.class || got.Reason != c.reason || got.Ahead != c.ahead {
+				t.Errorf("verdict = %+v, want class %q reason %q ahead %v", got, c.class, c.reason, c.ahead)
+			}
+			if got.Ready() != (c.class == "") {
+				t.Errorf("Ready() = %v for class %q", got.Ready(), got.Class)
+			}
+		})
+	}
 
-	t.Run("current + clean = ok", func(t *testing.T) {
-		if err := checkSchemaCurrent(latest, true, false, latest); err != nil {
-			t.Errorf("current schema returned error: %v", err)
+	t.Run("dirty at this binary's latest stops boot", func(t *testing.T) {
+		_, err := schemaWaitVerdict(latest, true, true, latest)
+		if !errors.Is(err, domain.ErrSchemaNotCurrent) {
+			t.Fatalf("want domain.ErrSchemaNotCurrent, got %v", err)
 		}
-	})
-
-	t.Run("table missing = fail fast", func(t *testing.T) {
-		err := checkSchemaCurrent(0, false, false, latest)
-		if err == nil {
-			t.Fatal("missing schema_migrations must fail")
-		}
-	})
-
-	t.Run("behind = fail with the version gap", func(t *testing.T) {
-		err := checkSchemaCurrent(latest-3, true, false, latest)
-		if err == nil {
-			t.Fatal("a DB behind the binary must fail")
-		}
-	})
-
-	t.Run("ahead = ok (expand-contract; rollback/rollout must not crash)", func(t *testing.T) {
-		// A DB ahead of the binary (older code after a helm rollback, or an old pod
-		// restarting mid-rollout) must NOT hard-fail — expand-contract migrations
-		// keep older code working. Hard-failing here would CrashLoopBackOff on
-		// rollback. The caller logs a warning; boot proceeds.
-		if err := checkSchemaCurrent(latest+1, true, false, latest); err != nil {
-			t.Errorf("an ahead DB must be accepted (rollback safety), got: %v", err)
-		}
-	})
-
-	t.Run("dirty = fail (a migration did not complete)", func(t *testing.T) {
-		err := checkSchemaCurrent(latest, true, true, latest)
-		if err == nil {
-			t.Fatal("a dirty schema must fail")
-		}
-	})
-
-	t.Run("errors are ErrValidation-wrapped for a clean boot message", func(t *testing.T) {
-		if err := checkSchemaCurrent(0, false, false, latest); !errors.Is(err, domain.ErrSchemaNotCurrent) {
-			t.Errorf("want domain.ErrSchemaNotCurrent, got %v", err)
+		if !strings.Contains(err.Error(), "dirty at v26") {
+			t.Errorf("the error does not name the dirty version: %v", err)
 		}
 	})
 }
@@ -86,11 +82,11 @@ func TestCheckSchemaCurrent(t *testing.T) {
 func TestSchemaReadinessDivergesFromBootOnDirty(t *testing.T) {
 	const latest = 26
 
-	t.Run("dirty ahead: boot refuses, readiness stays ready", func(t *testing.T) {
+	t.Run("dirty ahead: boot waits, readiness stays ready", func(t *testing.T) {
 		// An old binary (v26) during an upgrade whose migration Job is applying
 		// v27 right now. This is the case that empties the Service.
-		if err := checkSchemaCurrent(latest+1, true, true, latest); err == nil {
-			t.Error("boot must still refuse to start against a half-applied schema")
+		if w, err := schemaWaitVerdict(latest+1, true, true, latest); err != nil || w.Ready() {
+			t.Errorf("boot must wait, not start, against a half-applied schema: %+v %v", w, err)
 		}
 		if err := checkSchemaReady(latest+1, true, true, latest); err != nil {
 			t.Errorf("a live pod must stay ready while a forward migration is in flight, got: %v", err)
@@ -178,5 +174,62 @@ func TestDirtyAheadIsTheOnlyReadyDirtyState(t *testing.T) {
 		if got := dirtyAhead(c.version, c.exists, c.dirty, latest); got != c.want {
 			t.Errorf("%s: dirtyAhead = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// readyClass labels the readiness verdict for dexaflow_schema_ready, so a pod
+// that was serving reports why it stopped in the same words boot uses. It must
+// be empty exactly when checkSchemaReady passes, dirty ahead included.
+func TestReadyClassFollowsTheReadinessVerdict(t *testing.T) {
+	const latest = 26
+	cases := []struct {
+		name          string
+		version       uint
+		exists, dirty bool
+		want          string
+	}{
+		{"current", latest, true, false, ""},
+		{"clean ahead", latest + 1, true, false, ""},
+		{"dirty ahead stays ready", latest + 1, true, true, ""},
+		{"absent", 0, false, false, SchemaReasonAbsent},
+		{"behind", latest - 1, true, false, SchemaReasonBehind},
+		{"dirty behind", latest - 1, true, true, SchemaReasonBehind},
+		{"dirty at latest", latest, true, true, SchemaReasonDirty},
+	}
+	for _, c := range cases {
+		if got := readyClass(c.version, c.exists, c.dirty, latest); got != c.want {
+			t.Errorf("%s: readyClass = %q, want %q", c.name, got, c.want)
+		}
+		if (checkSchemaReady(c.version, c.exists, c.dirty, latest) == nil) != (c.want == "") {
+			t.Errorf("%s: readyClass disagrees with checkSchemaReady", c.name)
+		}
+	}
+}
+
+// replacedReason is ADR 0090 decision 3 on the server's side: with an
+// installation id configured, a database without a schema, without an id or
+// with another id is not this release's own. Without one (Lite, or a chart
+// install whose migration Job does not record it) nothing is checked.
+func TestReplacedReason(t *testing.T) {
+	cases := []struct {
+		name     string
+		expected string
+		exists   bool
+		dbID     string
+		want     string
+	}{
+		{"no id configured, empty database", "", false, "", ""},
+		{"no id configured, any id", "", true, "b", ""},
+		{"same id", "a", true, "a", ""},
+		{"emptied", "a", false, "", "database replaced: no schema"},
+		{"a schema without an id", "a", true, "", "database replaced: no installation id"},
+		{"another installation", "a", true, "b", "database replaced: another installation id"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := replacedReason(c.expected, c.exists, c.dbID); got != c.want {
+				t.Errorf("replacedReason = %q, want %q", got, c.want)
+			}
+		})
 	}
 }

@@ -261,7 +261,7 @@ func TestServerConfigValidateOIDCPassesWhenComplete(t *testing.T) {
 }
 
 // TestServerConfigValidateOIDCRequiresPro locks D7: provider oidc without the
-// Pro edition fails boot closed.
+// cluster edition (formerly Pro) fails boot closed.
 func TestServerConfigValidateOIDCRequiresPro(t *testing.T) {
 	c := validOIDCConfig()
 	c.UI.Edition = ""
@@ -269,8 +269,8 @@ func TestServerConfigValidateOIDCRequiresPro(t *testing.T) {
 	if err == nil {
 		t.Fatal("Validate() = nil for oidc without Pro edition, want error")
 	}
-	if !strings.Contains(err.Error(), "Pro edition") {
-		t.Errorf("error = %q, want it to mention the Pro edition", err.Error())
+	if !strings.Contains(err.Error(), "cluster edition") {
+		t.Errorf("error = %q, want it to mention the cluster edition", err.Error())
 	}
 }
 
@@ -419,6 +419,26 @@ func TestLoadServerLogsBackendDefaultsToDisk(t *testing.T) {
 	}
 	if c.Logs.Sink.Bucket != "" {
 		t.Errorf("Logs.Sink.Bucket = %q, want empty by default", c.Logs.Sink.Bucket)
+	}
+	if !c.Logs.PersistenceEnabled {
+		t.Error("Logs.PersistenceEnabled = false, want true by default")
+	}
+}
+
+// TestLoadServerReadsLogsPersistenceEnabledFromEnv checks the persistence toggle
+// binds from DEXAFLOW_LOGS_PERSISTENCE_ENABLED and legacy LEOFLOW_LOGS_PERSISTENCE_ENABLED.
+func TestLoadServerReadsLogsPersistenceEnabledFromEnv(t *testing.T) {
+	for _, env := range []string{"DEXAFLOW_LOGS_PERSISTENCE_ENABLED", "LEOFLOW_LOGS_PERSISTENCE_ENABLED"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv(env, "false")
+			c, err := LoadServer("", nil)
+			if err != nil {
+				t.Fatalf("LoadServer with %s: %v", env, err)
+			}
+			if c.Logs.PersistenceEnabled {
+				t.Errorf("%s=false: Logs.PersistenceEnabled = true, want false", env)
+			}
+		})
 	}
 }
 
@@ -1062,5 +1082,28 @@ func TestValidateSessionCookieName(t *testing.T) {
 				t.Fatalf("Validate() = %v, want an error naming %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestLoadServerTailReplayBudget pins #1621: logs.tail.replay_budget_bytes
+// defaults to 0 (no budget), binds from both prefixes, and refuses a negative
+// value at boot.
+func TestLoadServerTailReplayBudget(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil || c.Logs.Tail.ReplayBudgetBytes != 0 {
+		t.Fatalf("default replay budget = %d (%v), want 0", c.Logs.Tail.ReplayBudgetBytes, err)
+	}
+	t.Setenv("LEOFLOW_LOGS_TAIL_REPLAY_BUDGET_BYTES", "1048576")
+	if c, err = LoadServer("", nil); err != nil || c.Logs.Tail.ReplayBudgetBytes != 1<<20 {
+		t.Fatalf("LEOFLOW_ replay budget = %d (%v), want 1048576", c.Logs.Tail.ReplayBudgetBytes, err)
+	}
+	t.Setenv("DEXAFLOW_LOGS_TAIL_REPLAY_BUDGET_BYTES", "2097152")
+	if c, err = LoadServer("", nil); err != nil || c.Logs.Tail.ReplayBudgetBytes != 2<<20 {
+		t.Fatalf("DEXAFLOW_ replay budget = %d (%v), want 2097152 (new prefix wins)", c.Logs.Tail.ReplayBudgetBytes, err)
+	}
+	c.Auth.JWT.Secret = "set"
+	c.Logs.Tail.ReplayBudgetBytes = -1
+	if err := c.Validate(); err == nil {
+		t.Error("Validate() = nil with logs.tail.replay_budget_bytes -1, want error")
 	}
 }

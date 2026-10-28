@@ -58,7 +58,7 @@ func TestReadinessProbeIsOneBudgetNotOnePerStep(t *testing.T) {
 
 	before := time.Now()
 	r := gin.New()
-	r.GET("/readyz", readinessHandler(checks))
+	r.GET("/readyz", readinessHandler(checks, defaultProbeBudget))
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", http.NoBody))
 	after := time.Now()
@@ -80,7 +80,7 @@ func TestReadinessProbeIsOneBudgetNotOnePerStep(t *testing.T) {
 		t.Fatalf("recorded %d deadlines, want 3 (pg ping, pg schema, redis ping)", len(all))
 	}
 	// One budget: every step must see the SAME instant. A per-step allowance
-	// computed as now+probeBudget drifts between calls, so equality here is what
+	// computed as now+defaultProbeBudget drifts between calls, so equality here is what
 	// separates "one deadline shared" from "a fresh one each time".
 	for i, dl := range all[1:] {
 		if !dl.Equal(all[0]) {
@@ -88,8 +88,8 @@ func TestReadinessProbeIsOneBudgetNotOnePerStep(t *testing.T) {
 		}
 	}
 	// And it is the probe budget, derived once from the request.
-	if lo, hi := before.Add(probeBudget), after.Add(probeBudget); all[0].Before(lo) || all[0].After(hi) {
-		t.Errorf("shared deadline %v is not request-start + probeBudget (%v..%v)", all[0], lo, hi)
+	if lo, hi := before.Add(defaultProbeBudget), after.Add(defaultProbeBudget); all[0].Before(lo) || all[0].After(hi) {
+		t.Errorf("shared deadline %v is not request-start + defaultProbeBudget (%v..%v)", all[0], lo, hi)
 	}
 }
 
@@ -103,7 +103,7 @@ func TestMonitorHealthSharesTheProbeBudget(t *testing.T) {
 
 	pg := &schemaDeadlineRecorder{}
 	r := gin.New()
-	r.GET("/health", monitorHealthHandler(map[string]HealthChecker{"postgres": pg}, nil))
+	r.GET("/health", monitorHealthHandler(map[string]HealthChecker{"postgres": pg}, nil, defaultProbeBudget))
 	rec := httptest.NewRecorder()
 	before := time.Now()
 	r.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", http.NoBody))
@@ -118,9 +118,47 @@ func TestMonitorHealthSharesTheProbeBudget(t *testing.T) {
 	if !pg.deadlines[1].Equal(pg.deadlines[0]) {
 		t.Errorf("ping and schema got different deadlines (%v vs %v)", pg.deadlines[0], pg.deadlines[1])
 	}
-	// The same request-start + probeBudget window /readyz is held to. A looser
-	// lower bound accepts a hardcoded 1.5s here and calls it probeBudget.
-	if lo, hi := before.Add(probeBudget), after.Add(probeBudget); pg.deadlines[0].Before(lo) || pg.deadlines[0].After(hi) {
-		t.Errorf("deadline %v is not request-start + probeBudget (%v..%v)", pg.deadlines[0], lo, hi)
+	// The same request-start + defaultProbeBudget window /readyz is held to. A looser
+	// lower bound accepts a hardcoded 1.5s here and calls it defaultProbeBudget.
+	if lo, hi := before.Add(defaultProbeBudget), after.Add(defaultProbeBudget); pg.deadlines[0].Before(lo) || pg.deadlines[0].After(hi) {
+		t.Errorf("deadline %v is not request-start + defaultProbeBudget (%v..%v)", pg.deadlines[0], lo, hi)
+	}
+}
+
+// readyzDeadline serves /readyz from h once and returns how far past the
+// request the dependency check's deadline was set.
+func readyzDeadline(t *testing.T, h http.Handler, pg *schemaDeadlineRecorder) time.Duration {
+	t.Helper()
+	before := time.Now()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", http.NoBody))
+	if rec.Code != http.StatusOK || len(pg.deadlines) == 0 {
+		t.Fatalf("readyz = %d with %d deadlines, want 200 with a bounded check", rec.Code, len(pg.deadlines))
+	}
+	return pg.deadlines[len(pg.deadlines)-1].Sub(before)
+}
+
+// TestProbeBudgetIsConfigurable pins #1050: server.probe_budget, which the
+// chart renders from probes.readiness.timeoutSeconds, is the deadline of both
+// /readyz surfaces, and 0 keeps the 2s every earlier release used.
+func TestProbeBudgetIsConfigurable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	near := func(got, want time.Duration) bool { return got > want-time.Second/2 && got < want+time.Second/2 }
+
+	for _, tc := range []struct {
+		budget, want time.Duration
+	}{{9 * time.Second, 9 * time.Second}, {0, defaultProbeBudget}} {
+		pg := &schemaDeadlineRecorder{}
+		r := gin.New()
+		r.GET("/readyz", readinessHandler(map[string]HealthChecker{"postgres": pg}, tc.budget))
+		if got := readyzDeadline(t, r, pg); !near(got, tc.want) {
+			t.Errorf("API /readyz with budget %s: deadline %s after the request, want %s", tc.budget, got, tc.want)
+		}
+
+		pg = &schemaDeadlineRecorder{}
+		obs := ObservabilityHandler(nil, map[string]HealthChecker{"postgres": pg}, WithProbeBudget(tc.budget))
+		if got := readyzDeadline(t, obs, pg); !near(got, tc.want) {
+			t.Errorf("metrics /readyz with budget %s: deadline %s after the request, want %s", tc.budget, got, tc.want)
+		}
 	}
 }

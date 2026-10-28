@@ -75,6 +75,7 @@ func redactAny(v any) {
 // Password is encrypted at rest by the store (ADR 0019) and never returned.
 type ConnectionStore interface {
 	ListConnections(ctx context.Context, tenant string, limit, offset int) ([]domain.Connection, int, error)
+	ListConnectionsFiltered(ctx context.Context, tenant, pattern, prefixPattern string, limit, offset int) ([]domain.Connection, int, error)
 	GetConnection(ctx context.Context, tenant, connID string) (domain.Connection, error)
 	SetConnectionPatch(ctx context.Context, tenant string, p domain.ConnectionPatch) error
 	DeleteConnection(ctx context.Context, tenant, connID string) error
@@ -322,7 +323,9 @@ func strVal(p *string) string {
 func listConnectionsHandler(store ConnectionStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		limit, offset := pagination(c)
-		conns, total, err := store.ListConnections(c.Request.Context(), tenantOf(c), limit, offset)
+		prefixPattern := c.Query("connection_id_prefix_pattern")
+		pattern := c.Query("connection_id_pattern")
+		conns, total, err := store.ListConnectionsFiltered(c.Request.Context(), tenantOf(c), pattern, prefixPattern, limit, offset)
 		if err != nil {
 			handleRepoError(c, err)
 			return
@@ -331,6 +334,7 @@ func listConnectionsHandler(store ConnectionStore) gin.HandlerFunc {
 		for _, conn := range conns {
 			out.Connections = append(out.Connections, toConnectionDTO(conn))
 		}
+		setPaginationLinks(c, total, limit, offset)
 		c.JSON(http.StatusOK, out)
 	}
 }
@@ -441,7 +445,7 @@ func deleteConnectionHandler(store ConnectionStore) gin.HandlerFunc {
 func handleConnWriteError(c *gin.Context, err error) {
 	if err.Error() == "no encryption key configured" {
 		AbortProblem(c, http.StatusServiceUnavailable, "encryption unavailable",
-			"set LEOFLOW_SECRET_KEY to manage connections (secrets are never stored in plaintext)")
+			"set DEXAFLOW_SECRET_KEY to manage connections (secrets are never stored in plaintext)")
 		return
 	}
 	handleRepoError(c, err)

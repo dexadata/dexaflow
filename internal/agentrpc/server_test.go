@@ -176,6 +176,8 @@ func TestGetTaskSpecMapsStoreData(t *testing.T) {
 		TimeoutSeconds:      300,
 		DeclaredVariables:   []string{"region"},
 		DeclaredConnections: []string{"warehouse"},
+		RunConfJSON:         `{"table":"orders"}`,
+		RunType:             "manual",
 	}}
 	srv, a := newServer(store)
 
@@ -206,6 +208,13 @@ func TestGetTaskSpecMapsStoreData(t *testing.T) {
 	}
 	if got := spec.GetDeclaredConnections(); len(got) != 1 || got[0] != "warehouse" {
 		t.Errorf("declared connections = %v, want [warehouse]", got)
+	}
+	// The run conf and run type feed the runtime's dag_run (#1843).
+	if got := spec.GetRunConfJson(); got != `{"table":"orders"}` {
+		t.Errorf("run conf = %q", got)
+	}
+	if got := spec.GetRunType(); got != "manual" {
+		t.Errorf("run type = %q, want manual", got)
 	}
 }
 

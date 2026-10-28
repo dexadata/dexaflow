@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_db/
 title: "dexaflow db"
 linkTitle: "db"
-weight: 35
+weight: 38
 ---
 
 Manage the local Lite database (schema name leoflow_dev for upgrade safety).

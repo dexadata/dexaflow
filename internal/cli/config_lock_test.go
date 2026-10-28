@@ -13,6 +13,7 @@ import (
 // migrations each generating a key would let the second erase the key the
 // first committed rows under (ADR 0065 section 3).
 func TestConfigLockExcludesASecondWriter(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	release, err := lockConfigDir(dir, configLockExclusive, false)
 	if err != nil {
@@ -34,6 +35,7 @@ func TestConfigLockExcludesASecondWriter(t *testing.T) {
 
 // Readers (backup, the Lite boot) share the lock with each other.
 func TestConfigLockSharedReaders(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	r1, err := lockConfigDir(dir, configLockShared, false)
 	if err != nil {
@@ -50,6 +52,7 @@ func TestConfigLockSharedReaders(t *testing.T) {
 // A Lite boot that arrives during a migration waits for it, then reads the
 // migrated config, rather than booting with the keys from before it.
 func TestConfigLockWaitingReaderBlocksUntilTheWriterIsDone(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	release, err := lockConfigDir(dir, configLockExclusive, false)
 	if err != nil {
@@ -82,6 +85,7 @@ func TestConfigLockWaitingReaderBlocksUntilTheWriterIsDone(t *testing.T) {
 // The lock file is private and owned like config.yaml, so a command run with
 // sudo does not leave a root-owned lock the user's next command cannot open.
 func TestConfigLockFileIsPrivateAndOwnedLikeTheConfig(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(cfg, []byte("x: 1\n"), 0o600); err != nil {
@@ -115,6 +119,7 @@ func TestConfigLockFileIsPrivateAndOwnedLikeTheConfig(t *testing.T) {
 // A read-only look (`migrate-key --dry-run`) creates nothing: with no lock file
 // it proceeds unlocked rather than writing one.
 func TestConfigLockNoCreateLeavesNoFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	release, err := lockConfigDirIfPresent(dir, configLockShared)
 	if err != nil {

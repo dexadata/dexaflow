@@ -1,8 +1,8 @@
-// Command leoflow-mcp runs the Dexaflow Model Context Protocol server (ADR 0050).
-// It speaks stdio by default (a local agent — Claude Desktop/Code — against a Lite
-// control plane) or Streamable HTTP as an optional Pro service (POST /mcp). Either
-// way it reaches the control plane only through /api/v2, carrying the caller's
-// token, and is never part of leoflow-server.
+// Command dexaflow-mcp runs the Dexaflow Model Context Protocol server (ADR 0050).
+// It speaks stdio by default (a local agent, such as Claude Desktop or Claude Code,
+// against a Lite control plane) or Streamable HTTP as an optional Pro service
+// (POST /mcp). Either way it reaches the control plane only through /api/v2,
+// carrying the caller's token, and is never part of dexaflow-server.
 package main
 
 import (
@@ -119,7 +119,7 @@ func run() int {
 		}
 		return runHTTP(mcp.HTTPHandler(srv, pr), listen, server)
 	}
-	slog.Info("leoflow-mcp starting", "server", server, "transport", "stdio", "version", version)
+	slog.Info("dexaflow-mcp starting", "server", server, "transport", "stdio", "version", version)
 	if err := srv.Run(context.Background(), &mcpsdk.StdioTransport{}); err != nil {
 		slog.Error("mcp server exited", "error", err)
 		return 1
@@ -147,7 +147,7 @@ func runHTTP(handler http.Handler, listen, server string) int {
 		}
 	}()
 
-	slog.Info("leoflow-mcp starting", "server", server, "transport", "http", "listen", listen, "version", version)
+	slog.Info("dexaflow-mcp starting", "server", server, "transport", "http", "listen", listen, "version", version)
 	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("http server exited", "error", err)
 		return 1

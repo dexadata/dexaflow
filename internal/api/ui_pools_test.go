@@ -58,17 +58,25 @@ func (f *fakePoolStore) PoolSlotUsage(_ context.Context, _ string) (map[string]d
 	return f.usage, nil
 }
 
-func poolServer(store PoolStore, edition string, roles ...string) *gin.Engine {
+func poolServer(store PoolStore, pools bool, roles ...string) *gin.Engine {
 	if len(roles) == 0 {
 		roles = []string{"admin"}
 	}
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: roles}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Pools:         store,
-		Edition:       edition,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+			Pools:       pools,
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: roles}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Pools: store,
+		},
 	})
 }
 
@@ -76,7 +84,7 @@ func poolServer(store PoolStore, edition string, roles ...string) *gin.Engine {
 // Pro-gated endpoint (ADR 0053 Stage 3).
 func TestPoolCRUDLifecycle(t *testing.T) {
 	store := &fakePoolStore{pools: map[string]domain.Pool{}}
-	srv := poolServer(store, "pro")
+	srv := poolServer(store, true)
 
 	rec := authGet(srv, http.MethodPost, "/api/v2/pools", `{"name":"etl","slots":5,"description":"batch"}`)
 	if rec.Code != http.StatusCreated {
@@ -121,7 +129,7 @@ func TestPoolResponseAirflowSlotAccounting(t *testing.T) {
 		pools: map[string]domain.Pool{"default_pool": {Name: "default_pool", Slots: 4, IsDefault: true}},
 		usage: map[string]domain.PoolUsage{"default_pool": {Running: 2, Queued: 1, Scheduled: 3}},
 	}
-	rec := authGet(poolServer(store, "pro"), http.MethodGet, "/api/v2/pools", "")
+	rec := authGet(poolServer(store, true), http.MethodGet, "/api/v2/pools", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list = %d", rec.Code)
 	}
@@ -142,7 +150,7 @@ func TestPoolResponseAirflowSlotAccounting(t *testing.T) {
 // or delete pools — the same admin gate connections and variables use.
 func TestPoolMutationsAreAdminGated(t *testing.T) {
 	store := &fakePoolStore{pools: map[string]domain.Pool{"etl": {Name: "etl", Slots: 1}}}
-	srv := poolServer(store, "pro", "viewer")
+	srv := poolServer(store, true, "viewer")
 	cases := []struct{ method, path, body string }{
 		{http.MethodPost, "/api/v2/pools", `{"name":"x","slots":1}`},
 		{http.MethodPatch, "/api/v2/pools/etl", `{"slots":2}`},
@@ -160,7 +168,7 @@ func TestPoolMutationsAreAdminGated(t *testing.T) {
 // collection (so the Pools screen renders) and a write is not routed.
 func TestPoolsLiteServesEmptyStub(t *testing.T) {
 	store := &fakePoolStore{pools: map[string]domain.Pool{"etl": {Name: "etl", Slots: 1}}}
-	srv := poolServer(store, "lite")
+	srv := poolServer(store, false)
 
 	rec := authGet(srv, http.MethodGet, "/api/v2/pools", "")
 	if rec.Code != http.StatusOK {
@@ -185,7 +193,7 @@ func TestPoolDeleteDefaultRejected(t *testing.T) {
 	store := &fakePoolStore{pools: map[string]domain.Pool{
 		"default_pool": {Name: "default_pool", Slots: 128, IsDefault: true},
 	}}
-	rec := authGet(poolServer(store, "pro"), http.MethodDelete, "/api/v2/pools/default_pool", "")
+	rec := authGet(poolServer(store, true), http.MethodDelete, "/api/v2/pools/default_pool", "")
 	if rec.Code != http.StatusConflict {
 		t.Errorf("delete default_pool = %d, want 409", rec.Code)
 	}
@@ -193,7 +201,7 @@ func TestPoolDeleteDefaultRejected(t *testing.T) {
 
 // TestPoolCreateRequiresNameAndSlots: a create missing required fields is a 400.
 func TestPoolCreateRequiresNameAndSlots(t *testing.T) {
-	srv := poolServer(&fakePoolStore{pools: map[string]domain.Pool{}}, "pro")
+	srv := poolServer(&fakePoolStore{pools: map[string]domain.Pool{}}, true)
 	if rec := authGet(srv, http.MethodPost, "/api/v2/pools", `{"description":"no name or slots"}`); rec.Code != http.StatusBadRequest {
 		t.Errorf("create without name/slots = %d, want 400", rec.Code)
 	}
@@ -202,14 +210,22 @@ func TestPoolCreateRequiresNameAndSlots(t *testing.T) {
 // readOnlyPoolServer is poolServer with Dependencies.PoolsReadOnly set: the
 // tenant-facing pool API serves reads only, whatever role the caller holds.
 func readOnlyPoolServer(store PoolStore, user *auth.User) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: user},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Pools:         store,
-		Edition:       "pro",
-		PoolsReadOnly: true,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins:   []string{"*"},
+			Pools:         true,
+			PoolsReadOnly: true,
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: user},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Pools: store,
+		},
 	})
 }
 
@@ -352,7 +368,7 @@ func TestPoolsReadOnlyChargesUndefinedPoolUsageToDefaultPool(t *testing.T) {
 		t.Errorf("list does not fold made-up into default_pool: %s", rec.Body.String())
 	}
 
-	open := poolServer(newStore(), "pro")
+	open := poolServer(newStore(), true)
 	if p := get(open, domain.DefaultPoolName); p.OccupiedSlots != 1 {
 		t.Errorf("unlocked default_pool = %+v, want its own 1 occupied", p)
 	}
@@ -364,7 +380,7 @@ func TestPoolsReadOnlyChargesUndefinedPoolUsageToDefaultPool(t *testing.T) {
 // teams: the list and the single-pool responses carry "team_name": null.
 func TestPoolResponseCarriesNullTeamName(t *testing.T) {
 	store := &fakePoolStore{pools: map[string]domain.Pool{"etl": {Name: "etl", Slots: 8}}}
-	srv := poolServer(store, "pro")
+	srv := poolServer(store, true)
 
 	rec := authGet(srv, http.MethodGet, "/api/v2/pools", "")
 	if rec.Code != http.StatusOK {

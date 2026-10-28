@@ -45,6 +45,33 @@ const clipboardFallbackHTML = `<script>` +
 	`})();` +
 	`</script>`
 
+// sessionKeeperHTML renews the session cookie periodically and when the browser
+// tab regains visibility, preventing the session from expiring while the user is
+// actively using or keeping the UI open (#1127).
+const sessionKeeperHTML = `<script>` +
+	`(function(){` +
+	`var lastRenew=0;` +
+	`var minInterval=5*60*1000;` +
+	`var renewInterval=15*60*1000;` +
+	`function renew(){` +
+	`var now=Date.now();` +
+	`if(now-lastRenew<minInterval)return;` +
+	`lastRenew=now;` +
+	`var b=(document.querySelector('base')&&document.querySelector('base').getAttribute('href'))||'/';` +
+	`var u=b.replace(/\/+$/,'')+'/api/v2/auth/token/renew';` +
+	`fetch(u,{` +
+	`method:'POST',` +
+	`credentials:'same-origin',` +
+	`headers:{'Accept':'application/json'}` +
+	`}).catch(function(){});` +
+	`}` +
+	`setInterval(renew,renewInterval);` +
+	`document.addEventListener('visibilitychange',function(){` +
+	`if(document.visibilityState==='visible')renew();` +
+	`});` +
+	`})();` +
+	`</script>`
+
 // liteBannerHTML is a discreet, neutral-gray "LITE" pill fixed at top-center,
 // injected into the served shell in the Lite edition so the local environment is
 // never mistaken for production. The slate gray (with white text) reads well on
@@ -56,12 +83,14 @@ const liteBannerHTML = `<div id="leoflow-lite-banner">LITE</div>` +
 	`border-radius:0 0 6px 6px;letter-spacing:3px;pointer-events:none}</style>`
 
 // proBannerHTML is the gold counterpart to liteBannerHTML, injected when the
-// running edition is "pro". Same shape and placement as the Lite pill so
+// running edition is the cluster edition (the Helm chart; "pro" is its earlier
+// name, and the element id keeps it so existing stylesheet overrides still
+// match). Same shape and placement as the Lite pill so
 // operators get a consistent visual anchor across editions; only the color
 // shifts (gold #FFD700 with dark text), matching the gold edition badge in
 // docs/editions.md and the README's edition shield. pointer-events:none keeps
 // it click-through.
-const proBannerHTML = `<div id="leoflow-pro-banner">PRO</div>` +
+const proBannerHTML = `<div id="leoflow-pro-banner">CLUSTER</div>` +
 	`<style>#leoflow-pro-banner{position:fixed;top:0;left:50%;transform:translateX(-50%);` +
 	`z-index:2147483647;background:#FFD700;color:#1a1a1a;` +
 	`font:600 11px/1.7 system-ui,-apple-system,sans-serif;padding:1px 16px;` +
@@ -145,8 +174,9 @@ const stockFavicon = `<link rel="icon" type="image/png" href="./static/pin_32.pn
 // set it.
 func (s *Server) SetLiteBanner(on bool) { s.liteBanner = on }
 
-// SetProBanner toggles injection of the gold PRO overlay into the served shell.
-// It is enabled by the Pro edition (Helm install); Lite and Demo never set it.
+// SetProBanner toggles injection of the gold CLUSTER overlay into the served
+// shell. It is enabled by the cluster edition (Helm install); Lite and Demo
+// never set it.
 // The two edition pills are mutually exclusive in practice, but the server does
 // not enforce that — it trusts the edition resolved upstream.
 func (s *Server) SetProBanner(on bool) { s.proBanner = on }
@@ -413,6 +443,8 @@ func (s *Server) Index(w http.ResponseWriter, basePath string) {
 	// Always inject the clipboard polyfill — no-op on https / localhost, the
 	// only place it matters is plain http://<lan-ip>:port (#242).
 	body = injectBeforeBodyEnd(body, clipboardFallbackHTML)
+	// Always inject the session keeper to periodically renew session cookies (#1127).
+	body = injectBeforeBodyEnd(body, sessionKeeperHTML)
 	if s.liteBanner {
 		body = injectBeforeBodyEnd(body, liteBannerHTML)
 	}

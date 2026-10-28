@@ -92,20 +92,21 @@ type watchRun struct {
 	done      chan error
 }
 
-// fastWatch makes the watch poll every 10ms and settle a burst after settle.
-func fastWatch(t *testing.T, settle time.Duration) {
+// fastWatch returns test dependencies whose watch polls every 10ms and
+// settles a burst after settle.
+func fastWatch(t *testing.T, settle time.Duration) *cliDeps {
 	t.Helper()
-	interval, prevSettle := deployWatchInterval, deployWatchSettle
-	deployWatchInterval, deployWatchSettle = 10*time.Millisecond, settle
-	t.Cleanup(func() { deployWatchInterval, deployWatchSettle = interval, prevSettle })
+	d := testDeps()
+	d.watchInterval, d.watchSettle = 10*time.Millisecond, settle
+	return d
 }
 
-// startWatch runs deploy --watch with args against srv until stop.
-func startWatch(t *testing.T, srv *watchServer, builder string, args ...string) *watchRun {
+// startWatch runs deploy --watch with args against srv under d until stop.
+func startWatch(t *testing.T, d *cliDeps, srv *watchServer, builder string, args ...string) *watchRun {
 	t.Helper()
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(testCtx(d))
 	w := &watchRun{out: &syncBuffer{}, errb: &syncBuffer{}, cancel: cancel, done: make(chan error, 1)}
 	root := NewRootCommand()
 	root.SetOut(w.out)
@@ -151,18 +152,29 @@ func (w *watchRun) stop(t *testing.T) error {
 	}
 }
 
-// save writes body to rel in dir and moves its mtime forward, so the poller
-// sees a save even within the file system's time resolution.
+// save writes body to rel in dir as one move of the file: the content goes
+// to a temporary file whose mtime is set a second ahead (so the poller sees
+// a save even within the file system's time resolution), then a rename puts
+// it in place. Writing in place and moving the mtime after is two moves, and
+// a poll that falls between them on a loaded machine sees two saves.
 func save(t *testing.T, dir, rel, body string) {
 	t.Helper()
-	writeProjectFile(t, dir, rel, body)
 	p := filepath.Join(dir, rel)
-	st, err := os.Stat(p)
-	if err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	next := st.ModTime().Add(time.Second)
-	if err := os.Chtimes(p, next, next); err != nil {
+	next := time.Now().Add(time.Second)
+	if st, err := os.Stat(p); err == nil && !st.ModTime().Before(next) {
+		next = st.ModTime().Add(time.Second)
+	}
+	tmp := filepath.Join(t.TempDir(), filepath.Base(rel))
+	if err := os.WriteFile(tmp, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(tmp, next, next); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, p); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -177,10 +189,10 @@ func watchProject(t *testing.T) (dir, builder string) {
 }
 
 func TestDeployWatchRedeploysASave(t *testing.T) {
-	fastWatch(t, 30*time.Millisecond)
+	d := fastWatch(t, 30*time.Millisecond)
 	dir, builder := watchProject(t)
 	srv := &watchServer{fake: &deployServer{}}
-	w := startWatch(t, srv, builder, dir)
+	w := startWatch(t, d, srv, builder, dir)
 	w.watching(t)
 	first := labelOf(t, dir)
 	if got := srv.registered(); len(got) != 1 || got[0] != "etl:"+first {
@@ -212,12 +224,12 @@ func TestDeployWatchRedeploysASave(t *testing.T) {
 // dexaflow.yaml: a new module in an include_paths folder is a save that
 // redeploys.
 func TestDeployWatchRedeploysANewHelperFile(t *testing.T) {
-	fastWatch(t, 30*time.Millisecond)
+	d := fastWatch(t, 30*time.Millisecond)
 	dir, _ := platformProjectWith(t, singleManifest, "build:\n  platforms: [linux/amd64]\ninclude_paths: [lib]\n")
 	writeProjectFile(t, dir, filepath.Join("lib", "__init__.py"), "")
 	builder, _ := argvBuilder(t)
 	srv := &watchServer{fake: &deployServer{}}
-	w := startWatch(t, srv, builder, dir)
+	w := startWatch(t, d, srv, builder, dir)
 	w.watching(t)
 	save(t, dir, filepath.Join("lib", "helpers.py"), "def f():\n    return 1\n")
 	w.waitFor(t, "the redeploy", func() bool { return len(srv.registered()) == 2 })
@@ -233,10 +245,10 @@ func TestDeployWatchRedeploysANewHelperFile(t *testing.T) {
 // registers nothing, once the server confirms the label is its current
 // version.
 func TestDeployWatchUnchangedSaveRegistersNothing(t *testing.T) {
-	fastWatch(t, 30*time.Millisecond)
+	d := fastWatch(t, 30*time.Millisecond)
 	dir, builder := watchProject(t)
 	srv := &watchServer{fake: &deployServer{}}
-	w := startWatch(t, srv, builder, dir)
+	w := startWatch(t, d, srv, builder, dir)
 	w.watching(t)
 	before := w.out.String()
 	srv.fake.mu.Lock()
@@ -271,10 +283,10 @@ func TestDeployWatchUnchangedSaveRegistersNothing(t *testing.T) {
 // load), the first one included, prints the error and the watch goes on; the
 // next good save deploys.
 func TestDeployWatchKeepsWatchingAfterAFailedDeploy(t *testing.T) {
-	fastWatch(t, 30*time.Millisecond)
+	d := fastWatch(t, 30*time.Millisecond)
 	dir, builder := watchProject(t)
 	srv := &watchServer{fake: &deployServer{}, refuse: true}
-	w := startWatch(t, srv, builder, dir)
+	w := startWatch(t, d, srv, builder, dir)
 	w.watching(t)
 	if !strings.Contains(w.errb.String(), "deploy failed: ") || !strings.Contains(w.errb.String(), "connection warehouse is not defined") {
 		t.Fatalf("the refused first deploy did not print its error:\n%s", w.errb.String())
@@ -311,10 +323,10 @@ func TestDeployWatchKeepsWatchingAfterAFailedDeploy(t *testing.T) {
 // Saves in quick succession, as an editor's "save all" or a formatter makes,
 // are one redeploy of the last content.
 func TestDeployWatchDebouncesABurst(t *testing.T) {
-	fastWatch(t, 400*time.Millisecond)
+	d := fastWatch(t, 400*time.Millisecond)
 	dir, builder := watchProject(t)
 	srv := &watchServer{fake: &deployServer{}}
-	w := startWatch(t, srv, builder, dir)
+	w := startWatch(t, d, srv, builder, dir)
 	w.watching(t)
 	for i, body := range []string{"# one\n", "# two\n", "# three\n"} {
 		if i > 0 {
@@ -336,10 +348,10 @@ func TestDeployWatchDebouncesABurst(t *testing.T) {
 // redeploy never changes is_paused, so a DAG paused in the UI meanwhile stays
 // paused.
 func TestDeployWatchSetsIsPausedOnTheFirstDeployOnly(t *testing.T) {
-	fastWatch(t, 30*time.Millisecond)
+	d := fastWatch(t, 30*time.Millisecond)
 	dir, builder := watchProject(t)
 	srv := &watchServer{fake: &deployServer{paused: true}}
-	w := startWatch(t, srv, builder, dir, "--active")
+	w := startWatch(t, d, srv, builder, dir, "--active")
 	w.watching(t)
 	save(t, dir, "dag.py", "# dag, edited\n")
 	w.waitFor(t, "the redeploy", func() bool { return len(srv.registered()) == 2 })
@@ -356,7 +368,7 @@ func TestDeployWatchSetsIsPausedOnTheFirstDeployOnly(t *testing.T) {
 // In a workspace, a save redeploys the project it belongs to and no other.
 func TestDeployWatchRedeploysOnlyTheSavedProject(t *testing.T) {
 	isolateCLIEnv(t)
-	fastWatch(t, 30*time.Millisecond)
+	d := fastWatch(t, 30*time.Millisecond)
 	reg := newFakeOCIRegistry(t, singleManifest)
 	root := t.TempDir()
 	writeTree(t, filepath.Join(root, workspaceFileName), "targets: {}\n")
@@ -369,7 +381,7 @@ func TestDeployWatchRedeploysOnlyTheSavedProject(t *testing.T) {
 	builder, _ := argvBuilder(t)
 	t.Chdir(root)
 	srv := &watchServer{fake: &deployServer{}}
-	w := startWatch(t, srv, builder, "--all", "--config", emptyConfig(t))
+	w := startWatch(t, d, srv, builder, "--all", "--config", emptyConfig(t))
 	w.watching(t)
 	if got := srv.registered(); len(got) != 2 {
 		t.Fatalf("the first deploy registered %q, want both DAGs", got)
@@ -430,7 +442,7 @@ func TestDeployWatchRefusesFlagsThatCannotRepeat(t *testing.T) {
 				args = append(args, dir)
 			}
 			// A refusal that does not come would start a watch: bound it.
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(testCtx(nil), 5*time.Second)
 			defer cancel()
 			root := NewRootCommand()
 			root.SetOut(io.Discard)
@@ -450,10 +462,10 @@ func TestDeployWatchRefusesFlagsThatCannotRepeat(t *testing.T) {
 // older version names the rollback, never --dag-version, which --watch
 // refuses.
 func TestDeployWatchAsksTheServerAboutAKnownLabel(t *testing.T) {
-	fastWatch(t, 30*time.Millisecond)
+	d := fastWatch(t, 30*time.Millisecond)
 	dir, builder := watchProject(t)
 	srv := &watchServer{fake: &deployServer{}}
-	w := startWatch(t, srv, builder, dir)
+	w := startWatch(t, d, srv, builder, dir)
 	w.watching(t)
 	labelA := labelOf(t, dir)
 	original := readProjectFile(t, dir, "dag.py")
@@ -487,7 +499,7 @@ func TestDeployWatchAsksTheServerAboutAKnownLabel(t *testing.T) {
 // --timeout applies to --follow, which --watch refuses: it is refused too,
 // not accepted and ignored.
 func TestDeployWatchRefusesTimeout(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(testCtx(nil), 5*time.Second)
 	defer cancel()
 	root := NewRootCommand()
 	root.SetOut(io.Discard)

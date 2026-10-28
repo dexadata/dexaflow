@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_lite_provision/
 title: "dexaflow lite provision"
 linkTitle: "lite provision"
-weight: 45
+weight: 48
 ---
 
 Check and provision the local deps the from-source `dexaflow lite` loop needs.

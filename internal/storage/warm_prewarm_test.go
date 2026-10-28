@@ -109,3 +109,13 @@ func TestWarmTargetsPrewarmNeedsADeclaredMinIdle(t *testing.T) {
 		t.Fatalf("warm pools off: targets = %+v, want no prewarm target", got)
 	}
 }
+
+// A target carries its DAG's id, which the reconciler orders prewarm targets
+// by when the per-tenant cap cannot cover all of them (ADR 0082).
+func TestWarmTargetsCarryTheDagID(t *testing.T) {
+	exec := config.ExecutionSection{WarmPoolsEnabled: true, MaxPoolSize: 8}
+	got := warmTargets([]activeWarmVersion{{dagVersionID: "dv1", dagID: "orders", image: "i", dagMinIdle: 2, prewarm: true}}, exec, nil)
+	if len(got) != 1 || got[0].DagID != "orders" {
+		t.Fatalf("targets = %+v, want one target with DagID orders", got)
+	}
+}

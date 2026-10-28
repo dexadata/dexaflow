@@ -8,6 +8,7 @@ Thank you for your interest in contributing to Dexaflow! This document explains 
 2. Read the [Architecture Decision Records](website/content/project/adrs/) under `website/content/project/adrs/`. These document non-negotiable design choices. Contributions that contradict an ADR will be rejected unless the ADR is first amended via a separate PR.
 3. Read [`AGENTS.md`](AGENTS.md): the standing rules for every change, and a map to the rules of each area (directories such as `migrations/` carry their own `AGENTS.md`) and to the step by step recipes.
 4. Read [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+5. See what is planned: issues are the backlog, each in the milestone of the release it is planned for. The [Dexaflow roadmap](https://github.com/orgs/dexadata/projects/4) project is a read-only view of them; change the issue, not the project.
 
 ## How to Contribute
 
@@ -36,7 +37,9 @@ Open an issue or comment on an existing one before starting work on anything bey
 Dexaflow has strict engineering standards documented in the ADRs:
 
 - **[ADR 0011 — TDD Strict](website/content/project/adrs/0011-tdd-strict.md):** every production change is preceded by a failing test. Two-commit pattern preferred (`test:` followed by `feat:`).
+- **Bug fixes carry a regression test:** a test that reproduces the bug, fails without the fix and passes with it, committed before the fix (`test:` followed by `fix:`). See the [Fix a bug](website/content/contribute/recipes/fix-a-bug.md) recipe.
 - **[ADR 0012 — Code Quality Standards](website/content/project/adrs/0012-code-quality-standards.md):** Go Report Card A+ as floor. GoDocs mandatory on every exported identifier. Cyclomatic complexity ≤ 15.
+- **Go files stay at or under 1,500 lines** outside tests and generated code (`scripts/check-go-file-length.sh`). The files over it today are pinned in `scripts/go-file-length-allowlist.txt` and may only shrink.
 - **[ADR 0014 — Supply Chain Security](website/content/project/adrs/0014-supply-chain-security.md):** vulnerability scans, signed commits encouraged, no introduction of unsafe patterns.
 
 CI enforces all of the above automatically. PRs that fail CI cannot be merged.
@@ -45,6 +48,13 @@ CI enforces all of the above automatically. PRs that fail CI cannot be merged.
 
 - Branch from `main`. Name: `feat/<short-description>`, `fix/<short-description>`, `docs/<short-description>`, `test/<short-description>`.
 - One logical change per PR. If you find yourself describing the PR with "and also...", split it.
+- Text is in English, and new text has no em dashes: use a comma, a colon,
+  parentheses or two sentences. Commit messages carry no `Co-Authored-By`
+  trailer, no session link and no generated-by footer. The "Text rules" check
+  on every pull request names the file and line, or the commit, that breaks
+  either rule, and `make setup` installs hooks that check the same before a
+  commit (`scripts/lint-new-text.sh`). Text that was there before keeps its
+  em dashes until a cleanup of its own.
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/):
   - `feat: add XCom schema validation`
   - `fix: handle pod OOMKilled in K8s executor`
@@ -52,6 +62,26 @@ CI enforces all of the above automatically. PRs that fail CI cannot be merged.
   - `docs: clarify executor configuration`
   - `chore: bump dependencies`
   - `refactor: extract scheduler decision logic`
+
+#### Sign Off Your Commits (DCO)
+
+Every commit in a pull request carries a sign-off from its author under the
+[Developer Certificate of Origin](https://developercertificate.org): a line
+at the end of the message,
+
+```text
+Signed-off-by: Your Name <you@example.com>
+```
+
+with the name and email of the commit's author. It certifies that you wrote
+the change, or otherwise have the right to submit it under the project's
+license. `git commit -s` adds it, and the `prepare-commit-msg` hook that
+`make setup` installs adds it to every commit for you. To sign off the
+commits already on your branch, run `git rebase --signoff main` and push
+again.
+
+The "DCO" check on every pull request names each commit without a sign-off
+from its author. Merge commits and Dependabot's commits are exempt.
 
 #### 4. Record the Change
 
@@ -163,6 +193,10 @@ action only a maintainer can take:
 - Secrets: no workflow that runs on pull requests uses a repository secret, and
   none runs on `pull_request_target` (`scripts/check-fork-safe-workflows.sh`
   enforces both), so nothing waits on a secret your fork cannot have.
+- First run: the workflows of a first-time contributor's pull request wait
+  until a maintainer approves them (the repository requires approval for
+  first-time contributors), so a pending run on your first pull request is
+  expected and needs nothing from you.
 
 Before merging a pull request from a fork, the maintainer:
 

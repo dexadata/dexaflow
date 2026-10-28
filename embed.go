@@ -38,8 +38,9 @@ var devCompose []byte
 
 // DevCompose returns the embedded docker-compose for Dexaflow Lite's local
 // Postgres + Redis, so a binary-only install (no source checkout) can bring the
-// datastores up with `dexaflow lite` alone — it is materialized under ~/.dexaflow
-// on first run.
+// datastores up with `dexaflow lite` alone. It is materialized under ~/.dexaflow
+// on first run and refreshed there after a binary upgrade unless the operator
+// edited it (#981).
 func DevCompose() []byte { return devCompose }
 
 //go:embed all:examples

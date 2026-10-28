@@ -92,6 +92,7 @@ func TestResolveCredentialsNonInteractiveMissingErrors(t *testing.T) {
 }
 
 func TestPromptLineReadsTrimmedInput(t *testing.T) {
+	t.Parallel()
 	var out strings.Builder
 	got, err := promptValue(strings.NewReader("admin\n"), &out, "Username: ")
 	if err != nil {
@@ -106,6 +107,7 @@ func TestPromptLineReadsTrimmedInput(t *testing.T) {
 }
 
 func TestSessionConfigPathFallsBackToDefault(t *testing.T) {
+	t.Parallel()
 	// A bare login command has no --config flag, so the write target is the
 	// default ~/.leoflow/config.yaml (resolved even when it does not yet exist).
 	p, err := sessionConfigPath(newLoginCommand())
@@ -118,6 +120,7 @@ func TestSessionConfigPathFallsBackToDefault(t *testing.T) {
 }
 
 func TestPromptValueHandlesEOFWithoutNewline(t *testing.T) {
+	t.Parallel()
 	var out strings.Builder
 	got, err := promptValue(strings.NewReader("admin"), &out, "Username: ") // no trailing \n
 	if err != nil {
@@ -129,6 +132,7 @@ func TestPromptValueHandlesEOFWithoutNewline(t *testing.T) {
 }
 
 func TestPromptPasswordFallsBackToPlainReadOffTTY(t *testing.T) {
+	t.Parallel()
 	// A piped (non-terminal) reader falls back to a plain line read, so a
 	// password can be supplied non-interactively (echo pw | dexaflow auth login).
 	var out strings.Builder

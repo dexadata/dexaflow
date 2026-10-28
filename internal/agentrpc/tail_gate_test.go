@@ -45,7 +45,7 @@ func (c *fakeClock) now() time.Time          { return c.t }
 func (c *fakeClock) advance(d time.Duration) { c.t = c.t.Add(d) }
 func newFakeClock() *fakeClock               { return &fakeClock{t: time.Unix(1_700_000_000, 0)} }
 func gateFor(p LogPublisher, c *fakeClock) *tailGate {
-	return newTailGate(p, logs.Ref{TaskID: "t"}, c.now, true)
+	return newTailGate(p, logs.Ref{TaskID: "t"}, c.now, true, nil)
 }
 
 // TestTailGateSkipsPublishWithoutSubscribers: nobody tails most attempts, and a
@@ -133,7 +133,7 @@ func TestTailGateFailsOpen(t *testing.T) {
 func TestTailGateWithoutProbePublishesEverything(t *testing.T) {
 	var got []string
 	pub := publishFunc(func(line string) { got = append(got, line) })
-	g := newTailGate(pub, logs.Ref{}, time.Now, true)
+	g := newTailGate(pub, logs.Ref{}, time.Now, true, nil)
 	g.publish(context.Background(), "A")
 	g.publish(context.Background(), "B")
 	if strings.Join(got, ",") != "A,B" {
@@ -276,7 +276,7 @@ func assertSameLines(t *testing.T, got, want []string) {
 // the publisher is never probed, even when it could count subscribers.
 func TestTailGateAlwaysPublishesWithoutProbing(t *testing.T) {
 	pub, clock := &probingPublisher{}, newFakeClock()
-	g := newTailGate(pub, logs.Ref{TaskID: "t"}, clock.now, false)
+	g := newTailGate(pub, logs.Ref{TaskID: "t"}, clock.now, false, nil)
 	for _, l := range []string{"A", "B", "C"} {
 		g.publish(context.Background(), l)
 		clock.advance(tailProbeInterval)

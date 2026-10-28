@@ -3,6 +3,7 @@ package agentrpc
 import (
 	"context"
 	"log/slog"
+	"sync"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
@@ -317,8 +318,10 @@ func (s *Server) declaredNames(ctx context.Context, id *auth.AgentIdentity, kind
 // of the full tenant set it is about to receive (ADR 0045 §Settled #3, ADR 0055).
 // It never changes what is delivered — delivery stays fetch-all in the warn phase
 // — and it records counts only, never secret names or values. kind is
-// "variables" or "connections". A task that declared nothing is the permissive
-// default and is not warned.
+// "variables" or "connections". A task that declared nothing is warned too
+// (#800), since enforce would deliver it nothing, but only once per DAG version
+// and kind in this process: that is every DAG that never declared, and a warning
+// per attempt would write an audit row on every delivery under the default.
 func (s *Server) warnIfNarrowerScope(ctx context.Context, id *auth.AgentIdentity, kind string, delivered map[string]string) {
 	// The declared set lives on the task spec (ADR 0045). Loading it is only for
 	// the warning; a load failure must never affect delivery, which already
@@ -337,7 +340,14 @@ func (s *Server) warnIfNarrowerScope(ctx context.Context, id *auth.AgentIdentity
 	if !warn {
 		return
 	}
-	slog.Warn("task received the full secret vault but declared a narrower set; under secret_scoping: enforce it would receive only its declared set",
+	if len(declared) == 0 && !s.emptyScopeWarned.first(id.TenantID, id.DagID, id.DagVersionID, kind) {
+		return
+	}
+	msg := "task received the full secret vault but declared a narrower set; under secret_scoping: enforce it would receive only its declared set"
+	if declaredCount == 0 {
+		msg = "task received the full secret vault but declared no secrets; under secret_scoping: enforce it would receive zero secrets"
+	}
+	slog.Warn(msg,
 		"ti", id.TaskInstanceID, "tenant", id.TenantID, "dag", id.DagID, "run", id.RunID,
 		"task", id.TaskID, "kind", kind, "declared", declaredCount, "delivered", deliveredCount)
 	if s.secretAudit == nil {
@@ -352,14 +362,17 @@ func (s *Server) warnIfNarrowerScope(ctx context.Context, id *auth.AgentIdentity
 // scopeGap compares a task's declared secret names against the full tenant set it
 // is about to receive. It returns the count of declared names that are actually
 // delivered, the delivered total, and whether that declaration is a strict subset
-// (non-empty and covering fewer than all delivered secrets) — the condition the
-// warn phase records. E1a rejects declaring a name that does not exist, so a
-// declared name is expected to be delivered; a name that is not is simply not
+// (covering fewer than all delivered secrets, including an empty declaration), the
+// condition the warn phase records. E1a rejects declaring a name that does not exist,
+// so a declared name is expected to be delivered; a name that is not is simply not
 // counted, keeping the comparison robust.
 func scopeGap(declared []string, delivered map[string]string) (declaredCount, deliveredCount int, strictSubset bool) {
 	deliveredCount = len(delivered)
+	if deliveredCount == 0 {
+		return 0, 0, false
+	}
 	if len(declared) == 0 {
-		return 0, deliveredCount, false
+		return 0, deliveredCount, true
 	}
 	seen := make(map[string]struct{}, len(declared))
 	for _, name := range declared {
@@ -368,6 +381,34 @@ func scopeGap(declared []string, delivered map[string]string) (declaredCount, de
 		}
 	}
 	declaredCount = len(seen)
-	strictSubset = declaredCount > 0 && declaredCount < deliveredCount
+	strictSubset = declaredCount < deliveredCount
 	return declaredCount, deliveredCount, strictSubset
+}
+
+// emptyScopeWarnCap bounds emptyScopeWarnings. Past it the set starts over, so a
+// long-lived server with many DAG versions warns again instead of growing.
+const emptyScopeWarnCap = 4096
+
+// emptyScopeWarnings remembers the DAG versions already warned about for an
+// empty secret declaration, per kind, so the warning is not repeated on every
+// attempt. The zero value is ready to use.
+type emptyScopeWarnings struct {
+	mu   sync.Mutex
+	seen map[string]struct{}
+}
+
+// first reports whether this is the first empty-declaration warning for the
+// tenant, DAG, version and kind, and records it.
+func (w *emptyScopeWarnings) first(tenant, dagID, dagVersionID, kind string) bool {
+	key := tenant + "\x00" + dagID + "\x00" + dagVersionID + "\x00" + kind
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if _, ok := w.seen[key]; ok {
+		return false
+	}
+	if w.seen == nil || len(w.seen) >= emptyScopeWarnCap {
+		w.seen = make(map[string]struct{})
+	}
+	w.seen[key] = struct{}{}
+	return true
 }

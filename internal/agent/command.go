@@ -9,10 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
-)
 
-const maxRetryAttempts = 5
+	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
+)
 
 // NewReturnValuePath returns a unique, agent-owned path for this task's return
 // value, plus a cleanup. The agent runs one task per process, so a per-process
@@ -73,6 +72,22 @@ func BuildCommand(operator, entrypoint, operatorClass string) ([]string, error) 
 	}
 }
 
+// onFailureCallbackEnv signals the runtime to run the task's on_failure_callback
+// on its final failure (#424); the runtime imports dag.py for the callable only
+// when it is set. A captured operator is built from its args, which cannot carry
+// the callable, so its entrypoint names the dag.py module the runtime imports to
+// read it off the task (#484).
+func onFailureCallbackEnv(spec *agentv1.TaskSpec) []string {
+	if !spec.GetOnFailureCallback() {
+		return nil
+	}
+	env := []string{"LEOFLOW_ON_FAILURE_CALLBACK=1"}
+	if spec.GetOperator() == "airflow_operator" && spec.GetEntrypoint() != "" {
+		env = append(env, "LEOFLOW_CALLBACK_SOURCE="+spec.GetEntrypoint())
+	}
+	return env
+}
+
 // pythonInterpreter returns the Python executable the agent runs, from
 // LEOFLOW_PYTHON when set, defaulting to "python" (the task-image convention).
 func pythonInterpreter() string {
@@ -98,13 +113,4 @@ func ReadReturnValue(path string) (value []byte, ok bool, err error) {
 		return nil, false, fmt.Errorf("reading return value: %w", rerr)
 	}
 	return data, true, nil
-}
-
-// Backoff returns the delay before retry attempt n (1-based: 1s, 2s, 4s, 8s,
-// 16s). ok is false once the maximum number of attempts is exceeded.
-func Backoff(attempt int) (delay time.Duration, ok bool) {
-	if attempt < 1 || attempt > maxRetryAttempts {
-		return 0, false
-	}
-	return (1 << (attempt - 1)) * time.Second, true
 }

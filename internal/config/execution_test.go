@@ -220,6 +220,31 @@ func TestValidateExecutionSanityCaps(t *testing.T) {
 	}
 }
 
+// TestWarmRequireAttemptHomeSweepDefaultAndEnv locks the #1678 knob: off by
+// default (an unconfirmed warm worker is only logged and metered), and
+// reachable from both the DEXAFLOW_* and the legacy LEOFLOW_* env names.
+func TestWarmRequireAttemptHomeSweepDefaultAndEnv(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if c.Execution.WarmRequireAttemptHomeSweep {
+		t.Error("execution.warm_require_attempt_home_sweep default = true, want false")
+	}
+	for _, name := range []string{"DEXAFLOW_EXECUTION_WARM_REQUIRE_ATTEMPT_HOME_SWEEP", "LEOFLOW_EXECUTION_WARM_REQUIRE_ATTEMPT_HOME_SWEEP"} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, "true")
+			c, err := LoadServer("", nil)
+			if err != nil {
+				t.Fatalf("LoadServer: %v", err)
+			}
+			if !c.Execution.WarmRequireAttemptHomeSweep {
+				t.Errorf("%s=true did not bind execution.warm_require_attempt_home_sweep", name)
+			}
+		})
+	}
+}
+
 // TestWarmReadOnlyRootFilesystemDefaultAndEnv locks the X3.2 knob: off by default
 // (a warm pod keeps today's writable root), and reachable from both the
 // DEXAFLOW_* and the legacy LEOFLOW_* env names.

@@ -4,6 +4,7 @@ package storage_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -238,5 +239,47 @@ func TestListRunningTasksReportsHeartbeatIntegration(t *testing.T) {
 	cands, _ = sched.ListRunningTasks(ctx, 0, executor.ReapCursor{})
 	if c = findPodLostCandidate(cands, runUUID, "t"); c == nil || !c.Heartbeated {
 		t.Fatalf("a TI that heartbeated must report Heartbeated=true: %+v", c)
+	}
+}
+
+// TestMarkTaskPodLostOOMKilledIntegration: the warm-worker-lost reaper's
+// OOMKilled variant (#1218) is the same infra mark as MarkTaskPodLost (failed,
+// last_failure_kind infra, provisional on Kubernetes, fenced on try and epoch),
+// with a message that names the OOM kill and still starts with "pod_lost:", the
+// prefix the infra override reads the mark from.
+func TestMarkTaskPodLostOOMKilledIntegration(t *testing.T) {
+	f := seedStaleHeartbeat(t, "podlost_oom")
+	f.sched.SetProvisionalInfraMarks(true)
+	try, epoch := f.tryNumber(t), f.attemptEpoch(t)
+
+	if ok, err := f.sched.MarkTaskPodLostOOMKilled(f.ctx, f.tiID, try, epoch+1); err != nil || ok {
+		t.Fatalf("a mark computed for another epoch must be a no-op: ok=%v err=%v", ok, err)
+	}
+	if ok, err := f.sched.MarkTaskPodLostOOMKilled(f.ctx, f.tiID, try, epoch); err != nil || !ok {
+		t.Fatalf("MarkTaskPodLostOOMKilled ok=%v err=%v", ok, err)
+	}
+	var (
+		state, msg string
+		kind       *string
+	)
+	if err := f.pg.Pool.QueryRow(f.ctx,
+		"SELECT state::text, COALESCE(error_message,''), last_failure_kind FROM task_instances WHERE id=$1::uuid",
+		f.tiID).Scan(&state, &msg, &kind); err != nil {
+		t.Fatalf("select ti: %v", err)
+	}
+	if state != string(domain.TaskStateFailed) {
+		t.Errorf("state = %q, want failed", state)
+	}
+	if !strings.HasPrefix(msg, "pod_lost:") || !strings.Contains(msg, "OOMKilled") {
+		t.Errorf("error_message = %q, want a pod_lost reason naming OOMKilled", msg)
+	}
+	if kind == nil || *kind != "infra" {
+		t.Errorf("last_failure_kind = %v, want infra (ADR 0051, ADR 0058 D7)", kind)
+	}
+	if at := f.confirmedAt(t); at != nil {
+		t.Errorf("the mark must stay provisional on Kubernetes, got confirmed at %v", at)
+	}
+	if ok, err := f.sched.MarkTaskPodLostOOMKilled(f.ctx, f.tiID, try, epoch); err != nil || ok {
+		t.Errorf("a second mark must be a no-op: ok=%v err=%v", ok, err)
 	}
 }

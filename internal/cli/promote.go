@@ -303,7 +303,7 @@ type sourceVersion struct {
 // readSource picks the version on the source (--version, else the current
 // one) and reads its spec, refusing an image not pinned by digest.
 func (p *promoteRun) readSource(ctx context.Context) (sourceVersion, error) {
-	c, err := apiclient.New(p.from.target.Server, p.from.token)
+	c, err := cliAPIClient(p.from.target.Server, p.from.token)
 	if err != nil {
 		return sourceVersion{}, fmt.Errorf("building the API client: %w", err)
 	}
@@ -347,7 +347,7 @@ func pickPromoted(dagID, target string, versions []listedVersion, sel string) (l
 // version's (its dag_id, label and image), so nothing but that version is
 // ever promoted.
 func readVersionSpec(ctx context.Context, serverURL, token, dagID string, v listedVersion) ([]byte, error) {
-	c, err := apiclient.NewClient(serverURL, apiclient.WithHTTPClient(&http.Client{Timeout: 30 * time.Second}))
+	c, err := cliBareAPIClient(serverURL, 30*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("building the client: %w", err)
 	}
@@ -455,7 +455,7 @@ func copyImage(ctx context.Context, out io.Writer, image string, dest destImage,
 	if _, err := name.NewTag(dest.repo + ":" + label); err != nil {
 		tag = ""
 	}
-	got, err := registryFor(nil).Copy(ctx, image, dest.repo, tag)
+	got, err := registryFor(ctx, nil).Copy(ctx, image, dest.repo, tag)
 	if err != nil {
 		return fmt.Errorf("copying the image to %s: %w\n%s", dest.registry, err, copyLoginHint(image, dest.repo))
 	}
@@ -468,7 +468,7 @@ func copyImage(ctx context.Context, out io.Writer, image string, dest destImage,
 // cloud owns, the session the client also reads.
 func copyLoginHint(src, dstRepo string) string {
 	var b strings.Builder
-	b.WriteString("  The copy reads the source and pushes to the destination with the credentials of `docker login` and of a cloud CLI session. Sign in to each:")
+	b.WriteString("  The copy reads the source and pushes to the destination with the credentials of `dexaflow registry login` or `docker login` and of a cloud CLI session. Sign in to each:")
 	for _, ref := range []string{src, dstRepo} {
 		host := ref
 		if r, err := name.ParseReference(ref); err == nil {

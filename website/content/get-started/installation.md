@@ -14,11 +14,11 @@ you want:
 | Edition | Where it runs | Who it's for | Install path |
 |---|---|---|---|
 | **Lite** | Your laptop or a single VM (no Kubernetes, no Docker required) | Local development, small teams, evaluation | [Install Lite](#install-lite) |
-| **Pro** | A Kubernetes cluster (pod-per-task executor) | Team-scale and production workloads | [Install Pro](#install-pro) |
+| **Cluster** | A Kubernetes cluster (pod-per-task executor) | Team-scale and production workloads | [Install Cluster](#install-cluster) |
 
 See [Editions](/concepts/editions/) for the full feature-by-feature breakdown. The two
 editions share the same Go control plane and the same Airflow-compatible
-HTTP API — Pro adds the K8s executor, HA scheduler, and external-datastore
+HTTP API; Cluster adds the K8s executor, HA scheduler, and external-datastore
 expectations; Lite bundles everything in one host process.
 
 ---
@@ -39,7 +39,8 @@ its SHA-256 against the signed checksums, installs the binaries to
 ### What you need
 
 Almost nothing. The control plane, CLI, and agent are **static Go binaries**,
-and `dexaflow setup` provisions a Python 3.11 itself if you don't have one.
+and `dexaflow setup` uses the Python 3.11, 3.12 or 3.13 you have, or provisions
+a Python 3.11 itself if you have none.
 
 There are **two execution paths** — and **no Docker executor**, on purpose
 ([ADR 0015](/project/adrs/0015-kubernetes-only-execution/)):
@@ -62,10 +63,17 @@ picks the highest path available**; without Docker it uses subprocess. Run
 
 `setup` is idempotent — re-running is safe. It:
 
-1. **Ensures Python 3.11.** Uses a system `python3.11` if one is on `PATH`;
-   otherwise downloads a pinned, checksum-verified [relocatable
-   CPython](https://github.com/astral-sh/python-build-standalone) into
-   `~/.dexaflow/python`. No sudo, no system install.
+1. **Picks a Python for the parser.** A managed CPython already installed
+   under `~/.dexaflow/python` wins. Otherwise it uses the first of
+   `python3.13`, `python3.12`, `python3.11` and `python3` on `PATH` that reports
+   Python 3.11 to 3.13, and downloads nothing. Only when there is none does it
+   download a pinned, checksum-verified [relocatable
+   CPython](https://github.com/astral-sh/python-build-standalone) 3.11 into
+   `~/.dexaflow/python`. No sudo, no system install. A DAG that declares
+   `python_version: "3.11"` (the default) on a host without 3.11 fetches the
+   same build, with the same checksum, the first time `dexaflow lite` builds its
+   venv; offline, that build fails with a message naming the two ways out
+   (network access, or installing `python3.11`).
 2. **Extracts the DAG parser and task runtime** (embedded in the binary) to
    `~/.dexaflow/pysrc`.
 3. **Points `parser_cmd` at the parser** in `~/.dexaflow/config.yaml`. The parser is
@@ -85,7 +93,7 @@ picks the highest path available**; without Docker it uses subprocess. Run
 {{% alert title="Lite is for trusted networks" color="warning" %}}
 The admin password is short by design and there is no SSO/RBAC — run Lite
 on **localhost, an internal network, or a VPN**, never exposed publicly.
-Production-grade deploys are Pro's job. See [Editions](/concepts/editions/).
+Production-grade deploys are Cluster's job. See [Editions](/concepts/editions/).
 {{% /alert %}}
 
 Everything Dexaflow manages lives under `~/.dexaflow`; your DAG source lives in
@@ -159,7 +167,8 @@ $ dexaflow doctor
 dexaflow doctor
 
   platform      linux/amd64 (glibc)
-  python 3.11   found (/usr/bin/python3.11)
+  python 3.11+  found (/usr/bin/python3.11)
+                `dexaflow setup` will use /usr/bin/python3.11 (Python 3.11) for the parser; nothing to download
   docker        found
   k3d           not found (fetched on demand for the k8s tier)
   kubectl       not found (fetched on demand for the k8s tier)
@@ -229,9 +238,9 @@ rm -rf ~/dexaflow              # what `--purge` adds (your workspace)
 
 ---
 
-## Install Pro
+## Install Cluster
 
-Pro installs the **control plane into Kubernetes** via the Dexaflow Helm
+Cluster installs the **control plane into Kubernetes** via the Dexaflow Helm
 chart. Task pods are scheduled into the cluster by the same control plane —
 no host-side process supervisor, no managed Python sidecar. DAGs ship as
 **container images** built in CI ([CI/CD & deploy examples](/operate/cicd-deploy/)).
@@ -250,8 +259,8 @@ external Postgres and Redis and go:
 
 ```bash
 helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
-  -n leoflow --create-namespace \
-  --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full' \
+  -n dexaflow --create-namespace \
+  --set database.url='postgres://USER:PASS@HOST:5432/dexaflow?sslmode=verify-full' \
   --set redis.url='rediss://HOST:6380/0' \
   --set auth.jwtSecret="$(openssl rand -base64 64)" \
   --set secretKey="$(openssl rand -hex 32)" \
@@ -280,13 +289,13 @@ Publish the provider's CA bundle as a ConfigMap with the key `ca.crt`, point
 `database.caConfigMap` at it, and add `sslrootcert` to the DSN:
 
 ```bash
-kubectl create namespace leoflow
-kubectl -n leoflow create configmap rds-ca --from-file=ca.crt=./global-bundle.pem
+kubectl create namespace dexaflow
+kubectl -n dexaflow create configmap rds-ca --from-file=ca.crt=./global-bundle.pem
 
 helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
-  -n leoflow --create-namespace \
+  -n dexaflow --create-namespace \
   --set database.caConfigMap=rds-ca \
-  --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt' \
+  --set database.url='postgres://USER:PASS@HOST:5432/dexaflow?sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt' \
   ...
 ```
 
@@ -312,7 +321,7 @@ migration Job fails.
 
 {{% alert title="OCI chart is the primary path" color="info" %}}
 The OCI chart above is **published** and is the recommended way to install
-Pro — it carries the auto-generated agent TLS by default. [Installing from
+Cluster: it carries the auto-generated agent TLS by default. [Installing from
 source](#install-from-source) (below) is the alternative, for the bleeding
 edge on `main` ahead of the next release.
 {{% /alert %}}
@@ -330,10 +339,10 @@ this is only needed when you want `main`. Same required values, from the
 git clone --depth 1 https://github.com/dexadata/dexaflow   # current main
 cd dexaflow
 
-helm install lf ./helm/dexaflow -n leoflow --create-namespace \
+helm install lf ./helm/dexaflow -n dexaflow --create-namespace \
   --set image.tag={{< latest-version v >}} \
   --set migrations.image.tag={{< latest-version v >}} \
-  --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full' \
+  --set database.url='postgres://USER:PASS@HOST:5432/dexaflow?sslmode=verify-full' \
   --set redis.url='rediss://HOST:6380/0' \
   --set auth.jwtSecret="$(openssl rand -base64 64)" \
   --set secretKey="$(openssl rand -hex 32)" \
@@ -354,8 +363,10 @@ ServiceMonitor, NetworkPolicy):
 
 - **`dexaflow-server`** Deployment listening on HTTP `8080`, metrics `9090`,
   and agent gRPC `9091`.
-- A pre-install/pre-upgrade **Job** running `golang-migrate` against
-  `database.url` before the server starts.
+- A pre-install/pre-upgrade **Job** running the migrations (the
+  `dexaflow-migrate` image) against `database.url` before the server starts.
+  Dexaflow does not create the database: it must exist. When the Job fails,
+  see [the migration Job](/operate/troubleshooting/#the-migration-job).
 - A **ServiceAccount + Role/RoleBinding** letting the control plane create,
   watch, and delete **task pods** (and read their logs) in `taskNamespace`
   (default: the release namespace).
@@ -378,7 +389,7 @@ agent TLS, above).
 |---|---|
 | A **Kubernetes cluster** (1.27+ recommended) | runs the control plane and task pods |
 | `kubectl` + **Helm 3.8+** | apply the chart; Helm 3.8+ is required to `helm install` an OCI chart |
-| An **external Postgres** (PostgreSQL **13+**) | Pro datastore — the chart refuses to install without `database.url` (the embedded datastore is Lite-only) |
+| An **external Postgres** (PostgreSQL **13+**) | Cluster datastore: the chart refuses to install without `database.url` (the embedded datastore is Lite-only) |
 | An **external Redis** (Redis **6.0+**) | XCom + advisory locks — the chart refuses to install without `redis.url` |
 | A **default StorageClass** | the control-plane logs PVC (`logs.persistence.enabled: true`, on by default) binds to it |
 
@@ -428,7 +439,7 @@ External Secrets, etc.) and point the chart at them:
 When **every** credential comes from an existing Secret, the chart creates
 no Secret of its own. The `checksum/secret` annotation on the pod template
 only sees the chart-managed Secret, so rotation of an
-`existingSecret` requires a manual `kubectl rollout restart deploy/lf-leoflow`.
+`existingSecret` requires a manual `kubectl rollout restart deploy/lf-dexaflow`.
 
 ### Production hardening
 
@@ -439,7 +450,7 @@ deploy, layer on:
   self-signed CA — fine for the in-cluster agent channel, but many orgs want
   cert-manager-issued or externally-rooted certs with automatic rotation. Set
   `agentTLS.serverCertSecret` + `agentTLS.caConfigMap` and the chart uses them
-  verbatim (skipping auto-gen). Full recipe: [Pro TLS with cert-manager](/operate/pro-tls/).
+  verbatim (skipping auto-gen). Full recipe: [Cluster TLS with cert-manager](/operate/cluster-tls/).
 - **External Postgres / Redis** on managed services (see [Prerequisites](#prerequisites)),
   with **verified** TLS via the `database.caConfigMap` / `redis.caConfigMap` knobs.
 - **StorageClass sizing.** The logs PVC defaults to `50Gi` (~1 GB/day per
@@ -514,10 +525,10 @@ Under `enforce` a task receives **only** the Variables and Connections its
 declare nothing and would break on the flip. Land it the way any breaking
 security change lands: leave `permissive` on while your DAGs adopt
 [declarations](/author-dags/variables-connections/#declare-what-a-task-consumes),
-then flip. Note what the observation period can and cannot tell you — the
-scope-warning trail covers only DAGs whose declarations still resolve, so it
-sees neither a DAG that declares nothing nor one whose declared names have since
-been deleted from the vault
+then flip. The scope-warning trail lists every task that would receive less
+under `enforce`, including a DAG that declares nothing or whose declared names
+have since been deleted from the vault (recorded with `declared=0`); it only
+sees DAGs that ran during the observation period
 ([#800](https://github.com/dexadata/dexaflow/issues/800)).
 {{% /alert %}}
 
@@ -536,7 +547,7 @@ templating **without** live cluster access — can't `lookup`, so it either
 regenerates the CA on every sync (breaking every already-running agent's
 trust) or renders an empty cert. Under GitOps, use **BYO / cert-manager**
 (`agentTLS.serverCertSecret` + `agentTLS.caConfigMap`) rather than auto-gen.
-See [Pro TLS](/operate/pro-tls/).
+See [Cluster TLS](/operate/cluster-tls/).
 {{% /alert %}}
 
 ### Upgrades
@@ -571,9 +582,9 @@ pushes (`dexaflow-server`, `dexaflow-mcp`, `dexaflow-cli`, `dexaflow-migrate`, e
 `dexaflow-runtime:py3.N-<tag>`, and the `leoflow-*` names, which share their
 digests) carries a [SLSA build provenance](https://slsa.dev/spec/v1.0/provenance)
 attestation, and each archive's SPDX SBOM is attested against that archive.
-The Helm chart is cosign-signed (see [the chart page](/operate/helm-chart/))
-but carries no build provenance attestation yet (#1562).
-Check the archive and image attestations with the [GitHub CLI](https://cli.github.com/):
+From `v0.5.5` on, the Helm chart (`charts/dexaflow`, and `charts/leoflow`)
+carries one too, next to its cosign signature.
+Check the attestations with the [GitHub CLI](https://cli.github.com/):
 
 ```bash
 TAG={{< latest-version v >}}
@@ -585,7 +596,16 @@ gh attestation verify "dexaflow_${TAG#v}_linux_amd64.tar.gz" \
 gh attestation verify "oci://ghcr.io/dexadata/dexaflow-server:${TAG}" \
   --repo dexadata/dexaflow \
   --signer-workflow dexadata/dexaflow/.github/workflows/release.yaml
+
+gh attestation verify "oci://ghcr.io/dexadata/charts/dexaflow:${TAG#v}" \
+  --repo dexadata/dexaflow \
+  --signer-workflow dexadata/dexaflow/.github/workflows/release.yaml
 ```
+
+The chart tag has no leading `v`, like `helm install --version`. A chart
+re-published by hand with the recovery workflow is attested by
+`.github/workflows/helm-release.yaml` instead; pass that path to
+`--signer-workflow` for it.
 
 Add `--predicate-type https://spdx.dev/Document/v2.3` to check the SBOM
 attestation of an archive instead of its provenance. Offline, the archive
@@ -610,11 +630,11 @@ The chart [README on this site](/operate/helm-chart/) is auto-generated from
 `values.yaml` by `helm-docs` and documents every knob — TLS, observability,
 networking, autoscaling, secret wiring. Treat it as the source of truth.
 
-### Uninstalling Pro
+### Uninstalling Cluster
 
 ```bash
-helm uninstall lf -n leoflow
-kubectl delete namespace leoflow
+helm uninstall lf -n dexaflow
+kubectl delete namespace dexaflow
 ```
 
 This removes the chart-managed resources. PVCs (e.g. for control-plane logs
@@ -628,6 +648,6 @@ data outlive the chart — drop them out of band when you're done.
 - [Quickstart](/get-started/quickstart/) — run your first DAG.
 - [The `dexaflow lite` workflow](/contribute/local-dev-loop/) — the hot-reload inner loop
   (Lite).
-- [Helm chart](/operate/helm-chart/) — full Pro values reference.
-- [CI/CD & deploy examples](/operate/cicd-deploy/) — packaging DAGs as images for Pro.
-- [Editions](/concepts/editions/) — Lite vs Pro, feature by feature.
+- [Helm chart](/operate/helm-chart/): full Cluster values reference.
+- [CI/CD & deploy examples](/operate/cicd-deploy/): packaging DAGs as images for Cluster.
+- [Editions](/concepts/editions/): Lite vs Cluster, feature by feature.

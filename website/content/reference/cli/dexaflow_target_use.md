@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_target_use/
 title: "dexaflow target use"
 linkTitle: "target use"
-weight: 65
+weight: 70
 ---
 
 Select the target commands use when no --target is given.

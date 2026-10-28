@@ -88,20 +88,26 @@ func buildPlatforms(cfg *domain.LeoflowConfig) []string {
 func selectBuilder(ctx context.Context, dir, dockerfile string, o compileOptions, cfg *domain.LeoflowConfig, image string) (b build.Builder, reason string) {
 	split, noSplit := splitFor(ctx, dir, dockerfile, o, cfg, image)
 	opts := build.Options{Tool: o.builder, Reuse: o.reuse, Split: split, NoSplit: noSplit, Rebuild: o.rebuild,
-		Registry: registryFor(cfg), Push: o.push, Remote: remoteFor(cfg), RemoteSource: o.remoteSource}
+		Registry: registryFor(ctx, cfg), Push: o.push, Remote: remoteFor(ctx, cfg), RemoteSource: o.remoteSource, LocalOnly: cfg.Build.LocalOnly()}
 	return build.Select(ctx, opts, image, buildPlatforms(cfg))
 }
 
 // remoteFor is the remote builder build.remote_builder configures, reading
 // the pushed digest with the project's registry client, or nil when none is
 // configured.
-func remoteFor(cfg *domain.LeoflowConfig) build.Remote {
-	if cfg.Build == nil || cfg.Build.RemoteBuilder == nil || cfg.Build.RemoteBuilder.CloudBuild == nil {
+func remoteFor(ctx context.Context, cfg *domain.LeoflowConfig) build.Remote {
+	if cfg.Build == nil || cfg.Build.RemoteBuilder == nil {
 		return nil
 	}
+	if bk := cfg.Build.RemoteBuilder.BuildKit; bk != nil {
+		return build.InCluster{Namespace: bk.Namespace, PodSelector: bk.Selector(), Context: bk.Context, Registry: registryFor(ctx, cfg)}
+	}
 	cb := cfg.Build.RemoteBuilder.CloudBuild
+	if cb == nil {
+		return nil
+	}
 	return build.CloudBuild{Project: cb.Project, Region: cb.Region, WorkerPool: cb.WorkerPool, ServiceAccount: cb.ServiceAccount,
-		Registry: registryFor(cfg)}
+		Registry: registryFor(ctx, cfg)}
 }
 
 // printBuildSettings says what a build is about to do: the platforms and
@@ -121,10 +127,12 @@ func printBuildSettings(out io.Writer, o compileOptions, cfg *domain.LeoflowConf
 }
 
 // pushesFromHere reports whether builder b pushes with this machine's
-// credential: every builder but a whole build on the remote builder, which
-// pushes with its own, and the skip path, which pushes nothing.
+// credential: every builder but a whole build on Cloud Build, which pushes
+// with its own, and the skip path, which pushes nothing. The in-cluster
+// builder pushes with the credentials buildctl reads here.
 func pushesFromHere(b build.Builder) bool {
-	if _, split := b.(build.CodeLayer); split {
+	switch b.(type) {
+	case build.CodeLayer, build.InCluster:
 		return true
 	}
 	return b.Path() != build.PathRemote && b.Path() != build.PathSkip
@@ -149,17 +157,28 @@ func checkLocalPush(warn io.Writer, refused error, b build.Builder) error {
 
 // warnUploadedSecrets warns about every secret-looking file or directory
 // (secretishNames, secretishDirs, .env.*) in the context a remote build
-// uploads: the archive leaves this machine and stays in the project's Cloud
-// Build source bucket, whatever the Dockerfile copies.
+// uploads, whatever the Dockerfile copies: on Cloud Build the archive stays
+// in the project's source bucket; on the in-cluster builder the files reach
+// a cache everyone bound to the builder shares.
 func warnUploadedSecrets(w io.Writer, files []build.LayerFile, cfg *domain.LeoflowConfig) {
 	bucket := "the Cloud Build source bucket"
-	if cfg.Build != nil && cfg.Build.RemoteBuilder != nil && cfg.Build.RemoteBuilder.CloudBuild != nil {
-		bucket = build.CloudBuildSourceBucket(cfg.Build.RemoteBuilder.CloudBuild.Project)
+	var inCluster *domain.BuildKitConfig
+	if cfg.Build != nil && cfg.Build.RemoteBuilder != nil {
+		inCluster = cfg.Build.RemoteBuilder.BuildKit
+		if cb := cfg.Build.RemoteBuilder.CloudBuild; cb != nil {
+			bucket = build.CloudBuildSourceBucket(cb.Project)
+		}
 	}
 	for _, f := range files {
 		base := path.Base(f.Path)
 		secret := strings.HasPrefix(base, ".env.") || (!f.Dir && slices.Contains(secretishNames, base)) || (f.Dir && slices.Contains(secretishDirs, base))
 		if !secret {
+			continue
+		}
+		if inCluster != nil {
+			//nolint:errcheck // a warning that cannot be delivered must not fail the build
+			fmt.Fprintf(w, "warning: %s is sent to the in-cluster builder in namespace %s with the build context, and stays in the build cache "+
+				"everyone bound to the builder shares. If it holds credentials, add %q to exclude_paths in dexaflow.yaml.\n", f.Path, inCluster.Namespace, f.Path)
 			continue
 		}
 		//nolint:errcheck // a warning that cannot be delivered must not fail the build

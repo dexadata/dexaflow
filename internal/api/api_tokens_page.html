@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dexaflow - API tokens</title>
+<style>
+:root{--bg:#fff;--fg:#18181b;--muted:#52525b;--line:#e4e4e7;--head:#f4f4f5;--accent:#3f5c91;
+ --danger:#b91c1c;--ok:#15803d;--badge:#fef3c7;--badge-fg:#92400e}
+.dark{--bg:#09090b;--fg:#f4f4f5;--muted:#a1a1aa;--line:#27272a;--head:#18181b;--accent:#8fa8d8;
+ --danger:#f87171;--ok:#4ade80;--badge:#451a03;--badge-fg:#fcd34d}
+[hidden]{display:none!important}
+html,body{background:var(--bg);color:var(--fg)}
+body{margin:0;padding:16px 20px;font:14px/1.45 Inter,-apple-system,system-ui,"Segoe UI",Helvetica,Arial,sans-serif}
+h1{font-size:1.4rem;font-weight:600;margin:0 0 .3rem}
+p.lead{color:var(--muted);margin:0 0 1rem;max-width:72ch}
+code{font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--head);padding:1px 5px;border-radius:4px}
+.wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:760px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+th{background:var(--head);font-weight:600;font-size:.8rem;color:var(--muted);white-space:nowrap}
+td.name{font-weight:600;white-space:nowrap}
+td.time{white-space:nowrap}
+td.actions{text-align:right;width:1%;white-space:nowrap}
+.badge{display:inline-block;margin-left:6px;padding:0 6px;border-radius:999px;background:var(--badge);color:var(--badge-fg);font-size:.72rem;font-weight:600}
+.confirm{display:block;margin:0 0 6px;color:var(--danger);font-size:.85rem}
+button{font:inherit;font-weight:500;padding:5px 12px;border-radius:6px;cursor:pointer;margin-left:6px}
+button.secondary{background:transparent;color:var(--fg);border:1px solid var(--line)}
+button.danger{background:var(--danger);color:#fff;border:1px solid var(--danger)}
+button:disabled{opacity:.45;cursor:default}
+#status{min-height:1.4em;margin:.2rem 0 .6rem}
+#status.error{color:var(--danger)}
+#status.ok{color:var(--ok)}
+#empty{color:var(--muted);padding:1rem 0}
+#pager{display:flex;align-items:center;gap:8px;justify-content:flex-end;margin-top:10px;color:var(--muted)}
+</style></head><body>
+<main>
+<h1>API tokens</h1>
+<p class="lead">Long-lived tokens that CI pipelines and scripts use instead of a password. Create one with
+ <code>dexaflow auth create-token --scope deploy --name ci</code>; its secret is shown only then, never here.
+ Revoking a token stops it on its next request.</p>
+<p id="status" role="status" aria-live="polite"></p>
+<div class="wrap">
+<table id="tokens" hidden>
+<caption hidden>API tokens</caption>
+<thead><tr><th scope="col">Name</th><th scope="col">Scope</th><th scope="col">Owner</th><th scope="col">Created</th>
+<th scope="col">Expires</th><th scope="col">Last used</th><th scope="col"><span hidden>Actions</span></th></tr></thead>
+<tbody id="rows"></tbody>
+</table>
+</div>
+<p id="empty" hidden>No API tokens yet.</p>
+<div id="pager" hidden><span id="range"></span>
+<button type="button" class="secondary" id="prev">Previous</button>
+<button type="button" class="secondary" id="next">Next</button></div>
+</main>
+<script>{{SCRIPT}}</script>
+</body></html>

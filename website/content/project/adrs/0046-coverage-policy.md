@@ -9,7 +9,7 @@ weight: 460
 description: "ADR 0046: Coverage — one rule, per package, counting the tests we already wrote"
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-07-30
 **Supersedes (partial):** the coverage clauses of ADR 0011 (§"Coverage is computed per-package…" and the per-phase table). The rest of ADR 0011 — TDD discipline, what TDD does not mean, mandatory state-machine tests — stands unchanged.
 

@@ -40,9 +40,9 @@ trap 'rm -f "$SUMMARY_FILE"' EXIT
 
 # Color helpers — fall back to plain text when not a TTY.
 if [[ -t 1 ]]; then
-  GREEN=$'\e[32m'; RED=$'\e[31m'; YELLOW=$'\e[33m'; BOLD=$'\e[1m'; RESET=$'\e[0m'
+  GREEN=$'\e[32m'; RED=$'\e[31m'; BOLD=$'\e[1m'; RESET=$'\e[0m'
 else
-  GREEN=''; RED=''; YELLOW=''; BOLD=''; RESET=''
+  GREEN=''; RED=''; BOLD=''; RESET=''
 fi
 
 declare -i PASS_COUNT=0
@@ -72,7 +72,7 @@ echo "${BOLD}Chaos dogfood — Phase 1 (host contract + canonical suites)${RESET
 echo "Repo:   ${REPO_ROOT}"
 echo "Report: ${REPORT_FILE}"
 echo
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || exit 1
 
 # ─── Section 1: fresh-runner contract ────────────────────────────────────────
 # This catches the contributor-leak surface that hid the BYO Python gap in PR
@@ -85,12 +85,12 @@ contract_check() {
   if [[ -d "$HOME/.dexaflow" ]]; then
     echo "  - ${RED}~/.dexaflow/ exists${RESET} — host has Dexaflow state that may mask bugs."
     echo "    Hint: \`leoflow uninstall\` (keeps your DAGs; removes ~/.dexaflow only)."
-    violations+=1
+    violations=$((violations + 1))
   fi
   if command -v python3 >/dev/null 2>&1 && python3 -c "import leoflow_parser" 2>/dev/null; then
     echo "  - ${RED}leoflow_parser is importable from python3${RESET} — pip-installed on host (F5/#96)."
     echo "    Hint: \`pip uninstall leoflow-parser\` (or move to Phase 2 Docker isolation)."
-    violations+=1
+    violations=$((violations + 1))
   fi
   if [[ $violations -eq 0 ]]; then
     echo "  ✓ no ~/.dexaflow state"

@@ -29,31 +29,40 @@ type ServiceTenantStore interface {
 	// EnsureIssuerUser makes sure a passwordless user linked to (provider,
 	// subject) exists in tenant with exactly roles.
 	EnsureIssuerUser(ctx context.Context, tenant, email, provider, subject string, roles []string) (*auth.User, bool, error)
+	// SuspendTenant suspends tenant or changes its suspension (#2181);
+	// ResumeTenant lifts it, and TenantSuspension reads it (the zero value is
+	// a tenant that is not suspended). An unknown tenant is ErrNotFound.
+	SuspendTenant(ctx context.Context, tenant string, s domain.TenantSuspension) error
+	ResumeTenant(ctx context.Context, tenant string) error
+	TenantSuspension(ctx context.Context, tenant string) (domain.TenantSuspension, error)
 }
 
 // serviceTenantName is a tenant name the service API accepts: lowercase
 // letters, digits and '-', so it can travel in a URL, a claim and a label.
 var serviceTenantName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
-// Audit actions for the operator service API (#1283). Both create or change
-// accounts and roles, so every call that reaches the store is recorded.
+// Audit actions for the operator service API (#1283). Each creates or changes
+// accounts, roles or whether a tenant may run, so every call that reaches the
+// store is recorded.
 const (
-	auditServiceTenantEnsure = "service.tenant.ensure"
-	auditServiceUserEnsure   = "service.user.ensure"
+	auditServiceTenantEnsure  = "service.tenant.ensure"
+	auditServiceUserEnsure    = "service.user.ensure"
+	auditServiceTenantSuspend = "service.tenant.suspend"
+	auditServiceTenantResume  = "service.tenant.resume"
 )
 
 // recordService writes one service API audit event. A failed write is logged,
 // never returned: the operation itself already happened or already failed.
 func recordService(c *gin.Context, deps Dependencies, action, tenant, userID, email string, err error, extra map[string]string) {
-	if deps.AuthAudit == nil {
+	if deps.Auth.AuthAudit == nil {
 		return
 	}
 	outcome := "success"
 	if err != nil {
 		outcome = "failure"
 	}
-	if aerr := deps.AuthAudit.RecordAuthEvent(c.Request.Context(), tenant, userID, action, email, outcome, extra); aerr != nil {
-		deps.Logger.Warn("auth audit write failed", "action", action, "error", aerr)
+	if aerr := deps.Auth.AuthAudit.RecordAuthEvent(c.Request.Context(), tenant, userID, action, email, outcome, extra); aerr != nil {
+		deps.Observability.Logger.Warn("auth audit write failed", "action", action, "error", aerr)
 	}
 }
 
@@ -67,9 +76,12 @@ func issuerMaySignInTo(allowed []string, tenant string) bool {
 // /api/v2/service/, guarded by the service token instead of a user session.
 // It is called only when a service token is configured.
 func registerService(r gin.IRouter, deps Dependencies) {
-	g := r.Group("/api/v2/service", serviceAuth(deps.ServiceToken))
+	g := r.Group("/api/v2/service", serviceAuth(deps.Issuers.ServiceToken))
 	g.PUT("/tenants/:tenant", ensureTenantHandler(deps))
 	g.PUT("/tenants/:tenant/users/:subject", ensureIssuerUserHandler(deps))
+	g.PUT("/tenants/:tenant/suspension", suspendTenantHandler(deps))
+	g.GET("/tenants/:tenant/suspension", tenantSuspensionHandler(deps))
+	g.DELETE("/tenants/:tenant/suspension", resumeTenantHandler(deps))
 }
 
 // serviceAuth accepts only `Authorization: Bearer <service token>`. The
@@ -177,7 +189,7 @@ func ensureTenantHandler(deps Dependencies) gin.HandlerFunc {
 			AbortProblem(c, http.StatusBadRequest, "bad request", bad+" must be a whole number from 0 (unlimited) to 2147483647")
 			return
 		}
-		created, err := deps.ServiceTenants.EnsureTenant(c.Request.Context(), name, body.DisplayName, poolSlots, body.update())
+		created, err := deps.Issuers.ServiceTenants.EnsureTenant(c.Request.Context(), name, body.DisplayName, poolSlots, body.update())
 		meta := map[string]string{"created": strconv.FormatBool(created)}
 		if poolSlots > 0 {
 			meta["default_pool_slots"] = strconv.Itoa(poolSlots)
@@ -188,7 +200,7 @@ func ensureTenantHandler(deps Dependencies) gin.HandlerFunc {
 			AbortProblemCause(c, http.StatusInternalServerError, "internal error", "could not ensure the tenant", err)
 			return
 		}
-		deps.Logger.Info("service api: tenant ensured", "tenant", logSafe(name), "created", created)
+		deps.Observability.Logger.Info("service api: tenant ensured", "tenant", logSafe(name), "created", created)
 		c.JSON(statusFor(created), gin.H{"name": name, "created": created})
 	}
 }
@@ -205,7 +217,7 @@ func ensureTenantHandler(deps Dependencies) gin.HandlerFunc {
 // accounts outside the issuer's reach.
 func ensureIssuerUserHandler(deps Dependencies) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if deps.TrustedIssuer == nil {
+		if deps.Issuers.TrustedIssuer == nil {
 			AbortProblem(c, http.StatusConflict, "conflict", "no trusted issuer is configured (auth.trusted_issuer), so there is nothing to link users to")
 			return
 		}
@@ -219,14 +231,14 @@ func ensureIssuerUserHandler(deps Dependencies) gin.HandlerFunc {
 		}
 		tenant, subject := c.Param("tenant"), c.Param("subject")
 		extra := map[string]string{"subject": subject, "roles": strings.Join(body.Roles, ",")}
-		if !issuerMaySignInTo(deps.ServiceAllowedTenants, tenant) {
+		if !issuerMaySignInTo(deps.Issuers.ServiceAllowedTenants, tenant) {
 			extra["reason"] = "tenant_not_allowed"
 			recordService(c, deps, auditServiceUserEnsure, tenant, "", body.Email, errTenantNotAllowed, extra)
 			AbortProblem(c, http.StatusForbidden, "forbidden", "the trusted issuer may not sign in to this tenant (auth.trusted_issuer.allowed_tenants)")
 			return
 		}
-		user, created, err := deps.ServiceTenants.EnsureIssuerUser(c.Request.Context(), tenant, body.Email,
-			deps.TrustedIssuer.Provider(), subject, body.Roles)
+		user, created, err := deps.Issuers.ServiceTenants.EnsureIssuerUser(c.Request.Context(), tenant, body.Email,
+			deps.Issuers.TrustedIssuer.Provider(), subject, body.Roles)
 		userID := ""
 		if err == nil {
 			userID = user.ID
@@ -235,7 +247,7 @@ func ensureIssuerUserHandler(deps Dependencies) gin.HandlerFunc {
 		recordService(c, deps, auditServiceUserEnsure, tenant, userID, body.Email, err, extra)
 		switch {
 		case err == nil:
-			deps.Logger.Info("service api: user ensured", "tenant", logSafe(user.TenantID), "user_id", user.ID, "created", created)
+			deps.Observability.Logger.Info("service api: user ensured", "tenant", logSafe(user.TenantID), "user_id", user.ID, "created", created)
 			c.JSON(statusFor(created), gin.H{"id": user.ID, "tenant": user.TenantID, "email": user.Email, "roles": user.Roles, "created": created})
 		case errors.Is(err, domain.ErrNotFound):
 			AbortProblem(c, http.StatusNotFound, "not found", "no such tenant; create it first")

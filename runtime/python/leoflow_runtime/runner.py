@@ -69,10 +69,11 @@ def _resolve_kwargs(fn, context: dict) -> dict:
     - **LEOFLOW_XCOM_<PARAM>**: an upstream task's ``return_value`` (the agent fetches it).
     - **LEOFLOW_CALL_ARGS_JSON** (#115): the literal args the user wrote at the @task call
       site (``shard(n=0)``), captured by the parser at compile time.
-    - **run context** (ds, ts, data_interval_start/end, params, run_id, ti, var, conn):
-      injected for a param whose name is a context key, and for a ``**kwargs`` catch-all —
-      mirroring Airflow's TaskFlow context injection. Lowest precedence, so an explicit
-      call_arg/XCom binding is never overridden and existing tasks are unchanged.
+    - **run context** (the keys :func:`_operator_context` builds: ds, ts, logical_date,
+      params, run_id, ti, dag_run, task, ...): injected for a param whose name is a
+      context key, and for a ``**kwargs`` catch-all, mirroring Airflow's TaskFlow context
+      injection. Lowest precedence, so an explicit call_arg/XCom binding is never
+      overridden and existing tasks are unchanged.
 
     Parameters with no binding are left unset so the function's defaults apply (or it
     raises TypeError if it has none — exactly Airflow's semantics).
@@ -163,6 +164,8 @@ def run(entrypoint: str) -> None:
         sys.stderr.flush()
         # Run the @task's on_failure_callback on its terminal attempt, before the
         # re-raise, so the task's own failed outcome is unchanged (#424 inc 4b).
+        # Airflow hands the callback the error as context["exception"].
+        context["exception"] = exc
         _maybe_fire_on_failure_callback(context, on_failure_callback)
         # Re-raise so Python's default handler emits the traceback to stderr —
         # the agent captures it.
@@ -191,17 +194,33 @@ def _write_return(result) -> None:
         fh.write(payload)
 
 
+class TemplateRenderError(RuntimeError):
+    """TemplateRenderError fails a task attempt whose templates cannot render.
+
+    A template that fails to render must never run as its raw ``{{ ... }}`` text
+    (#1845, ADR 0084): the attempt fails before ``execute()`` or ``bash -c``, as on
+    Airflow. ``field`` names the template field that failed, or is None when it
+    cannot be identified; the message carries the Jinja error.
+    """
+
+    def __init__(self, field: str | None, owner: str, error: BaseException) -> None:
+        self.field = field
+        where = f"template field {field!r} of {owner}" if field else f"template fields of {owner}"
+        super().__init__(f"{where} failed to render: {type(error).__name__}: {error}")
+
+
 def _render_bash(command: str, context: dict) -> str:
     """Jinja-render a bash command with the run context (ds/params/var/conn/...), so a
-    native bash task can template like Airflow (ADR 0040 parity). No template markers,
-    no jinja2, or a render error → the raw command (best-effort; the env vars
-    $LEOFLOW_DS/$AIRFLOW_VAR_* still reach it either way)."""
+    native bash task can template like Airflow (ADR 0040 parity). A command with no
+    template markers is returned unchanged. A command that cannot render (a Jinja
+    error, a sandbox refusal, or no jinja2 in the image) raises
+    :class:`TemplateRenderError` instead of running the raw template (ADR 0084)."""
     if "{{" not in command and "{%" not in command:
         return command
     try:
         from jinja2.sandbox import SandboxedEnvironment
-    except Exception:  # noqa: BLE001 — no jinja in this env; env vars still work
-        return command
+    except ImportError as exc:
+        raise TemplateRenderError("bash_command", "the bash task", exc) from exc
     try:
         # A SandboxedEnvironment (what Airflow uses for templating) refuses access to
         # Python internals, so a template-injection payload (e.g. {{ ''.__class__ }})
@@ -221,16 +240,21 @@ def _render_bash(command: str, context: dict) -> str:
         # governs what the template may evaluate, not what the result means to bash.
         env = SandboxedEnvironment(finalize=lambda value: shlex.quote(str(value)))
         return env.from_string(command).render(**context)
-    except Exception:  # noqa: BLE001 — a broken/blocked template must not fail the task
-        return command
+    except Exception as exc:  # noqa: BLE001 (any render failure fails the attempt)
+        raise TemplateRenderError("bash_command", "the bash task", exc) from exc
 
 
 def run_bash(command: str) -> None:
     """Render a bash command with the run context, then exec ``bash -c`` in place so
     bash's stdout/stderr/exit code flow to the agent unchanged (ADR 0040). The agent
     only routes a command here when it contains ``{{`` — plain bash stays a direct
-    ``bash -c`` (no Python needed in bash-only images)."""
-    rendered = _render_bash(command, _operator_context())
+    ``bash -c`` (no Python needed in bash-only images). A command that cannot render
+    fails the attempt without running anything (ADR 0084)."""
+    try:
+        rendered = _render_bash(command, _operator_context())
+    except TemplateRenderError as exc:
+        _lifecycle(str(exc))
+        raise
     if rendered != command:
         _lifecycle("rendered bash command from the run context")
     # Intentionally exec bash by PATH (the agent ran the task as `bash -c` before this
@@ -268,7 +292,107 @@ def _load_xcom_by_task() -> dict:
     return decoded if isinstance(decoded, dict) else {}
 
 
-class _StandaloneTaskInstance:
+class NotProvidedError(AttributeError):
+    """NotProvidedError is raised for a context attribute Dexaflow does not provide.
+
+    The runtime builds the Airflow context itself (ADR 0040), so its task
+    instance, task, DAG and DAG run objects carry the attributes the runtime has
+    data for and no others. A provider that reaches for another one gets this
+    error, which names the attribute, instead of a bare AttributeError deep inside
+    the provider (#1843). It is an AttributeError, so ``hasattr`` and
+    ``getattr(obj, name, default)`` keep working.
+    """
+
+    def __init__(self, owner: str, name: str) -> None:
+        super().__init__(
+            f"{owner} has no attribute {name!r}: Dexaflow does not provide it in the "
+            f"task context yet (#1843)")
+        self.name = name
+
+
+class _ContextObject:
+    """Base of the context stand-ins: an attribute that is not set raises
+    :class:`NotProvidedError` naming it. Dunder lookups keep the plain
+    AttributeError so copy, pickle and introspection behave as usual."""
+
+    _owner = "context object"
+
+    def __getattr__(self, name: str):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        raise NotProvidedError(self._owner, name)
+
+
+class _StandaloneTask(_ContextObject):
+    """The ``task`` key when the runtime holds no operator object: a ``@task``
+    function or a bash command. It carries the task's identity only; an operator
+    run hands the real operator instead."""
+
+    _owner = "the task"
+
+    def __init__(self, task_id: str, dag_id: str) -> None:
+        self.task_id = task_id
+        self.dag_id = dag_id
+
+
+class _StandaloneDag(_ContextObject):
+    """The ``dag`` key. The runtime does not load the DAG object (an operator is
+    built on its own, a bash task imports no Python), so it carries the DAG's
+    identity only."""
+
+    _owner = "the DAG"
+
+    def __init__(self, dag_id: str) -> None:
+        self.dag_id = dag_id
+
+
+class _StandaloneDagRun(_ContextObject):
+    """The ``dag_run`` key, shaped like the Task SDK's DagRun for the fields the
+    agent delivers: ``dag_id``, ``run_id``, ``logical_date``, the data interval,
+    ``run_type`` (LEOFLOW_RUN_TYPE, the Task SDK's DagRunType value) and ``conf``
+    (LEOFLOW_RUN_CONF, the run conf alone, without the param defaults that
+    ``params`` layers under it). A control plane that does not deliver
+    ``conf`` or ``run_type`` leaves the attribute missing rather than invented.
+    ``start_date``, ``end_date``, ``state`` and the rest are not delivered to the
+    pod, so they are not provided."""
+
+    _owner = "the DAG run"
+
+    def __init__(self, dag_id: str, run_id: str) -> None:
+        self.dag_id = dag_id
+        self.run_id = run_id
+        self.logical_date = _parse_dt(os.environ.get("LEOFLOW_TS"))
+        self.data_interval_start = _parse_dt(os.environ.get("LEOFLOW_DATA_INTERVAL_START"))
+        self.data_interval_end = _parse_dt(os.environ.get("LEOFLOW_DATA_INTERVAL_END"))
+        run_type = os.environ.get("LEOFLOW_RUN_TYPE")
+        if run_type:
+            self.run_type = run_type
+        raw_conf = os.environ.get("LEOFLOW_RUN_CONF")
+        if raw_conf is not None:
+            self.conf = _json_object(raw_conf)
+
+
+def _json_object(raw: str | None) -> dict:
+    """Decode a JSON object from the agent's env; anything else (unset, malformed,
+    or not an object such as "null") is an empty dict."""
+    if not raw:
+        return {}
+    try:
+        decoded = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read an integer from the agent's env, or ``default`` when unset or invalid."""
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+class _StandaloneTaskInstance(_ContextObject):
     """A minimal, tolerant TaskInstance stand-in for a standalone operator run (ADR
     0040 Phase A).
 
@@ -281,18 +405,22 @@ class _StandaloneTaskInstance:
     rather than crashing the task *after* its real side effect (which on retry would
     re-run a non-idempotent operator). Identity fields come from the agent's env.
     Attributes beyond these are intentionally absent: an operator that needs the real
-    metastore then fails loudly rather than running silently wrong.
+    metastore then fails loudly, with a :class:`NotProvidedError` naming the
+    attribute, rather than running silently wrong.
     """
 
-    def __init__(self) -> None:
+    _owner = "the task instance"
+
+    def __init__(self, task=None) -> None:
         self.task_id = os.environ.get("LEOFLOW_TASK_ID", "")
         self.dag_id = os.environ.get("LEOFLOW_DAG_ID", "")
         self.run_id = os.environ.get("LEOFLOW_RUN_ID", "")
         self.map_index = -1
-        try:
-            self.try_number = int(os.environ.get("LEOFLOW_TRY_NUMBER", "1"))
-        except (TypeError, ValueError):
-            self.try_number = 1
+        self.try_number = _env_int("LEOFLOW_TRY_NUMBER", 1)
+        # The attempt budget the agent delivers (retries + 1); without it this
+        # attempt is treated as the last, as the on_failure_callback gate does.
+        self.max_tries = _env_int("LEOFLOW_MAX_TRIES", self.try_number)
+        self.task = task if task is not None else _StandaloneTask(self.task_id, self.dag_id)
         self._xcom_by_task = _load_xcom_by_task()
         self.pushed: dict = {}
 
@@ -340,39 +468,61 @@ class _StandaloneTaskInstance:
         return _parse_dt(os.environ.get("LEOFLOW_FIRST_RESCHEDULE_AT"))
 
 
-def _operator_context() -> dict:
-    """A minimal Airflow execution context for a standalone operator run (ADR 0040
-    Phase A). The agent supplies the run's macros via env; many operators read no
-    context at all, so sensible defaults are enough for the common case. ``ti`` /
-    ``task_instance`` are a tolerant :class:`_StandaloneTaskInstance` (not None) so
-    the near-universal operator-link ``ti.xcom_push`` pattern does not crash."""
-    params = {}
-    raw_params = os.environ.get("LEOFLOW_PARAMS")
-    if raw_params:
-        try:
-            decoded = json.loads(raw_params)
-        except (TypeError, ValueError):
-            decoded = {}
-        # Coerce non-object conf (e.g. "null") to {} so context["params"].get(...) works.
-        params = decoded if isinstance(decoded, dict) else {}
+def _operator_context(task=None) -> dict:
+    """The Airflow execution context the runtime hands an operator, a ``@task``
+    function and a bash command alike (ADR 0040), built from the agent's env.
+
+    It follows the pinned Task SDK's ``Context``; the keys it leaves out are listed,
+    with the reason, in ``tests/test_task_sdk_context_contract.py`` (#1843). ``task``
+    is the operator instance on an operator run; otherwise a stand-in carrying the
+    task's identity. ``ti`` / ``task_instance`` are a tolerant
+    :class:`_StandaloneTaskInstance` (not None) so the near-universal operator-link
+    ``ti.xcom_push`` pattern does not crash. The keys the Task SDK derives from the
+    logical date (``ds_nodash``, ``ts_nodash``, ``ts_nodash_with_tz``) are set only
+    when the run has one, as on Airflow."""
+    # Coerce non-object conf (e.g. "null") to {} so context["params"].get(...) works.
+    params = _json_object(os.environ.get("LEOFLOW_PARAMS"))
     ds = os.environ.get("LEOFLOW_DS", "")
-    ti = _StandaloneTaskInstance()
+    ti = _StandaloneTaskInstance(task)
+    run_id = os.environ.get("LEOFLOW_RUN_ID", "")
+    # The logical date the agent delivers as LEOFLOW_TS; None on a run without
+    # one, where Airflow also has none (#1843).
+    logical_date = _parse_dt(os.environ.get("LEOFLOW_TS"))
     ctx = {
         "ds": ds,
         "ts": os.environ.get("LEOFLOW_TS", ""),
-        "run_id": os.environ.get("LEOFLOW_RUN_ID", ""),
+        "run_id": run_id,
         "params": params,
         "task_instance": ti,
         "ti": ti,
-        "dag_run": None,
+        "task": ti.task,
+        "dag": _StandaloneDag(ti.dag_id),
+        "dag_run": _StandaloneDagRun(ti.dag_id, run_id),
+        "try_number": ti.try_number,
+        "logical_date": logical_date,
+        "macros": _Macros(),
         "data_interval_start": _parse_dt(os.environ.get("LEOFLOW_DATA_INTERVAL_START")),
         "data_interval_end": _parse_dt(os.environ.get("LEOFLOW_DATA_INTERVAL_END")),
+        "task_instance_key_str": f"{ti.dag_id}__{ti.task_id}__{run_id}",
     }
+    if logical_date is not None:
+        ctx.update(_logical_date_keys(logical_date))
+        ctx["task_instance_key_str"] = f"{ti.dag_id}__{ti.task_id}__{ctx['ds_nodash']}"
     var, conn = _secrets_accessors()
     if var is not None:
         ctx["var"] = var
         ctx["conn"] = conn
     return ctx
+
+
+def _logical_date_keys(logical_date: datetime) -> dict:
+    """The keys the Task SDK derives from the logical date, in its formats."""
+    ts = logical_date.isoformat()
+    return {
+        "ds_nodash": logical_date.strftime("%Y%m%d"),
+        "ts_nodash": logical_date.strftime("%Y%m%dT%H%M%S"),
+        "ts_nodash_with_tz": ts.replace("-", "").replace(":", ""),
+    }
 
 
 def _secrets_accessors():
@@ -488,6 +638,13 @@ def _maybe_fire_on_failure_callback(context, on_failure_callback) -> None:
     max_tries defaults to try_number (treat as final). Fully guarded — never raises."""
     if os.environ.get("LEOFLOW_ON_FAILURE_CALLBACK") != "1":
         return
+    try_number, max_tries = _attempt_numbers()
+    _run_on_failure_callback(on_failure_callback, context, try_number, max_tries)
+
+
+def _attempt_numbers() -> tuple[int, int]:
+    """Return (try_number, max_tries) from the env. A missing or invalid
+    max_tries defaults to try_number, so the attempt is treated as the last."""
     try:
         try_number = int(os.environ.get("LEOFLOW_TRY_NUMBER", "1"))
     except ValueError:
@@ -496,7 +653,93 @@ def _maybe_fire_on_failure_callback(context, on_failure_callback) -> None:
         max_tries = int(os.environ.get("LEOFLOW_MAX_TRIES", str(try_number)))
     except ValueError:
         max_tries = try_number
-    _run_on_failure_callback(on_failure_callback, context, try_number, max_tries)
+    return try_number, max_tries
+
+
+def _operator_failure_callback(op):
+    """Return the on_failure_callback of a captured operator's task (#484).
+
+    run_operator builds the operator from LEOFLOW_OPERATOR_ARGS, and the compiler
+    cannot carry a callable there, so the instance it builds has none. The
+    callback lives on the task as dag.py declares it: when the compiler marked
+    one, the agent passes that file's module in LEOFLOW_CALLBACK_SOURCE, and on
+    the terminal attempt the module is imported to read the callback off the
+    task with this task_id. Earlier attempts skip the import, as no callback
+    runs on them. An operator that sets the callback itself still wins."""
+    own = _on_failure_from_task_object(op)
+    if _normalize_callbacks(own):
+        return own
+    source = os.environ.get("LEOFLOW_CALLBACK_SOURCE", "")
+    if not source or os.environ.get("LEOFLOW_ON_FAILURE_CALLBACK") != "1":
+        return own
+    try_number, max_tries = _attempt_numbers()
+    if try_number < max_tries:
+        return own
+    module_name = source.partition(":")[0]
+    return _callback_from_dag_module(module_name, os.environ.get("LEOFLOW_DAG_ID", ""), op.task_id)
+
+
+def _callback_from_dag_module(module_name: str, dag_id: str, task_id: str):
+    """Import the DAG module and return the on_failure_callback of its task
+    task_id, or None when it cannot be read. Never raises: a callback that
+    cannot be loaded is logged, and the task fails with its own error."""
+    _lifecycle(f"loading on_failure_callback of {task_id} from {module_name}")
+    try:
+        dags = _import_dags(module_name)
+    except Exception as exc:  # noqa: BLE001 (the task's own failure must stand)
+        _lifecycle(f"importing {module_name} for on_failure_callback raised "
+                   f"{type(exc).__name__}: {exc} (callback not run)")
+        return None
+    # dag_id first, as one file can declare several DAGs; then any DAG with the task.
+    ordered = sorted(dags, key=lambda d: getattr(d, "dag_id", None) != dag_id)
+    for dag in ordered:
+        task = dag.task_dict.get(task_id)
+        if task is not None:
+            return getattr(task, "on_failure_callback", None)
+    _lifecycle(f"no task {task_id} in the DAGs of {module_name} (callback not run)")
+    return None
+
+
+def _dag_context():
+    """Return Airflow's DagContext (Task SDK first, then Airflow 2), or None."""
+    for name in ("airflow.sdk.definitions._internal.contextmanager", "airflow.models.dag"):
+        try:
+            context = getattr(importlib.import_module(name), "DagContext", None)
+        except ImportError:
+            continue
+        if context is not None and hasattr(context, "current_autoregister_module_name"):
+            return context
+    return None
+
+
+def _import_dags(module_name: str) -> list:
+    """Import module_name and return the DAGs it declares. A `with DAG():` or a
+    called @dag is usually bound to no module variable, so the import runs the
+    way Airflow's DagBag runs it: with DagContext auto-registering every DAG
+    the module closes. DAGs bound to module variables are added as well."""
+    dag_context = _dag_context()
+    if dag_context is not None:
+        previous = dag_context.current_autoregister_module_name
+        dag_context.current_autoregister_module_name = module_name
+    try:
+        # A module imported earlier ran with no DagContext watching (dag.py can
+        # define the operator class itself), so it runs again to register.
+        module = sys.modules.get(module_name)
+        if module is not None:
+            module = importlib.reload(module)
+        else:
+            module = importlib.import_module(module_name)
+    finally:
+        if dag_context is not None:
+            dag_context.current_autoregister_module_name = previous
+    dags = []
+    if dag_context is not None:
+        dags = [dag for dag, mod in list(dag_context.autoregistered_dags) if mod is module]
+    for value in vars(module).values():
+        bound = isinstance(getattr(value, "task_dict", None), dict)
+        if bound and all(value is not d for d in dags):
+            dags.append(value)
+    return dags
 
 
 def run_operator(operator_class: str, args: dict) -> None:
@@ -513,11 +756,20 @@ def run_operator(operator_class: str, args: dict) -> None:
     task_id = os.environ.get("LEOFLOW_TASK_ID", class_name)
     op = op_cls(task_id=task_id, **_merge_operator_xcom(dict(args)))
 
-    context = _operator_context()
+    context = _operator_context(task=op)
+    # Task-level params= sit on op.params; Airflow renders {{ params.x }} against
+    # context["params"], which merges them under the run conf (conf wins, as with
+    # dag_run_conf_overrides_params). Without this they render empty (#1841).
+    context["params"] = {**_task_params(op), **context["params"]}
     try:
-        op.render_template_fields(context)
-    except Exception as exc:  # noqa: BLE001 — templating is best-effort in Phase A
-        _lifecycle(f"render_template_fields skipped ({type(exc).__name__}: {exc})")
+        _render_operator_fields(op, class_name, context)
+    except TemplateRenderError as exc:
+        # The attempt fails before execute(), as on Airflow (ADR 0084): running
+        # with the raw template text would send it to the external system.
+        _lifecycle(str(exc))
+        context["exception"] = exc
+        _maybe_fire_on_failure_callback(context, _operator_failure_callback(op))
+        raise
 
     _lifecycle(f"executing {class_name}.execute()")
     try:
@@ -532,13 +784,80 @@ def run_operator(operator_class: str, args: dict) -> None:
                 f"the operator runs synchronously in the pod (poke-style).") from exc
         # A genuine failure (not a reschedule/deferral): run the on_failure_callback
         # on the terminal attempt before re-raising, so the task's failed state is
-        # unchanged (#424 inc 4b). The operator instance carries the (list-normalised)
-        # callback as an attribute.
-        _maybe_fire_on_failure_callback(context, _on_failure_from_task_object(op))
+        # unchanged (#424 inc 4b). The callback comes from the task in dag.py
+        # (#484), and gets the error as context["exception"].
+        context["exception"] = exc
+        _maybe_fire_on_failure_callback(context, _operator_failure_callback(op))
         raise
     _write_return(result)
     _write_extra_links(op, context["ti"].pushed)
     _write_xcom_pushes(context["ti"].pushed)
+
+
+def _render_operator_fields(op, class_name: str, context: dict) -> None:
+    """Render the operator's template fields in place, raising
+    :class:`TemplateRenderError` when any of them fails (ADR 0084). Airflow's
+    templater logs the failing field through stdlib logging only, so the field is
+    found again here: each field's value from before the render is rendered on its
+    own, in order, and the first one that raises is the one named."""
+    template_fields = tuple(getattr(op, "template_fields", None) or ())
+    originals = [(name, getattr(op, name, None)) for name in template_fields]
+    try:
+        op.render_template_fields(context)
+    except Exception as exc:  # noqa: BLE001 (any render failure fails the attempt)
+        field = _failing_template_field(op, originals, context)
+        raise TemplateRenderError(field, class_name, exc) from exc
+
+
+def _failing_template_field(op, originals, context) -> str | None:
+    """Return the first template field whose original value fails to render on its
+    own, or None when none does or the operator has no ``render_template``."""
+    render = getattr(op, "render_template", None)
+    if not callable(render):
+        return None
+    for name, value in originals:
+        if not value:
+            continue
+        try:
+            render(value, context)
+        except Exception:  # noqa: BLE001, S112 (a raise is the answer being looked for)
+            return name
+    return None
+
+
+class _Macros:
+    """The ``macros`` context key: the Task SDK's macros module, loaded on first
+    use so a task that never reads it pays no import, or the runtime's own subset
+    (:mod:`leoflow_runtime.macros`) when the SDK is not installed (#1843)."""
+
+    _module = None
+
+    def __getattr__(self, name: str):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        if self._module is None:
+            self._module = _load_macros_module()
+        return getattr(self._module, name)
+
+
+def _load_macros_module():
+    """Import the Task SDK's macros module, or the runtime's fallback without it."""
+    try:
+        return importlib.import_module("airflow.sdk.execution_time.macros")
+    except ImportError:
+        from leoflow_runtime import macros
+
+        return macros
+
+
+def _task_params(op) -> dict:
+    """Return the operator's task-level params as a plain dict. Airflow keeps them
+    in a ParamsDict, whose items resolve to their values; anything unreadable
+    yields {} so a param problem never hides the run conf."""
+    try:
+        return dict(getattr(op, "params", None) or {})
+    except Exception:  # noqa: BLE001 (e.g. a required Param with no value)
+        return {}
 
 
 def _ti_key():

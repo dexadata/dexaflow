@@ -18,8 +18,12 @@ applies too; the step by step is in the
 - **A registered key is documented.** Each key in `serverDefaults` has a row in
   `website/content/reference/configuration.md`, under its `DEXAFLOW_` name or,
   for a file-only key, in dotted form (`TestRegisteredKeysAreDocumented`, with
-  no exception list). `internal/config/*.go` is user-facing surface for the
-  docs guard (`scripts/check-docs-updated.sh`).
+  no exception list). Those rows are generated: write the purpose and edition
+  in `internal/tools/configref/settings.yaml` (or the field's GoDoc), then run
+  `make gen-config-reference`; `go test ./internal/tools/configref/` fails on a
+  stale page and on a `DEXAFLOW_*` variable the code reads but the page does
+  not list. `internal/config/*.go` is user-facing surface for the docs guard
+  (`scripts/check-docs-updated.sh`).
 - **The default keeps today's behavior.** A new setting is optional and inert
   until an operator sets it, so an upgrade changes nothing
   ([ADR 0068](https://dexaflow.dexadata.ai/project/adrs/0068-patch-content-gated-by-safety/),

@@ -1,0 +1,90 @@
+# Deploys the DAGs changed on main since its last successful deploy to Dexaflow.
+# Written by `dexaflow ci init github` for dexaflow v0.6.0; the deploy
+# itself is in ci/dexaflow-deploy.sh.
+#
+# Set up once, in the repository settings: an environment named production
+# (Settings, Environments) holding
+#   - the variable DEXAFLOW_SERVER_URL: the control plane URL;
+#   - no deploy token: the job signs in with its GitHub OIDC token, for the
+#     audience https://dexaflow.acme.example, which the control plane trusts through its
+#     CI OIDC issuer github-acme (auth.ci_oidc). Without that issuer, store
+#     a deploy token, created with
+#     `dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d`,
+#     as the secret DEXAFLOW_TOKEN and write this file again with --auth token
+# Repository-level variables and secrets of the same names work too. Protection
+# rules on the environment (required reviewers, a branch policy) apply to
+# every deploy.
+#
+# Each run deploys what changed since the commit of the last successful run of
+# this workflow on main, so a failed or cancelled run is caught up by the
+# next one; with no successful run yet, every DAG is deployed.
+name: Deploy DAGs to Dexaflow
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+concurrency:
+  group: dexaflow-deploy
+  cancel-in-progress: false
+permissions:
+  contents: read
+  actions: read # gh run list: the last successful deploy
+  packages: write
+  id-token: write
+jobs:
+  deploy:
+    # A manual run from another branch deploys nothing.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      DEXAFLOW_SERVER_URL: ${{ vars.DEXAFLOW_SERVER_URL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # --changed-since and the version label need the history
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      # Installs the pinned CLI, after checking its signature and checksum.
+      - name: Install dexaflow
+        uses: dexadata/dexaflow/.github/actions/setup-dexaflow@0123456789abcdef0123456789abcdef01234567 # v0.6.0
+        with:
+          version: v0.6.0
+      - name: Log in to ghcr.io
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Find the commit of the last successful deploy
+        id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: main
+        run: |
+          sha="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow dexaflow-deploy.yaml --branch "$BRANCH" \
+            --status success --limit 1 --json headSha --jq '.[0].headSha // ""')" || sha=""
+          echo "sha=$sha" >>"$GITHUB_OUTPUT"
+      # The CLI picks the builder: an image already in the registry, the DAG
+      # code as a layer on the dependency image, dependencies from wheels with
+      # uv, the remote builder when one is configured, and the runner's Docker
+      # only when none of these applies.
+      - name: Deploy the DAGs changed since then
+        # The job's OIDC token, for the audience of the control plane's
+        # issuer entry; the script exchanges it for a short-lived session.
+        env:
+          DEXAFLOW_OIDC_AUDIENCE: "https://dexaflow.acme.example"
+          DEXAFLOW_BASE_REF: ${{ steps.base.outputs.sha }}
+        run: |
+          DEXAFLOW_OIDC_TOKEN="$(python3 -c '
+          import json, os, urllib.parse, urllib.request
+          e = os.environ
+          url = e["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=" + urllib.parse.quote(e["DEXAFLOW_OIDC_AUDIENCE"], safe="")
+          r = urllib.request.Request(url, headers={"Authorization": "bearer " + e["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]})
+          with urllib.request.urlopen(r, timeout=30) as resp:
+              print(json.load(resp)["value"])
+          ')"
+          export DEXAFLOW_OIDC_TOKEN
+          sh ci/dexaflow-deploy.sh

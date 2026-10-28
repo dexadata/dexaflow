@@ -19,6 +19,7 @@ The per-package pages are **generated from source** by `gomarkdoc`
 reference:
 
 - `pkg/client` — the typed `/api/v2` client (**public**)
+- `pkg/dagspec`: validates a compiled `dag.json` with the registration rules (**public**)
 - `internal/domain` — core types (DAG, Task, Run, …)
 - `internal/scheduler` — the state machine
 - `internal/executor` — K8s / subprocess executors

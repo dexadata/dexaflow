@@ -23,15 +23,25 @@ func warmVersionServer(repo DagVersionRepository, policy domain.WarmPolicy, exec
 }
 
 func warmVersionServerAbsent(repo DagVersionRepository, policy domain.WarmPolicy, exec config.ExecutionSection, absent string) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:            discardLogger(),
-		Authenticator:     &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:       auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:       []string{"*"},
-		Versions:          repo,
-		WarmPolicy:        policy,
-		WarmPools:         exec,
-		WarmWorkersAbsent: absent,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Execution: ExecutionDeps{
+			WarmPolicy:        policy,
+			WarmPools:         exec.WarmPoolDefaults(),
+			WarmWorkersAbsent: absent,
+		},
+		Stores: StoreDeps{
+			Versions: repo,
+		},
 	})
 }
 
@@ -161,7 +171,8 @@ func TestRegisterReportsWarmPoolsOff(t *testing.T) {
 // creates none, and on a server that runs no warm workers (the subprocess
 // executor, or pod dispatch disabled) none exists either: a task otherwise
 // warm-eligible is reported dedicated with that reason, while a task with a
-// reason of its own keeps it. A new DAG has no previous pool.
+// reason of its own keeps it. A version none of whose tasks is warm-eligible
+// gets no warm worker either (#2065). A new DAG has no previous pool.
 func TestRegisterReportsNoPool(t *testing.T) {
 	policy := domain.WarmPolicy{Enabled: true}
 	staging := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","staging":{"enabled":true},` +
@@ -169,6 +180,9 @@ func TestRegisterReportsNoPool(t *testing.T) {
 	twoTasks := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
 		`{"task_id":"a","type":"python","entrypoint":"dag:a"},` +
 		`{"task_id":"b","type":"python","entrypoint":"dag:b","execution":{"labels":{"team":"x"}}}]}`
+	noWarmTask := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
+		`{"task_id":"a","type":"python","entrypoint":"dag:a","execution":{"labels":{"team":"x"}}},` +
+		`{"task_id":"b","type":"bash","entrypoint":"echo b","execution":{"node_selector":{"pool":"db"}}}]}`
 	cases := []struct {
 		name, spec string
 		exec       config.ExecutionSection
@@ -180,6 +194,7 @@ func TestRegisterReportsNoPool(t *testing.T) {
 			[]string{"no idle warm workers kept for this DAG", "labels set"}},
 		{"no warm workers on the server", twoTasks, warmOn, "the subprocess executor runs no warm workers",
 			[]string{"the subprocess executor runs no warm workers", "labels set"}},
+		{"no warm-eligible task", noWarmTask, warmOn, "", []string{"labels set", "node_selector set"}},
 	}
 	for _, c := range cases {
 		rec := authGet(warmVersionServerAbsent(&fakeVersionRepo{created: true, dagCreated: true}, policy, c.exec, c.absent),
@@ -239,5 +254,33 @@ func TestRegisterReportsUndeclaredMinIdleWaitsForFirstRun(t *testing.T) {
 	}
 	if p.State != "on" || strings.Contains(p.Detail, "warming now") {
 		t.Errorf("undeclared DAG: pool = %+v, want on and not warming", p)
+	}
+}
+
+// TestRegisterExecutionReportJSON pins the execution report the register
+// response carries, byte for byte, now that the warm pool settings reach the
+// API as domain.WarmPoolDefaults rather than the config section (#1948).
+func TestRegisterExecutionReportJSON(t *testing.T) {
+	policy := domain.WarmPolicy{Enabled: true, ServiceAccount: "dexaflow-task"}
+	rec := authGet(warmVersionServer(&fakeVersionRepo{created: true}, policy, warmOn), http.MethodPost,
+		"/api/v2/dags/etl/versions/dry_run", mixedDeclaredSpecJSON)
+	if rec.Code >= http.StatusMultipleChoices {
+		t.Fatalf("dry_run = %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Execution json.RawMessage `json:"execution"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"warm_pools":true,"tasks":[` +
+		`{"task_id":"extract","mode":"warm"},` +
+		`{"task_id":"load","mode":"dedicated","reason":"node_selector set"},` +
+		`{"task_id":"report","mode":"dedicated","reason":"service_account set"}],` +
+		`"pool":{"state":"on","detail":"2 idle warm workers (up to 5) warming now, kept while this version is the DAG's current version; ` +
+		`previous pool draining: its idle workers are removed now and busy ones finish their attempt first",` +
+		`"min_idle_workers":2,"max_pool_size":5,"previous_pool":"draining"}}`
+	if got := string(body.Execution); got != want {
+		t.Errorf("execution report =\n%s\nwant\n%s", got, want)
 	}
 }

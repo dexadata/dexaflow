@@ -2,8 +2,8 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"os"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/spf13/cobra"
@@ -40,18 +40,37 @@ func newDBMigrateCommand() *cobra.Command {
 }
 
 // newDBResetCommand drops, recreates, and migrates the Lite database (like
-// `airflow db reset`). Destructive, so it requires --yes.
+// `airflow db reset`). Destructive, so it requires --yes, and it names the
+// database it drops.
+//
+// Lite owns its database and never reads DEXAFLOW_DATABASE_URL (or
+// LEOFLOW_DATABASE_URL). An operator who set one to another database and ran
+// a reset believed they acted on the database they named, while Lite's was
+// dropped (#1185). So the reset refuses when either names a database other
+// than Lite's, before it connects to anything.
 func newDBResetCommand() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "reset",
 		Short: "Drop, recreate, and migrate the Lite database (DESTRUCTIVE).",
-		Args:  cobra.NoArgs,
+		Long: "reset drops Lite's own database, the managed or the Docker Postgres `dexaflow lite` " +
+			"starts, then recreates and migrates it. It never acts on another database: Lite does not " +
+			"read DEXAFLOW_DATABASE_URL (or LEOFLOW_DATABASE_URL), and reset refuses, dropping nothing, " +
+			"when either is set to a different host, port or database.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			target, terr := liteDatabaseTarget()
+			if terr != nil {
+				return fmt.Errorf("resolving the Lite database: %w", terr)
+			}
+			if ferr := foreignDatabaseURL(os.Getenv, target); ferr != nil {
+				return fmt.Errorf("refusing to reset, nothing was dropped: %w; unset the variable to reset Lite's database", ferr)
+			}
 			if !yes {
-				return errors.New("refusing to reset without --yes (this drops the leoflow_dev database)")
+				return fmt.Errorf("refusing to reset without --yes (this drops the Lite database: %s)", target)
 			}
 			ctx := cmdContext(cmd)
+			devPrintln(cmd.OutOrStdout(), "▸ resetting the Lite database ("+target.String()+")")
 			if err := dropDevDatabase(ctx, cmd); err != nil {
 				return err
 			}

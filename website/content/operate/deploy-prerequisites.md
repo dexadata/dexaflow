@@ -7,7 +7,7 @@ description: "Every gate dexaflow deploy/push enforces — the exact error, why 
 
 `dexaflow deploy` (and its explicit-steps sibling `dexaflow push`) is **fail-closed
 by design** — it registers a DAG only when the artifact and the caller both meet
-every gate below. That is deliberate: a Pro control plane runs task pods with
+every gate below. That is deliberate: a Cluster control plane runs task pods with
 your DAG's image and credentials, so the gates are the boundary between "code a
 teammate wrote" and "code that runs with real access." When a deploy is
 rejected, the error tells you which gate and how to satisfy it — this page is
@@ -26,13 +26,13 @@ CI-bypassing request cannot sneak an invalid artifact past compile-time checks.
 
 ### 1. A configured registry
 
-Pro has no single-node image-import path — Kubernetes pulls images from a
-registry, so a Pro deploy needs one, full stop (Lite runs locally and needs
+Cluster has no single-node image-import path: Kubernetes pulls images from a
+registry, so a Cluster deploy needs one, full stop (Lite runs locally and needs
 none). With no registry from any source, deploy fails immediately:
 
 ```
 error: deploy requires a container registry, but none is configured.
-  A Pro deploy pushes the DAG image to a registry your cluster can pull from
+  A cluster deploy pushes the DAG image to a registry your cluster can pull from
   (Lite runs locally and needs none). Set one, for one DAG or for all:
 
       dexaflow.yaml:              registry: {url: ghcr.io/<your-org>}
@@ -45,7 +45,7 @@ error: deploy requires a container registry, but none is configured.
       Artifact Registry, GCR: gcloud auth login
       ECR: aws sso login, aws configure, environment credentials or an instance role
       ACR: az login
-      any other registry: docker login <registry>
+      any other registry: dexaflow registry login <registry> (or docker login <registry>)
   A build by a local container tool pushes with that tool's own login; the deploy preflight names it.
 ```
 
@@ -53,8 +53,8 @@ error: deploy requires a container registry, but none is configured.
 [Workspaces and targets](/operate/workspaces-and-targets/#registry-platforms-and-base-image)),
 or ask the platform team to advertise one for the whole cluster
 ([Cluster deploy defaults](/operate/workspaces-and-targets/#cluster-deploy-defaults)),
-then make sure the CLI has a credential for the registry: `docker login
-<registry>` once, or, for Artifact Registry, GCR, ECR and ACR, just be signed
+then make sure the CLI has a credential for the registry: `dexaflow registry
+login <registry>` once (no docker needed), or, for Artifact Registry, GCR, ECR and ACR, just be signed
 in to that cloud's CLI ([Registry credentials](/operate/builders/#registry-credentials)).
 Registry auth is separate from the control-plane login, see [gate 5](#5-auth--writedag-rbac-scope).
 See [ADR 0041](/project/adrs/0041-leoflow-deploy-pipelineless/).
@@ -68,24 +68,28 @@ before registering, so a version registered by `deploy` never resolves a tag at
 pull time: there is no `:latest` drift and no way to point that version at a
 moving target. This is automatic; there is nothing to configure.
 
-Only `deploy` does this. `compile --build --push` followed by `push` registers
-the image reference exactly as `dag.json` holds it, which is the **tag** that was
-pushed, and the control plane accepts it: that version then follows whatever the
-tag points at when a node pulls it. Use `deploy` when the registered artifact has
-to be pinned (see [CI/CD & deploy examples](/operate/cicd-deploy/)).
+`compile --build --push` does the same: it writes the digest of the image it
+pushed into `dag.json`, and `push` registers that file. `push` also resolves an
+image `dag.json` names by tag (a file from an older CLI, or an image another
+tool pushed) to its digest before registering it, and `push --image <ref>`
+registers another image, a tag resolved the same way or a
+`<repository>@sha256:<digest>` used as given.
 
 An operator can make the control plane check this with
 `deploy.require_digest` (Helm `deploy.requireDigest`): `warn` registers a tag
-with a warning, and `enforce` refuses it, which today refuses the
-`compile --build --push` and `push` path:
+with a warning, and `enforce` refuses it. A push that could not read the
+registry registers the tag, so under `enforce` it fails, and the error says
+why the image could not be pinned:
 
 ```text
 Error: server returned 400: {..."detail":"image \"ghcr.io/acme/etl:v1\" is not pinned by digest (<repository>@sha256:<64 hex>), and this server refuses it (deploy.require_digest=enforce). ..."}
+  the push could not pin the image by digest: reading "ghcr.io/acme/etl:v1" from its registry ...: UNAUTHORIZED ...
+  fix: make the registry readable from here (`dexaflow registry login <registry>` or `docker login <registry>`, or the session of the cloud CLI that owns it), or pass --image <repository>@sha256:<digest>
 ```
 
-**Fix:** register with `dexaflow deploy`, which pins the pushed image by
-digest, or set `image` in `dag.json` to `<repository>@sha256:<digest>` (sha256
-only) before `dexaflow push`. See
+**Fix:** give the CLI a credential that can read the registry, register with
+`dexaflow deploy`, or pass `--image <repository>@sha256:<digest>` (sha256
+only) to `dexaflow push`. See
 [Require images pinned by digest](/operate/cicd-deploy/#require-images-pinned-by-digest).
 
 ### 3. Supported task types only
@@ -126,7 +130,7 @@ this page only calls out the ones deploy attempts hit most.
 ### 4. Non-root task image
 
 A task container whose image runs as **UID 0** is refused by the control
-plane's pod security defaults. On Pro, this is the executor's
+plane's pod security defaults. On Cluster, this is the executor's
 `taskPodSecurity.runAsNonRoot` Helm value (`true` by default — see
 `helm/dexaflow/values.yaml`). When it rejects your image, the **task pod**
 fails to start with:
@@ -135,9 +139,13 @@ fails to start with:
 CreateContainerConfigError: container has runAsNonRoot and image will run as root
 ```
 
-This is easy to miss because it surfaces as a **pod** failure, not a `deploy`
-CLI error — `deploy` succeeds (the artifact registers fine), and the rejection
-only shows up when the scheduler tries to run a task.
+The kubelet refuses it when the task pod starts, after the version has
+registered. `dexaflow deploy` catches it before the build: when the project
+builds from its own Dockerfile and the server runs task pods as non-root, a
+final `USER` of root or of a name stops the deploy (see
+[Checks before the build](/operate/cicd-deploy/#checks-before-the-build-preflight)).
+An image registered another way (`push`, `--skip-build`, a base image that
+runs as root with no `USER` of your own) still shows it only at the pod.
 
 **Fix — pick one:**
 - End your custom `Dockerfile` with a **numeric** non-root user, e.g.
@@ -157,7 +165,7 @@ call) requires the **`write:dag`** permission on the caller's token:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `401` — `"unauthorized" / "no authenticated user"` | No token, or an invalid/expired one | `dexaflow auth login --server <pro>` once; `deploy` then needs no auth flags |
+| `401`: `"unauthorized" / "no authenticated user"` | No token, or an invalid/expired one | `dexaflow auth login --server <cluster>` once; `deploy` then needs no auth flags |
 | `403` — `"forbidden" / "missing permission write:dag"` | A valid token whose role does not grant `write:dag` | Log in as (or ask an admin to grant) a role with `write:dag` — Admin → Users/Roles on the control plane |
 
 Registry auth (the cloud CLI session or `docker login`, gate 1) and
@@ -187,6 +195,16 @@ private registry needs the task pod to carry pull credentials:
   node/pod-level IAM (IRSA / EKS Pod Identity) paired with an ECR credential
   helper so the kubelet authenticates without a static secret. Dexaflow does not
   care which — it only needs the pull to work; either path satisfies this gate.
+
+`dexaflow deploy` asks the server, before the build, which ServiceAccount each
+task pod would run as: one that does not exist stops the deploy, and one with
+no `imagePullSecrets` is a note (the nodes' own credentials may still pull).
+The control plane reads the account with `get` on `serviceaccounts` in the
+task namespace, which the chart's Role grants unless `split.enabled` is on
+([ADR 0085](/project/adrs/0085-control-plane-reads-task-service-accounts/)); a
+Role managed outside the chart needs that verb, or each deploy prints a note
+that the account was not checked.
+See [Checks before the build](/operate/cicd-deploy/#checks-before-the-build-preflight).
 
 See the chart-wiring detail in [ADR 0041 → Cluster wiring](/project/adrs/0041-leoflow-deploy-pipelineless/#cluster-wiring-helm--required-for-the-deploy-path-to-actually-pull).
 
@@ -294,7 +312,7 @@ A 409 can still happen, and the hint names the cause that applies:
 
 ## From here
 
-- **[Deploy your first Pro DAG](/operate/first-pro-dag/)** — the walkthrough
+- **[Deploy your first Cluster DAG](/operate/first-cluster-dag/)**: the walkthrough
   these gates protect.
 - **[CI/CD & deploy examples](/operate/cicd-deploy/)** — wiring `deploy`/`push`
   into a pipeline, where most of gates 5–8 get automated away.

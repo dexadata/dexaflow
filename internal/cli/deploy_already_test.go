@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/dexadata/dexaflow/internal/domain"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // deployServer fakes the control plane for a deploy and records what it was
@@ -68,6 +69,9 @@ type deployServer struct {
 	// checks the spec against, refusing with its own message as the
 	// register does.
 	policy *domain.ExecutionPolicy
+	// taskPods, when set, is the task_pods object of an accepted dry run
+	// (#1889); unset, the answer has none, as an older server's.
+	taskPods string
 }
 
 // detailsJSON is the details answer: the current label and the fields the
@@ -225,11 +229,16 @@ func (s *deployServer) serveDryRun(w http.ResponseWriter, r *http.Request, body 
 		created = false
 	}
 	warnings, _ := json.Marshal(append([]string{}, s.dryRunWarnings...))
-	_, _ = fmt.Fprintf(w, `{"dag_id":"etl","version":"v","spec_hash":"abc","created":%v,"dag_created":%v,"is_paused":true,"dry_run":true,"warnings":%s}`,
-		created, s.dagCreated && created, warnings)
+	pods := ""
+	if s.taskPods != "" {
+		pods = `,"task_pods":` + s.taskPods
+	}
+	_, _ = fmt.Fprintf(w, `{"dag_id":"etl","version":"v","spec_hash":"abc","created":%v,"dag_created":%v,"is_paused":true,"dry_run":true,"warnings":%s%s}`,
+		created, s.dagCreated && created, warnings, pods)
 }
 
 func TestCheckDeployed(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		fake     *deployServer
@@ -427,6 +436,7 @@ func TestDeployTakesADockerfileOutsideTheProject(t *testing.T) {
 }
 
 func TestRegisterDeployedDAGWarnsWhenNothingNewWasRegistered(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"dag_id":"etl","version":"v1","created":false}`)
 	}))

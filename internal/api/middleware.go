@@ -239,7 +239,7 @@ func jwtAuth(authn auth.Authenticator, bearer *issuerBearerAuth, session session
 				c.Next()
 				return
 			}
-			if !errors.Is(err, auth.ErrInvalidToken) {
+			if authUnavailable(err) {
 				unavailable = err
 			}
 		}
@@ -260,7 +260,8 @@ func refuseCandidates(c *gin.Context, session sessionCookieSpec, unavailable, te
 		// 401s reads to whoever is on call as an auth incident rather than the
 		// outage it is. 503 is the same answer the login path already gives for
 		// the same cause (#843), and the cause stays in the log (#1087).
-		AbortProblemCause(c, http.StatusServiceUnavailable, "service unavailable", "authentication temporarily unavailable", unavailable)
+		// Retry-After gives the client a wait instead of a guess (#1100).
+		abortAuthUnavailable(c, unavailable)
 		return
 	}
 	if wrongHost {
@@ -300,15 +301,16 @@ func bearerToken(header string) string {
 // Authorization bearer first, then the session cookie named cookieName. Both are
 // returned (not just the first present) so JWTAuth can fall back to the cookie
 // when the bearer is stale/invalid — the SPA-refresh case — rather than failing
-// on the bearer alone. A cookie holding an API token is skipped.
+// on the bearer alone. A cookie holding an API token or a CI session is skipped.
 func candidateTokens(c *gin.Context, cookieName string) []string {
 	var tokens []string
 	if t := bearerToken(c.GetHeader("Authorization")); t != "" {
 		tokens = append(tokens, t)
 	}
-	// An API token (ADR 0074) is a bearer credential for clients, never a
-	// browser session: in the cookie it is ignored.
-	if cookie, err := c.Request.Cookie(cookieName); err == nil && cookie.Value != "" && !auth.IsAPIToken(cookie.Value) {
+	// An API token (ADR 0074) and a CI session (ADR 0092) are bearer
+	// credentials for clients, never a browser session: in the cookie they
+	// are ignored.
+	if cookie, err := c.Request.Cookie(cookieName); err == nil && cookie.Value != "" && !auth.IsAPIToken(cookie.Value) && !auth.IsCISession(cookie.Value) {
 		tokens = append(tokens, cookie.Value)
 	}
 	return tokens

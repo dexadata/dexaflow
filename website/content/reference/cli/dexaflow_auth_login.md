@@ -4,16 +4,16 @@ aliases:
   - /reference/cli/leoflow_auth_login/
 title: "dexaflow auth login"
 linkTitle: "auth login"
-weight: 15
+weight: 16
 ---
 
-Authenticate to a control plane (Pro) and store the token.
+Authenticate to a control plane (Cluster) and store the token.
 
 ### Synopsis
 
 Authenticate to a control plane and save the token for that server.
 
-When the server offers single sign-on and no username or password is given, login opens the browser on the server's sign-in, where you approve the CLI sign-in, and waits for it on a loopback address (127.0.0.1); --no-browser prints the URL instead. On a machine with no browser (an SSH session, or Linux with no display) a server that serves it gets the device sign-in instead, as with --device: login prints a page and a short code, you open the page in a browser on any device, sign in and confirm the code, and login waits for that approval; --sso keeps the browser sign-in. A username or a password (flags, LEOFLOW_USERNAME/LEOFLOW_PASSWORD or --password-stdin) signs in with a password, as does a server without single sign-on. A password is not sent over plain http to a server that is not on this machine without --allow-insecure-password.
+When the server offers single sign-on and no username or password is given, login opens the browser on the server's sign-in, where you approve the CLI sign-in, and waits for it on a loopback address (127.0.0.1); --no-browser prints the URL instead. On a machine with no browser (an SSH session, or Linux with no display) a server that serves it gets the device sign-in instead, as with --device: login prints a page and a short code, you open the page in a browser on any device, sign in and confirm the code, and login waits for that approval; --sso keeps the browser sign-in. A username or a password (flags, DEXAFLOW_USERNAME/DEXAFLOW_PASSWORD or --password-stdin) signs in with a password, as does a server without single sign-on. A password is not sent over plain http to a server that is not on this machine without --allow-insecure-password.
 
 ```
 dexaflow auth login [flags]

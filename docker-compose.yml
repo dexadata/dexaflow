@@ -4,6 +4,10 @@
 #   database.url = postgres://leoflow:leoflow@localhost:5432/leoflow
 #   redis.url    = redis://localhost:6379/0
 #
+# Postgres publishes host port 5432 unless DEXAFLOW_DEV_DB_PORT (or the older
+# LEOFLOW_DEV_DB_PORT) names another, for a machine where another project
+# already owns 5432. The Makefile derives DATABASE_URL from the same variable.
+#
 # Usage:
 #   make dev-up      # start Postgres + Redis (wait healthy) and apply migrations
 #   make dev-down    # stop, keeping data
@@ -18,7 +22,7 @@ services:
       POSTGRES_PASSWORD: leoflow
       POSTGRES_DB: leoflow
     ports:
-      - "5432:5432"
+      - "${DEXAFLOW_DEV_DB_PORT:-${LEOFLOW_DEV_DB_PORT:-5432}}:5432"
     volumes:
       - leoflow-pgdata:/var/lib/postgresql/data
       # On a fresh volume, also provision the isolated `leoflow_test` database
@@ -54,11 +58,11 @@ services:
   #
   # Built from deploy/Dockerfile.migrate rather than pulled from
   # `migrate/migrate` (#1039), so the demo stack runs the same migrate binary
-  # the Helm chart does — golang-migrate's CLI compiled from this repository's
-  # go.mod — instead of a separately pinned third-party image that drifted a
-  # minor version behind and pulled from rate-limited Docker Hub. The bind
-  # mount stays: it shadows the copy baked into the image with the live tree,
-  # so editing a .sql file does not need a rebuild.
+  # the Helm chart does (the dexaflow-migrate wrapper, #1020) instead of a
+  # separately pinned third-party image that drifted a minor version behind and
+  # pulled from rate-limited Docker Hub. The bind mount stays: it shadows the
+  # copy baked into the image with the live tree, so editing a .sql file does
+  # not need a rebuild.
   migrate:
     profiles: ["demo"]
     build:
@@ -97,6 +101,11 @@ services:
       # The distroless image runs as nonroot, which cannot create /var/log;
       # write task logs under a world-writable path instead.
       DEXAFLOW_LOGS_DIR: /tmp/leoflow-logs
+      # The demo stack has no Kubernetes cluster, and the kubernetes executor
+      # refuses to boot without one (#704). The subprocess executor boots, but
+      # the image ships no agent, so tasks fail at dispatch: run DAGs with
+      # `dexaflow lite` or on a cluster.
+      DEXAFLOW_EXECUTOR_TYPE: subprocess
     ports:
       - "8080:8080"
       - "9090:9090"

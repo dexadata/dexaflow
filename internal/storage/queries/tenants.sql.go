@@ -58,18 +58,24 @@ func (q *Queries) CountTenantDags(ctx context.Context, tenantID pgtype.UUID) (in
 }
 
 const getTenantLimits = `-- name: GetTenantLimits :one
-SELECT max_dags, max_runs_per_day, min_schedule_interval_seconds, max_task_pool_slots
+SELECT max_dags, max_runs_per_day, min_schedule_interval_seconds, max_task_pool_slots,
+    suspended_at, suspension_mode, suspension_reason
 FROM tenants
 WHERE id = $1
 `
 
 type GetTenantLimitsRow struct {
-	MaxDags                    int32 `json:"max_dags"`
-	MaxRunsPerDay              int32 `json:"max_runs_per_day"`
-	MinScheduleIntervalSeconds int32 `json:"min_schedule_interval_seconds"`
-	MaxTaskPoolSlots           int32 `json:"max_task_pool_slots"`
+	MaxDags                    int32              `json:"max_dags"`
+	MaxRunsPerDay              int32              `json:"max_runs_per_day"`
+	MinScheduleIntervalSeconds int32              `json:"min_schedule_interval_seconds"`
+	MaxTaskPoolSlots           int32              `json:"max_task_pool_slots"`
+	SuspendedAt                pgtype.Timestamptz `json:"suspended_at"`
+	SuspensionMode             *string            `json:"suspension_mode"`
+	SuspensionReason           string             `json:"suspension_reason"`
 }
 
+// The suspension is read with the limits, so run creation learns both from
+// the one row it already reads (#2181).
 func (q *Queries) GetTenantLimits(ctx context.Context, id pgtype.UUID) (GetTenantLimitsRow, error) {
 	row := q.db.QueryRow(ctx, getTenantLimits, id)
 	var i GetTenantLimitsRow
@@ -78,6 +84,9 @@ func (q *Queries) GetTenantLimits(ctx context.Context, id pgtype.UUID) (GetTenan
 		&i.MaxRunsPerDay,
 		&i.MinScheduleIntervalSeconds,
 		&i.MaxTaskPoolSlots,
+		&i.SuspendedAt,
+		&i.SuspensionMode,
+		&i.SuspensionReason,
 	)
 	return i, err
 }
@@ -172,6 +181,40 @@ func (q *Queries) ReserveTenantDailyRun(ctx context.Context, id pgtype.UUID) (in
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const resumeTenant = `-- name: ResumeTenant :exec
+UPDATE tenants
+SET suspended_at = NULL, suspension_mode = NULL, suspension_reason = '', updated_at = now()
+WHERE id = $1 AND suspended_at IS NOT NULL
+`
+
+// Lifts a tenant's suspension; a tenant that is not suspended is unchanged.
+func (q *Queries) ResumeTenant(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, resumeTenant, id)
+	return err
+}
+
+const suspendTenant = `-- name: SuspendTenant :exec
+UPDATE tenants
+SET suspended_at = COALESCE(suspended_at, now()),
+    suspension_mode = $1::text,
+    suspension_reason = $2::text,
+    updated_at = now()
+WHERE id = $3::uuid
+`
+
+type SuspendTenantParams struct {
+	Mode     string      `json:"mode"`
+	Reason   string      `json:"reason"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+}
+
+// Sets or changes a tenant's suspension (#2181). A tenant already suspended
+// keeps its suspended_at, so changing the reason does not restart the clock.
+func (q *Queries) SuspendTenant(ctx context.Context, arg SuspendTenantParams) error {
+	_, err := q.db.Exec(ctx, suspendTenant, arg.Mode, arg.Reason, arg.TenantID)
+	return err
 }
 
 const tenantHasDefaultPool = `-- name: TenantHasDefaultPool :one

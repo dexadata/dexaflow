@@ -1,8 +1,0 @@
-kind: Fixed
-body: |-
-  **Schedules that crashed or hung the scheduler.** A DAG schedule of `TZ=`
-  with no zone after it made the cron parser panic, and a schedule that never
-  fires made catchup loop forever and create runs dated year 1. A bare `TZ=`
-  is now rejected as an invalid schedule, and a schedule with no next fire
-  time produces no runs.
-time: 2026-10-13T19:00:00.000000000-03:00

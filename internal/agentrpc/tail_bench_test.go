@@ -47,7 +47,7 @@ func benchRedisTailer(b *testing.B) *logs.RedisTailer {
 func BenchmarkStreamLogsLineNoTail(b *testing.B) {
 	tailer := benchRedisTailer(b)
 	ref := logs.Ref{TenantID: "t", DagID: "d", RunID: "bench", TaskID: "task", TryNumber: 1}
-	gate := newTailGate(tailer, ref, time.Now, true)
+	gate := newTailGate(tailer, ref, time.Now, true, nil)
 	publish := func(line string) { gate.publish(context.Background(), line) }
 	line := &agentv1.LogLine{Time: timestamppb.Now(), Message: "INFO processed batch 42 of 1000 in 12ms", Stream: "stdout"}
 	b.ReportAllocs()

@@ -1,9 +1,0 @@
-kind: Fixed
-body: |-
-  **The Pools page no longer shows "(undefined)" after each pool name.** The
-  pool responses of `/api/v2/pools` now carry `"team_name": null`, as Airflow
-  3.2.1's `PoolResponse` does. The bundled Airflow UI appends the team in
-  parentheses unless the field is `null`, so a response without it rendered
-  "etl_pool (undefined)". Dexaflow has no teams, so the value is always `null`,
-  like the one variables already carry.
-time: 2026-10-14T12:00:00.000000000+00:00

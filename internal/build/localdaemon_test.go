@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeTool writes a stand-in for docker that appends its argv to a log, one
@@ -21,7 +22,10 @@ func fakeTool(t *testing.T, failOn string) (tool, log string) {
 	dir := t.TempDir()
 	tool = filepath.Join(dir, "docker")
 	log = filepath.Join(dir, "calls.log")
+	// No buildx: these tests drive the classic build-then-push argv, and a
+	// push whose output names no digest, so the registry is read by tag.
 	script := "#!/bin/sh\n" +
+		"if [ \"$1 $2\" = \"buildx version\" ]; then exit 1; fi\n" +
 		"echo \"$*\" >> \"" + log + "\"\n" +
 		"if [ \"$1\" = \"" + failOn + "\" ]; then echo refused >&2; exit 1; fi\n" +
 		"exit 0\n"
@@ -122,7 +126,7 @@ func TestLocalDaemonBuildsPushesAndPins(t *testing.T) {
 	}
 }
 
-// compile --build --push asks for no pin: the registry is not read, and the
+// A push that asks for no pin reads no registry, and the
 // result carries no digest.
 func TestLocalDaemonPushWithoutPinDoesNotReadTheRegistry(t *testing.T) {
 	tool, log := fakeTool(t, "")
@@ -313,9 +317,29 @@ func TestLocalDaemonFailsWhenTheRegistryCannotPin(t *testing.T) {
 	tool, _ := fakeTool(t, "")
 	req := request()
 	req.Push, req.Pin = true, true
-	_, err := LocalDaemon{Tool: tool, Registry: &fakeRegistry{err: errors.New("manifest unknown")}}.Build(context.Background(), req)
+	res, err := LocalDaemon{Tool: tool, Registry: &fakeRegistry{err: errors.New("manifest unknown")}}.Build(context.Background(), req)
 	if err == nil || !strings.Contains(err.Error(), "manifest unknown") || !strings.Contains(err.Error(), "reg.io/team/etl:v1") {
 		t.Fatalf("err = %v, want the registry failure and the image named", err)
+	}
+	// The push happened: the error says only the read failed, and the
+	// result names what was pushed, for a caller that can keep the tag.
+	if !errors.Is(err, ErrPinRead) {
+		t.Errorf("err = %v, want ErrPinRead", err)
+	}
+	if !res.Pushed || res.Image != req.Image || res.Ref != "" {
+		t.Errorf("result = %+v, want the pushed tag, unpinned", res)
+	}
+}
+
+// A multi-platform push whose read fails cannot be verified, which is not a
+// pin read the caller may skip.
+func TestLocalDaemonUnverifiedMultiPlatformPushIsNotAPinRead(t *testing.T) {
+	tool, _ := fakeTool(t, "")
+	req := request("linux/amd64", "linux/arm64")
+	req.Push, req.Pin = true, true
+	_, err := LocalDaemon{Tool: tool, Registry: &fakeRegistry{err: errors.New("manifest unknown")}}.Build(context.Background(), req)
+	if err == nil || errors.Is(err, ErrPinRead) {
+		t.Fatalf("err = %v, want a failure that is not ErrPinRead", err)
 	}
 }
 
@@ -351,5 +375,53 @@ func TestLocalDaemonNamesTheLoginWhenThePushFails(t *testing.T) {
 	want := "aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin 123456789012.dkr.ecr.eu-west-1.amazonaws.com"
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %v, want the login command %q", err, want)
+	}
+}
+
+// A stopped build (Ctrl-C reaching the CLI, #1061) interrupts the tool, the
+// signal `docker build` handles by canceling the build cleanly, rather than
+// killing it outright.
+func TestLocalDaemonInterruptsTheToolWhenStopped(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stubs are POSIX-only")
+	}
+	dir := t.TempDir()
+	tool := filepath.Join(dir, "docker")
+	started, interrupted := filepath.Join(dir, "started"), filepath.Join(dir, "interrupted")
+	script := "#!/bin/sh\n" +
+		"trap ': > \"" + interrupted + "\"; exit 130' INT\n" +
+		": > \"" + started + "\"\n" +
+		"while :; do sleep 0.05; done\n"
+	if err := os.WriteFile(tool, []byte(script), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := LocalDaemon{Tool: tool}.Build(ctx, request())
+		done <- err
+	}()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(started); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the tool never started")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a stopped build reported success")
+		}
+	case <-time.After(localDaemonWaitDelay + 5*time.Second):
+		t.Fatal("the build did not return after the stop")
+	}
+	if _, err := os.Stat(interrupted); err != nil {
+		t.Errorf("the tool was not sent an interrupt before it ended: %v", err)
 	}
 }

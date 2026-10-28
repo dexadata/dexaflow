@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_completion_bash/
 title: "dexaflow completion bash"
 linkTitle: "completion bash"
-weight: 22
+weight: 25
 ---
 
 Generate the autocompletion script for bash

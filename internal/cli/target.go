@@ -58,16 +58,32 @@ func newTargetAddCommand() *cobra.Command {
 	cmd.Flags().StringVar(&o.defaults.Registry, "registry", "", "image registry prefix deploys to this target push to (e.g. ghcr.io/acme)")
 	cmd.Flags().StringSliceVar(&o.defaults.Platforms, "platform", nil, "image platform for deploys to this target (repeatable, e.g. linux/amd64)")
 	cmd.Flags().StringVar(&o.defaults.BaseImage, "base-image", "", "base image for DAGs that set none, when deploying to this target")
+	cmd.Flags().StringVar(&o.defaults.SourceModeImage, "source-mode-image", "", "runtime image, pinned by digest, deploys to this target register dag.py on with no build (the server's execution.source_mode.image), or none to build even where the workspace defaults or the cluster set one")
 	cmd.Flags().BoolVar(&o.global, "global", false, "keep the target in your config file even inside a workspace")
 	cmd.Flags().BoolVar(&o.force, "force", false, "replace a target of the same name")
 	return cmd
 }
 
-func runTargetAdd(cmd *cobra.Command, name, server string, o targetAddOptions) error {
+// validateTargetAdd refuses a target name, a server URL or a source mode
+// image that `target add` cannot store.
+func validateTargetAdd(name, server string, o targetAddOptions) error {
 	if err := validateTargetName(name); err != nil {
 		return err
 	}
 	if err := validateServerURL(server); err != nil {
+		return err
+	}
+	if img := o.defaults.SourceModeImage; img != "" && img != sourceModeNone {
+		if err := checkSourceModeImage(img); err != nil {
+			return fmt.Errorf("--source-mode-image %q %v; give the server's execution.source_mode.image byte for byte, "+
+				"or none to build even where the workspace defaults or the cluster set one", printable(img), err)
+		}
+	}
+	return nil
+}
+
+func runTargetAdd(cmd *cobra.Command, name, server string, o targetAddOptions) error {
+	if err := validateTargetAdd(name, server, o); err != nil {
 		return err
 	}
 	tc, err := loadTargetContext(cmd)
@@ -166,7 +182,7 @@ func addUserTarget(cmd *cobra.Command, name, server string, o targetAddOptions) 
 			return fmt.Errorf("target %q already exists in %s (server %s); pass --force to replace it", name, path, old.Server)
 		}
 		s.SetTarget(config.UserTarget{Name: name, Server: server, Registry: o.defaults.Registry,
-			Platforms: o.defaults.Platforms, BaseImage: o.defaults.BaseImage})
+			Platforms: o.defaults.Platforms, BaseImage: o.defaults.BaseImage, SourceModeImage: o.defaults.SourceModeImage})
 		if s.CurrentTarget == "" && o.autoSelect {
 			s.CurrentTarget = name
 			isDefault = true

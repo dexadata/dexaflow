@@ -142,7 +142,7 @@ var errNoObjectList = errors.New("object store cannot list")
 // either layout, with one listing of the {try}. prefix (see EpochLister). A
 // store without ObjectLister, or a failed listing (S3 without s3:ListBucket),
 // returns an error and the caller probes instead.
-func (o *ObjectSink) StoredEpochs(ref Ref) ([]int, error) {
+func (o *ObjectSink) StoredEpochs(ctx context.Context, ref Ref) ([]int, error) {
 	if err := ref.validate(); err != nil {
 		return nil, err
 	}
@@ -151,7 +151,7 @@ func (o *ObjectSink) StoredEpochs(ref Ref) ([]int, error) {
 		return nil, errNoObjectList
 	}
 	dir := path.Join(o.prefix, ref.TenantID, ref.DagID, ref.RunID, ref.TaskID) + "/"
-	keys, err := lister.List(o.ctx, dir+fmt.Sprintf("%d.", ref.TryNumber), "/")
+	keys, err := lister.List(ctx, dir+fmt.Sprintf("%d.", ref.TryNumber), "/")
 	if err != nil {
 		o.logger.Debug("listing a try's log objects failed; probing each execution",
 			"prefix", logSafe(dir), "error", logSafe(err.Error()))
@@ -172,7 +172,10 @@ func (o *ObjectSink) StoredEpochs(ref Ref) ([]int, error) {
 // the attempt, so a second stream opened once the previous one has closed
 // appends instead of overwriting. Two writers live at the same time (a
 // reconnect before the old stream ended) can still overwrite each other's
-// segments, as they overwrite each other's object in the single layout.
+// segments, as they overwrite each other's object in the single layout. In the
+// single layout Open always starts empty: one writer per attempt, and a second
+// one opened with Open overwrites what the first stored. A stream that
+// continues an attempt opens with Resume instead.
 //
 // When the probe for the stored segments fails, even after its retries, Open
 // refuses the stream instead of guessing where the attempt ends. Starting at
@@ -203,6 +206,61 @@ func (o *ObjectSink) Open(ref Ref) (LogWriter, error) {
 	}
 	keyFn := func(n int) string { return o.segmentKey(ref, n) }
 	return newObjectWriter(o.ctx, o.store, keyFn, true, first, o.logger), nil
+}
+
+// Resume opens a writer for a stream that continues an attempt whose earlier
+// stream ended: the agent re-opening its log stream after the control plane
+// closed it mid-task (#912). Open would hand the single layout an empty writer
+// whose first flush overwrites the stored object with only the lines sent after
+// the re-open; Resume seeds the writer with the stored object instead, so the
+// object stays a prefix of the attempt. The segmented layout already continues
+// after the stored segments, so there Resume is Open.
+//
+// The seed is read like the segmented layout's probes (getRetrying). When the
+// read keeps failing for a reason other than not-found, Resume refuses the
+// stream rather than overwrite a prefix it could not read; the agent's lines
+// for that stream are lost, the stored prefix is not. A store that answers a
+// missing key with AccessDenied (S3 without s3:ListBucket) refuses the resume of
+// an attempt that never stored anything, which loses what an unseeded writer
+// would have kept; first streams use Open and are unaffected.
+//
+// Resuming is safe only once the earlier stream's writer is closed: the agent
+// re-opens after it has read the earlier stream's end, which the control plane
+// sends after that writer's final flush. A writer still alive (a stream cut by
+// the network whose handler has not noticed yet) races the resumed one, and
+// either can overwrite the other's latest flush, as with two writers in Open.
+func (o *ObjectSink) Resume(ref Ref) (LogWriter, error) {
+	if err := ref.validate(); err != nil {
+		return nil, err
+	}
+	if o.layout == ObjectLayoutSegmented {
+		return o.Open(ref)
+	}
+	key := o.key(ref)
+	rc, err := o.getRetrying(o.ctx, key, objectProbeAttempts)
+	if errors.Is(err, ErrObjectNotFound) {
+		return o.Open(ref)
+	}
+	if err != nil {
+		o.logger.Warn("reading the stored log object to resume the stream failed; refusing the stream rather than overwriting it",
+			"key", logSafe(key), "error", logSafe(err.Error()))
+		return nil, fmt.Errorf("reading the stored log object to resume: %w", err)
+	}
+	seed, err := io.ReadAll(io.LimitReader(rc, int64(maxBufferedAttemptBytes)+1))
+	if cerr := rc.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading the stored log object to resume: %w", err)
+	}
+	if len(seed) > maxBufferedAttemptBytes {
+		return nil, fmt.Errorf("stored log object exceeds the %d-byte object-sink buffer cap; not resuming", maxBufferedAttemptBytes)
+	}
+	w := newObjectWriter(o.ctx, o.store, func(int) string { return key }, false, 0, o.logger)
+	w.mu.Lock()
+	w.buf, w.flushed, w.stored = seed, len(seed), true
+	w.mu.Unlock()
+	return w, nil
 }
 
 // countSegments returns how many contiguous segments are stored for ref. A
@@ -248,6 +306,17 @@ func (o *ObjectSink) getRetrying(ctx context.Context, key string, attempts int) 
 	}
 }
 
+// Close releases the object store's client when it holds one (GCSStore keeps
+// an HTTP/2 connection pool), and does nothing for a store without Close. Call
+// it once no writer or reader of the sink is left: the server does so at
+// shutdown, after the agent streams have drained (#647).
+func (o *ObjectSink) Close() error {
+	if c, ok := o.store.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
+}
+
 // Read returns the attempt's stored log in either layout: its segments in order
 // followed by the single object, which holds the whole log of an attempt written
 // in the single layout and only the reaper's markers of a segmented one. A
@@ -265,19 +334,19 @@ func (o *ObjectSink) getRetrying(ctx context.Context, key string, attempts int) 
 // that object is missing as well, the probe's failure is what the caller gets,
 // not an absent log, so a store outage does not read as a task that logged
 // nothing.
-func (o *ObjectSink) Read(ref Ref) (io.ReadCloser, error) {
+func (o *ObjectSink) Read(ctx context.Context, ref Ref) (io.ReadCloser, error) {
 	if err := ref.validate(); err != nil {
 		return nil, err
 	}
 	if o.layout != ObjectLayoutSegmented {
-		rc, err := o.store.Get(o.ctx, o.key(ref))
+		rc, err := o.store.Get(ctx, o.key(ref))
 		if err == nil {
 			return rc, nil
 		}
 		if !errors.Is(err, ErrObjectNotFound) {
 			return nil, fmt.Errorf("reading log object: %w", err)
 		}
-		first, serr := o.store.Get(o.ctx, o.segmentKey(ref, 0))
+		first, serr := o.store.Get(ctx, o.segmentKey(ref, 0))
 		if serr != nil {
 			if !errors.Is(serr, ErrObjectNotFound) {
 				o.logger.Debug("probing log segment failed; treating the log as missing",
@@ -285,18 +354,18 @@ func (o *ObjectSink) Read(ref Ref) (io.ReadCloser, error) {
 			}
 			return nil, fmt.Errorf("reading log object: %w", err)
 		}
-		return &segmentReader{sink: o, ref: ref, cur: first, next: 1}, nil
+		return &segmentReader{ctx: ctx, sink: o, ref: ref, cur: first, next: 1}, nil
 	}
-	first, err := o.getRetrying(o.ctx, o.segmentKey(ref, 0), objectReadProbeAttempts)
+	first, err := o.getRetrying(ctx, o.segmentKey(ref, 0), objectReadProbeAttempts)
 	if err == nil {
-		return &segmentReader{sink: o, ref: ref, cur: first, next: 1}, nil
+		return &segmentReader{ctx: ctx, sink: o, ref: ref, cur: first, next: 1}, nil
 	}
 	probeFailed := !errors.Is(err, ErrObjectNotFound)
 	if probeFailed {
 		o.logger.Warn("probing log segment failed; reading the single object",
 			"key", logSafe(o.segmentKey(ref, 0)), "error", logSafe(err.Error()))
 	}
-	rc, gerr := o.store.Get(o.ctx, o.key(ref))
+	rc, gerr := o.store.Get(ctx, o.key(ref))
 	if gerr != nil {
 		if probeFailed && errors.Is(gerr, ErrObjectNotFound) {
 			// Nothing says the attempt has no log: the probe failed for a reason
@@ -313,6 +382,7 @@ func (o *ObjectSink) Read(ref Ref) (io.ReadCloser, error) {
 // the previous one is drained, then the single object (the reaper's markers) if
 // one exists.
 type segmentReader struct {
+	ctx    context.Context // the reader's, so later segments stop with its request
 	sink   *ObjectSink
 	ref    Ref
 	cur    io.ReadCloser
@@ -362,7 +432,7 @@ func (r *segmentReader) advance() error {
 		return nil
 	}
 	key := r.sink.segmentKey(r.ref, r.next)
-	rc, err := r.sink.getRetrying(r.sink.ctx, key, objectReadProbeAttempts)
+	rc, err := r.sink.getRetrying(r.ctx, key, objectReadProbeAttempts)
 	if err == nil {
 		r.cur, r.next = rc, r.next+1
 		return nil
@@ -373,7 +443,7 @@ func (r *segmentReader) advance() error {
 		return fmt.Errorf("probing log segment %d after %d served: %w", r.next, r.next, err)
 	}
 	r.tailed = true
-	rc, err = r.sink.getRetrying(r.sink.ctx, r.sink.key(r.ref), objectReadProbeAttempts)
+	rc, err = r.sink.getRetrying(r.ctx, r.sink.key(r.ref), objectReadProbeAttempts)
 	switch {
 	case err == nil:
 		r.cur = rc
@@ -587,11 +657,18 @@ func (w *objectWriter) runFlusher(ctx context.Context) {
 		case <-w.stop:
 			return
 		case <-ticker.C:
-			w.flushMu.Lock()
-			w.maybeFlush(ctx)
-			w.flushMu.Unlock()
+			w.flushTick(ctx)
 		}
 	}
+}
+
+// flushTick is one beat of the flusher: it waits for any Put in flight, then
+// flushes if the tail is due. Split out so a test can drive a beat directly
+// instead of racing the ticker.
+func (w *objectWriter) flushTick(ctx context.Context) {
+	w.flushMu.Lock()
+	defer w.flushMu.Unlock()
+	w.maybeFlush(ctx)
 }
 
 // WriteEvent appends an event to the in-memory buffer as a JSON line, matching

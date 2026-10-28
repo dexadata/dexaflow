@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -91,7 +90,7 @@ func newSyncCommandWith(prompts func(cmd *cobra.Command, serverURL string) bool)
 	var o syncOptions
 	cmd := &cobra.Command{
 		Use:   "sync <dir>",
-		Short: "Make the target run the DAGs of a workspace: deploy what changed, report or pause what is gone (Pro).",
+		Short: "Make the target run the DAGs of a workspace: deploy what changed, report or pause what is gone (Cluster).",
 		Long:  syncLong,
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) != 1 {
@@ -323,7 +322,7 @@ func syncDagOf(d dagStatus, rollback bool) syncDag {
 // absentDags lists the DAGs of the target that no project defines, each
 // with the pause --prune asks for when it is not paused yet.
 func absentDags(cmd *cobra.Command, serverURL, token string, projects []Project, prune bool) ([]syncDag, error) {
-	c, err := apiclient.New(serverURL, token, apiclient.WithHTTPClient(&http.Client{Timeout: statusReadTimeout}))
+	c, err := cliAPIClient(serverURL, token, apiclient.WithHTTPClient(cliHTTPClient(statusReadTimeout)))
 	if err != nil {
 		return nil, fmt.Errorf("building the API client: %w", err)
 	}
@@ -355,7 +354,7 @@ func absentDags(cmd *cobra.Command, serverURL, token string, projects []Project,
 // recorded on its DAG and the others still go through.
 func applySync(cmd *cobra.Command, rep *syncReport, token string, projects []Project, o syncOptions) {
 	results := syncDeploys(cmd, rep, projects, o)
-	c, cerr := apiclient.New(rep.Server, token)
+	c, cerr := cliAPIClient(rep.Server, token)
 	ctx, out := cmdContext(cmd), cmd.OutOrStdout()
 	for i := range rep.Dags {
 		d := &rep.Dags[i]

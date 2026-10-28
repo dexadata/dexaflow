@@ -162,6 +162,7 @@ drift_verdict() { # <first A p95> <second A p95>
 
 # ---------------------------------------------------------------- self-test
 
+# shellcheck disable=SC2046 # the series are passed one value per argument on purpose
 self_test() {
   local fail=0
   _eq() { [ "$1" = "$2" ] && { echo "  ok   $3"; return 0; }; echo "  FAIL $3: '$1' != '$2'"; fail=1; }
@@ -512,13 +513,14 @@ run_experiment() {
   wp_build_and_push "$out" || exp_die "the DAG image could not be built or pushed; no arm can run without it"
 
   local api_port="${API_PORT:-18080}" token
+  # shellcheck disable=SC2046 # wp_sets prints one --set pair per word
   stack_up leoflow "$WP_JWT" "$WP_PW" $(wp_sets A)
   stack_api_forward leoflow "$api_port"
   # The login identity is an EMAIL, not a name. FindUserByLogin calls
   # GetUserByEmail with whatever `username` carries
-  # (internal/storage/repository.go), and the bootstrap admin is created as
+  # (internal/storage/repo_users.go), and the bootstrap admin is created as
   # LEOFLOW_BOOTSTRAP_EMAIL or admin@dexaflow.local on the fresh stack this
-  # script installs (cmd/dexaflow-server/main.go; a database from before the
+  # script installs (cmd/dexaflow-server/bootstrap.go; a database from before the
   # rename keeps admin@leoflow.local, set WP_ADMIN_LOGIN for one). This passed
   # "admin" and got a 401 that the first real run spent a cluster to discover.
   local admin_login="${WP_ADMIN_LOGIN:-admin@dexaflow.local}"
@@ -627,6 +629,7 @@ wp_sets() { # <arm> -> --set arguments
 wp_run_arm() { # <arm> <index> <out> <api port> <token>
   local arm="$1" idx="$2" out="$3" port="$4" token="$5" i
   exp_log "arm $arm (position $idx in: $RUN_ORDER)"
+  # shellcheck disable=SC2046 # wp_sets prints one --set pair per word
   stack_up leoflow "$WP_JWT" "$WP_PW" $(wp_sets "$arm")
   stack_api_forward leoflow "$port"
   # A warm pool is empty on the first attempt of a dag_version, so the first

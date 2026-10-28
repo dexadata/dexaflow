@@ -65,18 +65,24 @@ func (f *fakeAPITokens) RevokeAPIToken(_ context.Context, _, id, ownerID string)
 func tokenServer(user *auth.User, store *fakeAPITokens, audit *fakeAuthAudit) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	deps := Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: user},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		Dags:          &fakeDagRepo{},
-		DagRuns:       &fakeRunRepo{},
-		Versions:      &fakeVersionRepo{created: true, change: rollbackChange()},
-		APITokens:     store,
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: user},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Dags:      &fakeDagRepo{},
+			DagRuns:   &fakeRunRepo{},
+			Versions:  &fakeVersionRepo{created: true, change: rollbackChange()},
+			APITokens: store,
+		},
 	}
 	if audit != nil {
-		deps.AuthAudit = audit
+		deps.Auth.AuthAudit = audit
 	}
-	return NewServer(deps)
+	return newTestServer(deps)
 }
 
 // TestDeployerRoleDeploysAndNothingElse: the deployer role registers a

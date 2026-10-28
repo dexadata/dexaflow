@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_variables_set/
 title: "dexaflow variables set"
 linkTitle: "variables set"
-weight: 72
+weight: 77
 ---
 
 Create or replace a variable (upsert).

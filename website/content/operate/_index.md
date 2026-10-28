@@ -9,21 +9,21 @@ menu:
     weight: 40
 ---
 
-Running Dexaflow in production: promotion from Lite to Pro, the deploy pipeline, and
+Running Dexaflow in production: promotion from Lite to Cluster, the deploy pipeline, and
 the day-2 operations that keep a control plane healthy.
 
 <div class="lf-cards">
-  <a class="lf-card lf-card--hero" href="/operate/first-pro-dag/">
+  <a class="lf-card lf-card--hero" href="/operate/first-cluster-dag/">
     <span class="lf-card__badge">Start here</span>
     <span class="lf-card__icon"><i class="fa-solid fa-rocket"></i></span>
-    <span class="lf-card__title">Deploy your first Pro DAG</span>
+    <span class="lf-card__title">Deploy your first Cluster DAG</span>
     <span class="lf-card__desc">Take a DAG from Lite to a Kubernetes control plane, end to end.</span>
     <span class="lf-card__more">Go to production →</span>
   </a>
   <a class="lf-card" href="/operate/deploy-prerequisites/">
     <span class="lf-card__icon"><i class="fa-solid fa-list-check"></i></span>
     <span class="lf-card__title">Deploy prerequisites &amp; why shortcuts fail</span>
-    <span class="lf-card__desc">Every gate a Pro deploy enforces, its exact error, and the fix.</span>
+    <span class="lf-card__desc">Every gate a Cluster deploy enforces, its exact error, and the fix.</span>
     <span class="lf-card__more">Check the gates →</span>
   </a>
   <a class="lf-card" href="/operate/cicd-deploy/">
@@ -35,7 +35,7 @@ the day-2 operations that keep a control plane healthy.
   <a class="lf-card" href="/operate/helm-chart/">
     <span class="lf-card__icon"><i class="fa-solid fa-ship"></i></span>
     <span class="lf-card__title">Helm chart</span>
-    <span class="lf-card__desc">Install and configure the Pro control plane on Kubernetes.</span>
+    <span class="lf-card__desc">Install and configure the Cluster control plane on Kubernetes.</span>
     <span class="lf-card__more">Install with Helm →</span>
   </a>
   <a class="lf-card" href="/operate/troubleshooting/">
@@ -47,7 +47,7 @@ the day-2 operations that keep a control plane healthy.
   <div class="lf-card">
     <span class="lf-card__icon"><i class="fa-solid fa-arrow-up-right-dots"></i></span>
     <span class="lf-card__title">Upgrades &amp; backup</span>
-    <span class="lf-card__desc">Day-2 lifecycle: <a href="/operate/upgrades/">upgrades</a> and <a href="/operate/backup-restore/">backup &amp; restore</a>.</span>
+    <span class="lf-card__desc">Day-2 lifecycle: <a href="/operate/upgrades/">upgrades</a> and <a href="/operate/backup-restore/">backup &amp; restore</a>, and a <a href="/operate/database-lost-restored-repointed/">database lost, restored or repointed</a>.</span>
   </div>
   <div class="lf-card">
     <span class="lf-card__icon"><i class="fa-solid fa-heart-pulse"></i></span>
@@ -57,6 +57,6 @@ the day-2 operations that keep a control plane healthy.
   <div class="lf-card">
     <span class="lf-card__icon"><i class="fa-solid fa-shield-halved"></i></span>
     <span class="lf-card__title">Security &amp; data-path internals</span>
-    <span class="lf-card__desc"><a href="/operate/agent-credential-transport/">Agent credential transport</a>, <a href="/operate/pro-tls/">Pro TLS</a>, the <a href="/operate/staging-volume/">staging volume</a>, and <a href="/operate/external-secrets/">external secrets</a>.</span>
+    <span class="lf-card__desc"><a href="/operate/agent-credential-transport/">Agent credential transport</a>, <a href="/operate/cluster-tls/">Cluster TLS</a>, the <a href="/operate/staging-volume/">staging volume</a>, and <a href="/operate/external-secrets/">external secrets</a>.</span>
   </div>
 </div>

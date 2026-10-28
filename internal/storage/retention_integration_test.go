@@ -65,8 +65,8 @@ func seedTenant(t *testing.T, pool *pgxpool.Pool, ctx context.Context, name stri
 }
 
 // seedRun inserts a run that ended `ago` before now (nil leaves ended_at NULL)
-// with one task instance per given state, each with a state-history row, an
-// archived attempt and an XCom index row.
+// with one task instance per given state, each with an archived attempt and an
+// XCom index row.
 func seedRun(t *testing.T, pool *pgxpool.Pool, ctx context.Context, tenant, dag, version, runID, state string, ago *time.Duration, tiStates ...string) string {
 	t.Helper()
 	var ended any
@@ -78,8 +78,6 @@ func seedRun(t *testing.T, pool *pgxpool.Pool, ctx context.Context, tenant, dag,
 	for i, st := range tiStates {
 		ti := mustUUID(t, pool, ctx, `INSERT INTO task_instances (tenant_id, dag_run_id, task_id, state, operator)
 			VALUES ($1, $2, $3, $4::task_state, 'python') RETURNING id::text`, tenant, id, fmt.Sprintf("t%d", i), st)
-		mustExec(t, pool, ctx, `INSERT INTO task_state_history (task_instance_id, from_state, to_state) VALUES ($1, 'none', $2::task_state)`, ti, st)
-		mustExec(t, pool, ctx, `INSERT INTO task_state_history (task_instance_id, from_state, to_state) VALUES ($1, 'queued', 'running')`, ti)
 		mustExec(t, pool, ctx, `INSERT INTO task_instance_history (task_instance_id, try_number, state) VALUES ($1, 1, 'failed')`, ti)
 		mustExec(t, pool, ctx, `INSERT INTO xcom_index (tenant_id, dag_run_id, task_id, key, redis_key, size_bytes, expires_at)
 			VALUES ($1, $2, $3, 'return_value', 'k', 1, now() + interval '1 day')`, tenant, id, fmt.Sprintf("t%d", i))
@@ -105,7 +103,9 @@ func seedRetention(t *testing.T, pool *pgxpool.Pool, ctx context.Context) retent
 	recent := 24 * time.Hour
 	f := retentionFixture{tenant: tenant, otherTenant: other, runs: map[string]string{}}
 	f.runs["old_success"] = seedRun(t, pool, ctx, tenant, dag, version, "old_success", "success", &old, "success", "success")
-	f.runs["old_failed"] = seedRun(t, pool, ctx, tenant, dag, version, "old_failed", "failed", &old, "failed", "upstream_failed", "skipped")
+	// removed is settled too: a clear marks it on a finished run's task
+	// instance whose task the run's new version dropped (ADR 0086).
+	f.runs["old_failed"] = seedRun(t, pool, ctx, tenant, dag, version, "old_failed", "failed", &old, "failed", "upstream_failed", "skipped", "removed")
 	// A run being cleared: still success with an old end, its task instance
 	// already reset to none. It is waiting to be scheduled, not settled.
 	f.runs["old_clearing"] = seedRun(t, pool, ctx, tenant, dag, version, "old_clearing", "success", &old, "success", "none")
@@ -176,7 +176,7 @@ func TestRetentionDeletesOnlyExpiredSettledRunsIntegration(t *testing.T) {
 	if calls < 10 {
 		t.Errorf("finished in %d calls; the row limit was not applied", calls)
 	}
-	want := retention.Counts{DagRuns: 2, TaskInstances: 5, TaskStateHistory: 10, TaskInstanceHistory: 5, XComIndex: 5}
+	want := retention.Counts{DagRuns: 2, TaskInstances: 6, TaskInstanceHistory: 6, XComIndex: 6}
 	if total != want {
 		t.Fatalf("deleted %+v, want %+v", total, want)
 	}
@@ -198,8 +198,8 @@ func TestRetentionDeletesOnlyExpiredSettledRunsIntegration(t *testing.T) {
 			t.Errorf("%d xcom rows of a deleted run remain", n)
 		}
 	}
-	if n := countFor(t, pool, ctx, `SELECT count(*) FROM task_state_history h JOIN task_instances ti ON ti.id = h.task_instance_id WHERE ti.dag_run_id = $1`, f.runs["old_active_ti"]); n != 4 {
-		t.Errorf("history of a kept run = %d rows, want 4", n)
+	if n := countFor(t, pool, ctx, `SELECT count(*) FROM task_instance_history h JOIN task_instances ti ON ti.id = h.task_instance_id WHERE ti.dag_run_id = $1`, f.runs["old_active_ti"]); n != 2 {
+		t.Errorf("attempt history of a kept run = %d rows, want 2", n)
 	}
 	if n := countFor(t, pool, ctx, `SELECT count(*) FROM task_instances WHERE dag_run_id = $1`, f.runs["old_clearing"]); n != 2 {
 		t.Errorf("a run being cleared lost task instances: %d left, want 2", n)
@@ -284,8 +284,8 @@ func TestRetentionCountEligibleIntegration(t *testing.T) {
 	if d := after.DagRuns - before.DagRuns; d != 2 {
 		t.Errorf("eligible runs delta = %d, want 2", d)
 	}
-	if d := after.TaskInstances - before.TaskInstances; d != 5 {
-		t.Errorf("eligible task instances delta = %d, want 5", d)
+	if d := after.TaskInstances - before.TaskInstances; d != 6 {
+		t.Errorf("eligible task instances delta = %d, want 6", d)
 	}
 	if d := after.AuditLog - before.AuditLog; d != 1 {
 		t.Errorf("eligible audit delta = %d, want 1", d)

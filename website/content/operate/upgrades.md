@@ -40,6 +40,7 @@ default**:
 | The `dexaflow` / `dexaflow-server` / `dexaflow-agent` binaries on `PATH` (and their `leoflow*` links) | Replaced by `install.sh`. |
 | `~/.dexaflow/python/` (managed CPython) | Pinned per release; replaced if the new release pins a different version. |
 | The SQL schema | The new binary applies any missing migrations on first start. |
+| `~/.dexaflow/docker-compose.yaml` (the Docker Postgres definition of a binary-only install) | The next `dexaflow lite` replaces it with the one the new binary ships and prints `↻ refreshed the managed compose (binary upgrade)`, as long as nobody edited it (a checksum of what was written is kept in `docker-compose.yaml.sha256`). An edited file is kept as is: Lite writes the new one beside it as `docker-compose.yaml.new` and warns once; merge what you need, or delete `docker-compose.yaml` and the next `dexaflow lite` writes the new one. A file written before the checksum existed is treated as edited unless it already equals the new one. |
 
 ## Drift detection
 
@@ -81,9 +82,9 @@ Before installing a newer tag on a Lite install you depend on:
    downgrade case.
 3. If anything looks off, restore from the tarball.
 
-## Pro — upgrade path
+## Cluster: upgrade path
 
-The Pro control plane upgrades with the standard Helm flow: re-run
+The Cluster control plane upgrades with the standard Helm flow: re-run
 `helm upgrade` against the same release, pointing the pinned image tag at the
 newer version.
 
@@ -133,7 +134,7 @@ Keeping a values file under version control and passing `-f` is better still.
 The chart runs a **pre-upgrade migrations Job** (`golang-migrate` against
 `database.url`) before the new `dexaflow-server` rolls out, so the schema is
 brought to parity before any new binary serves traffic. The same startup
-**drift detector** described above protects a Pro control plane from being run
+**drift detector** described above protects a Cluster control plane from being run
 against a database a newer binary already migrated. Use `--version <VERSION>`
 with the chart version — the [latest release](https://github.com/dexadata/dexaflow/releases)
 tag with the leading `v` stripped.
@@ -275,21 +276,35 @@ and one changes the table's `fillfactor`.
 | `039_infra_confirmed_at` | Adds `task_instances.infra_confirmed_at` and then, in a second transaction, stamps the infra failures that already exist as confirmed (#1406). | `ALTER TABLE` with `lock_timeout` 5 s, then an `UPDATE` |
 | `040_tenant_limits` | Adds the per-tenant limit columns and the daily run counter to `tenants`; every default means unlimited. | `ALTER TABLE` in a transaction |
 
-**Where they run.** On Pro, the chart's pre-install/pre-upgrade hook Job
+**Where they run.** On Cluster, the chart's pre-install/pre-upgrade hook Job
 (named `<release>-migrate`, or `<release>-dexaflow-migrate` when the release
 name does not contain the chart name; its pod carries
 `app.kubernetes.io/component: migrate`) runs
-`migrate -path /migrations -database $(LEOFLOW_DATABASE_URL) up` with the
+`dexaflow-migrate -path /migrations -database $(LEOFLOW_DATABASE_URL) up` with the
 release's `ghcr.io/dexadata/dexaflow-migrate` image, which bundles the SQL
-files with the golang-migrate CLI, before the new control plane rolls out and
-while the old replicas keep serving (their readiness check tolerates a
-migration in flight above their own schema version). The Job has
-`backoffLimit: 3`, so a failed pod is retried three times, and a failed Job
-is kept for inspection:
+files with Dexaflow's wrapper over the golang-migrate library, before the new
+control plane rolls out and while the old replicas keep serving (their
+readiness check tolerates a migration in flight above their own schema
+version). The Job has `backoffLimit: 3`, so a failed pod is retried three
+times, except for a failure a retry cannot fix: a missing database, a refused
+password, an unusable `database.url`, a missing `sslrootcert` file or a dirty
+version exits with a code of its own, and on Kubernetes 1.31 or newer the
+Job's `podFailurePolicy` fails it on that first pod. A failed Job is kept for
+inspection, and its log names the cause and the value to change
+([troubleshooting](/operate/troubleshooting/#the-migration-job) lists each
+message):
 
 ```sh
 kubectl -n <namespace> logs -l app.kubernetes.io/component=migrate --tail=50
 ```
+
+A control plane that starts on a schema that is absent or behind, because the
+Job failed, did not run (`migrations.enabled: false`) or the database lost its
+schema later, does not crash-loop: it stays up and not ready, says why on
+`/readyz` and in its log, and starts serving on its own once the migrations
+have run, so a failed upgrade stalls on unready new pods while the old ones
+keep serving
+([a control plane that is up but not ready](/operate/troubleshooting/#a-control-plane-that-is-up-but-not-ready)).
 
 On Lite, the new binary applies the same files from its embedded copy when
 `dexaflow lite` starts (or when you run `dexaflow db migrate`), one file at a
@@ -338,11 +353,15 @@ killed while it migrates: all of them leave the same two things behind.
 - **A dirty version.** golang-migrate writes the version a file moves to with
   `dirty = true` before it runs the file and clears the flag after it, so an
   interrupted file leaves `schema_migrations` at that version, dirty. Every
-  later run, the Job's three retries included, stops at
-  `Dirty database version N. Fix and force version.`; `dexaflow lite` refuses
-  to start with `database schema is marked dirty at version N`; a Pro control
-  plane refuses to boot against a dirty version too, while the replicas that
-  were already serving keep serving.
+  later run stops at it: the hook Job says `schema_migrations is dirty at
+  version N: a migration was interrupted` and quotes golang-migrate's
+  `Dirty database version N. Fix and force version.` on its second line, and
+  fails without retrying on Kubernetes 1.31 or newer; `dexaflow lite` refuses
+  to start with `database schema is marked dirty at version N`; a Cluster control
+  plane refuses to boot against a version dirty at the one it requires, and
+  waits, not ready, on one dirty at any other version, since a migration may
+  be in flight there, while the replicas that were already serving keep
+  serving.
 - **An INVALID index, sometimes.** An interrupted `CREATE INDEX CONCURRENTLY`
   (027, 032, 035) leaves an index with the final name that Postgres marks
   INVALID and never uses, but the name is taken. Those three files
@@ -380,14 +399,26 @@ holds, then re-run.
 | 027, 032, 035 (index build) | 27, 32, 35 | drop the INVALID index named above | 26, 31, 34 |
 | 028, 029, 030, 033, 034 (index drop) | 28, 29, 30, 33, 34 | run the file's `DROP INDEX CONCURRENTLY IF EXISTS` by hand (`idx_ti_run`, `idx_ti_task`, `idx_ti_running_heartbeat`, `idx_dag_versions_hash`, `idx_dag_versions_spec`); it is safe to repeat | the same number: the drop is now done |
 | 031 (`fillfactor`), 038 (`attempt_epoch`) | 31, 38 | nothing: each runs in a transaction with a 5 s `lock_timeout`, so nothing changed | 30, 37; retry when the table is quiet |
-| 036, 039, 040 (columns) | 36, 39, 40 | nothing: `ADD COLUMN IF NOT EXISTS`, and 039's backfill, can be repeated | 35, 38, 39 |
+| 036, 039, 040, 041 (columns) | 36, 39, 40, 41 | nothing: `ADD COLUMN IF NOT EXISTS`, and 039's backfill, can be repeated | 35, 38, 39, 40 |
 | 037 (role reconcile) | 37 | nothing: one transaction, rolled back, and the file is idempotent | 36 |
+| 042 (`pool_slots`) | 42 | nothing: the column and its `NOT VALID` check are added in one transaction with a 5 s `lock_timeout`, which rolled back if it was interrupted; if the closing `VALIDATE CONSTRAINT` was, both are there, and every statement of the file can be repeated | 41; retry when the table is quiet |
 | 043 (index build) | 43 | `DROP INDEX CONCURRENTLY IF EXISTS idx_dag_runs_tenant_settled_ended;` | 42 |
 | 044 (deployer role, API tokens) | 44 | nothing: one transaction, rolled back, and the file is idempotent | 43 |
+| 045 (device sign-ins) | 45 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and the file is idempotent | 44 |
+| 046 (`build_info`) | 46 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the column is not there yet | 45; retry when the table is quiet |
+| 047 (`removed` task state) | 47 | nothing: one transaction, rolled back, so the value is not there yet, and `ADD VALUE IF NOT EXISTS` can be repeated | 46 |
+| 048 (`dispatch_unavailable_since`) | 48 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the column is not there yet | 47; retry when the table is quiet |
+| 049 (`installation`) | 49 | nothing: one transaction, rolled back, so the table is not there yet, and the file is idempotent | 48 |
+| 050 (index build) | 50 | `DROP INDEX CONCURRENTLY IF EXISTS idx_audit_resource;` | 49 |
+| 051 (unwritten tables) | 51 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the tables are still there | 50; retry when `task_instances` is quiet |
+| 052 (tenant suspension) | 52 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 51 |
+| 053 (`next_run_at`) | 53 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the columns are not there yet | 52; retry when `dags` is quiet |
+| 054 (index build) | 54 | `DROP INDEX CONCURRENTLY IF EXISTS idx_dags_next_run;` | 53 |
 
-**How to run `migrate force`.** The hook image is the golang-migrate CLI plus
-the SQL files at `/migrations`, so the `version`, `force`, `goto` and `up`
-commands this page and the migration files name are all in it. From a
+**How to run `migrate force`.** The hook image is the `dexaflow-migrate`
+wrapper plus the SQL files at `/migrations`; it takes the golang-migrate CLI's
+`version`, `force`, `goto` and `up` with the same flags, so the commands this
+page and the migration files name all run in it. From a
 workstation that can reach the database, with the CLI (`go install -tags 'postgres'
 github.com/golang-migrate/migrate/v4/cmd/migrate@v4.20.1`, the version the
 image builds) and the repository checked out at the release tag:
@@ -457,7 +488,7 @@ the same way a retried up does.
 
 ### Rolling back 0.5.1 to 0.5.0
 
-**Pro.** `helm rollback <release> <revision>` rolls the chart and the images
+**Cluster.** `helm rollback <release> <revision>` rolls the chart and the images
 back and leaves the schema where 0.5.1 left it. That is supported: the 0.5.0
 control plane boots against a schema ahead of its own with a warning
 (`database schema is ahead of this binary; proceeding`), because every 0.5.1
@@ -483,7 +514,7 @@ backup page has the
 [worked example](/operate/backup-restore/#worked-example-roll-back-a-botched-upgrade).
 
 **Restoring the 0.5.0 schema.** Where you need the exact 0.5.0 schema back
-(Lite without a snapshot, or Pro before a `helm upgrade` to 0.5.0 with the
+(Lite without a snapshot, or Cluster before a `helm upgrade` to 0.5.0 with the
 hook on), run the down migrations from the highest migration your 0.5.1 build
 carries (040) to 026, with the CLI or
 the 0.5.1 migrate image, which carry the down files; the 0.5.0 image does not:
@@ -661,7 +692,7 @@ table, and existing tenants get `0`, which is unlimited. On a database with
 about one million task instances the migration took under 100 ms in the
 release review, and its down about 20 ms.
 
-**Rolling back 0.5.2 to 0.5.1.** On Pro, `helm rollback <release> <revision>`
+**Rolling back 0.5.2 to 0.5.1.** On Cluster, `helm rollback <release> <revision>`
 is supported and leaves the schema at 041: the 0.5.1 control plane boots
 against it with the warning `database schema is ahead of this binary;
 proceeding` and never reads the new column. As with 0.5.1, prefer it to a
@@ -694,7 +725,7 @@ and every tenant is unlimited again. Rows in every table are preserved.
 - **Migrated Airflow DAGs with `pool_slots` above 1 become weighted** (#1467).
   The next push of such a DAG makes each of those tasks take that many slots
   of its pool, so a pool sized for task count admits fewer of them at once.
-  DAGs that do not set `pool_slots` plan exactly as before. Pro only.
+  DAGs that do not set `pool_slots` plan exactly as before. Cluster only.
 - **Error messages no longer leak local detail.** A failed alert names its
   endpoint by scheme and host only, without the webhook URL (#1370), and a
   tenant schema error no longer names the server's working directory (#1402).
@@ -731,7 +762,7 @@ The migration waits at most 5 seconds for its lock. If a long transaction holds
 version 42 dirty and nothing changed: run `migrate force 41` and retry. Every
 statement can be repeated.
 
-**Rolling back 0.5.3 to 0.5.2.** On Pro, `helm rollback <release> <revision>`
+**Rolling back 0.5.3 to 0.5.2.** On Cluster, `helm rollback <release> <revision>`
 is supported and leaves the schema at 042: the 0.5.2 control plane boots
 against it with the warning `database schema is ahead of this binary;
 proceeding`, never reads the new column, and its inserts get the default. As
@@ -751,7 +782,7 @@ The down drops the column and its check. No other data changes.
 
 ### Upgrading to 0.5.4
 
-0.5.4 applies two migrations.
+0.5.4 applies four migrations, 043 to 046.
 
 - **`043_dag_runs_settled_ended_index`** builds the index the retention janitor
   reads, on `dag_runs (tenant_id, ended_at)` for runs in `success` or
@@ -772,14 +803,39 @@ The down drops the column and its check. No other data changes.
   role named `deployer` keeps it as it is. Creating `api_tokens` briefly takes
   a lock on `tenants` and `users` that blocks writes to them (not reads), with
   no `lock_timeout`. Every statement can be repeated.
+- **`045_cli_device_authorizations`** runs in one transaction, which took
+  about 20 ms. It creates the `cli_device_authorizations` table, where the
+  device sign-ins of `dexaflow auth login --device` wait for approval
+  ([From a machine with no browser](/operate/sso-google-workspace/#from-a-machine-with-no-browser)).
+  The table is new, so no existing row changes. Its foreign keys briefly take
+  a lock on `tenants` and `users` that blocks writes to them (not reads); the
+  migration waits at most 5 seconds for it. If it waits longer, the
+  transaction rolls back, golang-migrate marks version 45 dirty and nothing
+  changed: run `migrate force 44` and retry. Every statement can be repeated.
+- **`046_dag_versions_build_info`** runs in one transaction, which took about
+  10 ms. It adds the nullable `dag_versions.build_info` column, where the
+  register records where a version was built
+  ([Where a version was built](/operate/cicd-deploy/#where-a-version-was-built)).
+  The column has no default, so Postgres adds it to the catalog without
+  rewriting or scanning `dag_versions`, and every version registered before
+  the upgrade reads as having no build info. Adding it takes an `ACCESS
+  EXCLUSIVE` lock on `dag_versions`, which waits for every open transaction
+  that touched the table, and queries on the table queue behind it while it
+  waits. The migration waits at most 5 seconds for it. If it waits longer,
+  the transaction rolls back, golang-migrate marks version 46 dirty and
+  nothing changed: run `migrate force 45` and retry when the table is quiet.
+  The statement can be repeated.
 
-**Rolling back 0.5.4 to 0.5.3.** On Pro, `helm rollback <release> <revision>`
-is supported and leaves the schema at 044: the 0.5.3 control plane boots
+**Rolling back 0.5.4 to 0.5.3.** On Cluster, `helm rollback <release> <revision>`
+is supported and leaves the schema at 046: the 0.5.3 control plane boots
 against it with the warning `database schema is ahead of this binary;
-proceeding`. It ignores the new index, the `deployer` role and the API tokens,
-so tokens created on 0.5.4 stop authenticating until you move forward again.
+proceeding`. It ignores the new index, the `deployer` role, the API tokens,
+the device sign-ins and the `build_info` column, so tokens created on 0.5.4
+stop authenticating until you move forward again, a device sign-in in
+progress cannot finish, and the versions it registers record no build info
+(its inserts leave the column out and get `NULL`).
 As with earlier patches, prefer it to a `helm upgrade` that points at chart
-0.5.3, whose migration Job fails with `no migration found for version 44`; if
+0.5.3, whose migration Job fails with `no migration found for version 46`; if
 you must use that upgrade, pass `--set migrations.enabled=false` or run the
 down migrations first. On Lite, `dexaflow lite` 0.5.3 refuses a database above
 042, so the way back is the snapshot from
@@ -790,10 +846,15 @@ or the down migrations with the 0.5.4 CLI or migrate image:
 migrate -path migrations -database "$DATABASE_URL" goto 42
 ```
 
-The down of 044 drops `api_tokens`, which revokes every API token, deletes the
-built-in `deployer` roles with their user assignments, and deletes the
-`deploy:dag` permission, so a custom role granted it loses that grant. The down
-of 043 drops the index. No other data changes.
+The downs run from 046 to 043. The down of 046 drops `dag_versions.build_info`,
+so the build info recorded for every version is lost; the register audit
+entries keep a copy. The down of 045 drops `cli_device_authorizations`, so
+every device sign-in in progress is lost and has to be started again with
+`dexaflow auth login --device`; no token is kept there. The down of 044 drops
+`api_tokens`, which revokes every API token, deletes the built-in `deployer`
+roles with their user assignments, and deletes the `deploy:dag` permission, so
+a custom role granted it loses that grant. The down of 043 drops the index. No
+other data changes.
 
 **Encrypting Variables is opt-in** (#507). With the default
 `variable_encryption: off`, 0.5.4 stores Variables exactly as 0.5.3 does, so a
@@ -944,6 +1005,251 @@ back to 0.5.3 needs nothing on an existing install or on Lite, whose
 `config.yaml` names the address. A server install created by 0.5.4 that sets no
 bootstrap email gets a second admin, `admin@leoflow.local`, from the same
 bootstrap password when it starts on 0.5.3.
+
+### Upgrading to 0.5.5: three unused tables are no longer touched
+
+`scheduler_loops`, `replicas` and `task_state_history` (migrations 003 and
+004) were never written by any release (#1186). 0.5.5 stops touching them:
+the retention janitor no longer deletes from `task_state_history`, so
+`dexaflow_retention_rows_deleted_total` and `dexaflow_retention_rows_eligible`
+no longer have a `table="task_state_history"` series. The tables stay in the
+schema, and 0.5.6 drops them in a migration. A 0.5.5 control plane runs
+against either schema, so it keeps working through that migration and after a
+rollback from 0.5.6. Upgrading to 0.5.5 and rolling back to 0.5.4 need nothing
+for this change.
+
+0.5.5 also applies one migration, 047.
+
+- **`047_removed_task_state`** adds the `removed` task state of
+  [ADR 0086](/project/adrs/0086-clear-rebinds-a-finished-run-with-its-task-set/)
+  (`ALTER TYPE ... ADD VALUE`, catalog only). Its down migration is a no-op:
+  the value stays. On Lite, the previous `dexaflow lite` refuses a database
+  above its own schema, so before rolling back to 0.5.4 run
+  `migrate -path migrations -database "$DATABASE_URL" goto 46` with the 0.5.5
+  CLI or migrate image; the file says what the previous release does with a
+  `removed` task instance.
+
+### Upgrading to 0.5.6
+
+0.5.6 applies two migrations, 048 and 049.
+
+- **`048_task_instance_dispatch_unavailable_since`** runs in one transaction,
+  which took about 7 ms on a `task_instances` table of 1,000,000 rows. It adds
+  the nullable `task_instances.dispatch_unavailable_since` column, where the
+  scheduler keeps when the Kubernetes API became unavailable to a task it is
+  dispatching
+  ([A pod create that fails](/operate/scheduler-resilience/#a-pod-create-that-fails)).
+  The column has no default, so Postgres adds it to the catalog without
+  rewriting or scanning `task_instances`, and every existing row reads as not
+  waiting on an outage. Adding it takes an `ACCESS EXCLUSIVE` lock on
+  `task_instances`, which waits for every open transaction that touched the
+  table, and queries on the table queue behind it while it waits. The
+  migration waits at most 5 seconds for it. If it waits longer, the
+  transaction rolls back, golang-migrate marks version 48 dirty and nothing
+  changed: run `migrate force 47` and retry when the table is quiet. The
+  statement can be repeated.
+- **`049_installation`** creates the one-row `installation` table of
+  [ADR 0090](/project/adrs/0090-database-replaced-under-a-running-release/),
+  a new table that locks nothing else. The SQL leaves it empty: on Cluster the
+  migration Job writes the release's installation id into it after the
+  migrations, and into a ConfigMap, `<release>-installation`, that it creates
+  in the release namespace. On the upgrade to 0.5.6 the Job records an id for
+  the existing installation once; from then on a database that carries
+  another id, none, or no schema is refused as replaced instead of migrated
+  ([a replaced database](/operate/troubleshooting/#a-replaced-database)). The
+  Job now runs as its own ServiceAccount, `<release>-migrate`, with a Role on
+  that ConfigMap (rendered with `rbac.create`); with your own RBAC, grant it
+  before upgrading. On Lite the table stays empty and nothing is compared.
+
+**Rolling back 0.5.6.** On Cluster, `helm rollback <release> <revision>` leaves
+the schema at 049, and the previous control plane boots against it with the
+warning `database schema is ahead of this binary; proceeding`: it never reads
+or writes the column or the `installation` table. The installation ConfigMap
+stays, so upgrading again finds the same id in the database and the
+ConfigMap. On Lite, the previous `dexaflow lite` refuses a database
+above its own schema, so run the down migration first, with the 0.5.6 CLI or
+migrate image (it took about 8 ms on the same table):
+
+```sh
+migrate -path migrations -database "$DATABASE_URL" goto 47
+```
+
+That rolls back 049 and 048. A task that was
+waiting on an unavailable Kubernetes API at that moment falls back onto the
+dispatch-attempt budget of the previous release. No other data changes.
+
+### Upgrading to 0.5.7: platform resource defaults fill per dimension
+
+`executor.defaults.resources.cpu` and `executor.defaults.resources.memory` used
+to apply only to a task that declared no `resources` at all. A task that
+declared any part, for example only an `ephemeral_storage` limit or only a cpu
+request, got neither default and ran with no request or limit on the
+dimensions it left out. From 0.5.7 the control plane fills each of cpu, memory
+and ephemeral storage that a task leaves empty (neither request nor limit) with
+the platform default; a dimension the task sets at all is still entirely the
+task's ([#802](https://github.com/dexadata/dexaflow/issues/802)).
+
+Only clusters that set these defaults are affected, and only tasks that
+declare part of their resources. Those tasks now request more than before when
+they are next dispatched, which can leave them `Pending` on a cluster with no
+headroom. Before upgrading, find them: a task whose `resources` in `dag.json`
+names cpu but not memory, or the other way round, or only
+`ephemeral_storage`. Give the dimensions they leave out an explicit value if
+the platform default is too large for them. Nothing changes for a task with a
+resource unit (`executor.unit`), which sizes every task as before. Rolling
+back to 0.5.6 restores the old behavior with no other step.
+
+### Upgrading to 0.5.7: malformed placement fields are refused
+
+A task's `tolerations`, `affinity`, `topology_spread_constraints`,
+`resource_claims` and `resources.claims` used to be accepted as written and
+decoded only when the pod was built, where an entry with a misspelled key or a
+value of the wrong type was dropped and the task ran without it. From 0.5.7
+registration checks them against the Kubernetes types and refuses the DAG with
+`400`, naming the task and the field
+([#628](https://github.com/dexadata/dexaflow/issues/628),
+[placement allowlist](/operate/placement-allowlist/)).
+
+Versions registered before the upgrade keep running as they are. The next push
+of a DAG with such an entry, `dexaflow deploy` or a reload in `dexaflow dev`,
+is refused until it is fixed. Keys use the Kubernetes spelling, so
+`toleration_seconds` or `max_skew` written in `dexaflow.yaml` or `dag.py` are
+now errors: write `tolerationSeconds` and `maxSkew`. Before upgrading, look
+through the placement fields of your DAGs for keys that do not use the
+Kubernetes spelling. Rolling back to 0.5.6 restores the old behavior with no
+other step.
+
+### Upgrading to 0.5.8
+
+0.5.8 applies five migrations, 050 to 054.
+
+- **`050_audit_log_resource_index`** builds `idx_audit_resource` on
+  `audit_log (tenant_id, resource_id, occurred_at DESC, id DESC)`, the index the
+  event log filtered to one DAG reads; without it each page, and the count
+  beside it, read every audit entry of the tenant
+  ([#1612](https://github.com/dexadata/dexaflow/issues/1612)). It is built
+  `CONCURRENTLY`: reads and writes on `audit_log` keep going during the build,
+  which took about 0.15 s on 200,000 entries. Like 043, the build first waits
+  for every transaction already open in the database to finish, with no time
+  limit, and the hook waits with it (see "Why the hook can take longer than
+  usual" under [What the 0.5.1 migrations do](#what-the-051-migrations-do)).
+  If the build is interrupted, recover it as the table in
+  [An interrupted migration](#an-interrupted-migration) says.
+- **`051_drop_unwritten_tables`** drops `scheduler_loops`, `replicas` and
+  `task_state_history`, described below.
+- **`052_tenant_suspension`** adds `suspended_at`, `suspension_mode` and
+  `suspension_reason` to `tenants`, for the service API's tenant suspension
+  ([#2181](https://github.com/dexadata/dexaflow/issues/2181)). The columns are
+  empty or have a constant default, so nothing is rewritten; the transaction
+  waits at most 5 seconds for its lock on `tenants`. Previous releases never
+  read the columns and keep running against the schema, but they do not
+  honor a suspension: suspend a tenant only once every replica runs 0.5.8.
+- **`053_dag_next_run_at`** adds `next_run_at` and `schedule_epoch` to `dags`,
+  and **`054_dag_next_run_at_index`** builds `idx_dags_next_run` on it
+  `CONCURRENTLY` ([#2175](https://github.com/dexadata/dexaflow/issues/2175)).
+  The scheduler stores when each scheduled DAG is next due, at most an hour
+  ahead, and each tick lists only the DAGs that may be due instead of every
+  scheduled DAG. Nothing is backfilled: the first tick of a 0.5.8 leader
+  lists every scheduled DAG once, as before, and stores their times. 053
+  waits at most 5 seconds for its lock on `dags`; 054, like 050, first waits
+  for every open transaction to finish. Previous releases never read the
+  columns. During a rolling upgrade, a version registered or a run deleted
+  through a 0.5.7 replica does not clear the stored time, so the change
+  reaches the scheduler within the hour instead of on the next tick.
+
+#### Three unused tables are dropped
+
+Migration **`051_drop_unwritten_tables`** drops `scheduler_loops`, `replicas`
+and `task_state_history`, with their indexes, sequences and the
+`trim_scheduler_loops()` function (#1186). They were created by migrations 003
+and 004 for observability and audit, and no Dexaflow release ever wrote a row
+to them: leader election uses an advisory lock, the scheduler tick is measured
+by `dexaflow_scheduler_loop_duration_seconds`, and a task instance's attempts
+are in `task_instance_history`. Since 0.5.5 no release reads them either. On
+an install nobody touched by hand the three tables are empty and nothing is
+lost. **Any row someone inserted into them by hand is deleted by the
+upgrade**; to keep it, copy it out first. This shows whether there is
+anything to copy:
+
+```sql
+SELECT (SELECT count(*) FROM task_state_history) AS task_state_history,
+       (SELECT count(*) FROM scheduler_loops)    AS scheduler_loops,
+       (SELECT count(*) FROM replicas)           AS replicas;
+```
+
+The migration runs in one transaction, which took about 5 ms of SQL (40 ms
+with the CLI) on a database with 200,000 task instances: the tables are empty,
+so the drop does not depend on the size of the database. Dropping
+`task_state_history` removes its foreign key from `task_instances`, which
+takes an `ACCESS EXCLUSIVE` lock on `task_instances` until the transaction
+commits. The lock waits for every open transaction that touched the table,
+and reads and writes of task instances queue behind it while it waits. The
+migration waits at most 5 seconds for it. If it waits longer, the transaction
+rolls back, golang-migrate marks version 51 dirty and nothing changed: run
+`migrate force 50` and retry when the table is quiet. Every statement can be
+repeated.
+
+**While old replicas still run.** 0.5.5 and later never read or write the
+three tables, so their replicas keep working during the rollout. Upgrading
+straight from 0.5.4 is different: the 0.5.4 retention janitor deletes from
+`task_state_history`, so with `retention.dag_runs_days` set, a 0.5.4 leader
+running against the migrated schema fails every retention cycle that finds an
+expired run. It logs `retention cycle` at `ERROR` with
+`relation "task_state_history" does not exist`, deletes no run, and stops
+that cycle before the audit log too. Nothing is lost, and the cycle succeeds
+once a 0.5.8 replica leads. With retention off (the default) 0.5.4 never reads
+the three tables.
+
+**Rolling back 0.5.8.** On Cluster, `helm rollback <release> <revision>` leaves the
+schema at 054, and the previous control plane boots against it with the
+warning `database schema is ahead of this binary; proceeding`; it reads the
+event log through the new index without knowing it, never touches the three
+tables, and ignores tenant suspensions: a suspended tenant gets runs again
+until 0.5.8 is back. On Lite, run the down migrations first, with the 0.5.8 CLI or
+migrate image:
+
+```sh
+migrate -path migrations -database "$DATABASE_URL" goto 49
+```
+
+That drops the next due times and their index, drops the suspension columns
+(every suspended tenant runs again),
+recreates the three tables, empty, exactly as before, and drops the index
+`CONCURRENTLY`. Recreating the tables takes a lock on `task_instances`
+that blocks writes to it (not reads) for its few milliseconds, waiting at most
+5 seconds as the up does; it took about 15 ms of SQL (50 ms with the CLI) on
+the same database. Rows deleted by the upgrade do not come back. Rolling back
+further, to 0.5.4 with `retention.dag_runs_days` set, needs that down
+migration too, so its retention finds `task_state_history` again.
+
+## Ephemeral database loss (emptyDir Postgres)
+
+When evaluating Dexaflow with an in-cluster Postgres running on `emptyDir`
+storage (such as in local clusters or evaluation setups), the datastore has no
+persistence guarantees. Any pod recreation, node reboot, node drain, or
+Spot/preemptible reclamation destroys the database volume completely.
+
+Since 0.5.6 a Cluster release notices it
+([ADR 0090](/project/adrs/0090-database-replaced-under-a-running-release/)):
+the database no longer carries the release's installation id, so the migration
+Job refuses to migrate it, a booting control plane waits not ready, and one that
+was serving exits and restarts into that wait
+([a replaced database](/operate/troubleshooting/#a-replaced-database)). Nothing
+recreates an empty schema in its place, and nothing brings the data back: only
+a restore from a backup of this installation does.
+
+`helm install` and `helm upgrade` print a warning in the release notes when
+`database.url` points at an in-cluster Postgres Service, since the chart cannot
+see whether that Postgres has a volume.
+
+To prevent data loss:
+- Never run production control planes against `emptyDir` datastores.
+- For in-cluster Postgres, always back the deployment with a
+  PersistentVolumeClaim (PVC).
+- For production environments, point `database.url` at managed services such as
+  AWS RDS, GCP Cloud SQL, or Azure Database for PostgreSQL.
+- Regularly exercise database backup and restore drills (see
+  [Backup and restore](/operate/backup-restore/#regular-restore-drills)).
 
 ## Related issues
 

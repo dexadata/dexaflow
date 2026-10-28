@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -24,11 +23,6 @@ import (
 // modes, the script and RECORD rewrites, the image config), so no image of
 // the old layout is reused.
 const wheelKeyFormat = 2
-
-// hostOS is the operating system the CLI runs on. It is a variable only so
-// the tests of this package can stand on another one; nothing else assigns
-// it.
-var hostOS = runtime.GOOS
 
 // manylinuxTags are the glibc minors uv knows a manylinux tag for, newest
 // first, from the ceiling the dependency layer asks wheels for: Debian 12
@@ -82,7 +76,7 @@ type wheelPlan struct {
 // platform when it can; otherwise it returns nil and why not, for the
 // builder line.
 func planWheels(ctx context.Context, u *uvTool, cfg *domain.LeoflowConfig, deps []string, reader baseReader, base build.Pinned, platforms []string) (plan *wheelPlan, why string) {
-	if why := wheelBlocker(cfg, deps, platforms); why != "" {
+	if why := wheelBlocker(ctx, cfg, deps, platforms); why != "" {
 		return nil, why
 	}
 	if err := u.findPython(ctx); err != nil {
@@ -110,9 +104,16 @@ func planWheels(ctx context.Context, u *uvTool, cfg *domain.LeoflowConfig, deps 
 
 // wheelBlocker says why a project cannot take the dependency layer before
 // anything is read: a platform with no wheel tag, system packages, a
-// dependency that is not a plain requirement by name.
-func wheelBlocker(cfg *domain.LeoflowConfig, deps []string, platforms []string) string {
-	if hostOS == "windows" {
+// dependency that is not a plain requirement by name. The operating system
+// is cliDeps.hostOS, so the tests of this package can stand on another one.
+func wheelBlocker(ctx context.Context, cfg *domain.LeoflowConfig, deps []string, platforms []string) string {
+	return wheelBlockerOn(depsFrom(ctx).hostOS, cfg, deps, platforms)
+}
+
+// wheelBlockerOn is wheelBlocker for a CLI running on goos, such as the
+// Linux runner of a pipeline that `ci init` writes from another machine.
+func wheelBlockerOn(goos string, cfg *domain.LeoflowConfig, deps []string, platforms []string) string {
+	if goos == "windows" {
 		return "the dependency layer does not run on Windows yet"
 	}
 	for _, p := range platforms {

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -25,16 +24,81 @@ func (r *Repository) TenantLimits(ctx context.Context, tenant string) (domain.Te
 }
 
 func loadTenantLimits(ctx context.Context, q *queries.Queries, tid pgtype.UUID) (domain.TenantLimits, error) {
+	limits, _, err := loadTenantState(ctx, q, tid)
+	return limits, err
+}
+
+// loadTenantState reads a tenant's limits and its suspension from the one row
+// that holds both.
+func loadTenantState(ctx context.Context, q *queries.Queries, tid pgtype.UUID) (domain.TenantLimits, domain.TenantSuspension, error) {
 	row, err := q.GetTenantLimits(ctx, tid)
 	if err != nil {
-		return domain.TenantLimits{}, fmt.Errorf("loading tenant limits: %w", mapNotFound(err))
+		return domain.TenantLimits{}, domain.TenantSuspension{}, fmt.Errorf("loading tenant limits: %w", mapNotFound(err))
+	}
+	var suspension domain.TenantSuspension
+	if row.SuspendedAt.Valid && row.SuspensionMode != nil {
+		suspension = domain.TenantSuspension{
+			Mode:   domain.SuspensionMode(*row.SuspensionMode),
+			Reason: row.SuspensionReason,
+			Since:  row.SuspendedAt.Time,
+		}
 	}
 	return domain.TenantLimits{
 		MaxDags:                    int(row.MaxDags),
 		MaxRunsPerDay:              int(row.MaxRunsPerDay),
 		MinScheduleIntervalSeconds: int(row.MinScheduleIntervalSeconds),
 		MaxTaskPoolSlots:           int(row.MaxTaskPoolSlots),
-	}, nil
+	}, suspension, nil
+}
+
+// TenantSuspension returns the tenant's suspension; the zero value means it is
+// not suspended.
+func (r *Repository) TenantSuspension(ctx context.Context, tenant string) (domain.TenantSuspension, error) {
+	tid, err := r.tenantID(ctx, tenant)
+	if err != nil {
+		return domain.TenantSuspension{}, err
+	}
+	_, suspension, err := loadTenantState(ctx, r.q, tid)
+	return suspension, err
+}
+
+// SuspendTenant suspends the tenant, or changes the mode or reason of its
+// suspension (#2181). From then on no new run is created for it, manual or
+// scheduled; its DAGs keep their own paused flag. Under stop it also fails the
+// tenant's queued and running task instances; the scheduler repeats that on
+// every tick, so an attempt dispatched while this call ran is stopped too. An
+// unknown tenant is ErrNotFound and a suspension the engine cannot apply is
+// ErrValidation.
+func (r *Repository) SuspendTenant(ctx context.Context, tenant string, s domain.TenantSuspension) error {
+	if err := s.Validate(); err != nil {
+		return err
+	}
+	tid, err := r.tenantID(ctx, tenant)
+	if err != nil {
+		return err
+	}
+	if err := r.q.SuspendTenant(ctx, queries.SuspendTenantParams{TenantID: tid, Mode: string(s.Mode), Reason: s.Reason}); err != nil {
+		return fmt.Errorf("suspending tenant: %w", err)
+	}
+	if s.Mode == domain.SuspensionStop {
+		if _, err := r.q.FailStoppedTenantTaskInstances(ctx, tid); err != nil {
+			return fmt.Errorf("stopping the tenant's task instances: %w", err)
+		}
+	}
+	return nil
+}
+
+// ResumeTenant lifts the tenant's suspension. Resuming a tenant that is not
+// suspended does nothing; an unknown tenant is ErrNotFound.
+func (r *Repository) ResumeTenant(ctx context.Context, tenant string) error {
+	tid, err := r.tenantID(ctx, tenant)
+	if err != nil {
+		return err
+	}
+	if err := r.q.ResumeTenant(ctx, tid); err != nil {
+		return fmt.Errorf("resuming tenant: %w", err)
+	}
+	return nil
 }
 
 // applyTenantLimits stores the limits the update sets and leaves the others. A
@@ -92,10 +156,10 @@ func checkRegistrationLimits(ctx context.Context, q *queries.Queries, tid pgtype
 	if err != nil {
 		return err
 	}
-	if serr := checkScheduleInterval(spec, limits.MinScheduleIntervalSeconds); serr != nil {
+	if serr := domain.CheckScheduleInterval(spec, limits.MinScheduleIntervalSeconds); serr != nil {
 		return serr
 	}
-	if terr := checkTaskPoolSlots(spec, limits.MaxTaskPoolSlots); terr != nil {
+	if terr := domain.CheckTaskPoolSlots(spec, limits.MaxTaskPoolSlots); terr != nil {
 		return terr
 	}
 	if limits.MaxDags <= 0 {
@@ -117,40 +181,6 @@ func checkRegistrationLimits(ctx context.Context, q *queries.Queries, tid pgtype
 	return nil
 }
 
-// checkTaskPoolSlots refuses a DAG with a task larger than maxSlots, naming
-// the task and both numbers (ADR 0066 §5). 0 is unlimited.
-func checkTaskPoolSlots(spec domain.DAGSpec, maxSlots int) error {
-	if maxSlots <= 0 {
-		return nil
-	}
-	for _, t := range spec.Tasks {
-		if slots := t.EffectivePoolSlots(); slots > maxSlots {
-			return domain.Safef(domain.ErrLimitExceeded,
-				"dag %q cannot be registered: task %q is size %d (pool_slots), above the tenant limit max_task_pool_slots of %d",
-				spec.DagID, t.TaskID, slots, maxSlots)
-		}
-	}
-	return nil
-}
-
-// checkScheduleInterval refuses a schedule whose shortest gap between two runs
-// is below minSeconds. A schedule that never fires on a cron passes.
-func checkScheduleInterval(spec domain.DAGSpec, minSeconds int) error {
-	if minSeconds <= 0 || spec.Schedule == nil {
-		return nil
-	}
-	gap, ok := domain.MinScheduleInterval(*spec.Schedule)
-	if !ok {
-		return nil
-	}
-	if limit := time.Duration(minSeconds) * time.Second; gap < limit {
-		return domain.Safef(domain.ErrLimitExceeded,
-			"dag %q cannot be registered: schedule %q runs as often as every %s, below the tenant limit min_schedule_interval_seconds of %d (%s)",
-			spec.DagID, *spec.Schedule, gap, minSeconds, limit)
-	}
-	return nil
-}
-
 // runCreation is one DAG run to create under the tenant's daily run cap
 // (createRunWithinDailyLimit).
 type runCreation struct {
@@ -166,7 +196,8 @@ type runCreation struct {
 }
 
 // createRunWithinDailyLimit charges one run to the tenant's max_runs_per_day
-// and then creates it. A tenant without the limit runs the insert on q as
+// and then creates it. A suspended tenant is refused first, with
+// ErrTenantSuspended and nothing charged or written (#2181). A tenant without the limit runs the insert on q as
 // before. A tenant with it runs the charge and the insert in one transaction,
 // charge first: the charge locks the tenant row, so concurrent triggers cannot
 // both take the last run of the day, and a refusal (zero rows from the
@@ -175,9 +206,12 @@ type runCreation struct {
 // An insert that creates nothing (a scheduled slot that already exists) or
 // fails rolls the whole transaction back, charge included.
 func createRunWithinDailyLimit(ctx context.Context, q *queries.Queries, pool txBeginner, tid pgtype.UUID, run runCreation) error {
-	limits, err := loadTenantLimits(ctx, q, tid)
+	limits, suspension, err := loadTenantState(ctx, q, tid)
 	if err != nil {
 		return err
+	}
+	if suspension.Active() {
+		return suspension.RefusalError()
 	}
 	if limits.MaxRunsPerDay <= 0 {
 		_, ierr := run.insert(q)

@@ -28,10 +28,18 @@ func (credAuthn) Authenticate(context.Context, string) (*auth.User, error) {
 }
 
 func rateLimitedServer(limit int) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: credAuthn{},
-		RateLimiter: auth.NewRateLimiter(limit, time.Minute),
-		CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: credAuthn{},
+			RateLimiter:   auth.NewRateLimiter(limit, time.Minute),
+			TokenTTLSecs:  3600,
+		},
 	})
 }
 

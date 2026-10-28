@@ -3,10 +3,12 @@ package scheduler
 import "time"
 
 // Dispatch-failure backoff (ADR 0031 Amendment A). A synchronous dispatch
-// failure (kube-apiserver unreachable, RBAC denied, quota, admission reject) is
-// not retried every tick: the task instance records a backed-off next attempt,
-// and after dispatchMaxAttempts the planner fails it as dispatch_failed rather
-// than looping forever.
+// failure the apiserver answered (RBAC denied, admission reject, an invalid
+// spec) is not retried every tick: the task instance records a backed-off next
+// attempt, and after dispatchMaxAttempts the planner fails it as
+// dispatch_failed rather than looping forever. An unavailable API is bounded by
+// dispatchUnavailableWindow instead (ADR 0093), and quota backpressure is not
+// bounded (ADR 0053).
 const (
 	// dispatchBackoffBase is the delay after the first failed dispatch.
 	dispatchBackoffBase = 5 * time.Second
@@ -23,6 +25,17 @@ const (
 	// dispatchMaxAttempts (ADR 0051 Phase 1). Past this, a task that keeps hitting
 	// infra faults fails terminally instead of re-placing forever.
 	infraMaxAttempts = 6
+	// dispatchUnavailableWindow bounds how long a task is re-offered while the
+	// Kubernetes API is unavailable to it (a 503, a 504, a 500, a connection
+	// refused or reset, the client deadline), off the dispatch-attempt budget
+	// (ADR 0093). It outlasts a managed control plane upgrade or an etcd leader
+	// change; an API that stays down longer surfaces as dispatch_failed.
+	dispatchUnavailableWindow = 15 * time.Minute
+	// dispatchUnavailableMaxDelay caps the hold between two re-offers during an
+	// outage, so a task is dispatched again within a minute of the API coming
+	// back. The hold below it equals the time already spent in the outage
+	// (doubling from dispatchBackoffBase).
+	dispatchUnavailableMaxDelay = time.Minute
 )
 
 // dispatchBackoff returns the delay before the next dispatch attempt after

@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_variables_delete/
 title: "dexaflow variables delete"
 linkTitle: "variables delete"
-weight: 69
+weight: 74
 ---
 
 Delete a variable.

@@ -52,11 +52,11 @@ func (s *RetentionStore) TenantIDs(ctx context.Context) ([]string, error) {
 // DeleteFinishedRuns removes, in one transaction, at most rowLimit rows of up
 // to maxRuns of the tenant's settled runs that ended before cutoff, run rows
 // included. The runs are locked first (which re-checks that they are still
-// eligible), then their rows go children first: state and attempt history,
-// XCom index, task instances, and last the runs whose children are all gone.
-// When the limit runs out inside a run, the transaction commits what it
-// removed and the next call picks the run up again, so no transaction grows
-// with the size of a DAG. The FK cascades find nothing left to do.
+// eligible), then their rows go children first: attempt history, XCom index,
+// task instances, and last the runs whose children are all gone. When the
+// limit runs out inside a run, the transaction commits what it removed and the
+// next call picks the run up again, so no transaction grows with the size of a
+// DAG. The FK cascades find nothing left to do.
 func (s *RetentionStore) DeleteFinishedRuns(ctx context.Context, tenant string, cutoff time.Time, maxRuns, rowLimit int) (retention.Counts, error) {
 	tid, err := parseUUID(tenant)
 	if err != nil {
@@ -146,9 +146,6 @@ func deleteRunRows(ctx context.Context, q *queries.Queries, tid pgtype.UUID, run
 		n   *int64
 		del func(int32) (int64, error)
 	}{
-		{&c.TaskStateHistory, func(n int32) (int64, error) {
-			return q.DeleteTaskStateHistoryOfRuns(ctx, queries.DeleteTaskStateHistoryOfRunsParams{TenantID: tid, RunIds: runs, RowLimit: n})
-		}},
 		{&c.TaskInstanceHistory, func(n int32) (int64, error) {
 			return q.DeleteTaskInstanceHistoryOfRuns(ctx, queries.DeleteTaskInstanceHistoryOfRunsParams{TenantID: tid, RunIds: runs, RowLimit: n})
 		}},

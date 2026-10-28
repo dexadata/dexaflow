@@ -124,7 +124,7 @@ func (c CodeLayer) Build(ctx context.Context, req Request) (Result, error) {
 	}
 	pinned, err := c.Registry.Resolve(ctx, req.Image)
 	if err != nil {
-		return Result{}, fmt.Errorf("reading the digest of the pushed image %q: %w", req.Image, err)
+		return res, fmt.Errorf("%w: reading the digest of the pushed image %q: %w", ErrPinRead, req.Image, err)
 	}
 	res.Ref = pinned.Ref
 	return res, nil
@@ -195,6 +195,18 @@ func (c CodeLayer) wheelDeps(ctx context.Context, req Request, w *DependencyLaye
 	return pinned, nil
 }
 
+// depsRequest is the request that builds and pushes the dependency image
+// under image from dockerfile in the empty directory dir, for the build
+// req. It keeps the secrets and environment of req, since the generated
+// Dockerfile mounts the package index secret for its pip install, and drops
+// its build args, which no generated Dockerfile reads.
+func depsRequest(req Request, image, dockerfile, dir string) Request {
+	return Request{
+		Image: image, Dockerfile: dockerfile, ContextDir: dir, ContextFiles: []LayerFile{}, Platforms: req.Platforms,
+		Push: true, Pin: true, Secrets: req.Secrets, Env: req.Env, Stdout: req.Stdout, Stderr: req.Stderr,
+	}
+}
+
 // daemonDeps has the daemon, or the remote builder in its place, build and
 // push the dependency image under image, from its Dockerfile in an empty
 // directory (an empty listed context for the remote builder), and reads it
@@ -209,10 +221,7 @@ func (c CodeLayer) daemonDeps(ctx context.Context, req Request, image string) (P
 	if werr := os.WriteFile(dockerfile, []byte(c.Split.Dockerfile), 0o600); werr != nil {
 		return Pinned{}, fmt.Errorf("writing the Dockerfile of the dependency image: %w", werr)
 	}
-	res, err := c.depsBuilder().Build(ctx, Request{
-		Image: image, Dockerfile: dockerfile, ContextDir: dir, ContextFiles: []LayerFile{}, Platforms: req.Platforms,
-		Push: true, Pin: true, Stdout: req.Stdout, Stderr: req.Stderr,
-	})
+	res, err := c.depsBuilder().Build(ctx, depsRequest(req, image, dockerfile, dir))
 	if err != nil {
 		return Pinned{}, fmt.Errorf("building the dependency image %s: %w", image, err)
 	}

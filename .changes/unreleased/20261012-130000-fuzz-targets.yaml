@@ -1,8 +1,0 @@
-kind: Added
-body: |-
-  **Fuzz targets for the parsers of untrusted input.** `dexaflow.yaml`, `dag.json`
-  and its schedule, the scheduler's slot planning, the agent's bearer token and
-  termination message, and the API's cursor and paging parameters now have
-  native Go fuzz targets. `make test` replays their seeds and committed failing
-  inputs; `make fuzz` and a nightly Fuzz workflow run them open-ended. (#1571)
-time: 2026-10-12T13:00:00.000000000+00:00

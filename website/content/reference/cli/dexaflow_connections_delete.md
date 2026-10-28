@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_connections_delete/
 title: "dexaflow connections delete"
 linkTitle: "connections delete"
-weight: 27
+weight: 30
 ---
 
 Delete a connection.

@@ -146,6 +146,8 @@ message TaskSpec {
     repeated string declared_variables = 24;         // The variable names this task declared (dexaflow.yaml). The agent asks a pod-side external secret resolver only for declared names, so declaration stays the scope authority for externally-sourced secrets too (ADR 0060 / ADR 0055).
     repeated string declared_connections = 25;       // The connection ids this task declared (dexaflow.yaml). Same role as declared_variables for connections.
     int64 attempt_epoch = 26;                         // Which execution of this try the agent is (ADR 0051 amendment), read from its verified token; 0 for a token minted before the epoch existed. Informational for the agent: the control plane fences on the token, never on this field.
+    string run_conf_json = 27;                        // The DagRun's conf alone, JSON-encoded ("{}" for a run without one), not layered with param defaults as params_json is (#1843). Stamped as LEOFLOW_RUN_CONF -> context dag_run.conf. Empty from a control plane that predates the field; the runtime then reports dag_run.conf as not provided.
+    string run_type = 28;                             // The DagRun's type in the Task SDK's DagRunType vocabulary (manual, scheduled, backfill, asset_triggered) (#1843). Stamped as LEOFLOW_RUN_TYPE -> context dag_run.run_type. Empty leaves it unset.
 }
 
 // XComUpstreams is the list of upstream task_ids whose return_values feed one
@@ -266,6 +268,17 @@ message WorkAssignment {
     string dag_version_id = 6;  // the pool identity this assignment belongs to
     int64 lease_seconds = 7;    // ack deadline: unacked within it => the attempt is reclaimed
     int64 attempt_epoch = 8;    // the execution of try_number this assignment is (ADR 0051 amendment); also carried in attempt_token, which is what the control plane fences on
+    // dag_source is the version's dag.py when the version runs in source mode
+    // (ADR 0067 §3, ADR 0095), empty otherwise. The worker writes it as dag.py
+    // into a per-attempt directory and runs the attempt from there, as a
+    // dedicated source-mode pod runs from its projected dag.py. Only a worker
+    // that registered with source_delivery is sent one. At most
+    // MaxSourceModeBytes (128 KiB), the cap register and dispatch apply.
+    bytes dag_source = 9;
+    // dag_source_sha256 is the lowercase hex SHA-256 of dag_source, set with
+    // it. The worker refuses the assignment when the text it received does not
+    // match.
+    string dag_source_sha256 = 10;
 }
 
 // WorkerMessage is everything a warm worker sends UP the AwaitAssignment stream:
@@ -292,6 +305,21 @@ message WorkerRegister {
     // is a locator, not a credential: the worker's authenticated identity still
     // comes from its bearer token on the stream context, never from this field.
     string pod_name = 2;
+    // attempt_home_sweep confirms that this worker runs with a per-attempt HOME
+    // and empties /tmp and /dev/shm before and after every attempt (the
+    // read-only-root isolation mode, LEOFLOW_WARM_ATTEMPT_HOME=1). A worker
+    // built on an older runtime never sets it. With
+    // execution.warm_read_only_root_filesystem on, the control plane logs and
+    // meters a registration that does not confirm the sweep, and refuses it
+    // when execution.warm_require_attempt_home_sweep is on too, so attempts run
+    // on dedicated pods instead of on a worker that would leak those paths.
+    bool attempt_home_sweep = 3;
+    // source_delivery confirms that this worker writes a WorkAssignment's
+    // dag_source as dag.py and runs the attempt from it (ADR 0095). A worker
+    // built on an older runtime never sets it, and the control plane never
+    // places a source-mode attempt on such a worker: the attempt takes a
+    // dedicated pod instead.
+    bool source_delivery = 4;
 }
 
 // AssignmentAck answers a WorkAssignment. started=true means the worker began the

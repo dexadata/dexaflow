@@ -119,6 +119,9 @@ type dryRunAnswer struct {
 	DagCreated bool     `json:"dag_created"`
 	IsPaused   bool     `json:"is_paused"`
 	Warnings   []string `json:"warnings"`
+	// TaskPods is what the version's task pods would run as (#1889), nil
+	// from an older server.
+	TaskPods *taskPodsAnswer `json:"task_pods"`
 }
 
 // dryImage is the image a dry run is sent in the spec: ref, pinned by
@@ -136,10 +139,10 @@ type dryImage struct {
 // for version and origin. A refusal of the placeholder image or a conflict
 // when img does not decide them, an answer that is no dry run (an older
 // replica's 404), and one the server could not give (5xx, 429) are notes on
-// warn. It
-// prints what the register would do to out and the server's warnings to
-// warn.
-func serverDryRun(ctx context.Context, out, warn io.Writer, p versionPost, specPath string, img dryImage, version string, origin labelOrigin) ([]string, error) {
+// warn, and return no answer. It prints what the register would do, with
+// the links and checks the answer carries, to out and the server's warnings
+// to warn, and returns the answer.
+func serverDryRun(ctx context.Context, out, warn io.Writer, p versionPost, specPath string, img dryImage, version string, origin labelOrigin) (*dryRunAnswer, error) {
 	data, err := os.ReadFile(specPath) //nolint:gosec // the compiled dag.json of the DAG directory
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", specPath, err)
@@ -177,8 +180,9 @@ func serverDryRun(ctx context.Context, out, warn io.Writer, p versionPost, specP
 		//nolint:errcheck // advisory
 		fmt.Fprintf(warn, "warning: the server: %s\n", w)
 	}
-	_, werr := fmt.Fprintf(out, "preflight:  the server would register %s %s as %s\n", p.dagID, version, dryRunOutcome(answer))
-	return answer.Warnings, werr
+	_, werr := fmt.Fprintf(out, "preflight:  the server would register %s %s as %s\n%s", p.dagID, version, dryRunOutcome(answer),
+		readServerExtras(body).lines())
+	return &answer, werr
 }
 
 // imageAllowlistRefusal is the server's refusal of an image the operator's

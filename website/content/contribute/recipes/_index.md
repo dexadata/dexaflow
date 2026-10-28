@@ -19,6 +19,7 @@ commands to run and what to check.
 - [Add a CLI command or flag](add-a-cli-command-or-flag/)
 - [Add a connector](add-a-connector/)
 - [Cut a release candidate](cut-a-release-candidate/)
+- [Fix a bug](fix-a-bug/)
 - [Fix a flaky end-to-end job](fix-a-flaky-end-to-end-job/)
 
 Reviewing a change rather than making one? See the

@@ -195,8 +195,11 @@ def test_operator_non_serialisable_arg_is_loud_reject(monkeypatch, tmp_path):
 def test_operator_on_failure_callback_is_marked_not_rejected(monkeypatch, tmp_path):
     """on_failure_callback is a callable Dexaflow cannot serialise into dag.json,
     but instead of the general non-serialisable reject (ADR 0040 A1.1) it is
-    ACCEPTED and marked on the task (#424 inc 4): the runtime re-imports dag.py and
-    runs it in the task process on failure. The callable itself is not carried."""
+    ACCEPTED and marked on the task (#424 inc 4). The callable itself is not
+    carried: the entrypoint names the module the runtime imports to read it off
+    the task (#484). The marker alone proves nothing runs, so the runtime half is
+    runtime/python/tests/test_task_sdk_operator_callback.py, which fails when the
+    callback does not fire."""
     spec = _compile(monkeypatch, tmp_path, """
         from airflow.sdk import DAG
         from airflow.providers.snowflake.operators.snowflake import SQLExecuteQueryOperator
@@ -209,8 +212,20 @@ def test_operator_on_failure_callback_is_marked_not_rejected(monkeypatch, tmp_pa
     q = _task(spec, "q")
     assert q["type"] == "airflow_operator"
     assert q.get("on_failure_callback") is True
+    assert q.get("entrypoint") == "dag:q"
     # the callable must NOT leak into the serialised operator args
     assert "on_failure_callback" not in q.get("operator_args", {})
+
+
+def test_operator_without_callback_has_no_entrypoint(monkeypatch, tmp_path):
+    """Only a callback makes the runtime import dag.py for an operator (#484)."""
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.sdk import DAG
+        from airflow.providers.snowflake.operators.snowflake import SQLExecuteQueryOperator
+        with DAG("g"):
+            SQLExecuteQueryOperator(task_id="q", conn_id="sf", sql="SELECT 1")
+    """)
+    assert "entrypoint" not in _task(spec, "q")
 
 
 def test_python_task_on_failure_callback_is_marked(monkeypatch, tmp_path):
@@ -488,7 +503,8 @@ def test_python_task_on_failure_callback_as_list_is_marked(monkeypatch, tmp_path
 
 def test_operator_on_failure_callback_as_list_is_marked(monkeypatch, tmp_path):
     """Same for a generically-captured provider operator, whose kwargs arrive via
-    __leoflow_args__ rather than as attributes."""
+    __leoflow_args__ rather than as attributes. That the callback then runs is
+    asserted in runtime/python/tests/test_task_sdk_operator_callback.py (#484)."""
     spec = _compile(monkeypatch, tmp_path, """
         from airflow.sdk import DAG
         from airflow.providers.snowflake.operators.snowflake import SQLExecuteQueryOperator
@@ -499,6 +515,7 @@ def test_operator_on_failure_callback_as_list_is_marked(monkeypatch, tmp_path):
     """)
     q = _task(spec, "q")
     assert q.get("on_failure_callback") is True
+    assert q.get("entrypoint") == "dag:q"
     assert "on_failure_callback" not in q.get("operator_args", {})
 
 

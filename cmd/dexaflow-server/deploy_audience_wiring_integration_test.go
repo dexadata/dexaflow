@@ -127,7 +127,11 @@ func TestDeployAudienceWiringAgainstPostgres(t *testing.T) {
 	}
 	authn := auth.NewJWTAuthenticator(repo, cfg.Auth.JWT.Secret, time.Hour)
 	trusted := newTrustedIssuer(ctx, cfg)
-	handler := buildAPIServer(cfg, tel, authn, pg, repo, nil, nil, nil, nil, api.ExecutorInfo{}, nil, nil, trusted).Handler
+	apiSrv, buildErr := buildAPIServer(cfg, tel, authn, pg, repo, nil, nil, nil, nil, api.ExecutorInfo{}, nil, nil, trusted)
+	if buildErr != nil {
+		t.Fatalf("buildAPIServer: %v", buildErr)
+	}
+	handler := apiSrv.Handler
 
 	call := func(method, path, bearer, cookie, body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequestWithContext(ctx, method, path, strings.NewReader(body))

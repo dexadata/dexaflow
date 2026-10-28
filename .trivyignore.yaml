@@ -56,7 +56,7 @@
 # those is still reported. Trivy sees the vendored copies only because pip 26
 # ships an SBOM of them (pip/_vendor/bom.cdx.json); runtime/Dockerfile pins pip.
 #
-# Why accepting them is right for now, and not a fix we are skipping: pip 26.2.1
+# Why accepting them is right for now, and not a fix we are skipping: pip 26.2.2
 # is the newest pip release, and no pip release vendors fixed versions (pip's
 # main branch has picked up msgpack 1.2.1 but still vendors urllib3 2.7.0 and
 # setuptools 70.3.0). A pip vendored package can only be changed by a pip
@@ -76,7 +76,7 @@ vulnerabilities:
       - pkg:pypi/urllib3@2.7.0
     statement: >-
       HTTPS-proxy TLS settings overwritten by target TLS settings, in the urllib3
-      2.7.0 that pip 26.2.1 vendors. Reached only when pip downloads through an
+      2.7.0 that pip 26.2.2 vendors. Reached only when pip downloads through an
       HTTPS proxy, which happens at DAG image build time, not in a task. No pip
       release vendors urllib3 2.8.0 yet; bump the pip pin when one does (#1299).
     expired_at: 2026-12-31
@@ -84,7 +84,7 @@ vulnerabilities:
     purls:
       - pkg:pypi/urllib3@2.7.0
     statement: >-
-      urllib3 2.7.0 as vendored by pip 26.2.1, fixed in 2.8.0. Reached only when
+      urllib3 2.7.0 as vendored by pip 26.2.2, fixed in 2.8.0. Reached only when
       pip itself runs (DAG image builds), never through task code, which imports
       the separate site-packages urllib3. No pip release vendors 2.8.0 yet (#1299).
     expired_at: 2026-12-31
@@ -92,7 +92,7 @@ vulnerabilities:
     purls:
       - pkg:pypi/urllib3@2.7.0
     statement: >-
-      Unbounded chunk-size line in the urllib3 2.7.0 that pip 26.2.1 vendors: a
+      Unbounded chunk-size line in the urllib3 2.7.0 that pip 26.2.2 vendors: a
       malicious index server can exhaust pip's memory. Reached only while pip
       installs a DAG image's requirements from the configured index. No pip
       release vendors urllib3 2.8.0 yet; bump the pip pin when one does (#1299).
@@ -102,7 +102,7 @@ vulnerabilities:
       - pkg:pypi/msgpack@1.1.2
     statement: >-
       Crash when a msgpack Unpacker is reused after an error, in the msgpack 1.1.2
-      that pip 26.2.1 vendors for its HTTP cache. The crash is in the C extension
+      that pip 26.2.2 vendors for its HTTP cache. The crash is in the C extension
       and pip vendors the pure-Python msgpack; pip also runs with --no-cache-dir
       here. Fixed on pip's main branch (msgpack 1.2.1), not yet released (#1299).
     expired_at: 2026-12-31
@@ -110,7 +110,7 @@ vulnerabilities:
     purls:
       - pkg:pypi/setuptools@70.3.0
     statement: >-
-      Path traversal in setuptools PackageIndex. pip 26.2.1 vendors only
+      Path traversal in setuptools PackageIndex. pip 26.2.2 vendors only
       pkg_resources from setuptools 70.3.0, not package_index, so the vulnerable
       code is not in the image under this purl. The setuptools the 3.10 and 3.11
       images install (80.10.2) is a separate package and stays scanned (#1299).
@@ -120,7 +120,7 @@ vulnerabilities:
       - pkg:pypi/setuptools@70.3.0
     statement: >-
       MANIFEST.in exclusion bypass in setuptools FileList (sdist building).
-      pip 26.2.1 vendors only pkg_resources from setuptools 70.3.0, which has no
+      pip 26.2.2 vendors only pkg_resources from setuptools 70.3.0, which has no
       FileList, so the code is not in the image under this purl. Scoped to that version so the same CVE in the
       site-packages setuptools 80.10.2 (3.10 and 3.11 images) is still reported.
       No pip release vendors a fixed setuptools yet (#1299).

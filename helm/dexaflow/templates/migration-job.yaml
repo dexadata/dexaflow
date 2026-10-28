@@ -1,6 +1,7 @@
 {{- if .Values.migrations.enabled -}}
 {{/*
-Runs golang-migrate before the server starts, as a pre-install/pre-upgrade hook.
+Runs the dexaflow-migrate wrapper (golang-migrate underneath, #1020) before the
+server starts, as a pre-install/pre-upgrade hook.
 The default image (ghcr.io/dexadata/dexaflow-migrate, built from
 deploy/Dockerfile.migrate via `make migrate-image`) bundles the Dexaflow
 migrations at .Values.migrations.path. Override migrations.image to use your own,
@@ -20,6 +21,34 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   backoffLimit: 3
+  {{- /*
+  The migrate image exits with a code of its own for each failure a retry
+  cannot fix (#1020): 2 usage, 3 database.url is not a Postgres URL, 4 the
+  database does not exist, 5 user or password refused, 6 the sslrootcert file
+  is missing, 7 the schema is dirty, 8 the database is not this release's own
+  (ADR 0090 decision 3: emptied, restored from another installation, or
+  repointed). FailJob stops the Job on the first such
+  pod instead of spending backoffLimit on it, so the useful error surfaces in
+  one pod's log rather than after four ("failed: 4/1"). Transient failures
+  (75: not reachable yet, lock held) and anything unrecognized (1) are retried
+  as before. internal/migrator's TestChartFailsTheJobOnTheDeterministicCodes
+  keeps this list equal to migrator.DeterministicExitCodes.
+
+  podFailurePolicy is GA in Kubernetes 1.31, and Chart.yaml declares no
+  kubeVersion, so the field is rendered only where the apiserver serves it.
+  A `helm template` run without --kube-version renders against Helm's default
+  capabilities and may leave it out: that is the safe direction, the Job then
+  retries every failure as before.
+  */}}
+  {{- if semverCompare ">=1.31.0-0" .Capabilities.KubeVersion.Version }}
+  podFailurePolicy:
+    rules:
+      - action: FailJob
+        onExitCodes:
+          containerName: migrate
+          operator: In
+          values: [2, 3, 4, 5, 6, 7, 8]
+  {{- end }}
   template:
     metadata:
       # NOT leoflow.selectorLabels (#1055). A Service selector matches every pod
@@ -35,12 +64,13 @@ spec:
         {{- include "leoflow.migratePodLabels" . | nindent 8 }}
     spec:
       restartPolicy: Never
-      # The migrate binary talks only to Postgres via LEOFLOW_DATABASE_URL and
-      # never calls the Kubernetes API, so it has no use for a projected
-      # ServiceAccount token. Declining the automount keeps this pod from being
-      # handed the namespace default SA's credential. Mirrors the task pod in
-      # internal/executor/kubernetes.go.
-      automountServiceAccountToken: false
+      # Its own account (migration-rbac.yaml), with the token mounted: the
+      # wrapper reads and writes the installation ConfigMap through the
+      # Kubernetes API (ADR 0090 decision 3). The account may get, create and
+      # update that ConfigMap and nothing else, so the token is not the
+      # namespace default account's credential #727 kept out of this pod.
+      serviceAccountName: {{ include "leoflow.migrateServiceAccountName" . }}
+      automountServiceAccountToken: true
       securityContext:
         {{- toYaml .Values.migrations.podSecurityContext | nindent 8 }}
       # Pod placement is INHERITED from the top-level values rather than given
@@ -76,6 +106,14 @@ spec:
           args:
             - "-path={{ .Values.migrations.path }}"
             - "-database=$(LEOFLOW_DATABASE_URL)"
+            # The installation id (ADR 0090 decision 3): the wrapper refuses a
+            # database that is not this release's own before migrating it, and
+            # records the id in the database and in this ConfigMap.
+            - "-installation-configmap={{ include "leoflow.installationConfigMapName" . }}"
+            - "-installation-namespace={{ .Release.Namespace }}"
+            {{- with include "leoflow.installationID" . }}
+            - "-installation-id={{ . }}"
+            {{- end }}
             - "up"
           env:
             - name: LEOFLOW_DATABASE_URL

@@ -42,13 +42,22 @@ func (c *throttledCluster) hasPod(taskID string) bool {
 	return c.pods[taskID]
 }
 
-func (c *throttledCluster) DeleteTaskPod(context.Context, executor.Attempt) error { return nil }
-func (c *throttledCluster) DeleteRunPods(context.Context, string) error           { return nil }
+func (c *throttledCluster) DeleteTaskPod(context.Context, executor.Attempt) (executor.Teardown, error) {
+	return executor.Teardown{}, nil
+}
+func (c *throttledCluster) DeleteRunPods(context.Context, string) (executor.Teardown, error) {
+	return executor.Teardown{}, nil
+}
 func (c *throttledCluster) TaskPodPresence(_ context.Context, a executor.Attempt) (executor.PodPresence, error) {
 	if c.hasPod(a.TaskID) {
 		return executor.PodPresenceLive, nil
 	}
 	return executor.PodPresenceAbsent, nil
+}
+
+// TaskPodPending reports no pod as pending: every pod this cluster creates is running.
+func (c *throttledCluster) TaskPodPending(context.Context, executor.Attempt) (bool, error) {
+	return false, nil
 }
 
 // queuedRows is the metadatabase side of one run. A task the buffer accepts is
@@ -125,7 +134,7 @@ func (q *queuedRows) DispatchAttempts(_ context.Context, _, taskID string) (atte
 	return 0, active, nil
 }
 
-func (q *queuedRows) RequeueDispatch(_ context.Context, _, taskID string, countAttempt bool, _ time.Time) (bool, error) {
+func (q *queuedRows) RequeueDispatch(_ context.Context, _, taskID string, countAttempt, _ bool, _ time.Time) (bool, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if _, ok := q.queued[taskID]; !ok {
@@ -139,12 +148,31 @@ func (q *queuedRows) RequeueDispatch(_ context.Context, _, taskID string, countA
 	return true, nil
 }
 
+func (q *queuedRows) RecordDispatchUnavailable(_ context.Context, _, taskID string, now time.Time, minDelay, _ time.Duration) (since, nextAt time.Time, applied bool, err error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if _, ok := q.queued[taskID]; !ok {
+		return time.Time{}, time.Time{}, false, nil
+	}
+	delete(q.queued, taskID)
+	q.requeued[taskID] = true
+	return now, now.Add(minDelay), true, nil
+}
+
 func (q *queuedRows) MarkTaskDispatchFailed(context.Context, string, string, string) error {
 	return nil
 }
 
 func (q *queuedRows) FailDispatchRefused(context.Context, string, string, string) error {
 	return nil
+}
+
+func (q *queuedRows) MarkTaskPodLostOOMKilled(context.Context, string, int, int) (bool, error) {
+	return false, nil
+}
+
+func (q *queuedRows) MarkTaskStartExpired(context.Context, string, int, int) (bool, error) {
+	return false, nil
 }
 
 // Every other reaper sees nothing.

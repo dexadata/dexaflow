@@ -76,6 +76,7 @@ func gitInitTagged(t *testing.T, dir, tag string) {
 var labelShape = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
 
 func TestDefaultDAGVersionIsStableForUnchangedContent(t *testing.T) {
+	t.Parallel()
 	dir := versionProject(t, "")
 	first, second := labelOf(t, dir), labelOf(t, dir)
 	if first != second {
@@ -87,6 +88,7 @@ func TestDefaultDAGVersionIsStableForUnchangedContent(t *testing.T) {
 }
 
 func TestDefaultDAGVersionOutsideGitUsesFixedBase(t *testing.T) {
+	t.Parallel()
 	dir := versionProject(t, "")
 	label := labelOf(t, dir)
 	if !regexp.MustCompile(`^dev-[0-9a-f]{12}$`).MatchString(label) {
@@ -95,6 +97,7 @@ func TestDefaultDAGVersionOutsideGitUsesFixedBase(t *testing.T) {
 }
 
 func TestDefaultDAGVersionChangesWithInputs(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name, yaml string
 		mutate     func(t *testing.T, dir string)
@@ -123,6 +126,7 @@ func TestDefaultDAGVersionChangesWithInputs(t *testing.T) {
 }
 
 func TestDefaultDAGVersionIgnoresWhatDoesNotShip(t *testing.T) {
+	t.Parallel()
 	dir := versionProject(t, "")
 	before := labelOf(t, dir)
 	// Not copied by the generated Dockerfile, or rewritten by every compile.
@@ -135,6 +139,7 @@ func TestDefaultDAGVersionIgnoresWhatDoesNotShip(t *testing.T) {
 }
 
 func TestDefaultDAGVersionWholeContextSkipsCompileOutputs(t *testing.T) {
+	t.Parallel()
 	// An own Dockerfile can COPY anything, so the whole context counts; the
 	// compiled dag.json and excluded paths still do not.
 	dir := versionProject(t, "")
@@ -152,6 +157,7 @@ func TestDefaultDAGVersionWholeContextSkipsCompileOutputs(t *testing.T) {
 }
 
 func TestDefaultDAGVersionDbtIgnoresParseArtifacts(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeProjectFile(t, dir, "dexaflow.yaml", "dag_id: sales\ndbt:\n  project: transform\n")
 	writeProjectFile(t, dir, "transform/dbt_project.yml", "name: sales\n")
@@ -169,6 +175,7 @@ func TestDefaultDAGVersionDbtIgnoresParseArtifacts(t *testing.T) {
 }
 
 func TestDefaultDAGVersionUsesGitOfProjectDirNotCwd(t *testing.T) {
+	t.Parallel()
 	// The test process runs inside this repository's checkout; the project is
 	// its own repository, tagged v1.2.3. The label must come from the project.
 	dir := versionProject(t, "")
@@ -184,6 +191,7 @@ func TestDefaultDAGVersionUsesGitOfProjectDirNotCwd(t *testing.T) {
 }
 
 func TestDefaultDAGVersionDirtyTree(t *testing.T) {
+	t.Parallel()
 	dir := versionProject(t, "")
 	gitInitTagged(t, dir, "v1.0.0")
 	clean := labelOf(t, dir)
@@ -204,6 +212,7 @@ func TestDefaultDAGVersionDirtyTree(t *testing.T) {
 }
 
 func TestReadGitRevisionOutsideGit(t *testing.T) {
+	t.Parallel()
 	rev := readGitRevision(context.Background(), t.TempDir())
 	if rev != (gitRevision{}) {
 		t.Errorf("revision outside git = %+v, want zero", rev)
@@ -211,6 +220,7 @@ func TestReadGitRevisionOutsideGit(t *testing.T) {
 }
 
 func TestSanitizeImageTag(t *testing.T) {
+	t.Parallel()
 	long := strings.Repeat("a", 200)
 	cases := []struct{ in, want string }{
 		{"v1.2.3", "v1.2.3"},
@@ -229,6 +239,7 @@ func TestSanitizeImageTag(t *testing.T) {
 }
 
 func TestComposeDefaultLabelKeepsHashWithinTagLimit(t *testing.T) {
+	t.Parallel()
 	got := composeDefaultLabel(strings.Repeat("b/", 100), "0123456789ab")
 	if len(got) > 128 || !strings.HasSuffix(got, "-0123456789ab") || !labelShape.MatchString(got) {
 		t.Errorf("label = %q (len %d), want a valid tag ending in the hash", got, len(got))

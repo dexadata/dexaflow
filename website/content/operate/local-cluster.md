@@ -1,11 +1,11 @@
 ---
-title: Try Pro on a local cluster
+title: Try the cluster edition on a local cluster
 linkTitle: Local cluster (testing only)
 weight: 12
-description: Run the Pro deployment path on a throwaway k3d cluster on your machine, from the Helm chart to a first DAG run. For local testing and evaluation, not for production.
+description: Run the Cluster deployment path on a throwaway k3d cluster on your machine, from the Helm chart to a first DAG run. For local testing and evaluation, not for production.
 ---
 
-Pro targets Kubernetes. Before you take it to a real cluster you may want to try
+Cluster targets Kubernetes. Before you take it to a real cluster you may want to try
 the same deployment path on your machine: to evaluate it, rehearse a demo, check
 a chart change or reproduce an issue. This page puts the whole path on a local
 [k3d](https://k3d.io/) cluster: a registry the cluster pulls from, throwaway
@@ -22,7 +22,7 @@ Everything on this page is disposable by design:
 - There are no backups, no high availability and no resource sizing.
 
 For a real deployment, follow the [Helm chart](/operate/helm-chart/) page with
-managed datastores, and [Deploy your first Pro DAG](/operate/first-pro-dag/)
+managed datastores, and [Deploy your first Cluster DAG](/operate/first-cluster-dag/)
 against a real registry. If all you want is the authoring loop (write a DAG,
 run it, look at the result), [Lite](/get-started/quickstart/) needs no cluster
 at all.
@@ -40,7 +40,7 @@ drift from what ships:
 | `helm install` with an auto-generated agent TLS | the same `helm-ci.yaml` job | every chart change |
 
 The e2e scripts run the control plane as a process on the host. This page runs
-it in the cluster from the chart, which is the Pro shape. No CI job runs this
+it in the cluster from the chart, which is the Cluster shape. No CI job runs this
 exact combination end to end yet, so if a step here fails while the scripts
 above pass, please [open an issue](https://github.com/dexadata/dexaflow/issues).
 
@@ -57,7 +57,7 @@ Pick the release once and reuse it in every step. It is the release tag without
 the leading `v`:
 
 ```bash
-export DEXAFLOW_VERSION=0.5.3   # the release you are testing
+export DEXAFLOW_VERSION={{< latest-version >}}   # the release you are testing
 ```
 
 The CLI, the chart and the images should be the same release. A released CLI
@@ -93,7 +93,7 @@ k3d switches your current `kubectl` context to the new cluster
 
 ## 2. Throwaway Postgres and Redis
 
-The chart refuses to install without a database and a Redis: Pro never falls
+The chart refuses to install without a database and a Redis: Cluster never falls
 back to embedded datastores. Apply the minimal pair the chart CI uses:
 
 ```bash
@@ -134,7 +134,7 @@ What each value does here:
 - `bootstrap.password` creates the first admin on the first install.
 - The agent TLS is left to the chart's default, which generates a CA and a
   server certificate. Do not set `agentTLS.enabled=false`: the chart deploys
-  the Pro edition, which refuses to start without TLS on the agent channel.
+  the cluster edition, which refuses to start without TLS on the agent channel.
 
 `helm install` runs the database migrations in a Job before the server starts,
 then waits for the Deployment to be ready.
@@ -289,7 +289,7 @@ use the registry address it gives you as `registry.url` in `dexaflow.yaml`.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `helm install` fails because namespace `leoflow` is not found | `taskNamespace` left at its default | pass `--set taskNamespace=dexaflow`, as in step 3 |
-| The server pod crash-loops with "the Pro edition requires TLS on the agent gRPC channel" | `agentTLS.enabled=false` was set | leave `agentTLS` at its default |
+| The server pod crash-loops with "the cluster edition requires TLS on the agent gRPC channel" | `agentTLS.enabled=false` was set | leave `agentTLS` at its default |
 | The `dexaflow-migrate` Job fails on its first connection | Postgres was not accepting connections yet | wait with `pg_isready` (step 2), then `helm uninstall` and install again |
 | `dexaflow auth login` answers "invalid credentials" | the username is the e-mail address | `--username admin@dexaflow.local` |
 | `docker push` fails with `no such host` | your resolver does not map `*.localhost` | add `127.0.0.1 k3d-dexaflow-registry.localhost` to `/etc/hosts` |

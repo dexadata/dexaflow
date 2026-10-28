@@ -11,9 +11,14 @@ import (
 	"testing"
 )
 
-const pushSpec = `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[{"task_id":"a","type":"python","entrypoint":"dag:a"}]}`
+// pushSpecImage is the image of pushSpec.
+const pushSpecImage = "img@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+
+// pushSpec's image is pinned, so a push of it reads no registry (#1703).
+const pushSpec = `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"` + pushSpecImage + `","tasks":[{"task_id":"a","type":"python","entrypoint":"dag:a"}]}`
 
 func TestPushVersionPostsSpec(t *testing.T) {
+	t.Parallel()
 	var gotPath, gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path

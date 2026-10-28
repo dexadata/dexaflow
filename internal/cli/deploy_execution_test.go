@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/dexadata/dexaflow/internal/api"
+	"github.com/dexadata/dexaflow/internal/api/apitest"
 	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/domain"
 )
@@ -37,12 +38,20 @@ const mixedDeploySpec = `{"schema_version":"1.0","dag_id":"etl","dag_version":"v
 
 func registerAgainstAPI(t *testing.T, policy domain.WarmPolicy, pools config.ExecutionSection, spec string) (res deployResult, out string) {
 	t.Helper()
-	srv := httptest.NewServer(api.NewServer(api.Dependencies{
-		Logger:     discardTestLogger(),
-		DevNoAuth:  true,
-		Versions:   registerRepo{},
-		WarmPolicy: policy,
-		WarmPools:  pools,
+	srv := httptest.NewServer(apitest.NewServer(api.Dependencies{
+		Observability: api.ObservabilityDeps{
+			Logger: discardTestLogger(),
+		},
+		Auth: api.AuthDeps{
+			DevNoAuth: true,
+		},
+		Execution: api.ExecutionDeps{
+			WarmPolicy: policy,
+			WarmPools:  pools.WarmPoolDefaults(),
+		},
+		Stores: api.StoreDeps{
+			Versions: registerRepo{},
+		},
 	}))
 	defer srv.Close()
 	path := filepath.Join(t.TempDir(), "dag.json")
@@ -63,6 +72,7 @@ func registerAgainstAPI(t *testing.T, policy domain.WarmPolicy, pools config.Exe
 // and what the version's warm pool does; --output json carries the same
 // report.
 func TestDeployReportsExecutionModes(t *testing.T) {
+	t.Parallel()
 	pools := config.ExecutionSection{WarmPoolsEnabled: true, MinIdleWorkers: 2, MaxPoolSize: 4}
 	res, out := registerAgainstAPI(t, domain.WarmPolicy{Enabled: true}, pools, mixedDeploySpec)
 	for _, want := range []string{
@@ -108,6 +118,7 @@ func TestDeployReportsExecutionModes(t *testing.T) {
 // TestDeployReportsWarmPoolsOff: with warm pools off the deploy says, in one
 // line, that every task runs on a dedicated pod, and prints no pool line.
 func TestDeployReportsWarmPoolsOff(t *testing.T) {
+	t.Parallel()
 	_, out := registerAgainstAPI(t, domain.WarmPolicy{}, config.ExecutionSection{}, mixedDeploySpec)
 	if !strings.Contains(out, "  execution  every task runs on a dedicated pod: warm pools off\n") {
 		t.Errorf("deploy output lacks the one-line dedicated summary:\n%s", out)
@@ -119,6 +130,7 @@ func TestDeployReportsWarmPoolsOff(t *testing.T) {
 
 // TestExecutionSummaryLines covers the summary's wording.
 func TestExecutionSummaryLines(t *testing.T) {
+	t.Parallel()
 	task := func(id, reason string) taskExecution {
 		if reason == "" {
 			return taskExecution{TaskID: id, Mode: "warm"}
@@ -143,6 +155,10 @@ func TestExecutionSummaryLines(t *testing.T) {
 		{"every task dedicated for one task reason while idle workers are kept", executionSummary{WarmPools: true,
 			Tasks: []taskExecution{task("a", "node_selector set"), task("b", "node_selector set")}, Pool: on},
 			"  execution  every task runs on a dedicated pod: node_selector set\n  warm pool  2 idle warm workers\n"},
+		{"one task reason, no pool, previous pool draining", executionSummary{WarmPools: true,
+			Tasks: []taskExecution{task("a", "resources set (a warm pod is 1 unit)"), task("b", "resources set (a warm pod is 1 unit)")},
+			Pool:  executionPool{State: "none", Detail: "no warm pool for this version: no task of it is warm-eligible; previous pool draining", PreviousPool: "draining"}},
+			"  execution  every task runs on a dedicated pod: resources set (a warm pod is 1 unit)\n  warm pool  no warm pool for this version: no task of it is warm-eligible; previous pool draining\n"},
 		{"no pool, mixed reasons", executionSummary{WarmPools: true, Tasks: []taskExecution{task("a", "no idle warm workers kept for this DAG"), task("b", "labels set")},
 			Pool: executionPool{State: "none", Detail: "no idle warm worker is kept"}},
 			"  execution  0 tasks warm-eligible; on a dedicated pod: a (no idle warm workers kept for this DAG), b (labels set)\n  warm pool  no idle warm worker is kept\n"},
@@ -163,12 +179,24 @@ func TestExecutionSummaryLines(t *testing.T) {
 // those the preflight already printed from its dry run, so a warning is
 // printed once.
 func TestDeployPrintsTheRegisterWarningsOnce(t *testing.T) {
+	t.Parallel()
 	unit, err := domain.ParseResourceUnit(domain.ResourceUnitConfig{CPU: "250m", Memory: "512Mi", Enforce: domain.UnitEnforceWarn})
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(api.NewServer(api.Dependencies{
-		Logger: discardTestLogger(), DevNoAuth: true, Versions: registerRepo{}, ResourceUnit: unit,
+	srv := httptest.NewServer(apitest.NewServer(api.Dependencies{
+		Observability: api.ObservabilityDeps{
+			Logger: discardTestLogger(),
+		},
+		Auth: api.AuthDeps{
+			DevNoAuth: true,
+		},
+		Execution: api.ExecutionDeps{
+			ResourceUnit: unit,
+		},
+		Stores: api.StoreDeps{
+			Versions: registerRepo{},
+		},
 	}))
 	defer srv.Close()
 	spec := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v2","image":"img:v2","tasks":[` +

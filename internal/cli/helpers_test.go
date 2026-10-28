@@ -15,6 +15,7 @@ import (
 // foundation for the multi-DAG workspace contract (a subdir without a yaml
 // gets the same treatment with dag_id synthesized later).
 func TestLoadProjectConfigAppliesDefaults(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	yaml := "dag_id: minimal\n"
 	if err := os.WriteFile(filepath.Join(dir, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
@@ -52,6 +53,7 @@ func TestLoadProjectConfigAppliesDefaults(t *testing.T) {
 // its own inline fallback — keeping defaults in one place per
 // [[python-minimal-go-max]] / configuration-defaults-table doc.
 func TestDagSourcePathUsesAppliedDefault(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	yaml := "dag_id: minimal\n"
 	if err := os.WriteFile(filepath.Join(dir, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
@@ -72,6 +74,7 @@ func TestDagSourcePathUsesAppliedDefault(t *testing.T) {
 // duplicated task_id key in the tasks block is a copy-paste hazard, so parsing
 // must reject it rather than silently keeping the last entry (ADR 0023).
 func TestLoadProjectConfigRejectsDuplicateTaskID(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	yaml := strings.Join([]string{
 		"dag_id: proj",
@@ -97,6 +100,7 @@ func TestLoadProjectConfigRejectsDuplicateTaskID(t *testing.T) {
 // rename keeps using the ~/leoflow it already has, so its DAG projects are not
 // left behind; when both exist the new name wins.
 func TestDefaultWorkspaceIn(t *testing.T) {
+	t.Parallel()
 	mkdir := func(t *testing.T, dir string) {
 		t.Helper()
 		if err := os.MkdirAll(dir, 0o750); err != nil {
@@ -128,6 +132,7 @@ func TestDefaultWorkspaceIn(t *testing.T) {
 
 // A file named ~/leoflow is not a workspace.
 func TestDefaultWorkspaceInIgnoresAFileNamedLeoflow(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	if err := os.WriteFile(filepath.Join(home, "leoflow"), nil, 0o600); err != nil {
 		t.Fatal(err)

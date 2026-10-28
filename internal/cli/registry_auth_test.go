@@ -13,7 +13,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/build"
 )
 
-// fakeCloudSession stands in for the cloud CLIs (registryCloud): it holds
+// fakeCloudSession stands in for the cloud CLIs (cliDeps.registryCloud): it holds
 // user:pass for one registry host and counts the hosts it was asked for.
 type fakeCloudSession struct {
 	host, user, pass string
@@ -39,25 +39,23 @@ func (f *fakeCloudSession) askedCount() int {
 	return f.asked
 }
 
-// withCloudSession makes the registry client read the cloud session from
-// a fake holding user:pass for host, for the rest of the test.
-func withCloudSession(t *testing.T, host, user, pass string) *fakeCloudSession {
+// withCloudSession makes the registry client of the commands run under d
+// read the cloud session from a fake holding user:pass for host.
+func withCloudSession(t *testing.T, d *cliDeps, host, user, pass string) *fakeCloudSession {
 	t.Helper()
 	f := &fakeCloudSession{host: host, user: user, pass: pass}
-	prev := registryCloud
-	registryCloud = f
-	t.Cleanup(func() { registryCloud = prev })
+	d.registryCloud = f
 	return f
 }
 
 // cloudRegistryProject is a deploy fixture against a fake registry that
 // opens only to the cloud session's credential, with extra registry keys.
-func cloudRegistryProject(t *testing.T, registryKeys string) (reg *fakeOCIRegistry, dir, builder string, cloud *fakeCloudSession) {
+func cloudRegistryProject(t *testing.T, d *cliDeps, registryKeys string) (reg *fakeOCIRegistry, dir, builder string, cloud *fakeCloudSession) {
 	t.Helper()
 	noDockerCredentials(t)
 	reg = newFakeOCIRegistry(t, singleManifest)
 	reg.basicAuth = "oauth2accesstoken:tok-1"
-	cloud = withCloudSession(t, reg.host, "oauth2accesstoken", "tok-1")
+	cloud = withCloudSession(t, d, reg.host, "oauth2accesstoken", "tok-1")
 	dir, builder, _ = deployFixtureAt(t, reg.host+"/team")
 	if registryKeys != "" {
 		writeProjectFile(t, dir, "dexaflow.yaml", "dag_id: etl\nregistry:\n  url: "+reg.host+"/team\n  image_name: etl\n"+registryKeys)
@@ -70,9 +68,10 @@ func cloudRegistryProject(t *testing.T, registryKeys string) (reg *fakeOCIRegist
 // that owns it, with no docker login: the preflight says where the
 // credential came from, and the digest is read with it.
 func TestDeployReadsTheCloudSession(t *testing.T) {
-	reg, dir, builder, _ := cloudRegistryProject(t, "")
+	d := testDeps()
+	reg, dir, builder, _ := cloudRegistryProject(t, d, "")
 	fake := &deployServer{}
-	out, errOut, err := deployDir(t, fake, dir, builder, "--force")
+	out, errOut, err := deployDirDeps(t, d, fake, dir, builder, "--force")
 	if err != nil {
 		t.Fatalf("deploy: %v\n%s\n%s", err, out, errOut)
 	}
@@ -87,22 +86,24 @@ func TestDeployReadsTheCloudSession(t *testing.T) {
 // docker_config reads the docker config only, as before auto: the cloud is
 // never asked, and the preflight names the login command.
 func TestDeployAuthMethodDockerConfigIgnoresTheCloud(t *testing.T) {
-	reg, dir, _, cloud := cloudRegistryProject(t, "  auth_method: docker_config\n")
+	d := testDeps()
+	reg, dir, _, cloud := cloudRegistryProject(t, d, "  auth_method: docker_config\n")
 	builder, _ := argvBuilder(t) // named docker
-	_, errOut, err := deployDir(t, &deployServer{}, dir, builder, "--force")
+	_, errOut, err := deployDirDeps(t, d, &deployServer{}, dir, builder, "--force")
 	if err == nil {
 		t.Fatal("deploy reached a registry it holds no credential for")
 	}
-	if !strings.Contains(errOut, "docker login "+reg.host) || cloud.askedCount() != 0 {
-		t.Errorf("cloud asked %d times; stderr does not name docker login %s:\n%s", cloud.askedCount(), reg.host, errOut)
+	if !strings.Contains(errOut, "dexaflow registry login "+reg.host) || cloud.askedCount() != 0 {
+		t.Errorf("cloud asked %d times; stderr does not name dexaflow registry login %s:\n%s", cloud.askedCount(), reg.host, errOut)
 	}
 }
 
 // TestDeployWarnsOfADeprecatedAuthMethod: the values the schema accepted
 // before any was read still load, with a note, and read as auto.
 func TestDeployWarnsOfADeprecatedAuthMethod(t *testing.T) {
-	_, dir, builder, cloud := cloudRegistryProject(t, "  auth_method: iam\n")
-	out, errOut, err := deployDir(t, &deployServer{}, dir, builder, "--force")
+	d := testDeps()
+	_, dir, builder, cloud := cloudRegistryProject(t, d, "  auth_method: iam\n")
+	out, errOut, err := deployDirDeps(t, d, &deployServer{}, dir, builder, "--force")
 	if err != nil {
 		t.Fatalf("deploy: %v\n%s\n%s", err, out, errOut)
 	}
@@ -114,14 +115,15 @@ func TestDeployWarnsOfADeprecatedAuthMethod(t *testing.T) {
 // TestDoctorReadsTheCloudSession: doctor's push check uses the credentials
 // a deploy would, the cloud session included.
 func TestDoctorReadsTheCloudSession(t *testing.T) {
+	d := testDeps()
 	isolateCLIEnv(t)
-	reg, dir, _, _ := cloudRegistryProject(t, "")
+	reg, dir, _, _ := cloudRegistryProject(t, d, "")
 	t.Chdir(dir)
 	srv := httptest.NewServer(&deployServer{})
 	t.Cleanup(srv.Close)
-	out := doctorAgainst(t, srv.URL, "tok")
+	out := doctorAgainstDeps(t, d, srv.URL, "tok")
 	want := "registry      " + reg.host + "/team/etl accepts a push (credential from the fake cloud session; " +
-		"a local-daemon build pushes with docker's own login: docker login " + reg.host + ")"
+		"a local-daemon build pushes with docker's own login: dexaflow registry login " + reg.host + ")"
 	if !strings.Contains(out, want) {
 		t.Errorf("doctor does not say %q:\n%s", want, out)
 	}
@@ -130,6 +132,7 @@ func TestDoctorReadsTheCloudSession(t *testing.T) {
 // The refusal of a push names the command of the registry's cloud, and,
 // when the cloud CLI could not give a credential, why.
 func TestPushRefusalNamesTheCloudCommand(t *testing.T) {
+	t.Parallel()
 	ecr := "123456789012.dkr.ecr.eu-west-1.amazonaws.com"
 	denied := build.ErrPushDenied
 	for _, tc := range []struct {
@@ -191,6 +194,7 @@ func TestPushRefusalNamesTheCloudCommand(t *testing.T) {
 // is the same whatever registry.auth_method says, and the same as before
 // auto existed, so no deployed label moves.
 func TestContentLabelIgnoresTheAuthMethod(t *testing.T) {
+	t.Parallel()
 	methods := []string{"", "auto", "docker_config", "cloud"}
 	hashes := make([]string, 0, len(methods))
 	for _, m := range methods {
@@ -220,9 +224,10 @@ func TestContentLabelIgnoresTheAuthMethod(t *testing.T) {
 // The dependency layer, which pushes without a daemon, reads the
 // registry with the project's auth method too.
 func TestTheDependencyLayerUsesTheAuthMethod(t *testing.T) {
-	dir, _, _ := wheelProject(t, "[pandas==2.2.3]")
+	d := testDeps()
+	dir, _, _ := wheelProject(t, d, "[pandas==2.2.3]")
 	editYAML(t, dir, "  image_name: etl\n", "  image_name: etl\n  auth_method: docker_config\n")
-	split, why := splitOf(t, dir)
+	split, why := splitOf(t, d, dir)
 	if split == nil || split.Wheels == nil {
 		t.Fatalf("split = %+v (%q), want the dependency layer", split, why)
 	}
@@ -234,13 +239,14 @@ func TestTheDependencyLayerUsesTheAuthMethod(t *testing.T) {
 // TestDeployIamReadsTheDockerConfig: iam reads as auto, so a project that
 // set it next to a docker login keeps that credential.
 func TestDeployIamReadsTheDockerConfig(t *testing.T) {
+	d := testDeps()
 	reg := newFakeOCIRegistry(t, singleManifest)
 	reg.basicAuth = "bot:secret"
 	dockerCredentialsFor(t, reg.host)
-	withCloudSession(t, reg.host, "oauth2accesstoken", "other")
+	withCloudSession(t, d, reg.host, "oauth2accesstoken", "other")
 	dir, builder, _ := deployFixtureAt(t, reg.host+"/team")
 	writeProjectFile(t, dir, "dexaflow.yaml", "dag_id: etl\nregistry:\n  url: "+reg.host+"/team\n  image_name: etl\n  auth_method: iam\n")
-	out, errOut, err := deployDir(t, &deployServer{}, dir, builder, "--force")
+	out, errOut, err := deployDirDeps(t, d, &deployServer{}, dir, builder, "--force")
 	if err != nil {
 		t.Fatalf("deploy: %v\n%s\n%s", err, out, errOut)
 	}
@@ -253,14 +259,15 @@ func TestDeployIamReadsTheDockerConfig(t *testing.T) {
 // registry refuses to the cloud session's credential stops before the
 // build, naming where the credential came from.
 func TestDeployStopsOnARefusedCloudSession(t *testing.T) {
+	d := testDeps()
 	noDockerCredentials(t)
 	reg := newFakeOCIRegistry(t, singleManifest)
 	reg.denyPush = true
-	withCloudSession(t, reg.host, "oauth2accesstoken", "tok")
+	withCloudSession(t, d, reg.host, "oauth2accesstoken", "tok")
 	dir, _, _ := deployFixtureAt(t, reg.host+"/team")
 	builder, log := argvBuilder(t)
 	fake := &deployServer{}
-	_, _, err := deployDir(t, fake, dir, builder, "--force")
+	_, _, err := deployDirDeps(t, d, fake, dir, builder, "--force")
 	if err == nil || !strings.Contains(err.Error(), "with the credential from the fake cloud session") {
 		t.Fatalf("err = %v, want the refusal of the cloud session's credential", err)
 	}
@@ -290,12 +297,11 @@ func baseProject(t *testing.T, reg *fakeOCIRegistry, keys string) string {
 // The base image is read with the project's auth method: docker_config
 // runs no cloud CLI for it.
 func TestTheBaseImageReadHonorsDockerConfig(t *testing.T) {
+	d := testDeps()
 	noDockerCredentials(t)
 	reg := newFakeOCIRegistry(t, singleManifest)
-	prev := registryCloud
-	registryCloud = refusingCloud{t}
-	t.Cleanup(func() { registryCloud = prev })
-	split, why := splitOf(t, baseProject(t, reg, "  auth_method: docker_config\n"))
+	d.registryCloud = refusingCloud{t}
+	split, why := splitOf(t, d, baseProject(t, reg, "  auth_method: docker_config\n"))
 	if split == nil {
 		t.Fatalf("no split (%q), want the base read", why)
 	}
@@ -304,11 +310,12 @@ func TestTheBaseImageReadHonorsDockerConfig(t *testing.T) {
 // cloud reads the base image with the cloud session and never sends it
 // the docker config's credential.
 func TestTheBaseImageReadHonorsCloud(t *testing.T) {
+	d := testDeps()
 	reg := newFakeOCIRegistry(t, singleManifest)
 	reg.basicAuth = "oauth2accesstoken:tok-1"
 	dockerCredentialsFor(t, reg.host) // bot:secret
-	withCloudSession(t, reg.host, "oauth2accesstoken", "tok-1")
-	split, why := splitOf(t, baseProject(t, reg, "  auth_method: cloud\n"))
+	withCloudSession(t, d, reg.host, "oauth2accesstoken", "tok-1")
+	split, why := splitOf(t, d, baseProject(t, reg, "  auth_method: cloud\n"))
 	if split == nil {
 		t.Fatalf("no split (%q), want the base read with the cloud session", why)
 	}
@@ -321,6 +328,7 @@ func TestTheBaseImageReadHonorsCloud(t *testing.T) {
 // it was read; they keep that label. The hashes are those of the CLI
 // before auto existed.
 func TestContentLabelKeepsTheLegacyValues(t *testing.T) {
+	t.Parallel()
 	for m, want := range map[string]string{
 		"env": "414c13f7938067487741bf7d2e3d838a7893bf8285d7d66ef28f8d6da649dcb5",
 		"iam": "676550ba23a65778ddfba9f4bcc5576ff069f506f6535d5d986a4be79ac84e13",

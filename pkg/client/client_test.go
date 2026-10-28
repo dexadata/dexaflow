@@ -164,7 +164,7 @@ func TestGetDeployDefaultsReadsTheClusterDefaults(t *testing.T) {
 	var gotAuth, gotPath, gotMethod, gotProbe string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth, gotPath, gotMethod, gotProbe = r.Header.Get("Authorization"), r.URL.Path, r.Method, r.Header.Get("X-Probe")
-		_, _ = w.Write([]byte(`{"registry":"ghcr.io/acme","platforms":["linux/arm64"],"base_image":"b:1"}`))
+		_, _ = w.Write([]byte(`{"registry":"ghcr.io/acme","platforms":["linux/arm64"],"base_image":"b:1","source_mode_image":"r@sha256:1"}`))
 	}))
 	defer srv.Close()
 	c, err := NewClient(srv.URL+"/", WithRequestEditorFn(bearerAuth("tok")))
@@ -188,6 +188,9 @@ func TestGetDeployDefaultsReadsTheClusterDefaults(t *testing.T) {
 	if d == nil || d.Registry != "ghcr.io/acme" || len(d.Platforms) != 1 || d.Platforms[0] != "linux/arm64" || d.BaseImage != "b:1" {
 		t.Errorf("defaults = %+v, want the answer decoded", d)
 	}
+	if d != nil && d.SourceModeImage != "r@sha256:1" {
+		t.Errorf("source_mode_image = %q, want the answer decoded (#1772)", d.SourceModeImage)
+	}
 }
 
 // TestGetDeployDefaultsOlderServer: a server from before the route answers
@@ -208,5 +211,99 @@ func TestGetDeployDefaultsOlderServer(t *testing.T) {
 	status = http.StatusForbidden
 	if d, err := c.GetDeployDefaults(context.Background()); d != nil || err == nil || errors.Is(err, ErrDeployDefaultsNotServed) || !strings.Contains(err.Error(), "403") {
 		t.Errorf("403: defaults=%+v err=%v, want an error naming 403", d, err)
+	}
+}
+
+// TestGetDeployDefaultsBuilderServiceAccountAndWarmPools (#1890): the remote
+// builder, task service account and warm pools are decoded, and a server
+// that predates them, or advertises none, leaves them nil and empty.
+func TestGetDeployDefaultsBuilderServiceAccountAndWarmPools(t *testing.T) {
+	body := `{"registry":"","platforms":[],"base_image":"","source_mode_image":"",` +
+		`"remote_builder":{"cloud_build":{"project":"acme-ci","region":"us-central1","worker_pool":"projects/acme-ci/locations/us-central1/workerPools/p","service_account":"projects/acme-ci/serviceAccounts/b@acme-ci.iam.gserviceaccount.com"}},` +
+		`"task_service_account":"dexaflow-task","warm_pools":{"enabled":true,"min_idle_workers":1,"max_pool_size":8}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := c.GetDeployDefaults(context.Background())
+	if err != nil {
+		t.Fatalf("GetDeployDefaults: %v", err)
+	}
+	wantCB := DeployCloudBuild{Project: "acme-ci", Region: "us-central1", WorkerPool: "projects/acme-ci/locations/us-central1/workerPools/p",
+		ServiceAccount: "projects/acme-ci/serviceAccounts/b@acme-ci.iam.gserviceaccount.com"}
+	if d.RemoteBuilder == nil || d.RemoteBuilder.CloudBuild == nil || *d.RemoteBuilder.CloudBuild != wantCB {
+		t.Errorf("remote_builder = %+v, want %+v", d.RemoteBuilder, wantCB)
+	}
+	if d.TaskServiceAccount != "dexaflow-task" {
+		t.Errorf("task_service_account = %q, want dexaflow-task", d.TaskServiceAccount)
+	}
+	if want := (DeployWarmPools{Enabled: true, MinIdleWorkers: 1, MaxPoolSize: 8}); d.WarmPools == nil || *d.WarmPools != want {
+		t.Errorf("warm_pools = %+v, want %+v", d.WarmPools, want)
+	}
+	for _, older := range []string{
+		`{"registry":"ghcr.io/acme","platforms":[],"base_image":""}`,
+		`{"registry":"","platforms":[],"base_image":"","source_mode_image":"","remote_builder":null,"task_service_account":"","warm_pools":null}`,
+	} {
+		body = older
+		d, err := c.GetDeployDefaults(context.Background())
+		if err != nil {
+			t.Fatalf("GetDeployDefaults(%s): %v", older, err)
+		}
+		if d.RemoteBuilder != nil || d.TaskServiceAccount != "" || d.WarmPools != nil {
+			t.Errorf("%s decoded as %+v, want no remote builder, task service account or warm pools", older, d)
+		}
+	}
+}
+
+// TestGetDeployDefaultsBuildKit (#1883): the in-cluster builder a cluster
+// advertises is decoded with its namespace and pod selector.
+func TestGetDeployDefaultsBuildKit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"registry":"","platforms":[],"base_image":"",` +
+			`"remote_builder":{"buildkit":{"namespace":"dexaflow-builder","pod_selector":"app.kubernetes.io/instance=df,app.kubernetes.io/component=builder"}}}`))
+	}))
+	defer srv.Close()
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := c.GetDeployDefaults(context.Background())
+	if err != nil {
+		t.Fatalf("GetDeployDefaults: %v", err)
+	}
+	want := DeployBuildKit{Namespace: "dexaflow-builder", PodSelector: "app.kubernetes.io/instance=df,app.kubernetes.io/component=builder"}
+	if d.RemoteBuilder == nil || d.RemoteBuilder.CloudBuild != nil || d.RemoteBuilder.BuildKit == nil || *d.RemoteBuilder.BuildKit != want {
+		t.Errorf("remote_builder = %+v, want buildkit %+v", d.RemoteBuilder, want)
+	}
+}
+
+// TestGetDeployDefaultsCIOIDC reads the CI OIDC issuers of the caller's
+// tenant (ADR 0092), and none from a server that predates them.
+func TestGetDeployDefaultsCIOIDC(t *testing.T) {
+	body := `{"registry":"","platforms":[],"base_image":"","ci_oidc":{"issuers":[` +
+		`{"name":"github-acme","provider":"github","issuer":"https://token.actions.githubusercontent.com","audience":"https://dexaflow.acme.example"}]}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := c.GetDeployDefaults(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := DeployCIOIDCIssuer{Name: "github-acme", Provider: "github", Issuer: "https://token.actions.githubusercontent.com", Audience: "https://dexaflow.acme.example"}
+	if d.CIOIDC == nil || len(d.CIOIDC.Issuers) != 1 || d.CIOIDC.Issuers[0] != want {
+		t.Errorf("ci_oidc = %+v, want %+v", d.CIOIDC, want)
+	}
+	body = `{"registry":"","platforms":[],"base_image":""}`
+	if d, err = c.GetDeployDefaults(context.Background()); err != nil || d.CIOIDC != nil {
+		t.Errorf("an older server: %+v, %v; want no ci_oidc", d, err)
 	}
 }

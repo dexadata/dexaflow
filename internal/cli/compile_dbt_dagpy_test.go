@@ -56,6 +56,7 @@ dbt:
 // only the dbt nodes, so the author ships a DAG missing every Python task with
 // a green exit code.
 func TestCompileRefusesDbtBlockWithDagPy(t *testing.T) {
+	t.Parallel()
 	dir := dbtPlusDagPyProject(t)
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
@@ -84,6 +85,7 @@ func TestCompileRefusesDbtBlockWithDagPy(t *testing.T) {
 // which is the command whose whole job is to answer "is this project sane".
 // It reported "is valid" for this shape.
 func TestValidateRefusesDbtBlockWithDagPy(t *testing.T) {
+	t.Parallel()
 	dir := dbtPlusDagPyProject(t)
 	cmd := newValidateCommand()
 	cmd.SetContext(context.Background())
@@ -92,7 +94,7 @@ func TestValidateRefusesDbtBlockWithDagPy(t *testing.T) {
 	cmd.SetErr(&out)
 	cmd.SetArgs([]string{dir})
 
-	err := cmd.Execute()
+	err := cmd.ExecuteContext(testCtx(nil))
 	if err == nil {
 		t.Fatalf("validate called a dbt: block alongside dag.py valid (#1001)\noutput:\n%s", out.String())
 	}
@@ -111,6 +113,7 @@ func TestValidateRefusesDbtBlockWithDagPy(t *testing.T) {
 // Without this a stricter-than-intended check would take the whole mode down,
 // which is how #996 happened.
 func TestCompileDbtOnlyStillWorks(t *testing.T) {
+	t.Parallel()
 	dir := dbtPlusDagPyProject(t)
 	if err := os.Remove(filepath.Join(dir, "dag.py")); err != nil {
 		t.Fatal(err)
@@ -151,6 +154,7 @@ func TestCompileDbtOnlyStillWorks(t *testing.T) {
 // future "make these consistent" pass would silently un-protect every project
 // with a custom dag_source.
 func TestErrDbtBlockWithDagSourceTable(t *testing.T) {
+	t.Parallel()
 	write := func(t *testing.T, dir, name string) {
 		t.Helper()
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("x = 1\n"), 0o600); err != nil {

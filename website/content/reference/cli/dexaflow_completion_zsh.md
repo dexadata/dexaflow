@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_completion_zsh/
 title: "dexaflow completion zsh"
 linkTitle: "completion zsh"
-weight: 25
+weight: 28
 ---
 
 Generate the autocompletion script for zsh

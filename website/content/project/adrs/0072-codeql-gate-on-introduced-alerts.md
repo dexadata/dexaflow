@@ -5,7 +5,7 @@ weight: 720
 description: "ADR 0072: amends ADR 0014's CodeQL policy. A dedicated job fails a pull request that introduces an open CodeQL alert of high or critical security severity; alerts already open on the base branch warn; only checks the rulesets require block a merge."
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-13
 **Amends:** ADR 0014 (supply chain security stack), its CodeQL section and the CodeQL line of its CI gate summary. Everything else in ADR 0014 stands.
 **Issues:** #494 (this change), #491 (the high alert that sat unnoticed).

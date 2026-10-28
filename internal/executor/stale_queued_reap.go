@@ -2,9 +2,12 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"runtime/debug"
 	"time"
+
+	"github.com/dexadata/dexaflow/internal/logs"
 )
 
 // StaleQueuedCandidate is one task instance in `queued` whose dispatch may
@@ -18,8 +21,10 @@ import (
 type StaleQueuedCandidate struct {
 	TaskInstanceID string
 	DagRunID       string
-	DagID          string
-	TaskID         string
+	// TenantID names the attempt's log stream for a start_expired marker.
+	TenantID string
+	DagID    string
+	TaskID   string
 	// TryNumber is the attempt the queued row is on, so a best-effort pod
 	// delete after the mark targets exactly that attempt's pod (#474).
 	TryNumber int
@@ -77,7 +82,19 @@ type DispatchLostReapStore interface {
 	// epoch), so the caller must NOT treat it as reaped (no false log, no pod
 	// delete).
 	MarkTaskDispatchLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error)
+	// MarkTaskStartExpired fails one queued TI as an infra failure because its
+	// pod never started before the attempt credential would run out (#1126).
+	// Same guards and return as MarkTaskDispatchLost.
+	MarkTaskStartExpired(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error)
 }
+
+// StartCredentialMargin is how long before the attempt credential minted at
+// dispatch runs out the dispatch-lost reaper stops waiting for a Pending pod
+// (#1126). An agent that starts inside the margin still registers and reaches
+// its first heartbeat, which renews the credential, before it lapses; a pod
+// still Pending at the deadline is re-placed instead. The resilience ladder
+// checks it against the heartbeat and maintenance intervals.
+const StartCredentialMargin = 2 * time.Minute
 
 // dispatchLostReaper is the scheduler-internal worker that fails TIs whose
 // dispatch was lost. Invoked once per scheduler tick, leader-only. Mirrors
@@ -115,6 +132,16 @@ type dispatchLostReaper struct {
 	// the same try number beside a live agent (#911). Nil on the pod path, which
 	// gates on pod presence instead.
 	procs ProcessLiveness
+	// startDeadline is how long after queued_at a Pending pod may wait before
+	// the credential minted for it at dispatch is about to run out: the attempt
+	// token TTL less StartCredentialMargin (#1126). The token is minted after
+	// the row is queued, so measuring from queued_at errs early, never late.
+	// Zero (Lite, or the TTL not wired) keeps deferring on a live pod however
+	// long it waits.
+	startDeadline time.Duration
+	// sink appends the start_expired marker to the attempt's log; nil leaves
+	// markers off.
+	sink logSink
 	// gate is re-checked before every destructive call (see destructiveGate).
 	gate destructiveGate
 	// pager walks the queued list across sweeps, so attempts whose pods are
@@ -176,40 +203,59 @@ func (r *dispatchLostReaper) run(ctx context.Context) error {
 		// Cache fast-path (PR-10), safe direction only: a cached Pending/Running
 		// pod defers without an apiserver read. A cache MISS is NOT trusted — fall
 		// through to the live read below, preserving the #461 fix.
-		if r.cache != nil && r.cache.CachedPodActive(c.attempt()) {
+		//
+		// Past the start deadline the cache cannot defer: whether the live pod is
+		// still Pending decides between deferring and start_expired (#1126).
+		startDue := r.startDue(c, now)
+		if !startDue && r.cache != nil && r.cache.CachedPodActive(c.attempt()) {
 			r.record("dispatch_lost_cache_active")
 			continue
 		}
 		if processDefers(ctx, r.procs, r.logger, r.record, "dispatch_lost", c.TaskInstanceID, c.DagRunID, c.TaskID, c.TryNumber) {
 			continue
 		}
-		if r.pods != nil {
-			presence, perr := r.pods.TaskPodPresence(ctx, c.attempt())
-			if perr != nil {
-				r.logger.Warn("dispatch-lost: pod liveness unknown; deferring",
-					"ti", c.TaskInstanceID, "run", c.DagRunID, "task", c.TaskID, "error", perr)
-				r.record("dispatch_lost_pod_query_error")
-				continue
-			}
-			// Only a LIVE pod defers here, which is NOT because a finished pod is
-			// worthless: SucceedTaskInstanceIfActive and its siblings admit
-			// `queued`, so the reconciler settles queued attempts by design and
-			// "a queued attempt never ran" is unsound. (The scheduler's queued
-			// stamp is guarded to the scheduled slot it planned, so it never moves
-			// a row that reached `running` back to `queued`, #929.) The
-			// finished pod's outcome record is nonetheless safe: the teardown below
-			// skips a pod in a terminal phase and leaves it to the reconciler
-			// (#928), so this reaper's decision can stay a pure liveness question.
-			if presence == PodPresenceLive {
-				r.logger.Info("dispatch-lost: pod is live (slow start); deferring",
-					"ti", c.TaskInstanceID, "run", c.DagRunID, "task", c.TaskID)
-				r.record("dispatch_lost_deferred")
-				continue
-			}
+		if r.podDefers(ctx, c, startDue) {
+			continue
 		}
 		r.reapOne(ctx, c)
 	}
 	return nil
+}
+
+// podDefers is the live pod read behind the K8s-aware gate: it reports whether
+// the candidate was handled here (deferred on a live pod or an unknown read,
+// or failed as start_expired) so the caller must not mark it dispatch_lost.
+// Nil pods (Lite) handles nothing.
+func (r *dispatchLostReaper) podDefers(ctx context.Context, c StaleQueuedCandidate, startDue bool) bool {
+	if r.pods == nil {
+		return false
+	}
+	presence, perr := r.pods.TaskPodPresence(ctx, c.attempt())
+	if perr != nil {
+		r.logger.Warn("dispatch-lost: pod liveness unknown; deferring",
+			"ti", c.TaskInstanceID, "run", c.DagRunID, "task", c.TaskID, "error", perr)
+		r.record("dispatch_lost_pod_query_error")
+		return true
+	}
+	// Only a LIVE pod defers here, which is NOT because a finished pod is
+	// worthless: SucceedTaskInstanceIfActive and its siblings admit
+	// `queued`, so the reconciler settles queued attempts by design and
+	// "a queued attempt never ran" is unsound. (The scheduler's queued
+	// stamp is guarded to the scheduled slot it planned, so it never moves
+	// a row that reached `running` back to `queued`, #929.) The
+	// finished pod's outcome record is nonetheless safe: the teardown below
+	// skips a pod in a terminal phase and leaves it to the reconciler
+	// (#928), so this reaper's decision can stay a pure liveness question.
+	if presence != PodPresenceLive {
+		return false
+	}
+	if startDue && r.startExpired(ctx, c) {
+		return true
+	}
+	r.logger.Info("dispatch-lost: pod is live (slow start); deferring",
+		"ti", c.TaskInstanceID, "run", c.DagRunID, "task", c.TaskID)
+	r.record("dispatch_lost_deferred")
+	return true
 }
 
 // reapOne fails one dispatch-lost TI and tears down any lingering pod,
@@ -250,10 +296,97 @@ func (r *dispatchLostReaper) reapOne(ctx context.Context, c StaleQueuedCandidate
 		r.record("dispatch_lost_teardown_gate_skip")
 		return
 	}
-	if derr := r.pods.DeleteTaskPod(ctx, c.attempt()); derr != nil {
+	td, derr := r.pods.DeleteTaskPod(ctx, c.attempt())
+	recordPreserved(r.record, "dispatch_lost_terminal_pod_preserved", td)
+	if derr != nil {
 		r.logger.Error("deleting dispatch-lost task pod",
 			"ti", c.TaskInstanceID, "run", c.DagRunID, "task", c.TaskID, "try", c.TryNumber, "error", derr)
 		r.record("dispatch_lost_pod_delete_error")
+	}
+}
+
+// startDue reports whether c has waited past the start deadline: its pod, if
+// still Pending, can no longer start with a live credential.
+func (r *dispatchLostReaper) startDue(c StaleQueuedCandidate, now time.Time) bool {
+	return r.startDeadline > 0 && r.pods != nil && !c.QueuedAt.IsZero() && now.Sub(c.QueuedAt) >= r.startDeadline
+}
+
+// startExpired handles a live pod past the start deadline (#1126). A pod whose
+// agent has started (Running) keeps deferring: it registered with a live
+// credential and renews it on every heartbeat. A pod still Pending would start
+// with a credential about to lapse, be refused at Register, stream no log and
+// fail against the user's retries; it is failed as start_expired instead, an
+// infra mark the planner re-places off the retry budget with a fresh
+// credential, and its pod is stopped so it cannot start late. It reports
+// whether it took the candidate (reaped it, or deferred on an unknown read);
+// false means the pod has started and the ordinary live-pod defer applies.
+func (r *dispatchLostReaper) startExpired(ctx context.Context, c StaleQueuedCandidate) bool {
+	pending, err := r.pods.TaskPodPending(ctx, c.attempt())
+	if err != nil {
+		r.logger.Warn("dispatch-lost: pod start unknown; deferring",
+			"ti", c.TaskInstanceID, "run", c.DagRunID, "task", c.TaskID, "error", err)
+		r.record("start_expired_pod_query_error")
+		return true
+	}
+	if !pending {
+		return false
+	}
+	if !gateOpen(r.gate, ctx) {
+		r.record("start_expired_gate_skip")
+		return true
+	}
+	applied, ferr := r.store.MarkTaskStartExpired(ctx, c.TaskInstanceID, c.TryNumber, c.AttemptEpoch)
+	if ferr != nil {
+		r.logger.Error("marking task start-expired",
+			"ti", c.TaskInstanceID, "run", c.DagRunID, "dag", c.DagID, "task", c.TaskID, "error", ferr)
+		r.record("start_expired_error")
+		return true
+	}
+	if !applied {
+		// The agent reported RUNNING, or a dispatch claimed a new epoch, since
+		// the list: not ours to reap, and its pod is not ours to stop.
+		r.record("start_expired_noop")
+		return true
+	}
+	r.logger.Warn("task pod still pending as its attempt credential runs out; failing as start_expired for an infra re-place",
+		"ti", c.TaskInstanceID, "run", c.DagRunID, "dag", c.DagID, "task", c.TaskID,
+		"try", c.TryNumber, "epoch", c.AttemptEpoch, "queued_at", c.QueuedAt, "start_deadline", r.startDeadline)
+	r.record("start_expired")
+	r.writeStartExpiredMarker(c)
+	if !gateOpen(r.gate, ctx) {
+		r.record("start_expired_teardown_gate_skip")
+		return true
+	}
+	td, derr := r.pods.DeleteTaskPod(ctx, c.attempt())
+	recordPreserved(r.record, "start_expired_terminal_pod_preserved", td)
+	if derr != nil {
+		r.logger.Error("deleting start-expired task pod",
+			"ti", c.TaskInstanceID, "run", c.DagRunID, "task", c.TaskID, "try", c.TryNumber, "error", derr)
+		r.record("start_expired_pod_delete_error")
+	}
+	return true
+}
+
+// writeStartExpiredMarker appends the reason to the attempt's log, which is
+// otherwise empty: its agent never started. Best-effort, like the agent-lost
+// marker: a nil sink or a write error never blocks the reap.
+func (r *dispatchLostReaper) writeStartExpiredMarker(c StaleQueuedCandidate) {
+	if r.sink == nil {
+		return
+	}
+	ref := logs.Ref{
+		TenantID: c.TenantID, DagID: c.DagID, RunID: c.DagRunID, TaskID: c.TaskID,
+		TryNumber: c.TryNumber, AttemptEpoch: c.AttemptEpoch,
+	}
+	ev := logs.Event{
+		Time:   time.Now().UTC(),
+		Level:  "error",
+		Stream: "system",
+		Message: fmt.Sprintf("killed: start_expired (task pod still pending %s after it was queued, too close to the end of its attempt credential; "+
+			"re-placed with a fresh credential without using a retry)", r.startDeadline),
+	}
+	if err := r.sink.AppendEvent(ref, ev); err != nil {
+		r.record("start_expired_log_marker_error")
 	}
 }
 

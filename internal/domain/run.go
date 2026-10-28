@@ -27,6 +27,48 @@ type DAG struct {
 	CurrentVersion string
 }
 
+// DagFilter specifies filtering, searching, and sorting options for listing DAGs.
+type DagFilter struct {
+	DagIDPattern                string
+	DagIDPrefixPattern          string
+	DagDisplayNamePattern       string
+	DagDisplayNamePrefixPattern string
+	Paused                      *bool
+	LastDagRunState             string
+	Tags                        []string
+	TagsMatchMode               string // "any" or "all"
+	Owners                      []string
+	IsFavorite                  *bool
+	UserID                      string
+	OrderBy                     string
+	Limit                       int
+	Offset                      int
+}
+
+// DagRunFilter specifies filtering options for listing DAG runs.
+type DagRunFilter struct {
+	RunIDPattern       string
+	RunIDPrefixPattern string
+	RunType            string
+	States             []string
+	StartDateGte       *time.Time
+	StartDateLte       *time.Time
+	EndDateGte         *time.Time
+	EndDateLte         *time.Time
+	Limit              int
+	Offset             int
+}
+
+// TaskInstanceFilter specifies filtering options for listing task instances.
+type TaskInstanceFilter struct {
+	States              []string
+	TaskIDPattern       string
+	TaskIDPrefixPattern string
+	Pool                string
+	Limit               int
+	Offset              int
+}
+
 // DagVersion is a registered version of a DAG. VersionNumber is the 1-based
 // ordinal the UI uses (the stored version label is free-form).
 type DagVersion struct {

@@ -106,6 +106,7 @@ const (
 	TaskInstanceStateFailed         TaskInstanceState = "failed"
 	TaskInstanceStateNone           TaskInstanceState = "none"
 	TaskInstanceStateQueued         TaskInstanceState = "queued"
+	TaskInstanceStateRemoved        TaskInstanceState = "removed"
 	TaskInstanceStateRunning        TaskInstanceState = "running"
 	TaskInstanceStateScheduled      TaskInstanceState = "scheduled"
 	TaskInstanceStateSkipped        TaskInstanceState = "skipped"
@@ -122,6 +123,8 @@ func (e TaskInstanceState) Valid() bool {
 	case TaskInstanceStateNone:
 		return true
 	case TaskInstanceStateQueued:
+		return true
+	case TaskInstanceStateRemoved:
 		return true
 	case TaskInstanceStateRunning:
 		return true
@@ -283,9 +286,17 @@ type ClearTaskInstancesRequest struct {
 	// ResetDagRuns Re-open the run so the scheduler looks at it again. Without it a terminal run stays terminal and the cleared task instance is never scheduled.
 	ResetDagRuns *bool `json:"reset_dag_runs,omitempty"`
 
-	// RunOnLatestVersion Which version the re-run executes. false (the default, matching Apache Airflow) keeps the version the run was created with, so the re-run executes the image that produced the original attempt. true re-binds the run to the DAG's current registered version, so the re-run picks up the newest image and config — use it to re-run a failed task against a fix without creating a new run.
+	// RunOnLatestVersion Which version the re-run executes. false (the default, matching Apache Airflow) keeps the version the run was created with, so the re-run executes the image that produced the original attempt. true re-binds the run to the DAG's current registered version, so the re-run picks up the newest image and config. Use it to re-run a failed task against a fix without creating a new run. Only a finished run (success or failed, with no task instance queued or running) moves: the clear creates the task instances of the tasks the version adds and marks removed the ones of the tasks it dropped. A run that has not finished keeps its version, as in Airflow, and the response lists it in run_on_latest_version_not_applied with the reason (ADR 0086).
 	RunOnLatestVersion *bool     `json:"run_on_latest_version,omitempty"`
 	TaskIds            *[]string `json:"task_ids,omitempty"`
+}
+
+// ClearVersionNotApplied Dexaflow-only. The runs a clear with run_on_latest_version keeps on their own version, each with the reason (ADR 0086): only a finished run with no task instance queued or running moves to the current version. The clear still applies to these runs, on their version. Left out when every run moved or the option was not asked, and on every response other than the two clear routes.
+type ClearVersionNotApplied = []struct {
+	DagRunId string `json:"dag_run_id"`
+
+	// Reason Why the run keeps its version, for example "the run is running: only a finished run moves to the current version".
+	Reason string `json:"reason"`
 }
 
 // ComponentHealth defines model for ComponentHealth.
@@ -413,9 +424,12 @@ type DAGRun struct {
 	LogicalDate       *time.Time              `json:"logical_date,omitempty"`
 	Note              *string                 `json:"note,omitempty"`
 	QueuedAt          *time.Time              `json:"queued_at,omitempty"`
-	RunType           *DAGRunRunType          `json:"run_type,omitempty"`
-	StartDate         *time.Time              `json:"start_date,omitempty"`
-	State             *DAGRunState            `json:"state,omitempty"`
+
+	// RunOnLatestVersionNotApplied Dexaflow-only. The runs a clear with run_on_latest_version keeps on their own version, each with the reason (ADR 0086): only a finished run with no task instance queued or running moves to the current version. The clear still applies to these runs, on their version. Left out when every run moved or the option was not asked, and on every response other than the two clear routes.
+	RunOnLatestVersionNotApplied *ClearVersionNotApplied `json:"run_on_latest_version_not_applied,omitempty"`
+	RunType                      *DAGRunRunType          `json:"run_type,omitempty"`
+	StartDate                    *time.Time              `json:"start_date,omitempty"`
+	State                        *DAGRunState            `json:"state,omitempty"`
 }
 
 // DAGRunRunType defines model for DAGRun.RunType.
@@ -438,7 +452,7 @@ type DAGRunClearRequest struct {
 	// OnlyNew Not supported. Sending true is refused with 400: Dexaflow cannot yet tell which tasks a newer DAG version added.
 	OnlyNew *bool `json:"only_new,omitempty"`
 
-	// RunOnLatestVersion Which version the re-run executes. Unset or false keeps the version the run was created with; true re-binds the run to the DAG's current registered version.
+	// RunOnLatestVersion Which version the re-run executes. Unset or false keeps the version the run was created with. true moves a finished run (success or failed, with no task instance queued or running) to the DAG's current registered version, creating the task instances of the tasks that version adds and marking removed the ones of the tasks it dropped. A run that has not finished keeps its version, as in Airflow; the response then lists it in run_on_latest_version_not_applied with the reason (ADR 0086).
 	RunOnLatestVersion *bool `json:"run_on_latest_version,omitempty"`
 }
 
@@ -618,9 +632,12 @@ type TaskInstanceCollection struct {
 	NextCursor *string `json:"next_cursor,omitempty"`
 
 	// PreviousCursor Cursor of the previous page. Present only when the request carried cursor and the page is not the first.
-	PreviousCursor *string         `json:"previous_cursor,omitempty"`
-	TaskInstances  *[]TaskInstance `json:"task_instances,omitempty"`
-	TotalEntries   *int            `json:"total_entries,omitempty"`
+	PreviousCursor *string `json:"previous_cursor,omitempty"`
+
+	// RunOnLatestVersionNotApplied Dexaflow-only. The runs a clear with run_on_latest_version keeps on their own version, each with the reason (ADR 0086): only a finished run with no task instance queued or running moves to the current version. The clear still applies to these runs, on their version. Left out when every run moved or the option was not asked, and on every response other than the two clear routes.
+	RunOnLatestVersionNotApplied *ClearVersionNotApplied `json:"run_on_latest_version_not_applied,omitempty"`
+	TaskInstances                *[]TaskInstance         `json:"task_instances,omitempty"`
+	TotalEntries                 *int                    `json:"total_entries,omitempty"`
 }
 
 // TaskInstanceStateUpdate defines model for TaskInstanceStateUpdate.
@@ -630,6 +647,31 @@ type TaskInstanceStateUpdate struct {
 
 // TaskInstanceStateUpdateNewState defines model for TaskInstanceStateUpdate.NewState.
 type TaskInstanceStateUpdateNewState string
+
+// TaskPodsReport What the version's task pods would run as (Dexaflow), sent by the dry run route only, absent from a register. A server that starts no task pods sends run_as_non_root false and no service account.
+type TaskPodsReport struct {
+	// RunAsNonRoot True when task pods refuse an image that runs as root or as a user name rather than a number (executor.run_tasks_as_non_root).
+	RunAsNonRoot bool `json:"run_as_non_root"`
+
+	// ServiceAccounts Each ServiceAccount a task pod of the version would run as (the task's execution.service_account, else executor.task_service_account, else the namespace's default), sorted by name. A dry run looks up at most 8.
+	ServiceAccounts []TaskServiceAccountCheck `json:"service_accounts"`
+}
+
+// TaskServiceAccountCheck defines model for TaskServiceAccountCheck.
+type TaskServiceAccountCheck struct {
+	// Detail Why it is unchecked, or why a missing name is not valid.
+	Detail *string `json:"detail,omitempty"`
+
+	// ImagePullSecrets How many imagePullSecrets it carries; sent with state found.
+	ImagePullSecrets *int   `json:"image_pull_secrets,omitempty"`
+	Name             string `json:"name"`
+
+	// State One of found, missing or unchecked. found: it exists in the task namespace. missing: it does not, and the pods of these tasks would not be created; when its name is not a valid ServiceAccount name (a DNS-1123 subdomain), it is not looked up and detail says so. unchecked: the server could not look it up (detail says why).
+	State string `json:"state"`
+
+	// Tasks The tasks whose pods run as it.
+	Tasks []string `json:"tasks"`
+}
 
 // TokenRequest defines model for TokenRequest.
 type TokenRequest struct {
@@ -721,7 +763,10 @@ type VersionRegistration struct {
 	// IsPaused The DAG's is_paused after the register.
 	IsPaused *bool   `json:"is_paused,omitempty"`
 	SpecHash *string `json:"spec_hash,omitempty"`
-	Version  *string `json:"version,omitempty"`
+
+	// TaskPods What the version's task pods would run as (Dexaflow), sent by the dry run route only, absent from a register. A server that starts no task pods sends run_as_non_root false and no service account.
+	TaskPods *TaskPodsReport `json:"task_pods,omitempty"`
+	Version  *string         `json:"version,omitempty"`
 
 	// Warnings What the register lets through with a warning (a task that does not fit its size under executor.unit.enforce=warn, an image not pinned by digest under deploy.require_digest=warn). Always sent by the dry run route; sent by a register only when it has a warning to give.
 	Warnings *[]string `json:"warnings,omitempty"`
@@ -780,6 +825,9 @@ type TaskID = string
 
 // VariableKey defines model for VariableKey.
 type VariableKey = string
+
+// AuthUnavailable defines model for AuthUnavailable.
+type AuthUnavailable = Error
 
 // EncryptionUnavailable defines model for EncryptionUnavailable.
 type EncryptionUnavailable = Error
@@ -1203,7 +1251,7 @@ type ClientInterface interface {
 
 	// RenewToken Renew a still-valid JWT into a fresh short-lived token
 	//
-	// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again.
+	// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again. Returns 503 with Retry-After when the token could not be checked because the user store is unreachable; the token may still be good, so the client waits and retries instead of logging in again.
 	//
 	// Corresponds with POST /api/v2/auth/token/renew (the `RenewToken` operationId).
 	RenewToken(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1652,7 +1700,7 @@ func (c *Client) RevokeAPIToken(ctx context.Context, tokenId string, reqEditors 
 
 // RenewToken Renew a still-valid JWT into a fresh short-lived token
 //
-// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again.
+// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again. Returns 503 with Retry-After when the token could not be checked because the user store is unreachable; the token may still be good, so the client waits and retries instead of logging in again.
 //
 // Corresponds with POST /api/v2/auth/token/renew (the `RenewToken` operationId).
 func (c *Client) RenewToken(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -4611,7 +4659,7 @@ type ClientWithResponsesInterface interface {
 
 	// RenewTokenWithResponse Renew a still-valid JWT into a fresh short-lived token
 	//
-	// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again.
+	// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again. Returns 503 with Retry-After when the token could not be checked because the user store is unreachable; the token may still be good, so the client waits and retries instead of logging in again.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -5215,6 +5263,11 @@ func (r RevokeAPITokenResponse) ContentType() string {
 	return ""
 }
 
+// RenewTokenResponse503Headers the declared response headers of an HTTP 503 response for RenewToken
+type RenewTokenResponse503Headers struct {
+	RetryAfter *int
+}
+
 type RenewTokenResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5222,6 +5275,10 @@ type RenewTokenResponse struct {
 	JSON200 *TokenResponse
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *RenewTokenResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -5232,6 +5289,11 @@ func (r RenewTokenResponse) GetJSON200() *TokenResponse {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r RenewTokenResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RenewTokenResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -5742,11 +5804,18 @@ type ClearTaskInstancesResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *TaskInstanceCollection
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ClearTaskInstancesResponse) GetJSON200() *TaskInstanceCollection {
 	return r.JSON200
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ClearTaskInstancesResponse) GetJSON409() *Error {
+	return r.JSON409
 }
 
 // GetBody returns the raw response body bytes
@@ -5995,6 +6064,8 @@ type ClearDagRunResponse struct {
 	JSON403 *Error
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -6015,6 +6086,11 @@ func (r ClearDagRunResponse) GetJSON403() *Error {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r ClearDagRunResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ClearDagRunResponse) GetJSON409() *Error {
+	return r.JSON409
 }
 
 // GetBody returns the raw response body bytes
@@ -6984,6 +7060,11 @@ type IssueTokenResponse200Headers struct {
 	SetCookie *string
 }
 
+// IssueTokenResponse503Headers the declared response headers of an HTTP 503 response for IssueToken
+type IssueTokenResponse503Headers struct {
+	RetryAfter *int
+}
+
 type IssueTokenResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6991,8 +7072,12 @@ type IssueTokenResponse struct {
 	JSON200 *TokenResponse
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
 	// Headers200 the parsed response headers for an HTTP 200 response
 	Headers200 *IssueTokenResponse200Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *IssueTokenResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -7003,6 +7088,11 @@ func (r IssueTokenResponse) GetJSON200() *TokenResponse {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r IssueTokenResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r IssueTokenResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -7164,7 +7254,7 @@ func (c *ClientWithResponses) RevokeAPITokenWithResponse(ctx context.Context, to
 
 // RenewTokenWithResponse Renew a still-valid JWT into a fresh short-lived token
 //
-// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again.
+// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again. Returns 503 with Retry-After when the token could not be checked because the user store is unreachable; the token may still be good, so the client waits and retries instead of logging in again.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -8059,6 +8149,26 @@ func ParseRenewTokenResponse(rsp *http.Response) (*RenewTokenResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers RenewTokenResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8427,6 +8537,13 @@ func ParseClearTaskInstancesResponse(rsp *http.Response) (*ClearTaskInstancesRes
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
 	}
 
 	return response, nil
@@ -8625,6 +8742,13 @@ func ParseClearDagRunResponse(rsp *http.Response) (*ClearDagRunResponse, error) 
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	}
 
@@ -9313,6 +9437,13 @@ func ParseIssueTokenResponse(rsp *http.Response) (*IssueTokenResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
 	}
 
 	switch {
@@ -9326,6 +9457,16 @@ func ParseIssueTokenResponse(rsp *http.Response) (*IssueTokenResponse, error) {
 			headers.SetCookie = &value
 		}
 		response.Headers200 = &headers
+	case rsp.StatusCode == 503:
+		var headers IssueTokenResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil

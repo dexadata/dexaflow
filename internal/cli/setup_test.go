@@ -13,6 +13,7 @@ import (
 )
 
 func TestLibcSuffix(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{"": "", "glibc": " (glibc)", "musl": " (musl)"}
 	for in, want := range cases {
 		if got := libcSuffix(in); got != want {
@@ -22,6 +23,7 @@ func TestLibcSuffix(t *testing.T) {
 }
 
 func TestWriteSetupManifest(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	want := setupManifest{
 		Python: "/p/python3.11", Workspace: "/w", Tier: "k8s",
@@ -48,8 +50,10 @@ func TestRunSetupVenvless(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	// A fake python3.11 on PATH so EnsurePython uses it instead of downloading.
+	// It must answer the version probe: setup accepts a host interpreter on
+	// the version it reports, not on its name (#1700).
 	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "python3.11"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "python3.11"), []byte("#!/bin/sh\necho 'Python 3.11.9'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -60,7 +64,7 @@ func TestRunSetupVenvless(t *testing.T) {
 	cmd.SetErr(&out)
 	ws := filepath.Join(home, "ws")
 	cmd.SetArgs([]string{"--workspace", ws})
-	if err := cmd.Execute(); err != nil {
+	if err := cmd.ExecuteContext(testCtx(nil)); err != nil {
 		t.Fatalf("setup err = %v\n%s", err, out.String())
 	}
 	// Sources extracted, workspace + manifest + config created — no parser venv.
@@ -84,12 +88,13 @@ func TestRunSetupVenvless(t *testing.T) {
 }
 
 func TestRunSetupDryRun(t *testing.T) {
+	t.Parallel()
 	cmd := newSetupCommand()
 	var out, errb bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errb)
 	cmd.SetArgs([]string{"--dry-run"})
-	if err := cmd.Execute(); err != nil {
+	if err := cmd.ExecuteContext(testCtx(nil)); err != nil {
 		t.Fatalf("setup --dry-run err = %v", err)
 	}
 	s := out.String()
@@ -101,6 +106,7 @@ func TestRunSetupDryRun(t *testing.T) {
 }
 
 func TestWriteLiteConfig(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	lc := liteSettings{Workspace: "/ws", Executor: "subprocess", AdminEmail: "admin@leoflow.local", Port: 8088}
 	if err := writeLiteConfig(home, "env PYTHONPATH=/p python -m leoflow_parser", lc, "$2a$12$abcHASH", liteFileSecrets{jwtSecret: "deadbeef-jwt-secret", secretKey: "deadbeef-secret-key"}); err != nil {
@@ -132,6 +138,7 @@ func TestWriteLiteConfig(t *testing.T) {
 }
 
 func TestLoadManifestSettings(t *testing.T) {
+	t.Parallel()
 	def := liteSettings{Workspace: "/def", Executor: "subprocess", AdminEmail: "admin@leoflow.local", Port: 8088}
 
 	t.Run("missing manifest returns defaults", func(t *testing.T) {
@@ -182,7 +189,7 @@ func TestRunSetupReRunKeepsSettings(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
 	cmd.SetArgs([]string{})
-	if err := cmd.Execute(); err != nil {
+	if err := cmd.ExecuteContext(testCtx(nil)); err != nil {
 		t.Fatalf("re-run setup err = %v\n%s", err, out.String())
 	}
 	s := out.String()
@@ -198,6 +205,7 @@ func TestRunSetupReRunKeepsSettings(t *testing.T) {
 }
 
 func TestGatherLiteConfig(t *testing.T) {
+	t.Parallel()
 	def := liteSettings{Workspace: "/def/ws", Executor: "subprocess", AdminEmail: "admin@leoflow.local", Port: 8088}
 
 	t.Run("non-interactive returns defaults verbatim", func(t *testing.T) {
@@ -214,6 +222,14 @@ func TestGatherLiteConfig(t *testing.T) {
 		want := liteSettings{Workspace: "/my/ws", Executor: "k8s", AdminEmail: "me@x.io", Port: 9000}
 		if got != want {
 			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("interactive header names the product", func(t *testing.T) {
+		var out strings.Builder
+		gatherLiteConfig(true, bufio.NewReader(strings.NewReader("\n\n\n\n")), &out, def)
+		if !strings.Contains(out.String(), "Dexaflow Lite setup") || strings.Contains(out.String(), "Leoflow") {
+			t.Errorf("setup header must say Dexaflow Lite setup, got:\n%s", out.String())
 		}
 	})
 
@@ -246,10 +262,20 @@ func TestRunSetupDefaultsToTheDexaflowAdmin(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
 	cmd.SetArgs([]string{"--dry-run"})
-	if err := cmd.Execute(); err != nil {
+	if err := cmd.ExecuteContext(testCtx(nil)); err != nil {
 		t.Fatalf("setup --dry-run err = %v", err)
 	}
 	if !strings.Contains(out.String(), "admin      admin@dexaflow.local\n") {
 		t.Errorf("first setup should default the admin to admin@dexaflow.local:\n%s", out.String())
+	}
+}
+
+// TestSetupWordmarkIsDexaflow: the figlet wordmark atop `dexaflow setup` spells
+// the current name, whose capital D opens the first line.
+func TestSetupWordmarkIsDexaflow(t *testing.T) {
+	t.Parallel()
+	first := strings.SplitN(setupWordmark, "\n", 2)[0]
+	if !strings.HasPrefix(first, " ____") || !strings.Contains(setupWordmark, "|____/") {
+		t.Errorf("wordmark does not open with the figlet D of Dexaflow:\n%s", setupWordmark)
 	}
 }

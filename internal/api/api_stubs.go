@@ -23,14 +23,16 @@ func apiEmptyCollection(field string) gin.HandlerFunc {
 // registerAPIStubs mounts graceful empty responses for the unimplemented public
 // /api/v2 list endpoints the Airflow UI polls.
 func registerAPIStubs(r gin.IRouter) {
-	r.GET("/api/v2/dagTags", apiEmptyCollection("tags"))             // #26
+	// /api/v2/dagTags is owned by registerDagTags (real when a DagRepository is
+	// set, empty stub otherwise), see #26, #1927.
 	r.GET("/api/v2/dagWarnings", apiEmptyCollection("dag_warnings")) // #27
 	// /api/v2/importErrors is owned by registerImportErrors (real when an
 	// ImportErrorStore is set, empty stub otherwise) — see #28.
 	r.GET("/api/v2/plugins/importErrors", apiEmptyCollection("import_errors")) // #28
 	r.GET("/api/v2/assets", apiEmptyCollection("assets"))                      // #29
 	r.GET("/api/v2/assets/events", apiEmptyCollection("asset_events"))         // #29
-	r.GET("/api/v2/plugins", apiEmptyCollection("plugins"))                    // #30
+	// /api/v2/plugins is owned by pluginsHandler: the built-in plugin that
+	// carries the API tokens screen when the token API is mounted (#1886).
 	// /api/v2/pools is owned by registerUIPools: real Pro-only CRUD when the Pro
 	// edition sets a PoolStore, else the same empty-collection stub (ADR 0053, #31).
 	r.GET("/api/v2/providers", apiEmptyCollection("providers")) // #30

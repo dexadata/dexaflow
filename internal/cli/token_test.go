@@ -10,6 +10,7 @@ import (
 )
 
 func TestRequestTokenReturnsAccessToken(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -27,6 +28,7 @@ func TestRequestTokenReturnsAccessToken(t *testing.T) {
 }
 
 func TestRequestTokenRejectsBadStatus(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
@@ -38,6 +40,7 @@ func TestRequestTokenRejectsBadStatus(t *testing.T) {
 }
 
 func TestCreateUserSendsRoleAndReturnsUser(t *testing.T) {
+	t.Parallel()
 	var gotAuth, gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
@@ -68,6 +71,7 @@ func TestCreateUserSendsRoleAndReturnsUser(t *testing.T) {
 }
 
 func TestCreateUserRejectsBadStatus(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusConflict)
 		_, _ = io.WriteString(w, `{"detail":"resource already exists"}`)

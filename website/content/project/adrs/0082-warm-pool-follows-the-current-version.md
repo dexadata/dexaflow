@@ -5,7 +5,7 @@ weight: 820
 description: "ADR 0082: with warm pools on, the reconciler keeps a pool for the current version of every unpaused DAG that declares min_idle_workers from the moment it becomes current, and for an active run's version only while it is still current. A superseded version keeps no idle buffer: its idle workers are deleted and busy ones finish their attempt first. Replaces the version bump paragraph of ADR 0058 D1."
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-14
 **Relates:** ADR 0058 (warm worker pools; this ADR replaces the "a version bump drains the old pool by idle-TTL" sentence of D1 and keeps the rest of D1 and D2), ADR 0055 (per-attempt identity), ADR 0002 (pod per task, still the default)
 **Issues:** #1707
@@ -53,7 +53,10 @@ warm.
    declared value is read from the spec in SQL (`ListWarmCurrentVersions`),
    so no spec of a DAG that is not prewarmed is loaded. A paused DAG is not
    prewarmed; its running runs keep the target as before. The drain of D4
-   applies to every superseded version, declared or not.
+   applies to every superseded version, declared or not. The author declares
+   it as `min_idle_workers` in `dexaflow.yaml`; the compile copies it into
+   `dag.json` (the parser does not emit it), and refuses it on a DAG with
+   `staging.enabled`, which is never warm (ADR 0058 D5).
 4. **A superseded version drains at once, never by killing an attempt.** It
    is no longer a target, so the reconciler's existing drain applies: idle
    workers are deleted (each delete re-reads the busy set first, #1601), a
@@ -68,9 +71,43 @@ warm.
 6. **Observability.** The reconciler logs and counts each prewarm start and
    each drain start once per leader
    (`dexaflow_scheduler_decisions_total`, `warm_pool_prewarm_started`,
-   `warm_pool_drain_started`), and logs when a drained pool's anchor is
-   deleted. A new leader starts without that memory, so it logs and counts
+   `warm_pool_drain_started`, and `warm_pool_prewarm_rationed` and
+   `warm_pool_run_floor_over_retiring_prewarm` for the cap of D7), and logs
+   when a drained pool's anchor is deleted. A new leader starts without that memory, so it logs and counts
    each prewarmed or draining pool it finds once more.
+
+7. **Prewarm is bounded by the per-tenant cap.** A prewarm-only target (the
+   current version, no active run) never raises a tenant's budget the way
+   the idle floor of a version with an active run does (ADR 0058, the
+   per-tenant cap). The prewarm floors of a tenant share what
+   `max_warm_pods_per_tenant` leaves after the floors of its versions with an
+   active run, served by DAG id (then version id), each taking the smaller of
+   its floor and what is left. The order is stable, so the same DAGs keep
+   their pools on every tick. A rationed target creates toward its share
+   only; when its share drops below the idle workers it has (a DAG that
+   sorts first appears, or a run of another version needs its floor), its
+   idle workers are not deleted: they retire with `worker_idle_ttl` and are
+   not replaced, so a share that moves between ticks does not churn pods.
+   They are not charged against the floor of a version with an active run,
+   which is created at once, so the cap can be exceeded by those idle
+   workers for at most one idle TTL after each share drop: a worker's idle
+   TTL runs from when it connected or finished its last attempt, so it has
+   retired one idle TTL after the drop at the latest. The bound holds per
+   drop, not overall. A run version with no prewarm of its own drains when
+   its run ends, the prewarmed pool gets its share back and refills, and
+   the next run of that version exceeds the cap again, each time for at
+   most the shorter of the run and one idle TTL. Each tick that grants such
+   creates logs them and counts `warm_pool_run_floor_over_retiring_prewarm`,
+   so the pods above `max_warm_pods_per_tenant` are explained. A prewarm
+   target that took the share waits for those workers to retire, so a
+   prewarm target never creates past the cap. A busy worker is never deleted, as before. Once a run of a rationed
+   version is active, it is a run target again and its floor is honored.
+   A tenant's rationed set is logged (at most 10 versions and a count of the
+   rest) and counted as `warm_pool_prewarm_rationed` when it changes, not on
+   every tick; `warm_pool_tenant_cap_below_min_idle_sum` stays the signal
+   that the floors of versions with an active run exceed the cap. A target
+   rationed to nothing has not started, so its `warm_pool_prewarm_started`
+   (D6) is counted when it later gets a share.
 
 ## Alternatives considered
 
@@ -83,10 +120,16 @@ warm.
   between replicas and would miss rollbacks and direct database changes. The
   reconciler reading the current version covers every path.
 - **Prewarm under the operator floor too.** With a floor of N, every
-  unpaused DAG would hold N idle pods with no run, and the per-tenant cap
-  would not bound it (it never starves a promised idle floor, below). The
+  unpaused DAG would hold N idle pods with no run. The per-tenant cap would
+  ration them (D7), but which DAGs get warmth would then depend on DAG ids,
+  not on any author asking for it. The
   DAG's own declaration is the opt in: the author asks for warmth for this
   DAG, the operator caps how much.
+- **Let prewarm floors raise the tenant budget, as run floors do.** A tenant
+  could then pin `max_pool_size` idle pods per unpaused DAG with no run, and
+  `max_warm_pods_per_tenant` would bound nothing. A run floor raises the
+  budget because a run needs it now; a prewarm floor is an anticipation, so
+  it takes only what the cap leaves.
 - **A separate setting to opt into prewarm.** The declaration already is one,
   per DAG, and the operator keeps `warm_pools_enabled` and `max_pool_size`.
 
@@ -94,15 +137,20 @@ warm.
 
 - **Cost.** Each unpaused DAG that declares `min_idle_workers: N` keeps N
   idle warm pods (at most `max_pool_size`) even with no run, from the moment
-  its version is current. `max_warm_pods_per_tenant` does not bound this:
-  the reconciler raises a tenant's budget to the sum of its promised idle
-  floors (ADR 0058, the per-tenant cap) so a declared floor is never
-  starved, and only growth past the floors is capped. An idle worker is
-  still recycled after `worker_idle_ttl` and replaced at the next reconcile.
-  The operator floor alone adds no standing cost. Today the parser does not
-  emit `min_idle_workers` (it is not in the authoring schema), so only a
-  `dag.json` registered with it is prewarmed until the authoring side
-  exposes it.
+  its version is current, within `max_warm_pods_per_tenant` (D7): a tenant's
+  prewarmed pods never exceed what the cap leaves after the idle floors of
+  its versions with an active run (save idle workers retiring for at most
+  one `worker_idle_ttl` after a share drops), and the DAGs last by id get
+  fewer idle workers when the floors do not fit. An idle worker is still recycled after
+  `worker_idle_ttl` and replaced at the next reconcile. The operator floor
+  alone adds no standing cost.
+- **A new version per change.** `min_idle_workers` is part of
+  `dexaflow.yaml`, which the content label hashes, so changing it gives the
+  DAG a new version: a new image tag, and the previous version's pool
+  drains (D4).
+- **Older servers.** A server older than 0.5.4 accepts a `dag.json` carrying
+  `min_idle_workers` but applies it only while a run of the version is
+  active, with no prewarm.
 - **Reads per tick.** One more query, `ListWarmCurrentVersions`, which scans
   `dags` for the unpaused ones and the DAGs of active runs and probes each
   one's current version by primary key (about 60 ms with 100k DAGs, 3,000 of

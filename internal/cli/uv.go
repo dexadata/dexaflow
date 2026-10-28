@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,10 +13,10 @@ import (
 	"strings"
 )
 
-// lookUV finds the uv binary of the daemonless dependency layer (ADR 0078).
-// It is a variable only so the tests of this package choose whether uv is
-// there (split_seam_test.go); nothing else assigns it.
-var lookUV = func() (string, error) { return exec.LookPath("uv") }
+// lookPathUV finds the uv binary of the daemonless dependency layer (ADR
+// 0078) on PATH. Commands reach it as cliDeps.lookUV, so the tests of this
+// package choose whether uv is there.
+func lookPathUV() (string, error) { return exec.LookPath("uv") }
 
 // uvKeptEnv are the variables uv runs with, from the CLI's environment:
 // where to find programs, the home and cache directories, and how to reach
@@ -37,12 +38,15 @@ type uvTool struct {
 	path string
 	// version is what `uv --version` printed, "uv 0.11.32".
 	version string
+	// index is the package index URL, credentials included, uv installs
+	// from in place of PyPI; "" is PyPI.
+	index string
 }
 
 // findUV returns uv when it is on PATH and answers --version, or nil and
 // why not.
 func findUV(ctx context.Context) (u *uvTool, why string) {
-	p, err := lookUV()
+	p, err := depsFrom(ctx).lookUV()
 	if err != nil {
 		return nil, "uv is not on PATH"
 	}
@@ -60,9 +64,15 @@ func findUV(ctx context.Context) (u *uvTool, why string) {
 }
 
 // uvEnv is the environment uv runs with (uvKeptEnv), with Python downloads
-// off: uv uses a Python already on this machine and never fetches one.
-func uvEnv() []string {
+// off: uv uses a Python already on this machine and never fetches one. A
+// package index goes in UV_DEFAULT_INDEX, and in UV_INDEX_URL for the uv
+// releases that predate UV_DEFAULT_INDEX and would otherwise resolve from
+// PyPI; never in uv's argv, where ps would show its credentials.
+func uvEnv(index string) []string {
 	env := []string{"UV_PYTHON_DOWNLOADS=never"}
+	if index != "" {
+		env = append(env, "UV_DEFAULT_INDEX="+index, "UV_INDEX_URL="+index)
+	}
 	for _, k := range uvKeptEnv {
 		if v, ok := os.LookupEnv(k); ok {
 			env = append(env, k+"="+v)
@@ -91,16 +101,33 @@ func (u *uvTool) findPython(ctx context.Context) error {
 // what uv printed on standard error.
 func (u *uvTool) run(ctx context.Context, dir string, args ...string) (string, error) {
 	c := exec.CommandContext(ctx, u.path, args...) //nolint:gosec // G204: the uv binary found on PATH, with arguments built here.
-	c.Dir, c.Env = dir, uvEnv()
+	c.Dir, c.Env = dir, uvEnv(u.index)
 	var stdout, stderr bytes.Buffer
 	c.Stdout, c.Stderr = &stdout, &stderr
 	if err := c.Run(); err != nil {
 		if msg := uvMessage(stderr.String()); msg != "" {
-			return "", errors.New(msg)
+			return "", errors.New(u.scrub(msg))
 		}
 		return "", fmt.Errorf("running uv %s: %w", args[0], err)
 	}
 	return stdout.String(), nil
+}
+
+// scrub removes the package index credentials from msg, in the URL as uv
+// prints it and in their decoded form.
+func (u *uvTool) scrub(msg string) string {
+	parsed, err := url.Parse(u.index)
+	if u.index == "" || err != nil || parsed.User == nil {
+		return msg
+	}
+	msg = strings.ReplaceAll(msg, u.index, parsed.Redacted())
+	if pass, ok := parsed.User.Password(); ok && pass != "" {
+		msg = strings.ReplaceAll(msg, pass, "xxxxx")
+		if raw := strings.TrimPrefix(parsed.User.String(), parsed.User.Username()+":"); raw != pass {
+			msg = strings.ReplaceAll(msg, raw, "xxxxx")
+		}
+	}
+	return msg
 }
 
 // uvMessage trims what uv printed on a failure to its first useful

@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_auth_tokens/
 title: "dexaflow auth tokens"
 linkTitle: "auth tokens"
-weight: 16
+weight: 17
 ---
 
 List and revoke API tokens.

@@ -52,14 +52,14 @@ func TestDeleteTaskPodDeletesOnlyTheMatchingEpoch(t *testing.T) {
 	)
 	e := NewKubernetesExecutor(cs, "leoflow")
 
-	if err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1, AttemptEpoch: 1}); err != nil {
+	if _, err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1, AttemptEpoch: 1}); err != nil {
 		t.Fatalf("DeleteTaskPod(epoch 1): %v", err)
 	}
 	got := podNames(t, cs)
 	if got["e1"] || !got["e2"] || !got["legacy"] {
 		t.Fatalf("epoch 1 teardown must delete only e1, left %v", got)
 	}
-	if err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1, AttemptEpoch: 0}); err != nil {
+	if _, err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1, AttemptEpoch: 0}); err != nil {
 		t.Fatalf("DeleteTaskPod(epoch 0): %v", err)
 	}
 	got = podNames(t, cs)
@@ -83,7 +83,7 @@ func TestDeleteTaskPodDeletesByNameWithUIDPrecondition(t *testing.T) {
 		return false, nil, nil
 	})
 	e := NewKubernetesExecutor(cs, "leoflow")
-	if err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1, AttemptEpoch: 3}); err != nil {
+	if _, err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1, AttemptEpoch: 3}); err != nil {
 		t.Fatalf("DeleteTaskPod: %v", err)
 	}
 	if name != "victim" || opts == nil || opts.Preconditions == nil || opts.Preconditions.UID == nil || *opts.Preconditions.UID != "uid-victim" {
@@ -204,7 +204,17 @@ func (f *epochMarkStore) MarkTaskPodLost(_ context.Context, _ string, try, epoch
 	return true, nil
 }
 
+func (f *epochMarkStore) MarkTaskPodLostOOMKilled(_ context.Context, _ string, try, epoch int) (bool, error) {
+	f.marks = append(f.marks, Attempt{TryNumber: try, AttemptEpoch: epoch})
+	return true, nil
+}
+
 func (f *epochMarkStore) MarkTaskDispatchLost(_ context.Context, _ string, try, epoch int) (bool, error) {
+	f.marks = append(f.marks, Attempt{TryNumber: try, AttemptEpoch: epoch})
+	return !f.stale, nil
+}
+
+func (f *epochMarkStore) MarkTaskStartExpired(_ context.Context, _ string, try, epoch int) (bool, error) {
 	f.marks = append(f.marks, Attempt{TryNumber: try, AttemptEpoch: epoch})
 	return !f.stale, nil
 }

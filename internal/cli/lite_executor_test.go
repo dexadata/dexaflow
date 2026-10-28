@@ -9,6 +9,7 @@ import (
 // "auto") uses k3d when Docker is available, else falls back to the subprocess
 // executor so Lite still runs Docker-free; an explicit choice is honored.
 func TestResolveExecutor(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		flag   string
 		docker bool
@@ -30,6 +31,7 @@ func TestResolveExecutor(t *testing.T) {
 // present-but-unresponsive Docker so the user fixes it (or forces a choice)
 // instead of seeing the misleading "no Docker detected" (#403).
 func TestExecutorNote(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		mode    string
 		present bool

@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Generate the Go package reference for the Hugo site from GoDocs.
 #
-# Parity with the live MkDocs pipeline (.github/workflows/docs.yml), which runs
-# gomarkdoc over a fixed package list into docs/go/{{.Dir}}.md. Here the same
-# package set is rendered, then flattened + front-mattered for Hugo:
+# Runs gomarkdoc over a fixed package list, then flattens and front-matters the
+# output for Hugo:
 #   * gomarkdoc's `{{.Dir}}.md` template nests files (internal/domain.md), which
 #     would create empty "internal"/"pkg" section nodes with no _index.md in the
 #     Docsy sidebar. We render to a temp dir, then flatten to a single level
@@ -17,18 +16,18 @@
 # and in-page anchors — nothing to rewrite.
 #
 # Idempotent: reruns overwrite the generated *.md and never touch _index.md.
-# The generated tree IS committed (parallel-track preview convenience); CI
+# The generated tree IS committed (so a preview needs no generator run); CI
 # reruns this before `hugo` so the pages can never drift from source.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUT_DIR="${REPO_ROOT}/website/content/reference/go"
 
-# The exported package set — MUST match docs.yml so the two references agree.
+# The exported package set.
 PKGS=(
   ./internal/domain ./internal/scheduler ./internal/executor ./internal/dispatch
   ./internal/agent ./internal/agentrpc ./internal/storage ./internal/auth
-  ./internal/config ./internal/cli ./internal/api ./pkg/client
+  ./internal/config ./internal/cli ./internal/api ./pkg/client ./pkg/dagspec
 )
 
 cd "${REPO_ROOT}"
@@ -43,7 +42,7 @@ go run github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest \
   "${PKGS[@]}"
 
 echo "gen-go: flattening + post-processing into ${OUT_DIR}"
-# Pass the ordered package list as argv so weights follow the docs.yml order.
+# Pass the ordered package list as argv so weights follow the PKGS order.
 python3 - "${TMP_DIR}" "${OUT_DIR}" "${PKGS[@]}" <<'PY'
 import os, re, sys
 

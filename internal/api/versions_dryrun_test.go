@@ -84,6 +84,7 @@ func TestRegisterVersionDryRunRefusesAsTheRegisterWould(t *testing.T) {
 		{name: "dag_id mismatch", path: "other", body: validSpecJSON, code: http.StatusBadRequest},
 		{name: "empty body", path: "etl", body: "{}", code: http.StatusBadRequest},
 		{name: "invalid spec", path: "etl", body: `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[]}`, code: http.StatusBadRequest},
+		{name: "malformed toleration (#628)", path: "etl", body: `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[{"task_id":"a","type":"python","entrypoint":"dag:a","execution":{"tolerations":[{"keyy":"gpu"}]}}]}`, code: http.StatusBadRequest},
 		{name: "image outside the allowlist", path: "etl", body: validSpecJSON, pol: policy, code: http.StatusBadRequest},
 		{name: "unknown connection", path: "etl", body: validSpecJSON, err: domain.Safef(domain.ErrValidation, "dag %q declares unknown connection(s) %s", "etl", "warehouse"), code: http.StatusBadRequest},
 		{name: "version conflict", path: "etl", body: validSpecJSON, err: domain.ErrConflict, code: http.StatusConflict},
@@ -96,10 +97,23 @@ func TestRegisterVersionDryRunRefusesAsTheRegisterWould(t *testing.T) {
 				user = &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}
 			}
 			answer := func(dry bool) (int, string, string) {
-				srv := NewServer(Dependencies{
-					Logger: discardLogger(), Authenticator: &fakeAuthn{user: user},
-					RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"},
-					Versions: &fakeVersionRepo{created: true, err: tc.err}, ExecutionPolicy: tc.pol,
+				srv := newTestServer(Dependencies{
+					Observability: ObservabilityDeps{
+						Logger: discardLogger(),
+					},
+					Server: ServerDeps{
+						CORSOrigins: []string{"*"},
+					},
+					Auth: AuthDeps{
+						Authenticator: &fakeAuthn{user: user},
+						RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+					},
+					Execution: ExecutionDeps{
+						ExecutionPolicy: tc.pol,
+					},
+					Stores: StoreDeps{
+						Versions: &fakeVersionRepo{created: true, err: tc.err},
+					},
 				})
 				route := "/versions"
 				if dry {
@@ -138,14 +152,24 @@ func TestRegisterVersionDryRunReportsAMisfitWithoutCountingIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	misfits := &fakeUnitMisfits{}
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Versions:      &fakeVersionRepo{created: true},
-		ResourceUnit:  unit,
-		UnitMisfits:   misfits,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Execution: ExecutionDeps{
+			ResourceUnit: unit,
+			UnitMisfits:  misfits,
+		},
+		Stores: StoreDeps{
+			Versions: &fakeVersionRepo{created: true},
+		},
 	})
 	big := `{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"img:v1","tasks":[` +
 		`{"task_id":"train","type":"python","entrypoint":"dag:a","resources":{"limits":{"cpu":"2"}}}]}`

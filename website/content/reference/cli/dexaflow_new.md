@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_new/
 title: "dexaflow new"
 linkTitle: "new"
-weight: 48
+weight: 51
 ---
 
 Scaffold a new DAG under the workspace's dags/ folder.

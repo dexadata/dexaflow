@@ -16,14 +16,14 @@ at runtime as environment variables, so your task reads them with the **native
 Airflow APIs** *and* as plain env (ADR 0021).
 
 {{% alert title="Tenancy" color="info" %}}
-Tenancy is single-tenant on Lite; Pro adds multi-tenant isolation. The agent
+Tenancy is single-tenant on Lite; Cluster adds multi-tenant isolation. The agent
 injects the current tenant's Variables/Connections per
 [ADR 0019](/project/adrs/0019-secret-encryption-at-rest/).
 {{% /alert %}}
 
 ## Encryption at rest on Lite
 
-On Pro the key is `DEXAFLOW_SECRET_KEY`, which you provision and keep apart
+On Cluster the key is `DEXAFLOW_SECRET_KEY`, which you provision and keep apart
 from the database. On Lite it is narrower, and worth knowing before you store a
 production credential (#486):
 
@@ -39,7 +39,7 @@ production credential (#486):
   the datastore can read them. `dexaflow lite` warns about this on every start.
 
 See [Rotating the encryption key](/reference/configuration/#rotating-the-encryption-key)
-for the migration and for key rotation on Pro.
+for the migration and for key rotation on Cluster.
 
 ## Manage them
 Via the Airflow-compatible UI (Admin → Variables / Connections) or the API:
@@ -103,16 +103,17 @@ The control plane's secret-delivery policy (`auth.secret_scoping`, [ADR
 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)) has two modes:
 
 - **`permissive`** (the shipped default) delivers the **whole tenant vault** to
-  every task regardless of declaration, and only logs a warning when a task's
-  declared set is narrower than what it received. An **undeclared** Variable or
-  Connection still resolves — `Variable.get` does **not** return empty under
-  this default. A clean warning trail proves only that no DAG whose
-  declarations still *resolve* is over-served; it does **not** prove that no DAG
-  would lose secrets under `enforce`. Two populations never appear in the trail:
-  a DAG that declares nothing, and a DAG whose declared names no longer exist in
-  the vault — the warning counts only declared names that actually resolve, so an
-  all-stale declaration counts as zero. Both receive the whole vault today and
-  nothing under `enforce`
+  every task regardless of declaration, and only logs a warning (and records a
+  `secret.scope_warning` audit event) when a task's declared set is narrower
+  than what it received. An **undeclared** Variable or Connection still
+  resolves: `Variable.get` does **not** return empty under this default. A task
+  that declares nothing, or whose declared names no longer exist in the vault,
+  is warned about with `declared=0`, because under `enforce` it would receive
+  nothing. The warning counts only declared names that actually resolve, so an
+  all-stale declaration counts as zero. A DAG that declares nothing at all is
+  warned about once per DAG version and kind on each control plane replica, not
+  on every attempt; the other warnings are per delivery. Count distinct DAGs
+  with `declared=0` to size the migration backlog
   ([#800](https://github.com/dexadata/dexaflow/issues/800)).
 - **`enforce`** delivers **only** the declared subset — an undeclared name is
   not delivered, and `Variable.get`/`BaseHook.get_connection` for it comes back
@@ -120,7 +121,7 @@ The control plane's secret-delivery policy (`auth.secret_scoping`, [ADR
 
 **Declare anyway, even under `permissive`.** It documents your DAG's real
 dependencies, matches how a deploy already warns you about missing
-*connections* (see [Deploy your first Pro DAG](/operate/first-pro-dag/#when-it-doesnt-work)),
+*connections* (see [Deploy your first Cluster DAG](/operate/first-cluster-dag/#when-it-doesnt-work)),
 and is what makes the DAG portable to a tenant running `enforce` — the
 direction least-privilege delivery is headed (tracked in
 [#59](https://github.com/dexadata/dexaflow/issues/59)). An operator sets the
@@ -152,8 +153,9 @@ process command line, which `ps` and logs can expose. See
 [ADR 0070](/project/adrs/0070-secrets-by-env-reference/).
 
 Scope is global (per tenant). Delivery requires a secure agent channel (TLS, #58)
-or, in dev, the explicit `DEXAFLOW_AGENT_ALLOW_INSECURE_SECRETS=true` (set by
-`dexaflow lite`). Pro on Kubernetes (including GKE) **requires** TLS — the chart
+or, in dev, the explicit `DEXAFLOW_AGENT_ALLOW_INSECURE_SECRETS=true` (config
+key `agent.allow_insecure_secrets`, set by `dexaflow lite`). Cluster on Kubernetes
+(including GKE) **requires** TLS: the chart
 ships `agentTLS.enabled: true` by default and the server refuses the insecure
 bypass; the plaintext escape hatch is Lite-only, for local iteration. See
 [ADR 0021](/project/adrs/0021-exposing-variables-connections-to-pods/).

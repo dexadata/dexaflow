@@ -114,6 +114,7 @@ const (
 	TaskStateUpstreamFailed  TaskState = "upstream_failed"
 	TaskStateUpForRetry      TaskState = "up_for_retry"
 	TaskStateUpForReschedule TaskState = "up_for_reschedule"
+	TaskStateRemoved         TaskState = "removed"
 )
 
 func (e *TaskState) Scan(src interface{}) error {
@@ -229,6 +230,8 @@ type Dag struct {
 	CurrentVersionID pgtype.UUID        `json:"current_version_id"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	NextRunAt        pgtype.Timestamptz `json:"next_run_at"`
+	ScheduleEpoch    int64              `json:"schedule_epoch"`
 }
 
 type DagFavorite struct {
@@ -282,6 +285,12 @@ type ImportError struct {
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
+type Installation struct {
+	Singleton  bool               `json:"singleton"`
+	ID         string             `json:"id"`
+	RecordedAt pgtype.Timestamptz `json:"recorded_at"`
+}
+
 type Permission struct {
 	ID          pgtype.UUID `json:"id"`
 	Action      string      `json:"action"`
@@ -300,18 +309,6 @@ type Pool struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
-type Replica struct {
-	ID              pgtype.UUID        `json:"id"`
-	Hostname        string             `json:"hostname"`
-	ProcessID       int32              `json:"process_id"`
-	Version         string             `json:"version"`
-	StartedAt       pgtype.Timestamptz `json:"started_at"`
-	LastHeartbeatAt pgtype.Timestamptz `json:"last_heartbeat_at"`
-	IsLeader        bool               `json:"is_leader"`
-	Role            string             `json:"role"`
-	Metadata        []byte             `json:"metadata"`
-}
-
 type Role struct {
 	ID          pgtype.UUID        `json:"id"`
 	TenantID    pgtype.UUID        `json:"tenant_id"`
@@ -325,18 +322,6 @@ type RolePermission struct {
 	RoleID       pgtype.UUID        `json:"role_id"`
 	PermissionID pgtype.UUID        `json:"permission_id"`
 	GrantedAt    pgtype.Timestamptz `json:"granted_at"`
-}
-
-type SchedulerLoop struct {
-	ID             int64              `json:"id"`
-	ReplicaID      pgtype.UUID        `json:"replica_id"`
-	StartedAt      pgtype.Timestamptz `json:"started_at"`
-	EndedAt        pgtype.Timestamptz `json:"ended_at"`
-	DurationMs     int32              `json:"duration_ms"`
-	DagsExamined   int32              `json:"dags_examined"`
-	RunsCreated    int32              `json:"runs_created"`
-	TasksScheduled int32              `json:"tasks_scheduled"`
-	Errors         int32              `json:"errors"`
 }
 
 type StagingVolume struct {
@@ -353,40 +338,41 @@ type StagingVolume struct {
 }
 
 type TaskInstance struct {
-	ID                pgtype.UUID        `json:"id"`
-	TenantID          pgtype.UUID        `json:"tenant_id"`
-	DagRunID          pgtype.UUID        `json:"dag_run_id"`
-	TaskID            string             `json:"task_id"`
-	MapIndex          int32              `json:"map_index"`
-	TryNumber         int32              `json:"try_number"`
-	MaxTries          int32              `json:"max_tries"`
-	State             TaskState          `json:"state"`
-	Pool              *string            `json:"pool"`
-	Operator          string             `json:"operator"`
-	QueuedAt          pgtype.Timestamptz `json:"queued_at"`
-	StartedAt         pgtype.Timestamptz `json:"started_at"`
-	EndedAt           pgtype.Timestamptz `json:"ended_at"`
-	DurationSeconds   *float64           `json:"duration_seconds"`
-	PodName           *string            `json:"pod_name"`
-	NodeName          *string            `json:"node_name"`
-	ExitCode          *int32             `json:"exit_code"`
-	ErrorMessage      *string            `json:"error_message"`
-	LogUrl            *string            `json:"log_url"`
-	Hostname          *string            `json:"hostname"`
-	Note              *string            `json:"note"`
-	ScheduledAt       pgtype.Timestamptz `json:"scheduled_at"`
-	LastHeartbeatAt   pgtype.Timestamptz `json:"last_heartbeat_at"`
-	RescheduleAt      pgtype.Timestamptz `json:"reschedule_at"`
-	FirstRescheduleAt pgtype.Timestamptz `json:"first_reschedule_at"`
-	DispatchAttempts  int32              `json:"dispatch_attempts"`
-	NextDispatchAt    pgtype.Timestamptz `json:"next_dispatch_at"`
-	LastFailureKind   *string            `json:"last_failure_kind"`
-	InfraAttempts     int32              `json:"infra_attempts"`
-	WarmWorkerID      *string            `json:"warm_worker_id"`
-	ReleasedAt        pgtype.Timestamptz `json:"released_at"`
-	AttemptEpoch      int32              `json:"attempt_epoch"`
-	InfraConfirmedAt  pgtype.Timestamptz `json:"infra_confirmed_at"`
-	PoolSlots         int32              `json:"pool_slots"`
+	ID                       pgtype.UUID        `json:"id"`
+	TenantID                 pgtype.UUID        `json:"tenant_id"`
+	DagRunID                 pgtype.UUID        `json:"dag_run_id"`
+	TaskID                   string             `json:"task_id"`
+	MapIndex                 int32              `json:"map_index"`
+	TryNumber                int32              `json:"try_number"`
+	MaxTries                 int32              `json:"max_tries"`
+	State                    TaskState          `json:"state"`
+	Pool                     *string            `json:"pool"`
+	Operator                 string             `json:"operator"`
+	QueuedAt                 pgtype.Timestamptz `json:"queued_at"`
+	StartedAt                pgtype.Timestamptz `json:"started_at"`
+	EndedAt                  pgtype.Timestamptz `json:"ended_at"`
+	DurationSeconds          *float64           `json:"duration_seconds"`
+	PodName                  *string            `json:"pod_name"`
+	NodeName                 *string            `json:"node_name"`
+	ExitCode                 *int32             `json:"exit_code"`
+	ErrorMessage             *string            `json:"error_message"`
+	LogUrl                   *string            `json:"log_url"`
+	Hostname                 *string            `json:"hostname"`
+	Note                     *string            `json:"note"`
+	ScheduledAt              pgtype.Timestamptz `json:"scheduled_at"`
+	LastHeartbeatAt          pgtype.Timestamptz `json:"last_heartbeat_at"`
+	RescheduleAt             pgtype.Timestamptz `json:"reschedule_at"`
+	FirstRescheduleAt        pgtype.Timestamptz `json:"first_reschedule_at"`
+	DispatchAttempts         int32              `json:"dispatch_attempts"`
+	NextDispatchAt           pgtype.Timestamptz `json:"next_dispatch_at"`
+	LastFailureKind          *string            `json:"last_failure_kind"`
+	InfraAttempts            int32              `json:"infra_attempts"`
+	WarmWorkerID             *string            `json:"warm_worker_id"`
+	ReleasedAt               pgtype.Timestamptz `json:"released_at"`
+	AttemptEpoch             int32              `json:"attempt_epoch"`
+	InfraConfirmedAt         pgtype.Timestamptz `json:"infra_confirmed_at"`
+	PoolSlots                int32              `json:"pool_slots"`
+	DispatchUnavailableSince pgtype.Timestamptz `json:"dispatch_unavailable_since"`
 }
 
 type TaskInstanceHistory struct {
@@ -409,16 +395,6 @@ type TaskInstanceHistory struct {
 	AttemptEpoch    int32              `json:"attempt_epoch"`
 }
 
-type TaskStateHistory struct {
-	ID             int64              `json:"id"`
-	TaskInstanceID pgtype.UUID        `json:"task_instance_id"`
-	FromState      *TaskState         `json:"from_state"`
-	ToState        TaskState          `json:"to_state"`
-	TransitionedAt pgtype.Timestamptz `json:"transitioned_at"`
-	Reason         *string            `json:"reason"`
-	Actor          *string            `json:"actor"`
-}
-
 type Tenant struct {
 	ID                         pgtype.UUID        `json:"id"`
 	Name                       string             `json:"name"`
@@ -431,6 +407,9 @@ type Tenant struct {
 	RunsDay                    pgtype.Date        `json:"runs_day"`
 	RunsDayCount               int32              `json:"runs_day_count"`
 	MaxTaskPoolSlots           int32              `json:"max_task_pool_slots"`
+	SuspendedAt                pgtype.Timestamptz `json:"suspended_at"`
+	SuspensionMode             *string            `json:"suspension_mode"`
+	SuspensionReason           string             `json:"suspension_reason"`
 }
 
 type User struct {

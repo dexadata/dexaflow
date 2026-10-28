@@ -2,10 +2,13 @@ package cli
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestTokenServerHint covers #1102: the config file stores a server_url and a
@@ -15,6 +18,7 @@ import (
 // persisted token along, the other server rejected it, and the user got a bare
 // 401 with no way to tell an expired token from a token for somewhere else.
 func TestTokenServerHint(t *testing.T) {
+	t.Parallel()
 	unauth := errors.New("server returned 401: {\"title\":\"unauthorized\"}")
 
 	t.Run("names both servers when the token came from config", func(t *testing.T) {
@@ -97,11 +101,7 @@ func TestTokenServerHint(t *testing.T) {
 // regression — the shape of defect this repository keeps paying for.
 func TestResolveServerTokenRecordsTheTarget(t *testing.T) {
 	t.Run("a config token called against another server is recorded as such", func(t *testing.T) {
-		resolvedTarget = struct {
-			server     string
-			configured string
-			fromConfig bool
-		}{}
+		resolvedTarget = targetRecord{}
 		dir := t.TempDir()
 		cfgPath := filepath.Join(dir, "config.yaml")
 		if err := os.WriteFile(cfgPath, []byte("server_url: http://127.0.0.1:8088\ntoken: lite-tok\n"), 0o600); err != nil {
@@ -135,11 +135,7 @@ func TestResolveServerTokenRecordsTheTarget(t *testing.T) {
 	t.Run("an env token is not recorded as coming from config", func(t *testing.T) {
 		// config.Load surfaces LEOFLOW_TOKEN as cfg.Token, so without this the
 		// hint would fire for a token the user supplied deliberately.
-		resolvedTarget = struct {
-			server     string
-			configured string
-			fromConfig bool
-		}{}
+		resolvedTarget = targetRecord{}
 		t.Setenv("LEOFLOW_TOKEN", "env-tok")
 		dir := t.TempDir()
 		cfgPath := filepath.Join(dir, "config.yaml")
@@ -196,4 +192,56 @@ func TestLoginHintNamesACommandThatExists(t *testing.T) {
 	if cmd.Flags().Lookup("server") == nil && cmd.InheritedFlags().Lookup("server") == nil {
 		t.Errorf("%q does not accept --server, which the hint passes", cmd.CommandPath())
 	}
+}
+
+// TestExpiredSessionHint (#1127): a 401 for a saved session token that had
+// already expired says so and names the login command, instead of a bare
+// "server returned 401". The renewal is refused (as past the session's max
+// lifetime), so the expired token is the one sent. A live token gets no hint:
+// its 401 is about something else.
+func TestExpiredSessionHint(t *testing.T) {
+	refuse := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"title":"unauthorized","detail":"session lifetime exceeded; log in again"}`, http.StatusUnauthorized)
+	}))
+	t.Cleanup(refuse.Close)
+	now := time.Now()
+	resolve := func(t *testing.T, token string) {
+		t.Helper()
+		resolvedTarget = targetRecord{}
+		cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+		if err := os.WriteFile(cfgPath, []byte("server_url: "+refuse.URL+"\ntoken: "+token+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cmd := newDeployCommand()
+		cmd.Flags().String("config", cfgPath, "")
+		if err := cmd.Flags().Set("config", cfgPath); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := resolveServerToken(cmd, "", ""); err != nil {
+			t.Fatalf("resolveServerToken: %v", err)
+		}
+	}
+
+	t.Run("an expired saved token", func(t *testing.T) {
+		isolateCLIEnv(t)
+		exp := now.Add(-2 * time.Minute).Truncate(time.Second)
+		resolve(t, testJWT(t, exp.Add(-time.Hour), exp))
+		msg := apiStatusError(401, []byte(`{"title":"unauthorized"}`)).Error()
+		for _, want := range []string{"server returned 401", "expired at " + exp.UTC().Format(time.RFC3339), loginCommandPath + " --server " + refuse.URL} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("message lacks %q: %q", want, msg)
+			}
+		}
+		if strings.Contains(apiStatusError(403, []byte("{}")).Error(), "hint:") {
+			t.Error("a 403 is not about the session; no hint is owed")
+		}
+	})
+
+	t.Run("a live saved token", func(t *testing.T) {
+		isolateCLIEnv(t)
+		resolve(t, testJWT(t, now.Add(-time.Minute), now.Add(59*time.Minute)))
+		if msg := apiStatusError(401, []byte("{}")).Error(); strings.Contains(msg, "hint:") {
+			t.Errorf("a live token's 401 got a hint: %q", msg)
+		}
+	})
 }

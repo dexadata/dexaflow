@@ -197,3 +197,103 @@ func TestDispatchRefusedSpendsTheRetryBudget(t *testing.T) {
 		t.Errorf("run state = %s, want failed", runState)
 	}
 }
+
+// TestDispatchFailedDoesNotFallBackToTheRetryBudget: a task failed as
+// dispatch_failed (its dispatch budget spent, on the synchronous path or in a
+// buffered dispatch worker) is terminal. It must not move to up_for_retry and
+// spend one of the user's retries on what was an infrastructure failure (ADR
+// 0031 Amendment A: a dispatch failure never consumes try_number; ADR 0051:
+// dispatch_failed is an infra-terminal state with no fallback to the retry
+// budget).
+func TestDispatchFailedDoesNotFallBackToTheRetryBudget(t *testing.T) {
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		t.Skip("DATABASE_URL must point at a migrated database")
+	}
+	ctx := context.Background()
+	pg, err := storage.NewPostgres(ctx, config.DatabaseSection{URL: url})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer pg.Close()
+
+	for _, tc := range []struct {
+		name string
+		fail func(s *storage.SchedulerStore, runID string) error
+	}{
+		{"sync_exhausted", func(s *storage.SchedulerStore, runID string) error {
+			return s.FailDispatchExhausted(ctx, runID, "a", "dispatch_failed after 6 attempts: test")
+		}},
+		{"buffered_exhausted", func(s *storage.SchedulerStore, runID string) error {
+			return s.MarkTaskDispatchFailed(ctx, runID, "a", "dispatch_failed after 6 attempts: test")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := storage.NewRepository(pg)
+			store := storage.NewSchedulerStore(pg)
+			sched := scheduler.NewScheduler(store, slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond)
+			sched.SetDispatcher(failingDispatcher{})
+			sched.SetLeading(true)
+
+			suffix := time.Now().UnixNano()
+			dagID := fmt.Sprintf("dispatch_failed_retry_%s_%d", tc.name, suffix)
+			runID := fmt.Sprintf("dispatch-failed-run-%d", suffix)
+			retries := 2
+			spec := domain.DAGSpec{
+				SchemaVersion: "1.0", DagID: dagID, DagVersion: "v1", Image: "img:v1",
+				Tasks: []domain.TaskSpec{{TaskID: "a", Type: domain.TaskTypePython, Entrypoint: "dag:a", Retries: &retries}},
+			}
+			hash, err := spec.CanonicalHash()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, rerr := repo.RegisterDagVersion(ctx, "default", spec, hash); rerr != nil {
+				t.Fatalf("register version: %v", rerr)
+			}
+			if _, rerr := repo.CreateDagRun(ctx, "default", dagID, domain.DagRun{
+				RunID: runID, State: domain.DagRunStateQueued, RunType: "manual", LogicalDate: time.Now().UTC(),
+			}); rerr != nil {
+				t.Fatalf("create run: %v", rerr)
+			}
+			// materialize -> running -> none->scheduled -> dispatch fails once.
+			for i := 0; i < 4; i++ {
+				if serr := sched.Step(ctx); serr != nil {
+					t.Fatalf("step %d: %v", i, serr)
+				}
+			}
+			var runUUID string
+			if qerr := pg.Pool.QueryRow(ctx, `SELECT id::text FROM dag_runs WHERE run_id = $1`, runID).Scan(&runUUID); qerr != nil {
+				t.Fatalf("read run id: %v", qerr)
+			}
+			if ferr := tc.fail(store, runUUID); ferr != nil {
+				t.Fatalf("failing the dispatch: %v", ferr)
+			}
+			// Ticks in which a retriable failure would go up_for_retry -> none ->
+			// scheduled on a new try.
+			for i := 0; i < 5; i++ {
+				if serr := sched.Step(ctx); serr != nil {
+					t.Fatalf("step after fail %d: %v", i, serr)
+				}
+			}
+			var state string
+			var try int
+			if qerr := pg.Pool.QueryRow(ctx,
+				`SELECT ti.state::text, ti.try_number FROM task_instances ti
+				 WHERE ti.dag_run_id = $1::uuid AND ti.task_id = 'a'
+				 ORDER BY ti.try_number DESC LIMIT 1`, runUUID,
+			).Scan(&state, &try); qerr != nil {
+				t.Fatalf("read task: %v", qerr)
+			}
+			if state != string(domain.TaskStateFailed) || try != 1 {
+				t.Errorf("dispatch_failed must be terminal without spending a retry: state=%s try=%d, want failed and 1", state, try)
+			}
+			var runState string
+			if qerr := pg.Pool.QueryRow(ctx, `SELECT state::text FROM dag_runs WHERE id = $1::uuid`, runUUID).Scan(&runState); qerr != nil {
+				t.Fatalf("read run: %v", qerr)
+			}
+			if runState != string(domain.DagRunStateFailed) {
+				t.Errorf("run state = %s, want failed", runState)
+			}
+		})
+	}
+}

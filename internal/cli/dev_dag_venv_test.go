@@ -11,6 +11,7 @@ import (
 )
 
 func TestSanitizeDagIDForFs(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		in, want string
 	}{
@@ -31,6 +32,7 @@ func TestSanitizeDagIDForFs(t *testing.T) {
 }
 
 func TestDagVenvPathLayout(t *testing.T) {
+	t.Parallel()
 	home := filepath.FromSlash("/h/.leoflow/dev")
 	dir := dagVenvDir(home, "sales_etl")
 	wantDir := filepath.Join(home, "venvs", "sales_etl")
@@ -57,6 +59,7 @@ func TestDagVenvPathLayout(t *testing.T) {
 }
 
 func TestDetectInstallerPrefersUv(t *testing.T) {
+	t.Parallel()
 	uvFound := func(name string) (string, error) {
 		if name == "uv" {
 			return "/opt/homebrew/bin/uv", nil
@@ -73,6 +76,7 @@ func TestDetectInstallerPrefersUv(t *testing.T) {
 }
 
 func TestInstallerCmdShapes(t *testing.T) {
+	t.Parallel()
 	// pip: run the venv's Python as the installer host. Tests rely on
 	// argv[0]==<py> so the venv-relative install path is preserved even when
 	// the operator's $PATH points elsewhere.
@@ -116,6 +120,7 @@ func TestInstallerCmdShapes(t *testing.T) {
 // is a startup-time pip storm that hits every Lite reload when the gates
 // accidentally invert (#346's user pain).
 func TestEnsureDagVenvSkipsAllGatesWhenAlreadyFresh(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("sh stub is POSIX-only; the per-DAG layout is exercised by TestDagVenvPathLayout on Windows")
 	}
@@ -188,6 +193,7 @@ func TestEnsureDagVenvSkipsAllGatesWhenAlreadyFresh(t *testing.T) {
 // here would be a control plane that won't start until at least one DAG is
 // registered — the exact onboarding hole this branch prevents.
 func TestEnsureWorkspaceDagVenvsEmptyFallback(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	ws := &WorkspaceSpec{Path: "ws", Projects: nil}
 	got, err := ensureWorkspaceDagVenvs(context.Background(), devTestCmd(), ws, home, "runtime/python")
@@ -200,6 +206,7 @@ func TestEnsureWorkspaceDagVenvsEmptyFallback(t *testing.T) {
 }
 
 func TestLiteVenvsRootEnvWiringFromSubprocessServerEnv(t *testing.T) {
+	t.Parallel()
 	// The subprocess executor reads LEOFLOW_LITE_VENVS_ROOT to look up the
 	// per-DAG interpreter for each task. Without this env, the per-DAG
 	// install on the watcher side would create venvs the executor never

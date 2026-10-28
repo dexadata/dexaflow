@@ -20,6 +20,7 @@ import (
 func FuzzDecodeCursor(f *testing.F) {
 	f.Add(encodeCursor(domain.PageCursor{At: time.Date(2026, 10, 12, 8, 0, 0, 0, time.UTC), Key: "manual__2026-10-12"}))
 	f.Add(encodeCursor(domain.PageCursor{At: time.Unix(0, 1).UTC(), Key: "42"}))
+	f.Add(encodeCursor(domain.PageCursor{At: time.Unix(0, 1).UTC(), Key: "42", Total: 400000}))
 	f.Add("")
 	f.Add("not base64!")
 	f.Add("eyJ0IjoiMjAyNi0xMC0xMlQwODowMDowMCswMjowMCIsImsiOiJ4In0") // a +02:00 offset
@@ -38,7 +39,7 @@ func FuzzDecodeCursor(f *testing.F) {
 		if err != nil {
 			t.Fatalf("re-encoded cursor rejected: %v", err)
 		}
-		if !again.At.Equal(cur.At) || again.Key != cur.Key {
+		if !again.At.Equal(cur.At) || again.Key != cur.Key || again.Total != cur.Total {
 			t.Fatalf("round trip moved the cursor: got %+v, want %+v", again, cur)
 		}
 	})

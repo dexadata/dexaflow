@@ -78,6 +78,7 @@ func TestWarmPlacementReasonVersion(t *testing.T) {
 		{"staging", WarmPolicy{Enabled: true}, WarmVersion{Image: "etl:v1", Staging: &StagingConfig{Enabled: true}}, "staging enabled"},
 		{"staging block off", WarmPolicy{Enabled: true}, WarmVersion{Image: "etl:v1", Staging: &StagingConfig{}}, "node_selector set"},
 		{"source mode", WarmPolicy{Enabled: true, SourceModeImage: "rt@sha256:1"}, WarmVersion{Image: "rt@sha256:1", HasSource: true}, "source mode"},
+		{"source mode with warm pools", WarmPolicy{Enabled: true, SourceModeImage: "rt@sha256:1", SourceModeWarm: true}, WarmVersion{Image: "rt@sha256:1", HasSource: true}, "node_selector set"},
 		{"runtime image without source", WarmPolicy{Enabled: true, SourceModeImage: "rt@sha256:1"}, WarmVersion{Image: "rt@sha256:1"}, "node_selector set"},
 		{"other image with source", WarmPolicy{Enabled: true, SourceModeImage: "rt@sha256:1"}, WarmVersion{Image: "etl:v1", HasSource: true}, "node_selector set"},
 	}
@@ -127,6 +128,56 @@ func TestWarmPlacementReasonSize(t *testing.T) {
 	for _, c := range cases {
 		if got := c.policy.DedicatedReason(WarmVersion{Image: "etl:v1"}, c.task); got != c.want {
 			t.Errorf("%s: DedicatedReason = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// TestWarmPolicyHasWarmTask: a version keeps a warm pool only when one of its
+// tasks may be placed on a warm worker (#2065), decided per task exactly as
+// DedicatedReason decides it: the size against the unit or the default
+// limits, the ServiceAccount and the placement fields. A version with no task
+// has none.
+func TestWarmPolicyHasWarmTask(t *testing.T) {
+	unit, err := ParseResourceUnit(ResourceUnitConfig{CPU: "250m", Memory: "512Mi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits, err := ParseDefaultLimits("1", "1Gi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sized := TaskSpec{TaskID: "sized", Resources: &Resources{Limits: &ResourceQuantity{CPU: "500m"}}}
+	big := TaskSpec{TaskID: "big", Resources: &Resources{Limits: &ResourceQuantity{CPU: "2"}}}
+	wide := TaskSpec{TaskID: "wide", PoolSlots: 2}
+	plain := TaskSpec{TaskID: "plain"}
+	pinned := TaskSpec{TaskID: "pinned", Execution: &Execution{ServiceAccount: "reporting"}}
+	placed := TaskSpec{TaskID: "placed", Execution: &Execution{Labels: map[string]string{"team": "x"}}}
+	cases := []struct {
+		name   string
+		policy WarmPolicy
+		tasks  []TaskSpec
+		want   bool
+	}{
+		{"unit, every task declares resources", WarmPolicy{Unit: unit}, []TaskSpec{sized, big}, false},
+		{"unit, every task is size 2", WarmPolicy{Unit: unit}, []TaskSpec{wide, wide}, false},
+		{"unit, one size-1 task without resources", WarmPolicy{Unit: unit}, []TaskSpec{sized, wide, plain}, true},
+		{"limits, every task above them", WarmPolicy{Limits: limits}, []TaskSpec{big}, false},
+		{"limits, one task within them", WarmPolicy{Limits: limits}, []TaskSpec{big, sized}, true},
+		{"no unit, no limits", WarmPolicy{}, []TaskSpec{big, wide}, true},
+		{"every task pins another ServiceAccount or sets labels", WarmPolicy{ServiceAccount: "dexaflow-task"}, []TaskSpec{pinned, placed}, false},
+		{"no task", WarmPolicy{}, nil, false},
+	}
+	for _, c := range cases {
+		if got := c.policy.HasWarmTask(c.tasks); got != c.want {
+			t.Errorf("%s: HasWarmTask = %v, want %v", c.name, got, c.want)
+		}
+		someWarm := false
+		for _, task := range c.tasks {
+			someWarm = someWarm || WarmPolicy{Enabled: true, ServiceAccount: c.policy.ServiceAccount, Unit: c.policy.Unit, Limits: c.policy.Limits}.
+				DedicatedReason(WarmVersion{Image: "etl:v1"}, task) == ""
+		}
+		if someWarm != c.want {
+			t.Errorf("%s: HasWarmTask disagrees with DedicatedReason (some task warm = %v)", c.name, someWarm)
 		}
 	}
 }

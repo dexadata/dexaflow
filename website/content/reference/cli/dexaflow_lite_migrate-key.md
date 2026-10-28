@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_lite_migrate-key/
 title: "dexaflow lite migrate-key"
 linkTitle: "lite migrate-key"
-weight: 44
+weight: 47
 ---
 
 Move stored connection secrets off the key published in this repository, onto a key only this install has.

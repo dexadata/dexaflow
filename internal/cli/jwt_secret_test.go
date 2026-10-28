@@ -16,6 +16,7 @@ func isLowerHex(r rune) bool {
 // (64 chars, all lowercase hex), and each call returns a new value — so
 // `dexaflow setup` rotates it on every fresh install (#121).
 func TestGenerateJWTSecretLengthAndHex(t *testing.T) {
+	t.Parallel()
 	a, err := generateJWTSecret()
 	if err != nil {
 		t.Fatalf("generateJWTSecret err = %v", err)
@@ -38,6 +39,7 @@ func TestGenerateJWTSecretLengthAndHex(t *testing.T) {
 // TestResolveLiteJWTSecretPrefersConfig: a configured per-install secret is
 // returned verbatim — it is what makes a reinstall invalidate prior tokens.
 func TestResolveLiteJWTSecretPrefersConfig(t *testing.T) {
+	t.Parallel()
 	got := resolveLiteJWTSecret("install-X-secret")
 	if got != "install-X-secret" {
 		t.Errorf("resolveLiteJWTSecret with a configured secret must return it, got %q", got)
@@ -49,6 +51,7 @@ func TestResolveLiteJWTSecretPrefersConfig(t *testing.T) {
 // does not break existing setups; the user is told to run `dexaflow setup` to
 // rotate the secret per install.
 func TestResolveLiteJWTSecretLegacyFallback(t *testing.T) {
+	t.Parallel()
 	if got := resolveLiteJWTSecret(""); got != devJWTSecret {
 		t.Errorf("empty config must fall back to the dev constant, got %q", got)
 	}

@@ -30,6 +30,28 @@ func (f *fakeConnStore) ListConnections(_ context.Context, _ string, _, _ int) (
 	return out, len(out), nil
 }
 
+func (f *fakeConnStore) ListConnectionsFiltered(_ context.Context, _ string, pattern, prefixPattern string, limit, offset int) ([]domain.Connection, int, error) {
+	out := make([]domain.Connection, 0, len(f.conns))
+	for _, c := range f.conns {
+		if prefixPattern != "" && !strings.HasPrefix(c.ConnID, prefixPattern) {
+			continue
+		}
+		if pattern != "" && !strings.Contains(c.ConnID, pattern) {
+			continue
+		}
+		out = append(out, c)
+	}
+	total := len(out)
+	if offset >= total {
+		return []domain.Connection{}, total, nil
+	}
+	end := offset + limit
+	if limit <= 0 || end > total {
+		end = total
+	}
+	return out[offset:end], total, nil
+}
+
 func (f *fakeConnStore) GetConnection(_ context.Context, _, id string) (domain.Connection, error) {
 	if f.getErr != nil {
 		return domain.Connection{}, f.getErr
@@ -88,12 +110,20 @@ func (f *fakeConnStore) DeleteConnection(_ context.Context, _, id string) error 
 }
 
 func connServer(store ConnectionStore) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Connections:   store,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Connections: store,
+		},
 	})
 }
 
@@ -204,6 +234,10 @@ func TestConnectionWriteWithoutKeyReturns503(t *testing.T) {
 		`{"connection_id":"pg","conn_type":"postgres","password":"x"}`)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("write without key = %d, want 503", rec.Code)
+	}
+	// The detail tells the operator what to set, under the current name.
+	if body := rec.Body.String(); !strings.Contains(body, "DEXAFLOW_SECRET_KEY") || strings.Contains(body, "LEOFLOW_") {
+		t.Errorf("503 detail must name DEXAFLOW_SECRET_KEY only, got %s", body)
 	}
 }
 
@@ -581,4 +615,44 @@ func TestConnectionWriteNeverReplacesAnUnreadableExtra(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestListConnectionsFilters(t *testing.T) {
+	store := &fakeConnStore{
+		conns: map[string]domain.Connection{
+			"aws_default":   {ConnID: "aws_default", ConnType: "aws"},
+			"aws_east":      {ConnID: "aws_east", ConnType: "aws"},
+			"google_cloud":  {ConnID: "google_cloud", ConnType: "gcp"},
+			"postgres_prod": {ConnID: "postgres_prod", ConnType: "postgres"},
+		},
+	}
+	srv := connServer(store)
+
+	t.Run("prefix pattern filter", func(t *testing.T) {
+		rec := authGet(srv, http.MethodGet, "/api/v2/connections?connection_id_prefix_pattern=aws", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET = %d, want 200", rec.Code)
+		}
+		var resp connectionCollectionDTO
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decoding body: %v", err)
+		}
+		if resp.TotalEntries != 2 || len(resp.Connections) != 2 {
+			t.Errorf("got total %d, conns %d; want 2", resp.TotalEntries, len(resp.Connections))
+		}
+	})
+
+	t.Run("substring pattern filter", func(t *testing.T) {
+		rec := authGet(srv, http.MethodGet, "/api/v2/connections?connection_id_pattern=east", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET = %d, want 200", rec.Code)
+		}
+		var resp connectionCollectionDTO
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decoding body: %v", err)
+		}
+		if resp.TotalEntries != 1 || len(resp.Connections) != 1 || resp.Connections[0].ConnectionID != "aws_east" {
+			t.Errorf("got total %d, conns %+v; want 1 (aws_east)", resp.TotalEntries, resp.Connections)
+		}
+	})
 }

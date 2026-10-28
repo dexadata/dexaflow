@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_auth_create-user/
 title: "dexaflow auth create-user"
 linkTitle: "auth create-user"
-weight: 14
+weight: 15
 ---
 
 Create a user on the control plane (admin only).

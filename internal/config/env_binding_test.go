@@ -55,8 +55,9 @@ func docEnvVarsFromReference(t *testing.T) []string {
 }
 
 // docSettingFirstColumns returns the first column of every table row in the
-// configuration reference — the cell that names the setting, either as its
-// LEOFLOW_* env var or, for a config-file/Helm-values-only key, in dotted form.
+// server settings section of the configuration reference: the cell that
+// names the setting, either as its DEXAFLOW_* env var or, for a config-file
+// only key, as _(config file only)_ next to its dotted key.
 // It is the shared read side of both directions of the doc/binding guard.
 func docSettingFirstColumns(t *testing.T) []string {
 	t.Helper()
@@ -71,8 +72,15 @@ func docSettingFirstColumns(t *testing.T) []string {
 		t.Fatalf("read %s: %v", docPath, err)
 	}
 	var cols []string
+	// Only the server settings section: the variables a binary reads outside
+	// the config loaders (the "Other environment variables" section) bind
+	// through os.Getenv, not serverDefaults.
+	inServer := false
 	for _, line := range strings.Split(string(raw), "\n") {
-		if !strings.HasPrefix(strings.TrimSpace(line), "|") {
+		if strings.HasPrefix(line, "## ") {
+			inServer = strings.HasPrefix(line, "## Server environment")
+		}
+		if !inServer || !strings.HasPrefix(strings.TrimSpace(line), "|") {
 			continue
 		}
 		// First column only: text up to the first column separator.
@@ -285,6 +293,31 @@ func TestLoadServerPoolsReadOnly(t *testing.T) {
 	}
 	if !c.Server.PoolsReadOnly {
 		t.Fatal("DEXAFLOW_SERVER_POOLS_READ_ONLY=true did not bind server.pools_read_only")
+	}
+}
+
+// TestLoadServerAPITokensSwitch proves auth.api_tokens.disabled defaults to
+// false, so an upgrade keeps the API tokens of ADR 0074, and binds true from
+// the environment, the only override path a Helm install has. Consequence
+// when unbound: an operator who turned the tokens off, because its own
+// sign-in decides who may reach the engine, would still serve year-long
+// credentials that outlive that decision.
+func TestLoadServerAPITokensSwitch(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer() error = %v", err)
+	}
+	if c.Auth.APITokens.Disabled {
+		t.Fatal("auth.api_tokens.disabled must default to false")
+	}
+
+	t.Setenv("DEXAFLOW_AUTH_API_TOKENS_DISABLED", "true")
+	c, err = LoadServer("", nil)
+	if err != nil {
+		t.Fatalf("LoadServer() error = %v", err)
+	}
+	if !c.Auth.APITokens.Disabled {
+		t.Fatal("DEXAFLOW_AUTH_API_TOKENS_DISABLED=true did not bind auth.api_tokens.disabled")
 	}
 }
 

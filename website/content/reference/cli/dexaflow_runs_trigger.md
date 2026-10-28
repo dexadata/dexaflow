@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_runs_trigger/
 title: "dexaflow runs trigger"
 linkTitle: "runs trigger"
-weight: 56
+weight: 61
 ---
 
 Trigger a new run of a DAG, and optionally follow it to the end.

@@ -93,8 +93,10 @@ const deployDefaultsMaxBody = 64 << 10
 var ErrDeployDefaultsNotServed = errors.New("the server does not serve " + deployDefaultsPath)
 
 // DeployDefaults are the cluster deploy defaults GET /api/v2/deployDefaults
-// serves: what a deploy uses for the registry prefix, the build platforms
-// and the base image when nothing local sets them. An unset field is empty.
+// serves: what a deploy uses for the registry prefix, the build platforms,
+// the base image, the source mode runtime image and the remote builder when
+// nothing local sets them, and what it reports about the task service
+// account and the warm pools. An unset field is empty or nil.
 type DeployDefaults struct {
 	// Registry is the image prefix a deploy pushes to, such as ghcr.io/acme.
 	Registry string `json:"registry"`
@@ -102,6 +104,87 @@ type DeployDefaults struct {
 	Platforms []string `json:"platforms"`
 	// BaseImage is the base image for projects that set none.
 	BaseImage string `json:"base_image"`
+	// SourceModeImage is the runtime image a deploy registers a DAG's
+	// dag.py on, with no build, when nothing local names one (source mode,
+	// #1772). Empty when the cluster advertises none, or from a server
+	// that predates the field.
+	SourceModeImage string `json:"source_mode_image,omitempty"`
+	// RemoteBuilder is the remote builder a deploy uses for builds no
+	// daemonless path covers, when nothing local names one (#1890). Nil when
+	// the cluster advertises none, or from a server that predates the field.
+	RemoteBuilder *DeployRemoteBuilder `json:"remote_builder,omitempty"`
+	// TaskServiceAccount is the ServiceAccount task pods run as when a task
+	// sets no execution.service_account (#1890). Empty when the cluster
+	// advertises none, or from a server that predates the field.
+	TaskServiceAccount string `json:"task_service_account,omitempty"`
+	// WarmPools are the cluster's warm pool settings (#1890). Nil when the
+	// cluster advertises none, or from a server that predates the field.
+	WarmPools *DeployWarmPools `json:"warm_pools,omitempty"`
+	// CIOIDC lists the CI OIDC issuers of the caller's tenant (ADR 0092),
+	// which `dexaflow ci init` writes a tokenless pipeline for. Nil when the
+	// tenant has none, or from a server that predates the field.
+	CIOIDC *DeployCIOIDC `json:"ci_oidc,omitempty"`
+}
+
+// DeployCIOIDC is the ci_oidc of DeployDefaults.
+type DeployCIOIDC struct {
+	// Issuers are the entries, in the server's order.
+	Issuers []DeployCIOIDCIssuer `json:"issuers"`
+}
+
+// DeployCIOIDCIssuer is one CI OIDC issuer: its entry name, its provider
+// (github, gitlab, cloudbuild or other), the iss of its tokens and the
+// audience a pipeline asks its token for.
+type DeployCIOIDCIssuer struct {
+	Name     string `json:"name"`
+	Provider string `json:"provider"`
+	Issuer   string `json:"issuer"`
+	Audience string `json:"audience"`
+}
+
+// DeployRemoteBuilder is the remote_builder of DeployDefaults: its backend.
+type DeployRemoteBuilder struct {
+	// CloudBuild builds on Google Cloud Build.
+	CloudBuild *DeployCloudBuild `json:"cloud_build,omitempty"`
+	// BuildKit builds on the in-cluster BuildKit daemon the Helm chart runs
+	// (builder.enabled, #1883). Nil from a server that predates it.
+	BuildKit *DeployBuildKit `json:"buildkit,omitempty"`
+}
+
+// DeployBuildKit is the in-cluster BuildKit backend of DeployRemoteBuilder.
+type DeployBuildKit struct {
+	// Namespace is the namespace of the builder.
+	Namespace string `json:"namespace,omitempty"`
+	// PodSelector is the label selector of the builder pod; empty selects
+	// app.kubernetes.io/component=builder.
+	PodSelector string `json:"pod_selector,omitempty"`
+}
+
+// DeployCloudBuild is the Cloud Build backend of DeployRemoteBuilder. An
+// unset field is empty.
+type DeployCloudBuild struct {
+	// Project is the Google Cloud project the build runs in.
+	Project string `json:"project,omitempty"`
+	// Region is the Cloud Build region, such as us-central1.
+	Region string `json:"region,omitempty"`
+	// WorkerPool is a private pool,
+	// projects/<project>/locations/<region>/workerPools/<name>.
+	WorkerPool string `json:"worker_pool,omitempty"`
+	// ServiceAccount is the account the build runs as,
+	// projects/<project>/serviceAccounts/<email>.
+	ServiceAccount string `json:"service_account,omitempty"`
+}
+
+// DeployWarmPools is the warm_pools of DeployDefaults: a DAG that declares
+// no min_idle_workers gets MinIdleWorkers, every value is capped at
+// MaxPoolSize (0 sets no cap), and nothing is kept warm unless Enabled.
+type DeployWarmPools struct {
+	// Enabled says whether the cluster keeps warm workers at all.
+	Enabled bool `json:"enabled"`
+	// MinIdleWorkers is the cluster's idle worker floor per version.
+	MinIdleWorkers int `json:"min_idle_workers"`
+	// MaxPoolSize caps one version's pool.
+	MaxPoolSize int `json:"max_pool_size"`
 }
 
 // GetDeployDefaults reads GET /api/v2/deployDefaults through the client's

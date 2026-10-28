@@ -25,7 +25,7 @@ env:
   # falls back to the module's own source on any proxy error (with "," only on
   # 404/410); go.sum and sum.golang.org still verify every module.
   GOPROXY: https://proxy.golang.org|direct
-  GO_VERSION: "1.26.9"
+  GO_VERSION: "1.26.10"
   PYTHON_VERSION: "3.11"
   GOLANGCI_LINT_VERSION: "v2.12.2"
 
@@ -52,15 +52,27 @@ jobs:
         with:
           persist-credentials: false
 
+      # #1942: no Go production file over 1,500 lines (#1580), and the files
+      # already over it, pinned in scripts/go-file-length-allowlist.txt, never
+      # grow. Shares this job so the check costs no extra runner, and runs
+      # first because it takes milliseconds.
+      - name: Go files stay under the length limit
+        run: bash scripts/check-go-file-length.sh
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      # No golangci-lint cache: on 2026-10-28 a restored cache made staticcheck
+      # report SA5011 after t.Fatal nil checks in files no PR touched, while a
+      # clean run of the same commit found nothing. A cold run takes about as
+      # long as a warm one here (four minutes), so the cache buys nothing.
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
+          skip-cache: true
 
   # ─────────────────────────────────────────────────────────────────────
   # Proto drift: the generated gRPC code (proto/agent/v1) is committed, so a
@@ -175,6 +187,11 @@ jobs:
     name: Test + Coverage
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read # the base branch's coverage artifact, for the delta
+    outputs:
+      badge: ${{ steps.gate.outputs.badge }}
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -206,16 +223,153 @@ jobs:
         run: |
           go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
+      # The per-package change in the job summary (#1572) compares against
+      # the profile the base branch's own run uploaded: the pull request's
+      # or merge queue's base commit, or the commit a push replaced, else
+      # the newest green push run of the branch. Without one the summary
+      # says so; this step never fails the job.
+      - name: Fetch the base branch's coverage profile
+        id: base
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          BASE_REF: ${{ github.base_ref || github.event.merge_group.base_ref || github.ref_name }}
+        run: |
+          label=$(BASE_REF="${BASE_REF#refs/heads/}" scripts/coverage-base.sh base-coverage.out)
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+
       - name: Enforce coverage floor
+        id: gate
         # The floor and the exclude list live in scripts/coverage-gate.sh,
         # shared with the pre-commit hook so the two cannot drift (ADR 0011).
-        run: scripts/coverage-gate.sh coverage.out
+        env:
+          BASE_LABEL: ${{ steps.base.outputs.label }}
+        run: scripts/coverage-gate.sh coverage.out base-coverage.out "$BASE_LABEL"
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-${{ github.sha }}
           path: coverage.out
+
+  # The README coverage badge (#1572): shields.io reads a one-file endpoint
+  # document from the badges branch, which this job replaces after each
+  # green test run on main. No service account, token or repository setting:
+  # the run's own token writes the branch, which no ruleset covers. The
+  # branch holds one parentless commit, so it never grows. A run whose commit
+  # is no longer main's head leaves the badge to the newer run. A failure
+  # here must not turn main red (cut-release.sh tags only a green run), so
+  # the job may fail on its own.
+  coverage-badge:
+    name: Coverage badge
+    needs: test
+    if: github.repository == 'dexadata/dexaflow' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      contents: write # replace the badges branch
+    steps:
+      - name: Publish coverage.json on the badges branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BADGE: ${{ needs.test.outputs.badge }}
+        run: |
+          set -euo pipefail
+          repo="repos/${GITHUB_REPOSITORY}"
+          head=$(gh api "$repo/git/ref/heads/main" --jq .object.sha)
+          if [ "$head" != "$GITHUB_SHA" ]; then
+            echo "::notice::main moved to ${head:0:8}; its run publishes the badge"
+            exit 0
+          fi
+          blob=$(gh api "$repo/git/blobs" -f content="$BADGE" -f encoding=utf-8 --jq .sha)
+          tree=$(jq -n --arg sha "$blob" '{tree: [{path: "coverage.json", mode: "100644", type: "blob", sha: $sha}]}' |
+            gh api "$repo/git/trees" --input - --jq .sha)
+          commit=$(gh api "$repo/git/commits" -f "message=coverage of ${GITHUB_SHA}" -f "tree=$tree" --jq .sha)
+          gh api -X PATCH "$repo/git/refs/heads/badges" -f "sha=$commit" -F force=true >/dev/null 2>&1 ||
+            gh api "$repo/git/refs" -f ref=refs/heads/badges -f "sha=$commit" >/dev/null
+          echo "badges branch at ${commit:0:8}: $BADGE"
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Shell scripts drive CI and every release cut, and nothing linted them
+  # (#1572). shellcheck runs at warning severity, where the tree is clean;
+  # the info and style findings are a later tightening.
+  # ─────────────────────────────────────────────────────────────────────
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: shellcheck every tracked script
+        run: |
+          shellcheck --version
+          git ls-files -z '*.sh' | xargs -0 shellcheck -S warning
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Dockerfile lint (#1572). A warning or an error fails the job; the info
+  # findings (numeric USER, consecutive RUN) stay as a report. A finding
+  # that is deliberate carries a `# hadolint ignore=<rule>` with its reason
+  # in the Dockerfile.
+  # ─────────────────────────────────────────────────────────────────────
+  hadolint:
+    name: hadolint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # One job with a step per Dockerfile, not a matrix: the runners are
+    # shared, and seven jobs per pull request cost more than they report.
+    # Each step runs even when an earlier one failed, so one run reports
+    # every Dockerfile.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: hadolint deploy/Dockerfile.cli.release
+        if: ${{ !cancelled() }}
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: deploy/Dockerfile.cli.release
+          failure-threshold: warning
+      - name: hadolint deploy/Dockerfile.mcp.release
+        if: ${{ !cancelled() }}
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: deploy/Dockerfile.mcp.release
+          failure-threshold: warning
+      - name: hadolint deploy/Dockerfile.migrate
+        if: ${{ !cancelled() }}
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: deploy/Dockerfile.migrate
+          failure-threshold: warning
+      - name: hadolint deploy/Dockerfile.server
+        if: ${{ !cancelled() }}
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: deploy/Dockerfile.server
+          failure-threshold: warning
+      - name: hadolint deploy/Dockerfile.server.release
+        if: ${{ !cancelled() }}
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: deploy/Dockerfile.server.release
+          failure-threshold: warning
+      - name: hadolint runtime/Dockerfile
+        if: ${{ !cancelled() }}
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: runtime/Dockerfile
+          failure-threshold: warning
+      - name: hadolint scripts/chaos/Dockerfile
+        if: ${{ !cancelled() }}
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: scripts/chaos/Dockerfile
+          failure-threshold: warning
 
   # ─────────────────────────────────────────────────────────────────────
   # Integration tests (//go:build integration) against real Postgres + Redis.
@@ -1159,6 +1313,44 @@ jobs:
             echo "::warning::Production code changed without test changes. Verify ADR 0011 was followed."
           fi
 
+  # The text rules of AGENTS.md section 2 on what a pull request adds: no
+  # em dash in an added line, no attribution trailer or footer in a commit
+  # message (#1573). The pre-commit and commit-msg hooks run the same
+  # script.
+  new-text:
+    name: Text rules (added lines and commit messages)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: No em dash added, no attribution trailer
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/lint-new-text.sh --range "$BASE" "$HEAD"
+
+  # Developer Certificate of Origin (#1575): every commit of a pull request
+  # is signed off by its author. Merge commits and Dependabot are exempt.
+  dco:
+    name: DCO (every commit signed off by its author)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Every commit signed off by its author
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/dco-check.sh --range "$BASE" "$HEAD"
+
   # ─────────────────────────────────────────────────────────────────────
   # Build all binaries
   # ─────────────────────────────────────────────────────────────────────
@@ -1244,6 +1436,10 @@ jobs:
       # Shares this job so the check costs no extra runner.
       - name: Workflows stay safe for pull requests from forks
         run: bash scripts/check-fork-safe-workflows.sh
+      # #1688: a path filter does not apply to tag pushes, so a path-filtered
+      # push trigger without a ref filter runs on every release tag.
+      - name: Path-filtered workflows stay off tag pushes
+        run: bash scripts/check-workflow-tag-runs.sh
 
   # ─────────────────────────────────────────────────────────────────────
   # Stale deploy-path check. The old GKE deploy directory was renamed to
@@ -1292,15 +1488,13 @@ jobs:
         run: bash scripts/check-trivyignore-entries.sh
 
   # ─────────────────────────────────────────────────────────────────────
-  # The migrate CLI we ship and the migrate CLI CI scans must be one binary.
-  # `deploy/Dockerfile.migrate` compiles golang-migrate's `cmd/migrate` from the
-  # version in our go.mod (#1039) and security.yaml runs govulncheck over that
-  # package — but golang-migrate registers its database drivers behind BUILD
-  # TAGS, so a tag on one side and not the other means govulncheck reports clean
-  # on a package that is not the one in the image. Same for the Go pin: Trivy
-  # keys stdlib findings to the toolchain in the binary. Both drifts stay green
-  # while the coverage stops meaning anything, which is the shape of the gap
-  # #1039 closed.
+  # The migrate binary we ship and the one CI scans must be one binary.
+  # `deploy/Dockerfile.migrate` compiles our `./cmd/dexaflow-migrate` (#1020),
+  # which security.yaml's `govulncheck ./...` covers only while the image keeps
+  # building that package with no build tags and the wrapper keeps importing
+  # its pgx5 driver. Same for the Go pin: Trivy keys stdlib findings to the
+  # toolchain in the binary. Each drift stays green while the coverage stops
+  # meaning anything, which is the shape of the gap #1039 closed.
   # ─────────────────────────────────────────────────────────────────────
   migrate-cli-build-tags:
     name: Shipped migrate CLI is the one CI scans
@@ -1409,19 +1603,19 @@ jobs:
         run: bash scripts/check-workflow-pins.sh
       - name: Lite Postgres tag agrees with the container Lite starts
         run: bash scripts/check-lite-postgres-tag.sh
+      - name: Runtime data variant pins the base's Task SDK and certifi
+        run: bash scripts/check-runtime-data-pins.sh
       - name: Embedded Airflow UI pin agrees with the committed bundle
         run: bash scripts/check-airflow-ui-pin.sh
-      # Both of these landed with a self-test wired into `Script self-tests` and
-      # their REAL check reachable only through cut-release.sh's run_gates().
-      # That is too late to be useful: a PR lowering api.probeBudget under the
-      # chart's floor, or drifting HUGO_VERSION between the two website
-      # workflows, stayed green all the way to the release cut, where the
-      # failure lands on whoever is cutting rather than whoever caused it. Same
-      # argument that put the golangci-lint pin in this job.
-      - name: Readiness probe budget sits under the chart's floor
-        run: bash scripts/check-readiness-probe-budget.sh
       - name: Startup probe budget covers the boot bounds the code states
         run: bash scripts/check-startup-probe-budget.sh
+      # The Hugo pin check landed with a self-test wired into `Script
+      # self-tests` and its REAL check reachable only through cut-release.sh's
+      # run_gates(). That is too late to be useful: drifting HUGO_VERSION
+      # between the two website workflows stayed green all the way to the
+      # release cut, where the failure lands on whoever is cutting rather than
+      # whoever caused it. Same argument that put the golangci-lint pin in this
+      # job.
       - name: Hugo pin agrees between the website build and deploy
         run: bash scripts/check-hugo-version-pin.sh
       # Same shape again: landed with a self-test in `Script self-tests` and its
@@ -1432,6 +1626,15 @@ jobs:
       # so it cannot itself be cut-time-only.
       - name: Docs version menu agrees between versions.json and hugo.toml
         run: bash scripts/check-docs-version-menu.sh
+      # Two more of the same shape that never got their real check wired in:
+      # only their self-tests ran. CodeQL refuses to run when its init and
+      # analyze steps sit on different commits, which a per-sub-action
+      # Dependabot bump produces; the Playwright pin keeps the root
+      # package.json and the e2e-sso-login job's PLAYWRIGHT_VERSION on one version.
+      - name: Every codeql-action step is pinned to the same commit
+        run: bash scripts/check-codeql-action-pins.sh
+      - name: Playwright pin agrees between package.json and CI
+        run: bash scripts/check-playwright-pin.sh
 
   # ─────────────────────────────────────────────────────────────────────
   stale-deploy-path:
@@ -1633,3 +1836,11 @@ jobs:
           PY
       - name: Authoring contract
         run: python -m pytest runtime/python/tests/test_leoflow_authoring.py -q
+      # The context the runtime builds against the pinned Task SDK's Context and
+      # RuntimeTaskInstance (#1843): a pin bump that widens the gap fails here.
+      - name: Task context contract
+        run: python -m pytest runtime/python/tests/test_task_sdk_context_contract.py -q
+      # A captured operator's on_failure_callback, read off its task in a real
+      # dag.py (#484): the Airflow-free runtime job cannot import one.
+      - name: Operator callback contract
+        run: python -m pytest runtime/python/tests/test_task_sdk_operator_callback.py -q

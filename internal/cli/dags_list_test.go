@@ -9,6 +9,7 @@ import (
 )
 
 func TestPrintDagListEmpty(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	if err := printDagList(&buf, nil); err != nil {
 		t.Fatal(err)
@@ -19,6 +20,7 @@ func TestPrintDagListEmpty(t *testing.T) {
 }
 
 func TestPrintDagListRows(t *testing.T) {
+	t.Parallel()
 	sp := func(s string) *string { return &s }
 	paused := true
 	owners := []string{"team-a"}

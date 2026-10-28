@@ -45,6 +45,9 @@ skip_changelog_reason() {
 }
 
 self_test() {
+	# A git hook exports these, and the fixture repositories below would follow
+	# them to the repository being committed to.
+	unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_PREFIX
 	local fail=0
 	_eq() { # <got> <want> <name>
 		if [ "$1" = "$2" ]; then printf '  ok   %s\n' "$3"; else printf '  FAIL %s\n    got:  %q\n    want: %q\n' "$3" "$1" "$2"; fail=1; fi
@@ -82,6 +85,7 @@ self_test() {
 
 	local setup_log
 	setup_log="$(
+		exec 2>&1
 		export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 		cd "$tmp" || exit 1
 		git -c init.defaultBranch=main init -q . &&
@@ -90,7 +94,7 @@ self_test() {
 		printf '%s\n' '# Changelog' '' '## [Unreleased]' '' '### Fixed' '- a thing (#1)' '' '## [1.0.0] - 2026-01-01' '- old' > CHANGELOG.md &&
 		git add -A && git commit -qm base &&
 		git update-ref refs/remotes/origin/main refs/heads/main
-	2>&1)" || { printf '  FAIL self-test setup could not build the fixture repo\n%s\n' "$setup_log"; return 1; }
+	)" || { printf '  FAIL self-test setup could not build the fixture repo\n%s\n' "$setup_log"; return 1; }
 
 	# _case <name> <want-rc> <want-substring> -- <commands run inside $tmp>
 	# GITHUB_BASE_REF is part of the gate's decision, and it is SET in the

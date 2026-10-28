@@ -45,6 +45,7 @@ func gitInit(t *testing.T, dir, origin string) string {
 // credentials a CI checkout puts in it; on GitHub Actions the pipeline is
 // the workflow run.
 func TestCollectBuildInfoFromGitAndGitHub(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	sha := gitInit(t, dir, "https://x-access-token:s3cret@github.com/acme/etl.git")
 	got := collectBuildInfo(context.Background(), dir, envOf(map[string]string{
@@ -70,6 +71,7 @@ func TestCollectBuildInfoFromGitAndGitHub(t *testing.T) {
 // TestCollectBuildInfoOutsideGit: outside git there is no commit, and the
 // repository and pipeline come from the CI's own variables.
 func TestCollectBuildInfoOutsideGit(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name               string
 		env                map[string]string
@@ -95,6 +97,7 @@ func TestCollectBuildInfoOutsideGit(t *testing.T) {
 // TestBrowsableRemote turns a git remote into the http(s) URL of the
 // repository, never keeping credentials, and gives up on what it cannot map.
 func TestBrowsableRemote(t *testing.T) {
+	t.Parallel()
 	for in, want := range map[string]string{
 		"https://github.com/acme/etl.git":         "https://github.com/acme/etl",
 		"https://user:pw@gitlab.example/a/b":      "https://gitlab.example/a/b",
@@ -115,6 +118,7 @@ func TestBrowsableRemote(t *testing.T) {
 // TestVersionPostSendsBuildInfo: the register carries each build info field
 // as its build_* query parameter, and nothing when there is none.
 func TestVersionPostSendsBuildInfo(t *testing.T) {
+	t.Parallel()
 	b := &domain.BuildInfo{Commit: "abc1234", Repo: "https://github.com/acme/etl", PipelineURL: "https://ci/1",
 		Builder: "code-layer", BaseImage: "base:1", CLIVersion: "v0.5.4"}
 	q, err := url.ParseQuery(strings.TrimPrefix(versionPost{build: b}.query(), "?"))
@@ -139,6 +143,7 @@ func TestVersionPostSendsBuildInfo(t *testing.T) {
 // TestRegisterDeployedDAGSendsBuildInfo: the deploy's register sends the
 // build info it was given (where the deploy built the version).
 func TestRegisterDeployedDAGSendsBuildInfo(t *testing.T) {
+	t.Parallel()
 	var gotQuery url.Values
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.Query()

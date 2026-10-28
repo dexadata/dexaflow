@@ -8,16 +8,6 @@ import (
 	"github.com/dexadata/dexaflow/internal/build"
 )
 
-// The tests of this package never ask a public registry for a base image:
-// one off the loopback is refused, so a build splits (ADR 0077) only when a
-// test serves the base image itself.
-// uv is not there unless a test installs a fake one (fakeUV), so the
-// host's uv decides nothing.
-func init() {
-	wrapBaseReader = func(r build.Registry) baseReader { return loopbackRegistry{reg: r} }
-	lookUV = func() (string, error) { return "", errors.New("uv is not installed in the tests") }
-}
-
 // loopbackRegistry resolves images on 127.0.0.1 and localhost only, with
 // the project's registry client reg.
 type loopbackRegistry struct{ reg build.Registry }

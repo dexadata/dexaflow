@@ -339,6 +339,7 @@ func TestDeployChangedSinceReportsAMovedProjectAsMoved(t *testing.T) {
 // TestProjectOutsideTheRepositoryCountsAsChanged: a project git cannot
 // compare (its directory resolves outside the repository) is deployed.
 func TestProjectOutsideTheRepositoryCountsAsChanged(t *testing.T) {
+	t.Parallel()
 	dir := versionProject(t, "")
 	cfg, err := loadProjectConfig(dir)
 	if err != nil {
@@ -496,6 +497,7 @@ func TestDeployChangedSinceWithNothingChangedSaysSo(t *testing.T) {
 // another repository, its objects or its index would make the comparison
 // read that repository instead of the workspace's.
 func TestGitEnvDropsEveryRepositoryOverride(t *testing.T) {
+	t.Parallel()
 	in := []string{"PATH=/bin", "GIT_DIR=/x", "GIT_WORK_TREE=/x", "GIT_INDEX_FILE=/x", "GIT_COMMON_DIR=/x",
 		"GIT_OBJECT_DIRECTORY=/x", "GIT_ALTERNATE_OBJECT_DIRECTORIES=/x", "GIT_AUTHOR_NAME=a"}
 	got := gitEnv(in)

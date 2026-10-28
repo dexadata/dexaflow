@@ -18,7 +18,9 @@ const (
 	// (ADR 0058 D5).
 	DedicatedStaging = "staging enabled"
 	// DedicatedSourceMode: a warm pod is built before its task is known, so
-	// it cannot carry the task's dag.py (ADR 0067 §3).
+	// it cannot carry the task's dag.py in its pod spec (ADR 0067 §3), and
+	// execution.source_mode.warm_pools, which delivers it with each
+	// assignment instead (ADR 0095), is off.
 	DedicatedSourceMode = "source mode"
 )
 
@@ -42,6 +44,10 @@ type WarmPolicy struct {
 	// SourceModeImage is the runtime image when source mode is on, "" when it
 	// is off (ADR 0067 §3).
 	SourceModeImage string
+	// SourceModeWarm is execution.source_mode.warm_pools: a source-mode
+	// version may run on warm workers, which receive its dag.py with each
+	// assignment (ADR 0095).
+	SourceModeWarm bool
 }
 
 // WarmVersion is what of a DAG version the warm decision reads: the image its
@@ -60,7 +66,7 @@ func (p WarmPolicy) VersionReason(v WarmVersion) string {
 		return DedicatedWarmPoolsOff
 	case v.Staging != nil && v.Staging.Enabled:
 		return DedicatedStaging
-	case SourceModeApplies(p.SourceModeImage, v.Image, v.HasSource):
+	case !p.SourceModeWarm && SourceModeApplies(p.SourceModeImage, v.Image, v.HasSource):
 		return DedicatedSourceMode
 	}
 	return ""
@@ -74,6 +80,26 @@ func (p WarmPolicy) DedicatedReason(v WarmVersion, t TaskSpec) string {
 	if reason := p.VersionReason(v); reason != "" {
 		return reason
 	}
+	return p.taskReason(t)
+}
+
+// HasWarmTask reports whether at least one of tasks may be placed on a warm
+// worker of a version VersionReason accepts: the per-task half of
+// DedicatedReason. A version with no such task keeps no warm pool, since its
+// idle workers would serve none of its tasks (#2065); a version with no task
+// has none.
+func (p WarmPolicy) HasWarmTask(tasks []TaskSpec) bool {
+	for _, t := range tasks {
+		if p.taskReason(t) == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// taskReason says why task t takes a dedicated pod whatever its version, or
+// "" when it may be placed on a warm worker.
+func (p WarmPolicy) taskReason(t TaskSpec) string {
 	if reason := warmServiceAccountReason(t, p.ServiceAccount); reason != "" {
 		return reason
 	}

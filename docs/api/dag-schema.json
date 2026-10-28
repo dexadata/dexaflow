@@ -78,7 +78,7 @@
     "min_idle_workers": {
       "type": "integer",
       "minimum": 0,
-      "description": "DORMANT seam, not author-settable today: warm workers an author would want kept ready for this DAG version so its tasks skip cold-pod startup (ADR 0058, warm pools). It is absent from the authoring schema (dexaflow.yaml) and the parser never emits it, so a compiled artifact always carries 0. The downstream (EffectiveMinIdle clamp, scheduler store) is intentionally pre-wired, so exposing it to authors later is a schema+parser change only. Would be operator-capped at execution.max_pool_size and inert unless the operator enabled warm pools; 0 (default) means no warmth."
+      "description": "Idle warm workers kept for this DAG version so its tasks skip the cold pod start (ADR 0058, ADR 0082). Declared as min_idle_workers in dexaflow.yaml, which the compiler copies here. With warm pools on, an unpaused DAG whose current version carries it is prewarmed before its first run; the server clamps it to execution.max_pool_size, and with warm pools off it does nothing. 0 (default) declares none."
     },
     "catchup": {
       "type": "boolean",
@@ -209,7 +209,7 @@
         },
         "on_failure_callback": {
           "type": "boolean",
-          "description": "Marks that the task declares an Airflow on_failure_callback (#424); the runtime runs it in the task process on failure. The callable itself is not carried."
+          "description": "Marks that the task declares an Airflow on_failure_callback (#424); the runtime runs it in the task process on the final failure. The callable itself is not carried: a @task reads it off its entrypoint, an operator off its task in the module its entrypoint names (#484)."
         },
         "depends_on": {
           "type": "array",
@@ -263,7 +263,7 @@
         },
         "entrypoint": {
           "type": "string",
-          "description": "For type=python: 'module.path:callable'. For type=bash: shell command."
+          "description": "For type=python: 'module.path:callable'. For type=bash: shell command. For type=airflow_operator with on_failure_callback: 'module:task_id', the DAG module the runtime imports on the final failed attempt to read the callback."
         },
         "env": {
           "type": "object",
@@ -390,6 +390,11 @@
         "call_args": {
           "type": "object",
           "description": "TaskFlow literal call arguments captured at compile time (#115). Delivered to the runtime as LEOFLOW_CALL_ARGS_JSON. Each value must be JSON-serialisable; XCom upstreams take precedence at runtime over a same-name literal. Named call_args (not params) to leave Airflow's DAG-run params term free for a future feature.",
+          "additionalProperties": true
+        },
+        "params": {
+          "type": "object",
+          "description": "For type=bash and type=python: the task's own params (Airflow's task-level params=), captured at compile time (#1843). The control plane layers them over the DAG's param defaults and under the run conf into the task's params context. A captured operator carries its params in operator_args instead.",
           "additionalProperties": true
         },
         "xcom_schema": {

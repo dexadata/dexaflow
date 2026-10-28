@@ -5,9 +5,12 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-
-	"github.com/dexadata/dexaflow/internal/config"
 )
+
+// hostPatternTenant is the placeholder auth.trusted_issuer.host_pattern
+// replaces with the session's tenant (config.HostPatternTenant; a test keeps
+// the two equal).
+const hostPatternTenant = "{tenant}"
 
 // hostBinding ties a browser session to its tenant's host
 // (auth.trusted_issuer.host_pattern, #1463).
@@ -58,7 +61,7 @@ func (b *hostBinding) allows(c *gin.Context, tenant string) bool {
 	if b == nil {
 		return true
 	}
-	want := strings.Replace(b.pattern, config.HostPatternTenant, strings.ToLower(tenant), 1)
+	want := strings.Replace(b.pattern, hostPatternTenant, strings.ToLower(tenant), 1)
 	got := strings.ToLower(b.requestHost(c))
 	if !strings.Contains(b.pattern, ":") {
 		got = stripPort(got)

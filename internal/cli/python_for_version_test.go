@@ -19,6 +19,7 @@ import (
 // task runs on and a silent coercion is exactly the class this fix exists to
 // remove.
 func TestParsePythonMinor(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		in   string
 		want int
@@ -57,6 +58,7 @@ func TestParsePythonMinor(t *testing.T) {
 // trusted by PATH when nothing was asked for, and must be version-CHECKED when
 // something was. Trusting the path is what produced the skew.
 func TestResolvePythonForVersion(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	absent := func(string) (string, error) { return "", os.ErrNotExist }
 
@@ -164,6 +166,7 @@ func TestResolvePythonForVersion(t *testing.T) {
 // interpreter forever: ensureDagVenv short-circuits on the interpreter file
 // existing, so the declared version would apply only to venvs that never existed.
 func TestPyvenvMinor(t *testing.T) {
+	t.Parallel()
 	t.Run("reads the version line", func(t *testing.T) {
 		dir := t.TempDir()
 		cfg := "home = /opt/python/bin\ninclude-system-site-packages = false\nversion = 3.12.0\n"
@@ -196,6 +199,44 @@ func TestPyvenvMinor(t *testing.T) {
 			t.Errorf("pyvenvMinor = (%d, %v), want (13, true)", got, ok)
 		}
 	})
+
+	t.Run("only the minor is read", func(t *testing.T) {
+		// The major of a pyvenv.cfg version has never been checked, so a bad
+		// one must not turn a readable minor into "unknown".
+		for cfg, want := range map[string]int{
+			"version = x.12.0\n": 12,
+			"version = .13\n":    13,
+			"version = 3.11\n":   11,
+		} {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "pyvenv.cfg"), []byte(cfg), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := pyvenvMinor(dir); !ok || got != want {
+				t.Errorf("pyvenvMinor(%q) = (%d, %v), want (%d, true)", cfg, got, ok, want)
+			}
+		}
+		for _, cfg := range []string{"version = 3\n", "version = 3.\n", "version = 3.x\n"} {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "pyvenv.cfg"), []byte(cfg), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := pyvenvMinor(dir); ok {
+				t.Errorf("pyvenvMinor(%q) = (%d, true), want ok=false", cfg, got)
+			}
+		}
+	})
+}
+
+// TestParsePythonMinorErrorText pins the message a malformed minor produces:
+// it wraps the strconv error alone, as it did before the shared parser.
+func TestParsePythonMinorErrorText(t *testing.T) {
+	t.Parallel()
+	_, err := parsePythonMinor("3.x")
+	want := `python_version "3.x" is not of the form 3.<minor> (e.g. "3.13"): strconv.Atoi: parsing "x": invalid syntax`
+	if err == nil || err.Error() != want {
+		t.Errorf("parsePythonMinor(%q) error = %v, want %q", "3.x", err, want)
+	}
 }
 
 func containsAll(s string, subs ...string) bool {
@@ -246,6 +287,7 @@ func writeFakeDagVenv(t *testing.T, home, dagID, builtOn string) (dir, py string
 // after reverting the edit, and the reload path keeps serving the last
 // registered DAG either way.
 func TestDagVenvRebuiltWhenDeclaredMinorChanges(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("sh stub is POSIX-only")
 	}
@@ -271,6 +313,7 @@ func TestDagVenvRebuiltWhenDeclaredMinorChanges(t *testing.T) {
 // path. A venv already on the declared minor must be left exactly as it was —
 // no rebuild, no reinstall, and no interpreter resolution at all.
 func TestDagVenvKeptWhenDeclaredMinorMatches(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("sh stub is POSIX-only")
 	}
@@ -298,6 +341,7 @@ func TestDagVenvKeptWhenDeclaredMinorMatches(t *testing.T) {
 // alone rather than rebuilt, because "unknown" read as "wrong" would mean a full
 // reinstall on every single boot — a worse failure than the skew.
 func TestDagVenvKeptWhenPyvenvCfgUnreadable(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("sh stub is POSIX-only")
 	}
@@ -317,21 +361,28 @@ func TestDagVenvKeptWhenPyvenvCfgUnreadable(t *testing.T) {
 	}
 }
 
-// TestInstallHintOnlyOffersSetupForTheVersionItInstalls guards an error message
-// that used to send the user around a loop it cannot end: `dexaflow setup`
-// provisions exactly one minor — the managed build's — so offering it to someone
-// who asked for 3.13 means setup succeeds, 3.13 is still missing, and the same
-// error comes back.
-func TestInstallHintOnlyOffersSetupForTheVersionItInstalls(t *testing.T) {
-	if got := installHint(minPythonMinor); !strings.Contains(got, "dexaflow setup") {
-		t.Errorf("installHint(3.%d) = %q, want it to offer `dexaflow setup` — that is the version setup installs", minPythonMinor, got)
+// TestInstallHintNeverOffersSetup guards an error message that used to send
+// the user around a loop it cannot end. Offering `dexaflow setup` to someone
+// who asked for 3.13 meant setup succeeded, 3.13 was still missing, and the same
+// error came back. Since #1700 the same is true of 3.11: setup keeps a host 3.12
+// for the parser and fetches nothing, so only the lazy managed fetch (or
+// installing 3.11) produces it.
+func TestInstallHintNeverOffersSetup(t *testing.T) {
+	t.Parallel()
+	for _, want := range []int{minPythonMinor, minPythonMinor + 2} {
+		got := installHint(want)
+		if strings.Contains(got, "dexaflow setup") {
+			t.Errorf("installHint(3.%d) = %q, must not offer `dexaflow setup`", want, got)
+		}
+		if !strings.Contains(got, fmt.Sprintf("3.%d", want)) {
+			t.Errorf("installHint(3.%d) = %q, want it to name the version the user actually needs", want, got)
+		}
 	}
-	got := installHint(minPythonMinor + 2)
-	if strings.Contains(got, "dexaflow setup") {
-		t.Errorf("installHint(3.%d) = %q, must not offer `dexaflow setup`: setup only ever provisions 3.%d", minPythonMinor+2, got, minPythonMinor)
+	if got := installHint(minPythonMinor); !strings.Contains(got, "managed CPython") {
+		t.Errorf("installHint(3.%d) = %q, want it to say Dexaflow fetches the pinned minor itself", minPythonMinor, got)
 	}
-	if !strings.Contains(got, fmt.Sprintf("3.%d", minPythonMinor+2)) {
-		t.Errorf("installHint = %q, want it to name the version the user actually needs", got)
+	if got := installHint(minPythonMinor + 2); strings.Contains(got, "managed CPython") {
+		t.Errorf("installHint(3.%d) = %q, must not promise a managed build of a minor Dexaflow does not pin", minPythonMinor+2, got)
 	}
 }
 
@@ -345,6 +396,7 @@ func TestInstallHintOnlyOffersSetupForTheVersionItInstalls(t *testing.T) {
 // Nothing is inconsistent in that case: the task image is py3.11 because the
 // same default chose it, so dev and the cluster already agree.
 func TestDevEnforcedPythonVersion(t *testing.T) {
+	t.Parallel()
 	cmd := devTestCmd()
 
 	t.Run("a defaulted version is not enforced", func(t *testing.T) {

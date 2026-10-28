@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_lite_forget/
 title: "dexaflow lite forget"
 linkTitle: "lite forget"
-weight: 43
+weight: 46
 ---
 
 Remove a DAG (and all its history) from the Lite registry without touching the source files.

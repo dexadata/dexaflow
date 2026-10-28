@@ -91,12 +91,12 @@
       "properties": {
         "dockerfile": {
           "type": "string",
-          "description": "Path to a custom Dockerfile, relative to the directory holding dexaflow.yaml. If the file exists, autogeneration is skipped. An absolute path, or one that leaves the project (through `..` or, at build time, a symlink), is refused."
+          "description": "Path to a custom Dockerfile, relative to the directory holding dexaflow.yaml. If the file exists, autogeneration is skipped, and base_image, dependencies, connectors, system_packages and include_paths are not applied (the build warns when they are set; ADR 0003). An absolute path, or one that leaves the project (through `..` or, at build time, a symlink), is refused."
         },
         "context": {
           "type": "string",
           "default": ".",
-          "description": "Build context directory."
+          "description": "Ignored: the build always uses the directory holding dexaflow.yaml, and a value other than '.' earns a warning (#1062)."
         },
         "platforms": {
           "type": "array",
@@ -105,7 +105,8 @@
         },
         "labels": {
           "type": "object",
-          "additionalProperties": { "type": "string" }
+          "additionalProperties": { "type": "string" },
+          "description": "Ignored: no label is set on the image, whichever builder runs, and a project that sets one earns a warning."
         },
         "remote_builder": {
           "type": "object",
@@ -121,8 +122,47 @@
                 "service_account": { "type": "string", "description": "The account the build runs as: projects/<project>/serviceAccounts/<email>. Default: the project's Cloud Build service account." }
               },
               "additionalProperties": false
+            },
+            "buildkit": {
+              "type": "object",
+              "description": "Build on the in-cluster BuildKit daemon the Helm chart runs (builder.enabled), with buildctl over kubectl exec as the person who deploys. One platform, the builder node's. Set this or cloud_build, not both.",
+              "properties": {
+                "namespace": { "type": "string", "description": "Required. The namespace of the builder, the chart's builder.namespace." },
+                "pod_selector": { "type": "string", "description": "Label selector of the builder pod, key=value pairs separated by commas. Default: app.kubernetes.io/component=builder." },
+                "context": { "type": "string", "description": "The kubeconfig context that reaches the builder's cluster. Default: kubectl's current context." }
+              },
+              "additionalProperties": false
             }
           },
+          "additionalProperties": false
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Build arguments (--build-arg) for the ARG lines of your own Dockerfile; the generated Dockerfile declares none. Plain values that stay in the image history: a secret goes in build.secrets."
+        },
+        "secrets": {
+          "type": "array",
+          "description": "Build secrets a RUN line of your own Dockerfile mounts with --mount=type=secret,id=<id>. The value is read from the environment of the machine that builds and never reaches dexaflow.yaml, dag.json, the image or the build log. A build with secrets runs on this machine, never on a remote builder.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string", "description": "The id the RUN line mounts the secret under." },
+              "env": { "type": "string", "description": "The environment variable that holds the value." }
+            },
+            "required": ["id", "env"],
+            "additionalProperties": false
+          }
+        },
+        "package_index": {
+          "type": "object",
+          "description": "The Python package index dependencies are installed from in place of PyPI, by uv on the daemonless path and by pip in the generated Dockerfile. It replaces PyPI rather than adding to it, so a package name cannot be taken from another index: mirror PyPI through it. A build with a package index runs on this machine, never on a remote builder.",
+          "properties": {
+            "url": { "type": "string", "description": "The index's simple API, such as https://pypi.example.com/simple. https only (plain http on the loopback), with no credentials, query or fragment." },
+            "username_env": { "type": "string", "description": "The environment variable holding the user name. Set together with password_env." },
+            "password_env": { "type": "string", "description": "The environment variable holding the password or token. Set together with username_env." }
+          },
+          "required": ["url"],
           "additionalProperties": false
         }
       },
@@ -174,6 +214,12 @@
         }
       },
       "additionalProperties": false
+    },
+    "min_idle_workers": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Idle warm workers to keep for the DAG's current version, so its tasks skip the cold pod start (ADR 0058, ADR 0082). With warm pools on (execution.warm_pools_enabled), an unpaused DAG that declares it is prewarmed from the moment a version becomes current, before its first run. The server clamps it to execution.max_pool_size; with warm pools off it does nothing. Refused with staging.enabled, whose tasks always run on dedicated pods. 0 (default) declares none."
     },
     "staging": {
       "type": "object",

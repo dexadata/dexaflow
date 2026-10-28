@@ -24,7 +24,7 @@ env:
   # falls back to the module's own source on any proxy error (with "," only on
   # 404/410); go.sum and sum.golang.org still verify every module.
   GOPROXY: https://proxy.golang.org|direct
-  GO_VERSION: "1.26.9"
+  GO_VERSION: "1.26.10"
 
 # Same keying as the CHANGELOG guard: a newer push cancels the older run, and a
 # label change on the same commit does not cancel that commit's run.

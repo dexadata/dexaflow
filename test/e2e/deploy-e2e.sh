@@ -149,6 +149,13 @@ log "Creating k3d registry ($REG_HOST) + cluster '$CLUSTER' (cluster pulls from 
 k3d registry create "$REG_NAME" --port "$REG_PORT" >/dev/null
 k3d cluster create "$CLUSTER" --registry-use "$REG_HOST" --wait
 kubectl create namespace leoflow
+# Kubernetes creates the namespace's default ServiceAccount a moment after
+# the namespace; wait for it so the deploy preflight finds it.
+for _ in $(seq 1 60); do
+  kubectl get serviceaccount default -n leoflow >/dev/null 2>&1 && break
+  sleep 1
+done
+kubectl get serviceaccount default -n leoflow >/dev/null || fail "the default ServiceAccount of namespace leoflow did not appear within 60s"
 
 log "Starting the control plane (agents dial ${HOST_ADDR}:${GRPC_PORT})"
 export LEOFLOW_AUTH_JWT_SECRET="e2e-secret"

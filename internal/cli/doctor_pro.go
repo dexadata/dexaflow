@@ -85,7 +85,7 @@ func doctorRegistry(cmd *cobra.Command, serverURL, token string) doctorLine {
 	}
 	ctx, cancel := context.WithTimeout(cmdContext(cmd), doctorCheckTimeout)
 	defer cancel()
-	res, err := registryPushCheck(ctx, registryFor(cfg), composeImageRef(cfg.Registry.URL, cfg.Registry.ImageName, "latest"), doctorBuilder)
+	res, err := registryPushCheck(ctx, registryFor(ctx, cfg), composeImageRef(cfg.Registry.URL, cfg.Registry.ImageName, "latest"), doctorBuilder)
 	switch {
 	case err != nil:
 		return failLine("registry", err)

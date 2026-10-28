@@ -86,10 +86,10 @@ go to **stderr** — stdout is the MCP protocol channel and carries nothing else
 This is the transport an MCP client (Claude Desktop / Code) launches for you; you
 rarely run it by hand.
 {{% /tab %}}
-{{% tab header="Streamable HTTP — the Pro service" %}}
+{{% tab header="Streamable HTTP: the Cluster service" %}}
 
 ```bash
-dexaflow-mcp --transport http --listen :9099 --server https://leoflow.internal
+dexaflow-mcp --transport http --listen :9099 --server https://dexaflow.internal
 ```
 
 The HTTP transport serves `POST /mcp` (plus `GET /healthz`) and is **stateless**:
@@ -104,7 +104,7 @@ Each release also publishes the server as a signed image,
 
 ```bash
 docker run --rm -p 9099:9099 ghcr.io/dexadata/dexaflow-mcp:v<version>@sha256:<digest> \
-  --transport http --listen :9099 --server https://leoflow.internal
+  --transport http --listen :9099 --server https://dexaflow.internal
 ```
 {{% /tab %}}
 {{< /tabpane >}}

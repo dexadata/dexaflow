@@ -1,0 +1,11 @@
+# Go production files allowed over the 1,500-line limit of
+# scripts/check-go-file-length.sh, each at the length it may not exceed (#1942).
+#
+# This list only shrinks. A file may not grow past its number; when a change
+# makes it shorter, lower the number to the new length in the same pull
+# request, and when a split brings it to 1,500 lines or fewer, remove the line
+# (#1943, #1945, #1946, #1947, #1953). Never add an entry or raise a number:
+# move the new code to another file of the package instead.
+#
+# <path> <lines>
+internal/api/resources.go 1609

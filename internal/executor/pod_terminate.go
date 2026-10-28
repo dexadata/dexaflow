@@ -53,7 +53,7 @@ import (
 // new epoch label (ADR 0051 amendment). So a newer live attempt can never match
 // and is never deleted (#901). A pod already in a terminal phase is left for
 // the reconciler (#928). Tolerates NotFound.
-func (e *KubernetesExecutor) DeleteTaskPod(ctx context.Context, a Attempt) error {
+func (e *KubernetesExecutor) DeleteTaskPod(ctx context.Context, a Attempt) (Teardown, error) {
 	return e.deletePodsBySelector(ctx, attemptSelector(a), func(pod *corev1.Pod) bool {
 		return podMatchesAttempt(pod, a)
 	})
@@ -128,7 +128,7 @@ func podMatchesEpoch(pod *corev1.Pod, epoch int) bool {
 // is harmless because up_for_reschedule is not an active state for any reaper, so
 // a reaper only ever preserves a poke pod for an attempt it has just made
 // terminal. Tolerates NotFound.
-func (e *KubernetesExecutor) DeleteRunPods(ctx context.Context, runID string) error {
+func (e *KubernetesExecutor) DeleteRunPods(ctx context.Context, runID string) (Teardown, error) {
 	selector := fmt.Sprintf("%s=%s", podLabelRunID, labelValue(runID))
 	return e.deletePodsBySelector(ctx, selector, nil)
 }
@@ -144,20 +144,20 @@ func (e *KubernetesExecutor) DeleteRunPods(ctx context.Context, runID string) er
 // collected so one failure does not skip the rest.
 //
 // The skip is logged per pod at INFO, by name and phase, so an operator can tell
-// "left for the reconciler" from "failed to delete" — the latter is the
-// *_pod_delete_error the reaper meters at its own call site. It is deliberately
-// NOT metered as a scheduler decision: those labels are recorded by a
-// DecisionRecorder the reapers hold, this layer has none, and a label here could
-// not say which reaper's teardown it came from. The reaper-level defer
-// (pod_lost_terminal_pod_defer) remains the metered signal for the same class.
-func (e *KubernetesExecutor) deletePodsBySelector(ctx context.Context, selector string, match func(*corev1.Pod) bool) error {
+// "left for the reconciler" from "failed to delete", which is the
+// *_pod_delete_error the reaper meters at its own call site. The skip is not
+// metered here: this layer cannot say which reaper's teardown it came from. It
+// is counted in the returned Teardown instead, and each reaper records it as
+// <reaper>_terminal_pod_preserved through its own recorder (#933).
+func (e *KubernetesExecutor) deletePodsBySelector(ctx context.Context, selector string, match func(*corev1.Pod) bool) (Teardown, error) {
 	pods, err := e.clientset.CoreV1().Pods(e.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil
+			return Teardown{}, nil
 		}
-		return fmt.Errorf("listing pods to delete (%s): %w", selector, err)
+		return Teardown{}, fmt.Errorf("listing pods to delete (%s): %w", selector, err)
 	}
+	var td Teardown
 	var errs []error
 	for i := range pods.Items {
 		pod := &pods.Items[i]
@@ -167,13 +167,14 @@ func (e *KubernetesExecutor) deletePodsBySelector(ctx context.Context, selector 
 		if terminalForTeardown(pod) {
 			slog.InfoContext(ctx, "reap teardown: task pod is already in a terminal phase; leaving it for the reconciler",
 				"pod", pod.Name, "phase", pod.Status.Phase, "selector", selector)
+			td.Preserved++
 			continue
 		}
 		if err := e.stopOrDelete(ctx, pod); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	return errors.Join(errs...)
+	return td, errors.Join(errs...)
 }
 
 // stopOrDelete tears down one live task pod (ADR 0052 amendment, part 3). A
@@ -294,6 +295,33 @@ func terminalForTeardown(pod *corev1.Pod) bool {
 		return true
 	}
 	return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
+}
+
+// TaskPodPending reports whether exactly the (run, task, try, epoch) attempt
+// has a Pending pod and no Running one, i.e. its agent has not started yet
+// (image pull, node provisioning, init containers). Selector and epoch are
+// pinned exactly as in TaskPodPresence. An error reports nothing pending, and
+// the reaper defers on the error itself.
+func (e *KubernetesExecutor) TaskPodPending(ctx context.Context, a Attempt) (bool, error) {
+	selector := attemptSelector(a)
+	pods, err := e.clientset.CoreV1().Pods(e.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return false, fmt.Errorf("listing pods for start (%s): %w", selector, err)
+	}
+	pending := false
+	for i := range pods.Items {
+		if !podMatchesEpoch(&pods.Items[i], a.AttemptEpoch) {
+			continue
+		}
+		phase := pods.Items[i].Status.Phase
+		if phase == corev1.PodRunning {
+			return false, nil
+		}
+		if phase == corev1.PodPending {
+			pending = true
+		}
+	}
+	return pending, nil
 }
 
 // TaskPodPresence reports what the apiserver holds for exactly the

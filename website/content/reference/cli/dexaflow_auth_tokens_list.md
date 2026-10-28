@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_auth_tokens_list/
 title: "dexaflow auth tokens list"
 linkTitle: "auth tokens list"
-weight: 17
+weight: 18
 ---
 
 List your API tokens (every token of the tenant for an admin).

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 // #1677: one connection whose extra no configured key opens (written under a
@@ -20,7 +21,7 @@ func TestConnectionListSurvivesAnUnreadableExtra(t *testing.T) {
 	ctx := context.Background()
 
 	stranger := keyMigrationRepo(t, dsn)
-	stranger.SetCipher(varCipher(t, kmStranger))
+	stranger.Configure(storage.WithCipher(varCipher(t, kmStranger)))
 	if err := stranger.SetConnection(ctx, "default", domain.Connection{
 		ConnID: "lost", ConnType: "http", Host: "api.example.com", Extra: `{"token":"s3cret"}`,
 	}); err != nil {
@@ -28,7 +29,7 @@ func TestConnectionListSurvivesAnUnreadableExtra(t *testing.T) {
 	}
 
 	repo := keyMigrationRepo(t, dsn)
-	repo.SetCipher(varCipher(t, kmNew))
+	repo.Configure(storage.WithCipher(varCipher(t, kmNew)))
 	if err := repo.SetConnection(ctx, "default", domain.Connection{
 		ConnID: "ok", ConnType: "postgres", Extra: `{"sslmode":"require"}`,
 	}); err != nil {
@@ -73,7 +74,7 @@ func TestConnectionPatchKeepsAnUnreadableExtra(t *testing.T) {
 	ctx := context.Background()
 
 	stranger := keyMigrationRepo(t, dsn)
-	stranger.SetCipher(varCipher(t, kmStranger))
+	stranger.Configure(storage.WithCipher(varCipher(t, kmStranger)))
 	if err := stranger.SetConnection(ctx, "default", domain.Connection{
 		ConnID: "lost", ConnType: "http", Host: "api.example.com", Extra: `{"token":"s3cret"}`,
 	}); err != nil {
@@ -81,7 +82,7 @@ func TestConnectionPatchKeepsAnUnreadableExtra(t *testing.T) {
 	}
 
 	repo := keyMigrationRepo(t, dsn)
-	repo.SetCipher(varCipher(t, kmNew))
+	repo.Configure(storage.WithCipher(varCipher(t, kmNew)))
 	host := "new.example.com"
 	if err := repo.SetConnectionPatch(ctx, "default", domain.ConnectionPatch{
 		ConnID: "lost", ConnType: "http", Host: &host,

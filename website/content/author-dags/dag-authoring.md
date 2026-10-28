@@ -22,16 +22,16 @@ Scaffold one with `dexaflow init dags/my_pipeline`.
 ## Workspace layout (multi-DAG)
 
 > **Lite-specific.** The hot-reload watcher exists only in `dexaflow lite` — the
-> developer-mode loop. At **runtime** Pro has no "workspace": every DAG ships as
+> developer-mode loop. At **runtime** Cluster has no "workspace": every DAG ships as
 > its own image-and-`dag.json` pair, built by CI and registered via
 > `dexaflow push dag.json`, and the control plane never sees a directory of
 > siblings. See [The development → deploy lifecycle](#the-development--deploy-lifecycle).
 >
-> The same *discovery* does run at **build** time in Pro, in one place:
+> The same *discovery* does run at **build** time in Cluster, in one place:
 > [`dexaflow build [workspace]`](/operate/cicd-deploy/) walks a directory of
 > projects and builds each with its own `registry:`. That is a convenience for
 > the person at the keyboard — it produces the same one-image-per-DAG artifacts
-> and changes nothing about how Pro runs them.
+> and changes nothing about how Cluster runs them.
 
 `dexaflow lite` watches a **workspace** that can hold many DAGs as sibling
 subdirectories. The default workspace is `~/dexaflow/` (set by `dexaflow setup`).
@@ -107,7 +107,7 @@ with DAG("my_pipeline", schedule="@daily", catchup=False, tags=["etl"]):
     transform(extract())
 ```
 
-A DAG starts **paused** the first time it is deployed to Pro, as in Airflow, so
+A DAG starts **paused** the first time it is deployed to Cluster, as in Airflow, so
 its schedule waits for an unpause. Pass `is_paused_upon_creation=False` to
 `DAG(...)` or `@dag(...)` to have it start active (`True` keeps it paused on a
 server configured otherwise). It only matters on that first deploy; see
@@ -134,7 +134,7 @@ executor**, native-first by type. Nothing is silently dropped or mistranslated.
 
 | Task type | Airflow operator | Where it runs | Notes |
 |---|---|---|---|
-| `python` | `@task` (TaskFlow) **or** `PythonOperator` | agent in a pod (Pro) / subprocess (Lite) | The general-purpose escape hatch — any provider library you `pip install` is callable from inside a `@task`. |
+| `python` | `@task` (TaskFlow) **or** `PythonOperator` | agent in a pod (Cluster) / subprocess (Lite) | The general-purpose escape hatch: any provider library you `pip install` is callable from inside a `@task`. |
 | `bash` | `BashOperator` | agent | Executes a shell command. |
 | ~~`http_api`~~ (removed) | — | — | **Removed (ADR 0047/0048, #512).** `HttpOperator` now compiles to `airflow_operator` and runs in a **pod**, like any other provider operator — declare `connectors: [http]`. The old inline path ran the request in the control-plane process (an SSRF surface) and is gone. |
 | `airflow_operator` | **any provider operator/sensor** (Snowflake, S3, Postgres, BigQuery, …) | agent in a pod | The generic executor (ADR 0040): the runtime imports the class, instantiates it with your args, and calls `execute()`. Declare the provider or compile fails. |
@@ -147,6 +147,16 @@ automatically shell-quoted (`shlex.quote`) before it reaches `bash -c`. This is
 a security boundary: `params` is the run's `conf`, which anyone who can
 *trigger* the DAG supplies (`execute:dag`, a lower bar than authoring it), so an
 un-quoted value would let a trigger inject arbitrary shell (issue #489).
+
+A command whose template cannot render (an undefined name such as
+`{{ nope.x }}`, a syntax error, or an expression the sandbox refuses) fails the
+attempt without running, and the task log names `bash_command` and the Jinja
+error. The raw `{{ ... }}` text is never run
+([ADR 0084](/project/adrs/0084-template-render-errors-fail-the-task/)).
+
+Braces meant for another tool, such as `docker ps --format '{{.Names}}'`, are
+read as Jinja too and fail to parse. Wrap them in a raw block, as on Airflow:
+`docker ps --format '{% raw %}{{.Names}}{% endraw %}'`.
 
 Practical consequence — **write interpolations unquoted**, and do not wrap them
 in your own quotes:
@@ -265,9 +275,14 @@ How it works, and the Phase-A limits:
   condition is met), or `mode="reschedule"` (ADR 0040 Phase B, #380/#389) — the
   pod is released between pokes and the scheduler re-dispatches the sensor,
   preserving its `try_number`, once its next-poke time passes.
-- **Jinja templating** is best-effort (`render_template_fields` runs with a
-  minimal context); for rich macros (`{{ ds }}`, `{{ ti }}`, custom params),
-  compute the value in a `@task` and pass it in.
+- **Jinja templating** renders the operator's `template_fields` with the run
+  context (`{{ ds }}`, `{{ logical_date }}`, `{{ macros.ds_add(ds, 1) }}`,
+  `{{ params.x }}`, `{{ var.value.x }}`). A field that fails to render fails
+  the task attempt before `execute()`, with the field and the Jinja error in the
+  task log, as on Airflow
+  ([ADR 0084](/project/adrs/0084-template-render-errors-fail-the-task/)). For a
+  context key Dexaflow does not provide yet, compute the value in a `@task` and
+  pass it in.
 - A native task type (`bash`/`python`) always wins when it matches, so
   `BashOperator`/`HttpOperator`/`PythonOperator` keep their fast path.
 
@@ -343,6 +358,19 @@ meta-schemas. Since 0.5.1 any other reference, such as a `file://` URL or a
 relative path, is refused with a schema error at registration, at trigger or
 at the push, so inline what a schema needs instead of pointing at a file.
 
+A task sees `params` (`{{ params.x }}`, `context["params"]`) the way Airflow
+builds them: the DAG's declared defaults, then the task's own `params=`, then the
+run's `conf`, each one winning over the one before for the same key. Since 0.5.5
+this holds for every run: a scheduled run, which carries no `conf`, still gets
+the DAG defaults, and an operator's `params=` is part of its template context.
+Since 0.5.5 the same holds for the `params=` of a `BashOperator` and of
+`@task(params=...)`, which the compiler now carries in `dag.json`. A task
+param must be JSON-serializable, or `dexaflow compile` fails naming it.
+`context["dag_run"].conf` is the run's `conf` alone, without the defaults.
+A manual trigger stores the declared defaults in the run's `conf`, as the Airflow
+UI's trigger form does, so on such a run a DAG default wins over a task param of
+the same name.
+
 ### Clearing a task
 
 Clearing a task (the UI's Clear, or
@@ -359,6 +387,77 @@ with a full retry budget, as Apache Airflow does:
 The clear is one transaction: if the XCom values cannot be deleted, nothing is
 cleared and the request fails. Before 0.5.1 a clear kept the spent retries,
 and the UI could show "try 4 of 3".
+
+#### Clearing onto the current version
+
+By default a clear re-runs the version the run was created with. To re-run on
+the DAG's current version, tick "Run with latest bundle version" in the Clear
+dialog, or send `run_on_latest_version: true`. As in Airflow, this moves the
+run only when the run has finished (`success` or `failed`) and none of its
+task instances is `queued` or `running`. The run then takes the current
+version's tasks in the same transaction:
+
+- a task the version adds gets a task instance and runs in the re-opened run;
+- a task the version dropped keeps its task instance, history and logs, in the
+  new state `removed`. It is not run, and it does not count toward the run's
+  outcome;
+- a `removed` task whose task a later version declares again runs again as a
+  new try.
+
+A clear that names a task the current version dropped resets nothing for it.
+See [ADR 0086](/project/adrs/0086-clear-rebinds-a-finished-run-with-its-task-set/)
+for the reasoning.
+
+#### Clearing a run that is still running
+
+A run that is `queued` or `running`, or a finished run that still has a task
+instance `queued` or `running` (marked failed or success while that task ran),
+**keeps its DAG version**. Asking for the current version does not move it:
+
+- the cleared tasks re-run on the run's own version, with that version's
+  retries, as a clear without the option would;
+- tasks already running finish on the image they started with;
+- the response says the option was not applied, and why. Both clear routes,
+  dry run included, add `run_on_latest_version_not_applied`, one entry per run
+  with its `dag_run_id` and a `reason` such as `the run is running: only a
+  finished run moves to the current version`. The run's version in the UI
+  stays the one it had. The Clear dialog of the Airflow UI that Dexaflow ships
+  does not display this field, so read it from the API when you need the
+  reason.
+
+To run the cleared tasks on the current version, first get the run to a
+finished state with no task queued or running, then clear again with the
+option:
+
+1. wait for the run to finish, or mark it failed or success (the run page's
+   **Mark run as**, or `PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}` with
+   a `state`);
+2. if you marked it while a task was still running, wait for that task to end;
+3. clear again with `run_on_latest_version: true`.
+
+Or trigger a new run, which always uses the current version.
+
+For example, with `etl` still running on version 3 while version 4 is
+current:
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  "$DEXAFLOW_URL/api/v2/dags/etl/dagRuns/$RUN_ID/clear" \
+  -d '{"dry_run": true, "run_on_latest_version": true}' | jq .run_on_latest_version_not_applied
+```
+
+```json
+[
+  {
+    "dag_run_id": "manual__2026-10-16T09:00:00+00:00",
+    "reason": "the run is running: only a finished run moves to the current version"
+  }
+]
+```
+
+Once the run has finished, the same dry run answers no
+`run_on_latest_version_not_applied`, and the clear with `"dry_run": false`
+moves the run to version 4.
 
 ## dexaflow.yaml — deploy config
 
@@ -397,9 +496,10 @@ task override (tasks.<id>)  >  DAG default (defaults)  >  platform default (serv
 
 - `tasks.<id>` is merged at **compile** time onto the task in `dag.json`.
 - Platform defaults are applied at **dispatch** time, filling gaps the artifact
-  left empty (keeps the artifact portable across clusters) — but **wholesale**:
-  if a task declares any `resources` at all, even only `ephemeral_storage`, the
-  platform cpu/memory default does not apply to it
+  left empty (keeps the artifact portable across clusters), one resource
+  dimension at a time: a task that declares only `ephemeral_storage`, or only
+  cpu, still gets the platform default for the dimensions it left out. A
+  dimension the task sets at all (a request or a limit) is entirely the task's
   ([#802](https://github.com/dexadata/dexaflow/issues/802)).
 - **`staging` is DAG-level only** — one RWX volume is shared atomically by the
   whole run, so it cannot be per-task.
@@ -433,7 +533,7 @@ tasks:
 
 `@task(pool_slots=4)` or an operator's `pool_slots=4` in `dag.py` sets the same
 thing. Most specific wins: `tasks.<id>.size` > `pool_slots` in `dag.py` >
-`defaults.size` > 1. Pools are enforced on Pro only; Lite ignores the size.
+`defaults.size` > 1. Pools are enforced on Cluster only; Lite ignores the size.
 
 When the operator sets a resource unit (`executor.unit`, for example 250m CPU
 and 512Mi memory per slot), the size also sizes the pod: a task of size 4 gets
@@ -483,7 +583,7 @@ and re-registers. A bad binding prints an error in the terminal **immediately**:
 ✗ dexaflow.yaml tasks: unknown task_id "transfrom"; the DAG defines [extract load transform]
 ```
 
-Lite is fully isolated from Demo/Pro (own database, cluster, and ports) —
+Lite is fully isolated from Demo/Cluster (own database, cluster, and ports):
 **no split brain**. See [Operating modes](/concepts/editions/).
 
 ### 2 · Deploy (authoritative, immutable)

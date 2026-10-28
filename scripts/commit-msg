@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Dexaflow commit-msg hook: no attribution trailer or footer in the message
+# (AGENTS.md section 2, #1573). `make setup` installs it; CI runs the same
+# check on every commit of a pull request.
+set -euo pipefail
+exec "$(git rev-parse --show-toplevel)/scripts/lint-new-text.sh" --message "$1"

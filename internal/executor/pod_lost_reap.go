@@ -2,9 +2,12 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"runtime/debug"
 	"time"
+
+	"github.com/dexadata/dexaflow/internal/logs"
 )
 
 // PodLostCandidate is one task instance in `running` whose backing pod may have
@@ -31,8 +34,9 @@ type PodLostCandidate struct {
 	// Pod-lost ignores it; Lite uses it to judge an agent that died before its
 	// first heartbeat, which agent-lost never lists (#916).
 	Heartbeated bool
-	// TenantID locates the attempt's log stream for the agent_lost marker Lite
-	// writes when it fails a never-heartbeated attempt.
+	// TenantID locates the attempt's log stream for the killed marker: pod_lost
+	// on Kubernetes, and the agent_lost one Lite writes when it fails a
+	// never-heartbeated attempt.
 	TenantID string
 }
 
@@ -40,6 +44,14 @@ type PodLostCandidate struct {
 // the pod teardown.
 func (c PodLostCandidate) attempt() Attempt {
 	return Attempt{RunID: c.DagRunID, TaskID: c.TaskID, TryNumber: c.TryNumber, AttemptEpoch: c.AttemptEpoch}
+}
+
+// logRef is the log stream of the execution this candidate names.
+func (c PodLostCandidate) logRef() logs.Ref {
+	return logs.Ref{
+		TenantID: c.TenantID, DagID: c.DagID, RunID: c.DagRunID, TaskID: c.TaskID,
+		TryNumber: c.TryNumber, AttemptEpoch: c.AttemptEpoch,
+	}
 }
 
 // IsPodLostCandidate reports whether a running TI has been running long enough
@@ -115,6 +127,9 @@ type podLostReaper struct {
 	// pager walks the running list across sweeps, so live attempts cannot
 	// hide a lost one behind a full page (R-07, #1597).
 	pager reapPager
+	// sink appends a final "killed: pod_lost" marker to the reaped attempt's
+	// log stream (#861). Nil disables the marker; the reap is unaffected.
+	sink logSink
 }
 
 func newPodLostReaper(store PodLostReapStore, logger *slog.Logger, grace time.Duration, rec DecisionRecorder) *podLostReaper {
@@ -232,6 +247,14 @@ func (r *podLostReaper) reapOne(ctx context.Context, c PodLostCandidate) {
 	r.logger.Warn("running task has no live pod past grace; failing as pod_lost",
 		"ti", c.TaskInstanceID, "run", c.DagRunID, "dag", c.DagID, "task", c.TaskID, "running_since", c.RunningSince)
 	r.record("pod_lost")
+	// The pod is gone, so the attempt's log already stopped wherever the pod
+	// died; end it with the reason (#861).
+	now := time.Now().UTC()
+	msg := fmt.Sprintf("killed: pod_lost (no pod for this attempt after %s running, past the %s grace)",
+		now.Sub(c.RunningSince).Truncate(time.Second), r.grace)
+	if merr := appendKilledMarker(r.sink, c.logRef(), now, msg); merr != nil {
+		r.record("pod_lost_log_marker_error")
+	}
 	// Best-effort teardown pinned to (run, task, try). The presence read said
 	// there is no pod for this attempt at all, so this normally deletes nothing
 	// and exists to catch a pod that materialized between the read and here; a
@@ -240,7 +263,9 @@ func (r *podLostReaper) reapOne(ctx context.Context, c PodLostCandidate) {
 		r.record("pod_lost_teardown_gate_skip")
 		return
 	}
-	if derr := r.pods.DeleteTaskPod(ctx, c.attempt()); derr != nil {
+	td, derr := r.pods.DeleteTaskPod(ctx, c.attempt())
+	recordPreserved(r.record, "pod_lost_terminal_pod_preserved", td)
+	if derr != nil {
 		r.logger.Error("deleting pod-lost task pod",
 			"ti", c.TaskInstanceID, "run", c.DagRunID, "task", c.TaskID, "try", c.TryNumber, "error", derr)
 		r.record("pod_lost_pod_delete_error")

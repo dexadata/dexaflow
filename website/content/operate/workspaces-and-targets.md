@@ -104,13 +104,16 @@ control plane a command calls is, in order:
 3. `DEXAFLOW_SERVER_URL`;
 4. the target chosen with `dexaflow target use` for this workspace, then the
    workspace's `default_target`, then `current_target` in your config file;
-5. `server_url` in your config file, then `http://localhost:8080`.
+5. `server_url` in your config file, then the local server: on a machine set
+   up for Lite (`dexaflow setup`), the Lite server on the `lite_port` of your
+   config file (`http://localhost:8088` unless you chose another port), else
+   `http://localhost:8080`.
 
 `dexaflow deploy` does not take that last default: with no server set by any
 of the steps above it stops before building and says how to set one, unless
-the machine is set up for Lite (`dexaflow setup`), where the local server is
-the expected one. Pass `--server http://localhost:8080` to deploy to a local
-server on purpose.
+the machine is set up for Lite, where the local Lite server is the expected
+one. Pass `--server` with the local URL (`--server http://localhost:8088` for
+Lite on its default port) to deploy to a local server on purpose.
 
 A name that matches no target is an error that lists the known ones; the
 command never falls back to another server silently. `dexaflow auth login`
@@ -172,8 +175,10 @@ but never a target's. With a target, the workspace is the one around the
 current folder (the one the target came from), and its defaults apply only to
 projects inside it.
 
-`remote_builder`, the [Cloud Build remote builder](/operate/builders/#building-on-cloud-build)
-for builds that need a real Dockerfile build, follows the same order: the
+`remote_builder`, the remote builder for builds that need a real Dockerfile
+build ([Cloud Build](/operate/builders/#building-on-cloud-build) or the
+[in-cluster builder](/operate/builders/#building-on-the-in-cluster-builder)),
+follows the same order: the
 project's `build.remote_builder`, then the target's `remote_builder`, then
 `defaults.remote_builder`. Targets saved in your config file
 (`dexaflow target add`) and the cluster's defaults carry none.
@@ -184,6 +189,10 @@ targets:
     server: https://flow.acme.dev
     remote_builder:
       cloud_build: {project: acme-prod-ci, region: europe-west1}
+  staging:
+    server: https://flow-staging.acme.dev
+    remote_builder:
+      buildkit: {namespace: dexaflow-builder, context: staging}
 defaults:
   remote_builder:
     cloud_build: {project: acme-ci}
@@ -191,8 +200,8 @@ defaults:
 
 ## Cluster deploy defaults
 
-The platform team can state the registry, the platforms and the base image
-once for the whole cluster, so a repository needs no `registry:` block at all.
+The platform team can state the registry, the platforms, the base image and
+the remote builder once for the whole cluster, so a repository needs no `registry:` block at all.
 They set them in the Helm values:
 
 ```yaml
@@ -223,6 +232,8 @@ order, first match wins:
 | registry | `--registry`, `DEXAFLOW_REGISTRY`, the project's `registry.url`, the target, the workspace `defaults`, `registry:` in your config file, **the cluster**, none (deploy stops and says how to set one) |
 | platforms | `--platform`, the project's `build.platforms`, the target, the workspace `defaults`, **the cluster**, `linux/amd64` |
 | base image | the project's `base_image`, the target, the workspace `defaults`, **the cluster**, the built-in base image |
+| source mode runtime image | `--no-source-mode` (builds), the target's `source_mode_image`, the workspace `defaults` (`none` clears it: the deploy builds), **the cluster** (`deploy.defaults.sourceMode`, only when no local source set a registry; a local image that differs is refused), none (the deploy builds) |
+| remote builder | the project's `build.remote_builder`, the target's `remote_builder`, the workspace `defaults`, **the cluster** (`deploy.defaults.remoteBuilder`), none (the local daemon) |
 
 The cluster comes after every local source on purpose: each of those is a
 choice of the person deploying, so a cluster that starts advertising defaults
@@ -235,6 +246,62 @@ registry:   ghcr.io/acme/orders_report (from the deploy defaults of https://flow
 platforms:  linux/amd64 (from the deploy defaults of https://flow-dev.acme.dev)
 base image: ghcr.io/acme/base:1 (from the deploy defaults of https://flow-dev.acme.dev)
 ```
+
+With `deploy.defaults.sourceMode: true` (which needs source mode on), the
+cluster also advertises its runtime image as `source_mode_image`, and a deploy
+that names none of its own and resolves no registry locally registers
+`dag.py` on it with no build or push
+([Deploying in source mode](/operate/source-mode/#deploying-in-source-mode)).
+
+### Remote builder, task service account and warm pools
+
+The cluster can also name the remote builder for builds no daemonless path
+covers ([Builders](/operate/builders/)), and tell a deploy which
+ServiceAccount its tasks run as and what its warm pool will be:
+
+```yaml
+deploy:
+  defaults:
+    remoteBuilder:
+      cloudBuild:
+        project: acme-ci        # required with any other cloudBuild value
+        region: us-central1
+    taskServiceAccount: true    # advertise taskServiceAccount.name
+    warmPools: true             # advertise execution.warmPoolsEnabled, minIdleWorkers, maxPoolSize
+```
+
+The remote builder is a default like the others: a project, target or
+workspace that names its own keeps it, and the builder line of the deploy
+names where the one it used came from (`the remote builder from the deploy
+defaults of https://flow-dev.acme.dev builds the whole image`). The person
+deploying still signs in with `gcloud` and needs the Cloud Build role on that
+project.
+
+A cluster that runs the [in-cluster builder](/operate/builders/#building-on-the-in-cluster-builder)
+(`builder.enabled`) advertises it instead, with no `remoteBuilder` value: the
+chart sets its namespace and pod selector, unless `builder.advertise` is
+false. The chart refuses both at once. The person deploying needs `buildctl`
+and `kubectl` pointed at the cluster, and a binding in `builder.subjects`;
+without them the deploy says why and builds with the local daemon.
+
+The task service account and the warm pools are the server's own settings,
+served as they are when their switch is on, so nothing is copied by hand. The
+deploy only reports them, and writes neither into `dag.json`: the server
+already applies its task ServiceAccount to every task that sets no
+`execution.service_account`, and its warm pool settings to every version.
+
+```
+task SA:    dexaflow-task (from the deploy defaults of https://flow-dev.acme.dev), for tasks that set no execution.service_account
+warm pool:  on, 2 idle workers kept for the current version (min_idle_workers from /work/acme-dags/dags/orders_report/dexaflow.yaml)
+```
+
+The warm pool line resolves the number the way the server does: the
+project's `min_idle_workers` when it sets one, else the cluster's
+`execution.minIdleWorkers`, capped at `execution.maxPoolSize` (the line then
+says so). With warm pools off it says every task runs on a dedicated pod, and
+that a `min_idle_workers` the project sets keeps no worker warm.
+`taskServiceAccount: true` needs a task ServiceAccount on the server
+(`taskServiceAccount.create`); the chart and the server refuse it otherwise.
 
 A server from before this endpoint answers 404, and the deploy then resolves
 exactly as it did before, without a message. Any other failure to read the
@@ -384,6 +451,10 @@ targets:
     registry: ghcr.io/acme/prod
     platforms: [linux/amd64]         # optional
     base_image: ghcr.io/acme/base:2  # optional
+  lab:
+    server: https://flow-lab.acme.dev
+    # optional: deploy dag.py on this runtime image, with no build (source mode)
+    source_mode_image: ghcr.io/dexadata/dexaflow-runtime:py3.11-{{< latest-version v >}}@sha256:<digest>
 default_target: dev
 defaults:                            # optional, for every DAG in the workspace
   registry: ghcr.io/acme

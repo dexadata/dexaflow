@@ -78,6 +78,15 @@ case-by-case answer rather than a policy.
 This section previously promised support for "the previous minor version, for 90
 days", which described a versioning shape the project does not have.
 
+## Repository Protections
+
+The repository has Dependabot alerts and security updates, secret scanning
+and push protection turned on. Push protection rejects a push that contains a
+detected secret: remove the secret from the commits and push again. If the
+match is a false positive, choose the bypass reason GitHub offers and say why
+in the pull request. A secret that did reach GitHub must be rotated, not only
+deleted from the history.
+
 ## Recognition
 
 With your permission, we credit researchers who responsibly disclose vulnerabilities in the GitHub Security Advisory and in the release notes for the fix. There is no separate Hall of Fame page.

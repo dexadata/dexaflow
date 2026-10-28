@@ -341,6 +341,46 @@ func TestBuildEnvStampsParams(t *testing.T) {
 	}
 }
 
+func TestBuildEnvStampsRunConfAndType(t *testing.T) {
+	// The runtime's dag_run.conf and dag_run.run_type come from these (#1843):
+	// the conf alone, not the layered params, and the Task SDK's run type.
+	client := &fakeClient{spec: &agentv1.TaskSpec{
+		Operator:    "python",
+		ParamsJson:  `{"region":"us","table":"orders"}`,
+		RunConfJson: `{"table":"orders"}`,
+		RunType:     "scheduled",
+	}}
+	r := newRunner(client, &fakeCmd{}, &recordingSink{})
+
+	env, err := r.buildEnv(context.Background(), client.spec)
+	if err != nil {
+		t.Fatalf("buildEnv: %v", err)
+	}
+	je := strings.Join(env, "\n")
+	for _, want := range []string{`LEOFLOW_RUN_CONF={"table":"orders"}`, "LEOFLOW_RUN_TYPE=scheduled"} {
+		if !strings.Contains(je, want) {
+			t.Errorf("env missing %q; got %v", want, env)
+		}
+	}
+}
+
+func TestBuildEnvOmitsRunConfAndTypeFromAnOlderServer(t *testing.T) {
+	// A control plane that predates the fields sends neither; the runtime then
+	// reports dag_run.conf as not provided instead of an invented empty conf.
+	client := &fakeClient{spec: &agentv1.TaskSpec{Operator: "python"}}
+	r := newRunner(client, &fakeCmd{}, &recordingSink{})
+
+	env, err := r.buildEnv(context.Background(), client.spec)
+	if err != nil {
+		t.Fatalf("buildEnv: %v", err)
+	}
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "LEOFLOW_RUN_CONF=") || strings.HasPrefix(kv, "LEOFLOW_RUN_TYPE=") {
+			t.Errorf("env carries %q for a spec without the fields", kv)
+		}
+	}
+}
+
 func TestBuildEnvStampsDataInterval(t *testing.T) {
 	// The runtime's standalone context exposes data_interval_start/end; the agent
 	// stamps them from the DagRun's interval the server sends (ADR 0040).

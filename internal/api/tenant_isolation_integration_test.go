@@ -45,7 +45,6 @@ func newCrossTenantFixture(t *testing.T) crossTenantFixture {
 		t.Fatalf("connect: %v", err)
 	}
 	t.Cleanup(pg.Close)
-	repo := storage.NewRepository(pg)
 	key := make([]byte, 32)
 	for i := range key {
 		key[i] = byte(i + 41)
@@ -54,7 +53,7 @@ func newCrossTenantFixture(t *testing.T) crossTenantFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo := storage.NewRepository(pg, storage.WithCipher(cipher))
 
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	f := crossTenantFixture{repo: repo, ctx: ctx, tenantA: "xt_a_" + suffix, tenantB: "xt_b_" + suffix, suffix: suffix}
@@ -64,24 +63,32 @@ func newCrossTenantFixture(t *testing.T) crossTenantFixture {
 		}
 	}
 	server := func(tenant string) *gin.Engine {
-		return NewServer(Dependencies{
-			Logger:        discardLogger(),
-			Authenticator: &fakeAuthn{user: &auth.User{ID: "u-" + tenant, TenantID: tenant, Roles: []string{"admin"}}},
-			RateLimiter:   auth.NewRateLimiter(1000, time.Minute),
-			CORSOrigins:   []string{"*"},
-			TokenTTLSecs:  3600,
-			Edition:       "pro", // pools are mounted on Pro only
-			Dags:          repo,
-			DagRuns:       repo,
-			Tasks:         repo,
-			Versions:      repo,
-			Specs:         repo,
-			DagSources:    repo,
-			AuditLog:      repo,
-			Variables:     repo,
-			Connections:   repo,
-			Pools:         repo,
-			ImportErrors:  repo,
+		return newTestServer(Dependencies{
+			Observability: ObservabilityDeps{
+				Logger: discardLogger(),
+			},
+			Server: ServerDeps{
+				CORSOrigins: []string{"*"},
+				Pools:       true, // pools are mounted on the cluster edition only
+			},
+			Auth: AuthDeps{
+				Authenticator: &fakeAuthn{user: &auth.User{ID: "u-" + tenant, TenantID: tenant, Roles: []string{"admin"}}},
+				RateLimiter:   auth.NewRateLimiter(1000, time.Minute),
+				TokenTTLSecs:  3600,
+			},
+			Stores: StoreDeps{
+				Dags:         repo,
+				DagRuns:      repo,
+				Tasks:        repo,
+				Versions:     repo,
+				Specs:        repo,
+				DagSources:   repo,
+				AuditLog:     repo,
+				Variables:    repo,
+				Connections:  repo,
+				Pools:        repo,
+				ImportErrors: repo,
+			},
 		})
 	}
 	f.a = server(f.tenantA)

@@ -20,7 +20,7 @@ env:
   # falls back to the module's own source on any proxy error (with "," only on
   # 404/410); go.sum and sum.golang.org still verify every module.
   GOPROXY: https://proxy.golang.org|direct
-  GO_VERSION: "1.26.9"
+  GO_VERSION: "1.26.10"
   # The Trivy binary the trivy-action steps run. The action is pinned to its
   # v0.36.0 release (#1553); before, it was pinned to a master commit with a
   # `# master` comment, so Dependabot moved it to every new master tip. That
@@ -62,21 +62,13 @@ jobs:
       - name: Run govulncheck
         run: govulncheck -show verbose ./...
 
-      # `./...` matches packages in THIS module and nothing else, so it does not
-      # reach the second binary we publish: the golang-migrate CLI in
-      # `leoflow-migrate`, which deploy/Dockerfile.migrate compiles from
-      # upstream's own `cmd/migrate` main package at the version pinned in our
-      # go.mod (#1039). That package is inside our module graph but outside
-      # `./...`, which is precisely the gap that let the old third-party image
-      # accumulate 50 fixable CRITICAL/HIGH unseen — naming it here is what
-      # keeps the gap closed rather than merely reset.
-      #
-      # The build tags matter: golang-migrate registers database drivers behind
-      # them, so an untagged analysis would scan a binary with no drivers in it
-      # — not the one that ships. scripts/check-migrate-cli-build-tags.sh fails
-      # CI when these tags and the Dockerfile's disagree.
-      - name: Run govulncheck on the published migrate CLI
-        run: govulncheck -tags postgres,pgx5 -show verbose github.com/golang-migrate/migrate/v4/cmd/migrate
+      # `./...` also covers the second binary we publish: the migrate image
+      # runs `./cmd/dexaflow-migrate` (#1020), one of this module's packages,
+      # with its pgx5 driver imported rather than selected by build tags. Until
+      # #1020 the image shipped golang-migrate's own `cmd/migrate`, outside
+      # `./...`, and a second step here scanned it by path with its build tags.
+      # scripts/check-migrate-cli-build-tags.sh fails CI if the Dockerfile stops
+      # building that package or this step stops covering `./...`.
 
   # ─────────────────────────────────────────────────────────────────────
   # CodeQL: GitHub's semantic SAST (ADR 0014)
@@ -360,9 +352,9 @@ jobs:
   # produced or closeable by a commit here.
   #
   # #1039 changed what the image is, and therefore which lane it belongs in.
-  # `deploy/Dockerfile.migrate` now compiles golang-migrate's own CLI from the
-  # version in our go.mod onto distroless static, so the image is a Go binary we
-  # build, our SQL files, and the six base packages distroless carries
+  # `deploy/Dockerfile.migrate` now compiles our dexaflow-migrate wrapper (#1020;
+  # golang-migrate's own CLI before it) onto distroless static, so the image is a
+  # Go binary we build, our SQL files, and the six base packages distroless carries
   # (base-files, ca-certificates, media-types, netbase, tzdata, tzdata-legacy).
   # Not zero OS packages — six instead of Alpine's full set. Every finding in the
   # Go half is closed by a `go get` or a toolchain bump, which is the criterion

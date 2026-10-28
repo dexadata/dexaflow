@@ -91,7 +91,7 @@ func newDeployCommand() *cobra.Command {
 	var o deployOptions
 	cmd := &cobra.Command{
 		Use:   "deploy [path | dag_id]",
-		Short: "Build, push, and register a DAG to a control plane (Pro).",
+		Short: "Build, push, and register a DAG to a control plane (Cluster).",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("changed-since") && o.changedSince == "" {
@@ -110,6 +110,7 @@ func newDeployCommand() *cobra.Command {
 	cmd.Flags().StringVar(&o.serverURL, "server", "", "control plane base URL, over --target (default: the target in use, then server_url from the config file)")
 	cmd.Flags().StringVar(&o.token, "token", os.Getenv("LEOFLOW_TOKEN"), "JWT bearer token (default: config token)")
 	cmd.Flags().String("registry", "", deployRegistryFlagUsage)
+	cmd.Flags().Bool(noSourceModeFlag, false, "build and push an image even when a target, the workspace defaults or the cluster set source_mode_image")
 	cmd.Flags().StringVar(&o.builder, "builder", "docker", "image build tool to shell out to (e.g. docker, podman, nerdctl)")
 	cmd.Flags().StringVar(&o.dockerfile, "dockerfile", "Dockerfile", "Dockerfile path relative to the DAG directory")
 	cmd.Flags().StringVar(&o.dagVersion, "dag-version", "", "DAG version label (default: git describe of the project directory, or dev outside git, plus a hash of the DAG's content)")
@@ -464,7 +465,7 @@ func requireRegistry(cfg *domain.LeoflowConfig) error {
 		return nil
 	}
 	return fmt.Errorf(`deploy requires a container registry, but none is configured.
-  A Pro deploy pushes the DAG image to a registry your cluster can pull from
+  A cluster deploy pushes the DAG image to a registry your cluster can pull from
   (Lite runs locally and needs none). Set one, for one DAG or for all:
 
       dexaflow.yaml:              registry: {url: ghcr.io/<your-org>}
@@ -486,7 +487,7 @@ func registryLoginHints() string {
 	return "      Artifact Registry, GCR: " + session(build.ProviderGoogle) + "\n" +
 		"      ECR: " + session(build.ProviderAWS) + "\n" +
 		"      ACR: " + session(build.ProviderAzure) + "\n" +
-		"      any other registry: docker login <registry>\n" +
+		"      any other registry: dexaflow registry login <registry> (or docker login <registry>)\n" +
 		"  A build by a local container tool pushes with that tool's own login; the deploy preflight names it."
 }
 
@@ -571,6 +572,12 @@ func resolveServerChoiceTokenFor(cmd *cobra.Command, serverFlag, tokenFlag strin
 		resolvedTarget.configured = store.ServerURL
 	}
 	resolvedTarget.fromConfig = source == tokenLegacy || withheld
+	resolvedTarget.expiredAt = time.Time{}
+	if source == tokenSession || source == tokenLegacy {
+		if _, exp, ok := tokenIssuedExpiry(token); ok && !exp.After(time.Now()) {
+			resolvedTarget.expiredAt = exp
+		}
+	}
 	return choice, token, nil
 }
 
@@ -589,11 +596,15 @@ func loadDeployProject(dir string) (*domain.LeoflowConfig, error) {
 // settleDeployConfig fills what the project leaves unset from the workspace,
 // the target, the user's config and the deploy defaults the cluster
 // advertises (cluster, nil when none; applyDeployDefaults), and enforces the
-// registry a Pro deploy pushes to. It returns where each value came from.
+// registry a Pro deploy pushes to, unless it runs in source mode, which
+// pushes nothing. It returns where each value came from.
 func settleDeployConfig(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, cluster *defaultsLayer) (defaultsProvenance, error) {
 	prov, err := applyDeployDefaults(cmd, dir, cfg, cluster)
 	if err != nil {
 		return defaultsProvenance{}, err
+	}
+	if prov.sourceMode.on() {
+		return prov, nil
 	}
 	if rerr := requireRegistry(cfg); rerr != nil {
 		return defaultsProvenance{}, rerr
@@ -601,16 +612,23 @@ func settleDeployConfig(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfi
 	return prov, nil
 }
 
-// deploySettings says, before anything is built, where the deploy goes and
-// where each setting it did not get from the project came from.
-func deploySettings(choice *serverChoice, cfg *domain.LeoflowConfig, prov defaultsProvenance) string {
+// deploySettings says, before anything is built, where the deploy goes,
+// where each setting it did not get from the project in dir came from, and
+// what the cluster advertises about where its tasks run.
+func deploySettings(choice *serverChoice, dir string, cfg *domain.LeoflowConfig, prov defaultsProvenance) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "server:     %s (%s)\n", choice.URL, choice.Source)
-	fmt.Fprintf(&b, "registry:   %s/%s (from %s)\n", cfg.Registry.URL, cfg.Registry.ImageName, prov.registrySource)
-	fmt.Fprintf(&b, "platforms:  %s (from %s)\n", strings.Join(cfg.Build.Platforms, ","), orDefault(prov.platformsSource))
-	if cfg.BaseImage != "" {
-		fmt.Fprintf(&b, "base image: %s (from %s)\n", cfg.BaseImage, prov.baseImageSource)
+	if sm := prov.sourceMode; sm.on() {
+		// Nothing is built or pushed: no registry, platform or base image.
+		fmt.Fprintf(&b, "image:      %s (source mode, from %s): dag.py runs on this runtime image, nothing is built or pushed\n", sm.image, sm.source)
+	} else {
+		fmt.Fprintf(&b, "registry:   %s/%s (from %s)\n", cfg.Registry.URL, cfg.Registry.ImageName, prov.registrySource)
+		fmt.Fprintf(&b, "platforms:  %s (from %s)\n", strings.Join(cfg.Build.Platforms, ","), orDefault(prov.platformsSource))
+		if cfg.BaseImage != "" {
+			fmt.Fprintf(&b, "base image: %s (from %s)\n", cfg.BaseImage, prov.baseImageSource)
+		}
 	}
+	b.WriteString(clusterExecutionLines(dir, cfg, prov.cluster))
 	return b.String()
 }
 
@@ -624,8 +642,9 @@ func orDefault(source string) string {
 
 // runDeploy orchestrates the pipeline-less promotion: validate the project,
 // enforce the registry, build+push the image for the target platform, re-pin it
-// by digest into dag.json, and register that with the control plane. With
-// --plan it stops after deciding what it would do.
+// by digest into dag.json, and register that with the control plane. In
+// source mode it registers dag.py on the runtime image instead, with no
+// build or push. With --plan it stops after deciding what it would do.
 func runDeploy(cmd *cobra.Command, dir string, o deployOptions) (err error) {
 	cfg, err := loadDeployProject(dir)
 	if err != nil {
@@ -637,6 +656,13 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) (err error) {
 			o.report.addFailure(cfg.DagID, err)
 		}
 	}()
+	// Read from the project's own config, before any default fills it in,
+	// and checked against a local source mode setting before the server is
+	// asked anything.
+	scan := scanSourceMode(dir, cfg)
+	if lerr := localSourceMode(cmd, dir).check(dir, scan.needs); lerr != nil {
+		return lerr
+	}
 	choice, token, serr := deployServerChoice(cmd, o)
 	if serr != nil {
 		// With no server there are no cluster defaults: a project that has
@@ -651,9 +677,16 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) (err error) {
 	if perr != nil {
 		return perr
 	}
+	if merr := prov.sourceMode.check(dir, scan.needs); merr != nil {
+		// The cluster's setting: read with the deploy defaults.
+		return merr
+	}
+	if ferr := prov.sourceMode.checkFlags(cmd, scan, !o.watching.redeploy()); ferr != nil {
+		return ferr
+	}
 	o.report.setServer(choice)
 	serverURL := choice.URL
-	settings := deploySettings(choice, cfg, prov)
+	settings := deploySettings(choice, dir, cfg, prov)
 	if !o.watching.redeploy() {
 		// A redeploy of a watch prints them when it deploys (watchSkip).
 		o.watching.noteSettings(dir, settings)
@@ -666,7 +699,8 @@ func runDeploy(cmd *cobra.Command, dir string, o deployOptions) (err error) {
 		!confirmDeploy(cmd.InOrStdin(), cmd.OutOrStdout(), dir, serverURL) {
 		return fmt.Errorf("deploy aborted")
 	}
-	d := &deployRun{cmd: cmd, dir: dir, o: o, cfg: cfg, serverURL: serverURL, token: token, cluster: cluster, settings: settings}
+	d := &deployRun{cmd: cmd, dir: dir, o: o, cfg: cfg, serverURL: serverURL, token: token, cluster: cluster, settings: settings,
+		sourceMode: prov.sourceMode}
 	return d.run()
 }
 
@@ -685,6 +719,9 @@ type deployRun struct {
 	wasPaused bool
 	// settings is what deploySettings says about this deploy.
 	settings string
+	// sourceMode is the runtime image of a source mode deploy, which
+	// registers dag.py on it with no build or push; zero for a build.
+	sourceMode sourceModeChoice
 	// preflightWarnings is what the dry run of the register warned about,
 	// already printed.
 	preflightWarnings []string
@@ -712,19 +749,7 @@ func (d *deployRun) run() error {
 	// Where this deploy builds the version (#1702); the build adds the
 	// builder and the base image.
 	provenance := collectBuildInfo(ctx, d.dir, os.Getenv)
-	co := compileOptions{
-		cluster:    d.cluster,
-		output:     output,
-		builder:    d.o.builder,
-		dockerfile: d.o.dockerfile,
-		dagVersion: d.o.dagVersion,
-		build:      !d.o.skipBuild,
-		push:       !d.o.skipBuild,
-		// deploySettings showed the platforms; the build pins its push.
-		settingsShown: true,
-		built:         &built,
-		provenance:    &provenance,
-	}
+	co := d.compileOptions(output, &built, &provenance)
 	// Resolved here rather than inside runCompile because the digest lookup
 	// below needs the same reference; runCompile then takes both as given.
 	image, ierr := d.labelAndImage(&co)
@@ -758,15 +783,11 @@ func (d *deployRun) run() error {
 		return rerr
 	}
 	co.pushRefused = refused
-	if access.dryRun {
-		co.beforeBuild = func() error {
-			return d.dryRun(ctx, output, image, version, origin, co.reuse)
-		}
-	}
+	co.beforeBuild = d.beforeBuild(ctx, access, output, image, version, origin, co.reuse)
 	if cerr := runCompile(d.cmd, d.dir, co); cerr != nil {
 		return cerr
 	}
-	digestRef, derr := deployedDigest(d.cmd, registryFor(d.cfg), image, built)
+	digestRef, derr := d.registeredImage(image, built)
 	if derr != nil {
 		return derr
 	}
@@ -781,12 +802,74 @@ func (d *deployRun) run() error {
 	return d.finish(ctx, res)
 }
 
+// compileOptions are the options of this deploy's compile into output: a
+// build and push of the image (built receives the builder's result, and
+// provenance says where it was built), none with --skip-build, and in source
+// mode a compile on the runtime image only.
+func (d *deployRun) compileOptions(output string, built *build.Result, provenance *domain.BuildInfo) compileOptions {
+	building := !d.o.skipBuild && !d.sourceMode.on()
+	return compileOptions{
+		cluster:    d.cluster,
+		output:     output,
+		image:      d.sourceMode.image,
+		builder:    d.o.builder,
+		dockerfile: d.o.dockerfile,
+		dagVersion: d.o.dagVersion,
+		build:      building,
+		push:       building,
+		sourceMode: d.sourceMode.on(),
+		// deploySettings showed the platforms; the build pins its push.
+		settingsShown: true,
+		built:         built,
+		requirePin:    true,
+		provenance:    provenance,
+	}
+}
+
+// beforeBuild is what runs once dag.json is compiled and before anything is
+// built: in source mode the check of the source the server will make
+// (checkSourceModeSpec), then the server's dry run of the register when it
+// offers one, then the task pod step (checkTaskPods) with what the dry run
+// reported; nil when there is nothing to run.
+func (d *deployRun) beforeBuild(ctx context.Context, access serverAccess, output, image, version string, origin labelOrigin, reuse bool) func() error {
+	if dockerfile, _ := d.ownDockerfile(); !d.sourceMode.on() && !access.dryRun && dockerfile == "" {
+		return nil
+	}
+	return func() error {
+		if d.sourceMode.on() {
+			if err := checkSourceModeSpec(output, image); err != nil {
+				return err
+			}
+		}
+		var pods *taskPodsAnswer
+		if access.dryRun {
+			answer, err := d.dryRun(ctx, output, image, version, origin, reuse)
+			if err != nil {
+				return err
+			}
+			if answer != nil {
+				pods = answer.TaskPods
+			}
+		}
+		return d.checkTaskPods(pods)
+	}
+}
+
+// registeredImage is the image the register names: the pushed image pinned
+// by digest (deployedDigest), or in source mode the runtime image as it is.
+func (d *deployRun) registeredImage(image string, built build.Result) (string, error) {
+	if d.sourceMode.on() {
+		return image, nil
+	}
+	return deployedDigest(d.cmd, registryFor(cmdContext(d.cmd), d.cfg), image, built)
+}
+
 // labelAndImage fills co.dagVersion with the default content label
 // (deployContentLabel) when --dag-version was not given, and returns the
 // image reference (resolveVersionAndImage).
 func (d *deployRun) labelAndImage(co *compileOptions) (string, error) {
 	if co.dagVersion == "" {
-		label, err := deployContentLabel(d.cmd, d.dir, d.cfg, d.o.dockerfile)
+		label, err := deployContentLabel(d.cmd, d.dir, d.cfg, d.o.dockerfile, d.sourceMode.image)
 		if err != nil {
 			return "", err
 		}
@@ -803,10 +886,13 @@ func deployOutput(dir string) string {
 // deployContentLabel is the default content label a deploy of the project at
 // dir registers: cfg is its config settled for the server deployed to
 // (settleDeployConfig, the cluster's deploy defaults included), and
-// dockerfile is the --dockerfile flag. `dexaflow status` computes the local
-// label with it too, so status and deploy cannot disagree on a DAG's label.
-func deployContentLabel(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, dockerfile string) (string, error) {
-	return contentLabel(cmd, dir, compileOptions{output: deployOutput(dir), dockerfile: dockerfile}, cfg)
+// dockerfile is the --dockerfile flag, and sourceModeImage the runtime image
+// of a source mode deploy ("" for a build), which the label hashes.
+// `dexaflow status` computes the local label with it too, so status and
+// deploy cannot disagree on a DAG's label.
+func deployContentLabel(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, dockerfile, sourceModeImage string) (string, error) {
+	return contentLabel(cmd, dir, compileOptions{output: deployOutput(dir), dockerfile: dockerfile,
+		sourceMode: sourceModeImage != "", image: sourceModeImage}, cfg)
 }
 
 // checkServer is the first step of the preflight (#1705): the control plane
@@ -823,48 +909,58 @@ func (d *deployRun) checkServer(ctx context.Context) (serverAccess, error) {
 }
 
 // checkRegistry is the push step of the preflight: the registry accepts a
-// push of image, checked unless nothing will be pushed (--skip-build, or a
-// reusable image the registry already holds). With a remote builder
-// configured, a refusal is not decided here: it is returned as refused,
-// and the build fails on it unless the builder it chooses pushes nothing
-// from this machine (checkLocalPush).
+// push of image, checked unless nothing will be pushed (--skip-build, source
+// mode, or a reusable image the registry already holds). With a remote
+// builder configured, a refusal is not decided here: it is returned as
+// refused, and the build fails on it unless the builder it chooses pushes
+// nothing from this machine (checkLocalPush).
 func (d *deployRun) checkRegistry(ctx context.Context, image string, reuse bool) (refused, err error) {
 	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
 	defer cancel()
-	reg := registryFor(d.cfg)
-	if d.o.skipBuild || (reuse && registryHolds(ctx, reg, image)) {
+	if d.o.skipBuild || d.sourceMode.on() {
+		return nil, nil
+	}
+	reg := registryFor(ctx, d.cfg)
+	if reuse && registryHolds(ctx, reg, image) {
 		return nil, nil
 	}
 	err = checkRegistryPush(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), reg, image, d.o.builder)
-	if err == nil || remoteFor(d.cfg) == nil {
+	if err == nil || remoteFor(ctx, d.cfg) == nil {
 		return nil, err
 	}
 	return err, nil
 }
 
-// dryRun is the last step of the preflight: the server's dry run of the
-// compiled spec at output, before the build. reuse says the compile takes
-// the skip path when the registry holds the image.
-func (d *deployRun) dryRun(ctx context.Context, output, image, version string, origin labelOrigin, reuse bool) error {
+// dryRun is the server's dry run of the compiled spec at output, before the
+// build, and its answer (nil when there is none to read). reuse says the
+// compile takes the skip path when the registry holds the image.
+func (d *deployRun) dryRun(ctx context.Context, output, image, version string, origin labelOrigin, reuse bool) (*dryRunAnswer, error) {
 	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
 	defer cancel()
-	warned, err := serverDryRun(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), versionPost{serverURL: d.serverURL, token: d.token,
+	answer, err := serverDryRun(ctx, d.cmd.OutOrStdout(), d.cmd.ErrOrStderr(), versionPost{serverURL: d.serverURL, token: d.token,
 		dagID: d.cfg.DagID, paused: d.o.pausedOverride()}, output, d.dryRunImage(ctx, image, reuse), version, origin)
-	d.preflightWarnings = warned
-	return err
+	if answer != nil {
+		d.preflightWarnings = answer.Warnings
+	}
+	return answer, err
 }
 
 // dryRunImage is the image the dry run is sent. The register gets the image
 // pinned by digest. When nothing is built (--skip-build, or the skip path of
 // a reused content label the registry already holds), that is the digest the
 // registry holds for the tag, read here, and it decides the image checks and
-// a conflict as for the register. Before a build the digest does not exist
+// a conflict as for the register. In source mode it is the runtime image
+// itself, which the register gets too. Before a build the digest does not exist
 // yet: the repository at a placeholder digest, so an allowlist of
 // repositories or of repo@* decides as for the register, and a refusal of
 // the image itself or a conflict is left to the register.
 func (d *deployRun) dryRunImage(ctx context.Context, image string, reuse bool) dryImage {
+	if d.sourceMode.on() {
+		// The runtime image is registered as it is.
+		return dryImage{ref: image, decides: true}
+	}
 	if d.o.skipBuild || reuse {
-		if p, err := registryFor(d.cfg).Resolve(ctx, image); err == nil {
+		if p, err := registryFor(ctx, d.cfg).Resolve(ctx, image); err == nil {
 			return dryImage{ref: p.Ref, decides: true}
 		}
 	}
@@ -892,8 +988,8 @@ func reusableImage(image, version string, origin labelOrigin) bool {
 // plan says what a deploy of this DAG would do, and records it.
 func (d *deployRun) plan(ctx context.Context, version, image string, origin labelOrigin) error {
 	in := planInput{serverURL: d.serverURL, token: d.token, dagID: d.cfg.DagID, version: version, image: image,
-		origin: origin, skipBuild: d.o.skipBuild, force: d.o.force, paused: d.o.pausedOverride(),
-		reuse: d.mayReuse(image, version, origin), platforms: buildPlatforms(d.cfg), registry: registryFor(d.cfg)}
+		origin: origin, skipBuild: d.o.skipBuild, sourceMode: d.sourceMode.on(), force: d.o.force, paused: d.o.pausedOverride(),
+		reuse: d.mayReuse(image, version, origin), platforms: buildPlatforms(d.cfg), registry: registryFor(ctx, d.cfg)}
 	res, err := planDeploy(ctx, d.cmd.ErrOrStderr(), in)
 	if err != nil {
 		return err
@@ -1063,21 +1159,23 @@ func registerDeployedDAG(ctx context.Context, out io.Writer, r registerRequest) 
 	_ = json.Unmarshal(raw, &answer) //nolint:errcheck // an older server's body may say less; the register itself succeeded
 	warnPausedIgnored(r.warn, r.paused, answer.IsPaused)
 	printNewWarnings(r.warn, answer.Warnings, r.shown)
+	extras := readServerExtras(raw)
 	res := deployResult{DagID: spec.DagID, Version: r.version, Image: r.digestRef, Digest: digestOf(r.digestRef),
 		SpecHash: answer.SpecHash, IsPaused: answer.IsPaused, Created: status == http.StatusCreated,
-		DagCreated: answer.DagCreated != nil && *answer.DagCreated, Status: deployStatusRegistered, Execution: answer.Execution}
+		DagCreated: answer.DagCreated != nil && *answer.DagCreated, Status: deployStatusRegistered, Execution: answer.Execution,
+		Links: extras.Links, Checks: extras.Checks}
 	if status == http.StatusOK {
 		// 200 rather than 201: the server already had this exact spec and made
 		// no version. Reached when the pre-check was skipped (--force) or could
 		// not be made, so the label may not be the current version.
 		res.Status = deployStatusUnchanged
 		_, werr := fmt.Fprintf(out,
-			"warning: %s was already registered as version %s with this exact content; nothing new was registered, and it may not be the current version\n%s",
-			spec.DagID, r.version, executionLines(answer.Execution))
+			"warning: %s was already registered as version %s with this exact content; nothing new was registered, and it may not be the current version\n%s%s",
+			spec.DagID, r.version, executionLines(answer.Execution), extras.lines())
 		return res, werr
 	}
 	_, werr := fmt.Fprintf(out,
-		"Deployed %s -> %s\n  image %s\n  registered version %s\n%s", spec.DagID, r.serverURL, r.digestRef, r.version, executionLines(answer.Execution))
+		"Deployed %s -> %s\n  image %s\n  registered version %s\n%s%s", spec.DagID, r.serverURL, r.digestRef, r.version, executionLines(answer.Execution), extras.lines())
 	return res, werr
 }
 
@@ -1097,7 +1195,7 @@ func triggerDeployRun(ctx context.Context, out io.Writer, serverURL, token, dagI
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	resp, err := cliHTTPClient(30 * time.Second).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("triggering run for %q: %w", dagID, err)
 	}

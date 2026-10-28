@@ -5,13 +5,14 @@
 // builders are tried in (ResolutionOrder): skip the build when the dependency
 // image already exists, append a code layer, pack a daemonless dependency
 // layer, use a remote builder, and only then fall back to a local container
-// daemon. Four exist today: Existing, the skip path in its first form (the
+// daemon. These exist today: Existing, the skip path in its first form (the
 // whole image for this content label is already in the registry, see Select);
 // CodeLayer, which appends the DAG code to a dependency image the registry
 // holds, or first builds that dependency image, from wheels without a daemon
 // (DependencyLayer, ADR 0078), with the remote builder or with the daemon
-// (ADR 0077); CloudBuild, the remote builder on Google Cloud Build (Remote,
-// ADR 0083); and LocalDaemon. Every builder returns a Result that carries the digest of the image it
+// (ADR 0077); CloudBuild and InCluster, the remote builder on Google Cloud
+// Build (ADR 0083) or on the in-cluster BuildKit daemon the Helm chart runs
+// (Remote, #1883); and LocalDaemon. Every builder returns a Result that carries the digest of the image it
 // pushed, so the caller pins dag.json to exactly those bytes (ADR 0003,
 // ADR 0041).
 //
@@ -58,6 +59,14 @@ func ResolutionOrder() []Path {
 // error wraps the builder's own failure and says how to build one platform.
 var ErrMultiPlatform = errors.New("the multi-platform build failed")
 
+// ErrPinRead marks a build whose push succeeded and whose read of the pushed
+// image's digest, asked for by Request.Pin, failed (#1703). The builder then
+// returns the Result of the push, Pushed and without Ref, with the error, so
+// a caller that may register a tag (compile) keeps it, and one that must
+// register a digest (deploy) stops. A read that verifies a multi-platform
+// push is not a pin read: its failure leaves the push unverified.
+var ErrPinRead = errors.New("the image was pushed, but its digest could not be read")
+
 // Request is one image to produce.
 type Request struct {
 	// Image is the tag reference to build, <registry>/<name>:<tag>.
@@ -82,9 +91,28 @@ type Request struct {
 	// listed: such a builder refuses to run rather than send the whole
 	// directory; an empty list is an empty context.
 	ContextFiles []LayerFile
+	// BuildArgs are the build arguments a Dockerfile build passes with
+	// --build-arg, in name order. Plain values, never secrets.
+	BuildArgs map[string]string
+	// Secrets are the build secrets a Dockerfile build passes with
+	// --secret id=<ID>,env=<Env>; the tool reads each value from its own
+	// environment, so none reaches its argv.
+	Secrets []Secret
+	// Env are KEY=VALUE variables added to the environment of the tool, for
+	// a secret whose value the caller composed (the package index URL).
+	Env []string
 	// Stdout and Stderr receive the builder's own output.
 	Stdout io.Writer
 	Stderr io.Writer
+}
+
+// Secret is one build secret: the id a RUN line mounts it under, and the
+// environment variable of the tool that holds its value.
+type Secret struct {
+	// ID is the id of --mount=type=secret,id=<ID>.
+	ID string
+	// Env is the environment variable holding the value.
+	Env string
 }
 
 // Result is what a builder produced.

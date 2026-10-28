@@ -19,17 +19,24 @@ import (
 // stderr — the stdin-fed counterpart to run(), for --password-stdin/--value-stdin.
 func runWithStdin(t *testing.T, stdin string, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
+	return runWithStdinDeps(t, nil, stdin, args...)
+}
+
+// runWithStdinDeps is runWithStdin under d (testDeps when nil).
+func runWithStdinDeps(t *testing.T, d *cliDeps, stdin string, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
 	root := NewRootCommand()
 	var out, errb bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&errb)
 	root.SetIn(strings.NewReader(stdin))
 	root.SetArgs(args)
-	err = root.Execute()
+	err = root.ExecuteContext(testCtx(d))
 	return out.String(), errb.String(), err
 }
 
 func TestSetConnectionReqSendsBodyAndReturnsConnection(t *testing.T) {
+	t.Parallel()
 	var gotMethod, gotPath, gotBody, gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod, gotPath = r.Method, r.URL.Path
@@ -286,6 +293,7 @@ func TestConnectionsListCommand(t *testing.T) {
 }
 
 func TestSetConnectionSurfaces503(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = io.WriteString(w, `{"title":"encryption unavailable","detail":"set LEOFLOW_SECRET_KEY to manage connections"}`)
@@ -303,6 +311,7 @@ func TestSetConnectionSurfaces503(t *testing.T) {
 }
 
 func TestListConnectionsReq(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/v2/connections" {
 			t.Errorf("request = %s %s, want GET /api/v2/connections", r.Method, r.URL.Path)
@@ -322,6 +331,7 @@ func TestListConnectionsReq(t *testing.T) {
 }
 
 func TestGetConnectionReq(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v2/connections/pg" {
 			t.Errorf("path = %s, want /api/v2/connections/pg", r.URL.Path)
@@ -341,6 +351,7 @@ func TestGetConnectionReq(t *testing.T) {
 }
 
 func TestDeleteConnectionReq(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete || r.URL.Path != "/api/v2/connections/pg" {
 			t.Errorf("request = %s %s, want DELETE /api/v2/connections/pg", r.Method, r.URL.Path)
@@ -355,6 +366,7 @@ func TestDeleteConnectionReq(t *testing.T) {
 }
 
 func TestDeleteConnectionReqNotFound(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
@@ -366,6 +378,7 @@ func TestDeleteConnectionReqNotFound(t *testing.T) {
 }
 
 func TestPrintConnectionListNeverShowsSecrets(t *testing.T) {
+	t.Parallel()
 	extra := `{"token":"***"}`
 	host, login, schema := "db", "u", "public"
 	coll := &apiclient.ConnectionCollection{Connections: &[]apiclient.Connection{
@@ -388,6 +401,7 @@ func TestPrintConnectionListNeverShowsSecrets(t *testing.T) {
 }
 
 func TestPrintConnectionListEmpty(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	if err := printConnectionList(&buf, nil); err != nil {
 		t.Fatal(err)

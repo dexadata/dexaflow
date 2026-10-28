@@ -376,7 +376,7 @@ func TestCLICodeRefusalsLookAlike(t *testing.T) {
 		"unknown":        exchangeCLICode(srv, "not-a-code", pk.verifier, testCLIRedirect),
 		"used":           exchangeCLICode(srv, used, pk.verifier, testCLIRedirect),
 		"wrong verifier": exchangeCLICode(srv, fresh, pk.verifier, testCLIRedirect),
-		"tampered":       exchangeCLICode(srv, fresh[:len(fresh)-2]+"AA", pk2.verifier, testCLIRedirect),
+		"tampered":       exchangeCLICode(srv, tamperCode(fresh), pk2.verifier, testCLIRedirect),
 	}
 	var first string
 	for name, rec := range refusals {
@@ -390,6 +390,20 @@ func TestCLICodeRefusalsLookAlike(t *testing.T) {
 			t.Errorf("%s: body %s differs from %s; a refusal must not say which check failed", name, rec.Body.String(), first)
 		}
 	}
+}
+
+// tamperCode changes one character in the middle of a sealed code. Every
+// character there carries six bits of the ciphertext, so the result never
+// decodes to the original. Rewriting the last two characters did not hold:
+// they also carry the unpadded tail, and when the sealed bytes already ended
+// the way the rewrite did, the "tampered" code was the real one.
+func tamperCode(code string) string {
+	i := len(code) / 2
+	replacement := byte('A')
+	if code[i] == replacement {
+		replacement = 'B'
+	}
+	return code[:i] + string(replacement) + code[i+1:]
 }
 
 func TestCLICodeExpires(t *testing.T) {
@@ -430,17 +444,21 @@ func TestCLILoginLogsNoCodeOrToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := NewServer(Dependencies{
-		Logger:        slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
-		Authenticator: &fakeAuthn{},
-		RateLimiter:   auth.NewRateLimiter(50, time.Minute),
-		HealthChecks:  map[string]HealthChecker{},
-		TokenTTLSecs:  3600,
-		OIDCFlow:      flow,
-		OIDCSettings:  cfg,
-		OIDCUsers:     store,
-		AuthAudit:     &fakeAuthAudit{},
-		JWTSecret:     testHS256Secret,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger:       slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+			HealthChecks: map[string]HealthChecker{},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{},
+			RateLimiter:   auth.NewRateLimiter(50, time.Minute),
+			TokenTTLSecs:  3600,
+			OIDCFlow:      flow,
+			OIDCSettings:  testOIDCSettings(cfg),
+			OIDCUsers:     store,
+			AuthAudit:     &fakeAuthAudit{},
+			JWTSecret:     testHS256Secret,
+		},
 	})
 	pk := newCLIPKCE()
 	code := driveCLILogin(t, srv, f, cfg, pk)
@@ -503,9 +521,19 @@ func TestAuthMethodsMatchTheLoginPage(t *testing.T) {
 	sso := func(breakGlass []string) http.Handler {
 		c := cfg
 		c.BreakGlassEmails = breakGlass
-		return NewServer(Dependencies{
-			Logger: discardLogger(), Authenticator: &fakeAuthn{}, RateLimiter: auth.NewRateLimiter(5, time.Minute),
-			OIDCFlow: flow, OIDCEnabled: true, OIDCSettings: c, JWTSecret: testHS256Secret,
+		return newTestServer(Dependencies{
+			Observability: ObservabilityDeps{
+				Logger: discardLogger(),
+			},
+			Auth: AuthDeps{
+				Authenticator: &fakeAuthn{},
+				RateLimiter:   auth.NewRateLimiter(5, time.Minute),
+				OIDCFlow:      flow,
+				OIDCEnabled:   true,
+				OIDCSettings:  testOIDCSettings(c),
+				OIDCUsers:     newFakeOIDCStore(),
+				JWTSecret:     testHS256Secret,
+			},
 		})
 	}
 	if got := read(sso(nil)); got != (authMethods{SSO: true}) {
@@ -619,6 +647,16 @@ func TestCLILoginGETChainNeverReachesLoopback(t *testing.T) {
 	}
 }
 
+// forgedToken returns token with its first character replaced by a
+// different one, so the forgery never equals the real token.
+func forgedToken(token string) string {
+	first := byte('a')
+	if token[0] == first {
+		first = 'b'
+	}
+	return string(first) + token[1:]
+}
+
 func TestCLIConsentRefusesAForgedPost(t *testing.T) {
 	srv, f, cfg := seededCLIServer(t, &fakeAuthAudit{})
 	st := startCLILogin(t, srv, "cli-state-0123456789", newCLIPKCE())
@@ -626,7 +664,7 @@ func TestCLIConsentRefusesAForgedPost(t *testing.T) {
 
 	for name, rec := range map[string]*httptest.ResponseRecorder{
 		"no csrf":    postConsent(srv, cookie, "", "approve", "same-origin"),
-		"wrong csrf": postConsent(srv, cookie, "x"+csrf[1:], "approve", "same-origin"),
+		"wrong csrf": postConsent(srv, cookie, forgedToken(csrf), "approve", "same-origin"),
 		"no cookie":  postConsent(srv, nil, csrf, "approve", "same-origin"),
 		"cross-site": postConsent(srv, cookie, csrf, "approve", "cross-site"),
 		"same-site":  postConsent(srv, cookie, csrf, "approve", "same-site"),

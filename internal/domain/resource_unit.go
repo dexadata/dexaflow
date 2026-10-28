@@ -3,6 +3,7 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"math"
 
 	"k8s.io/apimachinery/pkg/api/resource"
 )
@@ -253,20 +254,37 @@ func (u *ResourceUnit) WarmEligible(t TaskSpec) bool {
 	return u == nil || (t.EffectivePoolSlots() == 1 && t.Resources == nil)
 }
 
-// unitsFor is how many units a quantity takes, rounded up; 0 for an empty or
-// unparsable value. milli reads the quantity in millis (CPU) instead of whole
-// units (memory), matching how the unit was stored.
+// unitsFor is how many units a quantity takes, rounded up; 0 for an empty,
+// unparsable or non-positive value. milli reads the quantity in millis (CPU)
+// instead of whole units (memory), matching how the unit was stored. A quantity
+// too large for an int64 in that scale takes math.MaxInt units, so the refuse
+// check sees it as oversized instead of reading a wrapped or saturated value
+// (#1608).
 func unitsFor(value string, unit int64, milli bool) int {
-	if value == "" {
+	if value == "" || unit <= 0 {
 		return 0
 	}
 	q, err := resource.ParseQuantity(value)
-	if err != nil {
+	if err != nil || q.Sign() <= 0 {
 		return 0
+	}
+	limit := resource.NewQuantity(math.MaxInt64, resource.DecimalSI)
+	if milli {
+		limit = resource.NewMilliQuantity(math.MaxInt64, resource.DecimalSI)
+	}
+	if q.Cmp(*limit) > 0 {
+		return math.MaxInt
 	}
 	v := q.Value()
 	if milli {
 		v = q.MilliValue()
 	}
-	return int((v + unit - 1) / unit)
+	div := v / unit
+	if v%unit != 0 {
+		div++
+	}
+	if div > int64(math.MaxInt) {
+		return math.MaxInt
+	}
+	return int(div)
 }

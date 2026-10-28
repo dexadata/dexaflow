@@ -169,9 +169,10 @@ func TestStepCapsDispatchesPerTenantPerTick(t *testing.T) {
 // (R-03: with catchup=false a slot missed this way is lost).
 func TestStepCreatesDueRunsBeforeDispatching(t *testing.T) {
 	store := newFakeStore(readyRun("a", "t1", 3))
-	last := time.Now().UTC().Add(-2 * time.Hour)
-	store.scheduled = []ScheduledDAG{{TenantID: "t2", DagID: "hourly", Schedule: "0 * * * *", LastLogical: &last}}
 	clock := &fakeClock{now: time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)}
+	// Run creation reads the scheduler's clock, so the last run is dated on it.
+	last := clock.now.Add(-2 * time.Hour)
+	store.scheduled = []ScheduledDAG{{TenantID: "t2", DagID: "hourly", Schedule: "0 * * * *", LastLogical: &last}}
 	disp := &slowDispatcher{clock: clock, cost: time.Millisecond}
 	createdBeforeFirstDispatch := -1
 	disp.onDispatch = func() {
@@ -225,5 +226,8 @@ func TestAsyncDeferredDispatchIsNotCounted(t *testing.T) {
 	}
 	if st.requeued[0].counted {
 		t.Errorf("a deferred dispatch must not count toward the budget, got %+v", st.requeued[0])
+	}
+	if st.requeued[0].cleared {
+		t.Errorf("a deferred dispatch never reached the API and must keep the outage window, got %+v", st.requeued[0])
 	}
 }

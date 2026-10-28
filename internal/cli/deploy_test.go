@@ -15,6 +15,7 @@ import (
 )
 
 func TestRegisterDeployedDAGRepinsAndRegisters(t *testing.T) {
+	t.Parallel()
 	var gotPath, gotAuth, gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
@@ -61,6 +62,7 @@ func TestRegisterDeployedDAGRepinsAndRegisters(t *testing.T) {
 }
 
 func TestRegisterDeployedDAGSurfacesServerError(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = io.WriteString(w, "forbidden")
@@ -81,6 +83,7 @@ func TestRegisterDeployedDAGSurfacesServerError(t *testing.T) {
 // server refuses because deploys go through its trusted issuer (#1773) says
 // so, rather than a bare 403.
 func TestRegisterDeployedDAGExplainsTheTrustedIssuerRefusal(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Dexaflow-Deploy-Via", "trusted-issuer")
 		w.WriteHeader(http.StatusForbidden)
@@ -99,6 +102,7 @@ func TestRegisterDeployedDAGExplainsTheTrustedIssuerRefusal(t *testing.T) {
 }
 
 func TestTriggerDeployRunPostsToDagRuns(t *testing.T) {
+	t.Parallel()
 	var gotPath, gotAuth, gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
@@ -128,6 +132,7 @@ func TestTriggerDeployRunPostsToDagRuns(t *testing.T) {
 }
 
 func TestTriggerDeployRunSurfacesError(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusConflict)
 	}))
@@ -284,6 +289,7 @@ func TestResolveServerTokenFallsBackToEnv(t *testing.T) {
 }
 
 func TestDeployImageRef(t *testing.T) {
+	t.Parallel()
 	base := func(strategy string) *domain.LeoflowConfig {
 		return &domain.LeoflowConfig{Registry: &domain.RegistryConfig{
 			URL: "ghcr.io/org", ImageName: "etl", TagStrategy: strategy,
@@ -301,6 +307,7 @@ func TestDeployImageRef(t *testing.T) {
 }
 
 func TestRepinImageInSpec(t *testing.T) {
+	t.Parallel()
 	in := []byte(`{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"ghcr.io/org/etl:v1","tasks":[{"task_id":"a","type":"python","entrypoint":"dag:a"}]}`)
 	out, err := repinImageInSpec(in, "ghcr.io/org/etl@sha256:deadbeef")
 	if err != nil {
@@ -339,6 +346,7 @@ func TestDeployCommandRejectsMissingRegistry(t *testing.T) {
 }
 
 func TestRequireRegistryRejectsUnconfigured(t *testing.T) {
+	t.Parallel()
 	// ApplyDefaults instantiates Registry but leaves URL empty — deploy must
 	// still reject it, loudly and actionably (ADR 0041).
 	cfg := &domain.LeoflowConfig{}
@@ -361,6 +369,7 @@ func TestRequireRegistryRejectsUnconfigured(t *testing.T) {
 // Artifact Registry, ECR and ACR, docker login for the others, and no longer
 // tells every user to run docker login for ghcr.io.
 func TestRequireRegistryNamesTheRegistryLogins(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{}
 	cfg.ApplyDefaults()
 	err := requireRegistry(cfg)
@@ -372,7 +381,7 @@ func TestRequireRegistryNamesTheRegistryLogins(t *testing.T) {
 		"Artifact Registry, GCR: gcloud auth login",
 		"ECR: aws sso login, aws configure, environment credentials or an instance role",
 		"ACR: az login",
-		"any other registry: docker login <registry>",
+		"any other registry: dexaflow registry login <registry> (or docker login <registry>)",
 		"the deploy preflight names it",
 	} {
 		if !strings.Contains(msg, want) {
@@ -385,6 +394,7 @@ func TestRequireRegistryNamesTheRegistryLogins(t *testing.T) {
 }
 
 func TestRequireRegistryRejectsMissingImageName(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{Registry: &domain.RegistryConfig{URL: "ghcr.io/org"}}
 	if err := requireRegistry(cfg); err == nil {
 		t.Error("expected requireRegistry to reject a registry URL with no image_name")
@@ -392,6 +402,7 @@ func TestRequireRegistryRejectsMissingImageName(t *testing.T) {
 }
 
 func TestRequireRegistryAcceptsConfigured(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{Registry: &domain.RegistryConfig{URL: "ghcr.io/org", ImageName: "etl"}}
 	if err := requireRegistry(cfg); err != nil {
 		t.Errorf("requireRegistry on a configured registry: %v", err)

@@ -68,6 +68,7 @@ func newStatusCommand() *cobra.Command {
 	cmd.Flags().StringVar(&o.output, "output", outputText, "output format: text, or json for one JSON document on stdout")
 	cmd.Flags().String("registry", "", "the --registry a deploy is given, which is part of the content label (then DEXAFLOW_REGISTRY, dexaflow.yaml, the target, the workspace defaults, the config file, the cluster's deploy defaults)")
 	cmd.Flags().StringVar(&o.dockerfile, "dockerfile", "Dockerfile", "the --dockerfile a deploy is given, relative to the DAG directory")
+	cmd.Flags().Bool(noSourceModeFlag, false, "the --no-source-mode a deploy is given: the label of a build even where source_mode_image is set")
 	addPlatformFlag(cmd)
 	return cmd
 }
@@ -377,10 +378,11 @@ func localLabel(cmd *cobra.Command, dir string, cluster *defaultsLayer, dockerfi
 	if err != nil {
 		return "", err
 	}
-	if _, serr := settleDeployConfig(cmd, dir, cfg, cluster); serr != nil {
+	prov, serr := settleDeployConfig(cmd, dir, cfg, cluster)
+	if serr != nil {
 		return "", serr
 	}
-	return deployContentLabel(cmd, dir, cfg, dockerfile)
+	return deployContentLabel(cmd, dir, cfg, dockerfile, prov.sourceMode.image)
 }
 
 // remoteDag is what one control plane holds for a DAG.
@@ -432,7 +434,7 @@ func (e *targetUnreadable) Unwrap() error { return e.err }
 // the reads with an error for the whole target; any other failure, a 403
 // included, is recorded on its DAG.
 func readTargetState(ctx context.Context, serverURL, token string, projects []statusProject, lastRun bool) ([]remoteDag, error) {
-	c, err := apiclient.New(serverURL, token, apiclient.WithHTTPClient(&http.Client{Timeout: statusReadTimeout}))
+	c, err := cliAPIClient(serverURL, token, apiclient.WithHTTPClient(cliHTTPClient(statusReadTimeout)))
 	if err != nil {
 		return nil, fmt.Errorf("building the API client: %w", err)
 	}

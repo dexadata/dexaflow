@@ -96,6 +96,19 @@ this page.
 - [ADR 0081: the CLI signs in from a machine with no browser through a device sign-in served by Dexaflow](/project/adrs/0081-cli-device-sign-in/)
 - [ADR 0082: a warm pool follows the DAG's current version, started when it becomes current and drained when it stops being current](/project/adrs/0082-warm-pool-follows-the-current-version/)
 - [ADR 0083: the remote builder runs on Cloud Build first, through the gcloud CLI](/project/adrs/0083-remote-builder-on-cloud-build/)
+- [ADR 0084: a template that fails to render fails the task attempt](/project/adrs/0084-template-render-errors-fail-the-task/)
+- [ADR 0085: the control plane reads task ServiceAccounts for the register dry run](/project/adrs/0085-control-plane-reads-task-service-accounts/)
+- [ADR 0086: a clear on the latest version re-binds a finished run with its task set, and leaves an unfinished run on its own version](/project/adrs/0086-clear-rebinds-a-finished-run-with-its-task-set/)
+- [ADR 0087: the local daemon takes the digest from its own push](/project/adrs/0087-local-daemon-digest-from-the-push/)
+- [ADR 0088: build args, build secrets and a private package index](/project/adrs/0088-build-args-secrets-and-package-index/)
+- [ADR 0089: a warm pool is keyed by the DAG's environment, so versions that share a dependency image and runtime settings share workers](/project/adrs/0089-warm-pools-keyed-by-environment/)
+- [ADR 0090: the control plane waits for its schema, and names a database that was emptied, replaced, restored or repointed under it](/project/adrs/0090-database-replaced-under-a-running-release/)
+- [ADR 0091: registry login without docker](/project/adrs/0091-registry-login-without-docker/)
+- [ADR 0092: CI pipelines deploy with their provider's OIDC token, exchanged for a short session](/project/adrs/0092-ci-deploys-with-oidc-tokens/)
+- [ADR 0093: an unavailable Kubernetes API is ridden out for a bounded time, off the dispatch-attempt budget](/project/adrs/0093-unavailable-api-dispatch-window/)
+- [ADR 0094: Lite's auto datastore follows the datastore the install is pinned to](/project/adrs/0094-lite-auto-follows-the-pinned-datastore/)
+- [ADR 0095: a source-mode version runs on warm workers, which receive its dag.py with each assignment](/project/adrs/0095-source-mode-on-warm-workers/)
+- [ADR 0096: every finished task attempt writes a usage event in the same transaction, read through the service API](/project/adrs/0096-task-attempt-usage-events/)
 
 ## Template
 

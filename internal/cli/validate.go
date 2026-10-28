@@ -128,7 +128,7 @@ func checkDagParses(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, p
 	}
 	defer os.RemoveAll(tmp) //nolint:errcheck // best-effort cleanup of a scratch directory
 	out := filepath.Join(tmp, "dag.json")
-	if rerr := runParser(cmd, command, parserArgs{
+	if rerr := parseForDeclaredPython(cmd, command, parserArgs{
 		source:        dagSourcePath(dir, cfg),
 		config:        projectConfigPath(dir),
 		output:        out,

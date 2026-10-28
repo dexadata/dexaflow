@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_status/
 title: "dexaflow status"
 linkTitle: "status"
-weight: 59
+weight: 64
 ---
 
 Show per DAG the version current on a target, its last run, and drift from the workspace.
@@ -29,6 +29,7 @@ dexaflow status [path | dag_id ...] [flags]
       --all-targets         report every target of the workspace, each with its own server and saved token
       --dockerfile string   the --dockerfile a deploy is given, relative to the DAG directory (default "Dockerfile")
   -h, --help                help for status
+      --no-source-mode      the --no-source-mode a deploy is given: the label of a build even where source_mode_image is set
       --output string       output format: text, or json for one JSON document on stdout (default "text")
       --platform strings    image platform to build for, os/arch (repeatable or comma-separated), over build.platforms in dexaflow.yaml, the target and the workspace defaults (default linux/amd64)
       --registry string     the --registry a deploy is given, which is part of the content label (then DEXAFLOW_REGISTRY, dexaflow.yaml, the target, the workspace defaults, the config file, the cluster's deploy defaults)

@@ -1,0 +1,156 @@
+# Deploys the DAGs changed on [[.Branch]] since its last successful deploy to Dexaflow.
+# Written by `dexaflow ci init github` for dexaflow [[.CLIVersion]]; the deploy
+# itself is in [[.ScriptPath]].
+#
+# Set up once, in the repository settings: an environment named [[.Environment]]
+# (Settings, Environments) holding
+[[- if .Target]]
+#   - (the control plane is target [[.Target]] of dexaflow.workspace.yaml);
+[[- else]]
+#   - the variable DEXAFLOW_SERVER_URL: the control plane URL;
+[[- end]]
+[[- if .OIDC]]
+#   - no deploy token: the job signs in with its GitHub OIDC token, for the
+#     audience [[.OIDC.Audience]], which the control plane trusts through its
+#     CI OIDC issuer [[.OIDC.Name]] (auth.ci_oidc). Without that issuer, store
+#     a deploy token, created with
+#     `dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d`,
+#     as the secret DEXAFLOW_TOKEN and write this file again with --auth token
+[[- else]]
+#   - the secret DEXAFLOW_TOKEN: a deploy token, created with
+#     `dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d`
+[[- end]]
+[[- if .GCloud]]
+#   - the variables GCP_WORKLOAD_IDENTITY_PROVIDER and GCP_SERVICE_ACCOUNT:
+#     the workload identity provider and the service account the job acts as
+#     on Google Cloud (Artifact Registry[[if .Remote]], Cloud Build[[end]]);
+[[- end]]
+[[- if .ECR]]
+#   - the variable AWS_ROLE_ARN: the IAM role the job assumes to push to ECR;
+[[- end]]
+[[- if .Others]]
+#   - the secrets DEXAFLOW_REGISTRY_USERNAME and DEXAFLOW_REGISTRY_PASSWORD:
+#     a push credential for [[range $i, $r := .Others]][[if $i]], [[end]][[$r.Host]][[end]];
+[[- end]]
+[[- if .Unknown]]
+#   - no project names a registry (registry.url, or registry in the workspace
+#     or target defaults): add the login step of yours below the install step;
+[[- end]]
+# Repository-level variables and secrets of the same names work too. Protection
+# rules on the environment (required reviewers, a branch policy) apply to
+# every deploy.
+#
+# Each run deploys what changed since the commit of the last successful run of
+# this workflow on [[.Branch]], so a failed or cancelled run is caught up by the
+# next one; with no successful run yet, every DAG is deployed.
+name: Deploy DAGs to Dexaflow
+on:
+  push:
+    branches: ["[[.Branch]]"]
+[[- if ne .WorkspaceDir "."]]
+    paths: ["[[.WorkspaceDir]]/**", "[[.ScriptPath]]"]
+[[- end]]
+  workflow_dispatch:
+concurrency:
+  group: dexaflow-deploy
+  cancel-in-progress: false
+permissions:
+  contents: read
+  actions: read # gh run list: the last successful deploy
+[[- if .GHCR]]
+  packages: write
+[[- end]]
+[[- if or .GCloud .ECR .OIDC]]
+  id-token: write
+[[- end]]
+jobs:
+  deploy:
+    # A manual run from another branch deploys nothing.
+    if: github.ref == 'refs/heads/[[.Branch]]'
+    runs-on: ubuntu-latest
+    environment: [[.Environment]]
+[[- if not .Target]]
+    env:
+      DEXAFLOW_SERVER_URL: ${{ vars.DEXAFLOW_SERVER_URL }}
+[[- end]]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # --changed-since and the version label need the history
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "[[.PythonVersion]]"
+      # Installs the pinned CLI, after checking its signature and checksum.
+      - name: Install dexaflow
+        uses: dexadata/dexaflow/.github/actions/setup-dexaflow@[[.CLICommit]] # [[.CLIVersion]]
+        with:
+          version: [[.CLIVersion]]
+[[- if .GHCR]]
+      - name: Log in to ghcr.io
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+[[- end]]
+[[- if .GCloud]]
+      - name: Sign in to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+[[- end]]
+[[- range .ECR]]
+      - name: Sign in to AWS ([[.Region]])
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: [[.Region]]
+[[- end]]
+[[- range .Others]]
+      - name: Log in to [[.Host]]
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: [[.Host]]
+          username: ${{ secrets.DEXAFLOW_REGISTRY_USERNAME }}
+          password: ${{ secrets.DEXAFLOW_REGISTRY_PASSWORD }}
+[[- end]]
+      - name: Find the commit of the last successful deploy
+        id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: [[.Branch]]
+        run: |
+          sha="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow dexaflow-deploy.yaml --branch "$BRANCH" \
+            --status success --limit 1 --json headSha --jq '.[0].headSha // ""')" || sha=""
+          echo "sha=$sha" >>"$GITHUB_OUTPUT"
+      # The CLI picks the builder: an image already in the registry, the DAG
+      # code as a layer on the dependency image, dependencies from wheels with
+      # uv, the remote builder when one is configured, and the runner's Docker
+      # only when none of these applies.
+      - name: Deploy the DAGs changed since then
+[[- if .OIDC]]
+        # The job's OIDC token, for the audience of the control plane's
+        # issuer entry; the script exchanges it for a short-lived session.
+        env:
+          DEXAFLOW_OIDC_AUDIENCE: "[[.OIDC.Audience]]"
+          DEXAFLOW_BASE_REF: ${{ steps.base.outputs.sha }}
+        run: |
+          DEXAFLOW_OIDC_TOKEN="$(python3 -c '
+          import json, os, urllib.parse, urllib.request
+          e = os.environ
+          url = e["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=" + urllib.parse.quote(e["DEXAFLOW_OIDC_AUDIENCE"], safe="")
+          r = urllib.request.Request(url, headers={"Authorization": "bearer " + e["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]})
+          with urllib.request.urlopen(r, timeout=30) as resp:
+              print(json.load(resp)["value"])
+          ')"
+          export DEXAFLOW_OIDC_TOKEN
+          sh [[.ScriptPath]]
+[[- else]]
+        env:
+          DEXAFLOW_TOKEN: ${{ secrets.DEXAFLOW_TOKEN }}
+          DEXAFLOW_BASE_REF: ${{ steps.base.outputs.sha }}
+        run: sh [[.ScriptPath]]
+[[- end]]

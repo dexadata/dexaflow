@@ -4,10 +4,10 @@ aliases:
   - /reference/cli/leoflow_deploy/
 title: "dexaflow deploy"
 linkTitle: "deploy"
-weight: 38
+weight: 41
 ---
 
-Build, push, and register a DAG to a control plane (Pro).
+Build, push, and register a DAG to a control plane (Cluster).
 
 ```
 dexaflow deploy [path | dag_id] [flags]
@@ -25,6 +25,7 @@ dexaflow deploy [path | dag_id] [flags]
       --follow                 follow the run: print task state changes and logs, the UI link, and exit with the run's result
       --force                  build, push and register even when the default content label is already deployed
   -h, --help                   help for deploy
+      --no-source-mode         build and push an image even when a target, the workspace defaults or the cluster set source_mode_image
       --output string          output format: text, or json for one JSON document on stdout (human lines go to stderr) (default "text")
       --paused                 leave the DAG paused after this deploy, new or not (default: a new DAG follows is_paused_upon_creation, else the server's dags_are_paused_at_creation; a redeploy keeps is_paused)
       --plan                   say per DAG what would be built, pushed and registered, and why, without doing any of it

@@ -16,6 +16,7 @@ import (
 // we emit could resurrect a path an earlier line of THEIRS excluded — but doing
 // it silently makes exclude_paths a field that accepts input and discards it.
 func TestExcludePathsNegationIsDroppedAndSaidSo(t *testing.T) {
+	t.Parallel()
 	t.Run("a negation still contributes no pattern", func(t *testing.T) {
 		// Pinning the behavior, not just the message: emitting `!keep.txt` into
 		// our appended block is the riskier half and must stay unimplemented

@@ -48,8 +48,16 @@ linters:
     # ─── Style consistency ───
     - whitespace         # Trailing whitespace
     - tagliatelle        # Struct tag naming consistency
+    - nolintlint         # Every //nolint names its linters and says why (#1572)
 
   settings:
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      # A directive can be needed on one platform or golangci-lint version and
+      # not another (field widths in syscall structs, gosec rule changes), so
+      # an unused one is not a finding.
+      allow-unused: true
     depguard:
       rules:
         # ADR 0073 section 3: the CLI's registry client may use only these
@@ -60,6 +68,7 @@ linters:
           list-mode: lax
           files:
             - "!$test"
+            - "!**/test/load/**"
           deny:
             - pkg: github.com/google/go-containerregistry
               desc: "only the packages ADR 0073 section 3 allows"
@@ -83,11 +92,14 @@ linters:
             - github.com/google/go-containerregistry/pkg/v1/tarball
             - github.com/google/go-containerregistry/pkg/v1/empty
             - github.com/google/go-containerregistry/pkg/v1/types
-        # Tests may also stand up an in-memory registry and random images.
+        # Tests may also stand up an in-memory registry and random images,
+        # and so may the load harnesses, which are never part of a binary
+        # (test/load/deploy_p50 serves one on the loopback).
         registry-client-tests:
           list-mode: lax
           files:
             - "$test"
+            - "**/test/load/**"
           deny:
             - pkg: github.com/google/go-containerregistry/pkg/v1/daemon
               desc: "wraps the Docker SDK (ADR 0015)"
@@ -99,6 +111,21 @@ linters:
               desc: "the Docker SDK is refused (ADR 0015)"
             - pkg: github.com/moby/moby
               desc: "the Docker SDK is refused (ADR 0015)"
+        # The API, the scheduler and the executor take their settings and
+        # stores as their own or domain types, mapped in cmd/dexaflow-server
+        # (#1948). Tests may still build them from config or storage.
+        layering:
+          list-mode: lax
+          files:
+            - "**/internal/api/**"
+            - "**/internal/scheduler/**"
+            - "**/internal/executor/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/dexadata/dexaflow/internal/config
+              desc: "map config onto api or domain types in cmd/dexaflow-server (#1948)"
+            - pkg: github.com/dexadata/dexaflow/internal/storage
+              desc: "depend on an interface the server wires a store into (#1948)"
     gocyclo:
       # ADR 0012: hard cap at 15. Critical paths target <=10 but that is not enforced here.
       min-complexity: 15

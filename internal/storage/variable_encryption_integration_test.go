@@ -42,8 +42,8 @@ func TestVariableEncryptionOnSealsAtRest(t *testing.T) {
 	repo := keyMigrationRepo(t, dsn)
 	conn := keyMigrationConn(t, dsn)
 	ctx := context.Background()
-	repo.SetCipher(varCipher(t, kmNew))
-	repo.SetVariableEncryption(storage.VariableEncryptionOn)
+	repo.Configure(storage.WithCipher(varCipher(t, kmNew)))
+	repo.Configure(storage.WithVariableEncryption(storage.VariableEncryptionOn))
 
 	if err := repo.SetVariable(ctx, "default", domain.Variable{Key: "stripe_sk", Value: "sk_live_1"}); err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestVariableEncryptionSweepBothWays(t *testing.T) {
 	repo := keyMigrationRepo(t, dsn)
 	conn := keyMigrationConn(t, dsn)
 	ctx := context.Background()
-	repo.SetCipher(varCipher(t, kmNew))
+	repo.Configure(storage.WithCipher(varCipher(t, kmNew)))
 
 	// Off (the default): the stored form is what v0.5.3 writes.
 	if err := repo.SetVariable(ctx, "default", domain.Variable{Key: "legacy", Value: "plain"}); err != nil {
@@ -98,7 +98,7 @@ func TestVariableEncryptionSweepBothWays(t *testing.T) {
 		t.Fatalf("off mode changed the stored form: %q", raw)
 	}
 
-	repo.SetVariableEncryption(storage.VariableEncryptionOn)
+	repo.Configure(storage.WithVariableEncryption(storage.VariableEncryptionOn))
 	if got, err := repo.GetVariable(ctx, "default", "legacy"); err != nil || got.Value != "plain" || got.Encrypted {
 		t.Fatalf("a legacy row must read as is: %+v, %v", got, err)
 	}
@@ -113,7 +113,7 @@ func TestVariableEncryptionSweepBothWays(t *testing.T) {
 		t.Fatalf("a second on sweep must be a no-op: %+v, %v", res, err)
 	}
 
-	repo.SetVariableEncryption(storage.VariableEncryptionDecrypt)
+	repo.Configure(storage.WithVariableEncryption(storage.VariableEncryptionDecrypt))
 	if res, err = repo.ConvergeVariableEncryption(ctx); err != nil || res.Migrated != 1 || !res.Clean() {
 		t.Fatalf("decrypt sweep = %+v, %v", res, err)
 	}
@@ -136,13 +136,13 @@ func TestVariableEncryptionOffSweepIsANoop(t *testing.T) {
 	repo := keyMigrationRepo(t, dsn)
 	conn := keyMigrationConn(t, dsn)
 	ctx := context.Background()
-	repo.SetCipher(varCipher(t, kmNew))
-	repo.SetVariableEncryption(storage.VariableEncryptionOn)
+	repo.Configure(storage.WithCipher(varCipher(t, kmNew)))
+	repo.Configure(storage.WithVariableEncryption(storage.VariableEncryptionOn))
 	if err := repo.SetVariable(ctx, "default", domain.Variable{Key: "k", Value: "v"}); err != nil {
 		t.Fatal(err)
 	}
 	sealed := storedVariable(t, conn, "k")
-	repo.SetVariableEncryption(storage.VariableEncryptionOff)
+	repo.Configure(storage.WithVariableEncryption(storage.VariableEncryptionOff))
 	if res, err := repo.ConvergeVariableEncryption(ctx); err != nil || res.Migrated != 0 {
 		t.Fatalf("off sweep = %+v, %v", res, err)
 	}
@@ -163,14 +163,14 @@ func TestVariableEncryptionUnreadableValue(t *testing.T) {
 	ctx := context.Background()
 
 	stranger := keyMigrationRepo(t, dsn)
-	stranger.SetCipher(varCipher(t, kmStranger))
-	stranger.SetVariableEncryption(storage.VariableEncryptionOn)
+	stranger.Configure(storage.WithCipher(varCipher(t, kmStranger)))
+	stranger.Configure(storage.WithVariableEncryption(storage.VariableEncryptionOn))
 	if err := stranger.SetVariable(ctx, "default", domain.Variable{Key: "lost", Value: "x"}); err != nil {
 		t.Fatal(err)
 	}
 	lost := storedVariable(t, conn, "lost")
 
-	repo.SetCipher(varCipher(t, kmNew))
+	repo.Configure(storage.WithCipher(varCipher(t, kmNew)))
 	if err := repo.SetVariable(ctx, "default", domain.Variable{Key: "ok", Value: "y"}); err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestVariableEncryptionUnreadableValue(t *testing.T) {
 	if !errors.Is(err, domain.ErrValueUnreadable) || !errors.As(err, &safe) || !strings.Contains(safe.ClientMessage(), `"lost"`) {
 		t.Errorf("GetVariable(lost) = %v, want a SafeError of class ErrValueUnreadable naming the key", err)
 	}
-	repo.SetVariableEncryption(storage.VariableEncryptionDecrypt)
+	repo.Configure(storage.WithVariableEncryption(storage.VariableEncryptionDecrypt))
 	res, err := repo.ConvergeVariableEncryption(ctx)
 	if err == nil || res.Unreadable != 1 {
 		t.Fatalf("decrypt sweep must report the unreadable row: %+v, %v", res, err)
@@ -230,12 +230,12 @@ func TestVariableCiphertextFollowsKeyRotation(t *testing.T) {
 	ctx := context.Background()
 	old, fresh := varCipher(t, kmPublished), varCipher(t, kmNew)
 
-	repo.SetCipher(old)
-	repo.SetVariableEncryption(storage.VariableEncryptionOn)
+	repo.Configure(storage.WithCipher(old))
+	repo.Configure(storage.WithVariableEncryption(storage.VariableEncryptionOn))
 	if err := repo.SetVariable(ctx, "default", domain.Variable{Key: "a", Value: "1"}); err != nil {
 		t.Fatal(err)
 	}
-	repo.SetVariableEncryption(storage.VariableEncryptionOff)
+	repo.Configure(storage.WithVariableEncryption(storage.VariableEncryptionOff))
 	if err := repo.SetVariable(ctx, "default", domain.Variable{Key: "plain", Value: "2"}); err != nil {
 		t.Fatal(err)
 	}
@@ -247,12 +247,12 @@ func TestVariableCiphertextFollowsKeyRotation(t *testing.T) {
 	// Pro: the boot sweep moves it onto the first key.
 	oldKey, _ := secrets.NewAESGCM([]byte(kmPublished))
 	freshKey, _ := secrets.NewAESGCM([]byte(kmNew))
-	repo.SetCipher(secrets.WithFallback(freshKey, oldKey))
+	repo.Configure(storage.WithCipher(secrets.WithFallback(freshKey, oldKey)))
 	rres, err := repo.ReencryptSecrets(ctx)
 	if err != nil || rres.Migrated != 1 {
 		t.Fatalf("ReencryptSecrets = %+v, %v", rres, err)
 	}
-	repo.SetCipher(fresh)
+	repo.Configure(storage.WithCipher(fresh))
 	if got, gerr := repo.GetVariable(ctx, "default", "a"); gerr != nil || got.Value != "1" {
 		t.Fatalf("after the boot sweep: %+v, %v", got, gerr)
 	}
@@ -262,7 +262,7 @@ func TestVariableCiphertextFollowsKeyRotation(t *testing.T) {
 	if err != nil || mres.Migrated != 1 || mres.Verified != 1 {
 		t.Fatalf("MigrateSecretValues = %+v, %v", mres, err)
 	}
-	repo.SetCipher(old)
+	repo.Configure(storage.WithCipher(old))
 	if got, gerr := repo.GetVariable(ctx, "default", "a"); gerr != nil || got.Value != "1" {
 		t.Fatalf("after migrate-key: %+v, %v", got, gerr)
 	}

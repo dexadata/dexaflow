@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"runtime"
@@ -32,16 +31,14 @@ const deviceSlowDown = 5 * time.Second
 // defaultDeviceInterval is the interval when the server names none.
 const defaultDeviceInterval = 5 * time.Second
 
-// devicePollWait waits one interval between polls. Tests replace it.
-var devicePollWait = time.After
+// headlessHere reports whether this session looks like it has no browser to
+// open, and why. Commands reach it as cliDeps.sessionHeadless.
+func headlessHere() (headless bool, why string) { return headlessSession(os.Getenv, runtime.GOOS) }
 
-// sessionHeadless reports whether this session looks like it has no browser
-// to open, and why. Tests replace it.
-var sessionHeadless = func() (bool, string) { return headlessSession(os.Getenv, runtime.GOOS) }
-
-// outputIsTerminal reports whether the command's output is a terminal, where
-// a person can read a printed code. Tests replace it.
-var outputIsTerminal = func(w io.Writer) bool {
+// writerIsTerminal reports whether the command's output is a terminal, where
+// a person can read a printed code. Commands reach it as
+// cliDeps.outputIsTerminal.
+func writerIsTerminal(w io.Writer) bool {
 	f, ok := w.(*os.File)
 	return ok && term.IsTerminal(int(f.Fd()))
 }
@@ -73,7 +70,7 @@ func headlessSession(getenv func(string) string, goos string) (headless bool, wh
 // Dexaflow token. It gives up after timeout or when the sign-in expires,
 // whichever comes first.
 func deviceLogin(ctx context.Context, out io.Writer, serverURL string, timeout time.Duration) (string, error) {
-	c, err := apiclient.NewClient(serverURL, apiclient.WithHTTPClient(&http.Client{Timeout: 30 * time.Second}))
+	c, err := cliBareAPIClient(serverURL, 30*time.Second)
 	if err != nil {
 		return "", fmt.Errorf("building the client for %s: %w", serverURL, err)
 	}
@@ -122,6 +119,7 @@ func pollDeviceLogin(ctx context.Context, c *apiclient.Client, serverURL string,
 	}
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
+	wait := depsFrom(ctx).devicePollWait
 	var lastErr error
 	for {
 		select {
@@ -129,7 +127,7 @@ func pollDeviceLogin(ctx context.Context, c *apiclient.Client, serverURL string,
 			return "", fmt.Errorf("single sign-on canceled: %w", ctx.Err())
 		case <-deadline.C:
 			return "", deviceTimeout(timeout, lastErr)
-		case <-devicePollWait(interval):
+		case <-wait(interval):
 		}
 		tok, err := c.PollCLIDeviceLogin(ctx, d.DeviceCode)
 		switch {

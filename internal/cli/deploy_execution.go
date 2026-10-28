@@ -34,8 +34,10 @@ type executionPool struct {
 // warm-eligible and which take a dedicated pod and why, then the pool. When
 // every task takes a dedicated pod for one reason, that is said in one line;
 // the pool line still follows when idle warm workers are kept for the
-// version (they would then serve none of its tasks), and is left out only
-// when the pool is off or none. Nil (an older server) prints nothing.
+// version (an older server keeps them even when they serve none of its
+// tasks, #2065) or the previous version's pool drains, and is left out
+// otherwise when the pool is off or none. Nil (an older server) prints
+// nothing.
 func executionLines(e *executionSummary) string {
 	if e == nil {
 		return ""
@@ -44,7 +46,7 @@ func executionLines(e *executionSummary) string {
 	reason, one := oneDedicatedReason(e.Tasks)
 	if one {
 		b.WriteString("  execution  every task runs on a dedicated pod: " + reason + "\n")
-		if e.Pool.State == "off" || e.Pool.State == "none" {
+		if (e.Pool.State == "off" || e.Pool.State == "none") && e.Pool.PreviousPool == "" {
 			return b.String()
 		}
 	} else {
