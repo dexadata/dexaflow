@@ -8,11 +8,22 @@
 -- An attempt is (task_instance_id, try_number, attempt_epoch). Its first event
 -- has revision 0; a later move of the same attempt into another
 -- attempt-ending state (a user's mark over the agent's result) gets the next
--- revision. The row lock the UPDATE already holds on task_instances serializes
--- two writers of one attempt, so revisions do not collide. failed to
+-- revision. The last revision of each attempt is kept in
+-- usage_event_revisions, not looked up among the events, so a re-mark after
+-- retention deleted the earlier events still gets a new revision; its rows go
+-- with their task instance. The row lock the UPDATE already holds on
+-- task_instances serializes two writers of one attempt, so revisions do not
+-- collide. failed to
 -- up_for_retry is not attempt-ending and writes nothing; a reschedule bumps
 -- attempt_epoch, so each poke that ends in up_for_reschedule is its own
 -- attempt.
+--
+-- ended_at is the task instance's end time, or, for a task that started but
+-- has none (a reschedule poke, a mark over a running task), the time of the
+-- change that ended the attempt.
+--
+-- tenant_id carries no foreign key: a key would lock the tenant row on every
+-- event, the same row for every settle of a single-tenant install.
 --
 -- xid is the writing transaction's id. Ids are taken at insert and become
 -- visible at commit, so they commit out of order; a reader serves only rows
@@ -24,8 +35,8 @@
 -- being called for any other write, and with the switch off the function
 -- returns before reading anything else.
 --
--- CREATE TRIGGER takes a SHARE ROW EXCLUSIVE lock on task_instances. The
--- statement is instant, but it waits behind every open transaction on the
+-- CREATE TRIGGER, and the foreign key of usage_event_revisions, take a SHARE
+-- ROW EXCLUSIVE lock on task_instances. The statements are instant, but it waits behind every open transaction on the
 -- table and writes queue behind the wait. lock_timeout bounds it: past 5
 -- seconds the transaction rolls back, golang-migrate marks version 55 dirty
 -- and nothing changed; force 54 and retry when the table is quiet. Every
@@ -50,7 +61,7 @@ INSERT INTO usage_events_switch (id) VALUES (TRUE) ON CONFLICT (id) DO NOTHING;
 CREATE TABLE IF NOT EXISTS usage_events (
     id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     xid               XID8 NOT NULL,
-    tenant_id         UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    tenant_id         UUID NOT NULL,
     dag_run_id        UUID NOT NULL,
     task_instance_id  UUID NOT NULL,
     task_id           TEXT NOT NULL,
@@ -68,9 +79,14 @@ CREATE TABLE IF NOT EXISTS usage_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_usage_events_cursor ON usage_events (xid, id);
-CREATE INDEX IF NOT EXISTS idx_usage_events_attempt
-    ON usage_events (task_instance_id, try_number, attempt_epoch);
-CREATE INDEX IF NOT EXISTS idx_usage_events_recorded ON usage_events (recorded_at);
+
+CREATE TABLE IF NOT EXISTS usage_event_revisions (
+    task_instance_id UUID NOT NULL REFERENCES task_instances(id) ON DELETE CASCADE,
+    try_number       INTEGER NOT NULL,
+    attempt_epoch    INTEGER NOT NULL,
+    revision         INTEGER NOT NULL,
+    PRIMARY KEY (task_instance_id, try_number, attempt_epoch)
+);
 
 CREATE OR REPLACE FUNCTION record_usage_event() RETURNS trigger AS $$
 DECLARE
@@ -79,11 +95,11 @@ BEGIN
     IF NOT COALESCE((SELECT enabled FROM usage_events_switch WHERE id), FALSE) THEN
         RETURN NULL;
     END IF;
-    SELECT COALESCE(max(revision) + 1, 0) INTO next_revision
-    FROM usage_events
-    WHERE task_instance_id = NEW.id
-      AND try_number = NEW.try_number
-      AND attempt_epoch = NEW.attempt_epoch;
+    INSERT INTO usage_event_revisions AS r (task_instance_id, try_number, attempt_epoch, revision)
+    VALUES (NEW.id, NEW.try_number, NEW.attempt_epoch, 0)
+    ON CONFLICT (task_instance_id, try_number, attempt_epoch)
+        DO UPDATE SET revision = r.revision + 1
+    RETURNING r.revision INTO next_revision;
     INSERT INTO usage_events (
         xid, tenant_id, dag_run_id, task_instance_id, task_id, map_index,
         try_number, attempt_epoch, revision, state, previous_state, pool_slots,
@@ -91,7 +107,9 @@ BEGIN
     ) VALUES (
         pg_current_xact_id(), NEW.tenant_id, NEW.dag_run_id, NEW.id, NEW.task_id, NEW.map_index,
         NEW.try_number, NEW.attempt_epoch, next_revision, NEW.state, OLD.state, NEW.pool_slots,
-        NEW.started_at, NEW.ended_at, NEW.last_failure_kind
+        NEW.started_at,
+        COALESCE(NEW.ended_at, CASE WHEN NEW.started_at IS NOT NULL THEN now() END),
+        NEW.last_failure_kind
     );
     RETURN NULL;
 END;
