@@ -288,6 +288,9 @@ var serverDefaults = map[string]any{
 	"observability.otel.skip_probe_spans": false,
 	// Gate (ADR 0062): false keeps the leoflow_ twin of every metric family.
 	"observability.metrics.drop_legacy_names": false,
+	// Per-tenant usage counters from the usage events (ADR 0096); one series
+	// per tenant, so off by default.
+	"observability.usage_metrics": false,
 	// Warm isolation mode (X3.2, ADR 0058). Registered so AutomaticEnv binds
 	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM; false keeps
 	// today's writable warm root.

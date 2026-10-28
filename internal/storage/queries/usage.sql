@@ -81,3 +81,9 @@ LIMIT sqlc.arg(row_limit)::int;
 SELECT COALESCE(EXTRACT(EPOCH FROM now() - min(e.recorded_at)), 0)::float8 AS lag_seconds
 FROM usage_events e
 WHERE e.xid >= pg_snapshot_xmin(pg_current_snapshot());
+
+-- name: UsageEventsHorizon :one
+-- The oldest transaction still running, or the next to start: every event
+-- served now has a lower xid, and every event committed later a higher or
+-- equal one.
+SELECT pg_snapshot_xmin(pg_current_snapshot())::xid8 AS horizon;

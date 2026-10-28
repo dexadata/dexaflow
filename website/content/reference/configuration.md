@@ -971,6 +971,7 @@ written stay. The chart has no value for this key; set it through `extraEnv`.
 | `DEXAFLOW_OBSERVABILITY_LOG_LEVEL` | `observability.log_level` | string | `info` | both | Control-plane log verbosity: `debug`, `info`, `warn` (alias `warning`), or `error`. Unknown values fall back to `info`. |
 | `DEXAFLOW_OBSERVABILITY_LOG_FORMAT` | `observability.log_format` | string | `json` | both | Control-plane log format: `json` (default) or `text`. |
 | `DEXAFLOW_OBSERVABILITY_METRICS_DROP_LEGACY_NAMES` | `observability.metrics.drop_legacy_names` | bool | `false` | both | Stop publishing every `dexaflow_*` metric a second time under its pre-rename `leoflow_*` name. The default keeps both, so dashboards and alerts on either name work. An opt-in for operators who do not need the `leoflow_*` names; it halves the scrape. Helm: set it through `extraEnv`. |
+| `DEXAFLOW_OBSERVABILITY_USAGE_METRICS` | `observability.usage_metrics` | bool | `false` | both | Advance `dexaflow_task_attempts_total{tenant,state}` and `dexaflow_task_slot_seconds_total{tenant}` from the usage events ([ADR 0096](/project/adrs/0096-task-attempt-usage-events/)). The scheduler leader counts each attempt once, by the state it first ended in, from the moment it took the lead, so a failover resets them. One series per tenant, so off by default. Needs `usage.events.enabled`. |
 
 <!-- END GENERATED configref -->
 
@@ -1405,7 +1406,8 @@ of every tenant ([ADR 0096](/project/adrs/0096-task-attempt-usage-events/)):
 one event each time a task attempt reaches an attempt-ending state
 (`success`, `failed`, `skipped`, `upstream_failed`, `removed`,
 `up_for_reschedule`), written by the database in the transaction that made
-the change. It answers `404` while `usage.events.enabled` is off. The answer
+the change ([how to use them](/operate/usage-events/)). It answers `404`
+while `usage.events.enabled` is off. The answer
 is `{"events": [...], "next_cursor": "...", "has_more": true}`, at most
 `limit` events (default 500, at most 5000); each event carries `cursor`,
 `tenant`, `dag_id` and `run_id` (empty once the run is deleted),

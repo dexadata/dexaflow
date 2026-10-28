@@ -106,3 +106,13 @@ func (s *UsageStore) EventsLag(ctx context.Context) (time.Duration, error) {
 	}
 	return time.Duration(secs * float64(time.Second)), nil
 }
+
+// Horizon is the cursor a new reader of only future events starts at: every
+// event served now sorts before it, and every event committed later after.
+func (s *UsageStore) Horizon(ctx context.Context) (domain.UsageCursor, error) {
+	h, err := s.q.UsageEventsHorizon(ctx)
+	if err != nil {
+		return domain.UsageCursor{}, fmt.Errorf("reading the usage events horizon: %w", err)
+	}
+	return domain.UsageCursor{Xid: h.Uint64}, nil
+}

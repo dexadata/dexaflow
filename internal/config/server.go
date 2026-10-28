@@ -267,6 +267,10 @@ type ObservabilitySection struct {
 	LogLevel  string         `mapstructure:"log_level"`
 	LogFormat string         `mapstructure:"log_format"`
 	Metrics   MetricsSection `mapstructure:"metrics"`
+	// UsageMetrics advances dexaflow_task_attempts_total and
+	// dexaflow_task_slot_seconds_total from the usage events (ADR 0096), one
+	// series per tenant. Off by default; it needs usage.events.enabled.
+	UsageMetrics bool `mapstructure:"usage_metrics"`
 }
 
 // MetricsSection configures the Prometheus scrape.

@@ -130,10 +130,13 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 		// API pool and its statement_timeout (#1339).
 		startRetention(ctx, cfg.Retention, cfg.Usage.Events.Enabled, storage.NewRetentionStore(schedPG), sched.IsLeading, metrics, logger)
 		var usageLag usageLagGauge
+		var usageCount usageCounters
 		if metrics != nil {
-			usageLag = metrics
+			usageLag, usageCount = metrics, metrics
 		}
-		startUsageSwitch(ctx, cfg.Usage.Events.Enabled, storage.NewUsageStore(schedPG), usageLag, sched.IsLeading, logger)
+		usageStore := storage.NewUsageStore(schedPG)
+		startUsageSwitch(ctx, cfg.Usage.Events.Enabled, usageStore, usageLag, sched.IsLeading, logger)
+		startUsageCounters(ctx, cfg.Usage.Events.Enabled, cfg.Observability.UsageMetrics, usageStore, usageCount, sched.IsLeading, logger)
 		health = sched
 		podDispatch = dispatchOn
 	}
