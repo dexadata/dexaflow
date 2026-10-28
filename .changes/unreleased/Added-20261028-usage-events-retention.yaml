@@ -1,0 +1,10 @@
+kind: Added
+body: |-
+  **The retention janitor deletes usage events after 30 days.** While
+  `usage.events.enabled` is on, events recorded more than
+  `retention.usage_events_days` ago (default 30, `0` keeps them) are deleted
+  oldest first, in the order the service API serves them, and counted under
+  `table="usage_events"` in `dexaflow_retention_rows_deleted_total`.
+  Migration 056 adds the row that marks the newest deleted event, so a
+  consumer that fell behind is told it lost events. (#2174)
+time: 2026-10-28T20:30:00.000000000+00:00
