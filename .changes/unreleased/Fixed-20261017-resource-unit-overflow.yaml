@@ -1,9 +1,0 @@
-kind: Fixed
-body: |-
-  **Resource unit calculations now prevent int64 integer overflow on astronomical quantities.**
-  When calculating units for quantities near MaxInt64 (such as memory requests in Exabytes
-  or large CPU values), the previous division algorithm overflowed into negative values,
-  passing the refuse check and erroneously admitting oversized tasks into pool slots. The
-  calculation now computes ceilings without intermediate sum overflow and returns math.MaxInt
-  when value boundaries are reached. (#1608)
-time: 2026-10-17T18:30:00.000000000+00:00

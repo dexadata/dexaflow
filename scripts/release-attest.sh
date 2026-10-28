@@ -17,7 +17,8 @@
 #       attestation (the workflow names the four platforms one step each).
 #   release-attest.sh images <tag> <subjects-file> <refs-file>
 #       Resolve the digest of every image the release published (server, mcp, cli,
-#       migrate, one runtime leg per Python line in the schema). Writes
+#       migrate, one runtime leg per Python line in the schema, and the py3.11
+#       data leg). Writes
 #       <subjects-file> in checksums format (`<hex>  <repository>`), which
 #       actions/attest takes as `subject-checksums`, and <refs-file> with one
 #       `<repository>@sha256:<hex>` per line.
@@ -57,6 +58,8 @@ image_refs() { # <prefix> <tag>
 		n=$((n + 1))
 	done
 	[ "$n" -ge 1 ] || die "no Python line found in the schema enum"
+	# The data variant (runtime/data, RUNTIME_VARIANT=data): one leg, py3.11.
+	printf '%s\n' "$prefix/dexaflow-runtime:py3.11-data-$tag"
 }
 
 cmd_archives() { # <dir> <tag>
@@ -186,7 +189,7 @@ SH
 	printf '{"properties":{"python_version":{"enum":["3.11","3.12"]}}}' >"$schema"
 
 	out="$(PATH="$bin:$PATH" RELEASE_ATTEST_SCHEMA="$schema" REGISTRY_PREFIX=ghcr.io/o cmd_images v1.2.3 "$tmp/subj" "$tmp/refs" 2>&1)" || { echo "  FAIL images: $out"; fail=1; }
-	_eq "$(awk '{print $2}' "$tmp/subj" | tr '\n' ' ')" "ghcr.io/o/dexaflow-server ghcr.io/o/dexaflow-mcp ghcr.io/o/dexaflow-cli ghcr.io/o/dexaflow-migrate ghcr.io/o/dexaflow-runtime ghcr.io/o/dexaflow-runtime " "every published image is a subject, one runtime leg per schema Python"
+	_eq "$(awk '{print $2}' "$tmp/subj" | tr '\n' ' ')" "ghcr.io/o/dexaflow-server ghcr.io/o/dexaflow-mcp ghcr.io/o/dexaflow-cli ghcr.io/o/dexaflow-migrate ghcr.io/o/dexaflow-runtime ghcr.io/o/dexaflow-runtime ghcr.io/o/dexaflow-runtime " "every published image is a subject, one runtime leg per schema Python plus the data leg"
 	_eq "$(head -1 "$tmp/subj")" "1111111111111111111111111111111111111111111111111111111111111111  ghcr.io/o/dexaflow-server" "subjects file is in checksums format"
 	_eq "$(head -1 "$tmp/refs")" "ghcr.io/o/dexaflow-server@sha256:1111111111111111111111111111111111111111111111111111111111111111" "refs are pinned by digest"
 	_eq "$(sed -n 5p "$tmp/refs")" "ghcr.io/o/dexaflow-runtime@sha256:2222222222222222222222222222222222222222222222222222222222222222" "runtime refs drop the tag, keep the digest"
@@ -198,8 +201,8 @@ SH
 	export FAKE_LOG="$tmp/log"
 	: >"$FAKE_LOG"
 	out="$(PATH="$bin:$PATH" COSIGN_RETRY_ATTEMPTS=1 cmd_sbom "$tmp/refs" 2>&1)" || { echo "  FAIL sbom: $out"; fail=1; }
-	_eq "$(grep -c '^cosign attest --yes --type spdxjson --predicate ' "$FAKE_LOG")" "6" "one cosign spdxjson attestation per image"
-	_eq "$(grep -c '^syft scan registry:ghcr.io/o/[a-z-]*@sha256:[0-9a-f]\{64\} --platform linux/amd64 -o spdx-json=' "$FAKE_LOG")" "6" "syft scans each image by digest"
+	_eq "$(grep -c '^cosign attest --yes --type spdxjson --predicate ' "$FAKE_LOG")" "7" "one cosign spdxjson attestation per image"
+	_eq "$(grep -c '^syft scan registry:ghcr.io/o/[a-z-]*@sha256:[0-9a-f]\{64\} --platform linux/amd64 -o spdx-json=' "$FAKE_LOG")" "7" "syft scans each image by digest"
 	_eq "$(grep '^cosign' "$FAKE_LOG" | head -1 | awk '{print $NF}')" "ghcr.io/o/dexaflow-server@sha256:1111111111111111111111111111111111111111111111111111111111111111" "cosign attests the digest, not the tag"
 	printf 'ghcr.io/o/dexaflow-server:v1.2.3\n' >"$tmp/tagref"
 	_fails "a tag-only ref is refused" "not pinned by digest" env PATH="$bin:$PATH" bash "$ROOT/scripts/release-attest.sh" sbom "$tmp/tagref"

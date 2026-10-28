@@ -104,10 +104,32 @@ func dueScheduledSlots(expr string, lastLogical, startDate *time.Time, now time.
 // run far in the past costs the same as a recent one and the per-tick cap
 // cannot stop the walk short of now.
 func latestDueSlot(schedule cron.Schedule, seed time.Time, startDate *time.Time, now time.Time) []time.Time {
+	if every, ok := schedule.(cron.ConstantDelaySchedule); ok {
+		return latestEverySlot(every, seed, startDate, now)
+	}
 	latest, ok := latestSlotAtOrBefore(schedule, now)
 	if !ok || !latest.After(seed) {
 		return nil
 	}
+	if startDate != nil && latest.Before(*startDate) {
+		return nil
+	}
+	return []time.Time{latest}
+}
+
+// latestEverySlot is latestDueSlot for an @every schedule. Its slots have no
+// wall-clock grid: Next adds the interval to whatever time it is given, so the
+// search back from now that latestSlotAtOrBefore does would always land on now
+// itself and find a slot on every tick. The slots are the steps of the
+// interval after seed (the last run, or one interval before the start_date),
+// the same ones catchup=true walks, and the latest of them at or before now is
+// found from the remainder instead of by walking.
+func latestEverySlot(every cron.ConstantDelaySchedule, seed time.Time, startDate *time.Time, now time.Time) []time.Time {
+	first := every.Next(seed)
+	if first.After(now) || every.Delay <= 0 {
+		return nil
+	}
+	latest := now.Add(-(now.Sub(first) % every.Delay))
 	if startDate != nil && latest.Before(*startDate) {
 		return nil
 	}

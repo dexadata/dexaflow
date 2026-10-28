@@ -148,7 +148,8 @@ loop**. `grep -rn SchedulerLoopDuration --include='*.go'` returns the metric
 definition, the metrics unit test, and `test/load/scheduler_ceiling`, which
 observes it by hand precisely because the product does not. The tables
 `scheduler_loops` and `replicas` (migration `004_scheduler_control.up.sql`,
-commented "purely for observability") are written by no Go code at all.
+commented "purely for observability") were written by no Go code at all;
+migration `051_drop_unwritten_tables` dropped them (#1186).
 
 So there is no in-product signal for tick duration. The soak therefore times
 `SchedulerStore.ActiveRuns` itself, from its own read-only connection. That call

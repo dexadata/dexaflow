@@ -295,6 +295,7 @@ var serverDefaults = map[string]any{
 	"execution.warm_require_attempt_home_sweep": false,
 	"execution.source_mode.enabled":             false,
 	"execution.source_mode.image":               "",
+	"execution.source_mode.warm_pools":          false,
 	// Event-driven warm-pool refill (ADR 0058). Registered so AutomaticEnv binds
 	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL; false keeps polling.
 	"execution.warm_pool_event_refill": false,

@@ -12,7 +12,11 @@ import (
 )
 
 const clearDagRuns = `-- name: ClearDagRuns :execrows
-DELETE FROM dag_runs WHERE tenant_id = $1 AND dag_id = $2
+WITH invalidate AS (
+  UPDATE dags d SET next_run_at = NULL, schedule_epoch = d.schedule_epoch + 1
+  WHERE d.tenant_id = $1 AND d.id = $2
+)
+DELETE FROM dag_runs r WHERE r.tenant_id = $1 AND r.dag_id = $2
 `
 
 type ClearDagRunsParams struct {
@@ -20,6 +24,7 @@ type ClearDagRunsParams struct {
 	DagID    pgtype.UUID `json:"dag_id"`
 }
 
+// The DAG's stored next due time goes with its runs (#2175).
 func (q *Queries) ClearDagRuns(ctx context.Context, arg ClearDagRunsParams) (int64, error) {
 	result, err := q.db.Exec(ctx, clearDagRuns, arg.TenantID, arg.DagID)
 	if err != nil {
@@ -257,7 +262,7 @@ func (q *Queries) GetCurrentDagSpec(ctx context.Context, arg GetCurrentDagSpecPa
 }
 
 const getDagByDagID = `-- name: GetDagByDagID :one
-SELECT id, tenant_id, dag_id, description, is_paused, is_active, owner, tags, schedule, schedule_timezone, start_date, end_date, max_active_runs, catchup, current_version_id, created_at, updated_at FROM dags WHERE tenant_id = $1 AND dag_id = $2
+SELECT id, tenant_id, dag_id, description, is_paused, is_active, owner, tags, schedule, schedule_timezone, start_date, end_date, max_active_runs, catchup, current_version_id, created_at, updated_at, next_run_at, schedule_epoch FROM dags WHERE tenant_id = $1 AND dag_id = $2
 `
 
 type GetDagByDagIDParams struct {
@@ -286,6 +291,8 @@ func (q *Queries) GetDagByDagID(ctx context.Context, arg GetDagByDagIDParams) (D
 		&i.CurrentVersionID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.NextRunAt,
+		&i.ScheduleEpoch,
 	)
 	return i, err
 }
@@ -321,7 +328,7 @@ func (q *Queries) GetDagVersionByHash(ctx context.Context, arg GetDagVersionByHa
 }
 
 const getDagWithVersion = `-- name: GetDagWithVersion :one
-SELECT d.id, d.tenant_id, d.dag_id, d.description, d.is_paused, d.is_active, d.owner, d.tags, d.schedule, d.schedule_timezone, d.start_date, d.end_date, d.max_active_runs, d.catchup, d.current_version_id, d.created_at, d.updated_at, v.version AS current_version_label
+SELECT d.id, d.tenant_id, d.dag_id, d.description, d.is_paused, d.is_active, d.owner, d.tags, d.schedule, d.schedule_timezone, d.start_date, d.end_date, d.max_active_runs, d.catchup, d.current_version_id, d.created_at, d.updated_at, d.next_run_at, d.schedule_epoch, v.version AS current_version_label
 FROM dags d
 LEFT JOIN dag_versions v ON v.id = d.current_version_id
 WHERE d.tenant_id = $1 AND d.dag_id = $2
@@ -350,6 +357,8 @@ type GetDagWithVersionRow struct {
 	CurrentVersionID    pgtype.UUID        `json:"current_version_id"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	NextRunAt           pgtype.Timestamptz `json:"next_run_at"`
+	ScheduleEpoch       int64              `json:"schedule_epoch"`
 	CurrentVersionLabel *string            `json:"current_version_label"`
 }
 
@@ -375,6 +384,8 @@ func (q *Queries) GetDagWithVersion(ctx context.Context, arg GetDagWithVersionPa
 		&i.CurrentVersionID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.NextRunAt,
+		&i.ScheduleEpoch,
 		&i.CurrentVersionLabel,
 	)
 	return i, err
@@ -510,7 +521,7 @@ func (q *Queries) ListDagVersions(ctx context.Context, arg ListDagVersionsParams
 }
 
 const listDags = `-- name: ListDags :many
-SELECT id, tenant_id, dag_id, description, is_paused, is_active, owner, tags, schedule, schedule_timezone, start_date, end_date, max_active_runs, catchup, current_version_id, created_at, updated_at FROM dags
+SELECT id, tenant_id, dag_id, description, is_paused, is_active, owner, tags, schedule, schedule_timezone, start_date, end_date, max_active_runs, catchup, current_version_id, created_at, updated_at, next_run_at, schedule_epoch FROM dags
 WHERE tenant_id = $1 AND is_active = true
 ORDER BY dag_id
 LIMIT $2 OFFSET $3
@@ -549,6 +560,8 @@ func (q *Queries) ListDags(ctx context.Context, arg ListDagsParams) ([]Dag, erro
 			&i.CurrentVersionID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.NextRunAt,
+			&i.ScheduleEpoch,
 		); err != nil {
 			return nil, err
 		}
@@ -561,7 +574,7 @@ func (q *Queries) ListDags(ctx context.Context, arg ListDagsParams) ([]Dag, erro
 }
 
 const listDagsFiltered = `-- name: ListDagsFiltered :many
-SELECT d.id, d.tenant_id, d.dag_id, d.description, d.is_paused, d.is_active, d.owner, d.tags, d.schedule, d.schedule_timezone, d.start_date, d.end_date, d.max_active_runs, d.catchup, d.current_version_id, d.created_at, d.updated_at
+SELECT d.id, d.tenant_id, d.dag_id, d.description, d.is_paused, d.is_active, d.owner, d.tags, d.schedule, d.schedule_timezone, d.start_date, d.end_date, d.max_active_runs, d.catchup, d.current_version_id, d.created_at, d.updated_at, d.next_run_at, d.schedule_epoch
 FROM dags d
 LEFT JOIN LATERAL (
     SELECT r.state
@@ -621,6 +634,8 @@ func (q *Queries) ListDagsFiltered(ctx context.Context, arg ListDagsFilteredPara
 			&i.CurrentVersionID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.NextRunAt,
+			&i.ScheduleEpoch,
 		); err != nil {
 			return nil, err
 		}
@@ -633,7 +648,7 @@ func (q *Queries) ListDagsFiltered(ctx context.Context, arg ListDagsFilteredPara
 }
 
 const listDagsWithFilter = `-- name: ListDagsWithFilter :many
-SELECT d.id, d.tenant_id, d.dag_id, d.description, d.is_paused, d.is_active, d.owner, d.tags, d.schedule, d.schedule_timezone, d.start_date, d.end_date, d.max_active_runs, d.catchup, d.current_version_id, d.created_at, d.updated_at, v.version AS current_version_label
+SELECT d.id, d.tenant_id, d.dag_id, d.description, d.is_paused, d.is_active, d.owner, d.tags, d.schedule, d.schedule_timezone, d.start_date, d.end_date, d.max_active_runs, d.catchup, d.current_version_id, d.created_at, d.updated_at, d.next_run_at, d.schedule_epoch, v.version AS current_version_label
 FROM dags d
 LEFT JOIN dag_versions v ON v.id = d.current_version_id
 LEFT JOIN LATERAL (
@@ -718,6 +733,8 @@ type ListDagsWithFilterRow struct {
 	CurrentVersionID    pgtype.UUID        `json:"current_version_id"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	NextRunAt           pgtype.Timestamptz `json:"next_run_at"`
+	ScheduleEpoch       int64              `json:"schedule_epoch"`
 	CurrentVersionLabel *string            `json:"current_version_label"`
 }
 
@@ -768,6 +785,8 @@ func (q *Queries) ListDagsWithFilter(ctx context.Context, arg ListDagsWithFilter
 			&i.CurrentVersionID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.NextRunAt,
+			&i.ScheduleEpoch,
 			&i.CurrentVersionLabel,
 		); err != nil {
 			return nil, err
@@ -781,7 +800,7 @@ func (q *Queries) ListDagsWithFilter(ctx context.Context, arg ListDagsWithFilter
 }
 
 const listDagsWithVersion = `-- name: ListDagsWithVersion :many
-SELECT d.id, d.tenant_id, d.dag_id, d.description, d.is_paused, d.is_active, d.owner, d.tags, d.schedule, d.schedule_timezone, d.start_date, d.end_date, d.max_active_runs, d.catchup, d.current_version_id, d.created_at, d.updated_at, v.version AS current_version_label
+SELECT d.id, d.tenant_id, d.dag_id, d.description, d.is_paused, d.is_active, d.owner, d.tags, d.schedule, d.schedule_timezone, d.start_date, d.end_date, d.max_active_runs, d.catchup, d.current_version_id, d.created_at, d.updated_at, d.next_run_at, d.schedule_epoch, v.version AS current_version_label
 FROM dags d
 LEFT JOIN dag_versions v ON v.id = d.current_version_id
 WHERE d.tenant_id = $1 AND d.is_active = true
@@ -813,6 +832,8 @@ type ListDagsWithVersionRow struct {
 	CurrentVersionID    pgtype.UUID        `json:"current_version_id"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	NextRunAt           pgtype.Timestamptz `json:"next_run_at"`
+	ScheduleEpoch       int64              `json:"schedule_epoch"`
 	CurrentVersionLabel *string            `json:"current_version_label"`
 }
 
@@ -847,6 +868,8 @@ func (q *Queries) ListDagsWithVersion(ctx context.Context, arg ListDagsWithVersi
 			&i.CurrentVersionID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.NextRunAt,
+			&i.ScheduleEpoch,
 			&i.CurrentVersionLabel,
 		); err != nil {
 			return nil, err
@@ -973,7 +996,7 @@ func (q *Queries) ListWarmCurrentVersions(ctx context.Context, arg ListWarmCurre
 }
 
 const lockDagByDagID = `-- name: LockDagByDagID :one
-SELECT id, tenant_id, dag_id, description, is_paused, is_active, owner, tags, schedule, schedule_timezone, start_date, end_date, max_active_runs, catchup, current_version_id, created_at, updated_at FROM dags WHERE tenant_id = $1 AND dag_id = $2 FOR NO KEY UPDATE
+SELECT id, tenant_id, dag_id, description, is_paused, is_active, owner, tags, schedule, schedule_timezone, start_date, end_date, max_active_runs, catchup, current_version_id, created_at, updated_at, next_run_at, schedule_epoch FROM dags WHERE tenant_id = $1 AND dag_id = $2 FOR NO KEY UPDATE
 `
 
 type LockDagByDagIDParams struct {
@@ -1007,12 +1030,16 @@ func (q *Queries) LockDagByDagID(ctx context.Context, arg LockDagByDagIDParams) 
 		&i.CurrentVersionID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.NextRunAt,
+		&i.ScheduleEpoch,
 	)
 	return i, err
 }
 
 const setCurrentDagVersion = `-- name: SetCurrentDagVersion :exec
-UPDATE dags SET current_version_id = $2, updated_at = now() WHERE id = $1 AND tenant_id = $3
+UPDATE dags
+SET current_version_id = $2, next_run_at = NULL, schedule_epoch = schedule_epoch + 1, updated_at = now()
+WHERE id = $1 AND tenant_id = $3
 `
 
 type SetCurrentDagVersionParams struct {
@@ -1021,6 +1048,8 @@ type SetCurrentDagVersionParams struct {
 	TenantID         pgtype.UUID `json:"tenant_id"`
 }
 
+// A new current version can change the schedule, start_date or catchup, so the
+// stored next due time is cleared and the schedule epoch bumped (#2175).
 func (q *Queries) SetCurrentDagVersion(ctx context.Context, arg SetCurrentDagVersionParams) error {
 	_, err := q.db.Exec(ctx, setCurrentDagVersion, arg.ID, arg.CurrentVersionID, arg.TenantID)
 	return err
@@ -1029,7 +1058,7 @@ func (q *Queries) SetCurrentDagVersion(ctx context.Context, arg SetCurrentDagVer
 const setDagPaused = `-- name: SetDagPaused :one
 UPDATE dags SET is_paused = $3, updated_at = now()
 WHERE tenant_id = $1 AND dag_id = $2
-RETURNING id, tenant_id, dag_id, description, is_paused, is_active, owner, tags, schedule, schedule_timezone, start_date, end_date, max_active_runs, catchup, current_version_id, created_at, updated_at
+RETURNING id, tenant_id, dag_id, description, is_paused, is_active, owner, tags, schedule, schedule_timezone, start_date, end_date, max_active_runs, catchup, current_version_id, created_at, updated_at, next_run_at, schedule_epoch
 `
 
 type SetDagPausedParams struct {
@@ -1059,6 +1088,8 @@ func (q *Queries) SetDagPaused(ctx context.Context, arg SetDagPausedParams) (Dag
 		&i.CurrentVersionID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.NextRunAt,
+		&i.ScheduleEpoch,
 	)
 	return i, err
 }

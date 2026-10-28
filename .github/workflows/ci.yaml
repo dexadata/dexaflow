@@ -1598,6 +1598,8 @@ jobs:
         run: bash scripts/check-workflow-pins.sh
       - name: Lite Postgres tag agrees with the container Lite starts
         run: bash scripts/check-lite-postgres-tag.sh
+      - name: Runtime data variant pins the base's Task SDK and certifi
+        run: bash scripts/check-runtime-data-pins.sh
       - name: Embedded Airflow UI pin agrees with the committed bundle
         run: bash scripts/check-airflow-ui-pin.sh
       - name: Startup probe budget covers the boot bounds the code states

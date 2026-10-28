@@ -36,6 +36,11 @@ var ErrDatabaseReplaced = errors.New("database replaced")
 // the tenant's usage changes.
 var ErrLimitExceeded = errors.New("tenant limit exceeded")
 
+// ErrTenantSuspended is returned when a write would create work for a tenant
+// the operator suspended through the service API. The API maps it to 409: the
+// request is well formed, and it succeeds once the suspension is lifted.
+var ErrTenantSuspended = errors.New("tenant suspended")
+
 // ErrValueUnreadable is returned when a stored value is encrypted and no
 // configured secret key opens it. It is a server configuration fault, not the
 // caller's: the API answers 500, with a message that says what happened.

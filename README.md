@@ -91,9 +91,9 @@ coexist out of the box.
 
 ```bash
 kubectl create namespace dexaflow
-helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version 0.5.5 -n dexaflow \
-  --set image.tag=v0.5.5 \
-  --set migrations.image.tag=v0.5.5 \
+helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version 0.5.7 -n dexaflow \
+  --set image.tag=v0.5.7 \
+  --set migrations.image.tag=v0.5.7 \
   --set database.url='postgres://USER:PASS@HOST:5432/dexaflow?sslmode=verify-full' \
   --set redis.url='rediss://HOST:6380/0' \
   --set auth.jwtSecret="$(openssl rand -base64 64)" \

@@ -194,6 +194,13 @@ type ScheduledDAG struct {
 	// skipped on this tick (issue #200). Starting a queued run is capped
 	// separately, on the running runs alone (RunState.MaxActiveRuns, #1766).
 	MaxActiveRuns int
+	// NextRunAt is the next due time the scheduler stored for the DAG
+	// (SetNextRunAt, #2175), nil when none is stored. ScheduleEpoch counts the
+	// changes that invalidate it (a new current version, a deleted run); a
+	// write conditioned on the epoch the list returned is dropped when the DAG
+	// changed in between.
+	NextRunAt     *time.Time
+	ScheduleEpoch int64
 }
 
 // Store is the scheduler's view of persistent state. The concrete
@@ -285,7 +292,13 @@ type Store interface {
 	// call because the send is detached from the tick: an operator clear can start
 	// a new episode mid-send, and a stamp from the superseded one must not land.
 	MarkRunAlertDelivered(ctx context.Context, runID string, attempt int) error
-	ScheduledDAGs(ctx context.Context) ([]ScheduledDAG, error)
+	// ScheduledDAGs lists the scheduled DAGs the tick must look at: those with
+	// no stored next due time and those whose time is at or before now, which
+	// is the scheduler's clock so the store's own clock never delays a run.
+	ScheduledDAGs(ctx context.Context, now time.Time) ([]ScheduledDAG, error)
+	// SetNextRunAt stores when the DAG is next due, unless its schedule epoch
+	// is no longer epoch.
+	SetNextRunAt(ctx context.Context, tenantID, dagID string, epoch int64, at time.Time) error
 	CreateScheduledRun(ctx context.Context, tenantID, dagID string, logical time.Time) error
 	// SetTaskNote attaches operational context to a task instance (shown in the
 	// UI), e.g. why it is queued but not running.
@@ -318,6 +331,10 @@ type Recorder interface {
 	// RecordSchedulerWokenTick counts a tick started early by Wake
 	// (scheduler.eager_promotion) instead of by the loop interval.
 	RecordSchedulerWokenTick()
+	// ObserveScheduleDelay records how late a scheduled run was created: the
+	// time from its slot to its creation, for the latest slot a tick created
+	// for a DAG (#2175).
+	ObserveScheduleDelay(d time.Duration)
 }
 
 // Dispatcher launches a task instance for execution. The scheduler dispatches a
@@ -393,6 +410,10 @@ type Scheduler struct {
 	// to the UTC date it was last logged for, so a capped tenant logs once a
 	// day, not on every tick that retries its due slot. Tick-only, no lock.
 	warnedRunCaps map[string]string
+	// warnedSuspensions dedupes the "tenant is suspended" warning: tenant UUID
+	// to the refusal it was last logged with, cleared once the tenant gets a
+	// run again. Tick-only, no lock.
+	warnedSuspensions map[string]string
 	// poolsEnabled turns on the cross-DAG named-pool admission gate (ADR 0053
 	// Stage 3). Pro-only: main calls EnablePools() only when the edition is "pro".
 	// While false (Lite / non-Pro), Step never loads pool budgets and never
@@ -425,14 +446,15 @@ type Scheduler struct {
 // NewScheduler builds a Scheduler over the given store, ticking every interval.
 func NewScheduler(store Store, logger *slog.Logger, interval time.Duration) *Scheduler {
 	return &Scheduler{
-		store:           store,
-		logger:          logger,
-		interval:        interval,
-		stepTimeout:     defaultStepTimeout(interval),
-		warnedSchedules: map[dagRef]string{},
-		warnedRunCaps:   map[string]string{},
-		alertSem:        make(chan struct{}, defaultAlertConcurrency),
-		clock:           time.Now,
+		store:             store,
+		logger:            logger,
+		interval:          interval,
+		stepTimeout:       defaultStepTimeout(interval),
+		warnedSchedules:   map[dagRef]string{},
+		warnedRunCaps:     map[string]string{},
+		warnedSuspensions: map[string]string{},
+		alertSem:          make(chan struct{}, defaultAlertConcurrency),
+		clock:             time.Now,
 		// The budget is on by default: the stall it prevents is reachable with
 		// default settings (synchronous dispatch, client QPS 5).
 		dispatchTickBudget: DefaultDispatchTickBudget,

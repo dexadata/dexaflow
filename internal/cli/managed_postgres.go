@@ -41,11 +41,18 @@ func resolveDatastore(flag string, dockerOK bool) string {
 	return datastoreManaged
 }
 
-// autoDatastore resolves an "auto" --postgres at run time (detecting Docker) and
-// prints which backend it chose; a non-auto value is returned unchanged.
-func autoDatastore(ctx context.Context, cmd *cobra.Command, flag string) string {
+// autoDatastore resolves an "auto" --postgres at run time and prints which
+// backend it chose; a non-auto value is returned unchanged. An install pinned to
+// the managed Postgres (a restore, or an earlier --postgres managed) keeps it
+// (ADR 0094); otherwise Docker is detected as ADR 0030 says.
+func autoDatastore(ctx context.Context, cmd *cobra.Command, flag, devDir string) string {
 	if flag != datastoreAuto {
 		return flag
+	}
+	if readDatastorePin(devDir) == datastoreManaged {
+		devPrintln(cmd.OutOrStdout(), "▸ using the managed Postgres this install is pinned to "+
+			"(by `dexaflow lite restore` or an earlier --postgres managed). Pass --postgres docker to switch.")
+		return datastoreManaged
 	}
 	host := probeDockerHost(ctx, dockerAvailable())
 	mode := resolveDatastore(datastoreAuto, host == dockerReady)

@@ -6,6 +6,433 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-10-27
+
+### Added
+
+- **Structured task placement fields are now validated at DAG registration.**
+  Task placement fields (`execution.tolerations`, `execution.affinity`,
+  `execution.topology_spread_constraints`, `execution.resource_claims`, and
+  `resources.claims`) are now strictly validated when a DAG is registered.
+  Malformed keys or invalid types now fail loudly at registration time rather
+  than being silently dropped at pod build. (#628)
+- **The Helm chart can show a maintenance page while no server pod is ready.**
+  Set `ingress.maintenancePage.enabled: true` to deploy a small unprivileged
+  nginx (`<release>-maintenance`) that answers with `503`, `Retry-After` and a
+  page that reloads by itself, and to point ingress-nginx's `default-backend`
+  at it, with `custom-http-errors: "502,504"`. The server's own 503 responses
+  still reach clients. The message, an operator note and a status link are
+  configurable and rendered escaped. (#1998)
+- **A data variant of the task runtime image.** Each release also publishes
+  `dexaflow-runtime:py3.11-data-<tag>`, signed and scanned like the base. It is
+  the base plus the Airflow providers for Postgres, MySQL, Amazon, Google,
+  Databricks, Snowflake, HTTP and common SQL, and dbt with its Postgres,
+  Snowflake, BigQuery and Databricks adapters, all pinned with hashes in
+  `runtime/data/requirements.txt`. It gives source mode, where a DAG runs on
+  the runtime image with no build, a runtime that can reach databases and
+  warehouses.
+- **Source-mode versions can run on warm workers.** With the new
+  `execution.source_mode.warm_pools` (Helm: `execution.sourceMode.warmPools`,
+  default `false`) and warm pools on, a source-mode version gets a warm pool:
+  the control plane sends its `dag.py` and SHA-256 with each warm assignment,
+  and the worker checks it, runs the attempt from it and removes it afterwards.
+  The runtime image needs an agent from 0.5.7 or later; a warm worker on an
+  older agent is never given a source-mode attempt, which then takes a
+  dedicated pod, and is counted in
+  `dexaflow_scheduler_decisions_total{decision_type="warm_worker_no_source_delivery"}`
+  (ADR 0095). (#2159)
+
+### Changed
+
+- **Expand/contract migration discipline documented and verified in CI.** Schema
+  migrations follow an expand/contract sequence per ADR 0090: a release only adds
+  nullable or defaulted columns, new tables, or new indexes. Removals, renames,
+  and NOT NULL constraints without defaults happen in a contract phase at least
+  one minor release later. Helm CI now verifies rollback to the previous release
+  against the newer schema to ensure compatibility. (#1994)
+- **`helm install` and `helm upgrade` warn when `database.url` points at an
+  in-cluster Postgres Service.** The release notes say that a Postgres on
+  emptyDir loses every DAG version, run, secret and user when its pod moves,
+  and point at the upgrade guide. The backup guide now describes a regular
+  restore drill for Lite and for Helm, which the repository also runs every
+  week and on each release candidate. (#1995)
+
+### Removed
+
+- **The unused 4.1 MB legacy logo.png and scripts/gen_assets.py were removed from the repository root.**
+  Brand logos and icons are now exclusively located under `website/static/assets/`, reducing
+  initial checkout size for contributors and CI pipelines. (#1939)
+
+### Fixed
+
+- **Saving a variable, connection or pool no longer fails after its tenant was
+  recreated or the database restored under a running server.** The server
+  caches each tenant's id; such a write failed with a foreign-key violation
+  against `tenants` (SQLSTATE 23503) until a restart. It now drops the stale
+  id and retries once. Other queries still need the restart the backup guide
+  describes. (#1614)
+- **Resource unit calculations now prevent int64 integer overflow on astronomical quantities.**
+  When calculating units for quantities near MaxInt64 (such as memory requests in Exabytes
+  or large CPU values), the previous division algorithm overflowed into negative values,
+  passing the refuse check and erroneously admitting oversized tasks into pool slots. The
+  calculation now computes ceilings without intermediate sum overflow and returns math.MaxInt
+  when value boundaries are reached. (#1608)
+- **Secret scoping in permissive and observe mode now warns when a task declares no secrets.**
+  Previously, scope gap detection only flagged strict non-empty subsets, remaining silent
+  when a task declared zero secrets. Under `secret_scoping: enforce`, undeclared tasks receive
+  zero secrets; the observation phase now emits a warning and audit record with `declared=0`
+  so operators can measure their migration backlog before turning on enforcement. That
+  warning is recorded once per DAG version and kind on each control plane replica, not on
+  every attempt. (#800)
+- **DAG list search, sort, tags, and favorites filters are now forwarded and
+  evaluated by the server, and `/api/v2/dagTags` serves distinct registered tags.**
+  Previously, `/ui/dags` only respected `paused` and `last_dag_run_state`,
+  ignoring search substrings, prefixes, order by, tags, and favorites filters,
+  and `/api/v2/dagTags` was a static empty stub leaving UI tag filters empty.
+  The server now evaluates all DAG filter parameters in database queries,
+  sorts by latest run state and start date (DAGs with no run last), and serves
+  distinct tenant DAG tags as plain strings, narrowed by `tag_name_pattern` or
+  `tag_name_prefix_pattern`. (#1927)
+- **The search boxes and filters of the Airflow 3.3 UI now filter the list
+  endpoints.** `/api/v2/connections`, `/api/v2/variables`, a DAG's
+  `dagRuns`, a run's `taskInstances` and `/api/v2/importErrors` read only
+  their paging parameters before, so a search returned the unfiltered page.
+  They now apply the `*_pattern` and `*_prefix_pattern` searches (SQL `LIKE`,
+  case-insensitive), the run state, type and date bounds, the task instance
+  state and pool, and `filename` and `bundle_name` for import errors, in SQL,
+  with `total_entries` counting the filtered set. A date bound that is not
+  RFC 3339 answers `400`. A run's task instances are now paged by
+  `limit`/`offset` (default 100) like every other list, instead of always
+  returning the whole run. The "DAG deactivated" banner no longer shows the
+  import error of another file. (#1928)
+- **Staging GC now sweeps unrecorded orphan PVCs by label and continues on delete errors.**
+  When a persistent volume claim was created in Kubernetes but failed to record in the
+  metadatabase, the volume was never reclaimed because the collector only read tracked
+  runs. The garbage collector now sweeps PVCs carrying the `leoflow.io/staging` label
+  whose age exceeds the TTL. In addition, when deleting a PVC fails, the collector logs
+  the error, increments the `staging_pvc_delete_error` decision metric, and continues
+  reclaiming subsequent volumes instead of halting the entire cycle. The chart's executor
+  Role now also grants `list` on `persistentvolumeclaims`; an install that manages its own
+  Role must add it, or the sweep of unrecorded claims logs a 403 every cycle. (#1615)
+- **A dbt run summary line printed to stderr is no longer mislabeled as ERROR when there are no errors.**
+  dbt prints its end-of-run summary (e.g. `Done. PASS=24 WARN=0 ERROR=0 SKIP=0`) to stderr
+  in some environments, which caused the log level refiner to label successful tasks as ERROR
+  due to the presence of the `ERROR=0` substring. The refiner now recognizes dbt summary patterns,
+  coloring runs with `ERROR=0` as info (or warning when warnings are present) instead of forcing
+  them to error. (#870)
+- **Airflow 3.3 UI actions degrade to 501 or empty collections instead of 404.**
+  Actions on the embedded UI screens answered 404 "API route not found" when
+  Dexaflow does not serve the underlying feature. Under ADR 0018, unserved writes
+  (bulk task instances, delete task instance, bulk variables and connections,
+  XCom mutations, and file reparsing) now answer 501 with a descriptive toast
+  message, while unserved list reads (upstream asset events and queued asset
+  events) answer empty collections (#1926).
+- **`dbt parse` now writes into an ephemeral scratch directory instead of polluting the working tree.**
+  Compiling a dbt project previously ran `dbt parse` directly in the project directory without
+  redirecting outputs, writing `target/` and `logs/` into the user's working tree. The compiler now
+  sets `DBT_TARGET_PATH` and `DBT_LOG_PATH` to a temporary directory that is wiped after the manifest
+  is read, keeping the author's project tree untouched. (#1060)
+- **An empty log view now says when task logs were on ephemeral storage.** With
+  `logs.persistence.enabled=false` and `logs.sink.provider=disk`, task logs live in
+  the control-plane pod's emptyDir, so a pod restart drops them. For an attempt that
+  ran and has no stored log, the log view now adds a warning saying so, instead of
+  only "No logs available for this attempt". The chart NOTES warn about this setup
+  on a single replica too, and the server logs a startup warning. (#1024)
+- **The web UI keeps its session renewed while it is open.** The session expired
+  after `auth.jwt.token_ttl_seconds` (one hour by default) with no renewal. The UI
+  now renews it every 15 minutes and when its tab is shown again, up to
+  `auth.jwt.max_lifetime_seconds`. `POST /api/v2/auth/token/renew` accepts the
+  session cookie on same-origin requests and rewrites it. "Generate token" in
+  the user menu reports the time the token really has left, the login page says
+  when authentication is unavailable instead of "Invalid credentials", the web
+  editor sends an expired session to the login page instead of showing an empty
+  workspace, and logging in again returns to the page you were on. (#1127)
+- An `on_failure_callback` on a provider operator now runs on the final failed attempt; it compiled but never fired (#484). The runtime reads it from the task in `dag.py`, so DAGs compiled by an older CLI need a new compile and deploy.
+- **The platform resource defaults now fill each dimension a task leaves
+  empty.** `executor.defaults.resources.cpu` and `.memory` used to apply only
+  to a task that declared no `resources` at all, so a task that set only an
+  `ephemeral_storage` limit, or only cpu, ran with no request or limit on the
+  rest and could land in BestEffort. The dispatcher now fills each of cpu,
+  memory and ephemeral storage that a task sets neither a request nor a limit
+  for, and leaves a dimension the task sets at all to the task. Tasks that
+  declare part of their resources on a cluster with these defaults request
+  more after the upgrade: see the 0.5.7 upgrade note. (#802)
+- **The CLI says when the saved session expired.** A command whose saved
+  token had already expired, unused past its lifetime or renewed up to the
+  session's max lifetime, failed with a bare `server returned 401`, though the
+  CLI holds the token's expiry. It now adds `hint: the saved session expired at
+  <time>` with the `dexaflow auth login --server <server>` line to run. The
+  chart's `auth.tokenTtlSeconds` comment no longer says it sets the agent token
+  lifetime: task agents use their own per-attempt lifetime. (#1127)
+- **`dexaflow compile` parses `dag.py` on the declared `python_version`.** The
+  parser executes `dag.py`, and it ran on whatever interpreter `dexaflow setup`
+  found, so a project declaring `python_version: "3.13"` on a host whose setup
+  picked 3.11 got a `SyntaxError` for 3.12+ syntax (`type X[T] = ...`) that the
+  cluster runs fine. When the setup parser is older than the declared minor and
+  that minor is installed, `compile` and `validate --parse` now parse on it. If
+  `dag.py` imports a module installed only for the setup interpreter, the parse
+  runs once more there and keeps that result, with a warning naming the module
+  and both interpreters. A custom `parser_cmd` of any other shape runs as
+  configured. (#1095)
+- **A plain `dexaflow lite` after `dexaflow lite restore` starts the restored
+  data on a host with Docker.** The restore pins the install to the managed
+  Postgres it replayed into, and `--postgres auto` follows that pin instead of
+  starting an empty Docker Postgres. An explicit `--postgres docker` or
+  `--postgres managed` pins the install the same way; installs without a pin
+  keep the old auto rule (ADR 0094). (#1997)
+- **A cleared and re-run run keeps its staging volume.** When a run succeeded, GC
+  freed its staging PVC and marked the volume deleted. Clearing and re-running the
+  run recreated the same PVC, but the volume stayed marked deleted, so the
+  unrecorded staging sweep added in this release (#1615) took the live claim for an
+  orphan and deleted it 24 hours after it was created, while the run could still be
+  using it. Recording the volume again now marks it active with a fresh creation
+  time. (#1615)
+- **An `@every` schedule with `catchup: false` runs once per interval again.**
+  Since 0.5.5 a DAG on `@every 1h` with catchup off, the default, got a new run
+  on every scheduler tick, held back only by `max_active_runs`. Its slots are
+  now the steps of the interval after the last run (or the start_date), and the
+  scheduler creates the latest one that is due, as it does for a cron
+  expression. (#2187)
+
+## [0.5.6] - 2026-10-23
+
+### Added
+
+- **A Pro release tells a replaced database from a fresh one, and can migrate
+  itself on boot.** The migration Job now records an installation id in the
+  database (migration 049) and in a `<release>-installation` ConfigMap it
+  creates itself, running as its own `<release>-migrate` ServiceAccount with a
+  Role on that ConfigMap. A database that was emptied, restored from another
+  installation or repointed (another id, none, or no schema) is no longer
+  migrated into an empty, healthy control plane: the Job fails with exit code
+  8, a booting server waits not ready with `database replaced` on `/readyz` and
+  in `dexaflow_schema_ready`, and a server that was serving exits with code 3
+  so no cache outlives the old database. Restore the right database, or accept
+  this one once by setting the new `installation.id` value (to the id it
+  carries, or to a new id for an emptied one). The upgrade to 0.5.6 records an
+  id for the existing installation once. New `migrations.onBoot` (default
+  `false`) lets the `all` role, or the scheduler in split mode, apply the
+  embedded migrations at boot when the schema is absent or behind, never on a
+  replaced, dirty or ahead schema (#1846, ADR 0090).
+- **The bootstrap admin and the insecure-secrets escape hatch are config keys.**
+  `dexaflow-server` read `LEOFLOW_BOOTSTRAP_EMAIL`,
+  `LEOFLOW_BOOTSTRAP_PASSWORD`, `LEOFLOW_BOOTSTRAP_PASSWORD_HASH` and
+  `LEOFLOW_AGENT_ALLOW_INSECURE_SECRETS` straight from the environment. They
+  now load with the rest of the configuration as `bootstrap.email`,
+  `bootstrap.password`, `bootstrap.password_hash` and
+  `agent.allow_insecure_secrets`, from the config file or from
+  `DEXAFLOW_*` and `LEOFLOW_*` alike, and are listed in the
+  [configuration reference](/reference/configuration/). Defaults and meanings
+  are unchanged: no bootstrap admin without a credential, and the escape hatch
+  turns on only for the exact value `true`. With a credential set, boot now
+  fails on a password hash that is not bcrypt, a password longer than the 72
+  bytes bcrypt accepts, and an email with a space or a control character; the
+  credentials are redacted when the configuration is formatted or logged.
+  (#1952)
+
+### Changed
+
+- **A Pro control plane waiting for its schema names this release's own
+  recovery command.** The reason on `/readyz` and in the boot log said
+  `helm upgrade <release> ... -n <namespace> --version <chart version>
+  --reuse-values` with placeholders, and offered `dexaflow db migrate` for
+  Lite on a Helm install. The chart now passes the release name, namespace,
+  chart version, `migrations.enabled` and the migrate image to the pods
+  (`LEOFLOW_HELM_*`), so the reason reads `helm upgrade dexaflow
+  oci://ghcr.io/dexadata/charts/dexaflow -n dexaflow --version 0.5.6
+  --reuse-values` for that release; with `migrations.enabled: false`, which
+  runs no Job, it names your own migration step and the `dexaflow-migrate`
+  image tag instead, and on Lite it names `dexaflow db migrate`. A pod that
+  was already serving logs the same command when its readiness finds the
+  schema absent or behind. A new operate page, database lost, restored or
+  repointed, says what the release reports and what to run in each case, on
+  Helm and on Lite, and the interrupted-migration table of the upgrade guide
+  gains its missing 047 row (#1846, #1619, ADR 0090).
+
+### Fixed
+
+- **A task is no longer failed as `dispatch_failed` by a second Kubernetes API
+  blip.** After one blip (a 503 while an apiserver restarts), a task that then
+  waited on ResourceQuota backpressure, or had a create rejected, kept the
+  start of that outage, so the next blip, 15 minutes or more later, failed it
+  at once as `dispatch_failed` with its retries spent, although the API had
+  answered every create in between. The 15-minute unavailable window now
+  counts only consecutive unavailable answers: a create the API answers ends
+  the outage, and the next blip starts a new window.
+
+- **The bootstrap admin can no longer be left without the admin role.** Startup
+  created the admin user and granted it the admin role in two separate steps, so
+  a server killed between them left an admin that could log in but had no role.
+  Every later boot only reset the admin's password and returned, so the admin
+  stayed role-less with no way to recover short of editing the database. The
+  create and the grant now run in one transaction, and every boot (including one
+  that loses a concurrent create to another replica) also grants the admin role
+  of the admin's own tenant when it is missing, which repairs an admin left in
+  that state by an earlier release. (#513)
+- **A task failed as `dispatch_failed` no longer spends the user's retries.**
+  Once the dispatch budget ran out, the planner moved the failed task to
+  `up_for_retry` and dispatched it again on a new try, so an infrastructure
+  failure consumed `retries` and each retry started a fresh dispatch budget.
+  `dispatch_failed` is now terminal, on the synchronous path and in the
+  buffered dispatch workers, as ADR 0031 and ADR 0051 describe it; a clear
+  restores the retry budget as usual.
+- **A binary upgrade now refreshes the compose Lite writes under
+  `~/.dexaflow`.** A binary-only install wrote `docker-compose.yaml` once, on
+  its first `dexaflow lite`, and every later binary kept starting that first
+  definition, so a change to the shipped compose never reached an upgraded
+  install. Lite now records a checksum beside the file and, on each start,
+  replaces a file nobody edited and prints `↻ refreshed the managed compose
+  (binary upgrade)`. A file the operator edited is kept: the new compose is
+  written beside it as `docker-compose.yaml.new` with a one-time warning. A
+  file from a binary that predates the checksum is kept the same way unless it
+  already equals the shipped compose. `~/.leoflow` installs behave the same.
+  (#981)
+- **An authentication outage now tells clients how long to wait.** The `503
+  authentication temporarily unavailable` answers, given when the user store
+  (or a trusted issuer's keys) could not be reached to check a credential, carry
+  `Retry-After: 5`: on any protected route, on `POST /auth/token`, on `POST
+  /api/v2/auth/token/renew` and on the trusted-issuer handoff. Without it a
+  client had no number to back off on and retried at once, against the
+  dependency that was already down. A `401` still carries none. The CLI's
+  transparent token renewal honors it: on a `503` with a `Retry-After` of at
+  most 10 seconds it waits that long and renews once more, and otherwise goes
+  ahead with the current token as before. (#1100)
+- **`dexaflow lite restore` works on a new machine right after `dexaflow
+  setup`.** The restore replayed its dump with the managed `psql`, which only
+  the first `dexaflow lite` downloads and initializes, so on a fresh install it
+  failed with `managed psql not found`; and the overwrite guard refused any
+  non-empty `~/.dexaflow`, which `dexaflow setup` always leaves, so it also
+  needed `--force`. The restore now provisions the managed Postgres through the
+  same path `dexaflow lite` uses, creates the Lite database, logs each phase
+  (decoding the manifest, provisioning Postgres, applying the dump, restoring
+  the workspace) and stops the cluster again when it started it. The guard now
+  refuses only a home that holds a datastore (the managed `pgdata`, or a Docker
+  datastore a Lite run used). On a host where Docker runs, the closing line
+  says to start with `dexaflow lite --postgres managed`, since the archive
+  holds a managed datastore. (#154)
+- **The UI shows an outage page instead of the sign-in page when the database
+  is down.** When the control plane could not reach its user store to check a
+  browser's session, the UI gate sent the browser to `/api/v2/auth/login`,
+  whose sign-in failed for the same reason, with nothing saying why. It now
+  answers `503` with `Retry-After`, `Cache-Control: no-store` and a static
+  page saying Dexaflow is temporarily unavailable and to reload in a few
+  seconds. The page carries no app, no script and no data, and the session
+  cookie is kept, so reloading after the outage opens the UI. The gate tells an
+  unreachable store apart from a missing or invalid session with the same rule
+  the API uses since #1097, and still serves the UI only for a session it
+  verified: no session or an invalid one is sent to sign in as before. The
+  sign-in page itself no longer reads an outage as a wrong password: when
+  `POST /auth/token` answers `503` it says sign-in is temporarily unavailable
+  and to try again shortly, instead of "Invalid credentials" (a `401` still
+  says "Invalid credentials"). (#1099)
+- **A short Kubernetes API outage no longer fails the tasks due during it**
+  (#1606). A pod create that failed with a 503, a 504, a 500 (such as a
+  fail-closed admission webhook that is down), a connection refused or reset,
+  or the client deadline spent one of the six dispatch attempts, so an outage
+  longer than about 2m35s (a managed control plane upgrade, an etcd leader
+  change) failed every task due in it as `dispatch_failed`. Those failures no
+  longer count: the task is re-offered with a hold that grows from 5 seconds
+  to 1 minute, and fails as `dispatch_failed: Kubernetes API unavailable for
+  <duration>` only after 15 minutes. Requests the apiserver refused (400, a
+  403 that is not quota, 404, 422) keep the six attempts. Migration 048 adds
+  the nullable `task_instances.dispatch_unavailable_since` column (catalog
+  only); see the 0.5.6 upgrade notes. ADR 0093 records the decision.
+- **Ctrl-C during `dexaflow compile --build` no longer leaves the generated
+  Dockerfile and a merged `.dockerignore` in the project.** The CLI had no
+  signal handler, so Ctrl-C or SIGTERM during a `docker build` ended it before
+  its cleanups ran. It now catches the first Ctrl-C or SIGTERM: the build tool
+  is interrupted (and killed if it has not exited 10 seconds later), the
+  generated `.leoflow.generated.Dockerfile` is removed, the `.dockerignore` is
+  restored, and the command exits with code `130`. A second Ctrl-C ends the CLI
+  at once. Commands with their own Ctrl-C handling (`lite`, `deploy --watch`,
+  `runs --follow`) behave as before. (#1061)
+- **`dexaflow db reset` no longer drops Lite's database while
+  `DEXAFLOW_DATABASE_URL` names another one.** When port 5432 was taken,
+  `dexaflow lite` suggested `--no-up` with your own `LEOFLOW_DATABASE_URL`, but
+  Lite always ran on its own database, and `db reset --yes` dropped Lite's
+  `leoflow_dev` while the operator believed it acted on the database they had
+  named. Lite owns its database and does not run on another one: the message now
+  says so and offers `--postgres managed`, `db reset` refuses and drops nothing
+  while `DEXAFLOW_DATABASE_URL` or `LEOFLOW_DATABASE_URL` names a different host,
+  port or database, and its confirmation names the database it drops. An
+  exported `DEXAFLOW_DATABASE_URL` no longer reaches the Lite server (where it
+  beat Lite's own URL), and `dexaflow lite` and `dexaflow lite backup` print a
+  note when the variable names another database. (#1185)
+- **`dexaflow lite` no longer fails with a raw docker usage error when the
+  Docker Compose v2 plugin is missing.** The default `--postgres auto` checked
+  only that the Docker daemon answered, then started the Docker Postgres with
+  `docker compose`, which a docker CLI without the plugin rejects with
+  `unknown shorthand flag: 'f' in -f` and its usage text. Lite now probes
+  `docker compose version` as well: without the plugin, auto uses the managed
+  Postgres, as it does when the daemon does not answer, and says why, and an
+  explicit `--postgres docker` stops with what to do (install the Compose v2
+  plugin, or use `--postgres managed`). (#759)
+- **The Helm migration Job says what is wrong, and stops retrying what a retry
+  cannot fix.** A fresh install against a database that did not exist failed
+  with `Job Failed. failed: 4/1`, and the pod log held only the raw driver
+  error (`pq: database "x" does not exist`). The `dexaflow-migrate` image now
+  runs Dexaflow's own wrapper over the golang-migrate library, on pgx like the
+  control plane, and its log names the cause and the value to change: a
+  missing database (`database "x" does not exist on host:5432. Dexaflow does
+  not create the database ...`, with the `CREATE DATABASE` line), a refused
+  user or password, an unusable `database.url`, a `sslrootcert` file that is
+  not mounted (checked before connecting, naming `database.caConfigMap`), a
+  dirty schema (pointing at the interrupted-migration runbook), and a server
+  not reachable yet. The driver's own error follows on a second line. Each
+  failure a retry cannot fix exits with a code of its own, and on Kubernetes
+  1.31 or newer the Job's new `podFailurePolicy` fails it on the first pod
+  instead of spending `backoffLimit`; on older clusters the Job retries as
+  before. A `database.url` with `sslrootcert=system`, which started the server
+  but failed the old Job, now migrates too. The image keeps the golang-migrate
+  CLI's `up`, `version`, `force N` and `goto N` with the same flags, so the
+  Job's arguments and the upgrade guide's recovery steps are unchanged (#1020).
+- **A Pro control plane whose database lost its schema waits, not ready,
+  instead of crash-looping.** When the schema was absent or behind at boot
+  (an `emptyDir` Postgres moved to another node, a restore into a fresh
+  instance, a changed `database.url`), the server exited and the pods sat in
+  `CrashLoopBackOff` until someone ran `helm upgrade`. The server now stays
+  up: `/healthz` answers 200, `/readyz` answers 503 with the reason
+  (`schema absent`, `schema behind v40, requires v46`, `schema dirty at vN`)
+  and what to run, and every other request is a 503, so nothing is written
+  before the schema is current. It logs one line per change of reason, checks
+  again every 1 to 30 seconds, and starts serving without a restart once the
+  migration Job or `dexaflow db migrate` has run. A schema dirty at the
+  version the binary requires still stops boot. New metrics
+  `dexaflow_schema_ready{reason}` and `dexaflow_schema_wait_seconds`, and an
+  optional chart alert (`metrics.prometheusRule.enabled`) when a pod has
+  waited 5 minutes (#1842, ADR 0090).
+- **A clear that re-opens a run while the scheduler is finalizing it is no
+  longer overwritten.** The tick reads every active run, then advances them in
+  turn, and the write that moves a finished run to `success` or `failed` had no
+  guard on the state the tick had read. A clear landing in between, while the
+  tick was dispatching another run's tasks, was overwritten: the run showed
+  `success` or `failed` over task instances reset to `none`, its cleared tasks
+  never ran, and a `failed` finalize could send an on-failure alert for a
+  failure the clear had already dismissed. The finalize now only moves a run
+  still in the state the tick read, and a run that moved on is left alone and
+  not alerted on. (#2047)
+- **The api role no longer reports the scheduler healthy because of another
+  install's leader on the same Postgres server.** In the split api role,
+  `/api/v2/monitor/health` looks for the scheduler leadership lock in
+  `pg_locks`, which lists the locks of every database on the server. A
+  scheduler leading another Dexaflow install whose database lives on the same
+  server counted as this install's leader, so a stopped scheduler showed as
+  healthy. The check now counts only a lock held in this install's database.
+  Leader election itself was not affected. (#2049)
+- **`dexaflow lite --postgres managed` names the libraries a bare host is
+  missing, and how to install them.** The managed Postgres links libxml2,
+  Kerberos, OpenSSL 3, zstd and lz4 from the host. On a fresh Ubuntu 24.04
+  (no libxml2, no Kerberos) or 22.04 (no libxml2) it stopped with `it needs
+  system libraries (ICU, Kerberos) that are missing here` and suggested
+  `apt-get install libicu-dev libgssapi-krb5-2`, which left libxml2 missing, so
+  the managed Postgres looked unusable on Ubuntu 24.04 whatever ICU was
+  installed. It now lists each missing library (`system libraries are missing:
+  libgssapi_krb5.so.2, libxml2.so.2`) and, on Debian, Ubuntu and Alpine, the
+  command that installs them (`sudo apt-get install -y libgssapi-krb5-2
+  libxml2`); after it, Lite starts. The glibc build does not use ICU, so the
+  host's ICU release never mattered. A new CI gate boots Lite on bare Ubuntu
+  22.04 and 24.04 containers. (#279)
+
 ## [0.5.5] - 2026-10-22
 
 ### Added

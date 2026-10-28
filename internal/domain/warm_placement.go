@@ -18,7 +18,9 @@ const (
 	// (ADR 0058 D5).
 	DedicatedStaging = "staging enabled"
 	// DedicatedSourceMode: a warm pod is built before its task is known, so
-	// it cannot carry the task's dag.py (ADR 0067 §3).
+	// it cannot carry the task's dag.py in its pod spec (ADR 0067 §3), and
+	// execution.source_mode.warm_pools, which delivers it with each
+	// assignment instead (ADR 0095), is off.
 	DedicatedSourceMode = "source mode"
 )
 
@@ -42,6 +44,10 @@ type WarmPolicy struct {
 	// SourceModeImage is the runtime image when source mode is on, "" when it
 	// is off (ADR 0067 §3).
 	SourceModeImage string
+	// SourceModeWarm is execution.source_mode.warm_pools: a source-mode
+	// version may run on warm workers, which receive its dag.py with each
+	// assignment (ADR 0095).
+	SourceModeWarm bool
 }
 
 // WarmVersion is what of a DAG version the warm decision reads: the image its
@@ -60,7 +66,7 @@ func (p WarmPolicy) VersionReason(v WarmVersion) string {
 		return DedicatedWarmPoolsOff
 	case v.Staging != nil && v.Staging.Enabled:
 		return DedicatedStaging
-	case SourceModeApplies(p.SourceModeImage, v.Image, v.HasSource):
+	case !p.SourceModeWarm && SourceModeApplies(p.SourceModeImage, v.Image, v.HasSource):
 		return DedicatedSourceMode
 	}
 	return ""

@@ -3,7 +3,7 @@
 # reference exists and carries this repository's release signature.
 #
 #   scripts/release-verify-images.sh v0.5.4            # server, mcp, migrate
-#   scripts/release-verify-images.sh v0.5.4 --runtime  # plus every py3.N-v0.5.4 leg
+#   scripts/release-verify-images.sh v0.5.4 --runtime  # plus every py3.N-v0.5.4 leg and py3.11-data-v0.5.4
 #
 # ADR 0071. The Helm chart references dexaflow-server, dexaflow-mcp and
 # dexaflow-migrate by the release tag, and the moving `py3.N` runtime tags are
@@ -41,6 +41,8 @@ image_refs() { # <prefix> <tag> <0|1>
   printf '%s\n' "$prefix/dexaflow-server:$tag" "$prefix/dexaflow-mcp:$tag" "$prefix/dexaflow-migrate:$tag"
   [ "$runtime" = 1 ] || return 0
   for py in $(runtime_pythons); do printf '%s\n' "$prefix/dexaflow-runtime:py$py-$tag"; done
+  # The data variant (runtime/data/README.md): one leg, Python 3.11 only.
+  printf '%s\n' "$prefix/dexaflow-runtime:py3.11-data-$tag"
 }
 
 self_test() {
@@ -50,6 +52,10 @@ self_test() {
   _eq "$got" "ghcr.io/o/dexaflow-server:v1.2.3 ghcr.io/o/dexaflow-mcp:v1.2.3 ghcr.io/o/dexaflow-migrate:v1.2.3 " "the chart's three images"
   got="$(image_refs ghcr.io/o v1.2.3 1 | grep -c '/dexaflow-runtime:py3\.[0-9]*-v1\.2\.3$')"
   _eq "$got" "$(runtime_pythons | wc -l | tr -d ' ')" "one runtime leg per Python line in the schema"
+  got="$(image_refs ghcr.io/o v1.2.3 1 | grep -c '/dexaflow-runtime:py3\.11-data-v1\.2\.3$')"
+  _eq "$got" "1" "the data variant's one leg"
+  got="$(image_refs ghcr.io/o v1.2.3 0 | grep -c data || true)"
+  _eq "$got" "0" "no data leg without --runtime"
   [ "$(runtime_pythons | wc -l | tr -d ' ')" -ge 1 ] || { echo "FAIL: the schema enum yielded no Python line"; fail=1; }
   [ "$fail" = 0 ] && echo "release-verify-images self-test: OK"
   return "$fail"

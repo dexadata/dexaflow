@@ -31,7 +31,8 @@ func bringUpDependencies(ctx context.Context, cmd *cobra.Command, o *devOptions)
 	if o.noUp {
 		return noop, nil
 	}
-	o.postgres = autoDatastore(ctx, cmd, o.postgres)
+	explicit := o.postgres != datastoreAuto
+	o.postgres = autoDatastore(ctx, cmd, o.postgres, liteDevDir())
 	if o.postgres == datastoreManaged {
 		// Managed relocatable Postgres, no Docker at all: Lite is Redis-free (XCom
 		// on Postgres, in-process log tailer, ADR 0026), so nothing comes up via
@@ -40,6 +41,7 @@ func bringUpDependencies(ctx context.Context, cmd *cobra.Command, o *devOptions)
 		if perr != nil {
 			return noop, perr
 		}
+		pinExplicitDatastore(cmd, explicit, datastoreManaged)
 		// Stop it on the way out only if this run started it (ADR 0065
 		// section 3): a cluster found running may be a migration's.
 		//nolint:contextcheck // stop runs at shutdown with a fresh context; the run's ctx is already canceled
@@ -59,7 +61,24 @@ func bringUpDependencies(ctx context.Context, cmd *cobra.Command, o *devOptions)
 	}
 	o.composeFile = cf
 	devPrintf(cmd.OutOrStdout(), "▸ Postgres (Docker) on localhost:%d  [project %s]\n", port, devProjectName())
-	return noop, devComposeUp(ctx, cmd, *o, "postgres")
+	if err := devComposeUp(ctx, cmd, *o, "postgres"); err != nil {
+		return noop, err
+	}
+	pinExplicitDatastore(cmd, explicit, datastoreDocker)
+	return noop, nil
+}
+
+// pinExplicitDatastore records an explicit --postgres once its datastore is up,
+// so later "auto" runs follow it (ADR 0094). An "auto" run pins nothing: a
+// Docker daemon that was down for one run must not move the install to the
+// managed Postgres for good. Failing to record it only costs the pin.
+func pinExplicitDatastore(cmd *cobra.Command, explicit bool, mode string) {
+	if !explicit {
+		return
+	}
+	if err := writeDatastorePin(liteDevDir(), mode); err != nil {
+		devPrintf(cmd.ErrOrStderr(), "! %v; a plain `dexaflow lite` may pick another Postgres\n", err)
+	}
 }
 
 // resolveComposeFile returns the docker-compose file Lite uses for its local

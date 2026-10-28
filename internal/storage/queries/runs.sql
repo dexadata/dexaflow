@@ -83,7 +83,14 @@ WHERE r.tenant_id = sqlc.arg(tenant_id) AND r.dag_id = sqlc.arg(dag_id)
 
 -- name: DeleteDagRun :execrows
 -- Removes one run; its task_instances and XCom rows cascade (ON DELETE CASCADE).
-DELETE FROM dag_runs WHERE tenant_id = $1 AND dag_id = $2 AND run_id = $3;
+-- The DAG's stored next due time is cleared in the same statement (#2175): the
+-- deleted run may have been its latest, which the time was computed from.
+WITH invalidate AS (
+  UPDATE dags d SET next_run_at = NULL, schedule_epoch = d.schedule_epoch + 1
+  WHERE d.tenant_id = sqlc.arg(tenant_id) AND d.id = sqlc.arg(dag_id)
+)
+DELETE FROM dag_runs r
+WHERE r.tenant_id = sqlc.arg(tenant_id) AND r.dag_id = sqlc.arg(dag_id) AND r.run_id = sqlc.arg(run_id);
 
 -- name: ListDagRunsByDag :many
 SELECT * FROM dag_runs
@@ -508,12 +515,35 @@ RETURNING *;
 -- should I backfill on this tick?" (catchup + start_date, see #129), and
 -- "may this DAG take another active run?" (max_active_runs, see #200). The
 -- owning tenant is returned because a dag_id is unique only within its tenant
--- (#209).
+-- (#209). The DAGs of a suspended tenant are left out (#2181); a suspension
+-- that lands after this read is refused when the run is created.
+-- Only the DAGs that may be due are listed (#2175): no stored next_run_at yet,
+-- or one at or before now, the scheduler's clock. idx_dags_next_run (054)
+-- holds exactly the DAGs the first four conditions keep.
 SELECT d.tenant_id, d.dag_id, d.schedule, d.catchup, d.start_date, d.max_active_runs,
+  d.next_run_at, d.schedule_epoch,
   (SELECT max(dr.logical_date) FROM dag_runs dr WHERE dr.dag_id = d.id) AS last_logical
 FROM dags d
+JOIN tenants t ON t.id = d.tenant_id
 WHERE d.is_active = true AND d.is_paused = false
-  AND d.schedule IS NOT NULL AND d.current_version_id IS NOT NULL;
+  AND d.schedule IS NOT NULL AND d.current_version_id IS NOT NULL
+  AND (d.next_run_at IS NULL OR d.next_run_at <= sqlc.arg(now)::timestamptz)
+  AND t.suspended_at IS NULL;
+
+-- name: SetDagNextRunAt :exec
+-- Stores when the DAG is next due, unless a change
+-- bumped its schedule_epoch since the scheduler listed it (#2175). SKIP LOCKED:
+-- a register or a retention delete holding the row would otherwise stall the
+-- tick until it commits. The time is only a hint, so a skipped write leaves the
+-- earlier one, and such a change usually clears it anyway.
+UPDATE dags d
+SET next_run_at = sqlc.arg(next_run_at)::timestamptz
+WHERE d.id = (
+  SELECT x.id FROM dags x
+  WHERE x.tenant_id = sqlc.arg(tenant_id) AND x.dag_id = sqlc.arg(dag_id)
+    AND x.schedule_epoch = sqlc.arg(schedule_epoch)::bigint
+  FOR NO KEY UPDATE SKIP LOCKED
+);
 
 -- name: CreateScheduledRunByDagID :execrows
 -- Zero rows means the slot's run already exists (or the DAG has no current

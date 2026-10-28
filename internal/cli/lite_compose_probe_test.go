@@ -63,7 +63,7 @@ func outCmd() (*cobra.Command, *bytes.Buffer) {
 func TestAutoPostgresFallsBackToManagedWithoutTheComposePlugin(t *testing.T) {
 	log := dockerWithoutCompose(t)
 	cmd, out := outCmd()
-	if got := autoDatastore(testCtx(nil), cmd, datastoreAuto); got != datastoreManaged {
+	if got := autoDatastore(testCtx(nil), cmd, datastoreAuto, t.TempDir()); got != datastoreManaged {
 		t.Fatalf("autoDatastore = %q, want %q without the Compose v2 plugin", got, datastoreManaged)
 	}
 	if !strings.Contains(dockerCalls(t, log), "compose version") {
@@ -84,7 +84,7 @@ func TestAutoPostgresKeepsDockerWithTheComposePlugin(t *testing.T) {
 	d.dockerPing = func() error { return nil }
 	d.composeProbe = func() error { return nil }
 	cmd, _ := outCmd()
-	if got := autoDatastore(testCtx(d), cmd, datastoreAuto); got != datastoreDocker {
+	if got := autoDatastore(testCtx(d), cmd, datastoreAuto, t.TempDir()); got != datastoreDocker {
 		t.Errorf("autoDatastore = %q, want %q with the Compose v2 plugin", got, datastoreDocker)
 	}
 }
