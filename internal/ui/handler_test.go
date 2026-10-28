@@ -97,6 +97,20 @@ func TestIndexInjectsClipboardFallback(t *testing.T) {
 	}
 }
 
+// TestIndexInjectsSessionKeeper asserts that Index injects the session-keeper
+// script that periodically renews the session cookie before it expires (#1127).
+func TestIndexInjectsSessionKeeper(t *testing.T) {
+	rec := httptest.NewRecorder()
+	fixture().Index(rec, "/")
+	body := rec.Body.String()
+	if !strings.Contains(body, "/api/v2/auth/token/renew") {
+		t.Errorf("session keeper missing: body should reference /api/v2/auth/token/renew; got %q", body)
+	}
+	if !strings.Contains(body, "visibilitychange") {
+		t.Errorf("session keeper missing: body should listen for visibilitychange; got %q", body)
+	}
+}
+
 func TestStaticServesHashedAssetImmutable(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/assets/app-abc123.js", http.NoBody)
@@ -231,8 +245,8 @@ func TestIndexInjectsProBannerOnlyInProMode(t *testing.T) {
 	rec := httptest.NewRecorder()
 	pro.Index(rec, "/")
 	body := rec.Body.String()
-	if !strings.Contains(body, "leoflow-pro-banner") || !strings.Contains(body, ">PRO<") {
-		t.Errorf("pro mode must inject the PRO overlay, got:\n%s", body)
+	if !strings.Contains(body, "leoflow-pro-banner") || !strings.Contains(body, ">CLUSTER<") {
+		t.Errorf("cluster mode must inject the CLUSTER overlay, got:\n%s", body)
 	}
 	if strings.Index(body, "leoflow-pro-banner") > strings.Index(body, "</body>") {
 		t.Error("PRO overlay should be injected before </body>")
@@ -252,7 +266,7 @@ func TestIndexInjectsProBannerOnlyInProMode(t *testing.T) {
 	both.SetProBanner(true)
 	rec3 := httptest.NewRecorder()
 	both.Index(rec3, "/")
-	if !strings.Contains(rec3.Body.String(), ">LITE<") || !strings.Contains(rec3.Body.String(), ">PRO<") {
+	if !strings.Contains(rec3.Body.String(), ">LITE<") || !strings.Contains(rec3.Body.String(), ">CLUSTER<") {
 		t.Error("both banners enabled: both pills should be in the body (server is the source of truth)")
 	}
 }

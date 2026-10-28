@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_completion/
 title: "dexaflow completion"
 linkTitle: "completion"
-weight: 18
+weight: 24
 ---
 
 Generate the autocompletion script for the specified shell
@@ -27,6 +27,7 @@ See each sub-command's help for details on how to use the generated script.
       --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
+      --target name         name of the control plane to use (default: DEXAFLOW_TARGET, then the target selected for the workspace; see dexaflow target list)
 ```
 
 ### SEE ALSO

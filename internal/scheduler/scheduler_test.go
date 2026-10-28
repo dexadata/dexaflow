@@ -32,18 +32,35 @@ type fakeStore struct {
 	// createdTenants records the tenant of each created scheduled run, in the
 	// same order as createdRuns.
 	createdTenants []string
+	// createdLogical records the logical date of each created scheduled run,
+	// in the same order as createdRuns.
+	createdLogical []time.Time
 	notes          map[string]string
 	createErr      bool
 	// scheduledErr makes ScheduledDAGs fail, as a broken run-creation query.
 	scheduledErr error
 	// limitedTenants answers CreateScheduledRun with a tenant-limit refusal for
 	// these tenants, as the store does once a tenant's daily run cap is reached.
-	limitedTenants       map[string]bool
-	limitedCalls         int
+	limitedTenants map[string]bool
+	limitedCalls   int
+	// suspendedTenants answers CreateScheduledRun with a suspension refusal
+	// for these tenant UUIDs, as a suspension that lands mid tick does.
+	suspendedTenants map[string]bool
+	suspendedCalls   int
+	// nextRuns records each SetNextRunAt write, keyed by DAG; listedAt is the
+	// now each ScheduledDAGs call was given.
+	nextRuns             map[dagRef]nextRunWrite
+	nextRunErr           error
+	listedAt             []time.Time
 	dispatchFailures     []transition
 	dispatchBackpressure []transition
 	dispatchExhausted    []string
-	dispatchRefused      []string
+	// dispatchUnavailable records each unavailable-API re-offer, and
+	// unavailableSince is the outage window the store keeps per task: stamped
+	// on the first one, kept after (the COALESCE of the SQL).
+	dispatchUnavailable []transition
+	unavailableSince    map[string]time.Time
+	dispatchRefused     []string
 	// alertAttempts mirrors the real per-episode attempt claim: each call
 	// consumes one, and the claim is refused once the budget is spent or the
 	// episode is already delivered. Backoff is not simulated — the fake is for
@@ -72,6 +89,19 @@ type fakeStore struct {
 	// the task no longer up_for_retry (a lost race).
 	activeRunsErr error
 	retryNoop     bool
+	// batchFrom records the source state each batched transition was guarded
+	// on; batchSuperseded makes that guard find the row already moved on (a
+	// user's mark or clear, an agent's report) so the write skips it.
+	batchFrom       map[string]domain.TaskState
+	batchSuperseded map[string]bool
+	// startSuperseded makes StartQueuedRun find the run no longer queued (a
+	// user marked it, or deleted it, after the tick read it), so nothing starts.
+	startSuperseded map[string]bool
+	// finalizeFrom records the run state each finalize write was guarded on;
+	// finalizeSuperseded makes that guard find the run already moved on (a
+	// clear re-opened it, a user marked it) so the write changes nothing.
+	finalizeFrom       map[string]domain.DagRunState
+	finalizeSuperseded map[string]bool
 }
 
 func newFakeStore(runs ...RunState) *fakeStore {
@@ -85,7 +115,23 @@ func (f *fakeStore) ActiveRuns(context.Context) ([]RunState, error) {
 	}
 	return f.runs, nil
 }
-func (f *fakeStore) ScheduledDAGs(context.Context) ([]ScheduledDAG, error) {
+
+// nextRunWrite is one SetNextRunAt call the fake recorded.
+type nextRunWrite struct {
+	epoch int64
+	at    time.Time
+}
+
+func (f *fakeStore) SetNextRunAt(_ context.Context, tenantID, dagID string, epoch int64, at time.Time) error {
+	if f.nextRuns == nil {
+		f.nextRuns = map[dagRef]nextRunWrite{}
+	}
+	f.nextRuns[dagRef{tenantID, dagID}] = nextRunWrite{epoch: epoch, at: at}
+	return f.nextRunErr
+}
+
+func (f *fakeStore) ScheduledDAGs(_ context.Context, now time.Time) ([]ScheduledDAG, error) {
+	f.listedAt = append(f.listedAt, now)
 	if f.scheduledErr != nil {
 		return nil, f.scheduledErr
 	}
@@ -95,9 +141,13 @@ func (f *fakeStore) PoolBudgets(context.Context) (map[string]int, error) {
 	f.poolBudgetsCalls++
 	return f.poolBudgets, nil
 }
-func (f *fakeStore) CreateScheduledRun(_ context.Context, tenantID, dagID string, _ time.Time) error {
+func (f *fakeStore) CreateScheduledRun(_ context.Context, tenantID, dagID string, logical time.Time) error {
 	if f.createErr {
 		return errors.New("create scheduled run failed")
+	}
+	if f.suspendedTenants[tenantID] {
+		f.suspendedCalls++
+		return domain.Safef(domain.ErrTenantSuspended, "the tenant is suspended: contract ended")
 	}
 	if f.limitedTenants[tenantID] {
 		f.limitedCalls++
@@ -105,6 +155,7 @@ func (f *fakeStore) CreateScheduledRun(_ context.Context, tenantID, dagID string
 	}
 	f.createdRuns = append(f.createdRuns, dagID)
 	f.createdTenants = append(f.createdTenants, tenantID)
+	f.createdLogical = append(f.createdLogical, logical)
 	return nil
 }
 func (f *fakeStore) MaterializeTasks(_ context.Context, runID string, _ []domain.TaskSpec) error {
@@ -132,12 +183,23 @@ func (f *fakeStore) MarkQueued(_ context.Context, runID, taskID string, expectNe
 
 // ApplyTransitions mirrors the batched store: it records one transition per task,
 // exactly as the equivalent per-task ApplyTransition calls would, so assertions
-// on f.transitions are unchanged by the scheduler's batching.
-func (f *fakeStore) ApplyTransitions(_ context.Context, runID string, taskIDs []string, to domain.TaskState) error {
-	for _, taskID := range taskIDs {
-		f.transitions = append(f.transitions, transition{runID, taskID, to})
+// on f.transitions are unchanged by the scheduler's batching. A task the test
+// marked superseded is skipped, as the store's source-state guard skips a row
+// that moved on, and is not reported as applied.
+func (f *fakeStore) ApplyTransitions(_ context.Context, runID string, taskIDs []string, from, to domain.TaskState) ([]string, error) {
+	if f.batchFrom == nil {
+		f.batchFrom = map[string]domain.TaskState{}
 	}
-	return nil
+	var applied []string
+	for _, taskID := range taskIDs {
+		f.batchFrom[taskID] = from
+		if f.batchSuperseded[taskID] {
+			continue
+		}
+		f.transitions = append(f.transitions, transition{runID, taskID, to})
+		applied = append(applied, taskID)
+	}
+	return applied, nil
 }
 func (f *fakeStore) ResetForRetry(_ context.Context, runID, taskID string) (bool, error) {
 	if f.retryNoop {
@@ -158,6 +220,22 @@ func (f *fakeStore) RecordDispatchFailure(_ context.Context, runID, taskID strin
 func (f *fakeStore) RecordDispatchBackpressure(_ context.Context, runID, taskID string, _ time.Time) error {
 	f.dispatchBackpressure = append(f.dispatchBackpressure, transition{runID, taskID, ""})
 	return nil
+}
+
+// RecordDispatchUnavailable mirrors the SQL: the window starts on the first
+// unavailable failure, and the hold is the time already spent in it, clamped.
+func (f *fakeStore) RecordDispatchUnavailable(_ context.Context, runID, taskID string, now time.Time, minDelay, maxDelay time.Duration) (since, nextAt time.Time, applied bool, err error) {
+	f.dispatchUnavailable = append(f.dispatchUnavailable, transition{runID, taskID, ""})
+	if f.unavailableSince == nil {
+		f.unavailableSince = map[string]time.Time{}
+	}
+	since, ok := f.unavailableSince[taskID]
+	if !ok {
+		since = now
+		f.unavailableSince[taskID] = since
+	}
+	hold := min(max(now.Sub(since), minDelay), maxDelay)
+	return since, now.Add(hold), true, nil
 }
 
 func (f *fakeStore) FailDispatchExhausted(_ context.Context, runID, taskID, _ string) error {
@@ -188,9 +266,26 @@ func (f *fakeStore) RedispatchReschedule(_ context.Context, runID, taskID string
 	f.redispatched = append(f.redispatched, transition{runID, taskID, domain.TaskStateNone})
 	return nil
 }
-func (f *fakeStore) SetRunState(_ context.Context, runID string, state domain.DagRunState) error {
-	f.runStates[runID] = state
-	return nil
+func (f *fakeStore) SetRunState(_ context.Context, runID string, from, to domain.DagRunState) (bool, error) {
+	if f.finalizeFrom == nil {
+		f.finalizeFrom = map[string]domain.DagRunState{}
+	}
+	f.finalizeFrom[runID] = from
+	if f.finalizeSuperseded[runID] {
+		return false, nil
+	}
+	f.runStates[runID] = to
+	return true, nil
+}
+
+// StartQueuedRun mirrors the guarded queued -> running write: it reports false,
+// writing nothing, for a run the test marked as moved on.
+func (f *fakeStore) StartQueuedRun(_ context.Context, runID, _ string) (bool, error) {
+	if f.startSuperseded[runID] {
+		return false, nil
+	}
+	f.runStates[runID] = domain.DagRunStateRunning
+	return true, nil
 }
 
 // The alert bookkeeping is the one part of this fake touched from two
@@ -813,6 +908,7 @@ type fakeRecorder struct {
 	undispatchable   []string
 	stepDowns        map[string]int
 	reacquireSamples []time.Duration
+	scheduleDelays   []time.Duration
 }
 
 func (r *fakeRecorder) RecordSchedulerDecision(d string) {
@@ -835,6 +931,9 @@ func (r *fakeRecorder) ObserveSchedulerReacquire(d time.Duration) {
 }
 func (r *fakeRecorder) RecordAlert(_, _, _ string) {}
 func (r *fakeRecorder) RecordSchedulerWokenTick()  {}
+func (r *fakeRecorder) ObserveScheduleDelay(d time.Duration) {
+	r.scheduleDelays = append(r.scheduleDelays, d)
+}
 
 func freshRun() *fakeStore {
 	// 'a' starts scheduled so a single Step plans it none->queued via launchQueued

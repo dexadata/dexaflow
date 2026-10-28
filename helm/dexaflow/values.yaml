@@ -3,7 +3,7 @@
 image:
   # -- Control-plane image. Published by GoReleaser on every tag, signed with cosign.
   repository: ghcr.io/dexadata/dexaflow-server
-  # -- Image tag. Defaults to `.Chart.appVersion` when empty; to pin a specific release set `--set image.tag=v0.4.0-rc.2` (the `v`-prefix and no-`v` forms are both published and resolve to the same digest, so either works).
+  # -- Image tag. Defaults to `.Chart.appVersion` when empty; to pin a specific release set `--set image.tag=vX.Y.Z` (the `v`-prefix and no-`v` forms are both published and resolve to the same digest, so either works).
   tag: ""
   pullPolicy: IfNotPresent
 imagePullSecrets: []
@@ -34,7 +34,7 @@ deployment:
 # that keeps the privileged identity. The security payoff is that a compromised or
 # SSRF'd API cannot reach the apiserver — see ADR 0048/0049.
 split:
-  # -- Render separate `api` and `scheduler` Deployments instead of one `all` Deployment. Pro-only (Lite is single-host and never splits).
+  # -- Render separate `api` and `scheduler` Deployments instead of one `all` Deployment. Cluster-only (Lite is single-host and never splits).
   enabled: false
   api:
     # -- API Deployment replicas (active-active; HPA-friendly). Ignored unless split.enabled.
@@ -113,12 +113,12 @@ taskPodSecurity:
 # always wins, keeping the dag.json artifact portable across clusters.
 executor:
   defaults:
-    # -- Default CPU **and** memory for a task that declares none of its own. Set
+    # -- Default CPU **and** memory, each for a task that sets none of its own. Set
     # BOTH: the control plane applies each value as its own request AND limit, and
     # Kubernetes grants Guaranteed QoS (least likely to be throttled/evicted under
     # node pressure) only when requests == limits for cpu AND memory. Setting just
     # one lands the task in **Burstable** with NO request or limit at all on the
-    # other dimension — nothing else fills it in — and the control plane logs a boot
+    # other dimension (nothing else fills it in), and the control plane logs a boot
     # WARN naming the missing key (#802). Empty (default) leaves tasks with no
     # platform resource floor, i.e. BestEffort QoS unless the DAG sets its own
     # (#725). Kubernetes quantities.
@@ -264,7 +264,7 @@ config:
   # -- gRPC address task pods dial back to reach the control plane. Defaults to the in-cluster Service DNS on `ports.grpc` when empty. Override for cross-cluster or external task pods.
   agentControlPlaneAddr: ""
 
-# Persistent log storage for the control plane (#227 — Pro alpha).
+# Persistent log storage for the control plane (#227, Cluster alpha).
 # Task pods stream logs over gRPC to the control plane, which writes them under
 # `config.logsDir`. By default this directory lives on a PVC so logs survive
 # pod restarts. For multi-replica HA the log store must be writable by every
@@ -322,13 +322,13 @@ logs:
 
 # Database (Postgres). Provide an external URL, or a pre-existing secret.
 database:
-  # -- External Postgres DSN. Required for Pro (the embedded datastore is Lite-only); the chart `fail`s the install if neither this nor `existingSecret` is set. Example: `postgres://user:pass@host:5432/leoflow?sslmode=disable`.
+  # -- External Postgres DSN. Required for Cluster (the embedded datastore is Lite-only); the chart `fail`s the install if neither this nor `existingSecret` is set. Example: `postgres://user:pass@host:5432/leoflow?sslmode=disable`.
   url: ""
   # -- Name of a Secret with key `databaseUrl` (takes precedence over `url`).
   existingSecret: ""
   # -- Name of a ConfigMap with key `ca.crt` holding the managed-Postgres CA bundle (#315). When set, the chart mounts it at `/etc/leoflow/db-ca/ca.crt` — in the control plane **and in the pre-install migration Job** (#1052), which reads the same DSN — so the operator can pin `sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt` in the DSN. Empty (default) means TLS still works via `sslmode=require`, but the server cert is NOT verified — the connection is encrypted but MITM-vulnerable, the standard managed-DB posture before this knob.
   caConfigMap: ""
-  # -- Max concurrent open DB connections per control-plane pod (Postgres-side load gate): the ceiling the pool grows to under load. Increase for high-throughput Pro deployments. Each pod also opens up to 3 more (2 for health checks, 1 for the scheduler's leader lock), so the cluster-wide ceiling is `(maxOpenConns + 3)` times the most pods that can run at once (`autoscaling.maxReplicas` with the HPA on, plus the surge pods of a rolling update, 25% of the replicas rounded up), plus 1 for the migration Job. With the HPA on at `maxReplicas` 6 that is 6 + 2 surge = 8 pods, and the defaults reach `8 * 23 = 184`, above stock Postgres' `max_connections` of 100: lower this, raise `max_connections`, or cap `maxReplicas`. With more than one pod the install notes print the peak total when it exceeds 20. A server that runs out answers SQLSTATE 53300, which the boot error names (#1088). See the "Postgres connection budget" section of the control-plane HA guide.
+  # -- Max concurrent open DB connections per control-plane pod (Postgres-side load gate): the ceiling the pool grows to under load. Increase for high-throughput Cluster deployments. Each pod also opens up to 3 more (2 for health checks, 1 for the scheduler's leader lock), so the cluster-wide ceiling is `(maxOpenConns + 3)` times the most pods that can run at once (`autoscaling.maxReplicas` with the HPA on, plus the surge pods of a rolling update, 25% of the replicas rounded up), plus 1 for the migration Job. With the HPA on at `maxReplicas` 6 that is 6 + 2 surge = 8 pods, and the defaults reach `8 * 23 = 184`, above stock Postgres' `max_connections` of 100: lower this, raise `max_connections`, or cap `maxReplicas`. With more than one pod the install notes print the peak total when it exceeds 20. A server that runs out answers SQLSTATE 53300, which the boot error names (#1088). See the "Postgres connection budget" section of the control-plane HA guide.
   maxOpenConns: 20
   # -- Idle DB connections each pod keeps open even when quiet (the pool's floor). This is what each pod opens at boot, so a server must hold `pods x (maxIdleConns + 3)` plus 1 for the migration Job just to start; the install notes warn when that exceeds 20, the budget of the smallest managed tiers (Cloud SQL `db-f1-micro`, the smallest RDS and Azure Flexible sizes cap `max_connections` near 25). Should be ≤ `maxOpenConns`. Was 5 before #1088.
   maxIdleConns: 2
@@ -341,7 +341,7 @@ database:
 
 # Redis (XCom + locks).
 redis:
-  # -- External Redis URI. Required for Pro (the embedded XCom is Lite-only). Example: `redis://host:6379/0`, or `rediss://host:6380/0` for TLS.
+  # -- External Redis URI. Required for Cluster (the embedded XCom is Lite-only). Example: `redis://host:6379/0`, or `rediss://host:6380/0` for TLS.
   url: ""
   # -- Name of a Secret with key `redisUrl` (takes precedence over `url`).
   existingSecret: ""
@@ -377,11 +377,23 @@ auth:
     bearerMaxLifetimeSeconds: 0
     # -- Binds every browser session to its tenant's host when each tenant is served on its own host, for example `{tenant}.example.com` (#1463). A handoff is then accepted only on the host of the token's tenant, and a session cookie only on the host of the session's tenant; the `Authorization` header is not bound. Behind an ingress that rewrites `Host`, list it in `config.trustedProxies` so its `X-Forwarded-Host` is used. Empty (the default) binds nothing.
     hostPattern: ""
+    # -- Makes the issuer the only way to deploy (#1773): registering a DAG version, its dry run, setting the current version and deleting a DAG then take only a bearer the issuer minted for this audience alone with the `dexaflow:deploy` scope, and a UI session, a password login, an API token or a bearer of another audience is refused with 403. Must differ from `audience` and every `bearerAudiences` entry, and needs `issuer` (the chart fails to render otherwise). Empty (the default) changes nothing.
+    deployAudience: ""
+  # CI pipelines that deploy with their provider's OIDC token instead of a
+  # stored deploy token (ADR 0092, #1882). Off until `issuers` lists an entry.
+  ciOidc:
+    # -- Trusted CI issuers, one entry per provider and tenant, rendered as JSON into `LEOFLOW_AUTH_CI_OIDC_ISSUERS` (`auth.ci_oidc.issuers`). Each entry has `name`, `provider` (`github`, `gitlab`, `cloudbuild` or `other`), `issuer` (the exact `iss`), `audience`, `tenant` (fixed here, never read from a claim), optional `jwks_url` and `max_lifetime_seconds`, and `rules`: `claims` (exact values or `path.Match` patterns, including one identity claim of the provider) mapped to a non-admin `role` of the tenant and optional `scopes`. See the operator guide, /operate/cicd-deploy/#deploying-without-a-stored-token-ci-oidc. Empty (the default) leaves the exchange off.
+    issuers: []
+    # -- Lifetime, in seconds, of the session a CI token is exchanged for, 300 to 43200 (`auth.ci_oidc.session_ttl_seconds`).
+    sessionTtlSeconds: 3600
+  apiTokens:
+    # -- Stop serving the long-lived API tokens (ADR 0074) a signed-in user mints for CI and scripts (`auth.api_tokens.disabled`). `true` leaves `/api/v2/apiTokens` and the API tokens screen unserved and refuses every `dxf_` token with 401, one created before included. Turn it on when a platform in front of Dexaflow decides at each sign-in who may reach it, so no credential outlives that decision. `false` (the default) renders nothing.
+    disabled: false
   # -- HMAC secret signing API + agent JWTs. Set inline OR reference an existing Secret via `existingSecret`. Generate with `openssl rand -base64 64`.
   jwtSecret: ""
   # -- Name of a Secret with key `jwtSecret` (takes precedence over `jwtSecret`).
   existingSecret: ""
-  # -- API + agent JWT lifetime in seconds. Default 1h; raise for longer agent sessions.
+  # -- Lifetime, in seconds, of a user session token (UI, API and CLI). Default 1h. The UI and the CLI renew it while in use, up to `sessionMaxLifetimeSeconds`. Task agent tokens have their own short per-attempt lifetime and do not use this value. Sets `auth.jwt.token_ttl_seconds`.
   tokenTtlSeconds: 3600
   # -- Ceiling, in seconds, on the total age of a renewed user session, measured from first login and kept across every `POST /api/v2/auth/token/renew` (#801). Past it, renewal is refused and the user logs in again. `tokenTtlSeconds` is what bounds a stolen token; this only caps how long a live session may keep refreshing. `0` disables the ceiling. Sets `auth.jwt.max_lifetime_seconds`.
   sessionMaxLifetimeSeconds: 86400
@@ -408,7 +420,7 @@ auth:
   agentTokenTransport: envvar
   # -- Secret-delivery liveness gate: `observe` (default) logs and audits a would-have-denied when the calling task instance is no longer live but still delivers the secrets; `enforce` denies. Required at `enforce` by `execution.warmPoolsEnabled` (ADR 0058 D2) — a reused pod's superseded attempt would otherwise still resolve secrets. Run `observe` first and read the audit trail before flipping.
   secretLivenessMode: observe
-  # -- Scope-by-declaration policy for secret delivery: `permissive` (default) delivers the WHOLE tenant vault to every task regardless of what its `leoflow.yaml` declares, and only logs + audits a warning when a task declared a narrower non-empty set; `enforce` delivers only the declared subset; `off` disables scoping and its warning entirely. `enforce` denies secrets to a DAG that declares NONE, which — the declaration schema being new — is most DAGs, so run `permissive` first and read the scope-warning trail before flipping. A clean trail proves only that no DAG whose declarations still RESOLVE is over-served: the warning counts only declared names that actually resolve, so it says nothing about a DAG that declares nothing, nor about one whose declared names were since deleted from the vault (an all-stale declaration counts as zero) (#800). Operator-scoped, never DAG-author-settable.
+  # -- Scope-by-declaration policy for secret delivery: `permissive` (default) delivers the WHOLE tenant vault to every task regardless of what its `leoflow.yaml` declares, and only logs + audits a warning when a task declared a narrower set, an empty one included; `enforce` delivers only the declared subset; `off` disables scoping and its warning entirely. `enforce` denies secrets to a DAG that declares NONE, which is most DAGs while the declaration schema is new, so run `permissive` first and read the scope-warning trail before flipping. The trail records a DAG that declares nothing, or whose declared names were since deleted from the vault, with `declared=0` (#800); it only covers DAGs that ran while you watched. Operator-scoped, never DAG-author-settable.
   secretScoping: permissive
 
   # OIDC / SSO login (server `auth.provider: oidc`). OFF by default, and off means
@@ -505,18 +517,50 @@ execution:
   maxWorkerLifetime: 1h
   # -- How long an idle warm worker is kept before it is recycled (ADR 0058 D6). A Go duration string (`5m`, `90s`). This is also what drains the pool of a superseded dag_version after a deploy. Ignored while `warmPoolsEnabled` is false.
   workerIdleTtl: 5m
-  # -- Cap on the TOTAL warm pods one tenant may hold across ALL its dag_versions (ADR 0058 M4). Where `maxPoolSize` bounds one version, this bounds a tenant's aggregate footprint so one team cannot pin idle pods and starve neighbours on a shared cluster. Enforced by refusing to create new warm pods, never by deleting a busy worker. Ignored while `warmPoolsEnabled` is false.
+  # -- Cap on the TOTAL warm pods one tenant may hold across ALL its dag_versions (ADR 0058 M4). Where `maxPoolSize` bounds one version, this bounds a tenant's aggregate footprint so one team cannot pin idle pods and starve neighbours on a shared cluster. Enforced by refusing to create new warm pods, never by deleting a busy worker. The idle floors of versions with an active run are created even above the cap, unless busy workers already hold the tenant's budget, in which case the missing workers are created on a later tick; prewarmed pools (ADR 0082) share what is left and are served after those floors, and a prewarmed pool whose share drops keeps its idle workers until `workerIdleTtl` retires them, so the tenant can exceed the cap by those workers for at most one `workerIdleTtl` after each drop. Ignored while `warmPoolsEnabled` is false.
   maxWarmPodsPerTenant: 100
   # -- Mount every warm worker's root filesystem read only, give each attempt its own `HOME` and XDG dirs inside the scratch the worker wipes between attempts, and empty the `/tmp` emptyDir and `/dev/shm` before each attempt and again as soon as it ends, so nothing one attempt writes reaches the next one on the same worker. Off by default because a task that writes outside `$HOME`, `$TMPDIR`, `/tmp` and `/dev/shm` fails with it on. Takes effect on warm pods created after it is turned on; running warm pods keep their spec until they recycle. Dedicated task pods are not affected. Ignored while `warmPoolsEnabled` is false.
   warmReadOnlyRootFilesystem: false
-  # Pro source mode (ADR 0067): a DAG version whose `image` is exactly `sourceMode.image` and that carries its `dag.py` as `source` runs from that file on this runtime image, with no image build. See the docs page "Source mode" for what such a DAG can and cannot do, and exclude the `leoflow.io/dag-source` pod annotation in your log shipper before turning it on.
+  # -- With `warmReadOnlyRootFilesystem` on, refuse a warm worker whose agent does not confirm, when it registers, that it empties `/tmp` and `/dev/shm` between attempts, so that DAG version's attempts run on dedicated pods. Off by default: such a worker is only logged and counted in `dexaflow_scheduler_decisions_total{decision_type="warm_worker_sweep_unconfirmed"}`, because task images built on runtimes from v0.5.1 sweep but only newer ones confirm it. A refused worker exits and the pool replaces it, so turn this on once your task images are rebuilt. Ignored while `warmPoolsEnabled` or `warmReadOnlyRootFilesystem` is false.
+  warmRequireAttemptHomeSweep: false
+  # Cluster source mode (ADR 0067): a DAG version whose `image` is exactly `sourceMode.image` and that carries its `dag.py` as `source` runs from that file on this runtime image, with no image build. See the docs page "Source mode" for what such a DAG can and cannot do, and exclude the `leoflow.io/dag-source` pod annotation in your log shipper before turning it on.
   sourceMode:
-    # -- Turn Pro source mode on (ADR 0067). OFF by default: Pro ignores a version's source and nothing below reaches the server. Renders `LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED` and `LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE` only when on. Requires `image`; the chart fails the render otherwise.
+    # -- Turn Cluster source mode on (ADR 0067). OFF by default: Cluster ignores a version's source and nothing below reaches the server. Renders `LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED` and `LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE` only when on. Requires `image`; the chart fails the render otherwise.
     enabled: false
     # -- The runtime image source-mode versions name as their `image`, pinned by a full digest: `name@sha256:` and 64 lowercase hex characters. A source-mode version must name this exact string as its image, byte for byte (pass it to `dexaflow compile` as the image). Required when `enabled`; the chart refuses a tag alone or a short digest, as the server does at boot. Ignored while `enabled` is false.
     image: ""
+    # -- Let source-mode versions run on warm workers (ADR 0095): the control plane sends the version's `dag.py` with each warm assignment, and the worker runs the attempt from it, as a dedicated source-mode pod runs from its projected `dag.py`. OFF by default: source-mode versions run on dedicated pods. Needs `warmPoolsEnabled` and a runtime `image` whose agent is from 0.5.7 or later; a warm worker on an older agent is never given a source-mode attempt, which then takes a dedicated pod, and is logged and counted in `dexaflow_scheduler_decisions_total{decision_type="warm_worker_no_source_delivery"}`. Rendered as `LEOFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS` only when on. Ignored while `enabled` is false.
+    warmPools: false
   # -- Refill warm pools on events instead of every 30s: read the warm fleet from a pod informer instead of a LIST per tick, react at once when a warm pod is deleted, fails or is claimed, and create replacements in parallel (up to 4). The periodic tick stays as a backstop. Ignored while `warmPoolsEnabled` is false.
   warmPoolEventRefill: false
+
+# Cluster deploy defaults (#1704): what `dexaflow deploy` uses on this cluster for whatever the project's `dexaflow.yaml`, its workspace, its target and the person's CLI config leave unset, so a platform team states its registry once instead of in every repository. Served to signed-in users who may read DAGs on `GET /api/v2/deployDefaults`, read by `dexaflow deploy` and `dexaflow build --push`; the deploy prints where each value came from. None of these is a secret: never put registry credentials here.
+deploy:
+  defaults:
+    # -- Image prefix a deploy pushes to, such as `ghcr.io/acme`: a host, an optional port and a path, lowercase, with no scheme, credentials, tag or trailing `/`. The image name defaults to the `dag_id`. Empty (the default) advertises none. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_REGISTRY` only when set. The chart refuses a scheme, credentials, a tag, capitals, whitespace, quotes, a backslash, `$` or a trailing `/`, as the server does at boot.
+    registry: ""
+    # -- Platforms a deploy builds for, each `os/arch` or `os/arch/variant` (`[linux/amd64, linux/arm64]`). Empty (the default) leaves the built-in `linux/amd64`. A list (with `--set`, `deploy.defaults.platforms={linux/amd64,linux/arm64}`). Rendered comma-joined as `LEOFLOW_DEPLOY_DEFAULTS_PLATFORMS` only when set. The chart refuses a value that is not a list or a platform outside that form, as the server does at boot.
+    platforms: []
+    # -- Base image of the generated Dockerfile for projects that set no `base_image`. Empty (the default) leaves the built-in one. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_BASE_IMAGE` only when set. The chart refuses whitespace, quotes, a backslash or `$`, which `FROM` cannot carry, as the server does at boot.
+    baseImage: ""
+    # -- Advertise `execution.sourceMode.image` to `dexaflow deploy` as the runtime image for source mode (#1772): a deploy to this cluster that names no runtime image of its own then registers the DAG's `dag.py` on it, with no build and no push, and refuses a DAG that needs a build. The value served is the server's own runtime image, so nothing is copied by hand. Off (the default) advertises none. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_SOURCE_MODE` only when on. Requires `execution.sourceMode.enabled`; the chart fails the render otherwise, as the server refuses to start.
+    sourceMode: false
+    remoteBuilder:
+      cloudBuild:
+        # -- Google Cloud project of the remote builder (Cloud Build, ADR 0083) a deploy to this cluster uses for builds no daemonless path covers (a project `Dockerfile`, `system_packages`, a package without wheels), when the project's `build.remote_builder`, its target and its workspace name none (#1890). Empty (the default) advertises none. Required when any other `cloudBuild` value is set. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT` only when set. The person deploying signs in with `gcloud` and needs `roles/cloudbuild.builds.editor` there. The chart refuses a value that is not a project id, as the server does at boot.
+        project: ""
+        # -- Cloud Build region of that remote builder, such as `us-central1`; required with `workerPool`. Empty uses gcloud's `builds/region`, else global. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_REGION` only when set.
+        region: ""
+        # -- Private pool of that remote builder, `projects/<project>/locations/<region>/workerPools/<name>`, in `region`. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_WORKER_POOL` only when set.
+        workerPool: ""
+        # -- Account the remote build runs as, `projects/<project>/serviceAccounts/<email>`. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_SERVICE_ACCOUNT` only when set.
+        serviceAccount: ""
+    # -- Advertise the task ServiceAccount (`taskServiceAccount.name`, the server's `executor.task_service_account`) to `dexaflow deploy`, which then says which account tasks that set no `execution.service_account` run as (#1890). Reported only: nothing is written into `dag.json`. Off (the default) advertises none. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT` only when on. Requires `taskServiceAccount.create` (or `LEOFLOW_EXECUTOR_TASK_SERVICE_ACCOUNT` in `extraEnv`); the chart fails the render otherwise, as the server refuses to start.
+    taskServiceAccount: false
+    # -- Advertise the warm pool settings (`execution.warmPoolsEnabled`, `execution.minIdleWorkers`, `execution.maxPoolSize`) to `dexaflow deploy`, which then says whether warm pools are on and how many idle workers the DAG gets: its own `min_idle_workers`, else the cluster's, capped at the pool size (#1890). Reported only. Off (the default) advertises none. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_WARM_POOLS` only when on.
+    warmPools: false
+  # -- What the control plane does with an image not pinned by a full sha256 digest (`<repository>@sha256:<64 hex>`, #1703), when a DAG version is registered and when one is made current again. `"off"` (the default) accepts it, as before. `warn` accepts it with a warning in the answer (printed by `dexaflow push`, `dexaflow deploy` and `dexaflow rollback`), a log line, a count in `dexaflow_unpinned_image_total` and `require_digest` and `image_pinned` in the audit entry. `enforce` refuses it with a 400 naming the setting and the way out. `dexaflow deploy`, and the split path (`dexaflow compile` with its build and push flags, then `dexaflow push`), register the image by digest (#1703); a CLI from before that registers a tag on the split path, so start with `warn` to find those pipelines. Quote `"off"`: a bare `off` is YAML for false, which the chart also reads as off. Rendered as `LEOFLOW_DEPLOY_REQUIRE_DIGEST` only when `warn` or `enforce`. The chart refuses any other value, as the server does at boot.
+  requireDigest: "off"
 
 # -- Extra environment variables appended to the control-plane container, for
 # server settings this chart does not model as a first-class value (see
@@ -551,12 +595,24 @@ bootstrap:
 
 # migrations runs golang-migrate as a pre-install/pre-upgrade hook Job before the
 # server starts. The image must contain the migrations and migrate binary.
+# The installation id of ADR 0090 decision 3, which tells a database that was
+# emptied, restored from another installation or repointed from the one this
+# release was installed on. The migration Job keeps it in the database and in a
+# ConfigMap (<fullname>-installation) it creates itself; the control plane
+# reads it from there and stays not ready, with the reason `database replaced`,
+# when the database carries another id or none.
+installation:
+  # -- Pins the installation id. Leave it empty: a first install generates one. Set it to accept a replaced database, once: to the id the database carries to adopt a database from another installation, or to a new id for an emptied database, which the migration Job then writes. 1 to 128 letters, digits, `.`, `_` or `-`. See [a replaced database](https://dexaflow.dexadata.ai/operate/troubleshooting/#a-replaced-database).
+  id: ""
+
 migrations:
   enabled: true
+  # -- Let the control plane apply the embedded migrations itself at boot when the schema is absent or behind (ADR 0090 decision 4), never when it is ahead or dirty or the database is reported as replaced. Rendered on the `all` role, and in split mode on the scheduler only: the api role never migrates. The server's `database.url` must then be allowed to run DDL. The hook Job above stays the default path and keeps the ordering an upgrade needs; this covers what the hook cannot see, such as `migrations.enabled=false` installs and a `database.url` repointed between upgrades. golang-migrate's advisory lock serializes the two.
+  onBoot: false
   image:
     # -- leoflow-migrate image: the golang-migrate CLI compiled from the version in our `go.mod`, plus the Dexaflow SQL migrations, on distroless static. Published per release by `release.yaml`, signed with cosign, multi-arch (amd64 + arm64).
     repository: ghcr.io/dexadata/dexaflow-migrate
-    # -- Migration image tag. Defaults to `.Chart.appVersion` when empty. Pin to the same tag as `image.tag` (both server and migrate publish both `v`-prefix and no-`v` forms — use whichever convention you prefer, they resolve to the same digest): `--set migrations.image.tag=v0.4.0-rc.2`.
+    # -- Migration image tag. Defaults to `.Chart.appVersion` when empty. Pin to the same tag as `image.tag` (both server and migrate publish both `v`-prefix and no-`v` forms; use whichever convention you prefer, they resolve to the same digest): `--set migrations.image.tag=vX.Y.Z`.
     tag: ""
     pullPolicy: IfNotPresent
   # -- Path inside the migrate image where the SQL files live. Must match the COPY destination in `deploy/Dockerfile.migrate`.
@@ -591,7 +647,8 @@ migrations:
       type: RuntimeDefault
   securityContext:
     allowPrivilegeEscalation: false
-    # migrate is a static Go binary writing only to the DB (advisory lock for
+    # migrate is a static Go binary writing only to the DB (and, through the
+    # Kubernetes API, the installation ConfigMap; advisory lock for
     # migration mutex). No /tmp writes, no log files. Safe to lock the root
     # FS read-only — tightest restricted-PSA posture. Verified against the
     # image this chart defaults to by applying all 26 migrations with
@@ -604,8 +661,8 @@ migrations:
       drop: ["ALL"]
 
 # TLS for the agent <-> control plane gRPC channel (issue #58). Mandatory here,
-# not optional: this chart hardcodes LEOFLOW_UI_EDITION=pro (deployment.yaml) and
-# the Pro server refuses to boot without a gRPC cert/key, so there is no plaintext
+# not optional: this chart hardcodes LEOFLOW_UI_EDITION=pro (deployment.yaml; `pro` is the
+# earlier name of the cluster edition) and the cluster edition server refuses to boot without a gRPC cert/key, so there is no plaintext
 # deployment to opt into. TLS stays ON — what is now optional is WHERE the cert
 # material comes from:
 #   - auto-generated (default): with autoGenerate=true and no serverCertSecret /
@@ -619,7 +676,7 @@ migrations:
 #     cluster-less `helm template` render cannot `lookup` the existing Secret, so
 #     auto-gen would rotate the CA on every sync. Use cert-manager for GitOps.
 agentTLS:
-  # -- Enable TLS on the agent ↔ control plane gRPC channel (#58). Keep this `true`: the chart marks every deployment as the production edition (`LEOFLOW_UI_EDITION=pro`), and that edition refuses to boot without a gRPC cert/key — setting this to `false` yields a crash-looping control plane ("the Pro edition requires TLS on the agent gRPC channel"), not a plaintext deployment. The same edition marker also rejects `LEOFLOW_AGENT_ALLOW_INSECURE_SECRETS=true`, so secrets cannot accidentally travel a plaintext channel. For a plaintext local loop use the Lite dev server, not this chart.
+  # -- Enable TLS on the agent ↔ control plane gRPC channel (#58). Keep this `true`: the chart marks every deployment as the cluster edition (`LEOFLOW_UI_EDITION=pro`, the earlier name of `cluster`, which the server still accepts), and that edition refuses to boot without a gRPC cert/key: setting this to `false` yields a crash-looping control plane ("the cluster edition requires TLS on the agent gRPC channel"), not a plaintext deployment. The same edition marker also rejects `LEOFLOW_AGENT_ALLOW_INSECURE_SECRETS=true`, so secrets cannot accidentally travel a plaintext channel. For a plaintext local loop use the Lite dev server, not this chart.
   enabled: true
   # -- Auto-generate a stable self-signed CA + gRPC server cert when neither `serverCertSecret` nor `caConfigMap` is supplied (#690), so `helm install` needs no cert-manager and no pre-created Secret. The material is minted once and reused on every `helm upgrade` (via `lookup`) so the CA never rotates and running agents keep trusting it. Fine for quickstart / simple clusters. Set `false` (and supply nothing) to force the old fail-fast when no cert is provided. **Not for GitOps** (ArgoCD/Flux): a cluster-less render can't `lookup` the live Secret and would rotate the CA every sync — use BYO/cert-manager there. For production, prefer BYO below (rotation, real chain of trust).
   autoGenerate: true
@@ -673,7 +730,7 @@ observability:
   # -- Log level: `debug`, `info`, `warn`, `error`. Production default is `info`.
   logLevel: info
 
-# -- Resource requests + limits for the leoflow-server container. `250m`/`256Mi` requests are a floor for a small Pro (50–500 DAGs) — bump CPU+memory for larger deployments. The request guarantees the control plane its CPU shares under node contention (so a task-pod burst can't starve it); the actual probe-timeout fix is `probes.liveness.timeoutSeconds` below (CFS throttling is bounded by the CPU *limit*, not the request). See #860.
+# -- Resource requests + limits for the leoflow-server container. `250m`/`256Mi` requests are a floor for a small Cluster install (50–500 DAGs); bump CPU+memory for larger deployments. The request guarantees the control plane its CPU shares under node contention (so a task-pod burst can't starve it); the actual probe-timeout fix is `probes.liveness.timeoutSeconds` below (CFS throttling is bounded by the CPU *limit*, not the request). See #860.
 resources:
   requests:
     cpu: 250m
@@ -689,7 +746,7 @@ goMemLimit:
   # -- Share of `resources.limits.memory` given to `GOMEMLIMIT`, from 1 to 100. The rest is headroom for memory the Go runtime does not track but the container is charged for, such as cgo allocations and kernel page cache.
   percent: 80
 
-# -- Liveness/readiness probes for the leoflow-server container. Exposed so an operator can loosen the timeout under load: a busy scheduler can miss a 1s `/healthz` during a task-pod burst and be kubelet-killed mid-run, which cascades in-flight tasks to agent_lost (#860). Defaults are deliberately forgiving (5s liveness / 3s readiness timeout, 3 failures) rather than Kubernetes' 1s/3. `readiness.timeoutSeconds` has a **floor of 3** and the render fails below it: /readyz bounds its own work at 2s so it answers before the kubelet gives up, and a shorter kubelet timeout inverts that and you get a bare timeout instead of a 503 naming the failing dependency (#1041). To react faster, lower `readiness.periodSeconds` or `failureThreshold` instead.
+# -- Liveness/readiness probes for the leoflow-server container. Exposed so an operator can loosen the timeout under load: a busy scheduler can miss a 1s `/healthz` during a task-pod burst and be kubelet-killed mid-run, which cascades in-flight tasks to agent_lost (#860). Defaults are deliberately forgiving (5s liveness / 3s readiness timeout, 3 failures) rather than Kubernetes' 1s/3. /readyz bounds its own work at `readiness.timeoutSeconds` minus one second (rendered as `LEOFLOW_SERVER_PROBE_BUDGET`, #1050), so it answers before the kubelet gives up; raise the timeout to give a slow metadatabase more room. `readiness.timeoutSeconds` has a **floor of 3** and the render fails below it: a shorter kubelet timeout leaves the server under its 2s minimum and you get a bare timeout instead of a 503 naming the failing dependency (#1041). To react faster, lower `readiness.periodSeconds` or `failureThreshold` instead.
 probes:
   # -- Startup gate for the control-plane boot. Kubernetes runs neither the liveness nor the readiness probe until this one succeeds, so a slow boot reads as "not ready yet" instead of being killed and restarted. Without it liveness points at the same API listener the boot has not bound yet, and any boot-path dependency that is slow or stuck becomes a restart loop whose every cycle is recorded as `Completed exit=0`, because SIGTERM is handled cleanly (#1083). The budget is `periodSeconds * failureThreshold` = 180s, and it is sized from the server's own boot bounds rather than picked: the Postgres connect retry is 30s and runs TWICE (the request pool and the dedicated probe pool), the pod-informer warm-up is bounded at 10s (#1141), and on top of those sit credential detection for an object-store log sink and OIDC discovery, neither of which carries a bound of its own. That is 70s of code-defined budget before anything cloud-shaped, and a gate tighter than the boot would kill a pod that was about to come up, which is the loop again. Generous on purpose, because the two directions are not symmetric: a boot that FAILS returns an error and the process exits 1, so CrashLoopBackOff reports it promptly no matter what this says, and the gate only bounds a boot that HANGS, where a restart is a lottery ticket rather than a fix. The render refuses a budget at or below the liveness budget it replaces (10 + 3*20 = 70s), since that only moves the kill from one probe to the other. It probes `/healthz`, never `/readyz`: a failing startup probe RESTARTS the container, so gating it on dependency health would turn a database outage into a crash loop, which is the exact thing `/healthz` is deliberately static to avoid. Nothing is lost by that, because readiness still gates endpoint membership on `/readyz` once the gate opens. Set `enabled: false` to go back to liveness policing the boot.
   startup:
@@ -766,6 +823,67 @@ taskNetworkPolicy:
   # -- Host CIDRs within the always-blocked cloud-metadata range to RE-ALLOW, scoped to a single host each. Needed for keyless external-secrets auth that reaches a metadata/link-local endpoint: GKE Workload Identity (`169.254.169.254/32`) and EKS Pod Identity (`169.254.170.23/32`). AWS IRSA needs nothing here (it uses the public STS endpoint). Empty keeps the full metadata block. **One host per entry is enforced, not merely documented: the render FAILS on anything wider than an IPv4 `/32` or an IPv6 `/128`** — and on a bare address, a malformed CIDR or a scalar instead of a list. A wider entry would not widen the hatch, it would remove the block: NetworkPolicy egress rules are additive, so a rule allowing `169.254.0.0/16` overrides the `except` in the allow-all rule and the manifest still shows a block that no longer exists. To reach a wider range that is NOT the metadata range, use `extraEgress`.
   allowMetadataEgress: []
 
+# In-cluster rootless image builder (#1883, path 4 of ADR 0073): a BuildKit daemon that runs
+# rootless in a namespace of its own, for the builds `dexaflow deploy` cannot do
+# without a real Dockerfile build (a project Dockerfile, system_packages, a
+# package without wheels) on clusters with no cloud builder. It has no port: a
+# client reaches it through `kubectl exec` (`buildctl --addr
+# kube-pod://<pod>?namespace=<builder.namespace>`), allowed by the Role this
+# block renders, and pushes with its own registry credentials. Off by default.
+builder:
+  # -- Deploy the in-cluster builder: a Deployment, a ServiceAccount with no token, a Role (with a RoleBinding when `builder.subjects` is set) and, unless `builder.networkPolicy.enabled` is false, a NetworkPolicy, all in `builder.namespace`.
+  enabled: false
+  # -- Namespace of the builder. Required when `builder.enabled`; it must exist (the chart does not create it) and must be neither the release namespace nor `taskNamespace`, which the chart refuses. With the default Unconfined `seccompProfile` and `appArmorProfile` the namespace must allow the privileged Pod Security level (`pod-security.kubernetes.io/enforce: privileged`); the pod itself is not privileged.
+  namespace: ""
+  image:
+    # -- Image of the builder: rootless BuildKit, which runs as uid 1000. Another image must run rootless BuildKit as uid 1000 too.
+    repository: moby/buildkit
+    # -- Tag of the builder image. Keep a `-rootless` tag.
+    tag: v0.33.1-rootless
+    # -- Digest appended to the tag (`sha256:...`) to pin the image. Empty pulls by tag.
+    digest: ""
+    # -- Pull policy of the builder image.
+    pullPolicy: IfNotPresent
+  # -- Pull secrets for the builder image, which must exist in `builder.namespace`, such as `[{name: regcred}]`.
+  imagePullSecrets: []
+  # -- Advertise the builder on `/api/v2/deployDefaults` as the cluster's remote builder (`deploy.defaults.remote_builder.buildkit`, rendered as `LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_NAMESPACE` and `_POD_SELECTOR`), so a `dexaflow deploy` that needs a real build runs it here with `buildctl` instead of a local container daemon. A person who is not in `subjects`, or has no `buildctl` or `kubectl`, is passed over for the local daemon. The chart refuses it next to `deploy.defaults.remoteBuilder.cloudBuild`; set it to false to keep Cloud Build as the cluster's default.
+  advertise: true
+  # -- Who may build: RBAC subjects bound to the builder Role, which allows `get` and `list` on pods and `create` and `get` on `pods/exec` in `builder.namespace` only. Each is `{kind: User|Group, name}` or `{kind: ServiceAccount, name, namespace}`. Everyone bound shares one daemon and its cache and can read what the others build, so bind people who already trust each other. Empty renders the Role with no binding.
+  subjects: []
+  cache:
+    # -- Size limit of the emptyDir holding layers and the build cache. The kubelet evicts the pod when it is passed, so keep it above `gcKeepStorage` plus the largest build.
+    sizeLimit: 20Gi
+    # -- Storage buildkitd's garbage collector keeps, in MB, as `reserved[,free[,maximum]]` (passed as `--oci-worker-gc-keepstorage`).
+    gcKeepStorage: "10000"
+  # -- Resources of the builder container. A build runs inside it, so its memory limit is the limit of the largest build step.
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      memory: 4Gi
+  # -- Seccomp profile of the builder container. Rootless BuildKit creates a user namespace and mounts in it, which the runtime default profile refuses, so the default is `Unconfined`. A `{type: Localhost, localhostProfile: <path>}` profile that allows those calls replaces it.
+  seccompProfile:
+    type: Unconfined
+  # -- AppArmor profile of the builder container (Kubernetes 1.30 or later), `Unconfined` by default because the runtime default profile refuses the mounts. A `{type: Localhost, localhostProfile: <name>}` profile replaces it; `null` leaves the field out, for nodes without AppArmor or older clusters.
+  appArmorProfile:
+    type: Unconfined
+  networkPolicy:
+    # -- Render the builder NetworkPolicy: no ingress, egress to DNS and everywhere but the cloud metadata range (169.254.0.0/16) and `extraExcept`. On by default with the builder because build steps run Dockerfile code; a CNI that does not enforce policies ignores it.
+    enabled: true
+    # -- More CIDRs the builder may not reach, such as the cluster's Service and pod ranges.
+    extraExcept: []
+    # -- Extra egress rules appended verbatim, such as a registry inside a blocked range.
+    extraEgress: []
+  # -- Annotations on the builder pod.
+  podAnnotations: {}
+  # -- nodeSelector of the builder pod.
+  nodeSelector: {}
+  # -- Tolerations of the builder pod.
+  tolerations: []
+  # -- Affinity of the builder pod.
+  affinity: {}
+
 networkPolicy:
   # -- Enable NetworkPolicy gating ingress + egress on the control-plane pods. Requires a CNI that enforces policies (Calico/Cilium/etc.).
   enabled: false
@@ -779,8 +897,9 @@ networkPolicy:
   # -- Explicit egress rules. Empty = allow-all (DNS is ALWAYS allowed regardless). Lock down to your DB/Redis/kube-apiserver endpoints in regulated environments.
   egress: []
 
-# Prometheus Operator ServiceMonitor for /metrics (ADR 0010). Requires the
-# monitoring.coreos.com CRDs (kube-prometheus-stack).
+# Prometheus Operator ServiceMonitor for /metrics (ADR 0010) and an optional
+# PrometheusRule (ADR 0090). Both require the monitoring.coreos.com CRDs
+# (kube-prometheus-stack).
 metrics:
   serviceMonitor:
     # -- Enable ServiceMonitor for Prometheus scraping. Requires kube-prometheus-stack CRDs.
@@ -792,6 +911,13 @@ metrics:
     # -- Prometheus scrape timeout (must be ≤ interval).
     scrapeTimeout: 10s
     # -- Extra labels on the ServiceMonitor. Required when the Prometheus instance has a `serviceMonitorSelector` filter (e.g. `{release: kube-prometheus-stack}`).
+    additionalLabels: {}
+  prometheusRule:
+    # -- Render a PrometheusRule with the `DexaflowSchemaNotReady` alert: `dexaflow_schema_ready == 0` for 5 minutes, a warning, or critical when the reason is `database replaced` (ADR 0090). A control plane that waits for its schema stays up and not ready, so without an alert nobody may notice. Requires kube-prometheus-stack CRDs and a scrape of `/metrics` (`metrics.serviceMonitor.enabled`).
+    enabled: false
+    # -- Namespace for the PrometheusRule resource. Defaults to the release namespace.
+    namespace: ""
+    # -- Extra labels on the PrometheusRule. Required when the Prometheus instance has a `ruleSelector` filter (e.g. `{release: kube-prometheus-stack}`).
     additionalLabels: {}
 
 ingress:
@@ -809,6 +935,43 @@ ingress:
           pathType: Prefix
   # -- TLS configuration. Each entry maps hosts to a TLS Secret (typically a cert-manager Certificate Secret).
   tls: []
+  # Optional maintenance page (#1998): a small nginx Deployment and Service that
+  # ingress-nginx answers from while no server pod is ready, instead of its own
+  # error page. Other controllers: point their fallback at the
+  # `<release>-maintenance` Service (see the troubleshooting page).
+  maintenancePage:
+    # -- Deploy the maintenance page and set the ingress-nginx `default-backend` and `custom-http-errors: "502,504"` annotations on the Ingress. Needs `ingress.enabled`. Every path of the page answers 503, so API clients still see an outage status.
+    enabled: false
+    # -- Message shown on the page, rendered escaped. Empty shows a generic "unavailable, retrying" text.
+    message: ""
+    # -- Optional operator text shown under the message, rendered escaped.
+    operatorText: ""
+    # -- Optional status or support URL linked from the page; must start with `http://` or `https://`.
+    statusUrl: ""
+    # -- Label of the `statusUrl` link. Empty shows "Status page".
+    statusText: ""
+    # -- Seconds between automatic reloads of the page, also sent as `Retry-After`. 0 turns both off.
+    refreshSeconds: 10
+    # -- Replicas of the maintenance page Deployment.
+    replicas: 1
+    image:
+      # -- Image of the maintenance page: any unprivileged nginx listening on 8080 as uid 101.
+      repository: nginxinc/nginx-unprivileged
+      # -- Tag of the maintenance page image.
+      tag: 1.30.6-alpine-slim
+      # -- Digest appended to the tag (`sha256:...`) to pin the image. Empty pulls by tag.
+      digest: ""
+      # -- Pull policy of the maintenance page image.
+      pullPolicy: IfNotPresent
+    # -- Pull secrets for the maintenance page image, such as `[{name: regcred}]`.
+    imagePullSecrets: []
+    # -- Resources of the maintenance page container.
+    resources:
+      requests:
+        cpu: 10m
+        memory: 16Mi
+      limits:
+        memory: 32Mi
 
 # -- Extra annotations on the control-plane pod template. EKS/Karpenter opt-in: `karpenter.sh/do-not-disrupt: "true"` exempts the pod's node from Karpenter's voluntary disruption (consolidation, drift, expiration), trading maintenance friction — that node is never consolidated or upgraded by Karpenter while the pod runs — for eviction protection. Not set by default; a second replica plus the auto PDB is the platform-neutral answer.
 podAnnotations: {}

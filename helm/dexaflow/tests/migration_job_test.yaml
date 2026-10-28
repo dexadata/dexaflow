@@ -84,19 +84,22 @@ tests:
           path: spec.template.spec.securityContext.seccompProfile.type
           value: RuntimeDefault
 
-  - it: "issue #727 — migration Job pod disables ServiceAccount token automount"
-    # The migrate binary talks only to Postgres via LEOFLOW_DATABASE_URL; it
-    # never calls the Kubernetes API, so it has no need for a projected SA
-    # token. Leaving automount on hands the most-hardened pod in the chart the
-    # namespace default SA's token — an unused credential and needless attack
-    # surface. Mirrors internal/executor/kubernetes.go, which already sets
-    # AutomountServiceAccountToken:false on the task pod.
+  - it: "issue #727: the migration Job pod never mounts the namespace default ServiceAccount's token"
+    # #727 turned automount off because the migrate binary only talked to
+    # Postgres, and the token it was handed was the namespace default SA's: an
+    # unused credential. Since ADR 0090 decision 3 the wrapper writes the
+    # installation ConfigMap, so the pod runs as its own account, which may
+    # get, create and update that one ConfigMap and nothing else
+    # (installation_test.yaml pins the Role).
     set:
       database.url: postgres://h/d
     asserts:
       - equal:
+          path: spec.template.spec.serviceAccountName
+          value: leoflow-migrate
+      - equal:
           path: spec.template.spec.automountServiceAccountToken
-          value: false
+          value: true
 
   # #1052 — the Job reads the SAME databaseUrl secret as the control plane, so a
   # DSN carrying `sslrootcert=/etc/leoflow/db-ca/ca.crt` (the recipe values.yaml
@@ -294,3 +297,62 @@ tests:
           path: spec.template.spec.tolerations
       - notExists:
           path: spec.template.spec.affinity
+
+  # #1020: the migrate image exits with its own code for each failure a retry
+  # cannot fix, and the Job fails on the first such pod instead of burning
+  # backoffLimit ("failed: 4/1"). The list is kept equal to the Go side by
+  # internal/migrator's TestChartFailsTheJobOnTheDeterministicCodes.
+  - it: fails the Job at once on the wrapper's deterministic exit codes (Kubernetes 1.31)
+    capabilities:
+      majorVersion: 1
+      minorVersion: 31
+    set:
+      database.url: postgres://h/d
+    asserts:
+      - equal:
+          path: spec.podFailurePolicy.rules[0].action
+          value: FailJob
+      - equal:
+          path: spec.podFailurePolicy.rules[0].onExitCodes
+          value:
+            containerName: migrate
+            operator: In
+            values: [2, 3, 4, 5, 6, 7, 8]
+      # podFailurePolicy is only valid with restartPolicy Never, and the
+      # containerName must name the container that exits.
+      - equal:
+          path: spec.template.spec.restartPolicy
+          value: Never
+      - equal:
+          path: spec.template.spec.containers[0].name
+          value: migrate
+      - equal:
+          path: spec.backoffLimit
+          value: 3
+
+  - it: keeps the policy on newer apiservers
+    capabilities:
+      majorVersion: 1
+      minorVersion: 33
+    set:
+      database.url: postgres://h/d
+    asserts:
+      - equal:
+          path: spec.podFailurePolicy.rules[0].action
+          value: FailJob
+
+  # Chart.yaml declares no kubeVersion, so a 1.30 apiserver still installs the
+  # chart; it gets the Job without the field (retries as before) rather than a
+  # rejected hook.
+  - it: renders no podFailurePolicy below Kubernetes 1.31
+    capabilities:
+      majorVersion: 1
+      minorVersion: 30
+    set:
+      database.url: postgres://h/d
+    asserts:
+      - notExists:
+          path: spec.podFailurePolicy
+      - equal:
+          path: spec.backoffLimit
+          value: 3

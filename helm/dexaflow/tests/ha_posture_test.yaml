@@ -817,6 +817,36 @@ tests:
       - notMatchRegexRaw:
           pattern: "WARNING: podDisruptionBudget.enabled=true"
 
+  - it: NOTES warn when single replica runs on ephemeral log storage with the disk sink
+    template: NOTES.txt
+    set:
+      replicaCount: 1
+      logs.persistence.enabled: false
+      logs.sink.provider: disk
+    asserts:
+      - matchRegexRaw:
+          pattern: "WARNING: logs\\.persistence\\.enabled=false with logs\\.sink\\.provider=disk"
+
+  - it: NOTES stay quiet about log persistence when PVC persistence is enabled
+    template: NOTES.txt
+    set:
+      replicaCount: 1
+      logs.persistence.enabled: true
+    asserts:
+      - notMatchRegexRaw:
+          pattern: "WARNING: logs\\.persistence\\.enabled"
+
+  - it: NOTES stay quiet about log persistence when object sink is used
+    template: NOTES.txt
+    set:
+      replicaCount: 1
+      logs.persistence.enabled: false
+      logs.sink.provider: s3
+      logs.sink.bucket: my-bucket
+    asserts:
+      - notMatchRegexRaw:
+          pattern: "WARNING: logs\\.persistence\\.enabled"
+
   # ─── Topology spread: two replicas on one node is one replica ────────────
   # Consolidation bin-packs both replicas onto one node unless told otherwise;
   # a node failure then takes the whole control plane, and the auto PDB (one

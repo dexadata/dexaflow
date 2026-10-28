@@ -62,11 +62,18 @@ func (s *ExecutionStore) TaskSpec(ctx context.Context, id auth.AgentIdentity) (a
 	if run.DataIntervalEnd.Valid {
 		dataIntervalEnd = run.DataIntervalEnd.Time.UTC().Format(time.RFC3339)
 	}
-	// The DagRun's params/conf JSON, for the runtime's context['params'] (#148). Empty
-	// when the run carried no conf, so the agent leaves LEOFLOW_PARAMS unset (params={}).
+	// The task's params for the runtime's context['params'] (#148): the DAG's param
+	// defaults, then the task's own params, then the run conf (#1841). Layered here,
+	// not at trigger time, so a run created without conf (a scheduled run) still
+	// gets the DAG defaults (#1844). Empty when nothing applies, so the agent leaves
+	// LEOFLOW_PARAMS unset (params={}).
+	params, err := spec.RunParams(task, json.RawMessage(run.Conf))
+	if err != nil {
+		return agentrpc.TaskSpec{}, fmt.Errorf("resolving task params: %w", err)
+	}
 	var paramsJSON string
-	if len(run.Conf) > 0 {
-		paramsJSON = string(run.Conf)
+	if len(params) > 0 {
+		paramsJSON = string(params)
 	}
 	// When a reschedule-mode sensor is re-dispatched, deliver the time it first
 	// entered reschedule so its get_first_reschedule_date returns the real value and
@@ -122,6 +129,8 @@ func (s *ExecutionStore) TaskSpec(ctx context.Context, id auth.AgentIdentity) (a
 		DataIntervalStart: dataIntervalStart,
 		DataIntervalEnd:   dataIntervalEnd,
 		ParamsJSON:        paramsJSON,
+		RunConfJSON:       runConfJSON(run.Conf),
+		RunType:           taskSDKRunType(run.Trigger),
 		FirstRescheduleAt: firstRescheduleAt,
 		MaxTries:          attemptBudget,
 		OnFailureCallback: task.OnFailureCallback,
@@ -255,9 +264,10 @@ func (s *ExecutionStore) RecordHeartbeat(ctx context.Context, id auth.AgentIdent
 // warm worker pod (workerPod, its own downward-API pod name) that acked this
 // attempt as started, stamped onto warm_worker_id so a later failover reaper can
 // tell which running attempts a dead warm pod held. The UPDATE is guarded on
-// state IN ('queued', 'running'), so a settled attempt is never bound — an ack
-// that races a reaper settling the row is a benign no-op (zero rows), not an
-// error. It is written ONLY on a warm ack; a dedicated-pod attempt (and every
+// state IN ('scheduled', 'queued', 'running'), so a settled attempt is never
+// bound (an ack that races a reaper settling the row is a benign no-op, zero
+// rows, not an error), while an ack that lands before the tick records queued
+// still binds (#1600). It is written ONLY on a warm ack; a dedicated-pod attempt (and every
 // attempt while warm pools are off) leaves warm_worker_id NULL.
 //
 // N1d-a2 deferral: warm_worker_id is intentionally NOT cleared when the attempt
@@ -287,7 +297,11 @@ func (s *ExecutionStore) BindWarmAttempt(ctx context.Context, runID, taskID stri
 // attempt epoch; a token without an epoch is matched on its try alone) is still
 // live (present and in an active, non-terminal state), derived from the same
 // predicate RecordHeartbeat writes on, but as a pure read with no
-// side-effect (ADR 0055). It is the read-only revocation signal the secret path
+// side-effect (ADR 0055). A scheduled attempt also counts when the token
+// carries the epoch the dispatch claimed: ClaimAttemptEpoch bumps the epoch
+// before the instance turns queued, so a task that starts fast can ask for a
+// secret in that gap (#2201). A token without an epoch never matches that
+// state. It is the read-only revocation signal the secret path
 // consults: a terminal, superseded (try_number moved on), or reaped attempt is
 // not live, so its token stops resolving secrets even while the signature holds.
 //
@@ -616,4 +630,24 @@ func (s *ExecutionStore) SettledRuns(ctx context.Context, refs []executor.RunRef
 		out[executor.RunRef{Tenant: uuidToString(row.TenantID), Run: uuidToString(row.ID)}] = true
 	}
 	return out, nil
+}
+
+// runConfJSON returns the run's conf for the runtime's dag_run.conf (#1843): the
+// conf alone, as stored, or "{}" for a run without one, as Airflow gives an empty
+// dict. Never empty, so the runtime can tell it from a server that sends none.
+func runConfJSON(conf []byte) string {
+	if len(conf) == 0 || string(conf) == "null" {
+		return "{}"
+	}
+	return string(conf)
+}
+
+// taskSDKRunType names the run's trigger in the Task SDK's DagRunType
+// vocabulary, which dag_run.run_type compares against (#1843). The dataset
+// trigger is the SDK's asset_triggered; the other triggers share their names.
+func taskSDKRunType(trigger queries.DagRunTrigger) string {
+	if trigger == queries.DagRunTriggerDataset {
+		return "asset_triggered"
+	}
+	return string(trigger)
 }

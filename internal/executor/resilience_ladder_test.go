@@ -23,6 +23,7 @@ func defaultLadder() ResilienceLadder {
 		MaxAttemptCredentialLifetime: 24 * time.Hour,
 		TaskTerminationGrace:         30 * time.Second,
 		InfraConfirmMaxWait:          2 * time.Minute,
+		DispatchLostThreshold:        cfg.DispatchLostThreshold,
 	}
 }
 
@@ -116,6 +117,38 @@ func TestValidateResilienceLadderRejectsEachViolation(t *testing.T) {
 			mutate:  func(l *ResilienceLadder) { l.MaxAttemptCredentialLifetime = 5 * time.Minute },
 			want:    []string{"attempt token TTL", key},
 			notWant: []string{bug, "file a bug"},
+		},
+		{
+			// #1126: a Pending pod must be re-placed before its dispatch-minted
+			// credential nears its end, which the dispatch-lost reaper can only
+			// do for attempts queued past its threshold.
+			name:    "dispatch-lost threshold not below the start deadline",
+			mutate:  func(l *ResilienceLadder) { l.DispatchLostThreshold = l.AttemptTokenTTL - StartCredentialMargin },
+			want:    []string{"dispatch-lost threshold", "start credential margin", bug},
+			notWant: []string{key},
+		},
+		{
+			name:    "a dispatch-lost threshold past the token TTL",
+			mutate:  func(l *ResilienceLadder) { l.DispatchLostThreshold = 15 * time.Minute },
+			want:    []string{"dispatch-lost threshold", bug},
+			notWant: []string{key},
+		},
+		{
+			// #1126: an agent that starts just inside the start deadline must
+			// reach its first, renewing heartbeat before the credential lapses.
+			name: "maintenance and heartbeat not inside the start margin",
+			mutate: func(l *ResilienceLadder) {
+				l.HeartbeatInterval = 60 * time.Second
+				l.AgentLostThreshold = 2 * time.Minute
+				l.SettlingGrace = 3 * time.Minute
+			},
+			want:    []string{"heartbeat interval", "start credential margin", bug},
+			notWant: []string{key},
+		},
+		{
+			name:   "a non-positive dispatch-lost threshold",
+			mutate: func(l *ResilienceLadder) { l.DispatchLostThreshold = 0 },
+			want:   []string{"dispatch-lost threshold", "positive"},
 		},
 		{
 			name:   "a non-positive rung",

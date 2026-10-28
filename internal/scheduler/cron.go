@@ -4,6 +4,8 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // scheduleParseable reports whether expr is a cron schedule the scheduler can
@@ -12,7 +14,7 @@ import (
 // expression is malformed", so the latter can be surfaced instead of silently
 // ignored.
 func scheduleParseable(expr string) bool {
-	_, err := cron.ParseStandard(expr)
+	_, err := domain.ParseCron(expr)
 	return err == nil
 }
 
@@ -26,7 +28,7 @@ func scheduleParseable(expr string) bool {
 // backfilling older slots. A DAG that has run advances to the next slot after its
 // last logical date once that slot has arrived.
 func nextScheduledRun(expr string, last *time.Time, now time.Time) (logical time.Time, due bool) {
-	schedule, err := cron.ParseStandard(expr)
+	schedule, err := domain.ParseCron(expr)
 	if err != nil {
 		return time.Time{}, false
 	}
@@ -42,7 +44,8 @@ func nextScheduledRun(expr string, last *time.Time, now time.Time) (logical time
 		return mostRecentSlot(schedule, now)
 	}
 	next := schedule.Next(*last)
-	if next.After(now) {
+	// The zero time means the schedule never fires again (see dueScheduledSlots).
+	if next.IsZero() || next.After(now) {
 		return time.Time{}, false
 	}
 	return next, true

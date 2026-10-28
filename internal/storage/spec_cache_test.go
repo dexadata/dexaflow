@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -222,5 +223,64 @@ func TestSpecCacheBuildsTaskGraphOnlyForTheScheduler(t *testing.T) {
 	}
 	if getter.calls[v] != 1 {
 		t.Errorf("version fetched %d times, want 1", getter.calls[v])
+	}
+}
+
+// batchingVersionGetter serves GetDagVersionsByIDs too, counting each batch.
+type batchingVersionGetter struct {
+	countingVersionGetter
+	batches [][]pgtype.UUID
+}
+
+func (g *batchingVersionGetter) GetDagVersionsByIDs(ctx context.Context, ids []pgtype.UUID) ([]queries.DagVersion, error) {
+	g.batches = append(g.batches, append([]pgtype.UUID(nil), ids...))
+	out := make([]queries.DagVersion, 0, len(ids))
+	for _, id := range ids {
+		raw, err := json.Marshal(g.spec)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, queries.DagVersion{ID: id, ImageReference: "img:v1", Spec: raw})
+	}
+	return out, nil
+}
+
+// TestSpecCachePrefetchBatchesColdVersions: prefetch reads every cold version
+// of a warm reconcile tick in one query (#1707 review), skips the versions
+// already cached, and the reads that follow, pinned or not, hit the cache.
+func TestSpecCachePrefetchBatchesColdVersions(t *testing.T) {
+	c := newSpecCacheWithLimit(1)
+	g := &batchingVersionGetter{countingVersionGetter: countingVersionGetter{spec: domain.DAGSpec{DagID: "d", Image: "img:v1"}}}
+	ctx := context.Background()
+	warm := versionUUID(1)
+	if _, _, err := c.getForTick(ctx, g, warm); err != nil {
+		t.Fatal(err)
+	}
+	ids := []pgtype.UUID{warm, versionUUID(2), versionUUID(3), versionUUID(4)}
+	if err := c.prefetch(ctx, g, ids); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.batches) != 1 || len(g.batches[0]) != 3 {
+		t.Fatalf("batches = %v, want one batch of the 3 cold versions", g.batches)
+	}
+	for i, id := range ids {
+		var err error
+		if i%2 == 0 {
+			_, _, err = c.getCurrent(ctx, g, currentSpecKey{dagID: fmt.Sprintf("d%d", i)}, id)
+		} else {
+			_, _, err = c.getForTick(ctx, g, id)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if g.calls[warm] != 1 || len(g.calls) != 1 {
+		t.Errorf("single-version reads = %v, want only the first read of the version cached before", g.calls)
+	}
+	if err := c.prefetch(ctx, g, ids); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.batches) != 1 {
+		t.Errorf("a prefetch of cached versions queried again: %v", g.batches)
 	}
 }

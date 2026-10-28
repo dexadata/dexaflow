@@ -60,10 +60,11 @@ func TestExecuteClassifiesClientRateLimiterRefusalAsDeferred(t *testing.T) {
 }
 
 // A context that expires while a request is in flight is not the limiter's
-// refusal: the create may have reached the apiserver, so it keeps the bounded
-// Rejected path.
+// refusal: the create may have reached the apiserver, so it is not Deferred
+// (which records nothing). It is Unavailable, bounded by the scheduler's
+// window, and the re-offer fences a pod the create may have made (ADR 0093).
 func TestClassifyContextDeadlineIsNotDeferred(t *testing.T) {
-	if got := classifyDispatchError(context.DeadlineExceeded); got != Rejected {
-		t.Errorf("a plain deadline must stay Rejected, got %s", got)
+	if got := classifyDispatchError(context.DeadlineExceeded); got != Unavailable {
+		t.Errorf("a plain deadline must be Unavailable, got %s", got)
 	}
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/secrets"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 // TestConnectionPartialUpsertPreservesOmittedFields locks the safe-by-default
@@ -29,7 +30,7 @@ func TestConnectionPartialUpsertPreservesOmittedFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	connID := fmt.Sprintf("uiq_partial_%d", time.Now().UnixNano())
 	port := 5432

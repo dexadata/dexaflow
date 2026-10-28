@@ -25,7 +25,8 @@ func TestRootCommandsHaveGroups(t *testing.T) {
 		"runs": "inspection",
 		"auth": "inspection",
 		// Operations — operate a running control plane.
-		"admin": "operations",
+		"admin":    "operations",
+		"rollback": "operations",
 		// Lifecycle — install, configure, repair, version, retire the host.
 		"setup":     "lifecycle",
 		"doctor":    "lifecycle",
@@ -69,6 +70,7 @@ func TestRootDefinesGroups(t *testing.T) {
 // for backward compatibility, but the help should brand it as the Lite
 // database so new users do not look for a non-existent "dev" edition.
 func TestDBHelpReferencesLite(t *testing.T) {
+	t.Parallel()
 	db := newDBCommand()
 	if !strings.Contains(db.Short, "Lite") {
 		t.Errorf("db Short should mention Lite (post-rename); got %q", db.Short)

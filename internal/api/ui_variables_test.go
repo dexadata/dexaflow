@@ -29,6 +29,28 @@ func (f *fakeVariableStore) ListVariables(_ context.Context, _ string, _, _ int)
 	return out, len(out), nil
 }
 
+func (f *fakeVariableStore) ListVariablesFiltered(_ context.Context, _ string, pattern, prefixPattern string, limit, offset int) ([]domain.Variable, int, error) {
+	out := make([]domain.Variable, 0, len(f.vars))
+	for _, v := range f.vars {
+		if prefixPattern != "" && !strings.HasPrefix(v.Key, prefixPattern) {
+			continue
+		}
+		if pattern != "" && !strings.Contains(v.Key, pattern) {
+			continue
+		}
+		out = append(out, v)
+	}
+	total := len(out)
+	if offset >= total {
+		return []domain.Variable{}, total, nil
+	}
+	end := offset + limit
+	if limit <= 0 || end > total {
+		end = total
+	}
+	return out[offset:end], total, nil
+}
+
 func (f *fakeVariableStore) GetVariable(_ context.Context, _, key string) (domain.Variable, error) {
 	if f.getErr != nil {
 		return domain.Variable{}, f.getErr
@@ -68,12 +90,20 @@ func (f *fakeVariableStore) DeleteVariable(_ context.Context, _, key string) err
 }
 
 func variablesServer(store VariableStore) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Variables:     store,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Variables: store,
+		},
 	})
 }
 
@@ -313,4 +343,43 @@ func TestVariableGetUnreadableExplainsTheError(t *testing.T) {
 	if body := rec.Body.String(); !strings.Contains(body, `variable \"lost\" is encrypted with a key this server does not have`) {
 		t.Errorf("body %s does not explain the failure", body)
 	}
+}
+
+func TestListVariablesFilters(t *testing.T) {
+	store := &fakeVariableStore{
+		vars: map[string]domain.Variable{
+			"env_staging": {Key: "env_staging", Value: "staging"},
+			"env_prod":    {Key: "env_prod", Value: "production"},
+			"app_timeout": {Key: "app_timeout", Value: "30"},
+		},
+	}
+	srv := variablesServer(store)
+
+	t.Run("prefix pattern filter", func(t *testing.T) {
+		rec := authGet(srv, http.MethodGet, "/api/v2/variables?variable_key_prefix_pattern=env_", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET = %d, want 200", rec.Code)
+		}
+		var resp variableCollectionDTO
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decoding body: %v", err)
+		}
+		if resp.TotalEntries != 2 || len(resp.Variables) != 2 {
+			t.Errorf("got total %d, vars %d; want 2", resp.TotalEntries, len(resp.Variables))
+		}
+	})
+
+	t.Run("substring pattern filter", func(t *testing.T) {
+		rec := authGet(srv, http.MethodGet, "/api/v2/variables?variable_key_pattern=prod", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET = %d, want 200", rec.Code)
+		}
+		var resp variableCollectionDTO
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decoding body: %v", err)
+		}
+		if resp.TotalEntries != 1 || len(resp.Variables) != 1 || resp.Variables[0].Key != "env_prod" {
+			t.Errorf("got total %d, vars %+v; want 1 (env_prod)", resp.TotalEntries, resp.Variables)
+		}
+	})
 }

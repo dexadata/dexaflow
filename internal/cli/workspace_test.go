@@ -14,6 +14,7 @@ import (
 // expected to scaffold a starter subdir, so ResolveWorkspace must return a
 // usable WorkspaceSpec with an empty Projects slice and a defaulted RootCfg.
 func TestResolveWorkspace_EmptyWorkspaceReturnsNoProjectsButValidRoot(t *testing.T) {
+	t.Parallel()
 	ws := t.TempDir()
 	got, err := ResolveWorkspace(ws)
 	if err != nil {
@@ -37,6 +38,7 @@ func TestResolveWorkspace_EmptyWorkspaceReturnsNoProjectsButValidRoot(t *testing
 // one subdir with dexaflow.yaml + dag.py shows up as the only project, with the
 // expected dag_id and resolved config path.
 func TestResolveWorkspace_SingleSubdirProject(t *testing.T) {
+	t.Parallel()
 	ws := t.TempDir()
 	dag := filepath.Join(ws, "sales")
 	if err := os.MkdirAll(dag, 0o755); err != nil {
@@ -70,6 +72,7 @@ func TestResolveWorkspace_SingleSubdirProject(t *testing.T) {
 // would have targeted the wrong venv. Per-component numeric compare fixes
 // it; this test pins the contract.
 func TestPythonVersionLess_NumericNotLexicographic(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		a, b string
 		want bool // want a < b
@@ -116,6 +119,7 @@ func writeDepsProject(t *testing.T, ws, dir string, deps ...string) {
 // per-DAG venvs exist for. Resolving the workspace must not refuse it, and each
 // project must keep its own pins untouched.
 func TestResolveWorkspace_ConflictingPinsAcrossProjectsResolve(t *testing.T) {
+	t.Parallel()
 	ws := t.TempDir()
 	writeDepsProject(t, ws, "legacy_pandas", "pandas==1.5.3")
 	writeDepsProject(t, ws, "modern_pandas", "pandas==2.2.3", "requests")
@@ -146,6 +150,7 @@ func TestResolveWorkspace_ConflictingPinsAcrossProjectsResolve(t *testing.T) {
 // for a dependency entry that is not a pip specifier at all, so the user sees
 // which project carries it before any venv is provisioned.
 func TestResolveWorkspace_MalformedSpecifierIsError(t *testing.T) {
+	t.Parallel()
 	ws := t.TempDir()
 	writeDepsProject(t, ws, "ok", "requests")
 	writeDepsProject(t, ws, "broken", "==1.0")
@@ -168,6 +173,7 @@ func TestResolveWorkspace_MalformedSpecifierIsError(t *testing.T) {
 // matches docs/configuration.md and avoids the "your workspace shipped a 3.10
 // venv but my new DAG needs 3.12" trap.
 func TestResolveWorkspace_RootCfgPicksHighestPythonVersion(t *testing.T) {
+	t.Parallel()
 	ws := t.TempDir()
 	for _, p := range []struct {
 		dir, py string
@@ -203,6 +209,7 @@ func TestResolveWorkspace_RootCfgPicksHighestPythonVersion(t *testing.T) {
 // swallow it — the caller needs the path list in the message to fix the
 // collision.
 func TestResolveWorkspace_PropagatesDiscoveryErrors(t *testing.T) {
+	t.Parallel()
 	ws := t.TempDir()
 	for _, name := range []string{"foo", "bar"} {
 		full := filepath.Join(ws, name)
@@ -230,6 +237,7 @@ func TestResolveWorkspace_PropagatesDiscoveryErrors(t *testing.T) {
 // WatchedPaths so a save in any of them triggers a reload. Without a yaml the
 // project still contributes its dag.py.
 func TestResolveWorkspace_WatchedPathsCoverEveryProject(t *testing.T) {
+	t.Parallel()
 	ws := t.TempDir()
 	// one project with yaml
 	withYaml := filepath.Join(ws, "with_yaml")
@@ -272,6 +280,7 @@ func TestResolveWorkspace_WatchedPathsCoverEveryProject(t *testing.T) {
 // banner is only cleared by a successful reload, so the UI stayed red while the
 // project was already fixed.
 func TestWatchedPathsCoverTheRefusedShape(t *testing.T) {
+	t.Parallel()
 	ws := t.TempDir()
 	mixed := filepath.Join(ws, "mixed")
 	if err := os.MkdirAll(mixed, 0o750); err != nil {

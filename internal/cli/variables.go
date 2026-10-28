@@ -177,7 +177,7 @@ func newVariablesDeleteCommand() *cobra.Command {
 // setVariableReq posts (upserts) a variable through the shared typed client and
 // returns the masked variable the server echoes back.
 func setVariableReq(ctx context.Context, serverURL, token string, body apiclient.VariableBody) (apiclient.Variable, error) {
-	c, err := apiclient.New(serverURL, token)
+	c, err := cliAPIClient(serverURL, token)
 	if err != nil {
 		return apiclient.Variable{}, err
 	}
@@ -196,7 +196,7 @@ func setVariableReq(ctx context.Context, serverURL, token string, body apiclient
 
 // listVariablesReq gets the variable collection through the typed client.
 func listVariablesReq(ctx context.Context, serverURL, token string) (*apiclient.VariableCollection, error) {
-	c, err := apiclient.New(serverURL, token)
+	c, err := cliAPIClient(serverURL, token)
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +212,7 @@ func listVariablesReq(ctx context.Context, serverURL, token string) (*apiclient.
 
 // getVariableReq fetches one variable through the typed client.
 func getVariableReq(ctx context.Context, serverURL, token, key string) (apiclient.Variable, error) {
-	c, err := apiclient.New(serverURL, token)
+	c, err := cliAPIClient(serverURL, token)
 	if err != nil {
 		return apiclient.Variable{}, err
 	}
@@ -231,7 +231,7 @@ func getVariableReq(ctx context.Context, serverURL, token, key string) (apiclien
 
 // deleteVariableReq deletes one variable through the typed client.
 func deleteVariableReq(ctx context.Context, serverURL, token, key string) error {
-	c, err := apiclient.New(serverURL, token)
+	c, err := cliAPIClient(serverURL, token)
 	if err != nil {
 		return err
 	}

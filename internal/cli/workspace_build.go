@@ -40,7 +40,7 @@ type projectLabel struct {
 func buildTargets(projects []Project, label func(Project) projectLabel) (targets []buildTarget, skipped []string) {
 	for _, p := range projects {
 		if !hasRegistry(p) {
-			skipped = append(skipped, fmt.Sprintf("%s (no registry.url/registry.image_name in its dexaflow.yaml — `dexaflow compile %s --image <ref> --build` builds it by hand)", p.DagID, p.Path))
+			skipped = append(skipped, fmt.Sprintf("%s (no registry in its dexaflow.yaml, the workspace or the target; `dexaflow compile %s --image <ref> --build` builds it by hand)", p.DagID, p.Path))
 			continue
 		}
 		l := label(p)
@@ -66,8 +66,10 @@ func hasRegistry(p Project) bool {
 // deploy` would label it alone: --dag-version when given, else the
 // content-derived default of that project; the git revision of the project's
 // own directory, with --sha overriding the commit. A tag strategy that falls
-// back is warned about per project.
-func resolveProjectLabels(cmd *cobra.Command, projects []Project, dagVersion, sha string) (map[string]projectLabel, error) {
+// back is warned about per project. cluster is the deploy defaults layer the
+// build applied (nil when none), so the label hashes the same resolved
+// config a deploy hashes.
+func resolveProjectLabels(cmd *cobra.Command, projects []Project, dagVersion, sha string, cluster *defaultsLayer) (map[string]projectLabel, error) {
 	ctx := cmdContext(cmd)
 	labels := make(map[string]projectLabel, len(projects))
 	for _, p := range projects {
@@ -82,6 +84,15 @@ func resolveProjectLabels(cmd *cobra.Command, projects []Project, dagVersion, sh
 		if version == "" {
 			cfg, err := loadProjectConfig(p.Path)
 			if err != nil {
+				return nil, fmt.Errorf("labeling %s: %w", p.DagID, err)
+			}
+			// Hashed with the same defaults the build applied: with --push
+			// that includes the cluster's, as a deploy to the same server
+			// applies them, so `build --push` and `deploy --skip-build` agree
+			// on the label. Without --push the cluster is not asked, and a
+			// cluster that advertises platforms or a base image gives the
+			// deploy a different label.
+			if _, err = applyDeployDefaults(cmd, p.Path, cfg, cluster); err != nil {
 				return nil, fmt.Errorf("labeling %s: %w", p.DagID, err)
 			}
 			version, err = defaultDAGVersion(ctx, p.Path, cfg, "Dockerfile", filepath.Join(p.Path, "dag.json"))
@@ -110,6 +121,7 @@ func resolveProjectLabels(cmd *cobra.Command, projects []Project, dagVersion, sh
 func newBuildCommand() *cobra.Command {
 	var (
 		push       bool
+		rebuild    bool
 		builder    string
 		dagVersion string
 		sha        string
@@ -132,12 +144,29 @@ func newBuildCommand() *cobra.Command {
 			if derr != nil {
 				return derr
 			}
+			// The registry, platforms, base image and remote builder deploy
+			// would use. Only
+			// --push asks the server a deploy would go to for its deploy
+			// defaults (buildClusterLayer); a build that stays local never
+			// calls a server.
+			var cluster *defaultsLayer
+			if push {
+				cluster = buildClusterLayer(cmd)
+			}
+			for _, p := range spec {
+				if p.Config == nil {
+					continue
+				}
+				if _, aerr := applyDeployDefaults(cmd, p.Path, p.Config, cluster); aerr != nil {
+					return aerr
+				}
+			}
 			// Resolve exactly as `dexaflow deploy` does before deriving the
 			// reference. Handing the raw flags to deployImageRef means the
 			// default tag strategy resolves against two empty strings and emits
 			// `<url>/<name>:` — a reference docker refuses, from a command whose
 			// entire purpose is to stop references being got wrong by hand.
-			labels, lerr := resolveProjectLabels(cmd, spec, dagVersion, sha)
+			labels, lerr := resolveProjectLabels(cmd, spec, dagVersion, sha, cluster)
 			if lerr != nil {
 				return lerr
 			}
@@ -156,10 +185,12 @@ func newBuildCommand() *cobra.Command {
 				//nolint:errcheck // informational
 				fmt.Fprintf(out, "▸ %s → %s\n", t.dagID, t.image)
 				o := compileOptions{
-					output: filepath.Join(t.dir, "dag.json"),
-					image:  t.image,
-					build:  true,
-					push:   push,
+					cluster: cluster,
+					output:  filepath.Join(t.dir, "dag.json"),
+					image:   t.image,
+					build:   true,
+					push:    push,
+					rebuild: rebuild,
 					// Named explicitly: an empty dockerfile makes
 					// ensureDockerfile stat the project directory, find it, and
 					// hand docker a directory as -f — so the generated
@@ -198,9 +229,12 @@ func newBuildCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&push, "push", false, "push each built image to its registry")
+	cmd.Flags().BoolVar(&rebuild, "rebuild", false, "build each dependency image again even when the registry holds one for its key (with --push)")
+	cmd.Flags().String("registry", "", registryFlagUsage)
 	cmd.Flags().StringVar(&builder, "builder", "docker", "image build tool to shell out to (e.g. docker, podman, nerdctl)")
 	cmd.Flags().StringVar(&dagVersion, "dag-version", "", "version recorded in each dag.json and used by the registry tag strategy (default: per project, git describe of its directory, or dev outside git, plus a hash of its content)")
 	cmd.Flags().StringVar(&sha, "sha", "", "commit sha for the git_sha tag strategy (default: git rev-parse --short HEAD in each project's directory)")
+	addPlatformFlag(cmd)
 	return cmd
 }
 

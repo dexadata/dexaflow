@@ -10,6 +10,10 @@
 # week, and switched-off is worse than never-installed because it looks like
 # coverage.
 #
+# dexaflow-cli (deploy/Dockerfile.cli.release, #1708) is in this lane for the
+# same reason: it is python:3.13-slim-trixie plus git, so most of its package
+# set is Debian's, not ours.
+#
 # So: this workflow never fails the build. It publishes to the Security tab and
 # keeps exactly one tracking issue current. The blocking gate lives in
 # security.yaml and covers the images whose every byte comes from our go.mod:
@@ -58,6 +62,7 @@ on:
       - ".trivyignore.yaml"
       - "scripts/trivy-report.py"
       - ".github/workflows/image-scan.yaml"
+      - "deploy/Dockerfile.cli.release"
   # A PR to a release-* branch (ADR 0062) is scanned like one to main. Pushes
   # stay main-only: the push path updates the single tracking issue, and a
   # release branch writing its findings there would overwrite main's.
@@ -76,6 +81,7 @@ on:
       - ".trivyignore.yaml"
       - "scripts/trivy-report.py"
       - ".github/workflows/image-scan.yaml"
+      - "deploy/Dockerfile.cli.release"
 
 permissions:
   contents: read
@@ -95,7 +101,7 @@ env:
   TRIVY_VERSION: "0.72.0"
   # Matches ci.yaml, so the agent baked into the scanned runtime image is built
   # with the toolchain that ships.
-  GO_VERSION: "1.26.9"
+  GO_VERSION: "1.26.10"
   GATE_SEVERITY: "CRITICAL,HIGH"
   ISSUE_TITLE: "Container image CVEs: fixable findings in published images"
 
@@ -123,6 +129,8 @@ jobs:
       issues: write            # create/update the single tracking issue
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # Which Python lines we publish is decided in ONE place (#1031): the
       # `python_version` enum in the authoring schema. A base image we publish
@@ -175,6 +183,13 @@ jobs:
         with:
           python-versions: ${{ env.PY_LINES }}
 
+      # The CLI image copies in a binary GoReleaser built; this is the same
+      # recipe (CGO-free, -trimpath, the release toolchain), as security.yaml
+      # does for the server image, so Trivy reads the toolchain that ships.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
       - name: Build images
         run: |
           set -euo pipefail
@@ -186,6 +201,20 @@ jobs:
               -t "leoflow-runtime:py${py}" .
             echo "::endgroup::"
           done
+          # The data variant (runtime/data): one leg, py3.11.
+          echo "::group::build leoflow-runtime data py3.11"
+          docker build -f runtime/Dockerfile \
+            --build-arg "PYTHON_VERSION=3.11" \
+            --build-arg "RUNTIME_VARIANT=data" \
+            --build-arg "GO_VERSION=${GO_VERSION}" \
+            -t "leoflow-runtime:py3.11-data" .
+          echo "::endgroup::"
+          echo "::group::build dexaflow-cli"
+          mkdir -p dist/cli-image-context
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" \
+            -o dist/cli-image-context/dexaflow ./cmd/dexaflow
+          docker build -f deploy/Dockerfile.cli.release -t dexaflow-cli:ci dist/cli-image-context
+          echo "::endgroup::"
 
       # Scan each image once to JSON (fixable findings, every severity), then
       # derive the SARIF from that report. The file stem names the image in the
@@ -207,6 +236,8 @@ jobs:
           for py in ${PY_LINES}; do
             scan "leoflow-runtime-py${py}" "leoflow-runtime:py${py}"
           done
+          scan "leoflow-runtime-data-py3.11" "leoflow-runtime:py3.11-data"
+          scan "dexaflow-cli" "dexaflow-cli:ci"
 
       # The complete picture, including the unfixed findings the policy filters
       # out, so a filter this workflow applies is never the only copy of the data.
@@ -219,6 +250,8 @@ jobs:
           mkdir -p scan-out/unfiltered
           refs=""
           for py in ${PY_LINES}; do refs="${refs} leoflow-runtime:py${py}"; done
+          refs="${refs} leoflow-runtime:py3.11-data"
+          refs="${refs} dexaflow-cli:ci"
           for ref in ${refs}; do
             name="${ref//[:\/]/-}"
             trivy image --quiet --scanners vuln \
@@ -236,32 +269,46 @@ jobs:
       # on pull_request: a PR run would collide with the main-branch baseline
       # under a shared category, the same trap security.yaml documents (#437).
       - name: Upload SARIF (leoflow-runtime py3.10)
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         if: always() && github.event_name != 'pull_request'
         with:
           sarif_file: scan-out/leoflow-runtime-py3.10.sarif
           category: trivy-image-runtime-py310
 
       - name: Upload SARIF (leoflow-runtime py3.11)
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         if: always() && github.event_name != 'pull_request'
         with:
           sarif_file: scan-out/leoflow-runtime-py3.11.sarif
           category: trivy-image-runtime-py311
 
       - name: Upload SARIF (leoflow-runtime py3.12)
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         if: always() && github.event_name != 'pull_request'
         with:
           sarif_file: scan-out/leoflow-runtime-py3.12.sarif
           category: trivy-image-runtime-py312
 
       - name: Upload SARIF (leoflow-runtime py3.13)
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         if: always() && github.event_name != 'pull_request'
         with:
           sarif_file: scan-out/leoflow-runtime-py3.13.sarif
           category: trivy-image-runtime-py313
+
+      - name: Upload SARIF (leoflow-runtime data py3.11)
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        if: always() && github.event_name != 'pull_request'
+        with:
+          sarif_file: scan-out/leoflow-runtime-data-py3.11.sarif
+          category: trivy-image-runtime-data-py311
+
+      - name: Upload SARIF (dexaflow-cli)
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        if: always() && github.event_name != 'pull_request'
+        with:
+          sarif_file: scan-out/dexaflow-cli.sarif
+          category: trivy-image-cli
 
       - name: Build report
         id: report
@@ -269,6 +316,7 @@ jobs:
           set -euo pipefail
           reports=""
           for py in ${PY_LINES}; do reports="${reports} scan-out/leoflow-runtime-py${py}.json"; done
+          reports="${reports} scan-out/leoflow-runtime-data-py3.11.json scan-out/dexaflow-cli.json"
           # shellcheck disable=SC2086 # deliberate word splitting over the report list.
           python3 scripts/trivy-report.py \
             ${reports} \

@@ -36,15 +36,21 @@ func (f *fakeRenewer) RenewUserToken(ctx context.Context, token string, ttl, max
 }
 
 func renewServer(r TokenRenewer) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:               discardLogger(),
-		Authenticator:        &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:          auth.NewRateLimiter(5, time.Minute),
-		HealthChecks:         map[string]HealthChecker{},
-		CORSOrigins:          []string{"*"},
-		TokenTTLSecs:         3600,
-		TokenRenewer:         r,
-		TokenMaxLifetimeSecs: 86400,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger:       discardLogger(),
+			HealthChecks: map[string]HealthChecker{},
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator:        &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:          auth.NewRateLimiter(5, time.Minute),
+			TokenTTLSecs:         3600,
+			TokenRenewer:         r,
+			TokenMaxLifetimeSecs: 86400,
+		},
 	})
 }
 
@@ -125,15 +131,21 @@ func TestRenewTokenDuringAnOutageIsNot401(t *testing.T) {
 	dbDown := errors.New("failed to connect to `user=leoflow database=leoflow`: dial tcp 10.0.0.1:5432: i/o timeout")
 
 	var logBuf bytes.Buffer
-	srv := NewServer(Dependencies{
-		Logger:               slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})),
-		Authenticator:        &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:          auth.NewRateLimiter(5, time.Minute),
-		HealthChecks:         map[string]HealthChecker{},
-		CORSOrigins:          []string{"*"},
-		TokenTTLSecs:         3600,
-		TokenRenewer:         &fakeRenewer{err: dbDown},
-		TokenMaxLifetimeSecs: 86400,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger:       slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})),
+			HealthChecks: map[string]HealthChecker{},
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator:        &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:          auth.NewRateLimiter(5, time.Minute),
+			TokenTTLSecs:         3600,
+			TokenRenewer:         &fakeRenewer{err: dbDown},
+			TokenMaxLifetimeSecs: 86400,
+		},
 	})
 	rec := postRenew(srv, "still-valid-token")
 
@@ -177,20 +189,150 @@ func TestRenewIsRateLimitedPerIP(t *testing.T) {
 // address out of password login (and everyone behind the same proxy).
 func TestRenewTrafficDoesNotSpendTheLoginBudget(t *testing.T) {
 	login := auth.NewRateLimiter(5, time.Minute)
-	srv := NewServer(Dependencies{
-		Logger:               discardLogger(),
-		Authenticator:        &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:          login,
-		HealthChecks:         map[string]HealthChecker{},
-		CORSOrigins:          []string{"*"},
-		TokenTTLSecs:         3600,
-		TokenRenewer:         &fakeRenewer{renewed: "new-token", ok: true},
-		TokenMaxLifetimeSecs: 86400,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger:       discardLogger(),
+			HealthChecks: map[string]HealthChecker{},
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator:        &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:          login,
+			TokenTTLSecs:         3600,
+			TokenRenewer:         &fakeRenewer{renewed: "new-token", ok: true},
+			TokenMaxLifetimeSecs: 86400,
+		},
 	})
 	for i := 0; i < renewRateLimitPerMinute+5; i++ {
 		postRenew(srv, "current-token")
 	}
 	if login.Blocked("192.0.2.1") {
 		t.Fatal("renewal traffic spent the password-login budget")
+	}
+}
+
+func postRenewWithCookie(srv *gin.Engine, cookieVal, site string) *httptest.ResponseRecorder {
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v2/auth/token/renew", http.NoBody)
+	if cookieVal != "" {
+		req.AddCookie(&http.Cookie{Name: "_token", Value: cookieVal})
+	}
+	if site != "" {
+		req.Header.Set("Sec-Fetch-Site", site)
+	}
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestRenewTokenViaSessionCookie: requests carrying the session cookie rather
+// than an Authorization header renew successfully, and write back the refreshed
+// session cookie when called same-origin (#1127).
+func TestRenewTokenViaSessionCookie(t *testing.T) {
+	r := &fakeRenewer{renewed: "new-token", ok: true}
+	srv := renewServer(r)
+	rec := postRenewWithCookie(srv, "current-cookie-token", "same-origin")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("renew with cookie = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp tokenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if resp.AccessToken != "new-token" {
+		t.Errorf("access_token = %q, want new-token", resp.AccessToken)
+	}
+	if r.gotToken != "current-cookie-token" {
+		t.Errorf("renewer got token %q, want current-cookie-token", r.gotToken)
+	}
+	cookie := rec.Header().Get("Set-Cookie")
+	if !strings.Contains(cookie, "_token=new-token") {
+		t.Errorf("Set-Cookie = %q, want refreshed _token cookie", cookie)
+	}
+	if !strings.Contains(cookie, "HttpOnly") {
+		t.Errorf("Set-Cookie = %q, want HttpOnly", cookie)
+	}
+}
+
+// TestRenewTokenRefusesTheCookieOffOrigin: a same-site sibling or cross-site
+// page can make the browser send the session cookie, and must not renew it
+// (#1127).
+func TestRenewTokenRefusesTheCookieOffOrigin(t *testing.T) {
+	for _, site := range []string{"cross-site", "same-site"} {
+		r := &fakeRenewer{renewed: "new-token", ok: true}
+		rec := postRenewWithCookie(renewServer(r), "current-cookie-token", site)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s renew with only the cookie = %d, want 401", site, rec.Code)
+		}
+		if r.gotToken != "" {
+			t.Errorf("%s request renewed %q", site, r.gotToken)
+		}
+		if cookie := rec.Header().Get("Set-Cookie"); cookie != "" {
+			t.Errorf("%s renewal wrote Set-Cookie: %q", site, cookie)
+		}
+	}
+}
+
+// TestRenewBearerLeavesTheSessionCookie: renewing a bearer sent next to the
+// cookie answers the renewed bearer and leaves the browser's session as it was.
+func TestRenewBearerLeavesTheSessionCookie(t *testing.T) {
+	r := &fakeRenewer{renewed: "new-token", ok: true}
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v2/auth/token/renew", http.NoBody)
+	req.Header.Set("Authorization", "Bearer other-token")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.AddCookie(&http.Cookie{Name: "_token", Value: "session-token"})
+	rec := httptest.NewRecorder()
+	renewServer(r).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || r.gotToken != "other-token" {
+		t.Fatalf("renew = %d with %q, want 200 with other-token", rec.Code, r.gotToken)
+	}
+	if cookie := rec.Header().Get("Set-Cookie"); cookie != "" {
+		t.Errorf("a bearer renewal replaced the session cookie: %q", cookie)
+	}
+}
+
+// fallbackRenewer rejects candidate1 as invalid and accepts candidate2.
+type fallbackRenewer struct {
+	invalidToken string
+	validToken   string
+	renewed      string
+}
+
+func (f *fallbackRenewer) RenewUserToken(ctx context.Context, token string, ttl, maxLifetime time.Duration) (renewed string, ok bool, err error) {
+	if token == f.invalidToken {
+		return "", false, auth.ErrInvalidToken
+	}
+	if token == f.validToken {
+		return f.renewed, true, nil
+	}
+	return "", false, auth.ErrInvalidToken
+}
+
+// TestRenewTokenFallsBackToCookieWhenBearerInvalid: when a stale bearer is in
+// Authorization header but a valid session cookie is present, renewal falls
+// back to the cookie (#1127).
+func TestRenewTokenFallsBackToCookieWhenBearerInvalid(t *testing.T) {
+	r := &fallbackRenewer{
+		invalidToken: "stale-bearer",
+		validToken:   "valid-cookie",
+		renewed:      "fresh-cookie-token",
+	}
+	srv := renewServer(r)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v2/auth/token/renew", http.NoBody)
+	req.Header.Set("Authorization", "Bearer stale-bearer")
+	req.AddCookie(&http.Cookie{Name: "_token", Value: "valid-cookie"})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("renew with stale bearer + valid cookie = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp tokenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if resp.AccessToken != "fresh-cookie-token" {
+		t.Errorf("access_token = %q, want fresh-cookie-token", resp.AccessToken)
 	}
 }

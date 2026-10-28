@@ -13,16 +13,21 @@
 // Run against a live Lite:
 //   dexaflow lite --port 18080 --postgres managed --executor subprocess &
 //   npm i playwright-core && npx playwright install chromium     # once
-//   LEOFLOW_URL=http://localhost:18080 LEOFLOW_USER=admin@leoflow.local \
+//   LEOFLOW_URL=http://localhost:18080 LEOFLOW_USER=admin@dexaflow.local \
 //     LEOFLOW_PASS=<pw> node test/e2e/ui-smoke.js
 //
 // Exit code 0 = no crashes; 1 = at least one screen/interaction threw.
 
 const { chromium } = require('playwright-core');
 const fs = require('fs');
+const { apiTokensFlow } = require('./ui-api-tokens');
 
 const URL = process.env.LEOFLOW_URL || 'http://localhost:18080';
-const USER = process.env.LEOFLOW_USER || 'admin@leoflow.local';
+// Without LEOFLOW_USER the bootstrap admin is found by trying the current
+// address first and then admin@leoflow.local, which installs created before the
+// rename keep.
+const ADMIN_CANDIDATES = ['admin@dexaflow.local', 'admin@leoflow.local'];
+let USER = process.env.LEOFLOW_USER || ADMIN_CANDIDATES[0];
 const PASS = process.env.LEOFLOW_PASS || '';
 
 // Reuse a cached chromium when we can find one (macOS or Linux paths); otherwise
@@ -72,7 +77,22 @@ function finish(code, text, stream = process.stdout) {
   stream.write(text, () => process.exit(code));
 }
 
+// resolveUser returns the first candidate admin that /auth/token accepts, or
+// the first candidate when none does (the login step then reports the failure).
+async function resolveUser() {
+  if (process.env.LEOFLOW_USER) return process.env.LEOFLOW_USER;
+  for (const candidate of ADMIN_CANDIDATES) {
+    const res = await fetch(URL + '/auth/token', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: candidate, password: PASS }),
+    }).catch(() => null);
+    if (res && res.ok) return candidate;
+  }
+  return ADMIN_CANDIDATES[0];
+}
+
 (async () => {
+  USER = await resolveUser();
   const browser = await chromium.launch({ headless: true, executablePath: cachedChromium() });
   const page = await (await browser.newContext()).newPage();
   let errs = [];
@@ -112,6 +132,25 @@ function finish(code, text, stream = process.stdout) {
     }
   };
   for (const r of routes) await step('route ' + r, async () => { await gotoRoute(r); });
+
+  // 1b) DAG list search and filter interaction.
+  await step('dags: search and filter interaction', async () => {
+    await page.goto(URL + '/dags', { waitUntil: 'networkidle' });
+    const search = page.locator('input[placeholder*="Search" i], input[type="search"]').first();
+    if (!(await search.count())) throw new Error('DAG search box not found');
+    // A term no DAG matches must reach the server as a filter and come back
+    // empty: before #1927 the filter params were ignored and every DAG returned.
+    const filtered = page.waitForResponse(
+      (r) => /\/dags\?/.test(r.url()) && /dag_display_name_(prefix_)?pattern=zz-no-such-dag/.test(r.url()),
+      { timeout: 10000 },
+    );
+    await search.fill('zz-no-such-dag');
+    const res = await filtered;
+    const body = await res.json();
+    if (res.status() !== 200 || body.total_entries !== 0) {
+      throw new Error(`search filter ignored: status ${res.status()}, total_entries ${body.total_entries}`);
+    }
+  });
 
   // 2) Connection form open (the bug that shipped broken).
   await step('connections: open Add form', async () => {
@@ -359,6 +398,13 @@ function finish(code, text, stream = process.stdout) {
     if (created.conf.region !== 'us') {
       throw new Error('declared default region=us not materialized into conf: ' + JSON.stringify(created.conf));
     }
+  });
+
+  // The API tokens screen (#1886): the user menu entry opens it in the UI's
+  // frame, it lists a token without its secret, and revoking it there asks
+  // first and stops the token (ui-api-tokens.js).
+  await step('api tokens: list and revoke from the user menu', async () => {
+    await apiTokensFlow(page, URL, USER, PASS);
   });
 
   await browser.close();

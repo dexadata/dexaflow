@@ -139,7 +139,7 @@ start_server() {
     sleep 1
   done
   curl -fsS "$API/readyz" >/dev/null 2>&1 || fail "the control plane did not become ready in phase '$PHASE'"
-  TOKEN="$("$ROOT/bin/leoflow" auth create-token --server "$API" --username admin@leoflow.local --password admin)"
+  TOKEN="$(admin_token "$ROOT/bin/leoflow" "$API" admin)"
 }
 
 # write_project DAG_ID writes a project directory whose dag.py comes from stdin.
@@ -182,6 +182,9 @@ register_ok() {
 
 trigger() {
   local rid
+  # New DAGs are paused at creation, and a manual run of a paused DAG waits
+  # until the DAG is unpaused.
+  unpause_dag "$API" "$1" "$TOKEN" || fail "$1: unpausing failed"
   rid="$(curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
     -d '{}' "$API/api/v2/dags/$1/dagRuns" | jq -r '.dag_run_id')"
   [ -n "$rid" ] && [ "$rid" != "null" ] || fail "$1: no dag_run_id returned"

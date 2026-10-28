@@ -26,10 +26,11 @@ import (
 //     this test pins it.)
 //  3. Per-project compile failures don't abort the loop — siblings still run.
 //
-// The test injects a mock devCompileAndRegisterFn so the real parser + HTTP
+// The test injects a mock cliDeps.compileAndRegister so the real parser + HTTP
 // stack is not exercised here (it has its own tests); the contract being
 // pinned is the LOOP, not the per-project compile.
 func TestDevCompileAndRegisterAll_IteratesEveryProjectAndLogsConfigSource(t *testing.T) {
+	t.Parallel()
 	// Three projects: two with yaml, one yaml-less (must show "auto-defaults: …").
 	type call struct {
 		dir string
@@ -38,14 +39,13 @@ func TestDevCompileAndRegisterAll_IteratesEveryProjectAndLogsConfigSource(t *tes
 		mu    sync.Mutex
 		calls []call
 	)
-	orig := devCompileAndRegisterFn
-	devCompileAndRegisterFn = func(_ context.Context, _ *cobra.Command, dir string, _ compileOptions, _ string, _ func() error, _ string) error {
+	d := testDeps()
+	d.compileAndRegister = func(_ context.Context, _ *cobra.Command, dir string, _ compileOptions, _ string, _ func() error, _ string) error {
 		mu.Lock()
 		defer mu.Unlock()
 		calls = append(calls, call{dir: filepath.Base(dir)})
 		return nil
 	}
-	defer func() { devCompileAndRegisterFn = orig }()
 
 	cmd := &cobra.Command{}
 	stdout := &bytes.Buffer{}
@@ -80,7 +80,7 @@ func TestDevCompileAndRegisterAll_IteratesEveryProjectAndLogsConfigSource(t *tes
 		RootCfg: defaultedCfg(""),
 	}
 
-	if err := devCompileAndRegisterAll(context.Background(), cmd, ws, compileOptions{image: "dev"}, "tok", nil, "http://127.0.0.1:0"); err != nil {
+	if err := devCompileAndRegisterAll(testCtx(d), cmd, ws, compileOptions{image: "dev"}, "tok", nil, "http://127.0.0.1:0"); err != nil {
 		t.Fatalf("devCompileAndRegisterAll: %v", err)
 	}
 
@@ -119,14 +119,14 @@ func TestDevCompileAndRegisterAll_IteratesEveryProjectAndLogsConfigSource(t *tes
 // import-error reporter (best-effort, not asserted here — too much HTTP
 // scaffolding for one test) and the terminal already showed the ✗ line.
 func TestDevCompileAndRegisterAll_PerProjectFailureDoesNotAbortLoop(t *testing.T) {
-	orig := devCompileAndRegisterFn
-	devCompileAndRegisterFn = func(_ context.Context, _ *cobra.Command, dir string, _ compileOptions, _ string, _ func() error, _ string) error {
+	t.Parallel()
+	d := testDeps()
+	d.compileAndRegister = func(_ context.Context, _ *cobra.Command, dir string, _ compileOptions, _ string, _ func() error, _ string) error {
 		if strings.HasSuffix(dir, "broken") {
 			return errors.New("simulated compile failure")
 		}
 		return nil
 	}
-	defer func() { devCompileAndRegisterFn = orig }()
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
@@ -141,7 +141,7 @@ func TestDevCompileAndRegisterAll_PerProjectFailureDoesNotAbortLoop(t *testing.T
 		},
 		RootCfg: defaultedCfg(""),
 	}
-	if err := devCompileAndRegisterAll(context.Background(), cmd, ws, compileOptions{image: "dev"}, "tok", nil, "http://127.0.0.1:0"); err != nil {
+	if err := devCompileAndRegisterAll(testCtx(d), cmd, ws, compileOptions{image: "dev"}, "tok", nil, "http://127.0.0.1:0"); err != nil {
 		t.Fatalf("loop should not abort on per-project failure; got: %v", err)
 	}
 }
@@ -151,11 +151,11 @@ func TestDevCompileAndRegisterAll_PerProjectFailureDoesNotAbortLoop(t *testing.T
 // `✗ %v` print has something to show. The caller (devWatchLoop) treats this
 // as the reload outcome.
 func TestDevCompileAndRegisterAll_AllFailuresReturnLastError(t *testing.T) {
-	orig := devCompileAndRegisterFn
-	devCompileAndRegisterFn = func(_ context.Context, _ *cobra.Command, _ string, _ compileOptions, _ string, _ func() error, _ string) error {
+	t.Parallel()
+	d := testDeps()
+	d.compileAndRegister = func(_ context.Context, _ *cobra.Command, _ string, _ compileOptions, _ string, _ func() error, _ string) error {
 		return errors.New("everything is broken")
 	}
-	defer func() { devCompileAndRegisterFn = orig }()
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
@@ -169,7 +169,7 @@ func TestDevCompileAndRegisterAll_AllFailuresReturnLastError(t *testing.T) {
 			{Path: "/tmp/ws/b", DagID: "b", Config: defaultedCfg("b")},
 		},
 	}
-	err := devCompileAndRegisterAll(context.Background(), cmd, ws, compileOptions{image: "dev"}, "tok", nil, "http://127.0.0.1:0")
+	err := devCompileAndRegisterAll(testCtx(d), cmd, ws, compileOptions{image: "dev"}, "tok", nil, "http://127.0.0.1:0")
 	if err == nil {
 		t.Fatal("expected error when every project fails")
 	}
@@ -182,6 +182,7 @@ func TestDevCompileAndRegisterAll_AllFailuresReturnLastError(t *testing.T) {
 // the "user just created the workspace dir" path: lite must not error, just
 // hint at what's missing. The caller (devWatchLoop) keeps polling.
 func TestDevCompileAndRegisterAll_EmptyWorkspacePrintsHintAndReturnsNil(t *testing.T) {
+	t.Parallel()
 	cmd := &cobra.Command{}
 	out := &bytes.Buffer{}
 	cmd.SetOut(out)
@@ -204,8 +205,8 @@ func defaultedCfg(dagID string) *domain.LeoflowConfig {
 	return cfg
 }
 
-// Sanity for the closure form devCompileAndRegisterFn takes — keeps a compile-
-// time check that the package var matches the production function signature.
+// Sanity for the closure form cliDeps.compileAndRegister takes: keeps a compile-
+// time check that the field matches the production function signature.
 // If devCompileAndRegister's signature ever changes, this test fails to build,
 // not at runtime.
 var _ = func(_ context.Context, _ *cobra.Command, _ string, _ compileOptions, _ string, _ func() error, _ string) error {

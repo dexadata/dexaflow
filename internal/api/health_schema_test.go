@@ -48,7 +48,7 @@ func TestReadinessHandlerAssertsSchemaInvariant(t *testing.T) {
 	readyz := func(t *testing.T, checks map[string]HealthChecker) *httptest.ResponseRecorder {
 		t.Helper()
 		r := gin.New()
-		r.GET("/readyz", readinessHandler(checks))
+		r.GET("/readyz", readinessHandler(checks, defaultProbeBudget))
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", http.NoBody))
 		return rec
@@ -161,7 +161,7 @@ func TestReadinessDistinguishesSchemaFromUnavailable(t *testing.T) {
 		r := gin.New()
 		r.GET("/readyz", readinessHandler(map[string]HealthChecker{
 			"postgres": &fakeSchemaHealthCheck{schemaErr: schemaErr},
-		}))
+		}, defaultProbeBudget))
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", http.NoBody))
 		return rec
@@ -202,6 +202,20 @@ func TestReadinessDistinguishesSchemaFromUnavailable(t *testing.T) {
 		}
 		if !strings.Contains(rec.Body.String(), "postgres schema not current") {
 			t.Errorf("body = %q, want it to name the schema verdict", rec.Body.String())
+		}
+	})
+
+	t.Run("a replaced database says database replaced, without the ids", func(t *testing.T) {
+		rec := readyz(t, fmt.Errorf("%w: another installation id (this release is \"a1\", the database carries \"b2\")", domain.ErrDatabaseReplaced))
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503", rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "postgres database replaced") {
+			t.Errorf("body = %q, want it to name a replaced database", body)
+		}
+		if strings.Contains(body, "a1") || strings.Contains(body, "b2") {
+			t.Errorf("body = %q carries the installation ids", body)
 		}
 	})
 

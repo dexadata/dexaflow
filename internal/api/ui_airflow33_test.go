@@ -115,17 +115,28 @@ func TestAirflow33UIStubs(t *testing.T) {
 // version names that version.
 func TestGetDagRunNamesItsPinnedVersion(t *testing.T) {
 	created := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
-		DagRuns: &fakeRunRepo{runs: []domain.DagRun{
-			{DagID: "etl", RunID: "pinned", Version: "v1.0.0"},
-			{DagID: "etl", RunID: "unknown", Version: "gone"},
-		}},
-		DagVersions: &fakeVersionLister{versions: []domain.DagVersion{
-			{ID: "id2", VersionNumber: 2, Version: "v1.1.0", CreatedAt: created},
-			{ID: "id1", VersionNumber: 1, Version: "v1.0.0", CreatedAt: created},
-		}},
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			DagRuns: &fakeRunRepo{runs: []domain.DagRun{
+				{DagID: "etl", RunID: "pinned", Version: "v1.0.0"},
+				{DagID: "etl", RunID: "unknown", Version: "gone"},
+			}},
+			DagVersions: &fakeVersionLister{versions: []domain.DagVersion{
+				{ID: "id2", VersionNumber: 2, Version: "v1.1.0", CreatedAt: created},
+				{ID: "id1", VersionNumber: 1, Version: "v1.0.0", CreatedAt: created},
+			}},
+		},
 	})
 	versionsOf := func(run string) []map[string]any {
 		t.Helper()
@@ -178,10 +189,22 @@ func TestListDagRunsNamesPinnedVersions(t *testing.T) {
 		{ID: "id2", VersionNumber: 2, Version: "v1.1.0", CreatedAt: created},
 		{ID: "id1", VersionNumber: 1, Version: "v1.0.0", CreatedAt: created},
 	}}}
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
-		DagRuns: &keysetRunRepo{fakeRunRepo: fakeRunRepo{runs: runs}}, DagVersions: versions,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			DagRuns:     &keysetRunRepo{fakeRunRepo: fakeRunRepo{runs: runs}},
+			DagVersions: versions,
+		},
 	})
 	type page struct {
 		DagRuns []struct {

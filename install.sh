@@ -8,7 +8,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | sh
 #
 # Environment overrides (the LEOFLOW_* names are still accepted):
-#   DEXAFLOW_VERSION=v0.5.0          pin a specific release (default: latest)
+#   DEXAFLOW_VERSION=vX.Y.Z          pin a specific release (default: latest)
 #   DEXAFLOW_NO_SETUP=1              install binaries only, skip `dexaflow setup`
 #   DEXAFLOW_INSTALL_DIR=~/.dexaflow/bin
 #   DEXAFLOW_INSTALL_REQUIRE_SIGNATURE=1  fail when cosign is not installed

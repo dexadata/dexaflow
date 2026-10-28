@@ -25,10 +25,14 @@ dexaflow compile . --image dexaflow-lifecycle:dev --build -o dag.json
 k3d image import dexaflow-lifecycle:dev --cluster <cluster>
 
 # 3. Push the compiled DAG to the control plane.
-TOKEN=$(leoflow auth create-token --username admin@leoflow.local --password admin)
+TOKEN=$(dexaflow auth create-token --username admin@dexaflow.local --password admin)
 dexaflow push dag.json --token "$TOKEN"
 
-# 4. Trigger a run from the UI, or:
+# 4. Unpause it: a DAG registered for the first time starts paused, and a run
+#    of a paused DAG waits in queued until the unpause.
+dexaflow admin dags unpause lifecycle --token "$TOKEN"
+
+# 5. Trigger a run from the UI, or:
 curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{}' http://localhost:8080/api/v2/dags/lifecycle/dagRuns
 ```

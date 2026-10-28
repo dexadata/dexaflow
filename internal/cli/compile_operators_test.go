@@ -16,6 +16,7 @@ func opSpec(class string) *domain.DAGSpec {
 // TestValidateOperatorProvidersDeclaredViaDependencies: a provider named directly
 // in dependencies: satisfies the check (no error).
 func TestValidateOperatorProvidersDeclaredViaDependencies(t *testing.T) {
+	t.Parallel()
 	spec := opSpec("airflow.providers.snowflake.operators.snowflake.SQLExecuteQueryOperator")
 	cfg := &domain.LeoflowConfig{Dependencies: []string{"apache-airflow-providers-snowflake"}}
 	if err := validateOperatorProviders(spec, cfg); err != nil {
@@ -26,6 +27,7 @@ func TestValidateOperatorProvidersDeclaredViaDependencies(t *testing.T) {
 // TestValidateOperatorProvidersDeclaredViaConnectors: the connectors: sugar
 // expands to the provider package, which satisfies the check.
 func TestValidateOperatorProvidersDeclaredViaConnectors(t *testing.T) {
+	t.Parallel()
 	spec := opSpec("airflow.providers.postgres.operators.postgres.SQLExecuteQueryOperator")
 	cfg := &domain.LeoflowConfig{Connectors: []string{"postgres"}}
 	if err := validateOperatorProviders(spec, cfg); err != nil {
@@ -36,6 +38,7 @@ func TestValidateOperatorProvidersDeclaredViaConnectors(t *testing.T) {
 // TestValidateOperatorProvidersMultiSegment: a dotted provider module
 // (cncf.kubernetes) declared via dependencies is matched by prefix.
 func TestValidateOperatorProvidersMultiSegment(t *testing.T) {
+	t.Parallel()
 	spec := opSpec("airflow.providers.cncf.kubernetes.operators.pod.KubernetesPodOperator")
 	cfg := &domain.LeoflowConfig{Dependencies: []string{"apache-airflow-providers-cncf-kubernetes"}}
 	if err := validateOperatorProviders(spec, cfg); err != nil {
@@ -46,6 +49,7 @@ func TestValidateOperatorProvidersMultiSegment(t *testing.T) {
 // TestValidateOperatorProvidersBundledIsImplicit: a provider baked into the task
 // base image (e.g. standard) needs no declaration.
 func TestValidateOperatorProvidersBundledIsImplicit(t *testing.T) {
+	t.Parallel()
 	spec := opSpec("airflow.providers.standard.operators.trigger_dagrun.TriggerDagRunOperator")
 	if err := validateOperatorProviders(spec, &domain.LeoflowConfig{}); err != nil {
 		t.Errorf("expected no error for a base-bundled provider, got %v", err)
@@ -55,6 +59,7 @@ func TestValidateOperatorProvidersBundledIsImplicit(t *testing.T) {
 // TestValidateOperatorProvidersUndeclaredIsLoudReject: an operator whose provider
 // is declared nowhere fails compile, naming the task and the line to add.
 func TestValidateOperatorProvidersUndeclaredIsLoudReject(t *testing.T) {
+	t.Parallel()
 	spec := opSpec("airflow.providers.snowflake.operators.snowflake.SQLExecuteQueryOperator")
 	err := validateOperatorProviders(spec, &domain.LeoflowConfig{})
 	if err == nil {

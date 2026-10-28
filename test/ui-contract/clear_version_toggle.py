@@ -24,22 +24,22 @@ import sys
 from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from sweep import BASE, PWD, USER, discover  # noqa: E402
+import sweep  # noqa: E402
 
 CLEAR_PATH = "/clearTaskInstances"
 
 
 def login(page):
     """Same login flow sweep.py uses: the SPA gates on a password form."""
-    page.goto(BASE, wait_until="networkidle")
+    page.goto(sweep.BASE, wait_until="networkidle")
     page.wait_for_timeout(2000)
     if page.locator("input[type=password]").count() == 0:
         return
     for sel in ["input[name=username]", "input[type=email]", "input[type=text]"]:
         if page.locator(sel).count() > 0:
-            page.fill(sel, USER)
+            page.fill(sel, sweep.USER)
             break
-    page.fill("input[type=password]", PWD)
+    page.fill("input[type=password]", sweep.PWD)
     page.locator("button[type=submit]").first.click()
     page.wait_for_load_state("networkidle")
     page.wait_for_timeout(3000)
@@ -58,7 +58,7 @@ def clear_bodies(page, dag, run, task, want_latest):
                 bodies.append({"__unparseable__": req.post_data})
 
     page.on("request", on_request)
-    page.goto(f"{BASE}/dags/{dag}/runs/{run}/tasks/{task}", wait_until="networkidle")
+    page.goto(f"{sweep.BASE}/dags/{dag}/runs/{run}/tasks/{task}", wait_until="networkidle")
 
     # The Clear action lives behind the task instance's action menu. Fail loudly
     # if it is not there: a silently skipped assertion is the bug this file
@@ -89,7 +89,7 @@ def clear_bodies(page, dag, run, task, want_latest):
 
 
 def main():
-    dag, run, task = discover()
+    dag, run, task = sweep.discover()
     failures = []
     with sync_playwright() as p:
         browser = p.chromium.launch()

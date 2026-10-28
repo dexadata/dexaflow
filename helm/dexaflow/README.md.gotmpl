@@ -29,16 +29,16 @@ Every release tag publishes this chart as a signed **OCI artifact** to
 pinned version without cloning the repo:
 
 ```bash
-kubectl create namespace leoflow
-helm install lf oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> -n leoflow \
-  --set database.url='postgres://user:pass@postgres:5432/leoflow?sslmode=disable' \
+kubectl create namespace dexaflow
+helm install lf oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> -n dexaflow \
+  --set database.url='postgres://user:pass@postgres:5432/dexaflow?sslmode=disable' \
   --set redis.url='redis://redis:6379/0' \
   --set auth.jwtSecret='change-me' \
   --set bootstrap.password='admin'
 ```
 
-Use the release tag **without** the leading `v` as `--version` (tag `v0.4.0` →
-`--version 0.4.0`); the chart `version`/`appVersion` move in lockstep with the
+Use the release tag **without** the leading `v` as `--version` (tag `vX.Y.Z` →
+`--version X.Y.Z`); the chart `version`/`appVersion` move in lockstep with the
 tag. The chart is cosign-signed by digest — verify it with
 `cosign verify ghcr.io/dexadata/charts/dexaflow --certificate-identity-regexp '…' --certificate-oidc-issuer https://token.actions.githubusercontent.com`.
 
@@ -46,8 +46,8 @@ To install from a source checkout instead (e.g. an unreleased branch), point
 Helm at the chart directory:
 
 ```bash
-helm install lf ./helm/dexaflow -n leoflow \
-  --set database.url='postgres://user:pass@postgres:5432/leoflow?sslmode=disable' \
+helm install lf ./helm/dexaflow -n dexaflow \
+  --set database.url='postgres://user:pass@postgres:5432/dexaflow?sslmode=disable' \
   --set redis.url='redis://redis:6379/0' \
   --set auth.jwtSecret='change-me' \
   --set bootstrap.password='admin'
@@ -157,7 +157,7 @@ recommended HA log path; a `ReadWriteMany` PVC is the alternative), auto PDB,
 memory sized for the object sink's per-attempt buffer, and the longer drain grace:
 
 ```bash
-helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> -n leoflow \
+helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> -n dexaflow \
   -f helm/dexaflow/examples/values-ha.yaml
 ```
 
@@ -182,16 +182,16 @@ Without the CA bundle mounted, the strongest TLS posture you can pin is
 
    ```bash
    kubectl create configmap managed-pg-ca \
-     -n leoflow --from-file=ca.crt=server-ca.pem
+     -n dexaflow --from-file=ca.crt=server-ca.pem
    ```
 
 2. Reference it from `database.caConfigMap` and point the DSN at the mounted
    path:
 
    ```bash
-   helm upgrade --install dexaflow ./helm/dexaflow -n leoflow \
+   helm upgrade --install dexaflow ./helm/dexaflow -n dexaflow \
      --set database.caConfigMap=managed-pg-ca \
-     --set database.url='postgres://user:pass@cloudsql-private-ip:5432/leoflow?sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt'
+     --set database.url='postgres://user:pass@cloudsql-private-ip:5432/dexaflow?sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt'
    ```
 
 The chart mounts the ConfigMap readonly at `/etc/leoflow/db-ca/ca.crt`. pgx
@@ -211,20 +211,35 @@ is required.
 
 ## Migrations
 
-The pre-install/pre-upgrade Job runs `migrate -path <path> -database <url> up`
+The pre-install/pre-upgrade Job runs `dexaflow-migrate -path <path> -database <url> up`
 using the default image **`ghcr.io/dexadata/dexaflow-migrate`** (built from
 `deploy/Dockerfile.migrate`, published by `.github/workflows/release.yaml` on
 every tag), which bundles the Dexaflow `migrations/` at `migrations.path`. The
-`migrate` binary in it is golang-migrate's own CLI, compiled from the version
-pinned in Dexaflow's `go.mod` onto distroless static and running as UID 65532,
-rather than a third-party image pulled at build time (#1039).
+binary is Dexaflow's own wrapper over the golang-migrate library (#1020),
+compiled onto distroless static and running as UID 65532; it takes the
+golang-migrate CLI's `up`, `version`, `force N` and `goto N`, so the recovery
+steps of the [upgrade guide](https://dexaflow.dexadata.ai/operate/upgrades/#an-interrupted-migration)
+run in it unchanged.
 Override `migrations.image` to use your own, or set `migrations.enabled=false`
 to migrate out of band.
 
+When the Job fails, its log names the cause and the value to change, for
+example `database "dexaflow" does not exist on postgres:5432. Dexaflow does
+not create the database ...`. A failure a retry cannot fix (a missing
+database, a refused password, an unusable `database.url`, a missing
+`sslrootcert` file, a dirty schema) exits with a code of its own, and on
+Kubernetes 1.31 or newer the Job's `podFailurePolicy` fails it on the first
+pod instead of retrying it `backoffLimit` times. Read the log with
+`kubectl -n <namespace> logs -l app.kubernetes.io/component=migrate --tail=50`;
+each message is listed in
+[troubleshooting](https://dexaflow.dexadata.ai/operate/troubleshooting/#the-migration-job).
+
 ## Datastore compatibility
 
-The chart talks to external Postgres + Redis you provision. Versions
-we test against in CI and the minimums we support:
+The chart talks to external Postgres + Redis you provision. Dexaflow does
+not create the Postgres database: create it first (`CREATE DATABASE dexaflow;`,
+as a role allowed to) and name it in `database.url`; the migration Job creates
+the tables inside it. Versions we test against in CI and the minimums we support:
 
 | Datastore | Tested in CI | Recommended minimum | Notes |
 |---|---|---|---|
@@ -256,7 +271,7 @@ Set `redis.caConfigMap` to a ConfigMap holding the provider CA as
 
 ```bash
 kubectl create configmap dexaflow-redis-ca \
-  --from-file=ca.crt=./memorystore-server-ca.pem -n leoflow
+  --from-file=ca.crt=./memorystore-server-ca.pem -n dexaflow
 ```
 
 ```yaml
@@ -395,7 +410,7 @@ auth:
     issuer: "https://accounts.google.com"
     clientId: "…apps.googleusercontent.com"
     existingSecret: dexaflow-idp          # key: oidcClientSecret
-    redirectUrl: "https://leoflow.example.com/api/v2/auth/oidc/callback"
+    redirectUrl: "https://dexaflow.example.com/api/v2/auth/oidc/callback"
     tenantClaim: "hd"                    # `tid` on Entra
     tenantClaims:
       "example.com": "default"
@@ -451,7 +466,7 @@ boot and would otherwise leave an edited tenant map sitting on disk unread.
 
 For a one-cluster evaluation (kind, minikube, k3d, scratch namespace), the
 chart deliberately won't fall back to embedded datastores — that's Lite's
-job, not Pro's (see `templates/deployment.yaml:8-13`). The supported PoC
+job, not Cluster's (see `templates/deployment.yaml:8-13`). The supported PoC
 path is to install Bitnami's Postgres + Redis charts alongside Dexaflow:
 
 - Recipe: [`helm/dexaflow/examples/README.md`](https://github.com/dexadata/dexaflow/tree/main/helm/dexaflow/examples/README.md)
@@ -464,7 +479,7 @@ the production-shaped command.
 
 ```bash
 helm lint ./helm/dexaflow
-helm template lf ./helm/dexaflow -n leoflow \
+helm template lf ./helm/dexaflow -n dexaflow \
   --set database.url=postgres://x \
   --set redis.url=redis://r/0 \
   --set auth.jwtSecret=s \

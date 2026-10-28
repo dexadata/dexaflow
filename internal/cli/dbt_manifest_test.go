@@ -43,6 +43,7 @@ func TestLiteDbtBin(t *testing.T) {
 // TestDbtProjectHasProfiles gates the L4 default duckdb: a project that ships its own
 // profiles.yml must report true so the compiler never overrides the user's warehouse.
 func TestDbtProjectHasProfiles(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if dbtProjectHasProfiles(dir) {
 		t.Error("no profiles.yml: want false")
@@ -59,6 +60,7 @@ func TestDbtProjectHasProfiles(t *testing.T) {
 // profiles.yml, and otherwise writes a temporary default-duckdb profile so `dbt parse`
 // succeeds zero-config (in a temp dir, never the user's ~/.dbt).
 func TestWriteParseDuckdbProfile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	proj := filepath.Join(dir, "shop")
 	if err := os.MkdirAll(proj, 0o755); err != nil {
@@ -99,6 +101,7 @@ func TestWriteParseDuckdbProfile(t *testing.T) {
 // the fresh `dbt parse` path is an external-binary orchestration, gated end-to-end by
 // the e2e-dbt job (ADR 0011), not unit-tested.
 func TestLoadDbtManifestBaked(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	proj := filepath.Join(dir, "shop")
 	if err := os.MkdirAll(proj, 0o755); err != nil {
@@ -129,6 +132,7 @@ func TestLoadDbtManifestBaked(t *testing.T) {
 // the no-connection case (so L4 can name its default duckdb), and it fails loudly only
 // when a connection is set but the project's dbt_project.yml is unreadable.
 func TestDbtConnectionProfile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	proj := filepath.Join(dir, "p")
 	if err := os.MkdirAll(proj, 0o755); err != nil {

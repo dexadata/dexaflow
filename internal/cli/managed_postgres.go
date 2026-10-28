@@ -41,23 +41,86 @@ func resolveDatastore(flag string, dockerOK bool) string {
 	return datastoreManaged
 }
 
-// autoDatastore resolves an "auto" --postgres at run time (detecting Docker) and
-// prints which backend it chose; a non-auto value is returned unchanged.
-func autoDatastore(cmd *cobra.Command, flag string) string {
+// autoDatastore resolves an "auto" --postgres at run time and prints which
+// backend it chose; a non-auto value is returned unchanged. An install pinned to
+// the managed Postgres (a restore, or an earlier --postgres managed) keeps it
+// (ADR 0094); otherwise Docker is detected as ADR 0030 says.
+func autoDatastore(ctx context.Context, cmd *cobra.Command, flag, devDir string) string {
 	if flag != datastoreAuto {
 		return flag
 	}
-	present := dockerAvailable()
-	mode := resolveDatastore(datastoreAuto, present && dockerResponsive())
-	devPrintln(cmd.OutOrStdout(), datastoreNote(mode, present))
+	if readDatastorePin(devDir) == datastoreManaged {
+		devPrintln(cmd.OutOrStdout(), "▸ using the managed Postgres this install is pinned to "+
+			"(by `dexaflow lite restore` or an earlier --postgres managed). Pass --postgres docker to switch.")
+		return datastoreManaged
+	}
+	host := probeDockerHost(ctx, dockerAvailable())
+	mode := resolveDatastore(datastoreAuto, host == dockerReady)
+	devPrintln(cmd.OutOrStdout(), datastoreNote(mode, host))
 	return mode
 }
 
-// dockerPingFn probes whether the Docker daemon actually answers — not just that
+// dockerHost is what the auto datastore found of Docker on this host.
+type dockerHost int
+
+const (
+	// dockerAbsent: no `docker` on PATH.
+	dockerAbsent dockerHost = iota
+	// dockerUnresponsive: `docker` is on PATH, its daemon does not answer.
+	dockerUnresponsive
+	// dockerNoCompose: the daemon answers, the Compose v2 plugin is missing.
+	dockerNoCompose
+	// dockerReady: the daemon answers and `docker compose` works.
+	dockerReady
+)
+
+// probeDockerHost classifies Docker for the datastore: the daemon is pinged
+// only when docker is present, and the Compose v2 plugin only when the daemon
+// answers. The Docker Postgres is started with `docker compose`, so a daemon
+// without the plugin cannot run it (#759).
+func probeDockerHost(ctx context.Context, present bool) dockerHost {
+	switch {
+	case !present:
+		return dockerAbsent
+	case !dockerResponsive(ctx):
+		return dockerUnresponsive
+	case depsFrom(ctx).composeProbe() != nil:
+		return dockerNoCompose
+	default:
+		return dockerReady
+	}
+}
+
+// probeCompose probes the Docker Compose v2 plugin with `docker compose
+// version`, which the docker CLI answers without the daemon. Without the
+// plugin the CLI does not know `compose` and the probe fails. Commands reach
+// it as cliDeps.composeProbe, which tests substitute.
+func probeCompose() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, "docker", "compose", "version").Run()
+}
+
+// errNoComposePlugin is the error for a Docker Postgres asked for on a host
+// without the Compose v2 plugin, in place of the docker CLI's usage text.
+const errNoComposePlugin = "the Docker Compose v2 plugin is not installed (`docker compose version` failed), and the Docker Postgres is started with `docker compose`. " +
+	"Install the Docker Compose v2 plugin, or run `dexaflow lite --postgres managed` for a Docker-free Postgres"
+
+// requireComposePlugin returns an actionable error when the Compose v2 plugin
+// is missing, and nil when `docker compose` works.
+func requireComposePlugin(ctx context.Context) error {
+	if err := depsFrom(ctx).composeProbe(); err != nil {
+		return fmt.Errorf("%s: %w", errNoComposePlugin, err)
+	}
+	return nil
+}
+
+// pingDocker probes whether the Docker daemon actually answers, not just that
 // the `docker` binary is on PATH. A wedged Docker Desktop resolves on PATH but
 // returns an error from its socket (the 500s seen on macOS, #403); the ping
-// catches that. Package-level so tests can substitute it.
-var dockerPingFn = func() error {
+// catches that. Commands reach it as cliDeps.dockerPing, which tests
+// substitute.
+func pingDocker() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return exec.CommandContext(ctx, "docker", "version").Run()
@@ -66,16 +129,19 @@ var dockerPingFn = func() error {
 // dockerResponsive reports whether the Docker daemon answered the ping. The auto
 // resolvers gate on this so a present-but-unresponsive daemon falls back to the
 // Docker-free path instead of failing later on `docker compose up` (#403).
-func dockerResponsive() bool { return dockerPingFn() == nil }
+func dockerResponsive(ctx context.Context) bool { return depsFrom(ctx).dockerPing() == nil }
 
 // datastoreNote is the user-facing line for the resolved Postgres backend. It
 // distinguishes "no Docker at all" from "Docker present but not responding" so a
-// wedged daemon gets an actionable message instead of the misleading "no Docker".
-func datastoreNote(mode string, dockerPresent bool) string {
+// wedged daemon gets an actionable message instead of the misleading "no Docker",
+// and names a missing Compose v2 plugin the same way (#759).
+func datastoreNote(mode string, host dockerHost) string {
 	switch {
 	case mode == datastoreDocker:
 		return "▸ Docker detected — using the Docker Postgres (postgres:16). Pass --postgres managed for a Docker-free Postgres."
-	case dockerPresent:
+	case host == dockerNoCompose:
+		return "▸ Docker detected but the Compose v2 plugin is missing (`docker compose`), so using a managed Postgres (no Docker). Install the Compose v2 plugin for the Docker Postgres."
+	case host == dockerUnresponsive:
 		return "▸ Docker detected but not responding — using a managed Postgres (no Docker). Fix Docker, or pass --postgres docker to force it."
 	default:
 		return "▸ no Docker detected — using a managed Postgres (downloaded under ~/.dexaflow, no Docker). Install Docker for the postgres:16 container instead."
@@ -124,16 +190,19 @@ func startManagedPostgres(ctx context.Context, cmd *cobra.Command) (started bool
 	if serr := checkSocketPathLen(dataDir); serr != nil {
 		return false, serr
 	}
-	// Pre-flight: the relocatable Postgres dynamically links a chain of system
-	// libraries it does not bundle (ICU, Kerberos, zstd, lz4, libxml2, …). On a
-	// minimal host (Alpine/musl, slim containers) some are absent and the server
-	// dies with a cryptic loader error. Probe the `postgres` binary — it has the
-	// widest dependency set, wider than initdb — and fail with an actionable
-	// message before the confusing startup error.
-	if verr := exec.CommandContext(ctx, filepath.Join(binDir, "postgres"), "--version").Run(); verr != nil { //nolint:gosec // managed binary + fixed arg
-		return false, fmt.Errorf("the managed Postgres can't run on this host: it needs system libraries (ICU, Kerberos) that are missing here (common on Alpine/musl and slim containers): %w\n"+
-			"  use `dexaflow lite --postgres docker` (recommended; works everywhere).\n"+
-			"  installing the libs may help if the versions match (Debian/Ubuntu: `apt-get install libicu-dev libgssapi-krb5-2`; Alpine: `apk add icu-libs krb5-libs` — but the bundled build may need exact versions)", verr)
+	// Pre-flight: the relocatable Postgres dynamically links system libraries it
+	// does not bundle (libxml2, Kerberos, OpenSSL 3, zstd, lz4; ICU on musl). On
+	// a minimal host (a bare ubuntu:24.04 container, Alpine) some are absent and
+	// the server dies with a cryptic loader error. Probe the `postgres` binary
+	// (it has the widest dependency set, wider than initdb) and fail naming the
+	// missing libraries and the packages that carry them (#279).
+	pgBin := filepath.Join(binDir, "postgres")
+	var probeErr strings.Builder
+	probe := exec.CommandContext(ctx, pgBin, "--version") //nolint:gosec // managed binary + fixed arg
+	probe.Stderr = &probeErr
+	if verr := probe.Run(); verr != nil {
+		libs := missingPGLibs(ctx, pgBin, probeErr.String())
+		return false, managedPGLibsError(libs, hostPackageManager(readOSRelease()), os.Geteuid() == 0, verr)
 	}
 
 	// Our cluster already accepting connections on its socket? leave it (idempotent
@@ -290,7 +359,7 @@ func autoExecutor(cmd *cobra.Command, flag string) string {
 		return flag
 	}
 	present := dockerAvailable()
-	mode := resolveExecutor("auto", present && dockerResponsive())
+	mode := resolveExecutor("auto", present && dockerResponsive(cmdContext(cmd)))
 	devPrintln(cmd.OutOrStdout(), executorNote(mode, present))
 	return mode
 }

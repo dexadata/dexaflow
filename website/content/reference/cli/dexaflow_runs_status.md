@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_runs_status/
 title: "dexaflow runs status"
 linkTitle: "runs status"
-weight: 48
+weight: 60
 ---
 
 Show the state of a DAG run (the latest by default).
@@ -28,6 +28,7 @@ dexaflow runs status <dag_id> [flags]
       --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
+      --target name         name of the control plane to use (default: DEXAFLOW_TARGET, then the target selected for the workspace; see dexaflow target list)
 ```
 
 ### SEE ALSO

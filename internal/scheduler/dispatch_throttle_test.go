@@ -113,22 +113,30 @@ func (s *simStore) RecordDispatchFailure(ctx context.Context, runID, taskID stri
 	return nil
 }
 
-// ApplyTransitions applies a plain state set (none -> scheduled and the like).
-func (s *simStore) ApplyTransitions(ctx context.Context, runID string, taskIDs []string, to domain.TaskState) error {
+// ApplyTransitions applies a plain state set (none -> scheduled and the like)
+// to the rows still in the from state, as the store's source-state guard does,
+// and returns the ids it moved.
+func (s *simStore) ApplyTransitions(ctx context.Context, runID string, taskIDs []string, from, to domain.TaskState) ([]string, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var applied []string
 	for _, id := range taskIDs {
-		s.rows[runID][id].state = to
+		r := s.rows[runID][id]
+		if r.state != from {
+			continue
+		}
+		r.state = to
+		applied = append(applied, id)
 	}
-	return nil
+	return applied, nil
 }
 
 // ScheduledDAGs reports one cron DAG that is always due, so a tick that reaches
 // createDueRuns creates a run.
-func (s *simStore) ScheduledDAGs(ctx context.Context) ([]ScheduledDAG, error) {
+func (s *simStore) ScheduledDAGs(ctx context.Context, _ time.Time) ([]ScheduledDAG, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

@@ -52,6 +52,7 @@ func writePoisonedProject(t *testing.T, configName, extra string) string {
 // `validate` is the sub-second command an author runs with dexaflow.yaml open,
 // and it called every one of these projects valid.
 func TestValidateCommandRefusesADockerfileValue(t *testing.T) {
+	t.Parallel()
 	for _, configName := range []string{projectConfigFile, legacyProjectConfigFile} {
 		for _, tc := range poisonedProjects {
 			t.Run(configName+"/"+tc.name, func(t *testing.T) {
@@ -60,7 +61,7 @@ func TestValidateCommandRefusesADockerfileValue(t *testing.T) {
 				cmd.SetArgs([]string{dir})
 				cmd.SetOut(io.Discard)
 				cmd.SetErr(io.Discard)
-				err := cmd.Execute()
+				err := cmd.ExecuteContext(testCtx(nil))
 				if err == nil {
 					t.Fatal("validate called the project valid")
 				}
@@ -78,6 +79,7 @@ func TestValidateCommandRefusesADockerfileValue(t *testing.T) {
 // Plain `compile`, without --build, must refuse before it starts a parser: the
 // refusal used to wait for the build, on the CI runner that was about to run it.
 func TestPlainCompileRefusesADockerfileValue(t *testing.T) {
+	t.Parallel()
 	for _, tc := range poisonedProjects {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := writePoisonedProject(t, projectConfigFile, tc.yaml)
@@ -85,7 +87,7 @@ func TestPlainCompileRefusesADockerfileValue(t *testing.T) {
 			cmd.SetArgs([]string{dir, "--parser-cmd", "/nonexistent/parser"})
 			cmd.SetOut(io.Discard)
 			cmd.SetErr(io.Discard)
-			err := cmd.Execute()
+			err := cmd.ExecuteContext(testCtx(nil))
 			if err == nil {
 				t.Fatal("compile accepted the project")
 			}
@@ -102,6 +104,7 @@ func TestPlainCompileRefusesADockerfileValue(t *testing.T) {
 // base_image, and a `.` group short-circuits the COPY of every sibling, so
 // neither the `$` nor the `<` below reaches a COPY guard in either renderer.
 func TestEveryDockerfileGeneratorRunsTheSharedCheck(t *testing.T) {
+	t.Parallel()
 	poisons := map[string]func(*domain.LeoflowConfig){
 		"base_image": func(c *domain.LeoflowConfig) { c.BaseImage = "alpine AS builder" },
 		"dbt_groups.b.project": func(c *domain.LeoflowConfig) {
@@ -145,6 +148,7 @@ func TestEveryDockerfileGeneratorRunsTheSharedCheck(t *testing.T) {
 // so a third generator cannot be added without the shared check. The second
 // generator having none of #1267's guards is how this issue was found.
 func TestEveryFunctionThatWritesFROMIsGuarded(t *testing.T) {
+	t.Parallel()
 	fset := token.NewFileSet()
 	files, err := filepath.Glob("*.go")
 	if err != nil {

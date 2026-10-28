@@ -202,6 +202,100 @@ vocabulary, so the operator sees which values to change.
 {{- end -}}
 {{- end -}}
 {{- /*
+Cluster deploy defaults (#1704). The server refuses at boot a registry prefix,
+a platform or a base image no deploy could use (domain.DeployDefaults.Validate);
+refuse the same values here so the operator sees which one to change instead of
+a CrashLoopBackOff. The base image goes into FROM, which has no quoting, so
+whitespace and the characters its lexer rewrites ($, quotes, backslash) are
+refused, as domain.CheckImageReference refuses them.
+*/ -}}
+{{- $deployDefaults := (.Values.deploy | default dict).defaults | default dict -}}
+{{- with $deployDefaults.registry -}}
+{{- $registry := toString . -}}
+{{- if or (contains "://" $registry) (contains "@" $registry) (hasSuffix "/" $registry) (ne (lower $registry) $registry) (regexMatch "[\\s'\"\\\\$]" $registry) (and (contains "/" $registry) (regexMatch ":[^/]*$" $registry)) -}}
+{{- fail (printf "deploy.defaults.registry must be an image prefix such as ghcr.io/acme: a host, an optional port and a path, lowercase, with no scheme, credentials, tag, whitespace, quote, backslash, $ or trailing slash (got %q). The server refuses to start with it." $registry) -}}
+{{- end -}}
+{{- end -}}
+{{- with $deployDefaults.platforms -}}
+{{- if not (kindIs "slice" .) -}}
+{{- fail (printf "deploy.defaults.platforms must be a list, such as [linux/amd64] (got %q). With --set, write deploy.defaults.platforms={linux/amd64,linux/arm64}." (toString .)) -}}
+{{- end -}}
+{{- end -}}
+{{- with $deployDefaults.baseImage -}}
+{{- if regexMatch "[\\s'\"\\\\$]" (toString .) -}}
+{{- fail (printf "deploy.defaults.baseImage %q contains whitespace, a quote, a backslash or $: FROM has no quoting and its lexer rewrites these, so the build would pull another image than the one named. The server refuses to start with it." (toString .)) -}}
+{{- end -}}
+{{- end -}}
+{{- range $deployDefaults.platforms -}}
+{{- if not (regexMatch "^[A-Za-z0-9]+/[A-Za-z0-9_]+(/[A-Za-z0-9]+)?$" (toString .)) -}}
+{{- fail (printf "deploy.defaults.platforms: invalid platform %q: want os/arch or os/arch/variant, such as linux/amd64 or linux/arm64/v8. The server refuses to start with it." (toString .)) -}}
+{{- end -}}
+{{- end -}}
+{{- if and $deployDefaults.sourceMode (not ((.Values.execution | default dict).sourceMode | default dict).enabled) -}}
+{{- fail "deploy.defaults.sourceMode advertises the source mode runtime image, but execution.sourceMode.enabled is false. Turn source mode on or leave deploy.defaults.sourceMode off. The server refuses to start with it." -}}
+{{- end -}}
+{{- /*
+Remote builder and task service account defaults (#1890), refused here as
+the server refuses them at boot (domain.RemoteBuilderConfig.Validate and
+config.validateDeployDefaults). The task service account advertised is the
+server's executor.task_service_account, which the chart sets only with
+taskServiceAccount.create, unless extraEnv sets it.
+*/ -}}
+{{- $cloudBuild := ($deployDefaults.remoteBuilder | default dict).cloudBuild | default dict -}}
+{{- if or $cloudBuild.project $cloudBuild.region $cloudBuild.workerPool $cloudBuild.serviceAccount -}}
+{{- $project := toString ($cloudBuild.project | default "") -}}
+{{- $region := toString ($cloudBuild.region | default "") -}}
+{{- $pool := toString ($cloudBuild.workerPool | default "") -}}
+{{- $buildSA := toString ($cloudBuild.serviceAccount | default "") -}}
+{{- if not $project -}}
+{{- fail "deploy.defaults.remoteBuilder.cloudBuild.project is required with any other remoteBuilder value: the Google Cloud project the build runs in. The server refuses to start without it." -}}
+{{- end -}}
+{{- if not (regexMatch "^([a-z0-9][a-z0-9.-]*[a-z0-9]:)?[a-z][a-z0-9-]{4,28}[a-z0-9]$" $project) -}}
+{{- fail (printf "deploy.defaults.remoteBuilder.cloudBuild.project %q is not a Google Cloud project id. The server refuses to start with it." $project) -}}
+{{- end -}}
+{{- if and $region (not (regexMatch "^[a-z][a-z0-9-]*[a-z0-9]$" $region)) -}}
+{{- fail (printf "deploy.defaults.remoteBuilder.cloudBuild.region %q is not a region name, such as us-central1. The server refuses to start with it." $region) -}}
+{{- end -}}
+{{- if $pool -}}
+{{- if not (regexMatch "^projects/[^/\\s]+/locations/[a-z][a-z0-9-]*/workerPools/[A-Za-z0-9_-]+$" $pool) -}}
+{{- fail (printf "deploy.defaults.remoteBuilder.cloudBuild.workerPool %q: want projects/<project>/locations/<region>/workerPools/<name>. The server refuses to start with it." $pool) -}}
+{{- end -}}
+{{- if not $region -}}
+{{- fail "deploy.defaults.remoteBuilder.cloudBuild.region is required with workerPool: a build runs in the region of its pool. The server refuses to start without it." -}}
+{{- end -}}
+{{- if ne (index (splitList "/" $pool) 3) $region -}}
+{{- fail (printf "deploy.defaults.remoteBuilder.cloudBuild.workerPool %q is not in region %s; a build runs in the region of its pool. The server refuses to start with it." $pool $region) -}}
+{{- end -}}
+{{- end -}}
+{{- if and $buildSA (not (regexMatch "^projects/[^/\\s]+/serviceAccounts/[^/\\s@]+@[^/\\s@]+$" $buildSA)) -}}
+{{- fail (printf "deploy.defaults.remoteBuilder.cloudBuild.serviceAccount %q: want projects/<project>/serviceAccounts/<email>. The server refuses to start with it." $buildSA) -}}
+{{- end -}}
+{{- end -}}
+{{- if and .Values.builder.enabled .Values.builder.advertise $cloudBuild.project -}}
+{{- fail "builder.advertise makes the in-cluster builder the cluster's remote builder, and deploy.defaults.remoteBuilder.cloudBuild sets Cloud Build; a cluster advertises one. Set builder.advertise: false to keep Cloud Build, or remove deploy.defaults.remoteBuilder.cloudBuild. The server refuses to start with both." -}}
+{{- end -}}
+{{- if $deployDefaults.taskServiceAccount -}}
+{{- $taskSAFromEnv := false -}}
+{{- range .Values.extraEnv -}}
+{{- if has .name (list "DEXAFLOW_EXECUTOR_TASK_SERVICE_ACCOUNT" "LEOFLOW_EXECUTOR_TASK_SERVICE_ACCOUNT") -}}
+{{- $taskSAFromEnv = true -}}
+{{- end -}}
+{{- end -}}
+{{- if not (or (.Values.taskServiceAccount | default dict).create $taskSAFromEnv) -}}
+{{- fail "deploy.defaults.taskServiceAccount advertises the task ServiceAccount, but the server has none: set taskServiceAccount.create (or LEOFLOW_EXECUTOR_TASK_SERVICE_ACCOUNT in extraEnv), or leave deploy.defaults.taskServiceAccount off. The server refuses to start with it." -}}
+{{- end -}}
+{{- end -}}
+{{- /*
+Digest-pinned images at register (#1703). The server refuses at boot any
+deploy.require_digest other than off, warn or enforce
+(domain.ParseDigestRequirement); refuse the same here. A bare `off` in a
+values file is YAML 1.1 for false, so false (and unset) mean off.
+*/ -}}
+{{- $requireDigest := (.Values.deploy | default dict).requireDigest | default "off" | toString -}}
+{{- if not (has $requireDigest (list "off" "warn" "enforce")) -}}
+{{- fail (printf "deploy.requireDigest must be off, warn or enforce (got %q). The server refuses to start with any other value." $requireDigest) -}}
+{{- end -}}
+{{- /*
 Pro source mode (ADR 0067) runs every source-mode task on the runtime image the
 operator vetted, so the server refuses to boot unless that image is pinned by a
 full sha256 digest (internal/config validateSourceMode, domain.IsDigestPinned).
@@ -289,7 +383,7 @@ server's own message, so one render names everything that is missing.
 {{- if not $oidc.tenantClaim -}}{{- $missing = append $missing "auth.oidc.tenantClaim" -}}{{- end -}}
 {{- if not $oidc.tenantClaims -}}{{- $missing = append $missing "auth.oidc.tenantClaims" -}}{{- end -}}
 {{- if $missing -}}
-{{- fail (printf "auth.oidc.enabled requires %s to be set: the server refuses to boot without them (internal/config/server.go validateOIDC), so this install would CrashLoopBackOff rather than serve SSO. tenantClaim + tenantClaims are the TENANT PIN and are required together, tenantClaim names the claim carrying the tenant (`tid` on Entra, `hd` on Google Workspace) and tenantClaims maps each value of it you accept to a Dexaflow tenant. Without the pin every SSO login is rejected with a generic 403 (audited as tenant_not_allowed) that never falls back to the default tenant. tenantClaims is a MAP: the chart delivers it in a mounted ConfigMap because no LEOFLOW_AUTH_OIDC_* env var can carry one. To keep serving password logins while SSO is configured, set auth.oidc.enabled=false." (join ", " $missing)) -}}
+{{- fail (printf "auth.oidc.enabled requires %s to be set: the server refuses to boot without them (internal/config/server_auth.go validateOIDC), so this install would CrashLoopBackOff rather than serve SSO. tenantClaim + tenantClaims are the TENANT PIN and are required together, tenantClaim names the claim carrying the tenant (`tid` on Entra, `hd` on Google Workspace) and tenantClaims maps each value of it you accept to a Dexaflow tenant. Without the pin every SSO login is rejected with a generic 403 (audited as tenant_not_allowed) that never falls back to the default tenant. tenantClaims is a MAP: the chart delivers it in a mounted ConfigMap because no LEOFLOW_AUTH_OIDC_* env var can carry one. To keep serving password logins while SSO is configured, set auth.oidc.enabled=false." (join ", " $missing)) -}}
 {{- end -}}
 {{- if not (hasPrefix "https://" $oidc.issuer) -}}
 {{- fail (printf "auth.oidc.issuer must be an https:// URL (got %q): discovery and the JWKS fetch that verifies every ID token run over it, and the server rejects a non-https issuer at boot. Use the IdP's issuer exactly as published in its /.well-known/openid-configuration." $oidc.issuer) -}}

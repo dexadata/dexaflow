@@ -61,6 +61,13 @@ type LeoflowConfig struct {
 	// Airflow DAG attribute), so it lives in dexaflow.yaml and the compiler overlays
 	// it onto the produced dag.json.
 	Alerts *AlertsConfig `json:"alerts,omitempty" yaml:"alerts,omitempty"`
+	// MinIdleWorkers is the number of idle warm workers the DAG asks to keep
+	// for its current version (ADR 0058, ADR 0082): with warm pools on, an
+	// unpaused DAG that declares it is prewarmed from the moment a version
+	// becomes current. The compiler overlays it onto dag.json; the server
+	// clamps it to execution.max_pool_size, and with warm pools off it does
+	// nothing. Zero declares none.
+	MinIdleWorkers int `json:"min_idle_workers,omitempty" yaml:"min_idle_workers,omitempty"`
 }
 
 // AlertsConfig groups alert rules by the lifecycle event that fires them. Only
@@ -139,11 +146,28 @@ type BuildConfig struct {
 	Context    string            `json:"context,omitempty" yaml:"context,omitempty"`
 	Platforms  []string          `json:"platforms,omitempty" yaml:"platforms,omitempty"`
 	Labels     map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
+	// RemoteBuilder is the remote builder for builds no daemonless path
+	// covers (ADR 0083); nil leaves those to the target's or workspace's
+	// remote_builder, then the local daemon.
+	RemoteBuilder *RemoteBuilderConfig `json:"remote_builder,omitempty" yaml:"remote_builder,omitempty"`
+	// Args are the build arguments (`--build-arg`) the project's own
+	// Dockerfile reads with ARG. Plain values: they stay in the image
+	// history, so a secret goes in Secrets.
+	Args map[string]string `json:"args,omitempty" yaml:"args,omitempty"`
+	// Secrets are the build secrets a RUN line mounts with
+	// --mount=type=secret,id=<id>, read from the environment of the build.
+	Secrets []BuildSecret `json:"secrets,omitempty" yaml:"secrets,omitempty"`
+	// PackageIndex is the Python package index pip and uv install from in
+	// place of PyPI; nil is PyPI.
+	PackageIndex *PackageIndex `json:"package_index,omitempty" yaml:"package_index,omitempty"`
 }
 
 // RegistryConfig describes where the built image is pushed and how it is tagged.
 type RegistryConfig struct {
-	URL         string `json:"url,omitempty" yaml:"url,omitempty"`
+	URL string `json:"url,omitempty" yaml:"url,omitempty"`
+	// AuthMethod is where the CLI reads the registry credential: auto (the
+	// default), docker_config or cloud; env and iam still load, deprecated
+	// (build.ParseAuthMethod, ADR 0080).
 	AuthMethod  string `json:"auth_method,omitempty" yaml:"auth_method,omitempty"`
 	ImageName   string `json:"image_name,omitempty" yaml:"image_name,omitempty"`
 	TagStrategy string `json:"tag_strategy,omitempty" yaml:"tag_strategy,omitempty"`
@@ -232,7 +256,7 @@ func (c *LeoflowConfig) ApplyDefaults() {
 		c.Registry = &RegistryConfig{}
 	}
 	if c.Registry.AuthMethod == "" {
-		c.Registry.AuthMethod = "docker_config"
+		c.Registry.AuthMethod = "auto"
 	}
 	if c.Registry.TagStrategy == "" {
 		c.Registry.TagStrategy = "version"
@@ -287,5 +311,27 @@ func (c *LeoflowConfig) Validate() error {
 	if err := c.validateBuildDockerfile(); err != nil {
 		return err
 	}
+	if err := c.validateMinIdleWorkers(); err != nil {
+		return err
+	}
+	if c.Build != nil {
+		if err := c.Build.RemoteBuilder.Validate("build.remote_builder"); err != nil {
+			return err
+		}
+		if err := c.Build.validateInputs(); err != nil {
+			return err
+		}
+	}
 	return c.ValidateDockerfileValues()
+}
+
+// validateMinIdleWorkers refuses min_idle_workers on a DAG with staging
+// enabled: a staging version never gets a warm pool (ADR 0058 D5), so the
+// declaration would be accepted and do nothing.
+func (c *LeoflowConfig) validateMinIdleWorkers() error {
+	if c.MinIdleWorkers > 0 && c.Staging != nil && c.Staging.Enabled {
+		return fmt.Errorf("min_idle_workers %d has no effect with staging.enabled: "+
+			"a staging DAG's tasks always run on dedicated pods (ADR 0058); remove one of the two", c.MinIdleWorkers)
+	}
+	return nil
 }

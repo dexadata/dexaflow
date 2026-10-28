@@ -15,12 +15,18 @@ import (
 // clientIPServer builds a minimal server with the given trusted-proxy list and a
 // probe route that echoes the resolved client IP.
 func clientIPServer(trusted []string) *gin.Engine {
-	r := NewServer(Dependencies{
-		Logger:         discardLogger(),
-		RateLimiter:    auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:    []string{"*"},
-		DevNoAuth:      true,
-		TrustedProxies: trusted,
+	r := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins:    []string{"*"},
+			TrustedProxies: trusted,
+		},
+		Auth: AuthDeps{
+			RateLimiter: auth.NewRateLimiter(100, time.Minute),
+			DevNoAuth:   true,
+		},
 	})
 	r.GET("/_clientip", func(c *gin.Context) { c.String(http.StatusOK, c.ClientIP()) })
 	return r

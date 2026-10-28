@@ -23,6 +23,11 @@ permissions:
 
 # Pin the toolchain. Docsy needs the Hugo EXTENDED build (SCSS) and Go (Hugo Modules).
 env:
+  # proxy.golang.org sometimes resets a large module download ("stream error:
+  # INTERNAL_ERROR"), which failed whole jobs before any test ran. With "|" Go
+  # falls back to the module's own source on any proxy error (with "," only on
+  # 404/410); go.sum and sum.golang.org still verify every module.
+  GOPROXY: https://proxy.golang.org|direct
   HUGO_VERSION: "0.165.0"
 
 # A newer push to the same pull request supersedes this run, so the older one
@@ -41,18 +46,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           # Docsy's "last modified" + enableGitInfo want full history.
           fetch-depth: 0
 
       - name: Setup Go (for Hugo Modules)
-        uses: actions/setup-go@v7.0.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: website/go.mod
 
       - name: Setup Node (for Docsy PostCSS/autoprefixer)
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # Node 22 LTS (NOT 20): Hugo Extended sandboxes the PostCSS/autoprefixer
           # subprocess with Node's Permission Model — it invokes node with
@@ -64,7 +70,7 @@ jobs:
           node-version: "22"
 
       - name: Setup Python (for pdoc + generator post-processing)
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -109,7 +115,7 @@ jobs:
       # external fan-out across thousands of doc links. External-link and governance-
       # Markdown coverage lives in link-check.yml. Behaviour is in ../lychee.toml.
       - name: Check links & images in the built site
-        uses: lycheeverse/lychee-action@v2
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
         with:
           args: >-
             --config lychee.toml
@@ -120,7 +126,7 @@ jobs:
           fail: true
 
       - name: Upload built site (artifact only — NOT a deploy)
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: website-public
           path: website/public

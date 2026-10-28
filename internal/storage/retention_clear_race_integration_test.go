@@ -19,6 +19,7 @@ func TestRetentionKeepsARunClearedAfterItsLock(t *testing.T) {
 	tenant, version, dag := seedTenant(t, pool, ctx, fmt.Sprintf("retention_race_%d", time.Now().UnixNano()))
 	old := 400 * 24 * time.Hour
 	run := seedRun(t, pool, ctx, tenant, dag, version, "cleared_mid_batch", "success", &old, "success", "success")
+	seedNewerRun(t, pool, ctx, tenant, dag, version)
 
 	store.SetAfterRunLockHook(func() {
 		mustExec(t, pool, ctx, `UPDATE task_instances SET state = 'none' WHERE dag_run_id = $1 AND task_id = 't0'`, run)
@@ -33,8 +34,8 @@ func TestRetentionKeepsARunClearedAfterItsLock(t *testing.T) {
 	if n := countFor(t, pool, ctx, `SELECT count(*) FROM task_instances WHERE dag_run_id = $1`, run); n != 2 {
 		t.Errorf("task instances left = %d, want 2 (the cleared run must stay whole)", n)
 	}
-	if n := countFor(t, pool, ctx, `SELECT count(*) FROM task_state_history h JOIN task_instances ti ON ti.id = h.task_instance_id WHERE ti.dag_run_id = $1`, run); n != 4 {
-		t.Errorf("state history rows left = %d, want 4", n)
+	if n := countFor(t, pool, ctx, `SELECT count(*) FROM task_instance_history h JOIN task_instances ti ON ti.id = h.task_instance_id WHERE ti.dag_run_id = $1`, run); n != 2 {
+		t.Errorf("attempt history rows left = %d, want 2", n)
 	}
 	if !runExists(t, pool, ctx, run) {
 		t.Error("the cleared run was deleted")
@@ -50,6 +51,7 @@ func TestRetentionSkipsARunAClearIsWriting(t *testing.T) {
 	tenant, version, dag := seedTenant(t, pool, ctx, fmt.Sprintf("retention_lock_%d", time.Now().UnixNano()))
 	old := 400 * 24 * time.Hour
 	run := seedRun(t, pool, ctx, tenant, dag, version, "being_cleared", "success", &old, "success")
+	seedNewerRun(t, pool, ctx, tenant, dag, version)
 
 	clear, err := pool.Begin(ctx)
 	if err != nil {
@@ -117,11 +119,12 @@ func TestRetentionNeverLeavesARunWithPartOfItsTaskInstances(t *testing.T) {
 	tenant, version, dag := seedTenant(t, pool, ctx, fmt.Sprintf("retention_split_%d", time.Now().UnixNano()))
 	old := 400 * 24 * time.Hour
 	run := seedRun(t, pool, ctx, tenant, dag, version, "split", "success", &old, "success", "success", "success")
+	seedNewerRun(t, pool, ctx, tenant, dag, version)
 	cutoff := time.Now().Add(-24 * time.Hour)
 
-	// 3 task instances, each with 2 state history rows, 1 attempt row and 1 XCom
-	// row: 12 child rows, so a limit of 13 has 1 row left for the 3 instances.
-	got, err := store.DeleteFinishedRuns(ctx, tenant, cutoff, 100, 13)
+	// 3 task instances, each with 1 attempt row and 1 XCom row: 6 child rows,
+	// so a limit of 7 has 1 row left for the 3 instances.
+	got, err := store.DeleteFinishedRuns(ctx, tenant, cutoff, 100, 7)
 	if err != nil {
 		t.Fatalf("DeleteFinishedRuns: %v", err)
 	}
@@ -131,7 +134,7 @@ func TestRetentionNeverLeavesARunWithPartOfItsTaskInstances(t *testing.T) {
 	mustExec(t, pool, ctx, `UPDATE task_instances SET state = 'none' WHERE dag_run_id = $1`, run)
 	mustExec(t, pool, ctx, `UPDATE dag_runs SET state = 'queued', ended_at = NULL WHERE id = $1`, run)
 
-	if _, err := store.DeleteFinishedRuns(ctx, tenant, cutoff, 100, 13); err != nil {
+	if _, err := store.DeleteFinishedRuns(ctx, tenant, cutoff, 100, 7); err != nil {
 		t.Fatalf("DeleteFinishedRuns: %v", err)
 	}
 	if n := countFor(t, pool, ctx, `SELECT count(*) FROM task_instances WHERE dag_run_id = $1`, run); n != 3 {
@@ -148,6 +151,7 @@ func TestRetentionDeletesARunLargerThanTheBatchInOneGo(t *testing.T) {
 	tenant, version, dag := seedTenant(t, pool, ctx, fmt.Sprintf("retention_large_%d", time.Now().UnixNano()))
 	old := 400 * 24 * time.Hour
 	run := seedRun(t, pool, ctx, tenant, dag, version, "large", "success", &old, "success", "success", "success")
+	seedNewerRun(t, pool, ctx, tenant, dag, version)
 	cutoff := time.Now().Add(-24 * time.Hour)
 
 	var total int64

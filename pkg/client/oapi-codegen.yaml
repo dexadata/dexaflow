@@ -5,3 +5,9 @@ output: pkg/client/client.gen.go
 generate:
   models: true
   client: true
+# The overlay applies to the client only: docs/api/openapi.yaml keeps
+# documenting every parameter, while the generated signatures stay compatible
+# (pkg/client is a public API, see scripts/api-compat.sh).
+output-options:
+  overlay:
+    path: pkg/client/overlay.yaml

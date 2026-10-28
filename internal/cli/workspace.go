@@ -26,6 +26,8 @@ type WorkspaceSpec struct {
 	// project's own `dependencies:` (ensureWorkspaceDagVenvs), so multi-DAG
 	// aware code paths iterate Projects instead.
 	RootCfg *domain.LeoflowConfig
+	// broken lists the dexaflow.yaml files discovery could not parse.
+	broken []brokenConfig
 }
 
 // ResolveWorkspace scans the workspace directory and returns its full
@@ -53,7 +55,7 @@ func ResolveWorkspace(dir string) (*WorkspaceSpec, error) {
 	if err != nil {
 		return nil, err
 	}
-	projects, err := DiscoverProjects(abs)
+	projects, broken, err := discoverWorkspace(abs)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +69,7 @@ func ResolveWorkspace(dir string) (*WorkspaceSpec, error) {
 			root.PythonVersion = py
 		}
 	}
-	return &WorkspaceSpec{Path: abs, Projects: projects, RootCfg: root}, nil
+	return &WorkspaceSpec{Path: abs, Projects: projects, RootCfg: root, broken: broken}, nil
 }
 
 // WatchedPaths returns the file paths the mtime-polling watcher should track:

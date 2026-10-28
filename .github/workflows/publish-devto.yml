@@ -39,6 +39,8 @@ jobs:
     if: ${{ github.repository == 'neochaotic/leoflow' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Publish articles on dev.to
         uses: sinedied/publish-devto@c713cc0934b35cb3df9fca759b98e36e6a540a85 # v2
         env:

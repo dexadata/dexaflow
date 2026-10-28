@@ -36,13 +36,13 @@ cd dexaflow
 docker compose --profile demo up --build
 ```
 
-Then open **<http://localhost:8080>** and log in as **`admin@leoflow.local`** /
+Then open **<http://localhost:8080>** and log in as **`admin@dexaflow.local`** /
 **`admin`**. Stop with `docker compose --profile demo down` (add `-v` to wipe data).
 
 {{% alert title="What you're looking at" color="success" %}}
 One process serves the API (`/api/v2`), the internal UI API (`/ui/*`), and the
 React UI (ADR 0017). It auto-applies migrations and seeds the admin user on
-first boot. The three operating modes (Lite · Pro-soon · Demo) are
+first boot. The three operating modes (Lite · Cluster · Demo) are
 described in [Operating modes](/concepts/editions/).
 {{% /alert %}}
 
@@ -77,9 +77,24 @@ merge. They are not bureaucracy; they are why the codebase stays an A+.
 - **Strict TDD** — every line of production code is written against a *failing*
   test (red → green → refactor). The preferred shape is two commits: a `test:`
   commit that fails, then the `feat:`/`fix:` that makes it pass. ([ADR 0011](/project/adrs/))
+- **Every bug fix ships a regression test** that reproduces the bug, fails
+  without the fix and passes with it. ([Fix a bug](/contribute/recipes/fix-a-bug/))
 - **Go Report Card A+** — gofmt, govet, gocyclo ≤ 15, golint, ineffassign, misspell,
   license, plus the extended golangci-lint stack. `make lint` clean every commit.
   ([ADR 0012](/project/adrs/))
+- **Go files stay at or under 1,500 lines**, not counting tests and generated
+  code. `scripts/check-go-file-length.sh` fails CI on a longer file. The files
+  already over it are pinned at their length in
+  `scripts/go-file-length-allowlist.txt` and may not grow; a change that
+  shortens one lowers its number, and a split that brings it under the limit
+  removes its line.
+- **Every `//nolint` names its linters and says why**, as in
+  `//nolint:gosec // G304: the user's own config file`; nolintlint refuses a
+  bare or blanket directive.
+- **Shell scripts pass shellcheck** at warning severity (`make lint` runs it
+  when shellcheck is installed; CI always does). **Dockerfiles pass hadolint**
+  at warning severity; a finding that is deliberate gets a
+  `# hadolint ignore=<rule>` line with the reason in the comment above it.
 - **GoDocs on every exported identifier** — starting with the name, ending with a period.
 - **English** for all code, comments, commit messages, and docs.
 - **No new dependency** without justification; the supply-chain scans
@@ -105,7 +120,7 @@ Comment on the issue to claim it before starting, so effort isn't duplicated.
 
 Open a [new issue](https://github.com/dexadata/dexaflow/issues/new/choose) and
 pick **Bug report**. The form asks for repro steps, how you're running Dexaflow
-(Lite / Pro / Demo), and environment — fill it in fully so we can
+(Lite / Cluster / Demo), and environment; fill it in fully so we can
 reproduce.
 {{% /tab %}}
 {{% tab header="Propose a feature" %}}
@@ -126,7 +141,7 @@ code. This avoids misaligned designs and wasted effort.
 
 ```bash
 # 1. Fork on GitHub, then clone YOUR fork and add the upstream remote
-git clone https://github.com/<you>/leoflow.git
+git clone https://github.com/<you>/dexaflow.git
 cd dexaflow
 git remote add upstream https://github.com/dexadata/dexaflow.git
 
@@ -145,6 +160,11 @@ git push -u origin fix/clear-error-message
 ```
 
 - **Branch names:** `feat/…`, `fix/…`, `docs/…`, `test/…`, `refactor/…`, `chore/…`.
+- **Sign-off (DCO):** every commit ends with `Signed-off-by: Your Name
+  <you@example.com>`, the author's name and email, under the
+  [Developer Certificate of Origin](https://developercertificate.org).
+  `git commit -s` adds it, and so does the hook `make setup` installs; the
+  "DCO" check on the pull request names any commit without it.
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) —
   `feat: add XCom schema validation`, `fix: handle pod OOMKilled`, `test: failing
   test for retry backoff`.
@@ -168,15 +188,27 @@ git push -u origin fix/clear-error-message
   [Record a change](/contribute/recipes/record-a-change/#what-happens-to-the-fragment).
 
   A PR with no user-facing change (release prep, chore, dependency bump,
-  docs-only) takes the **`skip-changelog`** label instead. Dependabot PRs are
-  exempt without one.
+  docs-only) carries a `Skip-changelog: <reason>` line in its description, or
+  the **`skip-changelog`** label. Dependabot PRs are exempt without either.
 - **User-facing changes update the docs in the same PR.** A chart value, the
   authoring schema, a CLI command, a server setting, a migration, the OpenAPI
   document, or a changelog fragment of kind Added, Changed, Deprecated or
   Removed needs an edit under `website/content/`. When nothing in the PR is
-  user-discoverable, apply the **`skip-docs`** label and put a
-  `Skip-docs: <reason>` line in the PR description; the label without a
-  reason fails the docs guard, and the release cut reads the reason back.
+  user-discoverable, put a `Skip-docs: <reason>` line in the PR description
+  (the **`skip-docs`** label is optional); the label without a reason fails
+  the docs guard, and the release cut reads the reason back.
+- **Pull requests from forks pass the same guards.** The `Skip-changelog:` and
+  `Skip-docs:` lines replace the labels a fork cannot apply, the milestone
+  guard passes a fork's PR with a notice (a maintainer sets the milestone
+  before merging), and no pull request workflow depends on a repository
+  secret. See "Pull requests from a fork" in
+  [`CONTRIBUTING.md`](https://github.com/dexadata/dexaflow/blob/main/CONTRIBUTING.md).
+- **Public APIs do not break by accident.** The API compatibility check
+  compares `proto/` (`buf breaking`), `docs/api/openapi.yaml` (`oasdiff
+  breaking`) and the exported API of `pkg/client` (`apidiff`) with the base
+  branch. An intended break needs the **`breaking-change`** label, applied by a
+  maintainer, and a changelog fragment of kind `Changed` or `Removed` that names
+  it. Run `scripts/api-compat.sh <checkout-of-main>` to see the verdict locally.
 
 {{% alert title="Security-sensitive areas need extra review" color="danger" %}}
 Changes to `internal/auth/`, `internal/executor/`, `internal/storage/`,
@@ -207,14 +239,39 @@ accepted from first-time contributors** — open a discussion issue first.
 ## 6. The CI gates
 
 Every PR runs, and must pass: the **build + unit/integration tests** with the
-per-package coverage floor, **golangci-lint** (the A+ stack), and the
-**security** suite (govulncheck, gosec, Trivy, CodeQL, gitleaks), and the
-**CHANGELOG guard** (a fragment, a hand-written entry, or the `skip-changelog`
-label), and the **docs guard** (an edit under `website/content/`, or the
-`skip-docs` label with a `Skip-docs: <reason>` line). The same
+per-package coverage floor (the total, each package's coverage and its change
+against the base branch are in the "Test + Coverage" job summary, and main's
+total is the README's coverage badge), **golangci-lint** (the A+ stack),
+**shellcheck**, **hadolint**, the
+**security** suite (govulncheck, gosec, Trivy, CodeQL, gitleaks), the
+**CHANGELOG guard** (a fragment, a hand-written entry, or a `Skip-changelog:`
+line or label), the **docs guard** (an edit under `website/content/`, or a
+`Skip-docs: <reason>` line), and the **API compatibility** check (no breaking
+change to `proto/`, the OpenAPI document or `pkg/client`, or the
+`breaking-change` label and a `Changed`/`Removed` fragment). The same
 `make lint test` you run locally is the fast feedback loop; CI is the source of
 truth. Push fixes until everything is green, then a maintainer reviews — we aim
 for three business days.
+
+### Fuzz targets
+
+The parsers that read untrusted or hand-written input (`dexaflow.yaml`,
+`dag.json` and its schedule, the agent's credential and termination message,
+the API's paging parameters) have native Go fuzz targets, the `FuzzXxx`
+functions in their packages' `*_test.go` files. `make test` replays their seeds
+and every committed failing input under `testdata/fuzz/`, so they guard every
+PR as ordinary tests. The open-ended run is not on PRs: the Fuzz workflow runs
+every target nightly, and you can run them yourself:
+
+```bash
+make fuzz                                # every target, 30s each
+make fuzz FUZZTIME=5m FUZZ=FuzzSchedule  # one target, longer
+```
+
+When a run finds a failing input, fix the code in its own commit and keep the
+input file it wrote under the package's `testdata/fuzz/<Target>/`, so the
+regular test run replays it from then on. A new parser of untrusted input gets
+a fuzz target next to its tests; `scripts/fuzz.sh` finds it by its name.
 
 ---
 
@@ -231,7 +288,7 @@ with live reload:
 
 ```bash
 cd website
-hugo server     # serves at http://localhost:1313/leoflow/ (the subpath matters)
+hugo server     # serves at http://localhost:1313/
 ```
 
 The CLI and Go references are **generated, not written**: `website/scripts/gen-cli.sh`

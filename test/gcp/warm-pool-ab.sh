@@ -162,6 +162,7 @@ drift_verdict() { # <first A p95> <second A p95>
 
 # ---------------------------------------------------------------- self-test
 
+# shellcheck disable=SC2046 # the series are passed one value per argument on purpose
 self_test() {
   local fail=0
   _eq() { [ "$1" = "$2" ] && { echo "  ok   $3"; return 0; }; echo "  FAIL $3: '$1' != '$2'"; fail=1; }
@@ -392,8 +393,8 @@ PY
   # The login identity must be an email, because that is what the server looks
   # up. Cheap to assert, and a cluster to discover: FindUserByLogin passes
   # `username` straight to GetUserByEmail, so "admin" is a 401 and
-  # "admin@leoflow.local" is a token.
-  case "${WP_ADMIN_LOGIN:-admin@leoflow.local}" in
+  # "admin@dexaflow.local" is a token.
+  case "${WP_ADMIN_LOGIN:-admin@dexaflow.local}" in
     *@*) echo "  ok   the admin login is an email, which is what the server matches on" ;;
     *)   echo "  FAIL the admin login is not an email; FindUserByLogin looks up by email and this will 401"; fail=1 ;;
   esac
@@ -512,15 +513,17 @@ run_experiment() {
   wp_build_and_push "$out" || exp_die "the DAG image could not be built or pushed; no arm can run without it"
 
   local api_port="${API_PORT:-18080}" token
+  # shellcheck disable=SC2046 # wp_sets prints one --set pair per word
   stack_up leoflow "$WP_JWT" "$WP_PW" $(wp_sets A)
   stack_api_forward leoflow "$api_port"
   # The login identity is an EMAIL, not a name. FindUserByLogin calls
   # GetUserByEmail with whatever `username` carries
-  # (internal/storage/repository.go), and the bootstrap admin is created as
-  # LEOFLOW_BOOTSTRAP_EMAIL or admin@leoflow.local
-  # (cmd/dexaflow-server/main.go). This passed "admin" and got a 401 that the
-  # first real run spent a cluster to discover.
-  local admin_login="${WP_ADMIN_LOGIN:-admin@leoflow.local}"
+  # (internal/storage/repo_users.go), and the bootstrap admin is created as
+  # LEOFLOW_BOOTSTRAP_EMAIL or admin@dexaflow.local on the fresh stack this
+  # script installs (cmd/dexaflow-server/bootstrap.go; a database from before the
+  # rename keeps admin@leoflow.local, set WP_ADMIN_LOGIN for one). This passed
+  # "admin" and got a 401 that the first real run spent a cluster to discover.
+  local admin_login="${WP_ADMIN_LOGIN:-admin@dexaflow.local}"
   # Stderr is KEPT. It was sent to /dev/null on the one call whose failure is
   # fatal, so the run died saying "could not obtain an API token" and threw away
   # the sentence that said why. A diagnostic discarded on the fatal path is the
@@ -543,6 +546,10 @@ run_experiment() {
   "$WP_CLI" deploy "$out/dag-project" --server "http://127.0.0.1:$api_port" \
     --token "$token" --skip-build --yes --dag-version "$WP_DAG_VERSION" \
     || exp_die "registering the DAG failed; a trigger would 404, which is exactly the shape this runner exists to fix"
+  # New DAGs are paused at creation, and a manual run of a paused DAG waits
+  # until the DAG is unpaused: every arm would measure runs that never start.
+  "$WP_CLI" admin dags unpause gcp_probe --server "http://127.0.0.1:$api_port" --token "$token" >/dev/null \
+    || exp_die "unpausing gcp_probe failed; every trigger would stay queued and no arm would measure a start"
 
   # An exploratory stop, for mapping what is left instead of discovering it one
   # paid cluster at a time.
@@ -622,6 +629,7 @@ wp_sets() { # <arm> -> --set arguments
 wp_run_arm() { # <arm> <index> <out> <api port> <token>
   local arm="$1" idx="$2" out="$3" port="$4" token="$5" i
   exp_log "arm $arm (position $idx in: $RUN_ORDER)"
+  # shellcheck disable=SC2046 # wp_sets prints one --set pair per word
   stack_up leoflow "$WP_JWT" "$WP_PW" $(wp_sets "$arm")
   stack_api_forward leoflow "$port"
   # A warm pool is empty on the first attempt of a dag_version, so the first

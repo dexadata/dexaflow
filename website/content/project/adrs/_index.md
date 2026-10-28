@@ -10,7 +10,9 @@ description: The why behind Leoflow design decisions — one record per decision
 cascade: { type: docs }
 ---
 
-The *why* behind Leoflow's design. ADRs are immutable once accepted.
+The *why* behind Leoflow's design. ADRs are immutable once accepted. To
+record a new decision, start from the [template](#template) at the end of
+this page.
 
 - [ADR 0001: Why Leoflow and Not Apache Airflow's KubernetesExecutor](/project/adrs/0001-why-leoflow/)
 - [ADR 0002: Pod-per-Task Execution Model](/project/adrs/0002-pod-per-task/)
@@ -82,3 +84,70 @@ The *why* behind Leoflow's design. ADRs are immutable once accepted.
 - [ADR 0069: Contributor context is public and tool-agnostic; tool files stay local](/project/adrs/0069-contributor-context/)
 - [ADR 0070: Secrets reach a process by environment reference, never rendered into a command string](/project/adrs/0070-secrets-by-env-reference/)
 - [ADR 0071: Releases stage, verify, then promote; only a promote job moves public pointers](/project/adrs/0071-stage-verify-promote-releases/)
+- [ADR 0072: CodeQL blocks a pull request only for the high or critical alerts it introduces](/project/adrs/0072-codeql-gate-on-introduced-alerts/)
+- [ADR 0073: DAG images are built without a container daemon first; a local daemon is the fallback](/project/adrs/0073-daemonless-image-builds/)
+- [ADR 0074: CI deploys with named, scoped, revocable API tokens and a built-in deployer role](/project/adrs/0074-scoped-api-tokens/)
+- [ADR 0075: The daemonless build of ADR 0073 ships in 0.5.4, and pushed images are read back through the registry](/project/adrs/0075-daemonless-builds-in-0-5-4/)
+- [ADR 0076: deploy reuses the image already in the registry under the content label](/project/adrs/0076-reuse-image-by-content-label/)
+- [ADR 0077: a pushed build splits into a dependency image and a code layer](/project/adrs/0077-dependency-image-and-code-layer/)
+- [ADR 0078: the dependency image is built from wheels without a daemon](/project/adrs/0078-dependency-image-from-wheels/)
+- [ADR 0079: the CLI signs in with single sign-on through the server, which stays the only OIDC client](/project/adrs/0079-cli-sso-through-the-server/)
+- [ADR 0080: registry credentials from the cloud CLI session, after the docker config](/project/adrs/0080-registry-credentials-from-cloud-cli-sessions/)
+- [ADR 0081: the CLI signs in from a machine with no browser through a device sign-in served by Dexaflow](/project/adrs/0081-cli-device-sign-in/)
+- [ADR 0082: a warm pool follows the DAG's current version, started when it becomes current and drained when it stops being current](/project/adrs/0082-warm-pool-follows-the-current-version/)
+- [ADR 0083: the remote builder runs on Cloud Build first, through the gcloud CLI](/project/adrs/0083-remote-builder-on-cloud-build/)
+- [ADR 0084: a template that fails to render fails the task attempt](/project/adrs/0084-template-render-errors-fail-the-task/)
+- [ADR 0085: the control plane reads task ServiceAccounts for the register dry run](/project/adrs/0085-control-plane-reads-task-service-accounts/)
+- [ADR 0086: a clear on the latest version re-binds a finished run with its task set, and leaves an unfinished run on its own version](/project/adrs/0086-clear-rebinds-a-finished-run-with-its-task-set/)
+- [ADR 0087: the local daemon takes the digest from its own push](/project/adrs/0087-local-daemon-digest-from-the-push/)
+- [ADR 0088: build args, build secrets and a private package index](/project/adrs/0088-build-args-secrets-and-package-index/)
+- [ADR 0089: a warm pool is keyed by the DAG's environment, so versions that share a dependency image and runtime settings share workers](/project/adrs/0089-warm-pools-keyed-by-environment/)
+- [ADR 0090: the control plane waits for its schema, and names a database that was emptied, replaced, restored or repointed under it](/project/adrs/0090-database-replaced-under-a-running-release/)
+- [ADR 0091: registry login without docker](/project/adrs/0091-registry-login-without-docker/)
+- [ADR 0092: CI pipelines deploy with their provider's OIDC token, exchanged for a short session](/project/adrs/0092-ci-deploys-with-oidc-tokens/)
+- [ADR 0093: an unavailable Kubernetes API is ridden out for a bounded time, off the dispatch-attempt budget](/project/adrs/0093-unavailable-api-dispatch-window/)
+- [ADR 0094: Lite's auto datastore follows the datastore the install is pinned to](/project/adrs/0094-lite-auto-follows-the-pinned-datastore/)
+- [ADR 0095: a source-mode version runs on warm workers, which receive its dag.py with each assignment](/project/adrs/0095-source-mode-on-warm-workers/)
+- [ADR 0096: every finished task attempt writes a usage event in the same transaction, read through the service API](/project/adrs/0096-task-attempt-usage-events/)
+
+## Template
+
+An ADR records one decision and why it was made; what a large change will
+build goes in a [spec](/project/specs/)
+([ADR 0069](/project/adrs/0069-contributor-context/)).
+
+**File it** as `NNNN-short-title.md` in this directory, with the next free
+number: check open pull requests as well as `main`, because two drafts can
+take the same number. Open it as its own pull request, which also adds it to
+the list above.
+
+**Status** starts as `Proposed` and becomes `Accepted` when the decision is
+taken. From then on the record is not rewritten: a later decision gets a new
+ADR that names the one it replaces in its **Relates** line.
+
+```markdown
+---
+title: "ADR NNNN: <the decision, as a sentence>"
+linkTitle: "NNNN · <short title>"
+weight: NNNN0
+description: "ADR NNNN: <one sentence>"
+---
+
+**Status:** Proposed
+**Date:** YYYY-MM-DD
+**Relates:** ADR <n> (<how it relates>), ...
+
+## Context
+The problem and the forces at play, with evidence: issues, incidents,
+measurements, the code as it is today.
+
+## Decision
+What is decided, stated so a reviewer can check a change against it.
+
+## Alternatives considered
+Each option that was rejected, and why.
+
+## Consequences
+What becomes easier, what becomes harder, and what follows from it
+(specs, migrations, settings, docs).
+```

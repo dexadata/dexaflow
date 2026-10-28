@@ -358,6 +358,10 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       summary: Update DAG (typically pause/unpause)
+      description: >-
+        Sets is_paused. A change is audited as dag.pause or dag.unpause with
+        the acting user; asking for the state the DAG is already in records
+        nothing.
       operationId: updateDag
       tags: [DAGs]
       requestBody:
@@ -410,6 +414,111 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DagVersion" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v2/dags/{dag_id}/versions:
+    parameters:
+      - $ref: "#/components/parameters/DagID"
+    post:
+      summary: Register a compiled DAG version (Dexaflow)
+      description: >-
+        Registers a compiled dag.json as a new version of the DAG and makes it
+        current. Re-registering content that is already registered (same spec
+        hash) is a no-op answered with 200 and created false, and leaves the
+        current version as it is. The same label with other content is
+        refused with 409. Needs write on dags (scope dexaflow:deploy).
+
+        Without is_paused, a DAG the register creates starts paused per its
+        is_paused_upon_creation, else the server's dags_are_paused_at_creation,
+        and an existing DAG keeps its state. With is_paused, the DAG ends the
+        register in that state whether it is created, gets a new version or
+        already had this content; a change to an existing DAG is audited as
+        dag.pause or dag.unpause in the same transaction. Pausing is a
+        run-state write: a scoped token needs dexaflow:run as well as
+        dexaflow:deploy to send is_paused, else the register is refused with
+        403.
+      operationId: registerDagVersion
+      tags: [DAGs]
+      parameters:
+        - name: is_paused
+          in: query
+          required: false
+          description: >-
+            Sets the DAG's is_paused for this register (true or false). Any
+            other value is refused with 400. A scoped token needs the
+            dexaflow:run scope to send it (403 otherwise).
+          schema: { type: boolean }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DagSpec" }
+      responses:
+        "200":
+          description: The content was already registered; nothing changed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VersionRegistration" }
+        "201":
+          description: A new version was registered and made current
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VersionRegistration" }
+        "400":
+          description: The spec is invalid or refused by the operator's policy
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: The caller may not register, or a scoped token sent is_paused without dexaflow:run
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: The version label is registered with other content
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v2/dags/{dag_id}/currentVersion:
+    parameters:
+      - $ref: "#/components/parameters/DagID"
+    put:
+      summary: Make a registered version current (Dexaflow)
+      description: >-
+        Makes a registered version of the DAG the one new runs are created
+        with, by label or by version_number: a rollback, or a roll forward.
+        The DAG's schedule and metadata become that version's, in the same
+        transaction. Runs that already exist keep their version, and
+        is_paused is never changed. The version must pass the checks a
+        register of it would pass today. Naming the current version changes
+        nothing (changed false). Audited as dag.version.set_current. Needs
+        write on dags (scope dexaflow:deploy).
+      operationId: setDagCurrentVersion
+      tags: [DAGs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DagCurrentVersionRequest" }
+      responses:
+        "200":
+          description: The version is current
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DagCurrentVersionChange" }
+        "400":
+          description: The body is invalid, or the version's spec is refused by the current checks
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: The caller may not deploy, or the version exceeds a tenant limit
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /api/v2/dags/{dag_id}/dagRuns:
@@ -937,6 +1046,13 @@ components:
         schema: { type: string, nullable: true }
         port: { type: integer, nullable: true }
         extra: { type: string, nullable: true }
+        extra_unreadable:
+          type: boolean
+          description: >-
+            Present and true in a listing when the extra is encrypted with a
+            secret key the server does not have (for example after a key
+            rotation that dropped the old key). The extra is then masked.
+            Reading the connection alone answers 500 with a message naming it.
 
     ConnectionBody:
       type: object
@@ -985,6 +1101,13 @@ components:
         description: { type: string, nullable: true }
         is_encrypted: { type: boolean }
         team_name: { type: string, nullable: true }
+        value_unreadable:
+          type: boolean
+          description: >-
+            Present and true in a listing when the value is encrypted with a
+            secret key the server does not have (for example after a key
+            rotation that dropped the old key). The value is then masked.
+            Reading the variable alone answers 500 with a message naming it.
 
     VariableBody:
       type: object
@@ -1054,6 +1177,61 @@ components:
         bundle_version: { type: string, nullable: true }
         bundle_url: { type: string, nullable: true }
         created_at: { type: string, format: date-time }
+        image:
+          type: string
+          description: Dexaflow. The image the version runs, pinned by digest when the deploy resolved one.
+        spec_hash:
+          type: string
+          description: Dexaflow. The canonical hash of the version's dag.json.
+        is_current:
+          type: boolean
+          description: Dexaflow. Whether new runs are created with this version.
+        created_by:
+          type: string
+          nullable: true
+          description: Dexaflow. Id of the user who registered the version (not an email, since every reader of the DAG sees it); null when none was recorded.
+
+    DagCurrentVersionRequest:
+      type: object
+      description: Exactly one of version and version_number.
+      properties:
+        version: { type: string, minLength: 1, maxLength: 255, description: The version label (bundle_version). }
+        version_number: { type: integer, minimum: 1 }
+
+    DagCurrentVersionChange:
+      type: object
+      required: [dag_id, changed, from, to]
+      properties:
+        dag_id: { type: string }
+        changed: { type: boolean, description: False when the version was already current. }
+        from:
+          description: The version that was current before; null when none was.
+          type: object
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/DagVersion" }]
+        to: { $ref: "#/components/schemas/DagVersion" }
+
+    DagSpec:
+      type: object
+      description: A compiled dag.json, as described by docs/api/dag-schema.json.
+      additionalProperties: true
+      required: [schema_version, dag_id, dag_version, image, tasks]
+      properties:
+        schema_version: { type: string }
+        dag_id: { type: string }
+        dag_version: { type: string }
+        image: { type: string }
+        tasks: { type: array, items: { type: object, additionalProperties: true } }
+
+    VersionRegistration:
+      type: object
+      properties:
+        dag_id: { type: string }
+        version: { type: string }
+        spec_hash: { type: string }
+        created: { type: boolean, description: False when the content was already registered. }
+        dag_created: { type: boolean, description: True when this register created the DAG (its first version); false for a new version of an existing DAG. }
+        is_paused: { type: boolean, description: The DAG's is_paused after the register. }
 
     DagVersionCollection:
       type: object

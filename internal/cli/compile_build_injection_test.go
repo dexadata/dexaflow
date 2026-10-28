@@ -21,6 +21,7 @@ import (
 // for `system_packages`, so restricting it to one field was a wrong fix the
 // suite accepted.
 func TestNewlineInADockerfileValueIsRefused(t *testing.T) {
+	t.Parallel()
 	const inject = "\nRUN echo surprise"
 	cases := []struct {
 		name      string
@@ -80,6 +81,7 @@ func TestNewlineInADockerfileValueIsRefused(t *testing.T) {
 // A carriage return is the same defect: Docker's parser ends a line on it too,
 // and a CRLF file edited on Windows is the likeliest way it arrives.
 func TestCarriageReturnInADockerfileValueIsRefused(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
 	cfg.BaseImage = "python:3.11-slim\rRUN echo surprise"
@@ -93,6 +95,7 @@ func TestCarriageReturnInADockerfileValueIsRefused(t *testing.T) {
 // two-word path becomes a different copy than the author wrote. Quoting it is
 // the fix, and the JSON form is the only quoting COPY understands.
 func TestWhitespaceInACopyOperandIsQuoted(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
 	df, err := generatedDockerfile(cfg, "my dag.py")
@@ -116,6 +119,7 @@ func TestWhitespaceInACopyOperandIsQuoted(t *testing.T) {
 // eight e2e scripts grep for `COPY dag.py`, so switching the form wholesale
 // would be churn with a real chance of breaking them.
 func TestOrdinaryCopyLinesKeepTheShellForm(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
 	df, err := generatedDockerfile(cfg, "dag.py")
@@ -133,6 +137,7 @@ func TestOrdinaryCopyLinesKeepTheShellForm(t *testing.T) {
 // check ever ran. The FROM path had no line-break coverage at all, and the
 // carriage return had none anywhere. Whitespace-free payloads fix that.
 func TestFromRefusesALineBreakIndependentlyOfWhitespace(t *testing.T) {
+	t.Parallel()
 	for _, bad := range []string{
 		"alpine\nVOLUME/x", // newline, no space anywhere
 		"alpine\rVOLUME/x", // carriage return
@@ -154,6 +159,7 @@ func TestFromRefusesALineBreakIndependentlyOfWhitespace(t *testing.T) {
 // /home/leoflow/a<VT>b.py` is read as three sources and the destination "b",
 // which hands an attacker an arbitrary destination inside the image.
 func TestCopyRefusesTheOtherWordSeparators(t *testing.T) {
+	t.Parallel()
 	for _, bad := range []string{"a\vb.py", "a\fb.py"} {
 		cfg := &domain.LeoflowConfig{DagID: "d"}
 		cfg.ApplyDefaults()
@@ -174,6 +180,7 @@ func TestCopyRefusesTheOtherWordSeparators(t *testing.T) {
 // moved `"` and `\` to a form that does not help and left `'` and `$` to
 // silently copy a different path.
 func TestCopyRefusesWhatTheOperandLexerRewrites(t *testing.T) {
+	t.Parallel()
 	for _, bad := range []string{`d'a't.py`, `an\alytics.py`, `a"b.py`, `$HOME.py`} {
 		cfg := &domain.LeoflowConfig{DagID: "d"}
 		cfg.ApplyDefaults()
@@ -192,6 +199,7 @@ func TestCopyRefusesWhatTheOperandLexerRewrites(t *testing.T) {
 // the operand and leaves Docker complaining that COPY needs two arguments.
 // Naming the entry is the whole point of validating it here.
 func TestCopyRefusesAFlagLookalikePath(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
 	cfg.IncludePaths = []string{".", "--from=alpine"}
@@ -208,6 +216,7 @@ func TestCopyRefusesAFlagLookalikePath(t *testing.T) {
 // adds, and nothing covered it: deleting the check entirely left the suite
 // green, because every other test's payload also carried a newline.
 func TestFromRefusesWhitespaceEvenWithoutALineBreak(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
 	cfg.BaseImage = "alpine AS builder"
@@ -221,6 +230,7 @@ func TestFromRefusesWhitespaceEvenWithoutALineBreak(t *testing.T) {
 // must keep working: refusing it, or quoting it, would break a legitimate
 // include_paths entry.
 func TestGlobCharacterClassIsNotDisturbed(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
 	cfg.IncludePaths = []string{".", "data/[0-9]*.csv"}
@@ -241,6 +251,7 @@ func TestGlobCharacterClassIsNotDisturbed(t *testing.T) {
 // warnDroppedNegations does not see it because it only checks the entry's
 // prefix.
 func TestNewlineInAnExcludePathIsRefused(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
 	cfg.ExcludePaths = []string{"foo\n!secrets.env"}
@@ -270,6 +281,7 @@ func TestNewlineInAnExcludePathIsRefused(t *testing.T) {
 // injection but also no named refusal: the author got a Docker "not found"
 // instead of being told what was wrong with their yaml.
 func TestALeadingNewlineIsRefusedRatherThanTrimmed(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
 	cfg.IncludePaths = []string{".", "\nhelpers"}
@@ -286,6 +298,7 @@ func TestALeadingNewlineIsRefusedRatherThanTrimmed(t *testing.T) {
 // form to Docker's parser, so it has to be quoted. Nothing covered the leading
 // case: dropping `[` from the trigger set left the suite green.
 func TestALeadingBracketPathIsQuoted(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
 	df, err := generatedDockerfile(cfg, "[archive].py")
@@ -307,6 +320,7 @@ func TestALeadingBracketPathIsQuoted(t *testing.T) {
 // there either. And `COPY .` is what then bakes the resurrected file into the
 // image.
 func TestNewlineInADbtProjectCannotReachTheDockerignore(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
 	cfg.DbtGroups = map[string]*domain.DbtConfig{
@@ -331,6 +345,7 @@ func TestNewlineInADbtProjectCannotReachTheDockerignore(t *testing.T) {
 // all, so the COPY guards never run, but the .dockerignore is still generated
 // from the same config.
 func TestTheDockerignoreIsGuardedEvenWithAProjectDockerfile(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
 	cfg.Dbt = &domain.DbtConfig{Project: "p\n!secrets.env\nq"}
@@ -350,6 +365,7 @@ func TestTheDockerignoreIsGuardedEvenWithAProjectDockerfile(t *testing.T) {
 // The trigger set said a tab needs the JSON form and the emitter then produced
 // a JSON form that does not parse.
 func TestATabbedPathSurvivesAsValidJSON(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
 	df, err := generatedDockerfile(cfg, "a\tb.py")
@@ -378,6 +394,7 @@ func TestATabbedPathSurvivesAsValidJSON(t *testing.T) {
 // unterminated heredoc swallows every generated line after it, including the
 // non-root USER drop, and then fails the parse.
 func TestAHeredocLookalikePathIsRefused(t *testing.T) {
+	t.Parallel()
 	for _, bad := range []string{"<<EOF", "1<<EOF"} {
 		cfg := &domain.LeoflowConfig{DagID: "d"}
 		cfg.ApplyDefaults()
@@ -394,6 +411,7 @@ func TestAHeredocLookalikePathIsRefused(t *testing.T) {
 // is a named refusal either, and `COPY . /home/leoflow/.` quietly copies the
 // whole context instead.
 func TestTheGuardRunsBeforeTheTransformThatHidesIt(t *testing.T) {
+	t.Parallel()
 	t.Run("dag_source", func(t *testing.T) {
 		cfg := &domain.LeoflowConfig{DagID: "d"}
 		cfg.ApplyDefaults()
@@ -417,6 +435,7 @@ func TestTheGuardRunsBeforeTheTransformThatHidesIt(t *testing.T) {
 // depth was not. The dev generator has the same assertion, and the two must not
 // drift.
 func TestADotGroupDoesNotLetASiblingSkipValidation(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
 	cfg.DbtGroups = map[string]*domain.DbtConfig{
@@ -436,6 +455,7 @@ func TestADotGroupDoesNotLetASiblingSkipValidation(t *testing.T) {
 // injection, since Clean can only remove the newline, but a garbage value
 // silently accepted where its sibling is named.
 func TestADbtGroupProjectIsGuardedBeforeCleanToo(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
 	cfg.DbtGroups = map[string]*domain.DbtConfig{"b": {Project: "evil\nstuff/.."}}
@@ -451,6 +471,7 @@ func TestADbtGroupProjectIsGuardedBeforeCleanToo(t *testing.T) {
 // And the same value must not reach the .dockerignore, where dbtBuildArtifacts
 // composes it into "<dir>/logs".
 func TestACleanCollapsingGroupPathIsRefusedByTheDockerignoreToo(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
 	cfg.DbtGroups = map[string]*domain.DbtConfig{"b": {Project: "evil\nstuff/.."}}
@@ -471,6 +492,7 @@ func TestACleanCollapsingGroupPathIsRefusedByTheDockerignoreToo(t *testing.T) {
 // `exclude_paths "p\n!secrets.env\nq/logs"`: a field they never set, and a value
 // with a /logs suffix that appears nowhere in their yaml.
 func TestADbtProjectErrorNamesTheDbtFieldNotExcludePaths(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
 	cfg.Dbt = &domain.DbtConfig{Project: "p\n!secrets.env\nq"}
@@ -492,6 +514,7 @@ func TestADbtProjectErrorNamesTheDbtFieldNotExcludePaths(t *testing.T) {
 // their file would be silently mis-copied, when in fact the build fails on an
 // unterminated heredoc.
 func TestTheHeredocRefusalExplainsAHeredoc(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
 	cfg.IncludePaths = []string{".", "<<EOF"}
@@ -511,6 +534,7 @@ func TestTheHeredocRefusalExplainsAHeredoc(t *testing.T) {
 // so a caller that reaches generatedDockerfile without Validate still cannot
 // render a FROM that pulls a different image than the one named.
 func TestFromRefusesWhatTheOperandLexerRewrites(t *testing.T) {
+	t.Parallel()
 	for _, bad := range []string{"alpine:3$X", "alpine:3'.20'", `alpine:3\.20`, `alpine"`} {
 		if _, err := fromOperand("base_image", bad); err == nil {
 			t.Errorf("fromOperand accepted %q, which the FROM lexer rewrites", bad)

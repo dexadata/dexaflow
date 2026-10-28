@@ -84,13 +84,13 @@ planned follow-up; for now, `redis` + Extra is the supported path.
 [README](https://github.com/dexadata/dexaflow/tree/main/examples/redis_load/README.md)
 walks through Connection setup and verification with `redis-cli HGETALL`.
 
-## Lite vs Pro caveats
+## Lite vs Cluster caveats
 
 - **Lite (subprocess)** runs the task on the host. Point the Connection at
   any reachable Redis (a local docker run, a remote instance).
 - **Lite (k3d)** runs the task in a pod. Use `host.k3d.internal` to reach
   a host-network Redis, or deploy Redis inside the cluster.
-- **Pro (Kubernetes)** typical pattern is the redis-operator or a managed
+- **Cluster (Kubernetes)** typical pattern is the redis-operator or a managed
   service (ElastiCache, Memorystore). For at-rest persistence, make sure
   Redis is configured with AOF or RDB; the Dexaflow Connection itself is
   metadata only.

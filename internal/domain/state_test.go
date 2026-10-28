@@ -14,6 +14,9 @@ func TestTaskStateIsTerminal(t *testing.T) {
 		TaskStateFailed:          true,
 		TaskStateSkipped:         true,
 		TaskStateUpstreamFailed:  true,
+		// A task the run's version no longer declares (ADR 0086), finished
+		// as in Airflow.
+		TaskStateRemoved: true,
 	}
 	for state, want := range terminal {
 		if got := state.IsTerminal(); got != want {
@@ -32,6 +35,19 @@ func TestDagRunStateIsTerminal(t *testing.T) {
 	for state, want := range terminal {
 		if got := state.IsTerminal(); got != want {
 			t.Errorf("%s.IsTerminal() = %v, want %v", state, got, want)
+		}
+	}
+}
+
+func TestDagRunStateValid(t *testing.T) {
+	for _, s := range []DagRunState{DagRunStateQueued, DagRunStateRunning, DagRunStateSuccess, DagRunStateFailed} {
+		if !s.Valid() {
+			t.Errorf("%s.Valid() = false, want true", s)
+		}
+	}
+	for _, s := range []DagRunState{"", "bogus", "Success", "scheduled"} {
+		if s.Valid() {
+			t.Errorf("%q.Valid() = true, want false", s)
 		}
 	}
 }

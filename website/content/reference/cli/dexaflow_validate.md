@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_validate/
 title: "dexaflow validate"
 linkTitle: "validate"
-weight: 53
+weight: 72
 ---
 
 Validate dexaflow.yaml and the DAG source against the schema.
@@ -41,6 +41,7 @@ dexaflow validate [path] [flags]
       --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
+      --target name         name of the control plane to use (default: DEXAFLOW_TARGET, then the target selected for the workspace; see dexaflow target list)
 ```
 
 ### SEE ALSO

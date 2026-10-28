@@ -36,6 +36,7 @@ jobs:
       contents: read
       packages: write   # Push the chart to GHCR (OCI).
       id-token: write   # Cosign keyless signing via Sigstore OIDC.
+      attestations: write   # Store the chart build provenance attestation.
     steps:
       - name: Refuse anything but a release tag
         if: github.ref_type != 'tag'
@@ -44,6 +45,8 @@ jobs:
           exit 1
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
@@ -124,10 +127,12 @@ jobs:
       # `helm push` authenticates via the docker credential store that the GHCR
       # login above populated. It prints `Digest: sha256:...` on push; capture it
       # so cosign can sign each chart by digest (immutable), the same shape the
-      # migrate/runtime image jobs sign in release.yaml.
+      # migrate/runtime image jobs sign in release.yaml. Each digest is also
+      # written to charts.sha256 (checksums format) for the provenance step.
       - name: helm push (OCI) and sign
         run: |
           set -euo pipefail
+          : > charts.sha256
           for name in dexaflow leoflow; do
             chart="${name}-${{ steps.ver.outputs.version }}.tgz"
             helm push "${chart}" "oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts" 2>&1 | tee push.log
@@ -137,8 +142,16 @@ jobs:
               exit 1
             fi
             echo "Pushed oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${name} @ ${digest}"
+            printf '%s  %s\n' "${digest#sha256:}" "${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${name}" >> charts.sha256
             # Keyless cosign sign by digest (ADR 0014/0028). `--yes` skips the
             # OIDC prompt; CI answers the Sigstore challenge with the GH OIDC token.
             cosign sign --yes \
               "${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${name}@${digest}"
           done
+
+      # SLSA build provenance for both charts, by the digest just pushed, as
+      # the `promote` job in release.yaml makes it (#1562).
+      - name: Provenance for the charts
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: charts.sha256

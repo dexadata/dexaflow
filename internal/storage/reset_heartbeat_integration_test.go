@@ -184,7 +184,7 @@ func TestResetRailsClearLastHeartbeat(t *testing.T) {
 		}},
 		{"buffered dispatch requeue", func(t *testing.T, f *staleHeartbeatFixture) {
 			f.setState(t, "queued")
-			if ok, err := f.sched.RequeueDispatch(f.ctx, f.runUUID, "t", true, time.Now()); err != nil || !ok {
+			if ok, err := f.sched.RequeueDispatch(f.ctx, f.runUUID, "t", true, false, time.Now()); err != nil || !ok {
 				t.Fatalf("RequeueDispatch ok=%v err=%v", ok, err)
 			}
 		}},

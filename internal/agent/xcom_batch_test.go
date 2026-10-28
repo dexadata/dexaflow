@@ -106,7 +106,7 @@ func TestBuildEnvFetchesDeferredValuesOneByOne(t *testing.T) {
 func TestBuildEnvBatchErrorKeepsPerValueErrors(t *testing.T) {
 	f := batchClient()
 	f.fetchXComErr = status.Error(codes.Unavailable, "control plane gone")
-	_, err := (&Runner{Client: f}).buildEnv(context.Background(), batchSpec())
+	_, err := withFakeClock(&Runner{Client: f}).buildEnv(context.Background(), batchSpec())
 	if err == nil || !strings.Contains(err.Error(), "control plane gone") {
 		t.Errorf("buildEnv error = %v, want the FetchXCom error", err)
 	}

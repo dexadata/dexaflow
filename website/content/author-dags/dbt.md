@@ -125,7 +125,7 @@ So `fused` trades **per-model isolation and grid granularity** for **far fewer
 pod startups**, while keeping in-pod parallelism. Rule of thumb:
 
 - **Lite (dev loop):** `node` — cheap local subprocess, per-model visibility.
-- **Pro (production):** `level`/`folder` — fewer pods at scale; `node` when you
+- **Cluster (production):** `level`/`folder`: fewer pods at scale; `node` when you
   want strict per-model isolation and can afford the pods.
 
 > The fused trade-off is the same one Cosmos faces; the difference is Dexaflow
@@ -153,7 +153,7 @@ ideal way to develop and test transformations before wiring a real warehouse. Ad
 `connection:` (below) or a project `profiles.yml` at any time and that wins instead — the
 default only kicks in when there's nothing configured.
 
-### Managed connection (recommended for Pro)
+### Managed connection (recommended for Cluster)
 
 {{% alert title="Top-level `connections:` and `variables:` reach dbt tasks too" color="info" %}}
 `dbt.connection` is the one the runtime turns into `profiles.yml`. Anything else
@@ -265,16 +265,19 @@ project on every invocation, so a compilation error in *any* model would, in
 naive setups, break *every* task. Dexaflow stops that at the **build parse-gate**:
 
 `dexaflow compile` runs `dbt parse` on your machine — **both editions**, before it
-writes anything. A broken project never produces a `dag.json` and, on Pro, never
+writes anything. A broken project never produces a `dag.json` and, on Cluster, never
 produces an image: nothing deploys. So a syntax error fails **loudly and early**,
 never at 5am.
 
 ### The baked manifest
 
-Dexaflow compiles from `dbt parse`'s `target/manifest.json`. **`dexaflow compile`
-runs `dbt parse` on your machine** — both editions, not inside the image build —
-and the resulting manifest is copied into the DAG image alongside the project.
-Pin a pre-built one with `dbt.manifest` to skip the parse (see
+Dexaflow compiles from the `manifest.json` that `dbt parse` writes.
+**`dexaflow compile` runs `dbt parse` on your machine**, in both editions and not
+inside the image build. It points `DBT_TARGET_PATH` and `DBT_LOG_PATH` at a
+scratch directory that is removed after the manifest is read, so the compile
+writes no `target/` or `logs/` into your project
+([#1060](https://github.com/dexadata/dexaflow/issues/1060)); the DAG it renders
+from that manifest is what ships. Pin a pre-built one with `dbt.manifest` to skip the parse (see
 [No local dbt](#no-local-dbt)).
 
 **Which `dbt` runs the parse is not the same in both editions**, and the

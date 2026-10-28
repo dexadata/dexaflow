@@ -2,15 +2,20 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // deployServer fakes the control plane for a deploy and records what it was
@@ -25,6 +30,81 @@ type deployServer struct {
 	reads       int
 	registers   int
 	triggers    int
+	// What the summary reads back, and what the deploy asked for.
+	paused       bool
+	schedule     string // timetable_summary; "" answers the server's no-schedule text
+	catchup      bool
+	startDate    string // start_date; "" answers null
+	dagCreated   bool   // dag_created of the register answer
+	ignorePaused bool   // an older server: no is_paused query, no is_paused in the answer
+	failTrigger  bool   // answer the trigger with 500
+	patches      []string
+	// regQueries is the is_paused part of each register's query, regBuilds
+	// its build_* parameters (#1702).
+	regQueries []string
+	regBuilds  []url.Values
+	// The register dry run (#1705): probes counts the empty-body probes of
+	// the preflight, dryRuns the dry runs of a compiled spec. noDryRun is a
+	// server that predates the dry run route and answers it 404;
+	// probeStatus and dryRunStatus, when set, refuse the probe or the dry
+	// run with that status and refusal; dryRunWarnings are the warnings of
+	// an accepted dry run. registeredImage, when set, is the image the
+	// label is registered with: a dry run of another image is a 409, of
+	// that one an unchanged register. dryRunImages records the image of
+	// each dry run.
+	probes         int
+	dryRuns        int
+	noDryRun       bool
+	probeStatus    int
+	viaIssuer      bool // the probe's refusal says deploys go through the trusted issuer (#1773)
+	dryRunStatus   int
+	refusal        string
+	dryRunWarnings []string
+	// registerWarnings are the warnings of the register's answer (#1703).
+	registerWarnings []string
+	dryRunQueries    []string
+	registeredImage  string
+	dryRunImages     []string
+	// policy, when set, is the operator's execution allowlist a dry run
+	// checks the spec against, refusing with its own message as the
+	// register does.
+	policy *domain.ExecutionPolicy
+	// taskPods, when set, is the task_pods object of an accepted dry run
+	// (#1889); unset, the answer has none, as an older server's.
+	taskPods string
+}
+
+// detailsJSON is the details answer: the current label and the fields the
+// deploy summary reads.
+func (s *deployServer) detailsJSON(current string) string {
+	summary := `"Never, external triggers only"`
+	if s.schedule != "" {
+		summary = `"` + s.schedule + `"`
+	}
+	start := "null"
+	if s.startDate != "" {
+		start = `"` + s.startDate + `"`
+	}
+	return fmt.Sprintf(`{"dag_id":"etl","bundle_version":%s,"is_paused":%v,"timetable_summary":%s,"catchup":%v,"start_date":%s}`,
+		current, s.paused, summary, s.catchup, start)
+}
+
+// applyPausedQuery sets paused from a register's is_paused query, as the
+// server does.
+func (s *deployServer) applyPausedQuery(r *http.Request) {
+	paused, build := url.Values{}, url.Values{}
+	for k, v := range r.URL.Query() {
+		if k == "is_paused" {
+			paused[k] = v
+		} else if strings.HasPrefix(k, "build_") {
+			build[k] = v
+		}
+	}
+	s.regQueries = append(s.regQueries, paused.Encode())
+	s.regBuilds = append(s.regBuilds, build)
+	if v := r.URL.Query().Get("is_paused"); v != "" && !s.ignorePaused {
+		s.paused = v == "true"
+	}
 }
 
 func (s *deployServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -32,41 +112,133 @@ func (s *deployServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	switch {
 	case r.Method == http.MethodGet && (strings.HasSuffix(r.URL.Path, "/details") || strings.HasSuffix(r.URL.Path, "/dagVersions")):
-		s.reads++
-		if s.failFirst > 0 {
-			s.failFirst--
+		s.serveRead(w, r)
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/versions"):
+		s.serveRegister(w, r)
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/versions/dry_run") && !s.noDryRun:
+		body, _ := io.ReadAll(r.Body)
+		s.serveDryRun(w, r, body)
+	case r.Method == http.MethodPatch && r.URL.Path == "/api/v2/dags/etl":
+		b, _ := io.ReadAll(r.Body)
+		s.patches = append(s.patches, string(b))
+		s.paused = strings.Contains(string(b), "true")
+		_, _ = fmt.Fprintf(w, `{"dag_id":"etl","is_paused":%v}`, s.paused)
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/dagRuns"):
+		s.triggers++
+		if s.failTrigger {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		if s.status != 0 {
-			w.WriteHeader(s.status)
-			return
-		}
-		if strings.HasSuffix(r.URL.Path, "/details") && s.nullCurrent {
-			_, _ = io.WriteString(w, `{"dag_id":"etl","bundle_version":null}`)
-			return
-		}
-		if strings.HasSuffix(r.URL.Path, "/details") {
-			_, _ = io.WriteString(w, `{"dag_id":"etl","bundle_version":"`+s.current+`"}`)
-			return
-		}
-		parts := make([]string, 0, len(s.registered))
-		for _, l := range s.registered {
-			parts = append(parts, `{"bundle_version":"`+l+`"}`)
-		}
-		_, _ = io.WriteString(w, `{"dag_versions":[`+strings.Join(parts, ",")+`]}`)
-	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/versions"):
-		s.registers++
-		w.WriteHeader(http.StatusCreated)
-	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/dagRuns"):
-		s.triggers++
 		w.WriteHeader(http.StatusOK)
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
 }
 
+// serveRead answers the details and dagVersions reads.
+func (s *deployServer) serveRead(w http.ResponseWriter, r *http.Request) {
+	s.reads++
+	if s.failFirst > 0 {
+		s.failFirst--
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if s.status != 0 {
+		w.WriteHeader(s.status)
+		return
+	}
+	if strings.HasSuffix(r.URL.Path, "/details") {
+		current := `"` + s.current + `"`
+		if s.nullCurrent {
+			current = "null"
+		}
+		_, _ = io.WriteString(w, s.detailsJSON(current))
+		return
+	}
+	parts := make([]string, 0, len(s.registered))
+	for _, l := range s.registered {
+		parts = append(parts, `{"bundle_version":"`+l+`"}`)
+	}
+	_, _ = io.WriteString(w, `{"dag_versions":[`+strings.Join(parts, ",")+`]}`)
+}
+
+// serveRegister answers a register with 201 and the fields the deploy reads,
+// and a dry run as the server does.
+func (s *deployServer) serveRegister(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	if strings.TrimSpace(string(body)) == "{}" {
+		// The dag_id of the path does not match the empty spec's.
+		http.Error(w, `{"detail":"dag_id in path does not match spec"}`, http.StatusBadRequest)
+		return
+	}
+	s.registers++
+	s.applyPausedQuery(r)
+	w.WriteHeader(http.StatusCreated)
+	if s.ignorePaused {
+		_, _ = io.WriteString(w, `{"dag_id":"etl","version":"v","spec_hash":"abc123","created":true}`)
+		return
+	}
+	warnings, _ := json.Marshal(append([]string{}, s.registerWarnings...))
+	_, _ = fmt.Fprintf(w, `{"dag_id":"etl","version":"v","spec_hash":"abc123","created":true,"dag_created":%v,"is_paused":%v,"warnings":%s}`,
+		s.dagCreated, s.paused, warnings)
+}
+
+// serveDryRun answers a register dry run: the probe of the preflight, or a
+// dry run of a compiled spec.
+func (s *deployServer) serveDryRun(w http.ResponseWriter, r *http.Request, body []byte) {
+	w.Header().Set("Dexaflow-Dry-Run", "true")
+	refuse := func(status int) {
+		w.WriteHeader(status)
+		detail, _ := json.Marshal(s.refusal)
+		_, _ = fmt.Fprintf(w, `{"title":"invalid dag spec","detail":%s}`, detail)
+	}
+	if strings.TrimSpace(string(body)) == "{}" {
+		s.probes++
+		if s.probeStatus != 0 {
+			w.Header().Del("Dexaflow-Dry-Run")
+			if s.viaIssuer {
+				w.Header().Set("Dexaflow-Deploy-Via", "trusted-issuer")
+			}
+			refuse(s.probeStatus)
+			return
+		}
+		http.Error(w, `{"detail":"dag_id in path does not match spec"}`, http.StatusBadRequest)
+		return
+	}
+	s.dryRuns++
+	s.dryRunQueries = append(s.dryRunQueries, r.URL.RawQuery)
+	var spec domain.DAGSpec
+	_ = json.Unmarshal(body, &spec)
+	s.dryRunImages = append(s.dryRunImages, spec.Image)
+	if s.dryRunStatus != 0 {
+		refuse(s.dryRunStatus)
+		return
+	}
+	if err := s.policy.CheckSpec(&spec); err != nil {
+		s.refusal = err.Error()
+		refuse(http.StatusBadRequest)
+		return
+	}
+	created := true
+	if s.registeredImage != "" {
+		if spec.Image != s.registeredImage {
+			s.refusal = "version already registered with other content"
+			refuse(http.StatusConflict)
+			return
+		}
+		created = false
+	}
+	warnings, _ := json.Marshal(append([]string{}, s.dryRunWarnings...))
+	pods := ""
+	if s.taskPods != "" {
+		pods = `,"task_pods":` + s.taskPods
+	}
+	_, _ = fmt.Fprintf(w, `{"dag_id":"etl","version":"v","spec_hash":"abc","created":%v,"dag_created":%v,"is_paused":true,"dry_run":true,"warnings":%s%s}`,
+		created, s.dagCreated && created, warnings, pods)
+}
+
 func TestCheckDeployed(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		fake     *deployServer
@@ -121,10 +293,17 @@ func TestCheckDeployed(t *testing.T) {
 
 func deployFixture(t *testing.T) (dir, builder, log string) {
 	t.Helper()
+	// A local registry with no image, so no test reaches a real registry.
+	return deployFixtureAt(t, missingRegistry(t)+"/team")
+}
+
+// deployFixtureAt is deployFixture whose registry is registryURL.
+func deployFixtureAt(t *testing.T, registryURL string) (dir, builder, log string) {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("shell stubs are POSIX-only")
 	}
-	dir = versionProject(t, "registry:\n  url: reg.io/team\n  image_name: etl\n")
+	dir = versionProject(t, "registry:\n  url: "+registryURL+"\n  image_name: etl\n")
 	bin := t.TempDir()
 	log = filepath.Join(bin, "builder.log")
 	t.Setenv("LEOFLOW_PARSER_CMD", recordingParser(t, filepath.Join(bin, "parser.log")))
@@ -177,7 +356,11 @@ func TestDeployRefusesAnOlderContentLabel(t *testing.T) {
 	if err == nil {
 		t.Fatal("deploying content of an older version must fail")
 	}
-	for _, want := range []string{label, "not the current version (LB)", "#1702", "--dag-version"} {
+	dagID := strings.Fields(strings.SplitN(err.Error(), " content matches", 2)[0])[0]
+	if strings.Contains(err.Error(), "not supported") {
+		t.Errorf("error %q still says rollback is not supported", err)
+	}
+	for _, want := range []string{label, "not the current version (LB)", "dexaflow rollback " + dagID + " --to " + label, "--dag-version"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not say %q", err, want)
 		}
@@ -253,6 +436,7 @@ func TestDeployTakesADockerfileOutsideTheProject(t *testing.T) {
 }
 
 func TestRegisterDeployedDAGWarnsWhenNothingNewWasRegistered(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"dag_id":"etl","version":"v1","created":false}`)
 	}))
@@ -262,7 +446,7 @@ func TestRegisterDeployedDAGWarnsWhenNothingNewWasRegistered(t *testing.T) {
 		t.Fatal(err)
 	}
 	var sb strings.Builder
-	if _, err := registerDeployedDAG(context.Background(), &sb, srv.URL, "tok", out, "r@sha256:x", "v1", labelDefault); err != nil {
+	if _, err := registerDeployedDAG(context.Background(), &sb, registerRequest{serverURL: srv.URL, token: "tok", output: out, digestRef: "r@sha256:x", version: "v1", origin: labelDefault}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(sb.String(), "already registered as version v1") || !strings.Contains(sb.String(), "may not be the current version") || strings.Contains(sb.String(), "Deployed") {

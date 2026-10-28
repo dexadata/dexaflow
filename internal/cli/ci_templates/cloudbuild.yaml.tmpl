@@ -1,0 +1,81 @@
+# Deploys the DAGs of this workspace to Dexaflow on Cloud Build.
+# Written by `dexaflow ci init cloudbuild` for dexaflow [[.CLIVersion]]; the
+# deploy itself is in [[.ScriptPath]].
+#
+# Set up once:
+[[- if .OIDC]]
+#   - nothing for the control plane: the step signs in with an identity token
+#     of the build's service account, for the audience [[.OIDC.Audience]], which
+#     the control plane trusts through its CI OIDC issuer [[.OIDC.Name]]
+#     (auth.ci_oidc). Without that issuer, store a deploy token, created with
+#     `dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d`,
+#     in Secret Manager and write this file again with --auth token;
+[[- else]]
+#   - a Secret Manager secret dexaflow-deploy-token holding a deploy token,
+#     created with `dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d`,
+#     readable by the build's service account;
+[[- end]]
+[[- if .Target]]
+#   - the control plane is target [[.Target]] of dexaflow.workspace.yaml;
+[[- else]]
+#   - the substitution _DEXAFLOW_SERVER_URL: the control plane URL;
+[[- end]]
+#   - a trigger on pushes to [[.Branch]], for example
+#     gcloud builds triggers create github --repo-owner=<owner> --repo-name=<repo> --branch-pattern='^[[.Branch]]$' --build-config=cloudbuild.yaml \
+#       --service-account=projects/<project>/serviceAccounts/<builder>@<project>.iam.gserviceaccount.com
+# The step signs in to Artifact Registry with the build's service account
+# (the gcloud session the CLI reads), which needs roles/artifactregistry.writer.
+[[- if .NonGoogle]]
+# The build's service account cannot push to [[range $i, $r := .NonGoogle]][[if $i]], [[end]][[$r.Host]][[end]]:
+# write a docker login for it into $HOME/.docker/config.json before the deploy.
+[[- end]]
+# A source uploaded by `gcloud builds submit` has no .git, so every DAG is
+# deployed; DAGs whose content is already the current version register
+# nothing. When the source is a git clone, the step fetches its full history
+# and tags, and _DEXAFLOW_BASE_REF deploys only what changed since a commit.
+[[- if .Daemon]]
+#
+# Docker builds the images of these projects, since no remote builder is
+# configured (build.remote_builder):
+[[- range .Daemon]]
+#   - [[.]]
+[[- end]]
+[[- end]]
+steps:
+  - id: deploy
+    name: [[.CloudSDKImage]]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends python3 python3-pip git curl ca-certificates[[if .Daemon]] docker.io[[end]] >/dev/null
+        if [ -d .git ]; then git fetch --unshallow --tags || true; fi
+[[- if .OIDC]]
+        DEXAFLOW_OIDC_TOKEN="$(gcloud auth print-identity-token --audiences='[[.OIDC.Audience]]' --include-email)"
+        export DEXAFLOW_OIDC_TOKEN
+        sh [[.ScriptPath]]
+[[- else]]
+        sh [[.ScriptPath]]
+    secretEnv: [DEXAFLOW_TOKEN]
+[[- end]]
+    env:
+[[- if not .Target]]
+      - DEXAFLOW_SERVER_URL=${_DEXAFLOW_SERVER_URL}
+[[- end]]
+      - DEXAFLOW_BASE_REF=${_DEXAFLOW_BASE_REF}
+      - PIP_BREAK_SYSTEM_PACKAGES=1
+substitutions:
+[[- if not .Target]]
+  _DEXAFLOW_SERVER_URL: https://dexaflow.example.com
+[[- end]]
+  _DEXAFLOW_BASE_REF: ""
+[[- if not .OIDC]]
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/dexaflow-deploy-token/versions/latest
+      env: DEXAFLOW_TOKEN
+[[- end]]
+options:
+  logging: CLOUD_LOGGING_ONLY

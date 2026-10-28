@@ -30,7 +30,7 @@ Point it elsewhere / override the login:
 
 ```sh
 LEOFLOW_BASE_URL=http://host.docker.internal:8080 \
-LEOFLOW_USER=admin@leoflow.local LEOFLOW_PASSWORD=admin \
+LEOFLOW_USER=admin@dexaflow.local LEOFLOW_PASSWORD=admin \
 test/ui-contract/run.sh
 ```
 

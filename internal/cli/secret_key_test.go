@@ -12,6 +12,7 @@ import (
 // so anyone holding a Lite database file read every credential in it (#486).
 // It is now per-install, generated the same way the JWT secret is.
 func TestGenerateSecretKeyIsRandomAndWellFormed(t *testing.T) {
+	t.Parallel()
 	a, err := generateSecretKey()
 	if err != nil {
 		t.Fatalf("generateSecretKey err = %v", err)
@@ -38,6 +39,7 @@ func TestGenerateSecretKeyIsRandomAndWellFormed(t *testing.T) {
 // key never wrote anything under the published constant, so accepting that
 // constant would downgrade it from "needs my key" to "needs a key on GitHub".
 func TestSecretKeyListOmitsTheConstantForAFreshInstall(t *testing.T) {
+	t.Parallel()
 	if got := liteSecretKeyList("install-X-key", ""); got != "install-X-key" {
 		t.Errorf("a fresh install must use its key alone, got %q", got)
 	}
@@ -46,6 +48,7 @@ func TestSecretKeyListOmitsTheConstantForAFreshInstall(t *testing.T) {
 // A migrated install carries its predecessor so older rows stay readable, with
 // the encrypting key FIRST.
 func TestSecretKeyListPutsTheEncryptingKeyFirst(t *testing.T) {
+	t.Parallel()
 	got := liteSecretKeyList("new-key", devSecretKey)
 	if got != "new-key,"+devSecretKey {
 		t.Errorf("list = %q; the encrypting key must lead and the predecessor follow", got)
@@ -55,6 +58,7 @@ func TestSecretKeyListPutsTheEncryptingKeyFirst(t *testing.T) {
 // If the backfill could not run, keep the install working rather than making
 // every credential unreadable.
 func TestSecretKeyListFallsBackWhenNothingCouldBeWritten(t *testing.T) {
+	t.Parallel()
 	if got := liteSecretKeyList("", ""); got != devSecretKey {
 		t.Errorf("with no key at all the install must still boot on the old constant, got %q", got)
 	}
@@ -63,6 +67,7 @@ func TestSecretKeyListFallsBackWhenNothingCouldBeWritten(t *testing.T) {
 // The env must carry the key LIST, not a separate variable, and must never
 // hand the server the published constant as its encrypting key.
 func TestLiteServerEnvCarriesTheKeyList(t *testing.T) {
+	t.Parallel()
 	env := sharedServerEnv(liteEnvParams{
 		jwtSecret:         "jwt-x",
 		secretKey:         "per-install-key",
@@ -83,6 +88,7 @@ func TestLiteServerEnvCarriesTheKeyList(t *testing.T) {
 
 // A fresh install must not be handed the published constant at all.
 func TestLiteServerEnvOnAFreshInstall(t *testing.T) {
+	t.Parallel()
 	env := sharedServerEnv(liteEnvParams{jwtSecret: "jwt-x", secretKey: "only-mine"})
 	joined := strings.Join(env, "\n")
 	if !strings.Contains(joined, "LEOFLOW_SECRET_KEY=only-mine\n") && !strings.HasSuffix(joined, "LEOFLOW_SECRET_KEY=only-mine") {
@@ -97,6 +103,7 @@ func TestLiteServerEnvOnAFreshInstall(t *testing.T) {
 // forward: dropping the JWT secret logs everyone out (#121), and dropping the
 // secret key makes every stored connection password undecryptable (#486).
 func TestWriteLiteConfigRoundTripsBothSecrets(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	lc := liteSettings{Workspace: "/w", Executor: "subprocess", AdminEmail: "a@b.c", Port: 8088}
 	if err := writeLiteConfig(home, "parser", lc, "$2a$12$hash", liteFileSecrets{jwtSecret: "the-jwt-secret", secretKey: "the-secret-key"}); err != nil {

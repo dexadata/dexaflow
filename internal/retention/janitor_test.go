@@ -130,7 +130,7 @@ func TestRunOnceDeletesRunsInPausedBatchesPerTenant(t *testing.T) {
 		tenants: []string{"t1", "t2"},
 		runBatches: map[string][]Counts{
 			"t1": {{DagRuns: 100, TaskInstances: 900}, {DagRuns: 3, TaskInstances: 9}},
-			"t2": {{DagRuns: 1, TaskInstances: 2, TaskStateHistory: 4}},
+			"t2": {{DagRuns: 1, TaskInstances: 2, TaskInstanceHistory: 4}},
 		},
 	}
 	cfg := baseConfig()
@@ -142,7 +142,7 @@ func TestRunOnceDeletesRunsInPausedBatchesPerTenant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
-	if got.DagRuns != 104 || got.TaskInstances != 911 || got.TaskStateHistory != 4 {
+	if got.DagRuns != 104 || got.TaskInstances != 911 || got.TaskInstanceHistory != 4 {
 		t.Fatalf("counts = %+v", got)
 	}
 	wantCutoff := fixedNow.Add(-30 * 24 * time.Hour)
@@ -189,7 +189,7 @@ func TestRunOnceDeletesRunsInPausedBatchesPerTenant(t *testing.T) {
 func TestRunOnceContinuesThroughChildOnlyBatches(t *testing.T) {
 	store := &fakeStore{
 		tenants:    []string{"t1"},
-		runBatches: map[string][]Counts{"t1": {{TaskInstances: 600, TaskStateHistory: 400}, {DagRuns: 1, TaskInstances: 3}}},
+		runBatches: map[string][]Counts{"t1": {{TaskInstances: 600, TaskInstanceHistory: 400}, {DagRuns: 1, TaskInstances: 3}}},
 	}
 	cfg := baseConfig()
 	cfg.DagRunsDays = 30

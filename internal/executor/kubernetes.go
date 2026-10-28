@@ -30,6 +30,10 @@ type KubernetesExecutor struct {
 	// teardown meters a reap teardown that fell back from stop-in-place to
 	// delete (ADR 0052 amendment); nil leaves it unmetered.
 	teardown DecisionRecorder
+	// decisions meters staging and executor decisions and errors; nil leaves it unmetered.
+	decisions DecisionRecorder
+	// logger logs operational warnings and errors; nil falls back to slog.Default().
+	logger *slog.Logger
 	// pods meters every task pod create (count by result, API latency); nil
 	// leaves it unmetered.
 	pods PodCreationRecorder
@@ -52,6 +56,28 @@ func (e *KubernetesExecutor) SetPodMetrics(r PodCreationRecorder) { e.pods = r }
 // (the patch was refused) and deleted instead.
 func (e *KubernetesExecutor) SetTeardownRecorder(r DecisionRecorder) { e.teardown = r }
 
+// SetDecisionRecorder wires the recorder that meters decisions and errors
+// (such as staging_pvc_delete_error).
+func (e *KubernetesExecutor) SetDecisionRecorder(r DecisionRecorder) { e.decisions = r }
+
+// SetLogger wires the logger used for executor operational messages.
+func (e *KubernetesExecutor) SetLogger(l *slog.Logger) { e.logger = l }
+
+func (e *KubernetesExecutor) recordDecision(reason string) {
+	if e.decisions != nil {
+		e.decisions.RecordSchedulerDecision(reason)
+	} else if e.teardown != nil {
+		e.teardown.RecordSchedulerDecision(reason)
+	}
+}
+
+func (e *KubernetesExecutor) log() *slog.Logger {
+	if e.logger != nil {
+		return e.logger
+	}
+	return slog.Default()
+}
+
 // SetStagingStore wires the metadatabase-backed staging-volume lifecycle store
 // (ADR 0022). With no store set, provisioning is not recorded and GC is a no-op.
 func (e *KubernetesExecutor) SetStagingStore(s StagingStore) { e.staging = s }
@@ -67,7 +93,8 @@ func NewKubernetesExecutor(clientset kubernetes.Interface, namespace string) *Ku
 // Execute creates the task pod. The agent inside the pod reports state over gRPC.
 // A dispatch failure is classified on this layer — where the apiserver's error
 // types are known — into transient Backpressure (a ResourceQuota 403 or an APF
-// 429) or a permanent Rejected, so the scheduler acts on the disposition without
+// 429), an Unavailable API (a 5xx, a connection refused or reset, the client
+// deadline; ADR 0093) or a permanent Rejected, so the scheduler acts on the disposition without
 // importing Kubernetes error types (ADR 0051 Phase 4). The cause is returned
 // alongside so its text still feeds the scheduler's note/log.
 func (e *KubernetesExecutor) Execute(ctx context.Context, req Request) (Disposition, error) {

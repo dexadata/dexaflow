@@ -25,7 +25,7 @@ func devGetJSON(serverURL, pathQuery, token string, out any) error {
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	resp, err := cliHTTPClient(10 * time.Second).Do(req)
 	if err != nil {
 		return fmt.Errorf("GET %s: %w", pathQuery, err)
 	}

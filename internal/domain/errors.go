@@ -23,11 +23,23 @@ var ErrValidation = errors.New("invalid input")
 // and a probe that conflates them costs an on-call hour.
 var ErrSchemaNotCurrent = errors.New("database schema is not current")
 
+// ErrDatabaseReplaced is returned when the database is reachable but is not
+// the one this release was installed on: it carries another installation id,
+// none, or no schema at all (ADR 0090 decision 3). The health endpoints name
+// it apart from ErrSchemaNotCurrent, because migrating does not fix it: an
+// operator restores the right database, or accepts this one.
+var ErrDatabaseReplaced = errors.New("database replaced")
+
 // ErrLimitExceeded is returned when a write would take a tenant past one of the
 // limits the operator set for it (TenantLimits). The API maps it to 403: the
 // request is well formed, and repeating it will not succeed until the limit or
 // the tenant's usage changes.
 var ErrLimitExceeded = errors.New("tenant limit exceeded")
+
+// ErrTenantSuspended is returned when a write would create work for a tenant
+// the operator suspended through the service API. The API maps it to 409: the
+// request is well formed, and it succeeds once the suspension is lifted.
+var ErrTenantSuspended = errors.New("tenant suspended")
 
 // ErrValueUnreadable is returned when a stored value is encrypted and no
 // configured secret key opens it. It is a server configuration fault, not the

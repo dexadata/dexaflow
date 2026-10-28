@@ -4,6 +4,8 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // dueScheduledSlots returns the logical dates for which the scheduler should
@@ -15,11 +17,12 @@ import (
 //
 // Behavior mirrors Airflow:
 //   - catchup=true  → backfill every missed slot, capped at maxSlots.
-//   - catchup=false → fire exactly one run for the most recent missed slot.
+//   - catchup=false → fire exactly one run for the most recent slot at or
+//     before now, skipping older missed slots however many there are (#1919).
 //
 // Two safety guards:
-//   - maxSlots bounds the per-tick work. A multi-hour outage that produced
-//     thousands of missed slots will not stall the tick; the remainder is
+//   - maxSlots bounds the per-tick backfill of catchup=true. A multi-hour
+//     outage that produced thousands of missed slots will not stall the tick; the remainder is
 //     picked up on the next interval (the scheduler is reconciliation-loop
 //     based, ADR 0031, so retry next tick is the correct shape).
 //   - The start_date floor prevents creating a run for a logical_date earlier
@@ -29,7 +32,7 @@ import (
 // scheduleParseable backstop in createDueRuns already log the bad expression
 // once; this helper stays silent.
 func dueScheduledSlots(expr string, lastLogical, startDate *time.Time, now time.Time, catchup bool, maxSlots int) []time.Time {
-	schedule, err := cron.ParseStandard(expr)
+	schedule, err := domain.ParseCron(expr)
 	if err != nil {
 		return nil
 	}
@@ -61,6 +64,9 @@ func dueScheduledSlots(expr string, lastLogical, startDate *time.Time, now time.
 	if !ok {
 		return nil
 	}
+	if !catchup {
+		return latestDueSlot(schedule, seed, startDate, now)
+	}
 
 	// Enumerate slots strictly after seed and at or before now. Skip any slot
 	// before start_date (the floor) — handles the case where lastLogical is
@@ -69,7 +75,11 @@ func dueScheduledSlots(expr string, lastLogical, startDate *time.Time, now time.
 	cursor := seed
 	for {
 		cursor = schedule.Next(cursor)
-		if cursor.After(now) {
+		// Next returns the zero time for a schedule that never fires (31
+		// February, an empty hour list). Taking it for a slot dated year 1
+		// would create a bogus run, or, below the start_date floor, ask Next
+		// again forever and hang the tick.
+		if cursor.IsZero() || cursor.After(now) {
 			break
 		}
 		if startDate != nil && cursor.Before(*startDate) {
@@ -83,11 +93,80 @@ func dueScheduledSlots(expr string, lastLogical, startDate *time.Time, now time.
 	if len(slots) == 0 {
 		return nil
 	}
-	if !catchup {
-		// Skip-ahead semantics: only fire the most recent missed slot.
-		return slots[len(slots)-1:]
-	}
 	return slots
+}
+
+// latestDueSlot is the catchup=false decision (#1919): the most recent slot
+// at or before now, as a single-element list, when it is strictly after seed
+// and not before the start_date floor; nil otherwise. Older missed slots are
+// skipped, as Airflow does for catchup=False. The slot is found by searching
+// back from now, never by walking forward from seed, so a start_date or last
+// run far in the past costs the same as a recent one and the per-tick cap
+// cannot stop the walk short of now.
+func latestDueSlot(schedule cron.Schedule, seed time.Time, startDate *time.Time, now time.Time) []time.Time {
+	if every, ok := schedule.(cron.ConstantDelaySchedule); ok {
+		return latestEverySlot(every, seed, startDate, now)
+	}
+	latest, ok := latestSlotAtOrBefore(schedule, now)
+	if !ok || !latest.After(seed) {
+		return nil
+	}
+	if startDate != nil && latest.Before(*startDate) {
+		return nil
+	}
+	return []time.Time{latest}
+}
+
+// latestEverySlot is latestDueSlot for an @every schedule. Its slots have no
+// wall-clock grid: Next adds the interval to whatever time it is given, so the
+// search back from now that latestSlotAtOrBefore does would always land on now
+// itself and find a slot on every tick. The slots are the steps of the
+// interval after seed (the last run, or one interval before the start_date),
+// the same ones catchup=true walks, and the latest of them at or before now is
+// found from the remainder instead of by walking.
+func latestEverySlot(every cron.ConstantDelaySchedule, seed time.Time, startDate *time.Time, now time.Time) []time.Time {
+	first := every.Next(seed)
+	if first.After(now) || every.Delay <= 0 {
+		return nil
+	}
+	latest := now.Add(-(now.Sub(first) % every.Delay))
+	if startDate != nil && latest.Before(*startDate) {
+		return nil
+	}
+	return []time.Time{latest}
+}
+
+// maxSlotLookback bounds how far back latestSlotAtOrBefore searches for a
+// slot. It stays well inside time.Duration's range (about 292 years).
+const maxSlotLookback = 200 * 365 * 24 * time.Hour
+
+// latestSlotAtOrBefore returns the latest activation of schedule at or before
+// now. The cron library only exposes Next, so it looks back over a window that
+// starts at one period and doubles until Next from the window's start lands at
+// or before now, then walks forward to the last such slot. Doubling handles
+// uneven gaps (a weekday schedule seen on a Monday) that a single period
+// estimate would miss, and the walk is short because the previous, smaller
+// window held no slot. ok is false when the schedule has no slot within
+// maxSlotLookback.
+func latestSlotAtOrBefore(schedule cron.Schedule, now time.Time) (time.Time, bool) {
+	window := schedulePeriod(schedule, now)
+	if window <= 0 {
+		return time.Time{}, false
+	}
+	for ; window <= maxSlotLookback; window *= 2 {
+		cursor := schedule.Next(now.Add(-window))
+		if cursor.IsZero() || cursor.After(now) {
+			continue
+		}
+		for {
+			next := schedule.Next(cursor)
+			if next.IsZero() || next.After(now) {
+				return cursor, true
+			}
+			cursor = next
+		}
+	}
+	return time.Time{}, false
 }
 
 // catchupSeed picks the time to feed schedule.Next from on the first

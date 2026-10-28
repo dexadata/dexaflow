@@ -105,6 +105,10 @@ func (s *pagingQueuedStore) MarkTaskDispatchLost(_ context.Context, id string, _
 	return true, nil
 }
 
+func (s *pagingQueuedStore) MarkTaskStartExpired(context.Context, string, int, int) (bool, error) {
+	return false, nil
+}
+
 // TestDispatchLostReaperPagesPastPendingRows is R-07 for the dispatch-lost
 // reaper: 100 older queued attempts whose pods are Pending (a capacity
 // shortage) no longer hide a newer attempt whose create never happened. The

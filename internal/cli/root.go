@@ -2,10 +2,14 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -31,6 +35,7 @@ func NewRootCommand() *cobra.Command {
 	root.PersistentFlags().String("config", "", "config file path (default ~/.dexaflow/config.yaml)")
 	root.PersistentFlags().String("log-level", "", "log level: debug, info, warn, error")
 	root.PersistentFlags().String("server-url", "", "control plane API base URL")
+	root.PersistentFlags().String("target", "", "`name` of the control plane to use (default: DEXAFLOW_TARGET, then the target selected for the workspace; see dexaflow target list)")
 
 	// Cobra command groups (issue #D1, dogfood audit #212): split the 17
 	// commands into four navigable sections so new users see "init → run"
@@ -43,11 +48,11 @@ func NewRootCommand() *cobra.Command {
 		&cobra.Group{ID: "lifecycle", Title: "Lifecycle (install, configure, repair, retire):"},
 	)
 
-	authoring := []*cobra.Command{newInitCommand(), newValidateCommand(), newCompileCommand(), newBuildCommand(), newPushCommand(), newDeployCommand()}
+	authoring := []*cobra.Command{newWorkspaceCommand(), newNewCommand(), newInitCommand(), newValidateCommand(), newCompileCommand(), newBuildCommand(), newPushCommand(), newDeployCommand(), newSyncCommand(), newRegistryCommand()}
 	runtime := []*cobra.Command{newLiteCommand(), newServerCommand()}
-	inspection := []*cobra.Command{newDagsCommand(), newRunsCommand(), newAuthCommand()}
-	operations := []*cobra.Command{newAdminCommand(), newConnectionsCommand(), newVariablesCommand()}
-	lifecycle := []*cobra.Command{newSetupCommand(), newDoctorCommand(), newDBCommand(), newUninstallCommand(), newVersionCommand()}
+	inspection := []*cobra.Command{newStatusCommand(), newDagsCommand(), newRunsCommand(), newAuthCommand(), newTargetCommand()}
+	operations := []*cobra.Command{newAdminCommand(), newPromoteCommand(), newRollbackCommand(), newConnectionsCommand(), newVariablesCommand()}
+	lifecycle := []*cobra.Command{newSetupCommand(), newCICommand(), newDoctorCommand(), newDBCommand(), newUninstallCommand(), newVersionCommand()}
 
 	for _, c := range authoring {
 		c.GroupID = "authoring"
@@ -77,7 +82,9 @@ func NewRootCommand() *cobra.Command {
 	return root
 }
 
-// Execute runs the root command and returns a process exit code.
+// Execute runs the root command and returns a process exit code: 0 on
+// success, the code an error carries (a followed run's result, see
+// exitRunFailed), or 1 for any other error.
 func Execute() int {
 	// DEXAFLOW_* and the pre-rename LEOFLOW_* names are interchangeable, and
 	// processes this CLI starts (server, agent, parser) inherit both.
@@ -92,11 +99,45 @@ func Execute() int {
 	if notice := legacyNameNotice(os.Args[0]); notice != "" && stderrIsTerminal() {
 		fmt.Fprintln(os.Stderr, notice)
 	}
-	if err := NewRootCommand().Execute(); err != nil {
+	code, err := executeWithSignals(NewRootCommand())
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
 	}
-	return 0
+	return code
+}
+
+// executeWithSignals runs root under a context that Ctrl-C (SIGINT) or SIGTERM
+// cancels, instead of letting the signal end the process (#1061). A command
+// that is waiting on a child (a `docker build` that takes minutes) sees its
+// context canceled, the child is stopped through it, and the command returns,
+// so its deferred cleanups run: the generated Dockerfile is removed and the
+// .dockerignore restored. Commands that install their own handler (lite,
+// deploy --watch, runs --follow) derive it from this context and keep working
+// as before.
+//
+// Only the first signal is caught. After it the default handling is back, so a
+// second Ctrl-C ends the process at once if a cleanup hangs.
+func executeWithSignals(root *cobra.Command) (int, error) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	return executeRoot(ctx, root)
+}
+
+// executeRoot runs root with ctx and returns the process exit code for its
+// error, together with the error. A command that failed because ctx was
+// canceled (a signal stopped it) exits with exitInterrupted, as a shell does
+// for a command Ctrl-C ended, unless its error carries a code of its own.
+func executeRoot(ctx context.Context, root *cobra.Command) (int, error) {
+	err := root.ExecuteContext(ctx)
+	var coded *exitCodeError
+	if err != nil && ctx.Err() != nil && !errors.As(err, &coded) {
+		return exitInterrupted, err
+	}
+	return exitCodeOf(err), err
 }
 
 // legacyCommandName is the CLI's name before the Dexaflow rename. Installs from

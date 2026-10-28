@@ -6,14 +6,14 @@ SHELL := /usr/bin/env bash
 
 # ─── Tool versions (pinned; see ADR 0012 / 0014) ───
 GOLANGCI_LINT_VERSION ?= v2.12.2
-GOVULNCHECK_VERSION   ?= latest
-MIGRATE_VERSION       ?= latest
-SQLC_VERSION          ?= latest
+GOVULNCHECK_VERSION   ?= v1.8.0
+MIGRATE_VERSION       ?= v4.20.1
+SQLC_VERSION          ?= v1.31.1
 # Go Report Card checkers (the site + its CLI were retired in 2026; we run the
 # same checks with maintained tools via scripts/reportcard.sh — see ADR 0012).
-GOCYCLO_VERSION       ?= latest
-INEFFASSIGN_VERSION   ?= latest
-MISSPELL_VERSION      ?= latest
+GOCYCLO_VERSION       ?= v0.6.0
+INEFFASSIGN_VERSION   ?= v0.2.0
+MISSPELL_VERSION      ?= v0.3.4
 OAPI_CODEGEN_VERSION  ?= v2.8.0
 # changie writes the per-PR changelog fragments (see .changie.yaml).
 CHANGIE_VERSION       ?= v1.24.0
@@ -40,10 +40,14 @@ LDFLAGS := -s -w \
 	-X '$(VERSION_PKG).buildDate=$(BUILD_DATE)'
 
 # ─── Database (used by migrate targets; override via env) ───
-DATABASE_URL ?= postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable
+# The host port `make dev-up` publishes Postgres on: 5432 unless
+# DEXAFLOW_DEV_DB_PORT (or the older LEOFLOW_DEV_DB_PORT) names another, so the
+# dev stack can run next to another project that owns 5432.
+DEXAFLOW_DEV_DB_PORT := $(or $(DEXAFLOW_DEV_DB_PORT),$(LEOFLOW_DEV_DB_PORT),5432)
+DATABASE_URL ?= postgres://leoflow:leoflow@localhost:$(DEXAFLOW_DEV_DB_PORT)/leoflow?sslmode=disable
 # Integration tests run against a SEPARATE database so they never pollute the
 # demo/dev `leoflow` DB (which backs the local control plane and its UI stats).
-TEST_DATABASE_URL ?= postgres://leoflow:leoflow@localhost:5432/leoflow_test?sslmode=disable
+TEST_DATABASE_URL ?= postgres://leoflow:leoflow@localhost:$(DEXAFLOW_DEV_DB_PORT)/leoflow_test?sslmode=disable
 
 .PHONY: help
 help: ## Show this help
@@ -63,6 +67,8 @@ setup: ## Install Go tools (incl. changie), Python parser, and the pre-commit ho
 	go install github.com/miniscruff/changie@$(CHANGIE_VERSION)
 	command -v python3 >/dev/null && pip install -e "./parser[dev]" && pip install -e ./runtime/python || echo "skip parser/runtime install (python3 not found)"
 	install -m 0755 scripts/pre-commit .git/hooks/pre-commit
+	install -m 0755 scripts/commit-msg .git/hooks/commit-msg
+	install -m 0755 scripts/prepare-commit-msg .git/hooks/prepare-commit-msg
 	@echo "setup complete"
 
 .PHONY: build
@@ -80,7 +86,7 @@ chaos-dogfood: ## Pre-Lima gate (#231) — Phase 1: run all suites on the host +
 	@bash scripts/chaos/run.sh
 
 CHAOS_IMAGE          ?= leoflow-chaos:local
-CHAOS_GO_VERSION     ?= 1.26.9
+CHAOS_GO_VERSION     ?= 1.26.10
 CHAOS_LINT_VERSION   ?= v2.12.2
 
 .PHONY: chaos-dogfood-docker
@@ -151,8 +157,8 @@ runtime-images: ## Build the task base images for each supported Python version
 	done
 
 .PHONY: migrate-image
-migrate-image: ## Build the migrate image (migrations + golang-migrate) for the Helm migration Job
-	docker build -f deploy/Dockerfile.migrate -t leoflow-migrate:$(VERSION) .
+migrate-image: ## Build the migrate image (dexaflow-migrate + migrations) for the Helm migration Job
+	docker build -f deploy/Dockerfile.migrate --build-arg VERSION=$(VERSION) --build-arg GIT_COMMIT=$(GIT_COMMIT) -t leoflow-migrate:$(VERSION) .
 
 .PHONY: rc-smoke
 rc-smoke: ## Run the full RC pre-cut smoke battery (gates + k3d e2es). SKIP_E2E=1 for gates only.
@@ -181,7 +187,8 @@ soak-credential-ceiling: ## Prove the credential-renewal ceiling is enforced: lo
 	    --label credential-ceiling --out .soak/credential-ceiling
 
 .PHONY: soak-selftest
-soak-selftest: ## Prove the soak's assertions can fail: injects a real outage that outlives its declared window. MUST exit 1 with recorded violations.
+soak-selftest: ## Prove the soak's assertions can fail: injects a real outage that outlives its declared window. MUST exit 1 with recorded violations. First checks that an interrupted soak exits 2, never 0.
+	@bash test/soak/soak.sh --self-test || { echo "soak-selftest FAILED: an interrupted soak must exit 2 and tear down once (#1921)."; exit 1; }
 	@bash test/soak/soak.sh --duration 6m --faults selftest-red --label selftest-red --out .soak/selftest-red; \
 	code=$$?; \
 	if [ $$code -ne 1 ]; then \
@@ -197,7 +204,7 @@ soak-selftest: ## Prove the soak's assertions can fail: injects a real outage th
 	echo "soak-selftest OK: the battery went red (exit 1, violations recorded) as designed"
 
 .PHONY: soak-warmpool-ab
-soak-warmpool-ab: ## Warm-pool A/B on k3d (ADR 0058): same workload with pools off and on, interleaved. Needs k3d + docker. Written, not yet executed.
+soak-warmpool-ab: ## Warm-pool A/B on k3d (ADR 0058): same workload with pools off and on, interleaved. Needs k3d, docker and migrate. Exits 2 when it measured nothing. Not yet run green on a cluster.
 	bash test/soak/warmpool-ab.sh
 
 .PHONY: e2e-timeout
@@ -215,6 +222,14 @@ e2e-split: ## Run the k3d two-process api/scheduler split e2e (ADR 0049; needs k
 .PHONY: e2e-source-mode
 e2e-source-mode: ## Run the k3d Pro source mode e2e (ADR 0067, #1539; needs k3d, kubectl, docker, jq, python3; run make dev-up + make build first)
 	bash test/e2e/source-mode-e2e.sh
+
+.PHONY: e2e-warm-pools
+e2e-warm-pools: ## Run the k3d warm pool e2e (ADR 0058, #1611: warm hit, placement, isolation between attempts, no leaks; needs k3d, kubectl, docker, jq, psql, python3; run make dev-up + make build first)
+	bash test/e2e/warm-pool-e2e.sh
+
+.PHONY: e2e-daemonless-deploy
+e2e-daemonless-deploy: ## Run the k3d daemonless deploy e2e (#1888: dexaflow deploy examples/taskflow_sales from the dexaflow-cli image with no container daemon, dependency layer from wheels with uv, then a green run; Linux, needs k3d, kubectl, docker, go, jq; run make dev-up + make build first)
+	bash test/e2e/daemonless-deploy-e2e.sh
 
 .PHONY: e2e-dbt
 e2e-dbt: ## Run the k3d dbt pod-per-node e2e (ADR 0042; needs k3d, kubectl, docker, jq, dbt; run make dev-up + make build first)
@@ -235,8 +250,8 @@ e2e-netpol-rwx: ## Pro split real-cluster verify (#526): kind + Calico enforces 
 .PHONY: test
 test: ## Run Go and Python tests with coverage
 	go test -race -coverprofile=coverage.out -covermode=atomic ./...
-	command -v pytest >/dev/null && (cd parser && pytest -v --cov=leoflow_parser) || echo "skip pytest (not installed)"
-	command -v pytest >/dev/null && (cd runtime/python && pytest -v --cov=leoflow_runtime) || echo "skip runtime pytest (not installed)"
+	@if command -v pytest >/dev/null; then cd parser && pytest -v --cov=leoflow_parser; else echo "skip pytest (not installed)"; fi
+	@if command -v pytest >/dev/null; then cd runtime/python && pytest -v --cov=leoflow_runtime; else echo "skip runtime pytest (not installed)"; fi
 
 .PHONY: test-db
 test-db: ## Create (if missing) and migrate the isolated integration-test database
@@ -254,10 +269,11 @@ cover: test ## Show total Go coverage
 	go tool cover -func=coverage.out | tail -1
 
 .PHONY: lint
-lint: ## Run golangci-lint and ruff
+lint: ## Run golangci-lint, ruff and shellcheck
 	golangci-lint run ./...
-	command -v ruff >/dev/null && (cd parser && ruff check .) || echo "skip ruff (not installed)"
-	command -v ruff >/dev/null && (cd runtime/python && ruff check .) || echo "skip runtime ruff (not installed)"
+	@if command -v shellcheck >/dev/null; then git ls-files -z '*.sh' | xargs -0 shellcheck -S warning; else echo "skip shellcheck (not installed)"; fi
+	@if command -v ruff >/dev/null; then cd parser && ruff check .; else echo "skip ruff (not installed)"; fi
+	@if command -v ruff >/dev/null; then cd runtime/python && ruff check .; else echo "skip runtime ruff (not installed)"; fi
 
 .PHONY: fmt
 fmt: ## Format Go code
@@ -276,37 +292,15 @@ reportcard: ## Verify the Go Report Card A+ floor (ADR 0012) with maintained too
 vuln: ## Run govulncheck (ADR 0014)
 	govulncheck ./...
 
+FUZZTIME ?= 30s
+
+.PHONY: fuzz
+fuzz: ## Run every Go fuzz target for FUZZTIME each (default 30s; FUZZ=<regexp> picks targets) (#1571)
+	FUZZTIME=$(FUZZTIME) bash scripts/fuzz.sh
+
 .PHONY: ci-local
-ci-local: ## Run every CI gate locally — pre-push tripwire so a PR does not arrive red
-	@echo "▸ gofmt"
-	@test -z "$$(gofmt -l . | tee /dev/stderr)" || (echo "FAIL: gofmt"; exit 1)
-	@echo "▸ go build"
-	@go build ./...
-	@echo "▸ golangci-lint"
-	@golangci-lint run ./...
-	@echo "▸ go test"
-	@go test ./...
-	@echo "▸ govulncheck (advisories DB is fetched at runtime — catches new stdlib CVEs CI will see)"
-	@command -v govulncheck >/dev/null && govulncheck ./... \
-		|| ($$(go env GOPATH)/bin/govulncheck ./... 2>/dev/null) \
-		|| (echo "skip govulncheck (run: go install golang.org/x/vuln/cmd/govulncheck@latest)"; exit 0)
-	@echo "▸ helm unittest (chart contracts)"
-	@command -v helm >/dev/null && command -v helm-unittest >/dev/null \
-		&& (cd helm/dexaflow && helm unittest .) \
-		|| (command -v helm >/dev/null && helm plugin list 2>/dev/null | grep -q unittest \
-			&& (cd helm/dexaflow && helm unittest .) \
-			|| echo "skip helm unittest (install: helm plugin install https://github.com/helm-unittest/helm-unittest)")
-	@echo "▸ python parser tests"
-	@command -v python3 >/dev/null && (cd parser && python3 -m pytest -q) || echo "skip pytest (no python3)"
-	@echo "▸ hugo --gc --minify (website/)"
-	@if ! command -v hugo >/dev/null; then \
-		echo "skip hugo (not installed: https://gohugo.io/installation/ — needs the extended build)"; \
-	elif [ ! -x website/node_modules/.bin/postcss ]; then \
-		echo "skip hugo (Docsy PostCSS toolchain missing: run 'npm --prefix website ci')"; \
-	else \
-		(cd website && hugo --gc --minify --quiet); \
-	fi
-	@echo "✅ ci-local clean — push when ready"
+ci-local: ## Run every CI gate locally, and list the gates whose tool is missing (no secrets needed)
+	@bash scripts/ci-local.sh
 
 .PHONY: install-pre-push-hook
 install-pre-push-hook: ## Install a pre-push hook that runs `make ci-local` automatically
@@ -316,8 +310,8 @@ install-pre-push-hook: ## Install a pre-push hook that runs `make ci-local` auto
 	@echo "▸ installed .git/hooks/pre-push → runs 'make ci-local' on every push"
 
 .PHONY: dev-up
-dev-up: ## Start local Postgres + Redis (wait healthy) and apply migrations
-	docker compose up -d --wait
+dev-up: ## Start local Postgres + Redis (wait healthy) and apply migrations. DEXAFLOW_DEV_DB_PORT moves Postgres off 5432.
+	DEXAFLOW_DEV_DB_PORT=$(DEXAFLOW_DEV_DB_PORT) docker compose up -d --wait
 	$(MAKE) migrate-up
 
 .PHONY: dev-down
@@ -367,6 +361,22 @@ gen-connectors-check: ## Anti-drift: regenerate to a temp file and diff against 
 	/tmp/conngen/bin/pip install --quiet -r scripts/connectors-providers.lock.txt
 	/tmp/conngen/bin/python scripts/gen_connectors.py /tmp/catalog.check.json
 	@diff -u internal/connectors/catalog.json /tmp/catalog.check.json && echo "catalog.json is in sync with the pinned providers"
+
+.PHONY: gen-config-reference
+gen-config-reference: ## Regenerate the configuration reference tables from internal/config (#1570)
+	go run ./internal/tools/configref
+
+.PHONY: gen-config-reference-check
+gen-config-reference-check: ## Fail when website/content/reference/configuration.md is stale (also run by go test)
+	go run ./internal/tools/configref -check
+
+.PHONY: gen-metrics-reference
+gen-metrics-reference: ## Regenerate the metrics reference table from the registered collectors
+	go run ./internal/tools/metricsref
+
+.PHONY: gen-metrics-reference-check
+gen-metrics-reference-check: ## Fail when website/content/reference/metrics.md is stale (also run by go test)
+	go run ./internal/tools/metricsref -check
 
 .PHONY: clean
 clean: ## Remove build artifacts

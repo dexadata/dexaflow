@@ -46,11 +46,31 @@ type Postgres struct {
 	// period for the whole duration of a migration. SchemaReady clears it when
 	// the condition clears, so a later upgrade is reported again.
 	dirtyAheadLogged atomic.Bool
+	// schemaObserver hears each readiness schema verdict (SetSchemaObserver).
+	schemaObserver func(class string)
+	// recoveryHint is what a schema readiness failure says to run
+	// (SetRecoveryHint); nil uses defaultSchemaHint.
+	recoveryHint func(class string) string
+	// installationID is database.installation_id: when set, the schema reads
+	// also read the database's installation id and compare it (ADR 0090
+	// decision 3). Empty checks nothing.
+	installationID string
+	// onReplaced hears a readiness probe that found the database replaced
+	// (SetOnReplaced), and replacedLogged latches its log line.
+	onReplaced     func()
+	replacedLogged atomic.Bool
+	// beforeLockCheck runs in SchemaWaitState between the read of a schema
+	// dirty at the latest and the migration lock check. Nil outside tests,
+	// which use it to finish a migration in that window.
+	beforeLockCheck func()
 	// health is a dedicated one-connection pool used by Ping and the schema
 	// read, so a probe never queues behind application traffic. See
 	// newHealthPool for why that matters. Nil only in tests that construct a
 	// Postgres literal; probePool falls back to Pool in that case.
 	health *pgxpool.Pool
+	// schedulerPool is the dedicated scheduler pool while ForScheduler keeps
+	// one open, read by PoolCollector. Nil when the scheduler shares Pool.
+	schedulerPool atomic.Pointer[pgxpool.Pool]
 }
 
 // probePool returns the pool health checks must use: the dedicated one when it
@@ -186,7 +206,7 @@ func NewPostgres(ctx context.Context, cfg config.DatabaseSection) (*Postgres, er
 		pool.Close()
 		return nil, explainConnBudget(err, pc.MaxConns)
 	}
-	return &Postgres{Pool: pool, Queries: queries.New(pool), specs: newSpecCache(), health: health}, nil
+	return &Postgres{Pool: pool, Queries: queries.New(pool), specs: newSpecCache(), health: health, installationID: cfg.InstallationID}, nil
 }
 
 // newHealthPool opens the dedicated pool behind Ping and the readiness schema
@@ -419,7 +439,11 @@ func (p *Postgres) ForScheduler(ctx context.Context, cfg config.DatabaseSection)
 		return nil, nil, err
 	}
 	sched := &Postgres{Pool: pool, Queries: queries.New(pool), specs: sharedSpecCache(p)}
-	return sched, pool.Close, nil
+	p.trackSchedulerPool(pool)
+	return sched, func() {
+		p.trackSchedulerPool(nil)
+		pool.Close()
+	}, nil
 }
 
 // Ping checks database connectivity (used by /readyz). It goes through

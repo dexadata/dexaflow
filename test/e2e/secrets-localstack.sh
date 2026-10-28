@@ -238,10 +238,13 @@ jq -e '.variables | index("region")' "$WORKDIR/$DAG_ID/dag.json" >/dev/null \
 k3d_import "$CLUSTER" "$BASE_IMAGE" "$DAG_IMAGE"
 
 log "Pushing the DAG — registration must ACCEPT names absent from the vault (B1 coverage)"
-TOKEN="$("$ROOT/bin/leoflow" auth create-token --server "$API" --username admin@leoflow.local --password admin)"
+TOKEN="$(admin_token "$ROOT/bin/leoflow" "$API" admin)"
 "$ROOT/bin/leoflow" push "$WORKDIR/$DAG_ID/dag.json" --server "$API" --token "$TOKEN" \
   || fail "push rejected a DAG whose declared names live only in the external backend (B1 coverage-at-registration broke)"
 
+# New DAGs are paused at creation, and a manual run of a paused DAG waits
+# until the DAG is unpaused.
+unpause_dag "$API" "$DAG_ID" "$TOKEN" || fail "unpausing $DAG_ID failed"
 log "Triggering a run"
 RUN_ID="$(curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{}' "$API/api/v2/dags/$DAG_ID/dagRuns" | jq -r '.dag_run_id')"

@@ -76,7 +76,7 @@ transports.
 export DEXAFLOW_SERVER_URL=http://localhost:8088     # your Lite control plane
 export DEXAFLOW_TOKEN="$(dexaflow auth create-token \
   --server http://localhost:8088 \
-  --username admin@leoflow.local --password <your-admin-password>)"
+  --username admin@dexaflow.local --password <your-admin-password>)"
 dexaflow-mcp                                          # speaks MCP over stdin/stdout
 ```
 
@@ -86,10 +86,10 @@ go to **stderr** — stdout is the MCP protocol channel and carries nothing else
 This is the transport an MCP client (Claude Desktop / Code) launches for you; you
 rarely run it by hand.
 {{% /tab %}}
-{{% tab header="Streamable HTTP — the Pro service" %}}
+{{% tab header="Streamable HTTP: the Cluster service" %}}
 
 ```bash
-dexaflow-mcp --transport http --listen :9099 --server https://leoflow.internal
+dexaflow-mcp --transport http --listen :9099 --server https://dexaflow.internal
 ```
 
 The HTTP transport serves `POST /mcp` (plus `GET /healthz`) and is **stateless**:
@@ -104,7 +104,7 @@ Each release also publishes the server as a signed image,
 
 ```bash
 docker run --rm -p 9099:9099 ghcr.io/dexadata/dexaflow-mcp:v<version>@sha256:<digest> \
-  --transport http --listen :9099 --server https://leoflow.internal
+  --transport http --listen :9099 --server https://dexaflow.internal
 ```
 {{% /tab %}}
 {{< /tabpane >}}
@@ -170,7 +170,7 @@ The MCP **passes the caller's Dexaflow JWT through** to `/api/v2` and never mint
 ```bash
 dexaflow auth create-token \
   --server http://localhost:8088 \
-  --username admin@leoflow.local \
+  --username admin@dexaflow.local \
   --password <your-admin-password>
 ```
 
@@ -199,10 +199,10 @@ scope too.
 
 | Tool | What it does | Plan first when |
 |---|---|---|
-| `trigger_run` | Starts a run now (`dag_id`, optional `conf` and `note`). | never |
-| `clear_task` | Clears task instances of a run so they run again: `dag_id`, `run_id`, optional `task_ids`, `include_downstream`, `include_upstream`, `only_failed` (default true) and `run_on_latest_version`. It previews the clear first. | the clear touches more than one task instance |
+| `trigger_run` | Triggers a run (`dag_id`, optional `conf` and `note`); on a paused DAG it waits in `queued` until the unpause. | never |
+| `clear_task` | Clears task instances of a run so they run again: `dag_id`, `run_id`, optional `task_ids`, `include_downstream`, `include_upstream`, `only_failed` (default true) and `run_on_latest_version`. It previews the clear first. On a paused DAG the cleared tasks wait until the unpause. | the clear touches more than one task instance |
 | `pause_dag` | Pauses a DAG. | never |
-| `unpause_dag` | Unpauses a DAG. | the DAG has a schedule, since unpausing starts runs |
+| `unpause_dag` | Unpauses a DAG. The plan says how many queued runs will start. | the DAG has a schedule, or has queued runs waiting for the unpause (triggered or cleared while it was paused), since unpausing starts runs |
 | `apply_plan` | Carries out a plan (`plan_id`). | — |
 
 A call that needs a plan changes nothing. It returns what would happen and a
@@ -219,8 +219,8 @@ A call that needs a plan changes nothing. It returns what would happen and a
   email changed, still applies the plan; the control plane checks the
   caller's permissions on the apply call itself.
 - **Apply checks again before acting.** If the task instances are no longer in
-  the states the plan showed, or the DAG's paused flag or schedule changed,
-  `apply_plan` refuses and asks for a new plan. A plan therefore applies once.
+  the states the plan showed, or the DAG's paused flag or schedule changed, or
+  more runs are queued than the plan showed, `apply_plan` refuses and asks for a new plan. A plan therefore applies once.
 - **A clear over more than 200 task instances is refused.** Narrow it with
   `task_ids` or use the UI.
 - **A clear runs only what its preview showed.** The clear that follows a
@@ -251,7 +251,7 @@ construction (untrusted content, ADR 0050 D10).
 | `run://detail/{dag_id}/{run_id}` | A DAG run's detail (state, type, timing). |
 | `task://instances/{dag_id}/{run_id}` | The task instances of a run (state, try, duration). |
 | `log://task/{dag_id}/{run_id}/{task_id}/{try_number}` | A task attempt's log, last lines only, sanitized. |
-| `dag://source/{dag_id}` | The DAG's `dag.py` source, sanitized and size-capped. |
+| `dag://source/{dag_id}` | The `dag.py` source of the DAG's current version (the one new runs use, also after a rollback), sanitized and size-capped. |
 | `dag://spec/{dag_id}` | The compiled `dag.json` artifact (the structured task graph). |
 | `health://control-plane` | Control-plane health: component status, executor capability, and version. |
 

@@ -71,7 +71,7 @@ func MinScheduleInterval(expr string) (time.Duration, bool) {
 	if IsCronlessSchedule(expr) {
 		return 0, false
 	}
-	schedule, err := cron.ParseStandard(expr)
+	schedule, err := ParseCron(expr)
 	if err != nil {
 		return 0, false
 	}
@@ -147,4 +147,41 @@ func closestFiringDays(s *cron.SpecSchedule) (int, bool) {
 		prev = t
 	}
 	return best, best > 0
+}
+
+// CheckTaskPoolSlots refuses a DAG with a task larger than maxSlots, naming
+// the task and both numbers (ADR 0066 §5). 0 is unlimited. Registration applies
+// it with the tenant's max_task_pool_slots; pkg/dagspec exports it (#1877).
+func CheckTaskPoolSlots(spec DAGSpec, maxSlots int) error {
+	if maxSlots <= 0 {
+		return nil
+	}
+	for _, t := range spec.Tasks {
+		if slots := t.EffectivePoolSlots(); slots > maxSlots {
+			return Safef(ErrLimitExceeded,
+				"dag %q cannot be registered: task %q is size %d (pool_slots), above the tenant limit max_task_pool_slots of %d",
+				spec.DagID, t.TaskID, slots, maxSlots)
+		}
+	}
+	return nil
+}
+
+// CheckScheduleInterval refuses a schedule whose shortest gap between two runs
+// is below minSeconds. A schedule that never fires on a cron passes. 0 is
+// unlimited. Registration applies it with the tenant's
+// min_schedule_interval_seconds; pkg/dagspec exports it (#1877).
+func CheckScheduleInterval(spec DAGSpec, minSeconds int) error {
+	if minSeconds <= 0 || spec.Schedule == nil {
+		return nil
+	}
+	gap, ok := MinScheduleInterval(*spec.Schedule)
+	if !ok {
+		return nil
+	}
+	if limit := time.Duration(minSeconds) * time.Second; gap < limit {
+		return Safef(ErrLimitExceeded,
+			"dag %q cannot be registered: schedule %q runs as often as every %s, below the tenant limit min_schedule_interval_seconds of %d (%s)",
+			spec.DagID, *spec.Schedule, gap, minSeconds, limit)
+	}
+	return nil
 }

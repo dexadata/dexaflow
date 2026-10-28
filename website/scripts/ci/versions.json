@@ -1,13 +1,41 @@
 {
-  "_comment": "Single source of truth for the multi-version Pages tree (issue #814). One entry per published leg. `id` names the build's artifact/subdir; `ref` is the git ref to build from (empty string means \"whatever ref triggered the workflow\", resolved to github.sha by the plan job); `subpath` is where it lands under https://dexaflow.dexadata.ai/ (empty = site root); `label` is the string shown in the version dropdown and written to params.version; `archived` marks a superseded GA so Docsy renders the archived-version banner.\n\nCutting a new GA release does this automatically: scripts/cut-release.sh calls promote_docs_version() after the tag is pushed, which repoints the `latest` entry's `ref` AND its `label` (the dropdown says `vX.Y.Z (latest)`, so a reader can tell which release they are on) and archives the GA it replaces, adding an entry for it if there is not one yet. The cut edits this file; hand-edit it only to recover a promotion the cut skipped, following the recipe in RELEASING.md. Before that was scripted, three GAs shipped with the root still built from v0.4.1: a procedure written in a comment that no script performs is a procedure that does not happen.",
+  "_comment": "Single source of truth for the multi-version Pages tree (issue #814). One entry per published leg. `id` names the build's artifact/subdir; `ref` is the git ref to build from (empty string means \"whatever ref triggered the workflow\", resolved to github.sha by the plan job); `subpath` is where it lands under https://dexaflow.dexadata.ai/ (empty = site root); `label` is the string shown in the version dropdown and written to params.version; `archived` marks a superseded GA so Docsy renders the archived-version banner.\n\nCutting a new GA release does this automatically: once the release is published, the Docs promote workflow and scripts/cut-release.sh run scripts/docs-promote.sh, whose promote_docs_version() repoints the `latest` entry's `ref` AND its `label` (the dropdown says `vX.Y.Z (latest)`, so a reader can tell which release they are on) and archives the GA it replaces, adding an entry for it if there is not one yet. Do not hand-edit it to recover a promotion that did not happen: run `scripts/docs-promote.sh vX.Y.Z --pr --fetch` or the Docs promote workflow (RELEASING.md). Before that was scripted, three GAs shipped with the root still built from v0.4.1: a procedure written in a comment that no script performs is a procedure that does not happen.",
   "root_url": "https://dexaflow.dexadata.ai/",
   "versions": [
     {
       "id": "latest",
-      "ref": "v0.5.3",
+      "ref": "v0.5.7",
       "subpath": "",
-      "label": "v0.5.3 (latest)",
+      "label": "v0.5.7 (latest)",
       "archived": false
+    },
+    {
+      "id": "v0.5.6",
+      "ref": "v0.5.6",
+      "subpath": "v0.5.6",
+      "label": "v0.5.6",
+      "archived": true
+    },
+    {
+      "id": "v0.5.5",
+      "ref": "v0.5.5",
+      "subpath": "v0.5.5",
+      "label": "v0.5.5",
+      "archived": true
+    },
+    {
+      "id": "v0.5.4",
+      "ref": "v0.5.4",
+      "subpath": "v0.5.4",
+      "label": "v0.5.4",
+      "archived": true
+    },
+    {
+      "id": "v0.5.3",
+      "ref": "v0.5.3",
+      "subpath": "v0.5.3",
+      "label": "v0.5.3",
+      "archived": true
     },
     {
       "id": "v0.5.2",

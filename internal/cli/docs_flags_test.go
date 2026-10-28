@@ -22,7 +22,7 @@ import (
 // of the docs site and the examples, and check its subcommands and flags
 // against the real command tree, so a renamed or removed flag fails here
 // instead of in a user's pipeline. A flag mentioned on its own in prose
-// (`--platform` with no command before it) is not a command and is not checked.
+// (`--arch` with no command before it) is not a command and is not checked.
 
 // docInvocation is one `dexaflow ...` command found in a Markdown file: the
 // words after the program name, up to the end of that shell command.
@@ -276,14 +276,14 @@ func TestDocFlagCheckerCatchesSeededFlag(t *testing.T) {
 		"Run `dexaflow deploy --yes` once.\n\n" +
 		"```bash\n" +
 		"export DEXAFLOW_TOKEN=$(dexaflow auth create-token --username ci --password-stdin < pw.txt)\n" +
-		"dexaflow deploy --platform linux/arm64 --yes\n" +
+		"dexaflow deploy --arch linux/arm64 --yes\n" +
 		"dexaflow compile dags/x -o dag.json --build \\\n" +
 		"  --push --frobnicate | tee build.log --not-ours\n" +
 		"docker build --platform linux/amd64 .   # not our CLI\n" +
 		"```\n")
 	got := docFlagViolations(NewRootCommand(), map[string][]byte{"seed.md": md})
 	want := []string{
-		"seed.md:7: dexaflow deploy --platform linux/arm64 --yes (unknown flag --platform)",
+		"seed.md:7: dexaflow deploy --arch linux/arm64 --yes (unknown flag --arch)",
 		"seed.md:8: dexaflow compile dags/x -o dag.json --build --push --frobnicate (unknown flag --frobnicate)",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {

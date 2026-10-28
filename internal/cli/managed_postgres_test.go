@@ -11,6 +11,7 @@ import (
 // postgresql.conf (not the space-split pg_ctl -o), so a data dir with spaces is
 // single-quoted and parsed correctly; TCP is off and the socket lives in dataDir.
 func TestManagedPGConfLinesQuotesDataDir(t *testing.T) {
+	t.Parallel()
 	conf := managedPGConfLines("/home/jo doe/.leoflow/pgdata")
 	for _, want := range []string{
 		"listen_addresses = ''",
@@ -27,6 +28,7 @@ func TestManagedPGConfLinesQuotesDataDir(t *testing.T) {
 // would exceed the OS limit (~108), instead of letting Postgres emit a cryptic
 // "socket path too long" — e.g. a deeply nested HOME (service accounts).
 func TestCheckSocketPathLen(t *testing.T) {
+	t.Parallel()
 	if err := checkSocketPathLen("/home/u/.leoflow/pgdata"); err != nil {
 		t.Errorf("normal path should pass, got %v", err)
 	}
@@ -43,6 +45,7 @@ func TestCheckSocketPathLen(t *testing.T) {
 // on a fresh `dexaflow lite`. pgLocaleEnv must strip any inherited LANG/LC_* and
 // force a deterministic, valid LANG=C / LC_ALL=C, while preserving other vars.
 func TestPGLocaleEnvForcesValidLocale(t *testing.T) {
+	t.Parallel()
 	got := pgLocaleEnv([]string{"PATH=/usr/bin", "LC_CTYPE=UTF-8", "LANG=C.UTF-8", "LC_ALL=", "HOME=/h"})
 	has := func(s string) bool {
 		for _, kv := range got {
@@ -69,6 +72,7 @@ func TestPGLocaleEnvForcesValidLocale(t *testing.T) {
 // lifecycle depends on: the bin dir and data dir both live under ~/.leoflow so
 // root and an unprivileged user never share a cluster.
 func TestManagedPGPaths(t *testing.T) {
+	t.Parallel()
 	binDir, dataDir, err := managedPGPaths()
 	if err != nil {
 		t.Fatalf("managedPGPaths: %v", err)
@@ -88,6 +92,7 @@ func TestManagedPGPaths(t *testing.T) {
 // TestDetectLibcReturnsKnownValue asserts libc detection yields a value the
 // relocatable-PostgreSQL resolver understands: "" on darwin, glibc/musl on linux.
 func TestDetectLibcReturnsKnownValue(t *testing.T) {
+	t.Parallel()
 	switch got := detectLibc(); got {
 	case "", "glibc", "musl":
 		// expected

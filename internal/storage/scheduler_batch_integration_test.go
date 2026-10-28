@@ -107,8 +107,12 @@ func TestApplyTransitionsMatchesSingleIntegration(t *testing.T) {
 	}
 
 	// Batch path: a,b,c -> upstream_failed in one call; d left none.
-	if err := sched.ApplyTransitions(ctx, batchUUID, []string{"a", "b", "c"}, domain.TaskStateUpstreamFailed); err != nil {
+	applied, err := sched.ApplyTransitions(ctx, batchUUID, []string{"a", "b", "c"}, domain.TaskStateNone, domain.TaskStateUpstreamFailed)
+	if err != nil {
 		t.Fatalf("ApplyTransitions: %v", err)
+	}
+	if len(applied) != 3 {
+		t.Errorf("ApplyTransitions applied %v, want a, b and c", applied)
 	}
 	// Single path: same target, one call per task; d left none.
 	for _, id := range []string{"a", "b", "c"} {
@@ -130,7 +134,7 @@ func TestApplyTransitionsMatchesSingleIntegration(t *testing.T) {
 	}
 
 	// Empty task list is a no-op.
-	if err := sched.ApplyTransitions(ctx, batchUUID, nil, domain.TaskStateSkipped); err != nil {
+	if _, err := sched.ApplyTransitions(ctx, batchUUID, nil, domain.TaskStateNone, domain.TaskStateSkipped); err != nil {
 		t.Errorf("ApplyTransitions(nil) should be a no-op, got %v", err)
 	}
 }

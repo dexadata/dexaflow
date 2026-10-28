@@ -37,6 +37,13 @@ concurrency:
   group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('{0}-run-{1}', github.workflow, github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  # proxy.golang.org sometimes resets a large module download ("stream error:
+  # INTERNAL_ERROR"), which failed whole jobs before any test ran. With "|" Go
+  # falls back to the module's own source on any proxy error (with "," only on
+  # 404/410); go.sum and sum.golang.org still verify every module.
+  GOPROXY: https://proxy.golang.org|direct
+
 jobs:
   soak-smoke:
     name: Soak harness smoke (6 minutes)
@@ -48,10 +55,12 @@ jobs:
       PYTHONPATH: parser
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/docker-hub-mirror
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.9"
+          go-version: "1.26.10"
           cache: true
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:

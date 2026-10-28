@@ -15,6 +15,7 @@ import (
 const conflictBody = `{"title":"conflict","status":409,"detail":"inserting version: conflict"}`
 
 func TestVersionConflictHintNamesTheWayOut(t *testing.T) {
+	t.Parallel()
 	base := apiStatusError(http.StatusConflict, []byte(conflictBody))
 	cases := []struct {
 		origin labelOrigin
@@ -42,6 +43,7 @@ func TestVersionConflictHintNamesTheWayOut(t *testing.T) {
 }
 
 func TestVersionConflictHintStaysOutOfOtherErrors(t *testing.T) {
+	t.Parallel()
 	for _, status := range []int{http.StatusBadRequest, http.StatusForbidden, http.StatusInternalServerError} {
 		err := versionConflictHint(apiStatusError(status, []byte("x")), "v1", labelDefault)
 		if strings.Contains(err.Error(), "hint:") {
@@ -76,12 +78,13 @@ func TestPushCommandExplainsA409(t *testing.T) {
 }
 
 func TestRegisterDeployedDAGExplainsA409(t *testing.T) {
+	t.Parallel()
 	srv := conflictServer(t)
 	out := filepath.Join(t.TempDir(), "dag.json")
 	if err := os.WriteFile(out, []byte(pushSpec), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := registerDeployedDAG(context.Background(), io.Discard, srv.URL, "tok", out, "r@sha256:x", "v1", labelExplicit)
+	_, err := registerDeployedDAG(context.Background(), io.Discard, registerRequest{serverURL: srv.URL, token: "tok", output: out, digestRef: "r@sha256:x", version: "v1", origin: labelExplicit})
 	if err == nil || !strings.Contains(err.Error(), "pass a new --dag-version or omit it") {
 		t.Fatalf("deploy register on 409 = %v, want the explicit-label hint", err)
 	}

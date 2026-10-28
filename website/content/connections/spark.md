@@ -102,7 +102,7 @@ Connection only carries where to submit, not the binary.
 - **Secrets in logs**: never `print()` the URI — it may carry credentials. Log
   the host + port only.
 - **gRPC channel (agent ↔ control plane)**: secrets are served only over an
-  authenticated channel (ADR 0021); Pro must run with TLS.
+  authenticated channel (ADR 0021); Cluster must run with TLS.
 
 ## Related
 

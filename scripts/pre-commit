@@ -21,6 +21,17 @@ if [ -n "$unformatted" ]; then
 	exit 1
 fi
 
+# Reads the index, so it runs before the repository variables are dropped.
+echo "[pre-commit] text rules on the staged lines"
+scripts/lint-new-text.sh --staged
+
+# `git commit` exports GIT_INDEX_FILE (and GIT_DIR in a worktree) to this hook.
+# The staged file list above needs them; nothing below does, and the tests that
+# run git in temp dirs would follow them to this repository. A checkout ended
+# up with core.bare = true that way (#1959); check-pre-commit-git-env.sh
+# commits from a worktree with this hook and fails if that comes back.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_PREFIX
+
 echo "[pre-commit] go vet"
 go vet ./...
 

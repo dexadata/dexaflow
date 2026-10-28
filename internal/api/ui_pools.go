@@ -23,7 +23,9 @@ type PoolStore interface {
 
 // poolDTO is the Airflow 3.2.1 PoolResponse. occupied_slots are the slots the
 // admission gate actually spends (queued+running); open_slots is the remaining
-// headroom. scheduled/deferred are reported for the UI but hold no slot.
+// headroom. scheduled/deferred are reported for the UI but hold no slot. There
+// are no teams: team_name is always null, which the Airflow Pools page reads as
+// "no team" (an absent field would render "(undefined)" after the pool name).
 type poolDTO struct {
 	Name            string  `json:"name"`
 	Slots           int     `json:"slots"`
@@ -35,6 +37,7 @@ type poolDTO struct {
 	DeferredSlots   int     `json:"deferred_slots"`
 	Description     *string `json:"description"`
 	IncludeDeferred bool    `json:"include_deferred"`
+	TeamName        *string `json:"team_name"`
 }
 
 type poolCollectionDTO struct {
@@ -53,6 +56,7 @@ func toPoolDTO(p domain.Pool, u domain.PoolUsage) poolDTO {
 		OccupiedSlots: occupied, RunningSlots: u.Running, QueuedSlots: u.Queued,
 		ScheduledSlots: u.Scheduled, OpenSlots: open, DeferredSlots: u.Deferred,
 		Description: strPtrOrNil(p.Description), IncludeDeferred: false,
+		TeamName: nil,
 	}
 }
 

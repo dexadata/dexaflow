@@ -31,7 +31,7 @@ func TestReadinessHandlerSurfacesDependencyHealth(t *testing.T) {
 		r.GET("/readyz", readinessHandler(map[string]HealthChecker{
 			"postgres": &fakeHealthCheck{},
 			"redis":    &fakeHealthCheck{},
-		}))
+		}, defaultProbeBudget))
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", http.NoBody))
 		if rec.Code != http.StatusOK {
@@ -46,7 +46,7 @@ func TestReadinessHandlerSurfacesDependencyHealth(t *testing.T) {
 		r := gin.New()
 		r.GET("/readyz", readinessHandler(map[string]HealthChecker{
 			"postgres": &fakeHealthCheck{err: errors.New("connection refused to secret.host")},
-		}))
+		}, defaultProbeBudget))
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", http.NoBody))
 		if rec.Code != http.StatusServiceUnavailable {
@@ -65,7 +65,7 @@ func TestReadinessHandlerSurfacesDependencyHealth(t *testing.T) {
 
 	t.Run("no checks configured → 200 ready (trivially)", func(t *testing.T) {
 		r := gin.New()
-		r.GET("/readyz", readinessHandler(nil))
+		r.GET("/readyz", readinessHandler(nil, defaultProbeBudget))
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", http.NoBody))
 		if rec.Code != http.StatusOK {

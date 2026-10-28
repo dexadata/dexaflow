@@ -9,7 +9,7 @@ weight: 540
 description: "ADR 0054: Coexistence in a shared, multi-team Kubernetes cluster"
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-08-17
 **Relates:** ADR 0049 (split API/scheduler roles), ADR 0035 (keyless-first cloud auth; Leoflow is not a key manager), ADR 0015 (Kubernetes as the sole execution path), ADR 0002 (pod-per-task, ephemeral, zero idle cost), ADR 0053 (admission + placement — task-level concurrency, the Leoflow-owned half of the ownership line), ADR 0055 (secret scoping + token liveness — closes the B1 the namespace split only shrinks)
 

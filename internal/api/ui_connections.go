@@ -75,6 +75,7 @@ func redactAny(v any) {
 // Password is encrypted at rest by the store (ADR 0019) and never returned.
 type ConnectionStore interface {
 	ListConnections(ctx context.Context, tenant string, limit, offset int) ([]domain.Connection, int, error)
+	ListConnectionsFiltered(ctx context.Context, tenant, pattern, prefixPattern string, limit, offset int) ([]domain.Connection, int, error)
 	GetConnection(ctx context.Context, tenant, connID string) (domain.Connection, error)
 	SetConnectionPatch(ctx context.Context, tenant string, p domain.ConnectionPatch) error
 	DeleteConnection(ctx context.Context, tenant, connID string) error
@@ -91,6 +92,11 @@ type connectionDTO struct {
 	Schema       *string `json:"schema"`
 	Port         *int    `json:"port"`
 	Extra        *string `json:"extra"`
+	// ExtraUnreadable marks a connection whose stored extra no configured
+	// secret key opens (#1677); its extra is then null, as for a connection
+	// with no extra. Omitted otherwise, so a readable connection renders
+	// exactly as Airflow's ConnectionResponse.
+	ExtraUnreadable bool `json:"extra_unreadable,omitempty"`
 }
 
 type connectionCollectionDTO struct {
@@ -98,16 +104,27 @@ type connectionCollectionDTO struct {
 	TotalEntries int             `json:"total_entries"`
 }
 
+// toConnectionDTO renders a connection for the read API with its extra
+// redacted. An unreadable extra (#1677) is served as null, not as the mask: the
+// Airflow edit form JSON.parses extra, and "***" is not JSON, so the mask
+// crashed the page. With null the form opens with "{}" and saves with extra
+// omitted, and a write to the connection is refused anyway while its extra
+// cannot be decrypted (the update reads the stored connection first).
 func toConnectionDTO(c domain.Connection) connectionDTO {
+	extra := strPtrOrNil(redactExtra(c.Extra))
+	if c.ExtraUnreadable {
+		extra = nil
+	}
 	return connectionDTO{
-		ConnectionID: c.ConnID,
-		ConnType:     c.ConnType,
-		Description:  strPtrOrNil(c.Description),
-		Host:         strPtrOrNil(c.Host),
-		Login:        strPtrOrNil(c.Login),
-		Schema:       strPtrOrNil(c.Schema),
-		Port:         c.Port,
-		Extra:        strPtrOrNil(redactExtra(c.Extra)),
+		ConnectionID:    c.ConnID,
+		ConnType:        c.ConnType,
+		Description:     strPtrOrNil(c.Description),
+		Host:            strPtrOrNil(c.Host),
+		Login:           strPtrOrNil(c.Login),
+		Schema:          strPtrOrNil(c.Schema),
+		Port:            c.Port,
+		Extra:           extra,
+		ExtraUnreadable: c.ExtraUnreadable,
 	}
 }
 
@@ -306,7 +323,9 @@ func strVal(p *string) string {
 func listConnectionsHandler(store ConnectionStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		limit, offset := pagination(c)
-		conns, total, err := store.ListConnections(c.Request.Context(), tenantOf(c), limit, offset)
+		prefixPattern := c.Query("connection_id_prefix_pattern")
+		pattern := c.Query("connection_id_pattern")
+		conns, total, err := store.ListConnectionsFiltered(c.Request.Context(), tenantOf(c), pattern, prefixPattern, limit, offset)
 		if err != nil {
 			handleRepoError(c, err)
 			return
@@ -315,6 +334,7 @@ func listConnectionsHandler(store ConnectionStore) gin.HandlerFunc {
 		for _, conn := range conns {
 			out.Connections = append(out.Connections, toConnectionDTO(conn))
 		}
+		setPaginationLinks(c, total, limit, offset)
 		c.JSON(http.StatusOK, out)
 	}
 }
@@ -425,7 +445,7 @@ func deleteConnectionHandler(store ConnectionStore) gin.HandlerFunc {
 func handleConnWriteError(c *gin.Context, err error) {
 	if err.Error() == "no encryption key configured" {
 		AbortProblem(c, http.StatusServiceUnavailable, "encryption unavailable",
-			"set LEOFLOW_SECRET_KEY to manage connections (secrets are never stored in plaintext)")
+			"set DEXAFLOW_SECRET_KEY to manage connections (secrets are never stored in plaintext)")
 		return
 	}
 	handleRepoError(c, err)

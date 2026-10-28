@@ -38,7 +38,7 @@ no special operator.** Just a list comprehension and a function that takes a lis
 At runtime:
 
 1. Dexaflow fans out — every `trial(lr=…)` is a separate task instance running
-   in parallel (its own pod on Pro; its own subprocess on Lite).
+   in parallel (its own pod on Cluster; its own subprocess on Lite).
 2. Each map task returns its result; Dexaflow stores it as XCom keyed by
    `(dag_id, run_id, task_id, return_value)`.
 3. When all upstreams finish, Dexaflow dispatches `select_best`. The agent
@@ -130,7 +130,7 @@ aggregator. Dexaflow's contract makes this cheap and durable:
 | Batch inference | one task per partition | collect predictions to a sink |
 | Monte-Carlo simulation | one task per worker | average / sum results |
 
-The Dexaflow runtime is **container-native** (pod-per-task on Pro, subprocess-per-task
+The Dexaflow runtime is **container-native** (pod-per-task on Cluster, subprocess-per-task
 on Lite), so every map task gets a clean process with its own memory, deps, and
 GPU slice when you ask for one. No shared interpreter, no GIL contention, no
 "why did training 7 leak memory into training 9."

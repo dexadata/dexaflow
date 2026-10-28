@@ -18,6 +18,7 @@ import (
 // ABSOLUTE workspace project path or `dbt --project-dir ./transform` fails with
 // "Path './transform' does not exist".
 func TestDbtProjectDir(t *testing.T) {
+	t.Parallel()
 	dag := filepath.FromSlash("/ws/sales")
 	cases := []struct {
 		name, project string
@@ -56,6 +57,7 @@ func TestDbtProjectDir(t *testing.T) {
 // the read-only project (#852), so dbt never looks inside the project and a
 // project shipping its own profiles.yml was unreachable.
 func TestCompiledEntrypointsAreWiredForTheRightTarget(t *testing.T) {
+	t.Parallel()
 	manifest, merr := os.ReadFile(filepath.Join("..", "dbt", "testdata", "manifest_wide.json"))
 	if merr != nil {
 		t.Fatalf("reading fixture manifest: %v", merr)
@@ -159,6 +161,7 @@ func TestCompiledEntrypointsAreWiredForTheRightTarget(t *testing.T) {
 // #993 a bare `dexaflow compile` stopped being "local", so it silently lost
 // access to the venv dbt it had been using.
 func TestDbtParseBinDoesNotDependOnTheRuntimeTarget(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	binDir := filepath.Join(home, ".dexaflow", "dev", "venvs", "sales", "bin")
 	if err := os.MkdirAll(binDir, 0o750); err != nil {

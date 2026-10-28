@@ -94,3 +94,26 @@ func TestMirrorReportsWriteFailures(t *testing.T) {
 		t.Fatalf("a failed write must be reported, got %+v", r)
 	}
 }
+
+func TestLookupPrefersTheCurrentName(t *testing.T) {
+	t.Setenv("DEXAFLOW_LOOKUP_PROBE", "new")
+	t.Setenv("LEOFLOW_LOOKUP_PROBE", "old")
+	if v, ok := Lookup("LOOKUP_PROBE"); !ok || v != "new" {
+		t.Errorf("Lookup = %q, %v; want the DEXAFLOW_ value", v, ok)
+	}
+}
+
+func TestLookupFallsBackToTheLegacyName(t *testing.T) {
+	t.Setenv("LEOFLOW_LOOKUP_PROBE", "old")
+	if v, ok := Lookup("LOOKUP_PROBE"); !ok || v != "old" {
+		t.Errorf("Lookup = %q, %v; want the LEOFLOW_ value", v, ok)
+	}
+}
+
+func TestLookupIgnoresEmptyValues(t *testing.T) {
+	t.Setenv("DEXAFLOW_LOOKUP_PROBE", "")
+	t.Setenv("LEOFLOW_LOOKUP_PROBE", "")
+	if v, ok := Lookup("LOOKUP_PROBE"); ok {
+		t.Errorf("Lookup = %q, true; an empty variable is unset for the CLI", v)
+	}
+}

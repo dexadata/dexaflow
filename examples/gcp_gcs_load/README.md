@@ -42,12 +42,12 @@ No key in the Connection — credentials come from the ambient identity.
    `roles/storage.objectAdmin` on the bucket).
 2. Let the chart create + annotate the task KSA (cloud-agnostic knob):
    ```bash
-   helm upgrade <release> <chart> -n leoflow --reset-then-reuse-values \
+   helm upgrade <release> <chart> -n dexaflow --reset-then-reuse-values \
      --set taskServiceAccount.create=true --set taskServiceAccount.name=dexaflow-gcs \
      --set 'taskServiceAccount.annotations.iam\.gke\.io/gcp-service-account=GSA@PROJECT.iam.gserviceaccount.com'
    gcloud iam service-accounts add-iam-policy-binding GSA@PROJECT.iam.gserviceaccount.com \
      --role roles/iam.workloadIdentityUser \
-     --member "serviceAccount:PROJECT.svc.id.goog[leoflow/dexaflow-gcs]"
+     --member "serviceAccount:PROJECT.svc.id.goog[dexaflow/dexaflow-gcs]"
    ```
    Then set `execution.service_account: dexaflow-gcs` in the DAG's `dexaflow.yaml`
    (already done in this example).
@@ -83,8 +83,8 @@ server, so keyless isn't available there — use key mode under k3d.)
 The key stays in the cluster's secret store; Dexaflow only mounts it.
 
 ```bash
-kubectl -n leoflow create secret generic gcp-sa-key --from-file=key.json=/path/to/key.json
-helm upgrade <release> <chart> -n leoflow --reset-then-reuse-values \
+kubectl -n dexaflow create secret generic gcp-sa-key --from-file=key.json=/path/to/key.json
+helm upgrade <release> <chart> -n dexaflow --reset-then-reuse-values \
   --set taskSecret.name=gcp-sa-key --set taskSecret.mountPath=/etc/leoflow/secrets
 ```
 Then the Connection's Extra: `{ "key_path": "/etc/leoflow/secrets/key.json", "project": "my-project" }`.
@@ -104,6 +104,7 @@ Then the Connection's Extra: `{ "key_secret_name": "dexaflow-gcp-key", "project"
 ```bash
 # Pro: add a registry: block to dexaflow.yaml (see ../README.md), then
 #      dexaflow deploy dags/gcp_gcs_load --trigger
+#      dexaflow admin dags unpause gcp_gcs_load   # new DAGs start paused; the run waits until this
 # Lite: dexaflow lite --executor=subprocess dags/gcp_gcs_load
 ```
 The task log prints the resolved auth mode and `gcs roundtrip ok: gs://<bucket>/leoflow/gcp_gcs_load.txt`.

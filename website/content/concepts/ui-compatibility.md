@@ -191,6 +191,22 @@ browser ──▶ static SPA assets (Airflow 3.3.2, unmodified)
     `Authorization: Bearer` on subsequent calls; Dexaflow's existing JWT issuance
     backs both, secret shared via configuration.
 
+### Dexaflow screens inside the UI
+
+The bundle is never edited, so a screen that only Dexaflow has reaches the UI
+through Airflow 3's own extension point: `GET /api/v2/plugins` lists a built-in
+plugin named `dexaflow` whose `external_views` the UI turns into menu entries.
+Each view is a page served by the control plane and shown in the UI's
+same-origin frame at `/plugin/<url_route>`. The page calls the API with the
+session cookie, so the API's checks are the only checks, and it answers with a
+CSP that allows only its own script (by hash), calls to its own origin and a
+same-origin frame. The plugin lists a view only when the API behind it is
+mounted; with none, the response is the empty collection the stub served.
+
+| Menu entry | View `url_route` | Page | API |
+|---|---|---|---|
+| User menu, **API tokens** | `api-tokens` | `/dexaflow/api-tokens` | `GET` and `DELETE /api/v2/apiTokens` ([ADR 0074](/project/adrs/0074-scoped-api-tokens/), #1886) |
+
 ## Learnings log
 
 - **2026-05-22:** Airflow 3.x split the backend into a stable public `/api/v2/`
@@ -352,6 +368,20 @@ Known gaps the 3.3 UI exposes, none of them a crash:
   Clear dialog shows "run on latest version" as forced for it; the request it
   sends still keeps the run's own version. Every other run names its pinned
   version, in `GET .../dagRuns/{dag_run_id}` and in the run list alike.
+- "Run with latest bundle version" follows Airflow 3.2
+  ([ADR 0086](/project/adrs/0086-clear-rebinds-a-finished-run-with-its-task-set/)):
+  a finished run with no task queued or running moves to the current version,
+  which creates the task instances of the tasks that version adds and marks
+  `removed` the ones of the tasks it dropped. A run that has not finished keeps
+  its version and the clear applies on it.
+  - **The UI does not say when the option was not applied.** Both Clear routes
+    (`clearTaskInstances` and `dagRuns/{dag_run_id}/clear`), dry run included,
+    name such a run in the added field `run_on_latest_version_not_applied`,
+    with the reason. The 3.3.2 Clear dialogs read only the fields Airflow
+    defines, so they show the usual preview and no message; the run keeps
+    showing the version it had. [Clearing a run that is still
+    running](/author-dags/dag-authoring/#clearing-a-run-that-is-still-running)
+    shows how to read the field and how to move the run once it has finished.
 - Deadline alerts and run duration stats answer empty.
 - The calls below are not served yet. Each one answers `501` with the detail
   "... is not available in Dexaflow yet", which the UI shows as an error toast,
@@ -371,4 +401,19 @@ Known gaps the 3.3 UI exposes, none of them a crash:
     (`PUT`, `PATCH`) and deleting answer `501`.
   - Partitioned runs: `GET /ui/partitioned_dag_runs` answers an empty list and
     `GET /ui/pending_partitioned_dag_run/{dag_id}` answers `501`.
+  - Bulk actions on task instances (`PATCH .../dagRuns/{dag_run_id}/taskInstances`)
+    and deleting a task instance (`DELETE .../taskInstances/{task_id}`). Clear
+    or mark the task instances one at a time.
+  - Bulk edits of variables and connections (`PATCH /api/v2/variables`,
+    `PATCH /api/v2/connections`). Edit or delete them one at a time.
+  - Creating, updating and deleting XCom entries under
+    `.../taskInstances/{task_id}/xcomEntries`. Reading them works.
+  - Reparsing a DAG file (`PUT /api/v2/parseDagFile/{file_token}`). Dexaflow
+    registers DAGs with `dexaflow deploy` or `dexaflow push`, not by parsing a
+    DAGs folder.
+  - Asset events: `GET .../dagRuns/{dag_run_id}/upstreamAssetEvents` and the
+    queued event reads (`/api/v2/assets/{asset_id}/queuedEvents`,
+    `/api/v2/dags/{dag_id}/assets/queuedEvents` and
+    `/api/v2/dags/{dag_id}/assets/{asset_id}/queuedEvents`) answer empty
+    collections; clearing queued events (`DELETE` on those paths) answers `501`.
 

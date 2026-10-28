@@ -18,6 +18,10 @@
 # run_gates() globs scripts/check-*.sh, so this is also part of the cut's own
 # pre-flight.
 set -euo pipefail
+# A git hook exports GIT_DIR, GIT_INDEX_FILE and the like. Discovery below and
+# every self-test that builds a fixture repository would follow them to the
+# repository being committed to: the fixtures' commits and tags landed there.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_PREFIX
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # scripts/ AND test/, because a self-test nothing runs is the defect this gate

@@ -19,7 +19,7 @@ There are two transports: **`envvar`** (the default; today's behavior, byte-for-
 and **`exchange`** (the projected-ServiceAccount-token path). The exchange transport
 is a **prerequisite for [warm worker pools](/operate/warm-pools/)**.
 
-{{% alert title="Pro / Kubernetes only" color="info" %}}
+{{% alert title="Cluster / Kubernetes only" color="info" %}}
 Both transports concern the Kubernetes executor. Lite runs the agent as a
 subprocess of the server with an in-process credential handoff — there is no pod
 spec, no ServiceAccount, and no `TokenReview` — so this setting does not apply to
@@ -36,6 +36,17 @@ nothing regresses.
 The in-pod agent reads the variable; an agent-only environment strip removes it (and
 every other `LEOFLOW_`-prefixed variable outside a tiny allowlist) before user code
 runs, so **task code cannot read the token from its own process environment**.
+
+Because the token is minted at dispatch, its 10 minute TTL runs while the pod is
+still `Pending` (node provisioning, a large image pull on a cold node, init
+containers). The TTL is not stretched for that: a longer one, or a grace for an
+expired token, would also keep a token read from the `Pod` object usable for
+longer. Instead, a pod still `Pending` 8 minutes after its task was queued is
+re-placed with a fresh credential, as an infra failure that spends no retry, and
+the attempt's log says `killed: start_expired`
+([#1126](https://github.com/dexadata/dexaflow/issues/1126)). If your pods
+routinely take that long to start, pre-pull the image or keep warm nodes, or use
+the `exchange` transport, whose credential is minted when the agent starts.
 
 The residual exposure this transport cannot close: the token sits **in plaintext on
 the `Pod` object in etcd**. Any principal with `get pods` in the task namespace can
@@ -162,12 +173,11 @@ dimensions of the same credential and are configured independently:
 Warm pools require `agent_token_transport=exchange` **and**
 `secret_liveness_mode=enforce`. `secret_scoping` and
 `max_attempt_credential_lifetime` are independent hardening choices with their own
-rollout arcs — and for `secret_scoping` that arc runs through the `permissive`
-warning trail, where a clean trail proves only that no DAG whose declarations
-still *resolve* is over-served and does **not** prove that no DAG would lose
-secrets under `enforce`: the warning counts only declared names that actually
-resolve, so neither a DAG that declares nothing nor a DAG whose declared names
-were since deleted from the vault ever appears in it
+rollout arcs. For `secret_scoping` that arc runs through the `permissive`
+warning trail: a task that would receive less under `enforce` is warned about,
+including one that declares nothing or whose declared names were since deleted
+from the vault (recorded with `declared=0`), so a clean trail over a period that
+ran every DAG means no DAG would lose secrets on the flip
 ([#800](https://github.com/dexadata/dexaflow/issues/800)). All are
 operator-scoped and documented in the
 [Configuration reference](/reference/configuration/#server-environment-dexaflow_).

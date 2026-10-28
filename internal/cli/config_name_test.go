@@ -19,6 +19,7 @@ func writeFile(t *testing.T, path, body string) {
 // new file wins and the user is told, so an edit to the stale one is not lost
 // silently.
 func TestProjectConfigPathPrefersDexaflowYAML(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		files     []string
@@ -52,6 +53,7 @@ func TestProjectConfigPathPrefersDexaflowYAML(t *testing.T) {
 
 // The config a project is read from is the one its values come from.
 func TestLoadProjectConfigReadsLegacyFileWhenAlone(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "leoflow.yaml"), "dag_id: legacy_dag\n")
 	cfg, err := loadProjectConfig(dir)
@@ -64,6 +66,7 @@ func TestLoadProjectConfigReadsLegacyFileWhenAlone(t *testing.T) {
 }
 
 func TestLoadProjectConfigNewFileWins(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "leoflow.yaml"), "dag_id: stale\n")
 	writeFile(t, filepath.Join(dir, "dexaflow.yaml"), "dag_id: current\n")
@@ -79,6 +82,7 @@ func TestLoadProjectConfigNewFileWins(t *testing.T) {
 // Discovery must recognize a project configured only by dexaflow.yaml (a pure
 // dbt project has no dag.py, so the yaml is all there is).
 func TestProjectAtFindsDbtProjectByDexaflowYAML(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "dexaflow.yaml"), "dag_id: dbt_only\ndbt:\n  project_dir: .\n")
 	if _, ok := projectAt(dir); !ok {

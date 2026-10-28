@@ -19,7 +19,11 @@ its line, saying why it does not apply. The cut script does not check these line
 yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
 
 1. **Docs.** `scripts/docs-gap.sh` is clean for the version being cut (#1478),
-   and the pages for every user-facing change read correctly on the docs site.
+   `scripts/check-stale-versions.sh --candidate X.Y.Z` is clean on the
+   candidate's commit (#1934), and the pages for every user-facing change read
+   correctly on the docs site. The Docs gap workflow runs both checks on every
+   push to `release-X.Y` and on rc tags (#1938): link its green run on the
+   candidate's commit as the evidence.
 2. **Algorithm.** Every change to scheduling, dispatch, state transitions,
    retries, pools or any other decision logic was read against its ADR and its
    tests, edge cases included.
@@ -27,9 +31,11 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
    they break elsewhere: the full Go and Python suites, the integration suite
    (`make test-integration`), and the fixes of the previous patches still holding.
 4. **End to end.** The E2E suites ran green on the candidate's commit: E2E Lite,
-   the k3d e2es (`make rc-smoke`), and the performance gates workflow
-   (`.github/workflows/e2e-gates.yaml`). That workflow and the soak smoke run
-   nightly on `main` and on rc tags only, so start both by hand
+   the k3d e2es (`make rc-smoke`), the performance gates workflow
+   (`.github/workflows/e2e-gates.yaml`) and the daemonless deploy workflow
+   (`.github/workflows/e2e-daemonless-deploy.yaml`, #1888). The performance
+   gates workflow and the soak smoke run nightly on `main` and on rc tags, the
+   daemonless deploy workflow on rc tags only, so start all three by hand
    (`workflow_dispatch`) on the `release-X.Y` commit before the cut.
 5. **UI with Playwright.** When the candidate changes anything the browser shows
    (embedded UI assets, `/api/v2/` responses the UI reads, sign-in, login or SSO),
@@ -56,7 +62,7 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
    that applies to this candidate (rc, GA, or a patch touching the area) gets its
    own line: gates on the tagged commit, benchmarks against the previous release,
    the database at scale, dispatch backpressure, failure injection, warm pools,
-   soak and leaks. At minimum, when the candidate touches the scheduler, dispatch
+   soak and leaks, and the code-only deploy time and warm-up. At minimum, when the candidate touches the scheduler, dispatch
    or storage: the benchmarks of the area compared with the previous release, and
    a soak run (`make soak`) with no recorded violations.
 9. **Release checklist.**
@@ -66,7 +72,9 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
      the changelog of every patch already tagged (a minor cut refuses
      otherwise), and after a patch GA its `changelog: sync vX.Y.Z to main`
      pull request is merged
-     ([RELEASING.md](RELEASING.md#how-the-changelog-flows)).
+     ([RELEASING.md](RELEASING.md#how-the-changelog-flows)). The Changelog
+     sync workflow runs the same check on `main` every day; a green run
+     without a notice is the evidence.
    - `leoflow.yaml`, `LEOFLOW_*` variables and `~/.leoflow` still work next to
      `dexaflow.yaml`, `DEXAFLOW_*` and `~/.dexaflow`.
    - No commit in the range carries a `Co-Authored-By` trailer, a session link
@@ -123,6 +131,10 @@ The Actions queue has few runners, so every wasted run delays everyone.
   messages, PR descriptions, docs and changelog entries.
 - **No em dashes** in new text written to the repository or to its PRs and
   issues. Use a comma, a colon, parentheses or two sentences instead.
+- `scripts/lint-new-text.sh` checks the two rules above that a script can
+  check, an em dash in an added line and an attribution trailer in a commit
+  message, on every pull request ("Text rules") and in the hooks `make setup`
+  installs.
 - Follow the PR template (`.github/PULL_REQUEST_TEMPLATE.md`): one logical change
   per PR, a changelog fragment (`make changelog`) or the `skip-changelog` label,
   docs updated or `skip-docs` with its reason.
@@ -184,6 +196,11 @@ The Actions queue has few runners, so every wasted run delays everyone.
 - **Test the documented path.** A test that bypasses the path users take (a
   hand-written Dockerfile, an overridden environment variable, a fixture that
   never imports `dag.py`) proves nothing about that path.
+- **Every bug fix ships a regression test.** The test reproduces the reported
+  behavior, fails on the code without the fix and passes with it. Commit it
+  before the fix (`test:` then `fix:`) and name it in the PR under "How it was
+  tested". A fix without such a test is not done; see the
+  [Fix a bug](https://dexaflow.dexadata.ai/contribute/recipes/fix-a-bug/) recipe.
 - **Mutation-test every new assertion.** Revert the fix, watch the test fail,
   restore it, and check that the mutation actually applied.
 - **Lock the wiring, not the leaf.** Drive the real entry point and assert on its
@@ -202,9 +219,10 @@ This file stays short and points; detail lives next to what it describes
 |---|---|
 | What Dexaflow is and how it is built | [Architecture](https://dexaflow.dexadata.ai/concepts/architecture/), [core concepts](https://dexaflow.dexadata.ai/concepts/core-concepts/), [glossary](https://dexaflow.dexadata.ai/reference/glossary/) |
 | Why a design is the way it is | [ADRs](https://dexaflow.dexadata.ai/project/adrs/), then the `// Package` comment of the Go package |
-| Rules for one area | [`migrations/AGENTS.md`](migrations/AGENTS.md), [`internal/api/AGENTS.md`](internal/api/AGENTS.md), [`helm/AGENTS.md`](helm/AGENTS.md), [`scripts/AGENTS.md`](scripts/AGENTS.md), [`website/AGENTS.md`](website/AGENTS.md) |
-| Steps for a recurring change | [Recipes](https://dexaflow.dexadata.ai/contribute/recipes/): add a migration, record a change, backport to a release branch |
-| A large change before coding it | [Specs](https://dexaflow.dexadata.ai/project/specs/) and their template |
+| Rules for one area | [`migrations/AGENTS.md`](migrations/AGENTS.md), [`internal/api/AGENTS.md`](internal/api/AGENTS.md), [`internal/auth/AGENTS.md`](internal/auth/AGENTS.md) (tenant isolation too), [`internal/config/AGENTS.md`](internal/config/AGENTS.md), [`internal/dispatch/AGENTS.md`](internal/dispatch/AGENTS.md), [`internal/executor/AGENTS.md`](internal/executor/AGENTS.md), [`internal/scheduler/AGENTS.md`](internal/scheduler/AGENTS.md), [`internal/storage/AGENTS.md`](internal/storage/AGENTS.md), [`proto/AGENTS.md`](proto/AGENTS.md), [`parser/AGENTS.md`](parser/AGENTS.md), [`runtime/AGENTS.md`](runtime/AGENTS.md), [`helm/AGENTS.md`](helm/AGENTS.md), [`scripts/AGENTS.md`](scripts/AGENTS.md), [`website/AGENTS.md`](website/AGENTS.md) |
+| Steps for a recurring change | [Recipes](https://dexaflow.dexadata.ai/contribute/recipes/): add a migration, a setting, an `/api/v2/` endpoint, a Helm value, a CLI command, a connector; record a change; backport; cut a release candidate; fix a flaky end-to-end job |
+| What to check in a review | [Review checklists](https://dexaflow.dexadata.ai/contribute/review-checklists/): Airflow compatibility, Kubernetes behavior, docs, developer experience |
+| A large change before coding it | [Specs](https://dexaflow.dexadata.ai/project/specs/) and their template; a new decision starts from the [ADR template](https://dexaflow.dexadata.ai/project/adrs/#template) |
 | Setting up and running locally | [`CONTRIBUTING.md`](CONTRIBUTING.md), [local dev loop](https://dexaflow.dexadata.ai/contribute/local-dev-loop/) |
 | Cutting a release | [`RELEASING.md`](RELEASING.md) and section 1 above |
 | What a release may contain | [ADR 0068](https://dexaflow.dexadata.ai/project/adrs/0068-patch-content-gated-by-safety/) |

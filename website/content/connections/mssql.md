@@ -91,13 +91,13 @@ reserved characters (`@` → `%40`); without `unquote`, pymssql would see
 walks through Docker spin-up, Connection setup (with a password
 containing `@`), and verification.
 
-## Lite vs Pro caveats
+## Lite vs Cluster caveats
 
 - **Lite (subprocess)** runs the task on the host. The Connection's
   `host` resolves against the host's name lookup.
 - **Lite (k3d)** runs the task in a pod. Use `host.k3d.internal` to
   reach a host-bound port.
-- **Pro (Kubernetes)** runs the task in a pod. The target SQL Server
+- **Cluster (Kubernetes)** runs the task in a pod. The target SQL Server
   must be reachable via cluster DNS, an Azure-managed PrivateLink, or
   external DNS the pod's network policy permits.
 - **Azure SQL specifics**: the host is `<server>.database.windows.net`,
@@ -125,7 +125,7 @@ containing `@`), and verification.
 | `Login failed for user 'sa'` with the right password | The password contains `@` (or other reserved chars) and you did NOT call `unquote` | Wrap with `urllib.parse.unquote(url.password)`. |
 | `Adaptive Server connection failed` | Network/DNS issue or wrong port | From the task's pod / host, try `sqlcmd -S host,port` with the same coords. |
 | `Cannot open database "warehouse" requested by the login` | The database does not exist | Create it: `sqlcmd -Q "CREATE DATABASE warehouse"`. |
-| `SSL provider: The certificate chain was issued by an authority that is not trusted` | TLS with a self-signed cert + verify-on | For local dev only, set `TrustServerCertificate=yes`. Pro: trust the CA. |
+| `SSL provider: The certificate chain was issued by an authority that is not trusted` | TLS with a self-signed cert + verify-on | For local dev only, set `TrustServerCertificate=yes`. Cluster: trust the CA. |
 
 ## Related
 

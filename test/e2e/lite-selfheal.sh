@@ -89,7 +89,7 @@ grep -q 'cleared stale import error' "$TMP/s2.log" \
 pass "stale import error cleared on boot"
 
 # State check: keeper survives, ghost is gone (it was never re-added on disk).
-TOKEN="$("$TMP/leoflow" auth create-token --server "$BASE" --username admin@leoflow.local --password x 2>/dev/null || true)"
+TOKEN="$("$TMP/leoflow" auth create-token --server "$BASE" --username admin@dexaflow.local --password x 2>/dev/null || true)"
 if [ -n "$TOKEN" ]; then
   DAGS="$(curl -fsS -H "Authorization: Bearer $TOKEN" "${BASE}/api/v2/dags?limit=100" 2>/dev/null || true)"
   if [ -n "$DAGS" ]; then

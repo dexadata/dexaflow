@@ -4,7 +4,7 @@ weight: 65
 description: "Every container image and chart Dexaflow publishes, how each is tagged, and which tags are immutable."
 ---
 
-Every release publishes four images and one chart to GitHub Container Registry.
+Every release publishes five images and one chart to GitHub Container Registry.
 This page says what each one is, who pulls it, and how it is tagged, because the
 tag is the part people get wrong.
 
@@ -14,13 +14,14 @@ tag is the part people get wrong.
 | --- | --- | --- |
 | `ghcr.io/dexadata/dexaflow-server` | the control plane: API, scheduler, UI | the Helm chart, and `docker compose` for the demo |
 | `ghcr.io/dexadata/dexaflow-migrate` | schema migrations, run as a Helm pre-install and pre-upgrade hook | the chart's migration Job |
-| `ghcr.io/dexadata/dexaflow-runtime` | the task base image, one per supported Python line | your DAG image's `FROM`, at `dexaflow compile --build` |
+| `ghcr.io/dexadata/dexaflow-runtime` | the task base image, one per supported Python line; plus a `data` variant on Python 3.11 with connector providers and dbt | your DAG image's `FROM`, at `dexaflow compile --build`; the data variant, a [source mode](/operate/source-mode/) runtime |
 | `ghcr.io/dexadata/dexaflow-mcp` | the [MCP server](/mcp/), for running it as a service with `--transport http` | your own Deployment or `docker run` |
+| `ghcr.io/dexadata/dexaflow-cli` | the `dexaflow` CLI with Python 3.13, git and uv, no Docker (from `v0.5.4`) | [pipelines that run a job in a container](/operate/cicd-deploy/#the-dexaflow-cli-image): GitLab CI, an Argo CD hook |
 | `oci://ghcr.io/dexadata/charts/dexaflow` | the Helm chart | `helm install` / `helm upgrade` |
 
 ### Names from before the rename
 
-Every image except `dexaflow-mcp`, which never shipped under the old name, is also
+Every image except `dexaflow-mcp` and `dexaflow-cli`, which never shipped under the old name, is also
 published under its pre-rename name, from the same build:
 `leoflow-server`, `leoflow-migrate` and `leoflow-runtime` carry the same tags and
 the same digests as their `dexaflow-*` names, so values files, Dockerfiles and
@@ -38,14 +39,16 @@ thing.)
 
 | artifact | tags | mutable? |
 | --- | --- | --- |
-| `dexaflow-server` | `0.4.8` **and** `v0.4.8` | no, both point at the same digests |
-| `dexaflow-migrate` | `0.4.8` **and** `v0.4.8` | no |
-| `dexaflow-mcp` | `0.4.8` **and** `v0.4.8` | no |
-| `dexaflow-runtime` | `py3.11-v0.4.8` | no |
+| `dexaflow-server` | `{{< latest-version >}}` **and** `{{< latest-version v >}}` | no, both point at the same digests |
+| `dexaflow-migrate` | `{{< latest-version >}}` **and** `{{< latest-version v >}}` | no |
+| `dexaflow-mcp` | `{{< latest-version >}}` **and** `{{< latest-version v >}}` | no |
+| `dexaflow-cli` | `{{< latest-version >}}` **and** `{{< latest-version v >}}` | no |
+| `dexaflow-runtime` | `py3.11-{{< latest-version v >}}` | no |
 | `dexaflow-runtime` | `py3.11` | **yes**, moved by every GA of the newest minor |
-| the chart | `0.4.8` | no |
+| `dexaflow-runtime` (data variant) | `py3.11-data-v<X.Y.Z>`, from v0.5.7 | no; it has no moving tag |
+| the chart | `{{< latest-version >}}` | no |
 
-The server, migrate and MCP images carry both the bare and the `v`-prefixed tag, and
+The server, migrate, MCP and CLI images carry both the bare and the `v`-prefixed tag, and
 both resolve to identical digests, so either spelling works.
 
 The versioned tags appear while a release is still being checked. The chart,
@@ -53,7 +56,7 @@ the moving `py3.N` tags and the GitHub release marked Latest move only after
 every install, upgrade and signature check passed, so a chart version never
 references an image that does not exist yet.
 
-{{% alert title="py3.11 moves, py3.11-v0.4.8 does not" color="warning" %}}
+{{% alert title="py3.11 moves, py3.11-vX.Y.Z does not" color="warning" %}}
 Every GA of the newest minor re-points `dexaflow-runtime:py<version>` at its
 own build, once the release has passed its install, upgrade and signature
 checks. A release candidate never moves it, and neither does a patch of an
@@ -88,12 +91,12 @@ the supported lines and the deprecation schedule.
 ## Verifying what you pulled
 
 Artifacts on the GitHub release are checksummed (SHA-256) and the checksums
-file is signed with cosign, keyless. The `dexaflow-server` and `dexaflow-mcp`
-manifests are signed by digest, so both tag shapes are covered (the same command
-verifies `dexaflow-mcp`):
+file is signed with cosign, keyless. The `dexaflow-server`, `dexaflow-mcp` and
+`dexaflow-cli` manifests are signed by digest, so both tag shapes are covered
+(the same command verifies `dexaflow-mcp` and `dexaflow-cli`):
 
 ```bash
-cosign verify ghcr.io/dexadata/dexaflow-server:0.4.8 \
+cosign verify ghcr.io/dexadata/dexaflow-server:{{< latest-version >}} \
   --certificate-identity-regexp 'https://github.com/(dexadata|neochaotic)/(dexaflow|leoflow)/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```

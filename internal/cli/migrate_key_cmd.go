@@ -60,15 +60,11 @@ func runMigrateKey(cmd *cobra.Command, dryRun, yes bool) error {
 		out: cmd.OutOrStdout(), stateDir: stateDir, datastores: dss,
 		dryRun: dryRun, yes: yes,
 		confirm: func() bool { return confirmDestructive(cmd) },
-		crashAt: migrateKeyCrashHook,
+		crashAt: migrateKeyCrashHook(),
 		leave:   cleanup,
 	}
 	return r.run(cmdContext(cmd))
 }
-
-// migrateKeyCrashHook is a no-op in every build but the crash-injection one
-// (build tag crashhooks), which SIGKILLs the process at a named step.
-var migrateKeyCrashHook = func(string) {}
 
 // bringUpKeyDatastores finds every datastore this install has, on disk, not
 // the one `--postgres auto` would pick on this run (gap 9), and brings each up
@@ -136,7 +132,7 @@ func bringUpDockerForKeys(ctx context.Context, cmd *cobra.Command, stateDir stri
 	noop := func() {}
 	devDir := filepath.Join(stateDir, "dev")
 	_, portRecorded := readPort(filepath.Join(devDir, "db-port"))
-	if !dockerUsable() {
+	if !depsFrom(ctx).dockerUsable(ctx) {
 		if portRecorded {
 			return keyDatastore{}, noop, false, fmt.Errorf("refusing to migrate: this install has used the Docker datastore (%s), and Docker is not available to scan it; start Docker and run this again (no file and no row was written)", filepath.Join(devDir, "db-port"))
 		}
@@ -157,7 +153,7 @@ func bringUpDockerForKeys(ctx context.Context, cmd *cobra.Command, stateDir stri
 	port := devDBPort(devDir)
 	name := fmt.Sprintf("the Docker datastore (volume %s, localhost:%d)", volume, port)
 	wasRunning := dockerPostgresRunning(ctx, project)
-	cf, cerr := resolveComposeFile("")
+	cf, cerr := resolveComposeFile(cmd.OutOrStdout(), "")
 	if cerr != nil {
 		return keyDatastore{}, noop, false, cerr
 	}
@@ -177,13 +173,13 @@ func bringUpDockerForKeys(ctx context.Context, cmd *cobra.Command, stateDir stri
 	return keyDatastore{name: name, dsn: tcpDSNs(port).database}, stop, true, nil
 }
 
-// dockerUsable reports whether the docker CLI is installed and its daemon
-// answers.
-func dockerUsable() bool {
+// hostDockerUsable reports whether the docker CLI is installed and its daemon
+// answers. Commands reach it as cliDeps.dockerUsable, which tests pin.
+func hostDockerUsable(ctx context.Context) bool {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return false
 	}
-	return dockerResponsive()
+	return dockerResponsive(ctx)
 }
 
 // dockerPostgresRunning reports whether this install's Postgres container runs.

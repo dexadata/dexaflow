@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/dexadata/dexaflow/internal/build"
 	"github.com/dexadata/dexaflow/internal/config"
 	"github.com/dexadata/dexaflow/internal/dbt"
 	"github.com/dexadata/dexaflow/internal/domain"
@@ -26,6 +27,9 @@ import (
 
 // compileOptions holds the resolved flags for a compile run.
 type compileOptions struct {
+	// inputs are the build args, secrets and package index of the build,
+	// resolved by buildAndPush.
+	inputs     buildInputs
 	output     string
 	image      string
 	parserCmd  string
@@ -48,6 +52,57 @@ type compileOptions struct {
 	// (LEOFLOW_EXECUTOR_TYPE), not by anything in the dag.json, so compile
 	// cannot infer this — only Lite's subprocess mode knows.
 	local bool
+	// lite marks a compile for `dexaflow lite`, which deploys to no target:
+	// the workspace defaults apply, a target's do not.
+	lite bool
+	// platformsSource names where build.platforms came from, for the build
+	// output; runCompile sets it.
+	platformsSource string
+	// remoteSource names where build.remote_builder came from, for the
+	// builder line; runCompile sets it.
+	remoteSource string
+	// baseImageSource names where base_image came from: the project's own
+	// config file, or the workspace, target or cluster defaults that filled
+	// it; runCompile sets it.
+	baseImageSource string
+	// pushRefused is the deploy preflight's refusal of this machine's push
+	// credential, kept until the builder is chosen because a remote builder
+	// was configured (checkLocalPush); nil when the push was accepted.
+	pushRefused error
+	// settingsShown says the caller already printed the platforms and their
+	// source (deploy does, before it asks to confirm), so the build does not
+	// print them twice.
+	settingsShown bool
+	// built, when set, receives the builder's result. A push always asks
+	// the builder for the pushed image's digest, which the compile writes
+	// into dag.json (#1703); deploy registers that pin.
+	built *build.Result
+	// requirePin makes a pushed image whose digest cannot be read a failure
+	// (deploy registers only a digest). Without it the compile keeps the
+	// tag in dag.json and warns (warnPinRead).
+	requirePin bool
+	// provenance, when set, receives the builder that produced the image
+	// and, for a generated Dockerfile, the base image it builds FROM: the
+	// build half of the version's build info (#1702). A reused image (the
+	// skip path) sets neither.
+	provenance *domain.BuildInfo
+	// reuse allows the skip path: the image tag is the default content label,
+	// so an image the registry holds under it can be pinned instead of built
+	// (ADR 0076). deploy sets it; --rebuild and --force clear it.
+	reuse bool
+	// rebuild builds the dependency image of a split build again even when
+	// the registry holds one for its key (--rebuild).
+	rebuild bool
+	// beforeBuild, when set, runs once dag.json is compiled and validated and
+	// before anything is built: deploy's dry run of the register (#1705).
+	beforeBuild func() error
+	// cluster is the deploy defaults layer the caller resolved (deploy, and
+	// build --push), nil for none. The compile applies it again after the
+	// local sources, so what is built is what the caller labeled and showed.
+	cluster *defaultsLayer
+	// sourceMode marks deploy's compile in source mode (#1772): image is the
+	// runtime image, which is never built.
+	sourceMode bool
 }
 
 func newCompileCommand() *cobra.Command {
@@ -73,12 +128,15 @@ func newCompileCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&o.output, "output", "o", "", "path to write the compiled dag.json (default <project>/dag.json)")
 	cmd.Flags().StringVar(&o.image, "image", "", "container image reference for the DAG")
+	cmd.Flags().String("registry", "", registryFlagUsage)
 	cmd.Flags().StringVar(&o.parserCmd, "parser-cmd", "", "override the parser command (default from config)")
 	cmd.Flags().StringVar(&o.dagVersion, "dag-version", "", "DAG version label (default: git describe of the project directory, or dev outside git, plus a hash of the DAG's content)")
 	cmd.Flags().BoolVar(&o.build, "build", false, "build the DAG container image (requires --image)")
-	cmd.Flags().BoolVar(&o.push, "push", false, "push the built image to its registry (requires --build)")
+	cmd.Flags().BoolVar(&o.push, "push", false, "push the built image to its registry and write its digest into dag.json (requires --build)")
+	cmd.Flags().BoolVar(&o.rebuild, "rebuild", false, "build the dependency image again even when the registry holds one for its key (with --push)")
 	cmd.Flags().StringVar(&o.builder, "builder", "docker", "image build tool to shell out to (e.g. docker, podman, nerdctl)")
 	cmd.Flags().StringVar(&o.dockerfile, "dockerfile", "Dockerfile", "Dockerfile path relative to the DAG directory")
+	addPlatformFlag(cmd)
 	return cmd
 }
 
@@ -101,6 +159,23 @@ func defaultOutputPath(dir, explicit string) string {
 		return explicit
 	}
 	return filepath.Join(dir, "dag.json")
+}
+
+// loadCompileConfig is resolveCompileTarget plus the workspace and target
+// defaults (applyWorkspaceDefaults) that deploy applies too, so a compile and a
+// deploy of the same project build the same image. The deploy defaults a
+// cluster advertises apply only when the caller read them (o.cluster: deploy,
+// build --push); `compile` itself works offline and never asks a server.
+func loadCompileConfig(cmd *cobra.Command, dir string, o compileOptions) (*domain.LeoflowConfig, defaultsProvenance, error) {
+	cfg, err := resolveCompileTarget(dir, o.output)
+	if err != nil {
+		return nil, defaultsProvenance{}, err
+	}
+	prov, derr := applyDefaults(cmd, dir, cfg, !o.lite, o.cluster)
+	if derr != nil {
+		return nil, defaultsProvenance{}, derr
+	}
+	return cfg, prov, nil
 }
 
 // resolveCompileTarget loads the project config and confirms the artifact can
@@ -146,9 +221,9 @@ func checkOutputWritable(output string) error {
 // checkProjectPreconditions runs the checks that apply to every project before
 // the dag.py and dbt paths diverge: the dexaflow.yaml must validate, it must not
 // declare a dbt: block alongside a dag.py (#1015), and a deprecated Python line
-// earns a warning the author can still act on.
+// or a build field nothing applies earns a warning the author can still act on.
 //
-// Grouped rather than inlined so every entry point gets all three by
+// Grouped rather than inlined so every entry point gets all of them by
 // construction. warnDeprecatedPython landing on only the dag.py branch would
 // leave every dbt project silently on a base image that stops being rebuilt,
 // and `dexaflow validate` open-coding the first two checks is how it spent this
@@ -165,7 +240,25 @@ func checkProjectPreconditions(cmd *cobra.Command, dir string, cfg *domain.Leofl
 	// Stderr, not stdout: the compile summary and any piped output stay clean.
 	// Advisory only — a write failure here must not fail an otherwise good run.
 	warnDeprecatedPython(cmd.ErrOrStderr(), cfg)
+	warnIgnoredBuildFields(cmd.ErrOrStderr(), filepath.Base(projectConfigPath(dir)), cfg)
 	return nil
+}
+
+// prepareCompile loads the project config with its defaults, records where
+// the platforms came from, and runs the project preconditions, every check
+// that must pass before the parser starts.
+func prepareCompile(cmd *cobra.Command, dir string, o *compileOptions) (*domain.LeoflowConfig, error) {
+	cfg, prov, err := loadCompileConfig(cmd, dir, *o)
+	if err != nil {
+		return nil, err
+	}
+	o.platformsSource = prov.platformsSource
+	o.remoteSource = prov.remoteSource
+	o.baseImageSource = prov.baseImageSource
+	if perr := checkProjectPreconditions(cmd, dir, cfg); perr != nil {
+		return nil, perr
+	}
+	return cfg, nil
 }
 
 // runCompile resolves the project config, runs the parser, validates the output,
@@ -176,12 +269,12 @@ func runCompile(cmd *cobra.Command, dir string, o compileOptions) error {
 	// filepath.Join, and a compileOptions literal that forgot it reached a write
 	// with an empty path.
 	o.output = defaultOutputPath(dir, o.output)
-	cfg, err := resolveCompileTarget(dir, o.output)
+	if o.built == nil {
+		o.built = &build.Result{}
+	}
+	cfg, err := prepareCompile(cmd, dir, &o)
 	if err != nil {
 		return err
-	}
-	if perr := checkProjectPreconditions(cmd, dir, cfg); perr != nil {
-		return perr
 	}
 	// Self-heal the extracted parser sources before running the parser, so a binary
 	// upgrade (new features like dbt vs a stale ~/.dexaflow/pysrc) never surfaces as
@@ -202,10 +295,10 @@ func runCompile(cmd *cobra.Command, dir string, o compileOptions) error {
 	if err != nil {
 		return err
 	}
-	if ierr := checkImageFlags(cmd, o.build, o.push, image); ierr != nil {
+	if ierr := checkImageFlags(cmd, o, image); ierr != nil {
 		return ierr
 	}
-	if rerr := runParser(cmd, command, parserArgs{
+	if rerr := parseForDeclaredPython(cmd, command, parserArgs{
 		source:        dagSourcePath(dir, cfg),
 		config:        projectConfigPath(dir),
 		output:        o.output,
@@ -230,14 +323,25 @@ func runCompile(cmd *cobra.Command, dir string, o compileOptions) error {
 	if perr := validateOperatorProvidersFile(o.output, cfg); perr != nil {
 		return perr
 	}
-	if berr := buildAndPush(cmd, dir, o, cfg, image); berr != nil {
+	if berr := checkThenBuild(cmd, dir, o, cfg, image); berr != nil {
 		return berr
 	}
 	if o.build {
 		remindDeprecatedPythonAfterBuild(cmd.ErrOrStderr(), cfg)
 	}
-	_, werr := fmt.Fprint(cmd.OutOrStdout(), compileSummary(dagSourcePath(dir, cfg), o.output, image, o.dagVersion))
+	_, werr := fmt.Fprint(cmd.OutOrStdout(), compileSummary(dagSourcePath(dir, cfg), o.output, compiledImageRef(image, *o.built), o.dagVersion))
 	return werr
+}
+
+// checkThenBuild runs o.beforeBuild on the compiled dag.json, then builds
+// and pushes as o asks.
+func checkThenBuild(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.LeoflowConfig, image string) error {
+	if o.beforeBuild != nil {
+		if err := o.beforeBuild(); err != nil {
+			return err
+		}
+	}
+	return buildAndPush(cmd, dir, o, cfg, image)
 }
 
 // runDbtCompile compiles a dbt project (ADR 0042) instead of a Python DAG: it
@@ -245,7 +349,7 @@ func runCompile(cmd *cobra.Command, dir string, o compileOptions) error {
 // into a dag.json via the dbt package, overlays the dexaflow.yaml, validates, and
 // optionally builds/pushes the image — reusing the same tail as the parser path.
 func runDbtCompile(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.LeoflowConfig, image string) error {
-	if ierr := checkImageFlags(cmd, o.build, o.push, image); ierr != nil {
+	if ierr := checkImageFlags(cmd, o, image); ierr != nil {
 		return ierr
 	}
 	manifest, err := loadDbtManifest(cmd, dir, cfg.Dbt, o.local, cfg.DagID)
@@ -304,13 +408,13 @@ func runDbtCompile(cmd *cobra.Command, dir string, o compileOptions, cfg *domain
 	if verr := validateDAGFile(o.output); verr != nil {
 		return verr
 	}
-	if berr := buildAndPush(cmd, dir, o, cfg, image); berr != nil {
+	if berr := checkThenBuild(cmd, dir, o, cfg, image); berr != nil {
 		return berr
 	}
 	if o.build {
 		remindDeprecatedPythonAfterBuild(cmd.ErrOrStderr(), cfg)
 	}
-	_, werr := fmt.Fprint(cmd.OutOrStdout(), compileSummary(filepath.Join(dir, cfg.Dbt.Project), o.output, image, o.dagVersion))
+	_, werr := fmt.Fprint(cmd.OutOrStdout(), compileSummary(filepath.Join(dir, cfg.Dbt.Project), o.output, compiledImageRef(image, *o.built), o.dagVersion))
 	return werr
 }
 
@@ -540,51 +644,165 @@ func writeDAGFile(path string, spec *domain.DAGSpec) error {
 }
 
 // buildAndPush optionally builds the DAG image and pushes it, honoring the
-// --build/--push flags. When building and the project ships no Dockerfile, one is
-// generated from the dexaflow.yaml (base image + system packages + dependencies/
-// connectors), built, and removed afterward so the workspace stays clean.
+// --build/--push flags, with the builder selectBuilder resolves. When building
+// and the project ships no Dockerfile, one is generated from the dexaflow.yaml
+// (base image + system packages + dependencies/connectors), built, and removed
+// afterward so the workspace stays clean. A push always follows a build
+// (checkImageFlags refuses --push without --build).
 func buildAndPush(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.LeoflowConfig, image string) error {
-	if o.build {
-		name, fromConfig := resolveDockerfileName(cmd, o, cfg)
-		if fromConfig {
-			if cerr := checkConfiguredDockerfile(dir, name); cerr != nil {
-				return cerr
-			}
+	if !o.build {
+		return nil
+	}
+	if o.push && !o.settingsShown {
+		// deploy warned with its settings.
+		warnAuthMethod(cmd.ErrOrStderr(), cfg)
+	}
+	name, _ := resolveDockerfileName(cmd, o, cfg)
+	o.inputs = resolveBuildInputs(cfg, os.LookupEnv)
+	b, reason := selectBuilder(cmdContext(cmd), dir, name, o, cfg, image)
+	return buildImage(cmd, dir, o, cfg, image, b, reason)
+}
+
+// buildImage runs builder b on the project, from its own Dockerfile or one
+// generated from dexaflow.yaml, and pushes when asked. The checks before the
+// build (a build.dockerfile outside the project, exclude_paths, secrets the
+// image would carry) run on the skip path too, where b builds nothing: the
+// image it reuses was built from the same inputs, so what they refuse or warn
+// about holds for it as well.
+func buildImage(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.LeoflowConfig, image string, b build.Builder, reason string) error {
+	name, fromConfig := resolveDockerfileName(cmd, o, cfg)
+	if fromConfig {
+		if cerr := checkConfiguredDockerfile(dir, name); cerr != nil {
+			return cerr
 		}
-		dockerfile, cleanup, derr := ensureDockerfile(dir, name, cfg, dagSourcePath(dir, cfg))
-		if derr != nil {
-			return derr
+	}
+	dockerfile, cleanup, derr := ensureDockerfile(dir, name, cfg, dagSourcePath(dir, cfg))
+	if derr != nil {
+		return derr
+	}
+	defer cleanup()
+	// A project that ships its own Dockerfile gets the exclusions too, but
+	// we cannot read its COPY lines, so the secret warning softens rather
+	// than claiming what ships.
+	ownDockerfile := dockerfile != filepath.Join(dir, generatedDockerfileName)
+	warnShadowedByDockerfile(cmd.ErrOrStderr(), dockerfileShadow{
+		own: ownDockerfile, dockerfile: name, configFile: projectConfigPath(dir), baseImageSource: o.baseImageSource,
+	}, cfg)
+	// Applies whether or not the project ships its own Dockerfile: exclude_paths
+	// is a statement about what may enter the image, and it does not become
+	// less true because the author wrote the Dockerfile themselves.
+	ignoreCleanup, baked, ierr := ensureDockerignore(cmd.ErrOrStderr(), dir, cfg, ownDockerfile)
+	if ierr != nil {
+		return ierr
+	}
+	defer ignoreCleanup()
+	if perr := printBuildSettings(cmd.OutOrStdout(), o, cfg, b, reason); perr != nil {
+		return perr
+	}
+	if lerr := checkLocalPush(cmd.ErrOrStderr(), o.pushRefused, b); lerr != nil {
+		return lerr
+	}
+	code, contextFiles, lerr := buildFiles(dir, cfg, o.output, dockerfile, b)
+	if lerr != nil {
+		return lerr
+	}
+	warnUploadedSecrets(cmd.ErrOrStderr(), contextFiles, cfg)
+	if ierr := checkBuildInputs(cmd.ErrOrStderr(), o, cfg, b, ownDockerfile); ierr != nil {
+		return ierr
+	}
+	res, berr := b.Build(cmdContext(cmd), build.Request{
+		Image:        image,
+		Dockerfile:   dockerfile,
+		ContextDir:   dir,
+		Platforms:    buildPlatforms(cfg),
+		Push:         o.push,
+		Pin:          o.push,
+		Code:         code,
+		ContextFiles: contextFiles,
+		BuildArgs:    o.inputs.args,
+		Secrets:      o.inputs.secrets,
+		Env:          o.inputs.env,
+		Stdout:       cmd.OutOrStdout(),
+		Stderr:       cmd.ErrOrStderr(),
+	})
+	if werr := warnPinRead(cmd.ErrOrStderr(), o, res, berr); werr != nil {
+		return werr
+	}
+	if perr := recordBuild(o, res); perr != nil {
+		return perr
+	}
+	// A reused image (the skip path) was built earlier by a build this CLI
+	// knows nothing of: naming "skip" or the base it would use now would be
+	// a guess, so it records neither.
+	if o.provenance != nil && res.Path != build.PathSkip {
+		o.provenance.Builder = b.Describe()
+		if !ownDockerfile {
+			o.provenance.BaseImage = resolveBaseImage(cfg)
 		}
-		defer cleanup()
-		// A project that ships its own Dockerfile gets the exclusions too, but
-		// we cannot read its COPY lines — so the secret warning softens rather
-		// than claiming what ships.
-		ownDockerfile := dockerfile != filepath.Join(dir, generatedDockerfileName)
-		// Applies whether or not the project ships its own Dockerfile: exclude_paths
-		// is a statement about what may enter the image, and it does not become
-		// less true because the author wrote the Dockerfile themselves.
-		ignoreCleanup, baked, ierr := ensureDockerignore(cmd.ErrOrStderr(), dir, cfg, ownDockerfile)
-		if ierr != nil {
-			return ierr
-		}
-		defer ignoreCleanup()
-		var platforms []string
-		if cfg.Build != nil {
-			platforms = cfg.Build.Platforms
-		}
-		if berr := buildImage(cmd, o.builder, image, dockerfile, dir, platforms); berr != nil {
-			return berr
-		}
-		// After the build, where the eye lands: the warning above is minutes of
-		// layer output away by now.
+		*o.provenance = o.provenance.Sanitized()
+	}
+	// After the build, where the eye lands: the warning above is minutes of
+	// layer output away by now. A reused image printed no build output.
+	if res.Path != build.PathSkip {
 		remindBakedSecretsAfterBuild(cmd.ErrOrStderr(), baked)
 	}
-	if o.push {
-		if perr := pushImage(cmd, o.builder, image); perr != nil {
-			return perr
-		}
-	}
 	return nil
+}
+
+// warnPinRead turns err, a build's failure, into a warning on w when only
+// the read of the pushed image's digest failed (build.ErrPinRead) and the
+// caller does not require a pin: the image is in the registry, so the
+// compile keeps its tag in dag.json rather than fail after the push
+// (podman reading another auth file, a plain-HTTP registry off the loopback).
+// Any other failure, or any failure under o.requirePin, is returned.
+func warnPinRead(w io.Writer, o compileOptions, res build.Result, err error) error {
+	if err == nil || o.requirePin || !res.Pushed || !errors.Is(err, build.ErrPinRead) {
+		return err
+	}
+	//nolint:errcheck // advisory
+	fmt.Fprintf(w, "warning: %s was pushed, but dag.json keeps its tag: %v\n"+
+		"  `dexaflow push` reads the digest again before registering; or register it pinned with "+
+		"`dexaflow push --image <repository>@sha256:<digest>`\n", res.Image, err)
+	return nil
+}
+
+// recordBuild hands res to the caller that asked for it (o.built) and, for a
+// pushed image, writes its digest-pinned reference into dag.json
+// (pinCompiledImage).
+func recordBuild(o compileOptions, res build.Result) error {
+	if o.built != nil {
+		*o.built = res
+	}
+	if res.Ref == "" {
+		return nil
+	}
+	return pinCompiledImage(o.output, res.Ref)
+}
+
+// pinCompiledImage writes ref, the pushed image's digest-pinned reference,
+// as the image of the compiled dag.json at path, so the artifact `dexaflow
+// push` registers names the bytes that were pushed (#1703), as deploy's does.
+// The file keeps the layout the compile gives it.
+func pinCompiledImage(path, ref string) error {
+	data, err := os.ReadFile(path) //nolint:gosec // G304: output path is operator-supplied on the CLI.
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", path, err)
+	}
+	var spec domain.DAGSpec
+	if uerr := json.Unmarshal(data, &spec); uerr != nil {
+		return fmt.Errorf("parsing %s: %w", path, uerr)
+	}
+	spec.Image = ref
+	return writeDAGFile(path, &spec)
+}
+
+// compiledImageRef is the image the compiled dag.json names: the pinned
+// reference of a pushed build, else image as resolved.
+func compiledImageRef(image string, built build.Result) string {
+	if built.Ref != "" {
+		return built.Ref
+	}
+	return image
 }
 
 // resolveDockerfileName picks the Dockerfile name to look for in the DAG
@@ -652,58 +870,20 @@ func compileSummary(src, out, image, version string) string {
 	return fmt.Sprintf("Compiled %s -> %s (%s, version %s)\n", src, out, imageField, version)
 }
 
-// checkImageFlags enforces the --build/--image relationship and notes when an
-// image is recorded without being built.
-func checkImageFlags(cmd *cobra.Command, build, push bool, image string) error {
-	if push && !build {
+// checkImageFlags enforces the --build/--image relationship of o and notes
+// when an image is recorded without being built, except in source mode,
+// where no image is ever built.
+func checkImageFlags(cmd *cobra.Command, o compileOptions, image string) error {
+	building, push := o.build, o.push
+	if push && !building {
 		return errors.New("--push requires --build")
 	}
-	if build && image == "" {
+	if building && image == "" {
 		return errors.New("--build needs an image reference: pass --image, or set registry.url + registry.image_name in dexaflow.yaml")
 	}
-	if !build && image != "" {
+	if !building && image != "" && !o.sourceMode {
 		_, werr := fmt.Fprintf(cmd.ErrOrStderr(), "note: recording image %q without building it; pass --build to build the DAG image\n", image)
 		return werr
-	}
-	return nil
-}
-
-// buildArgs assembles the builder argv for a DAG image build. When platforms is
-// non-empty it injects `--platform a,b`, so a deploy can target the cluster's
-// architecture instead of the host's — the Mac-safe default linux/amd64 (ADR
-// 0041). A single platform works with a plain `docker build`; a multi-platform
-// list is the caller's signal to route through buildx (the deploy command does).
-func buildArgs(image, dockerfile, contextDir string, platforms []string) []string {
-	args := []string{"build"}
-	if len(platforms) > 0 {
-		args = append(args, "--platform", strings.Join(platforms, ","))
-	}
-	return append(args, "-t", image, "-f", dockerfile, contextDir)
-}
-
-// buildImage shells out to the configured builder to build the DAG image
-// out-of-process (ADR 0015: no Docker SDK in our binaries). The build context
-// is the DAG directory; platforms selects the target architecture(s).
-func buildImage(cmd *cobra.Command, builder, image, dockerfile, contextDir string, platforms []string) error {
-	//nolint:gosec // G204: builder is operator-configured by design (ADR 0015).
-	bc := exec.CommandContext(cmdContext(cmd), builder, buildArgs(image, dockerfile, contextDir, platforms)...)
-	bc.Stdout = cmd.OutOrStdout()
-	bc.Stderr = cmd.ErrOrStderr()
-	if err := bc.Run(); err != nil {
-		return fmt.Errorf("building image %q with %q: %w", image, builder, err)
-	}
-	return nil
-}
-
-// pushImage shells out to the configured builder to push the image to its
-// registry (out-of-process; ADR 0015).
-func pushImage(cmd *cobra.Command, builder, image string) error {
-	//nolint:gosec // G204: builder is operator-configured by design (ADR 0015).
-	pc := exec.CommandContext(cmdContext(cmd), builder, "push", image)
-	pc.Stdout = cmd.OutOrStdout()
-	pc.Stderr = cmd.ErrOrStderr()
-	if err := pc.Run(); err != nil {
-		return fmt.Errorf("pushing image %q with %q: %w", image, builder, err)
 	}
 	return nil
 }
@@ -726,6 +906,10 @@ type parserArgs struct {
 	// which is what compile wants; validate --parse discards it, because the
 	// parser announces a scratch file the user never asked for.
 	stdout io.Writer
+	// stderr receives the parser's stderr. Nil means the command's stderr.
+	// parseForDeclaredPython holds a retargeted run's output back until it
+	// knows whether that run is the one to report.
+	stderr io.Writer
 }
 
 // parserConfigEnv is the env var that carries the resolved project config
@@ -743,8 +927,7 @@ const parserConfigEnv = "LEOFLOW_PROJECT_CONFIG_JSON"
 func resolveVersionAndImage(cmd *cobra.Command, dir string, o *compileOptions, cfg *domain.LeoflowConfig) (string, error) {
 	ctx := cmdContext(cmd)
 	if o.dagVersion == "" {
-		dockerfile, _ := resolveDockerfileName(cmd, *o, cfg)
-		label, err := defaultDAGVersion(ctx, dir, cfg, dockerfile, o.output)
+		label, err := contentLabel(cmd, dir, *o, cfg)
 		if err != nil {
 			return "", err
 		}
@@ -761,6 +944,20 @@ func resolveVersionAndImage(cmd *cobra.Command, dir string, o *compileOptions, c
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", msg)
 	}
 	return resolveBuildImage("", cfg, o.dagVersion, rev), nil
+}
+
+// contentLabel is the default version label of the project at dir, whose
+// settled config is cfg, for a compile with the options o: the Dockerfile
+// name o and dexaflow.yaml pick, and the compiled output o.output, which the
+// hash leaves out. In source mode (o.sourceMode) the label hashes the runtime
+// image o.image too.
+func contentLabel(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.LeoflowConfig) (string, error) {
+	dockerfile, _ := resolveDockerfileName(cmd, o, cfg)
+	runtimeImage := ""
+	if o.sourceMode {
+		runtimeImage = o.image
+	}
+	return defaultDAGVersionOn(cmdContext(cmd), dir, cfg, dockerfile, o.output, runtimeImage)
 }
 
 // resolveParserCommand returns the explicit --parser-cmd value when set,
@@ -818,7 +1015,11 @@ func runParser(cmd *cobra.Command, command string, a parserArgs) error {
 	// the returned error — surfaced both in the dev terminal and the UI's import
 	// error banner, not just an opaque "exit status 1".
 	var stderr bytes.Buffer
-	pc.Stderr = io.MultiWriter(cmd.ErrOrStderr(), &stderr)
+	streamTo := cmd.ErrOrStderr()
+	if a.stderr != nil {
+		streamTo = a.stderr
+	}
+	pc.Stderr = io.MultiWriter(streamTo, &stderr)
 	if err := pc.Run(); err != nil {
 		raw := strings.TrimSpace(stderr.String())
 		detail := lastLines(raw, 20)
@@ -876,13 +1077,14 @@ func parserErrorSummary(stderr string) string {
 }
 
 // overlayProject writes the dexaflow.yaml Dexaflow-specific config (staging,
-// on-failure alerts, and per-task overrides) onto the produced dag.json. These
+// on-failure alerts, min_idle_workers and per-task overrides) onto the
+// produced dag.json. These
 // are deployment concerns, not Airflow DAG attributes, so the parser does not
 // emit them (ADR 0022, 0023; #424).
 // Per-task overrides are bound by task_id; an entry naming a task absent from the
 // DAG is a hard error (no silent drop). No-op when nothing is configured.
 func overlayProject(dagJSONPath string, cfg *domain.LeoflowConfig) error {
-	if cfg.Staging == nil && cfg.Alerts == nil && len(cfg.Tasks) == 0 && !hasDAGDefaults(cfg.Defaults) {
+	if !hasProjectOverlay(cfg) {
 		return nil
 	}
 	data, err := os.ReadFile(dagJSONPath) //nolint:gosec // G304: output path is operator-supplied on the CLI.
@@ -893,12 +1095,7 @@ func overlayProject(dagJSONPath string, cfg *domain.LeoflowConfig) error {
 	if uerr := json.Unmarshal(data, &spec); uerr != nil {
 		return fmt.Errorf("parsing %s: %w", dagJSONPath, uerr)
 	}
-	if cfg.Staging != nil {
-		spec.Staging = cfg.Staging
-	}
-	if cfg.Alerts != nil {
-		spec.Alerts = cfg.Alerts
-	}
+	overlayDAGFields(&spec, cfg)
 	if verr := validateTaskBindings(cfg.Tasks, spec.Tasks); verr != nil {
 		return verr
 	}
@@ -926,6 +1123,27 @@ func overlayProject(dagJSONPath string, cfg *domain.LeoflowConfig) error {
 		return fmt.Errorf("writing %s: %w", dagJSONPath, werr)
 	}
 	return nil
+}
+
+// hasProjectOverlay reports whether cfg declares anything overlayProject
+// writes onto dag.json.
+func hasProjectOverlay(cfg *domain.LeoflowConfig) bool {
+	return cfg.Staging != nil || cfg.Alerts != nil || cfg.MinIdleWorkers > 0 ||
+		len(cfg.Tasks) > 0 || hasDAGDefaults(cfg.Defaults)
+}
+
+// overlayDAGFields copies the DAG-level fields of cfg the parser does not
+// emit onto spec: staging, alerts and min_idle_workers.
+func overlayDAGFields(spec *domain.DAGSpec, cfg *domain.LeoflowConfig) {
+	if cfg.Staging != nil {
+		spec.Staging = cfg.Staging
+	}
+	if cfg.Alerts != nil {
+		spec.Alerts = cfg.Alerts
+	}
+	if cfg.MinIdleWorkers > 0 {
+		spec.MinIdleWorkers = cfg.MinIdleWorkers
+	}
 }
 
 // validateTaskBindings guards the YAML↔task binding: every key in the dexaflow.yaml

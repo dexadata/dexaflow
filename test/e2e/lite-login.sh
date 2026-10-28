@@ -22,11 +22,14 @@ echo "==> building binaries"
 go build -o "$HOME_DIR/leoflow" ./cmd/dexaflow
 go build -o "$HOME_DIR/leoflow-server" ./cmd/dexaflow-server
 
-# A fake python3.11 on PATH so `setup` uses it instead of downloading a CPython
-# (the parser is not exercised by this login test).
+# A fake python3.12 on PATH so `setup` uses it instead of downloading a CPython
+# (the parser is not exercised by this login test). Setup takes a host
+# interpreter only on the version it reports, so the fake has to answer
+# --version, and it is a 3.12 because a host without 3.11 must not download
+# anything at setup time (#1700).
 mkdir -p "$HOME_DIR/bin"
-printf '#!/bin/sh\n' > "$HOME_DIR/bin/python3.11"
-chmod +x "$HOME_DIR/bin/python3.11"
+printf '#!/bin/sh\necho "Python 3.12.4"\n' > "$HOME_DIR/bin/python3.12"
+chmod +x "$HOME_DIR/bin/python3.12"
 export PATH="$HOME_DIR/bin:$PATH"
 
 echo "==> resetting the leoflow_dev database (migrated, empty)"
@@ -38,6 +41,8 @@ PW="$(printf '%s\n' "$SETUP_OUT" | sed -n 's/^[[:space:]]*password:[[:space:]]*/
 HASH="$(sed -n 's/^admin_password_hash:[[:space:]]*"\(.*\)"/\1/p' "$HOME_DIR/.dexaflow/config.yaml")"
 [ -n "$PW" ]   || fail "setup did not print a generated password"
 [ -n "$HASH" ] || fail "setup did not store an admin_password_hash"
+EMAIL="$(sed -n 's/^admin_email:[[:space:]]*"\(.*\)"/\1/p' "$HOME_DIR/.dexaflow/config.yaml")"
+[ "$EMAIL" = "admin@dexaflow.local" ] || fail "setup recorded admin_email '$EMAIL' (want the default admin@dexaflow.local)"
 pass "setup generated an admin password (shown once) and stored only the hash"
 
 # Seed the editor's workspace (a DAG project) and a fake Monaco bundle so the
@@ -56,16 +61,17 @@ LEOFLOW_REDIS_URL="$REDIS_URL" \
 LEOFLOW_AUTH_JWT_SECRET="e2e-insecure-jwt-secret-please-change" \
 LEOFLOW_SECRET_KEY="e2e-insecure-secret-key-32bytes!" \
 LEOFLOW_BOOTSTRAP_PASSWORD_HASH="$HASH" \
-LEOFLOW_BOOTSTRAP_EMAIL="admin@leoflow.local" \
+LEOFLOW_BOOTSTRAP_EMAIL="$EMAIL" \
 LEOFLOW_UI_EDITION="lite" \
 LEOFLOW_UI_WORKSPACE="$HOME_DIR/ws" \
 LEOFLOW_UI_MONACO_DIR="$HOME_DIR/monaco" \
 LEOFLOW_LOGS_DIR="$HOME_DIR/logs" \
+LEOFLOW_EXECUTOR_TYPE="subprocess" \
   "$HOME_DIR/leoflow-server" >"$HOME_DIR/server.log" 2>&1 &
 SERVER_PID=$!
 
 echo "==> waiting for readiness"
-for i in $(seq 1 40); do
+for _ in $(seq 1 40); do
   code="$(curl -s -o /dev/null -w '%{http_code}' "${BASE}/readyz" || true)"
   [ "$code" = "200" ] && break
   kill -0 "$SERVER_PID" 2>/dev/null || fail "server exited early:\n$(cat "$HOME_DIR/server.log")"
@@ -78,7 +84,7 @@ echo "==> login with the correct admin password (the happy path)"
 login() { curl -s -o "$HOME_DIR/resp.json" -w '%{http_code}' -X POST "${BASE}/auth/token" \
   -H 'content-type: application/json' -d "$1"; }
 
-code="$(login "{\"username\":\"admin@leoflow.local\",\"password\":$(printf '%s' "$PW" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')}")"
+code="$(login "{\"username\":\"${EMAIL}\",\"password\":$(printf '%s' "$PW" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')}")"
 [ "$code" = "200" ] || fail "login returned $code (want 200)\n$(cat "$HOME_DIR/resp.json")"
 grep -q '"access_token"' "$HOME_DIR/resp.json" || fail "login 200 but no access_token\n$(cat "$HOME_DIR/resp.json")"
 TOKEN="$(python3 -c 'import json;print(json.load(open("'"$HOME_DIR"'/resp.json"))["access_token"])')"
@@ -86,7 +92,7 @@ TOKEN="$(python3 -c 'import json;print(json.load(open("'"$HOME_DIR"'/resp.json")
 pass "admin login succeeded and returned a JWT"
 
 echo "==> wrong password must be rejected"
-code="$(login '{"username":"admin@leoflow.local","password":"definitely-wrong"}')"
+code="$(login "{\"username\":\"${EMAIL}\",\"password\":\"definitely-wrong\"}")"
 [ "$code" = "401" ] || fail "wrong password returned $code (want 401)"
 pass "wrong password rejected (401)"
 

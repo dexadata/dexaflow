@@ -150,17 +150,19 @@ func (s *Scheduler) promoteSameTick(ctx context.Context, run RunState, planned [
 	return run, nil
 }
 
-// foldable returns the batch's transitions that a re-plan should see: the
-// planner's start decisions (scheduled, skipped, upstream_failed). up_for_retry
-// is left out on purpose, so a re-plan derives a pending retry exactly as the
-// first pass did instead of advancing it.
+// foldable returns the batch's persisted transitions that a re-plan should
+// see: the planner's start decisions (scheduled, skipped, upstream_failed).
+// up_for_retry is left out on purpose, so a re-plan derives a pending retry
+// exactly as the first pass did instead of advancing it. A row the flush's
+// source-state guard left alone (#1605) is left out too, so a re-plan never
+// dispatches a task a concurrent writer moved.
 func (b *transitionBatch) foldable() map[string]domain.TaskState {
 	out := map[string]domain.TaskState{}
-	for _, to := range b.order {
-		switch to {
+	for _, k := range b.order {
+		switch k.to {
 		case domain.TaskStateScheduled, domain.TaskStateSkipped, domain.TaskStateUpstreamFailed:
-			for _, taskID := range b.byState[to] {
-				out[taskID] = to
+			for _, taskID := range b.applied[k] {
+				out[taskID] = k.to
 			}
 		default:
 		}

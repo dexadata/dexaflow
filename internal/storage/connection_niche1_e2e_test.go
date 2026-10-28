@@ -10,6 +10,7 @@ import (
 
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/secrets"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 // TestDbtCloudConnectionURIShapeIntegration pins the **token, no-host** shape for
@@ -29,7 +30,7 @@ func TestDbtCloudConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const rawToken = "dbt_tok/1+2" //nolint:gosec // fixture, not a real token
 	connID := fmt.Sprintf("e2e_dbt_cloud_%d", time.Now().UnixNano())
@@ -83,7 +84,7 @@ func TestHiveServer2ConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const rawPassword = "p@ss/w0rd:!#$" //nolint:gosec // fixture, not a credential
 	connID := fmt.Sprintf("e2e_hiveserver2_%d", time.Now().UnixNano())
@@ -142,7 +143,7 @@ func TestHiveCliConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const (
 		rawPassword = "p@ss/w0rd:!#$"                                       //nolint:gosec // fixture, not a credential
@@ -204,7 +205,7 @@ func TestPowerBIConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const (
 		rawSecret = "client_secret/1+2" //nolint:gosec // fixture, not a credential
@@ -261,7 +262,7 @@ func TestMSGraphConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const (
 		rawSecret = "client_secret/1+2" //nolint:gosec // fixture, not a credential
@@ -317,7 +318,7 @@ func TestLivyConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const rawPassword = "p@ss/w0rd:!#$" //nolint:gosec // fixture, not a credential
 	connID := fmt.Sprintf("e2e_livy_%d", time.Now().UnixNano())
@@ -377,7 +378,7 @@ func TestGCPLookerConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	const rawExtra = `{"client_id":"x","client_secret":"y/1+2"}` //nolint:gosec // fixture, not a credential
 	connID := fmt.Sprintf("e2e_gcp_looker_%d", time.Now().UnixNano())

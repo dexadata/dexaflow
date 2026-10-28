@@ -1,39 +1,36 @@
-# Bundles the Dexaflow SQL migrations with the golang-migrate CLI, for the Helm
-# chart's migration Job (#34/#48). Run as:
-#   migrate -path /migrations -database <url> up
+# The Helm chart's migration Job image (#34/#48): the dexaflow-migrate wrapper
+# (cmd/dexaflow-migrate) plus the Dexaflow SQL migrations. Run as:
+#   dexaflow-migrate -path /migrations -database <url> up
 #
-# Build from the repository root (go.mod / go.sum must be in context):
-#   docker build -f deploy/Dockerfile.migrate -t leoflow-migrate .
+# Build from the repository root:
+#   docker build -f deploy/Dockerfile.migrate -t dexaflow-migrate .
 #
-# ── Why this compiles the CLI instead of `FROM migrate/migrate:<tag>` (#1039) ─
+# ── What the binary is (#1020) ─────────────────────────────────────────────
 #
-# It used to be `FROM migrate/migrate:v4.19.1` plus a COPY. That shipped someone
-# else's compiled binary, with its own dependency tree and its own Go toolchain,
-# into a pod that holds the database DSN and runs before anything else on a
-# fresh cluster. `govulncheck` could not see it: golang-migrate IS in our go.mod
-# (the Lite path compiles it into the CLI, internal/cli/dev.go), but the binary
-# inside the third-party image is not in our module graph, so we had two migrate
-# binaries and covered one. The scan added in #1034 measured the difference —
-# 84 fixable findings, 50 of them CRITICAL/HIGH, against zero for leoflow-server.
+# It used to be golang-migrate's own `cmd/migrate`, compiled from the version
+# in our go.mod (#1039). That CLI printed the raw driver error, so a fresh
+# install against a database that does not exist failed with `pq: database "x"
+# does not exist` and nothing about database.url, and it linked lib/pq while
+# the control plane uses pgx. The wrapper calls golang-migrate's library API
+# over pgx v5, maps each driver error to a message in the chart's terms, and
+# exits with a code of its own for each failure a retry cannot fix, which the
+# migration Job's podFailurePolicy acts on. Its subcommands and flags are the
+# golang-migrate CLI's that the docs name (`up`, `version`, `force N`,
+# `goto N`, `-path`, `-database`), so the Job's args and the upgrade guide's
+# recovery steps are unchanged.
 #
-# Bumping the pin would have cleared those 50 and restored the same blind spot
-# the day the next advisory landed. Building the CLI from the version already in
-# our go.mod removes the third-party image instead: one migrate binary, resolved
-# by `go list -m`, moved by Dependabot like every other dependency, and inside
-# govulncheck's reach — `govulncheck -tags postgres,pgx5
-# github.com/golang-migrate/migrate/v4/cmd/migrate` analyses exactly the package
-# this stage builds, at exactly the version it builds it at.
-#
-# The CLI surface is upstream's, unmodified: this builds upstream's own
-# `cmd/migrate` main package, not a reimplementation, so every flag and
-# subcommand the Job (or an operator) passes behaves as documented.
+# It is one of this module's own packages, so `govulncheck ./...` in
+# security.yaml analyses exactly what this stage builds, and no build tag
+# selects its database driver: the pgx5 driver is imported by
+# internal/migrator, not registered behind `-tags`.
+# scripts/check-migrate-cli-build-tags.sh keeps those facts true.
 
 # Pinned to the toolchain CI uses (GO_VERSION in .github/workflows/security.yaml
 # and image-scan.yaml). Not cosmetic: Trivy keys `stdlib` findings to the Go
 # toolchain recorded in the binary's build info, so a floating tag here would
 # move this image's reported vulnerability set for reasons unrelated to any
-# commit — the same trap security.yaml documents for leoflow-server.
-ARG GO_VERSION=1.26.9
+# commit, the same trap security.yaml documents for dexaflow-server.
+ARG GO_VERSION=1.26.10
 
 # Build on the NATIVE platform and cross-compile with GOARCH, rather than
 # letting buildx emulate the build stage under QEMU for the arm64 leg. The
@@ -43,35 +40,26 @@ ARG GO_VERSION=1.26.9
 FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-bookworm AS build
 WORKDIR /src
 
-# Only the module files are copied: the package being built lives in a
-# dependency module, so none of this repository's own source is an input. That
-# also means the build cache keys on go.mod/go.sum alone and survives every
-# unrelated commit.
+# Module downloads first, so the cache survives source edits.
 COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
 
 ARG TARGETARCH
-# Build tags select which database drivers are registered — golang-migrate
-# registers none by default, and a binary built without them fails at RUNTIME
-# with "unknown driver", not at build time. `postgres` covers the `postgres://`
-# and `postgresql://` schemes the Helm Job's LEOFLOW_DATABASE_URL uses; `pgx5`
-# covers the `pgx5://` scheme the Lite path uses (internal/cli/dev.go), so a DSN
-# that works in one place works in the other. Postgres is the only database
-# Dexaflow supports, so no other driver is built in.
-#
-# The version stamped into the binary is READ from the module graph rather than
-# written here, so `migrate -version` cannot drift from the version actually
-# compiled. `-X main.Version=` must use the unqualified `main.` form; a
-# fully-qualified package path silently no-ops.
+# VERSION and GIT_COMMIT are stamped into internal/version, the same way
+# deploy/Dockerfile.server stamps the server, so `-version` names the build.
+# The golang-migrate version is read from the binary's build info at run time.
 #
 # TARGETARCH is filled in by BuildKit; the fallback keeps a build under any
 # front end that leaves it empty from setting GOARCH to the empty string, which
 # is not the same thing as leaving it unset.
+ARG VERSION=dev
+ARG GIT_COMMIT=none
 RUN set -eux; \
-	version="$(go list -m -f '{{.Version}}' github.com/golang-migrate/migrate/v4)"; \
 	CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH:-$(go env GOARCH)}" go build -trimpath \
-		-tags 'postgres pgx5' \
-		-ldflags="-s -w -X main.Version=${version}" \
-		-o /out/migrate github.com/golang-migrate/migrate/v4/cmd/migrate
+		-ldflags="-s -w -X github.com/dexadata/dexaflow/internal/version.version=${VERSION} -X github.com/dexadata/dexaflow/internal/version.gitCommit=${GIT_COMMIT}" \
+		-o /out/dexaflow-migrate ./cmd/dexaflow-migrate
 
 # Distroless static, Debian 13 (trixie): the same base as leoflow-server
 # (#1400) and the suite runtime/Dockerfile moved to in #1038.
@@ -91,22 +79,21 @@ RUN set -eux; \
 # `database.caConfigMap` here as well as in the control plane (#1052) — it did
 # not, which broke the chart's own recipe against RDS and Cloud SQL.
 #
-# Note this binary links lib/pq for `postgres://`, while the control plane uses
-# pgx. Both read `sslrootcert=<path>` the same way, so the documented recipe is
-# safe on both — but `sslrootcert=system` is pgx-only, and writing it in the
-# shared DSN starts the server and fails this Job.
+# The wrapper checks that the sslrootcert file exists before it dials and names
+# database.caConfigMap when it does not. It runs on pgx like the control plane,
+# so `sslrootcert=system` works in both.
 FROM gcr.io/distroless/static-debian13:nonroot
 
 LABEL org.opencontainers.image.source="https://github.com/dexadata/dexaflow"
-LABEL org.opencontainers.image.description="golang-migrate CLI plus the Dexaflow SQL migrations, for the Helm migration Job"
+LABEL org.opencontainers.image.description="dexaflow-migrate plus the Dexaflow SQL migrations, for the Helm migration Job"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
-COPY --from=build /out/migrate /usr/local/bin/migrate
-# Only the SQL. migrations/ also holds embed.go, latest.go and their tests,
-# which the Go side uses to compute the binary's required schema version;
-# golang-migrate's file source ignores names that do not match its version
-# pattern, so copying them was harmless — but shipping source into a runtime
-# image is not a thing to leave harmless on purpose.
+COPY --from=build /out/dexaflow-migrate /usr/local/bin/dexaflow-migrate
+# The binary embeds the same files and uses them when no -path is given. The
+# copy at /migrations stays because the Job, docker-compose and the upgrade
+# guide's one-off pods pass `-path=/migrations`. Only the SQL: migrations/ also
+# holds embed.go, latest.go and their tests, and shipping source into a
+# runtime image is not a thing to leave harmless on purpose.
 COPY migrations/*.sql /migrations/
 
 # 65532 numerically, not `nonroot` by name: a PodSecurity `restricted` namespace
@@ -116,7 +103,8 @@ COPY migrations/*.sql /migrations/
 # readOnlyRootFilesystem + drop-ALL posture needs no change.
 USER 65532:65532
 
-# Matches the entrypoint the third-party image exposed, so the Helm Job's
-# args-only invocation (`-path=… -database=… up`) is unchanged.
-ENTRYPOINT ["/usr/local/bin/migrate"]
+# The Helm Job and the documented one-off pods pass args only
+# (`-path=/migrations -database=... up`), so they are unchanged by the binary's
+# new name.
+ENTRYPOINT ["/usr/local/bin/dexaflow-migrate"]
 CMD ["--help"]

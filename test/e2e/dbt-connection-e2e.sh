@@ -167,12 +167,15 @@ log "Creating the managed Postgres connection FIRST, then pushing the DAG"
 # (ADR 0055 D6), so the connection must be created BEFORE the push — the correct
 # create-then-deploy order. (An external secrets backend would satisfy D6 via
 # coverage instead, with no pre-created vault entry.)
-TOKEN="$("$ROOT/bin/leoflow" auth create-token --server "$API" --username admin@leoflow.local --password admin)"
+TOKEN="$(admin_token "$ROOT/bin/leoflow" "$API" admin)"
 curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d "{\"connection_id\":\"warehouse_pg\",\"conn_type\":\"postgres\",\"host\":\"${HOST_ADDR}\",\"port\":${WH_PORT},\"login\":\"postgres\",\"password\":\"pw\",\"schema\":\"wh\"}" \
   "$API/api/v2/connections" >/dev/null || fail "creating the warehouse_pg connection"
 "$ROOT/bin/leoflow" push "$PROJ/dag.json" --server "$API" --token "$TOKEN"
 
+# New DAGs are paused at creation, and a manual run of a paused DAG waits
+# until the DAG is unpaused.
+unpause_dag "$API" "$DAG_ID" "$TOKEN" || fail "unpausing $DAG_ID failed"
 log "Triggering a run"
 RUN_ID="$(curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{}' "$API/api/v2/dags/$DAG_ID/dagRuns" | jq -r '.dag_run_id')"

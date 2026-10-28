@@ -22,8 +22,8 @@ type DashboardStatsReader interface {
 var dagRunStateOrder = []string{"queued", "running", "success", "failed"}
 
 // tiStateMap maps Dexaflow task states onto the Airflow TaskInstanceState
-// members. Members Dexaflow does not model (removed, restarting,
-// up_for_reschedule, deferred, awaiting_input) are always present and zero.
+// members. Members Dexaflow does not model (restarting, up_for_reschedule,
+// deferred, awaiting_input) are always present and zero.
 var tiStateMap = map[string]string{
 	"none":            "no_status",
 	"scheduled":       "scheduled",
@@ -34,6 +34,7 @@ var tiStateMap = map[string]string{
 	"skipped":         "skipped",
 	"upstream_failed": "upstream_failed",
 	"up_for_retry":    "up_for_retry",
+	"removed":         "removed",
 }
 
 // tiStateOrder is the full Airflow 3.3 TaskInstanceState set, in spec order

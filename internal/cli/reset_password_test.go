@@ -11,6 +11,7 @@ import (
 )
 
 func TestResolveAdminEmail(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		flag string
 		cfg  *config.Config
@@ -18,8 +19,8 @@ func TestResolveAdminEmail(t *testing.T) {
 	}{
 		{"me@x.io", &config.Config{AdminEmail: "cfg@x.io"}, "me@x.io"}, // flag wins
 		{"", &config.Config{AdminEmail: "cfg@x.io"}, "cfg@x.io"},       // config admin
-		{"", &config.Config{}, "admin@leoflow.local"},                  // default
-		{"", nil, "admin@leoflow.local"},                               // no config
+		{"", &config.Config{}, "admin@dexaflow.local"},                 // default
+		{"", nil, "admin@dexaflow.local"},                              // no config
 	}
 	for _, c := range cases {
 		if got := resolveAdminEmail(c.flag, c.cfg); got != c.want {
@@ -29,6 +30,7 @@ func TestResolveAdminEmail(t *testing.T) {
 }
 
 func TestLoadUserConfig(t *testing.T) {
+	t.Parallel()
 	if loadUserConfig("") != nil {
 		t.Error("empty home should yield nil config")
 	}
@@ -71,6 +73,7 @@ func TestInvokingUserHome(t *testing.T) {
 }
 
 func TestResetPasswordDoesNotRequireRoot(t *testing.T) {
+	t.Parallel()
 	// Lite is a per-user install, so reset-password must run as the normal user —
 	// never demand root (the old `sudo` requirement was a catch-22: without sudo it
 	// refused, and under sudo HOME became /root and it missed the user's config).
@@ -79,7 +82,7 @@ func TestResetPasswordDoesNotRequireRoot(t *testing.T) {
 	cmd := newResetPasswordCommand()
 	cmd.SetArgs([]string{})
 	cmd.SilenceUsage, cmd.SilenceErrors = true, true
-	if err := cmd.Execute(); err != nil && strings.Contains(err.Error(), "must run as root") {
+	if err := cmd.ExecuteContext(testCtx(nil)); err != nil && strings.Contains(err.Error(), "must run as root") {
 		t.Fatalf("reset-password must not require root anymore; got: %v", err)
 	}
 }

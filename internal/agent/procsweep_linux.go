@@ -21,6 +21,37 @@ const (
 	prSetChildSubreaper = 36 // PR_SET_CHILD_SUBREAPER
 )
 
+// procKernel is the set of process control calls hardening and the sweep make.
+// liveKernel is the real one; tests substitute a kernel whose calls fail, to check
+// that every failure is fail-closed.
+type procKernel interface {
+	prctl(option, arg uintptr) error
+	pidfdOpen(pid int) (int, error)
+	pidfdKill(fd int) error
+	closeFD(fd int)
+	kill(pid int) error
+}
+
+// liveKernel makes the real system calls.
+type liveKernel struct{}
+
+func (liveKernel) prctl(option, arg uintptr) error {
+	if _, _, errno := syscall.RawSyscall(syscall.SYS_PRCTL, option, arg, 0); errno != 0 {
+		return errno
+	}
+	return nil
+}
+
+func (liveKernel) pidfdOpen(pid int) (int, error) { return unix.PidfdOpen(pid, 0) }
+
+func (liveKernel) pidfdKill(fd int) error { return unix.PidfdSendSignal(fd, unix.SIGKILL, nil, 0) }
+
+func (liveKernel) closeFD(fd int) {
+	_ = unix.Close(fd) //nolint:errcheck // a close error on a pidfd changes nothing
+}
+
+func (liveKernel) kill(pid int) error { return syscall.Kill(pid, syscall.SIGKILL) }
+
 // hardenWarmProcess prepares the warm agent to share a container with untrusted
 // attempts (X3.3, X3.4).
 //
@@ -36,12 +67,15 @@ const (
 // in the shipped image, but a wrapper entrypoint would break that, so it claims
 // the role explicitly and every orphan of an attempt stays its descendant, where
 // sweepDescendants can find it.
-func hardenWarmProcess() error {
-	if _, _, errno := syscall.RawSyscall(syscall.SYS_PRCTL, prSetDumpable, 0, 0); errno != 0 {
-		return fmt.Errorf("prctl(PR_SET_DUMPABLE, 0): %w", errno)
+func hardenWarmProcess() error { return hardenWith(liveKernel{}) }
+
+// hardenWith is hardenWarmProcess on kernel k.
+func hardenWith(k procKernel) error {
+	if err := k.prctl(prSetDumpable, 0); err != nil {
+		return fmt.Errorf("prctl(PR_SET_DUMPABLE, 0): %w", err)
 	}
-	if _, _, errno := syscall.RawSyscall(syscall.SYS_PRCTL, prSetChildSubreaper, 1, 0); errno != 0 {
-		return fmt.Errorf("prctl(PR_SET_CHILD_SUBREAPER, 1): %w", errno)
+	if err := k.prctl(prSetChildSubreaper, 1); err != nil {
+		return fmt.Errorf("prctl(PR_SET_CHILD_SUBREAPER, 1): %w", err)
 	}
 	return nil
 }
@@ -60,9 +94,12 @@ const sweepBudget = 2 * time.Second
 //
 // It is fail-closed: an error means a process may still be running, and the
 // caller must not hand this worker another attempt.
-func sweepDescendants() error {
+func sweepDescendants() error { return sweepWith(liveKernel{}, sweepBudget) }
+
+// sweepWith is sweepDescendants on kernel k, giving up after budget.
+func sweepWith(k procKernel, budget time.Duration) error {
 	self := os.Getpid()
-	deadline := time.Now().Add(sweepBudget)
+	deadline := time.Now().Add(budget)
 	for {
 		alive, err := liveDescendants(self)
 		if err != nil {
@@ -78,7 +115,7 @@ func sweepDescendants() error {
 		for _, ref := range alive {
 			// ESRCH: it exited between the walk and the kill. EPERM (a setuid
 			// binary) is caught by the next walk and the deadline.
-			_ = killProc(ref, true) //nolint:errcheck // the next walk is the check
+			_ = killProcWith(k, ref, true) //nolint:errcheck // the next walk is the check
 		}
 		reapChildren()
 		time.Sleep(zombieDrainPoll)
@@ -118,16 +155,19 @@ type procRef struct {
 // time immediately before kill(2), which narrows the window to microseconds.
 // The parent pid is not re-checked: a descendant whose parent died is
 // reparented to the agent, and it must still be killed.
-func killProc(ref procRef, usePidfd bool) error {
+func killProc(ref procRef, usePidfd bool) error { return killProcWith(liveKernel{}, ref, usePidfd) }
+
+// killProcWith is killProc on kernel k.
+func killProcWith(k procKernel, ref procRef, usePidfd bool) error {
 	if usePidfd {
-		fd, err := unix.PidfdOpen(ref.pid, 0)
+		fd, err := k.pidfdOpen(ref.pid)
 		switch {
 		case err == nil:
-			defer unix.Close(fd) //nolint:errcheck // a close error on a pidfd changes nothing
+			defer k.closeFD(fd)
 			if !sameProcess(ref) {
 				return nil
 			}
-			if serr := unix.PidfdSendSignal(fd, unix.SIGKILL, nil, 0); serr != nil && !errors.Is(serr, unix.ESRCH) {
+			if serr := k.pidfdKill(fd); serr != nil && !errors.Is(serr, unix.ESRCH) {
 				return fmt.Errorf("pidfd_send_signal(%d): %w", ref.pid, serr)
 			}
 			return nil
@@ -140,7 +180,7 @@ func killProc(ref procRef, usePidfd bool) error {
 	if !sameProcess(ref) {
 		return nil
 	}
-	if err := syscall.Kill(ref.pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+	if err := k.kill(ref.pid); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return fmt.Errorf("kill(%d): %w", ref.pid, err)
 	}
 	return nil

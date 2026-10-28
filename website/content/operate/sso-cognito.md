@@ -89,7 +89,7 @@ auth:
     issuer: https://cognito-idp.us-east-1.amazonaws.com/us-east-1_aBcDeFgHi
     clientId: "<app client id>"
     existingSecret: cognito-oidc      # key: oidcClientSecret
-    redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
+    redirectUrl: https://dexaflow.example.com/api/v2/auth/oidc/callback
 
     tenantClaim: iss
     tenantClaims:
@@ -102,8 +102,11 @@ auth:
       - corp.example
 
     breakGlassEmails:
-      - admin@leoflow.local
+      - admin@dexaflow.local
 ```
+
+The bootstrap admin of an install whose database predates the rename is
+`admin@leoflow.local`; list that address instead on such an install.
 
 Cognito lets you create an app client with or without a secret. If yours has one
 it is a confidential client, so `clientSecret`/`existingSecret` is required:

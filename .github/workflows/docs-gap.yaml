@@ -1,0 +1,168 @@
+# The docs review of a release as a CI result (#1938): fails while the next
+# release would ship a user-facing change without docs (scripts/docs-gap.sh)
+# or with a page pinning a release older than it
+# (scripts/check-stale-versions.sh --candidate, #1934), with the list in the
+# job summary.
+#
+# Both ran only inside scripts/cut-release.sh, and AGENTS.md section 1 had the
+# docs review run and recorded by hand. A gap found at cut time costs a new
+# pick and another CI round on the release branch; found on the push that
+# opened it, it is fixed while the change is fresh. The release's tracking
+# issue links the run of the candidate's commit as the Docs line's evidence.
+#
+# The next version: on a push to release-X.Y, X.Y.(N+1) after the newest GA
+# vX.Y.N; on an rc tag vX.Y.Z-rc.N, X.Y.Z; a manual run takes it as input.
+# Both checks judge the commit of the run (docs-gap.sh --ref), not the tip of
+# the branch the version is cut from (release-X.Y for a patch, main for
+# X.Y.0): cut-release.sh waits on the runs of the commit it tags, and a later
+# push must not change what a run of that commit says.
+#
+# The path filter keeps the job off pushes that cannot change the answer: the
+# user-facing surface of scripts/check-docs-updated.sh, the changelog
+# fragments, the docs and what the stale pin check scans. Tag pushes are not
+# filtered by paths. A `Skip-docs:` reason added to a pull request description
+# changes the answer with no push: re-run the job.
+name: Docs gap
+
+on:
+  push:
+    branches: ["release-*"]
+    tags: ["v*-rc.*"]
+    paths:
+      - helm/dexaflow/**
+      - docs/api/leoflow-yaml-schema.json
+      - internal/domain/schemas/**
+      - internal/cli/*.go
+      - internal/config/*.go
+      - internal/api/openapi.yaml
+      - migrations/*.up.sql
+      - .changes/unreleased/**
+      - website/content/**
+      - website/scripts/ci/versions.json
+      - README.md
+      - install.sh
+      - .github/docs-skip.txt
+      - scripts/docs-gap.sh
+      - scripts/check-docs-updated.sh
+      - scripts/check-stale-versions.sh
+      - .github/workflows/docs-gap.yaml
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release to judge (X.Y.Z); run on main for X.Y.0 and on release-X.Y otherwise"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# A manual run for the same version supersedes the one before it. A push gets
+# a group of its own, keyed by run id, as in ci.yaml: cut-release.sh waits on
+# every run of the commit it tags and refuses one with a cancelled run, and a
+# newer push to the branch is no answer for an older commit.
+concurrency:
+  group: ${{ github.event_name == 'workflow_dispatch' && format('{0}-{1}', github.workflow, inputs.version) || format('{0}-run-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
+
+jobs:
+  docs-gap:
+    name: Docs for every user-facing change of the next release
+    # A fork has no release tags of its own to count from.
+    if: ${{ github.repository == 'dexadata/dexaflow' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read # the Skip-docs reason and label of each pull request
+    steps:
+      # docs-gap.sh walks the base branch since the previous GA tag, so it
+      # needs the history and the tags. blob:none keeps the clone to commits
+      # and trees; git fetches the few files the script reads.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+
+      - name: Resolve the next version
+        id: ver
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version=""
+          case "$GITHUB_EVENT_NAME:$GITHUB_REF" in
+            workflow_dispatch:*) version="${INPUT_VERSION#v}" ;;
+            push:refs/tags/v*) version="${GITHUB_REF_NAME#v}"; version="${version%%-*}" ;;
+            push:refs/heads/release-*)
+              minor="${GITHUB_REF_NAME#release-}"
+              patch="$(git tag -l "v$minor.*" | sed -nE "s/^v${minor//./\\.}\.([0-9]+)$/\1/p" | sort -n | tail -1)"
+              # release-X.Y is created from vX.Y.0 (RELEASING.md); without it
+              # there is no previous GA on the branch to count from.
+              [ -n "$patch" ] || { echo "::notice::no vX.Y.N GA tag for $GITHUB_REF_NAME: nothing to judge"; exit 0; }
+              version="$minor.$((patch + 1))" ;;
+          esac
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::'$version' is not a version (X.Y.Z)"; exit 1; }
+          # Both checks judge the commit this run checked out, which must be
+          # on the branch the version is cut from.
+          base=main
+          [ "${version##*.}" = 0 ] || base="release-${version%.*}"
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$GITHUB_REF_NAME" != "$base" ]; then
+            echo "::error::v$version is cut from $base: run this workflow on that branch (gh workflow run docs-gap.yaml --ref $base -f version=$version)"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: User-facing changes without docs
+        id: gap
+        if: steps.ver.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          rc=0
+          out="$(bash scripts/docs-gap.sh "$VERSION" --fetch --ref "$GITHUB_SHA" 2>"$RUNNER_TEMP/gap.err")" || rc=$?
+          cat "$RUNNER_TEMP/gap.err" >&2
+          [ -z "$out" ] || printf '%s\n' "$out"
+          case "$rc" in
+            0) echo "docs-gap.sh $VERSION: every user-facing change is documented or skipped with a reason." >> "$GITHUB_STEP_SUMMARY" ;;
+            1)
+              {
+                echo "## v$VERSION would ship user-facing changes without docs"
+                echo
+                echo "Document each one, give its pull request a \`Skip-docs: <reason>\` line, or list it with a reason in \`.github/docs-skip.txt\` on the branch the release is cut from (RELEASING.md)."
+                echo
+                echo '```'
+                printf '%s\n' "$out"
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "::error::v$VERSION: $(printf '%s\n' "$out" | wc -l | tr -d ' ') user-facing change(s) without docs (job summary)"
+              exit 1 ;;
+            *) echo "::error::docs-gap.sh could not run (exit $rc, above), so nothing was checked for docs"; exit "$rc" ;;
+          esac
+
+      # The tree of this commit, judged as if v<version> were out: the plain
+      # check reads versions.json, which still names the GA being replaced.
+      # It runs after a gap too, so one run reports both.
+      - name: Pages pinning a release older than the next one
+        if: ${{ !cancelled() && steps.ver.outputs.version != '' }}
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          rc=0
+          out="$(bash scripts/check-stale-versions.sh --candidate "v$VERSION" 2>&1)" || rc=$?
+          printf '%s\n' "$out"
+          if [ "$rc" = 0 ]; then
+            echo "check-stale-versions.sh --candidate v$VERSION: no page pins an older release." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "## Pages pin a release older than v$VERSION"
+            echo
+            echo '```'
+            printf '%s\n' "$out"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::pages pin a release older than v$VERSION (job summary)"
+          exit 1

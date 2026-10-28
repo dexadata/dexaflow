@@ -1,0 +1,78 @@
+suite: digest-pinned images at register (deploy.requireDigest, #1703)
+templates:
+  # secret.yaml is in scope so the deployment's `checksum/secret` annotation can
+  # resolve its `include` reference (same reason as deployment_test.yaml).
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+set:
+  nameOverride: leoflow
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+tests:
+  # off is the server default: the install renders the env it had before.
+  - it: renders nothing by default
+    template: deployment.yaml
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_REQUIRE_DIGEST")]
+  - it: renders nothing for off
+    template: deployment.yaml
+    set:
+      deploy.requireDigest: "off"
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_REQUIRE_DIGEST")]
+  # YAML 1.1 reads a bare `off` in a values file as false; it means off.
+  - it: reads a bare off (false) as off
+    template: deployment.yaml
+    set:
+      deploy.requireDigest: false
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_REQUIRE_DIGEST")]
+  - it: renders warn
+    template: deployment.yaml
+    set:
+      deploy.requireDigest: warn
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_REQUIRE_DIGEST
+            value: warn
+  # The api role serves the register; both Deployments share the env block.
+  - it: renders enforce in both Deployments when the control plane is split
+    template: deployment.yaml
+    set:
+      deploy.requireDigest: enforce
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+    asserts:
+      - hasDocuments:
+          count: 2
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DEPLOY_REQUIRE_DIGEST
+            value: enforce
+  # The server refuses any other value at boot; the chart refuses it at render.
+  - it: refuses another value
+    template: deployment.yaml
+    set:
+      deploy.requireDigest: refuse
+    asserts:
+      - failedTemplate:
+          errorPattern: deploy.requireDigest must be off, warn or enforce
+  - it: refuses true
+    template: deployment.yaml
+    set:
+      deploy.requireDigest: true
+    asserts:
+      - failedTemplate:
+          errorPattern: deploy.requireDigest must be off, warn or enforce

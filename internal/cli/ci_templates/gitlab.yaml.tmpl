@@ -1,0 +1,137 @@
+# Deploys the DAGs a push to [[if .BranchSet]][[.Branch]][[else]]the default branch[[end]] changed to Dexaflow.
+# Written by `dexaflow ci init gitlab` for dexaflow [[.CLIVersion]]; the deploy
+# itself is in [[.ScriptPath]]. To add it to an existing .gitlab-ci.yml, copy
+# the dexaflow-deploy job into that file by hand.
+#
+# Set up once, in Settings, CI/CD, Variables:
+[[- if .Target]]
+#   - (the control plane is target [[.Target]] of dexaflow.workspace.yaml);
+[[- else]]
+#   - DEXAFLOW_SERVER_URL: the control plane URL;
+[[- end]]
+[[- if not .OIDC]]
+#   - DEXAFLOW_TOKEN, masked and protected: a deploy token, created with
+#     `dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d`
+[[- end]]
+[[- if .GitLabOthers]]
+#   - DEXAFLOW_REGISTRY_USERNAME and DEXAFLOW_REGISTRY_PASSWORD, masked: a
+#     push credential for [[range $i, $r := .GitLabOthers]][[if $i]], [[end]][[$r.Host]][[end]];
+[[- end]]
+#   - DEXAFLOW_GITLAB_API_TOKEN, masked and protected (recommended): a project
+#     access token with the read_api scope, see below.
+# The job pushes to the project's container registry with the job token
+# ($CI_REGISTRY_USER and $CI_REGISTRY_PASSWORD).
+[[- if .OIDC]]
+#
+# No deploy token is stored: the job signs in with the GitLab OIDC token in
+# DEXAFLOW_OIDC_TOKEN, for the audience [[.OIDC.Audience]], which the control
+# plane trusts through its CI OIDC issuer [[.OIDC.Name]] (auth.ci_oidc), and
+# the script exchanges it for a short-lived session. Without that issuer, store
+# a deploy token, created with
+# `dexaflow auth create-token --scope deploy --name ci-<repo> --ttl 90d`,
+# as DEXAFLOW_TOKEN (masked and protected) and write this file again with
+# --auth token.
+[[- end]]
+#
+# What a run deploys: with DEXAFLOW_GITLAB_API_TOKEN, what changed since the
+# commit of the last successful push pipeline on the branch, so a failed or
+# cancelled pipeline is caught up by the next one. The job token cannot read
+# the pipelines API, so without that variable a run deploys what changed since
+# the previous commit of its push ($CI_COMMIT_BEFORE_SHA), and the changes of a
+# failed, cancelled or skipped pipeline wait for the next change to the same
+# DAG: rerun that pipeline, or run one by hand (Build, Pipelines, Run
+# pipeline), which deploys every DAG. Turn off "Auto-cancel redundant
+# pipelines" for the branch, and set the process mode of the resource group
+# dexaflow-deploy to oldest_first (PUT /projects/:id/resource_groups/dexaflow-deploy
+# with process_mode=oldest_first), so pipelines deploy in push order.
+#
+[[- if .Daemon]]
+# This job runs Docker in Docker, which needs a runner with privileged = true
+# and, for the TLS variables below, volumes = ["/certs/client"] in its
+# config.toml, because a project needs a real image build and no remote
+# builder is configured (build.remote_builder):
+[[- range .Daemon]]
+#   - [[.]]
+[[- end]]
+# The docker image has no pip, so uv is not installed and the daemon builds
+# the dependency images too.
+[[- else if .CLIImage]]
+# No container daemon is needed: the CLI pushes the DAG code as a layer on the
+# dependency image, and builds that image from wheels with uv. The job runs in
+# the dexaflow-cli image of [[.CLIVersion]], pinned by digest, which carries the
+# CLI, Python, git and uv, so nothing is installed in the job. The CLI is the
+# image's, so DEXAFLOW_CLI_VERSION does not apply: to change the release,
+# write this file again with `dexaflow ci init gitlab --force` (--cli-version
+# picks another release).
+[[- else]]
+# No container daemon is needed: the CLI pushes the DAG code as a layer on the
+# dependency image, and builds that image from wheels with uv.
+[[- end]]
+dexaflow-deploy:
+[[- if .Daemon]]
+  image: [[.DockerImage]]
+  services: ["[[.DindImage]]"]
+[[- else if .CLIImage]]
+  image:
+    name: [[.CLIImage]]
+    entrypoint: [""] # GitLab runs the script in a shell
+[[- else]]
+  image: [[.PythonImage]]
+[[- end]]
+  resource_group: dexaflow-deploy
+[[- if .OIDC]]
+  id_tokens:
+    DEXAFLOW_OIDC_TOKEN:
+      aud: "[[.OIDC.Audience]]"
+[[- end]]
+  variables:
+    GIT_DEPTH: "0" # --changed-since and the version label need the history
+    DEXAFLOW_SUMMARY_FILE: $CI_PROJECT_DIR/dexaflow-deploy.md
+    DEXAFLOW_REPORT_FILE: $CI_PROJECT_DIR/dexaflow-deploy.json
+[[- if .Daemon]]
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: "/certs"
+[[- end]]
+  rules:
+[[- if .BranchSet]]
+    - if: $CI_COMMIT_BRANCH == "[[.Branch]]" && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web")
+[[- else]]
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web")
+[[- end]]
+[[- if .Daemon]]
+  before_script:
+    - apk add --no-cache python3 git curl
+[[- else if not .CLIImage]]
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git curl ca-certificates >/dev/null
+[[- end]]
+  script:
+    - |
+      mkdir -p "$HOME/.docker"
+      b64() { printf '%s:%s' "$1" "$2" | base64 | tr -d '\n'; }
+      printf '{"auths":{"%s":{"auth":"%s"}[[range .GitLabOthers]],"[[.Host]]":{"auth":"%s"}[[end]]}}\n' \
+        "$CI_REGISTRY" "$(b64 "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD")" \
+[[- range .GitLabOthers]]
+        "$(b64 "$DEXAFLOW_REGISTRY_USERNAME" "$DEXAFLOW_REGISTRY_PASSWORD")" \
+[[- end]]
+        >"$HOME/.docker/config.json"
+    - |
+      DEXAFLOW_BASE_REF="$CI_COMMIT_BEFORE_SHA"
+      if [ -n "${DEXAFLOW_GITLAB_API_TOKEN:-}" ]; then
+        DEXAFLOW_BASE_REF="$(python3 -c '
+      import json, os, urllib.parse, urllib.request
+      e = os.environ
+      q = urllib.parse.urlencode({"ref": e["CI_COMMIT_BRANCH"], "source": "push", "status": "success", "per_page": 1})
+      r = urllib.request.Request(e["CI_API_V4_URL"] + "/projects/" + e["CI_PROJECT_ID"] + "/pipelines?" + q,
+                                 headers={"PRIVATE-TOKEN": e["DEXAFLOW_GITLAB_API_TOKEN"]})
+      with urllib.request.urlopen(r, timeout=30) as resp:
+          p = json.load(resp)
+      print(p[0]["sha"] if p else "")
+      ')" || DEXAFLOW_BASE_REF=""
+      fi
+      export DEXAFLOW_BASE_REF
+    - sh [[.ScriptPath]]
+  artifacts:
+    when: always
+    paths: [dexaflow-deploy.md, dexaflow-deploy.json]
+    expire_in: 30 days

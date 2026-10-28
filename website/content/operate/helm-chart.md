@@ -6,15 +6,21 @@ aliases:
 title: Helm chart
 linkTitle: Helm chart
 weight: 30
-description: Install and configure the Dexaflow Pro control plane on Kubernetes with the official Helm chart.
+description: Install and configure the Dexaflow Cluster control plane on Kubernetes with the official Helm chart.
 ---
 
-The **Pro** control plane installs on Kubernetes via the official Helm chart. The
+The **Cluster** control plane installs on Kubernetes via the official Helm chart. The
 chart is chart-test gated, publishes multi-arch images per release, and signs them
 with cosign. It runs on any cluster with an external Postgres + Redis.
 
+The chart runs the server as the cluster edition. It still sets
+`LEOFLOW_UI_EDITION=pro`: `pro` is the earlier name of `ui.edition: cluster`,
+the server accepts both with the same features, and the chart switches to
+`cluster` once every supported server accepts it. See
+[Editions](/concepts/editions/).
+
 To try the chart on your machine first, with throwaway datastores and a local
-registry, see [Try Pro on a local cluster](/operate/local-cluster/) (for testing
+registry, see [Try the cluster edition on a local cluster](/operate/local-cluster/) (for testing
 only, not for production).
 
 ## Install from the published OCI chart
@@ -22,15 +28,16 @@ only, not for production).
 Every release tag publishes the chart as a **cosign-signed OCI artifact** to
 `oci://ghcr.io/dexadata/charts/dexaflow` ([ADR 0028](/project/adrs/0028-release-versioning-two-editions/)),
 co-versioned with the release tag — so you can install a pinned version without
-cloning the repo:
+cloning the repo. Its signature and its build provenance are checked as shown
+in [Build provenance and SBOMs](/get-started/installation/#build-provenance-and-sboms):
 
 ```bash
 helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> \
-  -n leoflow --create-namespace \
+  -n dexaflow --create-namespace \
   -f values.yaml
 ```
 
-Pass the release tag **without** the leading `v` (tag `v0.4.0` → `--version 0.4.0`):
+Pass the release tag **without** the leading `v` (tag `vX.Y.Z` → `--version X.Y.Z`):
 the chart `version`/`appVersion` move in lockstep with the tag, so this also pins
 the control-plane image. Installing from a source checkout
 (`helm install ./helm/dexaflow`) is still supported for unreleased branches — see
@@ -75,12 +82,67 @@ A first-class values reference on this site is a TODO for a later migration phas
 
   **The HPA needs both of its bounds set together** — see
   [Autoscaling](/operate/control-plane-ha/#autoscaling-set-both-bounds-or-neither).
-- TLS termination via cert-manager — see [Pro TLS](/operate/pro-tls/).
+- Cluster deploy defaults (`deploy.defaults`), unset by default: the registry
+  prefix, platforms and base image `dexaflow deploy` uses for whatever a
+  repository leaves unset, so no project needs its own `registry:` block, and
+  with `sourceMode: true` the source mode runtime image (see
+  [Deploying in source mode](/operate/source-mode/#deploying-in-source-mode)),
+  the remote builder (`remoteBuilder.cloudBuild`), and, with
+  `taskServiceAccount: true` and `warmPools: true`, the task ServiceAccount and
+  warm pool settings a deploy reports. See
+  [Cluster deploy defaults](/operate/workspaces-and-targets/#cluster-deploy-defaults).
+- TLS termination via cert-manager: see [Cluster TLS](/operate/cluster-tls/).
 - OIDC/SSO login (`auth.oidc.*`), off by default: turning it on renders the
   ConfigMap the two map settings need and makes `auth.provider: oidc` reachable
   from values, rather than requiring a hand-mounted config file. See
   [SSO with Google Workspace](/operate/sso-google-workspace/) or
   [SSO with another OIDC provider](/operate/sso-other-providers/).
+- An in-cluster image builder (`builder.*`), off by default: rootless BuildKit
+  in a namespace of its own, with no port, a ServiceAccount with no token, a
+  Role that lets `builder.subjects` exec into it and a NetworkPolicy that keeps
+  build steps away from the cloud metadata endpoint. Unless
+  `builder.advertise` is false, the server advertises it as the cluster's
+  remote builder, so `dexaflow deploy` builds there what no daemonless path
+  covers. See
+  [The in-cluster builder](/operate/builders/#the-in-cluster-builder).
+
+## Migrations and the installation id
+
+The chart migrates the database in a pre-install/pre-upgrade hook Job
+(`migrations.enabled`, on by default) that runs the `dexaflow-migrate` image.
+The Job also records the release's installation id
+([ADR 0090](/project/adrs/0090-database-replaced-under-a-running-release/)):
+it writes it into the database and into a ConfigMap,
+`<release>-installation`, that it creates and updates itself in the release
+namespace, and the control plane reads it from that ConfigMap
+(`DEXAFLOW_DATABASE_INSTALLATION_ID`). A database that carries another id,
+none, or no schema is then reported as replaced instead of migrated as if it
+were a fresh install; see
+[a replaced database](/operate/troubleshooting/#a-replaced-database).
+
+- The chart renders no ConfigMap, so `helm template`, Argo CD and Flux installs
+  behave like `helm install`, and `helm uninstall` leaves it in place.
+- The Job runs as its own ServiceAccount, `<release>-migrate`, with its token
+  mounted. With `rbac.create` the chart binds it a Role that may `create`
+  ConfigMaps in the release namespace and `get` and `update`
+  `<release>-installation`, nothing else. All three are hooks that run before
+  the Job and are deleted with it. With `rbac.create: false`, grant the same
+  to that account yourself.
+- `installation.id` is empty: a first install generates the id, and an upgrade
+  from a release before 0.5.6 records one the first time. Set it only to
+  accept a replaced database; changing it rolls the control plane pods.
+
+`migrations.onBoot` (default `false`) also lets the control plane apply the
+embedded migrations itself at boot, when the schema is absent or behind, and
+never when it is ahead or dirty or the database is reported as replaced. Only
+the `all` role, and in split mode the scheduler, carries it: the api role
+never migrates. The server's `database.url` must then be allowed to run DDL.
+golang-migrate's advisory lock serializes it with the Job and with other
+replicas. The Job stays the default and keeps the ordering an upgrade needs;
+`onBoot` covers what it cannot see, such as `migrations.enabled: false`
+installs and a `database.url` repointed between upgrades. With
+`migrations.enabled: false` no installation id is recorded, so `onBoot`
+migrates an empty database like a fresh one.
 
 ## Tuning the probes
 
@@ -120,7 +182,11 @@ about to come up.
 
 It is deliberately generous, because the two directions are not symmetric. A boot
 that *fails* returns an error and the process exits 1, so `CrashLoopBackOff`
-reports it promptly whatever this budget says. The gate only bounds a boot that
+reports it promptly whatever this budget says. A database schema that is absent
+or behind is not such a failure: the process waits for it with `/healthz`
+answering 200, so the gate passes and this budget does not bound that wait
+([a control plane that is up but not ready](/operate/troubleshooting/#a-control-plane-that-is-up-but-not-ready)).
+Once the schema is current the rest of the boot runs under the liveness probe. The gate only bounds a boot that
 *hangs*, and restarting a hang is a lottery ticket rather than a fix. The cost of
 being too loose is a slower restart of something that was not going to recover
 anyway; the cost of being too tight is the restart loop back.
@@ -142,8 +208,9 @@ lost by the narrower gate, because readiness still gates endpoint membership on
 `/readyz` the moment the gate opens, so a pod never joins the Service on the
 strength of a bound listener alone.
 
-If a pod never passes the gate, read `/readyz` rather than guessing: it names the
-dependency that is not ready. The common causes are a database the pod cannot
+If a pod never passes the gate, or passes it and never turns ready, read
+`/readyz` rather than guessing: it names the dependency that is not ready, and
+for a schema that is absent, behind or dirty, the reason and what to run. The common causes are a database the pod cannot
 reach and a ServiceAccount that cannot `list`/`watch` pods in the task namespace.
 
 ### Timeouts under load
@@ -163,11 +230,23 @@ Error: probes.readiness.timeoutSeconds=1 is below the 3s floor. [...]
 ```
 
 `/readyz` checks the database connection *and* asserts the schema is the one
-this binary requires, and it bounds that whole check at 2s so it always answers
-before the kubelet stops listening. Setting the kubelet's timeout below that
-inverts the relationship: the kubelet cancels a probe that was about to reply,
-so instead of a `503` whose log line names the failing dependency, you get a
-bare timeout that names nothing — precisely when you most need to know which
+this binary requires, and it bounds that whole check at one second under
+`probes.readiness.timeoutSeconds`, so it always answers before the kubelet stops
+listening. The chart passes that budget to the server as
+`LEOFLOW_SERVER_PROBE_BUDGET` (`server.probe_budget`): 2s with the default
+timeout of 3. On a slow metadatabase, such as a cross-region managed Postgres,
+raise the timeout and the server gets the same extra room:
+
+```yaml
+probes:
+  readiness:
+    timeoutSeconds: 10  # /readyz may now spend 9s on its checks
+```
+
+A timeout under the floor would leave the server less than the 2s it has always
+had, or nothing at all: the kubelet cancels a probe that was about to reply, so
+instead of a `503` whose log line names the failing dependency, you get a bare
+timeout that names nothing, precisely when you most need to know which
 dependency is slow. The chart refuses the value rather than installing a cluster
 that will go quiet under stress.
 
@@ -214,9 +293,9 @@ track, such as cgo allocations and page cache.
 
 ## Related
 
-- [Editions & operating modes](/concepts/editions/) — what Pro gives you and its
+- [Editions & operating modes](/concepts/editions/): what Cluster gives you and its
   validation status.
-- [Deploy your first Pro DAG](/operate/first-pro-dag/) — the promotion walkthrough.
+- [Deploy your first Cluster DAG](/operate/first-cluster-dag/): the promotion walkthrough.
 - [Upgrades](/operate/upgrades/) — upgrading a chart release safely.
 - [In-transit encryption](/operate/in-transit-encryption/): a service mesh with
   mTLS, or `httpTLS` for HTTPS on the API listener, and `networkPolicy.grpcFrom`.

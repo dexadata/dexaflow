@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 // TestResolveBindHost is the security guard: a no-auth fallback must never bind
 // beyond loopback, while real auth honors the requested host.
 func TestResolveBindHost(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		host, adminHash, want string
 	}{
@@ -28,6 +30,7 @@ func TestResolveBindHost(t *testing.T) {
 
 // TestSharedServerEnvBindsRequestedHost ties it together at the env level.
 func TestSharedServerEnvBindsRequestedHost(t *testing.T) {
+	t.Parallel()
 	withAuth := strings.Join(sharedServerEnv(liteEnvParams{host: "0.0.0.0", port: 8088, adminHash: "$2a$hash", adminEmail: "admin@x", jwtSecret: ""}), "\n")
 	if !strings.Contains(withAuth, "LEOFLOW_SERVER_HTTP_ADDR=0.0.0.0:8088") {
 		t.Errorf("real auth should bind the requested host:\n%s", withAuth)
@@ -39,6 +42,7 @@ func TestSharedServerEnvBindsRequestedHost(t *testing.T) {
 }
 
 func TestDisplayURL(t *testing.T) {
+	t.Parallel()
 	if got := displayURL("127.0.0.1", 8088); got != "http://127.0.0.1:8088" {
 		t.Errorf("loopback display = %q", got)
 	}
@@ -53,7 +57,7 @@ func TestDisplayURL(t *testing.T) {
 // docker-compose.dev.yaml, then a materialized managed file.
 func TestResolveComposeFile(t *testing.T) {
 	// Explicit flag wins.
-	if got, err := resolveComposeFile("/my/compose.yaml"); err != nil || got != "/my/compose.yaml" {
+	if got, err := resolveComposeFile(io.Discard, "/my/compose.yaml"); err != nil || got != "/my/compose.yaml" {
 		t.Errorf("explicit = (%q,%v)", got, err)
 	}
 
@@ -63,7 +67,7 @@ func TestResolveComposeFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(repo)
-	if got, err := resolveComposeFile(""); err != nil || got != "docker-compose.dev.yaml" {
+	if got, err := resolveComposeFile(io.Discard, ""); err != nil || got != "docker-compose.dev.yaml" {
 		t.Errorf("CWD compose = (%q,%v), want docker-compose.dev.yaml", got, err)
 	}
 
@@ -72,7 +76,7 @@ func TestResolveComposeFile(t *testing.T) {
 	t.Setenv("HOME", home)
 	clean := t.TempDir() // a dir with no compose file
 	t.Chdir(clean)
-	got, err := resolveComposeFile("")
+	got, err := resolveComposeFile(io.Discard, "")
 	if err != nil {
 		t.Fatalf("managed resolve: %v", err)
 	}

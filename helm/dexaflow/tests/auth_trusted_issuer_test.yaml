@@ -75,7 +75,40 @@ tests:
     asserts:
       - notContains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_HOST_PATTERN, value: ""}}
 
+  - it: renders the deploy audience when one is set (#1773)
+    set:
+      auth.trustedIssuer.issuer: https://portal.example.com
+      auth.trustedIssuer.name: portal
+      auth.trustedIssuer.jwksUrl: https://portal.example.com/jwks
+      auth.trustedIssuer.audience: leoflow-engine
+      auth.trustedIssuer.allowedTenants: ["*"]
+      auth.trustedIssuer.allowedOrigins: ["https://portal.example.com"]
+      auth.trustedIssuer.deployAudience: dexaflow-deploy
+    template: deployment.yaml
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_DEPLOY_AUDIENCE, value: dexaflow-deploy}}
+
+  - it: leaves the deploy audience off by default
+    set:
+      auth.trustedIssuer.issuer: https://portal.example.com
+      auth.trustedIssuer.name: portal
+      auth.trustedIssuer.jwksUrl: https://portal.example.com/jwks
+      auth.trustedIssuer.audience: leoflow-engine
+      auth.trustedIssuer.allowedTenants: ["*"]
+      auth.trustedIssuer.allowedOrigins: ["https://portal.example.com"]
+    template: deployment.yaml
+    asserts:
+      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_DEPLOY_AUDIENCE, value: ""}}
+
   - it: renders none of them when no issuer is set
     template: deployment.yaml
     asserts:
       - notContains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_TENANT_CLAIM, value: tenant_id}}
+
+  - it: refuses a deploy audience without an issuer (#1773)
+    set:
+      auth.trustedIssuer.deployAudience: dexaflow-deploy
+    template: deployment.yaml
+    asserts:
+      - failedTemplate:
+          errorMessage: auth.trustedIssuer.deployAudience needs auth.trustedIssuer.issuer

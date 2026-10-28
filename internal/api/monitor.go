@@ -52,11 +52,11 @@ func componentHealth(hb Heartbeater) (status, heartbeat string) {
 // subsumes the triggerer and DAG-processor roles (no separate Python daemons):
 // triggering is folded into the scheduler and DAG "processing" is GitOps
 // compile-time, so those mirror the scheduler heartbeat. See docs/ui-compatibility.md.
-func monitorHealthHandler(checks map[string]HealthChecker, sched Heartbeater) gin.HandlerFunc {
+func monitorHealthHandler(checks map[string]HealthChecker, sched Heartbeater, budget time.Duration) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		dbStatus := healthStatusHealthy
 		if hc, ok := checks["postgres"]; ok {
-			ctx, cancel := withProbeBudget(c)
+			ctx, cancel := withProbeBudget(c, budget)
 			defer cancel()
 			if err := checkDependency(ctx, hc); err != nil {
 				// Unlike /readyz this endpoint always answers 200 (the Airflow

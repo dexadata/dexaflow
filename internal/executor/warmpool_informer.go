@@ -63,6 +63,9 @@ type WarmPodInformer struct {
 	cachedNames func() map[string]bool
 	expired     bool
 	now         func() time.Time
+	// terminations, when set by RecordTerminationsTo, receives the final state
+	// of every warm pod that turns terminal or is deleted (#1835).
+	terminations *warmTerminations
 }
 
 // createExpectation is one accepted create the cache has not observed yet.
@@ -110,6 +113,9 @@ func NewWarmPodInformer(clientset kubernetes.Interface, namespace string) (*Warm
 		UpdateFunc: func(oldObj, newObj any) {
 			o, ok1 := oldObj.(*corev1.Pod)
 			n, ok2 := newObj.(*corev1.Pod)
+			if ok2 && podTerminal(n) {
+				w.terminations.observe(n)
+			}
 			if ok1 && ok2 && !podTerminal(o) && podTerminal(n) {
 				w.Kick()
 			}
@@ -118,6 +124,7 @@ func NewWarmPodInformer(clientset kubernetes.Interface, namespace string) (*Warm
 			// A pod deleted before the watch reported its add never will be:
 			// drop its expectation with it.
 			if p, ok := podOf(obj); ok {
+				w.terminations.observe(p)
 				w.forget(p.Name)
 			}
 			w.Kick()
@@ -126,6 +133,17 @@ func NewWarmPodInformer(clientset kubernetes.Interface, namespace string) (*Warm
 		return nil, fmt.Errorf("registering warm pod event handler: %w", err)
 	}
 	return w, nil
+}
+
+// RecordTerminationsTo makes the informer record, on k, the warm-worker
+// container's terminated reason of every warm pod it sees turn terminal or get
+// deleted, so k.LastTerminationReason answers for a worker deleted before any
+// LIST saw it terminal (#1835). The delete event carries the pod's final state.
+// Call it before Start.
+func (w *WarmPodInformer) RecordTerminationsTo(k *KubernetesWarmPods) {
+	if k != nil {
+		w.terminations = k.terminations
+	}
 }
 
 // Start begins the watch and stops it when ctx is canceled.

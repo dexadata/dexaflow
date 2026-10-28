@@ -9,7 +9,7 @@ SELECT id FROM tenants ORDER BY id;
 -- first, whose task instances are all settled and that no live staging volume
 -- still points at. "Settled" is the predicate the pod reconciler's settled-run
 -- collection uses too: run in success or failed, and no task instance outside
--- success, failed, skipped and upstream_failed. none is unsettled on purpose:
+-- success, failed, skipped, upstream_failed and removed. none is unsettled on purpose:
 -- it is a task a clear just reset, waiting to be scheduled, while the run row
 -- still says success until the clear reopens it. Any state added later counts
 -- as unsettled, so it is kept rather than deleted. The janitor calls this once
@@ -19,15 +19,25 @@ SELECT id FROM tenants ORDER BY id;
 -- a clear: a clear resets task_instances before it touches the run row, so the
 -- janitor then locks and re-checks the task instances
 -- (LockTaskInstancesOfRuns) before it deletes anything.
+--
+-- The newest run of each DAG (by logical date) is never selected: the
+-- scheduler takes a DAG's last logical date from it (ListScheduledDags), so
+-- deleting it would make a cron DAG run its latest slot again, a catchup DAG
+-- backfill its whole history, and an @once DAG fire a second time. Airflow's
+-- `db clean` likewise keeps each DAG's latest (non-manual) run. The probe is
+-- one step on idx_dag_runs_dag_logical.
 SELECT r.id
 FROM dag_runs r
 WHERE r.tenant_id = sqlc.arg(tenant_id)
   AND r.state IN ('success', 'failed')
   AND r.ended_at < sqlc.arg(cutoff)
+  AND EXISTS (
+    SELECT 1 FROM dag_runs newer
+    WHERE newer.dag_id = r.dag_id AND newer.logical_date > r.logical_date)
   AND NOT EXISTS (
     SELECT 1 FROM task_instances ti
     WHERE ti.dag_run_id = r.id
-      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed'))
+      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed', 'removed'))
   AND NOT EXISTS (
     SELECT 1 FROM staging_volumes s
     WHERE s.tenant_id = r.tenant_id AND s.run_id = r.id::text AND s.state = 'active')
@@ -37,7 +47,9 @@ FOR UPDATE OF r SKIP LOCKED;
 
 -- name: LockTaskInstancesOfRuns :many
 -- Locks every task instance of the locked runs and reports whether each is
--- still settled. A clear resets task instances without locking the run row
+-- still settled. A clear that moves a finished run to the current version
+-- locks the run row first (ADR 0086), so LockExpiredSettledRuns skips it; any
+-- other clear resets task instances without locking the run row
 -- first, so the run lock alone does not keep it out: a clear that committed
 -- since LockExpiredSettledRuns shows here as an unsettled state, and the
 -- janitor drops that run from the batch. Once these locks are held no clear can
@@ -47,18 +59,10 @@ FOR UPDATE OF r SKIP LOCKED;
 -- the run row the janitor holds, and waiting would deadlock; the janitor skips
 -- the batch and retries on a later cycle.
 SELECT ti.dag_run_id,
-       (ti.state IN ('success', 'failed', 'skipped', 'upstream_failed'))::boolean AS settled
+       (ti.state IN ('success', 'failed', 'skipped', 'upstream_failed', 'removed'))::boolean AS settled
 FROM task_instances ti
 WHERE ti.tenant_id = sqlc.arg(tenant_id) AND ti.dag_run_id = ANY(sqlc.arg(run_ids)::uuid[])
 FOR UPDATE OF ti NOWAIT;
-
--- name: DeleteTaskStateHistoryOfRuns :execrows
-DELETE FROM task_state_history
-WHERE id IN (
-  SELECT h.id FROM task_state_history h
-  JOIN task_instances ti ON ti.id = h.task_instance_id
-  WHERE ti.tenant_id = sqlc.arg(tenant_id) AND ti.dag_run_id = ANY(sqlc.arg(run_ids)::uuid[])
-  LIMIT sqlc.arg(row_limit));
 
 -- name: DeleteTaskInstanceHistoryOfRuns :execrows
 DELETE FROM task_instance_history
@@ -98,7 +102,15 @@ WHERE d.tenant_id = sqlc.arg(tenant_id) AND d.dag_run_id IN (
      OR (sqlc.arg(first_run_always)::boolean AND sized.running = sized.n));
 
 -- name: DeleteDagRunsByID :execrows
--- Removes the locked runs whose children are all gone, up to row_limit.
+-- Removes the locked runs whose children are all gone, up to row_limit. The
+-- stored next due time of each DAG they belong to is cleared (#2175), in case
+-- a run removed was the DAG's latest; a DAG whose run stays is only listed
+-- once more.
+WITH invalidate AS (
+  UPDATE dags d SET next_run_at = NULL, schedule_epoch = d.schedule_epoch + 1
+  WHERE d.tenant_id = sqlc.arg(tenant_id)
+    AND d.id IN (SELECT r.dag_id FROM dag_runs r WHERE r.tenant_id = sqlc.arg(tenant_id) AND r.id = ANY(sqlc.arg(run_ids)::uuid[]))
+)
 DELETE FROM dag_runs
 WHERE id IN (
   SELECT r.id FROM dag_runs r
@@ -135,10 +147,13 @@ FROM (
   WHERE r.tenant_id = sqlc.arg(tenant_id)
     AND r.state IN ('success', 'failed')
     AND r.ended_at < sqlc.arg(cutoff)
+    AND EXISTS (
+      SELECT 1 FROM dag_runs newer
+      WHERE newer.dag_id = r.dag_id AND newer.logical_date > r.logical_date)
     AND NOT EXISTS (
       SELECT 1 FROM task_instances ti
       WHERE ti.dag_run_id = r.id
-        AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed'))
+        AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed', 'removed'))
     AND NOT EXISTS (
       SELECT 1 FROM staging_volumes s
       WHERE s.tenant_id = r.tenant_id AND s.run_id = r.id::text AND s.state = 'active')

@@ -65,8 +65,8 @@ func seedTenant(t *testing.T, pool *pgxpool.Pool, ctx context.Context, name stri
 }
 
 // seedRun inserts a run that ended `ago` before now (nil leaves ended_at NULL)
-// with one task instance per given state, each with a state-history row, an
-// archived attempt and an XCom index row.
+// with one task instance per given state, each with an archived attempt and an
+// XCom index row.
 func seedRun(t *testing.T, pool *pgxpool.Pool, ctx context.Context, tenant, dag, version, runID, state string, ago *time.Duration, tiStates ...string) string {
 	t.Helper()
 	var ended any
@@ -78,13 +78,20 @@ func seedRun(t *testing.T, pool *pgxpool.Pool, ctx context.Context, tenant, dag,
 	for i, st := range tiStates {
 		ti := mustUUID(t, pool, ctx, `INSERT INTO task_instances (tenant_id, dag_run_id, task_id, state, operator)
 			VALUES ($1, $2, $3, $4::task_state, 'python') RETURNING id::text`, tenant, id, fmt.Sprintf("t%d", i), st)
-		mustExec(t, pool, ctx, `INSERT INTO task_state_history (task_instance_id, from_state, to_state) VALUES ($1, 'none', $2::task_state)`, ti, st)
-		mustExec(t, pool, ctx, `INSERT INTO task_state_history (task_instance_id, from_state, to_state) VALUES ($1, 'queued', 'running')`, ti)
 		mustExec(t, pool, ctx, `INSERT INTO task_instance_history (task_instance_id, try_number, state) VALUES ($1, 1, 'failed')`, ti)
 		mustExec(t, pool, ctx, `INSERT INTO xcom_index (tenant_id, dag_run_id, task_id, key, redis_key, size_bytes, expires_at)
 			VALUES ($1, $2, $3, 'return_value', 'k', 1, now() + interval '1 day')`, tenant, id, fmt.Sprintf("t%d", i))
 	}
 	return id
+}
+
+// seedNewerRun gives the DAG a recent run with a later logical date, so the
+// runs seeded before it are not the DAG's newest, which retention always keeps.
+func seedNewerRun(t *testing.T, pool *pgxpool.Pool, ctx context.Context, tenant, dag, version string) {
+	t.Helper()
+	recent := time.Hour
+	id := seedRun(t, pool, ctx, tenant, dag, version, "newer", "success", &recent, "success")
+	mustExec(t, pool, ctx, `UPDATE dag_runs SET logical_date = now() + interval '1 day' WHERE id = $1`, id)
 }
 
 func seedRetention(t *testing.T, pool *pgxpool.Pool, ctx context.Context) retentionFixture {
@@ -96,7 +103,9 @@ func seedRetention(t *testing.T, pool *pgxpool.Pool, ctx context.Context) retent
 	recent := 24 * time.Hour
 	f := retentionFixture{tenant: tenant, otherTenant: other, runs: map[string]string{}}
 	f.runs["old_success"] = seedRun(t, pool, ctx, tenant, dag, version, "old_success", "success", &old, "success", "success")
-	f.runs["old_failed"] = seedRun(t, pool, ctx, tenant, dag, version, "old_failed", "failed", &old, "failed", "upstream_failed", "skipped")
+	// removed is settled too: a clear marks it on a finished run's task
+	// instance whose task the run's new version dropped (ADR 0086).
+	f.runs["old_failed"] = seedRun(t, pool, ctx, tenant, dag, version, "old_failed", "failed", &old, "failed", "upstream_failed", "skipped", "removed")
 	// A run being cleared: still success with an old end, its task instance
 	// already reset to none. It is waiting to be scheduled, not settled.
 	f.runs["old_clearing"] = seedRun(t, pool, ctx, tenant, dag, version, "old_clearing", "success", &old, "success", "none")
@@ -167,7 +176,7 @@ func TestRetentionDeletesOnlyExpiredSettledRunsIntegration(t *testing.T) {
 	if calls < 10 {
 		t.Errorf("finished in %d calls; the row limit was not applied", calls)
 	}
-	want := retention.Counts{DagRuns: 2, TaskInstances: 5, TaskStateHistory: 10, TaskInstanceHistory: 5, XComIndex: 5}
+	want := retention.Counts{DagRuns: 2, TaskInstances: 6, TaskInstanceHistory: 6, XComIndex: 6}
 	if total != want {
 		t.Fatalf("deleted %+v, want %+v", total, want)
 	}
@@ -189,8 +198,8 @@ func TestRetentionDeletesOnlyExpiredSettledRunsIntegration(t *testing.T) {
 			t.Errorf("%d xcom rows of a deleted run remain", n)
 		}
 	}
-	if n := countFor(t, pool, ctx, `SELECT count(*) FROM task_state_history h JOIN task_instances ti ON ti.id = h.task_instance_id WHERE ti.dag_run_id = $1`, f.runs["old_active_ti"]); n != 4 {
-		t.Errorf("history of a kept run = %d rows, want 4", n)
+	if n := countFor(t, pool, ctx, `SELECT count(*) FROM task_instance_history h JOIN task_instances ti ON ti.id = h.task_instance_id WHERE ti.dag_run_id = $1`, f.runs["old_active_ti"]); n != 2 {
+		t.Errorf("attempt history of a kept run = %d rows, want 2", n)
 	}
 	if n := countFor(t, pool, ctx, `SELECT count(*) FROM task_instances WHERE dag_run_id = $1`, f.runs["old_clearing"]); n != 2 {
 		t.Errorf("a run being cleared lost task instances: %d left, want 2", n)
@@ -270,9 +279,10 @@ func TestRetentionCountEligibleIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CountEligible: %v", err)
 	}
-	// old_success, old_failed and the other tenant's old run are eligible.
-	if d := after.DagRuns - before.DagRuns; d != 3 {
-		t.Errorf("eligible runs delta = %d, want 3", d)
+	// old_success and old_failed are eligible. The other tenant's old run is
+	// the only run of its DAG, so it is kept as the DAG's newest run.
+	if d := after.DagRuns - before.DagRuns; d != 2 {
+		t.Errorf("eligible runs delta = %d, want 2", d)
 	}
 	if d := after.TaskInstances - before.TaskInstances; d != 6 {
 		t.Errorf("eligible task instances delta = %d, want 6", d)
@@ -303,5 +313,55 @@ func TestRetentionTenantIDsIntegration(t *testing.T) {
 	}
 	if !seen[f.tenant] || !seen[f.otherTenant] {
 		t.Fatalf("TenantIDs missing the seeded tenants: %v", ids)
+	}
+}
+
+// TestRetentionKeepsNewestRunOfEachDagIntegration: the newest run of a DAG
+// survives however old it is. The scheduler takes a DAG's last logical date
+// from its newest run, so deleting it would make a cron DAG run its latest
+// slot again, backfill its whole history with catchup, or fire an @once DAG
+// a second time. Older runs of the same DAG are deleted as usual.
+func TestRetentionKeepsNewestRunOfEachDagIntegration(t *testing.T) {
+	store, pool, ctx := openRetention(t)
+	cutoff := time.Now().Add(-30 * 24 * time.Hour)
+	baseline, err := store.CountEligible(ctx, &cutoff, nil)
+	if err != nil {
+		t.Fatalf("CountEligible: %v", err)
+	}
+	tenant, version, dag := seedTenant(t, pool, ctx, fmt.Sprintf("retention_newest_%d", time.Now().UnixNano()))
+	old := 400 * 24 * time.Hour
+	older := seedRun(t, pool, ctx, tenant, dag, version, "older", "success", &old, "success")
+	newest := seedRun(t, pool, ctx, tenant, dag, version, "newest", "success", &old, "success")
+	mustExec(t, pool, ctx, `UPDATE dag_runs SET logical_date = now() - interval '2 days' WHERE id = $1`, older)
+	mustExec(t, pool, ctx, `UPDATE dag_runs SET logical_date = now() - interval '1 day' WHERE id = $1`, newest)
+
+	before, err := store.CountEligible(ctx, &cutoff, nil)
+	if err != nil {
+		t.Fatalf("CountEligible: %v", err)
+	}
+	if before.DagRuns != baseline.DagRuns+1 {
+		t.Errorf("dry run counts %d new eligible runs, want 1: it must skip the newest run", before.DagRuns-baseline.DagRuns)
+	}
+	for i := 0; i < 10; i++ {
+		c, err := store.DeleteFinishedRuns(ctx, tenant, cutoff, 10, 1000)
+		if err != nil {
+			t.Fatalf("DeleteFinishedRuns: %v", err)
+		}
+		if c.Total() == 0 {
+			break
+		}
+	}
+	if runExists(t, pool, ctx, older) {
+		t.Error("the older run survived retention")
+	}
+	if !runExists(t, pool, ctx, newest) {
+		t.Fatal("the newest run of the DAG was deleted, want it kept")
+	}
+	after, err := store.CountEligible(ctx, &cutoff, nil)
+	if err != nil {
+		t.Fatalf("CountEligible: %v", err)
+	}
+	if after.DagRuns != baseline.DagRuns {
+		t.Errorf("dry run counts %d eligible runs after the purge, want the baseline %d: the newest run is not eligible", after.DagRuns, baseline.DagRuns)
 	}
 }

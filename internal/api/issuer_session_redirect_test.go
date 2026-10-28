@@ -40,16 +40,22 @@ func issuerSessionServerWith(t *testing.T, o issuerSessionOpts) http.Handler {
 	if logger == nil {
 		logger = discardLogger()
 	}
-	return NewServer(Dependencies{
-		Logger:               logger,
-		RateLimiter:          auth.NewRateLimiter(100, time.Minute),
-		JWTSecret:            "test-secret",
-		TokenTTLSecs:         900,
-		TrustedIssuer:        fakeTrustedIssuer{issuer.Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme"}},
-		TrustedIssuerUsers:   o.users,
-		TrustedIssuerOrigins: []string{"https://portal.example.com"},
-		ExternalSignInURL:    o.signInURL,
-		AuthAudit:            o.audit,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: logger,
+		},
+		Auth: AuthDeps{
+			RateLimiter:       auth.NewRateLimiter(100, time.Minute),
+			JWTSecret:         "test-secret",
+			TokenTTLSecs:      900,
+			ExternalSignInURL: o.signInURL,
+			AuthAudit:         o.audit,
+		},
+		Issuers: IssuerDeps{
+			TrustedIssuer:        fakeTrustedIssuer{issuer.Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme"}},
+			TrustedIssuerUsers:   o.users,
+			TrustedIssuerOrigins: []string{"https://portal.example.com"},
+		},
 	})
 }
 

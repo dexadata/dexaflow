@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_db/
 title: "dexaflow db"
 linkTitle: "db"
-weight: 31
+weight: 38
 ---
 
 Manage the local Lite database (schema name leoflow_dev for upgrade safety).
@@ -21,6 +21,7 @@ Manage the local Lite database (schema name leoflow_dev for upgrade safety).
       --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
+      --target name         name of the control plane to use (default: DEXAFLOW_TARGET, then the target selected for the workspace; see dexaflow target list)
 ```
 
 ### SEE ALSO

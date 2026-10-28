@@ -13,3 +13,14 @@ commands to run and what to check.
 - [Add a migration](add-a-migration/)
 - [Record a change: changelog and docs](record-a-change/)
 - [Backport to a release branch](backport-to-a-release-branch/)
+- [Add a configuration setting](add-a-configuration-setting/)
+- [Add or change an /api/v2/ endpoint](add-an-api-endpoint/)
+- [Add a Helm value](add-a-helm-value/)
+- [Add a CLI command or flag](add-a-cli-command-or-flag/)
+- [Add a connector](add-a-connector/)
+- [Cut a release candidate](cut-a-release-candidate/)
+- [Fix a bug](fix-a-bug/)
+- [Fix a flaky end-to-end job](fix-a-flaky-end-to-end-job/)
+
+Reviewing a change rather than making one? See the
+[review checklists](/contribute/review-checklists/).

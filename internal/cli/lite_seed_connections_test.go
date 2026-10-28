@@ -12,6 +12,7 @@ import (
 // existing path; what is new — and what needs pinning — is the judgment about
 // when taking a secret from ambient environment is acceptable.
 func TestConnectionsToSeed(t *testing.T) {
+	t.Parallel()
 	env := func(kv ...string) func(string) string {
 		m := map[string]string{}
 		for i := 0; i+1 < len(kv); i += 2 {

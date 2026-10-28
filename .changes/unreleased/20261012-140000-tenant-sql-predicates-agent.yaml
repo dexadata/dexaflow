@@ -1,9 +1,0 @@
-kind: Security
-body: |-
-  **Agent calls check the token's tenant in SQL.** The task spec read, the
-  heartbeat, the state report, the reschedule and the liveness check behind a
-  task's secret reads used to find the task instance by the run id in the agent
-  token alone. They now also filter on the token's `tenant_id`, so a token can
-  only reach task instances of its own tenant. Every task token already carries
-  the tenant, so running tasks are unaffected. Part of #508.
-time: 2026-10-12T14:00:00.000000000-03:00

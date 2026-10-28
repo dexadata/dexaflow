@@ -176,6 +176,12 @@ no `--platform`), so a Mac-built image would crash the task pod with
 > `buildx ... --push` described above was not built either: the CLI runs
 > `<builder> build --platform <list>` and then `<builder> push`.
 
+> **Note (2026-10, #1706).** `--platform` now exists on `compile`, `build` and
+> `deploy`, over `build.platforms`, and the output names its source. A list
+> still reaches `<builder> build --platform <list>`, and a failure says how to
+> build one platform; how several platforms are built without a daemon is
+> decided in [ADR 0073](/project/adrs/0073-daemonless-image-builds/).
+
 ### What the artifact does NOT carry — connections & variables
 
 The DAG **image + `dag.json`** travel; **connections and variables do not** — they

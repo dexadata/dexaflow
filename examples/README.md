@@ -35,25 +35,29 @@ base exists on no other builder.
 
 ## Pro: the deploy loop
 
-A Pro deploy pushes the DAG image to a registry your cluster can pull from, so
-add a `registry:` block to the example's `dexaflow.yaml` first. The examples do
-not carry one because the registry is yours:
+A Pro deploy pushes the DAG image to a registry your cluster can pull from.
+Each example's `dexaflow.yaml` ends with a commented `registry:` block, since
+the registry is yours: uncomment it, or leave it as it is when the target names
+the registry (`--registry` on `dexaflow target add`, below) or the cluster
+advertises one in its deploy defaults.
 
-```yaml
-# registry:
-#   url: ghcr.io/your-org          # Docker Hub, ECR, Artifact Registry, ACR, GHCR or private
-#   image_name: taskflow-sales     # lower case
-#   tag_strategy: git_sha          # optional: tag by commit instead of the version label
-```
-
-Then log the builder in to that registry and the CLI in to the control plane,
-and deploy:
+The CLI needs a credential for that registry. For Artifact Registry, ECR and
+ACR, being signed in to the `gcloud`, `aws` or `az` CLI is enough while the
+image is built without a daemon (with `uv` on `PATH`); for any other registry,
+or when the local `docker` builds, sign in with the command
+[Registry credentials](https://dexaflow.dexadata.ai/operate/builders/#registry-credentials)
+names (`docker login <registry>` for most). Then add the control plane as a
+target, sign in to it and deploy:
 
 ```sh
-docker login ghcr.io
-dexaflow auth login --server https://pro.example.com
-dexaflow deploy examples/<name>/ --trigger    # compile, build, push, pin by digest, register, run
+dexaflow target add prod https://pro.example.com --registry ghcr.io/your-org
+dexaflow auth login --target prod
+dexaflow deploy examples/<name>/ --active --trigger --follow   # compile, build, push, pin by digest, register, run
 ```
+
+A new DAG starts paused, as in Airflow, and a run triggered while it is paused
+waits in `queued`. `--active` unpauses it in the same register, and `--follow`
+prints the run's task states and logs and exits with its result.
 
 The full walkthrough is [Deploy your first Pro DAG](https://dexaflow.dexadata.ai/operate/first-pro-dag/),
 and the pipeline recipes are in [CI/CD & deploy](https://dexaflow.dexadata.ai/operate/cicd-deploy/).

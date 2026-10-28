@@ -27,6 +27,48 @@ type DAG struct {
 	CurrentVersion string
 }
 
+// DagFilter specifies filtering, searching, and sorting options for listing DAGs.
+type DagFilter struct {
+	DagIDPattern                string
+	DagIDPrefixPattern          string
+	DagDisplayNamePattern       string
+	DagDisplayNamePrefixPattern string
+	Paused                      *bool
+	LastDagRunState             string
+	Tags                        []string
+	TagsMatchMode               string // "any" or "all"
+	Owners                      []string
+	IsFavorite                  *bool
+	UserID                      string
+	OrderBy                     string
+	Limit                       int
+	Offset                      int
+}
+
+// DagRunFilter specifies filtering options for listing DAG runs.
+type DagRunFilter struct {
+	RunIDPattern       string
+	RunIDPrefixPattern string
+	RunType            string
+	States             []string
+	StartDateGte       *time.Time
+	StartDateLte       *time.Time
+	EndDateGte         *time.Time
+	EndDateLte         *time.Time
+	Limit              int
+	Offset             int
+}
+
+// TaskInstanceFilter specifies filtering options for listing task instances.
+type TaskInstanceFilter struct {
+	States              []string
+	TaskIDPattern       string
+	TaskIDPrefixPattern string
+	Pool                string
+	Limit               int
+	Offset              int
+}
+
 // DagVersion is a registered version of a DAG. VersionNumber is the 1-based
 // ordinal the UI uses (the stored version label is free-form).
 type DagVersion struct {
@@ -38,6 +80,98 @@ type DagVersion struct {
 	// "dev-<timestamp>" in Lite. It is the stable
 	// per-deployment identifier under a stable dag_id.
 	Version string
+	// ImageReference is the image the version runs, pinned by digest when the
+	// deploy resolved one.
+	ImageReference string
+	// SpecHash is the canonical hash of the version's dag.json.
+	SpecHash string
+	// IsCurrent reports whether this is the DAG's current version: the one new
+	// runs are created with.
+	IsCurrent bool
+	// CreatedBy is the id of the user who registered the version, or "" when
+	// the register had no user of the tenant (Lite's dev principal, a direct
+	// call, a deleted user). It is an id, not an email: every reader of the
+	// DAG sees it.
+	CreatedBy string
+	// BuildInfo is where the version was built, as its register sent it
+	// (#1702); nil when it sent none.
+	BuildInfo *BuildInfo
+}
+
+// DagVersionSelector names one registered version of a DAG, by its label
+// (Version) or by its version_number (Number). Exactly one is set.
+type DagVersionSelector struct {
+	Version string
+	Number  int
+}
+
+// DagSetCurrent is one request to make a registered version of DagID current
+// again (#1702): the version Selector names, on behalf of ActorUserID (empty
+// when none), after Admit accepts its spec. RequireDigest is the
+// deploy.require_digest it was admitted under (#1703); while it is warn or
+// enforce, the audit entry records it and whether the image is pinned.
+type DagSetCurrent struct {
+	DagID         string
+	Selector      DagVersionSelector
+	ActorUserID   string
+	Admit         func(DAGSpec) error
+	RequireDigest DigestRequirement
+}
+
+// CurrentVersionChange is the outcome of making a version current: the
+// version that was current before (From), the one that is current now (To),
+// and whether anything changed (false when To was already current).
+type CurrentVersionChange struct {
+	From    DagVersion
+	To      DagVersion
+	Changed bool
+}
+
+// DagRegistration is one register of a compiled DAG version: the spec, its
+// canonical hash, the registering user (empty when none) and an optional
+// is_paused for the DAG. IsPaused nil keeps Airflow's rule: a DAG the
+// register creates starts paused per its is_paused_upon_creation or the
+// server's dags_are_paused_at_creation, and an existing DAG keeps its state.
+// IsPaused set is the DAG's state after the register, created or not.
+// DryRun runs every check and step of the register and then undoes it, so
+// the outcome says what the register would do and nothing is written, audit
+// included. PromotedFrom, when set, names the control plane the version was
+// promoted from (`dexaflow promote`), recorded in the register's audit entry.
+// BuildInfo, when set, is where the version was built, stored with the version
+// the register creates and recorded in its audit entry; a register that
+// creates no version (the content is already registered) changes no build
+// info.
+// RequireDigest is the deploy.require_digest the register was admitted under
+// (#1703); while it is warn or enforce, the audit entry records it and
+// whether the image is pinned by digest.
+type DagRegistration struct {
+	Spec          DAGSpec
+	SpecHash      string
+	ActorUserID   string
+	IsPaused      *bool
+	DryRun        bool
+	PromotedFrom  *DagPromotion
+	BuildInfo     *BuildInfo
+	RequireDigest DigestRequirement
+}
+
+// DagPromotion names where a promoted version came from: the source target's
+// name as the promoting CLI knows it, and the source control plane's URL
+// (empty when not sent).
+type DagPromotion struct {
+	Target string
+	Server string
+}
+
+// DagRegistered is the outcome of a register: whether a new version was
+// created (false when the content was already registered), whether the
+// register created the DAG itself (its first version), and the DAG's
+// is_paused afterwards. For a dry run each field is what the register would
+// have done.
+type DagRegistered struct {
+	Created    bool
+	DagCreated bool
+	IsPaused   bool
 }
 
 // DagRun is an execution of a DAG, identified by dag_id + run_id.

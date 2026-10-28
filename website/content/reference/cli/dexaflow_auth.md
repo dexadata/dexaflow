@@ -21,12 +21,15 @@ Manage authentication tokens.
       --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
+      --target name         name of the control plane to use (default: DEXAFLOW_TARGET, then the target selected for the workspace; see dexaflow target list)
 ```
 
 ### SEE ALSO
 
 * [dexaflow](/reference/cli/dexaflow/)	 - Dexaflow is a GitOps-first, container-native workflow orchestrator.
-* [dexaflow auth create-token](/reference/cli/dexaflow_auth_create-token/)	 - Obtain a JWT from the control plane.
+* [dexaflow auth ci-token](/reference/cli/dexaflow_auth_ci-token/)	 - Exchange a CI job's OIDC token for a deploy session.
+* [dexaflow auth create-token](/reference/cli/dexaflow_auth_create-token/)	 - Obtain a session JWT, or with --scope create a long-lived API token.
 * [dexaflow auth create-user](/reference/cli/dexaflow_auth_create-user/)	 - Create a user on the control plane (admin only).
-* [dexaflow auth login](/reference/cli/dexaflow_auth_login/)	 - Authenticate to a control plane (Pro) and store the token.
+* [dexaflow auth login](/reference/cli/dexaflow_auth_login/)	 - Authenticate to a control plane (Cluster) and store the token.
+* [dexaflow auth tokens](/reference/cli/dexaflow_auth_tokens/)	 - List and revoke API tokens.
 

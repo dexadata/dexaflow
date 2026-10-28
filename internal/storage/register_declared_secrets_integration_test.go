@@ -11,11 +11,12 @@ import (
 
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/secrets"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 // withTestCipher configures a deterministic AES-GCM cipher on the repo so
 // connection seeding (which encrypts at rest, ADR 0019) works in the test.
-func withTestCipher(t *testing.T, repo interface{ SetCipher(secrets.Cipher) }) {
+func withTestCipher(t *testing.T, repo *storage.Repository) {
 	t.Helper()
 	key := make([]byte, 32)
 	for i := range key {
@@ -25,7 +26,7 @@ func withTestCipher(t *testing.T, repo interface{ SetCipher(secrets.Cipher) }) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(c)
+	repo.Configure(storage.WithCipher(c))
 }
 
 // registerDeclaring registers a DAG that declares the given variable/connection

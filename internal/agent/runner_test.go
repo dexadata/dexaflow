@@ -192,13 +192,32 @@ func (c *fakeCmd) Run(ctx context.Context, argv, env []string, stdout, _ io.Writ
 }
 
 func newRunner(client *fakeClient, cmd *fakeCmd, sink *recordingSink) *Runner {
-	return &Runner{
+	return withFakeClock(&Runner{
 		Client:   client,
 		Cmd:      cmd,
 		Sink:     sink,
 		Hostname: "pod-1",
 		Version:  "test",
-	}
+	})
+}
+
+// withFakeClock gives r a fake clock that its backoffs advance at once.
+// Transient-error retries back off for real in production; here they are
+// instant, and the retry budget is measured on the same fake clock, so a test
+// that injects a lasting control-plane error spends the budget without
+// waiting for it.
+func withFakeClock(r *Runner) *Runner {
+	clk := newFakeClock()
+	r.afterFunc = clk.after
+	r.now = clk.now
+	return r
+}
+
+// instantAfter is an afterFunc that fires at once.
+func instantAfter(time.Duration) <-chan time.Time {
+	ch := make(chan time.Time, 1)
+	ch <- time.Time{}
+	return ch
 }
 
 func TestRunnerHappyPath(t *testing.T) {
@@ -319,6 +338,46 @@ func TestBuildEnvStampsParams(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(env, "\n"), `LEOFLOW_PARAMS={"region":"us-east1"}`) {
 		t.Errorf("env missing LEOFLOW_PARAMS; got %v", env)
+	}
+}
+
+func TestBuildEnvStampsRunConfAndType(t *testing.T) {
+	// The runtime's dag_run.conf and dag_run.run_type come from these (#1843):
+	// the conf alone, not the layered params, and the Task SDK's run type.
+	client := &fakeClient{spec: &agentv1.TaskSpec{
+		Operator:    "python",
+		ParamsJson:  `{"region":"us","table":"orders"}`,
+		RunConfJson: `{"table":"orders"}`,
+		RunType:     "scheduled",
+	}}
+	r := newRunner(client, &fakeCmd{}, &recordingSink{})
+
+	env, err := r.buildEnv(context.Background(), client.spec)
+	if err != nil {
+		t.Fatalf("buildEnv: %v", err)
+	}
+	je := strings.Join(env, "\n")
+	for _, want := range []string{`LEOFLOW_RUN_CONF={"table":"orders"}`, "LEOFLOW_RUN_TYPE=scheduled"} {
+		if !strings.Contains(je, want) {
+			t.Errorf("env missing %q; got %v", want, env)
+		}
+	}
+}
+
+func TestBuildEnvOmitsRunConfAndTypeFromAnOlderServer(t *testing.T) {
+	// A control plane that predates the fields sends neither; the runtime then
+	// reports dag_run.conf as not provided instead of an invented empty conf.
+	client := &fakeClient{spec: &agentv1.TaskSpec{Operator: "python"}}
+	r := newRunner(client, &fakeCmd{}, &recordingSink{})
+
+	env, err := r.buildEnv(context.Background(), client.spec)
+	if err != nil {
+		t.Fatalf("buildEnv: %v", err)
+	}
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "LEOFLOW_RUN_CONF=") || strings.HasPrefix(kv, "LEOFLOW_RUN_TYPE=") {
+			t.Errorf("env carries %q for a spec without the fields", kv)
+		}
 	}
 }
 

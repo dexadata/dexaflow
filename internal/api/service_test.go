@@ -32,6 +32,32 @@ type fakeServiceStore struct {
 	gotLimits                                 domain.TenantLimitsUpdate
 	gotUserTenant, gotEmail, gotProv, gotSubj string
 	gotRoles                                  []string
+
+	suspension               domain.TenantSuspension
+	suspendErr, resumeErr    error
+	readSuspensionErr        error
+	gotSuspended, gotResumed string
+	gotSuspension            domain.TenantSuspension
+}
+
+func (f *fakeServiceStore) SuspendTenant(_ context.Context, tenant string, s domain.TenantSuspension) error {
+	f.gotSuspended, f.gotSuspension = tenant, s
+	if f.suspendErr == nil {
+		f.suspension = domain.TenantSuspension{Mode: s.Mode, Reason: s.Reason, Since: time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)}
+	}
+	return f.suspendErr
+}
+
+func (f *fakeServiceStore) ResumeTenant(_ context.Context, tenant string) error {
+	f.gotResumed = tenant
+	if f.resumeErr == nil {
+		f.suspension = domain.TenantSuspension{}
+	}
+	return f.resumeErr
+}
+
+func (f *fakeServiceStore) TenantSuspension(_ context.Context, _ string) (domain.TenantSuspension, error) {
+	return f.suspension, f.readSuspensionErr
 }
 
 func (f *fakeServiceStore) EnsureTenant(_ context.Context, name, displayName string, defaultPoolSlots int, limits domain.TenantLimitsUpdate) (bool, error) {
@@ -55,18 +81,26 @@ func serviceServerWith(t *testing.T, store *fakeServiceStore, withIssuer bool, a
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	deps := Dependencies{
-		ServiceAllowedTenants: allowed,
-		AuthAudit:             audit,
-		Logger:                discardLogger(),
-		Authenticator:         &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"viewer"}}},
-		RateLimiter:           auth.NewRateLimiter(100, time.Minute),
-		ServiceToken:          testServiceToken,
-		ServiceTenants:        store,
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			AuthAudit:     audit,
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"viewer"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Issuers: IssuerDeps{
+			ServiceAllowedTenants: allowed,
+			ServiceToken:          testServiceToken,
+			ServiceTenants:        store,
+		},
 	}
 	if withIssuer {
-		deps.TrustedIssuer = fakeTrustedIssuer{issuer.Identity{}}
+		deps.Issuers.TrustedIssuer = fakeTrustedIssuer{issuer.Identity{}}
+		deps.Issuers.TrustedIssuerUsers = &fakeIssuerUsers{}
+		deps.Auth.JWTSecret = testHS256Secret
 	}
-	return NewServer(deps)
+	return newTestServer(deps)
 }
 
 func callService(h http.Handler, method, path, token, body string) *httptest.ResponseRecorder {
@@ -104,8 +138,15 @@ func TestServiceAPIRequiresTheServiceToken(t *testing.T) {
 // token configured, no service routes.
 func TestServiceAPIAbsentWithoutAToken(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	h := NewServer(Dependencies{Logger: discardLogger(), RateLimiter: auth.NewRateLimiter(100, time.Minute),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}}})
+	h := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+		},
+	})
 
 	rec := callService(h, http.MethodPut, "/api/v2/service/tenants/acme", testServiceToken, `{}`)
 

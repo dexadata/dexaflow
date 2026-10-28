@@ -61,6 +61,10 @@ func (f *fakeStaleQueuedStore) MarkTaskDispatchLost(_ context.Context, tiID stri
 	return true, nil
 }
 
+func (f *fakeStaleQueuedStore) MarkTaskStartExpired(context.Context, string, int, int) (bool, error) {
+	return false, nil
+}
+
 // TestReapDispatchLost_MarksStaleTIs covers the success path: only TIs queued
 // past the threshold get failed; freshly-queued ones are left alone. This is
 // the contract that makes "stuck dag_run because a scheduler crashed

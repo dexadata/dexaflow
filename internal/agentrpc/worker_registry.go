@@ -2,6 +2,7 @@ package agentrpc
 
 import (
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -66,7 +67,14 @@ type registeredWorker struct {
 	// sourced from the downward API). It is the durable key a started attempt is
 	// bound to; distinct from identity, which is the authenticated stream credential.
 	podName string
-	send    chan *agentv1.WorkAssignment
+	// sourceDelivery is the worker's WorkerRegister.source_delivery: it runs a
+	// source-mode attempt from the dag_source its assignment carries (ADR
+	// 0095). Only such a worker is handed a source-mode assignment.
+	sourceDelivery bool
+	// warnedNoSource records that this entry was already reported as passed
+	// over for a source-mode attempt, so the warning comes once per worker.
+	warnedNoSource bool
+	send           chan *agentv1.WorkAssignment
 	// busy is set once the worker acks an assignment as started; it is cleared
 	// when the worker signals SlotFree.
 	busy bool
@@ -111,7 +119,22 @@ type leaseState struct {
 	// attemptEpoch is the epoch the dispatcher claimed for this assignment.
 	attemptEpoch int
 	timer        *time.Timer
+	// expired is set once the ack deadline passed with no ack. The lease then
+	// stays as a tombstone for leaseTombstone (see onLeaseExpire): the worker
+	// may still ack it late and run the attempt, so it is neither offered new
+	// work nor forgotten while that ack can arrive.
+	expired bool
 }
+
+// leaseTombstone is how long an expired lease is remembered after its ack
+// deadline. A worker acks after resetting its scratch and runs the attempt
+// whatever the server answers, so an ack can arrive after the lease expired. The
+// tombstone lets that late started ack still bind the attempt and mark the worker
+// busy, and keeps the worker out of the free set meanwhile, so it is never handed
+// a second assignment while it may be running the first. Five minutes is well
+// past the dispatch-lost threshold (3 minutes): by then the attempt has been
+// recovered by the reaper and a later ack is fenced by the attempt epoch.
+const leaseTombstone = 5 * time.Minute
 
 // WorkerRegistry is the concurrency-safe home of the warm-worker fleet and the
 // H1 ack/lease machine (ADR 0058 N1b).
@@ -135,9 +158,56 @@ type WorkerRegistry struct {
 	// leaseFor computes an assignment's ack deadline. Injectable so tests drive
 	// reclaim deterministically with a tiny lease.
 	leaseFor func(*agentv1.WorkAssignment) time.Duration
+	// tombstoneFor is how long an expired lease is kept (leaseTombstone).
+	// Injectable so tests drive the tombstone deterministically.
+	tombstoneFor time.Duration
 	// now is the clock the liveness grace is measured on. Injectable for tests.
 	now func() time.Time
+	// sweepPolicy is what a registration that does not confirm the /tmp and
+	// /dev/shm sweep gets (#1678); sweepDecisions meters each one.
+	sweepPolicy    SweepPolicy
+	sweepDecisions DecisionRecorder
 }
+
+// DecisionRecorder meters a control-plane decision by type. The production
+// implementation is observability.Metrics (dexaflow_scheduler_decisions_total).
+type DecisionRecorder interface {
+	RecordSchedulerDecision(decisionType string)
+}
+
+// SweepPolicy is how the registry treats a warm worker whose register does not
+// confirm attempt_home_sweep (#1678).
+type SweepPolicy int
+
+const (
+	// SweepIgnore accepts every worker without looking (the read-only root is
+	// off, so no sweep is expected).
+	SweepIgnore SweepPolicy = iota
+	// SweepWarn accepts the worker, logs a warning and meters it.
+	SweepWarn
+	// SweepRefuse refuses the registration, logs and meters it, so the worker
+	// never joins the pool and its DAG version's attempts run on dedicated pods.
+	SweepRefuse
+)
+
+// DecisionWarmWorkerSweepUnconfirmed is the decision type metered when a warm
+// worker that does not confirm the attempt home sweep is accepted (SweepWarn).
+const DecisionWarmWorkerSweepUnconfirmed = "warm_worker_sweep_unconfirmed"
+
+// DecisionWarmWorkerRefusedNoSweep is the decision type metered when a warm
+// worker is refused because it does not confirm the attempt home sweep
+// (SweepRefuse).
+const DecisionWarmWorkerRefusedNoSweep = "warm_worker_refused_no_sweep"
+
+// DecisionWarmWorkerNoSourceDelivery is the decision type metered, once per
+// worker, when a source-mode attempt passes over a free warm worker that did
+// not register with source_delivery (ADR 0095): its agent predates it, and
+// the attempt takes a dedicated pod unless another worker can run it.
+const DecisionWarmWorkerNoSourceDelivery = "warm_worker_no_source_delivery"
+
+// ReasonAttemptHomeSweepUnconfirmed is the stable reason logged for a warm
+// worker that does not confirm the sweep, and carried by its refusal.
+const ReasonAttemptHomeSweepUnconfirmed = "attempt_home_sweep_unconfirmed"
 
 // NewWorkerRegistry builds a registry whose reclaim events are delivered to
 // onReclaim (may be nil).
@@ -150,7 +220,8 @@ func NewWorkerRegistry(onReclaim func(ReclaimEvent)) *WorkerRegistry {
 		leaseFor: func(a *agentv1.WorkAssignment) time.Duration {
 			return time.Duration(a.GetLeaseSeconds()) * time.Second
 		},
-		now: time.Now,
+		tombstoneFor: leaseTombstone,
+		now:          time.Now,
 	}
 }
 
@@ -161,6 +232,33 @@ func (r *WorkerRegistry) SetOnClaim(fn func()) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.onClaim = fn
+}
+
+// SetSweepPolicy sets how the registry treats a warm worker whose register
+// does not confirm attempt_home_sweep (#1678). With
+// execution.warm_read_only_root_filesystem on, isolation between attempts
+// relies on the agent in the task image to empty /tmp and /dev/shm, and an
+// agent built on an older runtime silently does not. rec (may be nil) meters
+// each unconfirmed worker. Call it before the registry serves workers.
+func (r *WorkerRegistry) SetSweepPolicy(p SweepPolicy, rec DecisionRecorder) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sweepPolicy = p
+	r.sweepDecisions = rec
+}
+
+// SweepPolicy reports the policy SetSweepPolicy set (SweepIgnore by default).
+func (r *WorkerRegistry) SweepPolicy() SweepPolicy {
+	p, _ := r.sweepPolicyAndRecorder()
+	return p
+}
+
+// sweepPolicyAndRecorder reports the sweep policy and the recorder its
+// decisions are metered on.
+func (r *WorkerRegistry) sweepPolicyAndRecorder() (SweepPolicy, DecisionRecorder) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sweepPolicy, r.sweepDecisions
 }
 
 // claimed runs the onClaim hook, if any, outside the registry lock.
@@ -187,6 +285,22 @@ func (r *WorkerRegistry) claimed() {
 // for longer than the grace; in the stale case the old entry's superseded
 // channel is closed so its handler ends. The fresh entry starts free.
 func (r *WorkerRegistry) Register(identity, dagVersion, podName string, send chan *agentv1.WorkAssignment, streamDone <-chan struct{}) (*registeredWorker, error) {
+	return r.RegisterWorker(identity, dagVersion, WorkerInfo{PodName: podName}, send, streamDone)
+}
+
+// WorkerInfo is what a warm worker's registration says about it besides its
+// identity and pool: the locator a started attempt is bound to, and what it
+// can run.
+type WorkerInfo struct {
+	// PodName is WorkerRegister.pod_name.
+	PodName string
+	// SourceDelivery is WorkerRegister.source_delivery (ADR 0095).
+	SourceDelivery bool
+}
+
+// RegisterWorker is Register with everything the registration states about
+// the worker.
+func (r *WorkerRegistry) RegisterWorker(identity, dagVersion string, info WorkerInfo, send chan *agentv1.WorkAssignment, streamDone <-chan struct{}) (*registeredWorker, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := r.now()
@@ -200,13 +314,14 @@ func (r *WorkerRegistry) Register(identity, dagVersion, podName string, send cha
 		close(old.superseded)
 	}
 	w := &registeredWorker{
-		identity:   identity,
-		dagVersion: dagVersion,
-		podName:    podName,
-		send:       send,
-		streamDone: streamDone,
-		lastSeen:   now,
-		superseded: make(chan struct{}),
+		identity:       identity,
+		dagVersion:     dagVersion,
+		podName:        info.PodName,
+		sourceDelivery: info.SourceDelivery,
+		send:           send,
+		streamDone:     streamDone,
+		lastSeen:       now,
+		superseded:     make(chan struct{}),
 	}
 	r.workers[identity] = w
 	r.addFreeLocked(w)
@@ -278,13 +393,36 @@ func (r *WorkerRegistry) Deregister(w *registeredWorker) {
 	}
 }
 
+// retireIfIdle takes w off the free set and reports true when it is idle: still
+// this identity's entry, not busy with an acked attempt, and holding no
+// assignment that awaits its ack. An expired lease kept as a tombstone counts as
+// awaiting its ack: the worker may still ack it late and run it (#1600). It
+// reports false, changing nothing, for a
+// worker that is serving or about to serve. The caller ends the worker's stream
+// on true, so taking it off the free set in the same step keeps an assignment
+// from being handed to a stream that is closing.
+func (r *WorkerRegistry) retireIfIdle(w *registeredWorker) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.workers[w.identity] != w || w.busy {
+		return false
+	}
+	for _, ls := range r.leases {
+		if ls.worker == w {
+			return false
+		}
+	}
+	r.removeFreeLocked(w)
+	return true
+}
+
 // Assign hands a WorkAssignment to some free worker of dagVersion by pushing it
 // onto that worker's outbound channel and starting its lease. It returns false
 // when no free worker of that dag_version exists (nothing was handed out and no
 // lease was started).
 func (r *WorkerRegistry) Assign(dagVersion string, a *agentv1.WorkAssignment) bool {
 	r.mu.Lock()
-	w := r.takeFreeLocked(dagVersion)
+	w := r.takeFreeLocked(dagVersion, len(a.GetDagSource()) > 0)
 	if w == nil {
 		r.mu.Unlock()
 		return false
@@ -319,8 +457,15 @@ func (r *WorkerRegistry) Assign(dagVersion string, a *agentv1.WorkAssignment) bo
 // cancels the lease (no reclaim), and returns the WarmBinding to persist — the
 // acked attempt's (run, task, try) plus the worker's pod name — with ok=true.
 // started=false reclaims the assignment and returns ok=false. An ack for an
-// unknown assignment (already expired or already settled) also returns ok=false.
-// Only ok=true carries a non-nil binding the handler should persist.
+// unknown assignment (already settled, or expired past its tombstone) also
+// returns ok=false. Only ok=true carries a non-nil binding the handler should
+// persist.
+//
+// A late ack, one that arrives after the lease expired but while its tombstone
+// is kept, is settled the same way: the worker runs the attempt whatever the
+// server answers, so a started late ack still binds the attempt and marks the
+// worker busy. A refused late ack returns the worker to the free set, which the
+// expiry deliberately did not do.
 func (r *WorkerRegistry) Ack(assignmentID string, started bool) (*WarmBinding, bool) {
 	r.mu.Lock()
 	ls, ok := r.leases[assignmentID]
@@ -332,6 +477,8 @@ func (r *WorkerRegistry) Ack(assignmentID string, started bool) (*WarmBinding, b
 	ls.timer.Stop()
 	if started {
 		ls.worker.busy = true
+		// A late started ack may land after a reconnect replaced this entry; the
+		// busy bit then sits on the stale entry and the new one is unaffected.
 		binding := &WarmBinding{
 			RunID:        ls.runID,
 			TaskID:       ls.taskID,
@@ -341,6 +488,9 @@ func (r *WorkerRegistry) Ack(assignmentID string, started bool) (*WarmBinding, b
 		}
 		r.mu.Unlock()
 		return binding, true
+	}
+	if ls.expired {
+		r.returnFreeLocked(ls.worker)
 	}
 	ev := ReclaimEvent{
 		AssignmentID: assignmentID,
@@ -372,24 +522,24 @@ func (r *WorkerRegistry) MarkFree(identity string) {
 // onLeaseExpire reclaims an assignment whose lease elapsed with no ack. If the
 // lease was already settled (acked or the worker deregistered), it is a no-op.
 //
-// H4 (ADR 0058 N1d-c): a missed ack is usually a transient slow-start, not a
-// wedge, so the worker is returned to the free set rather than stranded holding
-// a pool slot forever — but only if the registry still points at exactly this
-// entry (a reconnect under the same identity installs a fresh entry we must not
-// disturb) and it is not busy serving another acked attempt. A genuine wedge is
-// bounded later by the D9 lifetime/attempt caps (out of scope here). Done under
-// the lock, consistent with the other free-set mutations.
+// The worker is NOT returned to the free set here: it acks after a scratch reset
+// and then runs the attempt regardless of the server's answer, so a slow worker
+// can still ack and run this attempt. Offering it new work now would push a
+// second assignment onto a worker that is busy with the first (#1600). The lease
+// is kept as a tombstone instead (expired=true) so a late started ack still binds
+// the attempt (Ack). When the tombstone elapses with no ack, onTombstoneExpire
+// returns the worker to the free set (H4, ADR 0058 N1d-c): a missed ack is
+// usually a transient slow start, not a wedge, and the worker must not stay
+// stranded holding a pool slot forever.
 func (r *WorkerRegistry) onLeaseExpire(assignmentID string) {
 	r.mu.Lock()
 	ls, ok := r.leases[assignmentID]
-	if !ok {
+	if !ok || ls.expired {
 		r.mu.Unlock()
 		return
 	}
-	delete(r.leases, assignmentID)
-	if w := ls.worker; r.workers[w.identity] == w && !w.busy {
-		r.addFreeLocked(w)
-	}
+	ls.expired = true
+	ls.timer = time.AfterFunc(r.tombstoneFor, func() { r.onTombstoneExpire(assignmentID, ls) })
 	ev := ReclaimEvent{
 		AssignmentID: assignmentID,
 		DagVersionID: ls.dagVersion,
@@ -401,6 +551,30 @@ func (r *WorkerRegistry) onLeaseExpire(assignmentID string) {
 	}
 	r.mu.Unlock()
 	r.emitReclaim(ev)
+}
+
+// onTombstoneExpire forgets an expired lease whose late ack never came and
+// returns its worker to the free set (H4). It is a no-op if the lease was settled
+// meanwhile (a late ack, or the worker deregistered) or replaced. No reclaim is
+// emitted: the lease expiry already emitted ReclaimLeaseExpired.
+func (r *WorkerRegistry) onTombstoneExpire(assignmentID string, ls *leaseState) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.leases[assignmentID] != ls {
+		return
+	}
+	delete(r.leases, assignmentID)
+	r.returnFreeLocked(ls.worker)
+}
+
+// returnFreeLocked puts w back in the free set, but only if the registry still
+// points at exactly this entry (a reconnect under the same identity installs a
+// fresh entry we must not disturb) and it is not busy serving an acked attempt.
+// Requires r.mu.
+func (r *WorkerRegistry) returnFreeLocked(w *registeredWorker) {
+	if r.workers[w.identity] == w && !w.busy {
+		r.addFreeLocked(w)
+	}
 }
 
 // emitReclaim delivers a reclaim event to the observer, always OUTSIDE the lock
@@ -433,9 +607,31 @@ func (r *WorkerRegistry) removeFreeLocked(w *registeredWorker) {
 	}
 }
 
-func (r *WorkerRegistry) takeFreeLocked(dagVersion string) *registeredWorker {
+// warnNoSourceDeliveryLocked logs and meters, once per worker entry, that a
+// source-mode attempt passed w over.
+func (r *WorkerRegistry) warnNoSourceDeliveryLocked(w *registeredWorker) {
+	if w.warnedNoSource {
+		return
+	}
+	w.warnedNoSource = true
+	slog.Warn("warm worker passed over for a source-mode attempt: its agent does not confirm source delivery; rebuild the source mode runtime image on a runtime from 0.5.7 or later",
+		"reason", DecisionWarmWorkerNoSourceDelivery, "identity", w.identity, "dag_version", w.dagVersion, "pod_name", w.podName)
+	if r.sweepDecisions != nil {
+		r.sweepDecisions.RecordSchedulerDecision(DecisionWarmWorkerNoSourceDelivery)
+	}
+}
+
+// takeFreeLocked removes and returns a free worker of dagVersion, nil when
+// none is free. With needSource only a worker that registered with
+// source_delivery qualifies (ADR 0095): an older worker would run a
+// source-mode attempt without its dag.py.
+func (r *WorkerRegistry) takeFreeLocked(dagVersion string, needSource bool) *registeredWorker {
 	set := r.free[dagVersion]
 	for id, w := range set {
+		if needSource && !w.sourceDelivery {
+			r.warnNoSourceDeliveryLocked(w)
+			continue
+		}
 		delete(set, id)
 		if len(set) == 0 {
 			delete(r.free, dagVersion)

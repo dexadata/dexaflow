@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dexadata/dexaflow/internal/build"
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/version"
 )
@@ -66,7 +67,8 @@ func gitOutput(ctx context.Context, dir string, args ...string) string {
 // gitRepoOverrides are the variables that point git at a repository other
 // than the one around cmd.Dir. A hook or CI step that exports them would
 // otherwise label the project with that repository's commit.
-var gitRepoOverrides = []string{"GIT_DIR=", "GIT_WORK_TREE=", "GIT_INDEX_FILE="}
+var gitRepoOverrides = []string{"GIT_DIR=", "GIT_WORK_TREE=", "GIT_INDEX_FILE=",
+	"GIT_COMMON_DIR=", "GIT_OBJECT_DIRECTORY=", "GIT_ALTERNATE_OBJECT_DIRECTORIES="}
 
 // gitEnv returns env without gitRepoOverrides.
 func gitEnv(env []string) []string {
@@ -93,7 +95,13 @@ func gitEnv(env []string) []string {
 // dag.json changed. The result is also a valid image tag, because
 // tag_strategy version tags the image with it.
 func defaultDAGVersion(ctx context.Context, dir string, cfg *domain.LeoflowConfig, dockerfile, output string) (string, error) {
-	sum, err := contentHash(dir, cfg, dockerfile, output)
+	return defaultDAGVersionOn(ctx, dir, cfg, dockerfile, output, "")
+}
+
+// defaultDAGVersionOn is defaultDAGVersion for a source mode deploy on
+// runtimeImage (contentHashOn); "" is a build, and gives the same label.
+func defaultDAGVersionOn(ctx context.Context, dir string, cfg *domain.LeoflowConfig, dockerfile, output, runtimeImage string) (string, error) {
+	sum, err := contentHashOn(dir, cfg, dockerfile, output, runtimeImage)
 	if err != nil {
 		return "", err
 	}
@@ -165,24 +173,102 @@ func isTagChar(c byte) bool {
 // logs/, .user.yml), except a dbt.manifest the project points at. The image
 // digest is not an input: it does not exist before the build.
 func contentHash(dir string, cfg *domain.LeoflowConfig, dockerfile, output string) (string, error) {
+	return contentHashOn(dir, cfg, dockerfile, output, "")
+}
+
+// contentHashOn is contentHash for a source mode deploy on runtimeImage
+// (#1772): the version's image is the runtime image, not one built from the
+// project, so the label hashes it too, and a new runtime image is a new
+// version. A build (runtimeImage "") hashes nothing more, so no build label
+// moves.
+func contentHashOn(dir string, cfg *domain.LeoflowConfig, dockerfile, output, runtimeImage string) (string, error) {
 	h := sha256.New()
-	cfgJSON, err := json.Marshal(cfg)
+	cfgJSON, err := json.Marshal(labelConfig(cfg))
 	if err != nil {
 		return "", fmt.Errorf("encoding project config for the version label: %w", err)
 	}
 	hashField(h, "config", cfgJSON)
 	hashField(h, "cli", []byte(version.Get().Version))
+	if runtimeImage != "" {
+		hashField(h, "source_mode_image", []byte(runtimeImage))
+	}
+	if _, err := walkLabelInputs(dir, cfg, dockerfile, output, h, nil); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// labelAuthMethod is the registry.auth_method the content label hashes for
+// auto, docker_config and cloud: the value ApplyDefaults filled in before
+// auto existed, so that no label moved when the default changed.
+const labelAuthMethod = "docker_config"
+
+// labelConfig is cfg as the content label hashes it: where the CLI reads the
+// registry credential (registry.auth_method) is not an input of the image,
+// so auto, docker_config and cloud hash as one constant, and the remote
+// builder is left out. env and iam, which
+// were hashed as written before any value was read, keep that, so their
+// labels do not move either.
+func labelConfig(cfg *domain.LeoflowConfig) *domain.LeoflowConfig {
+	if cfg == nil {
+		return nil
+	}
+	c := *cfg
+	if cfg.Build != nil && cfg.Build.RemoteBuilder != nil {
+		// Where the image is built (build.remote_builder) is not an input
+		// of the image either.
+		b := *cfg.Build
+		b.RemoteBuilder = nil
+		c.Build = &b
+	}
+	if cfg.Registry == nil || cfg.Registry.AuthMethod == "env" || cfg.Registry.AuthMethod == "iam" {
+		return &c
+	}
+	reg := *cfg.Registry
+	reg.AuthMethod = labelAuthMethod
+	c.Registry = &reg
+	return &c
+}
+
+// walkLabelInputs hashes into h every file contentHash reads from the project
+// directory, calling seen (when not nil) with the path of each one, and
+// returns the roots it walked, as project-relative names. It is the one
+// definition of which files a DAG's image and version label come from, shared
+// by the label and by deploy --changed-since.
+func walkLabelInputs(dir string, cfg *domain.LeoflowConfig, dockerfile, output string, h hash.Hash, seen func(string)) ([]hashRootSpec, error) {
 	own := projectDockerfile(dir, cfg, dockerfile)
 	w, err := newContentWalker(dir, cfg, output, own != "", h)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	for _, root := range w.roots(own) {
+	w.seen = seen
+	roots := w.roots(own)
+	for _, root := range roots {
 		if werr := w.hashRoot(root); werr != nil {
-			return "", werr
+			return nil, werr
 		}
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return roots, nil
+}
+
+// labelInputFiles lists the files of the project directory the default
+// version label is computed from (walkLabelInputs), without reading them:
+// what deploy --watch polls. dockerfile is the --dockerfile flag.
+func labelInputFiles(dir string, cfg *domain.LeoflowConfig, dockerfile string) ([]string, error) {
+	own := projectDockerfile(dir, cfg, dockerfile)
+	w, err := newContentWalker(dir, cfg, "", own != "", sha256.New())
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	w.list = true
+	w.seen = func(file string) { files = append(files, file) }
+	for _, root := range w.roots(own) {
+		if werr := w.hashRoot(root); werr != nil {
+			return nil, werr
+		}
+	}
+	return files, nil
 }
 
 // hashField writes a length-prefixed field, so two fields can never run
@@ -220,6 +306,15 @@ type contentWalker struct {
 	manifest string // slash path of dbt.manifest relative to dir, or ""
 	ignore   dockerignore
 	h        hash.Hash
+	// layer collects the entries of the code layer instead of hashing them
+	// (codeLayerFiles).
+	layer bool
+	files []build.LayerFile
+	// seen, when set, receives the path of every entry the walk keeps.
+	seen func(file string)
+	// list walks without reading: seen receives the path of every file the
+	// walk keeps, and nothing is hashed (labelInputFiles).
+	list bool
 }
 
 // hashRootSpec is one root of the hash: a project-relative path.
@@ -384,6 +479,18 @@ func (w *contentWalker) visit(r hashRootSpec, file, rel string, d fs.DirEntry) e
 		}
 		return nil
 	}
+	if w.list {
+		if !d.IsDir() {
+			w.seen(file)
+		}
+		return nil
+	}
+	if w.seen != nil {
+		w.seen(file)
+	}
+	if w.layer {
+		return w.collect(file, slash, d)
+	}
 	return w.hashEntry(file, slash, d)
 }
 
@@ -433,6 +540,11 @@ func (w *contentWalker) skip(rel, abs string) bool {
 	}
 	if slash == "dag.json" || (w.output != "" && filepath.Clean(abs) == w.output) {
 		return true
+	}
+	if w.layer {
+		// The code layer reads exclude_paths and the dbt artifacts through
+		// the merged .dockerignore, with Docker's rules (codeLayerFiles).
+		return false
 	}
 	if w.dbtArtifact(slash) {
 		return true

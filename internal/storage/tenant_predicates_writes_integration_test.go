@@ -5,6 +5,7 @@ package storage_test
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -124,6 +125,31 @@ func TestRunWritesNeedTheOwningTenantIntegration(t *testing.T) {
 	}
 }
 
+// TestStartQueuedRunNeedsTheOwningTenantIntegration: the tick's guarded
+// queued -> running write (#1766) sent with another tenant's id starts
+// nothing; the owner's starts the run once, and a second start finds the run
+// no longer queued.
+func TestStartQueuedRunNeedsTheOwningTenantIntegration(t *testing.T) {
+	f, _, ctx := newTenantPredicateFixture(t)
+	q := f.q
+	f.exec(t, `UPDATE dag_runs SET state = 'queued', started_at = NULL WHERE id = $1`, f.runUUID)
+	if _, err := q.StartQueuedRun(ctx, queries.StartQueuedRunParams{ID: f.runUUID, TenantID: f.other}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("StartQueuedRun as another tenant: err = %v, want no rows", err)
+	}
+	if runState, _, _, _, _ := f.runAndTI(t); runState != "queued" {
+		t.Fatalf("after another tenant's start: run %s, want queued", runState)
+	}
+	if _, err := q.StartQueuedRun(ctx, queries.StartQueuedRunParams{ID: f.runUUID, TenantID: f.owner}); err != nil {
+		t.Fatalf("StartQueuedRun as the owner: %v", err)
+	}
+	if runState, _, _, _, _ := f.runAndTI(t); runState != "running" {
+		t.Errorf("after the owner's start: run %s, want running", runState)
+	}
+	if _, err := q.StartQueuedRun(ctx, queries.StartQueuedRunParams{ID: f.runUUID, TenantID: f.owner}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("StartQueuedRun on a running run: err = %v, want no rows", err)
+	}
+}
+
 // TestDagVersionQueriesNeedTheOwningTenantIntegration covers the dag_versions
 // queries of #508. The table has no tenant_id; the tenant is its DAG's, so a
 // DAG or version id of another tenant reads, inserts and re-points nothing.
@@ -177,5 +203,57 @@ func TestDagVersionQueriesNeedTheOwningTenantIntegration(t *testing.T) {
 	}
 	if got, _ := q.GetDagByDagID(ctx, queries.GetDagByDagIDParams{TenantID: f.owner, DagID: f.dagIDTxt}); got.CurrentVersionID != v2.ID {
 		t.Errorf("the owner's SetCurrentDagVersion did not apply")
+	}
+}
+
+// TestAPITokenRetireNeedsTheOwningTenantIntegration (#1768): retiring an
+// expired API token's name, sent with another tenant's id, retires nothing
+// even for the right owner and name; the owner's retire applies.
+func TestAPITokenRetireNeedsTheOwningTenantIntegration(t *testing.T) {
+	f, repo, ctx := newTenantPredicateFixture(t)
+	userID, _ := apiTokenOwner(t, ctx, repo, "default", "deployer")
+	_, tok := newStoredToken(t, ctx, repo, "default", userID, "nightly")
+	expireToken(t, ctx, f.pg, tok.ID)
+	var uid pgtype.UUID
+	if err := uid.Scan(userID); err != nil {
+		t.Fatal(err)
+	}
+	retire := func(tenant pgtype.UUID) ([]queries.RetireExpiredAPITokenNameRow, error) {
+		return f.q.RetireExpiredAPITokenName(ctx, queries.RetireExpiredAPITokenNameParams{UserID: uid, TenantID: tenant, Name: "nightly"})
+	}
+	if rows, err := retire(f.other); err != nil || len(rows) != 0 {
+		t.Errorf("RetireExpiredAPITokenName as another tenant = %d rows, %v; want none", len(rows), err)
+	}
+	var revoked *time.Time
+	if err := f.pg.Pool.QueryRow(ctx, `SELECT revoked_at FROM api_tokens WHERE id = $1`, tok.ID).Scan(&revoked); err != nil || revoked != nil {
+		t.Errorf("revoked_at = %v (%v) after a retire as another tenant, want NULL", revoked, err)
+	}
+	if rows, err := retire(f.owner); err != nil || len(rows) != 1 {
+		t.Errorf("RetireExpiredAPITokenName as the owner = %d rows, %v; want 1", len(rows), err)
+	}
+}
+
+// TestCLIDeviceApprovalNeedsTheUsersTenantIntegration (ADR 0081): approving
+// a device sign-in as a user while naming another tenant approves nothing;
+// naming the user's own tenant approves it.
+func TestCLIDeviceApprovalNeedsTheUsersTenantIntegration(t *testing.T) {
+	f, repo, ctx := newTenantPredicateFixture(t)
+	userID, email := apiTokenOwner(t, ctx, repo, "default", "viewer")
+	_, _, created := newDeviceAuthorization(t, ctx, repo, 10*time.Minute, time.Second)
+	var id, uid pgtype.UUID
+	if err := id.Scan(created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := uid.Scan(userID); err != nil {
+		t.Fatal(err)
+	}
+	approve := func(tenant string) (int64, error) {
+		return f.q.ApproveCLIDevice(ctx, queries.ApproveCLIDeviceParams{ID: id, UserID: uid, Tenant: tenant, Email: &email, Roles: []string{"viewer"}})
+	}
+	if n, err := approve(f.otherNm); err != nil || n != 0 {
+		t.Errorf("ApproveCLIDevice naming another tenant = %d rows, %v; want 0", n, err)
+	}
+	if n, err := approve("default"); err != nil || n != 1 {
+		t.Errorf("ApproveCLIDevice naming the user's tenant = %d rows, %v; want 1", n, err)
 	}
 }

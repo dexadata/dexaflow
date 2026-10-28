@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/observability"
 	"github.com/dexadata/dexaflow/internal/storage"
 	"github.com/dexadata/dexaflow/internal/version"
 )
@@ -111,8 +112,9 @@ func holdKeyLock(ctx context.Context, cfg *config.ServerConfig, logger *slog.Log
 
 // openPostgresHoldingKeyLock opens the verified pool and, for a Lite server,
 // takes the key-migration lock. It returns the context the server runs under.
-func openPostgresHoldingKeyLock(ctx context.Context, cfg *config.ServerConfig, logger *slog.Logger) (*storage.Postgres, context.Context, func(), error) {
-	pg, err := openVerifiedPostgres(ctx, cfg.Database)
+func openPostgresHoldingKeyLock(ctx context.Context, cfg *config.ServerConfig, tel *observability.Telemetry) (*storage.Postgres, context.Context, func(), error) {
+	logger := tel.Logger
+	pg, err := openVerifiedPostgres(ctx, cfg, tel)
 	if err != nil {
 		return nil, ctx, func() {}, fmt.Errorf("postgres: %w", err)
 	}
@@ -122,17 +124,4 @@ func openPostgresHoldingKeyLock(ctx context.Context, cfg *config.ServerConfig, l
 		return nil, ctx, func() {}, err
 	}
 	return pg, lctx, release, nil
-}
-
-// keyLockExit turns a shutdown caused by a lost key-migration lock into a
-// non-zero exit, so neither the supervising `dexaflow lite` nor an operator
-// mistakes it for a clean stop.
-func keyLockExit(ctx context.Context, serveErr error) error {
-	if serveErr != nil {
-		return serveErr
-	}
-	if cause := context.Cause(ctx); errors.Is(cause, errKeyLockLost) {
-		return cause
-	}
-	return nil
 }

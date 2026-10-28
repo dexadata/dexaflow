@@ -33,8 +33,8 @@ func IsOnceSchedule(expr string) bool {
 // a typo — is rejected here so it fails loudly at compile time; otherwise the
 // scheduler silently can't parse it and the DAG simply never runs, with no error
 // surfaced anywhere (the worst failure mode). The parser is robfig/cron's
-// ParseStandard, the same one the scheduler uses, so what validates here is
-// exactly what the scheduler can run (see scheduler/cron.go).
+// ParseStandard (through ParseCron), the same one the scheduler uses, so what
+// validates here is exactly what the scheduler can run (see scheduler/cron.go).
 func (d *DAGSpec) ValidateSchedule() error {
 	if d.Schedule == nil {
 		return nil
@@ -43,9 +43,25 @@ func (d *DAGSpec) ValidateSchedule() error {
 	if IsCronlessSchedule(expr) {
 		return nil
 	}
-	if _, err := cron.ParseStandard(expr); err != nil {
+	if _, err := ParseCron(expr); err != nil {
 		return fmt.Errorf("invalid schedule %q: %v; Dexaflow supports standard 5-field cron "+
 			`(e.g. "*/3 * * * *" for every 3 minutes), the @hourly/@daily/@weekly/@monthly/@yearly presets, and @once`, expr, err)
 	}
 	return nil
+}
+
+// ParseCron parses a schedule with robfig/cron's ParseStandard. Every schedule
+// parse in Dexaflow goes through it, so registration and the scheduler accept
+// exactly the same expressions.
+//
+// It first refuses a TZ= or CRON_TZ= prefix with no space after it.
+// ParseStandard (robfig/cron v3.0.1) cuts the zone name at the first space and
+// panics with a slice out of range when there is none, so a schedule such as
+// "TZ=UTC" in a dag.json would otherwise panic at registration and on every
+// scheduler tick.
+func ParseCron(expr string) (cron.Schedule, error) {
+	if (strings.HasPrefix(expr, "TZ=") || strings.HasPrefix(expr, "CRON_TZ=")) && !strings.Contains(expr, " ") {
+		return nil, fmt.Errorf("time zone %q is not followed by a space and a cron expression", expr)
+	}
+	return cron.ParseStandard(expr)
 }

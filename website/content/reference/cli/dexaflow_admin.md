@@ -11,7 +11,7 @@ Operate a running control plane (health, pause, drain, runs).
 
 ### Synopsis
 
-Operator commands for a running Dexaflow control plane (Pro). These act over the /api/v2 API — checking health, pausing DAGs, draining the control plane before maintenance, and inspecting runs — and reuse the same --server/--token/config precedence as `dexaflow deploy`.
+Operator commands for a running Dexaflow control plane (Cluster). These act over the /api/v2 API (checking health, pausing DAGs, draining the control plane before maintenance, and inspecting runs) and reuse the same --server/--token/config precedence as `dexaflow deploy`.
 
 ### Options
 
@@ -25,6 +25,7 @@ Operator commands for a running Dexaflow control plane (Pro). These act over the
       --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
+      --target name         name of the control plane to use (default: DEXAFLOW_TARGET, then the target selected for the workspace; see dexaflow target list)
 ```
 
 ### SEE ALSO

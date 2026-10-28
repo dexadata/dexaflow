@@ -4,7 +4,7 @@
 # Rebuilds leoflow / leoflow-server / leoflow-agent from the current source,
 # stops the running lite (if any), swaps the binaries in BOTH places lite
 # resolves them from (./bin and ~/.dexaflow/bin — see resolveBinary in
-# internal/cli/dev.go), and restarts `dexaflow lite --postgres managed`. Polls
+# internal/cli/dev_binaries.go), and restarts `dexaflow lite --postgres managed`. Polls
 # /readyz and prints the URL + a tail of the boot log.
 #
 # Why both dirs? `dexaflow lite` shells out to `leoflow-server` and resolves it

@@ -79,6 +79,11 @@ func classifyPod(pod *corev1.Pod) verdict {
 			if podWasDisrupted(pod) {
 				return verdict{terminal: true, settle: settleInfra, reason: disruptionReason(pod), fromRecord: true}
 			}
+			// The agent's control plane never answered before the task's code
+			// ran: the substrate could not run it (#1594).
+			if unexecutableStart(rec) {
+				return verdict{terminal: true, settle: settleInfra, reason: unexecutableReason(rec), fromRecord: true}
+			}
 			return verdict{terminal: true, settle: settleFailed, reason: failedReason(rec, pod), fromRecord: true}
 		case taskoutcome.Reschedule:
 			at, _ := rec.At() // Decode guaranteed a parseable time
@@ -473,6 +478,25 @@ func waitingFailureReason(reason, message string) string {
 	default:
 		return boundReason(reason)
 	}
+}
+
+// unexecutableStart reports whether a FAILED record is the agent's
+// unexecutable record (taskoutcome.UnexecutableBecause): its control plane
+// did not answer before the task's code ran, so ADR 0051 puts the attempt on
+// the infra rail (R-01, #1594). The task can write this file too, so the
+// marker counts only in the shape the agent writes: a reason the agent
+// declares it classified, and no exit code, since no user process ran. What a
+// forged record could still buy is a re-place on the bounded infra budget,
+// which a task can already get by killing its agent (agent_lost).
+func unexecutableStart(rec taskoutcome.Record) bool {
+	return rec.Infra && rec.ExitCode == nil && agentReason(rec) != ""
+}
+
+// unexecutableReason describes an unexecutable start for the operator, with
+// the control_plane_unavailable mark in the "<mark>: " shape the reapers use
+// ahead of the agent's classification.
+func unexecutableReason(rec taskoutcome.Record) string {
+	return boundReason("control_plane_unavailable: " + agentReason(rec))
 }
 
 // boundReason clamps a reason to the outcome record's cap. The cap applies here

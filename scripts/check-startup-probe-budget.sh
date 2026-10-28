@@ -3,9 +3,9 @@
 # halves of that claim live in different languages:
 #
 #   internal/storage/postgres.go   pgStartupBudget        how long the connect retry may spend
-#   cmd/dexaflow-server/main.go     podInformerSyncTimeout how long the informer warm-up may spend
-#   cmd/dexaflow-server/main.go     oidcDiscoveryTimeout   how long IdP discovery may spend
-#   cmd/dexaflow-server/main.go     oidcNameCheckTimeout   how long the OIDC name lookups may spend
+#   cmd/dexaflow-server/startup_timeouts.go podInformerSyncTimeout how long the informer warm-up may spend
+#   cmd/dexaflow-server/startup_timeouts.go oidcDiscoveryTimeout   how long IdP discovery may spend
+#   cmd/dexaflow-server/startup_timeouts.go oidcNameCheckTimeout   how long the OIDC name lookups may spend
 #   helm/dexaflow/values.yaml       probes.startup.*       what the kubelet actually allows
 #
 # The invariant is
@@ -37,7 +37,7 @@
 # replaces, or it only moves the kill from one probe to the other.
 #
 # Usage: scripts/check-startup-probe-budget.sh [--self-test]
-#        scripts/check-startup-probe-budget.sh <postgres.go> <main.go> <values.yaml>
+#        scripts/check-startup-probe-budget.sh <postgres.go> <startup_timeouts.go> <values.yaml>
 set -euo pipefail
 
 # Seconds of slack the gate must leave above the bounds the code states for
@@ -45,7 +45,7 @@ set -euo pipefail
 # sum alone would be exactly as tight as the worst boot that still succeeds.
 HEADROOM_SECONDS=${HEADROOM_SECONDS:-60}
 
-check() { # <postgres.go> <main.go> <values.yaml>
+check() { # <postgres.go> <startup_timeouts.go> <values.yaml>
 	HEADROOM_SECONDS="$HEADROOM_SECONDS" python3 - "$1" "$2" "$3" <<'PY'
 import os
 import re
@@ -189,4 +189,4 @@ self_test() {
 [ "${1:-}" = "--self-test" ] && { self_test; exit $?; }
 
 cd "$(dirname "$0")/.."
-check "${1:-internal/storage/postgres.go}" "${2:-cmd/dexaflow-server/main.go}" "${3:-helm/dexaflow/values.yaml}"
+check "${1:-internal/storage/postgres.go}" "${2:-cmd/dexaflow-server/startup_timeouts.go}" "${3:-helm/dexaflow/values.yaml}"

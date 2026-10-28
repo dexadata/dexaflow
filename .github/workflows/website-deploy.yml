@@ -74,6 +74,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # proxy.golang.org sometimes resets a large module download ("stream error:
+  # INTERNAL_ERROR"), which failed whole jobs before any test ran. With "|" Go
+  # falls back to the module's own source on any proxy error (with "," only on
+  # 404/410); go.sum and sum.golang.org still verify every module.
+  GOPROXY: https://proxy.golang.org|direct
   HUGO_VERSION: "0.165.0"
 
 jobs:
@@ -85,8 +90,9 @@ jobs:
       matrix: ${{ steps.resolve.outputs.matrix }}
     steps:
       - name: Checkout (for versions.json only)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 1
 
       - name: Resolve the dev leg's ref and emit the build matrix
@@ -113,32 +119,40 @@ jobs:
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     steps:
       - name: Checkout tooling (this workflow's own ref — CI scripts only)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           path: tooling
           fetch-depth: 1
 
       - name: Checkout version content (${{ matrix.id }} @ ${{ matrix.ref }})
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           ref: ${{ matrix.ref }}
           path: src
           fetch-depth: 0   # Docsy "last modified" + enableGitInfo want history
 
       - name: Setup Go (Hugo Modules + generators)
-        uses: actions/setup-go@v7.0.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: src/website/go.mod
+          # Every leg checks its version out under src/, so the default cache
+          # key (go.sum at the workspace root) found nothing and each of the
+          # dozen legs downloaded every module at once.
+          cache-dependency-path: |
+            src/go.sum
+            src/website/go.sum
 
       - name: Setup Node (Docsy PostCSS/autoprefixer)
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # Node 22 LTS (NOT 20): Hugo Extended sandboxes the PostCSS/autoprefixer
           # subprocess with Node's Permission Model. See PR #721.
           node-version: "22"
 
       - name: Setup Python (pdoc + generator post-processing)
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -187,7 +201,7 @@ jobs:
                --gc --minify --logLevel info
 
       - name: Upload leg artifact (not a Pages artifact — combined in `assemble`)
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: site-${{ matrix.id }}
           path: src/website/public
@@ -201,12 +215,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout (for versions.json only)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 1
 
       - name: Download every leg's built site
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: site-*
           path: artifacts
@@ -228,7 +243,7 @@ jobs:
           find combined -maxdepth 1 | sort
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: combined
 
@@ -243,4 +258,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

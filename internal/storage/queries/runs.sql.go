@@ -18,7 +18,7 @@ WHERE dag_run_id = $1
   AND task_id = $2
   AND try_number = $3
   AND attempt_epoch = COALESCE($5::int, 0)
-  AND state IN ('queued', 'running')
+  AND state IN ('scheduled', 'queued', 'running')
 `
 
 type BindWarmAttemptParams struct {
@@ -34,13 +34,18 @@ type BindWarmAttemptParams struct {
 // task_id, try_number) as started. A later failover reaper matches warm_worker_id
 // against the live warm-pod set to find attempts a dead warm pod held.
 //
-// Guarded on state IN ('queued', 'running') — the same active predicate the
-// heartbeat and liveness queries use — so a settled attempt is never bound: an
-// ack that races a reaper settling the row must not stamp a worker onto a
-// terminal TI. Bounded by (dag_run_id, task_id, try_number, attempt_epoch) to
-// match exactly the attempt the assignment named. Returns the affected row count; zero means the
-// attempt already moved on (terminal or superseded), and the caller treats that
-// as a benign no-op, never an error.
+// Guarded on state IN ('scheduled', 'queued', 'running'), so a settled attempt
+// is never bound: an ack that races a reaper settling the row must not stamp a
+// worker onto a terminal TI. 'scheduled' is admitted because with synchronous
+// dispatch the warm placer hands the assignment out inside Dispatch, before the
+// tick records queued, and the worker can ack (and report RUNNING) first. Missing
+// that bind left a running warm attempt unbound, and the pod-lost reaper failed it
+// while it ran (#1600). The epoch pin makes this safe: a scheduled row carries the
+// claimed epoch only for the attempt the dispatcher just handed out, and every
+// re-dispatch bumps it. Bounded by (dag_run_id, task_id, try_number,
+// attempt_epoch) to match exactly the attempt the assignment named. Returns the
+// affected row count; zero means the attempt already moved on (terminal or
+// superseded), and the caller treats that as a benign no-op, never an error.
 func (q *Queries) BindWarmAttempt(ctx context.Context, arg BindWarmAttemptParams) (int64, error) {
 	result, err := q.db.Exec(ctx, bindWarmAttempt,
 		arg.DagRunID,
@@ -275,6 +280,51 @@ func (q *Queries) CountDagRunsByDagStates(ctx context.Context, arg CountDagRunsB
 	return count, err
 }
 
+const countDagRunsFiltered = `-- name: CountDagRunsFiltered :one
+SELECT count(*)
+FROM dag_runs r
+WHERE r.tenant_id = $1 AND r.dag_id = $2
+  AND (cardinality($3::text[]) = 0 OR r.state::text = ANY($3::text[]))
+  AND ($4::text IS NULL OR r.run_id ILIKE '%' || $4 || '%')
+  AND ($5::text IS NULL OR r.run_id ILIKE $5 || '%')
+  AND ($6::text IS NULL OR r.trigger::text = $6)
+  AND ($7::timestamptz IS NULL OR r.started_at >= $7)
+  AND ($8::timestamptz IS NULL OR r.started_at <= $8)
+  AND ($9::timestamptz IS NULL OR r.ended_at >= $9)
+  AND ($10::timestamptz IS NULL OR r.ended_at <= $10)
+`
+
+type CountDagRunsFilteredParams struct {
+	TenantID           pgtype.UUID        `json:"tenant_id"`
+	DagID              pgtype.UUID        `json:"dag_id"`
+	States             []string           `json:"states"`
+	RunIDPattern       *string            `json:"run_id_pattern"`
+	RunIDPrefixPattern *string            `json:"run_id_prefix_pattern"`
+	RunType            *string            `json:"run_type"`
+	StartDateGte       pgtype.Timestamptz `json:"start_date_gte"`
+	StartDateLte       pgtype.Timestamptz `json:"start_date_lte"`
+	EndDateGte         pgtype.Timestamptz `json:"end_date_gte"`
+	EndDateLte         pgtype.Timestamptz `json:"end_date_lte"`
+}
+
+func (q *Queries) CountDagRunsFiltered(ctx context.Context, arg CountDagRunsFilteredParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countDagRunsFiltered,
+		arg.TenantID,
+		arg.DagID,
+		arg.States,
+		arg.RunIDPattern,
+		arg.RunIDPrefixPattern,
+		arg.RunType,
+		arg.StartDateGte,
+		arg.StartDateLte,
+		arg.EndDateGte,
+		arg.EndDateLte,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countDagsByLatestRunState = `-- name: CountDagsByLatestRunState :many
 SELECT lr.state AS state, count(*) AS n
 FROM dags d
@@ -354,6 +404,38 @@ func (q *Queries) CountTaskInstanceStatesInWindow(ctx context.Context, arg Count
 		return nil, err
 	}
 	return items, nil
+}
+
+const countTaskInstancesFiltered = `-- name: CountTaskInstancesFiltered :one
+SELECT count(*) FROM task_instances
+WHERE tenant_id = $1 AND dag_run_id = $2
+  AND (cardinality($3::text[]) = 0 OR state::text = ANY($3::text[]))
+  AND ($4::text IS NULL OR task_id ILIKE '%' || $4 || '%')
+  AND ($5::text IS NULL OR task_id ILIKE $5 || '%')
+  AND ($6::text IS NULL OR pool = $6)
+`
+
+type CountTaskInstancesFilteredParams struct {
+	TenantID            pgtype.UUID `json:"tenant_id"`
+	DagRunID            pgtype.UUID `json:"dag_run_id"`
+	States              []string    `json:"states"`
+	TaskIDPattern       *string     `json:"task_id_pattern"`
+	TaskIDPrefixPattern *string     `json:"task_id_prefix_pattern"`
+	Pool                *string     `json:"pool"`
+}
+
+func (q *Queries) CountTaskInstancesFiltered(ctx context.Context, arg CountTaskInstancesFilteredParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countTaskInstancesFiltered,
+		arg.TenantID,
+		arg.DagRunID,
+		arg.States,
+		arg.TaskIDPattern,
+		arg.TaskIDPrefixPattern,
+		arg.Pool,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const createDagRun = `-- name: CreateDagRun :one
@@ -445,7 +527,7 @@ func (q *Queries) CreateScheduledRunByDagID(ctx context.Context, arg CreateSched
 const createTaskInstance = `-- name: CreateTaskInstance :one
 INSERT INTO task_instances (tenant_id, dag_run_id, task_id, operator, max_tries, state, pool, try_number, pool_slots)
 VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8)
-RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots
+RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots, dispatch_unavailable_since
 `
 
 type CreateTaskInstanceParams struct {
@@ -509,6 +591,7 @@ func (q *Queries) CreateTaskInstance(ctx context.Context, arg CreateTaskInstance
 		&i.AttemptEpoch,
 		&i.InfraConfirmedAt,
 		&i.PoolSlots,
+		&i.DispatchUnavailableSince,
 	)
 	return i, err
 }
@@ -550,7 +633,12 @@ func (q *Queries) DagRunExistsByDagID(ctx context.Context, arg DagRunExistsByDag
 }
 
 const deleteDagRun = `-- name: DeleteDagRun :execrows
-DELETE FROM dag_runs WHERE tenant_id = $1 AND dag_id = $2 AND run_id = $3
+WITH invalidate AS (
+  UPDATE dags d SET next_run_at = NULL, schedule_epoch = d.schedule_epoch + 1
+  WHERE d.tenant_id = $1 AND d.id = $2
+)
+DELETE FROM dag_runs r
+WHERE r.tenant_id = $1 AND r.dag_id = $2 AND r.run_id = $3
 `
 
 type DeleteDagRunParams struct {
@@ -560,6 +648,8 @@ type DeleteDagRunParams struct {
 }
 
 // Removes one run; its task_instances and XCom rows cascade (ON DELETE CASCADE).
+// The DAG's stored next due time is cleared in the same statement (#2175): the
+// deleted run may have been its latest, which the time was computed from.
 func (q *Queries) DeleteDagRun(ctx context.Context, arg DeleteDagRunParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteDagRun, arg.TenantID, arg.DagID, arg.RunID)
 	if err != nil {
@@ -592,7 +682,8 @@ func (q *Queries) DispatchAttemptsForActive(ctx context.Context, arg DispatchAtt
 const failDispatchExhausted = `-- name: FailDispatchExhausted :exec
 UPDATE task_instances
 SET state = 'failed', ended_at = now(), error_message = $3,
-    next_dispatch_at = NULL
+    next_dispatch_at = NULL,
+    max_tries = LEAST(max_tries, try_number)
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled'
 `
 
@@ -607,6 +698,12 @@ type FailDispatchExhaustedParams struct {
 // error_message carries the underlying cause. Guarded to 'scheduled' for the same
 // reason as RecordDispatchFailure. This is distinct from dispatch_lost (a TI that
 // reached 'queued' then vanished) and from a task's own 'failed' (the code ran).
+// dispatch_failed is terminal: a dispatch failure never consumes try_number
+// (ADR 0031 Amendment A), so the user's retry budget is not a second dispatch
+// budget. It is spent the way FailDispatchRefused spends it, by lowering
+// max_tries to the current try, so the planner does not move the task to
+// up_for_retry and dispatch it again on a new try. A clear restores the
+// budget from the task, as after a refusal.
 func (q *Queries) FailDispatchExhausted(ctx context.Context, arg FailDispatchExhaustedParams) error {
 	_, err := q.db.Exec(ctx, failDispatchExhausted, arg.DagRunID, arg.TaskID, arg.ErrorMessage)
 	return err
@@ -638,6 +735,36 @@ type FailDispatchRefusedParams struct {
 func (q *Queries) FailDispatchRefused(ctx context.Context, arg FailDispatchRefusedParams) error {
 	_, err := q.db.Exec(ctx, failDispatchRefused, arg.DagRunID, arg.TaskID, arg.ErrorMessage)
 	return err
+}
+
+const failStoppedTenantTaskInstances = `-- name: FailStoppedTenantTaskInstances :execrows
+UPDATE task_instances ti
+SET state = 'failed',
+    ended_at = now(),
+    error_message = 'stopped: the tenant was suspended in stop mode',
+    last_failure_kind = NULL,
+    infra_confirmed_at = now()
+FROM tenants t
+WHERE t.id = ti.tenant_id
+  AND ti.tenant_id = $1
+  AND t.suspension_mode = 'stop'
+  AND ti.state IN ('queued', 'running')
+`
+
+// Fails the queued and running task instances of a tenant suspended in stop
+// mode (#2181), as a user's mark failed does: the row is the verdict, so the
+// attempt's next heartbeat or state report matches no live row, the agent is
+// told to terminate and kills its task process group. The tenants join keeps
+// it a no-op once the suspension is lifted or changed to another mode, so the
+// service API and every scheduler tick can run it. Scheduled task instances
+// are left alone: nothing dispatches them while the tenant is suspended, and
+// they run once it is resumed. idx_ti_active_tenant serves the scan.
+func (q *Queries) FailStoppedTenantTaskInstances(ctx context.Context, tenantID pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, failStoppedTenantTaskInstances, tenantID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const failTaskInstanceIfActive = `-- name: FailTaskInstanceIfActive :exec
@@ -782,6 +909,57 @@ func (q *Queries) GetDagRunByID(ctx context.Context, id pgtype.UUID) (DagRun, er
 	return i, err
 }
 
+const getDagRunForUpdate = `-- name: GetDagRunForUpdate :one
+SELECT id, tenant_id, dag_id, dag_version_id, run_id, logical_date, data_interval_start, data_interval_end, state, trigger, conf, triggered_by, queued_at, started_at, ended_at, note, alerted_at, alert_attempts, next_alert_attempt_at FROM dag_runs
+ WHERE id = $1 AND tenant_id = $2 AND state IN ('success', 'failed')
+   FOR NO KEY UPDATE
+`
+
+type GetDagRunForUpdateParams struct {
+	ID       pgtype.UUID `json:"id"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+}
+
+// A finished run a clear may move to the DAG's current version, read and
+// locked inside the clear's transaction before any of its task instances is
+// written (ADR 0086). The move depends on the run's state, so it is decided
+// on the locked row: a second clear of the same run waits for the first
+// instead of deciding from the same state. Only a finished run is locked:
+// the state predicate is checked again after a wait, so a run another clear
+// re-opened meanwhile is not returned and not held. The orphan reaper
+// share-locks a running run's task instances and then updates the run row,
+// the opposite order. NO KEY UPDATE is enough, since no key changes, and it
+// lets through the key-share lock an XCom insert of a live attempt takes on
+// the run. The retention janitor locks finished runs with SKIP LOCKED and
+// their task instances with NOWAIT, so it skips or gives way and never waits
+// on a clear.
+func (q *Queries) GetDagRunForUpdate(ctx context.Context, arg GetDagRunForUpdateParams) (DagRun, error) {
+	row := q.db.QueryRow(ctx, getDagRunForUpdate, arg.ID, arg.TenantID)
+	var i DagRun
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.DagID,
+		&i.DagVersionID,
+		&i.RunID,
+		&i.LogicalDate,
+		&i.DataIntervalStart,
+		&i.DataIntervalEnd,
+		&i.State,
+		&i.Trigger,
+		&i.Conf,
+		&i.TriggeredBy,
+		&i.QueuedAt,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.Note,
+		&i.AlertedAt,
+		&i.AlertAttempts,
+		&i.NextAlertAttemptAt,
+	)
+	return i, err
+}
+
 const getDagRunInTenant = `-- name: GetDagRunInTenant :one
 SELECT id, tenant_id, dag_id, dag_version_id, run_id, logical_date, data_interval_start, data_interval_end, state, trigger, conf, triggered_by, queued_at, started_at, ended_at, note, alerted_at, alert_attempts, next_alert_attempt_at FROM dag_runs WHERE tenant_id = $1 AND id = $2
 `
@@ -897,7 +1075,7 @@ func (q *Queries) GetDagRunWithVersion(ctx context.Context, arg GetDagRunWithVer
 }
 
 const getDagVersionByID = `-- name: GetDagVersionByID :one
-SELECT id, dag_id, version, image_reference, spec, spec_hash, created_by, created_at FROM dag_versions WHERE id = $1
+SELECT id, dag_id, version, image_reference, spec, spec_hash, created_by, created_at, build_info FROM dag_versions WHERE id = $1
 `
 
 // Unscoped: for the spec cache the scheduler and the dispatcher share, which
@@ -915,12 +1093,13 @@ func (q *Queries) GetDagVersionByID(ctx context.Context, id pgtype.UUID) (DagVer
 		&i.SpecHash,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.BuildInfo,
 	)
 	return i, err
 }
 
 const getDagVersionInTenant = `-- name: GetDagVersionInTenant :one
-SELECT id, dag_id, version, image_reference, spec, spec_hash, created_by, created_at FROM dag_versions
+SELECT id, dag_id, version, image_reference, spec, spec_hash, created_by, created_at, build_info FROM dag_versions
 WHERE dag_versions.id = $1
   AND EXISTS (SELECT 1 FROM dags d WHERE d.id = dag_versions.dag_id AND d.tenant_id = $2)
 `
@@ -944,8 +1123,45 @@ func (q *Queries) GetDagVersionInTenant(ctx context.Context, arg GetDagVersionIn
 		&i.SpecHash,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.BuildInfo,
 	)
 	return i, err
+}
+
+const getDagVersionsByIDs = `-- name: GetDagVersionsByIDs :many
+SELECT id, dag_id, version, image_reference, spec, spec_hash, created_by, created_at, build_info FROM dag_versions WHERE id = ANY($1::uuid[])
+`
+
+// Unscoped, like GetDagVersionByID: the spec cache's batch fill for a warm
+// pool reconcile tick, which reads the versions of its own targets (#1707).
+func (q *Queries) GetDagVersionsByIDs(ctx context.Context, ids []pgtype.UUID) ([]DagVersion, error) {
+	rows, err := q.db.Query(ctx, getDagVersionsByIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DagVersion{}
+	for rows.Next() {
+		var i DagVersion
+		if err := rows.Scan(
+			&i.ID,
+			&i.DagID,
+			&i.Version,
+			&i.ImageReference,
+			&i.Spec,
+			&i.SpecHash,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.BuildInfo,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const isTaskInstanceLive = `-- name: IsTaskInstanceLive :one
@@ -956,7 +1172,8 @@ SELECT EXISTS (
       AND try_number = $3
       AND tenant_id = $4
       AND ($5::int IS NULL OR attempt_epoch = $5::int)
-      AND state IN ('queued', 'running')
+      AND (state IN ('queued', 'running')
+           OR (state = 'scheduled' AND $5::int IS NOT NULL))
 )
 `
 
@@ -984,6 +1201,13 @@ type IsTaskInstanceLiveParams struct {
 //
 // The epoch term is the heartbeat's: exact for a token carrying attempt_epoch,
 // absent for a claim-less one (ADR 0051 amendment).
+//
+// 'scheduled' is live too, for a token whose epoch matches (#2201), as in
+// BindWarmAttempt: the dispatcher claims the epoch and hands the attempt out
+// before it records queued, and a subprocess agent or a warm worker can ask for
+// its secrets in that gap. Only the claim mints that epoch and every later
+// dispatch moves it, so the match names the attempt just handed out. A token
+// without an epoch cannot be pinned that way and needs queued or running.
 func (q *Queries) IsTaskInstanceLive(ctx context.Context, arg IsTaskInstanceLiveParams) (bool, error) {
 	row := q.db.QueryRow(ctx, isTaskInstanceLive,
 		arg.DagRunID,
@@ -1059,40 +1283,82 @@ func (q *Queries) LatestRunsForDags(ctx context.Context, arg LatestRunsForDagsPa
 }
 
 const listActiveDagRuns = `-- name: ListActiveDagRuns :many
-SELECT id, tenant_id, dag_id, dag_version_id, run_id, logical_date, data_interval_start, data_interval_end, state, trigger, conf, triggered_by, queued_at, started_at, ended_at, note, alerted_at, alert_attempts, next_alert_attempt_at FROM dag_runs
-WHERE state IN ('queued', 'running')
-ORDER BY queued_at
+SELECT dag_runs.id, dag_runs.tenant_id, dag_runs.dag_id, dag_runs.dag_version_id, dag_runs.run_id, dag_runs.logical_date, dag_runs.data_interval_start, dag_runs.data_interval_end, dag_runs.state, dag_runs.trigger, dag_runs.conf, dag_runs.triggered_by, dag_runs.queued_at, dag_runs.started_at, dag_runs.ended_at, dag_runs.note, dag_runs.alerted_at, dag_runs.alert_attempts, dag_runs.next_alert_attempt_at,
+  COALESCE(d.is_paused, false)::boolean AS dag_paused,
+  COALESCE(d.max_active_runs, 0)::integer AS dag_max_active_runs,
+  COALESCE(tn.suspension_mode, '')::text AS tenant_suspension_mode
+FROM dag_runs
+LEFT JOIN LATERAL (
+  SELECT dags.is_paused, dags.max_active_runs FROM dags WHERE dags.id = dag_runs.dag_id LIMIT 1
+) d ON true
+LEFT JOIN LATERAL (
+  SELECT tenants.suspension_mode FROM tenants WHERE tenants.id = dag_runs.tenant_id LIMIT 1
+) tn ON true
+WHERE dag_runs.state IN ('queued', 'running')
+ORDER BY dag_runs.queued_at
 `
 
-func (q *Queries) ListActiveDagRuns(ctx context.Context) ([]DagRun, error) {
+type ListActiveDagRunsRow struct {
+	DagRun               DagRun `json:"dag_run"`
+	DagPaused            bool   `json:"dag_paused"`
+	DagMaxActiveRuns     int32  `json:"dag_max_active_runs"`
+	TenantSuspensionMode string `json:"tenant_suspension_mode"`
+}
+
+// The runs the scheduler reads on a tick, and the warm-pool reconcile reads:
+// every queued and running run, each with dag_paused, the is_paused of its DAG.
+// No run is filtered out. The scheduler leaves a queued run of a paused DAG
+// waiting (not started, nothing materialized or dispatched) until the DAG is
+// unpaused, whoever created it (a manual trigger, a clear), as Airflow 3 does
+// when it moves queued runs to running (#1705); a running run of a paused DAG
+// advances so the tasks it started finish. The waiting run stays in the result
+// because a clear on a running run puts it back in queued while other tasks of
+// it still run, and those tasks must keep counting against max_active_runs,
+// max_active_tasks and the pool caps. dag_max_active_runs is the DAG's
+// max_active_runs: the tick starts a queued run only while fewer than that
+// many runs of the DAG are running, as Airflow does (#1766). Both come from one
+// primary-key probe of dags per active run; a run whose DAG row is gone reads
+// unpaused with 0, which the scheduler takes as unlimited. The probe is a
+// LATERAL subquery with LIMIT 1 on purpose: a plain LEFT JOIN lets the planner
+// hash every row of dags, a cost that grows with the number of DAGs (about 10
+// ms against 2 ms for 500 active runs over 20000 DAGs), while the scan stays
+// on idx_dag_runs_state and the probe keeps the cost proportional to the
+// active runs. tenant_suspension_mode is the suspension mode of the run's
+// tenant, ” when it is not suspended (#2181): under drain or stop the tick
+// dispatches nothing of the run and does not start it. It is a second
+// primary-key probe, of tenants, for the same reason.
+func (q *Queries) ListActiveDagRuns(ctx context.Context) ([]ListActiveDagRunsRow, error) {
 	rows, err := q.db.Query(ctx, listActiveDagRuns)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []DagRun{}
+	items := []ListActiveDagRunsRow{}
 	for rows.Next() {
-		var i DagRun
+		var i ListActiveDagRunsRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.TenantID,
-			&i.DagID,
-			&i.DagVersionID,
-			&i.RunID,
-			&i.LogicalDate,
-			&i.DataIntervalStart,
-			&i.DataIntervalEnd,
-			&i.State,
-			&i.Trigger,
-			&i.Conf,
-			&i.TriggeredBy,
-			&i.QueuedAt,
-			&i.StartedAt,
-			&i.EndedAt,
-			&i.Note,
-			&i.AlertedAt,
-			&i.AlertAttempts,
-			&i.NextAlertAttemptAt,
+			&i.DagRun.ID,
+			&i.DagRun.TenantID,
+			&i.DagRun.DagID,
+			&i.DagRun.DagVersionID,
+			&i.DagRun.RunID,
+			&i.DagRun.LogicalDate,
+			&i.DagRun.DataIntervalStart,
+			&i.DagRun.DataIntervalEnd,
+			&i.DagRun.State,
+			&i.DagRun.Trigger,
+			&i.DagRun.Conf,
+			&i.DagRun.TriggeredBy,
+			&i.DagRun.QueuedAt,
+			&i.DagRun.StartedAt,
+			&i.DagRun.EndedAt,
+			&i.DagRun.Note,
+			&i.DagRun.AlertedAt,
+			&i.DagRun.AlertAttempts,
+			&i.DagRun.NextAlertAttemptAt,
+			&i.DagPaused,
+			&i.DagMaxActiveRuns,
+			&i.TenantSuspensionMode,
 		); err != nil {
 			return nil, err
 		}
@@ -1195,7 +1461,8 @@ WHERE ti.state IN ('queued', 'running')
 // actively STARTING the attempt; counting only `running` would classify it IDLE
 // in that window and let the excess-idle-tail delete remove a worker that is
 // starting an attempt — an M1 violation that kills a just-started attempt. The
-// BindWarmAttempt guard binds exactly the queued/running window, and every
+// BindWarmAttempt guard binds the scheduled/queued/running window (a scheduled
+// bound row moves to queued or running within the same tick), and every
 // re-dispatch/reset that moves a bound row back out of that window clears
 // warm_worker_id, so a queued+bound row here is always a live starting attempt,
 // never a stale binding.
@@ -1463,6 +1730,115 @@ func (q *Queries) ListDagRunsByDagWithVersion(ctx context.Context, arg ListDagRu
 	return items, nil
 }
 
+const listDagRunsFiltered = `-- name: ListDagRunsFiltered :many
+SELECT r.id, r.tenant_id, r.dag_id, r.dag_version_id, r.run_id, r.logical_date, r.data_interval_start, r.data_interval_end, r.state, r.trigger, r.conf, r.triggered_by, r.queued_at, r.started_at, r.ended_at, r.note, r.alerted_at, r.alert_attempts, r.next_alert_attempt_at, v.version AS dag_version_label
+FROM dag_runs r
+LEFT JOIN dag_versions v ON v.id = r.dag_version_id
+WHERE r.tenant_id = $1 AND r.dag_id = $2
+  AND (cardinality($3::text[]) = 0 OR r.state::text = ANY($3::text[]))
+  AND ($4::text IS NULL OR r.run_id ILIKE '%' || $4 || '%')
+  AND ($5::text IS NULL OR r.run_id ILIKE $5 || '%')
+  AND ($6::text IS NULL OR r.trigger::text = $6)
+  AND ($7::timestamptz IS NULL OR r.started_at >= $7)
+  AND ($8::timestamptz IS NULL OR r.started_at <= $8)
+  AND ($9::timestamptz IS NULL OR r.ended_at >= $9)
+  AND ($10::timestamptz IS NULL OR r.ended_at <= $10)
+ORDER BY r.logical_date DESC, r.run_id DESC
+LIMIT $12 OFFSET $11
+`
+
+type ListDagRunsFilteredParams struct {
+	TenantID           pgtype.UUID        `json:"tenant_id"`
+	DagID              pgtype.UUID        `json:"dag_id"`
+	States             []string           `json:"states"`
+	RunIDPattern       *string            `json:"run_id_pattern"`
+	RunIDPrefixPattern *string            `json:"run_id_prefix_pattern"`
+	RunType            *string            `json:"run_type"`
+	StartDateGte       pgtype.Timestamptz `json:"start_date_gte"`
+	StartDateLte       pgtype.Timestamptz `json:"start_date_lte"`
+	EndDateGte         pgtype.Timestamptz `json:"end_date_gte"`
+	EndDateLte         pgtype.Timestamptz `json:"end_date_lte"`
+	RowOffset          int32              `json:"row_offset"`
+	RowLimit           int32              `json:"row_limit"`
+}
+
+type ListDagRunsFilteredRow struct {
+	ID                 pgtype.UUID        `json:"id"`
+	TenantID           pgtype.UUID        `json:"tenant_id"`
+	DagID              pgtype.UUID        `json:"dag_id"`
+	DagVersionID       pgtype.UUID        `json:"dag_version_id"`
+	RunID              string             `json:"run_id"`
+	LogicalDate        pgtype.Timestamptz `json:"logical_date"`
+	DataIntervalStart  pgtype.Timestamptz `json:"data_interval_start"`
+	DataIntervalEnd    pgtype.Timestamptz `json:"data_interval_end"`
+	State              DagRunState        `json:"state"`
+	Trigger            DagRunTrigger      `json:"trigger"`
+	Conf               []byte             `json:"conf"`
+	TriggeredBy        pgtype.UUID        `json:"triggered_by"`
+	QueuedAt           pgtype.Timestamptz `json:"queued_at"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	EndedAt            pgtype.Timestamptz `json:"ended_at"`
+	Note               *string            `json:"note"`
+	AlertedAt          pgtype.Timestamptz `json:"alerted_at"`
+	AlertAttempts      int32              `json:"alert_attempts"`
+	NextAlertAttemptAt pgtype.Timestamptz `json:"next_alert_attempt_at"`
+	DagVersionLabel    *string            `json:"dag_version_label"`
+}
+
+func (q *Queries) ListDagRunsFiltered(ctx context.Context, arg ListDagRunsFilteredParams) ([]ListDagRunsFilteredRow, error) {
+	rows, err := q.db.Query(ctx, listDagRunsFiltered,
+		arg.TenantID,
+		arg.DagID,
+		arg.States,
+		arg.RunIDPattern,
+		arg.RunIDPrefixPattern,
+		arg.RunType,
+		arg.StartDateGte,
+		arg.StartDateLte,
+		arg.EndDateGte,
+		arg.EndDateLte,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDagRunsFilteredRow{}
+	for rows.Next() {
+		var i ListDagRunsFilteredRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.DagID,
+			&i.DagVersionID,
+			&i.RunID,
+			&i.LogicalDate,
+			&i.DataIntervalStart,
+			&i.DataIntervalEnd,
+			&i.State,
+			&i.Trigger,
+			&i.Conf,
+			&i.TriggeredBy,
+			&i.QueuedAt,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.Note,
+			&i.AlertedAt,
+			&i.AlertAttempts,
+			&i.NextAlertAttemptAt,
+			&i.DagVersionLabel,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOrphanCandidates = `-- name: ListOrphanCandidates :many
 SELECT dr.id AS id,
        d.dag_id AS dag_id_text,
@@ -1480,7 +1856,7 @@ WHERE dr.state = 'running'
   AND NOT EXISTS (
       SELECT 1 FROM task_instances ti2
       WHERE ti2.dag_run_id = dr.id
-        AND ti2.state NOT IN ('none', 'success', 'failed', 'skipped', 'upstream_failed')
+        AND ti2.state NOT IN ('none', 'success', 'failed', 'skipped', 'upstream_failed', 'removed')
   )
 GROUP BY dr.id, d.dag_id, dr.started_at, dr.queued_at
 ORDER BY dr.queued_at
@@ -1494,7 +1870,7 @@ type ListOrphanCandidatesRow struct {
 }
 
 // Lists dag_runs currently in 'running' whose task instances are ALL terminal
-// or never-started (every TI in none/success/failed/skipped/upstream_failed),
+// or never-started (every TI in none/success/failed/skipped/upstream_failed/removed),
 // alongside the timestamp of their most recent observable activity. The "no
 // live TI" filter is the critical safety guarantee: a run that is still
 // progressing stays out of the candidate set, so the reaper can never kill a
@@ -1695,10 +2071,14 @@ func (q *Queries) ListRunningTasks(ctx context.Context, arg ListRunningTasksPara
 
 const listScheduledDags = `-- name: ListScheduledDags :many
 SELECT d.tenant_id, d.dag_id, d.schedule, d.catchup, d.start_date, d.max_active_runs,
+  d.next_run_at, d.schedule_epoch,
   (SELECT max(dr.logical_date) FROM dag_runs dr WHERE dr.dag_id = d.id) AS last_logical
 FROM dags d
+JOIN tenants t ON t.id = d.tenant_id
 WHERE d.is_active = true AND d.is_paused = false
   AND d.schedule IS NOT NULL AND d.current_version_id IS NOT NULL
+  AND (d.next_run_at IS NULL OR d.next_run_at <= $1::timestamptz)
+  AND t.suspended_at IS NULL
 `
 
 type ListScheduledDagsRow struct {
@@ -1708,6 +2088,8 @@ type ListScheduledDagsRow struct {
 	Catchup       bool               `json:"catchup"`
 	StartDate     pgtype.Timestamptz `json:"start_date"`
 	MaxActiveRuns int32              `json:"max_active_runs"`
+	NextRunAt     pgtype.Timestamptz `json:"next_run_at"`
+	ScheduleEpoch int64              `json:"schedule_epoch"`
 	LastLogical   interface{}        `json:"last_logical"`
 }
 
@@ -1716,9 +2098,13 @@ type ListScheduledDagsRow struct {
 // should I backfill on this tick?" (catchup + start_date, see #129), and
 // "may this DAG take another active run?" (max_active_runs, see #200). The
 // owning tenant is returned because a dag_id is unique only within its tenant
-// (#209).
-func (q *Queries) ListScheduledDags(ctx context.Context) ([]ListScheduledDagsRow, error) {
-	rows, err := q.db.Query(ctx, listScheduledDags)
+// (#209). The DAGs of a suspended tenant are left out (#2181); a suspension
+// that lands after this read is refused when the run is created.
+// Only the DAGs that may be due are listed (#2175): no stored next_run_at yet,
+// or one at or before now, the scheduler's clock. idx_dags_next_run (054)
+// holds exactly the DAGs the first four conditions keep.
+func (q *Queries) ListScheduledDags(ctx context.Context, now pgtype.Timestamptz) ([]ListScheduledDagsRow, error) {
+	rows, err := q.db.Query(ctx, listScheduledDags, now)
 	if err != nil {
 		return nil, err
 	}
@@ -1733,6 +2119,8 @@ func (q *Queries) ListScheduledDags(ctx context.Context) ([]ListScheduledDagsRow
 			&i.Catchup,
 			&i.StartDate,
 			&i.MaxActiveRuns,
+			&i.NextRunAt,
+			&i.ScheduleEpoch,
 			&i.LastLogical,
 		); err != nil {
 			return nil, err
@@ -1753,7 +2141,7 @@ WHERE (r.tenant_id, r.id) IN (
   AND NOT EXISTS (
     SELECT 1 FROM task_instances ti
     WHERE ti.dag_run_id = r.id
-      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed'))
+      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed', 'removed'))
 `
 
 type ListSettledRunIDsParams struct {
@@ -1767,7 +2155,8 @@ type ListSettledRunIDsRow struct {
 }
 
 // Of the given (tenant, run) pairs, the settled runs: run in success or failed
-// and no task instance outside success, failed, skipped and upstream_failed.
+// and no task instance outside success, failed, skipped, upstream_failed and
+// removed.
 // This is the same "settled" the retention janitor's LockExpiredSettledRuns
 // uses (duplicated there on purpose, keep the two identical). A run marked
 // failed while a task still runs is not settled, so the reconciler never
@@ -1797,6 +2186,7 @@ func (q *Queries) ListSettledRunIDs(ctx context.Context, arg ListSettledRunIDsPa
 const listStaleQueuedTaskInstances = `-- name: ListStaleQueuedTaskInstances :many
 SELECT ti.id AS task_instance_id,
        ti.dag_run_id,
+       ti.tenant_id,
        d.dag_id AS dag_id_text,
        ti.task_id,
        ti.try_number,
@@ -1823,6 +2213,7 @@ type ListStaleQueuedTaskInstancesParams struct {
 type ListStaleQueuedTaskInstancesRow struct {
 	TaskInstanceID pgtype.UUID        `json:"task_instance_id"`
 	DagRunID       pgtype.UUID        `json:"dag_run_id"`
+	TenantID       pgtype.UUID        `json:"tenant_id"`
 	DagIDText      string             `json:"dag_id_text"`
 	TaskID         string             `json:"task_id"`
 	TryNumber      int32              `json:"try_number"`
@@ -1849,6 +2240,8 @@ type ListStaleQueuedTaskInstancesRow struct {
 // gate unchanged.
 // attempt_epoch rides along (ADR 0051 amendment) so the mark and the pod
 // teardown name exactly the attempt that was listed.
+// tenant_id rides along so a start_expired reap can append its marker to the
+// attempt's log (#1126).
 func (q *Queries) ListStaleQueuedTaskInstances(ctx context.Context, arg ListStaleQueuedTaskInstancesParams) ([]ListStaleQueuedTaskInstancesRow, error) {
 	rows, err := q.db.Query(ctx, listStaleQueuedTaskInstances,
 		arg.ThresholdSeconds,
@@ -1866,6 +2259,7 @@ func (q *Queries) ListStaleQueuedTaskInstances(ctx context.Context, arg ListStal
 		if err := rows.Scan(
 			&i.TaskInstanceID,
 			&i.DagRunID,
+			&i.TenantID,
 			&i.DagIDText,
 			&i.TaskID,
 			&i.TryNumber,
@@ -2014,7 +2408,7 @@ func (q *Queries) ListTaskInstanceAttempts(ctx context.Context, arg ListTaskInst
 }
 
 const listTaskInstancesByRun = `-- name: ListTaskInstancesByRun :many
-SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots FROM task_instances
+SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots, dispatch_unavailable_since FROM task_instances
 WHERE tenant_id = $1 AND dag_run_id = $2
 ORDER BY task_id
 `
@@ -2068,6 +2462,7 @@ func (q *Queries) ListTaskInstancesByRun(ctx context.Context, arg ListTaskInstan
 			&i.AttemptEpoch,
 			&i.InfraConfirmedAt,
 			&i.PoolSlots,
+			&i.DispatchUnavailableSince,
 		); err != nil {
 			return nil, err
 		}
@@ -2080,7 +2475,7 @@ func (q *Queries) ListTaskInstancesByRun(ctx context.Context, arg ListTaskInstan
 }
 
 const listTaskInstancesByRuns = `-- name: ListTaskInstancesByRuns :many
-SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots FROM task_instances
+SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots, dispatch_unavailable_since FROM task_instances
 WHERE dag_run_id = ANY($1::uuid[])
 ORDER BY dag_run_id, task_id
 `
@@ -2133,6 +2528,94 @@ func (q *Queries) ListTaskInstancesByRuns(ctx context.Context, dagRunIds []pgtyp
 			&i.AttemptEpoch,
 			&i.InfraConfirmedAt,
 			&i.PoolSlots,
+			&i.DispatchUnavailableSince,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTaskInstancesFiltered = `-- name: ListTaskInstancesFiltered :many
+SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots, dispatch_unavailable_since FROM task_instances
+WHERE tenant_id = $1 AND dag_run_id = $2
+  AND (cardinality($3::text[]) = 0 OR state::text = ANY($3::text[]))
+  AND ($4::text IS NULL OR task_id ILIKE '%' || $4 || '%')
+  AND ($5::text IS NULL OR task_id ILIKE $5 || '%')
+  AND ($6::text IS NULL OR pool = $6)
+ORDER BY task_id
+LIMIT $8 OFFSET $7
+`
+
+type ListTaskInstancesFilteredParams struct {
+	TenantID            pgtype.UUID `json:"tenant_id"`
+	DagRunID            pgtype.UUID `json:"dag_run_id"`
+	States              []string    `json:"states"`
+	TaskIDPattern       *string     `json:"task_id_pattern"`
+	TaskIDPrefixPattern *string     `json:"task_id_prefix_pattern"`
+	Pool                *string     `json:"pool"`
+	RowOffset           int32       `json:"row_offset"`
+	RowLimit            int32       `json:"row_limit"`
+}
+
+func (q *Queries) ListTaskInstancesFiltered(ctx context.Context, arg ListTaskInstancesFilteredParams) ([]TaskInstance, error) {
+	rows, err := q.db.Query(ctx, listTaskInstancesFiltered,
+		arg.TenantID,
+		arg.DagRunID,
+		arg.States,
+		arg.TaskIDPattern,
+		arg.TaskIDPrefixPattern,
+		arg.Pool,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TaskInstance{}
+	for rows.Next() {
+		var i TaskInstance
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.DagRunID,
+			&i.TaskID,
+			&i.MapIndex,
+			&i.TryNumber,
+			&i.MaxTries,
+			&i.State,
+			&i.Pool,
+			&i.Operator,
+			&i.QueuedAt,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.DurationSeconds,
+			&i.PodName,
+			&i.NodeName,
+			&i.ExitCode,
+			&i.ErrorMessage,
+			&i.LogUrl,
+			&i.Hostname,
+			&i.Note,
+			&i.ScheduledAt,
+			&i.LastHeartbeatAt,
+			&i.RescheduleAt,
+			&i.FirstRescheduleAt,
+			&i.DispatchAttempts,
+			&i.NextDispatchAt,
+			&i.LastFailureKind,
+			&i.InfraAttempts,
+			&i.WarmWorkerID,
+			&i.ReleasedAt,
+			&i.AttemptEpoch,
+			&i.InfraConfirmedAt,
+			&i.PoolSlots,
+			&i.DispatchUnavailableSince,
 		); err != nil {
 			return nil, err
 		}
@@ -2146,12 +2629,16 @@ func (q *Queries) ListTaskInstancesByRuns(ctx context.Context, dagRunIds []pgtyp
 
 const listWarmBoundRunningTIs = `-- name: ListWarmBoundRunningTIs :many
 SELECT ti.id AS task_instance_id,
+       ti.tenant_id AS tenant_id,
        ti.dag_run_id AS dag_run_id,
+       d.dag_id AS dag_id_text,
        ti.task_id AS task_id,
        ti.try_number AS try_number,
        ti.attempt_epoch AS attempt_epoch,
        ti.warm_worker_id AS warm_worker_id
 FROM task_instances ti
+JOIN dag_runs dr ON dr.id = ti.dag_run_id
+JOIN dags d ON d.id = dr.dag_id
 WHERE ti.state = 'running'
   AND ti.warm_worker_id IS NOT NULL
 ORDER BY ti.started_at NULLS LAST
@@ -2160,7 +2647,9 @@ LIMIT 100
 
 type ListWarmBoundRunningTIsRow struct {
 	TaskInstanceID pgtype.UUID `json:"task_instance_id"`
+	TenantID       pgtype.UUID `json:"tenant_id"`
 	DagRunID       pgtype.UUID `json:"dag_run_id"`
+	DagIDText      string      `json:"dag_id_text"`
 	TaskID         string      `json:"task_id"`
 	TryNumber      int32       `json:"try_number"`
 	AttemptEpoch   int32       `json:"attempt_epoch"`
@@ -2177,6 +2666,8 @@ type ListWarmBoundRunningTIsRow struct {
 // entirely — with warm pools off no TI is ever bound, so this returns empty and
 // the reaper is inert. The LIMIT bounds a single tick's work after a large
 // outage; the rest are picked up next tick.
+// tenant_id and dag_id locate the attempt's log stream for the reaper's
+// killed marker (#861).
 func (q *Queries) ListWarmBoundRunningTIs(ctx context.Context) ([]ListWarmBoundRunningTIsRow, error) {
 	rows, err := q.db.Query(ctx, listWarmBoundRunningTIs)
 	if err != nil {
@@ -2188,7 +2679,9 @@ func (q *Queries) ListWarmBoundRunningTIs(ctx context.Context) ([]ListWarmBoundR
 		var i ListWarmBoundRunningTIsRow
 		if err := rows.Scan(
 			&i.TaskInstanceID,
+			&i.TenantID,
 			&i.DagRunID,
+			&i.DagIDText,
 			&i.TaskID,
 			&i.TryNumber,
 			&i.AttemptEpoch,
@@ -2261,7 +2754,7 @@ WHERE dr.id = $1
   AND NOT EXISTS (
       SELECT 1 FROM task_instances ti2
       WHERE ti2.dag_run_id = dr.id
-        AND ti2.state NOT IN ('none', 'success', 'failed', 'skipped', 'upstream_failed')
+        AND ti2.state NOT IN ('none', 'success', 'failed', 'skipped', 'upstream_failed', 'removed')
   )
   AND GREATEST(
           COALESCE((SELECT GREATEST(MAX(ti.ended_at), MAX(ti.started_at), MAX(ti.released_at))
@@ -2390,7 +2883,8 @@ const markTaskDispatchFailed = `-- name: MarkTaskDispatchFailed :exec
 UPDATE task_instances
 SET state = 'failed',
     ended_at = now(),
-    error_message = $3
+    error_message = $3,
+    max_tries = LEAST(max_tries, try_number)
 WHERE dag_run_id = $1
   AND task_id = $2
   AND state IN ('scheduled', 'queued')
@@ -2407,6 +2901,8 @@ type MarkTaskDispatchFailedParams struct {
 // task_id) and the active states (scheduled/queued) — a TI that already
 // moved to running/terminal between the worker accepting the request and
 // the dispatch failing is left alone (defense in depth).
+// The failure is dispatch_failed, which is terminal: the retry budget is
+// spent as in FailDispatchExhausted, so the planner does not retry it.
 func (q *Queries) MarkTaskDispatchFailed(ctx context.Context, arg MarkTaskDispatchFailedParams) error {
 	_, err := q.db.Exec(ctx, markTaskDispatchFailed, arg.DagRunID, arg.TaskID, arg.ErrorMessage)
 	return err
@@ -2485,6 +2981,30 @@ func (q *Queries) MarkTaskInstanceQueued(ctx context.Context, arg MarkTaskInstan
 	return result.RowsAffected(), nil
 }
 
+const markTaskInstancesRemoved = `-- name: MarkTaskInstancesRemoved :exec
+UPDATE task_instances
+SET state = 'removed'
+WHERE tenant_id = $1 AND dag_run_id = $2
+  AND task_id = ANY($3::text[])
+  AND state NOT IN ('queued', 'running', 'removed')
+`
+
+type MarkTaskInstancesRemovedParams struct {
+	TenantID pgtype.UUID `json:"tenant_id"`
+	DagRunID pgtype.UUID `json:"dag_run_id"`
+	TaskIds  []string    `json:"task_ids"`
+}
+
+// A clear that moves a finished run to a version that no longer declares
+// these tasks marks their task instances removed (ADR 0086), as Airflow's
+// verify_integrity does. Their history, logs and XCom stay. A queued or
+// running task instance is never marked: the clear does not move a run that
+// has one, and the guard keeps a racing attempt's row as it is.
+func (q *Queries) MarkTaskInstancesRemoved(ctx context.Context, arg MarkTaskInstancesRemovedParams) error {
+	_, err := q.db.Exec(ctx, markTaskInstancesRemoved, arg.TenantID, arg.DagRunID, arg.TaskIds)
+	return err
+}
+
 const markTaskPodLost = `-- name: MarkTaskPodLost :execrows
 UPDATE task_instances
 SET state = 'failed',
@@ -2493,15 +3013,19 @@ SET state = 'failed',
     -- Provisional on Kubernetes (the reconciler confirms it), confirmed at
     -- once on Lite (ADR 0052 amendment, part 2).
     infra_confirmed_at = CASE WHEN $1::bool THEN NULL ELSE now() END,
-    error_message = 'pod_lost: the task pod vanished with no live pod past the grace period — see #527'
-WHERE id = $2
-  AND try_number = $3
-  AND attempt_epoch = $4
+    -- error_message overrides the default reason; the warm-worker-lost reaper
+    -- passes one naming an OOM kill (#1218). It keeps the pod_lost: prefix the
+    -- infra override reads the mark from.
+    error_message = COALESCE($2::text, 'pod_lost: the task pod vanished with no live pod past the grace period — see #527')
+WHERE id = $3
+  AND try_number = $4
+  AND attempt_epoch = $5
   AND state = 'running'
 `
 
 type MarkTaskPodLostParams struct {
 	Provisional  bool        `json:"provisional"`
+	ErrorMessage *string     `json:"error_message"`
 	ID           pgtype.UUID `json:"id"`
 	TryNumber    int32       `json:"try_number"`
 	AttemptEpoch int32       `json:"attempt_epoch"`
@@ -2516,6 +3040,48 @@ type MarkTaskPodLostParams struct {
 func (q *Queries) MarkTaskPodLost(ctx context.Context, arg MarkTaskPodLostParams) (int64, error) {
 	result, err := q.db.Exec(ctx, markTaskPodLost,
 		arg.Provisional,
+		arg.ErrorMessage,
+		arg.ID,
+		arg.TryNumber,
+		arg.AttemptEpoch,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markTaskStartExpired = `-- name: MarkTaskStartExpired :execrows
+UPDATE task_instances
+SET state = 'failed',
+    ended_at = now(),
+    last_failure_kind = 'infra',
+    infra_confirmed_at = CASE WHEN $1::bool THEN NULL ELSE now() END,
+    error_message = 'start_expired: the task pod did not start before its attempt credential ran out (slow image pull, node provisioning or init containers); will be re-placed with a fresh credential'
+WHERE id = $2
+  AND try_number = $3
+  AND attempt_epoch = $4
+  AND state = 'queued'
+`
+
+type MarkTaskStartExpiredParams struct {
+	Provisional  bool        `json:"provisional"`
+	ID           pgtype.UUID `json:"id"`
+	TryNumber    int32       `json:"try_number"`
+	AttemptEpoch int32       `json:"attempt_epoch"`
+}
+
+// Fails one queued TI whose task pod is still Pending (image pull, node
+// provisioning, init containers) when the attempt credential minted at dispatch
+// is about to run out (#1126). The agent has not started, so it could only
+// start with a dead credential: it would be refused at Register, stream no log
+// and fail the attempt against the user's retry budget. Marked infra instead,
+// so the planner re-places it off-budget with a fresh credential. Same guards
+// and provisional rule as MarkTaskDispatchLost: state='queued' (an agent that
+// reported RUNNING wins) and the listed attempt, (try_number, attempt_epoch).
+func (q *Queries) MarkTaskStartExpired(ctx context.Context, arg MarkTaskStartExpiredParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markTaskStartExpired,
+		arg.Provisional,
 		arg.ID,
 		arg.TryNumber,
 		arg.AttemptEpoch,
@@ -2528,7 +3094,8 @@ func (q *Queries) MarkTaskPodLost(ctx context.Context, arg MarkTaskPodLostParams
 
 const recordDispatchBackpressure = `-- name: RecordDispatchBackpressure :exec
 UPDATE task_instances
-SET next_dispatch_at = $3
+SET next_dispatch_at = $3,
+    dispatch_unavailable_since = NULL
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled'
 `
 
@@ -2546,7 +3113,8 @@ type RecordDispatchBackpressureParams struct {
 // scheduled->queued on next_dispatch_at alone, so setting it holds and re-offers
 // the task without a counter bump. Guarded to 'scheduled' for the same reason as
 // RecordDispatchFailure; try_number is untouched — this is infra, not a task
-// failure.
+// failure. The apiserver answered the create, so dispatch_unavailable_since is
+// cleared as in RecordDispatchFailure.
 func (q *Queries) RecordDispatchBackpressure(ctx context.Context, arg RecordDispatchBackpressureParams) error {
 	_, err := q.db.Exec(ctx, recordDispatchBackpressure, arg.DagRunID, arg.TaskID, arg.NextDispatchAt)
 	return err
@@ -2556,6 +3124,7 @@ const recordDispatchFailure = `-- name: RecordDispatchFailure :exec
 UPDATE task_instances
 SET dispatch_attempts = dispatch_attempts + 1,
     next_dispatch_at = $3,
+    dispatch_unavailable_since = NULL,
     last_heartbeat_at = NULL,
     attempt_epoch = attempt_epoch + 1
 WHERE dag_run_id = $1 AND task_id = $2 AND state = 'scheduled'
@@ -2574,10 +3143,80 @@ type RecordDispatchFailureParams struct {
 // a row that has since progressed. try_number is untouched: this is infra, not a
 // task failure.
 // last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
-// ResetTaskInstanceToNone.
+// ResetTaskInstanceToNone. The apiserver answered the create, so the outage
+// window of ADR 0093 is closed: dispatch_unavailable_since is cleared, and a
+// later unavailable failure starts a new window.
 func (q *Queries) RecordDispatchFailure(ctx context.Context, arg RecordDispatchFailureParams) error {
 	_, err := q.db.Exec(ctx, recordDispatchFailure, arg.DagRunID, arg.TaskID, arg.NextDispatchAt)
 	return err
+}
+
+const recordDispatchUnavailable = `-- name: RecordDispatchUnavailable :one
+UPDATE task_instances
+SET state = 'scheduled',
+    next_dispatch_at = $1::timestamptz + LEAST(
+        $2::interval,
+        GREATEST($3::interval,
+                 $1::timestamptz - COALESCE(dispatch_unavailable_since, $1::timestamptz))),
+    dispatch_unavailable_since = COALESCE(dispatch_unavailable_since, $1::timestamptz),
+    warm_worker_id = NULL,
+    last_heartbeat_at = NULL,
+    attempt_epoch = attempt_epoch + 1,
+    queued_at = NULL
+WHERE dag_run_id = $4
+  AND task_id = $5
+  AND state IN ('scheduled', 'queued')
+RETURNING dispatch_unavailable_since::timestamptz AS unavailable_since, next_dispatch_at
+`
+
+type RecordDispatchUnavailableParams struct {
+	Now      pgtype.Timestamptz `json:"now"`
+	MaxDelay pgtype.Interval    `json:"max_delay"`
+	MinDelay pgtype.Interval    `json:"min_delay"`
+	DagRunID pgtype.UUID        `json:"dag_run_id"`
+	TaskID   string             `json:"task_id"`
+}
+
+type RecordDispatchUnavailableRow struct {
+	UnavailableSince pgtype.Timestamptz `json:"unavailable_since"`
+	NextDispatchAt   pgtype.Timestamptz `json:"next_dispatch_at"`
+}
+
+// A pod CREATE failed because the Kubernetes API was unavailable: a 503, a
+// 504, a 500 (a fail-closed admission webhook that is down), a connection
+// refused or reset, or the client deadline (#1606). Re-offer the task the way
+// backpressure is re-offered, back to 'scheduled' and held until
+// next_dispatch_at, WITHOUT touching dispatch_attempts, and stamp the start of
+// the outage window on the first such failure (COALESCE keeps the first one).
+// The caller fails the task as dispatch_failed once the window it returns is
+// older than the scheduler's bound (ADR 0093), so an API that never comes back
+// cannot hold the task forever.
+//
+// The hold grows with the outage: the next attempt waits as long as the task
+// has already been riding it out, at least min_delay and at most max_delay.
+// That doubles the interval without a counter, so a recovering apiserver is
+// not hit by every due task every few seconds, and a recovery is still seen
+// within max_delay.
+//
+// The create may have succeeded on the server before the response was lost,
+// so this is a rail like RequeueDispatch: attempt_epoch is bumped, and the
+// re-dispatch claims a new epoch on top, so an orphan pod from the ambiguous
+// create is fenced (its reports get ErrStaleReport). Guarded to
+// scheduled/queued: the sync path re-offers a scheduled row, a buffered
+// worker a scheduled or queued one, and a row the agent has since reported on
+// (the orphan pod won the race and runs the attempt) is left alone. The other
+// fields are cleared for the reasons given on RequeueDispatch.
+func (q *Queries) RecordDispatchUnavailable(ctx context.Context, arg RecordDispatchUnavailableParams) (RecordDispatchUnavailableRow, error) {
+	row := q.db.QueryRow(ctx, recordDispatchUnavailable,
+		arg.Now,
+		arg.MaxDelay,
+		arg.MinDelay,
+		arg.DagRunID,
+		arg.TaskID,
+	)
+	var i RecordDispatchUnavailableRow
+	err := row.Scan(&i.UnavailableSince, &i.NextDispatchAt)
+	return i, err
 }
 
 const recordTaskHeartbeat = `-- name: RecordTaskHeartbeat :execrows
@@ -2633,6 +3272,7 @@ func (q *Queries) RecordTaskHeartbeat(ctx context.Context, arg RecordTaskHeartbe
 const redispatchRescheduledTaskInstance = `-- name: RedispatchRescheduledTaskInstance :exec
 UPDATE task_instances
 SET state = 'none',
+    dispatch_unavailable_since = NULL,
     released_at = now(),
     started_at = NULL,
     ended_at = NULL,
@@ -2782,18 +3422,21 @@ UPDATE task_instances
 SET state = 'scheduled',
     next_dispatch_at = $1,
     dispatch_attempts = dispatch_attempts + $2::int,
+    dispatch_unavailable_since = CASE WHEN $3::bool
+                                      THEN NULL ELSE dispatch_unavailable_since END,
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
     attempt_epoch = attempt_epoch + 1,
     queued_at = NULL
-WHERE dag_run_id = $3
-  AND task_id = $4
+WHERE dag_run_id = $4
+  AND task_id = $5
   AND state IN ('scheduled', 'queued')
 `
 
 type RequeueDispatchParams struct {
 	NextDispatchAt   pgtype.Timestamptz `json:"next_dispatch_at"`
 	AttemptIncrement int32              `json:"attempt_increment"`
+	ClearUnavailable bool               `json:"clear_unavailable"`
 	DagRunID         pgtype.UUID        `json:"dag_run_id"`
 	TaskID           string             `json:"task_id"`
 }
@@ -2811,11 +3454,17 @@ type RequeueDispatchParams struct {
 // queued_at is cleared too, so the next queued episode stamps a fresh one:
 // MarkTaskInstanceQueued only stamps a NULL queued_at, and a kept one would
 // make the dispatch-lost reaper fail the re-offered task as soon as it is
-// queued again.
+// queued again. dispatch_unavailable_since is cleared when clear_unavailable
+// is set, for a failure the apiserver answered (a rejection, backpressure), as
+// in RecordDispatchFailure. It is kept for a failure that says nothing about
+// the API (a buffer wait past its bound), so a saturated buffer during an
+// outage cannot reset the window. It is not cleared when the row is marked
+// queued either: a buffered row is queued before its create is sent.
 func (q *Queries) RequeueDispatch(ctx context.Context, arg RequeueDispatchParams) (int64, error) {
 	result, err := q.db.Exec(ctx, requeueDispatch,
 		arg.NextDispatchAt,
 		arg.AttemptIncrement,
+		arg.ClearUnavailable,
 		arg.DagRunID,
 		arg.TaskID,
 	)
@@ -2830,7 +3479,8 @@ UPDATE task_instances
 SET state = 'scheduled',
     warm_worker_id = NULL,
     last_heartbeat_at = NULL,
-    attempt_epoch = attempt_epoch + 1
+    attempt_epoch = attempt_epoch + 1,
+    queued_at = NULL
 WHERE dag_run_id = $1 AND task_id = $2 AND try_number = $3
   AND attempt_epoch = COALESCE($4::int, 0)
   AND state = 'queued'
@@ -2866,6 +3516,9 @@ type RequeueForRedispatchParams struct {
 // the clear must happen here; a fresh try lands on a new row that is already NULL.
 // last_heartbeat_at is cleared and attempt_epoch bumped for the reasons given on
 // ResetTaskInstanceToNone.
+// queued_at is cleared for the reason given on RequeueDispatch: the re-dispatch
+// starts a new queued episode, and a kept stamp would let the dispatch-lost
+// reaper fail it as soon as it is queued again (#1604).
 func (q *Queries) RequeueForRedispatch(ctx context.Context, arg RequeueForRedispatchParams) (int64, error) {
 	result, err := q.db.Exec(ctx, requeueForRedispatch,
 		arg.DagRunID,
@@ -2997,6 +3650,7 @@ SET state = 'none',
     scheduled_at = NULL,
     dispatch_attempts = 0,
     next_dispatch_at = NULL,
+    dispatch_unavailable_since = NULL,
     last_failure_kind = NULL,
     infra_confirmed_at = NULL,
     warm_worker_id = NULL,
@@ -3090,7 +3744,8 @@ type ResetDagRunToVersionParams struct {
 }
 
 // Clear with run_on_latest_version re-binds the run to the DAG's current
-// registered version (ADR 0020; opt-in since the 2026-09-15 amendment): a
+// registered version (ADR 0020; opt-in since the 2026-09-15 amendment; only a
+// finished run with no queued or running task instance, ADR 0086): a
 // re-run after a code/yaml fix picks up the newest image and config — in dev that
 // is the last hot-reload, in prod the last deploy — while everything within a
 // version stays reproducible. Clearing the alert bookkeeping (#431) makes the clear
@@ -3144,6 +3799,7 @@ SET state = 'none',
     scheduled_at = NULL,
     dispatch_attempts = 0,
     next_dispatch_at = NULL,
+    dispatch_unavailable_since = NULL,
     last_failure_kind = NULL,
     infra_confirmed_at = NULL,
     warm_worker_id = NULL,
@@ -3249,6 +3905,7 @@ SET state = 'none',
     scheduled_at = NULL,
     dispatch_attempts = 0,
     next_dispatch_at = NULL,
+    dispatch_unavailable_since = NULL,
     reschedule_at = NULL,
     first_reschedule_at = NULL,
     last_failure_kind = NULL,
@@ -3322,6 +3979,7 @@ SET state = 'none',
     scheduled_at = NULL,
     dispatch_attempts = 0,
     next_dispatch_at = NULL,
+    dispatch_unavailable_since = NULL,
     reschedule_at = NULL,
     first_reschedule_at = NULL,
     last_failure_kind = NULL,
@@ -3406,6 +4064,7 @@ SET state = 'none',
     scheduled_at = NULL,
     dispatch_attempts = 0,
     next_dispatch_at = NULL,
+    dispatch_unavailable_since = NULL,
     reschedule_at = NULL,
     first_reschedule_at = NULL,
     last_failure_kind = NULL,
@@ -3521,6 +4180,39 @@ func (q *Queries) ResolveRunRef(ctx context.Context, arg ResolveRunRefParams) (R
 	return i, err
 }
 
+const setDagNextRunAt = `-- name: SetDagNextRunAt :exec
+UPDATE dags d
+SET next_run_at = $1::timestamptz
+WHERE d.id = (
+  SELECT x.id FROM dags x
+  WHERE x.tenant_id = $2 AND x.dag_id = $3
+    AND x.schedule_epoch = $4::bigint
+  FOR NO KEY UPDATE SKIP LOCKED
+)
+`
+
+type SetDagNextRunAtParams struct {
+	NextRunAt     pgtype.Timestamptz `json:"next_run_at"`
+	TenantID      pgtype.UUID        `json:"tenant_id"`
+	DagID         string             `json:"dag_id"`
+	ScheduleEpoch int64              `json:"schedule_epoch"`
+}
+
+// Stores when the DAG is next due, unless a change
+// bumped its schedule_epoch since the scheduler listed it (#2175). SKIP LOCKED:
+// a register or a retention delete holding the row would otherwise stall the
+// tick until it commits. The time is only a hint, so a skipped write leaves the
+// earlier one, and such a change usually clears it anyway.
+func (q *Queries) SetDagNextRunAt(ctx context.Context, arg SetDagNextRunAtParams) error {
+	_, err := q.db.Exec(ctx, setDagNextRunAt,
+		arg.NextRunAt,
+		arg.TenantID,
+		arg.DagID,
+		arg.ScheduleEpoch,
+	)
+	return err
+}
+
 const setTaskInstanceNote = `-- name: SetTaskInstanceNote :exec
 UPDATE task_instances
 SET note = $3
@@ -3571,25 +4263,56 @@ func (q *Queries) SetTaskInstanceStateByUser(ctx context.Context, arg SetTaskIns
 	return err
 }
 
-const stampDagRunState = `-- name: StampDagRunState :exec
+const stampDagRunState = `-- name: StampDagRunState :execrows
 UPDATE dag_runs
 SET state = $1::dag_run_state,
     started_at = CASE WHEN $1::dag_run_state = 'running' AND started_at IS NULL THEN now() ELSE started_at END,
     ended_at = CASE WHEN $1::dag_run_state IN ('success', 'failed') THEN now() ELSE ended_at END
-WHERE id = $2
+WHERE id = $2 AND state = $3::dag_run_state
 `
 
 type StampDagRunStateParams struct {
-	State DagRunState `json:"state"`
-	ID    pgtype.UUID `json:"id"`
+	State     DagRunState `json:"state"`
+	ID        pgtype.UUID `json:"id"`
+	FromState DagRunState `json:"from_state"`
 }
 
 // Transitions a run's state and stamps the run's own timestamps so the UI can
 // show its duration: started_at on first entry into 'running', ended_at on a
 // terminal state. Other timestamps are preserved (the scheduler may re-run).
-func (q *Queries) StampDagRunState(ctx context.Context, arg StampDagRunStateParams) error {
-	_, err := q.db.Exec(ctx, stampDagRunState, arg.State, arg.ID)
-	return err
+// Guarded on the state the caller read (from_state), as the tick's task-level
+// writes are (#1605): a run a clear re-opened or a user marked after the tick's
+// snapshot is left alone, and no row is affected (#2047).
+func (q *Queries) StampDagRunState(ctx context.Context, arg StampDagRunStateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, stampDagRunState, arg.State, arg.ID, arg.FromState)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const startQueuedRun = `-- name: StartQueuedRun :one
+UPDATE dag_runs
+SET state = 'running', started_at = COALESCE(started_at, now())
+WHERE id = $1 AND tenant_id = $2 AND state = 'queued'
+RETURNING id
+`
+
+type StartQueuedRunParams struct {
+	ID       pgtype.UUID `json:"id"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+}
+
+// Moves a queued run to running when the tick admits it (#1766), guarded on
+// the run still being queued: a run a user marked success or failed, or
+// deleted, after the tick read it is left alone, and no row comes back.
+// started_at is stamped on the first start only, as StampDagRunState does; a
+// clear resets it, so a re-queued run gets a new one.
+func (q *Queries) StartQueuedRun(ctx context.Context, arg StartQueuedRunParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, startQueuedRun, arg.ID, arg.TenantID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const succeedTaskInstanceIfActive = `-- name: SucceedTaskInstanceIfActive :execrows
@@ -3871,7 +4594,7 @@ const updateTaskInstanceState = `-- name: UpdateTaskInstanceState :one
 UPDATE task_instances
 SET state = $2, started_at = $3, ended_at = $4
 WHERE id = $1
-RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots
+RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots, dispatch_unavailable_since
 `
 
 type UpdateTaskInstanceStateParams struct {
@@ -3924,6 +4647,7 @@ func (q *Queries) UpdateTaskInstanceState(ctx context.Context, arg UpdateTaskIns
 		&i.AttemptEpoch,
 		&i.InfraConfirmedAt,
 		&i.PoolSlots,
+		&i.DispatchUnavailableSince,
 	)
 	return i, err
 }
@@ -3952,31 +4676,57 @@ func (q *Queries) UpdateTaskInstanceStateByRunTask(ctx context.Context, arg Upda
 	return err
 }
 
-const updateTaskInstanceStatesByRunTasks = `-- name: UpdateTaskInstanceStatesByRunTasks :exec
+const updateTaskInstanceStatesByRunTasks = `-- name: UpdateTaskInstanceStatesByRunTasks :many
 UPDATE task_instances
 SET state = $1::task_state,
     scheduled_at = CASE WHEN $1::task_state = 'scheduled' AND scheduled_at IS NULL THEN now() ELSE scheduled_at END,
     queued_at = CASE WHEN $1::task_state = 'queued' AND queued_at IS NULL THEN now() ELSE queued_at END,
     started_at = CASE WHEN $1::task_state = 'running' AND started_at IS NULL THEN now() ELSE started_at END
 WHERE dag_run_id = $2 AND task_id = ANY($3::text[])
+  AND state = $4::task_state
+RETURNING task_id
 `
 
 type UpdateTaskInstanceStatesByRunTasksParams struct {
-	State    TaskState   `json:"state"`
-	DagRunID pgtype.UUID `json:"dag_run_id"`
-	TaskIds  []string    `json:"task_ids"`
+	State     TaskState   `json:"state"`
+	DagRunID  pgtype.UUID `json:"dag_run_id"`
+	TaskIds   []string    `json:"task_ids"`
+	FromState TaskState   `json:"from_state"`
 }
 
 // Batched form of UpdateTaskInstanceStateByRunTask: applies ONE target state to
 // every listed task of a run in a single statement. The per-row stamping is
 // identical (scheduled_at/queued_at/started_at set on first entry only), as is
-// the task_state cast, so a batch of R same-target transitions is byte-identical
-// to R single-row updates — only the statement count changes (R UPDATEs → 1 per
-// distinct target state). The scheduler groups a tick's plain state-set
-// transitions (scheduled/skipped/upstream_failed/up_for_retry) by target state
-// and flushes each group through this query. task_id = ANY keeps every row's CASE
-// self-referential, so an already-stamped row is never re-stamped.
-func (q *Queries) UpdateTaskInstanceStatesByRunTasks(ctx context.Context, arg UpdateTaskInstanceStatesByRunTasksParams) error {
-	_, err := q.db.Exec(ctx, updateTaskInstanceStatesByRunTasks, arg.State, arg.DagRunID, arg.TaskIds)
-	return err
+// the task_state cast. The scheduler groups a tick's plain state-set transitions
+// (scheduled/skipped/upstream_failed from none, up_for_retry from failed) by
+// source and target state and flushes each group through this query.
+// The write is guarded on the source state the tick's snapshot read
+// (from_state), so a row a concurrent writer moved after the snapshot (a user's
+// mark or clear, an agent's RUNNING report under an overlapping leader) is left
+// alone instead of being overwritten (#1605, ADR 0031 leader-overlap
+// correctness). The ids it returns are the rows that actually moved, so the
+// tick records only those.
+func (q *Queries) UpdateTaskInstanceStatesByRunTasks(ctx context.Context, arg UpdateTaskInstanceStatesByRunTasksParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, updateTaskInstanceStatesByRunTasks,
+		arg.State,
+		arg.DagRunID,
+		arg.TaskIds,
+		arg.FromState,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var task_id string
+		if err := rows.Scan(&task_id); err != nil {
+			return nil, err
+		}
+		items = append(items, task_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

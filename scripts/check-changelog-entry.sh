@@ -34,7 +34,20 @@ unreleased_section() {
 	'
 }
 
+# skip_changelog_reason <pr-body>: the reason a `Skip-changelog:` line gives,
+# empty when there is none. The opt-out for an author who cannot apply the
+# skip-changelog label, which is every author of a pull request from a fork
+# (#1560). Same rule as Skip-docs in check-docs-updated.sh: case-insensitive
+# key, and a reason that says something.
+skip_changelog_reason() {
+	printf '%s\n' "$1" | tr -d '\r' |
+		sed -nE 's/^[[:space:]]*[Ss][Kk][Ii][Pp]-[Cc][Hh][Aa][Nn][Gg][Ee][Ll][Oo][Gg]:[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\1/p' | head -1
+}
+
 self_test() {
+	# A git hook exports these, and the fixture repositories below would follow
+	# them to the repository being committed to.
+	unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_PREFIX
 	local fail=0
 	_eq() { # <got> <want> <name>
 		if [ "$1" = "$2" ]; then printf '  ok   %s\n' "$3"; else printf '  FAIL %s\n    got:  %q\n    want: %q\n' "$3" "$1" "$2"; fail=1; fi
@@ -47,6 +60,11 @@ self_test() {
 	local dated
 	dated=$'## [Unreleased]\n\n## [1.0.0] - 2026-01-01\n- x\n'
 	_eq "$(printf '%s' "$dated" | unreleased_section | tr -d '[:space:]')" "" "empty Unreleased extracts blank"
+	_eq "$(skip_changelog_reason $'Summary\r\nSkip-changelog: test-only change\r\n')" "test-only change" "reads a Skip-changelog reason"
+	_eq "$(skip_changelog_reason $'  skip-CHANGELOG:   docs only  \n')" "docs only" "the key is case-insensitive and the reason trimmed"
+	_eq "$(skip_changelog_reason $'Skip-changelog:   \n')" "" "an empty reason is no reason"
+	_eq "$(skip_changelog_reason $'We skip-changelog: here\n')" "" "the key must start the line"
+	_eq "$(printf 'x\nSkip-changelog: via stdin\n' | bash "${BASH_SOURCE[0]}" --skip-reason)" "via stdin" "--skip-reason reads the body on stdin"
 	# The pure filter above was the only thing under test, which is why nothing
 	# caught that this gate fails when invoked with no pull request to judge —
 	# cut-release.sh's run_gates() globs scripts/check-*.sh and runs this one
@@ -67,6 +85,7 @@ self_test() {
 
 	local setup_log
 	setup_log="$(
+		exec 2>&1
 		export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 		cd "$tmp" || exit 1
 		git -c init.defaultBranch=main init -q . &&
@@ -75,7 +94,7 @@ self_test() {
 		printf '%s\n' '# Changelog' '' '## [Unreleased]' '' '### Fixed' '- a thing (#1)' '' '## [1.0.0] - 2026-01-01' '- old' > CHANGELOG.md &&
 		git add -A && git commit -qm base &&
 		git update-ref refs/remotes/origin/main refs/heads/main
-	2>&1)" || { printf '  FAIL self-test setup could not build the fixture repo\n%s\n' "$setup_log"; return 1; }
+	)" || { printf '  FAIL self-test setup could not build the fixture repo\n%s\n' "$setup_log"; return 1; }
 
 	# _case <name> <want-rc> <want-substring> -- <commands run inside $tmp>
 	# GITHUB_BASE_REF is part of the gate's decision, and it is SET in the
@@ -156,6 +175,7 @@ self_test() {
 }
 
 [ "${1:-}" = "--self-test" ] && { self_test; exit $?; }
+[ "${1:-}" = "--skip-reason" ] && { skip_changelog_reason "$(cat)"; exit 0; }
 
 cd "$(dirname "$0")/.."
 base="${1:-origin/main}"
@@ -233,7 +253,8 @@ if [ "$base_section" = "$head_section" ]; then
 	echo "assembles into CHANGELOG.md. Editing CHANGELOG.md by hand still passes."
 	echo
 	echo "If the PR has no user-facing change (release-prep, chore, dependabot,"
-	echo "docs-only), apply the 'skip-changelog' label to the PR instead."
+	echo "docs-only), add a line 'Skip-changelog: <reason>' to the PR description,"
+	echo "or apply the 'skip-changelog' label."
 	exit 1
 fi
 

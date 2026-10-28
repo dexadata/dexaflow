@@ -33,7 +33,8 @@ invoke   (DataformCreateWorkflowInvocationOperator)
 dexaflow lite --executor=subprocess examples/gcp_dataform_trigger
 
 # Pro: dexaflow compile examples/gcp_dataform_trigger --build --push -o dag.json
-#      dexaflow push dag.json && dexaflow runs trigger gcp_dataform_trigger
+#      dexaflow push dag.json && dexaflow admin dags unpause gcp_dataform_trigger
+#      dexaflow runs trigger gcp_dataform_trigger   # new DAGs start paused; a run waits until the unpause
 ```
 
 `compile` logs the created compilation result; `invoke` runs the workflow and waits

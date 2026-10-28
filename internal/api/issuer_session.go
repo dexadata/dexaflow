@@ -154,7 +154,7 @@ func issuerSessionHandler(d issuerSessionDeps) gin.HandlerFunc {
 		}
 		setSessionCookie(c, token, d.tokenTTL, d.session)
 		d.record(c, auditIssuerLoginSuccess, user.TenantID, user.ID, user.Email, nil)
-		c.Redirect(http.StatusSeeOther, sanitizeNext(c.PostForm("next")))
+		c.Redirect(http.StatusSeeOther, sanitizeNext(c.PostForm("next"), c.Request.Host))
 	}
 }
 
@@ -199,6 +199,11 @@ func (d issuerSessionDeps) resolve(c *gin.Context, id *issuer.Identity) (*auth.U
 // level, so a redirected refusal is as visible there as a 4xx or 5xx.
 func (d issuerSessionDeps) refuse(c *gin.Context, status int, code, title, detail string) {
 	if d.signIn == nil || wantsProblemJSON(c.GetHeader("Accept")) {
+		if status == http.StatusServiceUnavailable {
+			// The only 503 here is the issuer's keys being unreachable: name a
+			// wait so the caller backs off instead of retrying at once (#1100).
+			setOutageRetryAfter(c)
+		}
 		AbortProblem(c, status, title, detail)
 		return
 	}

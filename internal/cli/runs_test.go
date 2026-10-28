@@ -96,15 +96,17 @@ func TestRunsTriggerUsesConfigToken(t *testing.T) {
 }
 
 // bodyRecorder is an httptest server that records the raw request body of the
-// last request it served, together with a canned JSON response body. The trigger
+// last POST it served, together with a canned JSON response body. The trigger
 // command POSTs its conf payload, so a test can prove exactly what reached the
-// control plane.
+// control plane; the read of the DAG that may follow it is not recorded.
 func bodyRecorder(t *testing.T, body string) (srv *httptest.Server, got *string) {
 	t.Helper()
 	var reqBody string
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
-		reqBody = string(raw)
+		if r.Method == http.MethodPost {
+			raw, _ := io.ReadAll(r.Body)
+			reqBody = string(raw)
+		}
 		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(srv.Close)

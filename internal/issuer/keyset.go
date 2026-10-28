@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	gooidc "github.com/coreos/go-oidc/v3/oidc"
 	jose "github.com/go-jose/go-jose/v4"
 )
 
@@ -199,4 +200,27 @@ func (ks *cachedKeySet) download(ctx context.Context) ([]jose.JSONWebKey, error)
 		return nil, fmt.Errorf("decoding jwks: %w", err)
 	}
 	return set.Keys, nil
+}
+
+// NewKeySet returns the JWKS published at url as a go-oidc key set, with
+// the cache, the refresh cooldown and the size and time bounds the trusted
+// issuer uses. It makes no network call until a signature is checked. Only
+// algs are accepted. The CI OIDC issuers (ADR 0092) share it.
+func NewKeySet(url string, algs []string, now func() time.Time) gooidc.KeySet {
+	return newCachedKeySet(url, algs, now)
+}
+
+// TrackKeyOutage returns a context to verify a token with, and a function
+// that reports, after the verification, whether it failed because the keys
+// could not be downloaded rather than because the token is bad.
+func TrackKeyOutage(ctx context.Context) (tracked context.Context, outage func() bool) {
+	tracked, o := withKeyOutage(ctx)
+	return tracked, o.hit.Load
+}
+
+// MarkKeyOutage records on a context from TrackKeyOutage that the keys could
+// not be obtained, for a key set that finds its keys some other way first
+// (an OpenID discovery document, say).
+func MarkKeyOutage(ctx context.Context) {
+	markKeyOutage(ctx)
 }

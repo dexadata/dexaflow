@@ -26,8 +26,9 @@ type fakeAssignmentStream struct {
 	assignments []*agentv1.WorkAssignment
 	idx         int
 	sent        []*agentv1.WorkerMessage
-	recvErr     error // returned once assignments are exhausted; io.EOF when nil
-	sendErr     error // when set, every Send fails with it (a stream dying mid-attempt)
+	recvErr     error       // returned once assignments are exhausted; io.EOF when nil
+	sendErr     error       // when set, every Send fails with it (a stream dying mid-attempt)
+	header      metadata.MD // response header the control plane sent; nil means none
 }
 
 func (s *fakeAssignmentStream) Send(m *agentv1.WorkerMessage) error {
@@ -47,12 +48,17 @@ func (s *fakeAssignmentStream) Recv() (*agentv1.WorkAssignment, error) {
 	return a, nil
 }
 
-func (s *fakeAssignmentStream) Header() (metadata.MD, error) { return metadata.MD{}, nil }
-func (s *fakeAssignmentStream) Trailer() metadata.MD         { return nil }
-func (s *fakeAssignmentStream) CloseSend() error             { return nil }
-func (s *fakeAssignmentStream) Context() context.Context     { return s.ctx }
-func (s *fakeAssignmentStream) SendMsg(any) error            { return nil }
-func (s *fakeAssignmentStream) RecvMsg(any) error            { return nil }
+func (s *fakeAssignmentStream) Header() (metadata.MD, error) {
+	if s.header != nil {
+		return s.header, nil
+	}
+	return metadata.MD{}, nil
+}
+func (s *fakeAssignmentStream) Trailer() metadata.MD     { return nil }
+func (s *fakeAssignmentStream) CloseSend() error         { return nil }
+func (s *fakeAssignmentStream) Context() context.Context { return s.ctx }
+func (s *fakeAssignmentStream) SendMsg(any) error        { return nil }
+func (s *fakeAssignmentStream) RecvMsg(any) error        { return nil }
 
 // warmFake is the control-plane double for the warm-worker tests. It embeds the
 // single-shot fakeClient (reusing its Register / ReportState / secrets stubs) and
@@ -338,6 +344,71 @@ func TestWarmWorkerRegisterCarriesPodName(t *testing.T) {
 	}
 	if reg.GetPodName() != "leoflow-warm-dv-abc-x7k2" {
 		t.Errorf("WorkerRegister.pod_name = %q, want leoflow-warm-dv-abc-x7k2", reg.GetPodName())
+	}
+}
+
+// TestWarmWorkerRegisterCarriesAttemptHomeSweep locks the agent side of #1678:
+// the register states whether this worker empties /tmp and /dev/shm between
+// attempts (AttemptHome, from LEOFLOW_WARM_ATTEMPT_HOME), so a control plane
+// running warm workers with a read-only root can refuse one that does not.
+func TestWarmWorkerRegisterCarriesAttemptHomeSweep(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		stream := &fakeAssignmentStream{ctx: context.Background()} // empty => immediate io.EOF
+		client := &warmFake{fakeClient: &fakeClient{}, stream: stream, tokens: NewTokenSource("bootstrap")}
+		tmp := t.TempDir()
+		w := &WarmRunner{
+			StreamClient:  client,
+			WorkClient:    client,
+			AttemptTokens: NewTokenSource("bootstrap"),
+			Cmd:           &scratchProbeCmd{scratchDir: filepath.Join(tmp, "scratch")},
+			Hostname:      "warm-pod-1",
+			Version:       "test",
+			ScratchDir:    filepath.Join(tmp, "scratch"),
+			AttemptHome:   on,
+			SharedTmpDir:  tmp,
+			SharedMemDir:  t.TempDir(),
+		}
+		if err := w.Run(context.Background(), "dagver-1"); err != nil {
+			t.Fatalf("AttemptHome=%v: WarmRunner.Run: %v", on, err)
+		}
+		if len(stream.sent) == 0 {
+			t.Fatalf("AttemptHome=%v: worker sent no messages; expected a WorkerRegister", on)
+		}
+		reg := stream.sent[0].GetRegister()
+		if reg == nil {
+			t.Fatalf("AttemptHome=%v: first message must be a WorkerRegister, got %+v", on, stream.sent[0])
+		}
+		if reg.GetAttemptHomeSweep() != on {
+			t.Errorf("AttemptHome=%v: WorkerRegister.attempt_home_sweep = %v", on, reg.GetAttemptHomeSweep())
+		}
+	}
+}
+
+// TestWarmWorkerRegisterSweepNeedsBothPaths: the register confirms the sweep
+// only when the worker knows both paths it empties. AttemptHome with no /tmp or
+// no /dev/shm path skips that sweep in resetScratch, so it must not be
+// reported as done (#1678).
+func TestWarmWorkerRegisterSweepNeedsBothPaths(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		tmpSet, shm  bool
+		wantConfirms bool
+	}{
+		{"both", true, true, true},
+		{"no tmp", false, true, false},
+		{"no shm", true, false, false},
+	} {
+		w := &WarmRunner{PodName: "warm-pod-1", AttemptHome: true}
+		if tc.tmpSet {
+			w.SharedTmpDir = "/tmp"
+		}
+		if tc.shm {
+			w.SharedMemDir = "/dev/shm"
+		}
+		got := w.registerMessage("dagver-1").GetRegister().GetAttemptHomeSweep()
+		if got != tc.wantConfirms {
+			t.Errorf("%s: attempt_home_sweep = %v, want %v", tc.name, got, tc.wantConfirms)
+		}
 	}
 }
 

@@ -37,6 +37,7 @@ func healthServer(t *testing.T, schedulerStatus string) *httptest.Server {
 }
 
 func TestFetchAdminHealthHealthy(t *testing.T) {
+	t.Parallel()
 	srv := healthServer(t, "healthy")
 	defer srv.Close()
 
@@ -53,6 +54,7 @@ func TestFetchAdminHealthHealthy(t *testing.T) {
 }
 
 func TestFetchAdminHealthUnhealthy(t *testing.T) {
+	t.Parallel()
 	srv := healthServer(t, "unhealthy")
 	defer srv.Close()
 
@@ -66,6 +68,7 @@ func TestFetchAdminHealthUnhealthy(t *testing.T) {
 }
 
 func TestFetchAdminHealthNon200IsError(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))

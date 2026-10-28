@@ -152,3 +152,35 @@ func TestDueScheduledSlotsRespectsUTCWhenSeedHasOffset(t *testing.T) {
 		t.Fatalf("expected 0 slots (last run already covers today's UTC midnight), got %d: %v", len(got), got)
 	}
 }
+
+// A schedule that parses but never fires (31 February, or an empty hour list
+// such as "0 , * * 0") makes cron's Next return the zero time. The slot loop
+// took that zero time for a due slot: with a start_date floor it skipped it
+// and asked Next again, forever, which hung the scheduler tick; without one it
+// returned runs dated year 1. The last logical date exists as soon as the DAG
+// is triggered by hand, so both shapes are reachable.
+func TestDueSlotsForAScheduleThatNeverFires(t *testing.T) {
+	now := time.Date(2026, 10, 12, 8, 0, 0, 0, time.UTC)
+	last := now.Add(-time.Hour)
+	start := now.Add(-24 * time.Hour)
+	for _, expr := range []string{"0 0 31 2 *", "0 , * * 0"} {
+		done := make(chan []time.Time, 1)
+		go func() {
+			done <- dueScheduledSlots(expr, &last, &start, now, true, 5)
+		}()
+		select {
+		case slots := <-done:
+			if len(slots) != 0 {
+				t.Errorf("%q with a start_date: slots = %v, want none", expr, slots)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%q with a start_date: dueScheduledSlots did not return", expr)
+		}
+		if slots := dueScheduledSlots(expr, &last, nil, now, true, 5); len(slots) != 0 {
+			t.Errorf("%q: slots = %v, want none", expr, slots)
+		}
+		if logical, due := nextScheduledRun(expr, &last, now); due {
+			t.Errorf("%q: nextScheduledRun due at %v, want not due", expr, logical)
+		}
+	}
+}

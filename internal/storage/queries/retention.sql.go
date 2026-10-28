@@ -19,10 +19,13 @@ FROM (
   WHERE r.tenant_id = $1
     AND r.state IN ('success', 'failed')
     AND r.ended_at < $2
+    AND EXISTS (
+      SELECT 1 FROM dag_runs newer
+      WHERE newer.dag_id = r.dag_id AND newer.logical_date > r.logical_date)
     AND NOT EXISTS (
       SELECT 1 FROM task_instances ti
       WHERE ti.dag_run_id = r.id
-        AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed'))
+        AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed', 'removed'))
     AND NOT EXISTS (
       SELECT 1 FROM staging_volumes s
       WHERE s.tenant_id = r.tenant_id AND s.run_id = r.id::text AND s.state = 'active')
@@ -96,6 +99,11 @@ func (q *Queries) CountExpiredTenantAuditLog(ctx context.Context, arg CountExpir
 }
 
 const deleteDagRunsByID = `-- name: DeleteDagRunsByID :execrows
+WITH invalidate AS (
+  UPDATE dags d SET next_run_at = NULL, schedule_epoch = d.schedule_epoch + 1
+  WHERE d.tenant_id = $1
+    AND d.id IN (SELECT r.dag_id FROM dag_runs r WHERE r.tenant_id = $1 AND r.id = ANY($2::uuid[]))
+)
 DELETE FROM dag_runs
 WHERE id IN (
   SELECT r.id FROM dag_runs r
@@ -111,7 +119,10 @@ type DeleteDagRunsByIDParams struct {
 	RowLimit int32         `json:"row_limit"`
 }
 
-// Removes the locked runs whose children are all gone, up to row_limit.
+// Removes the locked runs whose children are all gone, up to row_limit. The
+// stored next due time of each DAG they belong to is cleared (#2175), in case
+// a run removed was the DAG's latest; a DAG whose run stays is only listed
+// once more.
 func (q *Queries) DeleteDagRunsByID(ctx context.Context, arg DeleteDagRunsByIDParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteDagRunsByID, arg.TenantID, arg.RunIds, arg.RowLimit)
 	if err != nil {
@@ -208,29 +219,6 @@ func (q *Queries) DeleteTaskInstancesOfRuns(ctx context.Context, arg DeleteTaskI
 	return result.RowsAffected(), nil
 }
 
-const deleteTaskStateHistoryOfRuns = `-- name: DeleteTaskStateHistoryOfRuns :execrows
-DELETE FROM task_state_history
-WHERE id IN (
-  SELECT h.id FROM task_state_history h
-  JOIN task_instances ti ON ti.id = h.task_instance_id
-  WHERE ti.tenant_id = $1 AND ti.dag_run_id = ANY($2::uuid[])
-  LIMIT $3)
-`
-
-type DeleteTaskStateHistoryOfRunsParams struct {
-	TenantID pgtype.UUID   `json:"tenant_id"`
-	RunIds   []pgtype.UUID `json:"run_ids"`
-	RowLimit int32         `json:"row_limit"`
-}
-
-func (q *Queries) DeleteTaskStateHistoryOfRuns(ctx context.Context, arg DeleteTaskStateHistoryOfRunsParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteTaskStateHistoryOfRuns, arg.TenantID, arg.RunIds, arg.RowLimit)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const deleteTenantAuditLog = `-- name: DeleteTenantAuditLog :execrows
 DELETE FROM audit_log
 WHERE id IN (
@@ -309,10 +297,13 @@ FROM dag_runs r
 WHERE r.tenant_id = $1
   AND r.state IN ('success', 'failed')
   AND r.ended_at < $2
+  AND EXISTS (
+    SELECT 1 FROM dag_runs newer
+    WHERE newer.dag_id = r.dag_id AND newer.logical_date > r.logical_date)
   AND NOT EXISTS (
     SELECT 1 FROM task_instances ti
     WHERE ti.dag_run_id = r.id
-      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed'))
+      AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed', 'removed'))
   AND NOT EXISTS (
     SELECT 1 FROM staging_volumes s
     WHERE s.tenant_id = r.tenant_id AND s.run_id = r.id::text AND s.state = 'active')
@@ -331,7 +322,7 @@ type LockExpiredSettledRunsParams struct {
 // first, whose task instances are all settled and that no live staging volume
 // still points at. "Settled" is the predicate the pod reconciler's settled-run
 // collection uses too: run in success or failed, and no task instance outside
-// success, failed, skipped and upstream_failed. none is unsettled on purpose:
+// success, failed, skipped, upstream_failed and removed. none is unsettled on purpose:
 // it is a task a clear just reset, waiting to be scheduled, while the run row
 // still says success until the clear reopens it. Any state added later counts
 // as unsettled, so it is kept rather than deleted. The janitor calls this once
@@ -341,6 +332,13 @@ type LockExpiredSettledRunsParams struct {
 // a clear: a clear resets task_instances before it touches the run row, so the
 // janitor then locks and re-checks the task instances
 // (LockTaskInstancesOfRuns) before it deletes anything.
+//
+// The newest run of each DAG (by logical date) is never selected: the
+// scheduler takes a DAG's last logical date from it (ListScheduledDags), so
+// deleting it would make a cron DAG run its latest slot again, a catchup DAG
+// backfill its whole history, and an @once DAG fire a second time. Airflow's
+// `db clean` likewise keeps each DAG's latest (non-manual) run. The probe is
+// one step on idx_dag_runs_dag_logical.
 func (q *Queries) LockExpiredSettledRuns(ctx context.Context, arg LockExpiredSettledRunsParams) ([]pgtype.UUID, error) {
 	rows, err := q.db.Query(ctx, lockExpiredSettledRuns, arg.TenantID, arg.Cutoff, arg.MaxRuns)
 	if err != nil {
@@ -363,7 +361,7 @@ func (q *Queries) LockExpiredSettledRuns(ctx context.Context, arg LockExpiredSet
 
 const lockTaskInstancesOfRuns = `-- name: LockTaskInstancesOfRuns :many
 SELECT ti.dag_run_id,
-       (ti.state IN ('success', 'failed', 'skipped', 'upstream_failed'))::boolean AS settled
+       (ti.state IN ('success', 'failed', 'skipped', 'upstream_failed', 'removed'))::boolean AS settled
 FROM task_instances ti
 WHERE ti.tenant_id = $1 AND ti.dag_run_id = ANY($2::uuid[])
 FOR UPDATE OF ti NOWAIT
@@ -380,7 +378,9 @@ type LockTaskInstancesOfRunsRow struct {
 }
 
 // Locks every task instance of the locked runs and reports whether each is
-// still settled. A clear resets task instances without locking the run row
+// still settled. A clear that moves a finished run to the current version
+// locks the run row first (ADR 0086), so LockExpiredSettledRuns skips it; any
+// other clear resets task instances without locking the run row
 // first, so the run lock alone does not keep it out: a clear that committed
 // since LockExpiredSettledRuns shows here as an unsettled state, and the
 // janitor drops that run from the batch. Once these locks are held no clear can
