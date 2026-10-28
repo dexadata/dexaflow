@@ -247,6 +247,9 @@ func (r *Repository) ClearDagHistory(ctx context.Context, tenant, dagID string) 
 // ListDagsWithFilter returns a page of active DAGs matching the given filter
 // criteria and the total count of matching DAGs.
 func (r *Repository) ListDagsWithFilter(ctx context.Context, tenant string, filter domain.DagFilter) ([]domain.DAG, int, error) {
+	if filter.LastDagRunState != "" && !domain.DagRunState(filter.LastDagRunState).Valid() {
+		return nil, 0, domain.Safef(domain.ErrValidation, "last_dag_run_state must be one of queued, running, success or failed")
+	}
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {
 		return nil, 0, err
