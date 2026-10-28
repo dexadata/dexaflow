@@ -718,6 +718,25 @@ func (s *Scheduler) Heartbeat() (bool, time.Time) {
 	return time.Since(last) <= 3*s.interval+time.Second, last
 }
 
+// StalledFor reports whether this process leads and its scheduling loop has
+// not started an iteration for longer than limit, with the time of the last
+// one. A follower, and a leader before its first tick, are never stalled. A
+// database outage does not stall the loop: Step marks its start before it
+// reads anything and fails fast, so only a loop that stopped iterating (a
+// blocked goroutine) is reported. It backs the opt-in liveness check of
+// server.liveness_scheduler_stall (#539).
+func (s *Scheduler) StalledFor(limit time.Duration) (bool, time.Time) {
+	if !s.leading.Load() {
+		return false, time.Time{}
+	}
+	nanos := s.lastTick.Load()
+	if nanos == 0 {
+		return false, time.Time{}
+	}
+	last := time.Unix(0, nanos).UTC()
+	return time.Since(last) > limit, last
+}
+
 // Step runs one deterministic scheduling iteration over every active run. Each
 // run is advanced in isolation (see advanceSafely): a panic or error in one
 // run is contained, so it never blocks the other runs or new-run creation.
