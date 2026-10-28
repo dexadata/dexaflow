@@ -91,7 +91,7 @@ func newServer(deps Dependencies) *gin.Engine {
 		r.Use(jwtAuth(deps.Auth.Authenticator, newIssuerBearerAuth(deps), deps.sessionCookie(), binding))
 	}
 
-	r.GET("/healthz", livenessHandler)
+	r.GET("/healthz", livenessHandlerWith(deps.Observability.Liveness))
 	r.GET("/readyz", readinessHandler(deps.Observability.HealthChecks, deps.Observability.ProbeBudget))
 	// /metrics is intentionally NOT served here (audit H2): scraping lives on the
 	// dedicated observability listener (ObservabilityHandler on the metrics port),

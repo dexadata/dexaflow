@@ -27,3 +27,35 @@ func TestLoadServerProbeBudget(t *testing.T) {
 		t.Error("Validate() = nil with server.probe_budget -1s, want error")
 	}
 }
+
+// TestLivenessSchedulerStallBounds is #539: off by default, and refused when
+// negative or shorter than twice the scheduler step timeout.
+func TestLivenessSchedulerStallBounds(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil || c.Server.LivenessSchedulerStall != 0 {
+		t.Fatalf("default server.liveness_scheduler_stall = %v (err %v), want 0", c.Server.LivenessSchedulerStall, err)
+	}
+	tests := []struct {
+		name     string
+		stall    time.Duration
+		interval int
+		wantErr  bool
+	}{
+		{name: "off", stall: 0, interval: 1000},
+		{name: "negative", stall: -time.Second, interval: 1000, wantErr: true},
+		{name: "under twice the step timeout", stall: 59 * time.Second, interval: 1000, wantErr: true},
+		{name: "twice the step timeout", stall: time.Minute, interval: 1000},
+		{name: "a slow loop needs more", stall: 2 * time.Minute, interval: 5000, wantErr: true},
+		{name: "a slow loop at twice its timeout", stall: 5 * time.Minute, interval: 5000},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &ServerConfig{}
+			c.Server.LivenessSchedulerStall = tc.stall
+			c.Scheduler.LoopIntervalMS = tc.interval
+			if err := c.validateLivenessSchedulerStall(); (err != nil) != tc.wantErr {
+				t.Errorf("validateLivenessSchedulerStall() = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}

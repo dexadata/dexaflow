@@ -126,6 +126,18 @@ settings:
       never limits a response, so live log tails keep streaming. Headers must always
       arrive within 10 seconds, or within this timeout when it is shorter. `0s`
       means no limit. Helm: set it through `extraEnv`.
+  server.liveness_scheduler_stall:
+    edition: both
+    description: >-
+      Fails `/healthz` with `503`, so the kubelet restarts the pod and another
+      replica takes the scheduler lease, while this process leads the scheduler
+      and its loop has not started an iteration for this long (a Go duration such
+      as `2m`). A database outage does not trip it: the loop keeps iterating and
+      failing fast, and `/readyz` reports the database. An api role process never
+      fails it for a scheduler in another process. `0s` keeps `/healthz`
+      unconditional. A value under twice the scheduler step timeout (30 s, or 30
+      loop intervals when that is longer), so `60s` at the default interval, fails
+      boot, as does a negative one. Helm: set it through `extraEnv`.
   server.idle_timeout:
     edition: both
     description: >-
