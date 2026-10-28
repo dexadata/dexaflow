@@ -111,6 +111,9 @@ type Querier interface {
 	CountExpiredSystemAuditLog(ctx context.Context, arg CountExpiredSystemAuditLogParams) (int64, error)
 	// Audit rows of one tenant older than the cutoff, at most max_rows.
 	CountExpiredTenantAuditLog(ctx context.Context, arg CountExpiredTenantAuditLogParams) (int64, error)
+	// Counts what DeleteExpiredUsageEvents would delete, looking at no more than
+	// max_rows events.
+	CountExpiredUsageEvents(ctx context.Context, arg CountExpiredUsageEventsParams) (int64, error)
 	CountImportErrorsFiltered(ctx context.Context, arg CountImportErrorsFilteredParams) (int64, error)
 	CountLiveAPITokens(ctx context.Context, arg CountLiveAPITokensParams) (int64, error)
 	// The live sign-ins, in all and from one requester.
@@ -178,6 +181,11 @@ type Querier interface {
 	// every minute, so the table holds only what is live or just expired (a CLI
 	// polling a just-expired sign-in still hears expired_token).
 	DeleteExpiredCLIDevices(ctx context.Context) (int64, error)
+	// Deletes the oldest usage events in serving order, (xid, id), up to
+	// row_limit, stopping at the first one recorded at or after the cutoff, so the
+	// deleted rows are always a prefix of what the service API serves. The pruned
+	// mark moves to the last one in the same statement.
+	DeleteExpiredUsageEvents(ctx context.Context, arg DeleteExpiredUsageEventsParams) (int64, error)
 	DeleteExpiredXComIndex(ctx context.Context) error
 	DeleteImportError(ctx context.Context, arg DeleteImportErrorParams) error
 	// The implicit default pool is never deletable (Airflow parity): the guard is in

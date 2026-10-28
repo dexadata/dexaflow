@@ -432,6 +432,13 @@ type UsageEvent struct {
 	RecordedAt      pgtype.Timestamptz `json:"recorded_at"`
 }
 
+type UsageEventsPruned struct {
+	ID       bool               `json:"id"`
+	Xid      pgtype.Uint64      `json:"xid"`
+	EventID  *int64             `json:"event_id"`
+	PrunedAt pgtype.Timestamptz `json:"pruned_at"`
+}
+
 type UsageEventsSwitch struct {
 	ID        bool               `json:"id"`
 	Enabled   bool               `json:"enabled"`

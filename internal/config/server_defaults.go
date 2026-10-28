@@ -327,6 +327,7 @@ var serverDefaults = map[string]any{
 	// deleted until an operator sets a window. The pacing values apply once one is.
 	"retention.dag_runs_days":      0,
 	"retention.audit_log_days":     0,
+	"retention.usage_events_days":  30,
 	"retention.dry_run":            false,
 	"retention.interval":           "1h",
 	"retention.batch_size":         1000,

@@ -1263,6 +1263,14 @@ settings:
     description: >-
       Delete audit log entries older than this many days, per tenant and for the
       tenant-less system entries. `0` keeps the whole audit log.
+  retention.usage_events_days:
+    edition: both
+    description: >-
+      Delete usage events ([ADR 0096](/project/adrs/0096-task-attempt-usage-events/))
+      recorded more than this many days ago, oldest first in the order the service
+      API serves them, so a consumer that is down can catch up for this long. The
+      janitor starts for it only while `usage.events.enabled` is on. `0` keeps every
+      event.
   retention.dry_run:
     edition: both
     description: >-
