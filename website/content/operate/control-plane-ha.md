@@ -5,7 +5,7 @@ weight: 75
 description: "Why a single control-plane replica is evicted as routine housekeeping, what each restart costs, and the one-switch HA profile that turns it into seconds of failover."
 ---
 
-A Pro control plane with one replica is not "stable until something breaks". It
+A Cluster control plane with one replica is not "stable until something breaks". It
 is evicted as **routine cluster housekeeping** — and every eviction is a full
 restart. This page explains the restart window and what is at risk inside it,
 why running two replicas is the recommended production posture, the storage
