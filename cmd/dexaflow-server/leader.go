@@ -163,10 +163,10 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 	// wide fan-out cannot stall every other run and cron creation (#1596).
 	sched.SetDispatchTickBudget(cfg.Scheduler.Dispatch.TickBudget)
 	sched.SetDispatchTenantLimit(cfg.Scheduler.Dispatch.MaxPerTenantPerTick)
-	// Named pools are Pro-only (ADR 0053): enable the cross-DAG slot gate only on
-	// the Pro edition. Left off on Lite/non-Pro, the tick never queries pool
+	// Named pools belong to the cluster edition (ADR 0053): enable the cross-DAG
+	// slot gate only there. Left off on Lite, the tick never queries pool
 	// budgets and planning is byte-identical to the max_active_tasks-only path.
-	if cfg.UI.Edition == "pro" {
+	if cfg.ClusterEdition() {
 		sched.EnablePools()
 		// A task held by its pool past the threshold reserves the pool, so
 		// smaller tasks cannot starve it (ADR 0066 §4).
@@ -178,7 +178,7 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 			logger.Info("pools read-only: tasks naming an undefined pool draw on default_pool")
 		}
 	} else if cfg.Server.PoolsReadOnly {
-		logger.Warn("server.pools_read_only has no effect: pools are a Pro edition feature")
+		logger.Warn("server.pools_read_only has no effect: pools are a cluster edition feature")
 	}
 	// Off by default (ADR 0062): see config.SchedulerSection.EagerPromotion.
 	if cfg.Scheduler.EagerPromotion {

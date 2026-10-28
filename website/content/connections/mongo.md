@@ -89,7 +89,7 @@ For MongoDB Atlas set `Extra: {"srv": true}` and use the cluster host
 - **Secrets in logs**: never `print()` the URI — it carries the password. Log
   the host + database + login only.
 - **gRPC channel (agent ↔ control plane)**: secrets are served only over an
-  authenticated channel (ADR 0021); Pro must run with TLS.
+  authenticated channel (ADR 0021); Cluster must run with TLS.
 
 ## Related
 

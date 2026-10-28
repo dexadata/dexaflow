@@ -261,7 +261,7 @@ func TestServerConfigValidateOIDCPassesWhenComplete(t *testing.T) {
 }
 
 // TestServerConfigValidateOIDCRequiresPro locks D7: provider oidc without the
-// Pro edition fails boot closed.
+// cluster edition (formerly Pro) fails boot closed.
 func TestServerConfigValidateOIDCRequiresPro(t *testing.T) {
 	c := validOIDCConfig()
 	c.UI.Edition = ""
@@ -269,8 +269,8 @@ func TestServerConfigValidateOIDCRequiresPro(t *testing.T) {
 	if err == nil {
 		t.Fatal("Validate() = nil for oidc without Pro edition, want error")
 	}
-	if !strings.Contains(err.Error(), "Pro edition") {
-		t.Errorf("error = %q, want it to mention the Pro edition", err.Error())
+	if !strings.Contains(err.Error(), "cluster edition") {
+		t.Errorf("error = %q, want it to mention the cluster edition", err.Error())
 	}
 }
 
