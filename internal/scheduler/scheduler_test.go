@@ -45,8 +45,13 @@ type fakeStore struct {
 	limitedCalls   int
 	// suspendedTenants answers CreateScheduledRun with a suspension refusal
 	// for these tenant UUIDs, as a suspension that lands mid tick does.
-	suspendedTenants     map[string]bool
-	suspendedCalls       int
+	suspendedTenants map[string]bool
+	suspendedCalls   int
+	// nextRuns records each SetNextRunAt write, keyed by DAG; listedAt is the
+	// now each ScheduledDAGs call was given.
+	nextRuns             map[dagRef]nextRunWrite
+	nextRunErr           error
+	listedAt             []time.Time
 	dispatchFailures     []transition
 	dispatchBackpressure []transition
 	dispatchExhausted    []string
@@ -110,7 +115,23 @@ func (f *fakeStore) ActiveRuns(context.Context) ([]RunState, error) {
 	}
 	return f.runs, nil
 }
-func (f *fakeStore) ScheduledDAGs(context.Context) ([]ScheduledDAG, error) {
+
+// nextRunWrite is one SetNextRunAt call the fake recorded.
+type nextRunWrite struct {
+	epoch int64
+	at    time.Time
+}
+
+func (f *fakeStore) SetNextRunAt(_ context.Context, tenantID, dagID string, epoch int64, at time.Time) error {
+	if f.nextRuns == nil {
+		f.nextRuns = map[dagRef]nextRunWrite{}
+	}
+	f.nextRuns[dagRef{tenantID, dagID}] = nextRunWrite{epoch: epoch, at: at}
+	return f.nextRunErr
+}
+
+func (f *fakeStore) ScheduledDAGs(_ context.Context, now time.Time) ([]ScheduledDAG, error) {
+	f.listedAt = append(f.listedAt, now)
 	if f.scheduledErr != nil {
 		return nil, f.scheduledErr
 	}
@@ -887,6 +908,7 @@ type fakeRecorder struct {
 	undispatchable   []string
 	stepDowns        map[string]int
 	reacquireSamples []time.Duration
+	scheduleDelays   []time.Duration
 }
 
 func (r *fakeRecorder) RecordSchedulerDecision(d string) {
@@ -909,6 +931,9 @@ func (r *fakeRecorder) ObserveSchedulerReacquire(d time.Duration) {
 }
 func (r *fakeRecorder) RecordAlert(_, _, _ string) {}
 func (r *fakeRecorder) RecordSchedulerWokenTick()  {}
+func (r *fakeRecorder) ObserveScheduleDelay(d time.Duration) {
+	r.scheduleDelays = append(r.scheduleDelays, d)
+}
 
 func freshRun() *fakeStore {
 	// 'a' starts scheduled so a single Step plans it none->queued via launchQueued

@@ -91,7 +91,11 @@ WHERE d.id = sqlc.arg(dag_id) AND d.tenant_id = sqlc.arg(tenant_id)
 RETURNING *;
 
 -- name: SetCurrentDagVersion :exec
-UPDATE dags SET current_version_id = $2, updated_at = now() WHERE id = $1 AND tenant_id = $3;
+-- A new current version can change the schedule, start_date or catchup, so the
+-- stored next due time is cleared and the schedule epoch bumped (#2175).
+UPDATE dags
+SET current_version_id = $2, next_run_at = NULL, schedule_epoch = schedule_epoch + 1, updated_at = now()
+WHERE id = $1 AND tenant_id = $3;
 
 -- name: GetCurrentDagSpec :one
 SELECT v.spec
@@ -152,7 +156,12 @@ WHERE d.tenant_id = $1 AND d.is_active = true
   AND (sqlc.narg('run_state')::dag_run_state IS NULL OR l.state = sqlc.narg('run_state'));
 
 -- name: ClearDagRuns :execrows
-DELETE FROM dag_runs WHERE tenant_id = $1 AND dag_id = $2;
+-- The DAG's stored next due time goes with its runs (#2175).
+WITH invalidate AS (
+  UPDATE dags d SET next_run_at = NULL, schedule_epoch = d.schedule_epoch + 1
+  WHERE d.tenant_id = sqlc.arg(tenant_id) AND d.id = sqlc.arg(dag_id)
+)
+DELETE FROM dag_runs r WHERE r.tenant_id = sqlc.arg(tenant_id) AND r.dag_id = sqlc.arg(dag_id);
 
 -- name: GetTenantUserID :one
 -- The id of a user of the tenant: no row when the user is gone or belongs to

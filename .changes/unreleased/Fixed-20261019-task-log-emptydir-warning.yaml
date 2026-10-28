@@ -1,9 +1,0 @@
-kind: Fixed
-body: |-
-  **An empty log view now says when task logs were on ephemeral storage.** With
-  `logs.persistence.enabled=false` and `logs.sink.provider=disk`, task logs live in
-  the control-plane pod's emptyDir, so a pod restart drops them. For an attempt that
-  ran and has no stored log, the log view now adds a warning saying so, instead of
-  only "No logs available for this attempt". The chart NOTES warn about this setup
-  on a single replica too, and the server logs a startup warning. (#1024)
-time: 2026-10-19T00:00:00.000000000+00:00
