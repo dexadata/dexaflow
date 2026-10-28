@@ -1749,3 +1749,17 @@ func TestFilteredListQueriesIntegration(t *testing.T) {
 		t.Errorf("list tis pool: got %d (len %d), want 1 (transform)", total, len(tis))
 	}
 }
+
+// An unknown last_dag_run_state is the client's mistake: it must come back as
+// a validation error (400), not reach Postgres and fail the enum cast (500,
+// #2202). A known state still filters.
+func TestListDagsWithFilterRefusesAnUnknownRunState(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	_, _, err := repo.ListDagsWithFilter(ctx, "default", domain.DagFilter{LastDagRunState: "bogus", Limit: 10})
+	if !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("unknown state: err = %v, want ErrValidation", err)
+	}
+	if _, _, err := repo.ListDagsWithFilter(ctx, "default", domain.DagFilter{LastDagRunState: "success", Limit: 10}); err != nil {
+		t.Fatalf("known state: %v", err)
+	}
+}

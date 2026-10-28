@@ -63,6 +63,18 @@ const (
 	DagRunStateFailed DagRunState = "failed"
 )
 
+// Valid reports whether s is one of the dag_run_state values. A raw value the
+// database cannot cast must be refused before the query, as the client's
+// mistake, not a server fault (#2202).
+func (s DagRunState) Valid() bool {
+	switch s {
+	case DagRunStateQueued, DagRunStateRunning, DagRunStateSuccess, DagRunStateFailed:
+		return true
+	default:
+		return false
+	}
+}
+
 // IsTerminal reports whether the dag run state is final.
 func (s DagRunState) IsTerminal() bool {
 	return s == DagRunStateSuccess || s == DagRunStateFailed
