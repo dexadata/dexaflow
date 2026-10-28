@@ -6,6 +6,194 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-10-27
+
+### Added
+
+- **Structured task placement fields are now validated at DAG registration.**
+  Task placement fields (`execution.tolerations`, `execution.affinity`,
+  `execution.topology_spread_constraints`, `execution.resource_claims`, and
+  `resources.claims`) are now strictly validated when a DAG is registered.
+  Malformed keys or invalid types now fail loudly at registration time rather
+  than being silently dropped at pod build. (#628)
+- **The Helm chart can show a maintenance page while no server pod is ready.**
+  Set `ingress.maintenancePage.enabled: true` to deploy a small unprivileged
+  nginx (`<release>-maintenance`) that answers with `503`, `Retry-After` and a
+  page that reloads by itself, and to point ingress-nginx's `default-backend`
+  at it, with `custom-http-errors: "502,504"`. The server's own 503 responses
+  still reach clients. The message, an operator note and a status link are
+  configurable and rendered escaped. (#1998)
+- **A data variant of the task runtime image.** Each release also publishes
+  `dexaflow-runtime:py3.11-data-<tag>`, signed and scanned like the base. It is
+  the base plus the Airflow providers for Postgres, MySQL, Amazon, Google,
+  Databricks, Snowflake, HTTP and common SQL, and dbt with its Postgres,
+  Snowflake, BigQuery and Databricks adapters, all pinned with hashes in
+  `runtime/data/requirements.txt`. It gives source mode, where a DAG runs on
+  the runtime image with no build, a runtime that can reach databases and
+  warehouses.
+- **Source-mode versions can run on warm workers.** With the new
+  `execution.source_mode.warm_pools` (Helm: `execution.sourceMode.warmPools`,
+  default `false`) and warm pools on, a source-mode version gets a warm pool:
+  the control plane sends its `dag.py` and SHA-256 with each warm assignment,
+  and the worker checks it, runs the attempt from it and removes it afterwards.
+  The runtime image needs an agent from 0.5.7 or later; a warm worker on an
+  older agent is never given a source-mode attempt, which then takes a
+  dedicated pod, and is counted in
+  `dexaflow_scheduler_decisions_total{decision_type="warm_worker_no_source_delivery"}`
+  (ADR 0095). (#2159)
+
+### Changed
+
+- **Expand/contract migration discipline documented and verified in CI.** Schema
+  migrations follow an expand/contract sequence per ADR 0090: a release only adds
+  nullable or defaulted columns, new tables, or new indexes. Removals, renames,
+  and NOT NULL constraints without defaults happen in a contract phase at least
+  one minor release later. Helm CI now verifies rollback to the previous release
+  against the newer schema to ensure compatibility. (#1994)
+- **`helm install` and `helm upgrade` warn when `database.url` points at an
+  in-cluster Postgres Service.** The release notes say that a Postgres on
+  emptyDir loses every DAG version, run, secret and user when its pod moves,
+  and point at the upgrade guide. The backup guide now describes a regular
+  restore drill for Lite and for Helm, which the repository also runs every
+  week and on each release candidate. (#1995)
+
+### Removed
+
+- **The unused 4.1 MB legacy logo.png and scripts/gen_assets.py were removed from the repository root.**
+  Brand logos and icons are now exclusively located under `website/static/assets/`, reducing
+  initial checkout size for contributors and CI pipelines. (#1939)
+
+### Fixed
+
+- **Saving a variable, connection or pool no longer fails after its tenant was
+  recreated or the database restored under a running server.** The server
+  caches each tenant's id; such a write failed with a foreign-key violation
+  against `tenants` (SQLSTATE 23503) until a restart. It now drops the stale
+  id and retries once. Other queries still need the restart the backup guide
+  describes. (#1614)
+- **Resource unit calculations now prevent int64 integer overflow on astronomical quantities.**
+  When calculating units for quantities near MaxInt64 (such as memory requests in Exabytes
+  or large CPU values), the previous division algorithm overflowed into negative values,
+  passing the refuse check and erroneously admitting oversized tasks into pool slots. The
+  calculation now computes ceilings without intermediate sum overflow and returns math.MaxInt
+  when value boundaries are reached. (#1608)
+- **Secret scoping in permissive and observe mode now warns when a task declares no secrets.**
+  Previously, scope gap detection only flagged strict non-empty subsets, remaining silent
+  when a task declared zero secrets. Under `secret_scoping: enforce`, undeclared tasks receive
+  zero secrets; the observation phase now emits a warning and audit record with `declared=0`
+  so operators can measure their migration backlog before turning on enforcement. That
+  warning is recorded once per DAG version and kind on each control plane replica, not on
+  every attempt. (#800)
+- **DAG list search, sort, tags, and favorites filters are now forwarded and
+  evaluated by the server, and `/api/v2/dagTags` serves distinct registered tags.**
+  Previously, `/ui/dags` only respected `paused` and `last_dag_run_state`,
+  ignoring search substrings, prefixes, order by, tags, and favorites filters,
+  and `/api/v2/dagTags` was a static empty stub leaving UI tag filters empty.
+  The server now evaluates all DAG filter parameters in database queries,
+  sorts by latest run state and start date (DAGs with no run last), and serves
+  distinct tenant DAG tags as plain strings, narrowed by `tag_name_pattern` or
+  `tag_name_prefix_pattern`. (#1927)
+- **The search boxes and filters of the Airflow 3.3 UI now filter the list
+  endpoints.** `/api/v2/connections`, `/api/v2/variables`, a DAG's
+  `dagRuns`, a run's `taskInstances` and `/api/v2/importErrors` read only
+  their paging parameters before, so a search returned the unfiltered page.
+  They now apply the `*_pattern` and `*_prefix_pattern` searches (SQL `LIKE`,
+  case-insensitive), the run state, type and date bounds, the task instance
+  state and pool, and `filename` and `bundle_name` for import errors, in SQL,
+  with `total_entries` counting the filtered set. A date bound that is not
+  RFC 3339 answers `400`. A run's task instances are now paged by
+  `limit`/`offset` (default 100) like every other list, instead of always
+  returning the whole run. The "DAG deactivated" banner no longer shows the
+  import error of another file. (#1928)
+- **Staging GC now sweeps unrecorded orphan PVCs by label and continues on delete errors.**
+  When a persistent volume claim was created in Kubernetes but failed to record in the
+  metadatabase, the volume was never reclaimed because the collector only read tracked
+  runs. The garbage collector now sweeps PVCs carrying the `leoflow.io/staging` label
+  whose age exceeds the TTL. In addition, when deleting a PVC fails, the collector logs
+  the error, increments the `staging_pvc_delete_error` decision metric, and continues
+  reclaiming subsequent volumes instead of halting the entire cycle. The chart's executor
+  Role now also grants `list` on `persistentvolumeclaims`; an install that manages its own
+  Role must add it, or the sweep of unrecorded claims logs a 403 every cycle. (#1615)
+- **A dbt run summary line printed to stderr is no longer mislabeled as ERROR when there are no errors.**
+  dbt prints its end-of-run summary (e.g. `Done. PASS=24 WARN=0 ERROR=0 SKIP=0`) to stderr
+  in some environments, which caused the log level refiner to label successful tasks as ERROR
+  due to the presence of the `ERROR=0` substring. The refiner now recognizes dbt summary patterns,
+  coloring runs with `ERROR=0` as info (or warning when warnings are present) instead of forcing
+  them to error. (#870)
+- **Airflow 3.3 UI actions degrade to 501 or empty collections instead of 404.**
+  Actions on the embedded UI screens answered 404 "API route not found" when
+  Dexaflow does not serve the underlying feature. Under ADR 0018, unserved writes
+  (bulk task instances, delete task instance, bulk variables and connections,
+  XCom mutations, and file reparsing) now answer 501 with a descriptive toast
+  message, while unserved list reads (upstream asset events and queued asset
+  events) answer empty collections (#1926).
+- **`dbt parse` now writes into an ephemeral scratch directory instead of polluting the working tree.**
+  Compiling a dbt project previously ran `dbt parse` directly in the project directory without
+  redirecting outputs, writing `target/` and `logs/` into the user's working tree. The compiler now
+  sets `DBT_TARGET_PATH` and `DBT_LOG_PATH` to a temporary directory that is wiped after the manifest
+  is read, keeping the author's project tree untouched. (#1060)
+- **An empty log view now says when task logs were on ephemeral storage.** With
+  `logs.persistence.enabled=false` and `logs.sink.provider=disk`, task logs live in
+  the control-plane pod's emptyDir, so a pod restart drops them. For an attempt that
+  ran and has no stored log, the log view now adds a warning saying so, instead of
+  only "No logs available for this attempt". The chart NOTES warn about this setup
+  on a single replica too, and the server logs a startup warning. (#1024)
+- **The web UI keeps its session renewed while it is open.** The session expired
+  after `auth.jwt.token_ttl_seconds` (one hour by default) with no renewal. The UI
+  now renews it every 15 minutes and when its tab is shown again, up to
+  `auth.jwt.max_lifetime_seconds`. `POST /api/v2/auth/token/renew` accepts the
+  session cookie on same-origin requests and rewrites it. "Generate token" in
+  the user menu reports the time the token really has left, the login page says
+  when authentication is unavailable instead of "Invalid credentials", the web
+  editor sends an expired session to the login page instead of showing an empty
+  workspace, and logging in again returns to the page you were on. (#1127)
+- An `on_failure_callback` on a provider operator now runs on the final failed attempt; it compiled but never fired (#484). The runtime reads it from the task in `dag.py`, so DAGs compiled by an older CLI need a new compile and deploy.
+- **The platform resource defaults now fill each dimension a task leaves
+  empty.** `executor.defaults.resources.cpu` and `.memory` used to apply only
+  to a task that declared no `resources` at all, so a task that set only an
+  `ephemeral_storage` limit, or only cpu, ran with no request or limit on the
+  rest and could land in BestEffort. The dispatcher now fills each of cpu,
+  memory and ephemeral storage that a task sets neither a request nor a limit
+  for, and leaves a dimension the task sets at all to the task. Tasks that
+  declare part of their resources on a cluster with these defaults request
+  more after the upgrade: see the 0.5.7 upgrade note. (#802)
+- **The CLI says when the saved session expired.** A command whose saved
+  token had already expired, unused past its lifetime or renewed up to the
+  session's max lifetime, failed with a bare `server returned 401`, though the
+  CLI holds the token's expiry. It now adds `hint: the saved session expired at
+  <time>` with the `dexaflow auth login --server <server>` line to run. The
+  chart's `auth.tokenTtlSeconds` comment no longer says it sets the agent token
+  lifetime: task agents use their own per-attempt lifetime. (#1127)
+- **`dexaflow compile` parses `dag.py` on the declared `python_version`.** The
+  parser executes `dag.py`, and it ran on whatever interpreter `dexaflow setup`
+  found, so a project declaring `python_version: "3.13"` on a host whose setup
+  picked 3.11 got a `SyntaxError` for 3.12+ syntax (`type X[T] = ...`) that the
+  cluster runs fine. When the setup parser is older than the declared minor and
+  that minor is installed, `compile` and `validate --parse` now parse on it. If
+  `dag.py` imports a module installed only for the setup interpreter, the parse
+  runs once more there and keeps that result, with a warning naming the module
+  and both interpreters. A custom `parser_cmd` of any other shape runs as
+  configured. (#1095)
+- **A plain `dexaflow lite` after `dexaflow lite restore` starts the restored
+  data on a host with Docker.** The restore pins the install to the managed
+  Postgres it replayed into, and `--postgres auto` follows that pin instead of
+  starting an empty Docker Postgres. An explicit `--postgres docker` or
+  `--postgres managed` pins the install the same way; installs without a pin
+  keep the old auto rule (ADR 0094). (#1997)
+- **A cleared and re-run run keeps its staging volume.** When a run succeeded, GC
+  freed its staging PVC and marked the volume deleted. Clearing and re-running the
+  run recreated the same PVC, but the volume stayed marked deleted, so the
+  unrecorded staging sweep added in this release (#1615) took the live claim for an
+  orphan and deleted it 24 hours after it was created, while the run could still be
+  using it. Recording the volume again now marks it active with a fresh creation
+  time. (#1615)
+- **An `@every` schedule with `catchup: false` runs once per interval again.**
+  Since 0.5.5 a DAG on `@every 1h` with catchup off, the default, got a new run
+  on every scheduler tick, held back only by `max_active_runs`. Its slots are
+  now the steps of the interval after the last run (or the start_date), and the
+  scheduler creates the latest one that is due, as it does for a cron
+  expression. (#2187)
+
 ## [0.5.6] - 2026-10-23
 
 ### Added
