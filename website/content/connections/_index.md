@@ -297,7 +297,7 @@ dedicated cookbook recipe yet. Any other Airflow provider works via
 
 Every entry in this cookbook ships with all three of:
 
-1. **A doc page** (this dir) covering: URI shape, default port, Lite-vs-Pro
+1. **A doc page** (this dir) covering: URI shape, default port, Lite-vs-Cluster
    caveats, security notes (TLS, auth modes).
 2. **An example DAG** under `examples/<type>_*/` with its own
    `README.md` showing how to spin up the dependency (Docker / Lima), how

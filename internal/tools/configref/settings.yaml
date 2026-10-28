@@ -7,14 +7,14 @@
 
 settings:
   server.role:
-    edition: Pro
+    edition: Cluster
     default_note: means `all`
     description: >-
       Which components this process runs ([ADR 0049](/project/adrs/0049-split-api-and-scheduler-roles/)):
       `all` (default: the Lite monolith; every component in one process), `api`
       (HTTP + UI only, restricted identity), or `scheduler` (reconciler + dispatch
       + agent gRPC, privileged). Empty defaults to `all`, which is behavior-identical
-      to the pre-split monolith; splitting is a Pro-only topology.
+      to the pre-split monolith; splitting is a Cluster-only topology.
   server.http_addr:
     edition: both
     description: >-
@@ -28,12 +28,12 @@ settings:
     description: >-
       Prometheus metrics.
   server.grpc_tls_cert:
-    edition: Pro
+    edition: Cluster
     description: >-
       PEM cert enabling TLS on the agent gRPC listener (#58). Set with `_KEY`; empty
-      means plaintext (dev). The Pro Helm chart requires both (see [Pro TLS](/operate/pro-tls/)).
+      means plaintext (dev). The Helm chart requires both (see [Cluster TLS](/operate/cluster-tls/)).
   server.grpc_tls_key:
-    edition: Pro
+    edition: Cluster
     description: >-
       PEM private key paired with `DEXAFLOW_SERVER_GRPC_TLS_CERT`. Both must be
       set together to encrypt the agent channel.
@@ -134,7 +134,7 @@ settings:
       is set (the read timeout is never used as an idle timeout). Helm: set it through
       `extraEnv`.
   server.pools_read_only:
-    edition: Pro
+    edition: Cluster
     description: >-
       Makes the tenant-facing pool API (`/api/v2/pools`) read-only (`server.pools_read_only`).
       Create, resize and delete answer `403` with the detail `pools are read-only
@@ -201,7 +201,7 @@ settings:
       to the main, scheduler and health pools, never to the leader election connection.
       `0` adds none.
   database.installation_id:
-    edition: '**Pro only**'
+    edition: '**Cluster only**'
     description: >-
       The installation id of the database this release was installed on ([ADR
       0090](/project/adrs/0090-database-replaced-under-a-running-release/), decision 3).
@@ -212,7 +212,7 @@ settings:
       it, and a running server exits with code 3 when its database changes
       under it. Empty checks nothing.
   database.migrate_on_boot:
-    edition: '**Pro only**'
+    edition: '**Cluster only**'
     description: >-
       Apply the embedded migrations at boot when the schema is absent or behind
       (Helm `migrations.onBoot`, [ADR
@@ -224,7 +224,7 @@ settings:
       `api` role, which never migrates. `false` leaves migrations to the chart's
       Job.
   helm.release:
-    edition: '**Pro only**'
+    edition: '**Cluster only**'
     description: >-
       The Helm release name. The chart sets it, with the four settings below,
       so that a control plane waiting for its schema names the exact command
@@ -234,34 +234,34 @@ settings:
       the hint with `<release>`, `<namespace>` and `<chart version>`
       placeholders.
   helm.namespace:
-    edition: '**Pro only**'
+    edition: '**Cluster only**'
     description: >-
       The release namespace, set by the chart for the recovery hint.
   helm.chart_version:
-    edition: '**Pro only**'
+    edition: '**Cluster only**'
     description: >-
       The version of the chart that rendered the pod, set by the chart, so the
       hint's `helm upgrade --version` reruns the same chart.
   helm.migrations_enabled:
-    edition: '**Pro only**'
+    edition: '**Cluster only**'
     description: >-
       The chart's `migrations.enabled`, set by the chart. When `false` there
       is no migration Job to run again, and the hint names your own migration
       step and the migrate image instead of `helm upgrade`.
   helm.migrate_image:
-    edition: '**Pro only**'
+    edition: '**Cluster only**'
     description: >-
       The `dexaflow-migrate` image and tag of this release
       (`migrations.image`), set by the chart and named by the hint when
       `migrations.enabled` is false.
   redis.url:
-    edition: '**Pro only**'
+    edition: '**Cluster only**'
     description: >-
       Redis URL (XCom + locks). Empty selects the embedded Lite edition: XCom on
       Postgres, in-process log tailer ([ADR 0026](/project/adrs/0026-lite-datastore-no-redis/)).
-      Pro sets it via the Helm chart.
+      Cluster sets it via the Helm chart.
   redis.ca_file:
-    edition: Pro
+    edition: Cluster
     description: >-
       Absolute path to a PEM CA bundle trusted when negotiating TLS to a `rediss://`
       URL (#312). Needed for managed Redis (Memorystore, ElastiCache in-transit
@@ -273,7 +273,7 @@ settings:
     description: >-
       Credential authenticator: `jwt` (default: username/password issues an HS256
       token) or `oidc` (adds the OIDC/SSO login flow on top; the JWT authenticator
-      stays the request-path verifier in both modes). `oidc` is Pro-gated and fails
+      stays the request-path verifier in both modes). `oidc` is Cluster-gated and fails
       boot closed unless its prerequisites are met (see [OIDC / SSO](#oidc--sso-authoidc)).
   auth.jwt.secret:
     edition: both
@@ -380,7 +380,7 @@ settings:
     description: >-
       `true` lets the server deliver secrets to agents over a plaintext gRPC
       channel. Dev only: `dexaflow lite` sets it for its loopback agents, and
-      the Pro edition refuses to boot with it. As in earlier releases, only the
+      the cluster edition refuses to boot with it. As in earlier releases, only the
       exact value `true` turns it on: any other value from the environment
       (`1`, `TRUE`, `yes`) reads as `false`, with a warning at boot. No Helm
       value on purpose.
@@ -401,7 +401,7 @@ settings:
       always on regardless of mode; this only chooses whether a not-live token is
       refused. Required to be `enforce` when warm pools are on. Helm: `auth.secretLivenessMode`.
   auth.agent_token_transport:
-    edition: Pro (K8s)
+    edition: Cluster (K8s)
     description: >-
       How the in-pod agent obtains its control-plane bearer credential ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)):
       `envvar` (plaintext `DEXAFLOW_AGENT_TOKEN` on the pod spec: today's behavior,
@@ -602,35 +602,35 @@ settings:
       uses a real admin login generated by `dexaflow setup`; set this only for ephemeral
       test scaffolds.
   auth.oidc.issuer:
-    edition: Pro
+    edition: Cluster
     description: >-
       The org's single-tenant issuer URL (must be `https://`). Pinned: any ID token
       whose `iss` differs is rejected.
   auth.oidc.client_id:
-    edition: Pro
+    edition: Cluster
     description: >-
       Registered application (client) id; the expected audience of every ID token.
   auth.oidc.client_secret:
-    edition: Pro
+    edition: Cluster
     description: >-
       Used only for the authorization-code exchange. Inject via env; never persist
       it in a config file, never logged.
   auth.oidc.redirect_url:
-    edition: Pro
+    edition: Cluster
     description: >-
       This server's callback URL registered with the IdP (`…/api/v2/auth/oidc/callback`).
       Must be `https://` (http allowed only for loopback hosts).
   auth.oidc.scopes:
-    edition: Pro
+    edition: Cluster
     description: >-
       OAuth scopes requested. A list, set as a comma-separated env var. Add the
       IdP's groups scope when group→role mapping is used.
   auth.oidc.groups_claim:
-    edition: Pro
+    edition: Cluster
     description: >-
       The ID-token claim carrying the user's IdP groups; its values drive `role_mappings`.
   auth.oidc.role_mappings:
-    edition: Pro
+    edition: Cluster
     description: >-
       Maps an IdP group value → an existing Dexaflow role name. **Default-DENY**:
       an unmapped group grants no role. YAML config file only (a map does not bind
@@ -638,14 +638,14 @@ settings:
       config file. Reconciliation is IdP-authoritative, so an EMPTY resolved set
       CLEARS the user's existing grants on every login: configure this or `default_role`.
   auth.oidc.default_role:
-    edition: Pro
+    edition: Cluster
     description: >-
       When an authenticated user resolves to zero mapped roles and this is set,
       grants this single role (advised: a read-only role such as `viewer`). Empty
       keeps strict default-deny. Must name an existing DB role for the resolved
       tenant.
   auth.oidc.tenant_claim:
-    edition: Pro
+    edition: Cluster
     description: >-
       **Required with `provider: oidc`** (boot fails otherwise). Which IdP claim
       identifies the tenant: `tid` (Entra) or `hd` (Google Workspace). Set it to
@@ -654,7 +654,7 @@ settings:
       in that domain. That is a convenience: the pin is still the verified claim
       on the returned token.
   auth.oidc.tenant_claims:
-    edition: Pro
+    edition: Cluster
     description: >-
       **Required with `provider: oidc`, with at least one entry** (boot fails otherwise).
       Maps a `tenant_claim` value → a Dexaflow tenant name. A value not present
@@ -669,14 +669,14 @@ settings:
       Dexaflow creates is `default`, from the first migration, so map to `default`
       unless you created one yourself. The server checks this at boot and warns.
   auth.oidc.allowed_email_domains:
-    edition: Pro
+    edition: Cluster
     description: >-
       Login-level allowlist layered on TOP of the `tid`/`hd` tenant pin (not the
       pin itself). Empty imposes no domain restriction. Non-empty admits a login
       only when the verified email's domain is in the list. A list, set as a comma-separated
       env var.
   auth.oidc.break_glass_emails:
-    edition: Pro
+    edition: Cluster
     description: >-
       Allowlist of local password logins permitted while provider is `oidc`; every
       other password login is rejected (SSO-only). A list, set as a comma-separated
@@ -689,7 +689,7 @@ settings:
       it has no password. Create the local account before you need it, while an
       admin session still exists.
   auth.oidc.jit_provisioning:
-    edition: Pro
+    edition: Cluster
     description: >-
       Create a user row on first OIDC login when none matches; the new row is granted
       the roles from `role_mappings` (or `default_role`). **Off means no SSO login
@@ -702,7 +702,7 @@ settings:
       `jit_failed`). The server logs a WARN at boot when it is off, so the cause
       is visible before the first login is attempted.
   auth.oidc.auto_redirect:
-    edition: Pro
+    edition: Cluster
     description: >-
       Start the login flow on the sign-in page instead of rendering it, for a deployment
       where that page is a screen to acknowledge for nothing (an edge proxy already
@@ -711,7 +711,7 @@ settings:
       back to the IdP forever, and suppressed by `?local=1`, so a break-glass account
       can always reach the password form without a values edit. Helm: `auth.oidc.autoRedirect`.
   auth.oidc.clock_skew_seconds:
-    edition: Pro
+    edition: Cluster
     description: >-
       Tolerance (seconds) on the ID token's `exp`/`iat`/`nbf` checks to absorb clock
       differences between the IdP and this server.
@@ -736,7 +736,7 @@ settings:
     description: >-
       Scheduler tick interval, in milliseconds.
   scheduler.pool_starvation_threshold:
-    edition: Pro
+    edition: Cluster
     description: >-
       How long a scheduled task of more than one slot that does not fit its pool
       (its dispatch backoff elapsed, its DAG under `max_active_tasks`) waits before
@@ -754,7 +754,7 @@ settings:
       Depth of the queued-dispatches channel ([ADR
       0031](/project/adrs/0031-scheduler-architecture/), #127). `0` keeps dispatch
       synchronous with the tick (right for Lite); `>0` enables the worker pool (right
-      for Pro, where K8s API calls add latency): the tick only enqueues, and a full
+      for Cluster, where K8s API calls add latency): the tick only enqueues, and a full
       buffer leaves the task scheduled for the next tick. The task is recorded
       `queued` when the buffer accepts it, so time in the buffer counts toward the 3
       minute dispatch-lost threshold: a request that waited more than half of it (90
@@ -807,7 +807,7 @@ settings:
       With `kubernetes`, a scheduler that finds no in-cluster config or kubeconfig
       refuses to start.
   executor.task_namespace:
-    edition: Pro
+    edition: Cluster
     description: >-
       Kubernetes namespace the server creates task pods and per-run staging PVCs in.
       MUST match the namespace the Helm chart grants the executor Role in (chart
@@ -821,24 +821,24 @@ settings:
       gRPC address task pods dial back to. In a local k3d/kind cluster set it to
       a host-reachable address such as `host.k3d.internal:9091`.
   executor.agent_tls_ca_configmap:
-    edition: Pro
+    edition: Cluster
     description: >-
       Names a ConfigMap (key `ca.crt`) mounted into task pods so the agent verifies
       the control plane's gRPC TLS cert (#58). Empty = agents use the insecure channel
       (dev).
   executor.task_secret_name:
-    edition: Pro
+    edition: Cluster
     description: >-
       Names a Kubernetes Secret mounted read-only into every task pod, so a task
       can read a cluster-stored credential (e.g. a GCP SA key) referenced by a connection's
       `key_path` ([ADR 0035](/project/adrs/0035-cloud-connector-auth-keyless-first/)).
       Empty = no secret mounted.
   executor.task_secret_mount_path:
-    edition: Pro
+    edition: Cluster
     description: >-
       Where `DEXAFLOW_EXECUTOR_TASK_SECRET_NAME` is mounted in the task pod.
   executor.task_service_account:
-    edition: Pro
+    edition: Cluster
     description: >-
       ServiceAccount task pods run as when a DAG does not set `execution.service_account`.
       The Helm chart wires this from `taskServiceAccount.name` when `taskServiceAccount.create:
@@ -846,7 +846,7 @@ settings:
       opt-in. An explicit per-task `execution.service_account` still wins; empty
       leaves pods on the namespace default SA.
   executor.collect_settled_run_pods:
-    edition: Pro
+    edition: Cluster
     description: >-
       Collect a settled run's finished task pods as soon as the reconciler has recorded
       every outcome, in one `DeleteCollection` by the run's and tenant's labels
@@ -874,7 +874,7 @@ settings:
       Default `User-Agent` header for HTTP requests a task image may make on the
       platform's behalf.
   executor.kube_client.qps:
-    edition: Pro
+    edition: Cluster
     description: >-
       Client-side request rate (queries per second) of the Kubernetes client that
       creates task pods. The agent token exchange builds its own client with the
@@ -882,12 +882,12 @@ settings:
       over three minutes just to create pods, so a large deployment raises it (for
       example `50`). Non-positive falls back to `5`. Helm: `executor.kubeClient.qps`.
   executor.kube_client.burst:
-    edition: Pro
+    edition: Cluster
     description: >-
       Burst of the same client's token bucket. Non-positive falls back to `10`.
       Helm: `executor.kubeClient.burst`.
   executor.kube_client.maintenance_qps:
-    edition: Pro
+    edition: Cluster
     description: >-
       When above `0`, maintenance work (pod informer, reconciler, reapers, staging
       GC, warm pool reconciler) gets its own Kubernetes client and rate limiter
@@ -895,12 +895,12 @@ settings:
       maintenance on the dispatch client, one shared budget. Set it whenever you
       raise `KUBE_CLIENT_QPS`. Helm: `executor.kubeClient.maintenanceQps`.
   executor.kube_client.maintenance_burst:
-    edition: Pro
+    edition: Cluster
     description: >-
       Burst of the separate maintenance client. Ignored while `KUBE_CLIENT_MAINTENANCE_QPS`
       is `0`; non-positive falls back to `10`. Helm: `executor.kubeClient.maintenanceBurst`.
   executor.unit.cpu:
-    edition: Pro
+    edition: Cluster
     description: >-
       CPU of one pool slot, the resource unit ([ADR 0066](/project/adrs/0066-weighted-pool-slots-and-resource-unit/)),
       as a Kubernetes quantity (e.g. `250m`). Set together with `DEXAFLOW_EXECUTOR_UNIT_MEMORY`;
@@ -915,12 +915,12 @@ settings:
       one unit and only takes tasks of size 1 that declare no resources; the rest
       get a dedicated pod. Empty (default) changes nothing. Helm: `executor.unit.cpu`.
   executor.unit.memory:
-    edition: Pro
+    edition: Cluster
     description: >-
       Memory of one pool slot (e.g. `512Mi`). See `DEXAFLOW_EXECUTOR_UNIT_CPU`.
       Helm: `executor.unit.memory`.
   executor.unit.enforce:
-    edition: Pro
+    edition: Cluster
     description: >-
       What happens to a task larger than its size while a unit is set. `refuse`
       fails it at registration and at dispatch; `warn` accepts it, runs it with
@@ -928,14 +928,14 @@ settings:
       Turn a unit on with `warn`, fix the DAGs the log names, then switch to `refuse`.
       Any other value fails boot. Helm: `executor.unit.enforce`.
   executor.unit.max_size:
-    edition: Pro
+    edition: Cluster
     description: >-
       Largest `pool_slots` a task may have while a unit is set, whatever its pool:
       a larger task is refused at registration and at dispatch, under `warn` too,
       since a pool without a budget would otherwise let one task ask for any multiple
       of the unit. Must be positive. Helm: `executor.unit.maxSize`.
   executor.defaults.run_tasks_as_non_root:
-    edition: Pro
+    edition: Cluster
     description: >-
       **Refuses to start a task container whose image resolves to UID 0**, completing
       Pod Security Admission's `restricted` set. On by default: the images this
@@ -944,14 +944,14 @@ settings:
       it off only for a cluster whose task images legitimately run as root. Operator-scoped
       (never a DAG field).
   executor.defaults.read_only_task_root_filesystem:
-    edition: Pro
+    edition: Cluster
     description: >-
       Mounts every task container's root filesystem read-only. Off by default (`restricted`
       does not require it and it breaks ordinary Python tasks: pip cache, `/tmp`,
       matplotlib config). Turn on for a fleet of tasks known not to write outside
       their volumes.
   executor.defaults.execution_allowlist.fields:
-    edition: Pro
+    edition: Cluster
     description: >-
       **Which task `execution` fields a DAG may set** (comma-separated `dag.json`
       names): `node_selector`, `tolerations`, `affinity`, `topology_spread_constraints`,
@@ -965,13 +965,13 @@ settings:
       not governed. An unknown name fails boot. Operator-scoped (never a DAG field).
       See [Placement allowlist](/operate/placement-allowlist/). Helm: `executor.defaults.executionAllowlist.fields`.
   executor.defaults.execution_allowlist.priority_classes:
-    edition: Pro
+    edition: Cluster
     description: >-
       When set (comma-separated), the only `execution.priority_class_name` values
       a DAG may use; refused like a disallowed field. Empty (default) allows any
       priority class. Helm: `executor.defaults.executionAllowlist.priorityClasses`.
   executor.defaults.execution_allowlist.service_accounts:
-    edition: Pro
+    edition: Cluster
     description: >-
       When set (comma-separated), the only `execution.service_account` values a DAG
       may name. A task that names none runs as
@@ -979,7 +979,7 @@ settings:
       registration and at dispatch like a disallowed field. Empty (default) allows
       any. Helm: `executor.defaults.executionAllowlist.serviceAccounts`.
   executor.defaults.execution_allowlist.images:
-    edition: Pro
+    edition: Cluster
     description: >-
       When set (comma-separated), the only DAG images that may run: an exact reference
       (`busybox:1.36`) or a prefix ending in `*` (`registry.example.com/team-a/*`);
@@ -987,23 +987,23 @@ settings:
       registration (400 naming the image) and at dispatch, and gets no warm workers.
       Empty (default) allows any. Helm: `executor.defaults.executionAllowlist.images`.
   executor.defaults.staging_access_mode:
-    edition: Pro
+    edition: Cluster
     description: >-
       PVC access mode for the per-run staging volume. Default `ReadWriteMany` (multi-node
       prod); single-node dev (k3d local-path, no RWX) sets `ReadWriteOnce`.
   executor.defaults.staging_size:
-    edition: Pro
+    edition: Cluster
     description: >-
       Default size of the per-run staging volume when the DAG enabled staging without
       pinning it (a Kubernetes quantity, e.g. `10Gi`). Empty leaves the size unset.
       Helm: `executor.defaults.staging.size`.
   executor.defaults.staging_storage_class:
-    edition: Pro
+    edition: Cluster
     description: >-
       Default StorageClass for the staging volume (e.g. the cluster's RWX class).
       Empty falls back to the cluster's default StorageClass. Helm: `executor.defaults.staging.storageClass`.
   executor.defaults.resources_cpu:
-    edition: Pro
+    edition: Cluster
     description: >-
       Default CPU for a task that sets no CPU request or limit of its own (a Kubernetes
       quantity, e.g. `250m`). Applied as **both request and limit**. Guaranteed QoS needs
@@ -1011,13 +1011,13 @@ settings:
       no memory bound at all, and the control plane WARNs at boot naming the missing
       key; empty leaves it BestEffort unless the DAG sets its own. Helm: `executor.defaults.resources.cpu`.
   executor.defaults.resources_memory:
-    edition: Pro
+    edition: Cluster
     description: >-
       Default memory for a task that sets no memory request or limit of its own (e.g. `256Mi`). Applied
       as **both request and limit**. Set it together with the CPU default: either
       one alone is Burstable, not Guaranteed. Helm: `executor.defaults.resources.memory`.
   executor.defaults.limits_cpu:
-    edition: Pro
+    edition: Cluster
     description: >-
       Default CPU **limit** for every task pod whose resources leave the CPU limit
       empty, including a task that declares requests only (a Kubernetes quantity, e.g.
@@ -1030,7 +1030,7 @@ settings:
       default) sets no limit. Not applied with `executor.unit`, which always sets both
       limits. Helm: `executor.defaults.limits.cpu`.
   executor.defaults.limits_memory:
-    edition: Pro
+    edition: Cluster
     description: >-
       Default memory **limit** for every task pod whose resources leave the memory
       limit empty (e.g. `4Gi`). Same rules as the CPU limit above (a task declaring
@@ -1038,42 +1038,42 @@ settings:
       too); either may be set alone. Empty (the default) sets no limit. Helm:
       `executor.defaults.limits.memory`.
   execution.warm_pools_enabled:
-    edition: Pro
+    edition: Cluster
     description: >-
       Reuse one task pod across many attempts of the same DAG version. Off = dedicated
       pod-per-task. Validated fail-closed at boot: requires `agent_token_transport=exchange`
       **and** `secret_liveness_mode=enforce`. Helm: `execution.warmPoolsEnabled`.
   execution.min_idle_workers:
-    edition: Pro
+    edition: Cluster
     description: >-
       Warm workers kept ready per DAG version when the DAG declares no warmth of
       its own (D6). `0` is scale-to-zero. Read only while warm pools are on.
   execution.max_pool_size:
-    edition: Pro
+    edition: Cluster
     description: >-
       Cap on the warm workers one DAG version may hold, and the ceiling a DAG author's
       warmth request is clamped to (D6).
   execution.max_attempts_per_worker:
-    edition: Pro
+    edition: Cluster
     description: >-
       Attempts a warm worker serves before it drains and recycles (D9).
   execution.max_worker_lifetime:
-    edition: Pro
+    edition: Cluster
     description: >-
       Wall-clock lifetime of a warm worker before it drains and recycles, independent
       of the attempt count (D9). A duration string.
   execution.worker_idle_ttl:
-    edition: Pro
+    edition: Cluster
     description: >-
       How long an idle warm worker is kept before it is recycled (D6). A duration
       string.
   execution.max_warm_pods_per_tenant:
-    edition: Pro
+    edition: Cluster
     description: >-
       Cap on the total warm pods one tenant may hold across all its DAG versions
       (M4), so one team cannot pin idle pods and starve neighbours on a shared cluster.
   execution.warm_read_only_root_filesystem:
-    edition: Pro
+    edition: Cluster
     description: >-
       Mount every warm worker's root filesystem read only, give each attempt its
       own `HOME` and XDG dirs inside the scratch the worker wipes between attempts,
@@ -1084,7 +1084,7 @@ settings:
       turned on; running warm pods keep their spec until they recycle. Dedicated
       task pods are not affected. Helm: `execution.warmReadOnlyRootFilesystem`.
   execution.warm_pool_event_refill:
-    edition: Pro
+    edition: Cluster
     description: >-
       Refill warm pools on events instead of every 30s: the reconciler reads the
       warm fleet from a dedicated pod informer instead of a LIST per tick, reacts
@@ -1092,7 +1092,7 @@ settings:
       and creates replacements concurrently (up to 4 at a time). The periodic tick
       stays as a backstop. Helm: `execution.warmPoolEventRefill`.
   execution.warm_require_attempt_home_sweep:
-    edition: Pro
+    edition: Cluster
     description: >-
       With `DEXAFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM` on, refuse a
       warm worker whose agent does not confirm, when it registers, that it
@@ -1104,12 +1104,12 @@ settings:
       only newer ones confirm it. Helm:
       `execution.warmRequireAttemptHomeSweep`.
   execution.source_mode.enabled:
-    edition: Pro
+    edition: Cluster
     description: >-
-      Turn source mode on. Off, Pro ignores a version's source, as before. Helm:
+      Turn source mode on. Off, Cluster ignores a version's source, as before. Helm:
       `execution.sourceMode.enabled`.
   execution.source_mode.image:
-    edition: Pro
+    edition: Cluster
     description: >-
       The runtime image source-mode versions name as their `image`, pinned by a full
       digest (`image@sha256:` and 64 hex characters). Required when source mode is on;
@@ -1117,7 +1117,7 @@ settings:
       `execution.sourceMode.image`; the chart refuses to render the same values the
       server refuses.
   execution.source_mode.warm_pools:
-    edition: Pro
+    edition: Cluster
     description: >-
       Let source-mode versions run on warm workers: the control plane sends the
       version's `dag.py` with each warm assignment and the worker runs the attempt
@@ -1134,7 +1134,7 @@ settings:
     description: >-
       Task-log sink directory (used by the default `disk` backend).
   logs.backend:
-    edition: Pro
+    edition: Cluster
     description: >-
       Durable task-log store: `disk` (default: the on-disk sink, unchanged; the
       only backend Lite uses), `s3` (AWS S3, MinIO, Ceph RGW), or `gcs` (Google
@@ -1171,48 +1171,48 @@ settings:
       `dexaflow_log_tail_replay_evictions_total` the drops. `0` means no budget; a
       negative value fails boot. Helm: set it through `extraEnv`.
   logs.sink.bucket:
-    edition: Pro
+    edition: Cluster
     description: >-
       Target bucket. Required when the backend is `s3` or `gcs` (boot fails otherwise).
   logs.sink.prefix:
-    edition: Pro
+    edition: Cluster
     description: >-
       Optional key prefix; objects are laid out at `{prefix}/{tenant}/{dag}/{run}/{task}/{try}.e{epoch}.log`,
       one object per execution of the try (an infra re-place or a reschedule poke
       runs the try again under a new epoch). Logs written before 0.5.1 keep `{try}.log`.
       The log endpoint serves all of a try's executions in order.
   logs.sink.region:
-    edition: Pro
+    edition: Cluster
     description: >-
       **s3-only.** Store region (e.g. `us-east-1`). Required by AWS S3; ignored
       by some S3-compatible stores.
   logs.sink.endpoint:
-    edition: Pro
+    edition: Cluster
     description: >-
       **s3-only.** Endpoint override for S3-compatible stores (MinIO, Ceph RGW).
       Empty uses the AWS default. Not a path to GCS: use `gcs`.
   logs.sink.force_path_style:
-    edition: Pro
+    edition: Cluster
     description: >-
       **s3-only.** Use path-style addressing (bucket in the path, not the host).
       Required by MinIO and some S3-compatible stores.
   logs.sink.access_key_id:
-    edition: Pro
+    edition: Cluster
     description: >-
       **s3-only.** Static credentials: **discouraged**. Leave empty (recommended)
       to use the keyless chain (IRSA / instance profile), per [ADR 0035](/project/adrs/0035-cloud-connector-auth-keyless-first/).
   logs.sink.secret_access_key:
-    edition: Pro
+    edition: Cluster
     description: >-
       **s3-only.** Static credentials: **discouraged**. Leave empty (recommended)
       to use the keyless chain (IRSA / instance profile), per [ADR 0035](/project/adrs/0035-cloud-connector-auth-keyless-first/).
   logs.sink.credentials_file:
-    edition: Pro
+    edition: Cluster
     description: >-
       **gcs-only.** Path to a service-account JSON key: **discouraged**. Leave
       empty (recommended) to use Application Default Credentials (GKE Workload Identity).
   logs.sink.layout:
-    edition: Pro
+    edition: Cluster
     description: >-
       How new attempts are written. `single` keeps one object per attempt at `{try}.log`,
       rewritten on every flush. `segmented` writes numbered segments under `{try}.log.d/`
@@ -1226,14 +1226,14 @@ settings:
       a missing segment answers not-found; the server checks this at startup and
       refuses to start when a missing key is not answered with not-found.
   secrets.backend:
-    edition: Pro (K8s)
+    edition: Cluster (K8s)
     default_note: disabled
     description: >-
       Provider secrets-backend class the in-pod resolver drives (e.g. `airflow.providers.amazon.aws.secrets.secrets_manager.SecretsManagerBackend`).
       When set, a Connection/Variable a DAG declares can be resolved pod-side from
       the provider store under the pod's keyless identity. Helm: `secrets.backend`.
   secrets.backend_kwargs:
-    edition: Pro (K8s)
+    edition: Cluster (K8s)
     default_note: treated as `{}`
     description: >-
       Provider kwargs as a JSON **object string** (`connections_prefix`, `variables_prefix`,
@@ -1294,24 +1294,24 @@ settings:
     description: >-
       A cycle starts no new batch once it deleted this many rows, children included.
   deploy.defaults.registry:
-    edition: Pro
+    edition: Cluster
     description: >-
       Image prefix a deploy pushes to, such as `ghcr.io/acme`: a host, an optional
       port and a path, lowercase, with no scheme, credentials, tag or trailing `/`.
       The image name defaults to the `dag_id`. Helm: `deploy.defaults.registry`.
   deploy.defaults.platforms:
-    edition: Pro
+    edition: Cluster
     description: >-
       Platforms a deploy builds for, comma separated (`linux/amd64,linux/arm64`), each
       `os/arch` or `os/arch/variant`. Unset, the built-in `linux/amd64` applies. Helm:
       `deploy.defaults.platforms` (a list).
   deploy.defaults.base_image:
-    edition: Pro
+    edition: Cluster
     description: >-
       Base image of the generated Dockerfile for projects that set no `base_image`.
       Helm: `deploy.defaults.baseImage`.
   deploy.defaults.source_mode:
-    edition: Pro
+    edition: Cluster
     description: >-
       Advertise the source mode runtime image (`execution.source_mode.image`) as
       `source_mode_image`, so a deploy that names no runtime image of its own
@@ -1324,7 +1324,7 @@ settings:
       `deploy.defaults.sourceMode`. See [Deploying in source
       mode](/operate/source-mode/#deploying-in-source-mode).
   deploy.defaults.remote_builder.cloud_build.project:
-    edition: Pro
+    edition: Cluster
     description: >-
       Google Cloud project of the remote builder (Cloud Build, ADR 0083) a
       deploy uses for builds no daemonless path covers, when the project's
@@ -1334,25 +1334,25 @@ settings:
       `deploy.defaults.remoteBuilder.cloudBuild.project`. See
       [Builders](/operate/builders/).
   deploy.defaults.remote_builder.cloud_build.region:
-    edition: Pro
+    edition: Cluster
     description: >-
       Cloud Build region of that remote builder, such as `us-central1`;
       required with a worker pool. Helm:
       `deploy.defaults.remoteBuilder.cloudBuild.region`.
   deploy.defaults.remote_builder.cloud_build.worker_pool:
-    edition: Pro
+    edition: Cluster
     description: >-
       Private pool of that remote builder,
       `projects/<project>/locations/<region>/workerPools/<name>`, in its
       region. Helm: `deploy.defaults.remoteBuilder.cloudBuild.workerPool`.
   deploy.defaults.remote_builder.cloud_build.service_account:
-    edition: Pro
+    edition: Cluster
     description: >-
       Account the remote build runs as,
       `projects/<project>/serviceAccounts/<email>`. Helm:
       `deploy.defaults.remoteBuilder.cloudBuild.serviceAccount`.
   deploy.defaults.remote_builder.buildkit.namespace:
-    edition: Pro
+    edition: Cluster
     description: >-
       Namespace of the in-cluster builder (rootless BuildKit, #1883) a deploy
       uses for builds no daemonless path covers, when the project's
@@ -1365,13 +1365,13 @@ settings:
       `builder.advertise` are on. See
       [Builders](/operate/builders/#building-on-the-in-cluster-builder).
   deploy.defaults.remote_builder.buildkit.pod_selector:
-    edition: Pro
+    edition: Cluster
     description: >-
       Label selector of the builder pod, `key=value` pairs separated by
       commas; `app.kubernetes.io/component=builder` when unset. The chart
       sets it to the builder's instance and component labels.
   deploy.defaults.task_service_account:
-    edition: Pro
+    edition: Cluster
     description: >-
       Advertise `executor.task_service_account` as `task_service_account`, so
       a deploy says which ServiceAccount its tasks run as when they set no
@@ -1380,7 +1380,7 @@ settings:
       server refuses to start otherwise. Helm:
       `deploy.defaults.taskServiceAccount`.
   deploy.defaults.warm_pools:
-    edition: Pro
+    edition: Cluster
     description: >-
       Advertise `execution.warm_pools_enabled`, `execution.min_idle_workers`
       and `execution.max_pool_size` as `warm_pools`, so a deploy says whether
@@ -1465,9 +1465,13 @@ settings:
   ui.edition:
     edition: both
     description: >-
-      Edition badge in the UI shell: `lite` shows the silver LITE badge, `pro` the
-      gold PRO badge (independent of the auth mode; also gates `auth.provider: oidc`).
-      Empty/other shows no badge.
+      The edition the server runs as ([ADR 0027](/project/adrs/0027-product-editions-executors-delivery/)):
+      `cluster` for the Helm chart on Kubernetes, `lite` for the installable binary.
+      `pro` is the earlier name of `cluster` and is still accepted; the Helm chart
+      currently sets `pro`. `cluster` turns
+      on named pools, allows `auth.provider: oidc`, enforces TLS on the agent channel
+      and shows the gold CLUSTER badge; `lite` shows the silver LITE badge. Empty or
+      any other value shows no badge.
   ui.workspace:
     edition: both
     description: >-

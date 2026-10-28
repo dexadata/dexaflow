@@ -96,7 +96,7 @@ func newFullScopeServer(t *testing.T) *gin.Engine {
 			Logger: discardLogger(),
 		},
 		Server: ServerDeps{
-			Edition: "pro",
+			Pools: true,
 		},
 		Auth: AuthDeps{
 			Authenticator: engineAdmin{},

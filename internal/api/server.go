@@ -215,7 +215,7 @@ func newServer(deps Dependencies) *gin.Engine {
 	registerAPITokensPage(r, deps, binding)
 	r.GET("/api/v2/plugins", pluginsHandler(deps.Stores.APITokens != nil))
 	registerUIConnections(r, deps.Stores.Connections, deps.Stores.ConnectionTest)
-	registerUIPools(r, deps.Stores.Pools, deps.Server.Edition == "pro", deps.Server.PoolsReadOnly)
+	registerUIPools(r, deps.Stores.Pools, deps.Server.Pools, deps.Server.PoolsReadOnly)
 	registerUIFavorites(r, deps.Stores.Favorites)
 	registerImportErrors(r, deps.Stores.ImportErrors)
 	registerDagTags(r, deps.Stores.Dags)

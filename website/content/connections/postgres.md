@@ -58,14 +58,14 @@ If you use `PostgresHook`, import it **inside** your `@task` function (see
 [Installing a connector's provider](/connections/#installing-a-connectors-provider)) —
 a top-level provider import fails the compile.
 
-## Lite vs Pro caveats
+## Lite vs Cluster caveats
 
 - **Lite (subprocess executor)** runs the task on the host. The Connection
   URI's `host` resolves against the host's name lookup — `localhost` works
   for a host-bound Docker container; `host.docker.internal` is unnecessary.
 - **Lite (k3d executor)** runs the task in a pod inside the k3d cluster.
   Use `host.k3d.internal` to reach a host-bound port.
-- **Pro (Kubernetes)** runs the task in a pod in your cluster. The target
+- **Cluster (Kubernetes)** runs the task in a pod in your cluster. The target
   Postgres must be reachable via cluster DNS (a `Service`) or an external
   DNS that the pod's network policy permits.
 
@@ -78,7 +78,7 @@ a top-level provider import fails the compile.
 - **gRPC channel (agent ↔ control plane)**: Connections are only served
   over an authenticated channel; without TLS, the server refuses to send
   secrets by default (see #58 + ADR 0021). Lite enables this for local
-  use; Pro must run with TLS.
+  use; Cluster must run with TLS.
 
 ## Troubleshooting
 

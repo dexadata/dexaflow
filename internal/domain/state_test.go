@@ -38,3 +38,16 @@ func TestDagRunStateIsTerminal(t *testing.T) {
 		}
 	}
 }
+
+func TestDagRunStateValid(t *testing.T) {
+	for _, s := range []DagRunState{DagRunStateQueued, DagRunStateRunning, DagRunStateSuccess, DagRunStateFailed} {
+		if !s.Valid() {
+			t.Errorf("%s.Valid() = false, want true", s)
+		}
+	}
+	for _, s := range []DagRunState{"", "bogus", "Success", "scheduled"} {
+		if s.Valid() {
+			t.Errorf("%q.Valid() = true, want false", s)
+		}
+	}
+}

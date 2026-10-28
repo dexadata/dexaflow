@@ -75,11 +75,11 @@ type ServerDeps struct {
 	// Non-positive (the default) leaves those routes unlimited.
 	MaxRequestBodyBytes int64
 	MaxUploadBodyBytes  int64
-	// Edition marks the running edition ("pro", "lite", or empty). It gates
-	// Pro-only surfaces: named-pool CRUD is registered as real endpoints only when
-	// Edition == "pro" (ADR 0053), otherwise the Pools screen gets the graceful
-	// empty-collection stub, matching how the scheduler's pool gate is Pro-gated.
-	Edition string
+	// Pools registers the named-pool CRUD as real endpoints (ADR 0053). The
+	// server sets it on the cluster edition, the same condition as the
+	// scheduler's pool gate; otherwise the Pools screen gets the graceful
+	// empty-collection stub.
+	Pools bool
 	// PoolsReadOnly is server.pools_read_only: the pool API serves reads only and
 	// every create, resize and delete answers 403 with PoolsReadOnlyDetail, for
 	// every role including tenant admin. False keeps the write:pool-gated CRUD.
