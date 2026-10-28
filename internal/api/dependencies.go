@@ -76,7 +76,7 @@ type ServerDeps struct {
 	MaxRequestBodyBytes int64
 	MaxUploadBodyBytes  int64
 	// Pools registers the named-pool CRUD as real endpoints (ADR 0053). The
-	// server sets it on the cluster edition, the same condition as the
+	// server sets it from scheduler.pools.enabled, the same condition as the
 	// scheduler's pool gate; otherwise the Pools screen gets the graceful
 	// empty-collection stub.
 	Pools bool

@@ -121,6 +121,9 @@ var serverDefaults = map[string]any{
 	"scheduler.loop_interval_ms":          1000,
 	"scheduler.enabled":                   true,
 	"scheduler.pool_starvation_threshold": "60s",
+	// No value: unset means follow the edition (PoolsEnabled). The key is
+	// listed so the environment can set it.
+	"scheduler.pools.enabled": nil,
 	// Off by default (ADR 0062 feature gate): promotion keeps its one-step-per-
 	// tick cadence until an operator opts in.
 	"scheduler.eager_promotion": false,
