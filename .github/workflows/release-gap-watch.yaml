@@ -1,0 +1,98 @@
+# Keeps the release gap visible between cuts. scripts/release-gap.sh already
+# blocks a patch cut while main carries a change the release branch lacks, but
+# then the gap is found on the day of the cut. This runs it after every push to
+# main and once a day, and keeps one issue per release branch ("Release gap:
+# release-X.Y") listing what is missing, how long ago it merged, and the open
+# pick pull request for it, if any. The issue closes itself when the gap is
+# empty. It never fails the push: the cut stays the gate.
+name: Release gap watch
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: release-gap-watch
+  cancel-in-progress: true
+
+jobs:
+  watch:
+    name: Report the release gap
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Find the active release branch and the next patch
+        id: target
+        run: |
+          set -euo pipefail
+          branch=$(git for-each-ref --format='%(refname:lstrip=3)' 'refs/remotes/origin/release-*' | sort -V | tail -1)
+          if [ -z "$branch" ]; then echo "no release branch"; echo "skip=1" >> "$GITHUB_OUTPUT"; exit 0; fi
+          minor="${branch#release-}"
+          last=$(git tag -l "v$minor.*" | grep -vE -- '-' | sort -V | tail -1)
+          if [ -z "$last" ]; then echo "no final tag for $minor"; echo "skip=1" >> "$GITHUB_OUTPUT"; exit 0; fi
+          patch="${last##*.}"
+          {
+            echo "skip=0"
+            echo "branch=$branch"
+            echo "version=$minor.$((patch + 1))"
+          } >> "$GITHUB_OUTPUT"
+      - name: Update the gap issue
+        if: steps.target.outputs.skip == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.target.outputs.branch }}
+          VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          set -uo pipefail
+          gap=$(scripts/release-gap.sh "$VERSION")
+          rc=$?
+          if [ "$rc" -gt 1 ]; then echo "release-gap.sh failed ($rc)"; exit "$rc"; fi
+          title="Release gap: $BRANCH"
+          issue=$(gh issue list --state all --search "in:title \"$title\"" --json number,title,state \
+            -q ".[] | select(.title == \"$title\") | \"\\(.number) \\(.state)\"" | head -1 || true)
+          num="${issue%% *}"; state="${issue#* }"
+          if [ "$rc" -eq 0 ]; then
+            echo "gap is empty for $VERSION"
+            if [ -n "$num" ] && [ "$state" = "OPEN" ]; then
+              gh issue close "$num" --comment "Empty again: \`$BRANCH\` carries everything on \`main\` for $VERSION."
+            fi
+            exit 0
+          fi
+          picks=$(gh pr list --base "$BRANCH" --state open --json number,title -q '.[] | "\(.number)\t\(.title)"')
+          today=$(date -u +%s)
+          {
+            echo "Commits on \`main\` that \`$BRANCH\` does not carry yet, for $VERSION ($(date -u +'%Y-%m-%d %H:%M') UTC)."
+            echo "Each needs a \`git cherry-pick -x\` pull request to \`$BRANCH\`, or a line in its \`.github/release-skip.txt\`."
+            echo
+            echo "| Commit | Merged | Pick pull request |"
+            echo "| --- | --- | --- |"
+            while read -r sha subject; do
+              [ -n "$sha" ] || continue
+              merged=$(git log -1 --format=%ct "$sha")
+              days=$(( (today - merged) / 86400 ))
+              pr=$(printf '%s\n' "$subject" | sed -nE 's/.*\(#([0-9]+)\)$/\1/p')
+              pick="none"
+              if [ -n "$pr" ]; then
+                found=$(printf '%s\n' "$picks" | awk -F '\t' -v pr="#$pr" 'index($2, pr) { printf "#%s ", $1 }')
+                [ -n "$found" ] && pick="$found"
+              fi
+              echo "| \`$sha\` $subject | ${days}d ago | $pick |"
+            done <<< "$gap"
+          } > body.md
+          cat body.md
+          if [ -z "$num" ]; then
+            gh issue create --title "$title" --body-file body.md
+          else
+            [ "$state" = "OPEN" ] || gh issue reopen "$num"
+            gh issue edit "$num" --body-file body.md
+          fi
