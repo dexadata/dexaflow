@@ -8,3 +8,13 @@
 # 3.x; the image build imports its client module. Drop this line once a
 # dbt-bigquery release lifts the cap.
 google-cloud-storage>=3.11
+
+# google-cloud-aiplatform 2.6.0 (pulled by apache-airflow-providers-google) caps
+# litellm below 1.97, and every litellm before 1.100.4 carries CVE-2026-114612
+# (HIGH, privilege escalation in the litellm proxy). The image never runs the
+# proxy; aiplatform imports litellm only for its evaluation extras. The image
+# build imports the Google provider. The upper bound keeps 1.103, the newest
+# patched line: later releases cap huggingface-hub below 2 and filelock below
+# 4, which would trade both down. Drop this line once an aiplatform release
+# lifts the cap.
+litellm>=1.103.1,<1.104

@@ -1,7 +1,10 @@
 kind: Security
 body: |-
-  **go-jose is updated to 4.1.6 (CVE-2026-116587).** Earlier versions could
-  spend unbounded time parsing a JWK set that contains RSA keys. The server
-  parses the key set it downloads from a configured token issuer, such as an
-  OIDC identity provider or a CI provider, before it verifies a token.
+  **go-jose is updated to 4.1.6 (CVE-2026-116587) and the data runtime image
+  to litellm 1.103 (CVE-2026-114612).** Earlier go-jose versions could spend
+  unbounded time parsing a JWK set that contains RSA keys; the server parses
+  the key set it downloads from a configured token issuer, such as an OIDC
+  identity provider or a CI provider, before it verifies a token. The
+  `py3.11-data` runtime image carried litellm 1.96.2, pulled by the Google
+  provider; the advisory is in the litellm proxy, which the image never runs.
 time: 2026-10-28T08:40:00.000000000+00:00
