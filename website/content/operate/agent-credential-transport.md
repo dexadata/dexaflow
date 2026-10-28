@@ -19,7 +19,7 @@ There are two transports: **`envvar`** (the default; today's behavior, byte-for-
 and **`exchange`** (the projected-ServiceAccount-token path). The exchange transport
 is a **prerequisite for [warm worker pools](/operate/warm-pools/)**.
 
-{{% alert title="Pro / Kubernetes only" color="info" %}}
+{{% alert title="Cluster / Kubernetes only" color="info" %}}
 Both transports concern the Kubernetes executor. Lite runs the agent as a
 subprocess of the server with an in-process credential handoff — there is no pod
 spec, no ServiceAccount, and no `TokenReview` — so this setting does not apply to

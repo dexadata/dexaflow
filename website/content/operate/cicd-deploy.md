@@ -9,8 +9,8 @@ weight: 20
 description: "Build, push and register DAGs from CI: GitHub Actions, GitLab CI, Cloud Build, Argo Workflows, Tekton and Jenkins, with buildah or kaniko."
 ---
 
-{{% alert title="New to Pro? Start with the walkthrough" color="success" %}}
-[**Your first Pro DAG (≈10 min)**](/operate/first-pro-dag/) takes one DAG from source
+{{% alert title="New to Cluster? Start with the walkthrough" color="success" %}}
+[**Your first Cluster DAG (≈10 min)**](/operate/first-cluster-dag/) takes one DAG from source
 to a running pod with **one command** (`dexaflow deploy`), so you see each
 artifact boundary before you automate it. This page is the CI recipes for the
 same pipeline.
@@ -22,7 +22,7 @@ artifact**: a `dag.json` + a container image, versioned together (ADR 0003).
 **By hand or in a pipeline,** one command does it all:
 
 ```bash
-dexaflow auth login --server https://pro.example.com   # by hand, once; stores the session
+dexaflow auth login --server https://cluster.example.com   # by hand, once; stores the session
 dexaflow deploy --yes                                  # compile → build → push → pin digest → register
 ```
 
@@ -77,7 +77,7 @@ bad `dag_id`/`task_id` binding or an unsupported operator never reaches prod.
 {{% /alert %}}
 
 {{% alert title="First time? Do it by hand once" color="info" %}}
-The [**first Pro DAG walkthrough**](/operate/first-pro-dag/) runs `deploy` by
+The [**first Cluster DAG walkthrough**](/operate/first-cluster-dag/) runs `deploy` by
 hand so you can watch the DAG cross each boundary. Come back here to wire the
 same command into CI.
 {{% /alert %}}
@@ -93,7 +93,7 @@ has the exact error and fix for each.
 
 ## Your repo of DAGs (CI is the recommended path)
 
-In Pro you keep your DAGs in a Git repository, one directory per DAG, and **CI**
+In Cluster you keep your DAGs in a Git repository, one directory per DAG, and **CI**
 turns each into an artifact when it changes. This is the recommended path: a push
 triggers the pipeline, no one builds by hand. Each DAG is just **two files**, no
 Dockerfile and no `requirements.txt`:
@@ -119,7 +119,7 @@ my-dags/                      # your Git repo, a workspace
 installed, your DAG copied in. No Dockerfile to maintain. A `Dockerfile` in the
 DAG directory is used verbatim instead and the yaml's dependencies then do not
 reach the image, so ship one only if you want full control (see
-[your own Dockerfile](/operate/first-pro-dag/#advanced-your-own-dockerfile)).
+[your own Dockerfile](/operate/first-cluster-dag/#advanced-your-own-dockerfile)).
 
 The built image is **your** artifact: push it wherever you like (Docker Hub, ECR,
 Artifact Registry, ACR, GHCR, a private registry). `deploy` needs a registry
@@ -281,7 +281,7 @@ The JSON document has one entry per DAG:
 
 ```json
 {
-  "server": "https://pro.example.com",
+  "server": "https://cluster.example.com",
   "target": "prod",
   "dags": [
     {
@@ -346,7 +346,7 @@ checks in the order given, under the `preflight:` line of the dry run and
 under the `Deployed` line of the register:
 
 ```text
-Deployed my_pipeline -> https://pro.example.com
+Deployed my_pipeline -> https://cluster.example.com
   image ghcr.io/acme/my_pipeline@sha256:4e1f...
   registered version v1.4.0-3f9c2a1b7d4e
   link     console: https://console.example.com/dags/my_pipeline
@@ -650,7 +650,7 @@ dexaflow sync ./dags --prune --yes         # make the target match
 
 ```text
 workspace: /repo/dags
-target prod: https://pro.example.com (target prod, from --target)
+target prod: https://cluster.example.com (target prod, from --target)
 
   DAG      STATE             CURRENT VERSION             PAUSED  ACTION
   billing  drift             v1.3.0-4-g77aa01-1f0c (#4)  no      deploy v1.4.0-3fa2c1
@@ -715,7 +715,7 @@ How each change is made:
 - A change that fails is reported on its DAG and the other changes still go
   through.
 - At a terminal, sync shows the plan and asks before it changes anything
-  (`Apply 2 deploys and 1 pause on https://pro.example.com? [y/N]`); `--yes`
+  (`Apply 2 deploys and 1 pause on https://cluster.example.com? [y/N]`); `--yes`
   skips the question. `--output json` never asks: pass `--yes` or `--dry-run`.
 
 What `--prune` guards against:
@@ -783,7 +783,7 @@ catch a target changed by hand or a deploy that did not finish:
 ```yaml
       - name: Is prod running what main holds
         env:
-          DEXAFLOW_SERVER_URL: https://pro.example.com
+          DEXAFLOW_SERVER_URL: https://cluster.example.com
           DEXAFLOW_TOKEN: ${{ secrets.DEXAFLOW_TOKEN }}   # a deploy token
         run: dexaflow sync ./dags --dry-run --prune
 ```
@@ -805,7 +805,7 @@ version: 0.1.0
 ```yaml title="deploy/dexaflow-sync/values.yaml"
 revision: ""                       # set by Argo CD to the synced commit
 repository: https://github.com/acme/dags
-server: https://pro.example.com
+server: https://cluster.example.com
 image: registry.example.com/tools/dexaflow-cli:1.4.0   # your image: the CLI, git and Python
 ```
 
@@ -1067,7 +1067,7 @@ variable (the pre-rename `LEOFLOW_TOKEN` still works).
    hold it, and choose its lifetime:
 
    ```bash
-   dexaflow auth create-token --server https://pro.example.com \
+   dexaflow auth create-token --server https://cluster.example.com \
      --username ci-deploy@example.com --password-stdin \
      --scope deploy --name github-my-dags --ttl 90d < password.txt
    ```
@@ -1134,7 +1134,7 @@ the service user's password instead (`DEXAFLOW_CI_PASSWORD` below) and mint a
 session token at the start of each job:
 
 ```bash
-export DEXAFLOW_SERVER_URL=https://pro.example.com
+export DEXAFLOW_SERVER_URL=https://cluster.example.com
 DEXAFLOW_TOKEN="$(printf '%s\n' "$DEXAFLOW_CI_PASSWORD" |
   dexaflow auth create-token --username ci-deploy@example.com --password-stdin)"
 export DEXAFLOW_TOKEN
@@ -1346,7 +1346,7 @@ every system that runs a job in a container.
       - uses: dexadata/dexaflow/.github/actions/setup-dexaflow@<VERSION>
         with:
           version: <VERSION>
-          server-url: https://pro.example.com   # optional
+          server-url: https://cluster.example.com   # optional
 ```
 
 The action installs the release named by `version` for the runner's OS and
@@ -1418,7 +1418,7 @@ deploy_dags:
     name: ghcr.io/dexadata/dexaflow-cli:<VERSION>
     entrypoint: [""]                   # GitLab runs the script in a shell
   variables:
-    DEXAFLOW_SERVER_URL: https://pro.example.com
+    DEXAFLOW_SERVER_URL: https://cluster.example.com
     GIT_DEPTH: "0"                     # git describe needs history and tags
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
@@ -1461,7 +1461,7 @@ spec:
               dexaflow sync /tmp/dags --dry-run --prune
           env:
             - name: DEXAFLOW_SERVER_URL
-              value: https://pro.example.com
+              value: https://cluster.example.com
             - name: DEXAFLOW_TOKEN
               valueFrom: { secretKeyRef: { name: dexaflow-deploy-token, key: token } }
 ```
@@ -1883,7 +1883,7 @@ with **Python 3.11+** and git on the runner (see
 `DEXAFLOW_SERVER_URL`, `DEXAFLOW_TOKEN` and `DEXAFLOW_BASE_REF` set:
 
 ```bash
-export DEXAFLOW_SERVER_URL=https://pro.example.com
+export DEXAFLOW_SERVER_URL=https://cluster.example.com
 export DEXAFLOW_TOKEN="$DEPLOY_TOKEN_FROM_YOUR_SECRET_STORE"   # a deploy token
 export DEXAFLOW_BASE_REF="$COMMIT_BEFORE_THIS_PUSH"             # empty deploys every DAG
 sh ci/dexaflow-deploy.sh
@@ -2212,7 +2212,7 @@ spec:
           - name: DEXAFLOW_BASE_REF
             value: "{{workflow.parameters.base-ref}}"
           - name: DEXAFLOW_SERVER_URL
-            value: https://pro.example.com
+            value: https://cluster.example.com
           - name: DEXAFLOW_TOKEN
             valueFrom:
               secretKeyRef:
@@ -2281,7 +2281,7 @@ spec:
         - name: DEXAFLOW_BASE_REF
           value: $(params.base-ref)
         - name: DEXAFLOW_SERVER_URL
-          value: https://pro.example.com
+          value: https://cluster.example.com
         - name: DEXAFLOW_TOKEN
           valueFrom:
             secretKeyRef:
@@ -2370,7 +2370,7 @@ pipeline {
     skipDefaultCheckout()
   }
   environment {
-    DEXAFLOW_SERVER_URL = 'https://pro.example.com'
+    DEXAFLOW_SERVER_URL = 'https://cluster.example.com'
   }
   stages {
     stage('Deploy DAGs') {
@@ -2461,7 +2461,7 @@ spec:
         - name: DEXAFLOW_BASE_REF
           value: $(params.base-ref)
         - name: DEXAFLOW_SERVER_URL
-          value: https://pro.example.com
+          value: https://cluster.example.com
         - name: DEXAFLOW_TOKEN
           valueFrom:
             secretKeyRef:
@@ -2518,7 +2518,7 @@ Notes:
 
 kaniko builds the Dockerfile it is given. The CLI does not hand kaniko the
 Dockerfile it generates from `dexaflow.yaml`, so kaniko fits a project that
-ships [its own Dockerfile](/operate/first-pro-dag/#advanced-your-own-dockerfile)
+ships [its own Dockerfile](/operate/first-cluster-dag/#advanced-your-own-dockerfile)
 (the escape hatch of [ADR 0003](/project/adrs/0003-dag-as-image/)). For a
 project built from `dexaflow.yaml` alone, use the daemonless builders of the
 other tabs, or buildah.
@@ -2593,7 +2593,7 @@ spec:
       workingDir: $(workspaces.source.path)
       env:
         - name: DEXAFLOW_SERVER_URL
-          value: https://pro.example.com
+          value: https://cluster.example.com
         - name: DEXAFLOW_TOKEN
           valueFrom:
             secretKeyRef:
@@ -2628,11 +2628,11 @@ Notes:
 
 Deploying the control plane itself (Helm chart, published `dexaflow-server`/
 `dexaflow-migrate` images, TLS on the agent channel, keyless cloud auth) is the
-**Pro** track. One command installs the chart with auto-generated TLS and no
+**Cluster** track. One command installs the chart with auto-generated TLS and no
 cert-manager — from its published OCI artifact
 (`helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION>`),
 or from source on `main` for the bleeding edge
-(`helm install lf ./helm/dexaflow …`). See [Install Pro](/get-started/installation/#install-pro).
+(`helm install lf ./helm/dexaflow …`). See [Install Cluster](/get-started/installation/#install-cluster).
 The chart is installable today and in validation — see the
 [Helm chart](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md), the reproducible
 [Kubernetes test setup](https://github.com/dexadata/dexaflow/blob/main/deploy/k8s/README.md)

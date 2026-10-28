@@ -90,7 +90,7 @@ func newSyncCommandWith(prompts func(cmd *cobra.Command, serverURL string) bool)
 	var o syncOptions
 	cmd := &cobra.Command{
 		Use:   "sync <dir>",
-		Short: "Make the target run the DAGs of a workspace: deploy what changed, report or pause what is gone (Pro).",
+		Short: "Make the target run the DAGs of a workspace: deploy what changed, report or pause what is gone (Cluster).",
 		Long:  syncLong,
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) != 1 {

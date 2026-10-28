@@ -34,7 +34,7 @@ deployment:
 # that keeps the privileged identity. The security payoff is that a compromised or
 # SSRF'd API cannot reach the apiserver — see ADR 0048/0049.
 split:
-  # -- Render separate `api` and `scheduler` Deployments instead of one `all` Deployment. Pro-only (Lite is single-host and never splits).
+  # -- Render separate `api` and `scheduler` Deployments instead of one `all` Deployment. Cluster-only (Lite is single-host and never splits).
   enabled: false
   api:
     # -- API Deployment replicas (active-active; HPA-friendly). Ignored unless split.enabled.
@@ -264,7 +264,7 @@ config:
   # -- gRPC address task pods dial back to reach the control plane. Defaults to the in-cluster Service DNS on `ports.grpc` when empty. Override for cross-cluster or external task pods.
   agentControlPlaneAddr: ""
 
-# Persistent log storage for the control plane (#227 — Pro alpha).
+# Persistent log storage for the control plane (#227, Cluster alpha).
 # Task pods stream logs over gRPC to the control plane, which writes them under
 # `config.logsDir`. By default this directory lives on a PVC so logs survive
 # pod restarts. For multi-replica HA the log store must be writable by every
@@ -322,13 +322,13 @@ logs:
 
 # Database (Postgres). Provide an external URL, or a pre-existing secret.
 database:
-  # -- External Postgres DSN. Required for Pro (the embedded datastore is Lite-only); the chart `fail`s the install if neither this nor `existingSecret` is set. Example: `postgres://user:pass@host:5432/leoflow?sslmode=disable`.
+  # -- External Postgres DSN. Required for Cluster (the embedded datastore is Lite-only); the chart `fail`s the install if neither this nor `existingSecret` is set. Example: `postgres://user:pass@host:5432/leoflow?sslmode=disable`.
   url: ""
   # -- Name of a Secret with key `databaseUrl` (takes precedence over `url`).
   existingSecret: ""
   # -- Name of a ConfigMap with key `ca.crt` holding the managed-Postgres CA bundle (#315). When set, the chart mounts it at `/etc/leoflow/db-ca/ca.crt` — in the control plane **and in the pre-install migration Job** (#1052), which reads the same DSN — so the operator can pin `sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt` in the DSN. Empty (default) means TLS still works via `sslmode=require`, but the server cert is NOT verified — the connection is encrypted but MITM-vulnerable, the standard managed-DB posture before this knob.
   caConfigMap: ""
-  # -- Max concurrent open DB connections per control-plane pod (Postgres-side load gate): the ceiling the pool grows to under load. Increase for high-throughput Pro deployments. Each pod also opens up to 3 more (2 for health checks, 1 for the scheduler's leader lock), so the cluster-wide ceiling is `(maxOpenConns + 3)` times the most pods that can run at once (`autoscaling.maxReplicas` with the HPA on, plus the surge pods of a rolling update, 25% of the replicas rounded up), plus 1 for the migration Job. With the HPA on at `maxReplicas` 6 that is 6 + 2 surge = 8 pods, and the defaults reach `8 * 23 = 184`, above stock Postgres' `max_connections` of 100: lower this, raise `max_connections`, or cap `maxReplicas`. With more than one pod the install notes print the peak total when it exceeds 20. A server that runs out answers SQLSTATE 53300, which the boot error names (#1088). See the "Postgres connection budget" section of the control-plane HA guide.
+  # -- Max concurrent open DB connections per control-plane pod (Postgres-side load gate): the ceiling the pool grows to under load. Increase for high-throughput Cluster deployments. Each pod also opens up to 3 more (2 for health checks, 1 for the scheduler's leader lock), so the cluster-wide ceiling is `(maxOpenConns + 3)` times the most pods that can run at once (`autoscaling.maxReplicas` with the HPA on, plus the surge pods of a rolling update, 25% of the replicas rounded up), plus 1 for the migration Job. With the HPA on at `maxReplicas` 6 that is 6 + 2 surge = 8 pods, and the defaults reach `8 * 23 = 184`, above stock Postgres' `max_connections` of 100: lower this, raise `max_connections`, or cap `maxReplicas`. With more than one pod the install notes print the peak total when it exceeds 20. A server that runs out answers SQLSTATE 53300, which the boot error names (#1088). See the "Postgres connection budget" section of the control-plane HA guide.
   maxOpenConns: 20
   # -- Idle DB connections each pod keeps open even when quiet (the pool's floor). This is what each pod opens at boot, so a server must hold `pods x (maxIdleConns + 3)` plus 1 for the migration Job just to start; the install notes warn when that exceeds 20, the budget of the smallest managed tiers (Cloud SQL `db-f1-micro`, the smallest RDS and Azure Flexible sizes cap `max_connections` near 25). Should be ≤ `maxOpenConns`. Was 5 before #1088.
   maxIdleConns: 2
@@ -341,7 +341,7 @@ database:
 
 # Redis (XCom + locks).
 redis:
-  # -- External Redis URI. Required for Pro (the embedded XCom is Lite-only). Example: `redis://host:6379/0`, or `rediss://host:6380/0` for TLS.
+  # -- External Redis URI. Required for Cluster (the embedded XCom is Lite-only). Example: `redis://host:6379/0`, or `rediss://host:6380/0` for TLS.
   url: ""
   # -- Name of a Secret with key `redisUrl` (takes precedence over `url`).
   existingSecret: ""
@@ -523,9 +523,9 @@ execution:
   warmReadOnlyRootFilesystem: false
   # -- With `warmReadOnlyRootFilesystem` on, refuse a warm worker whose agent does not confirm, when it registers, that it empties `/tmp` and `/dev/shm` between attempts, so that DAG version's attempts run on dedicated pods. Off by default: such a worker is only logged and counted in `dexaflow_scheduler_decisions_total{decision_type="warm_worker_sweep_unconfirmed"}`, because task images built on runtimes from v0.5.1 sweep but only newer ones confirm it. A refused worker exits and the pool replaces it, so turn this on once your task images are rebuilt. Ignored while `warmPoolsEnabled` or `warmReadOnlyRootFilesystem` is false.
   warmRequireAttemptHomeSweep: false
-  # Pro source mode (ADR 0067): a DAG version whose `image` is exactly `sourceMode.image` and that carries its `dag.py` as `source` runs from that file on this runtime image, with no image build. See the docs page "Source mode" for what such a DAG can and cannot do, and exclude the `leoflow.io/dag-source` pod annotation in your log shipper before turning it on.
+  # Cluster source mode (ADR 0067): a DAG version whose `image` is exactly `sourceMode.image` and that carries its `dag.py` as `source` runs from that file on this runtime image, with no image build. See the docs page "Source mode" for what such a DAG can and cannot do, and exclude the `leoflow.io/dag-source` pod annotation in your log shipper before turning it on.
   sourceMode:
-    # -- Turn Pro source mode on (ADR 0067). OFF by default: Pro ignores a version's source and nothing below reaches the server. Renders `LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED` and `LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE` only when on. Requires `image`; the chart fails the render otherwise.
+    # -- Turn Cluster source mode on (ADR 0067). OFF by default: Cluster ignores a version's source and nothing below reaches the server. Renders `LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED` and `LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE` only when on. Requires `image`; the chart fails the render otherwise.
     enabled: false
     # -- The runtime image source-mode versions name as their `image`, pinned by a full digest: `name@sha256:` and 64 lowercase hex characters. A source-mode version must name this exact string as its image, byte for byte (pass it to `dexaflow compile` as the image). Required when `enabled`; the chart refuses a tag alone or a short digest, as the server does at boot. Ignored while `enabled` is false.
     image: ""
@@ -661,8 +661,8 @@ migrations:
       drop: ["ALL"]
 
 # TLS for the agent <-> control plane gRPC channel (issue #58). Mandatory here,
-# not optional: this chart hardcodes LEOFLOW_UI_EDITION=pro (deployment.yaml) and
-# the Pro server refuses to boot without a gRPC cert/key, so there is no plaintext
+# not optional: this chart hardcodes LEOFLOW_UI_EDITION=pro (deployment.yaml; `pro` is the
+# earlier name of the cluster edition) and the cluster edition server refuses to boot without a gRPC cert/key, so there is no plaintext
 # deployment to opt into. TLS stays ON — what is now optional is WHERE the cert
 # material comes from:
 #   - auto-generated (default): with autoGenerate=true and no serverCertSecret /
@@ -676,7 +676,7 @@ migrations:
 #     cluster-less `helm template` render cannot `lookup` the existing Secret, so
 #     auto-gen would rotate the CA on every sync. Use cert-manager for GitOps.
 agentTLS:
-  # -- Enable TLS on the agent ↔ control plane gRPC channel (#58). Keep this `true`: the chart marks every deployment as the production edition (`LEOFLOW_UI_EDITION=pro`), and that edition refuses to boot without a gRPC cert/key — setting this to `false` yields a crash-looping control plane ("the Pro edition requires TLS on the agent gRPC channel"), not a plaintext deployment. The same edition marker also rejects `LEOFLOW_AGENT_ALLOW_INSECURE_SECRETS=true`, so secrets cannot accidentally travel a plaintext channel. For a plaintext local loop use the Lite dev server, not this chart.
+  # -- Enable TLS on the agent ↔ control plane gRPC channel (#58). Keep this `true`: the chart marks every deployment as the cluster edition (`LEOFLOW_UI_EDITION=pro`, the earlier name of `cluster`, which the server still accepts), and that edition refuses to boot without a gRPC cert/key: setting this to `false` yields a crash-looping control plane ("the cluster edition requires TLS on the agent gRPC channel"), not a plaintext deployment. The same edition marker also rejects `LEOFLOW_AGENT_ALLOW_INSECURE_SECRETS=true`, so secrets cannot accidentally travel a plaintext channel. For a plaintext local loop use the Lite dev server, not this chart.
   enabled: true
   # -- Auto-generate a stable self-signed CA + gRPC server cert when neither `serverCertSecret` nor `caConfigMap` is supplied (#690), so `helm install` needs no cert-manager and no pre-created Secret. The material is minted once and reused on every `helm upgrade` (via `lookup`) so the CA never rotates and running agents keep trusting it. Fine for quickstart / simple clusters. Set `false` (and supply nothing) to force the old fail-fast when no cert is provided. **Not for GitOps** (ArgoCD/Flux): a cluster-less render can't `lookup` the live Secret and would rotate the CA every sync — use BYO/cert-manager there. For production, prefer BYO below (rotation, real chain of trust).
   autoGenerate: true
@@ -730,7 +730,7 @@ observability:
   # -- Log level: `debug`, `info`, `warn`, `error`. Production default is `info`.
   logLevel: info
 
-# -- Resource requests + limits for the leoflow-server container. `250m`/`256Mi` requests are a floor for a small Pro (50–500 DAGs) — bump CPU+memory for larger deployments. The request guarantees the control plane its CPU shares under node contention (so a task-pod burst can't starve it); the actual probe-timeout fix is `probes.liveness.timeoutSeconds` below (CFS throttling is bounded by the CPU *limit*, not the request). See #860.
+# -- Resource requests + limits for the leoflow-server container. `250m`/`256Mi` requests are a floor for a small Cluster install (50–500 DAGs); bump CPU+memory for larger deployments. The request guarantees the control plane its CPU shares under node contention (so a task-pod burst can't starve it); the actual probe-timeout fix is `probes.liveness.timeoutSeconds` below (CFS throttling is bounded by the CPU *limit*, not the request). See #860.
 resources:
   requests:
     cpu: 250m

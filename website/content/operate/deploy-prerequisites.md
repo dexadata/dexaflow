@@ -7,7 +7,7 @@ description: "Every gate dexaflow deploy/push enforces — the exact error, why 
 
 `dexaflow deploy` (and its explicit-steps sibling `dexaflow push`) is **fail-closed
 by design** — it registers a DAG only when the artifact and the caller both meet
-every gate below. That is deliberate: a Pro control plane runs task pods with
+every gate below. That is deliberate: a Cluster control plane runs task pods with
 your DAG's image and credentials, so the gates are the boundary between "code a
 teammate wrote" and "code that runs with real access." When a deploy is
 rejected, the error tells you which gate and how to satisfy it — this page is
@@ -26,13 +26,13 @@ CI-bypassing request cannot sneak an invalid artifact past compile-time checks.
 
 ### 1. A configured registry
 
-Pro has no single-node image-import path — Kubernetes pulls images from a
-registry, so a Pro deploy needs one, full stop (Lite runs locally and needs
+Cluster has no single-node image-import path: Kubernetes pulls images from a
+registry, so a Cluster deploy needs one, full stop (Lite runs locally and needs
 none). With no registry from any source, deploy fails immediately:
 
 ```
 error: deploy requires a container registry, but none is configured.
-  A Pro deploy pushes the DAG image to a registry your cluster can pull from
+  A cluster deploy pushes the DAG image to a registry your cluster can pull from
   (Lite runs locally and needs none). Set one, for one DAG or for all:
 
       dexaflow.yaml:              registry: {url: ghcr.io/<your-org>}
@@ -130,7 +130,7 @@ this page only calls out the ones deploy attempts hit most.
 ### 4. Non-root task image
 
 A task container whose image runs as **UID 0** is refused by the control
-plane's pod security defaults. On Pro, this is the executor's
+plane's pod security defaults. On Cluster, this is the executor's
 `taskPodSecurity.runAsNonRoot` Helm value (`true` by default — see
 `helm/dexaflow/values.yaml`). When it rejects your image, the **task pod**
 fails to start with:
@@ -165,7 +165,7 @@ call) requires the **`write:dag`** permission on the caller's token:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `401` — `"unauthorized" / "no authenticated user"` | No token, or an invalid/expired one | `dexaflow auth login --server <pro>` once; `deploy` then needs no auth flags |
+| `401`: `"unauthorized" / "no authenticated user"` | No token, or an invalid/expired one | `dexaflow auth login --server <cluster>` once; `deploy` then needs no auth flags |
 | `403` — `"forbidden" / "missing permission write:dag"` | A valid token whose role does not grant `write:dag` | Log in as (or ask an admin to grant) a role with `write:dag` — Admin → Users/Roles on the control plane |
 
 Registry auth (the cloud CLI session or `docker login`, gate 1) and
@@ -312,7 +312,7 @@ A 409 can still happen, and the hint names the cause that applies:
 
 ## From here
 
-- **[Deploy your first Pro DAG](/operate/first-pro-dag/)** — the walkthrough
+- **[Deploy your first Cluster DAG](/operate/first-cluster-dag/)**: the walkthrough
   these gates protect.
 - **[CI/CD & deploy examples](/operate/cicd-deploy/)** — wiring `deploy`/`push`
   into a pipeline, where most of gates 5–8 get automated away.

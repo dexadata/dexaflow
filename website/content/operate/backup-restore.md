@@ -166,10 +166,10 @@ dexaflow lite restore --input ~/snap-before-upgrade.tar.gz
 dexaflow lite
 ```
 
-## Pro (Pro)
+## Cluster (Helm)
 
-The Helm-installed Pro control plane does **not** ship its own
-backup/restore commands. Pro operators own the Postgres backup story
+The Helm-installed Cluster control plane does **not** ship its own
+backup/restore commands. Cluster operators own the Postgres backup story
 via standard tooling:
 
 - Managed Postgres providers (RDS, Cloud SQL, etc.) offer point-in-time
@@ -220,7 +220,7 @@ dexaflow lite &
 for _ in $(seq 1 60); do curl -fsS http://localhost:8080/readyz && break; sleep 1; done
 ```
 
-### Pro (Helm) restore drill
+### Cluster (Helm) restore drill
 
 Restore into a separate database and point a throwaway release at it, so the
 production release never sees the drill. Use your own values file, so the

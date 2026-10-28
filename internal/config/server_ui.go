@@ -19,10 +19,11 @@ type UISection struct {
 	// (30s, production-safe). `dexaflow lite` sets it to 1s for a snappy inner
 	// loop so the SPA reflects state changes almost immediately during dev.
 	AutoRefreshIntervalSeconds int `mapstructure:"auto_refresh_interval_seconds"`
-	// Edition marks the running edition; "lite" shows the silver LITE badge and
-	// "pro" shows the gold PRO badge in the UI shell (independent of the auth
-	// mode). Empty/any other value shows no badge, Demo intentionally renders
-	// without an edition pill.
+	// Edition marks the running edition (ADR 0027): EditionCluster for the Helm
+	// chart, EditionLite for the binary; EditionProAlias is the earlier name of
+	// EditionCluster and means the same. Lite shows the silver LITE badge and
+	// cluster the gold CLUSTER badge (independent of the auth mode). Empty or
+	// any other value shows no badge; Demo intentionally renders without one.
 	Edition string `mapstructure:"edition"`
 	// Workspace is the DAG project directory the Lite web editor edits (ADR 0025).
 	// Empty disables the editor (Production, or Lite without one).

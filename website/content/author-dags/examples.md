@@ -63,7 +63,7 @@ re-registered:
 - **Lite (`dexaflow lite`):** the watcher re-registers the DAG on the next reload.
   To remove it for good, **delete the DAG's file** (or stop/point `dexaflow lite`
   elsewhere).
-- **Pro (CI deploy):** the next deploy that still includes the DAG
+- **Cluster (CI deploy):** the next deploy that still includes the DAG
   re-registers it as a new version. To remove it for good, **drop it from the
   repo/CI**, then optionally deregister to clear what is registered now.
 - **Demo:** seeded once at boot with no watcher/CI re-registering, so a clear or

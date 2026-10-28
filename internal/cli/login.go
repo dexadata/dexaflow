@@ -29,7 +29,7 @@ func newLoginCommand() *cobra.Command {
 	var f loginFlags
 	cmd := &cobra.Command{
 		Use:   "login",
-		Short: "Authenticate to a control plane (Pro) and store the token.",
+		Short: "Authenticate to a control plane (Cluster) and store the token.",
 		Long: "Authenticate to a control plane and save the token for that server.\n\n" +
 			"When the server offers single sign-on and no username or password is given, " +
 			"login opens the browser on the server's sign-in, where you approve the CLI sign-in, " +

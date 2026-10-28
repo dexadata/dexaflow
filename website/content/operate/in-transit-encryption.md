@@ -4,9 +4,9 @@ weight: 101
 description: "Encrypt every hop inside the cluster: a service mesh with mTLS, or TLS on the API listener for load balancer re-encryption, and who may dial the agent gRPC port."
 ---
 
-A Pro install already encrypts two hops: the browser or client to your load
+A Cluster install already encrypts two hops: the browser or client to your load
 balancer or Ingress (TLS you terminate there), and the task pod's agent to the
-control plane's gRPC port (server TLS, see [Pro TLS](/operate/pro-tls/)). One
+control plane's gRPC port (server TLS, see [Cluster TLS](/operate/cluster-tls/)). One
 hop is plain HTTP by default: **from the load balancer or Ingress controller to
 the API pod**. A regulated deployment usually needs that hop encrypted too,
 because a passive observer on the pod network (a compromised CNI, a

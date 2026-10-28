@@ -79,7 +79,7 @@ connectors:
   Password (or in Extra's `token`). The token grants API access for the agent.
 - **Secrets in logs**: never `print()` the URI — it carries the API token.
 - **gRPC channel (agent ↔ control plane)**: secrets are served only over an
-  authenticated channel (ADR 0021); Pro must run with TLS.
+  authenticated channel (ADR 0021); Cluster must run with TLS.
 
 ## Related
 
