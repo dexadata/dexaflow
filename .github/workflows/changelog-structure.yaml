@@ -1,0 +1,62 @@
+# CHANGELOG.md and the pending changelog fragments are well formed and agree
+# with each other and with the release tags (scripts/check-changelog-structure.sh),
+# and the scripts that move entries between them still pass their self-tests.
+#
+# Why. Patch releases fold their fragments on release-X.Y, and until
+# scripts/changelog-sync.sh nothing brought the result back: main reached
+# v0.5.3 without the [0.5.1], [0.5.2] and [0.5.3] sections and with 97
+# fragments that had already shipped, which the 0.6.0 cut would have published
+# a second time. The file showed it and nothing read the file.
+#
+# A workflow of its own, not a step of the CHANGELOG guard: that guard is
+# skipped by the skip-changelog label, and the pull requests this has to judge
+# most (release prep, the changelog sync itself) carry exactly that label. The
+# path filter keeps it off pull requests that cannot change the answer. The
+# same checks also run at every release cut, since cut-release.sh runs every
+# scripts/check-*.sh, and the self-tests also run in CI's "Script self-tests".
+name: CHANGELOG structure
+on:
+  pull_request:
+    branches: [main, "release-*"]
+    paths:
+      - CHANGELOG.md
+      - ".changes/**"
+      - .changie.yaml
+      - scripts/changelog-sync.sh
+      - scripts/changelog-fold.sh
+      - scripts/check-changelog-structure.sh
+      - scripts/cut-release.sh
+      - .github/workflows/changelog-structure.yaml
+
+permissions:
+  contents: read
+
+# A newer push to the same pull request supersedes this run.
+concurrency:
+  group: ${{ format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) }}
+  cancel-in-progress: true
+
+jobs:
+  changelog-structure:
+    name: CHANGELOG structure and fragments
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install PyYAML
+        run: python3 -m pip install --user pyyaml
+      - name: Self-test of the changelog sync
+        run: bash scripts/changelog-sync.sh --self-test
+      - name: Self-test of the structure check
+        run: bash scripts/check-changelog-structure.sh --self-test
+      # The tag names come from ls-remote: the checkout is shallow and has no
+      # tags, and the rule only needs their names. A failed ls-remote fails the
+      # step rather than passing with no tags to compare against.
+      - name: Check CHANGELOG.md and .changes/unreleased
+        run: |
+          set -euo pipefail
+          tags="$(git ls-remote --tags --refs origin 'v*' | sed 's|.*refs/tags/||')"
+          [ -n "$tags" ] || { echo "::error::no tags from origin"; exit 1; }
+          CHANGELOG_TAGS="$tags" bash scripts/check-changelog-structure.sh

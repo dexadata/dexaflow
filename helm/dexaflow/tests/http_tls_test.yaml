@@ -1,0 +1,160 @@
+suite: optional TLS on the API listener (httpTLS, #638)
+templates:
+  # secret.yaml is in scope so the deployment's `checksum/secret` annotation can
+  # resolve its `include` reference (same reason as deployment_test.yaml).
+  - deployment.yaml
+  - secret.yaml
+  - NOTES.txt
+release:
+  name: leoflow
+set:
+  nameOverride: leoflow
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+tests:
+  - it: keeps plain HTTP by default (no env, no volume, HTTP probes)
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SERVER_HTTP_TLS_CERT
+          any: true
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: http-tls
+          any: true
+      - notExists:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme
+      - notExists:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.scheme
+
+  - it: fails the render when enabled without a Secret
+    template: deployment.yaml
+    set:
+      httpTLS.enabled: true
+    asserts:
+      - failedTemplate:
+          errorPattern: "httpTLS.secretName"
+
+  - it: mounts the Secret, points the server at it and probes over HTTPS
+    template: deployment.yaml
+    set:
+      httpTLS.enabled: true
+      httpTLS.secretName: api-tls
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SERVER_HTTP_TLS_CERT
+            value: /etc/leoflow/http-tls/tls.crt
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SERVER_HTTP_TLS_KEY
+            value: /etc/leoflow/http-tls/tls.key
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: http-tls
+            mountPath: /etc/leoflow/http-tls
+            readOnly: true
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: http-tls
+            secret:
+              secretName: api-tls
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme
+          value: HTTPS
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.scheme
+          value: HTTPS
+
+  - it: probes the startup gate over HTTPS too
+    template: deployment.yaml
+    set:
+      httpTLS.enabled: true
+      httpTLS.secretName: api-tls
+      probes.startup.enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.scheme
+          value: HTTPS
+
+  # The scheduler role serves no API and probes the plain metrics port, so it
+  # gets neither the key nor the HTTPS scheme.
+  - it: reaches only the api Deployment when the control plane is split
+    template: deployment.yaml
+    set:
+      httpTLS.enabled: true
+      httpTLS.secretName: api-tls
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SERVER_HTTP_TLS_CERT
+            value: /etc/leoflow/http-tls/tls.crt
+        documentIndex: 0
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme
+          value: HTTPS
+        documentIndex: 0
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SERVER_HTTP_TLS_CERT
+          any: true
+        documentIndex: 1
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: http-tls
+          any: true
+        documentIndex: 1
+      - notExists:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme
+        documentIndex: 1
+
+  - it: tells the operator to open the port-forward over HTTPS
+    template: NOTES.txt
+    set:
+      httpTLS.enabled: true
+      httpTLS.secretName: api-tls
+    asserts:
+      - matchRegexRaw:
+          pattern: "then open https://localhost:8080"
+
+  - it: keeps the plain HTTP hint by default
+    template: NOTES.txt
+    asserts:
+      - matchRegexRaw:
+          pattern: "then open http://localhost:8080"
+
+  # `helm upgrade --reuse-values` from v0.5.3 carries no httpTLS key at all.
+  - it: renders the notes when values from a release without httpTLS are reused
+    template: NOTES.txt
+    set:
+      httpTLS: null
+    asserts:
+      - matchRegexRaw:
+          pattern: "then open http://localhost:8080"
+
+  - it: renders the deployment when values from a release without httpTLS are reused
+    template: deployment.yaml
+    set:
+      httpTLS: null
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SERVER_HTTP_TLS_CERT
+          any: true

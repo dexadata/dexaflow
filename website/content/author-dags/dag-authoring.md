@@ -107,6 +107,12 @@ with DAG("my_pipeline", schedule="@daily", catchup=False, tags=["etl"]):
     transform(extract())
 ```
 
+A DAG starts **paused** the first time it is deployed to Pro, as in Airflow, so
+its schedule waits for an unpause. Pass `is_paused_upon_creation=False` to
+`DAG(...)` or `@dag(...)` to have it start active (`True` keeps it paused on a
+server configured otherwise). It only matters on that first deploy; see
+[New DAGs start paused](/concepts/core-concepts/#new-dags-start-paused).
+
 `from airflow.sdk import …` is the canonical Airflow 3 spelling and what we
 recommend. The deprecated-but-still-valid Airflow 3 aliases resolve to the same
 objects, so a migrated DAG compiles unchanged:
@@ -142,6 +148,16 @@ a security boundary: `params` is the run's `conf`, which anyone who can
 *trigger* the DAG supplies (`execute:dag`, a lower bar than authoring it), so an
 un-quoted value would let a trigger inject arbitrary shell (issue #489).
 
+A command whose template cannot render (an undefined name such as
+`{{ nope.x }}`, a syntax error, or an expression the sandbox refuses) fails the
+attempt without running, and the task log names `bash_command` and the Jinja
+error. The raw `{{ ... }}` text is never run
+([ADR 0084](/project/adrs/0084-template-render-errors-fail-the-task/)).
+
+Braces meant for another tool, such as `docker ps --format '{{.Names}}'`, are
+read as Jinja too and fail to parse. Wrap them in a raw block, as on Airflow:
+`docker ps --format '{% raw %}{{.Names}}{% endraw %}'`.
+
 Practical consequence — **write interpolations unquoted**, and do not wrap them
 in your own quotes:
 
@@ -150,7 +166,48 @@ in your own quotes:
 - A value can no longer expand into multiple shell words/flags; if you need
   that, pass the pieces as separate `params` and interpolate each. For secrets,
   reference `$AIRFLOW_VAR_*` / `$AIRFLOW_CONN_*` env vars instead of rendering
-  them into the command.
+  them into the command (see below).
+{{% /alert %}}
+
+{{% alert title="Never render a secret into a bash command" color="danger" %}}
+Quoting stops a value from becoming shell syntax, but a rendered value is still
+**part of the command line**. The command line is `argv` of the `bash` process:
+anything that can list processes in the same container (`ps`,
+`/proc/<pid>/cmdline`, a debug sidecar, node tooling with host PID access, or
+any process of the same user on a Lite host) reads it, and `set -x`, error
+messages and argument-logging wrappers copy it into the task log.
+
+A Variable or Connection the task receives is already in its environment as
+`AIRFLOW_VAR_<KEY>` or `AIRFLOW_CONN_<ID>`, so reference it by name and let bash
+expand it at run time. On an install that runs `auth.secret_scoping: enforce`,
+the task receives only the names its DAG declares in `dexaflow.yaml`
+([Declare what a task consumes](/author-dags/variables-connections/#declare-what-a-task-consumes)),
+and an undeclared one expands to an empty string. The templated form has the
+same requirement, so declare what the command uses either way:
+
+```python
+# Wrong: the token is rendered into the command line.
+BashOperator(task_id="deploy", bash_command="deploy-tool --token {{ var.value.api_token }}")
+
+# Right: the command line carries only the variable name.
+BashOperator(task_id="deploy", bash_command='DEPLOY_TOKEN="$AIRFLOW_VAR_API_TOKEN" deploy-tool')
+```
+
+- `{{ var.value.x }}` and `{{ conn.x }}` stay supported for **non-secret**
+  configuration (a bucket name, a schema, a host), for Airflow parity.
+- A Variable is `$AIRFLOW_VAR_<KEY>` (key uppercased); a Connection is
+  `$AIRFLOW_CONN_<ID>`, a URI. In a `@task`, use `Variable.get` and
+  `BaseHook.get_connection` instead.
+- Put the reference in double quotes (`"$AIRFLOW_VAR_API_KEY"`) so bash does not
+  split a value with spaces.
+- The second example hands the token to the tool through its own
+  environment variable. A tool that only takes a secret as a flag
+  (`--token "$AIRFLOW_VAR_API_TOKEN"`) still receives it in its own `argv`, so
+  prefer the tool's environment variable or a file (in the task's scratch, never
+  the project directory) when it offers one.
+
+The rule and its reasoning are in
+[ADR 0070](/project/adrs/0070-secrets-by-env-reference/).
 {{% /alert %}}
 
 Also supported:
@@ -159,6 +216,14 @@ Also supported:
 - **XCom**: TaskFlow data-flow (`transform(extract())`) is resolved automatically into typed inputs (`xcom_input`) — for `@task` **and** operator args.
 - **Schedule**: cron strings and presets (`@daily`, `0 * * * *`).
 - **Dependencies**: linear ordering via TaskFlow calls or `a >> b`.
+- **`.override(...)` on a `@task`**: `estimate.override(task_id="estimate_03")(3)`
+  builds the task with different operator arguments, as in Airflow. It takes the
+  same arguments as `@task(...)` (`task_id`, `retries`, `retry_delay`,
+  `execution_timeout`, `trigger_rule`, `pool_slots`, ...), merged over the
+  decorator's, and leaves the decorated function unchanged. A repeated `task_id`
+  gets the usual `__1`, `__2` suffix. Two limits: `on_failure_callback` is
+  refused in `.override(...)` (set it on `@task(...)`, where the runtime reads it),
+  and `.override(...).expand(...)` is refused like any dynamic task mapping.
 
 > Connector cookbooks (postgres, mysql, sqlite, redis, http) are `python`
 > tasks that read a managed Connection (`AIRFLOW_CONN_*`) — that is the
@@ -210,9 +275,14 @@ How it works, and the Phase-A limits:
   condition is met), or `mode="reschedule"` (ADR 0040 Phase B, #380/#389) — the
   pod is released between pokes and the scheduler re-dispatches the sensor,
   preserving its `try_number`, once its next-poke time passes.
-- **Jinja templating** is best-effort (`render_template_fields` runs with a
-  minimal context); for rich macros (`{{ ds }}`, `{{ ti }}`, custom params),
-  compute the value in a `@task` and pass it in.
+- **Jinja templating** renders the operator's `template_fields` with the run
+  context (`{{ ds }}`, `{{ logical_date }}`, `{{ macros.ds_add(ds, 1) }}`,
+  `{{ params.x }}`, `{{ var.value.x }}`). A field that fails to render fails
+  the task attempt before `execute()`, with the field and the Jinja error in the
+  task log, as on Airflow
+  ([ADR 0084](/project/adrs/0084-template-render-errors-fail-the-task/)). For a
+  context key Dexaflow does not provide yet, compute the value in a `@task` and
+  pass it in.
 - A native task type (`bash`/`python`) always wins when it matches, so
   `BashOperator`/`HttpOperator`/`PythonOperator` keep their fast path.
 
@@ -288,6 +358,19 @@ meta-schemas. Since 0.5.1 any other reference, such as a `file://` URL or a
 relative path, is refused with a schema error at registration, at trigger or
 at the push, so inline what a schema needs instead of pointing at a file.
 
+A task sees `params` (`{{ params.x }}`, `context["params"]`) the way Airflow
+builds them: the DAG's declared defaults, then the task's own `params=`, then the
+run's `conf`, each one winning over the one before for the same key. Since 0.5.5
+this holds for every run: a scheduled run, which carries no `conf`, still gets
+the DAG defaults, and an operator's `params=` is part of its template context.
+Since 0.5.5 the same holds for the `params=` of a `BashOperator` and of
+`@task(params=...)`, which the compiler now carries in `dag.json`. A task
+param must be JSON-serializable, or `dexaflow compile` fails naming it.
+`context["dag_run"].conf` is the run's `conf` alone, without the defaults.
+A manual trigger stores the declared defaults in the run's `conf`, as the Airflow
+UI's trigger form does, so on such a run a DAG default wins over a task param of
+the same name.
+
 ### Clearing a task
 
 Clearing a task (the UI's Clear, or
@@ -304,6 +387,77 @@ with a full retry budget, as Apache Airflow does:
 The clear is one transaction: if the XCom values cannot be deleted, nothing is
 cleared and the request fails. Before 0.5.1 a clear kept the spent retries,
 and the UI could show "try 4 of 3".
+
+#### Clearing onto the current version
+
+By default a clear re-runs the version the run was created with. To re-run on
+the DAG's current version, tick "Run with latest bundle version" in the Clear
+dialog, or send `run_on_latest_version: true`. As in Airflow, this moves the
+run only when the run has finished (`success` or `failed`) and none of its
+task instances is `queued` or `running`. The run then takes the current
+version's tasks in the same transaction:
+
+- a task the version adds gets a task instance and runs in the re-opened run;
+- a task the version dropped keeps its task instance, history and logs, in the
+  new state `removed`. It is not run, and it does not count toward the run's
+  outcome;
+- a `removed` task whose task a later version declares again runs again as a
+  new try.
+
+A clear that names a task the current version dropped resets nothing for it.
+See [ADR 0086](/project/adrs/0086-clear-rebinds-a-finished-run-with-its-task-set/)
+for the reasoning.
+
+#### Clearing a run that is still running
+
+A run that is `queued` or `running`, or a finished run that still has a task
+instance `queued` or `running` (marked failed or success while that task ran),
+**keeps its DAG version**. Asking for the current version does not move it:
+
+- the cleared tasks re-run on the run's own version, with that version's
+  retries, as a clear without the option would;
+- tasks already running finish on the image they started with;
+- the response says the option was not applied, and why. Both clear routes,
+  dry run included, add `run_on_latest_version_not_applied`, one entry per run
+  with its `dag_run_id` and a `reason` such as `the run is running: only a
+  finished run moves to the current version`. The run's version in the UI
+  stays the one it had. The Clear dialog of the Airflow UI that Dexaflow ships
+  does not display this field, so read it from the API when you need the
+  reason.
+
+To run the cleared tasks on the current version, first get the run to a
+finished state with no task queued or running, then clear again with the
+option:
+
+1. wait for the run to finish, or mark it failed or success (the run page's
+   **Mark run as**, or `PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}` with
+   a `state`);
+2. if you marked it while a task was still running, wait for that task to end;
+3. clear again with `run_on_latest_version: true`.
+
+Or trigger a new run, which always uses the current version.
+
+For example, with `etl` still running on version 3 while version 4 is
+current:
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  "$DEXAFLOW_URL/api/v2/dags/etl/dagRuns/$RUN_ID/clear" \
+  -d '{"dry_run": true, "run_on_latest_version": true}' | jq .run_on_latest_version_not_applied
+```
+
+```json
+[
+  {
+    "dag_run_id": "manual__2026-10-16T09:00:00+00:00",
+    "reason": "the run is running: only a finished run moves to the current version"
+  }
+]
+```
+
+Once the run has finished, the same dry run answers no
+`run_on_latest_version_not_applied`, and the clear with `"dry_run": false`
+moves the run to version 4.
 
 ## dexaflow.yaml — deploy config
 
@@ -342,9 +496,10 @@ task override (tasks.<id>)  >  DAG default (defaults)  >  platform default (serv
 
 - `tasks.<id>` is merged at **compile** time onto the task in `dag.json`.
 - Platform defaults are applied at **dispatch** time, filling gaps the artifact
-  left empty (keeps the artifact portable across clusters) — but **wholesale**:
-  if a task declares any `resources` at all, even only `ephemeral_storage`, the
-  platform cpu/memory default does not apply to it
+  left empty (keeps the artifact portable across clusters), one resource
+  dimension at a time: a task that declares only `ephemeral_storage`, or only
+  cpu, still gets the platform default for the dimensions it left out. A
+  dimension the task sets at all (a request or a limit) is entirely the task's
   ([#802](https://github.com/dexadata/dexaflow/issues/802)).
 - **`staging` is DAG-level only** — one RWX volume is shared atomically by the
   whole run, so it cannot be per-task.
@@ -362,9 +517,11 @@ admissions until it fits. Tasks of size 1 never reserve a pool.
 The Pools screen and `/api/v2/pools` count slots the same way: two tasks of
 size 4 running in a pool of 8 show 8 occupied slots and 0 open, and each
 state's count (`running_slots`, `queued_slots`, `scheduled_slots`,
-`deferred_slots`) is the sum of its tasks' sizes. A task's size is recorded
-when its run starts, and a clear takes the size of the version the re-run
-executes.
+`deferred_slots`) is the sum of its tasks' sizes. A task's size and pool are
+recorded when its run starts, and a clear takes both from the version the
+re-run executes, so a task a newer version moved to another pool is charged
+there once it is cleared onto that version. The API's task instances report
+the same `pool` and `pool_slots`.
 
 ```yaml
 defaults:

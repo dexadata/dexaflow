@@ -78,6 +78,17 @@ What does **not** activate fan-in:
 The rule: **every element of the list must be a task call** for the parser to
 treat the whole argument as fan-in.
 
+Each call of the same `@task` gets the function name with a numeric suffix
+(`trial`, `trial__1`, `trial__2`, ...). To give the fanned-out tasks readable
+ids, use Airflow's `.override(task_id=...)`:
+
+```python
+select_best([trial.override(task_id=f"trial_lr_{i}")(lr) for i, lr in enumerate(LRS)])
+```
+
+Every overridden task still runs the `trial` function; only its task_id (and
+any other operator argument you pass to `.override`) changes.
+
 ## Guarantees and limits
 
 - **Scope.** Fan-in is always *N upstreams in the same DagRun → one

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -18,7 +19,8 @@ import (
 
 // fakeTrustedIssuer accepts the token "good" as the configured identity. The
 // tokens "replayed", "lifetime" and "foreign-tenant" fail with the verifier's
-// matching error; any other token is invalid.
+// matching error, and "keys-down" as if the issuer's JWKS could not be
+// downloaded; any other token is invalid.
 type fakeTrustedIssuer struct{ id issuer.Identity }
 
 func (fakeTrustedIssuer) Provider() string { return "issuer:portal" }
@@ -34,6 +36,8 @@ func (f fakeTrustedIssuer) Verify(_ context.Context, raw string) (*issuer.Identi
 		return nil, issuer.ErrLifetime
 	case "foreign-tenant":
 		return nil, issuer.ErrTenantNotAllowed
+	case "keys-down":
+		return nil, fmt.Errorf("%w: jwks answered 503", issuer.ErrKeysUnavailable)
 	default:
 		return nil, issuer.ErrInvalidToken
 	}
@@ -62,14 +66,20 @@ func (f *fakeIssuerUsers) FindUserByOIDCSubject(_ context.Context, provider, sub
 func issuerSessionServer(t *testing.T, users *fakeIssuerUsers) http.Handler {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	return NewServer(Dependencies{
-		Logger:               discardLogger(),
-		RateLimiter:          auth.NewRateLimiter(100, time.Minute),
-		JWTSecret:            "test-secret",
-		TokenTTLSecs:         900,
-		TrustedIssuer:        fakeTrustedIssuer{issuer.Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme"}},
-		TrustedIssuerUsers:   users,
-		TrustedIssuerOrigins: []string{"https://portal.example.com"},
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			RateLimiter:  auth.NewRateLimiter(100, time.Minute),
+			JWTSecret:    "test-secret",
+			TokenTTLSecs: 900,
+		},
+		Issuers: IssuerDeps{
+			TrustedIssuer:        fakeTrustedIssuer{issuer.Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme"}},
+			TrustedIssuerUsers:   users,
+			TrustedIssuerOrigins: []string{"https://portal.example.com"},
+		},
 	})
 }
 
@@ -145,6 +155,7 @@ func TestIssuerSessionRejections(t *testing.T) {
 		{"inactive user", url.Values{"token": {"good"}}, &fakeIssuerUsers{user: &auth.User{ID: "u-1", TenantID: "acme"}}, http.StatusForbidden},
 		{"user in another tenant", url.Values{"token": {"good"}}, &fakeIssuerUsers{user: &auth.User{ID: "u-1", TenantID: "globex"}, active: true}, http.StatusForbidden},
 		{"store failure", url.Values{"token": {"good"}}, &fakeIssuerUsers{err: errors.New("db down")}, http.StatusInternalServerError},
+		{"issuer keys unavailable", url.Values{"token": {"keys-down"}}, activeAcmeUser(), http.StatusServiceUnavailable},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -166,7 +177,7 @@ func TestIssuerSessionRejections(t *testing.T) {
 // without a trusted issuer the endpoint does not exist.
 func TestIssuerSessionRouteExistsOnlyWhenConfigured(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	h := NewServer(Dependencies{Logger: discardLogger(), RateLimiter: auth.NewRateLimiter(100, time.Minute)})
+	h := newTestServer(Dependencies{Observability: ObservabilityDeps{Logger: discardLogger()}, Auth: AuthDeps{RateLimiter: auth.NewRateLimiter(100, time.Minute)}})
 
 	rec := postSession(h, url.Values{"token": {"good"}})
 
@@ -193,5 +204,26 @@ func TestIssuerSessionOnlyFromTheOperatorsOrigin(t *testing.T) {
 				t.Errorf("Origin %q set a session cookie", origin)
 			}
 		})
+	}
+}
+
+// TestIssuerSessionKeyOutageIsNotAFailedSignIn locks #1588: when the trusted
+// issuer's keys cannot be downloaded, the token was never checked, so the
+// handoff answers 503 like the bearer path (#1545) and writes no
+// issuer.login.failure row. An issuer outage must not read as failed sign-ins.
+func TestIssuerSessionKeyOutageIsNotAFailedSignIn(t *testing.T) {
+	audit := &fakeAuthAudit{}
+	h := issuerSessionServerWith(t, issuerSessionOpts{users: activeAcmeUser(), audit: audit})
+
+	rec := postSession(h, url.Values{"token": {"keys-down"}})
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503 (body %s)", rec.Code, rec.Body.String())
+	}
+	if len(audit.events) != 0 {
+		t.Errorf("a key outage wrote audit rows: %+v", audit.events)
+	}
+	if setsSessionCookie(rec) {
+		t.Error("a key outage set a session cookie")
 	}
 }

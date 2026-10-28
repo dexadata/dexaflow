@@ -31,6 +31,10 @@ const (
 	settleSucceeded
 	// settleReschedule parks the task instance in up_for_reschedule.
 	settleReschedule
+	// settleInfra records the task instance as failed for an infrastructure
+	// reason (ADR 0051): the cluster stopped the pod, so the task is re-placed on
+	// the infra budget and keeps its own retries (#1595).
+	settleInfra
 )
 
 // verdict is the reconciler's classification of a task pod: whether it is terminal
@@ -38,7 +42,7 @@ const (
 type verdict struct {
 	terminal   bool       // the pod is done; eligible for GC on age
 	settle     settleKind // what to record for the task instance
-	reason     string     // failure reason (settleFailed)
+	reason     string     // failure reason (settleFailed, settleInfra)
 	at         time.Time  // next-poke time (settleReschedule)
 	fromRecord bool       // a durable outcome record drove this, not pod phase
 }
@@ -69,6 +73,17 @@ func classifyPod(pod *corev1.Pod) verdict {
 		case taskoutcome.Success:
 			return verdict{terminal: true, settle: settleSucceeded, fromRecord: true}
 		case taskoutcome.Failed:
+			// The agent writes a FAILED record when it catches the SIGTERM of a
+			// node shutdown or an eviction. The record says the task stopped, not
+			// why: the pod says the cluster stopped it, so the failure is infra.
+			if podWasDisrupted(pod) {
+				return verdict{terminal: true, settle: settleInfra, reason: disruptionReason(pod), fromRecord: true}
+			}
+			// The agent's control plane never answered before the task's code
+			// ran: the substrate could not run it (#1594).
+			if unexecutableStart(rec) {
+				return verdict{terminal: true, settle: settleInfra, reason: unexecutableReason(rec), fromRecord: true}
+			}
 			return verdict{terminal: true, settle: settleFailed, reason: failedReason(rec, pod), fromRecord: true}
 		case taskoutcome.Reschedule:
 			at, _ := rec.At() // Decode guaranteed a parseable time
@@ -81,6 +96,9 @@ func classifyPod(pod *corev1.Pod) verdict {
 	// recorded as failed so retries and finalization proceed.
 	switch pod.Status.Phase {
 	case corev1.PodFailed:
+		if podWasDisrupted(pod) {
+			return verdict{terminal: true, settle: settleInfra, reason: disruptionReason(pod)}
+		}
 		return verdict{terminal: true, settle: settleFailed, reason: podFailureReason(pod)}
 	case corev1.PodSucceeded:
 		return verdict{terminal: true, settle: settleNothing}
@@ -94,6 +112,105 @@ func classifyPod(pod *corev1.Pod) verdict {
 	default:
 		return verdict{terminal: false}
 	}
+}
+
+// disruptionPodReasons are the pod-level reasons the kubelet writes when it,
+// not the task, ended the pod: a node-pressure eviction (Evicted), a graceful
+// node shutdown (Shutdown and NodeShutdown on older kubelets, Terminated on
+// newer ones), and an admission refusal after the node accepted the pod
+// (OutOfcpu, OutOfmemory, UnexpectedAdmissionError). They are matched as well as
+// the DisruptionTarget condition because kubelets before that condition, and
+// the admission refusals, set only the reason.
+var disruptionPodReasons = map[string]bool{
+	"Evicted":                  true,
+	"Shutdown":                 true,
+	"NodeShutdown":             true,
+	"Terminated":               true,
+	"OutOfcpu":                 true,
+	"OutOfmemory":              true,
+	"UnexpectedAdmissionError": true,
+}
+
+// podWasDisrupted reports whether the cluster stopped the task pod for a reason
+// of its own (ADR 0051 infra rail, #1595): the pod carries DisruptionTarget=True
+// (TerminationByKubelet, PreemptionByScheduler, EvictionByEvictionAPI,
+// DeletionByTaintManager) or one of disruptionPodReasons. An OOMKilled task
+// container is never a disruption: the kernel enforced the task's own memory
+// limit, which is the task's failure to fix, so it stays on the task rail even
+// on a pod that also carries the condition. An eviction for a limit of the
+// task's own (ownLimitEviction) is the same class of failure and stays on the
+// task rail too.
+func podWasDisrupted(pod *corev1.Pod) bool {
+	if podWasOOMKilled(pod) || ownLimitEviction(pod) {
+		return false
+	}
+	for _, c := range pod.Status.Conditions {
+		if c.Type == corev1.DisruptionTarget && c.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return disruptionPodReasons[pod.Status.Reason]
+}
+
+// ownLimitEvictionMarks are the parts of the kubelet's eviction messages
+// (pkg/kubelet/eviction/helpers.go) that name a limit of the pod's own: a
+// container over its ephemeral-storage limit, the pod over the sum of its
+// containers' limits, and an emptyDir volume over its sizeLimit. A node-pressure
+// eviction says "The node was low on resource" instead and carries none of them.
+var ownLimitEvictionMarks = []string{
+	"exceeded its local ephemeral storage limit",                // containerEphemeralStorageMessageFmt
+	"local storage usage exceeds the total limit of containers", // podEphemeralStorageMessageFmt
+	"exceeds the limit", // emptyDirMessageFmt
+}
+
+// ownLimitEviction reports whether the kubelet evicted the pod because the task
+// outgrew a limit of its own rather than because the node ran short (review
+// finding 1595-1). Like an OOMKilled container, that is the task's failure to
+// fix, and it is deterministic: re-placing it on the infra budget would rerun it
+// up to the infra limit without spending a retry and blame the cluster.
+func ownLimitEviction(pod *corev1.Pod) bool {
+	if pod.Status.Reason != "Evicted" {
+		return false
+	}
+	for _, mark := range ownLimitEvictionMarks {
+		if strings.Contains(pod.Status.Message, mark) {
+			return true
+		}
+	}
+	return false
+}
+
+// ownLimitEvictionReason describes an own-limit eviction for the operator,
+// naming the kubelet's message, which says which limit was exceeded. Bounded,
+// because the message is a kubelet-supplied field.
+func ownLimitEvictionReason(pod *corev1.Pod) string {
+	return boundReason("the task pod was evicted for exceeding its own limit: " +
+		strings.TrimSpace(pod.Status.Message) + "; raise the task's ephemeral-storage limit or emptyDir sizeLimit.")
+}
+
+// disruptionReason describes an infra settle for the operator. It starts with
+// the pod_disrupted mark, the same "<mark>: " shape the reapers use (agent_lost,
+// pod_lost, dispatch_lost), and names what the cluster reported: the condition's
+// reason and the pod's reason and message. Every part comes from
+// kubelet-supplied fields, so the result is bounded.
+func disruptionReason(pod *corev1.Pod) string {
+	var parts []string
+	for _, c := range pod.Status.Conditions {
+		if c.Type == corev1.DisruptionTarget && c.Status == corev1.ConditionTrue && c.Reason != "" {
+			parts = append(parts, c.Reason)
+		}
+	}
+	if pod.Status.Reason != "" {
+		parts = append(parts, pod.Status.Reason)
+	}
+	cause := "the cluster stopped the task pod"
+	if len(parts) > 0 {
+		cause += " (" + strings.Join(parts, ", ") + ")"
+	}
+	if pod.Status.Message != "" {
+		cause += ": " + pod.Status.Message
+	}
+	return boundReason("pod_disrupted: " + cause + "; re-placed without spending a task retry.")
 }
 
 // outcomeRecord decodes the durable outcome record from the terminated task
@@ -152,8 +269,15 @@ func recordMatchesPod(rec taskoutcome.Record, pod *corev1.Pod) bool {
 // the agent clamps to 255; 128+signal is a shell convention and only appears
 // when a shell sits between. So the exit code cannot be pattern-matched for
 // this, and the pod's own Reason is the only reliable signal.
+//
+// Only an agent-authored reason counts as a classification here (#948): an
+// unmarked one is the task's own text, so it does not hide an OOMKilled pod
+// either, and it is shown only labeled (withTaskProvided).
 func failedReason(rec taskoutcome.Record, pod *corev1.Pod) string {
-	if rec.Reason == "" && podWasOOMKilled(pod) {
+	if agentReason(rec) == "" && ownLimitEviction(pod) {
+		return withTaskProvided(ownLimitEvictionReason(pod), taskProvidedReason(rec))
+	}
+	if agentReason(rec) == "" && podWasOOMKilled(pod) {
 		// The RECORD's exit code, not the container's, and the difference is the
 		// whole reason this takes an argument. On the path that reaches here the
 		// agent survived its child and exited on its own, so the CONTAINER's exit
@@ -165,10 +289,11 @@ func failedReason(rec taskoutcome.Record, pod *corev1.Pod) string {
 		// podFailureReason is right to use the container's, because there the
 		// container IS the corpse. This caller inherited that line without
 		// inheriting the conditions that make it true.
+		code := containerExitCode(pod)
 		if rec.ExitCode != nil {
-			return oomReason(*rec.ExitCode)
+			code = *rec.ExitCode
 		}
-		return oomReason(containerExitCode(pod))
+		return withTaskProvided(oomReason(code), taskProvidedReason(rec))
 	}
 	return recordFailureReason(rec)
 }
@@ -219,14 +344,67 @@ func taskTerminated(pod *corev1.Pod) *corev1.ContainerStateTerminated {
 // own process can write before it is killed, the kubelet's ceiling there is
 // ~4 KiB — seventeen times taskoutcome.MaxReasonLen — and Decode imposes no
 // length limit of its own.
+//
+// That same file is why only an AGENT-AUTHORED reason is served as the
+// platform's own (#948). A reason in a record without the agent's marker is
+// text the task may have written, and serving it bare would have the platform
+// vouch for any string a task chose, such as a claim that the control plane
+// rejected the pod's token. Such a record still settles the outcome (the
+// durable-outcome recovery does not depend on who wrote the reason), but the
+// reason renders from the exit code, with the task's text appended only
+// labeled as task-provided. A record from an agent that predates the marker
+// is indistinguishable from that, and is treated the same way.
 func recordFailureReason(rec taskoutcome.Record) string {
-	if rec.Reason != "" {
-		return boundReason(rec.Reason)
+	if reason := agentReason(rec); reason != "" {
+		return boundReason(reason)
 	}
+	base := "task failed"
 	if rec.ExitCode != nil {
-		return fmt.Sprintf("task failed (exit %d)", *rec.ExitCode)
+		base = fmt.Sprintf("task failed (exit %d)", *rec.ExitCode)
 	}
-	return "task failed"
+	return withTaskProvided(base, taskProvidedReason(rec))
+}
+
+// agentReason is the record's reason when the agent declared itself its
+// author, and empty otherwise.
+func agentReason(rec taskoutcome.Record) string {
+	if rec.AgentAuthored() {
+		return rec.Reason
+	}
+	return ""
+}
+
+// taskProvidedReason is the record's reason when the agent did NOT declare
+// itself its author: text that may come from the task.
+func taskProvidedReason(rec taskoutcome.Record) string {
+	if rec.AgentAuthored() {
+		return ""
+	}
+	return rec.Reason
+}
+
+// withTaskProvided appends a task's own text to a reason the platform built,
+// labeled so it cannot pass for the platform's words. The text is quoted, so a
+// newline or a forged closing bracket cannot leave the label. The task's text is
+// cut to the room the cap leaves after the label, so the label always closes;
+// with no room left the platform's reason is served alone.
+func withTaskProvided(platform, task string) string {
+	if task == "" {
+		return platform
+	}
+	room := taskoutcome.MaxReasonLen - len(platform) - len(" [task-provided: ]")
+	if room < len(`""`)+1 {
+		return platform
+	}
+	cut := taskoutcome.TruncateReason(task, room)
+	// Quoting can expand the text with escapes, so cut until it fits.
+	for cut != "" && len(strconv.Quote(cut)) > room {
+		cut = taskoutcome.TruncateReason(cut, len(cut)-1)
+	}
+	if cut == "" {
+		return platform
+	}
+	return platform + " [task-provided: " + strconv.Quote(cut) + "]"
 }
 
 // podFailureReason describes a failed pod from what Kubernetes observed, for the
@@ -240,6 +418,9 @@ func recordFailureReason(rec taskoutcome.Record) string {
 // result is bounded — the strings are copied from kubelet-supplied fields, which
 // are an untrusted, unbounded source for a value that ends up end-user visible.
 func podFailureReason(pod *corev1.Pod) string {
+	if ownLimitEviction(pod) {
+		return ownLimitEvictionReason(pod)
+	}
 	for _, cs := range pod.Status.ContainerStatuses {
 		if cs.Name != taskContainerName {
 			continue
@@ -299,6 +480,25 @@ func waitingFailureReason(reason, message string) string {
 	}
 }
 
+// unexecutableStart reports whether a FAILED record is the agent's
+// unexecutable record (taskoutcome.UnexecutableBecause): its control plane
+// did not answer before the task's code ran, so ADR 0051 puts the attempt on
+// the infra rail (R-01, #1594). The task can write this file too, so the
+// marker counts only in the shape the agent writes: a reason the agent
+// declares it classified, and no exit code, since no user process ran. What a
+// forged record could still buy is a re-place on the bounded infra budget,
+// which a task can already get by killing its agent (agent_lost).
+func unexecutableStart(rec taskoutcome.Record) bool {
+	return rec.Infra && rec.ExitCode == nil && agentReason(rec) != ""
+}
+
+// unexecutableReason describes an unexecutable start for the operator, with
+// the control_plane_unavailable mark in the "<mark>: " shape the reapers use
+// ahead of the agent's classification.
+func unexecutableReason(rec taskoutcome.Record) string {
+	return boundReason("control_plane_unavailable: " + agentReason(rec))
+}
+
 // boundReason clamps a reason to the outcome record's cap. The cap applies here
 // too because these reasons land in the same end-user-visible field as the
 // agent's own classifications, and they are copied from kubelet-supplied fields.
@@ -342,6 +542,11 @@ type OutcomeReporter interface {
 	FailTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, reason string) error
 	SucceedTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) error
 	RescheduleTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, at time.Time) error
+	// FailTaskInfra records the attempt as failed for an infrastructure reason
+	// (last_failure_kind 'infra', confirmed at once: the terminal pod is the
+	// confirmation), so the planner re-places it on the infra budget instead of
+	// spending a task retry (ADR 0051, #1595).
+	FailTaskInfra(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, reason string) error
 }
 
 // PodSnapshotter supplies the reconciler's task-pod set from a local cache instead
@@ -563,6 +768,8 @@ func (r *Reconciler) recordOutcome(ctx context.Context, tiID string, tryNumber, 
 		return r.reporter.RescheduleTask(ctx, tiID, tryNumber, epoch, v.at)
 	case settleFailed:
 		return r.reporter.FailTask(ctx, tiID, tryNumber, epoch, v.reason)
+	case settleInfra:
+		return r.reporter.FailTaskInfra(ctx, tiID, tryNumber, epoch, v.reason)
 	case settleNothing:
 		return nil
 	default:

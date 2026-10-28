@@ -34,8 +34,9 @@ A backup archive (`leoflow-backup-<timestamp>.tar.gz`) contains:
 
 What is **not** included:
 
-- `~/.dexaflow/python/` (managed CPython) — re-fetched by `dexaflow setup` on the
-  target machine if needed.
+- `~/.dexaflow/python/` (managed CPython): re-fetched on the target machine if
+  needed: by `dexaflow setup` when it has no Python 3.11 to 3.13, or by
+  `dexaflow lite` when a DAG declares 3.11 and the host has none.
 - `~/.dexaflow/postgres/` (managed PG binaries) — same.
 - `~/.dexaflow/venv/` (parser/runtime venv) — re-installed lazily.
 - VCS metadata (`.git`, `.hg`, `.svn`).
@@ -63,12 +64,35 @@ terminal first.
 ## Restore
 
 ```sh
-# Refuses to overwrite an existing ~/.dexaflow install:
+# Refuses to overwrite an install that already has a datastore:
 dexaflow lite restore --input ~/snapshots/before-upgrade.tar.gz
 
-# Use --force to overwrite explicitly (e.g. after `dexaflow uninstall`):
+# Use --force to overwrite it explicitly:
 dexaflow lite restore --input ~/snapshots/before-upgrade.tar.gz --force
 ```
+
+Lite does not need to be running, and does not need to have run before:
+`restore` provisions the managed Postgres itself, through the same path
+`dexaflow lite` uses (download it on first use, initialize its data dir,
+start it on its socket, create the Lite database). If this restore started
+the cluster, it stops it when it finishes; a cluster that was already running
+is left running. It logs each phase:
+
+```
+▸ decoding manifest from /home/me/snap.tar.gz …
+▸ provisioning the managed Postgres …
+▸ applying the datastore dump via psql …
+▸ restoring workspace to /home/me/dexaflow …
+✓ restore complete; run `dexaflow lite` to start.
+```
+
+The archive always holds a managed-Postgres datastore, since `backup` covers
+that path only. The restore pins the install to the managed Postgres, so a
+plain `dexaflow lite` starts the restored data even on a machine where Docker
+runs ([ADR 0094](/project/adrs/0094-lite-auto-follows-the-pinned-datastore/)).
+To move the install to the Docker Postgres later, run
+`dexaflow lite --postgres docker` once; that starts an empty Docker datastore
+and pins the install to it.
 
 The restore command refuses, with a clear error, when:
 
@@ -76,8 +100,12 @@ The restore command refuses, with a clear error, when:
    the restore is the inverse of the upgrade-time drift detector (see
    [Upgrades](/operate/upgrades/)). Loading rows into a DB the binary cannot read
    would corrupt them.
-2. **`~/.dexaflow/` already holds an install** and `--force` is not set.
-   Pass `--force` only after confirming you want to overwrite.
+2. **`~/.dexaflow/` already holds a datastore** (the managed
+   `~/.dexaflow/pgdata`, or a Docker datastore a Lite run used) and `--force`
+   is not set. Pass `--force` only after confirming you want to overwrite. A
+   home that only `dexaflow setup` filled has no datastore, so a restore on a
+   new machine needs no `--force`; the config it replaces is kept as
+   `config.yaml.pre-restore` (below).
 3. **The archive's `MANIFEST.json` is missing** or carries a `manifest_version`
    newer than this binary understands.
 
@@ -115,9 +143,12 @@ scp /tmp/snap.tar.gz user@new-host:~/
 
 # On the new machine, after `curl ... install.sh`:
 dexaflow setup           # provisions managed Python + binaries
-dexaflow lite restore --input ~/snap.tar.gz
+dexaflow lite restore --input ~/snap.tar.gz   # provisions the managed Postgres, then replays
 dexaflow lite            # boots with the restored datastore + workspace
 ```
+
+If Docker runs on the new machine, start with `dexaflow lite --postgres
+managed` instead (see [Restore](#restore)).
 
 ## Worked example: roll back a botched upgrade
 
@@ -128,7 +159,7 @@ dexaflow lite backup --output ~/snap-before-upgrade.tar.gz
 # Upgrade (re-run install.sh, restart dexaflow lite). Something breaks.
 
 # Wipe and restore. --purge removes the new install completely; restore
-# refuses without it because ~/.dexaflow is non-empty after the upgrade.
+# refuses without it because ~/.dexaflow still holds the upgraded datastore.
 dexaflow uninstall --purge
 # Re-install the previous version's binaries via install.sh's pin, then:
 dexaflow lite restore --input ~/snap-before-upgrade.tar.gz
@@ -153,8 +184,68 @@ plane pods (`kubectl rollout restart deployment`). Each pod caches tenant ids
 for its lifetime, and a restored database whose tenants carry different ids
 would otherwise be queried with the old ones.
 
+What the control plane reports after a restore, a failover or a changed
+`database.url`, and the command that recovers each case, is on
+[database lost, restored or repointed](/operate/database-lost-restored-repointed/).
+
 The PR that hardens the Helm chart (#96) will add a `BACKUP.md` to the
 chart README pointing at the upstream guidance.
+
+## Regular restore drills
+
+A backup that has never been restored does not count as a backup. Restore a
+recent backup into a scratch environment on a schedule and check that:
+
+1. The archive or dump is complete and restores without errors.
+2. The control plane boots on it and `/readyz` returns 200.
+3. An admin can sign in and sees the DAGs and runs you expect.
+
+The repository runs the same drill every week and on every release candidate
+(`.github/workflows/restore-drill.yaml`, which runs
+`test/e2e/restore-drill-e2e.sh`).
+
+### Lite restore drill
+
+`dexaflow lite restore --force` replaces `~/.dexaflow`, so run the drill on
+another machine or in a throwaway container or VM, never on the install you
+backed up.
+
+```sh
+# On the install you protect: take a fresh backup.
+dexaflow lite backup --output /tmp/drill-snapshot.tar.gz
+
+# On the scratch machine: restore it and start Lite.
+dexaflow lite restore --input /tmp/drill-snapshot.tar.gz --force
+dexaflow lite &
+for _ in $(seq 1 60); do curl -fsS http://localhost:8080/readyz && break; sleep 1; done
+```
+
+### Pro (Helm) restore drill
+
+Restore into a separate database and point a throwaway release at it, so the
+production release never sees the drill. Use your own values file, so the
+release has the same `secretKey` and can decrypt the restored connections.
+
+```sh
+# Dump the production database and restore it into an empty scratch database.
+pg_dump --clean --if-exists -d "$DATABASE_URL" > /tmp/drill-backup.sql
+psql "$DRILL_DATABASE_URL" -v ON_ERROR_STOP=1 < /tmp/drill-backup.sql
+
+# Pause every DAG in the copy, so the drill release schedules nothing.
+psql "$DRILL_DATABASE_URL" -c "UPDATE dags SET is_paused = true"
+
+# Start a throwaway release on the restored database and check it is ready.
+kubectl create namespace dexaflow-drill
+helm install drill oci://ghcr.io/dexadata/charts/dexaflow -n dexaflow-drill \
+  -f values.yaml --set fullnameOverride=dexaflow-drill \
+  --set database.url="$DRILL_DATABASE_URL" --wait
+kubectl -n dexaflow-drill port-forward svc/dexaflow-drill 8081:8080 &
+curl -fsS http://127.0.0.1:8081/readyz
+
+# Clean up.
+helm uninstall drill -n dexaflow-drill
+kubectl delete namespace dexaflow-drill
+```
 
 ## Related issues
 

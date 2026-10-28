@@ -1,0 +1,47 @@
+{{- /*
+Who may build on the in-cluster builder (#1883, path 4 of ADR 0073). A client
+reaches the daemon with `kubectl exec` into its pod, so building is the right to find the
+pod and exec into it, in the builder namespace and nowhere else. kubectl 1.31
+and later exec over a WebSocket, which an API server authorizes as a `get` on
+pods/exec unless it checks `create` for it; the older SPDY exec is a `create`.
+Both verbs are granted so every pairing of kubectl and API server works.
+
+Everyone bound here shares one daemon and its cache, and can read what the
+others build: bind people who already trust each other, such as the platform
+team and its CI. builder.subjects empty renders the Role alone, for a binding
+made outside the chart.
+*/ -}}
+{{- if .Values.builder.enabled }}
+{{- $ns := include "leoflow.builderNamespace" . }}
+{{- $subjects := include "leoflow.builderSubjects" . | fromYamlArray }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "leoflow.builderName" . }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "leoflow.builderLabels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create, get]
+{{- if $subjects }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "leoflow.builderName" . }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "leoflow.builderLabels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "leoflow.builderName" . }}
+subjects:
+  {{- toYaml $subjects | nindent 2 }}
+{{- end }}
+{{- end }}

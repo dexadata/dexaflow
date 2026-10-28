@@ -104,6 +104,9 @@ A compact JSON document written to the container **termination message**
 - `exit_code` — the user process exit code, for a `failed` outcome.
 - `reschedule_at` — RFC3339 next-poke time, **required** for a `reschedule`
   outcome (see "Reschedule carries its next-poke time" below).
+- `reason` and `author` (added later, optional): an agent-classified failure
+  reason and the marker that declares the agent wrote it; see "Follow-up
+  (#948): who wrote the reason" below.
 - Kept well under the Kubernetes termination-message cap (~4 KiB); it carries the
   outcome, never logs or the return value (those keep their existing paths).
 
@@ -626,6 +629,56 @@ claim the author could have made by exiting 0. The bounds that keep it there:
 
 The residual exposure is therefore misattribution of a task's own claim, the
 same class #948 already documents, and not privilege.
+
+### Follow-up (#948): who wrote the reason
+
+**Implemented in v0.5.3.** A failure record's `reason` is served as the
+platform's own `failure_reason` only when the record declares the agent as its
+author. The agent's reason constructors (`taskoutcome.FailedBecause`,
+`FailedBecauseWith`) stamp `"author":"agent"` on every record that carries a
+reason; records without a reason are unchanged byte for byte, and `v` stays `1`.
+
+A failure record with a reason but without the marker still settles the
+outcome: the durable-outcome recovery does not depend on who wrote the reason.
+Its reason is rendered by the reconciler from what the platform knows (the
+record's exit code, or the pod's OOMKilled), and the record's text is appended
+quoted and labeled, for example
+`task failed (exit 3) [task-provided: "..."]`, so it cannot pass for the
+platform's words and a newline in it cannot escape the label. An unmarked
+reason also no longer hides an OOMKilled pod. The served string keeps the
+240-byte cap.
+
+**Rolling upgrade.** A record written by an agent that predates the marker is
+indistinguishable from one a task wrote, and is treated the same way: it
+settles, and its classification (a bootstrap refusal or an
+`execution_timeout`) is still visible, labeled task-provided rather than
+vouched for. This only affects pods started by an older agent image that end
+after the control plane is upgraded.
+
+**What it does not prevent.** The marker is a declaration, not an
+authentication. A task that knows the format can write the marker into its own
+termination message, and its reason is then served as the platform's, exactly
+as before this change. It is reached only when the agent does not overwrite the
+file afterwards (the agent writes its own record whenever it survives the
+task), for example when the task makes the agent die or the pod is killed. The
+change makes authorship explicit and stops an unmarked or legacy-shaped record
+from being vouched for; it does not stop a deliberate forger.
+
+A marker the task cannot produce was considered and is not reachable without a
+protocol change and more agent hardening. The candidate was a MAC over the
+record keyed by a per-attempt secret. None exists that both the control plane
+can verify and the task cannot read: under pod-per-task the agent's bearer is
+in its environment (`LEOFLOW_AGENT_TOKEN`) or in the projected ServiceAccount
+token file, both readable by a task running as the same uid (the dedicated
+agent is dumpable, so `/proc/<agent>/environ` and its memory are readable;
+only the warm agent clears `PR_SET_DUMPABLE`); the per-attempt JWT is minted
+fresh and not stored, so the control plane cannot recompute a key from it; and
+a key the control plane derives would have to reach the agent over a new RPC
+field, which a task holding the agent's bearer could call itself. A real
+authenticity check therefore needs, together: a non-dumpable dedicated agent,
+a bootstrap credential the task cannot read, and a per-attempt record key
+delivered in-band and verified by the reconciler. That is left for a later
+change; `Author` is the field it would replace.
 
 ### Downstream tasks
 

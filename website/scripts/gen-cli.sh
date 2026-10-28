@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # Generate the CLI reference for the Hugo site from Cobra.
 #
-# Parity with the live MkDocs pipeline (.github/workflows/docs.yml), which runs
-#   go run ./cmd/dexaflow gen-docs --dir docs/cli
-# Here the same generator writes into website/content/reference/cli/ and the raw
-# Cobra markdown is post-processed for Hugo:
+# Runs `go run ./cmd/dexaflow gen-docs` into website/content/reference/cli/ and
+# post-processes the raw Cobra markdown for Hugo:
 #   * a front-matter block (title / linkTitle / weight) is prepended, since
 #     Cobra emits a bare "## <command>" heading with no front matter and Docsy
 #     needs one to title and order the page;
@@ -13,7 +11,7 @@
 #     render hooks disabled (see hugo.toml), a bare `.md` link would 404.
 #
 # Idempotent: reruns overwrite the generated *.md and never touch _index.md.
-# The generated tree IS committed (parallel-track preview convenience); CI
+# The generated tree IS committed (so a preview needs no generator run); CI
 # reruns this before `hugo` so the pages can never drift from the binary.
 set -euo pipefail
 

@@ -489,8 +489,9 @@ type DagVersion struct {
     ID            string
     VersionNumber int
     CreatedAt     time.Time
-    // Version is the deployment label that produced this snapshot: a git describe
-    // (tag/SHA) in production, or "dev-<timestamp>" in dev. It is the stable
+    // Version is the deployment label that produced this snapshot: by default a
+    // git describe (tag/SHA) plus a content hash in production, or
+    // "dev-<timestamp>" in Lite. It is the stable
     // per-deployment identifier under a stable dag_id.
     Version string
 }

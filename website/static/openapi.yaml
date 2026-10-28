@@ -358,6 +358,10 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       summary: Update DAG (typically pause/unpause)
+      description: >-
+        Sets is_paused. A change is audited as dag.pause or dag.unpause with
+        the acting user; asking for the state the DAG is already in records
+        nothing.
       operationId: updateDag
       tags: [DAGs]
       requestBody:
@@ -410,6 +414,111 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DagVersion" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v2/dags/{dag_id}/versions:
+    parameters:
+      - $ref: "#/components/parameters/DagID"
+    post:
+      summary: Register a compiled DAG version (Dexaflow)
+      description: >-
+        Registers a compiled dag.json as a new version of the DAG and makes it
+        current. Re-registering content that is already registered (same spec
+        hash) is a no-op answered with 200 and created false, and leaves the
+        current version as it is. The same label with other content is
+        refused with 409. Needs write on dags (scope dexaflow:deploy).
+
+        Without is_paused, a DAG the register creates starts paused per its
+        is_paused_upon_creation, else the server's dags_are_paused_at_creation,
+        and an existing DAG keeps its state. With is_paused, the DAG ends the
+        register in that state whether it is created, gets a new version or
+        already had this content; a change to an existing DAG is audited as
+        dag.pause or dag.unpause in the same transaction. Pausing is a
+        run-state write: a scoped token needs dexaflow:run as well as
+        dexaflow:deploy to send is_paused, else the register is refused with
+        403.
+      operationId: registerDagVersion
+      tags: [DAGs]
+      parameters:
+        - name: is_paused
+          in: query
+          required: false
+          description: >-
+            Sets the DAG's is_paused for this register (true or false). Any
+            other value is refused with 400. A scoped token needs the
+            dexaflow:run scope to send it (403 otherwise).
+          schema: { type: boolean }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DagSpec" }
+      responses:
+        "200":
+          description: The content was already registered; nothing changed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VersionRegistration" }
+        "201":
+          description: A new version was registered and made current
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VersionRegistration" }
+        "400":
+          description: The spec is invalid or refused by the operator's policy
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: The caller may not register, or a scoped token sent is_paused without dexaflow:run
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: The version label is registered with other content
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v2/dags/{dag_id}/currentVersion:
+    parameters:
+      - $ref: "#/components/parameters/DagID"
+    put:
+      summary: Make a registered version current (Dexaflow)
+      description: >-
+        Makes a registered version of the DAG the one new runs are created
+        with, by label or by version_number: a rollback, or a roll forward.
+        The DAG's schedule and metadata become that version's, in the same
+        transaction. Runs that already exist keep their version, and
+        is_paused is never changed. The version must pass the checks a
+        register of it would pass today. Naming the current version changes
+        nothing (changed false). Audited as dag.version.set_current. Needs
+        write on dags (scope dexaflow:deploy).
+      operationId: setDagCurrentVersion
+      tags: [DAGs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DagCurrentVersionRequest" }
+      responses:
+        "200":
+          description: The version is current
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DagCurrentVersionChange" }
+        "400":
+          description: The body is invalid, or the version's spec is refused by the current checks
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: The caller may not deploy, or the version exceeds a tenant limit
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /api/v2/dags/{dag_id}/dagRuns:
@@ -470,6 +579,46 @@ paths:
               schema: { $ref: "#/components/schemas/DAGRun" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear:
+    parameters:
+      - $ref: "#/components/parameters/DagID"
+      - $ref: "#/components/parameters/DagRunID"
+    post:
+      summary: Clear a whole DAG run (queue its task instances for re-run)
+      description: >-
+        The run page's Clear action. A dry run (the default) answers the task
+        instances the clear would reset. The clear itself resets them,
+        re-queues the run and answers the run.
+      operationId: clearDagRun
+      tags: [DAG Runs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DAGRunClearRequest" }
+      responses:
+        "200":
+          description: >-
+            With dry_run (the default), the task instances the clear would
+            reset; otherwise the cleared run.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/TaskInstanceCollection"
+                  - $ref: "#/components/schemas/DAGRun"
+        "400":
+          description: The body is not valid JSON, or only_new is true
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: The caller may not change task instances
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances:
     parameters:
       - $ref: "#/components/parameters/DagID"
@@ -478,6 +627,12 @@ paths:
       summary: List task instances of a DAG run
       operationId: listTaskInstances
       tags: [Task Instances]
+      description: >-
+        Pages with the same limit, offset and cursor query parameters as the
+        DAG run list (they are not declared on this operation so the
+        generated client keeps its signature). A request that carries cursor
+        gets next_cursor and previous_cursor in the body; only the offset
+        cursors this list issues are accepted, any other is refused with 400.
       responses:
         "200":
           description: A page of task instances
@@ -501,6 +656,61 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TaskInstance" }
+    patch:
+      summary: Mark a task instance as success, failed or skipped
+      description: >-
+        Sets the task instance's state, as the UI's Mark as action does. The
+        answer is the affected set, a collection holding the updated task
+        instance, as Apache Airflow declares it.
+      operationId: patchTaskInstance
+      tags: [Task Instances]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaskInstanceStateUpdate" }
+      responses:
+        "200":
+          description: The updated task instance, as a one-entry collection
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskInstanceCollection" }
+        "400":
+          description: new_state is not success, failed or skipped
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run:
+    parameters:
+      - $ref: "#/components/parameters/DagID"
+      - $ref: "#/components/parameters/DagRunID"
+      - $ref: "#/components/parameters/TaskID"
+    patch:
+      summary: Preview marking a task instance
+      description: >-
+        Answers the task instance with the state the PATCH would set, without
+        changing anything.
+      operationId: patchTaskInstanceDryRun
+      tags: [Task Instances]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaskInstanceStateUpdate" }
+      responses:
+        "200":
+          description: The task instance as the PATCH would leave it, as a one-entry collection
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskInstanceCollection" }
+        "400":
+          description: new_state is not success, failed or skipped
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/logs/{try_number}:
     parameters:
@@ -676,14 +886,20 @@ components:
       name: cursor
       in: query
       description: >-
-        Dexaflow extension. Opaque keyset cursor taken from the
-        Dexaflow-Next-Cursor response header of the previous page. When set,
-        offset is ignored and the page holds the rows after the cursor in the
-        same order, at the cost of the first page whatever the depth. The
-        response body is unchanged. With a state filter, offset paging filters
-        the newest 10000 runs and counts total_entries within them, while
-        cursor paging filters and counts every run of the DAG, so the two
-        modes can report different totals for a DAG with more runs than that.
+        Opaque cursor, as Apache Airflow 3.3 pages its lists. Send it empty
+        for the first page, then the next_cursor or previous_cursor the
+        previous body named. Whenever the request carries cursor, the body
+        names next_cursor (absent on the last page) and previous_cursor
+        (absent on the first page); a request without cursor gets the body
+        without those fields. A cursor that is not one this server issued is
+        refused with 400. Dexaflow also accepts the keyset cursor of the
+        Dexaflow-Next-Cursor response header on the DAG run list: the page
+        then holds the runs after the cursor in the same order, at the cost of
+        the first page whatever the depth. With a state filter, offset paging
+        filters the newest 10000 runs and counts total_entries within them,
+        while keyset paging filters and counts every run of the DAG, so the
+        two modes can report different totals for a DAG with more runs than
+        that.
       schema: { type: string }
     DagID:
       name: dag_id
@@ -830,6 +1046,13 @@ components:
         schema: { type: string, nullable: true }
         port: { type: integer, nullable: true }
         extra: { type: string, nullable: true }
+        extra_unreadable:
+          type: boolean
+          description: >-
+            Present and true in a listing when the extra is encrypted with a
+            secret key the server does not have (for example after a key
+            rotation that dropped the old key). The extra is then masked.
+            Reading the connection alone answers 500 with a message naming it.
 
     ConnectionBody:
       type: object
@@ -878,6 +1101,13 @@ components:
         description: { type: string, nullable: true }
         is_encrypted: { type: boolean }
         team_name: { type: string, nullable: true }
+        value_unreadable:
+          type: boolean
+          description: >-
+            Present and true in a listing when the value is encrypted with a
+            secret key the server does not have (for example after a key
+            rotation that dropped the old key). The value is then masked.
+            Reading the variable alone answers 500 with a message naming it.
 
     VariableBody:
       type: object
@@ -947,6 +1177,61 @@ components:
         bundle_version: { type: string, nullable: true }
         bundle_url: { type: string, nullable: true }
         created_at: { type: string, format: date-time }
+        image:
+          type: string
+          description: Dexaflow. The image the version runs, pinned by digest when the deploy resolved one.
+        spec_hash:
+          type: string
+          description: Dexaflow. The canonical hash of the version's dag.json.
+        is_current:
+          type: boolean
+          description: Dexaflow. Whether new runs are created with this version.
+        created_by:
+          type: string
+          nullable: true
+          description: Dexaflow. Id of the user who registered the version (not an email, since every reader of the DAG sees it); null when none was recorded.
+
+    DagCurrentVersionRequest:
+      type: object
+      description: Exactly one of version and version_number.
+      properties:
+        version: { type: string, minLength: 1, maxLength: 255, description: The version label (bundle_version). }
+        version_number: { type: integer, minimum: 1 }
+
+    DagCurrentVersionChange:
+      type: object
+      required: [dag_id, changed, from, to]
+      properties:
+        dag_id: { type: string }
+        changed: { type: boolean, description: False when the version was already current. }
+        from:
+          description: The version that was current before; null when none was.
+          type: object
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/DagVersion" }]
+        to: { $ref: "#/components/schemas/DagVersion" }
+
+    DagSpec:
+      type: object
+      description: A compiled dag.json, as described by docs/api/dag-schema.json.
+      additionalProperties: true
+      required: [schema_version, dag_id, dag_version, image, tasks]
+      properties:
+        schema_version: { type: string }
+        dag_id: { type: string }
+        dag_version: { type: string }
+        image: { type: string }
+        tasks: { type: array, items: { type: object, additionalProperties: true } }
+
+    VersionRegistration:
+      type: object
+      properties:
+        dag_id: { type: string }
+        version: { type: string }
+        spec_hash: { type: string }
+        created: { type: boolean, description: False when the content was already registered. }
+        dag_created: { type: boolean, description: True when this register created the DAG (its first version); false for a new version of an existing DAG. }
+        is_paused: { type: boolean, description: The DAG's is_paused after the register. }
 
     DagVersionCollection:
       type: object
@@ -1030,6 +1315,16 @@ components:
           type: array
           items: { $ref: "#/components/schemas/DAGRun" }
         total_entries: { type: integer }
+        next_cursor:
+          type: string
+          description: >-
+            Cursor of the next page. Present only when the request carried
+            cursor and a next page exists.
+        previous_cursor:
+          type: string
+          description: >-
+            Cursor of the previous page. Present only when the request carried
+            cursor and the page is not the first.
 
     DAGRunCreate:
       type: object
@@ -1083,6 +1378,59 @@ components:
           type: array
           items: { $ref: "#/components/schemas/TaskInstance" }
         total_entries: { type: integer }
+        next_cursor:
+          type: string
+          description: >-
+            Cursor of the next page. Present only when the request carried
+            cursor and a next page exists.
+        previous_cursor:
+          type: string
+          description: >-
+            Cursor of the previous page. Present only when the request carried
+            cursor and the page is not the first.
+
+    TaskInstanceStateUpdate:
+      type: object
+      required: [new_state]
+      properties:
+        new_state:
+          type: string
+          enum: [success, failed, skipped]
+
+    DAGRunClearRequest:
+      type: object
+      properties:
+        dry_run:
+          type: boolean
+          default: true
+          description: >-
+            Return the task instances that WOULD be cleared, without clearing
+            them. Defaults to true, matching Apache Airflow. Send false to
+            execute.
+        only_failed:
+          type: boolean
+          default: false
+          description: >-
+            Restrict the clear to the run's task instances in a failed state.
+            false (the default, matching Apache Airflow) takes every task
+            instance of the run.
+        only_new:
+          type: boolean
+          default: false
+          description: >-
+            Not supported. Sending true is refused with 400: Dexaflow cannot yet
+            tell which tasks a newer DAG version added.
+        run_on_latest_version:
+          type: boolean
+          nullable: true
+          description: >-
+            Which version the re-run executes. Unset or false keeps the version
+            the run was created with; true re-binds the run to the DAG's current
+            registered version.
+        note:
+          type: string
+          nullable: true
+          description: Accepted and not stored (run notes are not editable yet).
 
     ClearTaskInstancesRequest:
       type: object

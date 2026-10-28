@@ -46,6 +46,7 @@ func readIgnore(t *testing.T, dir string) string {
 // context — a `.env`, a BYO `profiles.yml`, `.git`, and the generated Dockerfile
 // the build had just written.
 func TestExcludePathsReachTheBuildContext(t *testing.T) {
+	t.Parallel()
 	dir := writeCtx(t, map[string]string{"dag.py": "x", ".git/config": "x"})
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ExcludePaths = []string{"secrets", "*.pem"}
@@ -75,6 +76,7 @@ func TestExcludePathsReachTheBuildContext(t *testing.T) {
 // excluding big.bin and a per-Dockerfile file excluding .env, big.bin shipped.
 // Closing one leak by reopening the author's own exclusions is not a fix.
 func TestUserDockerignoreIsMergedNotReplaced(t *testing.T) {
+	t.Parallel()
 	dir := writeCtx(t, map[string]string{".dockerignore": "big.bin\n!keep.me\n", "dag.py": "x"})
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
@@ -112,6 +114,7 @@ func TestUserDockerignoreIsMergedNotReplaced(t *testing.T) {
 // Scoped to the project directories rather than added to the defaults, because
 // `logs` is an ordinary name a non-dbt project may want shipped.
 func TestDbtArtifactsAreScopedToTheirProject(t *testing.T) {
+	t.Parallel()
 	dir := writeCtx(t, map[string]string{"dag.py": "x"})
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.DbtGroups = map[string]*domain.DbtConfig{"a": {Project: "transform"}}
@@ -150,6 +153,7 @@ func TestDbtArtifactsAreScopedToTheirProject(t *testing.T) {
 // is here so the next person tempted by the same tidy-up finds out in seconds
 // instead of in a k3d run.
 func TestDbtInputsAreNeverExcluded(t *testing.T) {
+	t.Parallel()
 	dir := writeCtx(t, map[string]string{"dag.py": "x"})
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.Dbt = &domain.DbtConfig{Project: ".", Manifest: "target/manifest.json"}
@@ -171,6 +175,7 @@ func TestDbtInputsAreNeverExcluded(t *testing.T) {
 // TestByoProfilesIsWarnedNotDropped: profiles.yml is credential-shaped, so it
 // gets the same treatment as .env — the author is told, not overruled.
 func TestByoProfilesIsWarnedNotDropped(t *testing.T) {
+	t.Parallel()
 	dir := writeCtx(t, map[string]string{"transform/profiles.yml": "password: s3cret", "dag.py": "x"})
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.DbtGroups = map[string]*domain.DbtConfig{"a": {Project: "transform"}}
@@ -191,6 +196,7 @@ func TestByoProfilesIsWarnedNotDropped(t *testing.T) {
 }
 
 func TestNoDbtMeansNoDbtExcludes(t *testing.T) {
+	t.Parallel()
 	dir := writeCtx(t, map[string]string{"dag.py": "x"})
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
@@ -206,6 +212,7 @@ func TestNoDbtMeansNoDbtExcludes(t *testing.T) {
 // DAG that calls load_dotenv() with a failure far from its cause; letting a
 // password ship unnoticed is also wrong. The author is told in time to act.
 func TestSecretishFilesWarnRatherThanVanish(t *testing.T) {
+	t.Parallel()
 	dir := writeCtx(t, map[string]string{".env": "PASSWORD=hunter2", "dag.py": "x"})
 	// A dbt project at "." is what makes the generated Dockerfile a wholesale
 	// `COPY . /home/leoflow/`, which is when .env actually ships.
@@ -243,6 +250,7 @@ func TestSecretishFilesWarnRatherThanVanish(t *testing.T) {
 // false, and a security warning that fires on the most common project shape
 // trains people to ignore the one that is real.
 func TestNoWarningWhenNothingCopiesIt(t *testing.T) {
+	t.Parallel()
 	dir := writeCtx(t, map[string]string{".env": "PASSWORD=hunter2", "dag.py": "x"})
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
@@ -260,6 +268,7 @@ func TestNoWarningWhenNothingCopiesIt(t *testing.T) {
 // .dockerignore — the docker-native, obvious place — must not be told to go and
 // duplicate it in dexaflow.yaml.
 func TestAuthorsOwnExclusionSilencesTheWarning(t *testing.T) {
+	t.Parallel()
 	dir := writeCtx(t, map[string]string{
 		".env": "PASSWORD=hunter2", "dag.py": "x", ".dockerignore": ".env\n",
 	})
@@ -283,6 +292,7 @@ func TestAuthorsOwnExclusionSilencesTheWarning(t *testing.T) {
 // without the expansion the feature lands looking delivered and prunes almost
 // nothing.
 func TestBareNamesPruneNestedCopies(t *testing.T) {
+	t.Parallel()
 	dir := writeCtx(t, map[string]string{"dag.py": "x"})
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
@@ -304,6 +314,7 @@ func TestBareNamesPruneNestedCopies(t *testing.T) {
 // `secrets`, `!secrets/keep.pem`, `secrets`, the keep.pem shipped on both
 // builders. Only the `p/**` form wins.
 func TestOurBlockBeatsAnEarlierNegation(t *testing.T) {
+	t.Parallel()
 	dir := writeCtx(t, map[string]string{
 		"dag.py": "x", ".dockerignore": "secrets\n!secrets/keep.pem\n",
 	})
@@ -331,6 +342,7 @@ func TestOurBlockBeatsAnEarlierNegation(t *testing.T) {
 // git-committable artifact headed "removed after the build" that no longer
 // tracks dexaflow.yaml.
 func TestInterruptedBlockIsStrippedNotAdopted(t *testing.T) {
+	t.Parallel()
 	dir := writeCtx(t, map[string]string{"dag.py": "x", ".dockerignore": "big.bin\n"})
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
@@ -360,6 +372,7 @@ func TestInterruptedBlockIsStrippedNotAdopted(t *testing.T) {
 // more and never less, which is the right direction to fail in. The next build
 // must not stack duplicate blocks onto it.
 func TestMergeIsIdempotentAcrossAnInterruptedBuild(t *testing.T) {
+	t.Parallel()
 	dir := writeCtx(t, map[string]string{".dockerignore": "big.bin\n", "dag.py": "x"})
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.ApplyDefaults()
@@ -390,6 +403,7 @@ func TestMergeIsIdempotentAcrossAnInterruptedBuild(t *testing.T) {
 // so a script standing in for `docker` can record what the context looked like
 // at the moment the build ran — which is the only moment that matters.
 func TestBuildActuallyGetsTheDockerignore(t *testing.T) {
+	t.Parallel()
 	dir := writeCtx(t, map[string]string{
 		"dag.py": "print('x')", ".env": "PASSWORD=hunter2", ".git/config": "x",
 	})
@@ -429,6 +443,7 @@ func TestBuildActuallyGetsTheDockerignore(t *testing.T) {
 // made the highest-value hits structurally unreachable: a whole .ssh or .aws
 // copied into a project is a bigger leak than any single file.
 func TestSecretDirectoriesAreReachable(t *testing.T) {
+	t.Parallel()
 	dir := writeCtx(t, map[string]string{"dag.py": "x", ".aws/credentials": "key", ".env.production": "P=1"})
 	cfg := &domain.LeoflowConfig{DagID: "d", Dbt: &domain.DbtConfig{Project: "."}}
 	cfg.ApplyDefaults()
@@ -448,6 +463,7 @@ func TestSecretDirectoriesAreReachable(t *testing.T) {
 // of layer output is a warning nobody reads — the repo already learned this and
 // shipped remindDeprecatedPythonAfterBuild for exactly this reason.
 func TestFindingsComeBackForThePostBuildReminder(t *testing.T) {
+	t.Parallel()
 	dir := writeCtx(t, map[string]string{"dag.py": "x", ".env": "P=1"})
 	cfg := &domain.LeoflowConfig{DagID: "d", Dbt: &domain.DbtConfig{Project: "."}}
 	cfg.ApplyDefaults()

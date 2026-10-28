@@ -28,6 +28,9 @@ on:
       - ".github/ci/kind-datastores.yaml"
       - "deploy/Dockerfile.server"
       - "deploy/Dockerfile.migrate"
+      # The migrate image's binary: the kind install runs it as the hook Job.
+      - "cmd/dexaflow-migrate/**"
+      - "internal/migrator/**"
       - "migrations/**"
       # internal/config defines the LEOFLOW_* env contract (Viper struct
       # tags) the chart wires through. Renaming an env name there without
@@ -61,6 +64,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v4.2.0
@@ -163,6 +168,8 @@ jobs:
     needs: lint
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/docker-hub-mirror
         with:
           python-versions: none
@@ -382,6 +389,16 @@ jobs:
           # the HEAD upgrade below then applies every new migration to it.
           kubectl -n leoflow exec deploy/postgres -- psql -v ON_ERROR_STOP=1 \
             -U leoflow -d leoflow -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+          # The installation ConfigMap (ADR 0090 decision 3) is written by the
+          # migrate wrapper, not rendered by the chart, so `helm uninstall`
+          # leaves it in place by design: check that it did. It still holds
+          # the id of the database just emptied, and the HEAD upgrade below
+          # would rightly refuse the fresh database as replaced (exit 8). An
+          # operator upgrading from the previous release has no ConfigMap
+          # yet, so remove it to start from that namespace, as the
+          # troubleshooting page tells an operator starting over to do.
+          kubectl -n leoflow get configmap leoflow-installation -o name
+          kubectl -n leoflow delete configmap leoflow-installation --wait
           # No pinned version, which would go stale silently the first time
           # nobody remembered to bump it: the previous release is the newest
           # final chart of HEAD's own minor (#1403). Not the newest chart in the
@@ -422,7 +439,8 @@ jobs:
           # The image overrides point at the images this job built and loaded into
           # kind, because no registry has an image for an unreleased version.
           # Upgrade through the chart as it is published under its pre-rename
-          # name (helm-release.yaml packages the same templates as `leoflow`):
+          # name (the `promote` job in release.yaml packages the same templates as
+          # `leoflow`):
           # that is the chart an existing release is upgraded with.
           legacy="$(mktemp -d)/leoflow"
           cp -R helm/dexaflow "${legacy}"
@@ -461,6 +479,31 @@ jobs:
           fi
           echo "durable Secret is tracked, the Deployment reads it, the hook copy is gone"
 
+      # Expand/contract guard (ADR 0090, #1994): roll back to the previous release
+      # and prove its binary boots and becomes ready on HEAD's schema. A contract
+      # step landed too early (such as dropping/renaming a column, or adding NOT NULL
+      # without a default) breaks the older binary.
+      - name: helm rollback to previous release (expand/contract schema guard)
+        run: |
+          set -euo pipefail
+          # Revision 1 is the last released chart installed above, revision 2
+          # the upgrade to HEAD. A rollback runs no pre-upgrade hook, so the
+          # old binary meets HEAD's schema as it is.
+          helm rollback leoflow 1 -n leoflow --wait --timeout 300s
+          kubectl -n leoflow rollout status deploy/leoflow --timeout=180s
+          kubectl -n leoflow port-forward svc/leoflow 8082:8080 &
+          PF_PID=$!
+          trap 'kill "$PF_PID" 2>/dev/null || true' EXIT
+          ready=0
+          for _ in $(seq 1 15); do
+            if curl -fsS http://127.0.0.1:8082/readyz; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          test "$ready" -eq 1 || { echo "::error::previous release binary failed /readyz on the new schema" >&2; exit 1; }
+          echo "previous release binary is ready on HEAD schema after rollback"
 
       # If anything above failed (helm install, smoke, upgrade, post-upgrade
       # smoke), dump the cluster + helm state so the cause is visible from

@@ -1,9 +1,0 @@
-kind: Changed
-body: |-
-  **The scheduler reads task instances for all active runs in one query.**
-  Each tick used to load task instances with one query per active run, so the
-  database work of a tick grew with the number of runs in flight. It is now a
-  single query per tick whatever the number of runs. With 1,000 active runs of
-  20 tasks the read went from 1,001 queries to 2 and from about 200 ms to
-  about 110 ms on a local Postgres 16. Scheduling decisions are unchanged.
-time: 2026-10-02T17:05:00.000000000-03:00

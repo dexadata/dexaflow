@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_build/
 title: "dexaflow build"
 linkTitle: "build"
-weight: 16
+weight: 20
 ---
 
 Build the container image of every DAG project in a workspace.
@@ -23,10 +23,13 @@ dexaflow build [workspace] [flags]
 
 ```
       --builder string       image build tool to shell out to (e.g. docker, podman, nerdctl) (default "docker")
-      --dag-version string   version recorded in each dag.json and used by the registry tag strategy (default: git describe, else dev)
+      --dag-version string   version recorded in each dag.json and used by the registry tag strategy (default: per project, git describe of its directory, or dev outside git, plus a hash of its content)
   -h, --help                 help for build
+      --platform strings     image platform to build for, os/arch (repeatable or comma-separated), over build.platforms in dexaflow.yaml, the target and the workspace defaults (default linux/amd64)
       --push                 push each built image to its registry
-      --sha string           commit sha for the git_sha tag strategy (default: git rev-parse --short HEAD)
+      --rebuild              build each dependency image again even when the registry holds one for its key (with --push)
+      --registry string      image registry prefix to push to, over every other source (then DEXAFLOW_REGISTRY, dexaflow.yaml, the target, the workspace defaults, the config file)
+      --sha string           commit sha for the git_sha tag strategy (default: git rev-parse --short HEAD in each project's directory)
 ```
 
 ### Options inherited from parent commands
@@ -35,6 +38,7 @@ dexaflow build [workspace] [flags]
       --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
+      --target name         name of the control plane to use (default: DEXAFLOW_TARGET, then the target selected for the workspace; see dexaflow target list)
 ```
 
 ### SEE ALSO

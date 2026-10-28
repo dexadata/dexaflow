@@ -111,7 +111,7 @@ tests:
           content:
             apiGroups: [""]
             resources: ["persistentvolumeclaims"]
-            verbs: ["create", "delete"]
+            verbs: ["create", "delete", "list"]
 
   - it: Role grants deletecollection on pods only with executor.collectSettledRunPods
     documentIndex: 0
@@ -127,3 +127,37 @@ tests:
       - contains:
           path: rules[0].verbs
           content: delete
+
+  # The register dry run looks up the ServiceAccount each task pod would run
+  # as, so a deploy learns before the build that one is missing or carries no
+  # pull secret (#1889, ADR 0085). One read verb: no list, no watch, and no
+  # access to the Secrets the account names.
+  - it: grants get on serviceaccounts for the register dry run
+    documentIndex: 0
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["serviceaccounts"]
+            verbs: ["get"]
+      - notContains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["secrets"]
+          any: true
+
+  # Split mode binds the Role to the scheduler only (ADR 0049), which never
+  # serves the dry run, so the read is not granted there.
+  - it: does not grant serviceaccounts in split mode
+    documentIndex: 0
+    set:
+      split.enabled: true
+    asserts:
+      - notContains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["serviceaccounts"]
+            verbs: ["get"]

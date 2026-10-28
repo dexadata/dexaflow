@@ -14,6 +14,9 @@ func TestTaskStateIsTerminal(t *testing.T) {
 		TaskStateFailed:          true,
 		TaskStateSkipped:         true,
 		TaskStateUpstreamFailed:  true,
+		// A task the run's version no longer declares (ADR 0086), finished
+		// as in Airflow.
+		TaskStateRemoved: true,
 	}
 	for state, want := range terminal {
 		if got := state.IsTerminal(); got != want {

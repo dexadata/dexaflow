@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	gooidc "github.com/coreos/go-oidc/v3/oidc"
 	jose "github.com/go-jose/go-jose/v4"
 )
 
@@ -61,7 +62,9 @@ type cachedKeySet struct {
 	cooldown time.Duration
 
 	// fetch serializes downloads, so a burst on a cold cache waits for one.
-	fetch sync.Mutex
+	// It is a one-slot semaphore rather than a mutex so a waiting caller can
+	// give up when its own context ends (#1588).
+	fetch chan struct{}
 
 	mu          sync.Mutex // guards the fields below
 	keys        []jose.JSONWebKey
@@ -76,6 +79,7 @@ func newCachedKeySet(url string, algs []string, now func() time.Time) *cachedKey
 		client:   &http.Client{Timeout: keyFetchTimeout},
 		now:      now,
 		cooldown: KeyRefreshCooldown,
+		fetch:    make(chan struct{}, 1),
 	}
 	for _, a := range algs {
 		ks.algs = append(ks.algs, jose.SignatureAlgorithm(a))
@@ -130,10 +134,15 @@ func verifyWith(jws *jose.JSONWebSignature, keys []jose.JSONWebKey) ([]byte, boo
 // refresh downloads the JWKS unless another caller already did since seen,
 // or the last attempt is younger than the cooldown. Within the cooldown it
 // refuses: as an outage when the last attempt failed, as an unknown key
-// otherwise.
+// otherwise. A caller whose context ends while another caller's download runs
+// stops waiting and gets an outage: its token was not checked.
 func (ks *cachedKeySet) refresh(ctx context.Context, seen uint64) ([]jose.JSONWebKey, error) {
-	ks.fetch.Lock()
-	defer ks.fetch.Unlock()
+	select {
+	case ks.fetch <- struct{}{}:
+	case <-ctx.Done():
+		return nil, fmt.Errorf("%w: waiting for the key download: %w", ErrKeysUnavailable, ctx.Err())
+	}
+	defer func() { <-ks.fetch }()
 
 	ks.mu.Lock()
 	if ks.gen != seen {
@@ -191,4 +200,27 @@ func (ks *cachedKeySet) download(ctx context.Context) ([]jose.JSONWebKey, error)
 		return nil, fmt.Errorf("decoding jwks: %w", err)
 	}
 	return set.Keys, nil
+}
+
+// NewKeySet returns the JWKS published at url as a go-oidc key set, with
+// the cache, the refresh cooldown and the size and time bounds the trusted
+// issuer uses. It makes no network call until a signature is checked. Only
+// algs are accepted. The CI OIDC issuers (ADR 0092) share it.
+func NewKeySet(url string, algs []string, now func() time.Time) gooidc.KeySet {
+	return newCachedKeySet(url, algs, now)
+}
+
+// TrackKeyOutage returns a context to verify a token with, and a function
+// that reports, after the verification, whether it failed because the keys
+// could not be downloaded rather than because the token is bad.
+func TrackKeyOutage(ctx context.Context) (tracked context.Context, outage func() bool) {
+	tracked, o := withKeyOutage(ctx)
+	return tracked, o.hit.Load
+}
+
+// MarkKeyOutage records on a context from TrackKeyOutage that the keys could
+// not be obtained, for a key set that finds its keys some other way first
+// (an OpenID discovery document, say).
+func MarkKeyOutage(ctx context.Context) {
+	markKeyOutage(ctx)
 }

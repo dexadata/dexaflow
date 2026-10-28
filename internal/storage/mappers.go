@@ -120,6 +120,19 @@ func mapDagWithVersion(d queries.GetDagWithVersionRow) domain.DAG {
 	return out
 }
 
+func mapDagWithFilter(d queries.ListDagsWithFilterRow) domain.DAG {
+	out := mapDag(queries.Dag{
+		DagID: d.DagID, Description: d.Description, Owner: d.Owner, Tags: d.Tags,
+		Schedule: d.Schedule, ScheduleTimezone: d.ScheduleTimezone, StartDate: d.StartDate,
+		IsPaused: d.IsPaused, IsActive: d.IsActive, MaxActiveRuns: d.MaxActiveRuns,
+		Catchup: d.Catchup, UpdatedAt: d.UpdatedAt,
+	})
+	if d.CurrentVersionLabel != nil {
+		out.CurrentVersion = *d.CurrentVersionLabel
+	}
+	return out
+}
+
 // mapDagRunWithVersion is mapDagRun plus the version label the joined query
 // carries, for the same reason as mapDagWithVersion.
 func mapDagRunWithVersion(r queries.GetDagRunWithVersionRow, dagID string) domain.DagRun {
@@ -158,6 +171,8 @@ func mapTaskInstance(ti queries.TaskInstance, dagID, runID string) domain.TaskIn
 		Duration:    ti.DurationSeconds,
 		Hostname:    strOrEmpty(ti.Hostname),
 		Note:        strOrEmpty(ti.Note),
+		Pool:        poolName(ti.Pool),
+		PoolSlots:   int(ti.PoolSlots),
 		// error_message is where every failure path already records its cause; it
 		// was written but never read back, which is what left a failed attempt with
 		// no visible reason anywhere outside the control plane's own logs.
@@ -177,4 +192,13 @@ func parseTimestamptz(s string) pgtype.Timestamptz {
 		}
 	}
 	return pgtype.Timestamptz{}
+}
+
+// poolName names a task instance's pool, resolving the NULL an unset pool is
+// stored as to the implicit default_pool (see poolOrNil).
+func poolName(pool *string) string {
+	if pool == nil || *pool == "" {
+		return domain.DefaultPoolName
+	}
+	return *pool
 }

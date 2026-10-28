@@ -20,34 +20,88 @@ A **paused** DAG is one whose `is_paused` flag is `true` in the metadata databas
 
 | Action | Paused DAG | Unpaused DAG |
 |---|---|---|
-| **Scheduler-created runs** (cron, `@daily`, `@hourly`, …) | ❌ Suspended — no new scheduled runs are created | ✅ Created at each interval |
-| **Catchup backfills** | ❌ Suspended — backlog accrues silently until you unpause | ✅ Created on each tick (subject to `catchup`/`max_active_runs`) |
-| **Manual triggers** (UI **Trigger DAG** button, `POST /api/v2/dags/{id}/dagRuns`) | ✅ **Always run** — pause does not gate manual triggers | ✅ Run |
-| **In-flight runs** (already created when the pause flipped) | ✅ Continue to completion — pause is not a kill switch | ✅ Continue |
+| **Scheduler-created runs** (cron, `@daily`, `@hourly`, …) | ❌ Suspended: no new scheduled runs are created | ✅ Created at each interval |
+| **Catchup backfills** | ❌ Suspended: backlog accrues silently until you unpause | ✅ Created on each tick (subject to `catchup`/`max_active_runs`) |
+| **Manual triggers** (UI **Trigger DAG** button, `POST /api/v2/dags/{id}/dagRuns`, `dexaflow deploy --trigger`) | ⏸ Accepted and **queued**: the run is created, but it does not start until you unpause | ✅ Run |
+| **Queued runs** (created before the pause, or re-queued by a clear) | ⏸ Wait in `queued`: no new task is started or dispatched; tasks of a cleared run that were already running finish | ✅ Start on the next scheduler tick, oldest first, up to `max_active_runs` running |
+| **Running runs** (in state `running` when the pause flipped) | ✅ Continue to completion: pause is not a kill switch | ✅ Continue |
 
-This is **intentional** and mirrors Apache Airflow's contract: *paused* gates the
-scheduler, not the operator. An operator who triggers a DAG manually has already
-acknowledged the side effects — pause is for *quieting the cron*, not for
-*disabling the pipeline*.
+This mirrors Apache Airflow 3: *paused* stops the scheduler from starting
+work. A trigger on a paused DAG is still accepted (the API answers with the
+new run in state `queued`, as Airflow does), and the run waits until someone
+unpauses the DAG with the switch in the UI or
+`dexaflow admin dags unpause <dag_id>`. On the next scheduler tick after the
+unpause, the waiting runs start, as many as `max_active_runs` allows.
+
+**`max_active_runs` caps runs twice.** Neither the schedule nor a trigger
+creates a run while the DAG has `max_active_runs` runs queued or running. And,
+as in Airflow, the scheduler moves a queued run to `running` only while fewer
+than `max_active_runs` runs of the DAG are running, oldest logical date first
+(close to Airflow's `run_after` order); the others stay `queued`, with nothing
+dispatched, until a running run finishes. A clear can leave more queued runs
+than the cap, since it re-queues a finished run whatever the count: they start
+one free slot at a time, after an unpause too, not all at once. A run that a
+clear re-queued goes back to `running` the same way, with a new start time.
+Only the scheduler starts a run: `PATCH /api/v2/dags/{dag_id}/dagRuns/{run_id}`
+sets a run to `queued`, `success` or `failed`, as in Airflow, and a PATCH to
+`running` stores `queued` (on a run already running it changes nothing), so
+the scheduler starts the run under the pause and the cap.
+
+Before 0.5.4 a manual trigger on a paused DAG started at once. With new DAGs
+paused at creation (below), a first `dexaflow deploy --trigger` now leaves its
+run queued: unpause the DAG and the run starts.
+
+**Running runs.** Pausing a DAG does not touch a run in state `running`: its
+tasks keep being scheduled and dispatched until the run finishes. A run that a
+clear put back in `queued` is a queued run, even while some of its tasks are
+still running: while its DAG is paused those tasks finish, and nothing
+downstream or retried starts until the unpause.
+This is a deliberate, conservative difference from Airflow 3, whose scheduler
+also stops scheduling new tasks of a running run while its DAG is paused
+(the tasks already running finish, and the rest wait for the unpause). To stop
+a running run, mark it failed or delete it.
 
 If you want a real "no runs at all" switch, the supported pattern is the same as
-in Airflow: pause the DAG **and** instruct operators not to trigger it. There is
-no separate "disable" flag.
+in Airflow: pause the DAG. Runs triggered while it is paused queue up instead of
+running; delete them from the run list if they should never run.
 
-### Why not block manual triggers too?
+### New DAGs start paused
 
-Three reasons we kept Airflow's behavior:
+As in Airflow, a DAG registered for the first time starts **paused**: its
+schedule creates no run, catchup included, until someone unpauses it with the
+switch in the UI or `dexaflow admin dags unpause <dag_id>`. Manual triggers
+are accepted but wait in `queued` until then, as the table above says. Two
+settings decide the first state, in this order:
 
-1. **Operations parity.** Sites migrating from Airflow have runbooks ("trigger
-   `etl_recover` manually if scheduler is paused") that depend on this.
-2. **Debugging.** Pausing a flapping DAG and then manually triggering one good
-   run to capture a clean trace is a common pattern.
-3. **Escape hatch.** During an incident, the on-call may need to force a single
-   run without unblocking the entire schedule.
+1. The DAG's own `is_paused_upon_creation` argument, when it sets one:
+   `DAG("etl", is_paused_upon_creation=False)` registers active,
+   `True` registers paused.
+2. The server setting `DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION` (default `true`;
+   on Helm set the chart value `config.dagsArePausedAtCreation`, not
+   `extraEnv`). Set it to `false` to register new
+   DAGs active, as releases before 0.5.4 did.
 
-If you triggered a paused DAG by accident, **delete the run** from the run list
-— that's the supported undo. Pausing again afterward will not retroactively
-suspend it.
+Both apply **only when the DAG is created**. Deploying a new version of an
+existing DAG never pauses or unpauses it: an active DAG stays active, and its
+next scheduled run uses the new version; a paused DAG stays paused. The one
+exception is asking for it: `dexaflow deploy --paused` or `--active` leaves
+the DAG in that state after this deploy, new or not, and the change is
+recorded in the audit log (`dag.pause` or `dag.unpause`), as a pause from the
+UI is. A DAG that
+is deleted (`dexaflow dags delete --deregister`) and deployed again is created
+again, so it comes back paused.
+`dexaflow lite` registers new DAGs active, so a DAG you run locally keeps its
+schedule from the first save.
+
+### Why queue manual triggers instead of refusing them?
+
+Refusing a trigger on a paused DAG would break the Airflow API contract that
+the UI and existing clients rely on: `POST /api/v2/dags/{id}/dagRuns` answers
+with the created run whatever the pause state. Queueing it keeps that
+contract and still gives pause one meaning: nothing of this DAG starts until
+it is unpaused. To force a single run of a paused DAG during an incident,
+trigger it and unpause the DAG; pause it again once the run has started, and
+the run keeps going (see **Running runs** above).
 
 ## Why "DAG = image"
 

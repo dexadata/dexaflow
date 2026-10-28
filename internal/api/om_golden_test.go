@@ -23,19 +23,27 @@ import (
 func omServer() *gin.Engine {
 	sched := "0 5 * * *"
 	spec := diamondSpec()
-	return NewServer(Dependencies{
-		Logger: discardLogger(),
-		Authenticator: &fakeAuthn{
-			user:  &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}},
-			token: "golden-token",
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
 		},
-		RateLimiter:  auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:  []string{"*"},
-		TokenTTLSecs: 3600,
-		Specs:        &fakeSpecReader{spec: spec},
-		Dags:         &fakeDagRepo{dags: []domain.DAG{{DagID: spec.DagID, Owner: "data", Schedule: &sched, Tags: []string{"x"}}}},
-		DagRuns:      &fakeRunRepo{runs: []domain.DagRun{{DagID: spec.DagID, RunID: "r1", State: domain.DagRunStateQueued}}},
-		Tasks:        &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", RunID: "r1", State: domain.TaskStateQueued}}},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{
+				user:  &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}},
+				token: "golden-token",
+			},
+			RateLimiter:  auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs: 3600,
+		},
+		Stores: StoreDeps{
+			Specs:   &fakeSpecReader{spec: spec},
+			Dags:    &fakeDagRepo{dags: []domain.DAG{{DagID: spec.DagID, Owner: "data", Schedule: &sched, Tags: []string{"x"}}}},
+			DagRuns: &fakeRunRepo{runs: []domain.DagRun{{DagID: spec.DagID, RunID: "r1", State: domain.DagRunStateQueued}}},
+			Tasks:   &fakeTaskRepo{tis: []domain.TaskInstance{{TaskID: "extract", RunID: "r1", State: domain.TaskStateQueued}}},
+		},
 	})
 }
 

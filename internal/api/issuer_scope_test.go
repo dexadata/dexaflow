@@ -47,19 +47,27 @@ func (engineAdmin) IssueToken(context.Context, auth.Credentials) (string, error)
 func newScopeServer(t *testing.T, user *auth.User) http.Handler {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	return NewServer(Dependencies{
-		Logger:              discardLogger(),
-		Authenticator:       engineAdmin{},
-		RateLimiter:         auth.NewRateLimiter(5, time.Minute),
-		TokenTTLSecs:        900,
-		Dags:                &fakeDagRepo{},
-		DagRuns:             &fakeRunRepo{},
-		Tasks:               &fakeTaskRepo{},
-		Versions:            &fakeVersionRepo{},
-		Connections:         &fakeConnStore{},
-		TrustedIssuerBearer: scopedIssuer{},
-		TrustedIssuerUsers:  &fakeIssuerUsers{user: user, active: true},
-		AuthAudit:           &fakeAuthAudit{},
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			Authenticator: engineAdmin{},
+			RateLimiter:   auth.NewRateLimiter(5, time.Minute),
+			TokenTTLSecs:  900,
+			AuthAudit:     &fakeAuthAudit{},
+		},
+		Issuers: IssuerDeps{
+			TrustedIssuerBearer: scopedIssuer{},
+			TrustedIssuerUsers:  &fakeIssuerUsers{user: user, active: true},
+		},
+		Stores: StoreDeps{
+			Dags:        &fakeDagRepo{},
+			DagRuns:     &fakeRunRepo{},
+			Tasks:       &fakeTaskRepo{},
+			Versions:    &fakeVersionRepo{},
+			Connections: &fakeConnStore{},
+		},
 	})
 }
 

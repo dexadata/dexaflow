@@ -14,13 +14,25 @@ updates:
     labels: ["dependencies", "go"]
     open-pull-requests-limit: 10
 
-  # GitHub Actions
+  # GitHub Actions. "/" covers .github/workflows only; the composite action
+  # users pin (setup-dexaflow) uses actions of its own, so its directory is
+  # listed too.
   - package-ecosystem: github-actions
-    directory: "/"
+    directories:
+      - "/"
+      - "/.github/actions/setup-dexaflow"
     schedule:
       interval: weekly
       day: monday
     labels: ["dependencies", "ci"]
+    groups:
+      # init, autobuild, analyze and upload-sarif are one release of
+      # github/codeql-action and must move together: bumped one by one, analyze
+      # refuses the configuration init wrote ("Loaded a configuration file for
+      # version 4.38.2, but running version 4.38.3") and every CodeQL job fails.
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
 
   # Docker base images.
   #
@@ -31,9 +43,8 @@ updates:
   # now fails CI on a path that does not resolve.
   #
   # Scoped to the images that ship: the two deploy images and the task runtime
-  # base. examples/*/Dockerfile is deliberately excluded — 24 demo images would
-  # produce weekly PR noise for artifacts nobody deploys, and each is generated
-  # from its dexaflow.yaml by scripts/sync-example-dockerfiles.sh anyway.
+  # base. The examples ship no Dockerfile; their images are generated from
+  # dexaflow.yaml at build time.
   - package-ecosystem: docker
     directories:
       - "/deploy"
@@ -59,3 +70,21 @@ updates:
       python:
         patterns: ["*"]
     labels: ["dependencies", "python"]
+
+  # npm. Both manifests are installed with `npm ci` in CI and had no update
+  # entry (#1553). The root package.json pins playwright-core, which
+  # scripts/check-playwright-pin.sh holds equal to PLAYWRIGHT_VERSION in
+  # ci.yaml: a bump PR from here fails that gate until the same PR moves the
+  # ci.yaml pin too, which is the review step that pin exists for.
+  # /website carries the Docsy PostCSS toolchain.
+  - package-ecosystem: npm
+    directories:
+      - "/"
+      - "/website"
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+    labels: ["dependencies"]

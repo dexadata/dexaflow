@@ -25,6 +25,7 @@ import (
 // We run a tiny shell-script "parser" that prints its env vars to stdout —
 // no actual Python needed — so this test stays fast and hermetic.
 func TestRunParserSetsProjectConfigEnv(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script parser stub assumes a POSIX env-dumping shell")
 	}

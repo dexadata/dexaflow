@@ -1,7 +1,7 @@
 # UI contract sweep
 
 A browser-driven contract test: it drives every major view of the embedded
-Airflow 3.2.x SPA against a running Dexaflow control plane and **fails if any view
+Airflow SPA (the pinned version, see `internal/ui/assets/VERSION`) against a running Dexaflow control plane and **fails if any view
 makes a non-2xx `/api` or `/ui` call or logs a console error**.
 
 Its purpose is to catch frontend↔backend contract breaks — especially when the
@@ -30,7 +30,7 @@ Point it elsewhere / override the login:
 
 ```sh
 LEOFLOW_BASE_URL=http://host.docker.internal:8080 \
-LEOFLOW_USER=admin@leoflow.local LEOFLOW_PASSWORD=admin \
+LEOFLOW_USER=admin@dexaflow.local LEOFLOW_PASSWORD=admin \
 test/ui-contract/run.sh
 ```
 

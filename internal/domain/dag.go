@@ -3,10 +3,12 @@
 package domain
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
@@ -79,25 +81,24 @@ type DAGSpec struct {
 	// exactly as before. The scheduler enforces it in PlanRun's scheduled→queued
 	// admission gate.
 	MaxActiveTasks int `json:"max_active_tasks,omitempty"`
-	// MinIdleWorkers is a DORMANT seam for per-DAG author-declared warmth: the
-	// number of warm workers an author would want kept ready for this DAG version
-	// so its tasks skip cold-pod startup (ADR 0058, warm pools model A2). It is NOT
-	// author-settable today. There is no author entry point: the field is absent
-	// from the authoring schema (leoflow-yaml-schema.json, which is
-	// additionalProperties:false) and the parser never emits it, so after the
-	// parse→compile path this value is ALWAYS 0. The intended split is that the
-	// operator gates IF warmth happens at all (execution.warm_pools_enabled) while
-	// the author would only tune HOW MANY, with the operator clamping the request;
+	// MinIdleWorkers is the number of idle warm workers the author asks to keep
+	// for this DAG version so its tasks skip the cold pod start (ADR 0058, warm
+	// pools model A2). It comes from min_idle_workers in dexaflow.yaml, which
+	// the compiler overlays onto dag.json. The operator gates whether warmth
+	// happens at all (execution.warm_pools_enabled) and caps it
+	// (config.ExecutionSection.EffectiveMinIdle clamps it to max_pool_size);
 	// whether a pod may be reused across attempts stays the operator's security
-	// decision. The downstream is intentionally pre-wired around this field —
-	// config.ExecutionSection.EffectiveMinIdle already clamps it and the scheduler
-	// store already reads it — so exposing it to authors later is a schema+parser
-	// change only (add the key to the authoring schema and have the parser emit
-	// it), with no domain/scheduler rework. Until then it stays 0 and every DAG,
-	// and all of Lite, behaves exactly as before.
-	MinIdleWorkers int          `json:"min_idle_workers,omitempty"`
-	Catchup        bool         `json:"catchup,omitempty"`
-	DefaultArgs    *DefaultArgs `json:"default_args,omitempty"`
+	// decision. A version whose DAG declares it is prewarmed when it becomes
+	// current (ADR 0082). Zero, the default, declares none.
+	MinIdleWorkers int  `json:"min_idle_workers,omitempty"`
+	Catchup        bool `json:"catchup,omitempty"`
+	// IsPausedUponCreation is Airflow's is_paused_upon_creation DAG argument:
+	// whether the DAG starts paused when it is registered for the first time.
+	// It overrides the server's dags_are_paused_at_creation; nil leaves the
+	// decision to that setting. It is read only on creation: a later version
+	// never changes whether the DAG is paused (#1705).
+	IsPausedUponCreation *bool        `json:"is_paused_upon_creation,omitempty"`
+	DefaultArgs          *DefaultArgs `json:"default_args,omitempty"`
 	// Staging, when enabled, requests an ephemeral RWX volume shared by the run's
 	// tasks at /staging (ADR 0022). nil/disabled means no staging volume.
 	Staging *StagingConfig `json:"staging,omitempty"`
@@ -197,6 +198,11 @@ type TaskSpec struct {
 	// Named call_args (not params) to leave the term free for Airflow's
 	// DAG-run params semantic (#148).
 	CallArgs map[string]any `json:"call_args,omitempty"`
+	// Params are a bash or python task's own params (Airflow's task-level
+	// params=), captured at compile time (#1843). RunParams layers them over the
+	// DAG's param defaults and under the run conf. A captured operator carries
+	// its params in OperatorArgs instead.
+	Params map[string]any `json:"params,omitempty"`
 	// OperatorClass is the dotted Airflow operator/sensor class for an
 	// airflow_operator task (ADR 0040), e.g.
 	// "airflow.providers.snowflake.operators.snowflake.SQLExecuteQueryOperator".
@@ -346,6 +352,9 @@ func (d *DAGSpec) Validate() error {
 	if err := d.validateExecutionMetadata(); err != nil {
 		return err
 	}
+	if err := d.validateTaskPlacement(); err != nil {
+		return err
+	}
 	return d.validateResourceQuantities()
 }
 
@@ -436,4 +445,59 @@ func (d *DAGSpec) validateResourceQuantities() error {
 		}
 	}
 	return nil
+}
+
+// validateTaskPlacement validates structured Kubernetes placement fields
+// (tolerations, affinity, topologySpreadConstraints, resourceClaims) on each task,
+// failing loud at registration rather than silently dropping malformed entries
+// at pod build (#628).
+func (d *DAGSpec) validateTaskPlacement() error {
+	for _, t := range d.Tasks {
+		if t.Execution != nil {
+			if idx, err := decodeStrictSlice[corev1.Toleration](t.Execution.Tolerations); err != nil {
+				return fmt.Errorf("task %q declares invalid execution.tolerations[%d]: %w", t.TaskID, idx, err)
+			}
+			if len(t.Execution.Affinity) > 0 {
+				if err := decodeStrict[corev1.Affinity](t.Execution.Affinity); err != nil {
+					return fmt.Errorf("task %q declares invalid execution.affinity: %w", t.TaskID, err)
+				}
+			}
+			if idx, err := decodeStrictSlice[corev1.TopologySpreadConstraint](t.Execution.TopologySpreadConstraints); err != nil {
+				return fmt.Errorf("task %q declares invalid execution.topology_spread_constraints[%d]: %w", t.TaskID, idx, err)
+			}
+			if idx, err := decodeStrictSlice[corev1.PodResourceClaim](t.Execution.ResourceClaims); err != nil {
+				return fmt.Errorf("task %q declares invalid execution.resource_claims[%d]: %w", t.TaskID, idx, err)
+			}
+		}
+		if t.Resources != nil {
+			if idx, err := decodeStrictSlice[corev1.ResourceClaim](t.Resources.Claims); err != nil {
+				return fmt.Errorf("task %q declares invalid resources.claims[%d]: %w", t.TaskID, idx, err)
+			}
+		}
+	}
+	return nil
+}
+
+// decodeStrict decodes an untyped map into a typed Kubernetes struct T,
+// disallowing unknown fields so that typos fail loud at registration time.
+func decodeStrict[T any](m map[string]any) error {
+	b, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	var out T
+	return dec.Decode(&out)
+}
+
+// decodeStrictSlice decodes each element of a slice of untyped maps into T,
+// returning the index and error on the first malformed entry.
+func decodeStrictSlice[T any](slice []map[string]any) (int, error) {
+	for i, m := range slice {
+		if err := decodeStrict[T](m); err != nil {
+			return i, err
+		}
+	}
+	return -1, nil
 }

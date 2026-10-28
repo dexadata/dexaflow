@@ -50,7 +50,7 @@ func TestBufferedQueuedWriteGuardIntegration(t *testing.T) {
 
 	// A worker re-offers the queued task after a transient failure.
 	nextAt := time.Now().UTC().Add(time.Minute).Truncate(time.Microsecond)
-	if ok, err := sched.RequeueDispatch(ctx, runID, "load", true, nextAt); err != nil || !ok {
+	if ok, err := sched.RequeueDispatch(ctx, runID, "load", true, false, nextAt); err != nil || !ok {
 		t.Fatalf("RequeueDispatch = %v, %v; want true", ok, err)
 	}
 	if st := taskInstanceState(t, sched, ctx, runID, "load"); st != domain.TaskStateScheduled {
@@ -128,17 +128,14 @@ func TestRequeueDispatchClearsQueuedAtIntegration(t *testing.T) {
 	}
 
 	next := time.Now().UTC().Truncate(time.Microsecond)
-	if ok, err := sched.RequeueDispatch(ctx, runID, "load", false, next); err != nil || !ok {
+	if ok, err := sched.RequeueDispatch(ctx, runID, "load", false, false, next); err != nil || !ok {
 		t.Fatalf("RequeueDispatch: ok=%v err=%v", ok, err)
 	}
 	if ok, err := sched.MarkQueued(ctx, runID, "load", &next); err != nil || !ok {
 		t.Fatalf("MarkQueued after re-offer: ok=%v err=%v", ok, err)
 	}
 
-	cands, err := sched.ListStaleQueuedCandidates(ctx)
-	if err != nil {
-		t.Fatalf("ListStaleQueuedCandidates: %v", err)
-	}
+	cands := allStaleQueued(t, sched, ctx, 0)
 	for _, c := range cands {
 		if c.DagRunID != runID || c.TaskID != "load" {
 			continue

@@ -332,7 +332,7 @@ func (r *migrateKeyRun) preflight(ctx context.Context, cfg liteKeyConfig, dss []
 		}
 		for _, v := range vals {
 			pf.total++
-			pf.conns[d.name+"\x00"+v.RowID] = true
+			pf.conns[d.name+"\x00"+v.Column.Table+"\x00"+v.RowID] = true
 			if _, idx := secrets.OpenWith(ciphers, v.Ciphertext); idx >= 0 {
 				pf.cands[idx].opened++
 			} else {
@@ -343,14 +343,28 @@ func (r *migrateKeyRun) preflight(ctx context.Context, cfg liteKeyConfig, dss []
 	if len(pf.unreadable) > 0 {
 		r.say("  Refusing to migrate: %s open under no key this install records, nor under the published key:", countOf(len(pf.unreadable), "stored secret", "stored secrets"))
 		for _, u := range pf.unreadable {
-			r.say("    - connection %q: %s (in %s)", u.value.Label, u.value.Column.Column, u.datastore)
+			r.say("    - %s %q: %s (in %s)", secretOwner(u.value.Column), u.value.Label, u.value.Column.Column, u.datastore)
 		}
-		r.say("  These values are already under a key nobody recorded. Re-enter or delete those connections,")
+		r.say("  These values are already under a key nobody recorded. Re-enter or delete those connections or variables,")
 		r.say("  or add the key they were written with to `secret_key_previous` in %s, then run this again.", r.configPath())
 		r.say("  No file and no row was written.")
 		return pf, errUnreadableSecrets
 	}
 	return pf, nil
+}
+
+// secretOwner names what a registered encrypted column belongs to, for a
+// message an operator reads: a connection, or a Variable encrypted under
+// variable_encryption (#507).
+func secretOwner(c storage.EncryptedColumn) string {
+	switch c.Table {
+	case "variables":
+		return "variable"
+	case "connections":
+		return "connection"
+	default:
+		return c.Table
+	}
 }
 
 func (r *migrateKeyRun) printPlan(cfg liteKeyConfig, pf *preflightResult) {
@@ -359,7 +373,7 @@ func (r *migrateKeyRun) printPlan(cfg liteKeyConfig, pf *preflightResult) {
 		parts = append(parts, fmt.Sprintf("%d under %s", c.opened, c.label))
 	}
 	r.say("  Found %s (%s) in %s: %s, 0 that no known key opens.",
-		countOf(pf.total, "connection secret", "connection secrets"), countOf(len(pf.conns), "connection", "connections"),
+		countOf(pf.total, "stored secret", "stored secrets"), countOf(len(pf.conns), "row", "rows"),
 		countOf(len(r.datastores), "datastore", "datastores"), strings.Join(parts, ", "))
 	if cfg.secretKey == "" {
 		r.say("  This re-encrypts them onto a new key that only this install has.")

@@ -1,0 +1,408 @@
+suite: in-cluster rootless image builder (#1883, path 4 of ADR 0073)
+release:
+  name: dexaflow
+  namespace: dexaflow
+templates:
+  - builder-deployment.yaml
+  - builder-serviceaccount.yaml
+  - builder-rbac.yaml
+  - builder-networkpolicy.yaml
+set:
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+tests:
+  - it: renders nothing while builder.enabled is false (the default)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: refuses to render without a builder namespace
+    template: builder-serviceaccount.yaml
+    set:
+      builder.enabled: true
+    asserts:
+      - failedTemplate:
+          errorPattern: builder.namespace is required
+
+  - it: refuses the release namespace as the builder namespace
+    template: builder-serviceaccount.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow
+    asserts:
+      - failedTemplate:
+          errorPattern: builder.namespace must not be the release namespace
+
+  - it: refuses the task namespace as the builder namespace
+    template: builder-serviceaccount.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: tasks
+      taskNamespace: tasks
+    asserts:
+      - failedTemplate:
+          errorPattern: builder.namespace must not be the task namespace
+
+  - it: runs rootless BuildKit in its own namespace, on a unix socket only
+    template: builder-deployment.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+    asserts:
+      - isKind:
+          of: Deployment
+      - equal:
+          path: metadata.namespace
+          value: dexaflow-builder
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: moby/buildkit:v0.33.1-rootless
+      - equal:
+          path: spec.template.spec.containers[0].args
+          value:
+            - --addr
+            - unix:///run/user/1000/buildkit/buildkitd.sock
+            - --oci-worker-no-process-sandbox
+            - --oci-worker-gc
+            - --oci-worker-gc-keepstorage=10000
+      - notExists:
+          path: spec.template.spec.containers[0].ports
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: dexaflow-builder
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: false
+      - equal:
+          path: spec.template.spec.enableServiceLinks
+          value: false
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.exec.command
+          value: [buildctl, debug, workers]
+
+  - it: does not carry the control-plane selector labels
+    template: builder-deployment.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+    asserts:
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app.kubernetes.io/name: dexaflow-builder
+            app.kubernetes.io/instance: dexaflow
+            app.kubernetes.io/component: builder
+      - equal:
+          path: spec.template.metadata.labels["app.kubernetes.io/name"]
+          value: dexaflow-builder
+
+  - it: runs non-root with every capability dropped but the two newuidmap needs
+    template: builder-deployment.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext
+          value:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+      - equal:
+          path: spec.template.spec.containers[0].securityContext
+          value:
+            privileged: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: true
+            capabilities:
+              drop: [ALL]
+              add: [SETUID, SETGID]
+            seccompProfile:
+              type: Unconfined
+            appArmorProfile:
+              type: Unconfined
+
+  - it: takes a Localhost seccomp and AppArmor profile instead of Unconfined
+    template: builder-deployment.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+      builder.seccompProfile:
+        type: Localhost
+        localhostProfile: profiles/buildkit.json
+      builder.appArmorProfile:
+        type: Localhost
+        localhostProfile: buildkit
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.seccompProfile
+          value:
+            type: Localhost
+            localhostProfile: profiles/buildkit.json
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.appArmorProfile
+          value:
+            type: Localhost
+            localhostProfile: buildkit
+
+  - it: leaves the AppArmor profile out when builder.appArmorProfile is null
+    template: builder-deployment.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+      builder.appArmorProfile: null
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].securityContext.appArmorProfile
+
+  - it: refuses a seccomp profile type it does not know
+    template: builder-deployment.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+      builder.seccompProfile.type: Whatever
+    asserts:
+      - failedTemplate:
+          errorPattern: builder.seccompProfile.type
+
+  - it: writes only to size-limited emptyDirs over a read-only root filesystem
+    template: builder-deployment.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+      builder.cache.sizeLimit: 50Gi
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: buildkit-state
+            emptyDir:
+              sizeLimit: 50Gi
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: buildkit-state
+            mountPath: /home/user/.local/share/buildkit
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: runtime
+            mountPath: /run/user/1000
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: buildkit-tmp
+            mountPath: /home/user/.local/tmp
+      # rootlesskit makes its bind directory under /tmp before anything else.
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: tmp
+            mountPath: /tmp
+
+  - it: passes the GC budget to buildkitd and refuses one that is not MB numbers
+    template: builder-deployment.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+      builder.cache.gcKeepStorage: "8000,2000,9000"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --oci-worker-gc-keepstorage=8000,2000,9000
+
+  - it: refuses a GC budget with something other than MB numbers
+    template: builder-deployment.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+      builder.cache.gcKeepStorage: "10GB --debug"
+    asserts:
+      - failedTemplate:
+          errorPattern: builder.cache.gcKeepStorage
+
+  - it: pins the image by digest when one is given
+    template: builder-deployment.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+      builder.image.digest: sha256:f8a833b2de9d68e27f0815e4a737abdfaf8a2e4c615650557df11025101557b4
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: moby/buildkit:v0.33.1-rootless@sha256:f8a833b2de9d68e27f0815e4a737abdfaf8a2e4c615650557df11025101557b4
+
+  - it: the builder ServiceAccount mounts no token and has no binding of its own
+    template: builder-serviceaccount.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+    asserts:
+      - isKind:
+          of: ServiceAccount
+      - equal:
+          path: metadata.name
+          value: dexaflow-builder
+      - equal:
+          path: metadata.namespace
+          value: dexaflow-builder
+      - equal:
+          path: automountServiceAccountToken
+          value: false
+
+  - it: the build Role only finds and execs into pods of the builder namespace
+    template: builder-rbac.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Role
+      - equal:
+          path: metadata.namespace
+          value: dexaflow-builder
+      - equal:
+          path: rules
+          value:
+            - apiGroups: [""]
+              resources: [pods]
+              verbs: [get, list]
+            - apiGroups: [""]
+              resources: [pods/exec]
+              verbs: [create, get]
+
+  - it: binds the build Role to the configured subjects only
+    template: builder-rbac.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+      builder.subjects:
+        - kind: Group
+          name: platform-deployers
+        - kind: ServiceAccount
+          name: ci
+          namespace: ci
+    asserts:
+      - hasDocuments:
+          count: 2
+      - isKind:
+          of: RoleBinding
+        documentIndex: 1
+      - equal:
+          path: roleRef
+          value:
+            apiGroup: rbac.authorization.k8s.io
+            kind: Role
+            name: dexaflow-builder
+        documentIndex: 1
+      - equal:
+          path: subjects
+          value:
+            - kind: Group
+              apiGroup: rbac.authorization.k8s.io
+              name: platform-deployers
+            - kind: ServiceAccount
+              name: ci
+              namespace: ci
+        documentIndex: 1
+
+  - it: refuses a subject of an unknown kind
+    template: builder-rbac.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+      builder.subjects:
+        - kind: Robot
+          name: r2
+    asserts:
+      - failedTemplate:
+          errorPattern: builder.subjects
+
+  - it: refuses a ServiceAccount subject without its namespace
+    template: builder-rbac.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+      builder.subjects:
+        - kind: ServiceAccount
+          name: ci
+    asserts:
+      - failedTemplate:
+          errorPattern: builder.subjects
+
+  - it: denies ingress and the cloud metadata range by default
+    template: builder-networkpolicy.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+    asserts:
+      - isKind:
+          of: NetworkPolicy
+      - equal:
+          path: metadata.namespace
+          value: dexaflow-builder
+      - equal:
+          path: spec.podSelector.matchLabels
+          value:
+            app.kubernetes.io/name: dexaflow-builder
+            app.kubernetes.io/instance: dexaflow
+            app.kubernetes.io/component: builder
+      - equal:
+          path: spec.ingress
+          value: []
+      - equal:
+          path: spec.egress[1].to[0].ipBlock
+          value:
+            cidr: 0.0.0.0/0
+            except: [169.254.0.0/16]
+
+  - it: adds the extra blocked ranges and egress rules
+    template: builder-networkpolicy.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+      builder.networkPolicy.extraExcept: [10.0.0.0/8]
+      builder.networkPolicy.extraEgress:
+        - to:
+            - ipBlock:
+                cidr: 10.1.2.3/32
+    asserts:
+      - equal:
+          path: spec.egress[1].to[0].ipBlock.except
+          value: [169.254.0.0/16, 10.0.0.0/8]
+      - equal:
+          path: spec.egress[2].to[0].ipBlock.cidr
+          value: 10.1.2.3/32
+
+  - it: leaves the NetworkPolicy out when builder.networkPolicy.enabled is false
+    template: builder-networkpolicy.yaml
+    set:
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+      builder.networkPolicy.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: keeps the pre-rename names under nameOverride leoflow
+    template: builder-deployment.yaml
+    set:
+      nameOverride: leoflow
+      builder.enabled: true
+      builder.namespace: dexaflow-builder
+    release:
+      name: leoflow
+    asserts:
+      - equal:
+          path: metadata.name
+          value: leoflow-builder
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: leoflow-builder

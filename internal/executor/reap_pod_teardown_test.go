@@ -22,12 +22,17 @@ type fakePodManager struct {
 	// exists for that attempt. A key in neither map is a genuine absence, which
 	// is what most tests want, so they need not mention this one.
 	terminal map[string]bool
+	// pending maps "runID/taskID/try" -> whether the attempt's live pod is still
+	// Pending (its agent has not started); absent key is false.
+	pending map[string]bool
 	// activeCalls counts TaskPodPresence invocations, so a test can assert the live
 	// (quorum) read was skipped when the presence cache already deferred.
 	activeCalls int
 	activeErr   error
 	deleteErr   error
 	deleteRunE  error
+	// preserved is the count every teardown reports as left in place.
+	preserved int
 }
 
 type deletedTask struct {
@@ -36,20 +41,20 @@ type deletedTask struct {
 	try    int
 }
 
-func (f *fakePodManager) DeleteTaskPod(_ context.Context, a Attempt) error {
+func (f *fakePodManager) DeleteTaskPod(_ context.Context, a Attempt) (Teardown, error) {
 	if f.deleteErr != nil {
-		return f.deleteErr
+		return Teardown{Preserved: f.preserved}, f.deleteErr
 	}
 	f.deletedTasks = append(f.deletedTasks, deletedTask{a.RunID, a.TaskID, a.TryNumber})
-	return nil
+	return Teardown{Preserved: f.preserved}, nil
 }
 
-func (f *fakePodManager) DeleteRunPods(_ context.Context, runID string) error {
+func (f *fakePodManager) DeleteRunPods(_ context.Context, runID string) (Teardown, error) {
 	if f.deleteRunE != nil {
-		return f.deleteRunE
+		return Teardown{Preserved: f.preserved}, f.deleteRunE
 	}
 	f.deletedRuns = append(f.deletedRuns, runID)
-	return nil
+	return Teardown{Preserved: f.preserved}, nil
 }
 
 // TaskPodPresence reports absence for a key in neither map, because most
@@ -70,6 +75,14 @@ func (f *fakePodManager) TaskPodPresence(_ context.Context, a Attempt) (PodPrese
 	default:
 		return PodPresenceAbsent, nil
 	}
+}
+
+// TaskPodPending reports the `pending` fixture for exactly the attempt.
+func (f *fakePodManager) TaskPodPending(_ context.Context, a Attempt) (bool, error) {
+	if f.activeErr != nil {
+		return false, f.activeErr
+	}
+	return f.pending[fmt.Sprintf("%s/%s/%d", a.RunID, a.TaskID, a.TryNumber)], nil
 }
 
 // --- Dispatch-lost reaper: K8s-aware deferral (part C) ---------------------

@@ -6,7 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/observability"
 )
 
 // fanOutRun builds a run with one succeeded root and n children that all depend
@@ -69,6 +72,27 @@ func BenchmarkStepQueueFanOut(b *testing.B) {
 				s := newScheduler(newFakeStore(run))
 				s.SetDispatcher(&fakeDispatcher{})
 				_ = s.Step(context.Background())
+			}
+		})
+	}
+}
+
+// BenchmarkTickWithMetrics measures one leader tick through the loop's entry
+// point with the real Prometheus recorder attached, so the cost of the
+// per-tick observability (loop duration, decisions, transitions) is included.
+func BenchmarkTickWithMetrics(b *testing.B) {
+	for _, c := range []struct{ runs, tasks int }{{100, 20}, {1000, 20}} {
+		runs := make([]RunState, c.runs)
+		for i := range runs {
+			runs[i] = fanOutRun(fmt.Sprintf("r%d", i), c.tasks, domain.TaskStateRunning)
+		}
+		b.Run(fmt.Sprintf("runs=%d/tasks=%d", c.runs, c.tasks), func(b *testing.B) {
+			m := observability.NewMetrics(prometheus.NewRegistry())
+			b.ReportAllocs()
+			for b.Loop() {
+				s := newScheduler(newFakeStore(runs...))
+				s.SetRecorder(m)
+				s.tick(context.Background())
 			}
 		})
 	}

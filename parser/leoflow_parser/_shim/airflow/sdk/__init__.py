@@ -44,32 +44,67 @@ def _iter_xcomargs(value):
             yield from _iter_xcomargs(item)
 
 
-def task(fn=None, **dec_kwargs):
-    """TaskFlow @task: calling the wrapped function builds a python operator and
-    returns an XComArg, wiring upstream edges from any XComArg arguments
-    (including those nested in lists/dicts, e.g. a fan-in)."""
+# Operator kwargs .override() cannot honor. The runtime reads a @task's
+# on_failure_callback off the module-level decorator, which never sees an
+# override, so accepting one here would run the wrong callback or none (#1681).
+_OVERRIDE_REJECTED = ("on_failure_callback",)
 
-    def wrap(func):
-        @functools.wraps(func)
-        def maker(*args, **kwargs):
-            # @task(trigger_rule=…, …) decorator kwargs apply to the operator.
-            op = PythonOperator(task_id=func.__name__, **dec_kwargs)
-            op.python_callable = func
-            op.op_args = args
-            op.op_kwargs = kwargs
-            op.function = func  # parity with the SDK's @task (.function unwrap)
-            for value in list(args) + list(kwargs.values()):
-                for xarg in _iter_xcomargs(value):
-                    op.upstream_task_ids.add(xarg.operator.task_id)
-            return XComArg(op)
 
+def _task_factory(func, op_class, dec_kwargs, *, mappable):
+    """Build the callable a TaskFlow decorator returns for ``func``.
+
+    Calling it builds an ``op_class`` operator and returns an XComArg, wiring
+    upstream edges from any XComArg arguments (including those nested in
+    lists/dicts, e.g. a fan-in). ``dec_kwargs`` are the operator kwargs given to
+    the decorator; a ``task_id`` among them replaces the function name, which
+    stays the task's entrypoint either way (the compiler reads it off
+    ``python_callable``)."""
+
+    @functools.wraps(func)
+    def maker(*args, **kwargs):
+        # @task(trigger_rule=…, …) decorator kwargs apply to the operator.
+        op_kwargs = dict(dec_kwargs)
+        task_id = op_kwargs.pop("task_id", None) or func.__name__
+        op = op_class(task_id=task_id, **op_kwargs)
+        op.python_callable = func
+        op.op_args = args
+        op.op_kwargs = kwargs
+        op.function = func  # parity with the SDK's @task (.function unwrap)
+        for value in list(args) + list(kwargs.values()):
+            for xarg in _iter_xcomargs(value):
+                op.upstream_task_ids.add(xarg.operator.task_id)
+        return XComArg(op)
+
+    def override(**kwargs):
+        """Airflow's ``_TaskDecorator.override``: a new task factory whose operator
+        kwargs are the decorator's with ``kwargs`` merged over them. The original
+        is left unchanged, and the result can be overridden again."""
+        for name in _OVERRIDE_REJECTED:
+            if name in kwargs:
+                raise NotImplementedError(
+                    f"{name} in .override(...) on task {func.__name__!r} (set it on "
+                    "the @task(...) decorator instead)")
+        return _task_factory(func, op_class, {**dec_kwargs, **kwargs}, mappable=mappable)
+
+    maker.function = func
+    maker.kwargs = dict(dec_kwargs)
+    maker.override = override
+    if mappable:
         def _no_dynamic_mapping(*_a, **_k):
             raise NotImplementedError("dynamic task mapping (.expand/.partial)")
 
-        maker.function = func
         maker.expand = _no_dynamic_mapping
         maker.partial = _no_dynamic_mapping
-        return maker
+    return maker
+
+
+def task(fn=None, **dec_kwargs):
+    """TaskFlow @task: calling the wrapped function builds a python operator and
+    returns an XComArg. ``.override(**kwargs)`` returns a copy with different
+    operator kwargs (``task_id`` included), as in Airflow."""
+
+    def wrap(func):
+        return _task_factory(func, PythonOperator, dec_kwargs, mappable=True)
 
     return wrap(fn) if callable(fn) else wrap
 
@@ -81,20 +116,7 @@ def _task_branch(fn=None, **dec_kwargs):
     attribute at import."""
 
     def wrap(func):
-        @functools.wraps(func)
-        def maker(*args, **kwargs):
-            op = _TaskBranchOperator(task_id=func.__name__, **dec_kwargs)
-            op.python_callable = func
-            op.op_args = args
-            op.op_kwargs = kwargs
-            op.function = func
-            for value in list(args) + list(kwargs.values()):
-                for xarg in _iter_xcomargs(value):
-                    op.upstream_task_ids.add(xarg.operator.task_id)
-            return XComArg(op)
-
-        maker.function = func
-        return maker
+        return _task_factory(func, _TaskBranchOperator, dec_kwargs, mappable=False)
 
     return wrap(fn) if callable(fn) else wrap
 

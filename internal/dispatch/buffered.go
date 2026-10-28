@@ -25,6 +25,11 @@ var ErrAtCapacity = errors.New("dispatch buffer at capacity; will retry next tic
 // runtime then kills the process and no drain happens at all (#463).
 var ErrDrainTimeout = errors.New("drain timed out")
 
+// ErrBufferWaitExceeded is the cause a worker hands to a RetrySink, with
+// executor.Backpressure, for a request that waited in the buffer longer than
+// BufferConfig.MaxWait. The task is re-offered instead of dispatched (#1607).
+var ErrBufferWaitExceeded = errors.New("dispatch request waited in the buffer past its bound; re-offering")
+
 // Inner is the underlying synchronous dispatcher BufferedDispatcher wraps —
 // matches scheduler.Dispatcher exactly so production wires through one type.
 type Inner interface {
@@ -72,6 +77,16 @@ type BufferConfig struct {
 	// remote call that never answers blocks shutdown until the runtime kills
 	// the process, which loses the drain entirely (#463).
 	DrainTimeout time.Duration
+	// MaxWait bounds how long a request may wait in the buffer before a worker
+	// takes it. The scheduler records the task queued, stamping queued_at, as
+	// soon as the buffer accepts it, so time spent in the buffer counts toward
+	// the dispatch-lost threshold; a request older than MaxWait when a worker
+	// takes it is not dispatched. When the sink is a RetrySink it is handed back
+	// as executor.Backpressure, which re-offers the task with no dispatch
+	// attempt charged and a fresh queued_at on its next queued episode (#1607).
+	// Zero selects half the default dispatch-lost threshold; a negative value
+	// disables the bound.
+	MaxWait time.Duration
 }
 
 // defaultDrainTimeout leaves room for an in-flight dispatch to finish while
@@ -87,6 +102,10 @@ const defaultDrainTimeout = 15 * time.Second
 type dispatchRequest struct {
 	runID, dagID, dagVersionID string
 	task                       domain.TaskSpec
+	// enqueuedAt is when the buffer accepted the request, the moment the
+	// scheduler goes on to stamp queued_at. It also starts the dispatch
+	// latency the worker observes.
+	enqueuedAt time.Time
 }
 
 // BufferedDispatcher fronts a synchronous Inner dispatcher with a bounded
@@ -106,6 +125,8 @@ type BufferedDispatcher struct {
 	mu     sync.RWMutex
 	closed bool
 	once   sync.Once
+	// maxWait is cfg.MaxWait resolved: zero means no bound.
+	maxWait time.Duration
 }
 
 // NewBuffered constructs a BufferedDispatcher. BufferSize=0 returns a
@@ -121,6 +142,12 @@ func NewBuffered(inner Inner, sink FailureSink, logger *slog.Logger, metrics Met
 	}
 	if cfg.BufferSize <= 0 {
 		return b
+	}
+	switch {
+	case cfg.MaxWait == 0:
+		b.maxWait = executor.DefaultReaperConfig().DispatchLostThreshold / 2
+	case cfg.MaxWait > 0:
+		b.maxWait = cfg.MaxWait
 	}
 	workers := cfg.Workers
 	if workers <= 0 {
@@ -165,7 +192,7 @@ func (b *BufferedDispatcher) Dispatch(ctx context.Context, runID, dagID, dagVers
 		return executor.Deferred, ErrAtCapacity
 	}
 	select {
-	case b.queue <- dispatchRequest{runID: runID, dagID: dagID, dagVersionID: dagVersionID, task: task}:
+	case b.queue <- dispatchRequest{runID: runID, dagID: dagID, dagVersionID: dagVersionID, task: task, enqueuedAt: time.Now()}:
 		if b.metrics != nil {
 			b.metrics.RecordDispatchQueueDepth(len(b.queue))
 		}
@@ -179,8 +206,8 @@ func (b *BufferedDispatcher) Dispatch(ctx context.Context, runID, dagID, dagVers
 }
 
 // Close stops accepting new dispatches, drains the in-flight queue (each buffered
-// request is still processed by the inner dispatcher — or failed via the sink —
-// so no TI is left stuck `queued`), and waits for every worker to finish. Under
+// request is still processed by the inner dispatcher, or failed or re-offered
+// via the sink, so no TI is left stuck `queued`), and waits for every worker to finish. Under
 // mu so a concurrent Dispatch never sends on the closed channel. Idempotent.
 //
 // The wait is bounded by cfg.DrainTimeout (#463). A worker sits in the inner
@@ -225,6 +252,11 @@ func (b *BufferedDispatcher) Close() error {
 func (b *BufferedDispatcher) worker() {
 	defer b.wg.Done()
 	for req := range b.queue {
+		// The depth gauge follows the queue down as well as up; set only on
+		// enqueue, it kept its last high value after the workers drained it.
+		if b.metrics != nil {
+			b.metrics.RecordDispatchQueueDepth(len(b.queue))
+		}
 		b.dispatchOne(req)
 	}
 }
@@ -241,6 +273,9 @@ func (b *BufferedDispatcher) dispatchOne(req dispatchRequest) {
 			b.reportFailure(req, "dispatch_failed: worker panic")
 		}
 	}()
+	if b.reofferExpired(req) {
+		return
+	}
 	// Use a background context: the caller's ctx may already be canceled by
 	// the time the worker picks the request up (a long tick has rolled over),
 	// but we already accepted responsibility for this dispatch — abandoning it
@@ -250,6 +285,9 @@ func (b *BufferedDispatcher) dispatchOne(req dispatchRequest) {
 	// The disposition goes to a RetrySink, which re-offers backpressure and
 	// transient errors like the synchronous path does; a plain sink fails the TI.
 	disp, err := b.inner.Dispatch(context.Background(), req.runID, req.dagID, req.dagVersionID, req.task) //nolint:contextcheck // worker intentionally detaches from the caller's ctx
+	if b.metrics != nil {
+		b.metrics.RecordDispatchLatencySeconds(time.Since(req.enqueuedAt).Seconds())
+	}
 	if err == nil {
 		return
 	}
@@ -266,6 +304,36 @@ func (b *BufferedDispatcher) dispatchOne(req dispatchRequest) {
 		return
 	}
 	b.reportFailure(req, "dispatch_failed: "+err.Error())
+}
+
+// reofferExpired hands a request that waited in the buffer past maxWait back
+// to the RetrySink as backpressure instead of dispatching it, and reports
+// whether it did. Its task has been queued since the buffer accepted it, so
+// dispatching it now would leave the dispatch-lost reaper free to fail it
+// before its pod exists (#1607). The re-offer charges no dispatch attempt and
+// clears queued_at, so the task starts a fresh clock when it is queued again.
+// Without a RetrySink the request is dispatched as before: failing the task
+// would be worse than the late dispatch.
+func (b *BufferedDispatcher) reofferExpired(req dispatchRequest) bool {
+	if b.maxWait <= 0 {
+		return false
+	}
+	waited := time.Since(req.enqueuedAt)
+	if waited <= b.maxWait {
+		return false
+	}
+	rs, ok := b.sink.(RetrySink)
+	if !ok {
+		return false
+	}
+	b.logger.Warn("dispatch request waited in the buffer past its bound; re-offering the task",
+		"run", req.runID, "dag", req.dagID, "task", req.task.TaskID,
+		"waited", waited, "max_wait", b.maxWait)
+	if err := rs.HandleDispatchFailure(context.Background(), req.runID, req.task.TaskID, executor.Backpressure, ErrBufferWaitExceeded); err != nil { //nolint:contextcheck // worker intentionally uses a fresh context for the re-offer
+		b.logger.Error("re-offering an expired buffered dispatch",
+			"run", req.runID, "task", req.task.TaskID, "error", err)
+	}
+	return true
 }
 
 // reportFailure marks the TI failed via the sink if one is configured. A sink

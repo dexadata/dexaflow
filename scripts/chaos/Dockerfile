@@ -11,7 +11,7 @@
 # Usage: built via `make chaos-dogfood-docker` (don't `docker build` directly
 #        — the Makefile passes the right build-args).
 
-ARG GO_VERSION=1.26.9
+ARG GO_VERSION=1.26.10
 ARG GOLANGCI_LINT_VERSION=v2.12.2
 
 FROM python:3.12-slim-bookworm AS base
@@ -24,6 +24,10 @@ ARG GOLANGCI_LINT_VERSION
 #   - curl: golangci-lint installer
 #   - build-essential: cgo for the few deps that touch it
 #   - ca-certificates: HTTPS verifies on the curl pulls
+# DL3008 (pin apt versions) is ignored: a local test image that takes the
+# bookworm packages current at build time; the toolchain it tests is pinned
+# below, and a pinned apt version breaks the build once Debian supersedes it.
+# hadolint ignore=DL3008
 RUN apt-get update -qq \
     && apt-get install -y --no-install-recommends \
         ca-certificates curl git build-essential \

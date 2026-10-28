@@ -1,0 +1,35 @@
+# Top-level packages of the dexaflow-runtime "data" variant (py3.11-data-*):
+# the base runtime plus the connectors a managed platform needs on day one.
+# Compiled with hashes into requirements.txt (see runtime/data/README.md); edit
+# this file, then recompile. The first two lines are the base image's own pins
+# (runtime/Dockerfile), so the lock cannot move them.
+apache-airflow-task-sdk==1.3.1
+certifi==2026.10.19
+# Unlike the base (80.x, which keeps pkg_resources for older DAG code), the
+# data variant takes a setuptools without pkg_resources: 84.1 is the first with
+# no fixable advisory, and no package of this lock imports pkg_resources
+# without an importlib fallback (runtime/data/README.md).
+setuptools>=84.1.0
+
+# Airflow providers: hooks and operators for the connection types the data
+# variant supports (internal/connectors/catalog.json).
+apache-airflow-providers-common-sql
+apache-airflow-providers-postgres
+apache-airflow-providers-mysql
+apache-airflow-providers-amazon
+apache-airflow-providers-databricks
+apache-airflow-providers-snowflake
+apache-airflow-providers-http
+
+# Google Cloud: the full provider (BigQuery, GCS and the other hooks). It pulls
+# ray, litellm and scipy and roughly doubles the image; the client libraries
+# alone (google-cloud-bigquery, google-cloud-storage) would not. The floor keeps
+# the resolver from trading the provider down to satisfy overrides.txt.
+apache-airflow-providers-google>=22.6.0
+
+# dbt and the adapters leoflow_runtime/dbt.py maps a connection to.
+dbt-core
+dbt-postgres
+dbt-snowflake
+dbt-bigquery
+dbt-databricks

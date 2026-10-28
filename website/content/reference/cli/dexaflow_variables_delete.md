@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_variables_delete/
 title: "dexaflow variables delete"
 linkTitle: "variables delete"
-weight: 55
+weight: 74
 ---
 
 Delete a variable.
@@ -27,6 +27,7 @@ dexaflow variables delete <key> [flags]
       --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
+      --target name         name of the control plane to use (default: DEXAFLOW_TARGET, then the target selected for the workspace; see dexaflow target list)
 ```
 
 ### SEE ALSO

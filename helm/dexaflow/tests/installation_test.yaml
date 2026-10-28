@@ -1,0 +1,137 @@
+suite: installation id (ADR 0090 decision 3)
+templates:
+  - migration-job.yaml
+  - migration-rbac.yaml
+release:
+  name: rel
+  namespace: data
+set:
+  database.url: postgres://h/d
+tests:
+  # The migrate wrapper creates and updates the installation ConfigMap itself,
+  # so the chart renders no ConfigMap and no Helm lookup is involved; the Job
+  # names it and the namespace, and runs as an account that may write it.
+  - it: the Job checks and records the installation id in the release's ConfigMap
+    template: migration-job.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: -installation-configmap=rel-dexaflow-installation
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: -installation-namespace=data
+      # -path, -database, the two -installation-* flags and up: no
+      # -installation-id unless installation.id is set.
+      - lengthEqual:
+          path: spec.template.spec.containers[0].args
+          count: 5
+      - equal:
+          path: spec.template.spec.containers[0].args[-1]
+          value: up
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: rel-dexaflow-migrate
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: true
+
+  - it: passes a pinned installation.id to the Job
+    template: migration-job.yaml
+    set:
+      installation.id: 6f1c2a9e-0d4b-4c37-9a51-2b7e8f3d1c40
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: -installation-id=6f1c2a9e-0d4b-4c37-9a51-2b7e8f3d1c40
+
+  - it: refuses an installation.id that is not a name
+    template: migration-job.yaml
+    set:
+      installation.id: "not an id"
+    asserts:
+      - failedTemplate:
+          errorPattern: "installation.id"
+
+  # The account, its Role and the binding are hooks too, with a lower weight,
+  # so they exist before the pre-install Job runs; they go when it succeeds.
+  - it: renders the migrate ServiceAccount, Role and RoleBinding as earlier hooks
+    template: migration-rbac.yaml
+    asserts:
+      - hasDocuments:
+          count: 3
+      - equal:
+          path: metadata.annotations["helm.sh/hook"]
+          value: pre-install,pre-upgrade
+      - equal:
+          path: metadata.annotations["helm.sh/hook-weight"]
+          value: "-5"
+      - equal:
+          path: metadata.annotations["helm.sh/hook-delete-policy"]
+          value: before-hook-creation,hook-succeeded
+      - equal:
+          path: metadata.namespace
+          value: data
+
+  - it: the ServiceAccount is the one the Job runs as
+    template: migration-rbac.yaml
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: ServiceAccount
+      - equal:
+          path: metadata.name
+          value: rel-dexaflow-migrate
+
+  # get and create on ConfigMaps in the release namespace, update on that one
+  # name. get is narrowed to the name too: the wrapper reads only it. create
+  # cannot be narrowed by name in Kubernetes RBAC.
+  - it: the Role grants only what the wrapper calls
+    template: migration-rbac.yaml
+    documentIndex: 1
+    asserts:
+      - isKind:
+          of: Role
+      - equal:
+          path: rules
+          value:
+            - apiGroups: [""]
+              resources: ["configmaps"]
+              verbs: ["create"]
+            - apiGroups: [""]
+              resources: ["configmaps"]
+              resourceNames: ["rel-dexaflow-installation"]
+              verbs: ["get", "update"]
+
+  - it: the RoleBinding binds the Role to the migrate ServiceAccount
+    template: migration-rbac.yaml
+    documentIndex: 2
+    asserts:
+      - isKind:
+          of: RoleBinding
+      - equal:
+          path: roleRef.name
+          value: rel-dexaflow-migrate
+      - equal:
+          path: subjects[0]
+          value:
+            kind: ServiceAccount
+            name: rel-dexaflow-migrate
+            namespace: data
+
+  - it: with rbac.create false only the ServiceAccount is rendered
+    template: migration-rbac.yaml
+    set:
+      rbac.create: false
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ServiceAccount
+
+  - it: nothing is rendered when migrations are off
+    template: migration-rbac.yaml
+    set:
+      migrations.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0

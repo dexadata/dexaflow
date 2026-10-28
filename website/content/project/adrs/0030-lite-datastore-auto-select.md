@@ -15,6 +15,7 @@ description: "ADR 0030: Lite Datastore Auto-Selects — Docker Postgres, or a Ma
 **Supersedes:** ADR 0029 (Lite Datastore Default — Docker)
 **Refines:** ADR 0026 (Lite Datastore — XCom on Postgres, no Redis), ADR 0027 (Product Editions)
 **Relates:** ADR 0015 (Kubernetes as the sole container execution path)
+**Amended by:** ADR 0094 (auto follows the datastore the install is pinned to)
 
 ## Context
 

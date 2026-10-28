@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -66,9 +67,12 @@ func TestBootstrapAdminConcurrentIntegration(t *testing.T) {
 		if nCreated != 1 {
 			t.Errorf("round %d: exactly one caller should report the admin as newly created, got %d", r, nCreated)
 		}
-		_, stored, ferr := repo.FindUserByLogin(ctx, "default", email)
+		user, stored, ferr := repo.FindUserByLogin(ctx, "default", email)
 		if ferr != nil {
 			t.Fatalf("round %d: admin not found after concurrent bootstrap: %v", r, ferr)
+		}
+		if !slices.Contains(user.Roles, "admin") {
+			t.Errorf("round %d: admin has roles %v after concurrent bootstrap, want admin (#513)", r, user.Roles)
 		}
 		if !auth.VerifyPassword(stored, "concurrent-pw-1") {
 			t.Errorf("round %d: admin password does not verify after concurrent bootstrap", r)

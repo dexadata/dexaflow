@@ -45,6 +45,33 @@ const clipboardFallbackHTML = `<script>` +
 	`})();` +
 	`</script>`
 
+// sessionKeeperHTML renews the session cookie periodically and when the browser
+// tab regains visibility, preventing the session from expiring while the user is
+// actively using or keeping the UI open (#1127).
+const sessionKeeperHTML = `<script>` +
+	`(function(){` +
+	`var lastRenew=0;` +
+	`var minInterval=5*60*1000;` +
+	`var renewInterval=15*60*1000;` +
+	`function renew(){` +
+	`var now=Date.now();` +
+	`if(now-lastRenew<minInterval)return;` +
+	`lastRenew=now;` +
+	`var b=(document.querySelector('base')&&document.querySelector('base').getAttribute('href'))||'/';` +
+	`var u=b.replace(/\/+$/,'')+'/api/v2/auth/token/renew';` +
+	`fetch(u,{` +
+	`method:'POST',` +
+	`credentials:'same-origin',` +
+	`headers:{'Accept':'application/json'}` +
+	`}).catch(function(){});` +
+	`}` +
+	`setInterval(renew,renewInterval);` +
+	`document.addEventListener('visibilitychange',function(){` +
+	`if(document.visibilityState==='visible')renew();` +
+	`});` +
+	`})();` +
+	`</script>`
+
 // liteBannerHTML is a discreet, neutral-gray "LITE" pill fixed at top-center,
 // injected into the served shell in the Lite edition so the local environment is
 // never mistaken for production. The slate gray (with white text) reads well on
@@ -119,7 +146,7 @@ func homeLinkHTML(label, href string) string {
 		`<span>` + html.EscapeString(label) + `</span></a>` + homeLinkStyle
 }
 
-// Server serves the embedded Airflow 3.2.1 SPA: static assets under a prefix and
+// Server serves the embedded Airflow 3.3.2 SPA: static assets under a prefix and
 // an index.html fallback for client-side routes.
 type Server struct {
 	fsys         fs.FS
@@ -413,6 +440,8 @@ func (s *Server) Index(w http.ResponseWriter, basePath string) {
 	// Always inject the clipboard polyfill — no-op on https / localhost, the
 	// only place it matters is plain http://<lan-ip>:port (#242).
 	body = injectBeforeBodyEnd(body, clipboardFallbackHTML)
+	// Always inject the session keeper to periodically renew session cookies (#1127).
+	body = injectBeforeBodyEnd(body, sessionKeeperHTML)
 	if s.liteBanner {
 		body = injectBeforeBodyEnd(body, liteBannerHTML)
 	}

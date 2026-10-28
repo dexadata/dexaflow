@@ -71,7 +71,7 @@ func MinScheduleInterval(expr string) (time.Duration, bool) {
 	if IsCronlessSchedule(expr) {
 		return 0, false
 	}
-	schedule, err := cron.ParseStandard(expr)
+	schedule, err := ParseCron(expr)
 	if err != nil {
 		return 0, false
 	}

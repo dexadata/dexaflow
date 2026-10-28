@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,14 +11,34 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dexadata/dexaflow/internal/dbt"
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
+// validateOptions holds the resolved flags for a validate run.
+type validateOptions struct {
+	// parse imports dag.py through the parser, the way compile does (#1680).
+	parse     bool
+	parserCmd string
+}
+
 func newValidateCommand() *cobra.Command {
-	return &cobra.Command{
+	var o validateOptions
+	cmd := &cobra.Command{
 		Use:   "validate [path]",
 		Short: "Validate dexaflow.yaml and the DAG source against the schema.",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Validate dexaflow.yaml against the schema and check the DAG source.
+
+By default the check is static: dexaflow.yaml is validated and dag.py is
+checked for syntax errors, without being imported. A dag.py that is valid
+Python but fails when it runs (an AttributeError, a missing import) still
+passes, and the error appears at compile time.
+
+Pass --parse to also import dag.py through the parser, as compile does, and
+validate the DAG it declares. It needs the parser and the DAG's dependencies
+on this host, takes a fraction of a second per DAG, and leaves no dag.json
+behind.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := "."
 			if len(args) == 1 {
@@ -62,13 +84,122 @@ func newValidateCommand() *cobra.Command {
 					return perr
 				}
 			}
+			if o.parse {
+				if perr := checkDagParses(cmd, dir, cfg, o.parserCmd); perr != nil {
+					return perr
+				}
+			}
 			if _, werr := fmt.Fprintf(cmd.OutOrStdout(), "%s is valid\n", projectConfigPath(dir)); werr != nil {
 				return werr
 			}
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&o.parse, "parse", false, "also import dag.py through the parser, as compile does, and validate the DAG it declares")
+	cmd.Flags().StringVar(&o.parserCmd, "parser-cmd", "", "override the parser command used by --parse (default from config)")
+	return cmd
 }
+
+// checkDagParses runs the DAG through the same parser compile uses, into a
+// scratch file, and validates what it produced (#1680).
+//
+// It is opt-in rather than part of every validate. The static checks run on
+// any host, including a CI lint step with no Python dependencies installed;
+// importing dag.py does not, so making it the default would turn passing CI
+// runs into failures for a reason that has nothing to do with the project.
+//
+// A dbt project has no dag.py to import: the dbt project is the DAG (ADR 0042)
+// and its manifest is already checked for existence above. Running `dbt parse`
+// here would need dbt on the host, which is the same trade, so it is not done.
+func checkDagParses(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig, parserCmd string) error {
+	if cfg.Dbt != nil {
+		_, werr := fmt.Fprintln(cmd.ErrOrStderr(),
+			"note: --parse has no dag.py to import in a dbt project; the dbt project is checked by compile")
+		return werr
+	}
+	ensurePysrc(cmd)
+	command, err := resolveParserCommand(cmd, parserCmd)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.MkdirTemp("", "dexaflow-validate-*")
+	if err != nil {
+		return fmt.Errorf("creating a scratch directory for --parse: %w", err)
+	}
+	defer os.RemoveAll(tmp) //nolint:errcheck // best-effort cleanup of a scratch directory
+	out := filepath.Join(tmp, "dag.json")
+	if rerr := parseForDeclaredPython(cmd, command, parserArgs{
+		source:        dagSourcePath(dir, cfg),
+		config:        projectConfigPath(dir),
+		output:        out,
+		image:         validateParseImage,
+		dagVersion:    "validate",
+		projectConfig: cfg,
+		stdout:        io.Discard,
+	}); rerr != nil {
+		return rerr
+	}
+	return validateParsedDAG(out, dagSourcePath(dir, cfg), cfg)
+}
+
+// validateParsedDAG applies compile's post-parser checks to the scratch
+// dag.json: the dexaflow.yaml overlay, the schema and graph, the schedule and
+// the operator providers. Errors name the DAG source rather than the scratch
+// file, which the user never sees.
+//
+// An embedded dbt project (a dbt_group placeholder, ADR 0043) is expanded by
+// compile from its dbt manifest, which needs dbt on the host. Here each group
+// is checked against dexaflow.yaml with compile's own message, then stands in
+// as a single task so the rest of the graph is still validated.
+func validateParsedDAG(path, source string, cfg *domain.LeoflowConfig) error {
+	spec, err := readDAGFile(path)
+	if err != nil {
+		return err
+	}
+	tasks, err := dbt.ExpandGroups(spec.Tasks, func(group string) ([]domain.TaskSpec, error) {
+		if _, ok := cfg.DbtGroups[group]; !ok {
+			return nil, fmt.Errorf("dag uses dbt_group(%q) but dexaflow.yaml has no dbt_groups.%s", group, group)
+		}
+		return []domain.TaskSpec{{TaskID: "dbt", Type: domain.TaskTypePython, Entrypoint: "dbt:group"}}, nil
+	})
+	if err != nil {
+		return fmt.Errorf("%s: %w", source, err)
+	}
+	spec.Tasks = tasks
+	if werr := writeDAGFile(path, spec); werr != nil {
+		return werr
+	}
+	if oerr := overlayProject(path, cfg); oerr != nil {
+		return oerr
+	}
+	if spec, err = readDAGFile(path); err != nil {
+		return err
+	}
+	if verr := spec.Validate(); verr != nil {
+		return fmt.Errorf("%s declares an invalid DAG: %w", source, verr)
+	}
+	if verr := spec.ValidateSchedule(); verr != nil {
+		return fmt.Errorf("%s declares an invalid DAG: %w", source, verr)
+	}
+	return validateOperatorProviders(spec, cfg)
+}
+
+// readDAGFile decodes a dag.json the parser wrote.
+func readDAGFile(path string) (*domain.DAGSpec, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // G304: a scratch file this command created
+	if err != nil {
+		return nil, fmt.Errorf("reading parser output: %w", err)
+	}
+	var spec domain.DAGSpec
+	if uerr := json.Unmarshal(data, &spec); uerr != nil {
+		return nil, fmt.Errorf("parsing parser output: %w", uerr)
+	}
+	return &spec, nil
+}
+
+// validateParseImage is the image reference handed to the parser by validate
+// --parse. The parser requires one, and the value never leaves the scratch file.
+const validateParseImage = "validate.invalid/dexaflow-validate:parse"
 
 // validateEnforcedPythonVersion returns the interpreter minor `validate` must
 // lint under, or empty when any supported one will do.

@@ -24,7 +24,23 @@ var scopedWrites = map[string]string{
 	"PATCH /api/v2/dags/:dag_id/dagRuns/:dag_run_id/taskInstances/:task_id":         auth.ScopeRun,
 	"PATCH /api/v2/dags/:dag_id/dagRuns/:dag_run_id/taskInstances/:task_id/*action": auth.ScopeRun,
 	"POST /api/v2/dags/:dag_id/clearTaskInstances":                                  auth.ScopeRun,
+	"POST /api/v2/dags/:dag_id/dagRuns/:dag_run_id/clear":                           auth.ScopeRun,
 	"POST /api/v2/dags/:dag_id/versions":                                            auth.ScopeDeploy,
+	"POST /api/v2/dags/:dag_id/versions/dry_run":                                    auth.ScopeDeploy,
+	"PUT /api/v2/dags/:dag_id/currentVersion":                                       auth.ScopeDeploy,
+}
+
+// deployReads are the GET routes dexaflow:deploy opens besides dexaflow:read:
+// what a deploy reads about the DAG it deploys (ADR 0074). Every other GET
+// needs dexaflow:read.
+var deployReads = map[string]bool{
+	"GET /api/v2/dags":                                     true,
+	"GET /api/v2/dags/:dag_id":                             true,
+	"GET /api/v2/dags/:dag_id/details":                     true,
+	"GET /api/v2/dags/:dag_id/dagVersions":                 true,
+	"GET /api/v2/dags/:dag_id/dagVersions/:version_number": true,
+	// The cluster's deploy defaults, read before the build (#1704).
+	"GET /api/v2/deployDefaults": true,
 }
 
 // scopelessReads are the protected GET routes a scoped token cannot call at
@@ -33,27 +49,40 @@ var scopedWrites = map[string]string{
 // dexaflow:read. Adding a GET route without RequirePermission or RequireScope
 // fails TestScopeGateClassifiesEveryRoute until it is listed here or guarded.
 var scopelessReads = map[string]bool{
-	"GET /ui/auth/me":                                          true,
-	"GET /ui/auth/menus":                                       true,
-	"GET /ui/dashboard/dag_stats":                              true,
-	"GET /ui/dashboard/historical_metrics_data":                true,
-	"GET /ui/dependencies":                                     true,
-	"GET /ui/calendar/:dag_id":                                 true,
-	"GET /ui/backfills":                                        true,
-	"GET /ui/teams":                                            true,
-	"GET /ui/connections/hook_meta":                            true,
-	"GET /ui/next_run_assets/:dag_id":                          true,
-	"GET /api/v2/dagTags":                                      true,
-	"GET /api/v2/dagWarnings":                                  true,
-	"GET /api/v2/plugins":                                      true,
-	"GET /api/v2/plugins/importErrors":                         true,
-	"GET /api/v2/assets":                                       true,
-	"GET /api/v2/assets/events":                                true,
-	"GET /api/v2/providers":                                    true,
-	"GET /api/v2/jobs":                                         true,
-	"GET /api/v2/backfills":                                    true,
-	"GET /api/v2/config":                                       true,
+	"GET /ui/auth/me":                                    true,
+	"GET /ui/auth/menus":                                 true,
+	"GET /ui/dashboard/dag_stats":                        true,
+	"GET /ui/dashboard/historical_metrics_data":          true,
+	"GET /ui/dependencies":                               true,
+	"GET /ui/calendar/:dag_id":                           true,
+	"GET /ui/backfills":                                  true,
+	"GET /ui/teams":                                      true,
+	"GET /ui/connections/hook_meta":                      true,
+	"GET /ui/next_run_assets/:dag_id":                    true,
+	"GET /ui/dags/:dag_id/deadlineAlerts":                true,
+	"GET /ui/dags/:dag_id/dagRuns/:dag_run_id/deadlines": true,
+	"GET /ui/dags/:dag_id/dagRuns/:dag_run_id/stats":     true,
+	// A token never lists tokens (ADR 0074).
+	"GET /api/v2/apiTokens":            true,
+	"GET /api/v2/dagWarnings":          true,
+	"GET /api/v2/plugins":              true,
+	"GET /api/v2/plugins/importErrors": true,
+	"GET /api/v2/assets":               true,
+	"GET /api/v2/assets/events":        true,
+	"GET /api/v2/providers":            true,
+	"GET /api/v2/jobs":                 true,
+	"GET /api/v2/backfills":            true,
+	"GET /api/v2/config":               true,
 	"GET /api/v2/dags/:dag_id/dagRuns/:dag_run_id/hitlDetails": true,
+	// Airflow 3.3 calls Dexaflow does not serve (airflow33_unserved.go).
+	"GET /api/v2/assets/:asset_id/state-store":                         true,
+	"GET /api/v2/assets/:asset_id/state-store/:key":                    true,
+	"GET /ui/partitioned_dag_runs":                                     true,
+	"GET /ui/pending_partitioned_dag_run/:dag_id":                      true,
+	"GET /api/v2/dags/:dag_id/dagRuns/:dag_run_id/upstreamAssetEvents": true,
+	"GET /api/v2/dags/:dag_id/assets/queuedEvents":                     true,
+	"GET /api/v2/dags/:dag_id/assets/:asset_id/queuedEvents":           true,
+	"GET /api/v2/assets/:asset_id/queuedEvents":                        true,
 }
 
 // newFullScopeServer wires every optional dependency that adds routes, so the
@@ -62,36 +91,50 @@ func newFullScopeServer(t *testing.T) *gin.Engine {
 	t.Helper()
 	ws, _ := newWorkspace(t)
 	sched := "0 5 * * *"
-	return NewServer(Dependencies{
-		Logger:              discardLogger(),
-		Authenticator:       engineAdmin{},
-		RateLimiter:         auth.NewRateLimiter(1000, time.Minute),
-		TokenTTLSecs:        900,
-		Edition:             "pro",
-		Dags:                &fakeDagRepo{dags: []domain.DAG{{DagID: "etl", Schedule: &sched}}},
-		DagRuns:             &fakeRunRepo{},
-		Tasks:               &fakeTaskRepo{},
-		Versions:            &fakeVersionRepo{},
-		Xcoms:               &fakeXComReader{},
-		Specs:               &fakeSpecReader{},
-		LatestRuns:          &fakeLatestRuns{},
-		TaskSummary:         &fakeTaskSummary{},
-		DagVersions:         &fakeVersionLister{},
-		DashboardStats:      &fakeStatsReader{},
-		AuditLog:            &fakeAuditReader{},
-		Variables:           &fakeVariableStore{},
-		Users:               &fakeUserStore{},
-		UserAudit:           &fakeUserAudit{},
-		Connections:         &fakeConnStore{},
-		ConnectionTest:      &fakeConnTester{},
-		Pools:               &fakePoolStore{},
-		Favorites:           &fakeFavoriteStore{},
-		ImportErrors:        &fakeImportErrorStore{},
-		Workspace:           ws,
-		ExamplesFS:          fstest.MapFS{},
-		TrustedIssuerBearer: scopedIssuer{},
-		TrustedIssuerUsers:  &fakeIssuerUsers{user: linkedAdmin(), active: true},
-		AuthAudit:           &fakeAuthAudit{},
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			Edition: "pro",
+		},
+		Auth: AuthDeps{
+			Authenticator: engineAdmin{},
+			RateLimiter:   auth.NewRateLimiter(1000, time.Minute),
+			TokenTTLSecs:  900,
+			AuthAudit:     &fakeAuthAudit{},
+		},
+		Issuers: IssuerDeps{
+			TrustedIssuerBearer: scopedIssuer{},
+			TrustedIssuerUsers:  &fakeIssuerUsers{user: linkedAdmin(), active: true},
+		},
+		UI: UIDeps{
+			Workspace:  ws,
+			ExamplesFS: fstest.MapFS{},
+		},
+		Stores: StoreDeps{
+			Dags:           &fakeDagRepo{dags: []domain.DAG{{DagID: "etl", Schedule: &sched}}},
+			DagRuns:        &fakeRunRepo{},
+			Tasks:          &fakeTaskRepo{},
+			Versions:       &fakeVersionRepo{},
+			Xcoms:          &fakeXComReader{},
+			Specs:          &fakeSpecReader{},
+			LatestRuns:     &fakeLatestRuns{},
+			TaskSummary:    &fakeTaskSummary{},
+			DagVersions:    &fakeVersionLister{},
+			DagSources:     rolledBackSources(),
+			DashboardStats: &fakeStatsReader{},
+			AuditLog:       &fakeAuditReader{},
+			Variables:      &fakeVariableStore{},
+			Users:          &fakeUserStore{},
+			UserAudit:      &fakeUserAudit{},
+			Connections:    &fakeConnStore{},
+			ConnectionTest: &fakeConnTester{},
+			Pools:          &fakePoolStore{},
+			Favorites:      &fakeFavoriteStore{},
+			ImportErrors:   &fakeImportErrorStore{},
+			APITokens:      &fakeAPITokens{},
+		},
 	})
 }
 
@@ -126,9 +169,8 @@ func scopeRefused(rec *httptest.ResponseRecorder) bool {
 func TestScopeGateClassifiesEveryRoute(t *testing.T) {
 	srv := newFullScopeServer(t)
 	const all = "scopes:dexaflow:read dexaflow:run dexaflow:deploy"
-	const noRead = "scopes:dexaflow:run dexaflow:deploy"
 
-	seenWrites := map[string]bool{}
+	seenWrites, seenReads := map[string]bool{}, map[string]bool{}
 	for _, ri := range srv.Routes() {
 		if isPublic(ri.Path) {
 			continue
@@ -147,8 +189,16 @@ func TestScopeGateClassifiesEveryRoute(t *testing.T) {
 			if scopeRefused(withAll) {
 				t.Errorf("%s with every scope = %d %s: a GET route without a permission check; guard it or list it in scopelessReads", key, withAll.Code, withAll.Body.String())
 			}
-			if rec := call.do(srv, noRead); !scopeRefused(rec) {
+			if rec := call.do(srv, "scopes:dexaflow:run"); !scopeRefused(rec) {
 				t.Errorf("%s without dexaflow:read = %d %s, want refused", key, rec.Code, rec.Body.String())
+			}
+			seenReads[key] = true
+			deployOnly := call.do(srv, "scopes:dexaflow:deploy")
+			if deployReads[key] && scopeRefused(deployOnly) {
+				t.Errorf("%s with dexaflow:deploy = %d %s, want past the scope checks (a deploy read)", key, deployOnly.Code, deployOnly.Body.String())
+			}
+			if !deployReads[key] && !scopeRefused(deployOnly) {
+				t.Errorf("%s with only dexaflow:deploy = %d %s, want refused", key, deployOnly.Code, deployOnly.Body.String())
 			}
 		default:
 			scope, mapped := scopedWrites[key]
@@ -165,6 +215,11 @@ func TestScopeGateClassifiesEveryRoute(t *testing.T) {
 			if rec := call.do(srv, "scopes:dexaflow:read"); !scopeRefused(rec) || !strings.Contains(rec.Body.String(), scope) {
 				t.Errorf("%s with only dexaflow:read = %d %s, want refused naming %s", key, rec.Code, rec.Body.String(), scope)
 			}
+		}
+	}
+	for key := range deployReads {
+		if !seenReads[key] {
+			t.Errorf("deployReads names %s, which is not a registered guarded read", key)
 		}
 	}
 	for key := range scopedWrites {

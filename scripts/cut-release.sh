@@ -15,6 +15,7 @@
 #   scripts/cut-release.sh <version> --resume     # finish a cut that died after
 #                                                 # the prepare PR merged
 #   scripts/cut-release.sh --self-test            # pure-logic cases, no network
+#   scripts/cut-release.sh 0.4.4 --force-queue    # tag even on a busy Actions queue
 #
 # Which branch a cut lands on follows from the version (ADR 0062): X.Y.0 and
 # its candidates are prepared and tagged on main; every later patch (X.Y.Z-rc.N
@@ -27,6 +28,12 @@
 #
 # Either way the cut first folds the pending `.changes/unreleased/*.yaml`
 # fragments into `[Unreleased]` and deletes them (scripts/changelog-fold.sh).
+#
+# A patch GA folds on release-X.Y, so main never sees that fold. Once the tag
+# is pushed the cut opens `changelog: sync vX.Y.Z to main`
+# (scripts/changelog-sync.sh), and before every cut it checks that main is in
+# sync with every patch already tagged, so a minor cut from main cannot fold a
+# shipped fragment a second time.
 #
 # Release-auth: the tag+push (the irreversible publish) NEVER happens without an
 # explicit confirmation — the interactive prompt, or `--yes` passed deliberately.
@@ -53,6 +60,12 @@ FLAKE_RE='toomanyrequests|Rate exceeded|TLS handshake|i/o timeout|no space left|
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarn:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+
+# promote_docs_version and docs_promote_pr: the docs root promotion, shared
+# with the Docs promote workflow (#1935). Next to this file, so it is always
+# the copy of the same revision.
+# shellcheck source=scripts/docs-promote.sh
+. "$(dirname "${BASH_SOURCE[0]}")/docs-promote.sh"
 
 # ---- pure logic (unit-testable, no network) --------------------------------
 
@@ -91,7 +104,65 @@ release_base() {
   if [ "$patch" = 0 ]; then printf 'main'; else printf 'release-%s' "$(minor_of "$v")"; fi
 }
 
+# wants_changelog_sync <version>: true for a patch GA (X.Y.Z, Z > 0), the one
+# kind of cut whose fold happens on release-X.Y and never reaches main. An rc
+# folds there too, but into [Unreleased], and its GA carries it on.
+wants_changelog_sync() {
+  is_rc "$1" && return 1
+  [ "$(release_base "$1")" != main ]
+}
+
+# changelog_sync_script: path of origin/main's copy of changelog-sync.sh. Not
+# $ROOT/scripts: by the time it runs, the cut has checked out release/<tag>,
+# built on release-X.Y, which may predate the script, and the sync it performs
+# is a change to main.
+changelog_sync_script() {
+  local f; f="$(mktemp)"
+  if git -C "$ROOT" show origin/main:scripts/changelog-sync.sh >"$f" 2>/dev/null && [ -s "$f" ]; then printf '%s' "$f"; return 0; fi
+  rm -f "$f"
+  [ -f "$ROOT/scripts/changelog-sync.sh" ] && { printf '%s' "$ROOT/scripts/changelog-sync.sh"; return 0; }
+  return 1
+}
+
+# sync_changelog_pr <version>: open the pull request that brings a patch's
+# changelog back to main. Runs right after the tag push, before the release
+# watch: the changelog is true once the tag exists, whatever the workflows do,
+# unlike the docs root. It RETURNS on every failure, for the same reason
+# promote_docs_version does: an exit here would strand a pushed tag with no
+# watch and no un-draft. The script runs in its own process, so not even an
+# exit inside it can reach this shell.
+sync_changelog_pr() { # <version>
+  local v="$1" script rc=0
+  script="${CHANGELOG_SYNC_SCRIPT:-$(changelog_sync_script)}" || script=""
+  if [ -z "$script" ]; then
+    warn "changelog sync: scripts/changelog-sync.sh is on neither origin/main nor this checkout. Main still lacks the v$v changelog; once it is there, run: scripts/changelog-sync.sh $v --pr --fetch"
+    return 0
+  fi
+  log "changelog: opening the sync of v$v to main"
+  # --fetch: the cut last fetched main at preflight, possibly an hour ago, and
+  # the pull request is built on origin/main.
+  CHANGELOG_SYNC_REPO="$ROOT" bash "$script" "$v" --pr --fetch || rc=$?
+  case "$rc" in
+    0) ;;
+    1) warn "changelog sync: the pull request needs a look; a fragment was kept for review (above)" ;;
+    *) warn "changelog sync for v$v failed (exit $rc, above). The release is unaffected; main still lacks its changelog. Recover with: scripts/changelog-sync.sh $v --pr --fetch (RELEASING.md, \"How the changelog flows\")" ;;
+  esac
+  [ "$script" = "${CHANGELOG_SYNC_SCRIPT:-}" ] || [ "$script" = "$ROOT/scripts/changelog-sync.sh" ] || rm -f "$script"
+  return 0
+}
+
+# commit_prepare <tag>: commits what is staged as the prepare commit, signed off
+# by its author (--signoff). The prepare PR runs the "DCO" check like every
+# pull request, and the cut waits for that PR green, so an unsigned prepare
+# commit stopped every cut once the check existed (#1575).
+commit_prepare() {
+  git commit -q --signoff -m "release: prepare $1"
+}
+
 self_test() {
+  # A git hook exports these, and the fixture repositories below would follow
+  # them to the repository being committed to.
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_PREFIX
   local fail=0
   # The real checkout, captured before any case overrides ROOT with a fixture.
   local REPO_ROOT="$ROOT"
@@ -255,6 +326,7 @@ self_test() {
     # directory being populated.
     mkdir -p "$1/website/scripts/ci"
     cp "$REPO_ROOT/website/scripts/ci/render-version-config.py" "$1/website/scripts/ci/"
+    mkdir -p "$1/scripts" && cp "$REPO_ROOT/scripts/check-stale-versions.sh" "$1/scripts/"
     printf '%s\n' '[params]' '  [[params.versions]]' '    version = "seed"' '    url = "https://example.invalid/"' > "$1/website/hugo.toml"
   }
   _promote() { ( ROOT="$vt" && _fixture_docs "$vt" && cp "$vt/versions.json" "$vt/website/scripts/ci/versions.json" && promote_docs_version "$1" >/dev/null && cat "$vt/website/scripts/ci/versions.json" ); }
@@ -294,6 +366,17 @@ self_test() {
   out="$(_promote v2.0.0)"
   _eq "$(printf '%s' "$out" | jq -r '.versions[] | select(.id=="latest") | .ref')" "v2.0.0" "promoting the current root is a no-op"
 
+  # The promotion also bumps README.md's install pins (#1555): the docs guard
+  # runs check-stale-versions.sh against the new latest leg, so a promotion
+  # that left them behind would fail its own pull request.
+  _versions '{"root_url":"https://example.invalid/","versions":[{"id":"latest","ref":"v1.0.0","subpath":"","label":"latest","archived":false}]}'
+  printf '%s\n' 'helm install x oci://ghcr.io/dexadata/charts/dexaflow --version 1.0.0 \' '  --set image.tag=v1.0.0' 'Since v1.0.0 it is renamed.' >"$vt/README.md"
+  _promote v2.0.0 >/dev/null
+  _eq "$(sed -n 1p "$vt/README.md" | grep -o -- '--version [0-9.]*')" "--version 2.0.0" "promotion bumps the README chart pin"
+  _eq "$(sed -n 2p "$vt/README.md")" "  --set image.tag=v2.0.0" "promotion bumps the README image pin"
+  _eq "$(sed -n 3p "$vt/README.md")" "Since v1.0.0 it is renamed." "promotion leaves README history alone"
+  rm -f "$vt/README.md"
+
   # With release branches a GA can be OLDER than the docs root: a security
   # patch on release-1.0 after v2.0.0 shipped. Promoting it would point the site
   # root back at the previous minor and archive the current one.
@@ -301,25 +384,6 @@ self_test() {
   out="$(_promote v1.0.5)"
   _eq "$(printf '%s' "$out" | jq -r '.versions[] | select(.id=="latest") | .ref')" "v2.0.0" "an older patch never takes the docs root"
   _eq "$(printf '%s' "$out" | jq -r '[.versions[] | select(.archived==true)] | length')" "0" "and archives nothing"
-
-  # restore_docs_file has to undo a STAGED edit, not just a dirty worktree. The
-  # commit at the end of promote_docs_pr runs one line after `git add`, so when
-  # it fails the file is already in the index — and `git checkout -- <path>`
-  # restores the worktree FROM the index, making it a no-op there. The staged
-  # edit then rode the branch switch onto the operator's branch and failed the
-  # next cut's working-tree guard, while the comment claimed it could not.
-  local rf; rf="$(mktemp -d)"
-  (
-    export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
-    mkdir -p "$rf/website/scripts/ci" && printf '{"v":1}\n' >"$rf/website/scripts/ci/versions.json"
-    cd "$rf" && git -c init.defaultBranch=main init -q . &&
-    git config user.email t@example.invalid && git config user.name tester &&
-    git add -A && git commit -qm base &&
-    printf '{"v":2}\n' >website/scripts/ci/versions.json && git add website/scripts/ci/versions.json
-  ) >/dev/null 2>&1 || { echo "  FAIL restore_docs_file: could not build the fixture"; fail=1; }
-  local rfroot="$ROOT"; ROOT="$rf"; restore_docs_file; ROOT="$rfroot"
-  _eq "$(cd "$rf" && git status --porcelain)" "" "restore_docs_file also drops a STAGED versions.json"
-  rm -rf "$rf"
 
   # promote_docs_version must RETURN on a bad input, never die. It runs after
   # `git push origin <tag>`, so an `exit` there takes the whole script with it
@@ -452,7 +516,7 @@ self_test() {
   rm -rf "$stubdir"
 
   # promote_docs_pr had no coverage at all — every case above targets
-  # promote_docs_version or restore_docs_file. That is how a seven-call-site
+  # promote_docs_version. That is how a seven-call-site
   # function shipped with one call site missing its argument and the whole gate
   # green: the one that lost it strands the operator on docs/promote-<tag>, and
   # nothing anywhere said so. Two invariants are locked, on BOTH the no-op and
@@ -477,6 +541,8 @@ self_test() {
       git config user.email t@example.invalid && git config user.name tester &&
       mkdir -p website/scripts/ci &&
       cp "$REPO_ROOT/website/scripts/ci/render-version-config.py" website/scripts/ci/ &&
+      mkdir -p scripts && cp "$REPO_ROOT/scripts/check-stale-versions.sh" scripts/ &&
+      printf '%s\n' "helm install x --version ${1#v}" > README.md &&
       printf '%s\n' '[params]' '  [[params.versions]]' '    version = "seed"' '    url = "https://example.invalid/"' > website/hugo.toml &&
       printf '{"root_url":"https://example.invalid/","versions":[{"id":"latest","ref":"%s","subpath":"","label":"latest","archived":false}]}\n' "$1" \
         >website/scripts/ci/versions.json &&
@@ -489,7 +555,7 @@ self_test() {
     (
       export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
       export PATH="$pp/stub:$PATH" REPO=o/r ROOT="$pp/wt" GH_ARGV="$pp/ghargv"
-      cd "$pp/wt" && wait_sha_green() { echo GREEN; } && promote_docs_pr v2.0.0
+      cd "$pp/wt" && wait_sha_green() { echo "$1" >"$pp/waited"; echo GREEN; } && promote_docs_pr v2.0.0
     ) >/dev/null 2>&1
     rc=$?
     printf '%s|%s|%s' \
@@ -520,13 +586,24 @@ self_test() {
   # stub, and gh's own branch switch never happens — so the restore is the only
   # thing bringing HEAD back.
   _pp_fixture v1.0.0 || { echo "  FAIL promote_docs_pr: could not build the happy-path fixture"; fail=1; }
+  # main moved on origin after this checkout last fetched: the promotion must
+  # build on origin's main, not on the stale copy.
+  ( export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+    cd "$pp/wt" && git commit -q --allow-empty -m "later on main" && git push -q origin HEAD:main &&
+    git reset -q --hard HEAD~1 && git update-ref refs/remotes/origin/main HEAD ) >/dev/null 2>&1
   rm -f "$pp/ghargv"
   _eq "$(_pp_run)" "operator-branch||0" "promote_docs_pr returns you to your branch after promoting"
   _eq "$(grep -c '^pr merge 7 ' "$pp/ghargv" 2>/dev/null)" "1" "the happy path actually merges the docs PR"
+  _eq "$(cat "$pp/waited" 2>/dev/null)" "$(git -C "$pp/origin" rev-parse -q --verify refs/heads/docs/promote-v2.0.0 2>/dev/null)" \
+    "it waits for CI on the head docs-promote.sh pushed"
+  _eq "$(git -C "$pp/origin" log -1 --format=%s refs/heads/docs/promote-v2.0.0~1 2>/dev/null)" "later on main" \
+    "and that head builds on origin's main as it is now, not on a stale fetch"
   _eq "$(git -C "$pp/origin" rev-parse -q --verify refs/heads/docs/promote-v2.0.0 >/dev/null 2>&1 && echo pushed || echo no)" "pushed" \
     "the happy path actually pushes the branch"
   _eq "$(git -C "$pp/origin" show refs/heads/docs/promote-v2.0.0:website/scripts/ci/versions.json 2>/dev/null | jq -r '.versions[] | select(.id=="latest") | .ref')" \
     "v2.0.0" "and what it pushed is the repointed root"
+  _eq "$(git -C "$pp/origin" show refs/heads/docs/promote-v2.0.0:README.md 2>/dev/null)" \
+    "helm install x --version 2.0.0" "and the bumped README pins ride the same commit"
   rm -rf "$pp"
 
   # promote_docs_version must leave BOTH version menus agreeing, which is the
@@ -556,6 +633,74 @@ JSON
   _eq "$(grep -c 'v9.9.9 (latest)' "$dv/website/hugo.toml")" "1" "the hugo fallback names the new release"
   _eq "$(grep -c '^    version = "v9.9.8"$' "$dv/website/hugo.toml")" "1" "and keeps the superseded one as an archived leg"
   rm -rf "$dv"
+
+  # run_gates judges the stale-pin gate against the release being cut. Run
+  # bare, check-stale-versions.sh reads versions.json, which before the tag
+  # still names the GA being replaced (on release-X.Y, an even older one), so
+  # v0.5.4 was tagged with pages pinning 0.5.3 (#1934).
+  local gd; gd="$(mktemp -d)"
+  mkdir -p "$gd/scripts"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >"%s/stale.argv"\n' "$gd" >"$gd/scripts/check-stale-versions.sh"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >"%s/other.argv"\n' "$gd" >"$gd/scripts/check-other.sh"
+  ( ROOT="$gd" MIN_GATES=2 run_gates v9.9.9-rc.1 release-9.9 >/dev/null 2>&1 )
+  _eq "$(cat "$gd/stale.argv" 2>/dev/null)" "--candidate v9.9.9-rc.1" "run_gates judges stale pins against the tag being cut"
+  _eq "$(cat "$gd/other.argv" 2>/dev/null)" "" "and still runs every other gate bare"
+  rm -rf "$gd"
+
+  # The changelog sync runs after a patch GA tag and only then: a minor GA is
+  # dated on main itself, and an rc leaves [Unreleased] for its GA to date.
+  _ws() { if wants_changelog_sync "$1"; then echo sync; else echo no; fi; }
+  _eq "$(_ws 0.5.4)"       "sync" "a patch GA syncs its changelog to main"
+  _eq "$(_ws 0.5.10)"      "sync" "patch 10 is a patch"
+  _eq "$(_ws 0.6.0)"       "no"   "a minor GA was dated on main already"
+  _eq "$(_ws 0.5.4-rc.1)"  "no"   "an rc has nothing dated to sync"
+  # sync_changelog_pr runs past the tag push, so it must return 0 whatever the
+  # script does, and must pass the version and --pr through. Driven in this
+  # shell, not a subshell, for the same reason as promote_docs_version above.
+  local sd; sd="$(mktemp -d)"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >"%s/argv"\nexit 2\n' "$sd" >"$sd/sync.sh"
+  local scrc=0
+  CHANGELOG_SYNC_SCRIPT="$sd/sync.sh" sync_changelog_pr 9.9.10 >/dev/null 2>&1 || scrc=$?
+  _eq "$scrc" "0" "sync_changelog_pr returns 0 when the sync fails"
+  _eq "$(cat "$sd/argv" 2>/dev/null)" "9.9.10 --pr --fetch" "sync_changelog_pr runs the sync with --pr on a fresh origin/main"
+  _eq "$(CHANGELOG_SYNC_SCRIPT="$sd/sync.sh" sync_changelog_pr 9.9.10 2>&1 >/dev/null | grep -c 'changelog-sync.sh 9.9.10 --pr --fetch')" "1" "and prints the manual recovery"
+  _eq "$(test -f "$sd/sync.sh" && echo kept)" "kept" "an operator-supplied script is never deleted"
+  rm -rf "$sd"
+
+  # promote_verdict: the watch's definition of PUBLISHED (ADR 0071).
+  _eq "$(promote_verdict '[{"name":"Gate release","conclusion":"success"},{"name":"Promote (verify images, chart, py3.N, Latest)","conclusion":"success"}]')" "PROMOTED" "a successful promote job is PUBLISHED"
+  _eq "$(promote_verdict '[{"name":"Gate release","conclusion":"success"},{"name":"Promote (verify images, chart, py3.N, Latest)","conclusion":"failure"}]')" "NOT failure" "a failed promote is not PUBLISHED"
+  _eq "$(promote_verdict '[{"name":"Gate release","conclusion":"failure"},{"name":"Promote (verify images, chart, py3.N, Latest)","conclusion":"skipped"}]')" "NOT skipped" "a promote skipped behind a red gate is not PUBLISHED"
+  _eq "$(promote_verdict '[{"name":"Promote (verify images, chart, py3.N, Latest)","conclusion":null}]')" "NOT pending" "a promote still running is not PUBLISHED"
+  _eq "$(promote_verdict '[{"name":"Gate release","conclusion":"success"}]')" "LEGACY" "a run from before ADR 0071 has no promote job"
+  _eq "$(promote_verdict 'not json')" "NOT unreadable" "an unreadable job list never reads as PUBLISHED"
+
+  # queue_verdict and runs_started: the queue preflight and the watch clock (#1685).
+  _eq "$(queue_verdict 3 2 25)"   "OK"      "a quiet queue lets the tag go"
+  _eq "$(queue_verdict 20 5 25)"  "OK"      "the threshold itself is still OK"
+  _eq "$(queue_verdict 200 6 25)" "BUSY"    "a PR wave refuses the tag"
+  _eq "$(queue_verdict '' 6 25)"  "UNKNOWN" "an unreadable count is UNKNOWN, not OK"
+  _eq "$(queue_verdict 3 x 25)"   "UNKNOWN" "a non-number is UNKNOWN"
+  _eq "$(runs_started '[{"status":"queued"},{"status":"queued"}]')" "no" "queued runs have not started"
+  _eq "$(runs_started '[{"status":"queued"},{"status":"in_progress"}]')" "yes" "one run with a runner starts the clock"
+  _eq "$(runs_started '[{"status":"completed","conclusion":"success"}]')" "yes" "a finished run has started"
+  _eq "$(runs_started '[]')" "no" "no runs yet is not started"
+  _eq "$(runs_started 'garbage')" "no" "an unreadable payload is not started"
+
+  # The prepare commit carries its author's DCO sign-off: the "DCO" check runs
+  # on the prepare PR like on any other, and the cut waits for it green.
+  local sp; sp="$(mktemp -d)"
+  if (cd "$sp" && export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null &&
+    git -c init.defaultBranch=main init -q . && git config user.name "Rel Ease" &&
+    git config user.email rel@example.invalid && echo x >f && git add f &&
+    commit_prepare v9.9.9) >/dev/null 2>&1; then
+    _eq "$(git -C "$sp" log -1 --format=%s)" "release: prepare v9.9.9" "the prepare commit names the tag"
+    _eq "$(git -C "$sp" log -1 --format=%B | git -C "$sp" interpret-trailers --parse | grep '^Signed-off-by:')" \
+      "Signed-off-by: Rel Ease <rel@example.invalid>" "the prepare commit is signed off by its author (DCO)"
+  else
+    _eq "commit failed" "committed" "commit_prepare commits the staged changes"
+  fi
+  rm -rf "$sp"
 
   if [ "$fail" = 0 ]; then echo "self-test: PASS"; else echo "self-test: FAIL"; return 1; fi
 }
@@ -614,6 +759,62 @@ run_verdict() { # <runs-json>
   anyfail=$(printf '%s' "$j" | jq -r 'any(.[]; .conclusion == "failure")' 2>/dev/null) || { echo PENDING; return; }
   [ "$anyfail" = "true" ] && { echo FAILED; return; }
   echo GREEN
+}
+
+# promote_verdict <jobs-json>: what the release run's `promote` job says about
+# the public pointers (ADR 0071). Pure (jq only) so --self-test can table it.
+# <jobs-json> is the `jobs` array of the release run. Echoes one of:
+#
+#   PROMOTED   the promote job concluded success: chart pushed, and for a GA of
+#              the newest minor, Latest and py3.N moved
+#   LEGACY     the run has no promote job: release.yaml at this tag predates
+#              ADR 0071 (a patch cut from a release branch that has not picked
+#              it up yet), so a green run is still the old meaning of PUBLISHED
+#   NOT <c>    the promote job exists and did not succeed (skipped, failure,
+#              cancelled, or not finished): nothing public moved
+#
+# A green run implies a successful promote today, since a skipped job leaves
+# the run green only when its `if` is false, and promote's `if` is false only
+# when the gate failed, which turns the run red. This reads the job anyway: the
+# watch used to infer "published" from the gate's `exit 1` in another file,
+# and one job's own conclusion is a fact rather than an inference (#1684).
+promote_verdict() { # <jobs-json>
+  local c
+  c=$(printf '%s' "$1" | jq -r '[.[]? | select((.name // "") | startswith("Promote"))] |
+        if length == 0 then "LEGACY" else (.[0].conclusion // "pending") end' 2>/dev/null) || { echo "NOT unreadable"; return; }
+  case "$c" in
+    LEGACY)  echo LEGACY ;;
+    success) echo PROMOTED ;;
+    ""|null) echo "NOT pending" ;;
+    *)       echo "NOT $c" ;;
+  esac
+}
+
+# queue_verdict <queued> <in-progress> <max>: whether the Actions queue is
+# quiet enough to push a tag. Pure, for --self-test. Echoes OK, BUSY or UNKNOWN.
+#
+# GitHub Actions has no job priority, so the release jobs wait behind every PR
+# run already queued. The v0.5.3 GA was tagged during a wave of 245 PR runs and
+# its jobs sat queued for about 50 minutes while the chart and Latest had
+# already moved (#1684, #1685). An unreadable count is UNKNOWN, which warns and
+# proceeds: an API blip must not stop a cut that the operator already confirmed
+# the rest of.
+queue_verdict() { # <queued> <in-progress> <max>
+  local q="${1:-}" p="${2:-}" max="${3:-25}"
+  [[ "$q" =~ ^[0-9]+$ && "$p" =~ ^[0-9]+$ && "$max" =~ ^[0-9]+$ ]] || { echo UNKNOWN; return; }
+  if [ $((q + p)) -gt "$max" ]; then echo BUSY; else echo OK; fi
+}
+
+# runs_started <runs-json>: "yes" once any run on the tag got a runner. The
+# watch deadline counts from then, not from the tag push, so a long queue does
+# not use up the time the jobs themselves need (#1685). Queue time has its own,
+# longer cap. Pure, for --self-test.
+runs_started() { # <runs-json>
+  local r
+  r=$(printf '%s' "$1" | jq -r 'if type == "array" and length > 0 then
+        (any(.[]; (.status // "queued") as $s | ["queued","waiting","pending","requested"] | index($s) | not) | if . then "yes" else "no" end)
+      else "no" end' 2>/dev/null) || r=no
+  echo "${r:-no}"
 }
 
 # latest_runs <runs-json>: keeps the newest run of each workflow. A pull
@@ -747,61 +948,27 @@ resume_target() { # <chart-version> <tag> [base]
 # push does not trigger that workflow at all. So the promotion must arrive as
 # its own push to main, after the tag is real.
 #
-# Failures here warn rather than die: the release is already published, and a
-# stale docs root is recoverable by re-running this by hand. Dying would tell
-# the operator the cut failed when it did not.
-# restore_docs_file: put versions.json back to HEAD, staged edit included.
+# The pull request itself is scripts/docs-promote.sh's (promote_docs_version
+# and docs_promote_pr, sourced above). The Docs promote workflow runs the same
+# `--pr` when the release run of a GA goes green, so a tag pushed without this
+# script still moves the root (#1935); whichever runs second finds the pull
+# request the first opened. The cut then waits for it and merges it.
 #
-# `git checkout -- <path>` restores the worktree from the INDEX, so the moment
-# `git add` has run it is a no-op: a failed commit right after it left the file
-# STAGED, the branch switch carried it to the operator's branch, and the next
-# cut died on "working tree not clean". Split out from promote_docs_pr so the
-# self-test can drive it — the hole was in a closure no test could reach.
-restore_docs_file() {
-  git -C "$ROOT" restore --staged --worktree -- website/scripts/ci/versions.json 2>/dev/null || true
-}
-
+# docs_promote_pr runs in a scratch worktree of origin/main, so the operator's
+# checkout is never switched, and in a command substitution, so nothing in it
+# can exit this shell past the tag push.
+#
+# Failures here warn rather than die: the release is already published, and a
+# stale docs root is recoverable by re-running the promotion by hand. Dying
+# would tell the operator the cut failed when it did not.
 promote_docs_pr() { # <tag>
-  local tag="$1" pr orig
-  local branch="docs/promote-$tag"
-  # Restore whatever ref we found, not `main`: from a git worktree — which is
-  # how this script is developed, and the cut only WARNS when HEAD is not main —
-  # `git checkout main` fails rc=128 ("already used by worktree at ..."), and
-  # `2>/dev/null` swallows the reason. Every early return goes through _restore,
-  # which also drops an uncommitted versions.json: leaving that behind fails the
-  # NEXT cut at its working-tree guard.
-  orig="$(git symbolic-ref -q --short HEAD || git rev-parse HEAD)"
-  # Takes the ref as an argument: bash has no local functions, so _restore
-  # outlives this one, while `orig` (local) does not. Reading $orig from the
-  # leaked copy would be an unbound-variable exit under `set -u` — a shell-
-  # killing exit living past the tag push, which is the one thing this file
-  # may not have.
-  _restore() { # <ref-to-return-to>
-    local o="${1:-}"
-    restore_docs_file
-    # Never silent: a missing argument used to strand the operator on the docs
-    # branch with no trace. That is how the call site below went unconverted
-    # through a green gate — six of seven passed "$orig" and nothing said so.
-    [ -n "$o" ] || { warn "docs promotion: _restore got no ref — still on $(git rev-parse --abbrev-ref HEAD 2>/dev/null)"; return 0; }
-    git checkout -q "$o" 2>/dev/null || git checkout -q --detach "$o" 2>/dev/null || true
-  }
-  git checkout -q -b "$branch" origin/main 2>/dev/null || { warn "docs promotion: could not create $branch — publish the docs root by hand"; return 0; }
-  promote_docs_version "$tag" || { warn "docs promotion skipped"; _restore "$orig"; return 0; }
-  # -C "$ROOT": promote_docs_version writes an absolute path, so a bare relative
-  # pathspec stages nothing whenever cwd is not the repo root — and the
-  # --cached --quiet below is then TRUE, so the failure came back as the log
-  # line "docs: root already serves <tag>". A flat lie, return 0, and a dirty
-  # tree left behind. Check the exit.
-  # Both menus, or the promotion PR ships one and leaves the other dirty in the
-  # operator's tree, which is how the gate failed every GA (#1242).
-  git -C "$ROOT" add website/scripts/ci/versions.json website/hugo.toml || { warn "docs promotion: could not stage the version menus"; _restore "$orig"; return 0; }
-  if git -C "$ROOT" diff --cached --quiet -- website/scripts/ci/versions.json; then log "docs: root already serves $tag"; _restore "$orig"; return 0; fi
-  git -C "$ROOT" commit -q -m "docs: publish $tag at the documentation root" -- website/scripts/ci/versions.json website/hugo.toml || { warn "docs promotion: commit failed"; _restore "$orig"; return 0; }
-  git push -u origin "$branch" -q || { warn "docs promotion: push failed — open the PR by hand from $branch"; _restore "$orig"; return 0; }
-  gh pr create --repo "$REPO" --base main --head "$branch" --label skip-changelog \
-    --title "docs: publish $tag at the documentation root" \
-    --body "Repoints website/scripts/ci/versions.json's \`latest\` leg at $tag, archives the one it replaces, and renders the matching \`[[params.versions]]\` block into website/hugo.toml so check-docs-version-menu.sh agrees. Opened by cut-release.sh after the tag was pushed, because the deploy checks the tag out, so this cannot ride in the prepare commit." >/dev/null || { warn "docs promotion: gh pr create failed"; _restore "$orig"; return 0; }
-  pr="$(gh pr view "$branch" --json number -q .number 2>/dev/null)"
+  local tag="$1" ans pr sha
+  if ! ans="$(DOCS_PROMOTE_REPO="$ROOT" DOCS_PROMOTE_SLUG="$REPO" docs_promote_pr "$tag" fetch)"; then
+    warn "docs promotion for $tag failed (above). The release is published, but the docs root still serves the previous GA. Recover with: scripts/docs-promote.sh $tag --pr --fetch, or run the Docs promote workflow with tag $tag (RELEASING.md)"
+    return 0
+  fi
+  if [ -z "$ans" ]; then log "docs: root already serves $tag or a newer GA"; return 0; fi
+  pr="${ans%% *}"; sha="${ans#* }"
   log "docs promotion PR #$pr — waiting for CI"
   # Its own budget: wait_sha_green restarts the clock per call, so the default
   # 5400s would pin the operator's terminal for 90 minutes on a docs PR after
@@ -809,88 +976,12 @@ promote_docs_pr() { # <tag>
   # still drags the full suite — 30 minutes is generous for it. An operator who
   # exports CUT_WAIT_DEADLINE overrides this default and gets their own value,
   # whether it is larger or smaller.
-  if [ "$(CUT_WAIT_DEADLINE="${CUT_DOCS_WAIT_DEADLINE:-${CUT_WAIT_DEADLINE:-1800}}" wait_sha_green "$(git rev-parse "$branch")")" = GREEN ]; then
+  if [ "$(CUT_WAIT_DEADLINE="${CUT_DOCS_WAIT_DEADLINE:-${CUT_WAIT_DEADLINE:-1800}}" wait_sha_green "$sha")" = GREEN ]; then
     gh pr merge "$pr" --repo "$REPO" --squash --delete-branch >/dev/null 2>&1 &&
       log "docs root now serves $tag (PR #$pr)" || warn "docs promotion PR #$pr is green but did not merge — merge it by hand"
   else
-    warn "docs promotion PR #$pr is not green — the release is published, but the docs root still serves the previous GA. Fix and merge #$pr."
+    warn "docs promotion PR #$pr is not green. The release is published, but the docs root still serves the previous GA. Fix and merge #$pr. If its checks never started, the workflow opened it with GITHUB_TOKEN, which starts no workflows: close and reopen it (RELEASING.md)."
   fi
-  _restore "$orig"
-}
-
-# promote_docs_version <tag>: point the published docs root at the GA being cut
-# and archive the one it replaces.
-#
-# website/scripts/ci/versions.json decides which ref each leg of the Pages tree
-# is built from, and its `latest` entry with subpath "" is the SITE ROOT. Its
-# own header says a GA "touches ONLY this file" — and no cut has ever touched
-# it: it has one commit in its history (#817), so v0.4.2, v0.4.3 and v0.4.4 all
-# shipped with the root still built from v0.4.1. Anyone reading the docs gets
-# the wrong version, and a link to an ADR added after v0.4.1 is a live 404 at
-# the root while resolving fine under /dev/ — which is how #953's dead links
-# would have recurred one ADR number later.
-#
-# A procedure written in a comment that no script performs is a procedure that
-# does not happen, so the cut performs it. rc cuts do not: a prerelease is not
-# what the docs root should serve.
-#
-# It RETURNS on every failure and never dies, because of WHERE it runs: past
-# `git push origin <tag>`. `die` is `exit 1`, and an exit inside a function
-# called in the current shell takes the whole script with it — the caller's
-# `|| warn` guard is not reached, it is dead code. That would skip the release
-# watch and #862's un-draft, and strand the operator on a pushed tag that
-# neither a re-invocation nor --resume can get past ("tag already exists"):
-# exactly the no-scripted-way-out state this file was changed to remove.
-promote_docs_version() { # <tag>
-  local tag="$1" f="$ROOT/website/scripts/ci/versions.json" prev tmp
-  [ -f "$f" ] || { warn "versions.json not found at $f"; return 1; }
-  jq -e '[.versions[]? | select(.id=="latest")] | length == 1' "$f" >/dev/null 2>&1 ||
-    { warn "versions.json must have exactly one \`latest\` entry"; return 1; }
-  prev="$(jq -r '(.versions[] | select(.id=="latest") | .ref) // empty' "$f")"
-  [ -n "$prev" ] || { warn "versions.json has no \`latest\` entry to repoint"; return 1; }
-  if [ "$prev" = "$tag" ]; then log "docs: latest already $tag"; return 0; fi
-  # A patch cut from an older release branch (ADR 0062) must not take the root
-  # from a newer minor: the root serves the newest GA, whichever branch it
-  # came from.
-  if [ "$(printf '%s\n%s\n' "${prev#v}" "${tag#v}" | sort -V | tail -n1)" = "${prev#v}" ]; then
-    log "docs: latest stays $prev, which is newer than $tag"; return 0
-  fi
-  tmp="$(mktemp)"
-  # The label leads with the version, so the dropdown says which release
-  # "latest" IS. Number-first is what Kubernetes, Istio and Docsy's own
-  # versioning guide do; leading with the generic word was this project's
-  # invention. It used to say only "latest", and the number of the CURRENT GA
-  # was the one number the menu never showed: a version appeared by name only
-  # after it was superseded and archived. The project's own maintainer read the
-  # menu and concluded latest was main, which is the clearest evidence the old
-  # label was not doing its job.
-  jq --arg tag "$tag" --arg prev "$prev" '
-    .versions |= (
-      map(if .id == "latest" then .ref = $tag | .label = $tag + " (latest)" else . end)
-      | if any(.[]; .id == $prev)
-        then map(if .id == $prev then .archived = true else . end)
-        else ( ([.[] | .id] | index("latest")) + 1 ) as $at
-             | .[0:$at] + [{id: $prev, ref: $prev, subpath: $prev, label: $prev, archived: true}] + .[$at:]
-        end
-    )' "$f" >"$tmp" || { rm -f "$tmp"; warn "rewriting versions.json failed"; return 1; }
-  mv "$tmp" "$f" || { rm -f "$tmp"; warn "could not replace versions.json"; return 1; }
-  chmod 644 "$f" 2>/dev/null || true
-
-  # The menu lives in TWO files, and this used to rewrite one. versions.json
-  # drives the published Pages tree; the [[params.versions]] block in
-  # website/hugo.toml is the fallback a plain `hugo` build uses.
-  # check-docs-version-menu.sh reconciles them, so leaving hugo.toml behind
-  # failed the docs promotion PR of every GA, and while that PR sat unmerged
-  # the release was published with its documentation root still serving the
-  # PREVIOUS GA. v0.4.8 shipped into exactly that state (#1242).
-  #
-  # Rendered by the same script that renders the Pages overlay, from the same
-  # manifest, so the fallback cannot drift from what is published.
-  python3 "$ROOT/website/scripts/ci/render-version-config.py" \
-    --versions-file "$f" --sync-hugo-config "$ROOT/website/hugo.toml" >/dev/null ||
-    { warn "could not sync website/hugo.toml from versions.json"; return 1; }
-
-  log "docs: root now built from $tag (archived $prev), both menus rendered"
 }
 
 read_chart_version() { awk '/^version:/{print $2; exit}' "$CHART"; }
@@ -946,8 +1037,13 @@ run_gates() { # <tag> <base>
     # entries an earlier rc folded, while main's stays empty since fragments
     # replaced hand edits. Against main, a GA that dates [Unreleased] reads as
     # "no entry" (empty before, empty after), so the gate gets the cut's base.
+    # check-stale-versions.sh judges against the release being cut: bare, it
+    # reads versions.json, which still names the GA this cut replaces (on
+    # release-X.Y an older one still), and v0.5.4 was tagged with pages
+    # pinning 0.5.3 that way (#1934).
     if [[ "$s" == *chart-version-matches-tag* ]]; then out="$(bash "$s" "$tag" 2>&1)"
     elif [[ "$s" == *check-changelog-entry* ]]; then out="$(bash "$s" "origin/$base" 2>&1)"
+    elif [[ "$s" == *check-stale-versions* ]]; then out="$(bash "$s" --candidate "$tag" 2>&1)"
     else out="$(bash "$s" 2>&1)"; fi
     rc=$?
     if [ "$rc" -ne 0 ]; then
@@ -961,6 +1057,23 @@ run_gates() { # <tag> <base>
     fi
   done
   return $ok
+}
+
+# check_queue <0|1|dry>: the queue preflight before the tag (#1685). Returns 1 on
+# a busy queue unless forced; the counts are logged either way.
+check_queue() { # <0 | 1 (--force-queue) | dry (report only)>
+  local q p v max="${CUT_MAX_QUEUED:-25}"
+  q=$(gh api "repos/$REPO/actions/runs?status=queued&per_page=1" --jq .total_count 2>/dev/null || true)
+  p=$(gh api "repos/$REPO/actions/runs?status=in_progress&per_page=1" --jq .total_count 2>/dev/null || true)
+  v="$(queue_verdict "$q" "$p" "$max")"
+  case "$v" in
+    OK)      log "actions queue: ${q} queued, ${p} in progress (max ${max})" ;;
+    UNKNOWN) warn "could not read the Actions queue; tagging without the queue preflight" ;;
+    BUSY)    warn "actions queue: ${q} queued, ${p} in progress, above CUT_MAX_QUEUED=${max}"
+             [ "$1" = dry ] && { warn "the real cut refuses here unless --force-queue"; return 0; }
+             [ "$1" = 1 ] && { warn "--force-queue: tagging anyway"; return 0; }
+             return 1 ;;
+  esac
 }
 
 confirm_tag() { # <tag>
@@ -978,18 +1091,19 @@ main() {
   # operator's shell or CI env can never silently bypass confirm_tag (M1). Only
   # --yes, parsed below, may set it.
   ASSUME_YES=0
-  local arg version="" dry=0 resume=0
+  local arg version="" dry=0 resume=0 force_queue=0
   for arg in "$@"; do
     case "$arg" in
       --self-test) self_test; exit $? ;;
       --dry-run)   dry=1 ;;
       --yes)       ASSUME_YES=1 ;;
       --resume)    resume=1 ;;
+      --force-queue) force_queue=1 ;;
       -*)          die "unknown flag: $arg" ;;
       *)           version="$arg" ;;
     esac
   done
-  [ -n "$version" ] || die "usage: cut-release.sh <version> [--dry-run] [--yes] [--resume]"
+  [ -n "$version" ] || die "usage: cut-release.sh <version> [--dry-run] [--yes] [--resume] [--force-queue]"
 
   version="${version#v}"
   valid_version "$version" || die "invalid version '$version' (want X.Y.Z or X.Y.Z-rc.N)"
@@ -1067,6 +1181,31 @@ main() {
     fi
   fi
 
+  # main must already carry the changelog of every patch tagged so far
+  # (scripts/changelog-sync.sh). A minor cut from main folds main's fragments,
+  # so one that shipped in a patch and was never synced back would be
+  # published again as new: that refuses. A patch cut builds on release-X.Y and
+  # its notes are not affected, and the sync it opens after its tag repairs the
+  # earlier ones too, so there it only warns. Read from origin/main, never from
+  # this checkout.
+  if [ "$resume" != 1 ]; then
+    local sync_script sync_out sync_rc=0
+    if sync_script="$(changelog_sync_script)"; then
+      git fetch origin main -q >/dev/null 2>&1 || true
+      sync_out="$(CHANGELOG_SYNC_REPO="$ROOT" bash "$sync_script" --check-all 2>&1)" || sync_rc=$?
+      [ "$sync_script" = "$ROOT/scripts/changelog-sync.sh" ] || rm -f "$sync_script"
+      if [ "$sync_rc" != 0 ]; then
+        printf '%s\n' "$sync_out" | head -40 >&2
+        if [ "$base" = main ] && [ "$dry" != 1 ]; then
+          die "main does not carry the changelog of a patch already released (above), and this cut would fold its fragments again. Run scripts/changelog-sync.sh <that X.Y.Z> --pr, merge the pull request, then cut."
+        fi
+        warn "main does not carry the changelog of a patch already released (above); run scripts/changelog-sync.sh <that X.Y.Z> --pr. A minor cut refuses until it does."
+      fi
+    else
+      warn "scripts/changelog-sync.sh is not on origin/main yet, so main was not checked for an unsynced patch changelog"
+    fi
+  fi
+
   if [ "$dry" = 1 ] && [ "$resume" = 1 ]; then
     log "DRY RUN (--resume) — no tag, no push:"
     [ "$base_ok" = 1 ] || die "$base does not exist on origin, so there is nothing to resume"
@@ -1079,6 +1218,8 @@ main() {
 
   if [ "$dry" = 1 ]; then
     log "DRY RUN — plan only, no branch/commit/PR/tag:"
+    # The queue preflight the real cut runs before the tag, reported only.
+    check_queue dry || true
     # The fragment count is part of the plan, not a detail. The cut CONSUMES
     # .changes/unreleased/, on an rc as well as a GA, and a plan that says
     # "unchanged" while two entries are about to move into the changelog is
@@ -1092,11 +1233,12 @@ main() {
     local base_note="" from_chart
     [ "$base_ok" = 1 ] || base_note=" (MISSING on origin: create it from v$(minor_of "$version").0 before the real cut)"
     from_chart="$(git show "origin/$base:helm/dexaflow/Chart.yaml" 2>/dev/null | awk '/^version:/{print $2; exit}')"
-    printf '  base:          %s%s\n  branch:        release/%s\n  tag:           %s\n  chart version: %s -> %s\n  kind:          %s\n  fragments:     %s\n  changelog:     %s\n' \
+    printf '  base:          %s%s\n  branch:        release/%s\n  tag:           %s\n  chart version: %s -> %s\n  kind:          %s\n  fragments:     %s\n  changelog:     %s\n  main sync:     %s\n' \
       "$base" "$base_note" "$tag" "$tag" "${from_chart:-$(read_chart_version)}" "$cv" \
       "$(is_rc "$version" && echo 'rc, keeps [Unreleased]' || echo 'GA, dates [Unreleased]')" \
       "$pending pending, folded into [Unreleased] and removed" \
-      "$(is_rc "$version" && echo "[Unreleased] gains the $pending folded entry(ies)" || echo "[Unreleased] + $pending folded -> [$cv] - $(date -u +%F)")"
+      "$(is_rc "$version" && echo "[Unreleased] gains the $pending folded entry(ies)" || echo "[Unreleased] + $pending folded -> [$cv] - $(date -u +%F)")" \
+      "$(wants_changelog_sync "$version" && echo "after the tag, a PR to main: changelog: sync $tag to main" || echo 'none (nothing folds outside main)')"
     exit 0
   fi
 
@@ -1163,7 +1305,7 @@ main() {
   # to be folded in a second time at the next cut.
   git add helm/dexaflow/Chart.yaml helm/dexaflow/README.md CHANGELOG.md
   git add -A .changes 2>/dev/null || true
-  git commit -q -m "release: prepare $tag" || die "nothing to commit (already prepared?)"
+  commit_prepare "$tag" || die "nothing to commit (already prepared?)"
   git push -u origin "$branch" -q || die "pushing $branch failed"
 
   local title body
@@ -1184,6 +1326,7 @@ main() {
   log "$base CI on merge commit ${sha:0:8}"
   [ "$(wait_sha_green "$sha")" = GREEN ] || die "$base red on the merge commit: NOT tagging"
 
+  check_queue "$force_queue" || die "the Actions queue is busy: the release jobs would wait behind it while nothing is promoted. Hold PR pushes until it drains (RELEASING.md, release freeze), then re-run with --resume, or pass --force-queue"
   confirm_tag "$tag"
   git tag -a "$tag" "$sha" -m "leoflow $tag" || die "creating tag $tag failed"
   git push origin "$tag" || die "pushing tag $tag failed — the tag is local only; 'git push origin $tag' when ready"
@@ -1195,18 +1338,37 @@ main() {
   # is what lets a retracted draft release recover on a rerun.
   { echo "tag=$tag sha=$sha date=$(date -u +%FT%TZ) kind=$(is_rc "$version" && echo rc || echo ga)"; } >>"$logf"
 
+  # A patch GA folded its fragments on release-X.Y; bring that back to main
+  # now, while the tag is fresh. It opens a pull request and does not wait on
+  # it, so it costs the watch below a few seconds, and it never fails the cut.
+  wants_changelog_sync "$version" && sync_changelog_pr "$cv"
+
   log "release workflows"
   sleep 15
   local reruns=0 j verdict failed rid isflake published=0 rstart=$SECONDS
   local rdeadline="${CUT_WAIT_DEADLINE:-5400}"
+  # The deadline counts from the first job that got a runner, not from the tag
+  # push: on v0.5.3 the jobs queued for about 50 minutes behind PR CI and the
+  # watch could expire before the run started, skipping the docs root (#1685).
+  # Queue time has its own, longer cap so a stuck queue still ends the watch.
+  local qstart=$SECONDS started=no qdeadline="${CUT_QUEUE_DEADLINE:-14400}"
   while :; do
-    if [ $((SECONDS - rstart)) -gt "$rdeadline" ]; then
-      warn "timed out after ${rdeadline}s waiting on the $tag release workflows — inspect: gh run list --branch $tag"
+    if [ "$started" = no ] && [ $((SECONDS - qstart)) -gt "$qdeadline" ]; then
+      warn "the $tag release jobs never got a runner in ${qdeadline}s; inspect: gh run list --branch $tag"
+      break
+    fi
+    if [ "$started" = yes ] && [ $((SECONDS - rstart)) -gt "$rdeadline" ]; then
+      warn "timed out after ${rdeadline}s of running $tag release workflows; inspect: gh run list --branch $tag"
       break
     fi
     # --branch filters server-side, same window problem as wait_sha_green.
     j=$(gh run list --branch "$tag" --limit 100 --json databaseId,status,conclusion 2>/dev/null \
           | jq '[.[]]' 2>/dev/null)
+    if [ "$started" = no ] && [ "$(runs_started "$j")" = yes ]; then
+      started=yes; rstart=$SECONDS
+      log "$tag release jobs started after $((SECONDS - qstart))s in the queue"
+      echo "queue_wait_s=$((SECONDS - qstart))" >>"$logf"
+    fi
     # Same classification as wait_sha_green — see run_verdict.
     verdict="$(run_verdict "$j")"
     case "$verdict" in
@@ -1231,7 +1393,9 @@ main() {
     # symptom it creates is exactly what stops the recovery. Re-publishing first
     # costs nothing when the release is already published, and it means the next
     # verdict is computed against a release the smokes can actually download.
-    gh release edit "$tag" --repo "$REPO" --draft=false >/dev/null 2>&1 || true
+    # --latest=false: GitHub marks a release Latest by default when it leaves
+    # draft, and only release.yaml's promote job may move Latest (ADR 0071).
+    gh release edit "$tag" --repo "$REPO" --draft=false --latest=false >/dev/null 2>&1 || true
     isflake=1
     for rid in $failed; do
       # An unreadable log is NOT evidence of a non-flake. A job that dies in
@@ -1259,6 +1423,22 @@ main() {
     fi
     warn "release workflows red (non-flake) — inspect the run + gate"; break
   done
+  # PUBLISHED means the release run's promote job moved the pointers, not only
+  # that every run is green (ADR 0071): read that job's own conclusion.
+  if [ "${published:-0}" = 1 ]; then
+    local relrun jobs="" pv
+    relrun=$(gh run list --branch "$tag" --workflow release.yaml --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+    # An unreadable job list must never read as LEGACY (which keeps PUBLISHED),
+    # so a failed lookup hands promote_verdict something it cannot parse.
+    [ -n "$relrun" ] && jobs=$(gh api "repos/$REPO/actions/runs/$relrun/jobs?per_page=100" --jq '.jobs' 2>/dev/null || true)
+    pv="$(promote_verdict "${jobs:-unreadable}")"
+    case "$pv" in
+      PROMOTED) log "$tag promoted: chart pushed; Latest and py3.N moved if this is a GA of the newest minor" ;;
+      LEGACY)   log "$tag: release.yaml at this tag has no promote job (before ADR 0071); a green run is PUBLISHED" ;;
+      *)        published=0
+                warn "$tag release run is green but its promote job reports ${pv#NOT }, so the chart and Latest may not have moved; re-run promote (RELEASING.md)" ;;
+    esac
+  fi
   gh release view "$tag" --repo "$REPO" --json tagName,isDraft,isPrerelease,url \
     -q '"release \(.tagName) draft=\(.isDraft) prerelease=\(.isPrerelease) \(.url)"' 2>/dev/null | tee -a "$logf"
 
@@ -1267,10 +1447,11 @@ main() {
   # or still draft. Everything above this line is already recorded, so a failure
   # here costs the docs root and nothing else.
   #
-  # `published` tracks the workflow verdict, not `isDraft`. Those coincide only
-  # because release.yaml's retract step ends in `exit 1`, so a drafted release
-  # is always a red run, and its green arm un-drafts. That invariant lives in
-  # another file — if that `exit 1` ever goes, check this.
+  # `published` tracks the workflow verdict and the promote job's own
+  # conclusion (promote_verdict), not `isDraft`. A drafted release is always a
+  # red run because release.yaml's retract step ends in `exit 1`, and promote
+  # only runs after a green gate, so a run that reached PROMOTED has passed
+  # every gate whatever that step does.
   if ! is_rc "$version"; then
     if [ "${published:-0}" = 1 ]; then
       promote_docs_pr "$tag"

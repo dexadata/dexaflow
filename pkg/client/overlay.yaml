@@ -1,0 +1,40 @@
+# OpenAPI Overlay applied by oapi-codegen when it generates this client (see
+# oapi-codegen.yaml). Each action keeps a generated signature compatible after
+# docs/api/openapi.yaml gained a parameter; the client reaches the parameter
+# through a hand-written request editor in client.go instead.
+overlay: 1.0.0
+info:
+  title: pkg/client compatibility overlay
+  version: 1.0.0
+actions:
+  # getDagSource gained the optional version_number query parameter (#1741).
+  # Removing it here keeps GetDagSource(ctx, dagId, ...RequestEditorFn); use
+  # WithDagSourceVersion to send it.
+  - target: $.paths['/api/v2/dagSources/{dag_id}'].get.parameters
+    remove: true
+  # The register dry run route (#1705) gets no method of its own: a new
+  # method on ClientInterface breaks every implementation of it. Use
+  # RegisterDagVersion with the DryRunRegister request editor.
+  - target: $.paths['/api/v2/dags/{dag_id}/versions/dry_run']
+    remove: true
+  # The cluster deploy defaults route (#1704) gets no generated method
+  # either; use Client.GetDeployDefaults in client.go.
+  - target: $.paths['/api/v2/deployDefaults']
+    remove: true
+  # The CLI sign-in routes (#1704) get no generated method either; use
+  # Client.GetAuthMethods, Client.ExchangeCLILoginCode,
+  # Client.StartCLIDeviceLogin and Client.PollCLIDeviceLogin in auth_cli.go.
+  - target: $.paths['/api/v2/auth/methods']
+    remove: true
+  - target: $.paths['/api/v2/auth/cli/token']
+    remove: true
+  - target: $.paths['/api/v2/auth/cli/device']
+    remove: true
+  # The CI OIDC exchange (ADR 0092) gets no generated method either; use
+  # Client.ExchangeCIToken in auth_ci.go.
+  - target: $.paths['/api/v2/auth/ciToken']
+    remove: true
+  # The spec of one version (#1708) gets no generated method either; use
+  # Client.GetDagVersionSpec in dag_version_spec.go.
+  - target: $.paths['/api/v2/dags/{dag_id}/dagVersions/{version_number}/spec']
+    remove: true

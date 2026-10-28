@@ -115,12 +115,12 @@ func TestJWTAuthTenantlessBearerFallsBackToTheCookie(t *testing.T) {
 // JWTAuth, so it does not render a shell whose every data call would 401.
 func TestShellSessionRejectsATenantlessPrincipal(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for token, want := range map[string]bool{"tenantless": false, "good": true} {
+	for token, want := range map[string]shellVerdict{"tenantless": shellNoSession, "good": shellVerified} {
 		c, _ := gin.CreateTestContext(httptest.NewRecorder())
 		c.Request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", http.NoBody)
 		c.Request.Header.Set("Authorization", "Bearer "+token)
-		if got := shellSessionValid(c, mixedAuthn{}); got != want {
-			t.Errorf("token %s: shellSessionValid = %v, want %v", token, got, want)
+		if got := shellSession(c, mixedAuthn{}, authTokenCookie, nil); got != want {
+			t.Errorf("token %s: shellSession = %v, want %v", token, got, want)
 		}
 	}
 }

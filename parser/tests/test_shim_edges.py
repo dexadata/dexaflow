@@ -195,8 +195,11 @@ def test_operator_non_serialisable_arg_is_loud_reject(monkeypatch, tmp_path):
 def test_operator_on_failure_callback_is_marked_not_rejected(monkeypatch, tmp_path):
     """on_failure_callback is a callable Dexaflow cannot serialise into dag.json,
     but instead of the general non-serialisable reject (ADR 0040 A1.1) it is
-    ACCEPTED and marked on the task (#424 inc 4): the runtime re-imports dag.py and
-    runs it in the task process on failure. The callable itself is not carried."""
+    ACCEPTED and marked on the task (#424 inc 4). The callable itself is not
+    carried: the entrypoint names the module the runtime imports to read it off
+    the task (#484). The marker alone proves nothing runs, so the runtime half is
+    runtime/python/tests/test_task_sdk_operator_callback.py, which fails when the
+    callback does not fire."""
     spec = _compile(monkeypatch, tmp_path, """
         from airflow.sdk import DAG
         from airflow.providers.snowflake.operators.snowflake import SQLExecuteQueryOperator
@@ -209,8 +212,20 @@ def test_operator_on_failure_callback_is_marked_not_rejected(monkeypatch, tmp_pa
     q = _task(spec, "q")
     assert q["type"] == "airflow_operator"
     assert q.get("on_failure_callback") is True
+    assert q.get("entrypoint") == "dag:q"
     # the callable must NOT leak into the serialised operator args
     assert "on_failure_callback" not in q.get("operator_args", {})
+
+
+def test_operator_without_callback_has_no_entrypoint(monkeypatch, tmp_path):
+    """Only a callback makes the runtime import dag.py for an operator (#484)."""
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.sdk import DAG
+        from airflow.providers.snowflake.operators.snowflake import SQLExecuteQueryOperator
+        with DAG("g"):
+            SQLExecuteQueryOperator(task_id="q", conn_id="sf", sql="SELECT 1")
+    """)
+    assert "entrypoint" not in _task(spec, "q")
 
 
 def test_python_task_on_failure_callback_is_marked(monkeypatch, tmp_path):
@@ -488,7 +503,8 @@ def test_python_task_on_failure_callback_as_list_is_marked(monkeypatch, tmp_path
 
 def test_operator_on_failure_callback_as_list_is_marked(monkeypatch, tmp_path):
     """Same for a generically-captured provider operator, whose kwargs arrive via
-    __leoflow_args__ rather than as attributes."""
+    __leoflow_args__ rather than as attributes. That the callback then runs is
+    asserted in runtime/python/tests/test_task_sdk_operator_callback.py (#484)."""
     spec = _compile(monkeypatch, tmp_path, """
         from airflow.sdk import DAG
         from airflow.providers.snowflake.operators.snowflake import SQLExecuteQueryOperator
@@ -499,6 +515,7 @@ def test_operator_on_failure_callback_as_list_is_marked(monkeypatch, tmp_path):
     """)
     q = _task(spec, "q")
     assert q.get("on_failure_callback") is True
+    assert q.get("entrypoint") == "dag:q"
     assert "on_failure_callback" not in q.get("operator_args", {})
 
 
@@ -733,3 +750,147 @@ def test_provider_operator_pool_slots_is_not_an_operator_arg(monkeypatch, tmp_pa
     q = _task(spec, "q")
     assert q["pool_slots"] == 2
     assert "pool_slots" not in q.get("operator_args", {})
+
+
+# ───────────────────────── .override() on a TaskFlow task (#1681) ─────────────────────────
+
+def test_task_override_task_id_fan_out_issue_1681(monkeypatch, tmp_path):
+    """The issue's DAG: .override(task_id=...) names each fanned-out task. Every
+    task keeps the decorated function as its entrypoint (the runtime imports the
+    module attribute and unwraps it), and the reducer receives the overridden
+    ids in declaration order."""
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.sdk import DAG, task
+
+        @task
+        def estimate(worker: int) -> float:
+            return float(worker)
+
+        @task
+        def combine(values: list[float]) -> float:
+            return sum(values)
+
+        with DAG("fan_out", schedule=None, catchup=False):
+            combine([estimate.override(task_id=f"estimate_{n:02d}")(n) for n in range(16)])
+    """)
+    ids = [f"estimate_{n:02d}" for n in range(16)]
+    assert sorted(t["task_id"] for t in spec["tasks"]) == sorted(ids + ["combine"])
+    for n, task_id in enumerate(ids):
+        t = _task(spec, task_id)
+        assert t["type"] == "python"
+        assert t["entrypoint"] == "dag:estimate"
+        assert t["call_args"] == {"worker": n}
+    combine = _task(spec, "combine")
+    assert combine["depends_on"] == sorted(ids)
+    assert combine["xcom_input"] == {"values": ids}
+
+
+def test_task_override_merges_kwargs_over_the_decorator(monkeypatch, tmp_path):
+    """.override(**kwargs) takes the same operator kwargs as @task(...): they are
+    merged over the decorator's, with the override winning, exactly as Airflow's
+    _TaskDecorator.override does. The scheduling attributes reach the dag.json."""
+    spec = _compile(monkeypatch, tmp_path, """
+        from datetime import timedelta
+        from airflow.sdk import DAG, task
+
+        @task(retries=2, retry_delay=timedelta(seconds=10))
+        def a() -> None: ...
+
+        @task
+        def b() -> None: ...
+
+        with DAG("g"):
+            a.override(task_id="a_fast", retries=5, trigger_rule="all_done",
+                       execution_timeout=timedelta(minutes=1), pool_slots=3)() >> b()
+    """)
+    t = _task(spec, "a_fast")
+    assert t["retries"] == 5
+    assert t["retry_delay_seconds"] == 10
+    assert t["trigger_rule"] == "all_done"
+    assert t["execution_timeout_seconds"] == 60
+    assert t["pool_slots"] == 3
+    assert _task(spec, "b")["depends_on"] == ["a_fast"]
+
+
+def test_task_override_leaves_the_original_decorator_unchanged(monkeypatch, tmp_path):
+    """An override builds a new task factory: calling the original afterwards
+    still uses the function name and the decorator's own kwargs."""
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.sdk import DAG, task
+
+        @task(retries=1)
+        def a() -> None: ...
+
+        with DAG("g"):
+            a.override(task_id="custom", retries=7)()
+            a()
+    """)
+    assert _task(spec, "custom")["retries"] == 7
+    assert _task(spec, "a")["retries"] == 1
+    assert _task(spec, "a")["entrypoint"] == "dag:a"
+
+
+def test_task_override_is_chainable_and_duplicate_ids_are_suffixed(monkeypatch, tmp_path):
+    """override() returns a decorator that has override() too, and a repeated
+    overridden task_id is auto-suffixed (__1, __2) like any duplicate id."""
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.sdk import DAG, task
+
+        @task
+        def a() -> None: ...
+
+        with DAG("g"):
+            a.override(task_id="x").override(retries=4)()
+            a.override(task_id="x")()
+    """)
+    assert sorted(t["task_id"] for t in spec["tasks"]) == ["x", "x__1"]
+    assert _task(spec, "x")["retries"] == 4
+    assert "retries" not in _task(spec, "x__1")
+
+
+def test_task_override_then_expand_is_still_refused(monkeypatch, tmp_path):
+    """.override(...).expand(...) is dynamic task mapping, which stays a clear
+    reject rather than an AttributeError."""
+    with pytest.raises(ValueError) as ei:
+        _compile(monkeypatch, tmp_path, """
+            from airflow.sdk import DAG, task
+            @task
+            def a(x): ...
+            with DAG("g"):
+                a.override(task_id="m").expand(x=[1, 2])
+        """)
+    assert "dynamic task mapping" in str(ei.value)
+
+
+def test_task_override_on_failure_callback_is_refused(monkeypatch, tmp_path):
+    """The runtime reads a @task's on_failure_callback off the module-level
+    decorator, which never sees an override. Accepting it in .override() would
+    run the wrong callback (or none), so it is a loud reject instead."""
+    with pytest.raises(ValueError) as ei:
+        _compile(monkeypatch, tmp_path, """
+            from airflow.sdk import DAG, task
+            def notify(ctx): pass
+            @task
+            def a() -> None: ...
+            with DAG("g"):
+                a.override(task_id="b", on_failure_callback=notify)()
+        """)
+    msg = str(ei.value)
+    assert "on_failure_callback" in msg
+    assert "override" in msg
+    assert "not supported by Dexaflow" in msg
+
+
+def test_task_branch_override_still_rejected_as_branching(monkeypatch, tmp_path):
+    """@task.branch(...).override() reaches the branching reject, not an
+    AttributeError."""
+    with pytest.raises(ValueError) as ei:
+        _compile(monkeypatch, tmp_path, """
+            from airflow.sdk import DAG, task
+            @task.branch
+            def pick() -> str:
+                return "a"
+            with DAG("g"):
+                pick.override(task_id="choose")()
+        """)
+    assert "branching" in str(ei.value)

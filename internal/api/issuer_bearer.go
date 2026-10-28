@@ -69,6 +69,10 @@ func (a *issuerBearerAuth) authenticate(ctx context.Context, raw string) (*auth.
 	scoped := *user
 	scoped.Scoped = true
 	scoped.Scopes = id.Scopes
+	// A deploy-audience bearer (#1773) is scoped like any other: the mark
+	// only lets it past the deploy routes' issuer check, and its scopes still
+	// decide which routes it reaches.
+	scoped.DeployAudience = id.DeployAudience
 	return &scoped, nil
 }
 

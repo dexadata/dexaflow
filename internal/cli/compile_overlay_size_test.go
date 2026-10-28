@@ -16,6 +16,7 @@ func intPtr(n int) *int { return &n }
 // TestOverlayProjectSizeSetsPoolSlots: a per-task size and a DAG-wide default
 // size both land on the compiled tasks as pool_slots.
 func TestOverlayProjectSizeSetsPoolSlots(t *testing.T) {
+	t.Parallel()
 	path := writeDagJSON(t)
 	cfg := &domain.LeoflowConfig{
 		DagID:    "proj",
@@ -38,6 +39,7 @@ func TestOverlayProjectSizeSetsPoolSlots(t *testing.T) {
 // in dag.py keeps it over the DAG-wide default; the YAML task override still
 // beats both.
 func TestOverlayProjectDagPyPoolSlotsBeatsDefaultSize(t *testing.T) {
+	t.Parallel()
 	path := writeDagJSON(t)
 	spec := readSpec(t, path)
 	for i := range spec.Tasks {
@@ -71,6 +73,7 @@ func TestOverlayProjectDagPyPoolSlotsBeatsDefaultSize(t *testing.T) {
 // compiled task carries no pool_slots, so dag.json is unchanged for every DAG
 // that does not use the knob.
 func TestOverlayProjectNoSizeLeavesPoolSlotsUnset(t *testing.T) {
+	t.Parallel()
 	path := writeDagJSON(t)
 	cfg := &domain.LeoflowConfig{
 		DagID: "proj",
@@ -90,6 +93,7 @@ func TestOverlayProjectNoSizeLeavesPoolSlotsUnset(t *testing.T) {
 // compiles to no pool_slots and dag.json (and its hash) match a DAG without
 // size. A task override of 1 still beats a larger DAG-wide default.
 func TestOverlayProjectSizeOneIsOmitted(t *testing.T) {
+	t.Parallel()
 	path := writeDagJSON(t)
 	cfg := &domain.LeoflowConfig{
 		DagID:    "proj",

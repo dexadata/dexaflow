@@ -420,6 +420,26 @@ func TestLoadServerLogsBackendDefaultsToDisk(t *testing.T) {
 	if c.Logs.Sink.Bucket != "" {
 		t.Errorf("Logs.Sink.Bucket = %q, want empty by default", c.Logs.Sink.Bucket)
 	}
+	if !c.Logs.PersistenceEnabled {
+		t.Error("Logs.PersistenceEnabled = false, want true by default")
+	}
+}
+
+// TestLoadServerReadsLogsPersistenceEnabledFromEnv checks the persistence toggle
+// binds from DEXAFLOW_LOGS_PERSISTENCE_ENABLED and legacy LEOFLOW_LOGS_PERSISTENCE_ENABLED.
+func TestLoadServerReadsLogsPersistenceEnabledFromEnv(t *testing.T) {
+	for _, env := range []string{"DEXAFLOW_LOGS_PERSISTENCE_ENABLED", "LEOFLOW_LOGS_PERSISTENCE_ENABLED"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv(env, "false")
+			c, err := LoadServer("", nil)
+			if err != nil {
+				t.Fatalf("LoadServer with %s: %v", env, err)
+			}
+			if c.Logs.PersistenceEnabled {
+				t.Errorf("%s=false: Logs.PersistenceEnabled = true, want false", env)
+			}
+		})
+	}
 }
 
 // TestLoadServerReadsLogsSinkS3FromEnv checks the S3 surface binds from
@@ -799,6 +819,8 @@ func TestLoadServerReadsTrustedIssuerFromEnv(t *testing.T) {
 	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS", "https://portal.example.com,http://localhost:3000")
 	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_AUDIENCES", "leoflow-mcp,other-mcp")
 	t.Setenv("LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS", "600")
+	t.Setenv("DEXAFLOW_AUTH_TRUSTED_ISSUER_HOST_PATTERN", "{tenant}.example.com")
+	t.Setenv("DEXAFLOW_AUTH_TRUSTED_ISSUER_DEPLOY_AUDIENCE", "dexaflow-deploy")
 	c, err = LoadServer("", nil)
 	if err != nil {
 		t.Fatalf("LoadServer: %v", err)
@@ -811,7 +833,8 @@ func TestLoadServerReadsTrustedIssuerFromEnv(t *testing.T) {
 	if got.Name != want.Name || got.Issuer != want.Issuer || got.JWKSURL != want.JWKSURL || got.Audience != want.Audience ||
 		got.TenantClaim != want.TenantClaim || strings.Join(got.AllowedTenants, ",") != "acme,globex" || got.MaxLifetimeSeconds != 300 ||
 		strings.Join(got.AllowedOrigins, ",") != "https://portal.example.com,http://localhost:3000" ||
-		strings.Join(got.BearerAudiences, ",") != "leoflow-mcp,other-mcp" || got.BearerMaxLifetimeSeconds != 600 {
+		strings.Join(got.BearerAudiences, ",") != "leoflow-mcp,other-mcp" || got.BearerMaxLifetimeSeconds != 600 ||
+		got.HostPattern != "{tenant}.example.com" || got.DeployAudience != "dexaflow-deploy" {
 		t.Errorf("TrustedIssuer = %+v, want %+v", got, want)
 	}
 }
@@ -853,6 +876,32 @@ func TestValidateTrustedIssuer(t *testing.T) {
 		{"bearer lifetime at the cap", func(s *TrustedIssuerSection) { s.BearerMaxLifetimeSeconds = 3600 }, nil},
 		{"bearer lifetime above the cap", func(s *TrustedIssuerSection) { s.BearerMaxLifetimeSeconds = 3601 }, []string{"auth.trusted_issuer.bearer_max_lifetime_seconds"}},
 		{"negative bearer lifetime", func(s *TrustedIssuerSection) { s.BearerMaxLifetimeSeconds = -1 }, []string{"auth.trusted_issuer.bearer_max_lifetime_seconds"}},
+		{"host pattern", func(s *TrustedIssuerSection) { s.HostPattern = "{tenant}.example.com" }, nil},
+		{"host pattern with a port", func(s *TrustedIssuerSection) { s.HostPattern = "{tenant}.example.com:8443" }, nil},
+		{"host pattern in the middle", func(s *TrustedIssuerSection) { s.HostPattern = "flow-{tenant}.example.com" }, nil},
+		{"host pattern without tenant", func(s *TrustedIssuerSection) { s.HostPattern = "flow.example.com" }, []string{"auth.trusted_issuer.host_pattern"}},
+		{"host pattern with two tenants", func(s *TrustedIssuerSection) { s.HostPattern = "{tenant}.{tenant}.example.com" }, []string{"auth.trusted_issuer.host_pattern"}},
+		{"host pattern with a scheme", func(s *TrustedIssuerSection) { s.HostPattern = "https://{tenant}.example.com" }, []string{"auth.trusted_issuer.host_pattern"}},
+		{"host pattern with a path", func(s *TrustedIssuerSection) { s.HostPattern = "{tenant}.example.com/ui" }, []string{"auth.trusted_issuer.host_pattern"}},
+		{"host pattern with a wildcard", func(s *TrustedIssuerSection) { s.HostPattern = "{tenant}.*.com" }, []string{"auth.trusted_issuer.host_pattern"}},
+		{"deploy audience", func(s *TrustedIssuerSection) { s.DeployAudience = "dexaflow-deploy" }, nil},
+		{"deploy audience next to bearer audiences", func(s *TrustedIssuerSection) {
+			s.BearerAudiences = []string{"leoflow-mcp"}
+			s.DeployAudience = "dexaflow-deploy"
+		}, nil},
+		{"deploy audience is the handoff audience", func(s *TrustedIssuerSection) { s.DeployAudience = "leoflow-engine" }, []string{"auth.trusted_issuer.deploy_audience"}},
+		{"deploy audience is a bearer audience", func(s *TrustedIssuerSection) {
+			s.BearerAudiences = []string{"leoflow-mcp", "dexaflow-deploy"}
+			s.DeployAudience = "dexaflow-deploy"
+		}, []string{"auth.trusted_issuer.deploy_audience"}},
+		{"deploy audience with surrounding spaces", func(s *TrustedIssuerSection) { s.DeployAudience = " dexaflow-deploy" }, []string{"auth.trusted_issuer.deploy_audience"}},
+		{"deploy audience with a trailing newline", func(s *TrustedIssuerSection) { s.DeployAudience = "dexaflow-deploy\n" }, []string{"auth.trusted_issuer.deploy_audience"}},
+		{"deploy audience without an issuer", func(s *TrustedIssuerSection) {
+			*s = TrustedIssuerSection{TenantClaim: "tenant_id", DeployAudience: "dexaflow-deploy"}
+		}, []string{"auth.trusted_issuer.issuer", "auth.trusted_issuer.jwks_url"}},
+		{"host pattern without an issuer", func(s *TrustedIssuerSection) {
+			*s = TrustedIssuerSection{TenantClaim: "tenant_id", HostPattern: "{tenant}.example.com"}
+		}, []string{"auth.trusted_issuer.issuer"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -960,5 +1009,101 @@ func TestLoadServerLogsTailPublish(t *testing.T) {
 	bad.Logs.Tail.Publish = "sometimes"
 	if err := bad.Validate(); err == nil {
 		t.Error("Validate() accepted an unknown logs.tail.publish")
+	}
+}
+
+// TestServerConfigValidateRefusesNegativeMaxPageLimit pins that a negative
+// server.max_page_limit fails boot instead of silently meaning "no cap".
+func TestServerConfigValidateRefusesNegativeMaxPageLimit(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Auth.JWT.Secret = "set"
+	c.Server.MaxPageLimit = -1
+	if err := c.Validate(); err == nil {
+		t.Error("Validate() = nil with server.max_page_limit -1, want error")
+	}
+}
+
+// TestLoadServerReadsSessionCookieName locks auth.session_cookie_name (#1405):
+// _token by default, so an existing install keeps its sessions, and bound from
+// both env prefixes.
+func TestLoadServerReadsSessionCookieName(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil || c.Auth.SessionCookieName != "_token" {
+		t.Fatalf("default session cookie name = %q (%v), want _token", c.Auth.SessionCookieName, err)
+	}
+	for _, env := range []string{"DEXAFLOW_AUTH_SESSION_COOKIE_NAME", "LEOFLOW_AUTH_SESSION_COOKIE_NAME"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv(env, "__Host-dexaflow")
+			c, err := LoadServer("", nil)
+			if err != nil || c.Auth.SessionCookieName != "__Host-dexaflow" {
+				t.Errorf("session cookie name = %q (%v), want the value from %s", c.Auth.SessionCookieName, err, env)
+			}
+		})
+	}
+}
+
+// TestValidateSessionCookieName refuses a name a browser would not accept as
+// set: a __Host- or __Secure- cookie without Secure is dropped by the browser,
+// so sign-in would fail with no visible error.
+func TestValidateSessionCookieName(t *testing.T) {
+	cases := []struct {
+		name     string
+		cookie   string
+		insecure bool
+		wantErr  string
+	}{
+		{"default", "_token", false, ""},
+		{"empty keeps the default", "", false, ""},
+		{"host prefix", "__Host-dexaflow", false, ""},
+		{"secure prefix", "__Secure-dexaflow", false, ""},
+		{"plain name over http", "_token", true, ""},
+		{"host prefix without secure", "__Host-dexaflow", true, "auth.session_cookie_insecure"},
+		{"host prefix in another case without secure", "__host-dexaflow", true, "auth.session_cookie_insecure"},
+		{"secure prefix without secure", "__Secure-dexaflow", true, "auth.session_cookie_insecure"},
+		{"space", "my token", false, "auth.session_cookie_name"},
+		{"separator", "a;b", false, "auth.session_cookie_name"},
+		{"equals", "a=b", false, "auth.session_cookie_name"},
+		{"state cookie", "_oidc_state", false, "auth.session_cookie_name"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &ServerConfig{}
+			c.Auth.JWT.Secret = "set"
+			c.Auth.SessionCookieName = tc.cookie
+			c.Auth.SessionCookieInsecure = tc.insecure
+			err := c.Validate()
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("Validate() = %v, want nil", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("Validate() = %v, want an error naming %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestLoadServerTailReplayBudget pins #1621: logs.tail.replay_budget_bytes
+// defaults to 0 (no budget), binds from both prefixes, and refuses a negative
+// value at boot.
+func TestLoadServerTailReplayBudget(t *testing.T) {
+	c, err := LoadServer("", nil)
+	if err != nil || c.Logs.Tail.ReplayBudgetBytes != 0 {
+		t.Fatalf("default replay budget = %d (%v), want 0", c.Logs.Tail.ReplayBudgetBytes, err)
+	}
+	t.Setenv("LEOFLOW_LOGS_TAIL_REPLAY_BUDGET_BYTES", "1048576")
+	if c, err = LoadServer("", nil); err != nil || c.Logs.Tail.ReplayBudgetBytes != 1<<20 {
+		t.Fatalf("LEOFLOW_ replay budget = %d (%v), want 1048576", c.Logs.Tail.ReplayBudgetBytes, err)
+	}
+	t.Setenv("DEXAFLOW_LOGS_TAIL_REPLAY_BUDGET_BYTES", "2097152")
+	if c, err = LoadServer("", nil); err != nil || c.Logs.Tail.ReplayBudgetBytes != 2<<20 {
+		t.Fatalf("DEXAFLOW_ replay budget = %d (%v), want 2097152 (new prefix wins)", c.Logs.Tail.ReplayBudgetBytes, err)
+	}
+	c.Auth.JWT.Secret = "set"
+	c.Logs.Tail.ReplayBudgetBytes = -1
+	if err := c.Validate(); err == nil {
+		t.Error("Validate() = nil with logs.tail.replay_budget_bytes -1, want error")
 	}
 }

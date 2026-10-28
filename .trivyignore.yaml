@@ -46,11 +46,82 @@
 #
 # ── Current state ────────────────────────────────────────────────────────────
 #
-# Empty, and that is the real state rather than an omission. The blocking gate
-# (leoflow-server) reports zero findings under the policy, so nothing needs
-# accepting; the runtime and migrate images are reported, not gated, so their
-# findings are tracked in an issue rather than suppressed here. The mechanism is
-# in place BEFORE the first exception, which is the only time it can be designed
-# calmly instead of under a red build.
+# The blocking gate (leoflow-server) reports zero findings under the policy, so
+# nothing of its needs accepting. The entries below are the copies of urllib3,
+# msgpack and setuptools that pip VENDORS inside the runtime images (#1299).
+#
+# Each entry is scoped by purl to the exact vendored version, so it suppresses
+# only pip's private copy: the urllib3 and setuptools the task runtime actually
+# imports are separate site-packages installs at other versions, and a finding in
+# those is still reported. Trivy sees the vendored copies only because pip 26
+# ships an SBOM of them (pip/_vendor/bom.cdx.json); runtime/Dockerfile pins pip.
+#
+# Why accepting them is right for now, and not a fix we are skipping: pip 26.2.2
+# is the newest pip release, and no pip release vendors fixed versions (pip's
+# main branch has picked up msgpack 1.2.1 but still vendors urllib3 2.7.0 and
+# setuptools 70.3.0). A pip vendored package can only be changed by a pip
+# release. Removing pip is not an option either: a DAG image runs it to install
+# its `requirements:` (internal/cli/compile_build.go). The code is reached only
+# when pip itself runs, which is at DAG image build time against the configured
+# package index, not by task code: task code that imports urllib3 or
+# pkg_resources gets the site-packages copies, never pip/_vendor.
+#
+# All entries lapse on the same date on purpose: the next pip release (26.3)
+# is expected before it, and the findings coming back is the reminder to bump
+# PIP_VERSION in runtime/Dockerfile and delete what it fixes.
 
-vulnerabilities: []
+vulnerabilities:
+  - id: CVE-2026-97687
+    purls:
+      - pkg:pypi/urllib3@2.7.0
+    statement: >-
+      HTTPS-proxy TLS settings overwritten by target TLS settings, in the urllib3
+      2.7.0 that pip 26.2.2 vendors. Reached only when pip downloads through an
+      HTTPS proxy, which happens at DAG image build time, not in a task. No pip
+      release vendors urllib3 2.8.0 yet; bump the pip pin when one does (#1299).
+    expired_at: 2026-12-31
+  - id: CVE-2026-97688
+    purls:
+      - pkg:pypi/urllib3@2.7.0
+    statement: >-
+      urllib3 2.7.0 as vendored by pip 26.2.2, fixed in 2.8.0. Reached only when
+      pip itself runs (DAG image builds), never through task code, which imports
+      the separate site-packages urllib3. No pip release vendors 2.8.0 yet (#1299).
+    expired_at: 2026-12-31
+  - id: CVE-2026-97689
+    purls:
+      - pkg:pypi/urllib3@2.7.0
+    statement: >-
+      Unbounded chunk-size line in the urllib3 2.7.0 that pip 26.2.2 vendors: a
+      malicious index server can exhaust pip's memory. Reached only while pip
+      installs a DAG image's requirements from the configured index. No pip
+      release vendors urllib3 2.8.0 yet; bump the pip pin when one does (#1299).
+    expired_at: 2026-12-31
+  - id: GHSA-6v7p-g79w-8964
+    purls:
+      - pkg:pypi/msgpack@1.1.2
+    statement: >-
+      Crash when a msgpack Unpacker is reused after an error, in the msgpack 1.1.2
+      that pip 26.2.2 vendors for its HTTP cache. The crash is in the C extension
+      and pip vendors the pure-Python msgpack; pip also runs with --no-cache-dir
+      here. Fixed on pip's main branch (msgpack 1.2.1), not yet released (#1299).
+    expired_at: 2026-12-31
+  - id: CVE-2025-47273
+    purls:
+      - pkg:pypi/setuptools@70.3.0
+    statement: >-
+      Path traversal in setuptools PackageIndex. pip 26.2.2 vendors only
+      pkg_resources from setuptools 70.3.0, not package_index, so the vulnerable
+      code is not in the image under this purl. The setuptools the 3.10 and 3.11
+      images install (80.10.2) is a separate package and stays scanned (#1299).
+    expired_at: 2026-12-31
+  - id: CVE-2026-59890
+    purls:
+      - pkg:pypi/setuptools@70.3.0
+    statement: >-
+      MANIFEST.in exclusion bypass in setuptools FileList (sdist building).
+      pip 26.2.2 vendors only pkg_resources from setuptools 70.3.0, which has no
+      FileList, so the code is not in the image under this purl. Scoped to that version so the same CVE in the
+      site-packages setuptools 80.10.2 (3.10 and 3.11 images) is still reported.
+      No pip release vendors a fixed setuptools yet (#1299).
+    expired_at: 2026-12-31

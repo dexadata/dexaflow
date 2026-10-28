@@ -76,7 +76,7 @@ func runBuildCmd(t *testing.T, args ...string) (stdout string, err error) {
 	root.SetOut(&out)
 	root.SetErr(&errOut)
 	root.SetArgs(args)
-	err = root.Execute()
+	err = root.ExecuteContext(testCtx(nil))
 	return out.String(), err
 }
 
@@ -148,7 +148,46 @@ func TestBuildCommandResolvesVersionFromGitWhenNotGiven(t *testing.T) {
 	}
 	tag := strings.Split(nonEmptyLines(t, log)[0], "\t")[0]
 	if strings.HasSuffix(tag, ":") {
-		t.Fatalf("-t %q has an empty tag: the default invocation must resolve a version (git describe, else dev)", tag)
+		t.Fatalf("-t %q has an empty tag: the default invocation must resolve a version (the content-derived default label)", tag)
+	}
+}
+
+// TestBuildCommandLabelsEachProjectByItsOwnContent: a workspace build used to
+// stamp one git describe on every DAG, so editing one project and rebuilding
+// conflicted with the version every other project already had registered.
+func TestBuildCommandLabelsEachProjectByItsOwnContent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stubs are POSIX-only")
+	}
+	ws := t.TempDir()
+	bin := t.TempDir()
+	writeBuildProject(t, ws, "alpha", "alpha-img")
+	beta := writeBuildProject(t, ws, "beta", "beta-img")
+	if err := os.WriteFile(filepath.Join(beta, "dag.py"), []byte("# beta\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(bin, "argv.log")
+	t.Setenv("LEOFLOW_PARSER_CMD", stubParser(t, bin))
+
+	if _, err := runBuildCmd(t, "build", ws, "--builder", stubBuilder(t, bin, log, "")); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	lines := nonEmptyLines(t, log)
+	if len(lines) != 2 {
+		t.Fatalf("builder lines = %q", lines)
+	}
+	tagOf := func(ln string) string {
+		ref := strings.Split(ln, "\t")[0]
+		return ref[strings.LastIndex(ref, ":")+1:]
+	}
+	a, b := tagOf(lines[0]), tagOf(lines[1])
+	if a == b {
+		t.Errorf("both projects got tag %q; each label must follow its own content", a)
+	}
+	for _, tag := range []string{a, b} {
+		if !strings.HasPrefix(tag, "dev-") || len(tag) != len("dev-")+12 {
+			t.Errorf("tag %q, want dev-<12 hex> outside git", tag)
+		}
 	}
 }
 

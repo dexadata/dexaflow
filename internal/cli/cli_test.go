@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,15 +14,11 @@ import (
 	yaml "go.yaml.in/yaml/v3"
 )
 
+// run runs the root command with args under testDeps and returns what it
+// printed.
 func run(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
-	root := NewRootCommand()
-	var out, errb bytes.Buffer
-	root.SetOut(&out)
-	root.SetErr(&errb)
-	root.SetArgs(args)
-	err = root.Execute()
-	return out.String(), errb.String(), err
+	return runDeps(t, nil, args...)
 }
 
 func TestVersionCommandPrintsInfo(t *testing.T) {
@@ -373,12 +368,16 @@ func TestCompilePushesImage(t *testing.T) {
 	if _, _, err := run(t, "init", dir); err != nil {
 		t.Fatal(err)
 	}
+	// The push is followed by a read of the pushed digest (#1703), so the
+	// image lives in a registry that answers it.
+	reg := newFakeOCIRegistry(t, singleManifest)
+	image := reg.host + "/test:v1"
 	parser := filepath.Join(t.TempDir(), "fake-parser.sh")
 	pscript := "#!/usr/bin/env bash\n" +
 		"out=\"\"\n" +
 		"while [ $# -gt 0 ]; do case \"$1\" in --output) out=\"$2\"; shift 2;; *) shift;; esac; done\n" +
 		"cat > \"$out\" <<'JSON'\n" +
-		"{\"schema_version\":\"1.0\",\"dag_id\":\"proj\",\"dag_version\":\"dev\",\"image\":\"test:v1\",\"tasks\":[{\"task_id\":\"hello\",\"type\":\"python\",\"entrypoint\":\"dag:hello\"}]}\n" +
+		"{\"schema_version\":\"1.0\",\"dag_id\":\"proj\",\"dag_version\":\"dev\",\"image\":\"" + image + "\",\"tasks\":[{\"task_id\":\"hello\",\"type\":\"python\",\"entrypoint\":\"dag:hello\"}]}\n" +
 		"JSON\n"
 	if err := os.WriteFile(parser, []byte(pscript), 0o755); err != nil {
 		t.Fatal(err)
@@ -389,7 +388,7 @@ func TestCompilePushesImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := filepath.Join(dir, "dag.json")
-	if _, _, err := run(t, "compile", dir, "--output", out, "--image", "test:v1",
+	if _, _, err := run(t, "compile", dir, "--output", out, "--image", image,
 		"--parser-cmd", parser, "--build", "--push", "--builder", builder); err != nil {
 		t.Fatalf("compile --build --push: %v", err)
 	}
@@ -397,8 +396,8 @@ func TestCompilePushesImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("builder not invoked: %v", err)
 	}
-	if !strings.Contains(string(got), "build") || !strings.Contains(string(got), "push test:v1") {
-		t.Errorf("builder calls = %q, want both build and push test:v1", got)
+	if !strings.Contains(string(got), "build") || !strings.Contains(string(got), "push "+image) {
+		t.Errorf("builder calls = %q, want both build and push %s", got, image)
 	}
 }
 
@@ -425,7 +424,11 @@ func TestCompileBuildRequiresImage(t *testing.T) {
 func TestRunsTrigger(t *testing.T) {
 	var gotMethod, gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod, gotPath = r.Method, r.URL.Path
+		// The trigger is the first request; a read of the DAG (is it
+		// paused?) may follow it.
+		if gotMethod == "" {
+			gotMethod, gotPath = r.Method, r.URL.Path
+		}
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"dag_run_id":"run-123","state":"queued"}`))
 	}))

@@ -42,6 +42,33 @@ dominated by the image pull. During it:
   settling grace < token TTL, and two maintenance cycles inside the grace),
   refusing to start if a knob was moved out of order. These bound the damage;
   they do not remove the window.
+- **Tasks starting or finishing in the window wait instead of failing.** An
+  agent that cannot read its task spec, variables, connections or upstream
+  XComs at start, or deliver its return value and XComs at the end, retries
+  with jittered backoff, so a restart of a single control-plane replica, a
+  Postgres failover or a Redis restart does not spend the user's retries. The
+  bound is 2 minutes of wall time per phase, counted from the first try and
+  including the time each try takes: all the reads before the task runs share
+  one 2-minute budget, and all the output pushes share another. A try that
+  hangs is cut at the end of the budget rather than at its own 30-second
+  deadline, and the agent never sleeps past it, so a start against a control
+  plane that answers nothing gives up 2 minutes after it began, however many
+  upstream XComs it reads. The control plane answers a store outage
+  (connection refused or reset, a failover's admin shutdown, a full connection
+  pool, a statement timeout, Redis loading or read-only) with gRPC
+  `Unavailable` rather than `Internal`. The agent also retries an `Internal`
+  answer to a state report for up to 2 minutes of backoff, which covers an
+  older control plane during an upgrade. An outage longer than that still
+  ends the attempt, but when it ends before the task's code ran (the agent
+  could not register, read its task spec or upstream XComs, or report
+  `running`), the task does not pay for it: on Kubernetes the agent leaves an
+  outcome record that the pod reconciler settles on the infra rail as
+  `control_plane_unavailable`, and on Lite the unreported attempt is
+  `dispatch_lost`. Either way the task is re-placed on the infra budget
+  without spending one of its retries
+  ([scheduler resilience](/operate/scheduler-resilience/)). An outage that
+  outlasts the push of a finished task's outputs still fails the attempt, since
+  its code already ran.
 - **The API and UI are down.** Every replica is the same binary, so one replica
   means one API.
 
@@ -88,7 +115,7 @@ The chart ships a complete overlay,
 
 ```bash
 helm upgrade --install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> \
-  -n leoflow -f values-ha.yaml
+  -n dexaflow -f values-ha.yaml
 ```
 
 It sets, and documents why:
@@ -159,6 +186,15 @@ topology that gives dispatch failover today; choose the split when you need the
 restricted API identity more than scheduler failover, and know which one you
 picked.
 
+The restricted API identity goes one step further than an unbound
+ServiceAccount: the `api` pods do not mount a ServiceAccount token at all
+(`automountServiceAccountToken: false`), because the api role never calls the
+Kubernetes API. The `scheduler` pods, and the single Deployment when split is
+off, keep the token, since they create the task pods. Cloud identity for the
+object log sink (IRSA, EKS Pod Identity, GKE Workload Identity) does not use this
+mount and keeps working. A sidecar that reads the default token mount needs
+`split.api.automountServiceAccountToken: true`.
+
 ### Warm pools are rebuilt on the far side of a failover
 
 [Warm worker pools](/operate/warm-pools/) survive a failover as *pods*, but not
@@ -174,18 +210,23 @@ from the workers' side:
   sitting idle treats that as a clean recycle: it exits `0`, with no `ERROR`
   line and no failed pod. A hard-killed leader is the same *code* but not the
   same *timing*. A killed process has its sockets torn down by the kernel, so
-  the worker's blocked receive fails promptly with `Unavailable` too; a lost
-  **node** closes nothing, and nothing pings — the agent's dial configures no
-  gRPC keepalive, and the control plane deliberately enables no server-initiated
-  keepalive either (it only *permits* a client's pings on an otherwise idle
-  stream, so gRPC does not `GOAWAY` them as abusive). "Nothing pings" is true of
-  gRPC only: Go's dialer still enables TCP keepalive at a 15s period, so the
-  kernel gives up after roughly 2.5 minutes on Linux defaults rather than never,
-  and the assignment stream's own idle TTL (5 minutes by default) is a second
-  backstop. So that worker sits blocked on a stream to a control plane that is
-  already gone for minutes, not seconds — bounded, but far longer than the
-  prompt failure a killed process produces. Tracked as
-  [#946](https://github.com/dexadata/dexaflow/issues/946). The new leader's warm-pool
+  the worker's blocked receive fails promptly with `Unavailable` too. A lost
+  **node** closes nothing, so the agent finds out by pinging: its gRPC channel
+  sends a keepalive ping after 20 seconds without traffic, including on an idle
+  assignment stream, and closes the connection when a ping goes unanswered for
+  10 seconds, so the worker sees `Unavailable` within about 30 seconds and
+  recycles. The control plane permits those pings (one every 10 seconds at
+  most, with or without an active stream) and sends none of its own: a
+  vanished agent is found by the heartbeat reapers, and an assignment sent to
+  a vanished warm worker is reclaimed when its ack lease expires.
+- **No agent call waits on a silent control plane.** Every unary call the
+  agent makes carries a deadline: 10 seconds for a heartbeat, so one
+  unanswered heartbeat never stalls the heartbeat loop into an `agent_lost`
+  reap of a healthy task, and 30 seconds for the rest (task spec, state
+  reports, XCom, secrets). A state report that times out is retried like any
+  other transient failure. These are fixed values, not settings
+  ([#946](https://github.com/dexadata/dexaflow/issues/946)).
+- **The warm-pool reconciler rebuilds the buffer.** The new leader's warm-pool
   reconciler is leader-gated as well, and it counts live warm pods from the
   **apiserver** and busy ones from the durable `warm_worker_id` binding, never
   from the registry, so it rebuilds each active DAG version's
@@ -198,6 +239,19 @@ from the workers' side:
   constant today (the bound is a field only tests set), after which it exits
   non-zero and lets the reconciler replace the pod rather than spinning forever
   against a misconfigured deployment.
+- **A leader that steps down without restarting sends its workers on.** A
+  replica can lose leadership and keep running as a follower (a lost advisory
+  lock, failed leadership checks). Its open assignment streams re-check
+  leadership about once a second: each **idle** worker's stream ends with the
+  same `FailedPrecondition`, and the worker re-dials toward the new leader as
+  above. The 10-rejection bound counts only consecutive rejections: a stream a
+  leader accepted (it announces the registration, or hands out an assignment)
+  starts the count over, so a long-lived worker survives any number of leader
+  changes. A worker running an attempt keeps its stream until the attempt is done
+  and its slot is free, then is sent on the same way. The warm-pool reconcile
+  and staging-volume GC cycles that were running at the step-down stop within
+  about a second as well, so they do not create or delete pods next to the new
+  leader's own cycles.
 - **A busy worker finishes its attempt, then exits non-zero — by design.** The
   server puts **no busy predicate** on the shutdown: the raw `SIGTERM` context
   *is* the shutdown signal the assignment handler selects on, so every open
@@ -254,11 +308,18 @@ by at most a few seconds. What a kill loses is therefore **the unflushed tail
 of each running attempt** — for a typical task, the lines of the last ~5 s —
 not the attempt's whole log; and an orderly shutdown loses nothing on the
 control-plane side, because open log streams are closed and flushed at
-`SIGTERM` (see [drain grace](#drain-grace)). Two honest caveats. First, the
-agent does not currently re-open a log stream the control plane closed, so the
-lines a task prints *after* its control plane went away are not shipped by that
-task; the task itself is unaffected, the reconciler still recovers its outcome,
-and a replacement control plane serves the stored partial log. Second, a bucket
+`SIGTERM` (see [drain grace](#drain-grace)). Two honest caveats. First, when
+the control plane closes a task's log stream mid-task, the agent re-opens it
+against whichever replica answers next, retrying with the same capped backoff
+as its final report, and the new stream **continues** the stored log rather
+than starting it over (the control plane reads the stored object back before
+it accepts the stream). The lines the task prints while no control plane is
+reachable wait in the agent, up to 4 MiB, and are shipped once the stream is
+back. What is still lost: the lines already in flight when the stream broke,
+lines past that 4 MiB, and everything after the re-open is refused for good
+(a store that keeps failing the read of the stored object, or a control plane
+older than this behavior, which the agent detects and does not write to). The
+task itself is never affected. Second, a bucket
 with **object versioning** keeps every rewrite as a version — set a lifecycle
 rule on noncurrent versions or expect the versioned size to be several times
 the log size. On memory: the whole attempt is still held in RAM until it ends
@@ -376,6 +437,29 @@ dashboards). In order of preference:
 2. **Cap `autoscaling.maxReplicas`** at what the database can serve.
 3. **Raise `max_connections`** on the server, if the instance has the memory
    for it (each connection is a backend process).
+
+**Watching the pools.** `/metrics` on the metrics port reports each pool by
+its `pool` label (`main`, `health`, and `scheduler` while
+`database.schedulerMaxConns` is set), read from the pool at scrape time:
+
+| Metric | Type | Meaning |
+|---|---|---|
+| `dexaflow_db_pool_acquired_conns` | gauge | connections lent out right now |
+| `dexaflow_db_pool_idle_conns` | gauge | idle connections |
+| `dexaflow_db_pool_total_conns` | gauge | open connections, idle, lent out or being opened |
+| `dexaflow_db_pool_max_conns` | gauge | the pool's size |
+| `dexaflow_db_pool_empty_acquires_total` | counter | callers that found no idle connection and waited |
+| `dexaflow_db_pool_canceled_acquires_total` | counter | callers that gave up waiting |
+| `dexaflow_db_pool_empty_acquire_wait_seconds_total` | counter | time spent waiting, in seconds |
+
+`/readyz` uses the health pool, so a pod whose request pool is fully lent out
+stays ready: readiness says the pod can serve, not that it has room. These
+series are where saturation shows. A steady
+`rate(dexaflow_db_pool_empty_acquires_total{pool="main"}[5m])` above zero, or
+`dexaflow_db_pool_acquired_conns` sitting at `dexaflow_db_pool_max_conns`,
+means requests are queueing for connections: raise `database.maxOpenConns`
+within the budget above, or add replicas. Any increase of
+`dexaflow_db_pool_canceled_acquires_total` means requests failed waiting.
 
 **PgBouncer.** A pooler in front of Postgres multiplexes many client
 connections over few server connections, but only in `transaction` pool mode,
@@ -581,6 +665,42 @@ boot-time check of the timing ladder they depend on, described in
 [scheduler resilience](/operate/scheduler-resilience/) — is what keeps the tasks
 that were in flight during the window from being falsely failed. HA shortens the
 window; the resilience mechanisms make the remaining window survivable. Run both.
+
+### When the database disappears without a reset
+
+A managed failover that moves the database address, a network partition or a
+lost database node can leave the leader's lock session open on a socket that
+no longer answers. Two settings bound how long that lasts:
+
+- **On the scheduler.** Every leadership check, and every attempt to take
+  leadership, runs under a deadline of one check interval (5 s). A check that
+  cannot confirm the lock in time counts as failed, and after 3 failed checks
+  in a row the leader steps down (reason `check_timeout`) and campaigns again,
+  so a leader cut off from its database stops scheduling within about 15 to
+  30 seconds. Before, the check waited for the kernel to give up on the socket
+  (about 15 minutes with the default `tcp_retries2`), while a follower on the
+  new primary could already lead.
+- **On the database server.** The leader session sets `tcp_keepalives_idle =
+  30`, `tcp_keepalives_interval = 10`, `tcp_keepalives_count = 3` and
+  `tcp_user_timeout = 60000` for itself, so Postgres ends a session whose
+  client vanished within about a minute and the advisory lock is free for the
+  next leader. With the operating system defaults that takes about two hours,
+  and no replica can lead in the meantime. The settings are sent with `SET`
+  (not as startup parameters, which PgBouncer refuses), apply to the leader
+  session only, and are skipped with a warning where the server refuses one.
+- **On the API and the UI.** While the user store cannot be reached, a
+  credential cannot be checked, which says nothing about the credential. The
+  API answers `503` with `Retry-After: 5` instead of `401`, on protected
+  routes, on `POST /auth/token` and on `POST /api/v2/auth/token/renew`, so
+  clients wait and retry instead of signing in again. A browser that opens the
+  UI with a session it could not check gets a static page saying Dexaflow is
+  temporarily unavailable (also `503`), not the sign-in page; it keeps its
+  session cookie, so reloading once the database is back opens the UI. A
+  browser without a session is still sent to the sign-in page, which says
+  sign-in is temporarily unavailable rather than that the password is wrong.
+  The UI is never served for a session that was not verified.
+
+Nothing needs configuring: all of this applies to every install.
 
 ## Related
 

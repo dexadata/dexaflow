@@ -110,7 +110,7 @@ func TestSegmentedLayoutKeepsEachExecutionApart(t *testing.T) {
 			t.Errorf("segment %s missing; stored: %v", key, keys(store))
 		}
 	}
-	rc, err := ReadAttempts(sink, ref(), TryEpochs{Low: 0, High: 1})
+	rc, err := ReadAttempts(t.Context(), sink, ref(), TryEpochs{Low: 0, High: 1})
 	if err != nil {
 		t.Fatalf("ReadAttempts: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestReadAttemptsListsInsteadOfProbing(t *testing.T) {
 			writeStream(t, sink, epochRef(150), "one-fifty")
 			before := store.totalGets()
 
-			rc, err := ReadAttempts(sink, ref(), TryEpochs{Low: 0, High: 200})
+			rc, err := ReadAttempts(t.Context(), sink, ref(), TryEpochs{Low: 0, High: 200})
 			if err != nil {
 				t.Fatalf("ReadAttempts: %v", err)
 			}
@@ -175,7 +175,7 @@ func TestReadAttemptsOpensStreamsLazily(t *testing.T) {
 			for e := 1; e <= 5; e++ {
 				writeStream(t, sink, epochRef(e), "line")
 			}
-			rc, err := ReadAttempts(sink, ref(), TryEpochs{Low: 0, High: 5})
+			rc, err := ReadAttempts(t.Context(), sink, ref(), TryEpochs{Low: 0, High: 5})
 			if err != nil {
 				t.Fatalf("ReadAttempts: %v", err)
 			}
@@ -215,7 +215,7 @@ func TestReadAttemptsNotesDroppedExecutions(t *testing.T) {
 			for e := 1; e <= 4; e++ {
 				writeStream(t, sink, epochRef(e), "line")
 			}
-			rc, err := ReadAttempts(sink, ref(), TryEpochs{Low: 0, High: 4, Max: 2})
+			rc, err := ReadAttempts(t.Context(), sink, ref(), TryEpochs{Low: 0, High: 4, Max: 2})
 			if err != nil {
 				t.Fatalf("ReadAttempts: %v", err)
 			}
@@ -238,7 +238,7 @@ func TestReadAttemptsNotesDroppedExecutions(t *testing.T) {
 func TestReadAttemptsNoNoteWithinTheBound(t *testing.T) {
 	sink := NewDiskSink(t.TempDir())
 	writeStream(t, sink, epochRef(2), "only")
-	rc, err := ReadAttempts(sink, ref(), TryEpochs{Low: 0, High: 2, Max: 2})
+	rc, err := ReadAttempts(t.Context(), sink, ref(), TryEpochs{Low: 0, High: 2, Max: 2})
 	if err != nil {
 		t.Fatalf("ReadAttempts: %v", err)
 	}

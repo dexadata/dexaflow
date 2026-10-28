@@ -6,6 +6,7 @@ import (
 )
 
 func TestNewDBCommandHasSubcommands(t *testing.T) {
+	t.Parallel()
 	db := newDBCommand()
 	got := map[string]bool{}
 	for _, c := range db.Commands() {
@@ -19,23 +20,26 @@ func TestNewDBCommandHasSubcommands(t *testing.T) {
 }
 
 func TestDBResetRequiresYes(t *testing.T) {
+	t.Parallel()
 	cmd := devTestCmd()
 	cmd.SetArgs([]string{"db", "reset"})
 	// Wire the db subtree under a throwaway root so we can execute "db reset".
 	cmd.AddCommand(newDBCommand())
-	err := cmd.Execute()
+	err := cmd.ExecuteContext(testCtx(nil))
 	if err == nil || !strings.Contains(err.Error(), "--yes") {
 		t.Errorf("db reset without --yes should refuse with a --yes hint, got %v", err)
 	}
 }
 
 func TestBrewInstallArgs(t *testing.T) {
+	t.Parallel()
 	if got := strings.Join(brewInstallArgs("k3d"), " "); got != "install k3d" {
 		t.Errorf("brewInstallArgs = %q, want 'install k3d'", got)
 	}
 }
 
 func TestLiteSubcommandsWired(t *testing.T) {
+	t.Parallel()
 	want := map[string]bool{"provision": false, "reset-password": false}
 	for _, c := range newLiteCommand().Commands() {
 		if _, ok := want[c.Name()]; ok {

@@ -52,8 +52,12 @@ func (f *flakyStore) ActiveRuns(ctx context.Context) ([]RunState, error) {
 	return f.runs, nil
 }
 
-func (f *flakyStore) ScheduledDAGs(context.Context) ([]ScheduledDAG, error) {
+func (f *flakyStore) ScheduledDAGs(context.Context, time.Time) ([]ScheduledDAG, error) {
 	return f.scheduled, nil
+}
+
+func (f *flakyStore) SetNextRunAt(context.Context, string, string, int64, time.Time) error {
+	return nil
 }
 
 func (f *flakyStore) PoolBudgets(context.Context) (map[string]int, error) {
@@ -96,13 +100,13 @@ func (f *flakyStore) MarkQueued(_ context.Context, runID, taskID string, _ *time
 
 // ApplyTransitions records one transition per task, matching the equivalent
 // per-task ApplyTransition calls, so the scheduler's batching is invisible here.
-func (f *flakyStore) ApplyTransitions(_ context.Context, runID string, taskIDs []string, to domain.TaskState) error {
+func (f *flakyStore) ApplyTransitions(_ context.Context, runID string, taskIDs []string, _, to domain.TaskState) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, taskID := range taskIDs {
 		f.transitions = append(f.transitions, transition{runID, taskID, to})
 	}
-	return nil
+	return taskIDs, nil
 }
 
 func (f *flakyStore) ResetForRetry(context.Context, string, string) (bool, error) { return true, nil }
@@ -116,14 +120,23 @@ func (f *flakyStore) RecordDispatchFailure(context.Context, string, string, time
 func (f *flakyStore) RecordDispatchBackpressure(context.Context, string, string, time.Time) error {
 	return nil
 }
+func (f *flakyStore) RecordDispatchUnavailable(context.Context, string, string, time.Time, time.Duration, time.Duration) (since, nextAt time.Time, applied bool, err error) {
+	return since, nextAt, false, nil
+}
 func (f *flakyStore) FailDispatchExhausted(context.Context, string, string, string) error { return nil }
 func (f *flakyStore) FailDispatchRefused(context.Context, string, string, string) error   { return nil }
 
-func (f *flakyStore) SetRunState(_ context.Context, runID string, state domain.DagRunState) error {
+func (f *flakyStore) SetRunState(_ context.Context, runID string, _, to domain.DagRunState) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.runStates[runID] = state
-	return nil
+	f.runStates[runID] = to
+	return true, nil
+}
+func (f *flakyStore) StartQueuedRun(_ context.Context, runID, _ string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.runStates[runID] = domain.DagRunStateRunning
+	return true, nil
 }
 func (f *flakyStore) ClaimAlertAttempt(context.Context, string, int, time.Duration) (int, error) {
 	return 1, nil
@@ -154,6 +167,10 @@ func (r *capturingRecorder) RecordTaskTransition(_, _, _ string)       {}
 func (r *capturingRecorder) RecordUndispatchable(string)               {}
 func (r *capturingRecorder) RecordSchedulerStepDown(string)            {}
 func (r *capturingRecorder) ObserveSchedulerReacquire(_ time.Duration) {}
+func (r *capturingRecorder) ObserveSchedulerLoop(time.Duration)        {}
+func (r *capturingRecorder) RecordTaskRetry(_, _ string)               {}
+func (r *capturingRecorder) RecordSchedulerWokenTick()                 {}
+func (r *capturingRecorder) ObserveScheduleDelay(time.Duration)        {}
 func (r *capturingRecorder) RecordAlert(dagID, channelType, result string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

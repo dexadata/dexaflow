@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_dags_delete/
 title: "dexaflow dags delete"
 linkTitle: "dags delete"
-weight: 29
+weight: 35
 ---
 
 Clear a DAG's run history, or fully deregister it with --deregister.
@@ -34,6 +34,7 @@ dexaflow dags delete <dag_id> [flags]
       --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
+      --target name         name of the control plane to use (default: DEXAFLOW_TARGET, then the target selected for the workspace; see dexaflow target list)
 ```
 
 ### SEE ALSO

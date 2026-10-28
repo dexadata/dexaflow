@@ -1,0 +1,71 @@
+suite: the control plane reads the installation id (ADR 0090 decisions 3 and 5)
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: rel
+set:
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: tls
+  agentTLS.caConfigMap: ca
+tests:
+  # From the ConfigMap the migration Job keeps, never a literal: on a
+  # rollback (which runs no hook) the pods still read the id the database
+  # carries. Optional, so a pod starts before a first Job has run, and with
+  # migrations.enabled false (no Job, no ConfigMap) nothing is compared.
+  - it: reads LEOFLOW_DATABASE_INSTALLATION_ID from the installation ConfigMap, optionally
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DATABASE_INSTALLATION_ID
+            valueFrom:
+              configMapKeyRef:
+                name: rel-dexaflow-installation
+                key: installationId
+                optional: true
+      - notExists:
+          path: spec.template.metadata.annotations["dexaflow.dexadata.ai/installation-id"]
+
+  # Changing installation.id accepts a replaced database: the Job updates the
+  # ConfigMap first, and this annotation rolls the pods so they read it. A
+  # pod waiting on the old id would otherwise wait for good.
+  - it: rolls the pods when installation.id changes
+    template: deployment.yaml
+    set:
+      installation.id: accepted-1
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["dexaflow.dexadata.ai/installation-id"]
+          value: accepted-1
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DATABASE_INSTALLATION_ID
+            valueFrom:
+              configMapKeyRef:
+                name: rel-dexaflow-installation
+                key: installationId
+                optional: true
+
+  - it: both split roles read it
+    template: deployment.yaml
+    set:
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+    asserts:
+      - hasDocuments:
+          count: 2
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DATABASE_INSTALLATION_ID
+            valueFrom:
+              configMapKeyRef:
+                name: rel-dexaflow-installation
+                key: installationId
+                optional: true

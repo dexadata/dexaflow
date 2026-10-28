@@ -21,9 +21,9 @@ type DashboardStatsReader interface {
 // always present in the response so the UI's chart never sees a missing series.
 var dagRunStateOrder = []string{"queued", "running", "success", "failed"}
 
-// tiStateMap maps Dexaflow task states onto the Airflow 3.2.1
-// TaskInstanceState members. Members Dexaflow does not model (removed,
-// restarting, up_for_reschedule, deferred) are always present and zero.
+// tiStateMap maps Dexaflow task states onto the Airflow TaskInstanceState
+// members. Members Dexaflow does not model (restarting, up_for_reschedule,
+// deferred, awaiting_input) are always present and zero.
 var tiStateMap = map[string]string{
 	"none":            "no_status",
 	"scheduled":       "scheduled",
@@ -34,13 +34,15 @@ var tiStateMap = map[string]string{
 	"skipped":         "skipped",
 	"upstream_failed": "upstream_failed",
 	"up_for_retry":    "up_for_retry",
+	"removed":         "removed",
 }
 
-// tiStateOrder is the full Airflow 3.2.1 TaskInstanceState set, in spec order.
+// tiStateOrder is the full Airflow 3.3 TaskInstanceState set, in spec order
+// (3.3 added awaiting_input).
 var tiStateOrder = []string{
 	"no_status", "removed", "scheduled", "queued", "running", "success",
 	"restarting", "failed", "up_for_retry", "up_for_reschedule",
-	"upstream_failed", "skipped", "deferred",
+	"upstream_failed", "skipped", "deferred", "awaiting_input",
 }
 
 // dagStatsHandler implements GET /ui/dashboard/dag_stats. The result is logged
@@ -95,6 +97,10 @@ func historicalMetricsHandler(reader DashboardStatsReader) gin.HandlerFunc {
 			"dag_run_states":       runStatesObject(m.RunStates),
 			"task_instance_states": tiStatesObject(m.TIStates),
 			"state_count_limit":    5000,
+			// Airflow 3.3 replaced state_count_limit with these flags. The
+			// counts here are exact (GROUP BY, no cap), so neither is a bound.
+			"dag_run_counts_are_lower_bounds":       false,
+			"task_instance_counts_are_lower_bounds": false,
 		})
 	}
 }
@@ -136,9 +142,11 @@ func registerUIDashboard(r gin.IRouter, reader DashboardStatsReader) {
 		})
 		r.GET("/ui/dashboard/historical_metrics_data", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
-				"dag_run_states":       runStatesObject(nil),
-				"task_instance_states": zeroTaskInstanceStateCount(),
-				"state_count_limit":    0,
+				"dag_run_states":                        runStatesObject(nil),
+				"task_instance_states":                  zeroTaskInstanceStateCount(),
+				"state_count_limit":                     0,
+				"dag_run_counts_are_lower_bounds":       false,
+				"task_instance_counts_are_lower_bounds": false,
 			})
 		})
 		return

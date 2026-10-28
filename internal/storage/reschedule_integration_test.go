@@ -47,7 +47,7 @@ func TestRescheduleRedispatchPreservesTryNumberIntegration(t *testing.T) {
 
 	// Poke-not-ready: the agent reports up_for_reschedule with a reschedule time
 	// already in the past (so it is immediately ready to re-dispatch).
-	id := auth.AgentIdentity{RunID: runUUID, TaskID: "probe", TryNumber: tryBefore}
+	id := auth.AgentIdentity{TenantID: defaultTenantID(), RunID: runUUID, TaskID: "probe", TryNumber: tryBefore}
 	if err := exec.Reschedule(ctx, id, time.Now().UTC().Add(-time.Minute)); err != nil {
 		t.Fatalf("Reschedule: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestRescheduleFirstRescheduleAtDeliveredAndPreservedIntegration(t *testing.
 	if err := sched.MaterializeTasks(ctx, runUUID, tasks); err != nil {
 		t.Fatalf("MaterializeTasks: %v", err)
 	}
-	id := auth.AgentIdentity{RunID: runUUID, TaskID: "probe", TryNumber: 1}
+	id := auth.AgentIdentity{TenantID: defaultTenantID(), RunID: runUUID, TaskID: "probe", TryNumber: 1}
 	bringToRunning := func() {
 		for _, st := range []domain.TaskState{domain.TaskStateScheduled, domain.TaskStateQueued, domain.TaskStateRunning} {
 			if err := sched.ApplyTransition(ctx, runUUID, "probe", st); err != nil {

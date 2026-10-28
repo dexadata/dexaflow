@@ -35,7 +35,7 @@ func TestExecutionStoreProducesSafeErrorsForTheAgentFacingMessage(t *testing.T) 
 	runUUID := seedRunningTask(t, repo, sched, ctx, dagID, "load")
 
 	id := auth.AgentIdentity{
-		TaskInstanceID: "ti-unknown", TenantID: "default", DagID: dagID,
+		TaskInstanceID: "ti-unknown", TenantID: defaultTenantID(), DagID: dagID,
 		RunID: runUUID, TaskID: "no_such_task", TryNumber: 1,
 	}
 	_, err := exec.TaskSpec(ctx, id)
@@ -63,7 +63,7 @@ func TestExecutionStoreProducesSafeErrorsForTheAgentFacingMessage(t *testing.T) 
 func TestExecutionStoreLeavesDriverErrorsUnsafe(t *testing.T) {
 	_, _, exec, ctx := openExec(t)
 
-	_, err := exec.TaskSpec(ctx, auth.AgentIdentity{RunID: "not-a-uuid", TaskID: "load", TryNumber: 1})
+	_, err := exec.TaskSpec(ctx, auth.AgentIdentity{TenantID: defaultTenantID(), RunID: "not-a-uuid", TaskID: "load", TryNumber: 1})
 	if err == nil {
 		t.Fatal("TaskSpec with a malformed run id must fail")
 	}

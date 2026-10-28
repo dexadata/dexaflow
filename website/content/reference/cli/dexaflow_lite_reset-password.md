@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_lite_reset-password/
 title: "dexaflow lite reset-password"
 linkTitle: "lite reset-password"
-weight: 42
+weight: 49
 ---
 
 Reset the Dexaflow Lite admin password.
@@ -30,6 +30,7 @@ dexaflow lite reset-password [flags]
       --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
+      --target name         name of the control plane to use (default: DEXAFLOW_TARGET, then the target selected for the workspace; see dexaflow target list)
 ```
 
 ### SEE ALSO

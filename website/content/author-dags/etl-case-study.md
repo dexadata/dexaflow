@@ -161,8 +161,10 @@ The task instances make it visible — `load` is on **try 2**, `extract` and
 
 `clear` re-runs the task on **the version its run was created with**, so what you
 see is the attempt reproduced, not a different one. To pick up a code/yaml fix
-instead, trigger a new run — or pass `run_on_latest_version: true` on the clear.
-ADR 0020 has the reasoning.
+instead, trigger a new run, or pass `run_on_latest_version: true` on the clear
+of a finished run ([clearing onto the current
+version](/author-dags/dag-authoring/#clearing-onto-the-current-version)).
+ADR 0020 and ADR 0086 have the reasoning.
 
 ## The external load uses a managed Connection
 
@@ -182,7 +184,7 @@ The Connection is managed in the UI (encrypted; the password is never returned):
 ![Admin → Connections showing etl_target (postgres, host.k3d.internal:55432)](/assets/screenshots/etl-connection.png)
 
 Each run is traceable to the exact **deployment** that produced it: the
-`dag_versions` entry carries a deployment label (git describe in prod,
+`dag_versions` entry carries a deployment label (git describe plus a content hash in prod,
 `dev-<timestamp>` in dev), surfaced as `bundle_version` on the version API.
 
 ## Gotcha: import heavy deps inside the task

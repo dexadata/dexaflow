@@ -12,6 +12,7 @@ import (
 // out of the traceback so the compile/validate caller can lead with a clean,
 // one-line summary before the bounded traceback tail.
 func TestParserErrorSummary(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		stderr string
@@ -69,6 +70,7 @@ ImportError: No module named 'nonexistent'`,
 // summary should reflect the *last* error line — that is the actual cause,
 // not an intermediate wrapper.
 func TestParserErrorSummaryPrefersUserError(t *testing.T) {
+	t.Parallel()
 	stderr := `Traceback (most recent call last):
   File "parser/wrapper.py", line 12, in run
     raise WrapError("inner") from None

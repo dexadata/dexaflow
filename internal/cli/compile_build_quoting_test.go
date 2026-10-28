@@ -47,6 +47,7 @@ func runLineWith(t *testing.T, dockerfile, needle string) string {
 // A version floor is how you remediate a CVE in a transitive dependency, so
 // this failed silently in exactly the case someone was relying on it.
 func TestVersionFloorSurvivesIntoTheRunLine(t *testing.T) {
+	t.Parallel()
 	df := renderFor(t, func(c *domain.LeoflowConfig) {
 		c.Dependencies = []string{"setuptools>=80.9.0", "msgpack>=1.2.1"}
 	})
@@ -70,6 +71,7 @@ func TestVersionFloorSurvivesIntoTheRunLine(t *testing.T) {
 // break a valid form; single-quoting carries it through intact, which a real
 // build confirms.
 func TestEnvironmentMarkersSurvive(t *testing.T) {
+	t.Parallel()
 	const spec = `requests; python_version < "3.99"`
 	df := renderFor(t, func(c *domain.LeoflowConfig) { c.Dependencies = []string{spec} })
 	line := runLineWith(t, df, "pip install")
@@ -81,6 +83,7 @@ func TestEnvironmentMarkersSurvive(t *testing.T) {
 // TestNothingEscapesTheQuotes. A value carrying its own single quote must not
 // be able to close ours and start a new word — the classic quoting escape.
 func TestNothingEscapesTheQuotes(t *testing.T) {
+	t.Parallel()
 	df := renderFor(t, func(c *domain.LeoflowConfig) {
 		c.Dependencies = []string{`ev'il`}
 	})
@@ -94,6 +97,7 @@ func TestNothingEscapesTheQuotes(t *testing.T) {
 // An apt name rarely carries a metacharacter, so the practical bug is smaller
 // — but the line has the same shape and the field is equally unconstrained.
 func TestSystemPackagesAreQuotedToo(t *testing.T) {
+	t.Parallel()
 	df := renderFor(t, func(c *domain.LeoflowConfig) {
 		c.SystemPackages = []string{"curl", "libpq-dev"}
 	})
@@ -114,6 +118,7 @@ func TestSystemPackagesAreQuotedToo(t *testing.T) {
 // only safe answer is to refuse it — and to say which entry, since a stray
 // newline in YAML is invisible.
 func TestNewlineInASpecIsRefused(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, bad string }{
 		{"dependency", "requests\nRUN echo surprise"},
 		{"carriage return", "requests\rmore"},
@@ -195,6 +200,7 @@ func runLineUnderSh(t *testing.T, dockerfile, tool string) []string {
 // Against a `%q` "fix" it fails on the expansion case alone, which is the
 // whole reason this tier exists.
 func TestShellReceivesTheSpecsIntact(t *testing.T) {
+	t.Parallel()
 	specs := []string{
 		"setuptools>=80.9.0",
 		`requests; python_version < "3.99"`,
@@ -235,6 +241,7 @@ func TestShellReceivesTheSpecsIntact(t *testing.T) {
 // cleanup are load-bearing, since they keep the install and the cleanup in one
 // layer.
 func TestAptLineStillWorksAsAShellCommand(t *testing.T) {
+	t.Parallel()
 	df := renderFor(t, func(c *domain.LeoflowConfig) {
 		c.SystemPackages = []string{"curl", "libpq-dev"}
 	})
@@ -272,6 +279,7 @@ func TestAptLineStillWorksAsAShellCommand(t *testing.T) {
 //
 // `--` ends option parsing in both, so either becomes a loud refusal instead.
 func TestOptionInjectionIsStoppedByTheSeparator(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, tool string
 		mutate     func(*domain.LeoflowConfig)
@@ -301,6 +309,7 @@ func TestOptionInjectionIsStoppedByTheSeparator(t *testing.T) {
 // system_packages — so restricting it to `dependencies` was a wrong fix the
 // suite accepted.
 func TestNewlineIsRefusedInSystemPackagesToo(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{DagID: "d"}
 	cfg.SystemPackages = []string{"curl\nRUN echo surprise"}
 	cfg.ApplyDefaults()
@@ -318,6 +327,7 @@ func TestNewlineIsRefusedInSystemPackagesToo(t *testing.T) {
 // ORIGINAL raw join in place — it is a "did I break the shell parts" check, not
 // a regression test for the quoting. This one is the regression test.
 func TestAptPackagesAreQuotedNotJoinedRaw(t *testing.T) {
+	t.Parallel()
 	df := renderFor(t, func(c *domain.LeoflowConfig) {
 		c.SystemPackages = []string{"pkg;touch bad"}
 	})

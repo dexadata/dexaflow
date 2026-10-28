@@ -76,7 +76,7 @@ func indexesOf(s, sub string) []int {
 // TestSPAClearConfirmSendsDryRunFalse: the Clear dialog's CONFIRM must send
 // dry_run explicitly.
 //
-// Since #1137 an omitted dry_run previews, matching Apache Airflow 3.2.1's
+// Since #1137 an omitted dry_run previews, matching Apache Airflow 3's
 // `dry_run: bool = True`. That is the right default for API clients, and it puts
 // the embedded SPA one bundle upgrade away from a silent failure: if a future
 // vendored bundle stopped putting dry_run in the confirm body, the Clear button

@@ -11,6 +11,7 @@ description: "ADR 0058: Warm worker pools — pod-reuse semantics (N:1)"
 
 **Status:** Accepted
 **Date:** 2026-08-20
+**Amended by:** ADR 0095 (a warm assignment can carry a source-mode version's `dag.py`)
 **Relates:** ADR 0053 (admission + placement — this ADR resolves the *reuse semantics* 0053 deferred to its Phase 4/5), ADR 0051 (separate orchestration/execution state machines — the seam a warm worker reports through), ADR 0052 (durable task outcome — a warm worker uses in-band impl #2, not the termination message), ADR 0055 (secret scoping + token liveness — the security gate; satisfied), ADR 0002 (pod-per-task — warm pools are an *amortization* of cold start, not a return to persistent Celery workers), ADR 0022 (per-run staging), ADR 0003 (per-DAG image/dependency isolation)
 
 ## Context

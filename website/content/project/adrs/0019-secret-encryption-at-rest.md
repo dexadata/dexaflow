@@ -84,6 +84,17 @@ Encrypt sensitive connection fields at rest with **AES-256-GCM**, using a
   the same `Cipher` can be applied later behind a per-variable `is_encrypted`
   flag.
 
+  **Note (2026-10-09, #507):** Variables can now be encrypted with the same
+  cipher and key, opt-in through `variable_encryption: on` (default `off`, so
+  a release that cannot read ciphertext keeps working during a rolling upgrade
+  or a rollback). The per-row marker is a prefix on the stored value
+  (`dexaflow:enc:v1:`) rather than a flag column: it needs no migration, and a
+  value an older release writes over an encrypted one is plaintext again,
+  which a flag column left set would misread. Encrypted Variables are in the
+  encrypted-column registry, so key rotation and `dexaflow lite migrate-key`
+  move them with the connection secrets. `variable_encryption: decrypt`
+  restores plaintext before a rollback.
+
 ## Alternatives considered
 
 - **Plaintext + masking (as Variables):** rejected for connections — a `password`

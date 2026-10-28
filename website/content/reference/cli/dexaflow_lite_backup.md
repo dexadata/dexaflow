@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_lite_backup/
 title: "dexaflow lite backup"
 linkTitle: "lite backup"
-weight: 38
+weight: 45
 ---
 
 Snapshot the Lite install (workspace + datastore + config) into a portable archive.
@@ -12,6 +12,8 @@ Snapshot the Lite install (workspace + datastore + config) into a portable archi
 ### Synopsis
 
 backup writes a tar.gz containing your workspace DAGs, a logical pg_dump of the managed Postgres, the config (admin hash, JWT secret, and the key that decrypts your connection secrets), and a small MANIFEST.json. Pair with `dexaflow lite restore` to migrate to another machine, survive an OS reinstall, or roll back a botched pre-alpha upgrade.
+
+The dump is of Lite's own database: Lite does not read DEXAFLOW_DATABASE_URL (or LEOFLOW_DATABASE_URL), so a backup never covers another database.
 
 Backup only covers the managed Postgres path (the default Lite shape). For the Docker datastore path, capture the volume with `docker volume export` instead.
 
@@ -32,6 +34,7 @@ dexaflow lite backup [flags]
       --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
+      --target name         name of the control plane to use (default: DEXAFLOW_TARGET, then the target selected for the workspace; see dexaflow target list)
 ```
 
 ### SEE ALSO

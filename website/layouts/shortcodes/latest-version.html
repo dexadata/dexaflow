@@ -1,0 +1,27 @@
+{{- /*
+  The newest GA release, so a page never pins an old one (#1555).
+
+    {{< latest-version >}}     0.5.3    chart --version, image tags
+    {{< latest-version v >}}   v0.5.3   release tags, DEXAFLOW_VERSION
+
+  The published site passes it as params.latest_release in the per-leg overlay
+  (website/scripts/ci/render-version-config.py), because the latest leg is
+  built from the GA's own tag, whose versions.json still names the release
+  before it. A plain `hugo` build has no overlay and reads the `latest` leg of
+  scripts/ci/versions.json, which cut-release.sh repoints on every GA.
+  scripts/check-stale-versions.sh fails CI on a literal old version instead.
+*/ -}}
+{{- $v := site.Params.latest_release -}}
+{{- if not $v -}}
+  {{- with os.ReadFile "scripts/ci/versions.json" | transform.Unmarshal -}}
+    {{- range .versions -}}
+      {{- if eq .id "latest" -}}{{- $v = .ref -}}{{- end -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- if not $v -}}
+  {{- errorf "latest-version: no latest release in params.latest_release or scripts/ci/versions.json (%s)" .Position -}}
+{{- end -}}
+{{- $v = strings.TrimPrefix "v" $v -}}
+{{- if eq (.Get 0) "v" -}}v{{- end -}}
+{{- $v -}}

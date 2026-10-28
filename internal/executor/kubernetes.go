@@ -30,12 +30,53 @@ type KubernetesExecutor struct {
 	// teardown meters a reap teardown that fell back from stop-in-place to
 	// delete (ADR 0052 amendment); nil leaves it unmetered.
 	teardown DecisionRecorder
+	// decisions meters staging and executor decisions and errors; nil leaves it unmetered.
+	decisions DecisionRecorder
+	// logger logs operational warnings and errors; nil falls back to slog.Default().
+	logger *slog.Logger
+	// pods meters every task pod create (count by result, API latency); nil
+	// leaves it unmetered.
+	pods PodCreationRecorder
 }
+
+// PodCreationRecorder meters task pod creates. observability.Metrics
+// implements it.
+type PodCreationRecorder interface {
+	// ObservePodCreation records one pod create for dagID: result is "success"
+	// or "error" (ADR 0010), d the API call's latency.
+	ObservePodCreation(dagID, result string, d time.Duration)
+}
+
+// SetPodMetrics wires the recorder that meters task pod creates
+// (dexaflow_pods_created_total, dexaflow_task_pod_creation_duration_seconds).
+func (e *KubernetesExecutor) SetPodMetrics(r PodCreationRecorder) { e.pods = r }
 
 // SetTeardownRecorder wires the recorder that meters
 // reap_teardown_delete_fallback: a started pod a reap could not stop in place
 // (the patch was refused) and deleted instead.
 func (e *KubernetesExecutor) SetTeardownRecorder(r DecisionRecorder) { e.teardown = r }
+
+// SetDecisionRecorder wires the recorder that meters decisions and errors
+// (such as staging_pvc_delete_error).
+func (e *KubernetesExecutor) SetDecisionRecorder(r DecisionRecorder) { e.decisions = r }
+
+// SetLogger wires the logger used for executor operational messages.
+func (e *KubernetesExecutor) SetLogger(l *slog.Logger) { e.logger = l }
+
+func (e *KubernetesExecutor) recordDecision(reason string) {
+	if e.decisions != nil {
+		e.decisions.RecordSchedulerDecision(reason)
+	} else if e.teardown != nil {
+		e.teardown.RecordSchedulerDecision(reason)
+	}
+}
+
+func (e *KubernetesExecutor) log() *slog.Logger {
+	if e.logger != nil {
+		return e.logger
+	}
+	return slog.Default()
+}
 
 // SetStagingStore wires the metadatabase-backed staging-volume lifecycle store
 // (ADR 0022). With no store set, provisioning is not recorded and GC is a no-op.
@@ -52,10 +93,27 @@ func NewKubernetesExecutor(clientset kubernetes.Interface, namespace string) *Ku
 // Execute creates the task pod. The agent inside the pod reports state over gRPC.
 // A dispatch failure is classified on this layer — where the apiserver's error
 // types are known — into transient Backpressure (a ResourceQuota 403 or an APF
-// 429) or a permanent Rejected, so the scheduler acts on the disposition without
+// 429), an Unavailable API (a 5xx, a connection refused or reset, the client
+// deadline; ADR 0093) or a permanent Rejected, so the scheduler acts on the disposition without
 // importing Kubernetes error types (ADR 0051 Phase 4). The cause is returned
 // alongside so its text still feeds the scheduler's note/log.
 func (e *KubernetesExecutor) Execute(ctx context.Context, req Request) (Disposition, error) {
+	// The operator's execution allowlist (issue #629). The dispatcher already
+	// refused a task that breaks it; this keeps any other Request builder from
+	// placing a pod the operator did not allow.
+	// The service account is checked too, except the operator's default task
+	// ServiceAccount the dispatcher filled in for a task that named none: the
+	// allowlist does not govern that one.
+	authored := req.Execution
+	if authored.ServiceAccount != "" && authored.ServiceAccount == req.DefaultServiceAccount {
+		authored.ServiceAccount = ""
+	}
+	if err := req.ExecutionPolicy.CheckTask(domain.TaskSpec{TaskID: req.TaskID, Execution: &authored}); err != nil {
+		return Refused, err
+	}
+	if err := req.ExecutionPolicy.CheckImage(req.Image); err != nil {
+		return Refused, fmt.Errorf("task %q: %w", req.TaskID, err)
+	}
 	// Provision the run's shared staging PVC on first use (idempotent), before the
 	// pod that mounts it (ADR 0022).
 	if req.StagingClaim != "" {
@@ -65,11 +123,22 @@ func (e *KubernetesExecutor) Execute(ctx context.Context, req Request) (Disposit
 		}
 	}
 	pod := BuildPod(req)
-	if _, err := e.clientset.CoreV1().Pods(e.namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
-		cause := fmt.Errorf("creating pod for task %s: %w", req.TaskID, err)
-		return classifyDispatchError(cause), cause
+	start := time.Now()
+	_, err := e.clientset.CoreV1().Pods(e.namespace).Create(ctx, pod, metav1.CreateOptions{})
+	disp := Dispatched
+	var cause error
+	if err != nil {
+		cause = fmt.Errorf("creating pod for task %s: %w", req.TaskID, err)
+		disp = classifyDispatchError(cause)
 	}
-	return Dispatched, nil
+	if e.pods != nil {
+		result := "success"
+		if cause != nil {
+			result = "error"
+		}
+		e.pods.ObservePodCreation(req.DagID, result, time.Since(start))
+	}
+	return disp, cause
 }
 
 // terminationMessagePath is where the task container surfaces its termination
@@ -100,7 +169,10 @@ func BuildPod(req Request) *corev1.Pod {
 				podLabelAttemptEpoch:   strconv.Itoa(req.AttemptEpoch),
 				"leoflow.io/tenant-id": labelValue(req.TenantID),
 			},
-			Annotations: map[string]string{"leoflow.io/task-instance-id": req.TaskInstanceID},
+			Annotations: map[string]string{
+				"leoflow.io/task-instance-id": req.TaskInstanceID,
+				podAnnotationRawTaskID:        req.TaskID,
+			},
 		},
 		Spec: corev1.PodSpec{
 			RestartPolicy: corev1.RestartPolicyNever,

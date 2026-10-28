@@ -59,6 +59,7 @@ func taskByID(spec domain.DAGSpec, id string) (domain.TaskSpec, bool) {
 }
 
 func TestOverlayProjectAppliesTaskOverrides(t *testing.T) {
+	t.Parallel()
 	path := writeDagJSON(t)
 	retries := 5
 	cfg := &domain.LeoflowConfig{
@@ -101,6 +102,7 @@ func TestOverlayProjectAppliesTaskOverrides(t *testing.T) {
 // (connections/variables) onto the compiled task, narrowing the DAG-level
 // declaration (ADR 0045, ADR 0055). A set list replaces the compiled value.
 func TestOverlayProjectAppliesDeclaredSecretNarrowing(t *testing.T) {
+	t.Parallel()
 	path := writeDagJSON(t)
 	cfg := &domain.LeoflowConfig{
 		DagID: "proj",
@@ -141,6 +143,7 @@ func TestOverlayProjectAppliesDeclaredSecretNarrowing(t *testing.T) {
 // of #725). Before the fix these keys were accepted by the config and then
 // dropped — never reaching dag.json or the task pod.
 func TestOverlayProjectAppliesDAGDefaults(t *testing.T) {
+	t.Parallel()
 	path := writeDagJSON(t)
 	cfg := &domain.LeoflowConfig{
 		DagID: "proj",
@@ -179,6 +182,7 @@ func TestOverlayProjectAppliesDAGDefaults(t *testing.T) {
 // merge partial fields (e.g. inject default Limits into an explicit request-only
 // resources block).
 func TestOverlayProjectPerTaskOverridesBeatDAGDefaults(t *testing.T) {
+	t.Parallel()
 	path := writeDagJSON(t)
 	cfg := &domain.LeoflowConfig{
 		DagID: "proj",
@@ -225,6 +229,7 @@ func TestOverlayProjectPerTaskOverridesBeatDAGDefaults(t *testing.T) {
 }
 
 func TestOverlayProjectUnknownTaskIDErrors(t *testing.T) {
+	t.Parallel()
 	path := writeDagJSON(t)
 	cfg := &domain.LeoflowConfig{
 		DagID: "proj",
@@ -240,6 +245,7 @@ func TestOverlayProjectUnknownTaskIDErrors(t *testing.T) {
 }
 
 func TestOverlayProjectPreservesStaging(t *testing.T) {
+	t.Parallel()
 	path := writeDagJSON(t)
 	cfg := &domain.LeoflowConfig{
 		DagID:   "proj",
@@ -257,6 +263,7 @@ func TestOverlayProjectPreservesStaging(t *testing.T) {
 // The overlay carries the dexaflow.yaml alerts: block onto the compiled dag.json
 // (#424), so the scheduler can fire it without re-reading dexaflow.yaml.
 func TestOverlayProjectCarriesAlerts(t *testing.T) {
+	t.Parallel()
 	path := writeDagJSON(t)
 	cfg := &domain.LeoflowConfig{
 		DagID: "proj",

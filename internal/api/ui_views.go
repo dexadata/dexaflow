@@ -28,6 +28,9 @@ type gridRunDTO struct {
 	RunType           string     `json:"run_type"`
 	HasMissedDeadline bool       `json:"has_missed_deadline"`
 	Duration          float64    `json:"duration"`
+	// HasNote is required by the Airflow 3.3 GridRunsResponse; the grid
+	// shades the bar of a run that has a note.
+	HasNote bool `json:"has_note"`
 }
 
 func toGridRunDTO(r domain.DagRun) gridRunDTO {
@@ -42,6 +45,7 @@ func toGridRunDTO(r domain.DagRun) gridRunDTO {
 		RunType:           r.RunType,
 		HasMissedDeadline: false,
 		Duration:          runDurationSeconds(r),
+		HasNote:           r.Note != "",
 	}
 }
 
@@ -130,7 +134,7 @@ func versionHandler() gin.HandlerFunc {
 func gridRunsHandler(repo DagRunRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		limit, offset := pagination(c)
-		runs, _, err := repo.ListDagRuns(c.Request.Context(), tenantOf(c), c.Param("dag_id"), limit, offset)
+		runs, err := listDagRunsPage(c, repo, c.Param("dag_id"), limit, offset)
 		if err != nil {
 			handleRepoError(c, err)
 			return
@@ -148,7 +152,7 @@ func gridRunsHandler(repo DagRunRepository) gin.HandlerFunc {
 // (not 404) — the SPA renders an empty header rather than erroring.
 func latestRunHandler(repo DagRunRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		runs, _, err := repo.ListDagRuns(c.Request.Context(), tenantOf(c), c.Param("dag_id"), 1, 0)
+		runs, err := listDagRunsPage(c, repo, c.Param("dag_id"), 1, 0)
 		if err != nil {
 			handleRepoError(c, err)
 			return
@@ -165,15 +169,15 @@ func latestRunHandler(repo DagRunRepository) gin.HandlerFunc {
 // /api/v2/version) whose repositories are configured.
 func registerUIViews(r gin.IRouter, deps Dependencies) {
 	r.GET("/api/v2/version", RequireScope(auth.ScopeRead), versionHandler())
-	if deps.DagRuns != nil {
-		r.GET("/ui/grid/runs/:dag_id", RequirePermission("read", "dag_run"), gridRunsHandler(deps.DagRuns))
-		r.GET("/ui/dags/:dag_id/latest_run", RequirePermission("read", "dag_run"), latestRunHandler(deps.DagRuns))
+	if deps.Stores.DagRuns != nil {
+		r.GET("/ui/grid/runs/:dag_id", RequirePermission("read", "dag_run"), gridRunsHandler(deps.Stores.DagRuns))
+		r.GET("/ui/dags/:dag_id/latest_run", RequirePermission("read", "dag_run"), latestRunHandler(deps.Stores.DagRuns))
 	}
-	if deps.Dags != nil && deps.LatestRuns != nil {
-		r.GET("/ui/dags", RequirePermission("read", "dag"), uiDagsHandler(deps.Dags, deps.LatestRuns, deps.Favorites))
+	if deps.Stores.Dags != nil && deps.Stores.LatestRuns != nil {
+		r.GET("/ui/dags", RequirePermission("read", "dag"), uiDagsHandler(deps.Stores.Dags, deps.Stores.LatestRuns, deps.Stores.Favorites))
 	}
-	if deps.DagVersions != nil {
-		r.GET("/api/v2/dags/:dag_id/dagVersions", RequirePermission("read", "dag"), dagVersionsHandler(deps.DagVersions))
-		r.GET("/api/v2/dags/:dag_id/dagVersions/:version_number", RequirePermission("read", "dag"), dagVersionHandler(deps.DagVersions))
+	if deps.Stores.DagVersions != nil {
+		r.GET("/api/v2/dags/:dag_id/dagVersions", RequireDeployRead(), dagVersionsHandler(deps.Stores.DagVersions))
+		r.GET("/api/v2/dags/:dag_id/dagVersions/:version_number", RequireDeployRead(), dagVersionHandler(deps.Stores.DagVersions))
 	}
 }

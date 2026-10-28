@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 )
@@ -15,6 +14,7 @@ import (
 // expected to scaffold a starter subdir, so ResolveWorkspace must return a
 // usable WorkspaceSpec with an empty Projects slice and a defaulted RootCfg.
 func TestResolveWorkspace_EmptyWorkspaceReturnsNoProjectsButValidRoot(t *testing.T) {
+	t.Parallel()
 	ws := t.TempDir()
 	got, err := ResolveWorkspace(ws)
 	if err != nil {
@@ -38,6 +38,7 @@ func TestResolveWorkspace_EmptyWorkspaceReturnsNoProjectsButValidRoot(t *testing
 // one subdir with dexaflow.yaml + dag.py shows up as the only project, with the
 // expected dag_id and resolved config path.
 func TestResolveWorkspace_SingleSubdirProject(t *testing.T) {
+	t.Parallel()
 	ws := t.TempDir()
 	dag := filepath.Join(ws, "sales")
 	if err := os.MkdirAll(dag, 0o755); err != nil {
@@ -65,51 +66,13 @@ func TestResolveWorkspace_SingleSubdirProject(t *testing.T) {
 	}
 }
 
-// TestResolveWorkspace_RootCfgUnionsDependencies guarantees the venv contract:
-// when multiple projects declare different pip deps, the synthesized root cfg
-// carries the de-duplicated union so the shared dev venv satisfies every DAG.
-// This is the load-bearing invariant for subprocess-mode multi-DAG.
-func TestResolveWorkspace_RootCfgUnionsDependencies(t *testing.T) {
-	ws := t.TempDir()
-	for _, p := range []struct {
-		dir  string
-		deps string
-	}{
-		{"etl", "  - pandas==2.1.0\n  - requests\n"},
-		{"ml", "  - pandas==2.1.0\n  - numpy\n"}, // overlap on pandas
-		{"web", "  - requests\n  - fastapi\n"},   // overlap on requests
-	} {
-		full := filepath.Join(ws, p.dir)
-		if err := os.MkdirAll(full, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		yaml := "dag_id: " + p.dir + "\ndependencies:\n" + p.deps
-		if err := os.WriteFile(filepath.Join(full, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(full, "dag.py"), []byte("x=1\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	got, err := ResolveWorkspace(ws)
-	if err != nil {
-		t.Fatalf("ResolveWorkspace: %v", err)
-	}
-	wantDeps := []string{"fastapi", "numpy", "pandas==2.1.0", "requests"}
-	gotDeps := append([]string(nil), got.RootCfg.Dependencies...)
-	sort.Strings(gotDeps)
-	if !reflect.DeepEqual(gotDeps, wantDeps) {
-		t.Errorf("RootCfg.Dependencies (sorted): got %v, want %v", gotDeps, wantDeps)
-	}
-}
-
 // TestPythonVersionLess_NumericNotLexicographic catches the bug the original
 // implementation shipped: naive string compare puts "3.10" BELOW "3.9"
 // because '1' < '9'. Python 3.10 is the newer release, so the workspace
 // would have targeted the wrong venv. Per-component numeric compare fixes
 // it; this test pins the contract.
 func TestPythonVersionLess_NumericNotLexicographic(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		a, b string
 		want bool // want a < b
@@ -129,76 +92,77 @@ func TestPythonVersionLess_NumericNotLexicographic(t *testing.T) {
 	}
 }
 
-// TestResolveWorkspace_DependencyConflictIsError asserts the multi-DAG venv
-// invariant: two projects that pin the same pip package to different
-// versions cannot share a venv, so the workspace must fail loud at resolve
-// time with the package name + colliding specs + the projects that declared
-// them. Silent merging would let pip install one version and break the other
-// DAG at runtime with a confusing ImportError.
-func TestResolveWorkspace_DependencyConflictIsError(t *testing.T) {
-	ws := t.TempDir()
-	for _, p := range []struct {
-		dir, dep string
-	}{
-		{"etl", "pandas==2.1.0"},
-		{"ml", "pandas==2.2.0"}, // conflict
-		{"web", "requests"},     // unrelated, must not show in error
-	} {
-		full := filepath.Join(ws, p.dir)
-		if err := os.MkdirAll(full, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		yaml := "dag_id: " + p.dir + "\ndependencies:\n  - " + p.dep + "\n"
-		if err := os.WriteFile(filepath.Join(full, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(full, "dag.py"), []byte("x=1\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+// writeDepsProject writes a minimal project (dexaflow.yaml + dag.py) under
+// ws/dir whose dependencies are deps, one specifier per entry.
+func writeDepsProject(t *testing.T, ws, dir string, deps ...string) {
+	t.Helper()
+	full := filepath.Join(ws, dir)
+	if err := os.MkdirAll(full, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	_, err := ResolveWorkspace(ws)
-	if err == nil {
-		t.Fatal("expected dependency conflict error, got nil")
+	yaml := "dag_id: " + dir + "\ndependencies:\n"
+	for _, d := range deps {
+		yaml += "  - " + d + "\n"
 	}
-	msg := err.Error()
-	for _, must := range []string{"pandas", "2.1.0", "2.2.0", "etl", "ml"} {
-		if !strings.Contains(msg, must) {
-			t.Errorf("error %q should mention %q", msg, must)
-		}
+	if err := os.WriteFile(filepath.Join(full, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(msg, "requests") || strings.Contains(msg, "web") {
-		t.Errorf("error %q should NOT list unrelated package 'requests' or project 'web'", msg)
+	if err := os.WriteFile(filepath.Join(full, "dag.py"), []byte("x=1\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
-// TestResolveWorkspace_DependencyCaseInsensitive asserts PEP 503 normalisation:
-// "Pandas==2.1.0" and "pandas==2.1.0" are the same package, NOT a conflict.
-func TestResolveWorkspace_DependencyCaseInsensitive(t *testing.T) {
+// TestResolveWorkspace_ConflictingPinsAcrossProjectsResolve pins #1679: Lite
+// provisions one venv per DAG (ensureWorkspaceDagVenvs) and the subprocess
+// executor runs each task with its own DAG's interpreter, so two projects
+// pinning the same package to different versions is exactly the case the
+// per-DAG venvs exist for. Resolving the workspace must not refuse it, and each
+// project must keep its own pins untouched.
+func TestResolveWorkspace_ConflictingPinsAcrossProjectsResolve(t *testing.T) {
+	t.Parallel()
 	ws := t.TempDir()
-	for _, p := range []struct {
-		dir, dep string
-	}{
-		{"a", "Pandas==2.1.0"},
-		{"b", "pandas==2.1.0"}, // same package, same version, just different case
-	} {
-		full := filepath.Join(ws, p.dir)
-		if err := os.MkdirAll(full, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		yaml := "dag_id: " + p.dir + "\ndependencies:\n  - " + p.dep + "\n"
-		if err := os.WriteFile(filepath.Join(full, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(full, "dag.py"), []byte("x=1\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
+	writeDepsProject(t, ws, "legacy_pandas", "pandas==1.5.3")
+	writeDepsProject(t, ws, "modern_pandas", "pandas==2.2.3", "requests")
+
 	got, err := ResolveWorkspace(ws)
 	if err != nil {
-		t.Fatalf("case-insensitive dedup should not error: %v", err)
+		t.Fatalf("ResolveWorkspace refused per-DAG pins that the per-DAG venvs can host: %v", err)
 	}
-	if len(got.RootCfg.Dependencies) != 1 {
-		t.Errorf("expected 1 merged dependency, got %v", got.RootCfg.Dependencies)
+	want := map[string][]string{
+		"legacy_pandas": {"pandas==1.5.3"},
+		"modern_pandas": {"pandas==2.2.3", "requests"},
+	}
+	if len(got.Projects) != len(want) {
+		t.Fatalf("Projects: got %d, want %d", len(got.Projects), len(want))
+	}
+	for _, p := range got.Projects {
+		deps, derr := p.Config.EffectiveDependencies()
+		if derr != nil {
+			t.Fatalf("EffectiveDependencies(%s): %v", p.DagID, derr)
+		}
+		if !reflect.DeepEqual(deps, want[p.DagID]) {
+			t.Errorf("project %s dependencies: got %v, want %v", p.DagID, deps, want[p.DagID])
+		}
+	}
+}
+
+// TestResolveWorkspace_MalformedSpecifierIsError keeps the early, named error
+// for a dependency entry that is not a pip specifier at all, so the user sees
+// which project carries it before any venv is provisioned.
+func TestResolveWorkspace_MalformedSpecifierIsError(t *testing.T) {
+	t.Parallel()
+	ws := t.TempDir()
+	writeDepsProject(t, ws, "ok", "requests")
+	writeDepsProject(t, ws, "broken", "==1.0")
+
+	_, err := ResolveWorkspace(ws)
+	if err == nil {
+		t.Fatal("expected a malformed specifier error, got nil")
+	}
+	for _, must := range []string{"broken", "==1.0"} {
+		if !strings.Contains(err.Error(), must) {
+			t.Errorf("error %q should mention %q", err.Error(), must)
+		}
 	}
 }
 
@@ -209,6 +173,7 @@ func TestResolveWorkspace_DependencyCaseInsensitive(t *testing.T) {
 // matches docs/configuration.md and avoids the "your workspace shipped a 3.10
 // venv but my new DAG needs 3.12" trap.
 func TestResolveWorkspace_RootCfgPicksHighestPythonVersion(t *testing.T) {
+	t.Parallel()
 	ws := t.TempDir()
 	for _, p := range []struct {
 		dir, py string
@@ -244,6 +209,7 @@ func TestResolveWorkspace_RootCfgPicksHighestPythonVersion(t *testing.T) {
 // swallow it — the caller needs the path list in the message to fix the
 // collision.
 func TestResolveWorkspace_PropagatesDiscoveryErrors(t *testing.T) {
+	t.Parallel()
 	ws := t.TempDir()
 	for _, name := range []string{"foo", "bar"} {
 		full := filepath.Join(ws, name)
@@ -271,6 +237,7 @@ func TestResolveWorkspace_PropagatesDiscoveryErrors(t *testing.T) {
 // WatchedPaths so a save in any of them triggers a reload. Without a yaml the
 // project still contributes its dag.py.
 func TestResolveWorkspace_WatchedPathsCoverEveryProject(t *testing.T) {
+	t.Parallel()
 	ws := t.TempDir()
 	// one project with yaml
 	withYaml := filepath.Join(ws, "with_yaml")
@@ -313,6 +280,7 @@ func TestResolveWorkspace_WatchedPathsCoverEveryProject(t *testing.T) {
 // banner is only cleared by a successful reload, so the UI stayed red while the
 // project was already fixed.
 func TestWatchedPathsCoverTheRefusedShape(t *testing.T) {
+	t.Parallel()
 	ws := t.TempDir()
 	mixed := filepath.Join(ws, "mixed")
 	if err := os.MkdirAll(mixed, 0o750); err != nil {

@@ -1,0 +1,9 @@
+kind: Added
+body: |-
+  **Each reaper meters the terminal pods its teardown preserves.** The
+  agent-lost, dispatch-lost, orphan-run and pod-lost reapers now record
+  `<reaper>_terminal_pod_preserved` (and `start_expired_terminal_pod_preserved`)
+  on `dexaflow_scheduler_decisions_total`, once per pod left in place for the
+  reconciler because it had already finished, so a climbing preserve rate is a
+  series instead of a log search (#933).
+time: 2026-10-23T03:00:00.000000000-03:00

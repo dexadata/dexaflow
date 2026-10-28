@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"strconv"
 	"sync/atomic"
@@ -45,11 +46,31 @@ type Postgres struct {
 	// period for the whole duration of a migration. SchemaReady clears it when
 	// the condition clears, so a later upgrade is reported again.
 	dirtyAheadLogged atomic.Bool
+	// schemaObserver hears each readiness schema verdict (SetSchemaObserver).
+	schemaObserver func(class string)
+	// recoveryHint is what a schema readiness failure says to run
+	// (SetRecoveryHint); nil uses defaultSchemaHint.
+	recoveryHint func(class string) string
+	// installationID is database.installation_id: when set, the schema reads
+	// also read the database's installation id and compare it (ADR 0090
+	// decision 3). Empty checks nothing.
+	installationID string
+	// onReplaced hears a readiness probe that found the database replaced
+	// (SetOnReplaced), and replacedLogged latches its log line.
+	onReplaced     func()
+	replacedLogged atomic.Bool
+	// beforeLockCheck runs in SchemaWaitState between the read of a schema
+	// dirty at the latest and the migration lock check. Nil outside tests,
+	// which use it to finish a migration in that window.
+	beforeLockCheck func()
 	// health is a dedicated one-connection pool used by Ping and the schema
 	// read, so a probe never queues behind application traffic. See
 	// newHealthPool for why that matters. Nil only in tests that construct a
 	// Postgres literal; probePool falls back to Pool in that case.
 	health *pgxpool.Pool
+	// schedulerPool is the dedicated scheduler pool while ForScheduler keeps
+	// one open, read by PoolCollector. Nil when the scheduler shares Pool.
+	schedulerPool atomic.Pointer[pgxpool.Pool]
 }
 
 // probePool returns the pool health checks must use: the dedicated one when it
@@ -185,7 +206,7 @@ func NewPostgres(ctx context.Context, cfg config.DatabaseSection) (*Postgres, er
 		pool.Close()
 		return nil, explainConnBudget(err, pc.MaxConns)
 	}
-	return &Postgres{Pool: pool, Queries: queries.New(pool), specs: newSpecCache(), health: health}, nil
+	return &Postgres{Pool: pool, Queries: queries.New(pool), specs: newSpecCache(), health: health, installationID: cfg.InstallationID}, nil
 }
 
 // newHealthPool opens the dedicated pool behind Ping and the readiness schema
@@ -354,7 +375,42 @@ func leaderPoolConfig(cfg config.DatabaseSection) (*pgxpool.Config, error) {
 	pc.MaxConnLifetime = leaderConnLifetime
 	pc.MaxConnIdleTime = leaderConnLifetime
 	pc.MaxConnLifetimeJitter = 0
+	pc.AfterConnect = setLeaderKeepalives
 	return pc, nil
+}
+
+// leaderSessionSettings make the server notice a leader that vanished without
+// a TCP reset (a partition, a lost node, a failover that moved the address)
+// within about a minute: keepalive probes after 30 s of silence, every 10 s,
+// 3 unanswered probes, and 60 s for unacknowledged data. With the operating
+// system defaults the server keeps the dead session, and the scheduler
+// advisory lock with it, for about two hours, and no other replica can take
+// leadership in the meantime (#1599). The client side needs no setting: every
+// leadership query runs under a deadline, and pgx closes the connection when
+// one expires.
+var leaderSessionSettings = []string{
+	"SET tcp_keepalives_idle = 30",
+	"SET tcp_keepalives_interval = 10",
+	"SET tcp_keepalives_count = 3",
+	"SET tcp_user_timeout = 60000",
+}
+
+// setLeaderKeepalives applies leaderSessionSettings as each leader connection
+// opens. They are sent with SET, not as startup parameters, for the PgBouncer
+// reason given on mainPoolConfig. They are best effort: a server or platform
+// that refuses one (tcp_user_timeout before Postgres 12, keepalive counts on
+// Windows) keeps its default for it, and the session is used as it always was.
+// On a Unix socket Postgres accepts and ignores them.
+func setLeaderKeepalives(ctx context.Context, conn *pgx.Conn) error {
+	for _, set := range leaderSessionSettings {
+		if _, err := conn.Exec(ctx, set); err != nil {
+			if ctx.Err() != nil || conn.IsClosed() {
+				return fmt.Errorf("configuring the leader session: %w", err)
+			}
+			slog.Warn("leader session setting not applied; the server keeps its default", "statement", set, "error", err)
+		}
+	}
+	return nil
 }
 
 // ForScheduler returns the handle the scheduler side should use, and a func
@@ -383,7 +439,11 @@ func (p *Postgres) ForScheduler(ctx context.Context, cfg config.DatabaseSection)
 		return nil, nil, err
 	}
 	sched := &Postgres{Pool: pool, Queries: queries.New(pool), specs: sharedSpecCache(p)}
-	return sched, pool.Close, nil
+	p.trackSchedulerPool(pool)
+	return sched, func() {
+		p.trackSchedulerPool(nil)
+		pool.Close()
+	}, nil
 }
 
 // Ping checks database connectivity (used by /readyz). It goes through

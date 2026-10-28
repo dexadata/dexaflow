@@ -9,7 +9,10 @@ name: E2E performance gates
 # leg and the k3d operators leg with every gate the leg can honour turned on,
 # and then asserts against the live process, Postgres and Redis that each one
 # took effect: a gate that silently did not apply fails the job
-# (test/e2e/perf-gates-on.sh and the steps after each leg).
+# (test/e2e/perf-gates-on.sh and the steps after each leg). A third leg runs
+# warm pools on k3d with every gate on as well (#1611): the restricted Pod
+# Security profile, placement and isolation between attempts, which the warm
+# pools leg of ci.yaml deploy-e2e (a deploy rollover) does not check.
 #
 # Nightly on main and on rc tags, not per push: the runner queue is saturated
 # and the k3d leg costs about fifteen minutes. On a release-X.Y branch, start it
@@ -38,7 +41,12 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  GO_VERSION: "1.26.9"
+  # proxy.golang.org sometimes resets a large module download ("stream error:
+  # INTERNAL_ERROR"), which failed whole jobs before any test ran. With "|" Go
+  # falls back to the module's own source on any proxy error (with "," only on
+  # 404/410); go.sum and sum.golang.org still verify every module.
+  GOPROXY: https://proxy.golang.org|direct
+  GO_VERSION: "1.26.10"
   PYTHON_VERSION: "3.11"
 
   # The gates both legs honour, under the DEXAFLOW_ names the configuration
@@ -65,11 +73,11 @@ env:
   # only the k3d leg produces task logs, so only it can show the gate working.
   DEXAFLOW_LOGS_TAIL_PUBLISH: on_demand
 
-  # Not turned on anywhere, on purpose:
-  # execution.warm_read_only_root_filesystem applies to warm worker pods only,
-  # and no e2e leg runs warm pools (they need token-exchange transport,
-  # liveness enforcement and a TokenReview-capable cluster); with warm pools
-  # off the knob is a no-op, so turning it on here would prove nothing.
+  # Not set here, on purpose: execution.warm_read_only_root_filesystem applies
+  # to warm worker pods only, and with warm pools off the knob is a no-op. The
+  # warm pools leg (e2e-warm-pools, below) turns it on in its own script,
+  # together with the token-exchange transport and liveness enforcement warm
+  # pools need.
 
   # The e2e scripts run this against the live control plane before they stop
   # it, with BASE, TOKEN and METRICS; it is what makes a gate that did not
@@ -103,15 +111,17 @@ jobs:
         options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
     env:
       # Lite's executor is the subprocess one (dexaflow lite sets
-      # LEOFLOW_EXECUTOR_TYPE=subprocess). e2e-lite leaves the kubernetes
-      # default, and on a runner with no cluster setupK8sDispatch logs "pod
-      # dispatch disabled" and wires no dispatcher at all; the buffered pool
-      # fronts a dispatcher, so this leg needs one, and the subprocess executor
-      # is the one Lite ships with. The login path dispatches no task.
+      # LEOFLOW_EXECUTOR_TYPE=subprocess). A runner has no cluster, and the
+      # kubernetes executor refuses to boot without a Kubernetes client (#704);
+      # the buffered pool fronts a dispatcher, so this leg needs one, and the
+      # subprocess executor is the one Lite ships with. The login path
+      # dispatches no task.
       DEXAFLOW_EXECUTOR_TYPE: subprocess
       PERF_GATES_LEG: lite
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -158,7 +168,9 @@ jobs:
   e2e-operators-gates:
     name: E2E operators (k3d, all performance gates on)
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # 40 for the operators leg and its gate checks, 20 more for the source
+    # mode leg that runs last on the same runner.
+    timeout-minutes: 60
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -224,6 +236,8 @@ jobs:
       SERVER_LOG: ${{ github.workspace }}/e2e-gates-server.log
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/docker-hub-mirror
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -238,7 +252,7 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/v5.7.4/install.sh | TAG=v5.7.4 bash
           curl -fsSLO "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
           sudo install -m 0755 kubectl /usr/local/bin/kubectl
-          go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+          go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.20.1
       - name: Apply migrations
         run: ~/go/bin/migrate -path migrations -database "postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable" up
       - name: Build binaries
@@ -336,8 +350,84 @@ jobs:
           fi
           echo "statement_timeout = 30000 was set on ${n} connection(s)"
 
+      # Pro source mode (ADR 0067, #1539) on its own k3d cluster and registry,
+      # on the runner the operators leg already set up (binaries, migrated
+      # Postgres, Redis, the base image in the build cache). It runs here, on
+      # rc tags and nightly, rather than on every pull request: the leg builds
+      # images and boots three control planes, and the runner queue is small.
+      # Last, so a red source mode leg never hides a performance gate result
+      # above. The script turns settled-run pod collection off for its own
+      # server, since it inspects each run's finished pods after the run
+      # settles.
+      - name: Run the k3d Pro source mode e2e
+        run: bash test/e2e/source-mode-e2e.sh
+
       - name: LocalStack log (on failure)
         if: failure()
         env:
           LOCALSTACK: ${{ job.services.localstack.id }}
         run: docker logs --tail 100 "$LOCALSTACK" 2>&1 || true
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Warm pools (ADR 0058, #1611) on their own k3d cluster, with the settings
+  # they require (token exchange transport, secret liveness enforcement) and
+  # the read-only warm root filesystem with its /tmp and /dev/shm sweeps.
+  # test/e2e/warm-pool-e2e.sh runs one DAG through a warm worker and asserts
+  # Pod Security restricted admission, a warm hit, that a task with its own
+  # pod labels goes to a dedicated pod (#1543), that nothing one attempt
+  # wrote reaches the next on the same worker, and that no task instance,
+  # warm pod or anchor ConfigMap is left once the run settles. Its own job,
+  # so a red warm pool result never hides a performance gate result and the
+  # two clusters do not share a runner.
+  # ─────────────────────────────────────────────────────────────────────
+  e2e-warm-pools:
+    name: E2E warm pools (k3d)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: leoflow
+          POSTGRES_PASSWORD: leoflow
+          POSTGRES_DB: leoflow
+        ports: [5432:5432]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: mirror.gcr.io/library/redis:7
+        ports: [6379:6379]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      LEOFLOW_E2E_HOST_ADDR: host.k3d.internal
+      PYTHONPATH: parser
+      # The Pro shape the chart mandates, as in the operators leg; the
+      # on_demand tail gate set for the whole workflow probes it.
+      DEXAFLOW_REDIS_URL: redis://localhost:6379/0
+      LEOFLOW_E2E_DATABASE_URL: postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/docker-hub-mirror
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install k3d + kubectl + migrate (+ psql when missing)
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/v5.7.4/install.sh | TAG=v5.7.4 bash
+          curl -fsSLO "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          sudo install -m 0755 kubectl /usr/local/bin/kubectl
+          go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.20.1
+          command -v psql >/dev/null || { sudo apt-get update -q && sudo apt-get install -yq postgresql-client; }
+      - name: Apply migrations
+        run: ~/go/bin/migrate -path migrations -database "postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable" up
+      - name: Build binaries
+        run: make build
+      - name: Run the k3d warm pool e2e
+        run: bash test/e2e/warm-pool-e2e.sh

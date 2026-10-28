@@ -297,6 +297,11 @@ func TestRunnerNonZeroExitOutcomeRecordCarriesNoReason(t *testing.T) {
 // raw error into it: the XCom fetch wraps a gRPC error that can carry the
 // control-plane endpoint and TLS handshake text, and the record is durable and
 // readable by anyone with pod read access in the task namespace.
+//
+// The injected code is Unknown, not a transient one: a transient code that
+// outlasts the start budget is a control-plane outage, which records a fixed
+// classification on the infra rail instead
+// (TestStartWithoutControlPlaneIsUnexecutable, #1594).
 func TestRunnerXComFetchErrorOutcomeRecordCarriesNoReason(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "termination-log")
 	client := &fakeClient{
@@ -307,7 +312,7 @@ func TestRunnerXComFetchErrorOutcomeRecordCarriesNoReason(t *testing.T) {
 				"payload": {TaskIds: []string{"producer"}},
 			},
 		},
-		fetchXComErr: status.Error(codes.Unavailable,
+		fetchXComErr: status.Error(codes.Unknown,
 			`connection error: desc = "transport: authentication handshake failed: `+
 				`tls: failed to verify certificate for leoflow-grpc.leoflow.svc:9090"`),
 	}

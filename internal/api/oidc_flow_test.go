@@ -289,6 +289,20 @@ func baseOIDCConfig(f *fakeIDP) config.OIDCSection {
 	}
 }
 
+// testOIDCSettings maps c onto the API's settings the way
+// cmd/dexaflow-server does.
+func testOIDCSettings(c config.OIDCSection) OIDCSettings {
+	return OIDCSettings{
+		Issuer:           c.Issuer,
+		RedirectURL:      c.RedirectURL,
+		RoleMappings:     c.RoleMappings,
+		DefaultRole:      c.DefaultRole,
+		BreakGlassEmails: c.BreakGlassEmails,
+		JITProvisioning:  c.JITProvisioning,
+		AutoRedirect:     c.AutoRedirect,
+	}
+}
+
 func oidcServer(t *testing.T, f *fakeIDP, cfg config.OIDCSection, store OIDCUserStore, audit AuthAuditWriter, authn auth.Authenticator) *gin.Engine {
 	t.Helper()
 	flow, err := oidc.NewFlow(context.Background(), cfg, testHS256Secret)
@@ -298,18 +312,24 @@ func oidcServer(t *testing.T, f *fakeIDP, cfg config.OIDCSection, store OIDCUser
 	if authn == nil {
 		authn = &fakeAuthn{}
 	}
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: authn,
-		RateLimiter:   auth.NewRateLimiter(50, time.Minute),
-		HealthChecks:  map[string]HealthChecker{},
-		CORSOrigins:   []string{"*"},
-		TokenTTLSecs:  3600,
-		OIDCFlow:      flow,
-		OIDCSettings:  cfg,
-		OIDCUsers:     store,
-		AuthAudit:     audit,
-		JWTSecret:     testHS256Secret,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger:       discardLogger(),
+			HealthChecks: map[string]HealthChecker{},
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: authn,
+			RateLimiter:   auth.NewRateLimiter(50, time.Minute),
+			TokenTTLSecs:  3600,
+			OIDCFlow:      flow,
+			OIDCSettings:  testOIDCSettings(cfg),
+			OIDCUsers:     store,
+			AuthAudit:     audit,
+			JWTSecret:     testHS256Secret,
+		},
 	})
 }
 

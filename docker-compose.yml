@@ -4,6 +4,10 @@
 #   database.url = postgres://leoflow:leoflow@localhost:5432/leoflow
 #   redis.url    = redis://localhost:6379/0
 #
+# Postgres publishes host port 5432 unless DEXAFLOW_DEV_DB_PORT (or the older
+# LEOFLOW_DEV_DB_PORT) names another, for a machine where another project
+# already owns 5432. The Makefile derives DATABASE_URL from the same variable.
+#
 # Usage:
 #   make dev-up      # start Postgres + Redis (wait healthy) and apply migrations
 #   make dev-down    # stop, keeping data
@@ -18,7 +22,7 @@ services:
       POSTGRES_PASSWORD: leoflow
       POSTGRES_DB: leoflow
     ports:
-      - "5432:5432"
+      - "${DEXAFLOW_DEV_DB_PORT:-${LEOFLOW_DEV_DB_PORT:-5432}}:5432"
     volumes:
       - leoflow-pgdata:/var/lib/postgresql/data
       # On a fresh volume, also provision the isolated `leoflow_test` database
@@ -47,17 +51,18 @@ services:
   # behind the "demo" profile, so `make dev-up` still brings up only Postgres +
   # Redis. Run the whole stack (UI included) with:
   #   docker compose --profile demo up --build
-  # then open http://localhost:8080 and log in as admin@leoflow.local / admin.
+  # then open http://localhost:8080 and log in as admin@dexaflow.local / admin
+  # (admin@leoflow.local on a volume created before the rename).
 
   # One-shot migration runner: applies all up migrations, then exits.
   #
   # Built from deploy/Dockerfile.migrate rather than pulled from
   # `migrate/migrate` (#1039), so the demo stack runs the same migrate binary
-  # the Helm chart does — golang-migrate's CLI compiled from this repository's
-  # go.mod — instead of a separately pinned third-party image that drifted a
-  # minor version behind and pulled from rate-limited Docker Hub. The bind
-  # mount stays: it shadows the copy baked into the image with the live tree,
-  # so editing a .sql file does not need a rebuild.
+  # the Helm chart does (the dexaflow-migrate wrapper, #1020) instead of a
+  # separately pinned third-party image that drifted a minor version behind and
+  # pulled from rate-limited Docker Hub. The bind mount stays: it shadows the
+  # copy baked into the image with the live tree, so editing a .sql file does
+  # not need a rebuild.
   migrate:
     profiles: ["demo"]
     build:
@@ -73,7 +78,7 @@ services:
       - "-database=postgres://leoflow:leoflow@postgres:5432/leoflow?sslmode=disable"
       - "up"
 
-  # The control plane: serves /api/v2, /ui, and the embedded Airflow 3.2.1 UI.
+  # The control plane: serves /api/v2, /ui, and the embedded Airflow 3.3.2 UI.
   leoflow-server:
     profiles: ["demo"]
     build:
@@ -90,11 +95,17 @@ services:
       DEXAFLOW_DATABASE_URL: postgres://leoflow:leoflow@postgres:5432/leoflow?sslmode=disable
       DEXAFLOW_REDIS_URL: redis://redis:6379/0
       DEXAFLOW_AUTH_JWT_SECRET: dev-secret-change-me
-      # Seeds admin@leoflow.local with this password on first boot (dev only).
+      # Seeds admin@dexaflow.local with this password on first boot (dev only); a
+      # volume created before the rename keeps its admin@leoflow.local.
       DEXAFLOW_BOOTSTRAP_PASSWORD: admin
       # The distroless image runs as nonroot, which cannot create /var/log;
       # write task logs under a world-writable path instead.
       DEXAFLOW_LOGS_DIR: /tmp/leoflow-logs
+      # The demo stack has no Kubernetes cluster, and the kubernetes executor
+      # refuses to boot without one (#704). The subprocess executor boots, but
+      # the image ships no agent, so tasks fail at dispatch: run DAGs with
+      # `dexaflow lite` or on a cluster.
+      DEXAFLOW_EXECUTOR_TYPE: subprocess
     ports:
       - "8080:8080"
       - "9090:9090"

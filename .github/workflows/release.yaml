@@ -11,22 +11,76 @@ on:
 permissions:
   contents: read
 
+# Stage, verify, promote (ADR 0071). Every job before `gate` builds, pushes and
+# signs only immutable, versioned artifacts, and GoReleaser publishes the
+# GitHub release without marking it Latest (`make_latest: false`), so the
+# smokes can download it from the public URL while unpinned users keep the
+# previous GA. `promote`, which needs a green `gate`, is the only job that
+# moves a public pointer: the Helm chart, the Latest release and the moving
+# `py3.N` runtime tags. Before this, the chart went out about 30 seconds after
+# the tag and Latest moved before any smoke ran (#1684).
+
 env:
-  GO_VERSION: "1.26.9"
+  # proxy.golang.org sometimes resets a large module download ("stream error:
+  # INTERNAL_ERROR"), which failed whole jobs before any test ran. With "|" Go
+  # falls back to the module's own source on any proxy error (with "," only on
+  # 404/410); go.sum and sum.golang.org still verify every module.
+  GOPROXY: https://proxy.golang.org|direct
+  GO_VERSION: "1.26.10"
   REGISTRY: ghcr.io
 
 jobs:
+  # ── The chart's tag gates, before anything is published ──
+  # These lived in helm-release.yaml, which pushed the chart on the tag event.
+  # The push moved to `promote`; the gates stay at the front, so a chart that
+  # does not match the tag fails the run before GoReleaser publishes anything.
+  # The full chart contract suite (helm unittest, template-checks,
+  # rbac-covers-executor, kubeconform) runs per PR in helm-ci.yaml.
+  chart-preflight:
+    name: Chart preflight (version, lint, contract)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # One build date for the run: the runtime image's amd64 and arm64 halves
+    # build on different runners and must bake the same date (#1686).
+    outputs:
+      build_date: ${{ steps.stamp.outputs.date }}
+    steps:
+      - name: Stamp build date
+        id: stamp
+        run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.2.0
+
+      # ADR 0028: the source Chart.yaml moves in lockstep with the tag, because
+      # `helm install ./helm/dexaflow` from the tag's tree uses it as is.
+      - name: Gate, chart version and appVersion match the tag (ADR 0028)
+        run: bash scripts/check-chart-version-matches-tag.sh
+
+      - name: Gate, helm lint
+        run: helm lint helm/dexaflow
+
+      - name: Gate, chart contract (env and Secret keys render)
+        run: bash scripts/helm-template-checks.sh
+
   release:
     name: Build, sign, publish
+    needs: chart-preflight
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write   # GoReleaser creates the GitHub release.
-      packages: write   # Push the leoflow-server image to GHCR.
+      packages: write   # Push the server, MCP and CLI images to GHCR.
       id-token: write   # Cosign keyless signing via Sigstore OIDC.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -43,11 +97,11 @@ jobs:
           cosign-release: v2.4.3
 
       # ── syft for SBOM generation ──
-      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
 
       # ── QEMU + Buildx so the arm64 control-plane image builds on the amd64 runner ──
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -114,18 +168,22 @@ jobs:
   # ── Build + push leoflow-migrate (golang-migrate + Dexaflow migrations)
   # The Helm chart's migration Job (#34/#48) defaults to
   # ghcr.io/dexadata/leoflow-migrate:<tag>; this job publishes that image,
-  # multi-arch, on every release tag in parallel with install-smoke.
+  # multi-arch, on every release tag. It builds from the tag's source and uses
+  # nothing GoReleaser produces, so it starts after the chart preflight, in
+  # parallel with the release job rather than after it (#1686); the gate
+  # waits on it. Dockerfile.migrate cross-compiles for the target from the
+  # build platform, so the arm64 half needs no native runner.
   #
-  # Dockerfile.migrate builds golang-migrate's own CLI from the version in our
-  # go.mod (#1039) and copies migrations/ on top. GoReleaser's dockers block
-  # expects a pre-built artifact from a `builds:` entry, and this binary is not
-  # one of ours to stamp — it is a dependency's main package, cross-compiled
-  # inside the Dockerfile from go.mod alone. docker/build-push-action is the
-  # simpler shape, and it builds the same file the blocking Trivy gate in
-  # security.yaml scans on every PR.
+  # Dockerfile.migrate builds cmd/dexaflow-migrate, the wrapper over
+  # golang-migrate's library (#1020), cross-compiled inside the Dockerfile, and
+  # copies migrations/ on top. VERSION and GIT_COMMIT are passed as build args
+  # so `-version` names the release the way GoReleaser stamps the server (tag
+  # without the leading `v`). docker/build-push-action is the simpler shape
+  # than GoReleaser's dockers block, and it builds the same file the blocking
+  # Trivy gate in security.yaml scans on every PR.
   migrate-image:
     name: Build + push dexaflow-migrate image
-    needs: release
+    needs: chart-preflight
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -134,13 +192,15 @@ jobs:
       id-token: write       # keyless cosign signing
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: v2.4.3
 
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -173,6 +233,15 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ github.ref_name }}
 
+      - name: Version stamp
+        id: stamp
+        env:
+          TAG: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "commit=${SHA:0:7}" >> "$GITHUB_OUTPUT"
+
       - name: Build + push (multi-arch)
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -183,6 +252,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.stamp.outputs.version }}
+            GIT_COMMIT=${{ steps.stamp.outputs.commit }}
 
       # Mirror the supply-chain posture of leoflow-server: keyless cosign sign
       # every published tag by digest (ADR 0014). Without `--yes` cosign would
@@ -220,28 +292,36 @@ jobs:
   # OS CVEs it has. The leg keeps being published until then because `base_image`
   # pins make a silent drop a broken build for somebody else; the schema carries
   # the removal date and `dexaflow compile` warns the author.
-  runtime-image:
-    name: Build + push dexaflow-runtime base (py${{ matrix.python }})
-    needs: release
-    runs-on: ubuntu-latest
+  runtime-image-build:
+    name: Build dexaflow-runtime base (py${{ matrix.python }}, ${{ matrix.arch }})
+    # Builds from the tag's source and uses nothing GoReleaser produces, so it
+    # starts after the chart preflight, not after the release job (#1686).
+    needs: chart-preflight
+    # Each platform builds on a runner of its own architecture. The arm64 half
+    # used to build under QEMU on amd64 and took 13 to 18 minutes per Python,
+    # the critical path of every release run (#1686). ubuntu-24.04-arm is the
+    # hosted arm64 runner public repositories get.
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         python: ["3.10", "3.11", "3.12", "3.13"]
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     permissions:
       contents: read
       packages: write
-      id-token: write       # keyless cosign signing
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
-          cosign-release: v2.4.3
+          persist-credentials: false
 
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -250,32 +330,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Image metadata
+      - name: Image labels
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          # Published under its name since the rename and its pre-rename
-          # name: one build, both tags, same digest, both signed below.
-          images: |
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/leoflow-runtime
-          # Two tags per Python line: an immutable per-release pin
-          # (py3.11-v0.0.2-rc.1) and a moving line tag (py3.11) the docs and the
-          # generated DAG Dockerfile default to. No bare `:latest` — the tag must
-          # always name a Python version.
-          tags: |
-            type=raw,value=py${{ matrix.python }}-${{ github.ref_name }}
-            type=raw,value=py${{ matrix.python }}
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ github.ref_name }}
 
-      - name: Stamp build date
-        id: stamp
-        run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-
-      - name: Build + push (multi-arch)
+      # Pushed by digest, with no tag: `runtime-image` puts the two platform
+      # images under one multi-arch manifest and tags that.
+      - name: Build + push by digest
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -289,15 +356,318 @@ jobs:
             GO_VERSION=${{ env.GO_VERSION }}
             VERSION=${{ github.ref_name }}
             GIT_COMMIT=${{ github.sha }}
-            BUILD_DATE=${{ steps.stamp.outputs.date }}
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+            BUILD_DATE=${{ needs.chart-preflight.outputs.build_date }}
+          platforms: linux/${{ matrix.arch }}
           labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime,push-by-digest=true,name-canonical=true,push=true
+
+      - name: Record the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime-digest-py${{ matrix.python }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ── Publish the Dexaflow task base image (runtime/Dockerfile)
+  # A DAG image is `FROM ghcr.io/dexadata/leoflow-runtime:py<ver>` (ADR 0003):
+  # the base ships the leoflow-agent (PID 1) and the leoflow_runtime helper, so a
+  # `dexaflow compile --build` needs nothing but a registry. Before this job the
+  # base only existed locally (built from a source checkout), which blocked
+  # testing Pro without the repo (#318). One leg per supported Python so an author
+  # picks the interpreter via `python_version`. Multi-arch + keyless cosign mirror
+  # leoflow-server/leoflow-migrate. The two platform images come from
+  # `runtime-image-build`; this job joins them under one manifest list, tags
+  # it under both names and signs it, so digests, tags and signatures keep
+  # the shape they had when one job built both platforms (#1686).
+  #
+  # The matrix below is a COPY, as is the one of `runtime-image-build`. The
+  # source of truth is the `python_version` enum
+  # in internal/domain/schemas/leoflow-yaml-schema.json — the list the CLI's
+  # Validate() actually enforces — and scripts/check-python-runtime-matrix.sh
+  # fails when either disagrees. Publishing a leg nobody can select, or letting an
+  # author select a leg nobody publishes, both surface as a `docker pull` 404
+  # inside the user's own build, which is the furthest point from the cause (#1031).
+  #
+  # py3.10 is DEPRECATED: Python 3.10 goes EOL 2026-10-31 and docker-library/python
+  # stops rebuilding an EOL line the day after, so the base freezes with whatever
+  # OS CVEs it has. The leg keeps being published until then because `base_image`
+  # pins make a silent drop a broken build for somebody else; the schema carries
+  # the removal date and `dexaflow compile` warns the author.
+  runtime-image:
+    name: Publish dexaflow-runtime base (py${{ matrix.python }})
+    needs: runtime-image-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write       # keyless cosign signing
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v2.4.3
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: runtime-digest-py${{ matrix.python }}-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          # Published under its name since the rename and its pre-rename
+          # name: one manifest, both tags, same digest, both signed below.
+          images: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/leoflow-runtime
+          # Only the immutable per-release pin (py3.11-v0.0.2-rc.1). The moving
+          # line tag (py3.11), which the docs and a development build's
+          # generated Dockerfile default to, is re-pointed by `promote` after
+          # the gate, for a GA of the newest minor only (ADR 0071). Pushing it
+          # here moved it on every rc and before any smoke ran (#1684). No bare
+          # `:latest`: the tag must always name a Python version.
+          tags: |
+            type=raw,value=py${{ matrix.python }}-${{ github.ref_name }}
+
+      # One manifest list over the two platform images, pushed under every tag
+      # of both names. It must hold exactly linux/amd64 and linux/arm64, or the
+      # job fails before anything is signed.
+      - name: Create the multi-arch manifest
+        id: manifest
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          SOURCE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime
+          DIGESTS: ${{ runner.temp }}/digests
+        run: |
+          set -euo pipefail
+          mapfile -t digests < <(ls "$DIGESTS")
+          if [ "${#digests[@]}" -ne 2 ]; then
+            echo "::error::want the amd64 and arm64 digests, got ${#digests[@]}: ${digests[*]}"
+            exit 1
+          fi
+          args=()
+          for tag in $TAGS; do args+=(-t "$tag"); done
+          for d in "${digests[@]}"; do args+=("${SOURCE}@sha256:${d}"); done
+          docker buildx imagetools create "${args[@]}"
+          first=$(printf '%s\n' "$TAGS" | head -n1)
+          digest=$(docker buildx imagetools inspect "$first" --format '{{json .Manifest}}' | jq -r .digest)
+          platforms=$(docker buildx imagetools inspect --raw "$first" |
+            jq -r '[.manifests[].platform | select(.os != "unknown") | .os + "/" + .architecture] | sort | join(",")')
+          if [ "$platforms" != "linux/amd64,linux/arm64" ]; then
+            echo "::error::the manifest of $first holds $platforms, want linux/amd64,linux/arm64"
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       - name: Sign image with cosign (keyless)
         env:
+          DIGEST: ${{ steps.manifest.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          for tag in $TAGS; do
+            ./scripts/cosign-retry.sh sign --yes "${tag}@${DIGEST}"
+          done
+
+  # ── Build + publish the data variant of the task image (RUNTIME_VARIANT=data)
+  # The base above plus the connector providers and dbt of runtime/data/requirements.txt, for a platform that runs DAGs on
+  # the runtime with no image build (source mode, ADR 0067), such as Dexaflow
+  # Cloud. Python 3.11 only (its lock is), published under the immutable
+  # py3.11-data-<tag> only: no moving tag, since nothing builds FROM it by
+  # default. Same two-runner build, manifest list and keyless signature as the
+  # base, in jobs of their own so the python matrix above stays the schema's.
+  runtime-data-image-build:
+    name: Build dexaflow-runtime data (py3.11, ${{ matrix.arch }})
+    # Builds from the tag's source and uses nothing GoReleaser produces, so it
+    # starts after the chart preflight, not after the release job (#1686).
+    needs: chart-preflight
+    # Each platform builds on a runner of its own architecture. The arm64 half
+    # used to build under QEMU on amd64 and took 13 to 18 minutes per Python,
+    # the critical path of every release run (#1686). ubuntu-24.04-arm is the
+    # hosted arm64 runner public repositories get.
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+
+      # Pushed by digest, with no tag: `runtime-image` puts the two platform
+      # images under one multi-arch manifest and tags that.
+      - name: Build + push by digest
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: runtime/Dockerfile
+          # Stamp the baked agent with the release version/commit/date, so
+          # `leoflow-agent version` in a task pod is traceable to a commit (matches
+          # the cosign-signed release binaries' provenance).
+          build-args: |
+            PYTHON_VERSION=3.11
+            RUNTIME_VARIANT=data
+            GO_VERSION=${{ env.GO_VERSION }}
+            VERSION=${{ github.ref_name }}
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ needs.chart-preflight.outputs.build_date }}
+          platforms: linux/${{ matrix.arch }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime,push-by-digest=true,name-canonical=true,push=true
+
+      - name: Record the digest
+        env:
           DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime-data-digest-py3.11-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  runtime-data-image:
+    name: Publish dexaflow-runtime data (py3.11)
+    needs: runtime-data-image-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+      id-token: write       # keyless cosign signing
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v2.4.3
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: runtime-data-digest-py3.11-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          # Published under its name since the rename and its pre-rename
+          # name: one manifest, both tags, same digest, both signed below.
+          images: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/leoflow-runtime
+          # Only the immutable per-release pin (py3.11-data-v0.0.2-rc.1). The
+          # data variant has no moving tag: a platform pins it by release, and
+          # `promote` re-points only the base `py3.N` lines.
+          tags: |
+            type=raw,value=py3.11-data-${{ github.ref_name }}
+
+      # One manifest list over the two platform images, pushed under every tag
+      # of both names. It must hold exactly linux/amd64 and linux/arm64, or the
+      # job fails before anything is signed.
+      - name: Create the multi-arch manifest
+        id: manifest
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          SOURCE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime
+          DIGESTS: ${{ runner.temp }}/digests
+        run: |
+          set -euo pipefail
+          mapfile -t digests < <(ls "$DIGESTS")
+          if [ "${#digests[@]}" -ne 2 ]; then
+            echo "::error::want the amd64 and arm64 digests, got ${#digests[@]}: ${digests[*]}"
+            exit 1
+          fi
+          args=()
+          for tag in $TAGS; do args+=(-t "$tag"); done
+          for d in "${digests[@]}"; do args+=("${SOURCE}@sha256:${d}"); done
+          docker buildx imagetools create "${args[@]}"
+          first=$(printf '%s\n' "$TAGS" | head -n1)
+          digest=$(docker buildx imagetools inspect "$first" --format '{{json .Manifest}}' | jq -r .digest)
+          platforms=$(docker buildx imagetools inspect --raw "$first" |
+            jq -r '[.manifests[].platform | select(.os != "unknown") | .os + "/" + .architecture] | sort | join(",")')
+          if [ "$platforms" != "linux/amd64,linux/arm64" ]; then
+            echo "::error::the manifest of $first holds $platforms, want linux/amd64,linux/arm64"
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Sign image with cosign (keyless)
+        env:
+          DIGEST: ${{ steps.manifest.outputs.digest }}
           TAGS: ${{ steps.meta.outputs.tags }}
         run: |
           set -euo pipefail
@@ -326,13 +696,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { image: "mirror.gcr.io/library/debian:12", prep: "apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq && apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y -qq curl ca-certificates tar" }
-          - { image: "mirror.gcr.io/library/ubuntu:24.04", prep: "apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq && apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y -qq curl ca-certificates tar" }
-          - { image: "mirror.gcr.io/library/fedora:41", prep: "dnf install -y -q tar curl --allowerasing" }
-          - { image: "quay.io/rockylinux/rockylinux:9", prep: "dnf install -y -q tar curl --allowerasing" }
-          - { image: "mirror.gcr.io/opensuse/leap:15", prep: "zypper --no-gpg-checks -n in -y curl tar gzip" }
-          - { image: "mirror.gcr.io/library/archlinux:latest", prep: "pacman -Sy --noconfirm archlinux-keyring && pacman -Syu --noconfirm curl tar" }
-          - { image: "mirror.gcr.io/library/alpine:3.20", prep: "apk add --no-cache curl tar" }
+          - { image: "mirror.gcr.io/library/debian:12", python: managed, prep: "apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq && apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y -qq curl ca-certificates tar" }
+          - { image: "mirror.gcr.io/library/ubuntu:24.04", python: managed, prep: "apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq && apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y -qq curl ca-certificates tar" }
+          - { image: "mirror.gcr.io/library/fedora:41", python: any, prep: "dnf install -y -q tar curl --allowerasing" }
+          - { image: "quay.io/rockylinux/rockylinux:9", python: any, prep: "dnf install -y -q tar curl --allowerasing" }
+          - { image: "mirror.gcr.io/opensuse/leap:15", python: any, prep: "zypper --no-gpg-checks -n in -y curl tar gzip" }
+          - { image: "mirror.gcr.io/library/archlinux:latest", python: any, prep: "pacman -Sy --noconfirm archlinux-keyring && pacman -Syu --noconfirm curl tar" }
+          - { image: "mirror.gcr.io/library/alpine:3.20", python: managed, prep: "apk add --no-cache curl tar" }
     steps:
       - name: Install prerequisites (curl + tar)
         # Retry the whole prep. apt-get carries Acquire::Retries inline, but
@@ -361,11 +731,47 @@ jobs:
           curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/install.sh" -o /tmp/install.sh
           sh /tmp/install.sh
 
-      - name: Verify the binary and managed CPython run
+      # Setup records the interpreter it chose in setup.json: a host Python
+      # 3.11 to 3.13 when the image ships one, otherwise the managed CPython it
+      # downloaded (#1700). Check that interpreter, whichever it is, and on the
+      # legs marked `python: managed` (images with no python3 at all, glibc and
+      # musl) require the download, so the relocatable CPython path stays
+      # proven on every release. `python: any` legs report what setup chose.
+      - name: Verify the binary and the Python setup chose run
+        env:
+          EXPECT: ${{ matrix.python }}
+          IMAGE: ${{ matrix.image }}
         run: |
           set -eu
           dexaflow version
-          "$HOME/.dexaflow/python/bin/python3.11" --version
+          state="$HOME/.dexaflow"
+          managed="$state/python/bin/python3.11"
+          py="$(sed -n 's/.*"python":[[:space:]]*"\([^"]*\)".*/\1/p' "$state/setup.json")"
+          if [ -z "$py" ]; then
+            echo "::error::$state/setup.json names no python"
+            exit 1
+          fi
+          ver="$("$py" --version 2>&1)"
+          case "$ver" in
+            "Python 3.11."* | "Python 3.12."* | "Python 3.13."*) ;;
+            *)
+              echo "::error::setup chose $py, which reports '$ver', not Python 3.11 to 3.13"
+              exit 1
+              ;;
+          esac
+          if [ "$py" = "$managed" ]; then source=managed; else source=host; fi
+          echo "setup chose the $source interpreter $py ($ver)"
+          echo "install smoke $IMAGE: $source interpreter $py ($ver)" >>"$GITHUB_STEP_SUMMARY"
+          if [ "$EXPECT" = "managed" ]; then
+            if [ "$source" != "managed" ]; then
+              echo "::error::$IMAGE is the leg that proves the managed CPython download, but setup used the host $py; move this leg to python: any and mark an image with no python3 as managed"
+              exit 1
+            fi
+            if [ ! -s "$state/python/.py-version" ]; then
+              echo "::error::$managed exists but the download sentinel $state/python/.py-version does not; the managed CPython was not installed by setup"
+              exit 1
+            fi
+          fi
 
   # ── Cold-start smoke (#96): the actual user flow we cannot reproduce in
   # any other gate — install fresh, run `dexaflow setup`, boot `dexaflow lite`,
@@ -383,6 +789,9 @@ jobs:
   # this smoke in the first place: docker-compose health vs. TCP accept).
   # Runs on the GitHub-hosted ubuntu-latest runner so Docker is already
   # available — no `container:` field needed.
+  # The managed path is gated on bare ubuntu:22.04 and ubuntu:24.04 by
+  # lite-managed-pg-distros.yaml (#279):
+  # the missing libraries were libxml2 and Kerberos, never the ICU release.
   lite-cold-start-smoke:
     name: Lite cold-start (boot + /readyz, docker PG)
     needs: release
@@ -501,6 +910,40 @@ jobs:
           # process becomes a CI zombie and future runs leak).
           kill -TERM "$LITE_PID"
           wait "$LITE_PID" 2>/dev/null || true
+      # The runner has a system Python 3.12 and no python3.11 on PATH, so setup
+      # runs the parser on the host 3.12 and downloads nothing, and the starter
+      # DAG (python_version "3.11", as `dexaflow init` writes it) gets the
+      # managed CPython 3.11 when `dexaflow lite` builds its venv (#1700).
+      # Check both interpreters whichever way they were resolved, and report
+      # which, rather than assuming a managed CPython that setup may not fetch.
+      - name: Verify the parser and starter venv interpreters
+        run: |
+          set -eu
+          state="$HOME/.dexaflow"
+          py="$(sed -n 's/.*"python":[[:space:]]*"\([^"]*\)".*/\1/p' "$state/setup.json")"
+          if [ -z "$py" ]; then
+            echo "::error::$state/setup.json names no python"
+            exit 1
+          fi
+          pver="$("$py" --version 2>&1)"
+          case "$pver" in
+            "Python 3.11."* | "Python 3.12."* | "Python 3.13."*) ;;
+            *)
+              echo "::error::setup chose $py, which reports '$pver', not Python 3.11 to 3.13"
+              exit 1
+              ;;
+          esac
+          venv="$state/dev/venvs/hello/bin/python"
+          vver="$("$venv" --version 2>&1)"
+          case "$vver" in
+            "Python 3.11."*) ;;
+            *)
+              echo "::error::the starter DAG declares python_version 3.11 but its venv $venv reports '$vver'"
+              exit 1
+              ;;
+          esac
+          if [ -x "$state/python/bin/python3.11" ]; then managed=present; else managed=absent; fi
+          echo "lite cold-start: parser on $py ($pver), starter venv on $vver, managed CPython $managed" | tee -a "$GITHUB_STEP_SUMMARY"
 
   # ── Upgrade-in-place smoke (#150): install the previous non-draft prerelease,
   # then install THIS tag on top, asserting the new version is in place. Catches
@@ -528,12 +971,134 @@ jobs:
           apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq
           apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y -qq gh
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Run upgrade smoke
         env:
           LEOFLOW_REPO: ${{ github.repository }}
           LEOFLOW_VERSION: ${{ github.ref_name }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: sh test/release/upgrade-smoke.sh
+
+  # ── Build provenance and SBOM attestations (#1562) ──
+  # The release already carries cosign signatures and one syft SBOM per
+  # archive. This adds SLSA build provenance (actions/attest) for the four
+  # archives and for every image this run pushed (server, mcp, cli, migrate and each
+  # runtime leg, by digest, so the leoflow-* names that share a digest are
+  # covered too), the archive SBOMs attested against the archive they describe,
+  # and an SPDX SBOM attached to each image with `cosign attest`. The chart's
+  # provenance is made in `promote`, where the chart is pushed. Verification
+  # is on the installation page (`gh attestation verify`,
+  # `cosign verify-attestation`).
+  #
+  # The provenance names this workflow run as the builder, so it can live in a
+  # job of its own: it reads the archives back from the release (and checks
+  # them against checksums.txt) and the images by the digest their versioned
+  # tag carries, and touches nothing else. The archive provenance bundle is
+  # also uploaded as `<name>.intoto.jsonl`, for offline `--bundle` checks and
+  # for Scorecard's Signed-Releases check. Only versioned objects get
+  # attestations: no public pointer moves here (ADR 0071). The `gate` retracts
+  # the release if this job fails, as it does for a missing signature.
+  attest:
+    name: Attest provenance and SBOMs
+    needs: [release, migrate-image, runtime-image, runtime-data-image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write       # Upload the provenance bundle to the release.
+      packages: write       # Push the cosign SBOM attestations next to the images.
+      id-token: write       # Sigstore signing of every attestation.
+      attestations: write   # Store the GitHub attestations.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v2.4.3
+
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download the archives and SBOMs, check them against checksums.txt
+        id: archives
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist \
+            --pattern 'dexaflow_*.tar.gz' --pattern 'dexaflow_*.tar.gz.sbom.json' --pattern checksums.txt
+          (cd dist && sha256sum -c checksums.txt)
+          bash scripts/release-attest.sh archives dist "$TAG"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve the image digests
+        env:
+          TAG: ${{ github.ref_name }}
+          REGISTRY_PREFIX: ${{ env.REGISTRY }}/${{ github.repository_owner }}
+        run: bash scripts/release-attest.sh images "$TAG" images.sha256 images.refs
+
+      - name: Provenance for the archives
+        id: provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/dexaflow_*.tar.gz
+
+      - name: Provenance for the images
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: images.sha256
+
+      # One step per platform: actions/attest takes one SBOM per call.
+      # `release-attest.sh archives` above fails on a platform not listed here.
+      - name: SBOM attestation (linux_amd64)
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/dexaflow_${{ steps.archives.outputs.version }}_linux_amd64.tar.gz
+          sbom-path: dist/dexaflow_${{ steps.archives.outputs.version }}_linux_amd64.tar.gz.sbom.json
+      - name: SBOM attestation (linux_arm64)
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/dexaflow_${{ steps.archives.outputs.version }}_linux_arm64.tar.gz
+          sbom-path: dist/dexaflow_${{ steps.archives.outputs.version }}_linux_arm64.tar.gz.sbom.json
+      - name: SBOM attestation (darwin_amd64)
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/dexaflow_${{ steps.archives.outputs.version }}_darwin_amd64.tar.gz
+          sbom-path: dist/dexaflow_${{ steps.archives.outputs.version }}_darwin_amd64.tar.gz.sbom.json
+      - name: SBOM attestation (darwin_arm64)
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/dexaflow_${{ steps.archives.outputs.version }}_darwin_arm64.tar.gz
+          sbom-path: dist/dexaflow_${{ steps.archives.outputs.version }}_darwin_arm64.tar.gz.sbom.json
+
+      - name: SPDX SBOM on each image (cosign attest)
+        run: bash scripts/release-attest.sh sbom images.refs
+
+      # One JSON line per bundle, the format `gh attestation verify --bundle`
+      # reads. --clobber keeps a re-run idempotent.
+      - name: Upload the archive provenance to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+          VERSION: ${{ steps.archives.outputs.version }}
+        run: |
+          set -euo pipefail
+          out="dist/dexaflow_${VERSION}.intoto.jsonl"
+          jq -c . "$BUNDLE" > "$out"
+          gh release upload "$TAG" "$out" --repo "$GITHUB_REPOSITORY" --clobber
 
   # ── Verify the control-plane server image is cosign-signed (#772). GoReleaser
   # signs it keyless in the `release` job via docker_signs; this job proves the
@@ -547,7 +1112,7 @@ jobs:
   # Verifying the `:v<tag>` manifest is sufficient: it and the un-prefixed
   # `:<version>` manifest resolve to the same digest, and both were signed.
   verify-server-signature:
-    name: Verify dexaflow-server image signature
+    name: Verify dexaflow-server, dexaflow-mcp and dexaflow-cli image signatures
     needs: release
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -556,6 +1121,8 @@ jobs:
       packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: v2.4.3
@@ -582,15 +1149,59 @@ jobs:
             --certificate-identity-regexp "^https://github\.com/${REPO}/\.github/workflows/release\.yaml@refs/tags/" \
             "${IMAGE}"
 
+      - name: cosign verify dexaflow-mcp
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-mcp:${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Signed by the same docker_signs block as the server image, so the
+          # same identity pins apply.
+          ./scripts/cosign-retry.sh verify \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-identity-regexp "^https://github\.com/${REPO}/\.github/workflows/release\.yaml@refs/tags/" \
+            "${IMAGE}"
+
+      # The CLI image pipelines pull by tag (#1708), from the same GoReleaser
+      # docker_signs block: an unsigned one retracts the release like the others.
+      # It is then run, because what it is for is the programs next to the
+      # binary: a CLI that reports another version, or a python3, git or uv
+      # missing, fails the first `dexaflow deploy` of every pipeline using it.
+      - name: cosign verify and run dexaflow-cli
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-cli:${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ./scripts/cosign-retry.sh verify \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-identity-regexp "^https://github\.com/${REPO}/\.github/workflows/release\.yaml@refs/tags/" \
+            "${IMAGE}"
+          got="$(docker run --rm "$IMAGE" version --json | jq -r .version)"
+          [ "$got" = "${TAG#v}" ] || { echo "::error::${IMAGE} runs dexaflow ${got}, want ${TAG#v}"; exit 1; }
+          for tool in python3 git uv; do
+            docker run --rm --entrypoint "$tool" "$IMAGE" --version
+          done
+
+      # Every step above is logged in, so a private package passes them while
+      # every pipeline's anonymous pull is denied. A new GHCR package can start
+      # private, and the first rc is the run that creates it: an rc warns, a GA
+      # fails (RELEASING.md, "A new image").
+      - name: dexaflow-cli pulls without credentials (warns on an rc, fails a GA)
+        env:
+          REPO_IMAGE: ${{ github.repository_owner }}/dexaflow-cli
+          TAG: ${{ github.ref_name }}
+        run: bash scripts/release-check-public.sh "$REPO_IMAGE" "$TAG"
+
   # ── Release gate: if any of the smoke jobs OR the migrate-image build
-  # failed, retract the pre-release to a draft so `curl | sh` (which resolves
-  # the newest public release) and the Helm chart (which references the
-  # migrate image by tag) stop handing users a broken build. Runs always() so
-  # it can act on any failure; on success it leaves the published pre-release
-  # untouched.
+  # failed, retract the release to a draft so a pinned `curl | sh` stops
+  # handing users a broken build. Runs always() so it can act on any failure.
+  # Its success is what `promote` waits for; nothing public has moved before
+  # that (ADR 0071), so a retraction here leaves no chart and no Latest behind.
   gate:
     name: Gate release on install + lite-cold-start + upgrade + migrate + runtime image + server signature
-    needs: [release, install-smoke, lite-cold-start-smoke, upgrade-smoke, migrate-image, runtime-image, verify-server-signature]
+    needs: [release, install-smoke, lite-cold-start-smoke, upgrade-smoke, migrate-image, runtime-image, runtime-data-image, verify-server-signature, attest]
     if: always() && needs.release.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -598,12 +1209,12 @@ jobs:
       contents: write   # Edit the published release back to a draft on failure.
     steps:
       - name: Retract release to draft on smoke or image failure
-        if: needs.install-smoke.result != 'success' || needs.lite-cold-start-smoke.result != 'success' || needs.upgrade-smoke.result != 'success' || needs.migrate-image.result != 'success' || needs.runtime-image.result != 'success' || needs.verify-server-signature.result != 'success'
+        if: needs.install-smoke.result != 'success' || needs.lite-cold-start-smoke.result != 'success' || needs.upgrade-smoke.result != 'success' || needs.migrate-image.result != 'success' || needs.runtime-image.result != 'success' || needs.runtime-data-image.result != 'success' || needs.verify-server-signature.result != 'success' || needs.attest.result != 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eu
-          echo "::error::release blocked: install-smoke=${{ needs.install-smoke.result }} lite-cold-start-smoke=${{ needs.lite-cold-start-smoke.result }} upgrade-smoke=${{ needs.upgrade-smoke.result }} migrate-image=${{ needs.migrate-image.result }} runtime-image=${{ needs.runtime-image.result }} verify-server-signature=${{ needs.verify-server-signature.result }}; retracting ${GITHUB_REF_NAME} to a draft."
+          echo "::error::release blocked: install-smoke=${{ needs.install-smoke.result }} lite-cold-start-smoke=${{ needs.lite-cold-start-smoke.result }} upgrade-smoke=${{ needs.upgrade-smoke.result }} migrate-image=${{ needs.migrate-image.result }} runtime-image=${{ needs.runtime-image.result }} runtime-data-image=${{ needs.runtime-data-image.result }} verify-server-signature=${{ needs.verify-server-signature.result }} attest=${{ needs.attest.result }}; retracting ${GITHUB_REF_NAME} to a draft."
           gh release edit "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --draft
           # Print the recovery, because a plain re-run CANNOT work and the reader
           # has no way to know that from here (#979, observed on v0.4.5-rc.1).
@@ -636,7 +1247,7 @@ jobs:
           EOF
           exit 1
       - name: Confirm release passed all gates and ensure it is published
-        if: needs.install-smoke.result == 'success' && needs.lite-cold-start-smoke.result == 'success' && needs.upgrade-smoke.result == 'success' && needs.migrate-image.result == 'success' && needs.runtime-image.result == 'success' && needs.verify-server-signature.result == 'success'
+        if: needs.install-smoke.result == 'success' && needs.lite-cold-start-smoke.result == 'success' && needs.upgrade-smoke.result == 'success' && needs.migrate-image.result == 'success' && needs.runtime-image.result == 'success' && needs.runtime-data-image.result == 'success' && needs.verify-server-signature.result == 'success' && needs.attest.result == 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -649,4 +1260,168 @@ jobs:
           # where a passing re-run left the release stuck as a draft, needing a manual
           # `gh release edit --draft=false`. --draft=false leaves the prerelease flag
           # untouched, so an rc stays a pre-release.
-          gh release edit "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --draft=false
+          #
+          # --latest=false is load-bearing: GitHub marks a release Latest by
+          # default when it goes from draft to published, which would move the
+          # pointer here, before `promote` ran (ADR 0071).
+          gh release edit "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --draft=false --latest=false
+
+  # ── Promote: the only job that moves a public pointer (ADR 0071) ──
+  # Runs once `gate` is green, in the order a user would trip over a gap:
+  # 1. every image the chart or the moving tags reference exists and carries
+  #    this repository's release signature;
+  # 2. the chart is pushed and signed, as `dexaflow` and as `leoflow` (the name
+  #    installs from before the rename upgrade with), for rc and GA alike;
+  # 3. for a GA of the newest minor only, the moving `py3.N` runtime tags are
+  #    re-pointed at this release's digests, and the release is marked Latest,
+  #    which is what install.sh resolves without a pinned version.
+  # An rc and a patch of an older minor stop after step 2; the reason is in the
+  # step summary. Every step is idempotent, so a failed promote is recovered by
+  # re-running this job alone.
+  promote:
+    name: Promote (verify images, chart, py3.N, Latest)
+    needs: gate
+    if: needs.gate.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write   # Mark the release Latest.
+      packages: write   # Push the chart and re-point the py3.N tags on GHCR.
+      id-token: write   # Cosign keyless signing of the chart and its provenance.
+      attestations: write   # Store the chart build provenance attestation.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v2.4.3
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.2.0
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Decide which pointers this tag may move
+        id: plan
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          bash scripts/release-promote-plan.sh "$TAG" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Verify the images the chart and the moving tags reference
+        env:
+          TAG: ${{ github.ref_name }}
+          REGISTRY_PREFIX: ${{ env.REGISTRY }}/${{ github.repository_owner }}
+        run: bash scripts/release-verify-images.sh "$TAG" --runtime
+
+      # Stamp version and appVersion from the tag (ADR 0028), without the `v`:
+      # a chart version is SemVer 2, and the image tags the chart defaults to
+      # are the un-prefixed ones. The same templates are published twice, as
+      # `dexaflow` and as `leoflow`: the chart name feeds the selector labels,
+      # so a release installed before the rename upgrades in place only with
+      # the chart name it was installed with. Each pushed digest is also written
+      # to charts.sha256 (checksums format) for the provenance step below.
+      - name: Package, push and sign the charts (dexaflow and leoflow)
+        env:
+          TAG: ${{ github.ref_name }}
+          CHARTS: oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
+          SIGN_PREFIX: ${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          helm package helm/dexaflow --version "$version" --app-version "$version"
+          legacy="$(mktemp -d)/leoflow"
+          cp -R helm/dexaflow "$legacy"
+          sed -i 's/^name: dexaflow$/name: leoflow/' "$legacy/Chart.yaml"
+          grep -q '^name: leoflow$' "$legacy/Chart.yaml"
+          helm package "$legacy" --version "$version" --app-version "$version"
+          : > charts.sha256
+          for name in dexaflow leoflow; do
+            helm push "${name}-${version}.tgz" "$CHARTS" 2>&1 | tee push.log
+            digest="$(awk '/Digest: /{print $2}' push.log)"
+            if [ -z "$digest" ]; then
+              echo "::error::could not parse the pushed ${name} chart digest from helm push output"
+              exit 1
+            fi
+            printf '%s  %s\n' "${digest#sha256:}" "${SIGN_PREFIX}/${name}" >> charts.sha256
+            ./scripts/cosign-retry.sh sign --yes "${SIGN_PREFIX}/${name}@${digest}"
+            # Read the signature back with the same identity pins the images
+            # use, so a sign that silently flaked cannot ship (#1687).
+            ./scripts/cosign-retry.sh verify \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              --certificate-identity-regexp "^https://github\.com/${GITHUB_REPOSITORY}/\.github/workflows/release\.yaml@refs/tags/" \
+              "${SIGN_PREFIX}/${name}@${digest}" >/dev/null
+            echo "chart ${name} ${version} @ ${digest}, signed and verified" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      # SLSA build provenance for both charts, by the digest just pushed (#1562).
+      # The chart is only pushed here, after the gate, so its provenance is made
+      # here too and not in the `attest` job. A failure stops before any pointer
+      # moves below.
+      - name: Provenance for the charts
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: charts.sha256
+
+      # Re-point py3.N at the digest py3.N-<tag> already carries, under both
+      # image names. No rebuild and no re-sign: the signature is on the digest,
+      # which the verify step above just checked. The digest is read back and
+      # compared, so a copy that re-wrapped the index cannot pass silently.
+      - name: Move the py3.N runtime tags
+        if: steps.plan.outputs.latest == 'true'
+        env:
+          TAG: ${{ github.ref_name }}
+          PREFIX: ${{ env.REGISTRY }}/${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          digest_of() { docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' | jq -r .digest; }
+          pythons="$(jq -r '.. | objects | select(has("python_version")) | .python_version.enum? // empty | .[]' internal/domain/schemas/leoflow-yaml-schema.json)"
+          [ -n "$pythons" ] || { echo "::error::no Python line found in the schema enum"; exit 1; }
+          for py in $pythons; do
+            for image in dexaflow-runtime leoflow-runtime; do
+              src="${PREFIX}/${image}:py${py}-${TAG}"
+              dst="${PREFIX}/${image}:py${py}"
+              want="$(digest_of "$src")"
+              docker buildx imagetools create --tag "$dst" "$src"
+              got="$(digest_of "$dst")"
+              if [ "$got" != "$want" ]; then
+                echo "::error::${dst} points at ${got}, expected ${want} from ${src}"
+                exit 1
+              fi
+              echo "${dst} -> ${want}" >> "$GITHUB_STEP_SUMMARY"
+            done
+          done
+
+      - name: Mark the release Latest
+        if: steps.plan.outputs.latest == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --latest
+          latest="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)"
+          if [ "$latest" != "$TAG" ]; then
+            echo "::error::releases/latest returns ${latest} after marking ${TAG} Latest"
+            exit 1
+          fi
+          echo "${TAG} is Latest" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record what was not moved
+        if: steps.plan.outputs.latest != 'true'
+        env:
+          REASON: ${{ steps.plan.outputs.reason }}
+        run: |
+          echo "Latest and the py3.N runtime tags were not moved: ${REASON}" >> "$GITHUB_STEP_SUMMARY"

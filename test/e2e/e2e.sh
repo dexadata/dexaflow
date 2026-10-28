@@ -272,7 +272,7 @@ jq -e '.tasks[] | select(.task_id=="probe") | .depends_on | index("endpoint_name
 k3d_import "$CLUSTER" "$BASE_IMAGE" "$DAG_IMAGE"
 
 log "Pushing the DAG"
-TOKEN="$("$ROOT/bin/leoflow" auth create-token --server "$API" --username admin@leoflow.local --password admin)"
+TOKEN="$(admin_token "$ROOT/bin/leoflow" "$API" admin)"
 "$ROOT/bin/leoflow" push "$WORKDIR/$DAG_ID/dag.json" --server "$API" --token "$TOKEN"
 
 log "Creating an Admin Variable for the runtime-delivery check (#54)"
@@ -337,6 +337,9 @@ set_wait_until() {
 set_wait_until "$WAIT_FUTURE"
 log "wait_until = ${WAIT_FUTURE} (far future — the sensor will reschedule)"
 
+# New DAGs are paused at creation, and a manual run of a paused DAG waits
+# until the DAG is unpaused.
+unpause_dag "$API" "$DAG_ID" "$TOKEN" || fail "unpausing $DAG_ID failed"
 log "Triggering a run"
 RUN_ID="$(curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{}' "$API/api/v2/dags/$DAG_ID/dagRuns" | jq -r '.dag_run_id')"
@@ -502,6 +505,9 @@ jq -e '.tasks[] | select(.task_id=="boom" and .on_failure_callback==true)' \
   "$WORKDIR/$CBID/dag.json" >/dev/null || fail "boom did not compile with on_failure_callback=true"
 k3d_import "$CLUSTER" "$CB_IMAGE"
 "$ROOT/bin/leoflow" push "$WORKDIR/$CBID/dag.json" --server "$API" --token "$TOKEN"
+# New DAGs are paused at creation, and a manual run of a paused DAG waits
+# until the DAG is unpaused.
+unpause_dag "$API" cbdag "$TOKEN" || fail "unpausing cbdag failed"
 CB_RUN="$(curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{}' "$API/api/v2/dags/cbdag/dagRuns" | jq -r '.dag_run_id')"
 [ -n "$CB_RUN" ] && [ "$CB_RUN" != "null" ] || fail "no cbdag dag_run_id returned"
@@ -653,6 +659,9 @@ SP_USER="$(docker image inspect -f '{{.Config.User}}' "$SP_IMAGE")"
 log "generated DAG image final USER: $SP_USER"
 k3d_import "$CLUSTER" "$SP_IMAGE"
 "$ROOT/bin/leoflow" push "$WORKDIR/$SPID/dag.json" --server "$API" --token "$TOKEN"
+# New DAGs are paused at creation, and a manual run of a paused DAG waits
+# until the DAG is unpaused.
+unpause_dag "$API" "$SPID" "$TOKEN" || fail "unpausing $SPID failed"
 SP_RUN="$(curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{}' "$API/api/v2/dags/$SPID/dagRuns" | jq -r '.dag_run_id')"
 [ -n "$SP_RUN" ] && [ "$SP_RUN" != "null" ] || fail "no sysdag dag_run_id returned"

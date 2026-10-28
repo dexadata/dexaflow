@@ -19,6 +19,21 @@ ORDER BY key;
 -- name: CountVariables :one
 SELECT count(*) FROM variables WHERE tenant_id = $1;
 
+-- name: ListVariablesFiltered :many
+SELECT key, value, description
+FROM variables
+WHERE tenant_id = $1
+  AND (sqlc.narg('key_pattern')::text IS NULL OR key ILIKE '%' || sqlc.narg('key_pattern') || '%')
+  AND (sqlc.narg('key_prefix_pattern')::text IS NULL OR key ILIKE sqlc.narg('key_prefix_pattern') || '%')
+ORDER BY key
+LIMIT $2 OFFSET $3;
+
+-- name: CountVariablesFiltered :one
+SELECT count(*) FROM variables
+WHERE tenant_id = $1
+  AND (sqlc.narg('key_pattern')::text IS NULL OR key ILIKE '%' || sqlc.narg('key_pattern') || '%')
+  AND (sqlc.narg('key_prefix_pattern')::text IS NULL OR key ILIKE sqlc.narg('key_prefix_pattern') || '%');
+
 -- name: GetVariable :one
 SELECT key, value, description
 FROM variables
@@ -48,3 +63,19 @@ ON CONFLICT (tenant_id, key) DO UPDATE SET
 
 -- name: DeleteVariable :execrows
 DELETE FROM variables WHERE tenant_id = $1 AND key = $2;
+
+-- name: ListVariablesForEncryptionSweep :many
+-- Every variable across every tenant whose stored value does (sealed = true) or
+-- does not (sealed = false) start with the ciphertext tag (#507). It backs the
+-- variable_encryption boot sweeps, which seal plaintext rows ("on") or restore
+-- them ("decrypt"), and the key rotation sweep, which reads the sealed ones.
+SELECT id, key, value FROM variables
+WHERE starts_with(value, sqlc.arg(prefix)::text) = sqlc.arg(sealed)::boolean
+ORDER BY id;
+
+-- name: UpdateVariableValueGuarded :execrows
+-- Rewrites one stored value only if it is still the one the sweep read, so a
+-- concurrent write wins and the sweep counts the row as skipped. updated_at is
+-- left alone: the variable's value did not change, only its stored form.
+UPDATE variables SET value = sqlc.arg(value)
+WHERE id = sqlc.arg(id) AND value = sqlc.arg(expect);

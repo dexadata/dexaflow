@@ -17,16 +17,19 @@ run it on your machine or a trusted internal network — see [Editions](/concept
 - **One of the following** for the datastores:
     - **Docker** running (preferred — Lite spins up `postgres:16` automatically), OR
     - **Nothing** — Lite falls back to an embedded managed Postgres downloaded
-      under `~/.dexaflow` (no Docker, no system Postgres needed). See
+      under `~/.dexaflow` (no Docker, no system Postgres needed). It uses a
+      few common system libraries (libxml2, Kerberos); on a bare container
+      Lite names any that are missing and the command that installs them. See
       [Editions § Datastores](/concepts/editions/) for the auto-selection logic.
 - Linux or macOS (incl. WSL2). No system Python needed: Lite installs a managed
   one. See [Installation](/get-started/installation/) for details.
-- **Outbound network on the first `dexaflow setup`, unless you already have
-  `python3.11`.** Setup needs that exact version and downloads a managed CPython
-  3.11 under `~/.dexaflow/python` when it is not on your `PATH`. A newer host
-  Python is not a substitute here: 3.12 and 3.13 can parse DAGs, which is why
-  `dexaflow doctor` reports them as present, but setup still fetches its own 3.11.
-  Behind a proxy or offline, install `python3.11` first and setup will use it.
+- **Outbound network only when no Python 3.11 to 3.13 is installed.** Setup
+  runs the DAG parser on a host `python3.13`, `python3.12`, `python3.11` or
+  `python3` that reports one of those versions, and downloads a managed CPython
+  3.11 under `~/.dexaflow/python` only when there is none. A DAG that declares
+  `python_version: "3.11"` (the default `dexaflow init` writes) on a host without
+  3.11 fetches that same CPython the first time `dexaflow lite` builds its venv.
+  Behind a proxy or offline, install `python3.11` and nothing is downloaded.
 
 ## 1 · Install
 
@@ -43,14 +46,15 @@ each `[default]`:
   no Docker, recommended) or `k8s` (real pod-per-task on a local mini-Kubernetes —
   mirrors Pro, needs Docker). The wizard also accepts the friendly aliases `local`
   (= `subprocess`) and `cluster` (= `k8s`).
-- **Admin email** — default `admin@leoflow.local`
+- **Admin email**: default `admin@dexaflow.local` (an install created before the
+  rename keeps `admin@leoflow.local`)
 
-It then fetches a managed Python + the editor, creates your workspace, and prints
+It then picks a Python for the parser (downloading one only if you have none), fetches the editor, creates your workspace, and prints
 your **admin password once** (`dexaflow lite reset-password` resets it):
 
 ```
 ── Dexaflow Lite admin (save this — it is shown only once) ──
-  user:     admin@leoflow.local
+  user:     admin@dexaflow.local
   password: tiger98
 ```
 
@@ -74,8 +78,8 @@ That's it. With no arguments, `dexaflow lite`:
 ```
 ✓ Dexaflow Lite is ready
     open:    http://127.0.0.1:8088
-    login:   admin@leoflow.local
-    project: /home/you/leoflow
+    login:   admin@dexaflow.local
+    project: /home/you/dexaflow
 ```
 
 Open that URL, log in with the password from step 1, and the DAG shows up in the

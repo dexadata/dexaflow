@@ -5,10 +5,28 @@ aliases:
 # --- end AUTO redirect aliases ---
 title: Roadmap
 weight: 20
-description: The historical road to release — where Dexaflow has been heading.
+description: Where Dexaflow is heading next, and the historical road to the first release.
 ---
 
-{{% alert title="Historical — the first release shipped" color="info" %}}
+## Current roadmap
+
+Planning lives in GitHub issues, each assigned to the release milestone it is
+planned for. Two public views read from them:
+
+- **[Dexaflow roadmap](https://github.com/orgs/dexadata/projects/4)**, a GitHub
+  Project with the open issues by release, as a timeline, a board and a table.
+- **[Milestones](https://github.com/dexadata/dexaflow/milestones)**, one per
+  release, with progress and a target date.
+
+Patch releases (`v0.5.x`) carry fixes and small features roughly once a week;
+the next minor (`v0.6.0`) has no date yet. Milestone dates are targets, not
+commitments: a release ships when its milestone is done and its candidate
+passes the release gates in [RELEASING.md](https://github.com/dexadata/dexaflow/blob/main/RELEASING.md).
+To propose work, open an issue; a maintainer sets its milestone.
+
+## The road to v0.1
+
+{{% alert title="Historical: the first release shipped" color="info" %}}
 This page captured the plan **before v0.1**. The `v0.x` line has since
 shipped (v0.1 through v0.4 and beyond) and ADR 0037 removed the
 Alpha/Beta phase framing. It is kept for context; the Alpha/Beta/GA

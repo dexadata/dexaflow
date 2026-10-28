@@ -43,6 +43,9 @@ expect_substring() {
 # Each line below is a contract the chart must honour. Add to this list as new
 # config keys land.
 expect_substring 'name: LEOFLOW_DATABASE_URL'  "DB URL env entry in deployment"
+expect_substring 'name: LEOFLOW_DATABASE_INSTALLATION_ID' "installation id env entry in deployment (ADR 0090)"
+expect_substring '-installation-configmap=dexaflow-test-installation' "installation ConfigMap flag on the migration Job (ADR 0090)"
+expect_substring 'name: LEOFLOW_HELM_RELEASE' "release env entry for the recovery hint in deployment (ADR 0090)"
 expect_substring 'name: LEOFLOW_REDIS_URL'     "Redis URL env entry in deployment"
 expect_substring 'name: LEOFLOW_AUTH_JWT_SECRET' "JWT secret env entry in deployment"
 expect_substring 'name: LEOFLOW_SECRET_KEY'    "Connection encryption key env entry in deployment (ADR 0019)"

@@ -2,7 +2,7 @@
 title: Build your first DAG
 linkTitle: Build your first DAG
 weight: 20
-description: A guided walk from an empty project to a running DAG — scaffold, author, compile, run.
+description: "A guided walk from an empty workspace to a running DAG: scaffold, author, validate, run."
 ---
 
 This is a hands-on tutorial. By the end you will have **authored and run a
@@ -19,40 +19,46 @@ print a version). If `dexaflow lite` is still running from the Quickstart, press
 **Ctrl-C** to stop it — you will start it again in step 5.
 {{% /alert %}}
 
-## 1 · Scaffold a project
+## 1 · Create a workspace and a DAG
 
-A Dexaflow DAG project is just a directory with two files: **`dag.py`** (your
-pipeline) and **`dexaflow.yaml`** (how to package it). `dexaflow init` creates that
-pair for you:
+A **workspace** is the folder, usually a git repository, that holds your DAG
+projects; each DAG project is a folder with two files: **`dag.py`** (your
+pipeline) and **`dexaflow.yaml`** (how to package it). Create the workspace,
+then the DAG inside it:
 
 ```bash
-dexaflow init taskflow_sales
+dexaflow workspace init sales-dags --git
+cd sales-dags
+dexaflow new taskflow_sales
 ```
 
 ```
-Initialized Dexaflow project "taskflow_sales" in taskflow_sales
+Created DAG "taskflow_sales" in dags/taskflow_sales
 
 Next steps:
-  dexaflow validate taskflow_sales    # quick syntax check
-  dexaflow lite taskflow_sales        # run it locally with the embedded scheduler
+  dexaflow validate dags/taskflow_sales
+  dexaflow lite                     # run every DAG of the workspace locally
+  dexaflow target add dev https://<control-plane>   # where deploys go
+  dexaflow deploy taskflow_sales
 ```
 
-The `dag_id` is taken from the directory name — `taskflow_sales`. Look inside:
+The last two lines are for later, when you deploy to a control plane. The `dag_id` is the name you passed, `taskflow_sales`. Look inside:
 
 ```bash
-ls taskflow_sales
+ls dags/taskflow_sales
 # dag.py  dexaflow.yaml
 ```
 
 The scaffold is a one-task "hello" DAG. In the next two steps you will replace it
-with the real pipeline.
+with the real pipeline. The same workspace is what you later deploy from: see
+[Workspaces and targets](/operate/workspaces-and-targets/).
 
 ## 2 · Write the pipeline
 
-Open `taskflow_sales/dag.py` and replace its contents with this:
+Open `dags/taskflow_sales/dag.py` and replace its contents with this:
 
 ```python
-"""taskflow_sales — a pure TaskFlow ETL passing data via XCom (no deps)."""
+"""taskflow_sales: a pure TaskFlow ETL passing data via XCom (no deps)."""
 from __future__ import annotations
 
 from airflow.sdk import DAG, task
@@ -100,7 +106,7 @@ What you just wrote, top to bottom:
 
 ## 3 · Declare packaging
 
-Open `taskflow_sales/dexaflow.yaml` and make it match this. It tells Dexaflow how to
+Open `dags/taskflow_sales/dexaflow.yaml` and make it match this. It tells Dexaflow how to
 build the DAG's image — here, nothing beyond a Python version, because the pipeline
 has no third-party dependencies:
 
@@ -121,30 +127,44 @@ If your pipeline imported a library (say `pandas`), you would add it under
 
 ## 4 · Validate it
 
-Before running, check the project parses and matches the schema:
+Before running, check the project matches the schema:
 
 ```bash
-dexaflow validate taskflow_sales
+dexaflow validate dags/taskflow_sales
 ```
 
 A clean run prints no errors. If you mistyped something in `dexaflow.yaml` or
-`dag.py`, this is where you find out — fix it and rerun until it passes.
+left a syntax error in `dag.py`, this is where you find out: fix it and rerun
+until it passes.
+
+By default `validate` does not import `dag.py`, so code that is valid Python but
+fails when it runs (a misspelled attribute, a missing import) still passes. Add
+`--parse` to load the DAG the way `compile` does and catch those too:
+
+```bash
+dexaflow validate dags/taskflow_sales --parse
+```
+
+It needs the DAG's dependencies installed where you run it, which is why it is
+not the default: a CI step that only lints `dexaflow.yaml` keeps working on a
+runner without them.
 
 ## 5 · Run it
 
-Start Lite pointed at your project:
+Start Lite from the workspace root:
 
 ```bash
-dexaflow lite taskflow_sales
+dexaflow lite
 ```
 
-Lite brings up its datastore, registers the DAG, and prints where to go:
+With no argument, Lite runs every DAG of the workspace it finds from the current
+folder. It brings up its datastore, registers the DAGs, and prints where to go:
 
 ```
 ✓ Dexaflow Lite is ready
     open:    http://127.0.0.1:8088
-    login:   admin@leoflow.local
-    project: /path/to/taskflow_sales
+    login:   admin@dexaflow.local
+    project: /path/to/sales-dags
 ```
 
 Leave it running — it **hot-reloads** every time you save `dag.py`.
@@ -215,7 +235,8 @@ Delete the bad line, save, and the banner clears as the DAG reloads. Press
 
 ## What you learned
 
-- A DAG project is **`dag.py` + `dexaflow.yaml`**; `dexaflow init` scaffolds the pair.
+- A workspace holds your DAG projects; `dexaflow new` scaffolds a project, the pair
+  **`dag.py` + `dexaflow.yaml`**, in it.
 - Tasks are `@task` functions; **returning a value and passing it to another task**
   moves data over XCom with no boilerplate.
 - The **call graph is the dependency graph** — `load(transform(extract()))`.

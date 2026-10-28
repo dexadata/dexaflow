@@ -15,6 +15,7 @@ import (
 )
 
 func TestRegisterDeployedDAGRepinsAndRegisters(t *testing.T) {
+	t.Parallel()
 	var gotPath, gotAuth, gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
@@ -34,12 +35,12 @@ func TestRegisterDeployedDAGRepinsAndRegisters(t *testing.T) {
 	digest := "ghcr.io/org/etl@sha256:cafef00d"
 
 	var sb strings.Builder
-	dagID, err := registerDeployedDAG(context.Background(), &sb, srv.URL, "tok", out, digest, "v1")
+	res, err := registerDeployedDAG(context.Background(), &sb, registerRequest{serverURL: srv.URL, token: "tok", output: out, digestRef: digest, version: "v1", origin: labelDefault})
 	if err != nil {
 		t.Fatalf("registerDeployedDAG: %v", err)
 	}
-	if dagID != "etl" {
-		t.Errorf("dagID = %q, want etl", dagID)
+	if res.DagID != "etl" || res.Status != deployStatusRegistered || res.Digest != "sha256:cafef00d" || res.Image != digest {
+		t.Errorf("result = %+v, want etl registered with the digest", res)
 	}
 	if gotPath != "/api/v2/dags/etl/versions" {
 		t.Errorf("path = %q", gotPath)
@@ -61,6 +62,7 @@ func TestRegisterDeployedDAGRepinsAndRegisters(t *testing.T) {
 }
 
 func TestRegisterDeployedDAGSurfacesServerError(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = io.WriteString(w, "forbidden")
@@ -71,13 +73,36 @@ func TestRegisterDeployedDAGSurfacesServerError(t *testing.T) {
 	if err := os.WriteFile(out, []byte(pushSpec), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := registerDeployedDAG(context.Background(), io.Discard, srv.URL, "tok", out, "r@sha256:x", "v1")
+	_, err := registerDeployedDAG(context.Background(), io.Discard, registerRequest{serverURL: srv.URL, token: "tok", output: out, digestRef: "r@sha256:x", version: "v1", origin: labelDefault})
 	if err == nil {
 		t.Error("expected an error when the control plane rejects the register")
 	}
 }
 
+// TestRegisterDeployedDAGExplainsTheTrustedIssuerRefusal: a register the
+// server refuses because deploys go through its trusted issuer (#1773) says
+// so, rather than a bare 403.
+func TestRegisterDeployedDAGExplainsTheTrustedIssuerRefusal(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Dexaflow-Deploy-Via", "trusted-issuer")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"detail":"deploys go through the trusted issuer"}`)
+	}))
+	defer srv.Close()
+
+	out := filepath.Join(t.TempDir(), "dag.json")
+	if err := os.WriteFile(out, []byte(pushSpec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := registerDeployedDAG(context.Background(), io.Discard, registerRequest{serverURL: srv.URL, token: "tok", output: out, digestRef: "r@sha256:x", version: "v1", origin: labelDefault})
+	if err == nil || !strings.Contains(err.Error(), "takes deploys only through its trusted issuer") {
+		t.Errorf("err = %v, want it to say deploys go through the trusted issuer", err)
+	}
+}
+
 func TestTriggerDeployRunPostsToDagRuns(t *testing.T) {
+	t.Parallel()
 	var gotPath, gotAuth, gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
@@ -89,7 +114,7 @@ func TestTriggerDeployRunPostsToDagRuns(t *testing.T) {
 	defer srv.Close()
 
 	var sb strings.Builder
-	if err := triggerDeployRun(context.Background(), &sb, srv.URL, "tok", "etl"); err != nil {
+	if _, err := triggerDeployRun(context.Background(), &sb, srv.URL, "tok", "etl"); err != nil {
 		t.Fatalf("triggerDeployRun: %v", err)
 	}
 	if gotPath != "/api/v2/dags/etl/dagRuns" {
@@ -107,11 +132,12 @@ func TestTriggerDeployRunPostsToDagRuns(t *testing.T) {
 }
 
 func TestTriggerDeployRunSurfacesError(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusConflict)
 	}))
 	defer srv.Close()
-	if err := triggerDeployRun(context.Background(), io.Discard, srv.URL, "tok", "etl"); err == nil {
+	if _, err := triggerDeployRun(context.Background(), io.Discard, srv.URL, "tok", "etl"); err == nil {
 		t.Error("expected an error when the trigger is rejected")
 	}
 }
@@ -166,6 +192,7 @@ func TestResolveProjectDirFindsByDagID(t *testing.T) {
 }
 
 func TestDeployUnknownDagIDFails(t *testing.T) {
+	t.Chdir(t.TempDir()) // outside any workspace or repository: the config's workspace applies
 	ws := t.TempDir()
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(cfgPath, []byte("workspace: "+ws+"\n"), 0o600); err != nil {
@@ -177,7 +204,8 @@ func TestDeployUnknownDagIDFails(t *testing.T) {
 }
 
 func TestDeployAllEmptyWorkspaceFails(t *testing.T) {
-	ws := t.TempDir() // empty: no DAG projects
+	t.Chdir(t.TempDir()) // outside any workspace or repository: the config's workspace applies
+	ws := t.TempDir()    // empty: no DAG projects
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(cfgPath, []byte("workspace: "+ws+"\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -188,6 +216,7 @@ func TestDeployAllEmptyWorkspaceFails(t *testing.T) {
 }
 
 func TestDeployAllRejectsExtraArg(t *testing.T) {
+	t.Chdir(t.TempDir())
 	if _, _, err := run(t, "deploy", "somedir", "--all"); err == nil {
 		t.Error("expected --all combined with a path/dag_id to be rejected")
 	}
@@ -196,6 +225,9 @@ func TestDeployAllRejectsExtraArg(t *testing.T) {
 func TestDeployAllReportsPerProjectFailure(t *testing.T) {
 	// A workspace with one scaffolded project that has no registry: --all must
 	// iterate to it, fail it at the registry guard, and report a non-zero result.
+	// Run from a folder outside any workspace or repository, where the
+	// config's workspace is the one deploy reads.
+	t.Chdir(t.TempDir())
 	ws := t.TempDir()
 	if _, _, err := run(t, "init", filepath.Join(ws, "one")); err != nil {
 		t.Fatalf("init: %v", err)
@@ -210,6 +242,7 @@ func TestDeployAllReportsPerProjectFailure(t *testing.T) {
 }
 
 func TestDeployByDagIDReachesProjectThenGuard(t *testing.T) {
+	t.Chdir(t.TempDir()) // outside any workspace or repository: the config's workspace applies
 	ws := t.TempDir()
 	if _, _, err := run(t, "init", filepath.Join(ws, "solo")); err != nil {
 		t.Fatalf("init: %v", err)
@@ -256,23 +289,25 @@ func TestResolveServerTokenFallsBackToEnv(t *testing.T) {
 }
 
 func TestDeployImageRef(t *testing.T) {
+	t.Parallel()
 	base := func(strategy string) *domain.LeoflowConfig {
 		return &domain.LeoflowConfig{Registry: &domain.RegistryConfig{
 			URL: "ghcr.io/org", ImageName: "etl", TagStrategy: strategy,
 		}}
 	}
 	// version strategy tags by the version label.
-	if got := deployImageRef(base("version"), "v3", "1a2b3c4"); got != "ghcr.io/org/etl:v3" {
+	if got := deployImageRef(base("version"), "v3", gitRevision{sha: "1a2b3c4"}); got != "ghcr.io/org/etl:v3" {
 		t.Errorf("version: ref = %q, want ghcr.io/org/etl:v3", got)
 	}
 	// git_sha strategy tags by the actual commit sha (the #2 fix — it used to
 	// collapse to the version label).
-	if got := deployImageRef(base("git_sha"), "v3", "1a2b3c4"); got != "ghcr.io/org/etl:1a2b3c4" {
+	if got := deployImageRef(base("git_sha"), "v3", gitRevision{sha: "1a2b3c4"}); got != "ghcr.io/org/etl:1a2b3c4" {
 		t.Errorf("git_sha: ref = %q, want ghcr.io/org/etl:1a2b3c4", got)
 	}
 }
 
 func TestRepinImageInSpec(t *testing.T) {
+	t.Parallel()
 	in := []byte(`{"schema_version":"1.0","dag_id":"etl","dag_version":"v1","image":"ghcr.io/org/etl:v1","tasks":[{"task_id":"a","type":"python","entrypoint":"dag:a"}]}`)
 	out, err := repinImageInSpec(in, "ghcr.io/org/etl@sha256:deadbeef")
 	if err != nil {
@@ -311,6 +346,7 @@ func TestDeployCommandRejectsMissingRegistry(t *testing.T) {
 }
 
 func TestRequireRegistryRejectsUnconfigured(t *testing.T) {
+	t.Parallel()
 	// ApplyDefaults instantiates Registry but leaves URL empty — deploy must
 	// still reject it, loudly and actionably (ADR 0041).
 	cfg := &domain.LeoflowConfig{}
@@ -328,7 +364,37 @@ func TestRequireRegistryRejectsUnconfigured(t *testing.T) {
 	}
 }
 
+// TestRequireRegistryNamesTheRegistryLogins checks that the error names the
+// credential each kind of registry takes (ADR 0080): the cloud CLI session for
+// Artifact Registry, ECR and ACR, docker login for the others, and no longer
+// tells every user to run docker login for ghcr.io.
+func TestRequireRegistryNamesTheRegistryLogins(t *testing.T) {
+	t.Parallel()
+	cfg := &domain.LeoflowConfig{}
+	cfg.ApplyDefaults()
+	err := requireRegistry(cfg)
+	if err == nil {
+		t.Fatal("expected requireRegistry to reject a config with no registry URL")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"Artifact Registry, GCR: gcloud auth login",
+		"ECR: aws sso login, aws configure, environment credentials or an instance role",
+		"ACR: az login",
+		"any other registry: dexaflow registry login <registry> (or docker login <registry>)",
+		"the deploy preflight names it",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error message missing %q; got:\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "authenticate your builder once") {
+		t.Errorf("error message still tells everyone to docker login ghcr.io:\n%s", msg)
+	}
+}
+
 func TestRequireRegistryRejectsMissingImageName(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{Registry: &domain.RegistryConfig{URL: "ghcr.io/org"}}
 	if err := requireRegistry(cfg); err == nil {
 		t.Error("expected requireRegistry to reject a registry URL with no image_name")
@@ -336,6 +402,7 @@ func TestRequireRegistryRejectsMissingImageName(t *testing.T) {
 }
 
 func TestRequireRegistryAcceptsConfigured(t *testing.T) {
+	t.Parallel()
 	cfg := &domain.LeoflowConfig{Registry: &domain.RegistryConfig{URL: "ghcr.io/org", ImageName: "etl"}}
 	if err := requireRegistry(cfg); err != nil {
 		t.Errorf("requireRegistry on a configured registry: %v", err)

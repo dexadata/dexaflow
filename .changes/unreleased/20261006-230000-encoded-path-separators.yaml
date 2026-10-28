@@ -1,4 +1,0 @@
-kind: Security
-body: |-
-  **Request paths with an encoded slash or backslash are refused.** The server routes on the decoded path, so `/auth%2Ftoken` was served as `/auth/token`, while a reverse proxy or load balancer in front of it matches its rules on the raw path. A rule written at the edge for `/auth/token`, `/api/v2/service/` or `/api/v2/auth/session` could be skipped by encoding a slash. Every endpoint reached that way still required its own credentials. The server now answers 400 to any path that contains `%2F` or `%5C`, in any case, so the edge and the server read the same path. The XCom key in the task instance route keeps accepting an encoded slash, since the UI percent-encodes the key and a key may hold one. (GHSA-qc9m-2jm5-rccc)
-time: 2026-10-06T23:00:00.000000+00:00

@@ -1,19 +1,23 @@
 name: Helm chart release
 
-# Publish the Dexaflow Helm chart as an OCI artifact on every release tag AND
-# every release-candidate tag. ADR 0028: the chart ships as an OCI artifact in
-# the same registry as the images (`oci://ghcr.io/dexadata/charts/dexaflow`,
-# and `charts/leoflow` for releases installed before the rename),
-# co-versioned with the release tag (chart `version` + `appVersion` move in
-# lockstep with the tag). RC tags publish the chart too so the team can pull it
-# via OCI while an RC bakes in staging.
+# Manual recovery only. The chart is published by the `promote` job in
+# release.yaml, after the release gate is green (ADR 0071). This workflow used
+# to run on every tag push with no dependency on the release, and pushed the
+# chart about 30 seconds after the tag, before any image it references existed;
+# on v0.5.3 `helm upgrade` failed on ImagePullBackOff for over an hour (#1684).
 #
-# `v*` already matches RC tags (`v0.0.2-rc.1`), the same single filter the
-# Release workflow uses — GitHub fires the workflow once per push regardless of
-# how many patterns match, so one glob covers both stable and RC.
+# Dispatch it from a release tag (`gh workflow run helm-release.yaml --ref
+# vX.Y.Z`) only to re-publish a chart, for example after deleting a broken
+# package. It refuses a branch ref, and it verifies the images the chart
+# references exist and are signed before pushing, the same check `promote`
+# runs. Re-running `promote` in the release run is the normal recovery; this is
+# for when that run can no longer be re-run.
+#
+# ADR 0028: the chart ships as an OCI artifact in the same registry as the
+# images (`oci://ghcr.io/dexadata/charts/dexaflow`, and `charts/leoflow` for
+# releases installed before the rename), co-versioned with the release tag.
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
 
 # Least-privilege default: read-only at the top level; the publish job opts into
 # the writes it needs, mirroring .github/workflows/release.yaml.
@@ -32,8 +36,17 @@ jobs:
       contents: read
       packages: write   # Push the chart to GHCR (OCI).
       id-token: write   # Cosign keyless signing via Sigstore OIDC.
+      attestations: write   # Store the chart build provenance attestation.
     steps:
+      - name: Refuse anything but a release tag
+        if: github.ref_type != 'tag'
+        run: |
+          echo "::error::dispatch this workflow from a release tag (--ref vX.Y.Z), not from ${GITHUB_REF}"
+          exit 1
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
@@ -70,6 +83,12 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify the images the chart references
+        env:
+          TAG: ${{ github.ref_name }}
+          REGISTRY_PREFIX: ${{ env.REGISTRY }}/${{ github.repository_owner }}
+        run: bash scripts/release-verify-images.sh "$TAG"
 
       # Derive the chart version from the tag the same way the image tag is
       # derived, then strip the leading `v`: a Helm chart `version` must be
@@ -108,10 +127,12 @@ jobs:
       # `helm push` authenticates via the docker credential store that the GHCR
       # login above populated. It prints `Digest: sha256:...` on push; capture it
       # so cosign can sign each chart by digest (immutable), the same shape the
-      # migrate/runtime image jobs sign in release.yaml.
+      # migrate/runtime image jobs sign in release.yaml. Each digest is also
+      # written to charts.sha256 (checksums format) for the provenance step.
       - name: helm push (OCI) and sign
         run: |
           set -euo pipefail
+          : > charts.sha256
           for name in dexaflow leoflow; do
             chart="${name}-${{ steps.ver.outputs.version }}.tgz"
             helm push "${chart}" "oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts" 2>&1 | tee push.log
@@ -121,8 +142,16 @@ jobs:
               exit 1
             fi
             echo "Pushed oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${name} @ ${digest}"
+            printf '%s  %s\n' "${digest#sha256:}" "${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${name}" >> charts.sha256
             # Keyless cosign sign by digest (ADR 0014/0028). `--yes` skips the
             # OIDC prompt; CI answers the Sigstore challenge with the GH OIDC token.
             cosign sign --yes \
               "${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/${name}@${digest}"
           done
+
+      # SLSA build provenance for both charts, by the digest just pushed, as
+      # the `promote` job in release.yaml makes it (#1562).
+      - name: Provenance for the charts
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: charts.sha256

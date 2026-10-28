@@ -13,6 +13,7 @@ import (
 // A failed compile publishes an import error (UI banner); a good compile clears
 // it. Reporting is best-effort and must never mask the reload's own result.
 func TestDevReportingReloadPushesAndClears(t *testing.T) {
+	t.Parallel()
 	var puts, dels int
 	var lastBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

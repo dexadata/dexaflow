@@ -10,6 +10,7 @@ import (
 // (no args) would silently no-op and `dexaflow lite forget --all foo` would
 // confuse the operator about whether foo was deregistered.
 func TestForgetCommandArgs(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		args      []string
@@ -42,6 +43,7 @@ func TestForgetCommandArgs(t *testing.T) {
 // would mix two semantics. Explicit rejection at parse time is friendlier
 // than silently using one or the other.
 func TestForgetCommandAllRejectsPositional(t *testing.T) {
+	t.Parallel()
 	c := newForgetCommand()
 	if err := c.Flags().Set("all", "true"); err != nil {
 		t.Fatalf("set --all: %v", err)
@@ -59,6 +61,7 @@ func TestForgetCommandAllRejectsPositional(t *testing.T) {
 // are boolean. A renamed flag would silently break scripts that rely on this
 // CLI.
 func TestForgetCommandFlags(t *testing.T) {
+	t.Parallel()
 	c := newForgetCommand()
 	if f := c.Flags().Lookup("all"); f == nil {
 		t.Error("--all flag missing")

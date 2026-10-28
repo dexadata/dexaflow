@@ -21,6 +21,7 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Code quality: golangci-lint A+](https://img.shields.io/badge/golangci--lint-A%2B-00ADD8?logo=go&logoColor=white)](https://dexaflow.dexadata.ai/project/adrs/0012-code-quality-standards/)
 [![CI](https://github.com/dexadata/dexaflow/actions/workflows/ci.yaml/badge.svg)](https://github.com/dexadata/dexaflow/actions/workflows/ci.yaml)
+[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdexadata%2Fdexaflow%2Fbadges%2Fcoverage.json)](https://github.com/dexadata/dexaflow/actions/workflows/ci.yaml?query=branch%3Amain)
 [![Security](https://github.com/dexadata/dexaflow/actions/workflows/security.yaml/badge.svg)](https://github.com/dexadata/dexaflow/actions/workflows/security.yaml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/dexadata/dexaflow/badge)](https://securityscorecards.dev/viewer/?uri=github.com/dexadata/dexaflow)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13068/badge)](https://www.bestpractices.dev/projects/13068)
@@ -45,16 +46,17 @@
 | [HTTP API (Scalar)](https://dexaflow.dexadata.ai/api-reference.html) · [Go packages](https://dexaflow.dexadata.ai/reference/go/) · [MCP server](https://dexaflow.dexadata.ai/reference/mcp/) | API references & the LLM-agent surface |
 | [Concepts & glossary](https://dexaflow.dexadata.ai/concepts/core-concepts/) · [Architecture](https://dexaflow.dexadata.ai/concepts/architecture/) · [ADRs](https://dexaflow.dexadata.ai/project/adrs/) | the model, the *why*, and every major decision |
 | [Troubleshooting](https://dexaflow.dexadata.ai/operate/troubleshooting/) · [Security policy](SECURITY.md) | when things break; how to report a vulnerability |
+| [Roadmap](https://dexaflow.dexadata.ai/project/roadmap/) · [Project board](https://github.com/orgs/dexadata/projects/4) · [Milestones](https://github.com/dexadata/dexaflow/milestones) | what is planned next, by release |
 
 ---
 
 <p align="center">
   <a href="https://dexaflow.dexadata.ai/">
-    <img src="website/static/assets/screenshots/dev-grid-tasks.png" alt="Dexaflow running the Apache Airflow 3.2 UI — a DAG's grid view, task list, and run-duration overview" width="860">
+    <img src="website/static/assets/screenshots/dev-grid-tasks.png" alt="Dexaflow running the Apache Airflow UI: a DAG's grid view, task list, and run-duration overview" width="860">
   </a>
 </p>
 
-<p align="center"><em>The unmodified Apache Airflow 3.2 UI, served by a Go control plane.</em></p>
+<p align="center"><em>The unmodified Apache Airflow UI, served by a Go control plane.</em></p>
 
 ---
 
@@ -65,7 +67,7 @@ Dexaflow ships in two editions. Pick the track that matches your target:
 ### Lite — the full engine on a single host
 
 The **full Dexaflow control plane on one machine** — the same engine, the same
-Airflow-3.2 UI, the same `dag.py` + `dexaflow.yaml` as Pro — in a one-command,
+Airflow 3.3 UI, the same `dag.py` + `dexaflow.yaml` as Pro, in a one-command,
 **no-Kubernetes** package. Light to run, powerful where it counts: real
 pod-per-task execution, a **durable** Postgres datastore, hot-reload, a real
 admin login. It is not a stripped-down demo — it is the whole engine scoped to
@@ -88,11 +90,11 @@ coexist out of the box.
 ### Pro — Kubernetes cluster (Helm)
 
 ```bash
-kubectl create namespace leoflow
-helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version 0.5.1 -n leoflow \
-  --set image.tag=v0.5.1 \
-  --set migrations.image.tag=v0.5.1 \
-  --set database.url='postgres://USER:PASS@HOST:5432/leoflow?sslmode=verify-full' \
+kubectl create namespace dexaflow
+helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version 0.5.7 -n dexaflow \
+  --set image.tag=v0.5.7 \
+  --set migrations.image.tag=v0.5.7 \
+  --set database.url='postgres://USER:PASS@HOST:5432/dexaflow?sslmode=verify-full' \
   --set redis.url='rediss://HOST:6380/0' \
   --set auth.jwtSecret="$(openssl rand -base64 64)" \
   --set secretKey="$(openssl rand -hex 32)" \
@@ -150,7 +152,7 @@ Dexaflow is a **GitOps-first, container-native workflow orchestrator** written i
 
 - **GitOps-first.** Your DAG is a versioned artifact (`dag.json` + container image), not live source code. CI builds it. The registry stores it. Rollback is a tag change.
 - **Container-native.** Each DAG is its own container image, with its own dependencies, its own Python version, its own everything. Built automatically from a one-page `dexaflow.yaml` — you never touch Docker unless you want to.
-- **Airflow-UI compatible.** The MVP runs the unmodified Apache Airflow 3.2.x UI. Your team's muscle memory survives the migration. No new tool to learn.
+- **Airflow-UI compatible.** The MVP runs the unmodified Apache Airflow 3.3 UI. Your team's muscle memory survives the migration. No new tool to learn.
 - **Go performance, Go discipline.** Static binary. No GIL. Goroutines for concurrency. Test-driven from the first commit. The full `golangci-lint` A+ stack enforced in CI.
 
 ## What It Looks Like to Use
@@ -297,7 +299,7 @@ Versioning follows [ADR 0037](https://dexaflow.dexadata.ai/project/adrs/0037-rel
 - **dbt** — a dbt project runs as a DAG (pod-per-model or fused groups); managed warehouse connections generate `profiles.yml` in-pod, with modern service-account auth (Snowflake key-pair, BigQuery keyless / Workload Identity, Databricks OAuth M2M).
 - **MCP + typed client** — an experimental [`dexaflow-mcp`](https://dexaflow.dexadata.ai/project/adrs/0050-mcp-server/) Model Context Protocol server (read tools + resources over stdio / Streamable HTTP) and a generated, typed Go client for `/api/v2` (`pkg/client`).
 
-**Not yet implemented:** load tests. Tracked refinements live in the [issue tracker](https://github.com/dexadata/dexaflow/issues).
+**Not yet implemented:** load tests. Tracked refinements live in the [issue tracker](https://github.com/dexadata/dexaflow/issues); what is planned for each release is on the [public roadmap](https://github.com/orgs/dexadata/projects/4).
 
 ## Features
 
@@ -307,7 +309,7 @@ Versioning follows [ADR 0037](https://dexaflow.dexadata.ai/project/adrs/0037-rel
 - DAG-as-Image model with automatic image build via `dexaflow.yaml`
 - Hybrid DAG authoring: Python source parsed at compile time, or declarative YAML
 - XCom on Redis with 256 KB limit, TTL, and optional schema validation
-- Apache Airflow 3.2.x UI compatibility (no fork required)
+- Apache Airflow 3.3 UI compatibility (no fork required)
 - JWT authentication, RBAC, multi-tenant schema (OIDC-ready)
 - Kubernetes-native execution (no worker pool to manage)
 - Local development on Kubernetes (k3d/kind) or a dev-only subprocess executor (ADR 0015)
@@ -342,9 +344,9 @@ example DAGs in `~/dexaflow/examples/`, and hot-reloads every save. Recover the
 admin password any time with `dexaflow lite reset-password`.
 
 > Lite is the primary local path. The legacy Docker-Compose demo profile
-> (`docker compose --profile demo up --build`, login `admin@leoflow.local` /
+> (`docker compose --profile demo up --build`, login `admin@dexaflow.local` /
 > `admin`) still works for CI / containerized-only environments — see
-> [docs/local-deploy.md](https://dexaflow.dexadata.ai/contribute/local-dev-loop/). The pinned Airflow 3.2.x UI is a
+> [docs/local-deploy.md](https://dexaflow.dexadata.ai/contribute/local-dev-loop/). The pinned Airflow 3.3 UI is a
 > tactical MVP choice; a purpose-built Dexaflow UI is the long-term direction
 > (ADR 0018).
 
@@ -366,13 +368,13 @@ DEXAFLOW_AUTH_JWT_SECRET=dev DEXAFLOW_BOOTSTRAP_PASSWORD=admin123 ./bin/dexaflow
 # Author, compile, and register a DAG
 ./bin/dexaflow init my-dag
 ./bin/dexaflow compile my-dag --image my-dag:dev -o my-dag/dag.json
-TOKEN=$(./bin/dexaflow auth create-token --username admin@leoflow.local --password admin123)
+TOKEN=$(./bin/dexaflow auth create-token --username admin@dexaflow.local --password admin123)
 ./bin/dexaflow push my-dag/dag.json --token "$TOKEN"
 ```
 
 > **Two dev environments.** `make dev-up` runs Postgres + Redis as plain Docker containers on the host for a fast inner loop (control plane on the host). For full in-cluster execution (control plane and dependencies on a local Kubernetes cluster, mirroring production and exercising real task pods), the [Helm chart](helm/dexaflow/README.md) is installable on any K8s cluster — chart-test CI gates every change with `helm lint` + `helm-unittest` (41 tests) + kind install/upgrade smoke. Task execution is on Kubernetes only (ADR 0015); the host containers are dev dependencies, not the execution path.
 
-> The Airflow 3.2.1 UI ships embedded in the server and is served at `/` (see the one-command demo above and `docs/ui-compatibility.md`). The Scalar API reference is at `/docs`. Load tests are the remaining Phase 6 work.
+> The Airflow 3.3.2 UI ships embedded in the server and is served at `/` (see the one-command demo above and `docs/ui-compatibility.md`). The Scalar API reference is at `/docs`. Load tests are the remaining Phase 6 work.
 
 ## Honest Comparison
 

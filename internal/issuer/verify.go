@@ -75,6 +75,13 @@ type Config struct {
 	// BearerMaxLifetime caps exp - iat of a bearer; zero means
 	// DefaultBearerMaxLifetime.
 	BearerMaxLifetime time.Duration
+	// DeployAudience is the `aud` of the bearers that may deploy when the
+	// operator makes the issuer the only way to deploy (#1773). It is a
+	// bearer audience of its own, accepted even when BearerAudiences is
+	// empty, and VerifyBearer marks a token whose aud is it alone
+	// (Identity.DeployAudience).
+	// Empty means no deploy audience.
+	DeployAudience string
 }
 
 // Identity is what a verified token says about the user.
@@ -85,6 +92,10 @@ type Identity struct {
 	// Scopes are a bearer token's OAuth scopes (ADR 0067); nil for a handoff
 	// token, whose session is not scoped.
 	Scopes []string
+	// DeployAudience is true for a bearer whose `aud` is Config.DeployAudience
+	// alone (#1773); a token that also names another audience is not one. It says where the token was minted for,
+	// not what it may do: its scopes still decide that.
+	DeployAudience bool
 }
 
 // Verifier checks tokens against one trusted issuer.
@@ -166,8 +177,14 @@ func (v *Verifier) Provider() string { return "issuer:" + v.cfg.Name }
 
 // Verify checks raw and returns the identity it carries.
 func (v *Verifier) Verify(ctx context.Context, raw string) (*Identity, error) {
+	ctx, outage := withKeyOutage(ctx)
 	tok, err := v.v.Verify(ctx, raw)
 	if err != nil {
+		if outage.hit.Load() {
+			// The keys could not be downloaded, so the token was never
+			// checked: an outage, not a refusal (#1588).
+			return nil, fmt.Errorf("%w: %w", ErrKeysUnavailable, err)
+		}
 		return nil, fmt.Errorf("%w: %w", ErrInvalidToken, err)
 	}
 	id, claims, err := v.identity(tok, v.cfg.MaxLifetime)

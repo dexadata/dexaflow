@@ -28,14 +28,22 @@ spec:
   policyTypes:
     - Ingress
     - Egress
+  {{- /* networkPolicy.grpcFrom (#638) moves the gRPC port out of the shared
+       rule into one of its own. A rule without ports matches every port, so
+       the shared rule renders only while it still holds a port. */}}
+  {{- $grpcFrom := $ctx.Values.networkPolicy.grpcFrom }}
+  {{- $servesHTTP := or (eq $role "all") (eq $role "api") }}
+  {{- $servesGRPC := or (eq $role "all") (eq $role "scheduler") }}
+  {{- $sharedGRPC := and $servesGRPC (not $grpcFrom) }}
   ingress:
+    {{- if or $servesHTTP $sharedGRPC }}
     - ports:
-        {{- if or (eq $role "all") (eq $role "api") }}
+        {{- if $servesHTTP }}
         # HTTP/UI. Restrict sources via networkPolicy.ingressFrom.
         - port: {{ $ctx.Values.ports.http }}
           protocol: TCP
         {{- end }}
-        {{- if or (eq $role "all") (eq $role "scheduler") }}
+        {{- if $sharedGRPC }}
         # Task pods dial the agent gRPC back (ADR 0002/0004).
         - port: {{ $ctx.Values.ports.grpc }}
           protocol: TCP
@@ -44,6 +52,15 @@ spec:
       from:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+    {{- end }}
+    {{- if and $servesGRPC $grpcFrom }}
+    # Task pods dial the agent gRPC back, only from networkPolicy.grpcFrom.
+    - ports:
+        - port: {{ $ctx.Values.ports.grpc }}
+          protocol: TCP
+      from:
+        {{- toYaml $grpcFrom | nindent 8 }}
+    {{- end }}
     {{- with $ctx.Values.networkPolicy.metricsFrom }}
     # Metrics scrape (e.g. the Prometheus pods' namespace/labels).
     - ports:

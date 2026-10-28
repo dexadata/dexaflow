@@ -28,6 +28,7 @@ func writeProject(t *testing.T, yaml string) string {
 }
 
 func TestLoadProjectConfigRejectsUnknownKeys(t *testing.T) {
+	t.Parallel()
 	t.Run("the key the docs taught", func(t *testing.T) {
 		_, err := loadProjectConfig(writeProject(t, "schema_version: \"1.0\"\ndag_id: sales\nschedule: \"@daily\"\n"))
 		if err == nil {
@@ -72,6 +73,7 @@ func TestLoadProjectConfigRejectsUnknownKeys(t *testing.T) {
 // dbt block and a source — the compile step is where the user should be told,
 // with the file and the key, not by the DAG quietly vanishing from the workspace.
 func TestLoadProjectConfigLenientKeepsTheConfigAnUnknownKeyWouldCost(t *testing.T) {
+	t.Parallel()
 	dir := writeProject(t, "schema_version: \"1.0\"\ndag_id: sales\nschedule: \"@daily\"\ndbt:\n  project: analytics\n")
 
 	if _, err := loadProjectConfig(dir); err == nil {
@@ -91,6 +93,7 @@ func TestLoadProjectConfigLenientKeepsTheConfigAnUnknownKeyWouldCost(t *testing.
 
 // Genuine YAML syntax errors must still fail both loaders.
 func TestBothLoadersRejectMalformedYAML(t *testing.T) {
+	t.Parallel()
 	dir := writeProject(t, "dag_id: [unclosed\n")
 	if _, err := loadProjectConfig(dir); err == nil {
 		t.Error("the strict loader accepted malformed YAML")
@@ -109,6 +112,7 @@ func TestBothLoadersRejectMalformedYAML(t *testing.T) {
 // The command that exists to say "this is fine" always said it was not — which
 // is how the mode's other gaps stayed invisible.
 func TestValidateAcceptsADbtOnlyProject(t *testing.T) {
+	t.Parallel()
 	dir := writeProject(t, "schema_version: \"1.0\"\ndag_id: sales\ndbt:\n  project: .\n  schedule: \"@daily\"\n")
 	if err := os.WriteFile(filepath.Join(dir, "dbt_project.yml"), []byte("name: sales\nversion: \"1.0\"\nprofile: sales\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -117,7 +121,7 @@ func TestValidateAcceptsADbtOnlyProject(t *testing.T) {
 	cmd.SetArgs([]string{dir})
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
-	if err := cmd.Execute(); err != nil {
+	if err := cmd.ExecuteContext(testCtx(nil)); err != nil {
 		t.Fatalf("validate rejected a dbt-only project: %v", err)
 	}
 }
@@ -125,12 +129,13 @@ func TestValidateAcceptsADbtOnlyProject(t *testing.T) {
 // And it must still catch a dag.py DAG whose source is missing — the check is
 // scoped, not removed.
 func TestValidateStillRequiresTheDagSourceForAPythonDag(t *testing.T) {
+	t.Parallel()
 	dir := writeProject(t, "schema_version: \"1.0\"\ndag_id: sales\n")
 	cmd := newValidateCommand()
 	cmd.SetArgs([]string{dir})
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
-	err := cmd.Execute()
+	err := cmd.ExecuteContext(testCtx(nil))
 	if err == nil || !strings.Contains(err.Error(), "DAG source not found") {
 		t.Fatalf("validate accepted a python DAG with no dag.py: %v", err)
 	}
@@ -140,6 +145,7 @@ func TestValidateStillRequiresTheDagSourceForAPythonDag(t *testing.T) {
 // already contains the quotes from the join re-escapes them, so the headline
 // feature of this change rendered as: unknown keys "bar\", \"foo".
 func TestUnknownKeyMessageRendersSeveralKeys(t *testing.T) {
+	t.Parallel()
 	_, err := loadProjectConfig(writeProject(t, "schema_version: \"1.0\"\ndag_id: s\nfoo: 1\nbar: 2\n"))
 	if err == nil {
 		t.Fatal("two unknown keys were accepted")
@@ -156,6 +162,7 @@ func TestUnknownKeyMessageRendersSeveralKeys(t *testing.T) {
 // `schedule` nested anywhere — telling someone who wrote `build.schedule` that
 // their DAG takes its schedule from DAG(schedule=…), which is not their problem.
 func TestScheduleHintOnlyFiresForTheTopLevelKey(t *testing.T) {
+	t.Parallel()
 	_, err := loadProjectConfig(writeProject(t, "schema_version: \"1.0\"\ndag_id: s\nbuild:\n  schedule: x\n"))
 	if err == nil {
 		t.Fatal("a nested unknown key was accepted")
@@ -171,6 +178,7 @@ func TestScheduleHintOnlyFiresForTheTopLevelKey(t *testing.T) {
 // second — and someone who wrote `build.schedule` alongside an unrelated typo got
 // lectured about DAG(schedule=…). The single-key test above cannot see it.
 func TestScheduleHintDoesNotLeakAcrossKeys(t *testing.T) {
+	t.Parallel()
 	_, err := loadProjectConfig(writeProject(t, "schema_version: \"1.0\"\ndag_id: s\nzzz: 1\nbuild:\n  schedule: x\n"))
 	if err == nil {
 		t.Fatal("two unknown keys were accepted")
@@ -202,6 +210,7 @@ func TestScheduleHintDoesNotLeakAcrossKeys(t *testing.T) {
 // and the DAG is removed from the registry as "folder gone". Ungated, the same
 // rewording costs an ugly message.
 func TestLenientDecodeIsNotGatedOnTheClassifier(t *testing.T) {
+	t.Parallel()
 	// What is observable: the lenient loader keeps the config for a file the
 	// strict loader refuses, and it reaches that answer through yaml.Unmarshal
 	// alone — the classifier no longer sits between them.
@@ -232,6 +241,7 @@ func TestLenientDecodeIsNotGatedOnTheClassifier(t *testing.T) {
 // mid-edit save in the Lite web IDE started reporting a bare "EOF" instead of
 // the missing dag_id.
 func TestEmptyProjectConfigIsNotAnError(t *testing.T) {
+	t.Parallel()
 	for _, body := range []string{"", "# nada ainda\n"} {
 		cfg, err := loadProjectConfig(writeProject(t, body))
 		if err != nil {
@@ -248,12 +258,13 @@ func TestEmptyProjectConfigIsNotAnError(t *testing.T) {
 // `validate` answered "is valid" for a dbt: block pointing at a directory that
 // does not exist — the exact shape of #15, reintroduced by #15's own fix.
 func TestValidateRejectsADbtProjectThatIsNotThere(t *testing.T) {
+	t.Parallel()
 	dir := writeProject(t, "schema_version: \"1.0\"\ndag_id: sales\ndbt:\n  project: ./nowhere\n")
 	cmd := newValidateCommand()
 	cmd.SetArgs([]string{dir})
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
-	err := cmd.Execute()
+	err := cmd.ExecuteContext(testCtx(nil))
 	if err == nil {
 		t.Fatal("validate accepted a dbt project directory that does not exist")
 	}

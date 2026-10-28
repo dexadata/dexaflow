@@ -10,3 +10,10 @@ dependencies: []
 # the DAG valid once secret delivery is scoped to the declared set.
 connections:
   - http_target
+
+# A Pro deploy pushes the DAG image to a registry your cluster can pull from.
+# Leave this commented out when the target or the cluster already names one
+# (dexaflow target add --registry, or the cluster's deploy defaults).
+# registry:
+#   url: ghcr.io/your-org        # Docker Hub, ECR, Artifact Registry, ACR, GHCR or private
+#   image_name: http_load   # optional: defaults to the dag_id

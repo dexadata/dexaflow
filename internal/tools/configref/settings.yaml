@@ -1,0 +1,1734 @@
+# The hand-written half of the generated configuration reference
+# (website/content/reference/configuration.md). Names, types and defaults come
+# from internal/config; this file holds what code cannot say: the edition a
+# setting applies to and its purpose for an operator. A setting without an
+# entry here is described by the first paragraph of its Go doc comment.
+# Regenerate the page with `make gen-config-reference`.
+
+settings:
+  server.role:
+    edition: Pro
+    default_note: means `all`
+    description: >-
+      Which components this process runs ([ADR 0049](/project/adrs/0049-split-api-and-scheduler-roles/)):
+      `all` (default: the Lite monolith; every component in one process), `api`
+      (HTTP + UI only, restricted identity), or `scheduler` (reconciler + dispatch
+      + agent gRPC, privileged). Empty defaults to `all`, which is behavior-identical
+      to the pre-split monolith; splitting is a Pro-only topology.
+  server.http_addr:
+    edition: both
+    description: >-
+      HTTP/UI listener.
+  server.grpc_addr:
+    edition: both
+    description: >-
+      Agent gRPC listener.
+  server.metrics_addr:
+    edition: both
+    description: >-
+      Prometheus metrics.
+  server.grpc_tls_cert:
+    edition: Pro
+    description: >-
+      PEM cert enabling TLS on the agent gRPC listener (#58). Set with `_KEY`; empty
+      means plaintext (dev). The Pro Helm chart requires both (see [Pro TLS](/operate/pro-tls/)).
+  server.grpc_tls_key:
+    edition: Pro
+    description: >-
+      PEM private key paired with `DEXAFLOW_SERVER_GRPC_TLS_CERT`. Both must be
+      set together to encrypt the agent channel.
+  server.http_tls_cert:
+    edition: both
+    description: >-
+      Path to a PEM certificate (chain) that makes the API and UI listener (`server.http_tls_cert`,
+      on `DEXAFLOW_SERVER_HTTP_ADDR`) serve HTTPS instead of plain HTTP, so a load
+      balancer can re-encrypt to the pod (#638). Set with `_KEY`; setting only one
+      of the two fails boot. Empty (the default) keeps plain HTTP. The files are
+      re-read when they change on disk, so a rotated certificate is served without
+      a restart. TLS 1.2 is the minimum. The metrics listener stays plain HTTP.
+      In the chart set `httpTLS.enabled` and `httpTLS.secretName`. See [In-transit
+      encryption](/operate/in-transit-encryption/).
+  server.http_tls_key:
+    edition: both
+    description: >-
+      Path to the PEM private key paired with `DEXAFLOW_SERVER_HTTP_TLS_CERT` (`server.http_tls_key`).
+      Both must be set together.
+  server.cors.allowed_origins:
+    edition: both
+    description: >-
+      Browser origins allowed to call the API cross-origin (`server.cors.allowed_origins`,
+      a list). The UI is served same-origin with the API, so most deployments need
+      no entry and should leave the server default alone. Comma-separated via the
+      env var; in the chart set `config.cors.allowedOrigins` (a YAML list) and it
+      is rendered comma-joined for you. The chart rejects `"*"` at render time (#1144).
+  server.trusted_proxies:
+    edition: both
+    default_note: trusts no proxy
+    description: >-
+      Proxy IPs/CIDRs whose `X-Forwarded-For` is honored for the client IP (`server.trusted_proxies`,
+      a list). See note below.
+  server.gzip_responses:
+    edition: both
+    description: >-
+      Gzip JSON and NDJSON responses of 1 KB or more on `/api/v2/*` and `/ui/*`
+      for clients that send `Accept-Encoding: gzip`. Log routes and any response
+      that streams (flushes before 1 KB, such as a live log tail) are never compressed.
+      Clients that list `gzip;q=0` get identity. Only full `200` and `201` bodies
+      are compressed, and every response of an eligible route carries `Vary: Accept-Encoding`.
+      Routes that return secrets, tokens or code (`/api/v2/variables`, `/api/v2/connections`,
+      XCom routes, `/api/v2/auth/`, `/ui/auth/`, `/api/v2/ide/`, `/api/v2/dagSources`,
+      a DAG's `/spec` and a single task's detail, and a single task instance with
+      its rendered fields) are never compressed, because compressing a secret next
+      to attacker-reflected input lets the response length leak it (BREACH). Other
+      JSON may still reflect request input next to private data, so weigh the bandwidth
+      saved against that before turning it on behind a TLS terminator that does
+      not already compress. Off sends every body uncompressed. Helm: set it through
+      `extraEnv`.
+  server.max_page_limit:
+    edition: both
+    description: >-
+      Largest `limit` a list endpoint (`/api/v2/*`, `/ui/*`) serves, and the largest
+      `dag_runs_limit` of `/ui/dags`; a larger request is served this many rows,
+      like Airflow's `[api] maximum_page_limit`. `0` means no cap; a negative value
+      fails boot. Helm: set it through `extraEnv`.
+  server.max_request_body_bytes:
+    edition: both
+    description: >-
+      Largest request body, in bytes, the API and UI listener accepts; a larger one
+      is refused with `413` and an RFC 7807 problem. The routes that take a DAG's
+      code or spec (registering a version, its dry run, writing an IDE file) use
+      `server.max_upload_body_bytes` instead. `0` means no limit; a negative value
+      fails boot. Helm: set it through `extraEnv`.
+  server.max_upload_body_bytes:
+    edition: both
+    description: >-
+      Largest request body, in bytes, of the routes that take a DAG's code or spec
+      (`POST /api/v2/dags/{dag_id}/versions`, its `dry_run`, and `PUT` or `POST
+      /api/v2/ide/file`); a larger one is refused with `413`. `0` leaves those routes
+      unlimited even when `server.max_request_body_bytes` is set, so a limit sized
+      for JSON calls never refuses a deploy; a negative value fails boot. Helm: set
+      it through `extraEnv`.
+  server.probe_budget:
+    edition: both
+    description: >-
+      How long `/readyz` may spend checking its dependencies, all checks sharing
+      one deadline; past it the probe answers `503` naming the slow dependency.
+      It must stay under the kubelet's readiness timeout, so the Helm chart sets
+      it to `probes.readiness.timeoutSeconds` minus one second: raise that value
+      to give a slow metadatabase more room. `0` means `2s`; a negative value fails
+      boot.
+  server.read_timeout:
+    edition: both
+    description: >-
+      Longest time the API and metrics listeners spend reading one request, headers
+      and body (a Go duration such as `60s`). Protects against clients that trickle
+      a body to hold connections. Set it above your slowest legitimate upload. It
+      never limits a response, so live log tails keep streaming. Headers must always
+      arrive within 10 seconds, or within this timeout when it is shorter. `0s`
+      means no limit. Helm: set it through `extraEnv`.
+  server.idle_timeout:
+    edition: both
+    description: >-
+      Closes a keep-alive connection idle this long (a Go duration such as `120s`).
+      `0s` keeps idle connections open, also when `DEXAFLOW_SERVER_READ_TIMEOUT`
+      is set (the read timeout is never used as an idle timeout). Helm: set it through
+      `extraEnv`.
+  server.pools_read_only:
+    edition: Pro
+    description: >-
+      Makes the tenant-facing pool API (`/api/v2/pools`) read-only (`server.pools_read_only`).
+      Create, resize and delete answer `403` with the detail `pools are read-only
+      on this server: their slots are managed by the platform operator` for every
+      role, tenant `admin` included, while list and get keep working. Turn it on
+      when one engine serves many tenants and the platform operator sizes each tenant's
+      pools: a tenant `operator` holds `write:pool`, and a tenant `admin` can grant
+      itself anything, so a lock that spared admins would not hold a slot budget.
+      The platform then changes pools out of band, not through this API. With the
+      option on, a task that names a pool its tenant has not defined is also admitted
+      against that tenant's `default_pool` instead of running unlimited, and the
+      Pools screen counts it there; existing DAGs using such pool names start sharing
+      `default_pool`. A tenant with no `default_pool` row stays unlimited (the gate
+      never deadlocks). Set it on every role: with split API and scheduler roles,
+      the API enforces the lock and the scheduler the `default_pool` fallback (the
+      chart sets both). The platform sizes `default_pool` through the service API
+      (`default_pool_slots`); other named pools have no platform API yet. Default
+      `false` keeps pools writable under `write:pool`. In the chart set `config.poolsReadOnly`.
+  database.url:
+    edition: both
+    description: >-
+      Postgres DSN. On Lite, `dexaflow lite` sets it for the server to Lite's
+      own database and ignores one exported in the shell: Lite does not run on
+      another database, and `dexaflow db reset` refuses while it names one.
+  database.max_open_conns:
+    edition: both
+    description: >-
+      Max open connections in the Postgres pool.
+  database.max_idle_conns:
+    edition: both
+    description: >-
+      Max idle connections retained in the pool.
+  database.scheduler_max_conns:
+    edition: both
+    description: >-
+      Size of a dedicated pool for the scheduler loop, its reapers and its janitors
+      (`database.scheduler_max_conns`; Helm `database.schedulerMaxConns`), so API
+      traffic that holds every main pool connection cannot stall a scheduler tick.
+      It is opened in addition to the main pool, only by a process that runs the
+      scheduler (`DEXAFLOW_SCHEDULER_ENABLED`). `0` keeps them on the main pool.
+  database.statement_timeout_ms:
+    edition: both
+    description: >-
+      `statement_timeout`, in milliseconds, for every connection of the main pool,
+      which serves the API (`database.statement_timeout_ms`; Helm `database.statementTimeoutMs`).
+      About `30000` bounds a runaway API query without cutting legitimate ones.
+      Never applied to the leader election connection (its session holds the scheduler
+      advisory lock), the health checks, the scheduler pool or migrations. Deleting
+      a DAG, clearing its history and the XCom janitor lift it with `SET LOCAL statement_timeout
+      = 0` for their own transaction, since their cost grows with the data they
+      cascade over. Without `DEXAFLOW_DATABASE_SCHEDULER_MAX_CONNS` the scheduler
+      shares the main pool, and with it this timeout, so set both together. The
+      server applies it with `SET` as each connection opens, not as a startup parameter,
+      so it also works through PgBouncer in session mode (no `ignore_startup_parameters`
+      entry needed); in transaction mode a session `SET` does not stay on one server
+      connection, so set it on the role instead (`ALTER ROLE ... SET statement_timeout`)
+      and leave this at `0`. `0` sets none.
+  database.conn_max_lifetime_jitter_ms:
+    edition: both
+    description: >-
+      Up to this many milliseconds of random extra lifetime per pooled connection
+      (`database.conn_max_lifetime_jitter_ms`; Helm `database.connMaxLifetimeJitterMs`),
+      so replicas started together do not all reconnect at the same moment. Applies
+      to the main, scheduler and health pools, never to the leader election connection.
+      `0` adds none.
+  database.installation_id:
+    edition: '**Pro only**'
+    description: >-
+      The installation id of the database this release was installed on ([ADR
+      0090](/project/adrs/0090-database-replaced-under-a-running-release/), decision 3).
+      The Helm chart sets it from the `<fullname>-installation` ConfigMap that
+      the migration Job keeps; do not set it by hand. When set, the server
+      serves only a database that carries this id: one with another id, none,
+      or no schema is reported as `database replaced`, boot waits not ready on
+      it, and a running server exits with code 3 when its database changes
+      under it. Empty checks nothing.
+  database.migrate_on_boot:
+    edition: '**Pro only**'
+    description: >-
+      Apply the embedded migrations at boot when the schema is absent or behind
+      (Helm `migrations.onBoot`, [ADR
+      0090](/project/adrs/0090-database-replaced-under-a-running-release/),
+      decision 4), while the probes already answer. Never when the schema is
+      ahead or dirty, or when the database is reported as `database replaced`.
+      It needs a `database.url` that may run DDL; golang-migrate's advisory lock
+      serializes it with the migration Job and other replicas. Refused on the
+      `api` role, which never migrates. `false` leaves migrations to the chart's
+      Job.
+  helm.release:
+    edition: '**Pro only**'
+    description: >-
+      The Helm release name. The chart sets it, with the four settings below,
+      so that a control plane waiting for its schema names the exact command
+      that migrates this release on `/readyz` and in its log ([ADR
+      0090](/project/adrs/0090-database-replaced-under-a-running-release/),
+      decision 2). Nothing else reads it; do not set it by hand. Empty keeps
+      the hint with `<release>`, `<namespace>` and `<chart version>`
+      placeholders.
+  helm.namespace:
+    edition: '**Pro only**'
+    description: >-
+      The release namespace, set by the chart for the recovery hint.
+  helm.chart_version:
+    edition: '**Pro only**'
+    description: >-
+      The version of the chart that rendered the pod, set by the chart, so the
+      hint's `helm upgrade --version` reruns the same chart.
+  helm.migrations_enabled:
+    edition: '**Pro only**'
+    description: >-
+      The chart's `migrations.enabled`, set by the chart. When `false` there
+      is no migration Job to run again, and the hint names your own migration
+      step and the migrate image instead of `helm upgrade`.
+  helm.migrate_image:
+    edition: '**Pro only**'
+    description: >-
+      The `dexaflow-migrate` image and tag of this release
+      (`migrations.image`), set by the chart and named by the hint when
+      `migrations.enabled` is false.
+  redis.url:
+    edition: '**Pro only**'
+    description: >-
+      Redis URL (XCom + locks). Empty selects the embedded Lite edition: XCom on
+      Postgres, in-process log tailer ([ADR 0026](/project/adrs/0026-lite-datastore-no-redis/)).
+      Pro sets it via the Helm chart.
+  redis.ca_file:
+    edition: Pro
+    description: >-
+      Absolute path to a PEM CA bundle trusted when negotiating TLS to a `rediss://`
+      URL (#312). Needed for managed Redis (Memorystore, ElastiCache in-transit
+      encryption, Azure Cache) whose server cert is signed by a provider/per-instance
+      CA not in the container's system roots. Empty falls back to system roots only.
+      The Helm chart sets it when `redis.caConfigMap` is configured.
+  auth.provider:
+    edition: both
+    description: >-
+      Credential authenticator: `jwt` (default: username/password issues an HS256
+      token) or `oidc` (adds the OIDC/SSO login flow on top; the JWT authenticator
+      stays the request-path verifier in both modes). `oidc` is Pro-gated and fails
+      boot closed unless its prerequisites are met (see [OIDC / SSO](#oidc--sso-authoidc)).
+  auth.jwt.secret:
+    edition: both
+    default_note: required
+    description: >-
+      Signs API/agent tokens. Required for both `jwt` and `oidc` (both mint the
+      app's own HS256 token).
+  auth.jwt.token_ttl_seconds:
+    edition: both
+    description: >-
+      Lifetime, in seconds, of an issued API token. The web UI renews its
+      session every 15 minutes and when its tab is shown again, so a browser
+      session with the UI open lasts up to `auth.jwt.max_lifetime_seconds`.
+  auth.jwt.max_lifetime_seconds:
+    edition: both
+    description: >-
+      Ceiling, in seconds, on the **total** age of a transparently renewed session,
+      measured from first login and preserved across every renewal. Past it, `POST
+      /api/v2/auth/token/renew` refuses and the user must log in again; the short
+      `TOKEN_TTL_SECONDS` is what bounds a stolen token, this only caps how long
+      a live session may keep refreshing. A non-positive value disables the ceiling.
+      Renewal also re-checks that the account is still active, so a deactivated
+      user stops being issued tokens as well as being refused on use. The renew
+      endpoint is rate-limited to 60 requests a minute per client IP, on a budget
+      separate from login's. Helm: `auth.sessionMaxLifetimeSeconds`.
+  auth.login_rate_limit_per_minute:
+    edition: both
+    description: >-
+      Cap on **failed** `/auth/token` attempts per client IP per minute (anti-brute-force).
+      A successful login consumes no budget. `dexaflow lite` raises this well above
+      the default (local single-user tool).
+  secret_key:
+    edition: both
+    description: >-
+      Key encrypting connection secrets at rest ([ADR 0019](/project/adrs/0019-secret-encryption-at-rest/)),
+      and Variable values when `DEXAFLOW_VARIABLE_ENCRYPTION=on`. Raw 32 chars,
+      64-char hex, or base64. Empty disables connection writes. Accepts a **comma-separated
+      list to rotate**: the first entry encrypts and decrypts, later entries only
+      decrypt, and nothing is ever written under them. Same rule as Airflow's `fernet_key`.
+      See [Rotating the encryption key](#rotating-the-encryption-key).
+  secret_key_reencrypt_on_boot:
+    edition: both
+    description: >-
+      Re-encrypt stored connection secrets onto the first `DEXAFLOW_SECRET_KEY`
+      entry at startup ([Rotating the encryption key](#rotating-the-encryption-key)).
+      `dexaflow lite` sets it to `false`: Lite moves keys only through [`dexaflow
+      lite migrate-key`](/reference/cli/dexaflow_lite_migrate-key/).
+  secret_key_migration_lock:
+    edition: both
+    description: >-
+      Hold the key-migration advisory lock for the server's lifetime: refuse to
+      start while `dexaflow lite migrate-key` runs, and exit if the lock's database
+      session is lost. `dexaflow lite` sets it to `true`; there is no reason to
+      set it elsewhere.
+  variable_encryption:
+    edition: both
+    description: >-
+      How Variable values are stored. `off` writes plaintext, as every earlier release
+      did. `on` encrypts every Variable value with `DEXAFLOW_SECRET_KEY` (AES-256-GCM,
+      the cipher connections use) and encrypts the stored plaintext rows at startup.
+      `decrypt` writes plaintext and turns every encrypted row back into plaintext
+      at startup, the step before rolling back to a release older than 0.5.4. `on`
+      and `decrypt` refuse to start without a usable key. Every mode reads both
+      forms. Config key `variable_encryption`. See [Encrypting Variables](#encrypting-variables).
+  dags_are_paused_at_creation:
+    edition: both
+    description: >-
+      Start a DAG paused when it is registered for the first time, so its schedule
+      creates no run until someone unpauses it. Airflow's setting of the same name. A
+      DAG's own `is_paused_upon_creation` wins over it. Applies only on creation: a
+      redeploy never pauses or unpauses an existing DAG. `false` registers new DAGs
+      active, as releases before 0.5.4 did. `dexaflow lite` sets it to `false`. Config
+      key `dags_are_paused_at_creation`. Helm: set the chart value
+      `config.dagsArePausedAtCreation` (not `extraEnv`); the chart always renders this
+      variable. A DAG deleted and deployed again comes back paused. See [New DAGs
+      start paused](/concepts/core-concepts/#new-dags-start-paused).
+  bootstrap.email:
+    edition: both
+    default_note: means `admin@dexaflow.local`
+    description: >-
+      Email of the admin user created at boot from `DEXAFLOW_BOOTSTRAP_PASSWORD`
+      or `DEXAFLOW_BOOTSTRAP_PASSWORD_HASH`, in tenant `default`. Left empty, an
+      install whose admin is the pre-rename `admin@leoflow.local` keeps that
+      address. With a credential set, boot fails on an address with a space or
+      a control character.
+  bootstrap.password:
+    edition: both
+    description: >-
+      Plaintext password of the bootstrap admin, used when
+      `DEXAFLOW_BOOTSTRAP_PASSWORD_HASH` is empty. Unset, no admin is created.
+      Prefer the hash. Boot fails on a password longer than the 72 bytes bcrypt
+      accepts. Never logged. Helm: `bootstrap.password` or
+      `bootstrap.existingSecret`.
+  bootstrap.password_hash:
+    edition: both
+    description: >-
+      Bcrypt hash of the bootstrap admin's password, so the plaintext never
+      reaches the server. Takes precedence over `DEXAFLOW_BOOTSTRAP_PASSWORD`
+      and reconciles: an existing admin with that email gets this password on
+      every boot. Boot fails on a value that is not a bcrypt hash. Never
+      logged. `dexaflow lite` sets it from its config file.
+  agent.allow_insecure_secrets:
+    edition: dev-only
+    description: >-
+      `true` lets the server deliver secrets to agents over a plaintext gRPC
+      channel. Dev only: `dexaflow lite` sets it for its loopback agents, and
+      the Pro edition refuses to boot with it. As in earlier releases, only the
+      exact value `true` turns it on: any other value from the environment
+      (`1`, `TRUE`, `yes`) reads as `false`, with a warning at boot. No Helm
+      value on purpose.
+  auth.secret_scoping:
+    edition: both
+    description: >-
+      Scope-by-declaration policy ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)):
+      `permissive` (delivers the whole tenant vault; warns when a DAG declares a
+      narrower set, an empty one included), `enforce` (delivers only the declared subset: empty declaration
+      ⇒ nothing), or `off` (no scoping). Operator-scoped, never author-settable.
+      Helm: `auth.secretScoping`.
+  auth.secret_liveness_mode:
+    edition: both
+    description: >-
+      Gates secret delivery on task-instance liveness ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)):
+      `observe` (logs + audits a would-have-denied when the caller's task instance
+      is not live, but still delivers) or `enforce` (denies). Liveness renewal is
+      always on regardless of mode; this only chooses whether a not-live token is
+      refused. Required to be `enforce` when warm pools are on. Helm: `auth.secretLivenessMode`.
+  auth.agent_token_transport:
+    edition: Pro (K8s)
+    description: >-
+      How the in-pod agent obtains its control-plane bearer credential ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)):
+      `envvar` (plaintext `DEXAFLOW_AGENT_TOKEN` on the pod spec: today's behavior,
+      byte-identical) or `exchange` (projected ServiceAccount token exchanged once
+      via a control-plane `TokenReview` for a task-scoped JWT: nothing secret on
+      the pod object; requires cluster-scoped `create` on `authentication.k8s.io/tokenreviews`).
+      Operator-scoped. Prerequisite for warm pools. Ignored by the subprocess (Lite)
+      executor. See [Agent credential transport](/operate/agent-credential-transport/).
+      Helm: `auth.agentTokenTransport`.
+  auth.max_attempt_credential_lifetime:
+    edition: both
+    description: >-
+      Duration ceiling on how long one attempt's agent credential may be kept alive
+      by heartbeat renewal ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)).
+      A runaway-task backstop; the short per-attempt TTL is what bounds a stolen
+      token. An attempt still running past it fails as a task failure with `credential_ceiling`
+      (subject to its retries) instead of being re-placed as `agent_lost` ([#1461](https://github.com/dexadata/dexaflow/issues/1461));
+      in Lite the reaper also stops its task at the ceiling ([#1511](https://github.com/dexadata/dexaflow/issues/1511)).
+      A non-positive value disables the ceiling. No Helm value yet; `extraEnv` only
+      ([#955](https://github.com/dexadata/dexaflow/issues/955)).
+  auth.service_token:
+    edition: both
+    description: >-
+      Turns on the [operator service API](#operator-service-api) under `/api/v2/service/`
+      and is its bearer credential. At least 32 characters; boot fails on a shorter
+      one. Keep it in a Secret. Empty leaves the API off and its routes absent.
+      Helm: `auth.serviceToken`, or `auth.serviceTokenExistingSecret` naming a Secret
+      with key `serviceToken`.
+  auth.trusted_issuer.issuer:
+    edition: both
+    description: >-
+      Turns on the [trusted-issuer handoff](#trusted-issuer-handoff): a platform
+      that already authenticates its users opens a UI session for them by posting
+      a token its own issuer signed. The exact `iss` of those tokens. Empty disables
+      it and the endpoint does not exist. Helm: `auth.trustedIssuer.issuer`.
+  auth.trusted_issuer.name:
+    edition: both
+    description: >-
+      Name of the trusted issuer, 1-40 lowercase letters, digits or `-`. Users the
+      issuer may sign in are linked under `issuer:<name>`, so keep it stable once
+      users exist. Helm: `auth.trustedIssuer.name`.
+  auth.trusted_issuer.jwks_url:
+    edition: both
+    description: >-
+      Where the issuer publishes its public signing keys (RS256, ES256 or PS256).
+      `https`, or `http` on a loopback host. Fetched on first use and refreshed
+      when a token names an unknown key (at most once every 30 seconds), so key
+      rotation needs no restart and an outage of the issuer does not block boot.
+      Helm: `auth.trustedIssuer.jwksUrl`.
+  auth.trusted_issuer.audience:
+    edition: both
+    description: >-
+      The `aud` the issuer's tokens must carry for this Dexaflow. Helm: `auth.trustedIssuer.audience`.
+  auth.trusted_issuer.tenant_claim:
+    edition: both
+    description: >-
+      The string claim that names the Dexaflow tenant. Helm: `auth.trustedIssuer.tenantClaim`.
+  auth.trusted_issuer.allowed_tenants:
+    edition: both
+    description: >-
+      Comma-separated tenants the issuer may sign in to; `*` allows every tenant,
+      for an operator that serves many. Required when the issuer is set. Helm: `auth.trustedIssuer.allowedTenants`.
+  auth.trusted_issuer.max_lifetime_seconds:
+    edition: both
+    description: >-
+      Longest `exp - iat` a handoff token may have, its replay window. `0` uses
+      120 seconds; at most 600. Helm: `auth.trustedIssuer.maxLifetimeSeconds`.
+  auth.trusted_issuer.allowed_origins:
+    edition: both
+    description: >-
+      Comma-separated origins (`scheme://host[:port]`, no path) whose pages may
+      post a handoff, typically your portal. A post with any other `Origin`, or
+      none, is refused with `403`, so another site cannot sign a visitor in as someone
+      else. Required when the issuer is set. Helm: `auth.trustedIssuer.allowedOrigins`.
+  auth.trusted_issuer.bearer_audiences:
+    edition: both
+    description: >-
+      Comma-separated audiences whose tokens from the trusted issuer are accepted
+      as the bearer of any `/api/v2` request, reused until they expire: the [bearer
+      mode](#trusted-issuer-bearer-tokens), for remote MCP clients behind your platform
+      (`leoflow-mcp` is the conventional audience). Each must differ from `DEXAFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE`.
+      Empty leaves the mode off. Helm: `auth.trustedIssuer.bearerAudiences`.
+  auth.trusted_issuer.bearer_max_lifetime_seconds:
+    edition: both
+    description: >-
+      Longest `exp - iat` a bearer token may have. `0` uses 900 seconds; at most
+      3600. Helm: `auth.trustedIssuer.bearerMaxLifetimeSeconds`.
+  auth.trusted_issuer.deploy_audience:
+    edition: both
+    description: >-
+      Makes the trusted issuer the only way to deploy: registering a DAG version, its
+      dry run, setting the current version and deleting a DAG then take only a bearer
+      the issuer minted for this audience alone with the `dexaflow:deploy` scope. See
+      [Deploys through the issuer only](#deploys-through-the-issuer-only). Must differ
+      from `DEXAFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE` and every bearer audience; boot
+      fails otherwise, or when the issuer is not set. Empty changes nothing. Helm:
+      `auth.trustedIssuer.deployAudience`.
+  auth.trusted_issuer.host_pattern:
+    edition: both
+    description: >-
+      Binds every browser session to its tenant's host, for an operator that serves
+      each tenant on its own host in front of one Dexaflow, for example
+      `{tenant}.example.com`. A handoff for a tenant is accepted only on that tenant's
+      host, and a session cookie only on the host of the session's tenant. See
+      [Binding sessions to tenant hosts](#binding-sessions-to-tenant-hosts). A host
+      and optional port with exactly one `{tenant}`; boot fails otherwise, or when the
+      issuer is not set. Empty binds nothing. Helm: `auth.trustedIssuer.hostPattern`.
+  auth.ci_oidc.issuers:
+    edition: both
+    description: >-
+      The CI OIDC issuers whose job tokens a pipeline exchanges for a deploy session,
+      so it stores no deploy token ([ADR 0092](/project/adrs/0092-ci-deploys-with-oidc-tokens/)).
+      Each entry has a `name`, a `provider` (`github`, `gitlab`, `cloudbuild` or
+      `other`), the exact `issuer`, an optional `jwks_url` (discovered otherwise),
+      the `audience` its tokens carry, the one `tenant` it deploys to, an optional
+      `max_lifetime_seconds` (0 means 3600, at most 86400) and ordered `rules`, each
+      mapping `claims` patterns to a `role` and optional `scopes`. The tenant never
+      comes from a claim. In the configuration file, or as a JSON array of the same
+      objects in this variable, which wins over the file. Empty (the default) leaves
+      the exchange off. See [CI OIDC](/operate/cicd-deploy/#deploying-without-a-stored-token-ci-oidc).
+      Helm: `auth.ciOidc.issuers`.
+  auth.ci_oidc.session_ttl_seconds:
+    edition: both
+    description: >-
+      How long the session a CI token is exchanged for lives, 300 to 43200 seconds.
+      It is not renewed: a later job exchanges again. Read only when an issuer is
+      configured. Helm: `auth.ciOidc.sessionTtlSeconds`.
+  auth.api_tokens.disabled:
+    edition: both
+    description: >-
+      `true` stops serving the [API tokens](/operate/cicd-deploy/#credentials-for-the-control-plane)
+      a signed-in user mints for CI and scripts: `/api/v2/apiTokens` and the
+      tokens screen are not served, and every API token is refused as an unknown
+      bearer, including one minted before (it works again if they are served
+      again before it expires). Turn it on when a platform in front of Dexaflow
+      decides at each sign-in who may reach it, so no Dexaflow credential
+      outlives that decision. `false` (the default) serves them. Helm:
+      `auth.apiTokens.disabled`.
+  auth.external_signin_url:
+    edition: both
+    description: >-
+      Sends UI visitors without a session to your own sign-in instead of Dexaflow's
+      page, for a Dexaflow served from a larger platform. The page they asked for
+      travels in a `next` query parameter (a same-origin path, `/` when the request
+      carried anything else), added to whatever query your URL already has; your
+      flow is expected to return them with a Dexaflow session. A refused [trusted-issuer
+      handoff](#trusted-issuer-handoff) is also sent back here, with an `error`
+      code. API calls without a session still get `401`. `/api/v2/auth/login?local=1`
+      and a refused single sign-on still render Dexaflow's page, so break-glass
+      access survives an outage of your sign-in. Absolute `http(s)` URL; boot fails
+      otherwise. Helm: `auth.externalSigninUrl`.
+  auth.external_signout_url:
+    edition: both
+    description: >-
+      Where `/api/v2/auth/logout` lands after clearing the session cookie, so your
+      platform can end its own session too. Empty returns to Dexaflow's sign-in
+      page. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSignoutUrl`.
+  auth.session_cookie_insecure:
+    edition: both
+    description: >-
+      Drops the `Secure` attribute from the browser session cookie (`_token`) and
+      the OIDC state cookie. Leave it off. Both login paths set the session cookie
+      server-side, `HttpOnly`, `SameSite=Lax`, `Secure`, so the session token is
+      never readable by a script. There is one reason to turn it on: a deployment
+      served over **plain http to something that is not a loopback address**, where
+      the browser refuses a `Secure` cookie outright and the sign-in page would
+      post valid credentials, get a `200`, and land back on itself with no error
+      anywhere. A loopback deployment (`localhost`, `127.0.0.1`) needs nothing:
+      browsers treat it as trustworthy and accept the cookie over http. It cannot
+      be derived from the request (behind a TLS-terminating ingress the server sees
+      plain http while the browser sees https), so it is a setting, and boot logs
+      a `WARN` while it is on. Operator-scoped. No Helm value on purpose: a chart
+      install terminates TLS at the ingress, where this must stay off. `extraEnv`
+      if a deployment genuinely needs it. **Set this before upgrading a plain-http
+      deployment on a non-loopback name.** The browser refuses a `Secure` cookie
+      there and refuses the `Secure` deletion too, so a new login is discarded and
+      sign-out cannot clear the session the previous build left behind until it
+      expires on its own.
+  auth.session_cookie_name:
+    edition: both
+    description: >-
+      Name of the browser session cookie. Set it to a name starting with `__Host-`
+      (for example `__Host-dexaflow`) on any deployment that serves several hosts
+      under one parent domain, such as one host per tenant (`<tenant>.example.com`):
+      a browser then accepts the cookie only when it is `Secure`, has `Path=/` and
+      no `Domain`, so a page on a sibling host can no longer plant a session on
+      this one (session fixation). The session cookie is always set that way, so
+      the prefix needs nothing else. Boot fails on a name a browser would not accept,
+      and on a `__Host-` or `__Secure-` name together with `DEXAFLOW_AUTH_SESSION_COOKIE_INSECURE`.
+      Changing the name signs every browser out once: sessions under the old name
+      are no longer read, and that cookie expires on its own. The bundled UI never
+      reads the cookie from a script, so it works under any name. Helm: `auth.sessionCookieName`.
+  auth.dev_no_auth:
+    edition: dev-only
+    description: >-
+      Legacy escape hatch: bypasses auth entirely, treating every request as admin.
+      Permitted only on a loopback `http_addr` (boot fails otherwise). Modern Lite
+      uses a real admin login generated by `dexaflow setup`; set this only for ephemeral
+      test scaffolds.
+  auth.oidc.issuer:
+    edition: Pro
+    description: >-
+      The org's single-tenant issuer URL (must be `https://`). Pinned: any ID token
+      whose `iss` differs is rejected.
+  auth.oidc.client_id:
+    edition: Pro
+    description: >-
+      Registered application (client) id; the expected audience of every ID token.
+  auth.oidc.client_secret:
+    edition: Pro
+    description: >-
+      Used only for the authorization-code exchange. Inject via env; never persist
+      it in a config file, never logged.
+  auth.oidc.redirect_url:
+    edition: Pro
+    description: >-
+      This server's callback URL registered with the IdP (`…/api/v2/auth/oidc/callback`).
+      Must be `https://` (http allowed only for loopback hosts).
+  auth.oidc.scopes:
+    edition: Pro
+    description: >-
+      OAuth scopes requested. A list, set as a comma-separated env var. Add the
+      IdP's groups scope when group→role mapping is used.
+  auth.oidc.groups_claim:
+    edition: Pro
+    description: >-
+      The ID-token claim carrying the user's IdP groups; its values drive `role_mappings`.
+  auth.oidc.role_mappings:
+    edition: Pro
+    description: >-
+      Maps an IdP group value → an existing Dexaflow role name. **Default-DENY**:
+      an unmapped group grants no role. YAML config file only (a map does not bind
+      from an env var). Helm: `auth.oidc.roleMappings`, rendered into the mounted
+      config file. Reconciliation is IdP-authoritative, so an EMPTY resolved set
+      CLEARS the user's existing grants on every login: configure this or `default_role`.
+  auth.oidc.default_role:
+    edition: Pro
+    description: >-
+      When an authenticated user resolves to zero mapped roles and this is set,
+      grants this single role (advised: a read-only role such as `viewer`). Empty
+      keeps strict default-deny. Must name an existing DB role for the resolved
+      tenant.
+  auth.oidc.tenant_claim:
+    edition: Pro
+    description: >-
+      **Required with `provider: oidc`** (boot fails otherwise). Which IdP claim
+      identifies the tenant: `tid` (Entra) or `hd` (Google Workspace). Set it to
+      `hd` with exactly one entry in `tenant_claims` and the login redirect also
+      carries Google's `hd` parameter, so the account chooser offers only accounts
+      in that domain. That is a convenience: the pin is still the verified claim
+      on the returned token.
+  auth.oidc.tenant_claims:
+    edition: Pro
+    description: >-
+      **Required with `provider: oidc`, with at least one entry** (boot fails otherwise).
+      Maps a `tenant_claim` value → a Dexaflow tenant name. A value not present
+      is rejected and the login never falls back to `default`. The claim may be
+      a string or an array of strings (some IdPs emit `aud` as an array); an array
+      naming two accepted tenants is rejected as ambiguous rather than resolved
+      to either, and a claim that is neither shape is rejected with its own audit
+      reason. Config file only (a map does not bind from an env var), read from
+      the path in `DEXAFLOW_CONFIG`. Helm: `auth.oidc.tenantClaim` + `auth.oidc.tenantClaims`,
+      which the chart requires together before it will render an SSO install. **The
+      value must name a tenant that already exists**: the only tenant anything in
+      Dexaflow creates is `default`, from the first migration, so map to `default`
+      unless you created one yourself. The server checks this at boot and warns.
+  auth.oidc.allowed_email_domains:
+    edition: Pro
+    description: >-
+      Login-level allowlist layered on TOP of the `tid`/`hd` tenant pin (not the
+      pin itself). Empty imposes no domain restriction. Non-empty admits a login
+      only when the verified email's domain is in the list. A list, set as a comma-separated
+      env var.
+  auth.oidc.break_glass_emails:
+    edition: Pro
+    description: >-
+      Allowlist of local password logins permitted while provider is `oidc`; every
+      other password login is rejected (SSO-only). A list, set as a comma-separated
+      env var. **Empty means an IdP outage or a wrong tenant pin locks everyone
+      out**, including whoever has to fix it; the server warns at boot. It also
+      warns when none of the listed addresses has a **local password account**,
+      which is the worse case: the allowlist admits the address and the credential
+      store then rejects it exactly like a wrong password, so the hatch does not
+      open while you believe it will. A user provisioned through SSO does not count,
+      it has no password. Create the local account before you need it, while an
+      admin session still exists.
+  auth.oidc.jit_provisioning:
+    edition: Pro
+    description: >-
+      Create a user row on first OIDC login when none matches; the new row is granted
+      the roles from `role_mappings` (or `default_role`). **Off means no SSO login
+      can succeed**: a login is matched by `(oidc_provider, oidc_subject)` and JIT
+      is the only path that ever writes those columns, so there is no supported
+      way to pre-provision a matching account and every first login is denied (audited
+      `no_user_jit_off`). The Helm chart therefore defaults `auth.oidc.jitProvisioning`
+      to `true`. An address that already has a local password account in the same
+      tenant cannot be provisioned either way (unique `(tenant, email)`; audited
+      `jit_failed`). The server logs a WARN at boot when it is off, so the cause
+      is visible before the first login is attempted.
+  auth.oidc.auto_redirect:
+    edition: Pro
+    description: >-
+      Start the login flow on the sign-in page instead of rendering it, for a deployment
+      where that page is a screen to acknowledge for nothing (an edge proxy already
+      authenticated the session, or SSO is the only way in). **Suppressed on a refused
+      sign-on**, so a denial lands on the page that explains it rather than bouncing
+      back to the IdP forever, and suppressed by `?local=1`, so a break-glass account
+      can always reach the password form without a values edit. Helm: `auth.oidc.autoRedirect`.
+  auth.oidc.clock_skew_seconds:
+    edition: Pro
+    description: >-
+      Tolerance (seconds) on the ID token's `exp`/`iat`/`nbf` checks to absorb clock
+      differences between the IdP and this server.
+  scheduler.enabled:
+    edition: both
+    description: >-
+      Whether this process runs the scheduler loop.
+  scheduler.eager_promotion:
+    edition: both
+    description: >-
+      Dispatches downstream tasks sooner after their upstreams settle. Within one
+      tick, a task that becomes ready is queued at once instead of on the next tick,
+      and skips or upstream failures cascade down the DAG (bounded passes per run, the
+      rest continues next tick). A task's final state report also triggers an early
+      tick on the replica that receives it, started at least 100 ms, and at least
+      twice the previous tick's duration, after the previous tick began; the loop
+      interval stays the upper bound. `dexaflow_scheduler_woken_ticks_total` (also
+      exported as `leoflow_scheduler_woken_ticks_total`) counts those early ticks. Max
+      active tasks and pool limits apply across the extra passes. Off by default.
+  scheduler.loop_interval_ms:
+    edition: both
+    description: >-
+      Scheduler tick interval, in milliseconds.
+  scheduler.pool_starvation_threshold:
+    edition: Pro
+    description: >-
+      How long a scheduled task of more than one slot that does not fit its pool
+      (its dispatch backoff elapsed, its DAG under `max_active_tasks`) waits before
+      the pool is reserved for it ([ADR 0066](/project/adrs/0066-weighted-pool-slots-and-resource-unit/)).
+      While reserved the pool admits no other task, so tasks of fewer slots cannot
+      keep a larger one out forever; the oldest waiter wins, one per pool; a task
+      of size 1 never reserves, so an install that sets no `size` admits exactly
+      as before; a tick in which something other than the pool holds the waiter
+      keeps its waiting time; and a task larger than its whole pool is never reserved
+      for (it is logged once instead). The state lives in the leader's memory. `0s`
+      disables it; negative fails boot. Helm: `config.scheduler.poolStarvationThreshold`.
+  scheduler.dispatch.buffer_size:
+    edition: both
+    description: >-
+      Depth of the queued-dispatches channel ([ADR
+      0031](/project/adrs/0031-scheduler-architecture/), #127). `0` keeps dispatch
+      synchronous with the tick (right for Lite); `>0` enables the worker pool (right
+      for Pro, where K8s API calls add latency): the tick only enqueues, and a full
+      buffer leaves the task scheduled for the next tick. The task is recorded
+      `queued` when the buffer accepts it, so time in the buffer counts toward the 3
+      minute dispatch-lost threshold: a request that waited more than half of it (90
+      s) is not dispatched, and its task is offered again on a later tick with no
+      dispatch attempt charged and a fresh `queued_at`. Size the buffer to what the
+      Kubernetes client creates in well under 90 s (`executor.kube_client.qps`, shared
+      with maintenance unless `executor.kube_client.maintenance_qps` is set): at the
+      default QPS of 5, 512 requests take over 100 s. Recommended for a busy cluster:
+      `512` with 16 workers, with the client QPS raised to match (for example `50`).
+      Helm: `config.scheduler.dispatch.bufferSize`.
+  scheduler.dispatch.workers:
+    edition: both
+    description: >-
+      Goroutines draining the dispatch queue. Ignored when buffer size ≤ 0; otherwise
+      floored to 1. Helm: `config.scheduler.dispatch.workers`.
+  scheduler.dispatch.tick_budget:
+    edition: both
+    description: >-
+      Wall time one scheduler tick may spend dispatching. Once it is spent the tick
+      stops dispatching: the remaining ready tasks stay `scheduled` with no dispatch
+      attempt charged, and the next tick starts at the run after the one that was cut,
+      so one wide fan-out (for example under the Kubernetes client limit of
+      `EXECUTOR_KUBE_CLIENT_QPS`) cannot hold every other run of every tenant for
+      minutes. Due cron runs are created before the tick dispatches. `0s` dispatches
+      every ready task in the tick however long it takes (the behavior before 0.5.4);
+      negative fails boot.
+  scheduler.dispatch.max_per_tenant_per_tick:
+    edition: both
+    description: >-
+      Most tasks one tenant may dispatch in one tick, so a tenant with a wide fan-out
+      or many runs leaves dispatch room for the others; the rest wait for the next
+      tick with no attempt charged. `0` means no cap; negative fails boot.
+  scheduler.alerts.block_private_destinations:
+    edition: both
+    description: >-
+      Refuse on-failure alert requests to loopback, private, link-local (including
+      the `169.254.169.254` metadata address), shared, unspecified, multicast and
+      broadcast addresses. See [Alert destinations](#alert-destinations).
+  scheduler.alerts.allowed_cidrs:
+    edition: both
+    description: >-
+      CIDRs or single addresses exempted from that block (`scheduler.alerts.allowed_cidrs`,
+      a list; comma-separated via the env var). Applied only while the block is
+      on, but validated at startup either way: an invalid entry fails startup.
+  executor.type:
+    edition: both
+    description: >-
+      Pod-path executor: `kubernetes` (default, pod-per-task) or `subprocess` (dev
+      only, runs the agent on the host without isolation; `dexaflow lite` sets it).
+      With `kubernetes`, a scheduler that finds no in-cluster config or kubeconfig
+      refuses to start.
+  executor.task_namespace:
+    edition: Pro
+    description: >-
+      Kubernetes namespace the server creates task pods and per-run staging PVCs in.
+      MUST match the namespace the Helm chart grants the executor Role in (chart
+      `taskNamespace`); a mismatch 403s every dispatch (#480). The Helm chart always
+      sets it (to the release namespace by default, #1682), so the `leoflow` default
+      applies only to installs that do not use the chart.
+  executor.agent_control_plane_addr:
+    edition: both
+    default_note: uses `server.grpc_addr`
+    description: >-
+      gRPC address task pods dial back to. In a local k3d/kind cluster set it to
+      a host-reachable address such as `host.k3d.internal:9091`.
+  executor.agent_tls_ca_configmap:
+    edition: Pro
+    description: >-
+      Names a ConfigMap (key `ca.crt`) mounted into task pods so the agent verifies
+      the control plane's gRPC TLS cert (#58). Empty = agents use the insecure channel
+      (dev).
+  executor.task_secret_name:
+    edition: Pro
+    description: >-
+      Names a Kubernetes Secret mounted read-only into every task pod, so a task
+      can read a cluster-stored credential (e.g. a GCP SA key) referenced by a connection's
+      `key_path` ([ADR 0035](/project/adrs/0035-cloud-connector-auth-keyless-first/)).
+      Empty = no secret mounted.
+  executor.task_secret_mount_path:
+    edition: Pro
+    description: >-
+      Where `DEXAFLOW_EXECUTOR_TASK_SECRET_NAME` is mounted in the task pod.
+  executor.task_service_account:
+    edition: Pro
+    description: >-
+      ServiceAccount task pods run as when a DAG does not set `execution.service_account`.
+      The Helm chart wires this from `taskServiceAccount.name` when `taskServiceAccount.create:
+      true`, so creating the task SA is enough for keyless secret access: no per-DAG
+      opt-in. An explicit per-task `execution.service_account` still wins; empty
+      leaves pods on the namespace default SA.
+  executor.collect_settled_run_pods:
+    edition: Pro
+    description: >-
+      Collect a settled run's finished task pods as soon as the reconciler has recorded
+      every outcome, in one `DeleteCollection` by the run's and tenant's labels
+      limited to finished phases and served from the apiserver's watch cache, instead
+      of one delete per pod after the 10 minute grace period. A run is settled when
+      it is `success` or `failed` and none of its task instances is outside `success`,
+      `failed`, `skipped` and `upstream_failed`; a sweep collects at most 50 runs.
+      Off keeps finished pods inspectable with `kubectl` for the grace period. Needs
+      the `deletecollection` verb on pods, which the chart's executor Role grants
+      only when `executor.collectSettledRunPods` is on; without it the server falls
+      back to per-pod deletes. Helm: `executor.collectSettledRunPods`.
+  executor.agent_path:
+    edition: dev-only
+    description: >-
+      The agent binary the subprocess executor runs (`leoflow-agent`, a link to
+      `dexaflow-agent`, so agents from before the rename are found too).
+  executor.subprocess_workdir:
+    edition: dev-only
+    description: >-
+      Working directory the subprocess executor runs the agent in (so it can import
+      the project's `dag.py`). Empty keeps the server's working directory.
+  executor.http.user_agent:
+    edition: both
+    description: >-
+      Default `User-Agent` header for HTTP requests a task image may make on the
+      platform's behalf.
+  executor.kube_client.qps:
+    edition: Pro
+    description: >-
+      Client-side request rate (queries per second) of the Kubernetes client that
+      creates task pods. The agent token exchange builds its own client with the
+      same limits. `5` is client-go's default; a 1,000-task fan out at 5 QPS takes
+      over three minutes just to create pods, so a large deployment raises it (for
+      example `50`). Non-positive falls back to `5`. Helm: `executor.kubeClient.qps`.
+  executor.kube_client.burst:
+    edition: Pro
+    description: >-
+      Burst of the same client's token bucket. Non-positive falls back to `10`.
+      Helm: `executor.kubeClient.burst`.
+  executor.kube_client.maintenance_qps:
+    edition: Pro
+    description: >-
+      When above `0`, maintenance work (pod informer, reconciler, reapers, staging
+      GC, warm pool reconciler) gets its own Kubernetes client and rate limiter
+      at this QPS, so a maintenance burst cannot starve pod creation. `0` keeps
+      maintenance on the dispatch client, one shared budget. Set it whenever you
+      raise `KUBE_CLIENT_QPS`. Helm: `executor.kubeClient.maintenanceQps`.
+  executor.kube_client.maintenance_burst:
+    edition: Pro
+    description: >-
+      Burst of the separate maintenance client. Ignored while `KUBE_CLIENT_MAINTENANCE_QPS`
+      is `0`; non-positive falls back to `10`. Helm: `executor.kubeClient.maintenanceBurst`.
+  executor.unit.cpu:
+    edition: Pro
+    description: >-
+      CPU of one pool slot, the resource unit ([ADR 0066](/project/adrs/0066-weighted-pool-slots-and-resource-unit/)),
+      as a Kubernetes quantity (e.g. `250m`). Set together with `DEXAFLOW_EXECUTOR_UNIT_MEMORY`;
+      one without the other fails boot. With a unit, a task that declares no cpu
+      or memory gets `pool_slots x unit` as requests and limits (this replaces `executor.defaults.resources`);
+      a task that declares some keeps its values, a missing request follows the
+      declared limit, and a missing limit is `pool_slots x unit` (or the request,
+      when that is larger), so requests are never above limits, and a task that
+      declares more than `pool_slots x unit` is refused at registration (400 naming
+      the `size` it needs) and at dispatch (the task fails once, spending neither
+      dispatch retries nor its own `retries`). With warm pools on, a warm pod is
+      one unit and only takes tasks of size 1 that declare no resources; the rest
+      get a dedicated pod. Empty (default) changes nothing. Helm: `executor.unit.cpu`.
+  executor.unit.memory:
+    edition: Pro
+    description: >-
+      Memory of one pool slot (e.g. `512Mi`). See `DEXAFLOW_EXECUTOR_UNIT_CPU`.
+      Helm: `executor.unit.memory`.
+  executor.unit.enforce:
+    edition: Pro
+    description: >-
+      What happens to a task larger than its size while a unit is set. `refuse`
+      fails it at registration and at dispatch; `warn` accepts it, runs it with
+      its own resources, logs it and counts it in `dexaflow_unit_misfit_total{stage}`.
+      Turn a unit on with `warn`, fix the DAGs the log names, then switch to `refuse`.
+      Any other value fails boot. Helm: `executor.unit.enforce`.
+  executor.unit.max_size:
+    edition: Pro
+    description: >-
+      Largest `pool_slots` a task may have while a unit is set, whatever its pool:
+      a larger task is refused at registration and at dispatch, under `warn` too,
+      since a pool without a budget would otherwise let one task ask for any multiple
+      of the unit. Must be positive. Helm: `executor.unit.maxSize`.
+  executor.defaults.run_tasks_as_non_root:
+    edition: Pro
+    description: >-
+      **Refuses to start a task container whose image resolves to UID 0**, completing
+      Pod Security Admission's `restricted` set. On by default: the images this
+      repo ships carry a numeric non-root UID (`USER 65532:65532`) and the executor
+      pairs it with a pod-level `fsGroup` so the staging PVC stays writable. Turn
+      it off only for a cluster whose task images legitimately run as root. Operator-scoped
+      (never a DAG field).
+  executor.defaults.read_only_task_root_filesystem:
+    edition: Pro
+    description: >-
+      Mounts every task container's root filesystem read-only. Off by default (`restricted`
+      does not require it and it breaks ordinary Python tasks: pip cache, `/tmp`,
+      matplotlib config). Turn on for a fleet of tasks known not to write outside
+      their volumes.
+  executor.defaults.execution_allowlist.fields:
+    edition: Pro
+    description: >-
+      **Which task `execution` fields a DAG may set** (comma-separated `dag.json`
+      names): `node_selector`, `tolerations`, `affinity`, `topology_spread_constraints`,
+      `priority_class_name`, `runtime_class_name`, `resource_claims`, `termination_grace_period_seconds`,
+      `labels`, `annotations`. `*` (default) allows all of them, `none` allows none
+      (so does an explicitly empty list, `fields: []`, in a server config file or
+      in Helm; an empty environment variable counts as unset). A DAG that sets a
+      field outside the list is refused at registration (400 naming the task and
+      the field), and a DAG registered before the list changed fails that task at
+      dispatch (once, no retries). `service_account` and `image_pull_policy` are
+      not governed. An unknown name fails boot. Operator-scoped (never a DAG field).
+      See [Placement allowlist](/operate/placement-allowlist/). Helm: `executor.defaults.executionAllowlist.fields`.
+  executor.defaults.execution_allowlist.priority_classes:
+    edition: Pro
+    description: >-
+      When set (comma-separated), the only `execution.priority_class_name` values
+      a DAG may use; refused like a disallowed field. Empty (default) allows any
+      priority class. Helm: `executor.defaults.executionAllowlist.priorityClasses`.
+  executor.defaults.execution_allowlist.service_accounts:
+    edition: Pro
+    description: >-
+      When set (comma-separated), the only `execution.service_account` values a DAG
+      may name. A task that names none runs as
+      `DEXAFLOW_EXECUTOR_TASK_SERVICE_ACCOUNT`, which is not checked. Refused at
+      registration and at dispatch like a disallowed field. Empty (default) allows
+      any. Helm: `executor.defaults.executionAllowlist.serviceAccounts`.
+  executor.defaults.execution_allowlist.images:
+    edition: Pro
+    description: >-
+      When set (comma-separated), the only DAG images that may run: an exact reference
+      (`busybox:1.36`) or a prefix ending in `*` (`registry.example.com/team-a/*`);
+      `*` is allowed only at the end. A DAG with another image is refused at
+      registration (400 naming the image) and at dispatch, and gets no warm workers.
+      Empty (default) allows any. Helm: `executor.defaults.executionAllowlist.images`.
+  executor.defaults.staging_access_mode:
+    edition: Pro
+    description: >-
+      PVC access mode for the per-run staging volume. Default `ReadWriteMany` (multi-node
+      prod); single-node dev (k3d local-path, no RWX) sets `ReadWriteOnce`.
+  executor.defaults.staging_size:
+    edition: Pro
+    description: >-
+      Default size of the per-run staging volume when the DAG enabled staging without
+      pinning it (a Kubernetes quantity, e.g. `10Gi`). Empty leaves the size unset.
+      Helm: `executor.defaults.staging.size`.
+  executor.defaults.staging_storage_class:
+    edition: Pro
+    description: >-
+      Default StorageClass for the staging volume (e.g. the cluster's RWX class).
+      Empty falls back to the cluster's default StorageClass. Helm: `executor.defaults.staging.storageClass`.
+  executor.defaults.resources_cpu:
+    edition: Pro
+    description: >-
+      Default CPU for a task that sets no CPU request or limit of its own (a Kubernetes
+      quantity, e.g. `250m`). Applied as **both request and limit**. Guaranteed QoS needs
+      the **memory** default set too: cpu alone leaves the task Burstable with
+      no memory bound at all, and the control plane WARNs at boot naming the missing
+      key; empty leaves it BestEffort unless the DAG sets its own. Helm: `executor.defaults.resources.cpu`.
+  executor.defaults.resources_memory:
+    edition: Pro
+    description: >-
+      Default memory for a task that sets no memory request or limit of its own (e.g. `256Mi`). Applied
+      as **both request and limit**. Set it together with the CPU default: either
+      one alone is Burstable, not Guaranteed. Helm: `executor.defaults.resources.memory`.
+  executor.defaults.limits_cpu:
+    edition: Pro
+    description: >-
+      Default CPU **limit** for every task pod whose resources leave the CPU limit
+      empty, including a task that declares requests only (a Kubernetes quantity, e.g.
+      `2`). A declared limit is never changed, and a request above this value raises
+      the filled limit to the request. Where the CPU request is also empty, Kubernetes
+      sets the request to this limit, as it does for a `LimitRange` default, so a task
+      declaring only a memory request also requests this CPU. Without `executor.unit`,
+      the default limits also size every warm worker pod, and a task whose own limit
+      would be larger skips warm placement and takes a dedicated pod. Empty (the
+      default) sets no limit. Not applied with `executor.unit`, which always sets both
+      limits. Helm: `executor.defaults.limits.cpu`.
+  executor.defaults.limits_memory:
+    edition: Pro
+    description: >-
+      Default memory **limit** for every task pod whose resources leave the memory
+      limit empty (e.g. `4Gi`). Same rules as the CPU limit above (a task declaring
+      only a CPU request also requests this memory, and warm worker pods carry it
+      too); either may be set alone. Empty (the default) sets no limit. Helm:
+      `executor.defaults.limits.memory`.
+  execution.warm_pools_enabled:
+    edition: Pro
+    description: >-
+      Reuse one task pod across many attempts of the same DAG version. Off = dedicated
+      pod-per-task. Validated fail-closed at boot: requires `agent_token_transport=exchange`
+      **and** `secret_liveness_mode=enforce`. Helm: `execution.warmPoolsEnabled`.
+  execution.min_idle_workers:
+    edition: Pro
+    description: >-
+      Warm workers kept ready per DAG version when the DAG declares no warmth of
+      its own (D6). `0` is scale-to-zero. Read only while warm pools are on.
+  execution.max_pool_size:
+    edition: Pro
+    description: >-
+      Cap on the warm workers one DAG version may hold, and the ceiling a DAG author's
+      warmth request is clamped to (D6).
+  execution.max_attempts_per_worker:
+    edition: Pro
+    description: >-
+      Attempts a warm worker serves before it drains and recycles (D9).
+  execution.max_worker_lifetime:
+    edition: Pro
+    description: >-
+      Wall-clock lifetime of a warm worker before it drains and recycles, independent
+      of the attempt count (D9). A duration string.
+  execution.worker_idle_ttl:
+    edition: Pro
+    description: >-
+      How long an idle warm worker is kept before it is recycled (D6). A duration
+      string.
+  execution.max_warm_pods_per_tenant:
+    edition: Pro
+    description: >-
+      Cap on the total warm pods one tenant may hold across all its DAG versions
+      (M4), so one team cannot pin idle pods and starve neighbours on a shared cluster.
+  execution.warm_read_only_root_filesystem:
+    edition: Pro
+    description: >-
+      Mount every warm worker's root filesystem read only, give each attempt its
+      own `HOME` and XDG dirs inside the scratch the worker wipes between attempts,
+      and empty the `/tmp` emptyDir and `/dev/shm` before each attempt and again
+      as soon as it ends, so nothing one attempt writes reaches the next one on
+      the same worker. A task that writes outside `$HOME`, `$TMPDIR`, `/tmp` and
+      `/dev/shm` fails with it on. Takes effect on warm pods created after it is
+      turned on; running warm pods keep their spec until they recycle. Dedicated
+      task pods are not affected. Helm: `execution.warmReadOnlyRootFilesystem`.
+  execution.warm_pool_event_refill:
+    edition: Pro
+    description: >-
+      Refill warm pools on events instead of every 30s: the reconciler reads the
+      warm fleet from a dedicated pod informer instead of a LIST per tick, reacts
+      at once when a warm worker is deleted, fails or is claimed by an attempt,
+      and creates replacements concurrently (up to 4 at a time). The periodic tick
+      stays as a backstop. Helm: `execution.warmPoolEventRefill`.
+  execution.warm_require_attempt_home_sweep:
+    edition: Pro
+    description: >-
+      With `DEXAFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM` on, refuse a
+      warm worker whose agent does not confirm, when it registers, that it
+      empties `/tmp` and `/dev/shm` between attempts, so that DAG version's
+      attempts run on dedicated pods. Off, such a worker is logged with
+      `reason=attempt_home_sweep_unconfirmed`, counted in
+      `dexaflow_scheduler_decisions_total{decision_type="warm_worker_sweep_unconfirmed"}`
+      and kept, because task images built on runtimes from v0.5.1 sweep but
+      only newer ones confirm it. Helm:
+      `execution.warmRequireAttemptHomeSweep`.
+  execution.source_mode.enabled:
+    edition: Pro
+    description: >-
+      Turn source mode on. Off, Pro ignores a version's source, as before. Helm:
+      `execution.sourceMode.enabled`.
+  execution.source_mode.image:
+    edition: Pro
+    description: >-
+      The runtime image source-mode versions name as their `image`, pinned by a full
+      digest (`image@sha256:` and 64 hex characters). Required when source mode is on;
+      the server refuses to start with a tag alone or a short digest. Helm:
+      `execution.sourceMode.image`; the chart refuses to render the same values the
+      server refuses.
+  execution.source_mode.warm_pools:
+    edition: Pro
+    description: >-
+      Let source-mode versions run on warm workers: the control plane sends the
+      version's `dag.py` with each warm assignment and the worker runs the attempt
+      from it ([ADR 0095](/project/adrs/0095-source-mode-on-warm-workers/)). Needs
+      `DEXAFLOW_EXECUTION_WARM_POOLS_ENABLED` and a runtime image whose agent is
+      from 0.5.7 or later; a worker on an older agent never gets a source-mode
+      attempt, which then takes a dedicated pod, and is counted in
+      `dexaflow_scheduler_decisions_total{decision_type="warm_worker_no_source_delivery"}`.
+      Ignored while source mode is off. See [Source
+      mode](/operate/source-mode/#warm-workers). Helm:
+      `execution.sourceMode.warmPools`.
+  logs.dir:
+    edition: both
+    description: >-
+      Task-log sink directory (used by the default `disk` backend).
+  logs.backend:
+    edition: Pro
+    description: >-
+      Durable task-log store: `disk` (default: the on-disk sink, unchanged; the
+      only backend Lite uses), `s3` (AWS S3, MinIO, Ceph RGW), or `gcs` (Google
+      Cloud Storage, native SDK). See [ADR 0056](/project/adrs/0056-task-log-object-sink/).
+  logs.persistence_enabled:
+    edition: both
+    description: >-
+      Whether task-log storage is backed by durable persistence (a PVC or host
+      disk). When false with backend `disk`, task logs reside on an ephemeral
+      emptyDir volume and do not survive a pod restart or upgrade.
+  logs.tail.publish:
+    edition: both
+    description: >-
+      When the control plane publishes received task-log lines for live followers.
+      `always` publishes every line as it arrives. `on_demand` publishes only while
+      someone follows the attempt: each log stream checks for followers at most
+      once a second (Redis `PUBSUB NUMSUB`/`NUMPAT`), or once per 512 lines or 512
+      KiB of output when the task logs faster than that, and replays to a new follower
+      every line received since the last check that found none (a single line over
+      1 MiB is not replayed). A new follower can see its first live lines up to
+      about a second late. Enable `on_demand` once every API replica runs a version
+      that skips replayed lines, or followers on older replicas may see a few lines
+      twice.
+  logs.tail.replay_budget_bytes:
+    edition: both
+    description: >-
+      With `logs.tail.publish: on_demand`, the most bytes the log streams of one
+      control-plane process hold together for a follower who may subscribe. Each
+      stream holds at most 1 MiB, so a thousand streams that went quiet after a
+      burst can hold about 500 MiB; over the budget the held lines of the stream
+      silent the longest are dropped first, and a follower of that stream reads
+      them from the stored log instead of the replay.
+      `dexaflow_log_tail_replay_bytes` reports what is held and
+      `dexaflow_log_tail_replay_evictions_total` the drops. `0` means no budget; a
+      negative value fails boot. Helm: set it through `extraEnv`.
+  logs.sink.bucket:
+    edition: Pro
+    description: >-
+      Target bucket. Required when the backend is `s3` or `gcs` (boot fails otherwise).
+  logs.sink.prefix:
+    edition: Pro
+    description: >-
+      Optional key prefix; objects are laid out at `{prefix}/{tenant}/{dag}/{run}/{task}/{try}.e{epoch}.log`,
+      one object per execution of the try (an infra re-place or a reschedule poke
+      runs the try again under a new epoch). Logs written before 0.5.1 keep `{try}.log`.
+      The log endpoint serves all of a try's executions in order.
+  logs.sink.region:
+    edition: Pro
+    description: >-
+      **s3-only.** Store region (e.g. `us-east-1`). Required by AWS S3; ignored
+      by some S3-compatible stores.
+  logs.sink.endpoint:
+    edition: Pro
+    description: >-
+      **s3-only.** Endpoint override for S3-compatible stores (MinIO, Ceph RGW).
+      Empty uses the AWS default. Not a path to GCS: use `gcs`.
+  logs.sink.force_path_style:
+    edition: Pro
+    description: >-
+      **s3-only.** Use path-style addressing (bucket in the path, not the host).
+      Required by MinIO and some S3-compatible stores.
+  logs.sink.access_key_id:
+    edition: Pro
+    description: >-
+      **s3-only.** Static credentials: **discouraged**. Leave empty (recommended)
+      to use the keyless chain (IRSA / instance profile), per [ADR 0035](/project/adrs/0035-cloud-connector-auth-keyless-first/).
+  logs.sink.secret_access_key:
+    edition: Pro
+    description: >-
+      **s3-only.** Static credentials: **discouraged**. Leave empty (recommended)
+      to use the keyless chain (IRSA / instance profile), per [ADR 0035](/project/adrs/0035-cloud-connector-auth-keyless-first/).
+  logs.sink.credentials_file:
+    edition: Pro
+    description: >-
+      **gcs-only.** Path to a service-account JSON key: **discouraged**. Leave
+      empty (recommended) to use Application Default Credentials (GKE Workload Identity).
+  logs.sink.layout:
+    edition: Pro
+    description: >-
+      How new attempts are written. `single` keeps one object per attempt at `{try}.log`,
+      rewritten on every flush. `segmented` writes numbered segments under `{try}.log.d/`
+      (`{try}.e{epoch}.log.d/` for a later execution of the try) so each flush uploads
+      only the open segment (up to 4 MiB) and the control plane holds one segment
+      per attempt instead of the whole log. Both layouts are always readable, but
+      a server older than this setting reads only `{try}.log`: enable `segmented`
+      once every replica is upgraded. Before downgrading to an older version, switch
+      back to `single`; attempts already written as segments stay unreadable by
+      older versions. On S3, `segmented` needs `s3:ListBucket` on the bucket so
+      a missing segment answers not-found; the server checks this at startup and
+      refuses to start when a missing key is not answered with not-found.
+  secrets.backend:
+    edition: Pro (K8s)
+    default_note: disabled
+    description: >-
+      Provider secrets-backend class the in-pod resolver drives (e.g. `airflow.providers.amazon.aws.secrets.secrets_manager.SecretsManagerBackend`).
+      When set, a Connection/Variable a DAG declares can be resolved pod-side from
+      the provider store under the pod's keyless identity. Helm: `secrets.backend`.
+  secrets.backend_kwargs:
+    edition: Pro (K8s)
+    default_note: treated as `{}`
+    description: >-
+      Provider kwargs as a JSON **object string** (`connections_prefix`, `variables_prefix`,
+      `region_name`, …), delivered to the pod verbatim. A kind is served only if
+      its `*_prefix` kwarg is present. A JSON string rather than a map so a single
+      env var sets it, matching the env-only control-plane chart. Keyless auth (IRSA
+      / Workload Identity) uses the task pod's ServiceAccount: set `executor.task_service_account`
+      accordingly. Helm: `secrets.backendKwargs`.
+  retention.dag_runs_days:
+    edition: both
+    default_note: off
+    description: >-
+      Delete settled runs, with their task instances and history, that ended more than
+      this many days ago. The newest run of each DAG is always kept. `0` keeps every
+      run.
+  retention.audit_log_days:
+    edition: both
+    default_note: off
+    description: >-
+      Delete audit log entries older than this many days, per tenant and for the
+      tenant-less system entries. `0` keeps the whole audit log.
+  retention.dry_run:
+    edition: both
+    description: >-
+      Only count what a cycle would delete; delete nothing.
+  retention.interval:
+    edition: both
+    description: >-
+      How often a cycle runs. Must be greater than zero when a class is on.
+  retention.batch_size:
+    edition: both
+    description: >-
+      Most rows one DELETE statement removes (1 to 50000), except the task instances
+      of a single run larger than that, which go together. Also caps the runs per
+      batch at 100.
+  retention.batch_pause:
+    edition: both
+    description: >-
+      Sleep between two batches, so the janitor never keeps the database busy.
+  retention.max_rows_per_cycle:
+    edition: both
+    description: >-
+      A cycle starts no new batch once it deleted this many rows, children included.
+  deploy.defaults.registry:
+    edition: Pro
+    description: >-
+      Image prefix a deploy pushes to, such as `ghcr.io/acme`: a host, an optional
+      port and a path, lowercase, with no scheme, credentials, tag or trailing `/`.
+      The image name defaults to the `dag_id`. Helm: `deploy.defaults.registry`.
+  deploy.defaults.platforms:
+    edition: Pro
+    description: >-
+      Platforms a deploy builds for, comma separated (`linux/amd64,linux/arm64`), each
+      `os/arch` or `os/arch/variant`. Unset, the built-in `linux/amd64` applies. Helm:
+      `deploy.defaults.platforms` (a list).
+  deploy.defaults.base_image:
+    edition: Pro
+    description: >-
+      Base image of the generated Dockerfile for projects that set no `base_image`.
+      Helm: `deploy.defaults.baseImage`.
+  deploy.defaults.source_mode:
+    edition: Pro
+    description: >-
+      Advertise the source mode runtime image (`execution.source_mode.image`) as
+      `source_mode_image`, so a deploy that names no runtime image of its own
+      registers the DAG's `dag.py` on it with no build or push, and refuses a DAG that
+      needs a build. The server serves its own runtime image, so nothing is copied by
+      hand. Requires `execution.source_mode.enabled`; the server refuses to start
+      otherwise. There is no `deploy.defaults.source_mode_image` key: the server
+      refuses to start when one is set (in the file or as
+      `DEXAFLOW_DEPLOY_DEFAULTS_SOURCE_MODE_IMAGE`). Helm:
+      `deploy.defaults.sourceMode`. See [Deploying in source
+      mode](/operate/source-mode/#deploying-in-source-mode).
+  deploy.defaults.remote_builder.cloud_build.project:
+    edition: Pro
+    description: >-
+      Google Cloud project of the remote builder (Cloud Build, ADR 0083) a
+      deploy uses for builds no daemonless path covers, when the project's
+      `build.remote_builder`, its target and its workspace name none. Required
+      when any other `remote_builder` value is set. Served as
+      `remote_builder.cloud_build`. Helm:
+      `deploy.defaults.remoteBuilder.cloudBuild.project`. See
+      [Builders](/operate/builders/).
+  deploy.defaults.remote_builder.cloud_build.region:
+    edition: Pro
+    description: >-
+      Cloud Build region of that remote builder, such as `us-central1`;
+      required with a worker pool. Helm:
+      `deploy.defaults.remoteBuilder.cloudBuild.region`.
+  deploy.defaults.remote_builder.cloud_build.worker_pool:
+    edition: Pro
+    description: >-
+      Private pool of that remote builder,
+      `projects/<project>/locations/<region>/workerPools/<name>`, in its
+      region. Helm: `deploy.defaults.remoteBuilder.cloudBuild.workerPool`.
+  deploy.defaults.remote_builder.cloud_build.service_account:
+    edition: Pro
+    description: >-
+      Account the remote build runs as,
+      `projects/<project>/serviceAccounts/<email>`. Helm:
+      `deploy.defaults.remoteBuilder.cloudBuild.serviceAccount`.
+  deploy.defaults.remote_builder.buildkit.namespace:
+    edition: Pro
+    description: >-
+      Namespace of the in-cluster builder (rootless BuildKit, #1883) a deploy
+      uses for builds no daemonless path covers, when the project's
+      `build.remote_builder`, its target and its workspace name none. The
+      person deploying needs `buildctl` and `kubectl`, and the builder
+      Role through `builder.subjects`; one who has not is passed over for
+      the local daemon. Required when `pod_selector` is set; refused with
+      any `cloud_build` value. Served as `remote_builder.buildkit`. The chart
+      sets it to `builder.namespace` when `builder.enabled` and
+      `builder.advertise` are on. See
+      [Builders](/operate/builders/#building-on-the-in-cluster-builder).
+  deploy.defaults.remote_builder.buildkit.pod_selector:
+    edition: Pro
+    description: >-
+      Label selector of the builder pod, `key=value` pairs separated by
+      commas; `app.kubernetes.io/component=builder` when unset. The chart
+      sets it to the builder's instance and component labels.
+  deploy.defaults.task_service_account:
+    edition: Pro
+    description: >-
+      Advertise `executor.task_service_account` as `task_service_account`, so
+      a deploy says which ServiceAccount its tasks run as when they set no
+      `execution.service_account`. The deploy only reports it: nothing is
+      written into `dag.json`. Requires `executor.task_service_account`; the
+      server refuses to start otherwise. Helm:
+      `deploy.defaults.taskServiceAccount`.
+  deploy.defaults.warm_pools:
+    edition: Pro
+    description: >-
+      Advertise `execution.warm_pools_enabled`, `execution.min_idle_workers`
+      and `execution.max_pool_size` as `warm_pools`, so a deploy says whether
+      warm pools are on and how many idle workers its DAG gets: its own
+      `min_idle_workers`, else the cluster's, capped at the pool size. The
+      deploy only reports it. Helm: `deploy.defaults.warmPools`.
+  deploy.require_digest:
+    edition: both
+    description: >-
+      What the control plane does with an image that is not pinned by a full sha256
+      digest (`<repository>@sha256:<64 hex>`), when a version is registered and when
+      one is made current again (`dexaflow rollback`). `off` accepts any image, as
+      before. `warn` accepts it with a warning in the answer (printed by `dexaflow
+      push`, `dexaflow deploy` and `dexaflow rollback`), logs it, counts it in
+      `dexaflow_unpinned_image_total{stage,outcome="warned"}` and records
+      `require_digest` and `image_pinned` in the `dag.version.register` or
+      `dag.version.set_current` audit entry. `enforce` refuses it with a 400 that
+      names this setting and the way out, counted with `outcome="refused"`. The dry
+      run of a register gives the same answer and records nothing. `dexaflow deploy`,
+      and `dexaflow compile --build --push` followed by `dexaflow push`, register the
+      image by digest (#1703); a CLI from before that registers a tag on the second
+      path, so start with `warn` to find those pipelines. Any other value fails boot;
+      in a config file a YAML `false` means `off`. Config key `deploy.require_digest`.
+      Helm: `deploy.requireDigest`. See [Require images pinned by
+      digest](/operate/cicd-deploy/#require-images-pinned-by-digest).
+  observability.log_level:
+    edition: both
+    description: >-
+      Control-plane log verbosity: `debug`, `info`, `warn` (alias `warning`), or
+      `error`. Unknown values fall back to `info`.
+  observability.log_format:
+    edition: both
+    description: >-
+      Control-plane log format: `json` (default) or `text`.
+  observability.otel.enabled:
+    edition: both
+    description: >-
+      Enable OpenTelemetry trace export.
+  observability.otel.endpoint:
+    edition: both
+    description: >-
+      OTLP collector endpoint (when OTel is enabled).
+  observability.otel.sample_ratio:
+    edition: both
+    description: >-
+      Share of request traces kept, from `0` to `1`. An incoming `traceparent` header
+      is not propagated, so every request starts its own trace and is sampled at
+      this ratio; spans within a request follow its decision. `1` traces every request;
+      other values outside the range fail boot.
+  observability.otel.skip_probe_spans:
+    edition: both
+    description: >-
+      When `true`, no spans are recorded for `/healthz`, `/readyz` and `/static/*`.
+      Their HTTP metrics are still recorded.
+  observability.metrics.drop_legacy_names:
+    edition: both
+    description: >-
+      Stop publishing every `dexaflow_*` metric a second time under its pre-rename
+      `leoflow_*` name. The default keeps both, so dashboards and alerts on either
+      name work. An opt-in for operators who do not need the `leoflow_*` names;
+      it halves the scrape. Helm: set it through `extraEnv`.
+  ui.instance_name:
+    edition: both
+    description: >-
+      UI navbar label (`dexaflow lite` sets it to mark the environment).
+  ui.auto_refresh_interval_seconds:
+    edition: both
+    description: >-
+      SPA polling cadence for DAG / DagRun / task-instance state. `0` falls back
+      to the production-safe 30s default; `dexaflow lite` sets 1s for a snappy inner
+      loop. Helm: `ui.autoRefreshIntervalSeconds`, which the chart omits entirely
+      when unset so the server default decides.
+  ui.edition:
+    edition: both
+    description: >-
+      Edition badge in the UI shell: `lite` shows the silver LITE badge, `pro` the
+      gold PRO badge (independent of the auth mode; also gates `auth.provider: oidc`).
+      Empty/other shows no badge.
+  ui.workspace:
+    edition: both
+    description: >-
+      DAG project directory the Lite web editor edits ([ADR 0025](/project/adrs/0025-lite-embedded-web-editor/)).
+      Empty disables the editor.
+  ui.monaco_dir:
+    edition: both
+    description: >-
+      Where the pinned Monaco bundle was fetched by `dexaflow setup`; the editor
+      page is served Monaco from it. Empty shows a setup hint.
+  ui.home_link.label:
+    edition: both
+    description: >-
+      Text of an optional link from the UI back to the platform you serve it from,
+      shown on every page at the bottom-left and opened in the same tab. Set it
+      together with `DEXAFLOW_UI_HOME_LINK_URL`. Helm: `ui.homeLink.label`.
+  ui.home_link.url:
+    edition: both
+    description: >-
+      Absolute `http://` or `https://` URL of the home link. Empty shows no link.
+      Boot fails on another scheme, a missing host, or a URL without a label. Helm:
+      `ui.homeLink.url`.
+  ui.theme:
+    edition: both
+    description: >-
+      Theme for the UI as a JSON object, the same shape as Airflow's `[api] theme`:
+      `tokens` (Chakra design tokens such as `colors.brand` and `fonts`), `globalCss`,
+      `icon`, `icon_dark_mode`. Served in `/ui/config`, so the UI applies it through
+      its own theming. Boot fails on invalid JSON, an unknown top-level key, or
+      an icon that is not http(s) or root-relative. Helm: `ui.theme` (YAML, rendered
+      as JSON). See [Branding the UI](#branding-the-ui).
+  ui.favicon_url:
+    edition: both
+    description: >-
+      Favicon for the UI, http(s) or root-relative. Empty keeps the stock icon.
+      Helm: `ui.faviconUrl`.
+  ui.stylesheet_urls:
+    edition: both
+    description: >-
+      Comma-separated stylesheets every UI page loads in `<head>`, typically the
+      web fonts a theme names. Each must be http(s) or root-relative and contain
+      no comma. Helm: `ui.stylesheetUrls`.
+  ui.etag_revalidation:
+    edition: both
+    description: >-
+      Lets the browser revalidate the grid's task summaries (`/ui/grid/ti_summaries/*`),
+      the one UI route that computes an `ETag`: that route answers `Cache-Control:
+      private, no-cache` with `Vary: Authorization, Cookie` instead of `no-store`,
+      so an unchanged poll gets `304 Not Modified` and no body. Every revalidation
+      still runs authentication and authorization. With it on, the browser keeps
+      the last grid body in its private cache after logout (on a shared machine
+      it stays on disk until evicted); it is never shown without a revalidation,
+      so a signed-out user gets `401`, not the cached grid. Off keeps `no-store`
+      on every UI route. Helm: set it through `extraEnv`.
+
+# Variables a binary reads directly, outside the config loaders. Names are
+# suffixes: every binary mirrors DEXAFLOW_<name> and LEOFLOW_<name> onto each
+# other at startup (internal/envcompat), so both prefixes work. A name ending in
+# <NAME> stands for a family of variables. TestEveryEnvironmentVariableIsListed
+# fails when Go code reads a variable that is neither a setting nor listed here.
+environment:
+  - name: CONFIG
+    group: server
+    description: >-
+      Path of the YAML config file `dexaflow-server` reads before the
+      environment. Unset, the server runs on built-in defaults and environment
+      variables alone. The Helm chart points it at a mounted ConfigMap when it
+      has map-valued keys to deliver (`auth.oidc.tenant_claims`,
+      `auth.oidc.role_mappings`).
+  - name: LITE_VENVS_ROOT
+    group: server
+    description: >-
+      Lite only, set by `dexaflow lite`: the directory holding one virtual
+      environment per DAG (`<root>/<dag_id>/bin/python`). The subprocess
+      executor runs each task with its DAG's interpreter.
+  - name: PYTHON
+    group: task
+    default: python
+    description: >-
+      Interpreter the agent runs Python tasks with. The Lite subprocess
+      executor sets it to the DAG's virtual environment; task images leave it
+      unset. Not passed on to the task.
+  - name: CONTROL_PLANE_ADDR
+    group: task
+    description: >-
+      gRPC address of the control plane the agent dials, from
+      `executor.agent_control_plane_addr` (or `server.grpc_addr`).
+  - name: AGENT_TOKEN
+    group: task
+    description: >-
+      The agent's bearer token under the `envvar` agent token transport.
+  - name: AGENT_TOKEN_TRANSPORT
+    group: task
+    description: >-
+      `exchange` when `auth.agent_token_transport` is `exchange`: the agent
+      then reads a projected ServiceAccount token from
+      `DEXAFLOW_AGENT_TOKEN_PATH` and exchanges it for its bearer.
+  - name: AGENT_TOKEN_PATH
+    group: task
+    description: >-
+      Path of the projected ServiceAccount token under the `exchange`
+      transport.
+  - name: AGENT_INSECURE
+    group: task
+    description: >-
+      `false` makes the agent dial the control plane over TLS. Any other value,
+      or unset, dials in plaintext (the Lite loopback). Set to `false` when the
+      server has a gRPC certificate.
+  - name: AGENT_TLS_CA
+    group: task
+    description: >-
+      Path of the PEM CA bundle the agent verifies the control plane's
+      certificate with, mounted from `executor.agent_tls_ca_configmap`.
+  - name: TERMINATION_LOG_PATH
+    group: task
+    description: >-
+      File the agent writes its classified outcome to, the container
+      termination message the reconciler reads when the agent could not report.
+  - name: TASK_INSTANCE_ID
+    group: task
+    description: >-
+      Id of the task instance the pod runs. Visible to task code.
+  - name: STAGING_DIR
+    group: task
+    description: >-
+      Mount path of the run's staging volume when the DAG enables `staging`
+      ([ADR 0022](/project/adrs/0022-ephemeral-per-run-staging-volume/)). Visible to task code.
+  - name: TASK_PGID_FILE
+    group: task
+    description: >-
+      Lite only: file the agent records its task's process group in, so the
+      server can stop a task its agent left behind.
+  - name: WARM_WORKER
+    group: task
+    description: >-
+      `1` runs the agent as a warm worker that serves attempt after attempt
+      ([ADR 0058](/project/adrs/0058-warm-worker-pools/)).
+  - name: DAG_VERSION_ID
+    group: task
+    description: >-
+      DAG version a warm worker serves. Required with `DEXAFLOW_WARM_WORKER`.
+  - name: POD_NAME
+    group: task
+    description: >-
+      The warm worker's own pod name, from the downward API.
+  - name: MAX_ATTEMPTS_PER_WORKER
+    group: task
+    description: >-
+      Warm worker cap from `execution.max_attempts_per_worker`. `0` disables
+      the bound.
+  - name: MAX_WORKER_LIFETIME_SECONDS
+    group: task
+    description: >-
+      Warm worker lifetime cap from `execution.max_worker_lifetime`, in
+      seconds. `0` disables the bound.
+  - name: WORKER_IDLE_TTL_SECONDS
+    group: task
+    description: >-
+      Idle time after which a warm worker exits, from
+      `execution.worker_idle_ttl`, in seconds. `0` disables the bound.
+  - name: ATTEMPT_WATCHDOG_SECONDS
+    group: task
+    description: >-
+      Longest one attempt may run on a warm worker before the worker exits,
+      from `auth.max_attempt_credential_lifetime`, in seconds.
+  - name: WARM_ATTEMPT_HOME
+    group: task
+    description: >-
+      `1` gives every attempt on a warm worker its own `HOME` under the
+      scratch directory, set when
+      `execution.warm_read_only_root_filesystem` is on.
+  - name: UPSTREAM_XCOM
+    group: task
+    description: >-
+      JSON map of upstream task id to return value, read by the runtime's
+      `ti.xcom_pull`.
+  - name: XCOM_<NAME>
+    group: task
+    description: >-
+      One XCom input bound to the operator parameter `<name>`, as JSON.
+  - name: PROJECT_CONFIG_JSON
+    group: task
+    description: >-
+      The project's `dexaflow.yaml`, as JSON, passed by `dexaflow compile` to
+      the DAG parser.
+  - name: SERVER_URL
+    group: mcp
+    default: http://localhost:8080
+    description: >-
+      Control plane base URL (`--server`). The CLI reads the same variable
+      for `server_url`.
+  - name: TOKEN
+    group: mcp
+    description: >-
+      Bearer token for the stdio transport. The http transport ignores it and
+      uses each request's own bearer. The CLI reads the same variable for
+      `token`.
+  - name: MCP_TRANSPORT
+    group: mcp
+    default: stdio
+    description: >-
+      `stdio` or `http` (`--transport`).
+  - name: MCP_LISTEN
+    group: mcp
+    default: ":9099"
+    description: >-
+      Listen address of the http transport (`--listen`).
+  - name: MCP_UI_BASE_URL
+    group: mcp
+    description: >-
+      URL of the Dexaflow UI; when set, results carry links into it
+      (`--ui-base-url`).
+  - name: MCP_RUN_CONTROL
+    group: mcp
+    default: "false"
+    description: >-
+      Registers the run control tools (`--run-control`). Takes `true`/`false`,
+      `1`/`0` or `t`/`f`; any other value stops the server.
+  - name: MCP_PLAN_KEY_FILE
+    group: mcp
+    description: >-
+      File holding the key (at least 32 bytes) that signs run control plans
+      (`--plan-key-file`). Required by `--run-control` on the http transport,
+      the same file on every replica.
+  - name: MCP_RESOURCE
+    group: mcp
+    description: >-
+      http transport: this endpoint's URL as clients reach it (`--resource`).
+  - name: MCP_AUTHORIZATION_SERVERS
+    group: mcp
+    description: >-
+      http transport: comma-separated issuer URLs of the OAuth authorization
+      servers for `--resource` (`--authorization-servers`).
+  - name: MCP_SCOPES
+    group: mcp
+    description: >-
+      http transport: comma-separated scopes advertised in the protected
+      resource metadata (`--scopes`).
+  - name: USERNAME
+    group: cli
+    description: >-
+      Default of `--username` for `dexaflow auth create-token`.
+  - name: PASSWORD
+    group: cli
+    description: >-
+      Default of `--password` for `dexaflow auth create-token` and `dexaflow
+      auth create-user`. Prefer `--password-stdin`.
+  - name: TARGET
+    group: cli
+    description: >-
+      Named control plane a command uses when `--target` is not given; it beats
+      the target selected for the workspace, and `--server` or `--server-url`
+      beat it. See [Workspaces and targets](/operate/workspaces-and-targets/).
+  - name: OIDC_TOKEN
+    group: cli
+    description: >-
+      The OIDC token a CI provider minted for the job, which `dexaflow auth
+      ci-token` exchanges for a short-lived deploy session. Pipelines written
+      by `dexaflow ci init` set it when the control plane offers a CI OIDC
+      issuer. See [Deploying without a stored token (CI
+      OIDC)](/operate/cicd-deploy/#deploying-without-a-stored-token-ci-oidc).
+  - name: TRUSTED_WORKSPACES
+    group: cli
+    description: >-
+      Workspace roots whose `dexaflow.workspace.yaml` is read even when another
+      user owns it, separated by the OS path-list separator (`:` on Linux and
+      macOS), or `*` for every workspace. A CI container that runs as root over
+      a checkout the runner owns typically sets `*`. See [Workspaces and
+      targets](/operate/workspaces-and-targets/).
+  - name: BUILD_INDEX_URL
+    group: cli
+    description: >-
+      Not read from your environment: a build by `dexaflow deploy` or
+      `dexaflow compile --build` sets it on the
+      container tool's process only, to the package index URL with its
+      credentials, and the build reads it as the `dexaflow_index_url` build
+      secret ([ADR 0088](/project/adrs/0088-build-args-secrets-and-package-index/)).
+      See [Builders](/operate/builders/).
+
+# Variables that exist only for automated tests. They are not documented on
+# the page; the reason says why.
+test_only:
+  - name: CHAOS_DIE_BEFORE_REPORT
+    reason: >-
+      Failure injection in the agent for the runtime chaos run (test/e2e/chaos-runtime.sh).
+  - name: KEY_MIGRATION_CRASH_AT
+    reason: >-
+      Compiled only with the crashhooks build tag, for the crash-injection
+      runs of `dexaflow lite migrate-key`.

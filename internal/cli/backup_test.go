@@ -12,6 +12,7 @@ import (
 // TestWorkspaceDirFromConfig covers both the YAML-resolved path and the
 // default fallback the restore command applies when config.yaml is silent.
 func TestWorkspaceDirFromConfig(t *testing.T) {
+	t.Parallel()
 	t.Run("returns the configured workspace when present", func(t *testing.T) {
 		got, err := workspaceDirFromConfig([]byte("workspace: /tmp/my-ws\n"))
 		if err != nil || got != "/tmp/my-ws" {
@@ -38,22 +39,44 @@ func TestWorkspaceDirFromConfig(t *testing.T) {
 	})
 }
 
-// TestLeoflowHomeHasData mirrors the safety guard. A non-existent or empty
-// dir is "no install"; one regular file inside it is.
-func TestLeoflowHomeHasData(t *testing.T) {
-	if leoflowHomeHasData(filepath.Join(t.TempDir(), "definitely-missing")) {
-		t.Error("missing dir reported as having data")
+// TestLiteHomeHasDatastore mirrors the safety guard (#154). A missing or
+// empty home, or one that only `dexaflow setup` filled, holds no datastore a
+// restore would replace; a managed data dir, or a Docker datastore a Lite run
+// recorded the port of, does.
+func TestLiteHomeHasDatastore(t *testing.T) {
+	t.Parallel()
+	if liteHomeHasDatastore(filepath.Join(t.TempDir(), "definitely-missing")) {
+		t.Error("missing dir reported as having a datastore")
 	}
-	emptyDir := t.TempDir()
-	if leoflowHomeHasData(emptyDir) {
-		t.Error("empty dir reported as having data")
+	if liteHomeHasDatastore(t.TempDir()) {
+		t.Error("empty dir reported as having a datastore")
 	}
-	withFile := t.TempDir()
-	if err := os.WriteFile(filepath.Join(withFile, "config.yaml"), []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
+	write := func(dir, rel, data string) {
+		t.Helper()
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if !leoflowHomeHasData(withFile) {
-		t.Error("dir with a file reported as empty")
+	setupOnly := t.TempDir()
+	write(setupOnly, "config.yaml", "x")
+	write(setupOnly, "setup.json", "{}")
+	write(setupOnly, "pysrc/parser/x.py", "")
+	if liteHomeHasDatastore(setupOnly) {
+		t.Error("a home only `dexaflow setup` filled reported as having a datastore")
+	}
+	managed := t.TempDir()
+	write(managed, "pgdata/PG_VERSION", "16\n")
+	if !liteHomeHasDatastore(managed) {
+		t.Error("a managed data dir not reported as a datastore")
+	}
+	docker := t.TempDir()
+	write(docker, "dev/db-port", "5433\n")
+	if !liteHomeHasDatastore(docker) {
+		t.Error("a recorded Docker datastore not reported as a datastore")
 	}
 }
 
@@ -63,6 +86,7 @@ func TestLeoflowHomeHasData(t *testing.T) {
 // pipe these filenames into rsync/scp loops and parsers; a regression to
 // local time or a different separator would silently break automations.
 func TestDefaultBackupOutputPath_IsDeterministicAndUTC(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 5, 28, 14, 30, 45, 0, time.UTC)
 	got := defaultBackupOutputPath(now)
 	want := "leoflow-backup-2026-05-28T143045Z.tar.gz"
@@ -80,6 +104,7 @@ func TestDefaultBackupOutputPath_IsDeterministicAndUTC(t *testing.T) {
 // and assert every field round-trips exactly. The .git exclusion is
 // asserted here so the walker cannot regress to leaking VCS history.
 func TestArchiveRoundTrip(t *testing.T) {
+	t.Parallel()
 	leoflowHome := t.TempDir()
 	if err := os.WriteFile(filepath.Join(leoflowHome, "config.yaml"),
 		[]byte("workspace: /tmp/x\nadmin_email: a@b\n"), 0o600); err != nil {
@@ -159,6 +184,7 @@ func TestArchiveRoundTrip(t *testing.T) {
 // is refused so the user gets a clear error rather than half-loading the
 // rest of the archive into a broken install.
 func TestReadBackupArchive_RejectsMissingManifest(t *testing.T) {
+	t.Parallel()
 	out := filepath.Join(t.TempDir(), "no-manifest.tar.gz")
 	// writeBackupArchive will write an empty MANIFEST when called with
 	// manifest=nil; that round-trips to manifest_version=0, which the
@@ -184,6 +210,7 @@ func TestReadBackupArchive_RejectsMissingManifest(t *testing.T) {
 // parent, restoring a sub-project would fail with "no such file or
 // directory" on the first nested write.
 func TestRestoreWorkspaceTree_RebuildsNestedFiles(t *testing.T) {
+	t.Parallel()
 	dst := t.TempDir()
 	files := map[string][]byte{
 		"dag.py":                []byte("a"),
@@ -210,6 +237,7 @@ func TestRestoreWorkspaceTree_RebuildsNestedFiles(t *testing.T) {
 // after a refactor) or, worse, fail to exclude .git and leak secrets a
 // user committed locally but did not push.
 func TestIsWorkspaceSkipDir(t *testing.T) {
+	t.Parallel()
 	for _, dir := range []string{".git", ".venv", "__pycache__", "node_modules", ".pytest_cache"} {
 		if !isWorkspaceSkipDir(dir) {
 			t.Errorf("%q should be skipped from the backup", dir)
@@ -227,6 +255,7 @@ func TestIsWorkspaceSkipDir(t *testing.T) {
 // stable: a manifest written by version N must be readable by version N (and,
 // ideally, by any version M >= N until manifest_version is bumped).
 func TestManifestRoundTrip(t *testing.T) {
+	t.Parallel()
 	m := newBackupManifest("v0.0.1-prealpha.17", 15, "16.4")
 	if m.ManifestVersion != backupManifestVersion {
 		t.Errorf("manifest_version = %d, want %d", m.ManifestVersion, backupManifestVersion)
@@ -252,6 +281,7 @@ func TestManifestRoundTrip(t *testing.T) {
 // restore command refuses with a clear message rather than half-loading
 // junk.
 func TestUnmarshalManifest_RejectsPreV1(t *testing.T) {
+	t.Parallel()
 	_, err := unmarshalManifest([]byte(`{"leoflow_version":"x","schema_version":15}`))
 	if err == nil || !strings.Contains(err.Error(), "no manifest_version") {
 		t.Errorf("expected pre-v1 manifest to be refused, got err=%v", err)
@@ -263,6 +293,7 @@ func TestUnmarshalManifest_RejectsPreV1(t *testing.T) {
 // a clear "upgrade leoflow" hint — the inverse of the schema-drift guard in
 // the migration path (#136).
 func TestUnmarshalManifest_RejectsFutureVersion(t *testing.T) {
+	t.Parallel()
 	_, err := unmarshalManifest([]byte(`{"manifest_version":999,"leoflow_version":"x","schema_version":15}`))
 	if err == nil || !strings.Contains(err.Error(), "newer than this binary supports") {
 		t.Errorf("expected future-version manifest to be refused, got err=%v", err)
@@ -273,6 +304,7 @@ func TestUnmarshalManifest_RejectsFutureVersion(t *testing.T) {
 // applies (#137). The CLI invokes the surrounding orchestration; the
 // decision itself is unit-testable without touching the filesystem.
 func TestDecideRestoreSafe(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name               string
 		manifestSchema     uint

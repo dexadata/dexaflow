@@ -25,7 +25,7 @@ set -euo pipefail
 # committed to this (public) repo. Override with `PROJECT=my-proj ./00-create-cluster.sh`.
 PROJECT="${PROJECT:-$(gcloud config get-value project 2>/dev/null)}"
 ZONE="${ZONE:-us-central1-a}"                 # cheapest US region (Iowa), single zone
-CLUSTER="${CLUSTER:-leoflow-test}"            # cluster name
+CLUSTER="${CLUSTER:-dexaflow-test}"            # cluster name
 RELEASE_CHANNEL="${RELEASE_CHANNEL:-regular}" # regular | rapid | stable | None
 MACHINE_TYPE="${MACHINE_TYPE:-e2-standard-2}" # 2 vCPU / 8 GB; bump for load test
 DISK_TYPE="${DISK_TYPE:-pd-standard}"         # cheapest persistent disk
@@ -78,10 +78,11 @@ fi
 log "Fetching cluster credentials (writes to ~/.kube/config)"
 gcloud container clusters get-credentials "$CLUSTER" --zone="$ZONE" --project="$PROJECT"
 
-# ---- 4. Create the leoflow namespace ---------------------------------------
-# The server creates task pods in 'leoflow' (see helm values.yaml: taskNamespace).
-log "Ensuring 'leoflow' namespace exists"
-kubectl create namespace leoflow --dry-run=client -o yaml | kubectl apply -f -
+# ---- 4. Create the dexaflow namespace ---------------------------------------
+# The scripts install the release in 'dexaflow', and the chart creates task pods
+# in the release namespace unless taskNamespace says otherwise.
+log "Ensuring 'dexaflow' namespace exists"
+kubectl create namespace dexaflow --dry-run=client -o yaml | kubectl apply -f -
 
 # ---- 5. Sanity check --------------------------------------------------------
 log "Cluster nodes:"

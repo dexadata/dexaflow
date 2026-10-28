@@ -68,9 +68,12 @@ DOCKERFILE_REL="runtime/Dockerfile"
 PYPROJECT_REL="runtime/python/pyproject.toml"
 DOCS_REL="website/content/reference/configuration.md"
 JOB="runtime-image"
+# The job that builds each platform of the runtime image (#1686) carries a
+# second copy of the matrix; it is checked when the workflow has it.
+BUILD_JOB="runtime-image-build"
 
 check() { # <repo-root>
-	python3 - "$1" "$SCHEMA_REL" "$WORKFLOW_REL" "$MAKEFILE_REL" "$DOCKERFILE_REL" "$PYPROJECT_REL" "$DOCS_REL" "$JOB" <<'PY'
+	python3 - "$1" "$SCHEMA_REL" "$WORKFLOW_REL" "$MAKEFILE_REL" "$DOCKERFILE_REL" "$PYPROJECT_REL" "$DOCS_REL" "$JOB" "$BUILD_JOB" <<'PY'
 import json
 import os
 import re
@@ -81,7 +84,7 @@ try:
 except ImportError:
 	sys.exit("FAIL: PyYAML unavailable; cannot parse the release workflow (pip install pyyaml)")
 
-root, schema_rel, workflow_rel, makefile_rel, dockerfile_rel, pyproject_rel, docs_rel, job_name = sys.argv[1:9]
+root, schema_rel, workflow_rel, makefile_rel, dockerfile_rel, pyproject_rel, docs_rel, job_name, build_job_name = sys.argv[1:10]
 
 problems = []
 VERSION_RE = re.compile(r"3\.\d+")
@@ -155,6 +158,11 @@ if not matrix:
 got = [str(v) for v in matrix]
 if set(got) != wantset:
 	note(workflow_rel, f"`{job_name}` matrix.python", got, want)
+if build_job_name in jobs:
+	build_matrix = (((jobs[build_job_name].get("strategy") or {}).get("matrix")) or {}).get("python")
+	build_got = [str(v) for v in (build_matrix or [])]
+	if set(build_got) != wantset:
+		note(workflow_rel, f"`{build_job_name}` matrix.python", build_got, want)
 
 # ── 2. the Makefile target that builds them locally ──────────────────────────
 make_text = read(makefile_rel)
@@ -534,6 +542,8 @@ self_test() {
 	_drop_from_matrix() { _release "$1" 'jobs:\n  runtime-image:\n    strategy:\n      matrix:\n        python: ["3.10"]\n' "$_note_default"; }
 	_comment_out_matrix() { _release "$1" 'jobs:\n  runtime-image:\n    strategy:\n      matrix:\n        # python: ["3.10", "3.11"]\n        os: [ubuntu-latest]\n' "$_note_default"; }
 	_rename_job() { _release "$1" 'jobs:\n  runtime-base:\n    strategy:\n      matrix:\n        python: ["3.10", "3.11"]\n' "$_note_default"; }
+	_drop_from_build_matrix() { _release "$1" 'jobs:\n  runtime-image-build:\n    strategy:\n      matrix:\n        python: ["3.11"]\n        arch: [amd64, arm64]\n  runtime-image:\n    strategy:\n      matrix:\n        python: ["3.10", "3.11"]\n' "$_note_default"; }
+	_agreeing_build_matrix() { _release "$1" 'jobs:\n  runtime-image-build:\n    strategy:\n      matrix:\n        python: ["3.10", "3.11"]\n        arch: [amd64, arm64]\n  runtime-image:\n    strategy:\n      matrix:\n        python: ["3.10", "3.11"]\n' "$_note_default"; }
 	_unquoted_matrix() { _release "$1" 'jobs:\n  runtime-image:\n    strategy:\n      matrix:\n        python: [3.10, 3.11]\n' "$_note_default"; }
 	_stale_makefile() { printf 'runtime-images:\n\tfor v in 3.10; do \\\n\t\tdocker build . ; \\\n\tdone\n' >"$1/Makefile"; }
 	_commented_makefile_loop() { printf 'runtime-images:\n\t# for v in 3.10 3.11; do \\\n\t@echo skip\n' >"$1/Makefile"; }
@@ -601,6 +611,8 @@ self_test() {
 
 	_case "an agreeing tree passes"                  0 "agrees everywhere (3.10, 3.11; deprecated: 3.10)" _noop
 	_case "a leg missing from the release matrix"    1 "matrix.python" _drop_from_matrix
+	_case "a leg missing from the build matrix"      1 "runtime-image-build\` matrix.python" _drop_from_build_matrix
+	_case "an agreeing build matrix passes"          0 "agrees everywhere" _agreeing_build_matrix
 	_case "a commented-out matrix is not a matrix"   1 "declares no \`strategy.matrix.python\`" _comment_out_matrix
 	_case "a renamed job fails loudly"               1 "did it get renamed?" _rename_job
 	# YAML turns an unquoted 3.10 into the float 3.1 — the typo this gate is for.

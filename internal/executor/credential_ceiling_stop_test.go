@@ -20,7 +20,7 @@ type ceilingRunning struct {
 	graces []time.Duration
 }
 
-func (f *ceilingRunning) ListRunningTasks(_ context.Context, grace time.Duration) ([]PodLostCandidate, error) {
+func (f *ceilingRunning) ListRunningTasks(_ context.Context, grace time.Duration, _ ReapCursor) ([]PodLostCandidate, error) {
 	f.graces = append(f.graces, grace)
 	return f.cands, f.err
 }

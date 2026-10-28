@@ -94,7 +94,8 @@ go build -o "$HOME_DIR/leoflow" ./cmd/dexaflow || die "building leoflow"
 go build -o "$HOME_DIR/leoflow-server" ./cmd/dexaflow-server || die "building leoflow-server"
 
 mkdir -p "$HOME_DIR/bin"
-printf '#!/bin/sh\n' > "$HOME_DIR/bin/python3.11"
+# Setup takes a host interpreter only on the version it reports (#1700).
+printf '#!/bin/sh\necho "Python 3.11.15"\n' > "$HOME_DIR/bin/python3.11"
 chmod +x "$HOME_DIR/bin/python3.11"
 export PATH="$HOME_DIR/bin:$PATH"
 
@@ -112,7 +113,8 @@ echo "==> dexaflow setup"
 SETUP_OUT="$(HOME="$HOME_DIR" LEOFLOW_DATABASE_URL="$DB_URL" "$HOME_DIR/leoflow" setup --workspace "$HOME_DIR/ws" </dev/null 2>&1)"
 PW="$(printf '%s\n' "$SETUP_OUT" | sed -n 's/^[[:space:]]*password:[[:space:]]*//p' | head -1)"
 HASH="$(sed -n 's/^admin_password_hash:[[:space:]]*"\(.*\)"/\1/p' "$HOME_DIR/.dexaflow/config.yaml")"
-[ -n "$PW" ] && [ -n "$HASH" ] || die "setup did not produce an admin password/hash"
+EMAIL="$(sed -n 's/^admin_email:[[:space:]]*"\(.*\)"/\1/p' "$HOME_DIR/.dexaflow/config.yaml")"
+[ -n "$PW" ] && [ -n "$HASH" ] && [ -n "$EMAIL" ] || die "setup did not produce an admin email/password/hash"
 
 echo "==> starting the control plane with REAL auth"
 LEOFLOW_SERVER_HTTP_ADDR="127.0.0.1:${PORT}" \
@@ -123,7 +125,7 @@ LEOFLOW_REDIS_URL="$REDIS_URL" \
 LEOFLOW_AUTH_JWT_SECRET="e2e-insecure-jwt-secret-please-change" \
 LEOFLOW_SECRET_KEY="e2e-insecure-secret-key-32bytes!" \
 LEOFLOW_BOOTSTRAP_PASSWORD_HASH="$HASH" \
-LEOFLOW_BOOTSTRAP_EMAIL="admin@leoflow.local" \
+LEOFLOW_BOOTSTRAP_EMAIL="$EMAIL" \
 LEOFLOW_EXECUTOR_TYPE="subprocess" \
 LEOFLOW_LOGS_DIR="$HOME_DIR/logs" \
   "$HOME_DIR/leoflow-server" >"$HOME_DIR/server.log" 2>&1 &
@@ -139,8 +141,14 @@ done
 $(tail -20 "$HOME_DIR/server.log")"
 
 echo "==> logging in (the token below is valid; nothing about it changes later)"
-TOKEN="$(curl -s -X POST "${BASE}/auth/token" -H 'Content-Type: application/json' \
-  -d "{\"username\":\"admin@leoflow.local\",\"password\":\"${PW}\"}" | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')"
+# The database is not reset, so it may predate the rename: the server then keeps
+# its admin@leoflow.local (it never adds a second admin), and that is the login.
+TOKEN=""
+for user in "$EMAIL" admin@leoflow.local; do
+  TOKEN="$(curl -s -X POST "${BASE}/auth/token" -H 'Content-Type: application/json' \
+    -d "{\"username\":\"${user}\",\"password\":\"${PW}\"}" | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')"
+  [ -n "$TOKEN" ] && break
+done
 [ -n "$TOKEN" ] || die "login did not return a token:
 $(tail -10 "$HOME_DIR/server.log")"
 

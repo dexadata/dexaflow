@@ -70,7 +70,9 @@ func TestStatementTimeoutStaysOffTheOtherPools(t *testing.T) {
 			t.Errorf("%s pool sets statement_timeout %q; only the main pool may", name, v)
 		}
 	}
-	for name, pc := range map[string]*pgxpool.Config{"leader": leader, "health": health, "scheduler": sched} {
+	// The leader pool has its own hook, for keepalives only (#1599); the
+	// integration test checks its session runs with no statement_timeout.
+	for name, pc := range map[string]*pgxpool.Config{"health": health, "scheduler": sched} {
 		if pc.AfterConnect != nil {
 			t.Errorf("%s pool runs an AfterConnect hook; only the main pool sets statement_timeout", name)
 		}

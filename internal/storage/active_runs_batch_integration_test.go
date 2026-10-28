@@ -111,6 +111,10 @@ func TestActiveRunsLoadsTaskInstancesInOneQueryIntegration(t *testing.T) {
 		t.Errorf("ActiveRuns issued %d task-instance queries for %d active runs, want 1", got, len(runs))
 	}
 
+	tenant, err := pg.Queries.GetDefaultTenant(ctx)
+	if err != nil {
+		t.Fatalf("default tenant: %v", err)
+	}
 	byID := make(map[string]int, len(runs))
 	for i, r := range runs {
 		byID[r.RunID] = i
@@ -125,7 +129,7 @@ func TestActiveRunsLoadsTaskInstancesInOneQueryIntegration(t *testing.T) {
 		if err := key.Scan(id); err != nil {
 			t.Fatal(err)
 		}
-		want, err := pg.Queries.ListTaskInstancesByRun(ctx, key)
+		want, err := pg.Queries.ListTaskInstancesByRun(ctx, queries.ListTaskInstancesByRunParams{TenantID: tenant.ID, DagRunID: key})
 		if err != nil {
 			t.Fatalf("per-run query: %v", err)
 		}

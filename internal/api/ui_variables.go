@@ -14,6 +14,7 @@ import (
 // VariableStore reads and writes Airflow-style Variables for the Admin UI.
 type VariableStore interface {
 	ListVariables(ctx context.Context, tenant string, limit, offset int) ([]domain.Variable, int, error)
+	ListVariablesFiltered(ctx context.Context, tenant, pattern, prefixPattern string, limit, offset int) ([]domain.Variable, int, error)
 	GetVariable(ctx context.Context, tenant, key string) (domain.Variable, error)
 	SetVariablePatch(ctx context.Context, tenant string, p domain.VariablePatch) error
 	DeleteVariable(ctx context.Context, tenant, key string) error
@@ -71,14 +72,18 @@ func buildVariablePatch(key string, value, desc *string, stored domain.Variable,
 	return p
 }
 
-// variableDTO is the Airflow 3.2.1 VariableResponse. Dexaflow stores variables in
-// plaintext for now (is_encrypted is false) and has no teams (team_name null).
+// variableDTO is the Airflow 3.2.1 VariableResponse. is_encrypted reports whether
+// the value is sealed at rest (variable_encryption, #507); there are no teams.
 type variableDTO struct {
 	Key         string  `json:"key"`
 	Value       string  `json:"value"`
 	Description *string `json:"description"`
 	IsEncrypted bool    `json:"is_encrypted"`
 	TeamName    *string `json:"team_name"`
+	// ValueUnreadable marks a variable whose stored value no configured secret
+	// key opens (#507); its value is masked. Omitted otherwise, so a readable
+	// variable renders exactly as Airflow's VariableResponse.
+	ValueUnreadable bool `json:"value_unreadable,omitempty"`
 }
 
 type variableCollectionDTO struct {
@@ -87,12 +92,17 @@ type variableCollectionDTO struct {
 }
 
 func toVariableDTO(v domain.Variable) variableDTO {
+	value := maskedValue(v.Key, v.Value)
+	if v.Unreadable {
+		value = secretMask
+	}
 	return variableDTO{
-		Key:         v.Key,
-		Value:       maskedValue(v.Key, v.Value),
-		Description: strPtrOrNil(v.Description),
-		IsEncrypted: false,
-		TeamName:    nil,
+		Key:             v.Key,
+		Value:           value,
+		Description:     strPtrOrNil(v.Description),
+		IsEncrypted:     v.Encrypted,
+		TeamName:        nil,
+		ValueUnreadable: v.Unreadable,
 	}
 }
 
@@ -100,7 +110,9 @@ func toVariableDTO(v domain.Variable) variableDTO {
 func listVariablesHandler(store VariableStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		limit, offset := pagination(c)
-		vars, total, err := store.ListVariables(c.Request.Context(), tenantOf(c), limit, offset)
+		prefixPattern := c.Query("variable_key_prefix_pattern")
+		pattern := c.Query("variable_key_pattern")
+		vars, total, err := store.ListVariablesFiltered(c.Request.Context(), tenantOf(c), pattern, prefixPattern, limit, offset)
 		if err != nil {
 			handleRepoError(c, err)
 			return
@@ -109,6 +121,7 @@ func listVariablesHandler(store VariableStore) gin.HandlerFunc {
 		for _, v := range vars {
 			out.Variables = append(out.Variables, toVariableDTO(v))
 		}
+		setPaginationLinks(c, total, limit, offset)
 		c.JSON(http.StatusOK, out)
 	}
 }

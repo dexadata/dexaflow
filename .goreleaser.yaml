@@ -3,8 +3,8 @@
 # Produces static (CGO-free) binaries for linux/darwin × amd64/arm64, bundles all
 # three binaries per platform into a single archive (so install.sh fetches the CLI,
 # server, and agent in one download), publishes SHA-256 checksums, an SBOM per
-# archive, cosign keyless signatures (the checksums file AND the control-plane
-# image manifests), and a control-plane container image on GHCR.
+# archive, cosign keyless signatures (the checksums file AND the image
+# manifests), and the control-plane, MCP and CLI container images on GHCR.
 version: 2
 
 project_name: dexaflow
@@ -141,6 +141,61 @@ dockers:
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.source=https://github.com/dexadata/dexaflow"
 
+  # The MCP server (cmd/dexaflow-mcp), so a platform that runs it beside the
+  # control plane pins a signed image by digest instead of building its own.
+  # New name only: it never shipped as leoflow-mcp.
+  - id: mcp-amd64
+    ids: [dexaflow-mcp]
+    goarch: amd64
+    dockerfile: deploy/Dockerfile.mcp.release
+    image_templates:
+      - "ghcr.io/dexadata/dexaflow-mcp:{{ .Version }}-amd64"
+      - "ghcr.io/dexadata/dexaflow-mcp:v{{ .Version }}-amd64"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.source=https://github.com/dexadata/dexaflow"
+  - id: mcp-arm64
+    ids: [dexaflow-mcp]
+    goarch: arm64
+    dockerfile: deploy/Dockerfile.mcp.release
+    image_templates:
+      - "ghcr.io/dexadata/dexaflow-mcp:{{ .Version }}-arm64"
+      - "ghcr.io/dexadata/dexaflow-mcp:v{{ .Version }}-arm64"
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.source=https://github.com/dexadata/dexaflow"
+  # The CLI (cmd/dexaflow) with python3, git and uv, for pipelines that run a
+  # container per job (#1708): `dexaflow deploy` in GitLab CI, Cloud Build or
+  # an Argo CD or Flux hook, with no install step. Signed by docker_signs below
+  # with the other manifests. New name only: it never shipped as leoflow-cli.
+  - id: cli-amd64
+    ids: [dexaflow]
+    goarch: amd64
+    dockerfile: deploy/Dockerfile.cli.release
+    image_templates:
+      - "ghcr.io/dexadata/dexaflow-cli:{{ .Version }}-amd64"
+      - "ghcr.io/dexadata/dexaflow-cli:v{{ .Version }}-amd64"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.source=https://github.com/dexadata/dexaflow"
+  - id: cli-arm64
+    ids: [dexaflow]
+    goarch: arm64
+    dockerfile: deploy/Dockerfile.cli.release
+    image_templates:
+      - "ghcr.io/dexadata/dexaflow-cli:{{ .Version }}-arm64"
+      - "ghcr.io/dexadata/dexaflow-cli:v{{ .Version }}-arm64"
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.source=https://github.com/dexadata/dexaflow"
 docker_manifests:
   - name_template: "ghcr.io/dexadata/dexaflow-server:{{ .Version }}"
     image_templates:
@@ -161,8 +216,24 @@ docker_manifests:
     image_templates:
       - "ghcr.io/dexadata/leoflow-server:v{{ .Version }}-amd64"
       - "ghcr.io/dexadata/leoflow-server:v{{ .Version }}-arm64"
+  - name_template: "ghcr.io/dexadata/dexaflow-mcp:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/dexadata/dexaflow-mcp:{{ .Version }}-amd64"
+      - "ghcr.io/dexadata/dexaflow-mcp:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/dexadata/dexaflow-mcp:v{{ .Version }}"
+    image_templates:
+      - "ghcr.io/dexadata/dexaflow-mcp:v{{ .Version }}-amd64"
+      - "ghcr.io/dexadata/dexaflow-mcp:v{{ .Version }}-arm64"
+  - name_template: "ghcr.io/dexadata/dexaflow-cli:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/dexadata/dexaflow-cli:{{ .Version }}-amd64"
+      - "ghcr.io/dexadata/dexaflow-cli:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/dexadata/dexaflow-cli:v{{ .Version }}"
+    image_templates:
+      - "ghcr.io/dexadata/dexaflow-cli:v{{ .Version }}-amd64"
+      - "ghcr.io/dexadata/dexaflow-cli:v{{ .Version }}-arm64"
 
-# Cosign keyless signing of the control-plane image. `artifacts: manifests`
+# Cosign keyless signing of the control-plane, MCP and CLI images. `artifacts: manifests`
 # signs each multi-arch manifest (`:{{ .Version }}` and `:v{{ .Version }}`) by
 # its digest — the reference an operator actually pulls — so both tag shapes are
 # covered. GoReleaser resolves the pushed manifest digest and substitutes it for
@@ -191,6 +262,12 @@ release:
   # Pre-alpha tags (v0.x.y-alpha.N) are pre-releases; GoReleaser auto-detects the
   # prerelease suffix, but make it explicit.
   prerelease: auto
+  # Public but never Latest at publish time (ADR 0071). The smokes need the
+  # assets on the public download URL, so the release cannot be a draft, but
+  # install.sh without a pinned version follows /releases/latest, which must
+  # not move before the gate. The `promote` job in release.yaml marks a GA
+  # Latest once every gate is green, and only for the newest minor.
+  make_latest: false
   name_template: "{{ .Tag }}"
   # The body is not set here. GoReleaser creates the release, and a workflow
   # step then writes the body with `gh release edit` from

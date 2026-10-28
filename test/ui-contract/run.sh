@@ -33,7 +33,7 @@ exec docker run --rm \
   --add-host=host.docker.internal:host-gateway \
   "${mounts[@]}" \
   -e "LEOFLOW_BASE_URL=$BASE_URL" \
-  -e "LEOFLOW_USER=${LEOFLOW_USER:-admin@leoflow.local}" \
+  -e "LEOFLOW_USER=${LEOFLOW_USER:-}" \
   -e "LEOFLOW_PASSWORD=${LEOFLOW_PASSWORD:-admin}" \
   -e "LEOFLOW_DAG_ID=${LEOFLOW_DAG_ID:-}" \
   -e "LEOFLOW_RUN_ID=${LEOFLOW_RUN_ID:-}" \

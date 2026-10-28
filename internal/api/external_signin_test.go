@@ -73,7 +73,7 @@ func TestExternalSignInKeepsTheEscapeHatches(t *testing.T) {
 func TestExternalSignOutEndsOnTheOperatorsPage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.GET("/api/v2/auth/logout", logoutHandler(false, "https://portal.example.com/signout"))
+	r.GET("/api/v2/auth/logout", logoutHandler(sessionCookieSpec{}, "https://portal.example.com/signout"))
 	rec := httptest.NewRecorder()
 
 	r.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v2/auth/logout", http.NoBody))
@@ -90,7 +90,7 @@ func TestExternalSignOutEndsOnTheOperatorsPage(t *testing.T) {
 func TestSignOutWithoutExternalURLIsTodaysBehavior(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.GET("/api/v2/auth/logout", logoutHandler(false, ""))
+	r.GET("/api/v2/auth/logout", logoutHandler(sessionCookieSpec{}, ""))
 	rec := httptest.NewRecorder()
 
 	r.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v2/auth/logout", http.NoBody))
@@ -103,11 +103,15 @@ func TestSignOutWithoutExternalURLIsTodaysBehavior(t *testing.T) {
 // TestNewServerWiresExternalAuthURLs locks the wiring from Dependencies to the
 // routes, so the settings cannot be accepted and then dropped.
 func TestNewServerWiresExternalAuthURLs(t *testing.T) {
-	h := NewServer(Dependencies{
-		Logger:             discardLogger(),
-		RateLimiter:        auth.NewRateLimiter(100, time.Minute),
-		ExternalSignInURL:  "https://portal.example.com/engine",
-		ExternalSignOutURL: "https://portal.example.com/signout",
+	h := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Auth: AuthDeps{
+			RateLimiter:        auth.NewRateLimiter(100, time.Minute),
+			ExternalSignInURL:  "https://portal.example.com/engine",
+			ExternalSignOutURL: "https://portal.example.com/signout",
+		},
 	})
 	login := httptest.NewRecorder()
 	logout := httptest.NewRecorder()

@@ -11,6 +11,28 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countImportErrorsFiltered = `-- name: CountImportErrorsFiltered :one
+SELECT count(*)
+FROM import_errors e
+JOIN tenants t ON t.id = e.tenant_id
+WHERE t.name = $1
+  AND ($2::text IS NULL OR e.filename = $2 OR e.filename ILIKE '%' || $2 || '%')
+  AND ($3::text IS NULL OR e.bundle_name = $3)
+`
+
+type CountImportErrorsFilteredParams struct {
+	Tenant     string  `json:"tenant"`
+	Filename   *string `json:"filename"`
+	BundleName *string `json:"bundle_name"`
+}
+
+func (q *Queries) CountImportErrorsFiltered(ctx context.Context, arg CountImportErrorsFilteredParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countImportErrorsFiltered, arg.Tenant, arg.Filename, arg.BundleName)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteImportError = `-- name: DeleteImportError :exec
 DELETE FROM import_errors
 WHERE tenant_id = (SELECT id FROM tenants WHERE name = $1)
@@ -52,6 +74,65 @@ func (q *Queries) ListImportErrors(ctx context.Context, tenant string) ([]ListIm
 	items := []ListImportErrorsRow{}
 	for rows.Next() {
 		var i ListImportErrorsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Filename,
+			&i.Stacktrace,
+			&i.BundleName,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listImportErrorsFiltered = `-- name: ListImportErrorsFiltered :many
+SELECT e.id, e.filename, e.stacktrace, e.bundle_name, e.created_at
+FROM import_errors e
+JOIN tenants t ON t.id = e.tenant_id
+WHERE t.name = $3
+  AND ($4::text IS NULL OR e.filename = $4 OR e.filename ILIKE '%' || $4 || '%')
+  AND ($5::text IS NULL OR e.bundle_name = $5)
+ORDER BY e.created_at DESC
+LIMIT $1 OFFSET $2
+`
+
+type ListImportErrorsFilteredParams struct {
+	Limit      int32   `json:"limit"`
+	Offset     int32   `json:"offset"`
+	Tenant     string  `json:"tenant"`
+	Filename   *string `json:"filename"`
+	BundleName *string `json:"bundle_name"`
+}
+
+type ListImportErrorsFilteredRow struct {
+	ID         pgtype.UUID        `json:"id"`
+	Filename   string             `json:"filename"`
+	Stacktrace string             `json:"stacktrace"`
+	BundleName *string            `json:"bundle_name"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) ListImportErrorsFiltered(ctx context.Context, arg ListImportErrorsFilteredParams) ([]ListImportErrorsFilteredRow, error) {
+	rows, err := q.db.Query(ctx, listImportErrorsFiltered,
+		arg.Limit,
+		arg.Offset,
+		arg.Tenant,
+		arg.Filename,
+		arg.BundleName,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListImportErrorsFilteredRow{}
+	for rows.Next() {
+		var i ListImportErrorsFilteredRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Filename,

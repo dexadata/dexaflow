@@ -72,6 +72,7 @@ type plan struct {
 	Clear    *clearParams `json:"c,omitempty"`
 	Expect   []planTI     `json:"e,omitempty"` // clear: the preview the user saw
 	Schedule string       `json:"s,omitempty"` // unpause: the schedule the user saw
+	Queued   int          `json:"q,omitempty"` // unpause: the queued runs the user saw
 	Caller   string       `json:"w"`           // callerKey of whoever planned it
 	Expires  int64        `json:"x"`           // unix seconds
 }

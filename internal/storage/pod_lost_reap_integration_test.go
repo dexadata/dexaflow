@@ -4,6 +4,7 @@ package storage_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,7 +40,7 @@ func TestListRunningTasksIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cands, err := sched.ListRunningTasks(ctx, 0)
+	cands, err := sched.ListRunningTasks(ctx, 0, executor.ReapCursor{})
 	if err != nil {
 		t.Fatalf("ListRunningTasks: %v", err)
 	}
@@ -78,7 +79,7 @@ func TestMarkTaskPodLostIntegration(t *testing.T) {
 	if err := sched.ApplyTransition(ctx, runUUID, "t", domain.TaskStateRunning); err != nil {
 		t.Fatal(err)
 	}
-	cands, _ := sched.ListRunningTasks(ctx, 0)
+	cands, _ := sched.ListRunningTasks(ctx, 0, executor.ReapCursor{})
 	c := findPodLostCandidate(cands, runUUID, "t")
 	if c == nil {
 		t.Fatalf("expected a running candidate")
@@ -96,7 +97,7 @@ func TestMarkTaskPodLostIntegration(t *testing.T) {
 		t.Errorf("after MarkTaskPodLost, TI state = %+v, want failed", tis)
 	}
 	// A failed TI is no longer in the running candidate set.
-	cands, _ = sched.ListRunningTasks(ctx, 0)
+	cands, _ = sched.ListRunningTasks(ctx, 0, executor.ReapCursor{})
 	if findPodLostCandidate(cands, runUUID, "t") != nil {
 		t.Errorf("a failed TI must no longer appear in ListRunningTasks")
 	}
@@ -142,7 +143,7 @@ func TestListRunningTasksExcludesWarmAttemptsIntegration(t *testing.T) {
 		t.Fatalf("BindWarmAttempt: %v", err)
 	}
 
-	cands, err := sched.ListRunningTasks(ctx, 0)
+	cands, err := sched.ListRunningTasks(ctx, 0, executor.ReapCursor{})
 	if err != nil {
 		t.Fatalf("ListRunningTasks: %v", err)
 	}
@@ -175,14 +176,14 @@ func TestListRunningTasksAppliesGraceBeforeLimitIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cands, err := sched.ListRunningTasks(ctx, time.Hour)
+	cands, err := sched.ListRunningTasks(ctx, time.Hour, executor.ReapCursor{})
 	if err != nil {
 		t.Fatalf("ListRunningTasks: %v", err)
 	}
 	if findPodLostCandidate(cands, runUUID, "fresh") != nil {
 		t.Errorf("an attempt running for less than the grace period must not be listed")
 	}
-	cands, err = sched.ListRunningTasks(ctx, 0)
+	cands, err = sched.ListRunningTasks(ctx, 0, executor.ReapCursor{})
 	if err != nil {
 		t.Fatalf("ListRunningTasks: %v", err)
 	}
@@ -221,7 +222,7 @@ func TestListRunningTasksReportsHeartbeatIntegration(t *testing.T) {
 	if err := sched.ApplyTransition(ctx, runUUID, "t", domain.TaskStateRunning); err != nil {
 		t.Fatal(err)
 	}
-	cands, err := sched.ListRunningTasks(ctx, 0)
+	cands, err := sched.ListRunningTasks(ctx, 0, executor.ReapCursor{})
 	if err != nil {
 		t.Fatalf("ListRunningTasks: %v", err)
 	}
@@ -232,11 +233,53 @@ func TestListRunningTasksReportsHeartbeatIntegration(t *testing.T) {
 	if c.Heartbeated {
 		t.Fatalf("a TI that never heartbeated must report Heartbeated=false")
 	}
-	if err := exec.RecordHeartbeat(ctx, auth.AgentIdentity{RunID: runUUID, TaskID: "t", TryNumber: 1}); err != nil {
+	if err := exec.RecordHeartbeat(ctx, auth.AgentIdentity{TenantID: defaultTenantID(), RunID: runUUID, TaskID: "t", TryNumber: 1}); err != nil {
 		t.Fatalf("RecordHeartbeat: %v", err)
 	}
-	cands, _ = sched.ListRunningTasks(ctx, 0)
+	cands, _ = sched.ListRunningTasks(ctx, 0, executor.ReapCursor{})
 	if c = findPodLostCandidate(cands, runUUID, "t"); c == nil || !c.Heartbeated {
 		t.Fatalf("a TI that heartbeated must report Heartbeated=true: %+v", c)
+	}
+}
+
+// TestMarkTaskPodLostOOMKilledIntegration: the warm-worker-lost reaper's
+// OOMKilled variant (#1218) is the same infra mark as MarkTaskPodLost (failed,
+// last_failure_kind infra, provisional on Kubernetes, fenced on try and epoch),
+// with a message that names the OOM kill and still starts with "pod_lost:", the
+// prefix the infra override reads the mark from.
+func TestMarkTaskPodLostOOMKilledIntegration(t *testing.T) {
+	f := seedStaleHeartbeat(t, "podlost_oom")
+	f.sched.SetProvisionalInfraMarks(true)
+	try, epoch := f.tryNumber(t), f.attemptEpoch(t)
+
+	if ok, err := f.sched.MarkTaskPodLostOOMKilled(f.ctx, f.tiID, try, epoch+1); err != nil || ok {
+		t.Fatalf("a mark computed for another epoch must be a no-op: ok=%v err=%v", ok, err)
+	}
+	if ok, err := f.sched.MarkTaskPodLostOOMKilled(f.ctx, f.tiID, try, epoch); err != nil || !ok {
+		t.Fatalf("MarkTaskPodLostOOMKilled ok=%v err=%v", ok, err)
+	}
+	var (
+		state, msg string
+		kind       *string
+	)
+	if err := f.pg.Pool.QueryRow(f.ctx,
+		"SELECT state::text, COALESCE(error_message,''), last_failure_kind FROM task_instances WHERE id=$1::uuid",
+		f.tiID).Scan(&state, &msg, &kind); err != nil {
+		t.Fatalf("select ti: %v", err)
+	}
+	if state != string(domain.TaskStateFailed) {
+		t.Errorf("state = %q, want failed", state)
+	}
+	if !strings.HasPrefix(msg, "pod_lost:") || !strings.Contains(msg, "OOMKilled") {
+		t.Errorf("error_message = %q, want a pod_lost reason naming OOMKilled", msg)
+	}
+	if kind == nil || *kind != "infra" {
+		t.Errorf("last_failure_kind = %v, want infra (ADR 0051, ADR 0058 D7)", kind)
+	}
+	if at := f.confirmedAt(t); at != nil {
+		t.Errorf("the mark must stay provisional on Kubernetes, got confirmed at %v", at)
+	}
+	if ok, err := f.sched.MarkTaskPodLostOOMKilled(f.ctx, f.tiID, try, epoch); err != nil || ok {
+		t.Errorf("a second mark must be a no-op: ok=%v err=%v", ok, err)
 	}
 }

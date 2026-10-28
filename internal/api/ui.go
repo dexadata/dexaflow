@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/dexadata/dexaflow/internal/auth"
 )
@@ -80,11 +82,11 @@ const DefaultUIAutoRefreshIntervalSeconds = 30
 // autoRefreshIntervalSecs is the SPA's polling cadence for DAG / DagRun /
 // task-instance state refresh (non-positive values fall back to the
 // production default).
-func registerUI(r gin.IRouter, tokenTTLSecs int, instanceName string, autoRefreshIntervalSecs int, theme json.RawMessage) {
+func registerUI(r gin.IRouter, tokenTTLSecs int, instanceName string, autoRefreshIntervalSecs int, theme json.RawMessage, session sessionCookieSpec) {
 	r.GET("/ui/config", uiConfigHandler(instanceName, autoRefreshIntervalSecs, theme))
 	r.GET("/ui/auth/me", uiMeHandler())
 	r.GET("/ui/auth/menus", uiMenusHandler())
-	r.POST("/ui/auth/token", uiTokenHandler(tokenTTLSecs))
+	r.POST("/ui/auth/token", uiTokenHandler(tokenTTLSecs, session))
 }
 
 // uiConfigHandler returns the UI ConfigResponse (Airflow 3.2.1 shape). It keeps
@@ -135,25 +137,41 @@ func themeOrNull(theme json.RawMessage) any {
 
 // uiTokenHandler implements POST /ui/auth/token: it re-mints a bearer token for
 // an already-authenticated principal. Per the 3.2.1 spec the body carries no
-// credentials (only an optional token_type), so this is NOT the login endpoint
-// — credential login is the simple-auth-manager POST /auth/token. Without a
-// valid bearer it returns 401. The response is GenerateTokenResponse
+// credentials (only an optional token_type), so this is NOT the login endpoint,
+// credential login is the simple-auth-manager POST /auth/token. Without a
+// valid bearer or session cookie it returns 401. The response is GenerateTokenResponse
 // (access_token, token_type, expires_in_seconds). See docs/ui-compatibility.md.
-func uiTokenHandler(tokenTTLSecs int) gin.HandlerFunc {
+func uiTokenHandler(tokenTTLSecs int, session sessionCookieSpec) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if _, ok := UserFromContext(c); !ok {
 			AbortProblem(c, http.StatusUnauthorized, "unauthorized", "no authenticated user")
 			return
 		}
-		token := bearerToken(c.GetHeader("Authorization"))
+		var token string
+		for _, cand := range candidateTokens(c, session.cookieName()) {
+			if cand != "" {
+				token = cand
+				break
+			}
+		}
 		if token == "" {
 			AbortProblem(c, http.StatusUnauthorized, "unauthorized", "no bearer token")
 			return
 		}
+		expiresIn := tokenTTLSecs
+		var claims jwt.RegisteredClaims
+		if _, _, err := jwt.NewParser().ParseUnverified(token, &claims); err == nil && claims.ExpiresAt != nil {
+			rem := int(time.Until(claims.ExpiresAt.Time).Seconds())
+			if rem >= 0 {
+				expiresIn = rem
+			} else {
+				expiresIn = 0
+			}
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"access_token":       token,
 			"token_type":         "bearer",
-			"expires_in_seconds": tokenTTLSecs,
+			"expires_in_seconds": expiresIn,
 		})
 	}
 }
@@ -196,7 +214,7 @@ func uiMenusHandler() gin.HandlerFunc {
 // writes). An unmatched /api path is a 404. Any other GET falls back to the SPA
 // shell so the React router can handle client-side routes; without a UI server,
 // or for non-GET, it is a 404.
-func uiNoRoute(uiSrv UIServer, authn auth.Authenticator, devNoAuth bool) gin.HandlerFunc {
+func uiNoRoute(uiSrv UIServer, authn auth.Authenticator, devNoAuth bool, session sessionCookieSpec, hosts *hostBinding) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
 		switch {
@@ -219,9 +237,16 @@ func uiNoRoute(uiSrv UIServer, authn auth.Authenticator, devNoAuth bool) gin.Han
 			// (which 401) before redirecting — flashing the whole UI and lighting
 			// the log with 401s. Redirecting here keeps the shell off-screen until
 			// there is a valid session. Skipped under dev no-auth.
-			if !devNoAuth && !shellSessionValid(c, authn) {
-				c.Redirect(http.StatusFound, "/api/v2/auth/login?next="+url.QueryEscape(path))
-				return
+			//
+			// Fail-closed: only a verified session reaches the shell. A session
+			// that could not be checked because the store was unreachable gets a
+			// static outage page instead of the login redirect (#1099), since the
+			// login cannot work during the outage either.
+			if !devNoAuth {
+				if verdict := shellSession(c, authn, session.cookieName(), hosts); verdict != shellVerified {
+					refuseShell(c, verdict, session, hosts, path)
+					return
+				}
 			}
 			uiSrv.Index(c.Writer, "/")
 			return
@@ -230,20 +255,66 @@ func uiNoRoute(uiSrv UIServer, authn auth.Authenticator, devNoAuth bool) gin.Han
 	}
 }
 
-// shellSessionValid reports whether the request carries a token (bearer or the
-// _token cookie) that authenticates — the same check JWTAuth applies to data
-// routes, reused to gate the SPA shell so the gate and the data plane agree on
-// what "logged in" means.
-func shellSessionValid(c *gin.Context, authn auth.Authenticator) bool {
-	if authn == nil {
-		return false
+// shellVerdict is what the SPA shell gate learned about a request's session.
+type shellVerdict int
+
+const (
+	// shellNoSession: no candidate token authenticated, and none failed for
+	// want of the store. The visitor signs in.
+	shellNoSession shellVerdict = iota
+	// shellUnverified: no candidate authenticated, and at least one could not
+	// be checked because the store was unreachable (authUnavailable).
+	shellUnverified
+	// shellVerified: a candidate authenticated. Only this serves the shell.
+	shellVerified
+)
+
+// refuseShell answers a SPA route whose session was not verified: the outage
+// page when it could not be checked, the login redirect otherwise.
+func refuseShell(c *gin.Context, verdict shellVerdict, session sessionCookieSpec, hosts *hostBinding, path string) {
+	if verdict == shellUnverified {
+		// The cookie is kept: it was never judged, and clearing it would
+		// sign out a session that may be valid once the store answers.
+		serveOutagePage(c)
+		return
 	}
-	for _, token := range candidateTokens(c) {
+	if hosts != nil {
+		// The cookie may be a valid session of another tenant
+		// than this host's (#1463); it can never work here.
+		clearSessionCookie(c, session)
+	}
+	c.Redirect(http.StatusFound, "/api/v2/auth/login?next="+url.QueryEscape(path))
+}
+
+// shellSession reports what the request's tokens (bearer or the session cookie
+// named cookieName) say about its session: the same check JWTAuth applies to
+// data routes, reused to gate the SPA shell so the gate and the data plane
+// agree on what "logged in" means. That includes the host binding (#1463): a
+// session cookie of another tenant than the host's does not count. And, like
+// JWTAuth, a candidate that could not be checked decides the answer only when
+// no other candidate authenticates.
+func shellSession(c *gin.Context, authn auth.Authenticator, cookieName string, hosts *hostBinding) shellVerdict {
+	if authn == nil {
+		return shellNoSession
+	}
+	verdict := shellNoSession
+	fromHeader := bearerToken(c.GetHeader("Authorization")) != ""
+	for i, token := range candidateTokens(c, cookieName) {
+		u, err := authn.Authenticate(c.Request.Context(), token)
+		if err != nil {
+			if authUnavailable(err) {
+				verdict = shellUnverified
+			}
+			continue
+		}
 		// Same rule as JWTAuth: a principal with no tenant is no session, so
 		// the shell gate and the data plane never disagree about it.
-		if u, err := authn.Authenticate(c.Request.Context(), token); err == nil && u.TenantID != "" {
-			return true
+		if u.TenantID == "" {
+			continue
+		}
+		if (fromHeader && i == 0) || hosts.allows(c, u.TenantID) {
+			return shellVerified
 		}
 	}
-	return false
+	return verdict
 }

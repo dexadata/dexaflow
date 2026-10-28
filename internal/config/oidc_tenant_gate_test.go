@@ -117,7 +117,7 @@ func TestValidateOIDCNamesEveryMissingKeyAtOnce(t *testing.T) {
 //
 // tenant_claims is tagged mapstructure:"-" and is absent from serverDefaults, so
 // viper never binds it: decodeDottedOIDCMaps reads it out of the YAML config file
-// named by LEOFLOW_CONFIG, and that is its ONLY load path. An operator running
+// named by DEXAFLOW_CONFIG, and that is its ONLY load path. An operator running
 // from env vars alone (the Helm chart ships no server config file) can therefore
 // satisfy every other OIDC key and still never satisfy this one by the route they
 // are using. An error that only names the key sends them to set an env var that
@@ -130,7 +130,7 @@ func TestValidateOIDCTenantPinErrorSaysWhereTheMapComesFrom(t *testing.T) {
 	if err == nil {
 		t.Fatal("Validate() = nil with tenant_claims unset, want error")
 	}
-	if !strings.Contains(err.Error(), "LEOFLOW_CONFIG") {
-		t.Errorf("Validate() = %v, want it to name LEOFLOW_CONFIG: the map has no env-var route", err)
+	if !strings.Contains(err.Error(), "DEXAFLOW_CONFIG") {
+		t.Errorf("Validate() = %v, want it to name DEXAFLOW_CONFIG: the map has no env-var route", err)
 	}
 }

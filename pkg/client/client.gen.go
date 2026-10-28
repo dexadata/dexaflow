@@ -17,6 +17,24 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for CreateAPITokenRequestScope.
+const (
+	Deploy CreateAPITokenRequestScope = "deploy"
+	Read   CreateAPITokenRequestScope = "read"
+)
+
+// Valid indicates whether the value is a known member of the CreateAPITokenRequestScope enum.
+func (e CreateAPITokenRequestScope) Valid() bool {
+	switch e {
+	case Deploy:
+		return true
+	case Read:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DAGRunRunType.
 const (
 	DAGRunRunTypeBackfill         DAGRunRunType = "backfill"
@@ -65,11 +83,30 @@ func (e DAGRunState) Valid() bool {
 	}
 }
 
+// Defines values for TaskExecutionMode.
+const (
+	TaskExecutionModeDedicated TaskExecutionMode = "dedicated"
+	TaskExecutionModeWarm      TaskExecutionMode = "warm"
+)
+
+// Valid indicates whether the value is a known member of the TaskExecutionMode enum.
+func (e TaskExecutionMode) Valid() bool {
+	switch e {
+	case TaskExecutionModeDedicated:
+		return true
+	case TaskExecutionModeWarm:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TaskInstanceState.
 const (
 	TaskInstanceStateFailed         TaskInstanceState = "failed"
 	TaskInstanceStateNone           TaskInstanceState = "none"
 	TaskInstanceStateQueued         TaskInstanceState = "queued"
+	TaskInstanceStateRemoved        TaskInstanceState = "removed"
 	TaskInstanceStateRunning        TaskInstanceState = "running"
 	TaskInstanceStateScheduled      TaskInstanceState = "scheduled"
 	TaskInstanceStateSkipped        TaskInstanceState = "skipped"
@@ -87,6 +124,8 @@ func (e TaskInstanceState) Valid() bool {
 		return true
 	case TaskInstanceStateQueued:
 		return true
+	case TaskInstanceStateRemoved:
+		return true
 	case TaskInstanceStateRunning:
 		return true
 	case TaskInstanceStateScheduled:
@@ -98,6 +137,63 @@ func (e TaskInstanceState) Valid() bool {
 	case TaskInstanceStateUpForRetry:
 		return true
 	case TaskInstanceStateUpstreamFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TaskInstanceStateUpdateNewState.
+const (
+	TaskInstanceStateUpdateNewStateFailed  TaskInstanceStateUpdateNewState = "failed"
+	TaskInstanceStateUpdateNewStateSkipped TaskInstanceStateUpdateNewState = "skipped"
+	TaskInstanceStateUpdateNewStateSuccess TaskInstanceStateUpdateNewState = "success"
+)
+
+// Valid indicates whether the value is a known member of the TaskInstanceStateUpdateNewState enum.
+func (e TaskInstanceStateUpdateNewState) Valid() bool {
+	switch e {
+	case TaskInstanceStateUpdateNewStateFailed:
+		return true
+	case TaskInstanceStateUpdateNewStateSkipped:
+		return true
+	case TaskInstanceStateUpdateNewStateSuccess:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WarmPoolReportPreviousPool.
+const (
+	WarmPoolReportPreviousPoolDraining WarmPoolReportPreviousPool = "draining"
+)
+
+// Valid indicates whether the value is a known member of the WarmPoolReportPreviousPool enum.
+func (e WarmPoolReportPreviousPool) Valid() bool {
+	switch e {
+	case WarmPoolReportPreviousPoolDraining:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WarmPoolReportState.
+const (
+	WarmPoolReportStateNone WarmPoolReportState = "none"
+	WarmPoolReportStateOff  WarmPoolReportState = "off"
+	WarmPoolReportStateOn   WarmPoolReportState = "on"
+)
+
+// Valid indicates whether the value is a known member of the WarmPoolReportState enum.
+func (e WarmPoolReportState) Valid() bool {
+	switch e {
+	case WarmPoolReportStateNone:
+		return true
+	case WarmPoolReportStateOff:
+		return true
+	case WarmPoolReportStateOn:
 		return true
 	default:
 		return false
@@ -128,6 +224,48 @@ func (e ListDagRunsParamsState) Valid() bool {
 	}
 }
 
+// APIToken defines model for APIToken.
+type APIToken struct {
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Id        string    `json:"id"`
+
+	// LastUsedAt When the token last authenticated a request, recorded at most once every five minutes; null when it was never used.
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	Name       string     `json:"name"`
+
+	// OwnerEmail Email of the token's owner (in lists).
+	OwnerEmail *string  `json:"owner_email,omitempty"`
+	Scopes     []string `json:"scopes"`
+}
+
+// APITokenCollection defines model for APITokenCollection.
+type APITokenCollection struct {
+	ApiTokens    *[]APIToken `json:"api_tokens,omitempty"`
+	TotalEntries *int        `json:"total_entries,omitempty"`
+}
+
+// BuildInfo Dexaflow. Where a DAG version was built (#1702), as the register claimed it, not verified. Every field is optional and absent when it was not sent.
+type BuildInfo struct {
+	// BaseImage The base image the DAG image was built from; it carries the task agent.
+	BaseImage *string `json:"base_image,omitempty"`
+
+	// Builder The builder that produced the image.
+	Builder *string `json:"builder,omitempty"`
+
+	// CliVersion The version of the CLI that built and registered the version.
+	CliVersion *string `json:"cli_version,omitempty"`
+
+	// Commit The git commit of the sources.
+	Commit *string `json:"commit,omitempty"`
+
+	// PipelineUrl The CI pipeline run that built the version (http or https URL).
+	PipelineUrl *string `json:"pipeline_url,omitempty"`
+
+	// Repo The repository of the sources (http or https URL).
+	Repo *string `json:"repo,omitempty"`
+}
+
 // ClearTaskInstancesRequest defines model for ClearTaskInstancesRequest.
 type ClearTaskInstancesRequest struct {
 	DagRunId *string `json:"dag_run_id,omitempty"`
@@ -148,9 +286,17 @@ type ClearTaskInstancesRequest struct {
 	// ResetDagRuns Re-open the run so the scheduler looks at it again. Without it a terminal run stays terminal and the cleared task instance is never scheduled.
 	ResetDagRuns *bool `json:"reset_dag_runs,omitempty"`
 
-	// RunOnLatestVersion Which version the re-run executes. false (the default, matching Apache Airflow) keeps the version the run was created with, so the re-run executes the image that produced the original attempt. true re-binds the run to the DAG's current registered version, so the re-run picks up the newest image and config — use it to re-run a failed task against a fix without creating a new run.
+	// RunOnLatestVersion Which version the re-run executes. false (the default, matching Apache Airflow) keeps the version the run was created with, so the re-run executes the image that produced the original attempt. true re-binds the run to the DAG's current registered version, so the re-run picks up the newest image and config. Use it to re-run a failed task against a fix without creating a new run. Only a finished run (success or failed, with no task instance queued or running) moves: the clear creates the task instances of the tasks the version adds and marks removed the ones of the tasks it dropped. A run that has not finished keeps its version, as in Airflow, and the response lists it in run_on_latest_version_not_applied with the reason (ADR 0086).
 	RunOnLatestVersion *bool     `json:"run_on_latest_version,omitempty"`
 	TaskIds            *[]string `json:"task_ids,omitempty"`
+}
+
+// ClearVersionNotApplied Dexaflow-only. The runs a clear with run_on_latest_version keeps on their own version, each with the reason (ADR 0086): only a finished run with no task instance queued or running moves to the current version. The clear still applies to these runs, on their version. Left out when every run moved or the option was not asked, and on every response other than the two clear routes.
+type ClearVersionNotApplied = []struct {
+	DagRunId string `json:"dag_run_id"`
+
+	// Reason Why the run keeps its version, for example "the run is running: only a finished run moves to the current version".
+	Reason string `json:"reason"`
 }
 
 // ComponentHealth defines model for ComponentHealth.
@@ -167,10 +313,13 @@ type Connection struct {
 	ConnectionId string  `json:"connection_id"`
 	Description  *string `json:"description,omitempty"`
 	Extra        *string `json:"extra,omitempty"`
-	Host         *string `json:"host,omitempty"`
-	Login        *string `json:"login,omitempty"`
-	Port         *int    `json:"port,omitempty"`
-	Schema       *string `json:"schema,omitempty"`
+
+	// ExtraUnreadable Present and true in a listing when the extra is encrypted with a secret key the server does not have (for example after a key rotation that dropped the old key). The extra is then null, so a client that parses it as JSON still can. Reading the connection alone, or updating it, answers 500 with a message naming it, and the stored extra is kept.
+	ExtraUnreadable *bool   `json:"extra_unreadable,omitempty"`
+	Host            *string `json:"host,omitempty"`
+	Login           *string `json:"login,omitempty"`
+	Port            *int    `json:"port,omitempty"`
+	Schema          *string `json:"schema,omitempty"`
 }
 
 // ConnectionBody Connection create/replace payload. connection_id is required on POST (taken from the path on PATCH). password and extra are write-only. Every optional field is tri-state: omit the key to preserve the stored value (a partial write never wipes a field it does not mention, so the unreadable password survives a `--host`-only edit), send an empty string to clear the field, or send a value to set it. A password equal to the mask `***`, and any key inside `extra` whose value is exactly `***`, is treated as "unchanged" — so re-submitting a connection read back from GET (whose secrets are masked) never overwrites the real secret with the mask.
@@ -192,6 +341,21 @@ type ConnectionCollection struct {
 	TotalEntries *int          `json:"total_entries,omitempty"`
 }
 
+// CreateAPITokenRequest defines model for CreateAPITokenRequest.
+type CreateAPITokenRequest struct {
+	// ExpiresInSeconds Lifetime of the token. Defaults to 7776000 (90 days).
+	ExpiresInSeconds *int64 `json:"expires_in_seconds,omitempty"`
+
+	// Name A name for the token, unique among the caller's live tokens: 1 to 64 letters, digits, dots, dashes or underscores, starting with a letter or digit.
+	Name string `json:"name"`
+
+	// Scope deploy registers versions, sets the current version and reads DAGs; read only reads.
+	Scope CreateAPITokenRequestScope `json:"scope"`
+}
+
+// CreateAPITokenRequestScope deploy registers versions, sets the current version and reads DAGs; read only reads.
+type CreateAPITokenRequestScope string
+
 // CreateUserRequest defines model for CreateUserRequest.
 type CreateUserRequest struct {
 	// Email Login email. Normalized to lowercase, so it is unique case-insensitively within the tenant.
@@ -202,6 +366,24 @@ type CreateUserRequest struct {
 
 	// Roles Names of existing roles to grant; omit or empty to grant none.
 	Roles *[]string `json:"roles,omitempty"`
+}
+
+// CreatedAPIToken defines model for CreatedAPIToken.
+type CreatedAPIToken struct {
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Id        string    `json:"id"`
+
+	// LastUsedAt When the token last authenticated a request, recorded at most once every five minutes; null when it was never used.
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	Name       string     `json:"name"`
+
+	// OwnerEmail Email of the token's owner (in lists).
+	OwnerEmail *string  `json:"owner_email,omitempty"`
+	Scopes     []string `json:"scopes"`
+
+	// Token The token, starting with dxf_. It is shown only in this response and cannot be read again.
+	Token string `json:"token"`
 }
 
 // DAG defines model for DAG.
@@ -242,9 +424,12 @@ type DAGRun struct {
 	LogicalDate       *time.Time              `json:"logical_date,omitempty"`
 	Note              *string                 `json:"note,omitempty"`
 	QueuedAt          *time.Time              `json:"queued_at,omitempty"`
-	RunType           *DAGRunRunType          `json:"run_type,omitempty"`
-	StartDate         *time.Time              `json:"start_date,omitempty"`
-	State             *DAGRunState            `json:"state,omitempty"`
+
+	// RunOnLatestVersionNotApplied Dexaflow-only. The runs a clear with run_on_latest_version keeps on their own version, each with the reason (ADR 0086): only a finished run with no task instance queued or running moves to the current version. The clear still applies to these runs, on their version. Left out when every run moved or the option was not asked, and on every response other than the two clear routes.
+	RunOnLatestVersionNotApplied *ClearVersionNotApplied `json:"run_on_latest_version_not_applied,omitempty"`
+	RunType                      *DAGRunRunType          `json:"run_type,omitempty"`
+	StartDate                    *time.Time              `json:"start_date,omitempty"`
+	State                        *DAGRunState            `json:"state,omitempty"`
 }
 
 // DAGRunRunType defines model for DAGRun.RunType.
@@ -253,10 +438,34 @@ type DAGRunRunType string
 // DAGRunState defines model for DAGRun.State.
 type DAGRunState string
 
+// DAGRunClearRequest defines model for DAGRunClearRequest.
+type DAGRunClearRequest struct {
+	// DryRun Return the task instances that WOULD be cleared, without clearing them. Defaults to true, matching Apache Airflow. Send false to execute.
+	DryRun *bool `json:"dry_run,omitempty"`
+
+	// Note Accepted and not stored (run notes are not editable yet).
+	Note *string `json:"note,omitempty"`
+
+	// OnlyFailed Restrict the clear to the run's task instances in a failed state. false (the default, matching Apache Airflow) takes every task instance of the run.
+	OnlyFailed *bool `json:"only_failed,omitempty"`
+
+	// OnlyNew Not supported. Sending true is refused with 400: Dexaflow cannot yet tell which tasks a newer DAG version added.
+	OnlyNew *bool `json:"only_new,omitempty"`
+
+	// RunOnLatestVersion Which version the re-run executes. Unset or false keeps the version the run was created with. true moves a finished run (success or failed, with no task instance queued or running) to the DAG's current registered version, creating the task instances of the tasks that version adds and marking removed the ones of the tasks it dropped. A run that has not finished keeps its version, as in Airflow; the response then lists it in run_on_latest_version_not_applied with the reason (ADR 0086).
+	RunOnLatestVersion *bool `json:"run_on_latest_version,omitempty"`
+}
+
 // DAGRunCollection defines model for DAGRunCollection.
 type DAGRunCollection struct {
-	DagRuns      *[]DAGRun `json:"dag_runs,omitempty"`
-	TotalEntries *int      `json:"total_entries,omitempty"`
+	DagRuns *[]DAGRun `json:"dag_runs,omitempty"`
+
+	// NextCursor Cursor of the next page. Present only when the request carried cursor and a next page exists.
+	NextCursor *string `json:"next_cursor,omitempty"`
+
+	// PreviousCursor Cursor of the previous page. Present only when the request carried cursor and the page is not the first.
+	PreviousCursor *string `json:"previous_cursor,omitempty"`
+	TotalEntries   *int    `json:"total_entries,omitempty"`
 }
 
 // DAGRunCreate defines model for DAGRunCreate.
@@ -272,25 +481,72 @@ type DAGUpdate struct {
 	IsPaused *bool `json:"is_paused,omitempty"`
 }
 
+// DagCurrentVersionChange defines model for DagCurrentVersionChange.
+type DagCurrentVersionChange struct {
+	// Changed False when the version was already current.
+	Changed bool   `json:"changed"`
+	DagId   string `json:"dag_id"`
+
+	// From The version that was current before; null when none was.
+	From *DagVersion `json:"from"`
+	To   DagVersion  `json:"to"`
+
+	// Warnings What the change let through with a warning (a task that does not fit its size under executor.unit.enforce=warn, an image not pinned by digest under deploy.require_digest=warn). Absent when there is none.
+	Warnings *[]string `json:"warnings,omitempty"`
+}
+
+// DagCurrentVersionRequest Exactly one of version and version_number.
+type DagCurrentVersionRequest struct {
+	// Version The version label (bundle_version).
+	Version       *string `json:"version,omitempty"`
+	VersionNumber *int    `json:"version_number,omitempty"`
+}
+
 // DagSource defines model for DagSource.
 type DagSource struct {
 	// Content The dag.py source text (compiled-spec JSON fallback for pre-source-capture versions).
 	Content        *string `json:"content,omitempty"`
 	DagDisplayName *string `json:"dag_display_name,omitempty"`
 	DagId          *string `json:"dag_id,omitempty"`
-	VersionNumber  *int    `json:"version_number,omitempty"`
+
+	// VersionNumber The version whose source this is.
+	VersionNumber *int `json:"version_number,omitempty"`
+}
+
+// DagSpec A compiled dag.json, as described by docs/api/dag-schema.json.
+type DagSpec struct {
+	DagId                string                   `json:"dag_id"`
+	DagVersion           string                   `json:"dag_version"`
+	Image                string                   `json:"image"`
+	SchemaVersion        string                   `json:"schema_version"`
+	Tasks                []map[string]interface{} `json:"tasks"`
+	AdditionalProperties map[string]interface{}   `json:"-"`
 }
 
 // DagVersion defines model for DagVersion.
 type DagVersion struct {
-	BundleName     *string    `json:"bundle_name,omitempty"`
-	BundleUrl      *string    `json:"bundle_url,omitempty"`
-	BundleVersion  *string    `json:"bundle_version,omitempty"`
-	CreatedAt      *time.Time `json:"created_at,omitempty"`
-	DagDisplayName *string    `json:"dag_display_name,omitempty"`
-	DagId          *string    `json:"dag_id,omitempty"`
-	Id             *string    `json:"id,omitempty"`
-	VersionNumber  *int       `json:"version_number,omitempty"`
+	// BuildInfo Dexaflow. Where the version was built, as its register sent it in the build_* parameters; null when it sent none. Served by the dagVersions routes and the currentVersion answer; the dag_version copies embedded in task instance, run and DAG details answers leave it out.
+	BuildInfo     *BuildInfo `json:"build_info,omitempty"`
+	BundleName    *string    `json:"bundle_name,omitempty"`
+	BundleUrl     *string    `json:"bundle_url,omitempty"`
+	BundleVersion *string    `json:"bundle_version,omitempty"`
+	CreatedAt     *time.Time `json:"created_at,omitempty"`
+
+	// CreatedBy Dexaflow. Id of the user who registered the version (not an email, since every reader of the DAG sees it); null when none was recorded.
+	CreatedBy      *string `json:"created_by,omitempty"`
+	DagDisplayName *string `json:"dag_display_name,omitempty"`
+	DagId          *string `json:"dag_id,omitempty"`
+	Id             *string `json:"id,omitempty"`
+
+	// Image Dexaflow. The image the version runs, pinned by digest when the deploy resolved one.
+	Image *string `json:"image,omitempty"`
+
+	// IsCurrent Dexaflow. Whether new runs are created with this version.
+	IsCurrent *bool `json:"is_current,omitempty"`
+
+	// SpecHash Dexaflow. The canonical hash of the version's dag.json.
+	SpecHash      *string `json:"spec_hash,omitempty"`
+	VersionNumber *int    `json:"version_number,omitempty"`
 }
 
 // DagVersionCollection defines model for DagVersionCollection.
@@ -308,6 +564,15 @@ type Error struct {
 	Type     *string `json:"type,omitempty"`
 }
 
+// ExecutionReport Where the version's tasks run (Dexaflow), from the same decision dispatch places an attempt with: on a warm worker of the version (warm pools, ADR 0058) or on a dedicated pod. Sent by the register and its dry run. A task is warm-eligible; it still takes a dedicated pod when no warm worker is free. A task the dispatcher would offer to a warm worker is reported dedicated when no warm worker of its version can exist (no idle worker kept, or a server that runs none).
+type ExecutionReport struct {
+	Pool  WarmPoolReport  `json:"pool"`
+	Tasks []TaskExecution `json:"tasks"`
+
+	// WarmPools execution.warm_pools_enabled on the server.
+	WarmPools bool `json:"warm_pools"`
+}
+
 // ExecutorInfo defines model for ExecutorInfo.
 type ExecutorInfo struct {
 	AgentControlPlaneAddr *string   `json:"agent_control_plane_addr,omitempty"`
@@ -323,6 +588,18 @@ type HealthInfo struct {
 	Scheduler    *ComponentHealth `json:"scheduler,omitempty"`
 	Triggerer    *ComponentHealth `json:"triggerer,omitempty"`
 }
+
+// TaskExecution defines model for TaskExecution.
+type TaskExecution struct {
+	Mode TaskExecutionMode `json:"mode"`
+
+	// Reason Why the task takes a dedicated pod, absent when warm-eligible: warm pools off, staging enabled, source mode, service_account set, a placement field set (node_selector set, tolerations set, ...), a size larger than a warm pod, no idle warm workers kept for this DAG, or a server that runs no warm workers.
+	Reason *string `json:"reason,omitempty"`
+	TaskId string  `json:"task_id"`
+}
+
+// TaskExecutionMode defines model for TaskExecution.Mode.
+type TaskExecutionMode string
 
 // TaskInstance defines model for TaskInstance.
 type TaskInstance struct {
@@ -351,8 +628,49 @@ type TaskInstanceState string
 
 // TaskInstanceCollection defines model for TaskInstanceCollection.
 type TaskInstanceCollection struct {
-	TaskInstances *[]TaskInstance `json:"task_instances,omitempty"`
-	TotalEntries  *int            `json:"total_entries,omitempty"`
+	// NextCursor Cursor of the next page. Present only when the request carried cursor and a next page exists.
+	NextCursor *string `json:"next_cursor,omitempty"`
+
+	// PreviousCursor Cursor of the previous page. Present only when the request carried cursor and the page is not the first.
+	PreviousCursor *string `json:"previous_cursor,omitempty"`
+
+	// RunOnLatestVersionNotApplied Dexaflow-only. The runs a clear with run_on_latest_version keeps on their own version, each with the reason (ADR 0086): only a finished run with no task instance queued or running moves to the current version. The clear still applies to these runs, on their version. Left out when every run moved or the option was not asked, and on every response other than the two clear routes.
+	RunOnLatestVersionNotApplied *ClearVersionNotApplied `json:"run_on_latest_version_not_applied,omitempty"`
+	TaskInstances                *[]TaskInstance         `json:"task_instances,omitempty"`
+	TotalEntries                 *int                    `json:"total_entries,omitempty"`
+}
+
+// TaskInstanceStateUpdate defines model for TaskInstanceStateUpdate.
+type TaskInstanceStateUpdate struct {
+	NewState TaskInstanceStateUpdateNewState `json:"new_state"`
+}
+
+// TaskInstanceStateUpdateNewState defines model for TaskInstanceStateUpdate.NewState.
+type TaskInstanceStateUpdateNewState string
+
+// TaskPodsReport What the version's task pods would run as (Dexaflow), sent by the dry run route only, absent from a register. A server that starts no task pods sends run_as_non_root false and no service account.
+type TaskPodsReport struct {
+	// RunAsNonRoot True when task pods refuse an image that runs as root or as a user name rather than a number (executor.run_tasks_as_non_root).
+	RunAsNonRoot bool `json:"run_as_non_root"`
+
+	// ServiceAccounts Each ServiceAccount a task pod of the version would run as (the task's execution.service_account, else executor.task_service_account, else the namespace's default), sorted by name. A dry run looks up at most 8.
+	ServiceAccounts []TaskServiceAccountCheck `json:"service_accounts"`
+}
+
+// TaskServiceAccountCheck defines model for TaskServiceAccountCheck.
+type TaskServiceAccountCheck struct {
+	// Detail Why it is unchecked, or why a missing name is not valid.
+	Detail *string `json:"detail,omitempty"`
+
+	// ImagePullSecrets How many imagePullSecrets it carries; sent with state found.
+	ImagePullSecrets *int   `json:"image_pull_secrets,omitempty"`
+	Name             string `json:"name"`
+
+	// State One of found, missing or unchecked. found: it exists in the task namespace. missing: it does not, and the pods of these tasks would not be created; when its name is not a valid ServiceAccount name (a DNS-1123 subdomain), it is not looked up and detail says so. unchecked: the server could not look it up (detail says why).
+	State string `json:"state"`
+
+	// Tasks The tasks whose pods run as it.
+	Tasks []string `json:"tasks"`
 }
 
 // TokenRequest defines model for TokenRequest.
@@ -403,6 +721,9 @@ type Variable struct {
 	Key         string  `json:"key"`
 	TeamName    *string `json:"team_name,omitempty"`
 	Value       string  `json:"value"`
+
+	// ValueUnreadable Present and true in a listing when the value is encrypted with a secret key the server does not have (for example after a key rotation that dropped the old key). The value is then masked. Reading the variable alone answers 500 with a message naming it.
+	ValueUnreadable *bool `json:"value_unreadable,omitempty"`
 }
 
 // VariableBody Variable create/replace payload. value and description are tri-state: omit the key to preserve the stored value, send an empty string to clear it, or send a value to set it. A value equal to the mask `***` for a sensitive-looking key (secret/password/token/...) is treated as "unchanged", so re-submitting a variable read back from GET (whose sensitive value is masked) never overwrites the real value with the mask.
@@ -423,6 +744,53 @@ type VersionInfo struct {
 	GitVersion *string `json:"git_version,omitempty"`
 	Version    *string `json:"version,omitempty"`
 }
+
+// VersionRegistration defines model for VersionRegistration.
+type VersionRegistration struct {
+	// Created False when the content was already registered.
+	Created *bool `json:"created,omitempty"`
+
+	// DagCreated True when this register created the DAG (its first version); false for a new version of an existing DAG.
+	DagCreated *bool   `json:"dag_created,omitempty"`
+	DagId      *string `json:"dag_id,omitempty"`
+
+	// DryRun True on an answer of the dry run route: nothing was written, and the other fields say what the register would do. Absent from a register.
+	DryRun *bool `json:"dry_run,omitempty"`
+
+	// Execution Where the version's tasks run (Dexaflow), from the same decision dispatch places an attempt with: on a warm worker of the version (warm pools, ADR 0058) or on a dedicated pod. Sent by the register and its dry run. A task is warm-eligible; it still takes a dedicated pod when no warm worker is free. A task the dispatcher would offer to a warm worker is reported dedicated when no warm worker of its version can exist (no idle worker kept, or a server that runs none).
+	Execution *ExecutionReport `json:"execution,omitempty"`
+
+	// IsPaused The DAG's is_paused after the register.
+	IsPaused *bool   `json:"is_paused,omitempty"`
+	SpecHash *string `json:"spec_hash,omitempty"`
+
+	// TaskPods What the version's task pods would run as (Dexaflow), sent by the dry run route only, absent from a register. A server that starts no task pods sends run_as_non_root false and no service account.
+	TaskPods *TaskPodsReport `json:"task_pods,omitempty"`
+	Version  *string         `json:"version,omitempty"`
+
+	// Warnings What the register lets through with a warning (a task that does not fit its size under executor.unit.enforce=warn, an image not pinned by digest under deploy.require_digest=warn). Always sent by the dry run route; sent by a register only when it has a warning to give.
+	Warnings *[]string `json:"warnings,omitempty"`
+}
+
+// WarmPoolReport defines model for WarmPoolReport.
+type WarmPoolReport struct {
+	// Detail The state in a sentence for a person.
+	Detail         string `json:"detail"`
+	MaxPoolSize    *int   `json:"max_pool_size,omitempty"`
+	MinIdleWorkers *int   `json:"min_idle_workers,omitempty"`
+
+	// PreviousPool draining for a new version of an existing DAG when this server keeps warm workers; the previous version's idle warm workers, if it has any, are removed, and each busy one once its attempt ends.
+	PreviousPool *WarmPoolReportPreviousPool `json:"previous_pool,omitempty"`
+
+	// State off: warm pools are off. none: this version gets no warm worker (staging, source mode, no idle worker kept, or a server that runs no warm workers: the subprocess executor, or pod dispatch disabled). on: the version keeps min_idle_workers idle warm workers, up to max_pool_size, while it is the DAG's current version; for a DAG that declares min_idle_workers they start at the next reconcile (when a paused DAG is unpaused), else with the version's first run.
+	State WarmPoolReportState `json:"state"`
+}
+
+// WarmPoolReportPreviousPool draining for a new version of an existing DAG when this server keeps warm workers; the previous version's idle warm workers, if it has any, are removed, and each busy one once its attempt ends.
+type WarmPoolReportPreviousPool string
+
+// WarmPoolReportState off: warm pools are off. none: this version gets no warm worker (staging, source mode, no idle worker kept, or a server that runs no warm workers: the subprocess executor, or pod dispatch disabled). on: the version keeps min_idle_workers idle warm workers, up to max_pool_size, while it is the DAG's current version; for a DAG that declares min_idle_workers they start at the next reconcile (when a paused DAG is unpaused), else with the version's first run.
+type WarmPoolReportState string
 
 // XComEntry defines model for XComEntry.
 type XComEntry struct {
@@ -458,6 +826,9 @@ type TaskID = string
 // VariableKey defines model for VariableKey.
 type VariableKey = string
 
+// AuthUnavailable defines model for AuthUnavailable.
+type AuthUnavailable = Error
+
 // EncryptionUnavailable defines model for EncryptionUnavailable.
 type EncryptionUnavailable = Error
 
@@ -466,6 +837,12 @@ type NotFound = Error
 
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = Error
+
+// ListAPITokensParams defines parameters for ListAPITokens.
+type ListAPITokensParams struct {
+	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
+}
 
 // ListConnectionsParams defines parameters for ListConnections.
 type ListConnectionsParams struct {
@@ -487,13 +864,48 @@ type ListDagRunsParams struct {
 	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
 	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
 
-	// Cursor Dexaflow extension. Opaque keyset cursor taken from the Dexaflow-Next-Cursor response header of the previous page. When set, offset is ignored and the page holds the rows after the cursor in the same order, at the cost of the first page whatever the depth. The response body is unchanged. With a state filter, offset paging filters the newest 10000 runs and counts total_entries within them, while cursor paging filters and counts every run of the DAG, so the two modes can report different totals for a DAG with more runs than that.
+	// Cursor Opaque cursor, as Apache Airflow 3.3 pages its lists. Send it empty for the first page, then the next_cursor or previous_cursor the previous body named. Whenever the request carries cursor, the body names next_cursor (absent on the last page) and previous_cursor (absent on the first page); a request without cursor gets the body without those fields. A cursor that is not one this server issued is refused with 400. Dexaflow also accepts the keyset cursor of the Dexaflow-Next-Cursor response header on the DAG run list: the page then holds the runs after the cursor in the same order, at the cost of the first page whatever the depth. With a state filter, offset paging filters the newest 10000 runs and counts total_entries within them, while keyset paging filters and counts every run of the DAG, so the two modes can report different totals for a DAG with more runs than that.
 	Cursor *Cursor                   `form:"cursor,omitempty" json:"cursor,omitempty"`
 	State  *[]ListDagRunsParamsState `form:"state,omitempty" json:"state,omitempty"`
 }
 
 // ListDagRunsParamsState defines parameters for ListDagRuns.
 type ListDagRunsParamsState string
+
+// ClearDagRun200JSONResponseBody defines parameters for ClearDagRun.
+type ClearDagRun200JSONResponseBody struct {
+	union json.RawMessage
+}
+
+// RegisterDagVersionParams defines parameters for RegisterDagVersion.
+type RegisterDagVersionParams struct {
+	// IsPaused Sets the DAG's is_paused for this register (true or false). Any other value is refused with 400. Sending it needs write on dags, and a scoped token also needs the dexaflow:run scope (403 otherwise).
+	IsPaused *bool `form:"is_paused,omitempty" json:"is_paused,omitempty"`
+
+	// PromotedFrom Marks the register as a promotion (`dexaflow promote`): the name of the target the version was read from, recorded with promoted_from_server under promoted_from in the register's audit entry. It is the caller's claim, recorded as sent and not verified. A target name: lower case letters, digits, _ and -, starting with a letter or digit, at most 63 characters; anything else is refused with 400.
+	PromotedFrom *string `form:"promoted_from,omitempty" json:"promoted_from,omitempty"`
+
+	// PromotedFromServer The URL of the control plane the version was promoted from, as the caller claims it (not verified): an absolute http or https URL without credentials and with no control or format character, at most 2048 bytes. It needs promoted_from (400 otherwise).
+	PromotedFromServer *string `form:"promoted_from_server,omitempty" json:"promoted_from_server,omitempty"`
+
+	// BuildCommit Where the version was built (#1702), with the other build_* parameters: the git commit of its sources, 7 to 64 lower case hex characters. The build_* parameters are metadata of the register, not part of dag.json: they change neither the spec, its hash nor the version label. They are stored with the version the register creates (build_info in DagVersion) and recorded in its audit entry; a register of content already registered keeps the build info of its first register. They are the caller's claim, recorded as sent and not verified. A value that is empty or breaks its rule is refused with 400.
+	BuildCommit *string `form:"build_commit,omitempty" json:"build_commit,omitempty"`
+
+	// BuildRepo The repository of the sources: an absolute http or https URL without credentials, query string or fragment, valid UTF-8 with no control or format character, at most 2048 bytes.
+	BuildRepo *string `form:"build_repo,omitempty" json:"build_repo,omitempty"`
+
+	// BuildPipelineUrl The CI pipeline run that built the version: an absolute http or https URL without credentials, query string or fragment, valid UTF-8 with no control or format character, at most 2048 bytes.
+	BuildPipelineUrl *string `form:"build_pipeline_url,omitempty" json:"build_pipeline_url,omitempty"`
+
+	// BuildBuilder The builder that produced the image, at most 255 bytes, with no control or format character.
+	BuildBuilder *string `form:"build_builder,omitempty" json:"build_builder,omitempty"`
+
+	// BuildBaseImage The base image the DAG image was built from (it carries the task agent), at most 512 bytes, with no space, control or format character.
+	BuildBaseImage *string `form:"build_base_image,omitempty" json:"build_base_image,omitempty"`
+
+	// BuildCliVersion The version of the CLI that built and registered the version, at most 128 bytes, with no space, control or format character.
+	BuildCliVersion *string `form:"build_cli_version,omitempty" json:"build_cli_version,omitempty"`
+}
 
 // ListUsersParams defines parameters for ListUsers.
 type ListUsersParams struct {
@@ -507,6 +919,9 @@ type ListVariablesParams struct {
 	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
+// CreateAPITokenJSONRequestBody defines body for CreateAPIToken for application/json ContentType.
+type CreateAPITokenJSONRequestBody = CreateAPITokenRequest
+
 // CreateConnectionJSONRequestBody defines body for CreateConnection for application/json ContentType.
 type CreateConnectionJSONRequestBody = ConnectionBody
 
@@ -519,8 +934,23 @@ type UpdateDagJSONRequestBody = DAGUpdate
 // ClearTaskInstancesJSONRequestBody defines body for ClearTaskInstances for application/json ContentType.
 type ClearTaskInstancesJSONRequestBody = ClearTaskInstancesRequest
 
+// SetDagCurrentVersionJSONRequestBody defines body for SetDagCurrentVersion for application/json ContentType.
+type SetDagCurrentVersionJSONRequestBody = DagCurrentVersionRequest
+
 // TriggerDagRunJSONRequestBody defines body for TriggerDagRun for application/json ContentType.
 type TriggerDagRunJSONRequestBody = DAGRunCreate
+
+// ClearDagRunJSONRequestBody defines body for ClearDagRun for application/json ContentType.
+type ClearDagRunJSONRequestBody = DAGRunClearRequest
+
+// PatchTaskInstanceJSONRequestBody defines body for PatchTaskInstance for application/json ContentType.
+type PatchTaskInstanceJSONRequestBody = TaskInstanceStateUpdate
+
+// PatchTaskInstanceDryRunJSONRequestBody defines body for PatchTaskInstanceDryRun for application/json ContentType.
+type PatchTaskInstanceDryRunJSONRequestBody = TaskInstanceStateUpdate
+
+// RegisterDagVersionJSONRequestBody defines body for RegisterDagVersion for application/json ContentType.
+type RegisterDagVersionJSONRequestBody = DagSpec
 
 // CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
 type CreateUserJSONRequestBody = CreateUserRequest
@@ -530,6 +960,188 @@ type CreateVariableJSONRequestBody = VariableBody
 
 // IssueTokenJSONRequestBody defines body for IssueToken for application/json ContentType.
 type IssueTokenJSONRequestBody = TokenRequest
+
+// Getter for additional properties for DagSpec. Returns the specified
+// element and whether it was found
+func (a DagSpec) Get(fieldName string) (value interface{}, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for DagSpec
+func (a *DagSpec) Set(fieldName string, value interface{}) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]interface{})
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for DagSpec to handle AdditionalProperties
+func (a *DagSpec) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["dag_id"]; found {
+		err = json.Unmarshal(raw, &a.DagId)
+		if err != nil {
+			return fmt.Errorf("error reading 'dag_id': %w", err)
+		}
+		delete(object, "dag_id")
+	}
+
+	if raw, found := object["dag_version"]; found {
+		err = json.Unmarshal(raw, &a.DagVersion)
+		if err != nil {
+			return fmt.Errorf("error reading 'dag_version': %w", err)
+		}
+		delete(object, "dag_version")
+	}
+
+	if raw, found := object["image"]; found {
+		err = json.Unmarshal(raw, &a.Image)
+		if err != nil {
+			return fmt.Errorf("error reading 'image': %w", err)
+		}
+		delete(object, "image")
+	}
+
+	if raw, found := object["schema_version"]; found {
+		err = json.Unmarshal(raw, &a.SchemaVersion)
+		if err != nil {
+			return fmt.Errorf("error reading 'schema_version': %w", err)
+		}
+		delete(object, "schema_version")
+	}
+
+	if raw, found := object["tasks"]; found {
+		err = json.Unmarshal(raw, &a.Tasks)
+		if err != nil {
+			return fmt.Errorf("error reading 'tasks': %w", err)
+		}
+		delete(object, "tasks")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]interface{})
+		for fieldName, fieldBuf := range object {
+			var fieldVal interface{}
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for DagSpec to handle AdditionalProperties
+func (a DagSpec) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	object["dag_id"], err = json.Marshal(a.DagId)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'dag_id': %w", err)
+	}
+
+	object["dag_version"], err = json.Marshal(a.DagVersion)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'dag_version': %w", err)
+	}
+
+	object["image"], err = json.Marshal(a.Image)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'image': %w", err)
+	}
+
+	object["schema_version"], err = json.Marshal(a.SchemaVersion)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'schema_version': %w", err)
+	}
+
+	if a.Tasks != nil {
+		object["tasks"], err = json.Marshal(a.Tasks)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'tasks': %w", err)
+		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// AsTaskInstanceCollection returns the union data inside the ClearDagRun200JSONResponseBody as a TaskInstanceCollection
+func (t ClearDagRun200JSONResponseBody) AsTaskInstanceCollection() (TaskInstanceCollection, error) {
+	var body TaskInstanceCollection
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromTaskInstanceCollection overwrites any union data inside the ClearDagRun200JSONResponseBody as the provided TaskInstanceCollection
+func (t *ClearDagRun200JSONResponseBody) FromTaskInstanceCollection(v TaskInstanceCollection) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeTaskInstanceCollection performs a merge with any union data inside the ClearDagRun200JSONResponseBody, using the provided TaskInstanceCollection
+func (t *ClearDagRun200JSONResponseBody) MergeTaskInstanceCollection(v TaskInstanceCollection) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsDAGRun returns the union data inside the ClearDagRun200JSONResponseBody as a DAGRun
+func (t ClearDagRun200JSONResponseBody) AsDAGRun() (DAGRun, error) {
+	var body DAGRun
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDAGRun overwrites any union data inside the ClearDagRun200JSONResponseBody as the provided DAGRun
+func (t *ClearDagRun200JSONResponseBody) FromDAGRun(v DAGRun) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDAGRun performs a merge with any union data inside the ClearDagRun200JSONResponseBody, using the provided DAGRun
+func (t *ClearDagRun200JSONResponseBody) MergeDAGRun(v DAGRun) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ClearDagRun200JSONResponseBody) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ClearDagRun200JSONResponseBody) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -605,9 +1217,41 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
+	// ListAPITokens List API tokens (Dexaflow)
+	//
+	// Lists the caller's unrevoked API tokens, newest first, expired ones included. A caller who may manage accounts (write:user) sees every token of the tenant. The token itself and its hash are never returned. Not callable with an API token or any other scoped token (ADR 0074).
+	//
+	// Corresponds with GET /api/v2/apiTokens (the `ListAPITokens` operationId).
+	ListAPITokens(ctx context.Context, params *ListAPITokensParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateAPITokenWithBody Create an API token (Dexaflow)
+	//
+	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/apiTokens (the `CreateAPIToken` operationId).
+	CreateAPITokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateAPIToken Create an API token (Dexaflow)
+	//
+	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/apiTokens (the `CreateAPIToken` operationId).
+	CreateAPIToken(ctx context.Context, body CreateAPITokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeAPIToken Revoke an API token (Dexaflow)
+	//
+	// Revokes one of the caller's API tokens, or any token of the tenant for a caller who may manage accounts (write:user). The token stops working on its next request. Revoking a revoked token succeeds. Audited as api_token.revoke. Not callable with an API token or any other scoped token.
+	//
+	// Corresponds with DELETE /api/v2/apiTokens/{token_id} (the `RevokeAPIToken` operationId).
+	RevokeAPIToken(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RenewToken Renew a still-valid JWT into a fresh short-lived token
 	//
-	// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again.
+	// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again. Returns 503 with Retry-After when the token could not be checked because the user store is unreachable; the token may still be good, so the client waits and retries instead of logging in again.
 	//
 	// Corresponds with POST /api/v2/auth/token/renew (the `RenewToken` operationId).
 	RenewToken(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -669,6 +1313,8 @@ type ClientInterface interface {
 
 	// GetDagSource Get a DAG's source (the dag.py text)
 	//
+	// The source registered with one version of the DAG, as in Airflow 3.2: version_number selects the version, and without it (or with 0) the newest version is served. After a rollback the newest version is not the current one. A version the DAG does not have is a 404, and a version_number that is not an integer is a 400.
+	//
 	// Corresponds with GET /api/v2/dagSources/{dag_id} (the `GetDagSource` operationId).
 	GetDagSource(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -684,12 +1330,16 @@ type ClientInterface interface {
 
 	// UpdateDagWithBody Update DAG (typically pause/unpause)
 	//
+	// Sets is_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PATCH /api/v2/dags/{dag_id} (the `UpdateDag` operationId).
 	UpdateDagWithBody(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateDag Update DAG (typically pause/unpause)
+	//
+	// Sets is_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -709,6 +1359,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v2/dags/{dag_id}/clearTaskInstances (the `ClearTaskInstances` operationId).
 	ClearTaskInstances(ctx context.Context, dagId DagID, body ClearTaskInstancesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetDagCurrentVersionWithBody Make a registered version current (Dexaflow)
+	//
+	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /api/v2/dags/{dag_id}/currentVersion (the `SetDagCurrentVersion` operationId).
+	SetDagCurrentVersionWithBody(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetDagCurrentVersion Make a registered version current (Dexaflow)
+	//
+	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /api/v2/dags/{dag_id}/currentVersion (the `SetDagCurrentVersion` operationId).
+	SetDagCurrentVersion(ctx context.Context, dagId DagID, body SetDagCurrentVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListDagRuns List DAG runs
 	//
@@ -734,7 +1402,27 @@ type ClientInterface interface {
 	// Corresponds with GET /api/v2/dags/{dag_id}/dagRuns/{dag_run_id} (the `GetDagRun` operationId).
 	GetDagRun(ctx context.Context, dagId DagID, dagRunId DagRunID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ClearDagRunWithBody Clear a whole DAG run (queue its task instances for re-run)
+	//
+	// The run page's Clear action. A dry run (the default) answers the task instances the clear would reset. The clear itself resets them, re-queues the run and answers the run.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear (the `ClearDagRun` operationId).
+	ClearDagRunWithBody(ctx context.Context, dagId DagID, dagRunId DagRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClearDagRun Clear a whole DAG run (queue its task instances for re-run)
+	//
+	// The run page's Clear action. A dry run (the default) answers the task instances the clear would reset. The clear itself resets them, re-queues the run and answers the run.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear (the `ClearDagRun` operationId).
+	ClearDagRun(ctx context.Context, dagId DagID, dagRunId DagRunID, body ClearDagRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListTaskInstances List task instances of a DAG run
+	//
+	// Pages with the same limit, offset and cursor query parameters as the DAG run list (they are not declared on this operation so the generated client keeps its signature). A request that carries cursor gets next_cursor and previous_cursor in the body; only the offset cursors this list issues are accepted, any other is refused with 400.
 	//
 	// Corresponds with GET /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances (the `ListTaskInstances` operationId).
 	ListTaskInstances(ctx context.Context, dagId DagID, dagRunId DagRunID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -743,6 +1431,42 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `GetTaskInstance` operationId).
 	GetTaskInstance(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatchTaskInstanceWithBody Mark a task instance as success, failed or skipped
+	//
+	// Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `PatchTaskInstance` operationId).
+	PatchTaskInstanceWithBody(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatchTaskInstance Mark a task instance as success, failed or skipped
+	//
+	// Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `PatchTaskInstance` operationId).
+	PatchTaskInstance(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatchTaskInstanceDryRunWithBody Preview marking a task instance
+	//
+	// Answers the task instance with the state the PATCH would set, without changing anything.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run (the `PatchTaskInstanceDryRun` operationId).
+	PatchTaskInstanceDryRunWithBody(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatchTaskInstanceDryRun Preview marking a task instance
+	//
+	// Answers the task instance with the state the PATCH would set, without changing anything.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run (the `PatchTaskInstanceDryRun` operationId).
+	PatchTaskInstanceDryRun(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceDryRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetTaskLogs Get task logs
 	//
@@ -763,6 +1487,30 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/v2/dags/{dag_id}/spec (the `GetDagSpec` operationId).
 	GetDagSpec(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterDagVersionWithBody Register a compiled DAG version (Dexaflow)
+	//
+	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
+	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+	// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
+	// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
+	RegisterDagVersionWithBody(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterDagVersion Register a compiled DAG version (Dexaflow)
+	//
+	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
+	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+	// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
+	// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
+	RegisterDagVersion(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetMonitorExecutor Executor capability and configuration
 	//
@@ -878,9 +1626,81 @@ type ClientInterface interface {
 	GetReadyz(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
+// ListAPITokens List API tokens (Dexaflow)
+//
+// Lists the caller's unrevoked API tokens, newest first, expired ones included. A caller who may manage accounts (write:user) sees every token of the tenant. The token itself and its hash are never returned. Not callable with an API token or any other scoped token (ADR 0074).
+//
+// Corresponds with GET /api/v2/apiTokens (the `ListAPITokens` operationId).
+func (c *Client) ListAPITokens(ctx context.Context, params *ListAPITokensParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAPITokensRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateAPITokenWithBody Create an API token (Dexaflow)
+//
+// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/apiTokens (the `CreateAPIToken` operationId).
+func (c *Client) CreateAPITokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateAPITokenRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateAPIToken Create an API token (Dexaflow)
+//
+// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/apiTokens (the `CreateAPIToken` operationId).
+func (c *Client) CreateAPIToken(ctx context.Context, body CreateAPITokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateAPITokenRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeAPIToken Revoke an API token (Dexaflow)
+//
+// Revokes one of the caller's API tokens, or any token of the tenant for a caller who may manage accounts (write:user). The token stops working on its next request. Revoking a revoked token succeeds. Audited as api_token.revoke. Not callable with an API token or any other scoped token.
+//
+// Corresponds with DELETE /api/v2/apiTokens/{token_id} (the `RevokeAPIToken` operationId).
+func (c *Client) RevokeAPIToken(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeAPITokenRequest(c.Server, tokenId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // RenewToken Renew a still-valid JWT into a fresh short-lived token
 //
-// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again.
+// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again. Returns 503 with Retry-After when the token could not be checked because the user store is unreachable; the token may still be good, so the client waits and retries instead of logging in again.
 //
 // Corresponds with POST /api/v2/auth/token/renew (the `RenewToken` operationId).
 func (c *Client) RenewToken(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1022,6 +1842,8 @@ func (c *Client) UpdateConnection(ctx context.Context, connectionId ConnectionID
 
 // GetDagSource Get a DAG's source (the dag.py text)
 //
+// The source registered with one version of the DAG, as in Airflow 3.2: version_number selects the version, and without it (or with 0) the newest version is served. After a rollback the newest version is not the current one. A version the DAG does not have is a 404, and a version_number that is not an integer is a 400.
+//
 // Corresponds with GET /api/v2/dagSources/{dag_id} (the `GetDagSource` operationId).
 func (c *Client) GetDagSource(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetDagSourceRequest(c.Server, dagId)
@@ -1067,6 +1889,8 @@ func (c *Client) GetDag(ctx context.Context, dagId DagID, reqEditors ...RequestE
 
 // UpdateDagWithBody Update DAG (typically pause/unpause)
 //
+// Sets is_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with PATCH /api/v2/dags/{dag_id} (the `UpdateDag` operationId).
@@ -1083,6 +1907,8 @@ func (c *Client) UpdateDagWithBody(ctx context.Context, dagId DagID, contentType
 }
 
 // UpdateDag Update DAG (typically pause/unpause)
+//
+// Sets is_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -1123,6 +1949,44 @@ func (c *Client) ClearTaskInstancesWithBody(ctx context.Context, dagId DagID, co
 // Corresponds with POST /api/v2/dags/{dag_id}/clearTaskInstances (the `ClearTaskInstances` operationId).
 func (c *Client) ClearTaskInstances(ctx context.Context, dagId DagID, body ClearTaskInstancesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewClearTaskInstancesRequest(c.Server, dagId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetDagCurrentVersionWithBody Make a registered version current (Dexaflow)
+//
+// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /api/v2/dags/{dag_id}/currentVersion (the `SetDagCurrentVersion` operationId).
+func (c *Client) SetDagCurrentVersionWithBody(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetDagCurrentVersionRequestWithBody(c.Server, dagId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetDagCurrentVersion Make a registered version current (Dexaflow)
+//
+// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /api/v2/dags/{dag_id}/currentVersion (the `SetDagCurrentVersion` operationId).
+func (c *Client) SetDagCurrentVersion(ctx context.Context, dagId DagID, body SetDagCurrentVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetDagCurrentVersionRequest(c.Server, dagId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1197,7 +2061,47 @@ func (c *Client) GetDagRun(ctx context.Context, dagId DagID, dagRunId DagRunID, 
 	return c.Client.Do(req)
 }
 
+// ClearDagRunWithBody Clear a whole DAG run (queue its task instances for re-run)
+//
+// The run page's Clear action. A dry run (the default) answers the task instances the clear would reset. The clear itself resets them, re-queues the run and answers the run.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear (the `ClearDagRun` operationId).
+func (c *Client) ClearDagRunWithBody(ctx context.Context, dagId DagID, dagRunId DagRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClearDagRunRequestWithBody(c.Server, dagId, dagRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClearDagRun Clear a whole DAG run (queue its task instances for re-run)
+//
+// The run page's Clear action. A dry run (the default) answers the task instances the clear would reset. The clear itself resets them, re-queues the run and answers the run.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear (the `ClearDagRun` operationId).
+func (c *Client) ClearDagRun(ctx context.Context, dagId DagID, dagRunId DagRunID, body ClearDagRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClearDagRunRequest(c.Server, dagId, dagRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListTaskInstances List task instances of a DAG run
+//
+// Pages with the same limit, offset and cursor query parameters as the DAG run list (they are not declared on this operation so the generated client keeps its signature). A request that carries cursor gets next_cursor and previous_cursor in the body; only the offset cursors this list issues are accepted, any other is refused with 400.
 //
 // Corresponds with GET /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances (the `ListTaskInstances` operationId).
 func (c *Client) ListTaskInstances(ctx context.Context, dagId DagID, dagRunId DagRunID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1217,6 +2121,82 @@ func (c *Client) ListTaskInstances(ctx context.Context, dagId DagID, dagRunId Da
 // Corresponds with GET /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `GetTaskInstance` operationId).
 func (c *Client) GetTaskInstance(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetTaskInstanceRequest(c.Server, dagId, dagRunId, taskId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PatchTaskInstanceWithBody Mark a task instance as success, failed or skipped
+//
+// Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `PatchTaskInstance` operationId).
+func (c *Client) PatchTaskInstanceWithBody(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchTaskInstanceRequestWithBody(c.Server, dagId, dagRunId, taskId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PatchTaskInstance Mark a task instance as success, failed or skipped
+//
+// Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `PatchTaskInstance` operationId).
+func (c *Client) PatchTaskInstance(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchTaskInstanceRequest(c.Server, dagId, dagRunId, taskId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PatchTaskInstanceDryRunWithBody Preview marking a task instance
+//
+// Answers the task instance with the state the PATCH would set, without changing anything.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run (the `PatchTaskInstanceDryRun` operationId).
+func (c *Client) PatchTaskInstanceDryRunWithBody(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchTaskInstanceDryRunRequestWithBody(c.Server, dagId, dagRunId, taskId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PatchTaskInstanceDryRun Preview marking a task instance
+//
+// Answers the task instance with the state the PATCH would set, without changing anything.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run (the `PatchTaskInstanceDryRun` operationId).
+func (c *Client) PatchTaskInstanceDryRun(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceDryRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchTaskInstanceDryRunRequest(c.Server, dagId, dagRunId, taskId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1277,6 +2257,50 @@ func (c *Client) GetDagVersion(ctx context.Context, dagId DagID, versionNumber i
 // Corresponds with GET /api/v2/dags/{dag_id}/spec (the `GetDagSpec` operationId).
 func (c *Client) GetDagSpec(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetDagSpecRequest(c.Server, dagId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterDagVersionWithBody Register a compiled DAG version (Dexaflow)
+//
+// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
+// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
+// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
+func (c *Client) RegisterDagVersionWithBody(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterDagVersionRequestWithBody(c.Server, dagId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterDagVersion Register a compiled DAG version (Dexaflow)
+//
+// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
+// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
+// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
+func (c *Client) RegisterDagVersion(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterDagVersionRequest(c.Server, dagId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1558,6 +2582,146 @@ func (c *Client) GetReadyz(ctx context.Context, reqEditors ...RequestEditorFn) (
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewListAPITokensRequest constructs an http.Request for the ListAPITokens method
+func NewListAPITokensRequest(server string, params *ListAPITokensParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/apiTokens")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateAPITokenRequest calls the generic CreateAPIToken builder with application/json body
+func NewCreateAPITokenRequest(server string, body CreateAPITokenJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateAPITokenRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateAPITokenRequestWithBody constructs an http.Request for the CreateAPIToken method, with any body, and a specified content type
+func NewCreateAPITokenRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/apiTokens")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRevokeAPITokenRequest constructs an http.Request for the RevokeAPIToken method
+func NewRevokeAPITokenRequest(server string, tokenId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "token_id", tokenId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/apiTokens/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
 }
 
 // NewRenewTokenRequest constructs an http.Request for the RenewToken method
@@ -2072,6 +3236,53 @@ func NewClearTaskInstancesRequestWithBody(server string, dagId DagID, contentTyp
 	return req, nil
 }
 
+// NewSetDagCurrentVersionRequest calls the generic SetDagCurrentVersion builder with application/json body
+func NewSetDagCurrentVersionRequest(server string, dagId DagID, body SetDagCurrentVersionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetDagCurrentVersionRequestWithBody(server, dagId, "application/json", bodyReader)
+}
+
+// NewSetDagCurrentVersionRequestWithBody constructs an http.Request for the SetDagCurrentVersion method, with any body, and a specified content type
+func NewSetDagCurrentVersionRequestWithBody(server string, dagId DagID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "dag_id", dagId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/dags/%s/currentVersion", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListDagRunsRequest constructs an http.Request for the ListDagRuns method
 func NewListDagRunsRequest(server string, dagId DagID, params *ListDagRunsParams) (*http.Request, error) {
 	var err error
@@ -2257,6 +3468,60 @@ func NewGetDagRunRequest(server string, dagId DagID, dagRunId DagRunID) (*http.R
 	return req, nil
 }
 
+// NewClearDagRunRequest calls the generic ClearDagRun builder with application/json body
+func NewClearDagRunRequest(server string, dagId DagID, dagRunId DagRunID, body ClearDagRunJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewClearDagRunRequestWithBody(server, dagId, dagRunId, "application/json", bodyReader)
+}
+
+// NewClearDagRunRequestWithBody constructs an http.Request for the ClearDagRun method, with any body, and a specified content type
+func NewClearDagRunRequestWithBody(server string, dagId DagID, dagRunId DagRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "dag_id", dagId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "dag_run_id", dagRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/dags/%s/dagRuns/%s/clear", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListTaskInstancesRequest constructs an http.Request for the ListTaskInstances method
 func NewListTaskInstancesRequest(server string, dagId DagID, dagRunId DagRunID) (*http.Request, error) {
 	var err error
@@ -2342,6 +3607,128 @@ func NewGetTaskInstanceRequest(server string, dagId DagID, dagRunId DagRunID, ta
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewPatchTaskInstanceRequest calls the generic PatchTaskInstance builder with application/json body
+func NewPatchTaskInstanceRequest(server string, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPatchTaskInstanceRequestWithBody(server, dagId, dagRunId, taskId, "application/json", bodyReader)
+}
+
+// NewPatchTaskInstanceRequestWithBody constructs an http.Request for the PatchTaskInstance method, with any body, and a specified content type
+func NewPatchTaskInstanceRequestWithBody(server string, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "dag_id", dagId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "dag_run_id", dagRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "task_id", taskId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/dags/%s/dagRuns/%s/taskInstances/%s", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewPatchTaskInstanceDryRunRequest calls the generic PatchTaskInstanceDryRun builder with application/json body
+func NewPatchTaskInstanceDryRunRequest(server string, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceDryRunJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPatchTaskInstanceDryRunRequestWithBody(server, dagId, dagRunId, taskId, "application/json", bodyReader)
+}
+
+// NewPatchTaskInstanceDryRunRequestWithBody constructs an http.Request for the PatchTaskInstanceDryRun method, with any body, and a specified content type
+func NewPatchTaskInstanceDryRunRequestWithBody(server string, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "dag_id", dagId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "dag_run_id", dagRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "task_id", taskId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/dags/%s/dagRuns/%s/taskInstances/%s/dry_run", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -2506,6 +3893,176 @@ func NewGetDagSpecRequest(server string, dagId DagID) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewRegisterDagVersionRequest calls the generic RegisterDagVersion builder with application/json body
+func NewRegisterDagVersionRequest(server string, dagId DagID, params *RegisterDagVersionParams, body RegisterDagVersionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRegisterDagVersionRequestWithBody(server, dagId, params, "application/json", bodyReader)
+}
+
+// NewRegisterDagVersionRequestWithBody constructs an http.Request for the RegisterDagVersion method, with any body, and a specified content type
+func NewRegisterDagVersionRequestWithBody(server string, dagId DagID, params *RegisterDagVersionParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "dag_id", dagId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/dags/%s/versions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.IsPaused != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "is_paused", *params.IsPaused, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.PromotedFrom != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "promoted_from", *params.PromotedFrom, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.PromotedFromServer != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "promoted_from_server", *params.PromotedFromServer, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.BuildCommit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "build_commit", *params.BuildCommit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.BuildRepo != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "build_repo", *params.BuildRepo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.BuildPipelineUrl != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "build_pipeline_url", *params.BuildPipelineUrl, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.BuildBuilder != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "build_builder", *params.BuildBuilder, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.BuildBaseImage != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "build_base_image", *params.BuildBaseImage, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.BuildCliVersion != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "build_cli_version", *params.BuildCliVersion, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -3064,9 +4621,45 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
+	// ListAPITokensWithResponse List API tokens (Dexaflow)
+	//
+	// Lists the caller's unrevoked API tokens, newest first, expired ones included. A caller who may manage accounts (write:user) sees every token of the tenant. The token itself and its hash are never returned. Not callable with an API token or any other scoped token (ADR 0074).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/apiTokens (the `ListAPITokens` operationId).
+	ListAPITokensWithResponse(ctx context.Context, params *ListAPITokensParams, reqEditors ...RequestEditorFn) (*ListAPITokensResponse, error)
+
+	// CreateAPITokenWithBodyWithResponse Create an API token (Dexaflow)
+	//
+	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/apiTokens (the `CreateAPIToken` operationId).
+	CreateAPITokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateAPITokenResponse, error)
+
+	// CreateAPITokenWithResponse Create an API token (Dexaflow)
+	//
+	// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/apiTokens (the `CreateAPIToken` operationId).
+	CreateAPITokenWithResponse(ctx context.Context, body CreateAPITokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateAPITokenResponse, error)
+
+	// RevokeAPITokenWithResponse Revoke an API token (Dexaflow)
+	//
+	// Revokes one of the caller's API tokens, or any token of the tenant for a caller who may manage accounts (write:user). The token stops working on its next request. Revoking a revoked token succeeds. Audited as api_token.revoke. Not callable with an API token or any other scoped token.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v2/apiTokens/{token_id} (the `RevokeAPIToken` operationId).
+	RevokeAPITokenWithResponse(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*RevokeAPITokenResponse, error)
+
 	// RenewTokenWithResponse Renew a still-valid JWT into a fresh short-lived token
 	//
-	// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again.
+	// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again. Returns 503 with Retry-After when the token could not be checked because the user store is unreachable; the token may still be good, so the client waits and retries instead of logging in again.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -3136,6 +4729,8 @@ type ClientWithResponsesInterface interface {
 
 	// GetDagSourceWithResponse Get a DAG's source (the dag.py text)
 	//
+	// The source registered with one version of the DAG, as in Airflow 3.2: version_number selects the version, and without it (or with 0) the newest version is served. After a rollback the newest version is not the current one. A version the DAG does not have is a 404, and a version_number that is not an integer is a 400.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /api/v2/dagSources/{dag_id} (the `GetDagSource` operationId).
@@ -3157,12 +4752,16 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateDagWithBodyWithResponse Update DAG (typically pause/unpause)
 	//
+	// Sets is_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /api/v2/dags/{dag_id} (the `UpdateDag` operationId).
 	UpdateDagWithBodyWithResponse(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateDagResponse, error)
 
 	// UpdateDagWithResponse Update DAG (typically pause/unpause)
+	//
+	// Sets is_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -3182,6 +4781,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v2/dags/{dag_id}/clearTaskInstances (the `ClearTaskInstances` operationId).
 	ClearTaskInstancesWithResponse(ctx context.Context, dagId DagID, body ClearTaskInstancesJSONRequestBody, reqEditors ...RequestEditorFn) (*ClearTaskInstancesResponse, error)
+
+	// SetDagCurrentVersionWithBodyWithResponse Make a registered version current (Dexaflow)
+	//
+	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v2/dags/{dag_id}/currentVersion (the `SetDagCurrentVersion` operationId).
+	SetDagCurrentVersionWithBodyWithResponse(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetDagCurrentVersionResponse, error)
+
+	// SetDagCurrentVersionWithResponse Make a registered version current (Dexaflow)
+	//
+	// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v2/dags/{dag_id}/currentVersion (the `SetDagCurrentVersion` operationId).
+	SetDagCurrentVersionWithResponse(ctx context.Context, dagId DagID, body SetDagCurrentVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*SetDagCurrentVersionResponse, error)
 
 	// ListDagRunsWithResponse List DAG runs
 	//
@@ -3211,7 +4828,27 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/v2/dags/{dag_id}/dagRuns/{dag_run_id} (the `GetDagRun` operationId).
 	GetDagRunWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, reqEditors ...RequestEditorFn) (*GetDagRunResponse, error)
 
+	// ClearDagRunWithBodyWithResponse Clear a whole DAG run (queue its task instances for re-run)
+	//
+	// The run page's Clear action. A dry run (the default) answers the task instances the clear would reset. The clear itself resets them, re-queues the run and answers the run.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear (the `ClearDagRun` operationId).
+	ClearDagRunWithBodyWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClearDagRunResponse, error)
+
+	// ClearDagRunWithResponse Clear a whole DAG run (queue its task instances for re-run)
+	//
+	// The run page's Clear action. A dry run (the default) answers the task instances the clear would reset. The clear itself resets them, re-queues the run and answers the run.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear (the `ClearDagRun` operationId).
+	ClearDagRunWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, body ClearDagRunJSONRequestBody, reqEditors ...RequestEditorFn) (*ClearDagRunResponse, error)
+
 	// ListTaskInstancesWithResponse List task instances of a DAG run
+	//
+	// Pages with the same limit, offset and cursor query parameters as the DAG run list (they are not declared on this operation so the generated client keeps its signature). A request that carries cursor gets next_cursor and previous_cursor in the body; only the offset cursors this list issues are accepted, any other is refused with 400.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -3224,6 +4861,42 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `GetTaskInstance` operationId).
 	GetTaskInstanceWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, reqEditors ...RequestEditorFn) (*GetTaskInstanceResponse, error)
+
+	// PatchTaskInstanceWithBodyWithResponse Mark a task instance as success, failed or skipped
+	//
+	// Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `PatchTaskInstance` operationId).
+	PatchTaskInstanceWithBodyWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchTaskInstanceResponse, error)
+
+	// PatchTaskInstanceWithResponse Mark a task instance as success, failed or skipped
+	//
+	// Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `PatchTaskInstance` operationId).
+	PatchTaskInstanceWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchTaskInstanceResponse, error)
+
+	// PatchTaskInstanceDryRunWithBodyWithResponse Preview marking a task instance
+	//
+	// Answers the task instance with the state the PATCH would set, without changing anything.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run (the `PatchTaskInstanceDryRun` operationId).
+	PatchTaskInstanceDryRunWithBodyWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchTaskInstanceDryRunResponse, error)
+
+	// PatchTaskInstanceDryRunWithResponse Preview marking a task instance
+	//
+	// Answers the task instance with the state the PATCH would set, without changing anything.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run (the `PatchTaskInstanceDryRun` operationId).
+	PatchTaskInstanceDryRunWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceDryRunJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchTaskInstanceDryRunResponse, error)
 
 	// GetTaskLogsWithResponse Get task logs
 	//
@@ -3252,6 +4925,30 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/v2/dags/{dag_id}/spec (the `GetDagSpec` operationId).
 	GetDagSpecWithResponse(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*GetDagSpecResponse, error)
+
+	// RegisterDagVersionWithBodyWithResponse Register a compiled DAG version (Dexaflow)
+	//
+	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
+	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+	// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
+	// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
+	RegisterDagVersionWithBodyWithResponse(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterDagVersionResponse, error)
+
+	// RegisterDagVersionWithResponse Register a compiled DAG version (Dexaflow)
+	//
+	// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
+	// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+	// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
+	// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
+	RegisterDagVersionWithResponse(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterDagVersionResponse, error)
 
 	// GetMonitorExecutorWithResponse Executor capability and configuration
 	//
@@ -3387,6 +5084,190 @@ type ClientWithResponsesInterface interface {
 	GetReadyzWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadyzResponse, error)
 }
 
+type ListAPITokensResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *APITokenCollection
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAPITokensResponse) GetJSON200() *APITokenCollection {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListAPITokensResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListAPITokensResponse) GetJSON403() *Error {
+	return r.JSON403
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAPITokensResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAPITokensResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAPITokensResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAPITokensResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateAPITokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *CreatedAPIToken
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Error
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Error
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateAPITokenResponse) GetJSON201() *CreatedAPIToken {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateAPITokenResponse) GetJSON400() *Error {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateAPITokenResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateAPITokenResponse) GetJSON403() *Error {
+	return r.JSON403
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CreateAPITokenResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateAPITokenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateAPITokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateAPITokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateAPITokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeAPITokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Error
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r RevokeAPITokenResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RevokeAPITokenResponse) GetJSON403() *Error {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RevokeAPITokenResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeAPITokenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeAPITokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeAPITokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeAPITokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RenewTokenResponse503Headers the declared response headers of an HTTP 503 response for RenewToken
+type RenewTokenResponse503Headers struct {
+	RetryAfter *int
+}
+
 type RenewTokenResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -3394,6 +5275,10 @@ type RenewTokenResponse struct {
 	JSON200 *TokenResponse
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *RenewTokenResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -3404,6 +5289,11 @@ func (r RenewTokenResponse) GetJSON200() *TokenResponse {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r RenewTokenResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RenewTokenResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -3722,6 +5612,8 @@ type GetDagSourceResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *DagSource
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Error
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -3729,6 +5621,11 @@ type GetDagSourceResponse struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetDagSourceResponse) GetJSON200() *DagSource {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetDagSourceResponse) GetJSON400() *Error {
+	return r.JSON400
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -3907,11 +5804,18 @@ type ClearTaskInstancesResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *TaskInstanceCollection
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ClearTaskInstancesResponse) GetJSON200() *TaskInstanceCollection {
 	return r.JSON200
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ClearTaskInstancesResponse) GetJSON409() *Error {
+	return r.JSON409
 }
 
 // GetBody returns the raw response body bytes
@@ -3937,6 +5841,82 @@ func (r ClearTaskInstancesResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ClearTaskInstancesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// SetDagCurrentVersionResponse403Headers the declared response headers of an HTTP 403 response for SetDagCurrentVersion
+type SetDagCurrentVersionResponse403Headers struct {
+	DexaflowDeployVia *string
+}
+
+type SetDagCurrentVersionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DagCurrentVersionChange
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Error
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Error
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *SetDagCurrentVersionResponse403Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetDagCurrentVersionResponse) GetJSON200() *DagCurrentVersionChange {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SetDagCurrentVersionResponse) GetJSON400() *Error {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SetDagCurrentVersionResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SetDagCurrentVersionResponse) GetJSON403() *Error {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SetDagCurrentVersionResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r SetDagCurrentVersionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetDagCurrentVersionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetDagCurrentVersionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetDagCurrentVersionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -4073,6 +6053,75 @@ func (r GetDagRunResponse) ContentType() string {
 	return ""
 }
 
+type ClearDagRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ClearDagRun200JSONResponseBody
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Error
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Error
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ClearDagRunResponse) GetJSON200() *ClearDagRun200JSONResponseBody {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ClearDagRunResponse) GetJSON400() *Error {
+	return r.JSON400
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ClearDagRunResponse) GetJSON403() *Error {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ClearDagRunResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ClearDagRunResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetBody returns the raw response body bytes
+func (r ClearDagRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ClearDagRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ClearDagRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ClearDagRunResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListTaskInstancesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -4149,6 +6198,116 @@ func (r GetTaskInstanceResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetTaskInstanceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PatchTaskInstanceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TaskInstanceCollection
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Error
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PatchTaskInstanceResponse) GetJSON200() *TaskInstanceCollection {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PatchTaskInstanceResponse) GetJSON400() *Error {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PatchTaskInstanceResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r PatchTaskInstanceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PatchTaskInstanceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PatchTaskInstanceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PatchTaskInstanceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PatchTaskInstanceDryRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TaskInstanceCollection
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Error
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PatchTaskInstanceDryRunResponse) GetJSON200() *TaskInstanceCollection {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PatchTaskInstanceDryRunResponse) GetJSON400() *Error {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PatchTaskInstanceDryRunResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r PatchTaskInstanceDryRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PatchTaskInstanceDryRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PatchTaskInstanceDryRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PatchTaskInstanceDryRunResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -4320,6 +6479,89 @@ func (r GetDagSpecResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetDagSpecResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RegisterDagVersionResponse403Headers the declared response headers of an HTTP 403 response for RegisterDagVersion
+type RegisterDagVersionResponse403Headers struct {
+	DexaflowDeployVia *string
+}
+
+type RegisterDagVersionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *VersionRegistration
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *VersionRegistration
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Error
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Error
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *RegisterDagVersionResponse403Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RegisterDagVersionResponse) GetJSON200() *VersionRegistration {
+	return r.JSON200
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r RegisterDagVersionResponse) GetJSON201() *VersionRegistration {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r RegisterDagVersionResponse) GetJSON400() *Error {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r RegisterDagVersionResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RegisterDagVersionResponse) GetJSON403() *Error {
+	return r.JSON403
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r RegisterDagVersionResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetBody returns the raw response body bytes
+func (r RegisterDagVersionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RegisterDagVersionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RegisterDagVersionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RegisterDagVersionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -4818,6 +7060,11 @@ type IssueTokenResponse200Headers struct {
 	SetCookie *string
 }
 
+// IssueTokenResponse503Headers the declared response headers of an HTTP 503 response for IssueToken
+type IssueTokenResponse503Headers struct {
+	RetryAfter *int
+}
+
 type IssueTokenResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -4825,8 +7072,12 @@ type IssueTokenResponse struct {
 	JSON200 *TokenResponse
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
 	// Headers200 the parsed response headers for an HTTP 200 response
 	Headers200 *IssueTokenResponse200Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *IssueTokenResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -4837,6 +7088,11 @@ func (r IssueTokenResponse) GetJSON200() *TokenResponse {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r IssueTokenResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r IssueTokenResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -4936,9 +7192,69 @@ func (r GetReadyzResponse) ContentType() string {
 	return ""
 }
 
+// ListAPITokensWithResponse List API tokens (Dexaflow)
+//
+// Lists the caller's unrevoked API tokens, newest first, expired ones included. A caller who may manage accounts (write:user) sees every token of the tenant. The token itself and its hash are never returned. Not callable with an API token or any other scoped token (ADR 0074).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/apiTokens (the `ListAPITokens` operationId).
+func (c *ClientWithResponses) ListAPITokensWithResponse(ctx context.Context, params *ListAPITokensParams, reqEditors ...RequestEditorFn) (*ListAPITokensResponse, error) {
+	rsp, err := c.ListAPITokens(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAPITokensResponse(rsp)
+}
+
+// CreateAPITokenWithBodyWithResponse Create an API token (Dexaflow)
+//
+// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/apiTokens (the `CreateAPIToken` operationId).
+func (c *ClientWithResponses) CreateAPITokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateAPITokenResponse, error) {
+	rsp, err := c.CreateAPITokenWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateAPITokenResponse(rsp)
+}
+
+// CreateAPITokenWithResponse Create an API token (Dexaflow)
+//
+// Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/apiTokens (the `CreateAPIToken` operationId).
+func (c *ClientWithResponses) CreateAPITokenWithResponse(ctx context.Context, body CreateAPITokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateAPITokenResponse, error) {
+	rsp, err := c.CreateAPIToken(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateAPITokenResponse(rsp)
+}
+
+// RevokeAPITokenWithResponse Revoke an API token (Dexaflow)
+//
+// Revokes one of the caller's API tokens, or any token of the tenant for a caller who may manage accounts (write:user). The token stops working on its next request. Revoking a revoked token succeeds. Audited as api_token.revoke. Not callable with an API token or any other scoped token.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v2/apiTokens/{token_id} (the `RevokeAPIToken` operationId).
+func (c *ClientWithResponses) RevokeAPITokenWithResponse(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*RevokeAPITokenResponse, error) {
+	rsp, err := c.RevokeAPIToken(ctx, tokenId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeAPITokenResponse(rsp)
+}
+
 // RenewTokenWithResponse Renew a still-valid JWT into a fresh short-lived token
 //
-// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again.
+// Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again. Returns 503 with Retry-After when the token could not be checked because the user store is unreachable; the token may still be good, so the client waits and retries instead of logging in again.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -5056,6 +7372,8 @@ func (c *ClientWithResponses) UpdateConnectionWithResponse(ctx context.Context, 
 
 // GetDagSourceWithResponse Get a DAG's source (the dag.py text)
 //
+// The source registered with one version of the DAG, as in Airflow 3.2: version_number selects the version, and without it (or with 0) the newest version is served. After a rollback the newest version is not the current one. A version the DAG does not have is a 404, and a version_number that is not an integer is a 400.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /api/v2/dagSources/{dag_id} (the `GetDagSource` operationId).
@@ -5095,6 +7413,8 @@ func (c *ClientWithResponses) GetDagWithResponse(ctx context.Context, dagId DagI
 
 // UpdateDagWithBodyWithResponse Update DAG (typically pause/unpause)
 //
+// Sets is_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PATCH /api/v2/dags/{dag_id} (the `UpdateDag` operationId).
@@ -5107,6 +7427,8 @@ func (c *ClientWithResponses) UpdateDagWithBodyWithResponse(ctx context.Context,
 }
 
 // UpdateDagWithResponse Update DAG (typically pause/unpause)
+//
+// Sets is_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -5143,6 +7465,36 @@ func (c *ClientWithResponses) ClearTaskInstancesWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseClearTaskInstancesResponse(rsp)
+}
+
+// SetDagCurrentVersionWithBodyWithResponse Make a registered version current (Dexaflow)
+//
+// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v2/dags/{dag_id}/currentVersion (the `SetDagCurrentVersion` operationId).
+func (c *ClientWithResponses) SetDagCurrentVersionWithBodyWithResponse(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetDagCurrentVersionResponse, error) {
+	rsp, err := c.SetDagCurrentVersionWithBody(ctx, dagId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetDagCurrentVersionResponse(rsp)
+}
+
+// SetDagCurrentVersionWithResponse Make a registered version current (Dexaflow)
+//
+// Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v2/dags/{dag_id}/currentVersion (the `SetDagCurrentVersion` operationId).
+func (c *ClientWithResponses) SetDagCurrentVersionWithResponse(ctx context.Context, dagId DagID, body SetDagCurrentVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*SetDagCurrentVersionResponse, error) {
+	rsp, err := c.SetDagCurrentVersion(ctx, dagId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetDagCurrentVersionResponse(rsp)
 }
 
 // ListDagRunsWithResponse List DAG runs
@@ -5197,7 +7549,39 @@ func (c *ClientWithResponses) GetDagRunWithResponse(ctx context.Context, dagId D
 	return ParseGetDagRunResponse(rsp)
 }
 
+// ClearDagRunWithBodyWithResponse Clear a whole DAG run (queue its task instances for re-run)
+//
+// The run page's Clear action. A dry run (the default) answers the task instances the clear would reset. The clear itself resets them, re-queues the run and answers the run.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear (the `ClearDagRun` operationId).
+func (c *ClientWithResponses) ClearDagRunWithBodyWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClearDagRunResponse, error) {
+	rsp, err := c.ClearDagRunWithBody(ctx, dagId, dagRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClearDagRunResponse(rsp)
+}
+
+// ClearDagRunWithResponse Clear a whole DAG run (queue its task instances for re-run)
+//
+// The run page's Clear action. A dry run (the default) answers the task instances the clear would reset. The clear itself resets them, re-queues the run and answers the run.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear (the `ClearDagRun` operationId).
+func (c *ClientWithResponses) ClearDagRunWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, body ClearDagRunJSONRequestBody, reqEditors ...RequestEditorFn) (*ClearDagRunResponse, error) {
+	rsp, err := c.ClearDagRun(ctx, dagId, dagRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClearDagRunResponse(rsp)
+}
+
 // ListTaskInstancesWithResponse List task instances of a DAG run
+//
+// Pages with the same limit, offset and cursor query parameters as the DAG run list (they are not declared on this operation so the generated client keeps its signature). A request that carries cursor gets next_cursor and previous_cursor in the body; only the offset cursors this list issues are accepted, any other is refused with 400.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -5221,6 +7605,66 @@ func (c *ClientWithResponses) GetTaskInstanceWithResponse(ctx context.Context, d
 		return nil, err
 	}
 	return ParseGetTaskInstanceResponse(rsp)
+}
+
+// PatchTaskInstanceWithBodyWithResponse Mark a task instance as success, failed or skipped
+//
+// Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `PatchTaskInstance` operationId).
+func (c *ClientWithResponses) PatchTaskInstanceWithBodyWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchTaskInstanceResponse, error) {
+	rsp, err := c.PatchTaskInstanceWithBody(ctx, dagId, dagRunId, taskId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchTaskInstanceResponse(rsp)
+}
+
+// PatchTaskInstanceWithResponse Mark a task instance as success, failed or skipped
+//
+// Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `PatchTaskInstance` operationId).
+func (c *ClientWithResponses) PatchTaskInstanceWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchTaskInstanceResponse, error) {
+	rsp, err := c.PatchTaskInstance(ctx, dagId, dagRunId, taskId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchTaskInstanceResponse(rsp)
+}
+
+// PatchTaskInstanceDryRunWithBodyWithResponse Preview marking a task instance
+//
+// Answers the task instance with the state the PATCH would set, without changing anything.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run (the `PatchTaskInstanceDryRun` operationId).
+func (c *ClientWithResponses) PatchTaskInstanceDryRunWithBodyWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchTaskInstanceDryRunResponse, error) {
+	rsp, err := c.PatchTaskInstanceDryRunWithBody(ctx, dagId, dagRunId, taskId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchTaskInstanceDryRunResponse(rsp)
+}
+
+// PatchTaskInstanceDryRunWithResponse Preview marking a task instance
+//
+// Answers the task instance with the state the PATCH would set, without changing anything.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run (the `PatchTaskInstanceDryRun` operationId).
+func (c *ClientWithResponses) PatchTaskInstanceDryRunWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceDryRunJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchTaskInstanceDryRunResponse, error) {
+	rsp, err := c.PatchTaskInstanceDryRun(ctx, dagId, dagRunId, taskId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchTaskInstanceDryRunResponse(rsp)
 }
 
 // GetTaskLogsWithResponse Get task logs
@@ -5273,6 +7717,42 @@ func (c *ClientWithResponses) GetDagSpecWithResponse(ctx context.Context, dagId 
 		return nil, err
 	}
 	return ParseGetDagSpecResponse(rsp)
+}
+
+// RegisterDagVersionWithBodyWithResponse Register a compiled DAG version (Dexaflow)
+//
+// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
+// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
+// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
+func (c *ClientWithResponses) RegisterDagVersionWithBodyWithResponse(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterDagVersionResponse, error) {
+	rsp, err := c.RegisterDagVersionWithBody(ctx, dagId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterDagVersionResponse(rsp)
+}
+
+// RegisterDagVersionWithResponse Register a compiled DAG version (Dexaflow)
+//
+// Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
+// Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+// Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
+// POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
+func (c *ClientWithResponses) RegisterDagVersionWithResponse(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterDagVersionResponse, error) {
+	rsp, err := c.RegisterDagVersion(ctx, dagId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterDagVersionResponse(rsp)
 }
 
 // GetMonitorExecutorWithResponse Executor capability and configuration
@@ -5504,6 +7984,143 @@ func (c *ClientWithResponses) GetReadyzWithResponse(ctx context.Context, reqEdit
 	return ParseGetReadyzResponse(rsp)
 }
 
+// ParseListAPITokensResponse parses an HTTP response from a ListAPITokensWithResponse call
+func ParseListAPITokensResponse(rsp *http.Response) (*ListAPITokensResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAPITokensResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest APITokenCollection
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateAPITokenResponse parses an HTTP response from a CreateAPITokenWithResponse call
+func ParseCreateAPITokenResponse(rsp *http.Response) (*CreateAPITokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateAPITokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest CreatedAPIToken
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeAPITokenResponse parses an HTTP response from a RevokeAPITokenWithResponse call
+func ParseRevokeAPITokenResponse(rsp *http.Response) (*RevokeAPITokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeAPITokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseRenewTokenResponse parses an HTTP response from a RenewTokenWithResponse call
 func ParseRenewTokenResponse(rsp *http.Response) (*RenewTokenResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -5532,6 +8149,26 @@ func ParseRenewTokenResponse(rsp *http.Response) (*RenewTokenResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers RenewTokenResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -5768,6 +8405,13 @@ func ParseGetDagSourceResponse(rsp *http.Response) (*GetDagSourceResponse, error
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -5893,6 +8537,80 @@ func ParseClearTaskInstancesResponse(rsp *http.Response) (*ClearTaskInstancesRes
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetDagCurrentVersionResponse parses an HTTP response from a SetDagCurrentVersionWithResponse call
+func ParseSetDagCurrentVersionResponse(rsp *http.Response) (*SetDagCurrentVersionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetDagCurrentVersionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DagCurrentVersionChange
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 403:
+		var headers SetDagCurrentVersionResponse403Headers
+		if values := rsp.Header.Values("Dexaflow-Deploy-Via"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Dexaflow-Deploy-Via", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.DexaflowDeployVia = &value
+		}
+		response.Headers403 = &headers
 	}
 
 	return response, nil
@@ -5983,6 +8701,60 @@ func ParseGetDagRunResponse(rsp *http.Response) (*GetDagRunResponse, error) {
 	return response, nil
 }
 
+// ParseClearDagRunResponse parses an HTTP response from a ClearDagRunWithResponse call
+func ParseClearDagRunResponse(rsp *http.Response) (*ClearDagRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ClearDagRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ClearDagRun200JSONResponseBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListTaskInstancesResponse parses an HTTP response from a ListTaskInstancesWithResponse call
 func ParseListTaskInstancesResponse(rsp *http.Response) (*ListTaskInstancesResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -6029,6 +8801,86 @@ func ParseGetTaskInstanceResponse(rsp *http.Response) (*GetTaskInstanceResponse,
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePatchTaskInstanceResponse parses an HTTP response from a PatchTaskInstanceWithResponse call
+func ParsePatchTaskInstanceResponse(rsp *http.Response) (*PatchTaskInstanceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PatchTaskInstanceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TaskInstanceCollection
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePatchTaskInstanceDryRunResponse parses an HTTP response from a PatchTaskInstanceDryRunWithResponse call
+func ParsePatchTaskInstanceDryRunResponse(rsp *http.Response) (*PatchTaskInstanceDryRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PatchTaskInstanceDryRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TaskInstanceCollection
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	}
 
@@ -6138,6 +8990,80 @@ func ParseGetDagSpecResponse(rsp *http.Response) (*GetDagSpecResponse, error) {
 		}
 		response.JSON404 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseRegisterDagVersionResponse parses an HTTP response from a RegisterDagVersionWithResponse call
+func ParseRegisterDagVersionResponse(rsp *http.Response) (*RegisterDagVersionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RegisterDagVersionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest VersionRegistration
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest VersionRegistration
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 403:
+		var headers RegisterDagVersionResponse403Headers
+		if values := rsp.Header.Values("Dexaflow-Deploy-Via"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Dexaflow-Deploy-Via", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.DexaflowDeployVia = &value
+		}
+		response.Headers403 = &headers
 	}
 
 	return response, nil
@@ -6511,6 +9437,13 @@ func ParseIssueTokenResponse(rsp *http.Response) (*IssueTokenResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
 	}
 
 	switch {
@@ -6524,6 +9457,16 @@ func ParseIssueTokenResponse(rsp *http.Response) (*IssueTokenResponse, error) {
 			headers.SetCookie = &value
 		}
 		response.Headers200 = &headers
+	case rsp.StatusCode == 503:
+		var headers IssueTokenResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil

@@ -19,9 +19,9 @@ type DagVersionLister interface {
 }
 
 // dagVersionDTO is the Airflow 3.2.1 DAGVersionResponse. Dexaflow surfaces the
-// deployment label (git describe in prod, "dev-<ts>" in dev) as bundle_version —
-// Airflow's field for the deployed bundle's version — so a run is traceable to
-// its deployment. bundle_url is null; bundle_name is a constant.
+// deployment label (git describe plus a content hash in prod, "dev-<ts>" in
+// dev) as bundle_version, Airflow's field for the deployed bundle's version,
+// so a run is traceable to its deployment. bundle_url is null; bundle_name is a constant.
 type dagVersionDTO struct {
 	ID             string    `json:"id"`
 	VersionNumber  int       `json:"version_number"`
@@ -31,11 +31,34 @@ type dagVersionDTO struct {
 	CreatedAt      time.Time `json:"created_at"`
 	DagDisplayName string    `json:"dag_display_name"`
 	BundleURL      *string   `json:"bundle_url"`
+	// Dexaflow fields, added next to Airflow's (#1702): the image the version
+	// runs, its spec hash, whether it is the current version, and the id of
+	// the user who registered it (null when none was recorded). An id, not an
+	// email, since anyone who may read the DAG reads this.
+	Image     string  `json:"image"`
+	SpecHash  string  `json:"spec_hash"`
+	IsCurrent bool    `json:"is_current"`
+	CreatedBy *string `json:"created_by"`
+}
+
+// listedDagVersionDTO is dagVersionDTO as the routes about versions serve it
+// (the listing, one version by number, a rollback's from and to), with where
+// the version was built: null when its register sent none (#1702). The
+// dag_version copies embedded in other answers (task instances, runs, a
+// DAG's latest_dag_version) leave it out, so a long list does not repeat it.
+type listedDagVersionDTO struct {
+	dagVersionDTO
+	BuildInfo *domain.BuildInfo `json:"build_info"`
 }
 
 type dagVersionCollectionDTO struct {
-	DagVersions  []dagVersionDTO `json:"dag_versions"`
-	TotalEntries int             `json:"total_entries"`
+	DagVersions  []listedDagVersionDTO `json:"dag_versions"`
+	TotalEntries int                   `json:"total_entries"`
+}
+
+// toListedDagVersionDTO maps a domain version onto listedDagVersionDTO.
+func toListedDagVersionDTO(dagID string, v domain.DagVersion) listedDagVersionDTO {
+	return listedDagVersionDTO{dagVersionDTO: toDagVersionDTO(dagID, v), BuildInfo: v.BuildInfo}
 }
 
 // toDagVersionDTO maps a domain version onto the Airflow DAGVersionResponse.
@@ -48,6 +71,10 @@ func toDagVersionDTO(dagID string, v domain.DagVersion) dagVersionDTO {
 		BundleVersion:  strPtrOrNil(v.Version),
 		CreatedAt:      v.CreatedAt,
 		DagDisplayName: dagID,
+		Image:          v.ImageReference,
+		SpecHash:       v.SpecHash,
+		IsCurrent:      v.IsCurrent,
+		CreatedBy:      strPtrOrNil(v.CreatedBy),
 	}
 }
 
@@ -61,11 +88,11 @@ func dagVersionsHandler(lister DagVersionLister) gin.HandlerFunc {
 			return
 		}
 		out := dagVersionCollectionDTO{
-			DagVersions:  make([]dagVersionDTO, 0, len(versions)),
+			DagVersions:  make([]listedDagVersionDTO, 0, len(versions)),
 			TotalEntries: len(versions),
 		}
 		for _, v := range versions {
-			out.DagVersions = append(out.DagVersions, toDagVersionDTO(dagID, v))
+			out.DagVersions = append(out.DagVersions, toListedDagVersionDTO(dagID, v))
 		}
 		c.JSON(http.StatusOK, out)
 	}
@@ -89,7 +116,7 @@ func dagVersionHandler(lister DagVersionLister) gin.HandlerFunc {
 		}
 		for _, v := range versions {
 			if v.VersionNumber == number {
-				c.JSON(http.StatusOK, toDagVersionDTO(dagID, v))
+				c.JSON(http.StatusOK, toListedDagVersionDTO(dagID, v))
 				return
 			}
 		}

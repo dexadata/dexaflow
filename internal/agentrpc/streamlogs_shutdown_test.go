@@ -248,8 +248,8 @@ func TestStreamLogsWithoutShutdownContextBehavesAsBefore(t *testing.T) {
 // against a real gRPC server and then fires the control plane's shutdown while
 // the task is still streaming. It pins three things a fake stream cannot: the
 // server-side writer is Closed (flushed) with every line received so far; the
-// agent's log sink survives the server ending the stream (Send errors are
-// best-effort, Close returns promptly — the TASK is unaffected); and
+// agent's log sink survives the server ending the stream (Send is
+// best-effort, Close returns promptly, the TASK is unaffected); and
 // GracefulStop, which used to hang on this exact stream until SIGKILL, now
 // completes within a bound because the stream has ended.
 func TestStreamLogsShutdownOverRealTransport(t *testing.T) {
@@ -317,16 +317,15 @@ func TestStreamLogsShutdownOverRealTransport(t *testing.T) {
 		t.Fatalf("after shutdown: writer closed=%v lines=%d, want closed with the %d lines flushed", closed, len(got), before)
 	}
 
-	// The agent keeps running its task and keeps calling Send; the stream is gone,
-	// so Send fails — best-effort, never a panic — and Close returns quickly.
-	var sendErr error
-	deadline = time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) && sendErr == nil {
-		sendErr = clientSink.Send(&agentv1.LogLine{Message: "post"})
+	// The agent keeps running its task and keeps calling Send. The stream is
+	// gone and this replica refuses new ones while it shuts down, so the sink
+	// keeps the lines for a re-open (#912): Send never fails the task, and
+	// Close still returns quickly.
+	for i := 0; i < 20; i++ {
+		if serr := clientSink.Send(&agentv1.LogLine{Message: "post"}); serr != nil {
+			t.Logf("Send after the server ended the stream = %v (tolerated: best-effort)", serr)
+		}
 		time.Sleep(10 * time.Millisecond)
-	}
-	if sendErr == nil {
-		t.Fatal("agent Send kept succeeding after the server ended the stream")
 	}
 	closeStart := time.Now()
 	if cerr := clientSink.Close(); cerr != nil && !errors.Is(cerr, io.EOF) {

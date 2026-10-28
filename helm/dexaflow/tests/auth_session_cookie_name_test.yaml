@@ -1,0 +1,27 @@
+suite: session cookie name reaches the chart (#1405)
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+set:
+  nameOverride: leoflow
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: s
+tests:
+  - it: renders the name when set
+    set:
+      auth.sessionCookieName: __Host-dexaflow
+    template: deployment.yaml
+    asserts:
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_SESSION_COOKIE_NAME, value: __Host-dexaflow}}
+
+  - it: omits it by default, so the server keeps _token
+    template: deployment.yaml
+    asserts:
+      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_SESSION_COOKIE_NAME, value: ""}}
+      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_SESSION_COOKIE_NAME, value: _token}}

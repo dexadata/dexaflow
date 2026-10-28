@@ -1,0 +1,127 @@
+name: Set up the Dexaflow CLI
+description: >
+  Installs one pinned release of the dexaflow CLI for the runner's OS and
+  architecture, verifies the cosign signature of the release's checksums.txt
+  and the archive's checksum, caches it per version, and puts dexaflow on PATH.
+  Use it instead of piping install.sh into a shell (#1708).
+author: Dexadata
+branding:
+  icon: upload-cloud
+  color: blue
+inputs:
+  version:
+    description: >
+      Release to install: vX.Y.Z or vX.Y.Z-rc.N (the leading v is optional).
+      Set it. Without it, the ref the action is used at is the version only
+      when that ref is a release tag (@v0.6.0 installs v0.6.0); with a branch,
+      a commit SHA or a local path the action fails and asks for it. "latest"
+      is refused: a pipeline pins the CLI it runs.
+    required: false
+    default: ""
+  server-url:
+    description: >
+      Control plane the later steps of the job talk to. When set, it is
+      exported as DEXAFLOW_SERVER_URL for the rest of the job.
+    required: false
+    default: ""
+  verify-signature:
+    description: >
+      Verify the keyless cosign signature of checksums.txt against this
+      repository's release workflow at the release tag ("true" or "false"),
+      on every run, also when the files come from the cache. The action
+      installs cosign v2.4.3 for the check and uses it rather than any cosign
+      on PATH. The archive is checked against checksums.txt either way.
+    required: false
+    default: "true"
+outputs:
+  version:
+    description: The release tag that was installed (vX.Y.Z).
+    value: ${{ steps.resolve.outputs.version }}
+  path:
+    description: Absolute path of the installed dexaflow binary.
+    value: ${{ steps.install.outputs.path }}
+  cache-hit:
+    description: "\"true\" when the release files came from the actions cache (they were still verified)."
+    value: ${{ steps.cache.outputs.cache-hit == 'true' }}
+runs:
+  using: composite
+  steps:
+    - name: Resolve the version and the platform
+      id: resolve
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_VERIFY: ${{ inputs.verify-signature }}
+        INPUT_SERVER_URL: ${{ inputs.server-url }}
+        # Empty inside some composite actions (actions/runner#2473); the
+        # GITHUB_ACTION_REF variable is the fallback.
+        ACTION_REF: ${{ github.action_ref }}
+        TOOL_CACHE: ${{ runner.tool_cache }}
+      run: |
+        set -euo pipefail
+        case "$INPUT_VERIFY" in
+          true | false) ;;
+          *) echo "::error::verify-signature must be true or false, not '${INPUT_VERIFY}'"; exit 1 ;;
+        esac
+        # One line, http or https: the install step appends it to GITHUB_ENV,
+        # where a newline would set a variable of the caller's choosing.
+        if [ -n "$INPUT_SERVER_URL" ] && [[ "$INPUT_SERVER_URL" == *$'\n'* || "$INPUT_SERVER_URL" == *$'\r'* || ! "$INPUT_SERVER_URL" =~ ^https?://[^[:space:]]+$ ]]; then
+          echo "::error::server-url must be one http:// or https:// URL"
+          exit 1
+        fi
+        script="${GITHUB_ACTION_PATH}/setup-dexaflow.sh"
+        version="$(bash "$script" resolve-version "$INPUT_VERSION" "${ACTION_REF:-${GITHUB_ACTION_REF:-}}")"
+        platform="$(bash "$script" platform "$RUNNER_OS" "$RUNNER_ARCH")"
+        {
+          echo "version=${version}"
+          echo "platform=${platform}"
+          echo "dir=${TOOL_CACHE}/dexaflow/${version}/${platform}-verify-${INPUT_VERIFY}"
+        } >> "$GITHUB_OUTPUT"
+
+    # The cache holds the release files as downloaded: checksums.txt, its
+    # signature and certificate, and the archive. It is not trusted: with
+    # verify-signature on, every run, hit or miss, verifies the signature of
+    # checksums.txt, and every run checks the archive against checksums.txt.
+    # A hit only saves the downloads. The key and the directory carry the
+    # signature setting, so files saved by a run that did not verify are
+    # never what a verifying run starts from. The binary is extracted from
+    # the checked archive on every run and is not cached.
+    - name: Restore the release files from the cache
+      id: cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ${{ steps.resolve.outputs.dir }}/checksums.txt
+          ${{ steps.resolve.outputs.dir }}/checksums.txt.sig
+          ${{ steps.resolve.outputs.dir }}/checksums.txt.pem
+          ${{ steps.resolve.outputs.dir }}/dexaflow_*.tar.gz
+        key: setup-dexaflow-${{ steps.resolve.outputs.version }}-${{ steps.resolve.outputs.platform }}-verify-${{ inputs.verify-signature }}
+
+    # Always the pinned cosign, in a directory of its own, whatever the runner
+    # has on PATH: the 2.4.x line release.yaml signs with.
+    - name: Install cosign for the signature check
+      if: inputs.verify-signature == 'true'
+      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      with:
+        cosign-release: v2.4.3
+        install-dir: ${{ runner.temp }}/setup-dexaflow-cosign
+
+    - name: Install dexaflow ${{ steps.resolve.outputs.version }}
+      id: install
+      shell: bash
+      env:
+        VERSION: ${{ steps.resolve.outputs.version }}
+        PLATFORM: ${{ steps.resolve.outputs.platform }}
+        DIR: ${{ steps.resolve.outputs.dir }}
+        VERIFY_SIGNATURE: ${{ inputs.verify-signature }}
+        COSIGN: ${{ runner.temp }}/setup-dexaflow-cosign/cosign
+        SERVER_URL: ${{ inputs.server-url }}
+      run: |
+        set -euo pipefail
+        bash "${GITHUB_ACTION_PATH}/setup-dexaflow.sh" install "$VERSION" "$PLATFORM" "$DIR"
+        echo "${DIR}/bin" >> "$GITHUB_PATH"
+        echo "path=${DIR}/bin/dexaflow" >> "$GITHUB_OUTPUT"
+        if [ -n "$SERVER_URL" ]; then
+          echo "DEXAFLOW_SERVER_URL=${SERVER_URL}" >> "$GITHUB_ENV"
+        fi
+        "${DIR}/bin/dexaflow" version

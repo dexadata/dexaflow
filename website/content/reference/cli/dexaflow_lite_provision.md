@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_lite_provision/
 title: "dexaflow lite provision"
 linkTitle: "lite provision"
-weight: 41
+weight: 48
 ---
 
 Check and provision the local deps the from-source `dexaflow lite` loop needs.
@@ -30,6 +30,7 @@ dexaflow lite provision [flags]
       --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
+      --target name         name of the control plane to use (default: DEXAFLOW_TARGET, then the target selected for the workspace; see dexaflow target list)
 ```
 
 ### SEE ALSO

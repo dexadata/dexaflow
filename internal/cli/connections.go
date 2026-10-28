@@ -229,7 +229,7 @@ func newConnectionsDeleteCommand() *cobra.Command {
 // setConnectionReq posts (upserts) a connection through the shared typed client
 // and returns the masked connection the server echoes back.
 func setConnectionReq(ctx context.Context, serverURL, token string, body apiclient.ConnectionBody) (apiclient.Connection, error) {
-	c, err := apiclient.New(serverURL, token)
+	c, err := cliAPIClient(serverURL, token)
 	if err != nil {
 		return apiclient.Connection{}, err
 	}
@@ -248,7 +248,7 @@ func setConnectionReq(ctx context.Context, serverURL, token string, body apiclie
 
 // listConnectionsReq gets the connection collection through the typed client.
 func listConnectionsReq(ctx context.Context, serverURL, token string) (*apiclient.ConnectionCollection, error) {
-	c, err := apiclient.New(serverURL, token)
+	c, err := cliAPIClient(serverURL, token)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +264,7 @@ func listConnectionsReq(ctx context.Context, serverURL, token string) (*apiclien
 
 // getConnectionReq fetches one connection through the typed client.
 func getConnectionReq(ctx context.Context, serverURL, token, connID string) (apiclient.Connection, error) {
-	c, err := apiclient.New(serverURL, token)
+	c, err := cliAPIClient(serverURL, token)
 	if err != nil {
 		return apiclient.Connection{}, err
 	}
@@ -283,7 +283,7 @@ func getConnectionReq(ctx context.Context, serverURL, token, connID string) (api
 
 // deleteConnectionReq deletes one connection through the typed client.
 func deleteConnectionReq(ctx context.Context, serverURL, token, connID string) error {
-	c, err := apiclient.New(serverURL, token)
+	c, err := cliAPIClient(serverURL, token)
 	if err != nil {
 		return err
 	}

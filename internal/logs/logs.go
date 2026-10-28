@@ -4,12 +4,14 @@ package logs
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -74,6 +76,9 @@ func RefineLevel(line, fallback string) string {
 // loggers) to avoid false positives from ordinary lowercase prose. error is
 // checked first so "ERROR" wins over a stray "INFO" later in the same line.
 func levelFromContent(line string) (string, bool) {
+	if lvl, ok := dbtSummaryLevel(line); ok {
+		return lvl, true
+	}
 	switch {
 	case containsAny(line, "ERROR", "CRITICAL", "FATAL", "Traceback", "Exception"):
 		return "error", true
@@ -86,6 +91,33 @@ func levelFromContent(line string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// dbtSummaryRe matches dbt's end-of-run counts, e.g.
+// "Done. PASS=24 WARN=0 ERROR=0 SKIP=0 TOTAL=24", capturing WARN (optional)
+// and ERROR.
+var dbtSummaryRe = regexp.MustCompile(`\bPASS=\d+\s+(?:WARN=(\d+)\s+)?ERROR=(\d+)\b`)
+
+// dbtSummaryLevel reports the severity of a dbt run summary line, which dbt
+// prints to stderr even on complete success (#870): info when ERROR=0 and
+// WARN=0, warning when only WARN is non-zero, error when ERROR is non-zero.
+func dbtSummaryLevel(line string) (string, bool) {
+	// Every streamed line passes here; the substring check keeps the regex off
+	// the lines that cannot match, which is nearly all of them.
+	if !strings.Contains(line, "PASS=") {
+		return "", false
+	}
+	m := dbtSummaryRe.FindStringSubmatch(line)
+	if m == nil {
+		return "", false
+	}
+	switch {
+	case strings.TrimLeft(m[2], "0") != "":
+		return "error", true
+	case strings.TrimLeft(m[1], "0") != "":
+		return "warning", true
+	}
+	return "info", true
 }
 
 // containsAny reports whether s contains any of the given substrings.
@@ -181,7 +213,7 @@ type LineWriter interface {
 // Sink stores and retrieves task logs.
 type Sink interface {
 	Open(ref Ref) (LogWriter, error)
-	Read(ref Ref) (io.ReadCloser, error)
+	Read(ctx context.Context, ref Ref) (io.ReadCloser, error)
 }
 
 // MarkerSink appends a single event to an attempt's existing log while
@@ -307,6 +339,10 @@ func (d *DiskSink) Open(ref Ref) (LogWriter, error) {
 	return &diskWriter{f: f, buf: bufio.NewWriterSize(f, flushThreshold)}, nil
 }
 
+// Resume opens a writer for a stream that continues an attempt whose earlier
+// stream ended (#912). Open already appends, so it is Open.
+func (d *DiskSink) Resume(ref Ref) (LogWriter, error) { return d.Open(ref) }
+
 // AppendEvent adds one event to the attempt's log file. The disk sink already
 // opens with O_APPEND, so this is a plain open-write-close that preserves the
 // streamed content — the marker lands after whatever the agent wrote (#861).
@@ -350,7 +386,7 @@ func (d *DiskSink) Prune(now time.Time, retention time.Duration) error {
 // StoredEpochs lists the attempt epochs with a log file for ref's try, with
 // one directory read (see EpochLister). A task directory that does not exist
 // yet holds none.
-func (d *DiskSink) StoredEpochs(ref Ref) ([]int, error) {
+func (d *DiskSink) StoredEpochs(_ context.Context, ref Ref) ([]int, error) {
 	if err := ref.validate(); err != nil {
 		return nil, err
 	}
@@ -380,7 +416,7 @@ func (d *DiskSink) StoredEpochs(ref Ref) ([]int, error) {
 }
 
 // Read opens the log file for reading.
-func (d *DiskSink) Read(ref Ref) (io.ReadCloser, error) {
+func (d *DiskSink) Read(_ context.Context, ref Ref) (io.ReadCloser, error) {
 	if err := ref.validate(); err != nil {
 		return nil, err
 	}

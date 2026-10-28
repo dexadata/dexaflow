@@ -56,7 +56,7 @@ func TestUnreadyDetailBlamesTheBudgetNotTheBystander(t *testing.T) {
 	// Postgres answers, slowly, inside the budget. Redis is healthy and instant.
 	// The only way this probe fails is the budget, and Postgres is what spent it.
 	checks := map[string]HealthChecker{
-		"postgres": &slowSchemaChecker{slowChecker{ping: 10 * time.Millisecond, schema: probeBudget - 100*time.Millisecond}},
+		"postgres": &slowSchemaChecker{slowChecker{ping: 10 * time.Millisecond, schema: defaultProbeBudget - 100*time.Millisecond}},
 		"redis":    &slowChecker{ping: 300 * time.Millisecond},
 	}
 
@@ -64,7 +64,7 @@ func TestUnreadyDetailBlamesTheBudgetNotTheBystander(t *testing.T) {
 	// against the broken code roughly one time in ten.
 	for i := range 10 {
 		r := gin.New()
-		r.GET("/readyz", readinessHandler(checks))
+		r.GET("/readyz", readinessHandler(checks, defaultProbeBudget))
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", http.NoBody))
 
@@ -106,7 +106,7 @@ func TestReadinessChecksDependenciesInAStableOrder(t *testing.T) {
 			"zulu":     recordingChecker{&seen, "zulu"},
 		}
 		r := gin.New()
-		r.GET("/readyz", readinessHandler(checks))
+		r.GET("/readyz", readinessHandler(checks, defaultProbeBudget))
 		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", http.NoBody))
 		if i == 0 {
 			first = seen

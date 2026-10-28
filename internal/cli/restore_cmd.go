@@ -30,7 +30,9 @@ func newRestoreCommand() *cobra.Command {
 		Short: "Restore a Lite install from an archive produced by `dexaflow lite backup`.",
 		Long: "restore reads a tar.gz produced by `dexaflow lite backup`, validates the " +
 			"manifest against this binary (refuses an archive newer than what this " +
-			"binary knows about), then replays the datastore SQL and, only once that " +
+			"binary knows about), provisions the managed Postgres the way `dexaflow lite` " +
+			"does (so it works right after `dexaflow setup` on a new machine) and stops it " +
+			"again if it started it, then replays the datastore SQL and, only once that " +
 			"succeeded, restores config and workspace. The config.yaml it replaces is kept " +
 			"as ~/.dexaflow/config.yaml.pre-restore until a scan of every datastore finds every " +
 			"stored secret under the restored keys: the next `dexaflow lite` when the install has one " +
@@ -38,14 +40,15 @@ func newRestoreCommand() *cobra.Command {
 			"The archive's config is restored as it is: an archive from before this install " +
 			"had a key of its own restores onto the published key, and `dexaflow lite " +
 			"migrate-key` moves it.\n\n" +
-			"By default refuses to overwrite a non-empty ~/.dexaflow; pass --force to confirm.",
+			"By default refuses to overwrite an install that already has a datastore (the managed " +
+			"~/.dexaflow/pgdata, or a Docker datastore a Lite run used); pass --force to confirm.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runRestore(cmd, input, force)
 		},
 	}
 	cmd.Flags().StringVarP(&input, "input", "i", "", "path to the archive (required)")
-	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing ~/.dexaflow install")
+	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing ~/.dexaflow install that has a datastore")
 	_ = cmd.MarkFlagRequired("input") //nolint:errcheck // Cobra returns nil for a known flag name; the error path is unreachable
 	return cmd
 }
@@ -58,7 +61,7 @@ func runRestore(cmd *cobra.Command, input string, force bool) error {
 	}
 	leoflowHome := stateDirIn(home)
 
-	devPrintf(out, "▸ reading manifest from %s …\n", input)
+	devPrintf(out, "▸ decoding manifest from %s …\n", input)
 	archive, err := readBackupArchive(input)
 	if err != nil {
 		return err
@@ -68,7 +71,7 @@ func runRestore(cmd *cobra.Command, input string, force bool) error {
 	if lerr != nil {
 		return fmt.Errorf("reading embedded schema version: %w", lerr)
 	}
-	homeHasData := leoflowHomeHasData(leoflowHome)
+	homeHasData := liteHomeHasDatastore(leoflowHome)
 	if serr := decideRestoreSafe(archive.Manifest.SchemaVersion, embedded, homeHasData, force); serr != nil {
 		return serr
 	}
@@ -94,8 +97,19 @@ func runRestore(cmd *cobra.Command, input string, force bool) error {
 	if len(archive.Dump) == 0 {
 		return fmt.Errorf("archive has no datastore.sql; cannot restore datastore")
 	}
-	devPrintln(out, "▸ replaying datastore via psql …")
-	if err := psqlRestore(cmd.Context(), leoflowHome, archive.Dump); err != nil {
+	// The archive holds a managed-Postgres dump (backup covers that path only),
+	// and on a fresh install nothing has provisioned that cluster yet (#154):
+	// bring it up through the path `dexaflow lite` uses, and stop it on the way
+	// out only when this restore started it.
+	devPrintln(out, "▸ provisioning the managed Postgres …")
+	d := cmdDeps(cmd)
+	stop, perr := d.provisionForRestore(cmd.Context(), cmd)
+	if perr != nil {
+		return fmt.Errorf("provisioning the managed Postgres to restore into: %w; nothing was restored", perr)
+	}
+	defer stop()
+	devPrintln(out, "▸ applying the datastore dump via psql …")
+	if err := d.psqlRestore(cmd.Context(), leoflowHome, archive.Dump); err != nil {
 		return fmt.Errorf("%w; config.yaml was left as it was", err)
 	}
 	if err := restoreConfigFiles(out, leoflowHome, archive); err != nil {
@@ -107,19 +121,42 @@ func runRestore(cmd *cobra.Command, input string, force bool) error {
 		if werr != nil {
 			return fmt.Errorf("resolving workspace dir from restored config: %w", werr)
 		}
+		devPrintf(out, "▸ restoring workspace to %s …\n", workspaceDir)
 		if err := restoreWorkspaceTree(workspaceDir, archive.Workspace); err != nil {
 			return err
 		}
 		devPrintf(out, "✓ workspace restored to %s (%d files)\n", workspaceDir, len(archive.Workspace))
 	}
 
+	// The restored data lives in the managed Postgres: pin the install to it,
+	// so a plain `dexaflow lite` boots it on a host with Docker too (ADR 0094).
+	if err := writeDatastorePin(filepath.Join(leoflowHome, "dev"), datastoreManaged); err != nil {
+		devPrintf(out, "! %v\n", err)
+		devPrintln(out, "✓ restore complete; run `dexaflow lite --postgres managed` to start.")
+		return nil
+	}
 	devPrintln(out, "✓ restore complete; run `dexaflow lite` to start.")
 	return nil
 }
 
-// psqlRestore replays a dump into the Lite database; a variable so tests can
-// make the replay fail or succeed without a managed Postgres.
-var psqlRestore = runPsqlRestore
+// provisionManagedForRestore downloads, initializes and starts the managed
+// Postgres exactly as `dexaflow lite` does (startManagedPostgres), then creates
+// the Lite database a dump replays into, which a fresh cluster lacks. The stop
+// it returns stops the cluster only when this call started it (ADR 0065
+// section 3: a cluster found running may be another command's).
+func provisionManagedForRestore(ctx context.Context, cmd *cobra.Command) (func(), error) {
+	started, err := startManagedPostgres(ctx, cmd)
+	if err != nil {
+		return func() {}, err
+	}
+	//nolint:contextcheck // the stop runs after the restore, with its own context
+	stop := managedCleanup(started, func() { stopManagedPostgres(cmd) })
+	if derr := ensureDevDatabase(ctx, cmd); derr != nil {
+		stop()
+		return func() {}, derr
+	}
+	return stop, nil
+}
 
 // restoreConfigFiles writes the archive's config.yaml and setup.json. The
 // config is written as it is: restore never adds or removes a key on Lite's
@@ -222,19 +259,21 @@ func readBackupArchive(path string) (archiveContents, error) {
 	return out, nil
 }
 
-// leoflowHomeHasData reports whether ~/.dexaflow already contains an install:
-// any file inside qualifies (config.yaml, pgdata, etc.). The check is the
-// guard the restore decision uses to refuse a destructive overwrite.
-func leoflowHomeHasData(leoflowHome string) bool {
-	info, err := os.Stat(leoflowHome)
-	if err != nil || !info.IsDir() {
-		return false
+// liteHomeHasDatastore reports whether the Lite home already holds a
+// datastore a restore would replace: the managed cluster's data dir
+// (pgdata/PG_VERSION), or the Docker datastore once a Lite run recorded its
+// port (dev/db-port, the test migrate-key uses too). It is the guard the
+// restore decision uses to refuse a destructive overwrite. A home that only
+// `dexaflow setup` filled (config.yaml, setup.json, the managed runtimes)
+// holds no data a restore can lose, since the config it replaces is kept as
+// config.yaml.pre-restore, so the documented `dexaflow setup` then
+// `dexaflow lite restore` on a new machine needs no --force (#154).
+func liteHomeHasDatastore(leoflowHome string) bool {
+	if fileExists(filepath.Join(leoflowHome, "pgdata", "PG_VERSION")) {
+		return true
 	}
-	entries, err := os.ReadDir(leoflowHome)
-	if err != nil {
-		return false
-	}
-	return len(entries) > 0
+	_, docker := readPort(filepath.Join(leoflowHome, "dev", "db-port"))
+	return docker
 }
 
 // workspaceDirFromConfig reads the workspace path out of a config.yaml

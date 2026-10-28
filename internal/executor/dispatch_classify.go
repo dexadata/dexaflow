@@ -1,7 +1,11 @@
 package executor
 
 import (
+	"context"
+	"errors"
+	"net"
 	"strings"
+	"syscall"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
@@ -33,7 +37,8 @@ const (
 	// bounded-backoff → dispatch_failed behavior (ADR 0031 Amendment A).
 	Rejected
 	// Deferred means the dispatch was never attempted: the control plane's own
-	// buffered dispatch queue was full (or shutting down). Nothing reached the
+	// buffered dispatch queue was full (or shutting down), or the Kubernetes
+	// client's own rate limiter refused the request before sending it. Nothing reached the
 	// runtime, so the scheduler leaves the task scheduled for a later tick and
 	// records nothing: no backoff, no dispatch-attempt increment, no
 	// dispatch_failed. It is local backpressure, not a failed dispatch.
@@ -45,6 +50,19 @@ const (
 	// reason, and spends no dispatch retries on it. Unlike Rejected, which also
 	// covers errors that clear on retry, Refused is never retried.
 	Refused
+	// Unavailable means the Kubernetes API could not take the request: a 503,
+	// a 504, a 500 (such as a fail-closed admission webhook that is down), a
+	// connection refused or reset, or the client deadline (#1606). That is a
+	// control plane outage (an upgrade, an etcd leader change), not a verdict
+	// on the task, so the scheduler re-offers it without spending the
+	// dispatch-attempt budget. Unlike Backpressure it is bounded: the task
+	// fails as dispatch_failed once the API has been unavailable to it for
+	// longer than the scheduler's window (ADR 0093). The create may have
+	// reached the apiserver before the response was lost; retrying is still
+	// safe because the re-offer and every dispatch bump the attempt epoch,
+	// which fences a pod the lost create left behind: its agent's RUNNING
+	// report is refused before user code starts.
+	Unavailable
 )
 
 // String renders the disposition for logs and error notes.
@@ -60,6 +78,8 @@ func (d Disposition) String() string {
 		return "deferred"
 	case Refused:
 		return "refused"
+	case Unavailable:
+		return "unavailable"
 	default:
 		return "unknown"
 	}
@@ -67,11 +87,11 @@ func (d Disposition) String() string {
 
 // classifyDispatchError decides whether a synchronous dispatch failure is
 // transient cluster backpressure (Backpressure: retry forever, off the attempt
-// budget) or a permanent condition (Rejected: bounded retry → dispatch_failed).
-// Only Kubernetes apiserver error types can yield the Backpressure verdict; every
-// other error is Rejected, which preserves today's path exactly for the Lite
-// subprocess executor — its errors are never apiserver StatusErrors, so its
-// dispatch handling is unreachable by the Backpressure branch (ADR 0053).
+// budget), an unavailable Kubernetes API (Unavailable: retried off the attempt
+// budget for a bounded time, ADR 0093) or a request the apiserver understood
+// and refused (Rejected: bounded retry → dispatch_failed). Only the Kubernetes
+// executor calls it; the Lite subprocess executor returns its own verdicts
+// and never reaches it, so its dispatch handling is unchanged (ADR 0053).
 //
 // The two backpressure signals:
 //   - 429 Too Many Requests: API Priority & Fairness shed the request. Always
@@ -86,10 +106,9 @@ func (d Disposition) String() string {
 // request") also arrives as Forbidden and is likewise treated as permanent: a
 // webhook that rejects a spec rejects every re-offer of that same spec, so
 // retrying forever would loop silently — a bounded retry surfaces it as
-// dispatch_failed instead. A genuinely transient webhook (call timeout under a
-// Fail policy) is not special-cased; it falls to the permanent default, matching
-// today's behavior, rather than risking an infinite re-offer loop on a poison
-// spec.
+// dispatch_failed instead. A webhook that is down under a Fail policy is a 500,
+// not a 403, and is Unavailable (isAPIUnavailable): bounded by a time window
+// rather than retried forever, so a poison spec cannot loop silently either.
 func classifyDispatchError(err error) Disposition {
 	if err == nil {
 		// Not a real input: Execute only classifies a non-nil dispatch error.
@@ -97,13 +116,69 @@ func classifyDispatchError(err error) Disposition {
 		// path.
 		return Rejected
 	}
+	if isClientRateLimiterRefusal(err) {
+		return Deferred
+	}
 	if apierrors.IsTooManyRequests(err) {
 		return Backpressure
 	}
 	if apierrors.IsForbidden(err) && isQuotaExceeded(err) {
 		return Backpressure
 	}
+	if isAPIUnavailable(err) {
+		return Unavailable
+	}
 	return Rejected
+}
+
+// isAPIUnavailable reports whether err says the Kubernetes API could not take
+// the request, rather than that it took the request and refused it (#1606):
+//   - 503 ServiceUnavailable: the apiserver is starting, shutting down, or lost
+//     etcd (a leader change).
+//   - 504 Timeout and 500 ServerTimeout: the apiserver or a proxy in front of it
+//     gave up waiting.
+//   - 500 InternalError: the apiserver failed, which includes a fail-closed
+//     admission webhook that cannot be reached and a 502 from a load balancer
+//     in front of a managed control plane (client-go reads a non-Status 5xx as
+//     InternalError). A webhook that answered and denied the request is a 403
+//     and stays Rejected.
+//   - a connection refused or reset, or a timeout of the transport: no
+//     response at all.
+//   - the client deadline (context.DeadlineExceeded): the request ran out of
+//     time before an answer came back. The client rate limiter's own deadline
+//     refusal is Deferred and handled before this.
+//
+// Only typed errors count: a bare string that merely mentions "connection
+// refused" is not an apiserver or transport error and stays Rejected.
+func isAPIUnavailable(err error) bool {
+	if apierrors.IsServiceUnavailable(err) || apierrors.IsTimeout(err) ||
+		apierrors.IsServerTimeout(err) || apierrors.IsInternalError(err) {
+		return true
+	}
+	if errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+// clientRateLimiterRefusal is the prefix client-go puts on an error from its
+// own client-side rate limiter (rest.Request.tryThrottle). The limiter returns
+// it before the request is sent, when waiting for a token would run past the
+// caller's deadline, so nothing reached the apiserver. client-go leaves a plain
+// context cancellation or deadline unwrapped, so this marker never covers a
+// request that may have been sent.
+const clientRateLimiterRefusal = "client rate limiter Wait returned an error"
+
+// isClientRateLimiterRefusal reports whether err is the client-side rate
+// limiter refusing a request before sending it. That is local backpressure, the
+// same as a full dispatch buffer, so the task is Deferred: left scheduled for a
+// later tick without spending its dispatch-attempt budget (#1596). Counting it
+// as Rejected let a throttled wide fan-out fail healthy tasks as
+// dispatch_failed although no create was ever attempted.
+func isClientRateLimiterRefusal(err error) bool {
+	return strings.Contains(err.Error(), clientRateLimiterRefusal)
 }
 
 // isQuotaExceeded reports whether a Forbidden error is a ResourceQuota rejection

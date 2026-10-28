@@ -16,6 +16,7 @@ import (
 // to touch (#1084). It is recoverable through git when the target happened to be
 // tracked, and not necessarily otherwise.
 func TestDefaultOutputResolvesAgainstTheProjectNotTheCwd(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, dir, want string }{
 		{name: "an explicit project directory", dir: filepath.FromSlash("/tmp/probe"), want: filepath.FromSlash("/tmp/probe/dag.json")},
 		{name: "a relative project directory", dir: filepath.FromSlash("dags/sales"), want: filepath.FromSlash("dags/sales/dag.json")},
@@ -129,10 +130,10 @@ func TestRunCompileDefaultsTheOutputForNonFlagCallers(t *testing.T) {
 
 // The artifact now lands in the user's source tree, so the first `git add .`
 // after the first compile would commit a build artifact into every DAG repo.
-// This repository needed a .gitignore rule for exactly that reason, and the one
-// stray `dag.json` it still tracks (a `cyc_demo` scratch file) is what the rule
-// was added too late to prevent.
+// This repository needed a .gitignore rule for exactly that reason: a stray
+// `cyc_demo` scratch `dag.json` sat tracked in its root until the rule covered it.
 func TestScaffoldIgnoresTheCompiledArtifact(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "p")
 	if _, err := scaffoldProject(dir); err != nil {
 		t.Fatal(err)

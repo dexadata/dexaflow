@@ -64,7 +64,7 @@ cd deploy/k8s
 ./01-install-addons.sh
 
 # 3. Install Dexaflow Pro (official Postgres + Redis, agent-TLS, generated secrets)
-./02-install-leoflow.sh
+./02-install-dexaflow.sh
 ```
 
 Override any parameter via env vars, e.g.:
@@ -79,13 +79,13 @@ PROJECT=my-proj ZONE=us-central1-a MACHINE_TYPE=e2-standard-4 MAX_NODES=5 ./00-c
 |---|---|---|
 | `PROJECT` | active `gcloud` project | no id is hardcoded |
 | `ZONE` | `us-central1-a` | cheapest US, single zone |
-| `CLUSTER` | `leoflow-test` | cluster name |
+| `CLUSTER` | `dexaflow-test` | cluster name |
 | `MACHINE_TYPE` | `e2-standard-2` | bump for the load test |
 | `MIN_NODES` / `MAX_NODES` | `1` / `3` | autoscaler bounds |
 | `USE_SPOT` | `true` | set `false` for load-test stability |
 | `DISK_TYPE` / `DISK_SIZE` | `pd-standard` / `50` | cheapest disk |
 
-## What `02-install-leoflow.sh` does
+## What `02-install-dexaflow.sh` does
 
 With the cluster + cert-manager up, the Pro install:
 
@@ -94,9 +94,9 @@ With the cluster + cert-manager up, the Pro install:
    (created once; re-runs reuse it so creds stay stable). The initial admin
    password is printed and stored there.
 2. Deploys **official Postgres + Redis** (ephemeral emptyDir, no persistence)
-   into the `leoflow` namespace.
+   into the `dexaflow` namespace.
 3. Issues the agent gRPC server cert via **cert-manager** (self-signed root CA →
-   server leaf, SANs for `leoflow.leoflow.svc.cluster.local`), and publishes the
+   server leaf, SANs for `dexaflow.dexaflow.svc.cluster.local`), and publishes the
    CA as a `ConfigMap` for `agentTLS.caConfigMap`.
 4. `helm upgrade --install` from `helm/dexaflow`, pinning `image.tag` +
    `migrations.image.tag` (default `v0.0.1-prealpha.28`).
@@ -104,9 +104,10 @@ With the cluster + cert-manager up, the Pro install:
 Open the UI after install:
 
 ```bash
-kubectl -n leoflow port-forward svc/leoflow 8080:8080
+kubectl -n dexaflow port-forward svc/dexaflow 8080:8080
 # http://127.0.0.1:8080/
-# login: admin@leoflow.local  (the bootstrap admin email — NOT "admin")
+# login: admin@dexaflow.local  (the bootstrap admin email, NOT "admin";
+#   admin@leoflow.local on a database created before the rename)
 # password: bootstrap.password in values.local.yaml
 ```
 
@@ -124,7 +125,7 @@ What it does:
 1. Enables `servicenetworking` / `sqladmin` / `redis` APIs and sets up **Private
    Services Access** (allocated range + VPC peering) on the cluster's VPC.
 2. Creates **Cloud SQL** Postgres (`db-f1-micro`, `--edition=ENTERPRISE`, private
-   IP) + database `leoflow`, and **Memorystore** Redis (Basic 1 GB, `--enable-auth`,
+   IP) + database `dexaflow`, and **Memorystore** Redis (Basic 1 GB, `--enable-auth`,
    private), both in `us-central1`.
 3. Writes a gitignored `values.managed.local.yaml` (reusing `02`'s secrets +
    agent-TLS) and `helm upgrade`s the release at the managed endpoints, then
@@ -162,7 +163,7 @@ resize the node pool / machine type:
 
 ```bash
 # bigger, non-Spot nodes for stable load numbers
-gcloud container clusters resize leoflow-test --node-pool=default-pool \
+gcloud container clusters resize dexaflow-test --node-pool=default-pool \
   --num-nodes=3 --zone=us-central1-a
 # or create a dedicated load-test node pool, and consider managed Cloud SQL + Memorystore
 ```
@@ -170,7 +171,7 @@ gcloud container clusters resize leoflow-test --node-pool=default-pool \
 ## Tear down (stop all cost)
 
 ```bash
-gcloud container clusters delete leoflow-test --zone=us-central1-a
+gcloud container clusters delete dexaflow-test --zone=us-central1-a
 ```
 
 ## Security note

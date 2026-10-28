@@ -15,6 +15,7 @@ import (
 // install.sh puts on a PATH dir like /usr/local/bin, not under ~/.leoflow) must be
 // removed, while unrelated files in the same dir are left untouched.
 func TestRemoveBinariesIn(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	all := []string{
 		"dexaflow", "dexaflow-server", "dexaflow-agent", "dexaflow-mcp",
@@ -41,6 +42,7 @@ func TestRemoveBinariesIn(t *testing.T) {
 // explicit `dexaflow lite <arg>` that is not a project (e.g. the `dexaflow lite
 // uninstall` typo) fails with an actionable message, not a cryptic dexaflow.yaml error.
 func TestResolveLiteProjectRejectsNonProjectArg(t *testing.T) {
+	t.Parallel()
 	cmd := &cobra.Command{}
 	cmd.SetOut(io.Discard)
 
@@ -150,6 +152,7 @@ func TestUninstallWired(t *testing.T) {
 // TestRemoveHomeExceptPreservesDatastore: a plain uninstall keeps the datastore
 // (pgdata) for a reinstall while removing everything else under the home.
 func TestRemoveHomeExceptPreservesDatastore(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "pgdata", "PG_VERSION"), "16")
 	mustWrite(t, filepath.Join(root, "postgres", "bin", "postgres"), "x")
@@ -171,6 +174,7 @@ func TestRemoveHomeExceptPreservesDatastore(t *testing.T) {
 // managed pgdata) has its home removed entirely — its data lives in the Docker
 // volume, which a plain uninstall also leaves intact (it does not run down -v).
 func TestRemoveHomeExceptRemovesRootWhenNoDatastore(t *testing.T) {
+	t.Parallel()
 	root := filepath.Join(t.TempDir(), ".leoflow")
 	mustWrite(t, filepath.Join(root, "postgres", "bin", "postgres"), "x")
 	if err := removeHomeExcept(root, "pgdata"); err != nil {
@@ -195,6 +199,7 @@ func mustWrite(t *testing.T, path, content string) {
 // ~/.dexaflow link (config.HomeDirIn). Removing it must remove the data, not
 // just the link, and leave no link pointing at nothing.
 func TestRemoveLeoflowHomeThroughTheLegacyLink(t *testing.T) {
+	t.Parallel()
 	for _, purge := range []bool{true, false} {
 		home := t.TempDir()
 		legacy := filepath.Join(home, ".leoflow")

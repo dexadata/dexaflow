@@ -4,7 +4,7 @@ aliases:
   - /reference/cli/leoflow_completion_powershell/
 title: "dexaflow completion powershell"
 linkTitle: "completion powershell"
-weight: 21
+weight: 27
 ---
 
 Generate the autocompletion script for powershell
@@ -38,6 +38,7 @@ dexaflow completion powershell [flags]
       --config string       config file path (default ~/.dexaflow/config.yaml)
       --log-level string    log level: debug, info, warn, error
       --server-url string   control plane API base URL
+      --target name         name of the control plane to use (default: DEXAFLOW_TARGET, then the target selected for the workspace; see dexaflow target list)
 ```
 
 ### SEE ALSO

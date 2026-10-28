@@ -178,33 +178,27 @@ func TestSecretsWarnOnNarrowDeclaration(t *testing.T) {
 	}
 }
 
-// TestSecretsNoWarnOnEmptyDeclaration is the permissive default: a task that
-// declared nothing triggers no warn and receives the full set, exactly as before
-// the warn phase existed.
-func TestSecretsNoWarnOnEmptyDeclaration(t *testing.T) {
+// TestSecretsNoWarnOnEmptyDeclarationWithEmptyVault is the other side of #800:
+// a task that declared nothing warns only when there was something to narrow.
+// With an empty vault enforce would deliver exactly what permissive does, so no
+// scope-warning event is recorded.
+func TestSecretsNoWarnOnEmptyDeclarationWithEmptyVault(t *testing.T) {
 	store := &fakeStore{spec: TaskSpec{}} // no declaration
 	srv, a := newServer(store)
-	sec := &fakeSecrets{
-		vars:  map[string]string{"FOO": "bar", "BAR": "baz"},
-		conns: map[string]string{"pg": "postgres://u:p@h:5432/db"},
-	}
+	sec := &fakeSecrets{vars: map[string]string{}, conns: map[string]string{}}
 	audit := &fakeScopeAuditor{}
 	srv.SetSecrets(sec, true)
 	srv.SetSecretScopeAuditor(audit)
 	ctx := ctxWithToken(t, a)
 
-	vresp, err := srv.GetVariables(ctx, &agentv1.GetVariablesRequest{})
-	if err != nil {
+	if _, err := srv.GetVariables(ctx, &agentv1.GetVariablesRequest{}); err != nil {
 		t.Fatalf("GetVariables: %v", err)
-	}
-	if len(vresp.Variables) != 2 {
-		t.Errorf("variables = %v, want the full set", vresp.Variables)
 	}
 	if _, err := srv.GetConnections(ctx, &agentv1.GetConnectionsRequest{}); err != nil {
 		t.Fatalf("GetConnections: %v", err)
 	}
 	if len(audit.events) != 0 {
-		t.Errorf("recorded %d scope-warning events for an undeclared task, want 0: %+v", len(audit.events), audit.events)
+		t.Errorf("recorded %d scope-warning events for an empty vault, want 0: %+v", len(audit.events), audit.events)
 	}
 }
 

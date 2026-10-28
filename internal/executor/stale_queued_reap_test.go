@@ -49,7 +49,7 @@ type fakeStaleQueuedStore struct {
 	failErr    error
 }
 
-func (f *fakeStaleQueuedStore) ListStaleQueuedCandidates(context.Context) ([]StaleQueuedCandidate, error) {
+func (f *fakeStaleQueuedStore) ListStaleQueuedCandidates(context.Context, time.Duration, ReapCursor) ([]StaleQueuedCandidate, error) {
 	return f.candidates, f.listErr
 }
 
@@ -59,6 +59,10 @@ func (f *fakeStaleQueuedStore) MarkTaskDispatchLost(_ context.Context, tiID stri
 	}
 	f.failed = append(f.failed, tiID)
 	return true, nil
+}
+
+func (f *fakeStaleQueuedStore) MarkTaskStartExpired(context.Context, string, int, int) (bool, error) {
+	return false, nil
 }
 
 // TestReapDispatchLost_MarksStaleTIs covers the success path: only TIs queued

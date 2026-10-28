@@ -12,18 +12,27 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/ui"
 )
 
 func uiServer() *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", Email: "admin@leoflow.local", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		UI:            ui.New(),
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", Email: "admin@leoflow.local", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		UI: UIDeps{
+			SPA: ui.New(),
+		},
 	})
 }
 
@@ -214,6 +223,56 @@ func TestUIAuthTokenReMintsForAuthenticatedPrincipal(t *testing.T) {
 	}
 }
 
+func TestUIAuthTokenAuthenticatesWithCookie(t *testing.T) {
+	srv := uiServer()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/auth/token", strings.NewReader(`{"token_type":"api"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "_token", Value: "cookie-jwt"})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/ui/auth/token with cookie = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	var tok map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &tok); err != nil {
+		t.Fatal(err)
+	}
+	if tok["access_token"] != "cookie-jwt" {
+		t.Errorf("access_token = %v, want cookie-jwt", tok["access_token"])
+	}
+}
+
+func TestUIAuthTokenReportsRemainingTTL(t *testing.T) {
+	srv := uiServer()
+	exp := time.Now().Add(300 * time.Second)
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		ExpiresAt: jwt.NewNumericDate(exp),
+	}).SignedString([]byte("any-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/ui/auth/token", strings.NewReader(`{"token_type":"api"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/ui/auth/token = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	var tok map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &tok); err != nil {
+		t.Fatal(err)
+	}
+	expiresIn, ok := tok["expires_in_seconds"].(float64)
+	if !ok {
+		t.Fatalf("expires_in_seconds not a number: %v", tok["expires_in_seconds"])
+	}
+	if expiresIn <= 0 || expiresIn > 300 {
+		t.Errorf("expires_in_seconds = %v, want ~300", expiresIn)
+	}
+}
+
 func TestUIMeReturnsUser(t *testing.T) {
 	rec := authGet(uiServer(), http.MethodGet, "/ui/auth/me", "")
 	if rec.Code != http.StatusOK {
@@ -320,26 +379,35 @@ func TestUIServesStaticAndIndexShell(t *testing.T) {
 
 // TestShellGateDeniesOnABackendError pins the SECOND caller of
 // auth.Authenticate. #1087 changed what Authenticate returns for a store
-// failure — a raw backend error instead of a joined ErrInvalidToken — and
-// nothing outside internal/auth switches on that sentinel, so the shell gate
-// must keep deciding on `err == nil` alone. If it ever grew a "not
-// ErrInvalidToken, so let it through" branch, an unreachable user store would
-// serve the authenticated SPA shell to anyone holding any string.
+// failure (a raw backend error instead of a joined ErrInvalidToken), so the
+// shell gate must only ever serve the shell on `err == nil`. If it ever grew a
+// "not ErrInvalidToken, so let it through" branch, an unreachable user store
+// would serve the authenticated SPA shell to anyone holding any string. Since
+// #1099 such a request gets the static outage page (503) instead of the login
+// redirect, and still never the shell.
 func TestShellGateDeniesOnABackendError(t *testing.T) {
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{authErr: errors.New("dial tcp 10.0.0.1:5432: i/o timeout")},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		UI:            ui.New(),
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{authErr: errors.New("dial tcp 10.0.0.1:5432: i/o timeout")},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		UI: UIDeps{
+			SPA: ui.New(),
+		},
 	})
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/dags/etl/grid", http.NoBody)
 	req.AddCookie(&http.Cookie{Name: authTokenCookie, Value: "whatever"})
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusFound {
-		t.Errorf("shell GET with an unreachable store = %d, want 302 to login — a store we could not read must never authenticate", rec.Code)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("shell GET with an unreachable store = %d, want the 503 outage page: a store we could not read must never authenticate", rec.Code)
 	}
 	if strings.Contains(rec.Body.String(), "<div id=\"root\"") {
 		t.Error("the authenticated SPA shell was served while the user store was unreachable")

@@ -1,7 +1,16 @@
 Dexaflow control plane "{{ include "leoflow.fullname" . }}" is installing into namespace "{{ .Release.Namespace }}".
 
-1. Task pods are created in namespace "{{ .Values.taskNamespace }}". Ensure it exists:
-     kubectl create namespace {{ .Values.taskNamespace }} --dry-run=client -o yaml | kubectl apply -f -
+1. Task pods are created in namespace "{{ include "leoflow.taskNamespace" . }}". Ensure it exists:
+     kubectl create namespace {{ include "leoflow.taskNamespace" . }} --dry-run=client -o yaml | kubectl apply -f -
+{{- if and (not .Values.taskNamespace) .Release.IsUpgrade (ne (include "leoflow.taskNamespace" .) .Release.Namespace) }}
+   taskNamespace is unset, so this upgrade keeps "{{ include "leoflow.taskNamespace" . }}", the namespace the
+   running control plane already used (charts before 0.5.4 defaulted to "leoflow"). Fresh
+   installs now default to the release namespace. To pin the current namespace, set
+     --set taskNamespace={{ include "leoflow.taskNamespace" . }}
+   To move task pods to "{{ .Release.Namespace }}", let running tasks finish, then
+     --set taskNamespace={{ .Release.Namespace }}
+   (see the upgrade guide).
+{{- end }}
 
 2. Agents in task pods dial the control plane gRPC at:
      {{ include "leoflow.agentControlPlaneAddr" . }}
@@ -11,7 +20,7 @@ Dexaflow control plane "{{ include "leoflow.fullname" . }}" is installing into n
      via the configured Ingress host(s).
 {{- else }}
      kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "leoflow.roleName" (dict "ctx" . "role" (ternary "api" "all" .Values.split.enabled)) }} {{ .Values.ports.http }}:{{ .Values.ports.http }}
-     # then open http://localhost:{{ .Values.ports.http }}
+     # then open {{ ternary "https" "http" ((.Values.httpTLS | default dict).enabled | default false) }}://localhost:{{ .Values.ports.http }}
 {{- end }}
 
 Agent gRPC TLS:
@@ -49,6 +58,12 @@ leader is invisible to every other pod's API/UI, and every log is lost when a po
 restarts. Ship task logs to object storage (logs.sink.provider=s3|gcs with
 logs.sink.bucket) or use a ReadWriteMany logs PVC — see
 helm/dexaflow/examples/values-ha.yaml.
+{{- else if and (not .Values.logs.persistence.enabled) (eq .Values.logs.sink.provider "disk") }}
+
+WARNING: logs.persistence.enabled=false with logs.sink.provider=disk.
+Task logs are stored in an ephemeral emptyDir and will not survive a pod restart
+or helm upgrade. Ship task logs to object storage (logs.sink.provider=s3|gcs with
+logs.sink.bucket) or enable persistent volume storage (logs.persistence.enabled=true).
 {{- end }}
 {{- /* Auto-selection only: this note credits the replica floor for the budget, so
 printing it over a value the operator set by hand — in either spelling — hands
@@ -83,7 +98,7 @@ metadata, the apiserver, or any in-cluster service" is contained (ADR 0047/0048)
 networkPolicy.enabled does NOT cover task pods: it selects control-plane pods in
 namespace {{ .Release.Namespace }}, and its egress is a single empty rule
 (- {}), which matches every destination — it restricts ingress only. Nothing
-selects a task pod in namespace {{ .Values.taskNamespace }} until you set:
+selects a task pod in namespace {{ include "leoflow.taskNamespace" . }} until you set:
      --set taskNetworkPolicy.enabled=true
 It is off by default on purpose, not by oversight: the policy always excludes
 169.254.0.0/16 from its allow-all egress rule, and that is where GKE Workload
@@ -137,6 +152,16 @@ database.maxOpenConns. See #1088.
 
 WARNING: no database URL set. Provide .Values.database.url or .Values.database.existingSecret (key databaseUrl).
 {{- end }}
+{{- $dbURL := .Values.database.url | default "" }}
+{{- if or (contains "@pg-postgresql:" $dbURL) (contains "@postgres:" $dbURL) (contains "@postgres." $dbURL) }}
+
+WARNING: database.url points at an in-cluster Postgres Service. If that Postgres
+keeps its data on emptyDir (as the PoC and local-cluster examples do) instead of
+a PersistentVolumeClaim, every DAG version, run, secret and user is lost when its
+pod restarts or moves: a node reboot, a drain, a Spot or preemptible reclamation.
+For production use a managed Postgres (RDS, Cloud SQL) or back it with a PVC, and
+rehearse a restore. See https://dexaflow.dexadata.ai/operate/upgrades/#ephemeral-database-loss
+{{- end }}
 {{- if not (or .Values.auth.existingSecret .Values.auth.jwtSecret) }}
 
 WARNING: no JWT secret set. Provide .Values.auth.jwtSecret or .Values.auth.existingSecret (key jwtSecret).
@@ -183,9 +208,8 @@ to the namespace default SA and the pull secrets will not apply.
 
 Migrations run as a pre-install/pre-upgrade Job using image
 "{{ .Values.migrations.image.repository }}:{{ .Values.migrations.image.tag | default .Chart.AppVersion }}",
-which bundles the Dexaflow migrations at "{{ .Values.migrations.path }}"
-(build/publish it with `make migrate-image`). Override migrations.image or set
-migrations.enabled=false to migrate out of band.
+which bundles the Dexaflow migrations at "{{ .Values.migrations.path }}".
+Override migrations.image or set migrations.enabled=false to migrate out of band.
 Index migrations (0.5.1 ships eight) run CONCURRENTLY: each waits for every
 transaction that was open in the database when it started, so the Job can take
 longer than usual behind a session idle in transaction or a long query. Upgrade

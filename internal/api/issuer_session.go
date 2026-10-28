@@ -30,7 +30,10 @@ const (
 	issuerErrRateLimited      = "rate_limited"
 	issuerErrOriginNotAllowed = "origin_not_allowed"
 	issuerErrTokenMissing     = "token_missing"
-	issuerErrServer           = "server_error"
+	// issuerErrHostTenantMismatch is a token for a tenant posted on another
+	// tenant's host (#1463).
+	issuerErrHostTenantMismatch = "host_tenant_mismatch"
+	issuerErrServer             = "server_error"
 )
 
 // TrustedIssuer verifies handoff tokens from the operator's trusted issuer.
@@ -50,14 +53,16 @@ type TrustedIssuerUserStore interface {
 
 // issuerSessionDeps is what the handoff handler needs.
 type issuerSessionDeps struct {
-	issuer          TrustedIssuer
-	users           TrustedIssuerUserStore
-	origins         []string
-	audit           AuthAuditWriter
-	jwtSecret       string
-	tokenTTL        time.Duration
-	logger          *slog.Logger
-	insecureCookies bool
+	issuer    TrustedIssuer
+	users     TrustedIssuerUserStore
+	origins   []string
+	audit     AuthAuditWriter
+	jwtSecret string
+	tokenTTL  time.Duration
+	logger    *slog.Logger
+	session   sessionCookieSpec
+	// hosts binds a session to its tenant's host; nil binds nothing.
+	hosts *hostBinding
 	// signIn is auth.external_signin_url (#1288), parsed once. When set, a
 	// refusal sends the browser back there instead of answering problem+json.
 	// It is the only place a refusal redirects to: nothing from the request
@@ -89,8 +94,8 @@ func issuerSignInTarget(raw string) *url.URL {
 // It never creates a user and never takes roles from the token: the user must
 // already be linked to the issuer, and its roles are the ones Dexaflow holds.
 // Refusals set no cookie, answer with a status that says which side is wrong
-// (401 token, 403 user or origin, 500 Dexaflow), and log the reason
-// server-side only.
+// (401 token, 403 user, origin or host, 500 Dexaflow, 503 when the issuer's
+// keys cannot be downloaded), and log the reason server-side only.
 //
 // With an external sign-in URL configured, a refusal instead redirects the
 // browser there with the stable reason code (see refuse), so the person lands
@@ -114,11 +119,27 @@ func issuerSessionHandler(d issuerSessionDeps) gin.HandlerFunc {
 			return
 		}
 		id, err := d.issuer.Verify(c.Request.Context(), raw)
+		if errors.Is(err, issuer.ErrKeysUnavailable) {
+			// The issuer's keys could not be downloaded, so the token was
+			// never checked: a server-side outage, not a failed sign-in, and
+			// not audited as one (#1588), as on the bearer path (#1545).
+			d.logger.Error("trusted issuer sign-in: signing keys unavailable", "error", err)
+			d.refuse(c, http.StatusServiceUnavailable, issuerErrServer, "service unavailable", "the sign-in could not be checked, try again shortly")
+			return
+		}
 		if err != nil {
 			d.logger.Warn("trusted issuer sign-in refused: token", "reason", err)
 			reason := issuerReason(err)
 			d.record(c, auditIssuerLoginFailure, "", "", "", map[string]string{"reason": reason})
 			d.refuse(c, http.StatusUnauthorized, reason, "unauthorized", "the sign-in token was not accepted")
+			return
+		}
+		// With a host binding (#1463), a token for one tenant opens no session
+		// on another tenant's host.
+		if !d.hosts.allows(c, id.Tenant) {
+			d.logger.Warn("trusted issuer sign-in refused: host", "tenant", logSafe(id.Tenant), "host", logSafe(d.hosts.requestHost(c)))
+			d.record(c, auditIssuerLoginFailure, id.Tenant, "", id.Email, map[string]string{"reason": issuerErrHostTenantMismatch})
+			d.refuse(c, http.StatusForbidden, issuerErrHostTenantMismatch, "forbidden", "this sign-in is not for this host")
 			return
 		}
 		user, ok := d.resolve(c, id)
@@ -131,9 +152,9 @@ func issuerSessionHandler(d issuerSessionDeps) gin.HandlerFunc {
 			d.refuse(c, http.StatusInternalServerError, issuerErrServer, "internal error", "could not open a session")
 			return
 		}
-		setSessionCookie(c, token, d.tokenTTL, d.insecureCookies)
+		setSessionCookie(c, token, d.tokenTTL, d.session)
 		d.record(c, auditIssuerLoginSuccess, user.TenantID, user.ID, user.Email, nil)
-		c.Redirect(http.StatusSeeOther, sanitizeNext(c.PostForm("next")))
+		c.Redirect(http.StatusSeeOther, sanitizeNext(c.PostForm("next"), c.Request.Host))
 	}
 }
 
@@ -178,6 +199,11 @@ func (d issuerSessionDeps) resolve(c *gin.Context, id *issuer.Identity) (*auth.U
 // level, so a redirected refusal is as visible there as a 4xx or 5xx.
 func (d issuerSessionDeps) refuse(c *gin.Context, status int, code, title, detail string) {
 	if d.signIn == nil || wantsProblemJSON(c.GetHeader("Accept")) {
+		if status == http.StatusServiceUnavailable {
+			// The only 503 here is the issuer's keys being unreachable: name a
+			// wait so the caller backs off instead of retrying at once (#1100).
+			setOutageRetryAfter(c)
+		}
 		AbortProblem(c, status, title, detail)
 		return
 	}

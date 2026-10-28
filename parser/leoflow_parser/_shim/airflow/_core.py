@@ -135,6 +135,10 @@ class DAG:
         self.start_date = kwargs.get("start_date")
         self.max_active_runs = kwargs.get("max_active_runs")
         self.catchup = kwargs.get("catchup")
+        # Airflow's is_paused_upon_creation: whether the DAG starts paused when
+        # it is first registered, overriding the server's
+        # dags_are_paused_at_creation. None (unset) leaves it to the server.
+        self.is_paused_upon_creation = kwargs.get("is_paused_upon_creation")
         # Collect on construction too, so DAGs defined without `with` (e.g.
         # module-level `dag = DAG(...)` with operators attached via dag=) are seen.
         COLLECTED[dag_id] = self

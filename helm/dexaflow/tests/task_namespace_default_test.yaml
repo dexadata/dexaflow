@@ -1,0 +1,303 @@
+suite: task namespace default follows the release namespace (#1682)
+# Before #1682 an unset taskNamespace meant the literal "leoflow", so
+# `helm install -n dexaflow` sent task pods, the executor Role/RoleBinding and the
+# agent CA ConfigMap to a namespace the operator never chose. An unset value now
+# means the release namespace on a fresh install. On `helm upgrade` an unset value
+# keeps the namespace the running control plane already uses, read from its
+# Deployment, so an upgrade never moves task pods (and their RBAC) on its own.
+templates:
+  - deployment.yaml
+  - rbac.yaml
+  - secret.yaml
+  - agent-tls-autogen.yaml
+  - task-serviceaccount.yaml
+  - task-networkpolicy.yaml
+  - NOTES.txt
+release:
+  name: dexaflow
+  namespace: dexaflow
+set:
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+  taskServiceAccount.create: true
+  taskNetworkPolicy.enabled: true
+tests:
+  # ─── Fresh install: the release namespace ─────────────────────────────────
+  - it: tells the control plane to create task pods in the release namespace
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+            value: dexaflow
+
+  - it: grants the executor Role in the release namespace
+    template: rbac.yaml
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: dexaflow
+
+  - it: binds the executor Role in the release namespace
+    template: rbac.yaml
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: dexaflow
+
+  - it: puts the auto-generated agent CA ConfigMap in the release namespace
+    template: agent-tls-autogen.yaml
+    documentSelector:
+      path: kind
+      value: ConfigMap
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: dexaflow
+
+  - it: creates the task ServiceAccount in the release namespace
+    template: task-serviceaccount.yaml
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: dexaflow
+
+  - it: puts the task NetworkPolicy in the release namespace
+    template: task-networkpolicy.yaml
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: dexaflow
+
+  - it: no rendered object lands in the old hardcoded leoflow namespace
+    templates:
+      - rbac.yaml
+      - agent-tls-autogen.yaml
+      - task-serviceaccount.yaml
+      - task-networkpolicy.yaml
+    asserts:
+      - notEqual:
+          path: metadata.namespace
+          value: leoflow
+
+  - it: NOTES name the release namespace as the task namespace
+    template: NOTES.txt
+    asserts:
+      - matchRegexRaw:
+          pattern: Task pods are created in namespace "dexaflow"
+
+  # ─── An explicit value always wins ────────────────────────────────────────
+  - it: honors an explicit taskNamespace of leoflow on a fresh install
+    set:
+      taskNamespace: leoflow
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+            value: leoflow
+        template: deployment.yaml
+      - equal:
+          path: metadata.namespace
+          value: leoflow
+        template: rbac.yaml
+        documentIndex: 0
+
+  - it: honors an explicit taskNamespace on upgrade, over the live one
+    release:
+      name: dexaflow
+      namespace: dexaflow
+      upgrade: true
+    set:
+      taskNamespace: data-platform
+    kubernetesProvider:
+      scheme: &scheme
+        "apps/v1/Deployment":
+          gvr:
+            group: apps
+            version: v1
+            resource: deployments
+          namespaced: true
+      objects:
+        - &liveLeoflow
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: dexaflow
+            namespace: dexaflow
+            labels:
+              app.kubernetes.io/instance: dexaflow
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: server
+                    env:
+                      - name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+                        value: leoflow
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+            value: data-platform
+        template: deployment.yaml
+      - equal:
+          path: metadata.namespace
+          value: data-platform
+        template: rbac.yaml
+        documentIndex: 0
+
+  # ─── Upgrade with the value unset: keep the live namespace ────────────────
+  - it: on upgrade keeps the namespace the running control plane uses (env)
+    template: deployment.yaml
+    release:
+      name: dexaflow
+      namespace: dexaflow
+      upgrade: true
+    kubernetesProvider:
+      scheme: *scheme
+      objects:
+        - *liveLeoflow
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+            value: leoflow
+
+  - it: on upgrade keeps the executor RBAC where the running pods are
+    template: rbac.yaml
+    release:
+      name: dexaflow
+      namespace: dexaflow
+      upgrade: true
+    kubernetesProvider:
+      scheme: *scheme
+      objects:
+        - *liveLeoflow
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: leoflow
+        documentIndex: 0
+      - equal:
+          path: metadata.namespace
+          value: leoflow
+        documentIndex: 1
+
+  - it: on upgrade keeps the agent CA ConfigMap where the running pods are
+    template: agent-tls-autogen.yaml
+    release:
+      name: dexaflow
+      namespace: dexaflow
+      upgrade: true
+    kubernetesProvider:
+      scheme: *scheme
+      objects:
+        - *liveLeoflow
+    documentSelector:
+      path: kind
+      value: ConfigMap
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: leoflow
+
+  - it: on upgrade NOTES say the live namespace was kept and how to move
+    template: NOTES.txt
+    release:
+      name: dexaflow
+      namespace: dexaflow
+      upgrade: true
+    kubernetesProvider:
+      scheme: *scheme
+      objects:
+        - *liveLeoflow
+    asserts:
+      - matchRegexRaw:
+          pattern: Task pods are created in namespace "leoflow"
+      - matchRegexRaw:
+          pattern: taskNamespace is unset, so this upgrade keeps "leoflow"
+
+  - it: reads the live value from a split scheduler Deployment too
+    template: deployment.yaml
+    release:
+      name: dexaflow
+      namespace: dexaflow
+      upgrade: true
+    kubernetesProvider:
+      scheme: *scheme
+      objects:
+        - apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: dexaflow-scheduler
+            namespace: dexaflow
+            labels:
+              app.kubernetes.io/instance: dexaflow
+              app.kubernetes.io/component: scheduler
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: server
+                    env:
+                      - name: LEOFLOW_SERVER_HTTP_ADDR
+                        value: ":8080"
+                      - name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+                        value: team-tasks
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+            value: team-tasks
+
+  - it: ignores a Deployment of another release in the same namespace
+    template: deployment.yaml
+    release:
+      name: dexaflow
+      namespace: dexaflow
+      upgrade: true
+    kubernetesProvider:
+      scheme: *scheme
+      objects:
+        - apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: other
+            namespace: dexaflow
+            labels:
+              app.kubernetes.io/instance: other
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: server
+                    env:
+                      - name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+                        value: leoflow
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+            value: dexaflow
+
+  - it: on upgrade with no live control plane uses the release namespace
+    template: deployment.yaml
+    release:
+      name: dexaflow
+      namespace: dexaflow
+      upgrade: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+            value: dexaflow

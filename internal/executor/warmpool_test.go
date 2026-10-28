@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -54,19 +55,19 @@ func (f *fakeWarmPods) ListWarmPods(context.Context) ([]WarmPodInfo, error) {
 	return f.existing, nil
 }
 
-func (f *fakeWarmPods) CreateWarmPod(_ context.Context, t WarmTarget, anchorName, anchorUID string) error {
+func (f *fakeWarmPods) CreateWarmPod(_ context.Context, t WarmTarget, anchorName, anchorUID string) (string, error) {
 	if f.panicOn != "" && t.DagVersionID == f.panicOn {
 		panic("boom creating " + t.DagVersionID)
 	}
 	if f.createErr != nil {
 		if err := f.createErr[t.DagVersionID]; err != nil {
-			return err
+			return "", err
 		}
 	}
 	f.created = append(f.created, t)
 	f.createdAnchorName = append(f.createdAnchorName, anchorName)
 	f.createdAnchorUID = append(f.createdAnchorUID, anchorUID)
-	return nil
+	return fmt.Sprintf("warm-%s-%d", t.DagVersionID, len(f.created)), nil
 }
 
 func (f *fakeWarmPods) DeleteWarmPod(_ context.Context, name string) error {

@@ -1,15 +1,18 @@
 #!/bin/sh
 # Dexaflow installer: downloads the release archive for this OS/arch, verifies
-# its checksum, installs the binaries (plus leoflow* links to them, the names
+# the cosign signature of checksums.txt (when cosign is installed) and the
+# archive's checksum, installs the binaries (plus leoflow* links to them, the names
 # before the rename) and runs `dexaflow setup` to bootstrap the managed runtime
 # (Python, workspace).
 #
 #   curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | sh
 #
 # Environment overrides (the LEOFLOW_* names are still accepted):
-#   DEXAFLOW_VERSION=v0.5.0          pin a specific release (default: latest)
+#   DEXAFLOW_VERSION=vX.Y.Z          pin a specific release (default: latest)
 #   DEXAFLOW_NO_SETUP=1              install binaries only, skip `dexaflow setup`
 #   DEXAFLOW_INSTALL_DIR=~/.dexaflow/bin
+#   DEXAFLOW_INSTALL_REQUIRE_SIGNATURE=1  fail when cosign is not installed
+#   DEXAFLOW_INSTALL_SKIP_SIGNATURE=1     do not verify the signature
 set -eu
 
 REPO="dexadata/dexaflow"
@@ -78,6 +81,74 @@ fi
 # message instead of a raw "tar: command not found" mid-install.
 have tar || err "need tar to extract the release archive (install it, e.g. 'apk add tar', 'zypper in tar', 'dnf install tar')"
 
+# ── Signature policy (#1563) ──
+# checksums.txt comes from the same release as the archive, so the checksum
+# alone catches a broken download, not a tampered release. The release workflow
+# signs checksums.txt with cosign (keyless), and with cosign installed this
+# script verifies that signature before trusting a single checksum in it, and
+# aborts on any failure. Without cosign it says so in one line and goes on, as
+# it always has: making cosign mandatory would break every existing
+# `curl | sh` on a machine without it. REQUIRE makes a missing cosign fatal;
+# SKIP is for a machine with cosign that cannot reach Sigstore.
+require_sig="${DEXAFLOW_INSTALL_REQUIRE_SIGNATURE:-${LEOFLOW_INSTALL_REQUIRE_SIGNATURE:-}}"
+skip_sig="${DEXAFLOW_INSTALL_SKIP_SIGNATURE:-${LEOFLOW_INSTALL_SKIP_SIGNATURE:-}}"
+if [ "$require_sig" = 1 ] && [ "$skip_sig" = 1 ]; then
+	err "DEXAFLOW_INSTALL_REQUIRE_SIGNATURE=1 and DEXAFLOW_INSTALL_SKIP_SIGNATURE=1 contradict each other; set one"
+fi
+sig_docs="https://dexaflow.dexadata.ai/get-started/installation/#verifying-the-download"
+
+# cosign 1.x has no --certificate-identity, so it cannot pin the signer.
+cosign_usable() {
+	have cosign || return 1
+	case "$(cosign version 2>/dev/null | awk '/GitVersion/ {print $2}')" in
+		v1.* | 1.* | v0.* | 0.*) return 1 ;;
+	esac
+	return 0
+}
+
+# The release workflow that signed a tag: dexadata/dexaflow from v0.5.0 on,
+# neochaotic/leoflow for the releases cut before the repository moved. The
+# identity is exact, workflow file and tag included, so a signature made by any
+# other workflow, branch or tag of either repository does not verify.
+signer_identity() { # <tag>
+	_sv="${1#v}"
+	_maj="${_sv%%.*}"
+	_rest="${_sv#*.}"
+	_min="${_rest%%.*}"
+	_srepo="dexadata/dexaflow"
+	case "${_maj}${_min}" in
+		'' | *[!0-9]*) ;;
+		*) [ "$_maj" -eq 0 ] && [ "$_min" -lt 5 ] && _srepo="neochaotic/leoflow" ;;
+	esac
+	printf 'https://github.com/%s/.github/workflows/release.yaml@refs/tags/%s' "$_srepo" "$1"
+}
+
+verify_checksums_signature() { # <dir holding checksums.txt> <base url> <tag>
+	if [ "$skip_sig" = 1 ]; then
+		info "signature of checksums.txt was not checked (DEXAFLOW_INSTALL_SKIP_SIGNATURE=1)"
+		return
+	fi
+	if ! cosign_usable; then
+		[ "$require_sig" = 1 ] && err "DEXAFLOW_INSTALL_REQUIRE_SIGNATURE=1, but cosign v2 or later is not on PATH (install it: https://docs.sigstore.dev/cosign/system_config/installation/)"
+		info "signature of checksums.txt was not checked: cosign is not installed (to check it, see ${sig_docs})"
+		return
+	fi
+	dl "${2}/checksums.txt.sig" "${1}/checksums.txt.sig" || err "downloading checksums.txt.sig failed; not installing an unsigned release"
+	dl "${2}/checksums.txt.pem" "${1}/checksums.txt.pem" || err "downloading checksums.txt.pem failed; not installing an unsigned release"
+	identity="$(signer_identity "$3")"
+	info "verifying the signature of checksums.txt (cosign)..."
+	if ! cosign verify-blob \
+		--certificate "${1}/checksums.txt.pem" \
+		--signature "${1}/checksums.txt.sig" \
+		--certificate-identity "$identity" \
+		--certificate-oidc-issuer https://token.actions.githubusercontent.com \
+		"${1}/checksums.txt" >"${1}/cosign.log" 2>&1; then
+		cat "${1}/cosign.log" >&2
+		err "signature verification of checksums.txt failed (cosign output above); nothing was installed. Expected signer: ${identity}. If cosign could not reach Sigstore, see ${sig_docs}"
+	fi
+	info "signature verified (${identity})"
+}
+
 # ── Resolve version ──
 # Pin any version (incl. a pre-release once stable exists): LEOFLOW_VERSION=...
 version="${DEXAFLOW_VERSION:-${LEOFLOW_VERSION:-}}"
@@ -106,6 +177,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 dl "${base}/checksums.txt" "${tmp}/checksums.txt" || err "downloading checksums.txt failed"
+verify_checksums_signature "$tmp" "$base" "$version"
 # Releases before the rename ship leoflow_* archives with leoflow* binaries.
 archive="dexaflow_${ver_nov}_${os}_${arch}.tar.gz"
 name=dexaflow

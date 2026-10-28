@@ -2,7 +2,9 @@ package agentrpc
 
 import (
 	"context"
+	"errors"
 	"io"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -23,6 +26,8 @@ type fakeAwaitStream struct {
 	ctx  context.Context
 	recv chan recvItem
 	sent chan *agentv1.WorkAssignment
+	// headers receives every response header the handler sends.
+	headers chan metadata.MD
 }
 
 type recvItem struct {
@@ -32,13 +37,19 @@ type recvItem struct {
 
 func newFakeAwaitStream(ctx context.Context) *fakeAwaitStream {
 	return &fakeAwaitStream{
-		ctx:  ctx,
-		recv: make(chan recvItem, 16),
-		sent: make(chan *agentv1.WorkAssignment, 16),
+		ctx:     ctx,
+		recv:    make(chan recvItem, 16),
+		sent:    make(chan *agentv1.WorkAssignment, 16),
+		headers: make(chan metadata.MD, 4),
 	}
 }
 
 func (s *fakeAwaitStream) Context() context.Context { return s.ctx }
+
+func (s *fakeAwaitStream) SendHeader(md metadata.MD) error {
+	s.headers <- md
+	return nil
+}
 
 func (s *fakeAwaitStream) Recv() (*agentv1.WorkerMessage, error) {
 	it := <-s.recv
@@ -315,17 +326,19 @@ func TestAckRefusedReclaims(t *testing.T) {
 	}
 }
 
-// ─── (f2) lease expiry returns the worker to the free set (H4) ──────────────
+// ─── (f2) an expired lease's tombstone returns the worker to free (H4) ──────
 
-// TestLeaseExpiryReturnsWorkerToFree: a missed ack is a transient slow-start,
-// not a wedge, so onLeaseExpire must return the worker to the free set rather
-// than strand it holding a pool slot forever (ADR 0058 N1d-c, H4). Proven
-// behaviourally: after the lease expires, a fresh Assign for the same
-// dag_version hands the worker out again.
-func TestLeaseExpiryReturnsWorkerToFree(t *testing.T) {
+// TestLeaseTombstoneExpiryReturnsWorkerToFree: a missed ack is usually a
+// transient slow-start, not a wedge, so once the expired lease's tombstone
+// elapses with no late ack the worker must return to the free set rather than
+// strand it holding a pool slot forever (ADR 0058 N1d-c, H4). Proven
+// behaviourally: after the lease and its tombstone expire, a fresh Assign for the
+// same dag_version hands the worker out again.
+func TestLeaseTombstoneExpiryReturnsWorkerToFree(t *testing.T) {
 	reclaims := make(chan ReclaimEvent, 4)
 	reg := NewWorkerRegistry(func(ev ReclaimEvent) { reclaims <- ev })
 	reg.leaseFor = func(*agentv1.WorkAssignment) time.Duration { return 5 * time.Millisecond }
+	reg.tombstoneFor = 5 * time.Millisecond
 
 	send := make(chan *agentv1.WorkAssignment, 2)
 	mustRegister(t, reg, "w1", "v1", "pod-1", send)
@@ -334,8 +347,6 @@ func TestLeaseExpiryReturnsWorkerToFree(t *testing.T) {
 	}
 	<-send
 
-	// Wait for the reclaim so the lease has certainly expired and the worker
-	// has been returned to free under the lock.
 	select {
 	case ev := <-reclaims:
 		if ev.Reason != ReclaimLeaseExpired {
@@ -360,6 +371,113 @@ func TestLeaseExpiryReturnsWorkerToFree(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected the re-Assigned assignment on the worker's channel")
+	}
+	select {
+	case ev := <-reclaims:
+		t.Fatalf("unexpected second reclaim when the tombstone expired: %+v", ev)
+	default:
+	}
+}
+
+// expireLease assigns a1 to the only worker of v1 and waits until its lease
+// expired, leaving the tombstone in place (tombstoneFor is an hour).
+func expireLease(t *testing.T) (reg *WorkerRegistry, send chan *agentv1.WorkAssignment, reclaims chan ReclaimEvent) {
+	t.Helper()
+	reclaims = make(chan ReclaimEvent, 4)
+	reg = NewWorkerRegistry(func(ev ReclaimEvent) { reclaims <- ev })
+	reg.leaseFor = func(*agentv1.WorkAssignment) time.Duration { return 5 * time.Millisecond }
+	reg.tombstoneFor = time.Hour
+	send = make(chan *agentv1.WorkAssignment, 1)
+	mustRegister(t, reg, "w1", "v1", "warm-pod-1", send)
+	if !reg.Assign("v1", &agentv1.WorkAssignment{AssignmentId: "a1", DagRunId: "r", TaskId: "t1", TryNumber: 1, AttemptEpoch: 2}) {
+		t.Fatal("first Assign should succeed")
+	}
+	<-send // the worker received a1 but is slow to ack
+	select {
+	case ev := <-reclaims:
+		if ev.Reason != ReclaimLeaseExpired {
+			t.Fatalf("reclaim reason = %v, want ReclaimLeaseExpired", ev.Reason)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected a reclaim on lease expiry")
+	}
+	return reg, send, reclaims
+}
+
+// TestLateStartedAckBindsAndWorkerIsNotReoffered (#1600): a worker that acks
+// started after its lease expired still runs the attempt (it acks, then runs,
+// with no confirmation step). The late ack must still yield the binding to
+// persist, and the worker must not be offered a second assignment, neither
+// between the expiry and the ack nor after it.
+func TestLateStartedAckBindsAndWorkerIsNotReoffered(t *testing.T) {
+	reg, _, reclaims := expireLease(t)
+
+	if reg.Assign("v1", &agentv1.WorkAssignment{AssignmentId: "a2", DagRunId: "r", TaskId: "t2", TryNumber: 1}) {
+		t.Fatal("a worker whose ack can still arrive was offered a second assignment")
+	}
+
+	binding, ok := reg.Ack("a1", true)
+	if !ok || binding == nil {
+		t.Fatalf("late started Ack = (%+v, %v), want a binding", binding, ok)
+	}
+	want := WarmBinding{RunID: "r", TaskID: "t1", TryNumber: 1, AttemptEpoch: 2, PodName: "warm-pod-1"}
+	if *binding != want {
+		t.Fatalf("late binding = %+v, want %+v", *binding, want)
+	}
+	if !reg.busy("w1") {
+		t.Fatal("a worker that acked started late must be busy")
+	}
+	if reg.Assign("v1", &agentv1.WorkAssignment{AssignmentId: "a3", DagRunId: "r", TaskId: "t3", TryNumber: 1}) {
+		t.Fatal("a busy worker was offered a second assignment")
+	}
+	select {
+	case ev := <-reclaims:
+		t.Fatalf("unexpected reclaim after a late started ack: %+v", ev)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+// TestLateRefusedAckReturnsWorkerToFree: a refused ack after the lease expired
+// reclaims the assignment as refused and frees the worker the expiry held back.
+func TestLateRefusedAckReturnsWorkerToFree(t *testing.T) {
+	reg, send, reclaims := expireLease(t)
+
+	if binding, ok := reg.Ack("a1", false); ok || binding != nil {
+		t.Fatalf("late refused Ack = (%+v, %v), want (nil, false)", binding, ok)
+	}
+	select {
+	case ev := <-reclaims:
+		if ev.Reason != ReclaimRefused || ev.AssignmentID != "a1" {
+			t.Fatalf("reclaim = %+v, want a1/ReclaimRefused", ev)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected a refused reclaim")
+	}
+	if !reg.Assign("v1", &agentv1.WorkAssignment{AssignmentId: "a2", DagVersionId: "v1"}) {
+		t.Fatal("a worker that refused its late assignment should be free again")
+	}
+	<-send
+}
+
+// TestDeregisterReclaimsExpiredLease: a worker whose stream ends while holding
+// an expired, unacked lease never ran it (it acks before running), so the
+// tombstone is reclaimed as worker-gone and re-placed at once.
+func TestDeregisterReclaimsExpiredLease(t *testing.T) {
+	reg, _, reclaims := expireLease(t)
+	reg.mu.Lock()
+	w := reg.workers["w1"]
+	reg.mu.Unlock()
+	reg.Deregister(w)
+	select {
+	case ev := <-reclaims:
+		if ev.Reason != ReclaimWorkerGone || ev.AssignmentID != "a1" {
+			t.Fatalf("reclaim = %+v, want a1/ReclaimWorkerGone", ev)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected a worker-gone reclaim for the tombstone")
+	}
+	if _, ok := reg.Ack("a1", true); ok {
+		t.Fatal("an ack after the worker deregistered must not bind")
 	}
 }
 
@@ -571,6 +689,39 @@ func TestAwaitAssignmentPersistsBindingOnStartedAck(t *testing.T) {
 	got := store.warmBindingCalls()[0]
 	if got.runID != "run-42" || got.taskID != "load" || got.tryNumber != 3 || got.workerPod != "warm-pod-7" {
 		t.Fatalf("BindWarmAttempt call = %+v, want run-42/load/3/warm-pod-7", got)
+	}
+	stream.pushErr(io.EOF)
+}
+
+// TestAwaitAssignmentRetriesFailedBinding (#1600): the worker runs the attempt
+// whatever the server does with its ack, so a binding write that fails once (a
+// DB blip) must be retried until it applies; an unbound running warm attempt is
+// failed as pod_lost while it runs.
+func TestAwaitAssignmentRetriesFailedBinding(t *testing.T) {
+	store := &fakeStore{bindWarmErr: errors.New("db blip"), bindWarmFailures: 2}
+	srv, a := newServer(store)
+	srv.bindRetryDelays = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
+	reg := NewWorkerRegistry(nil)
+	reg.leaseFor = func(*agentv1.WorkAssignment) time.Duration { return time.Hour }
+	srv.SetWarmPools(reg)
+	var claims atomic.Int32
+	reg.SetOnClaim(func() { claims.Add(1) })
+
+	stream := newFakeAwaitStream(ctxWithWarmToken(t, a))
+	stream.pushMsg(regMsgPod("dagver-1", "warm-pod-7"))
+	go func() { _ = srv.AwaitAssignment(stream) }()
+	awaitEventually(t, func() bool { return reg.registered("ti-1") })
+	if !reg.Assign("dagver-1", &agentv1.WorkAssignment{
+		AssignmentId: "as-9", DagRunId: "run-42", TaskId: "load", TryNumber: 3, LeaseSeconds: 3600,
+	}) {
+		t.Fatal("Assign should succeed")
+	}
+	<-stream.sent
+	stream.pushMsg(ackMsg("as-9", true))
+
+	awaitEventually(t, func() bool { return claims.Load() == 1 })
+	if n := len(store.warmBindingCalls()); n != 3 {
+		t.Fatalf("BindWarmAttempt calls = %d, want 3 (two failures, then the write that applies)", n)
 	}
 	stream.pushErr(io.EOF)
 }

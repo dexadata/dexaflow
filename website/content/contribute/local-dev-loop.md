@@ -23,6 +23,43 @@ changed:
 Neither loop goes near `git tag` or the release pipeline — that keeps release tags
 clean.
 
+## A ready toolchain: the devcontainer
+
+The repository ships a devcontainer (`.devcontainer/`) with the toolchain the
+CI gates use, so a contributor needs only Docker and an editor that opens
+devcontainers (VS Code with the Dev Containers extension, or GitHub
+Codespaces):
+
+- Go at the version `go.mod` pins (the base image's `GO_VERSION`, which
+  `scripts/check-go-toolchain-pin.sh` keeps equal to `go.mod`);
+- Python 3.11, shellcheck, Node 22 and Docker in Docker;
+- after the container is created, `.devcontainer/post-create.sh` runs
+  `make setup` (golangci-lint, govulncheck, changie and the other tools at the
+  Makefile's pins, the parser and runtime packages, the git hooks), installs
+  Hugo extended at the version `website-build.yml` pins and k3d at the version
+  CI installs, and runs `npm --prefix website ci`.
+
+Nothing is copied: each version is read from the file that already pins it,
+so a bump there reaches the devcontainer too.
+
+## Running the CI gates locally (`make ci-local`)
+
+`make ci-local` runs the gates CI runs on a pull request: gofmt, `go build`,
+golangci-lint, `go test`, govulncheck, the chart unit tests, the parser tests
+and the Hugo build. No gate needs a repository secret or a cloud credential.
+A gate whose tool is not installed is skipped with how to install it, and the
+run ends by listing every gate that did not run, so a green line never hides
+one:
+
+```text
+ci-local clean, but 2 gate(s) did not run and CI will run them:
+  - helm unittest: helm or its unittest plugin is not installed (helm plugin install https://github.com/helm-unittest/helm-unittest)
+  - hugo build: hugo extended is not installed (https://gohugo.io/installation/)
+```
+
+In the devcontainer every gate runs except the chart unit tests, which need
+helm and its unittest plugin.
+
 ## The `dexaflow lite` hot-reload loop
 
 `dexaflow lite` runs the whole stack locally — control plane, the embedded Airflow
@@ -276,7 +313,7 @@ This is **not** an install path. Real users still install via
    a `pkill -f "dexaflow lite"` fallback).
 4. **Swaps the binaries in both locations** `dexaflow lite` resolves
    them from — `./bin/` (the repo's local bin, preferred by
-   `resolveBinary` in `internal/cli/dev.go`) and `~/.dexaflow/bin/` (the
+   `resolveBinary` in `internal/cli/dev_binaries.go`) and `~/.dexaflow/bin/` (the
    user-install location). Keeping them in lockstep is critical: if
    only one is updated the stale one silently runs and the dev loop
    becomes confusing fast (this happened — see the commit that added

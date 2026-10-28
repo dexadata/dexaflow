@@ -5,6 +5,7 @@
 #   scripts/docs-gap.sh 0.6.0            # changes on origin/main since v0.5.0
 #   scripts/docs-gap.sh 0.5.2 --fetch    # refresh the branch and the tags first
 #   scripts/docs-gap.sh 0.5.2 --offline  # no gh: judge by the skip file alone
+#   scripts/docs-gap.sh 0.5.2 --ref HEAD # judge this commit, not the branch tip (CI)
 #   scripts/docs-gap.sh --self-test      # fixture repository, no network
 #
 # The docs guard (scripts/check-docs-updated.sh) judges one pull request when it
@@ -19,8 +20,8 @@
 # reachable from it (v0.5.1 for 0.5.2, v0.5.0 for 0.6.0 cut from main) is
 # judged by the guard's own rule (user_facing() in check-docs-updated.sh): a
 # commit that changes user-facing surface passes when it also edits
-# website/content/, or when its pull request carries the `skip-docs` label and
-# a `Skip-docs: <reason>` line in its description. For a cherry-pick, the
+# website/content/, or when its pull request has a `Skip-docs: <reason>` line
+# in its description (the `skip-docs` label is optional since #1560). For a cherry-pick, the
 # label and the reason of the original pull request on main count as well.
 #
 # A change documented by a later pull request, or one held on purpose, is
@@ -55,7 +56,7 @@ pr_of() {
     -e 't' -e 's/.*\(#([0-9]+)\)[[:space:]]*$/\1/p'
 }
 release_mechanics() {
-  printf '%s\n' "$1" | grep -qE '^(release: (prepare|promote) v[0-9]|docs: publish v[0-9][^ ]* at the documentation root)'
+  printf '%s\n' "$1" | grep -qE '^(release: (prepare|promote) v[0-9]|docs: publish v[0-9][^ ]* at the documentation root|changelog: sync v[0-9][^ ]*( and v[0-9][^ ]*|, v[0-9][^ ]*)* to main)'
 }
 
 base_of() { # <version>: the branch the version is cut from (ADR 0062)
@@ -143,8 +144,10 @@ gap() {
       meta="$(pr_meta "$k")"
       labels="${meta%%$'\t'*}"; reason="${meta#*$'\t'}"
       [ "$meta" = "$labels" ] && reason=""
+      # The reason line is the opt-out, label or not: an author on a fork
+      # cannot apply labels (#1560). A label without a reason is still named.
+      if [ -n "$reason" ]; then skipped=1; break; fi
       if printf ',%s,' "$labels" | grep -q ',skip-docs,'; then
-        if [ -n "$reason" ]; then skipped=1; break; fi
         why="skip-docs without a reason"
       fi
     done
@@ -154,12 +157,15 @@ gap() {
 }
 
 self_test() {
+  # A git hook exports these, and the fixture repositories below would follow
+  # them to the repository being committed to.
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_PREFIX
   local fail=0 tmp out
   _eq() { [ "$1" = "$2" ] || { printf 'FAIL: %s\n  got:  %s\n  want: %s\n' "$3" "$1" "$2"; fail=1; }; }
   _eq "$(base_of 0.5.2)" "release-0.5" "a patch is cut from its release branch"
   _eq "$(base_of 0.6.0-rc.1)" "main" "a minor is cut from main"
   # Pull request metadata comes from a table here, not from GitHub.
-  pr_meta() { case "$1" in 3) printf 'skip-docs\tinternal only' ;; 4) printf 'skip-docs\t' ;; 10) printf 'skip-docs\tcovered by the guide' ;; esac; }
+  pr_meta() { case "$1" in 3) printf 'skip-docs\tinternal only' ;; 4) printf 'skip-docs\t' ;; 10) printf 'skip-docs\tcovered by the guide' ;; 14) printf '\tinternal only, from a fork' ;; esac; }
 
   tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
   _g() { git -C "$tmp" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@" >/dev/null 2>&1; }
@@ -174,6 +180,8 @@ self_test() {
   _c .changes/unreleased/a.yaml "fix: changes behaviour (#5)" $'kind: Changed\nbody: x'
   _c .changes/unreleased/b.yaml "fix: restores behaviour (#6)" $'kind: Fixed\nbody: x'
   _c internal/scheduler/x.go "perf: internals (#7)"
+  # A reason with no label: an author on a fork cannot apply labels (#1560).
+  _c internal/config/fork.go "feat: a setting from a fork (#14)"
   _c CHANGELOG.md "release: prepare v0.9.1-rc.1"
   _g tag v0.9.1-rc.1
   _c internal/cli/run.go "feat: a flag (#8)"
@@ -211,24 +219,28 @@ self_test() {
 }
 
 main() {
-  local version="" fetch=0 arg base
-  for arg in "$@"; do
+  local version="" fetch=0 arg base ref=""
+  while [ "$#" -gt 0 ]; do
+    arg="$1"; shift
     case "$arg" in
       --self-test) self_test; exit $? ;;
       --fetch) fetch=1 ;;
       --offline) OFFLINE=1 ;;
+      --ref) [ "$#" -gt 0 ] || die "--ref needs a commit"; ref="$1"; shift ;;
       -*) die "unknown flag: $arg" ;;
       *) version="${arg#v}" ;;
     esac
   done
   version="${version%%-*}"
-  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "usage: docs-gap.sh <X.Y.Z> [--fetch] [--offline]"
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "usage: docs-gap.sh <X.Y.Z> [--fetch] [--offline] [--ref <commit>]"
   base="$(base_of "$version")"
   if [ "$fetch" = 1 ]; then
     git -C "$ROOT" fetch -q origin --tags "+refs/heads/$base:refs/remotes/origin/$base" || die "cannot reach origin"
   fi
+  # --ref judges one commit of the base branch instead of its tip: CI judges
+  # the commit it runs on, which a later push to the branch does not change.
   local out
-  out="$(gap "$ROOT" "$version" "origin/$base")" || exit 2
+  out="$(gap "$ROOT" "$version" "${ref:-origin/$base}")" || exit 2
   if [ -n "$out" ]; then
     printf '%s\n' "$out"
     printf 'docs-gap: %s user-facing change(s) on %s ship without docs, a justified skip-docs label, or a line in its %s\n' \

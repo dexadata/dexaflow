@@ -155,3 +155,16 @@ func TestPlatformDefaultsWarnOnPartialPair(t *testing.T) {
 		t.Errorf("an api-only role must not emit the partial-pair WARN, got %q", buf.String())
 	}
 }
+
+// TestPlatformDefaultsCarryDefaultLimits: executor.defaults.limits_* (#537) reach
+// the dispatcher, and an unset pair leaves it without default limits (the
+// behavior-neutral default).
+func TestPlatformDefaultsCarryDefaultLimits(t *testing.T) {
+	if pd := platformDefaults(config.PlatformDefaultsSection{}); pd.Limits != nil {
+		t.Errorf("Limits = %+v with nothing configured; want nil", pd.Limits)
+	}
+	pd := platformDefaults(config.PlatformDefaultsSection{LimitsCPU: "2", LimitsMemory: "4Gi"})
+	if pd.Limits == nil {
+		t.Fatal("Limits is nil despite configured limits_cpu/limits_memory")
+	}
+}

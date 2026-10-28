@@ -67,7 +67,7 @@ func TestDeleteTaskPod_TargetsExactlyTheReapedTI(t *testing.T) {
 	)
 	e := NewKubernetesExecutor(cs, "leoflow")
 
-	if err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 2}); err != nil {
+	if _, err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 2}); err != nil {
 		t.Fatalf("DeleteTaskPod: %v", err)
 	}
 	got := podNames(t, cs)
@@ -86,7 +86,7 @@ func TestDeleteTaskPod_TargetsExactlyTheReapedTI(t *testing.T) {
 func TestDeleteTaskPod_ToleratesNotFound(t *testing.T) {
 	cs := fake.NewSimpleClientset()
 	e := NewKubernetesExecutor(cs, "leoflow")
-	if err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}); err != nil {
+	if _, err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}); err != nil {
 		t.Errorf("DeleteTaskPod on absent pod = %v, want nil", err)
 	}
 }
@@ -100,8 +100,12 @@ func TestDeleteRunPods_DeletesAllOfTheRunOnly(t *testing.T) {
 		taskPod("b1", "run-b", "extract", 1, corev1.PodRunning),
 	)
 	e := NewKubernetesExecutor(cs, "leoflow")
-	if err := e.DeleteRunPods(context.Background(), "run-a"); err != nil {
+	td, err := e.DeleteRunPods(context.Background(), "run-a")
+	if err != nil {
 		t.Fatalf("DeleteRunPods: %v", err)
+	}
+	if td.Preserved != 0 {
+		t.Errorf("teardown of live pods reported %d preserved, want 0 (#933)", td.Preserved)
 	}
 	got := podNames(t, cs)
 	if got["a1"] || got["a2"] {
@@ -219,7 +223,7 @@ func TestDeleteTaskPod_PreservesTerminalPodCarryingOutcomeRecord(t *testing.T) {
 	cs := fake.NewSimpleClientset(pod)
 	e := NewKubernetesExecutor(cs, "leoflow")
 
-	if err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}); err != nil {
+	if _, err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}); err != nil {
 		t.Fatalf("DeleteTaskPod: %v", err)
 	}
 	got, err := cs.CoreV1().Pods("leoflow").Get(context.Background(), "finished", metav1.GetOptions{})
@@ -271,7 +275,7 @@ func TestDeleteTaskPod_PreservesARecordBearingPodWhateverItsPhase(t *testing.T) 
 
 	cs := fake.NewSimpleClientset(pod)
 	e := &KubernetesExecutor{clientset: cs, namespace: "leoflow"}
-	if derr := e.DeleteTaskPod(context.Background(), Attempt{RunID: "sidecar-run", TaskID: "work", TryNumber: 1}); derr != nil {
+	if _, derr := e.DeleteTaskPod(context.Background(), Attempt{RunID: "sidecar-run", TaskID: "work", TryNumber: 1}); derr != nil {
 		t.Fatalf("DeleteTaskPod: %v", derr)
 	}
 	if _, gerr := cs.CoreV1().Pods("leoflow").Get(context.Background(), pod.Name, metav1.GetOptions{}); gerr != nil {
@@ -295,8 +299,12 @@ func TestDeleteTaskPod_PhaseDecidesTheTeardown(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cs := fake.NewSimpleClientset(taskPod("p", "run-a", "extract", 1, tc.phase))
 			e := NewKubernetesExecutor(cs, "leoflow")
-			if err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}); err != nil {
+			td, err := e.DeleteTaskPod(context.Background(), Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1})
+			if err != nil {
 				t.Fatalf("DeleteTaskPod: %v", err)
+			}
+			if want := map[bool]int{true: 0, false: 1}[tc.deleted]; td.Preserved != want {
+				t.Errorf("phase %s: teardown reported %d preserved, want %d (#933)", tc.phase, td.Preserved, want)
 			}
 			survived := podNames(t, cs)["p"]
 			if tc.deleted && survived {
@@ -323,8 +331,12 @@ func TestDeleteRunPods_PreservesTerminalPodsPerPod(t *testing.T) {
 		taskPod("other-run", "run-b", "extract", 1, corev1.PodRunning),
 	)
 	e := NewKubernetesExecutor(cs, "leoflow")
-	if err := e.DeleteRunPods(context.Background(), "run-a"); err != nil {
+	td, err := e.DeleteRunPods(context.Background(), "run-a")
+	if err != nil {
 		t.Fatalf("DeleteRunPods: %v", err)
+	}
+	if td.Preserved != 2 {
+		t.Errorf("teardown reported %d preserved pods, want the 2 terminal ones (#933)", td.Preserved)
 	}
 	got := podNames(t, cs)
 	for _, keep := range []string{"done-ok", "done-bad"} {

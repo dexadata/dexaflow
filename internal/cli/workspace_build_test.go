@@ -25,10 +25,11 @@ func regCfg(url, name string) *domain.LeoflowConfig {
 // skipping it would mean a "build everything" that quietly built less than
 // everything.
 func TestBuildTargets(t *testing.T) {
+	t.Parallel()
 	t.Run("a project with a registry gets a derived image", func(t *testing.T) {
 		got, skipped := buildTargets([]Project{
 			{Path: "/ws/sales", DagID: "sales", Config: regCfg("reg.io/team", "sales")},
-		}, "v1", "abc1234")
+		}, sameLabel("v1", "abc1234"))
 		if len(got) != 1 {
 			t.Fatalf("targets = %+v", got)
 		}
@@ -50,7 +51,7 @@ func TestBuildTargets(t *testing.T) {
 		got, skipped := buildTargets([]Project{
 			{Path: "/ws/a", DagID: "a", Config: regCfg("reg.io/team", "a")},
 			{Path: "/ws/b", DagID: "b", Config: regCfg("", "")},
-		}, "v1", "abc1234")
+		}, sameLabel("v1", "abc1234"))
 		if len(got) != 1 || got[0].dagID != "a" {
 			t.Errorf("targets = %+v, want only a", got)
 		}
@@ -63,7 +64,7 @@ func TestBuildTargets(t *testing.T) {
 	})
 
 	t.Run("a project with no config at all is reported", func(t *testing.T) {
-		_, skipped := buildTargets([]Project{{Path: "/ws/c", DagID: "c"}}, "v1", "abc1234")
+		_, skipped := buildTargets([]Project{{Path: "/ws/c", DagID: "c"}}, sameLabel("v1", "abc1234"))
 		if len(skipped) != 1 || !strings.Contains(skipped[0], "c") {
 			t.Fatalf("skipped = %v, want it to name c", skipped)
 		}
@@ -73,16 +74,24 @@ func TestBuildTargets(t *testing.T) {
 		got, _ := buildTargets([]Project{
 			{Path: "/ws/z", DagID: "z", Config: regCfg("r", "z")},
 			{Path: "/ws/a", DagID: "a", Config: regCfg("r", "a")},
-		}, "v1", "abc1234")
+		}, sameLabel("v1", "abc1234"))
 		if len(got) != 2 || got[0].dagID != "a" {
 			t.Errorf("targets = %+v, want a before z", got)
 		}
 	})
 
 	t.Run("an empty workspace yields nothing and no complaint", func(t *testing.T) {
-		got, skipped := buildTargets(nil, "v1", "abc1234")
+		got, skipped := buildTargets(nil, sameLabel("v1", "abc1234"))
 		if len(got) != 0 || len(skipped) != 0 {
 			t.Errorf("got %v / %v", got, skipped)
 		}
 	})
+}
+
+// sameLabel gives every project one label and revision, for tests about which
+// projects are built rather than how they are labeled.
+func sameLabel(version, sha string) func(Project) projectLabel {
+	return func(Project) projectLabel {
+		return projectLabel{version: version, rev: gitRevision{sha: sha}}
+	}
 }

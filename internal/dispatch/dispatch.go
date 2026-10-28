@@ -5,6 +5,8 @@ package dispatch
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -119,6 +121,11 @@ type PlatformDefaults struct {
 	// that declares more than pool_slots x unit is refused (or, under
 	// enforce: warn, run and counted). Nil: no unit.
 	Unit *domain.ResourceUnit
+	// Limits fills an empty CPU or memory limit on every task pod, after the task
+	// and L0 resources above are chosen (executor.defaults.limits_*, #537). Nil:
+	// no default limit. Not applied with a unit, which always sets both limits.
+	// Without a unit the same limits also size the warm pods (see WarmPolicy).
+	Limits *domain.DefaultLimits
 	// PodSecurity carries the task-pod hardening choices. It lives here, not in
 	// the DAG spec, on purpose: whether untrusted task code may run as root is a
 	// cluster-operator decision. Exposing it per-DAG would let an author elevate
@@ -126,6 +133,12 @@ type PlatformDefaults struct {
 	// arbitrary service_account. It is populated from the cluster's configured
 	// defaults (runAsNonRoot on), which an operator can override.
 	PodSecurity executor.PodSecurity
+	// ExecutionPolicy is the operator's allowlist of task execution fields
+	// (executor.defaults.execution_allowlist, issue #629). Registration refuses a
+	// DAG that breaks it; dispatch refuses a task of a DAG registered before the
+	// list changed. Like PodSecurity it is cluster policy, never a DAG field.
+	// Nil allows everything.
+	ExecutionPolicy *domain.ExecutionPolicy
 }
 
 // Dispatcher builds executor requests for queued pod-path tasks and runs them.
@@ -171,8 +184,12 @@ type Dispatcher struct {
 	misfits UnitMisfitRecorder
 	// sourceModeImage is the operator's runtime image when source mode is on
 	// (ADR 0067 §3), "" when it is off. A version on that image that carries a
-	// source dispatches in source mode, always on a cold pod.
+	// source dispatches in source mode, on a cold pod unless sourceModeWarm.
 	sourceModeImage string
+	// sourceModeWarm is execution.source_mode.warm_pools: a source-mode
+	// attempt may go to a warm worker, which receives the dag.py with the
+	// assignment (ADR 0095).
+	sourceModeWarm bool
 }
 
 // UnitMisfitRecorder counts a task that does not fit the resource unit but is
@@ -212,18 +229,6 @@ func (d *Dispatcher) SetSecretsBackend(class, kwargs string) {
 	d.secretsBackend, d.secretsBackendKwargs = class, kwargs
 }
 
-// warmSACompatible reports whether a task can run on a warm worker, whose
-// ServiceAccount is the operator default fixed at pod creation. A task that pins a
-// different execution.service_account is incompatible (the warm pod cannot adopt
-// it) and must take the dedicated path; a task with no SA (uses the default) or one
-// equal to the default is compatible.
-func warmSACompatible(task domain.TaskSpec, warmSA string) bool {
-	if task.Execution == nil || task.Execution.ServiceAccount == "" {
-		return true
-	}
-	return task.Execution.ServiceAccount == warmSA
-}
-
 // SetDefaultTaskServiceAccount sets the ServiceAccount task pods run as when a
 // DAG's task does not specify execution.service_account. Empty leaves pods on the
 // namespace default SA (today's behavior). Wiring the chart's task ServiceAccount
@@ -248,6 +253,11 @@ func (d *Dispatcher) SetWarmPlacer(p WarmPlacer) { d.placer = p }
 // §3); "" leaves it off, today's behavior. Lite does not set it: the subprocess
 // executor always runs from the source.
 func (d *Dispatcher) SetSourceModeImage(image string) { d.sourceModeImage = image }
+
+// SetSourceModeWarm lets source-mode attempts run on warm workers, which
+// receive the version's dag.py with each assignment (ADR 0095). Off, the
+// default, keeps every source-mode attempt on a dedicated pod.
+func (d *Dispatcher) SetSourceModeWarm(on bool) { d.sourceModeWarm = on }
 
 // SetAgentTLSCAConfigMap configures the CA ConfigMap mounted into task pods so
 // agents verify the control plane's gRPC TLS cert (issue #58). Empty = the agent
@@ -287,21 +297,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	if err != nil {
 		return executor.Rejected, fmt.Errorf("resolving task %s: %w", task.TaskID, err)
 	}
-	// Registration refuses a task larger than its size once a unit is
-	// configured; this catches a DAG registered before that (ADR 0066 §3), so no
-	// task runs larger than the slots it is charged.
-	if refused := d.checkUnit(runID, dagID, task); refused != nil {
+	sourceMode, refused := d.refuseBeforeToken(runID, dagID, task, r)
+	if refused != nil {
 		return executor.Refused, refused
-	}
-	// Register caps a source-mode source only while the mode is on; a version
-	// registered on the runtime image before it was turned on was never
-	// checked. Refuse it here with register's message rather than let the
-	// apiserver reject an oversize annotation on every try (ADR 0067 §3).
-	sourceMode := domain.SourceModeApplies(d.sourceModeImage, r.Image, r.Source != "")
-	if sourceMode {
-		if refused := domain.CheckSourceModeSize(dagID, r.Source); refused != nil {
-			return executor.Refused, refused
-		}
 	}
 	token, err := d.issuer.IssueAgentToken(auth.AgentIdentity{
 		TaskInstanceID: r.TaskInstanceID,
@@ -330,22 +328,16 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	// defer-at-max belong to N1b2/N1d, where real pool accounting (registered
 	// workers + in-flight pods) exists; there is no admission cap here.
 	//
-	// Staging is excluded from warm reuse (ADR 0058 D5): a warm worker carries no
-	// per-run /staging mount, so a staging attempt placed on one would silently
-	// lose the run's shared volume. Staging attempts always take the dedicated
-	// path below, which provisions the StagingClaim.
-	// A warm worker is pre-created with the operator's default task ServiceAccount,
-	// fixed for its lifetime, so a task that pins a DIFFERENT execution.service_account
-	// cannot run on it (it would silently run as the wrong identity and break keyless
-	// resolution). Such a task takes the dedicated path below, which sets its own SA —
-	// the same degrade-not-strand exclusion as staging (ADR 0058 D5).
-	// With a resource unit a warm pod is one unit, so only a task of size 1
-	// that declares no resources fits on it (ADR 0066 §3). A task that declares
-	// its own placement or pod metadata (node selector, runtime class, labels,
-	// ...) takes the dedicated path too (warmPlacementCompatible).
-	// A source-mode attempt never goes warm either (ADR 0067 §3): a warm pod is
-	// built before its task is known, so it cannot carry the task's dag.py.
-	if d.placer != nil && !sourceMode && d.warmEligible(r, task) {
+	// Which attempts may go warm is domain.WarmPolicy.DedicatedReason, the
+	// decision the register response reports per task: warm pools on; no
+	// staging (a warm worker has no per-run /staging mount, ADR 0058 D5); no
+	// source mode unless execution.source_mode.warm_pools is on, and then the
+	// assignment carries the dag.py (ADR 0067 §3, ADR 0095);
+	// the warm workers' ServiceAccount; none of the task's own placement or pod
+	// metadata; and a size that fits a warm pod (one unit, ADR 0066 §3, or the
+	// default limits, #537). Any other attempt takes the dedicated path below.
+	version := domain.WarmVersion{Image: r.Image, HasSource: r.Source != "", Staging: r.Staging}
+	if d.placer != nil && d.WarmPolicy().DedicatedReason(version, task) == "" {
 		wa := &agentv1.WorkAssignment{
 			AssignmentId: uuid.NewString(),
 			AttemptToken: token,
@@ -355,6 +347,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 			DagVersionId: dagVersionID,
 			LeaseSeconds: warmLeaseSeconds,
 			AttemptEpoch: int64(r.AttemptEpoch),
+		}
+		if sourceMode {
+			setAssignmentSource(wa, r.Source)
 		}
 		if d.placer.Assign(dagVersionID, wa) {
 			return executor.Dispatched, nil
@@ -382,6 +377,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 		AgentToken:           token,
 		// Cluster-operator policy, not a per-task choice — see PlatformDefaults.
 		PodSecurity:                   d.defaults.PodSecurity,
+		ExecutionPolicy:               d.defaults.ExecutionPolicy,
 		AttemptLifetimeCeilingSeconds: wholeSeconds(d.attemptLifetimeCeiling),
 	}
 	if task.ExecutionTimeoutSeconds != nil {
@@ -398,6 +394,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	if req.Execution.ServiceAccount == "" {
 		req.Execution.ServiceAccount = d.defaultTaskServiceAccount
 	}
+	// Name the default too, so the executor's allowlist re-check can tell it
+	// from an account the task chose (issue #537 C2).
+	req.DefaultServiceAccount = d.defaultTaskServiceAccount
 	if r.Staging != nil && r.Staging.Enabled {
 		// All of the run's tasks share one PVC, named deterministically so a
 		// clear+re-run re-attaches it (ADR 0022). The executor provisions it.
@@ -421,6 +420,39 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	return d.exec.Execute(ctx, req)
 }
 
+// refuseBeforeToken runs the checks that refuse an attempt for good before its
+// agent token is minted and before warm placement, so a refused task never
+// runs. It also reports whether the attempt runs in source mode.
+func (d *Dispatcher) refuseBeforeToken(runID, dagID string, task domain.TaskSpec, r Resolved) (bool, error) {
+	// Registration refuses a task larger than its size once a unit is
+	// configured; this catches a DAG registered before that (ADR 0066 §3), so no
+	// task runs larger than the slots it is charged.
+	if refused := d.checkUnit(runID, dagID, task); refused != nil {
+		return false, refused
+	}
+	// The same for the execution allowlist (issue #629), for a DAG registered
+	// before the list changed.
+	if refused := d.defaults.ExecutionPolicy.CheckTask(task); refused != nil {
+		return false, refused
+	}
+	// The image allowlist (issue #537 C2) checks the image this run resolved,
+	// the one the pod (or a warm worker of this version) would run.
+	if refused := d.defaults.ExecutionPolicy.CheckImage(r.Image); refused != nil {
+		return false, fmt.Errorf("task %q: %w", task.TaskID, refused)
+	}
+	// Register caps a source-mode source only while the mode is on; a version
+	// registered on the runtime image before it was turned on was never
+	// checked. Refuse it here with register's message rather than let the
+	// apiserver reject an oversize annotation on every try (ADR 0067 §3).
+	sourceMode := domain.SourceModeApplies(d.sourceModeImage, r.Image, r.Source != "")
+	if sourceMode {
+		if refused := domain.CheckSourceModeSize(dagID, r.Source); refused != nil {
+			return false, refused
+		}
+	}
+	return sourceMode, nil
+}
+
 // checkUnit applies the resource unit to a task about to dispatch and returns
 // the refusal, if any. A misfit tolerated under enforce: warn runs with the
 // task's own resources, but is logged and counted.
@@ -436,53 +468,90 @@ func (d *Dispatcher) checkUnit(runID, dagID string, task domain.TaskSpec) error 
 	return refused
 }
 
-// warmEligible reports whether an attempt may go to a warm worker: no
-// staging, the warm ServiceAccount, none of its own placement or pod metadata,
-// and, with a resource unit, a size-1 task without resources, since a warm pod
-// is one unit.
-func (d *Dispatcher) warmEligible(r Resolved, task domain.TaskSpec) bool {
-	return (r.Staging == nil || !r.Staging.Enabled) &&
-		warmSACompatible(task, d.defaultTaskServiceAccount) &&
-		warmPlacementCompatible(task) &&
-		d.defaults.Unit.WarmEligible(task)
+// WarmPolicy is the warm placement decision this dispatcher applies (ADR
+// 0058): warm pools are on when a placer is wired, and a warm pod has the
+// default task ServiceAccount, the resource unit or default limits, and no
+// source. The register response reports each task's execution mode from the
+// same policy, built from the same configuration (#1707).
+func (d *Dispatcher) WarmPolicy() domain.WarmPolicy {
+	return domain.WarmPolicy{
+		Enabled:         d.placer != nil,
+		ServiceAccount:  d.defaultTaskServiceAccount,
+		Unit:            d.defaults.Unit,
+		Limits:          d.defaults.Limits,
+		SourceModeImage: d.sourceModeImage,
+		SourceModeWarm:  d.sourceModeWarm,
+	}
 }
 
-// warmPlacementCompatible reports whether a task can run on a warm worker as it
-// would on its dedicated pod. A warm worker is created before any task is known,
-// so it carries none of the placement fields and pod metadata BuildPod applies
-// from a task's execution block: node selector, tolerations, affinity, topology
-// spread, priority and runtime class, termination grace, DRA claims, labels and
-// annotations. Placed on a warm worker, such a task would run on the wrong
-// node, outside the sandbox its runtime class asks for (gVisor), without its
-// device, or outside the NetworkPolicy its labels select, with no error. It
-// takes the dedicated path instead, like staging and a pinned ServiceAccount.
-// The image pull policy is the one field left out: it only matters before the
-// container starts, and the warm image is the dag_version's.
-func warmPlacementCompatible(task domain.TaskSpec) bool {
-	e := task.Execution
-	if e == nil {
-		return true
-	}
-	return len(e.NodeSelector) == 0 && len(e.Tolerations) == 0 && len(e.Affinity) == 0 &&
-		len(e.TopologySpreadConstraints) == 0 && e.PriorityClassName == "" &&
-		e.RuntimeClassName == nil && e.TerminationGracePeriodSeconds == nil &&
-		len(e.ResourceClaims) == 0 && len(e.Labels) == 0 && len(e.Annotations) == 0
+// setAssignmentSource puts a source-mode version's dag.py on a warm
+// assignment, with its SHA-256 so the worker can detect a copy damaged on the
+// way (ADR 0095). It is the same text a dedicated pod would get. The registry only hands such an assignment to a worker that
+// registered with source_delivery.
+func setAssignmentSource(wa *agentv1.WorkAssignment, source string) {
+	sum := sha256.Sum256([]byte(source))
+	wa.DagSource = []byte(source)
+	wa.DagSourceSha256 = hex.EncodeToString(sum[:])
 }
 
 // taskResources picks the task pod's resources. With a resource unit the unit
 // sizes every task: its own values where it set them, the rest filled so
 // requests never exceed limits (see ResourceUnit.Apply, ADR 0066 §3). Without one, the task's
-// own resources win, then the L0 platform default (ADR 0023), else none.
+// own resources win per dimension, and the L0 platform default (ADR 0023)
+// fills each dimension the task left empty (#802).
+//
+// The default limits then fill any CPU or memory limit still empty (#537).
 func (d *Dispatcher) taskResources(task domain.TaskSpec) domain.Resources {
-	switch {
-	case d.defaults.Unit != nil:
+	if d.defaults.Unit != nil {
 		return *d.defaults.Unit.Apply(task)
-	case task.Resources != nil:
-		return *task.Resources
-	case d.defaults.Resources != nil:
-		return *d.defaults.Resources
 	}
-	return domain.Resources{}
+	var own domain.Resources
+	if task.Resources != nil {
+		own = *task.Resources
+	}
+	return d.defaults.Limits.Apply(fillDimensions(own, d.defaults.Resources))
+}
+
+// fillDimensions copies into r, for each of cpu, memory and ephemeral storage,
+// the request and limit of base when r sets neither for that dimension. A
+// dimension r sets at all stays entirely r's: taking base's request beside r's
+// own limit could ask for more than the limit, which the API server refuses.
+// Without this, a task declaring only an ephemeral-storage limit (ADR 0054)
+// dropped the platform cpu and memory default and ran BestEffort.
+func fillDimensions(r domain.Resources, base *domain.Resources) domain.Resources {
+	if base == nil {
+		return r
+	}
+	var req, lim, baseReq, baseLim domain.ResourceQuantity
+	if r.Requests != nil {
+		req = *r.Requests
+	}
+	if r.Limits != nil {
+		lim = *r.Limits
+	}
+	if base.Requests != nil {
+		baseReq = *base.Requests
+	}
+	if base.Limits != nil {
+		baseLim = *base.Limits
+	}
+	fill := func(req, lim *string, baseReq, baseLim string) {
+		if *req == "" && *lim == "" {
+			*req, *lim = baseReq, baseLim
+		}
+	}
+	fill(&req.CPU, &lim.CPU, baseReq.CPU, baseLim.CPU)
+	fill(&req.Memory, &lim.Memory, baseReq.Memory, baseLim.Memory)
+	fill(&req.EphemeralStorage, &lim.EphemeralStorage, baseReq.EphemeralStorage, baseLim.EphemeralStorage)
+	out := r
+	out.Requests, out.Limits = nil, nil
+	if req != (domain.ResourceQuantity{}) {
+		out.Requests = &req
+	}
+	if lim != (domain.ResourceQuantity{}) {
+		out.Limits = &lim
+	}
+	return out
 }
 
 // firstNonEmpty returns a if it is non-empty, otherwise b.

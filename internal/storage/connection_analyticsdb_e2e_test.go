@@ -10,6 +10,7 @@ import (
 
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/secrets"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 // TestCassandraConnectionURIShapeIntegration walks the full delivery chain
@@ -27,7 +28,7 @@ func TestCassandraConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	connID := fmt.Sprintf("e2e_cassandra_%d", time.Now().UnixNano())
 	port := 9042
@@ -84,7 +85,7 @@ func TestNeo4jConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	connID := fmt.Sprintf("e2e_neo4j_%d", time.Now().UnixNano())
 	port := 7687
@@ -141,7 +142,7 @@ func TestVerticaConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	connID := fmt.Sprintf("e2e_vertica_%d", time.Now().UnixNano())
 	port := 5433
@@ -199,7 +200,7 @@ func TestInfluxdbConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	connID := fmt.Sprintf("e2e_influxdb_%d", time.Now().UnixNano())
 	port := 8086
@@ -256,7 +257,7 @@ func TestDruidConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	connID := fmt.Sprintf("e2e_druid_%d", time.Now().UnixNano())
 	port := 8082
@@ -313,7 +314,7 @@ func TestPinotConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	connID := fmt.Sprintf("e2e_pinot_%d", time.Now().UnixNano())
 	port := 8000
@@ -370,7 +371,7 @@ func TestElasticsearchConnectionURIShapeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	connID := fmt.Sprintf("e2e_elasticsearch_%d", time.Now().UnixNano())
 	port := 9200

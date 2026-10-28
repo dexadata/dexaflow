@@ -96,3 +96,34 @@ func TestToTaskInstanceDTOStateTimestamps(t *testing.T) {
 		t.Errorf("queued_when = %v, want %v", ti.QueuedWhen, queued)
 	}
 }
+
+// TestToTaskInstanceDTOReportsPoolAndSlots (#1589): a task instance reports the
+// pool and the pool_slots it is charged, so the task panel agrees with the pools
+// view, which sums the same weight. An instance with no recorded weight falls
+// back to Airflow's defaults.
+func TestToTaskInstanceDTOReportsPoolAndSlots(t *testing.T) {
+	ti := toTaskInstanceDTO(domain.TaskInstance{DagID: "etl", RunID: "r1", TaskID: "train", Pool: "gpu", PoolSlots: 4})
+	if ti.Pool != "gpu" || ti.PoolSlots != 4 {
+		t.Errorf("pool = %q, pool_slots = %d, want gpu and 4", ti.Pool, ti.PoolSlots)
+	}
+	ti = toTaskInstanceDTO(domain.TaskInstance{DagID: "etl", RunID: "r1", TaskID: "extract"})
+	if ti.Pool != "default_pool" || ti.PoolSlots != 1 {
+		t.Errorf("pool = %q, pool_slots = %d, want default_pool and 1", ti.Pool, ti.PoolSlots)
+	}
+}
+
+// TestToTaskResponseReportsPoolAndSlots (#1589): the task definition reports
+// the pool and the size the spec declares, the same values its instances are
+// charged.
+func TestToTaskResponseReportsPoolAndSlots(t *testing.T) {
+	task := domain.TaskSpec{TaskID: "train", Type: domain.TaskTypePython, Pool: "gpu", PoolSlots: 4}
+	got := toTaskResponse(domain.DAGSpec{DagID: "etl", Tasks: []domain.TaskSpec{task}}, task)
+	if got.Pool != "gpu" || got.PoolSlots != 4 {
+		t.Errorf("pool = %q, pool_slots = %d, want gpu and 4", got.Pool, got.PoolSlots)
+	}
+	plain := domain.TaskSpec{TaskID: "extract", Type: domain.TaskTypePython}
+	got = toTaskResponse(domain.DAGSpec{DagID: "etl", Tasks: []domain.TaskSpec{plain}}, plain)
+	if got.Pool != "default_pool" || got.PoolSlots != 1 {
+		t.Errorf("pool = %q, pool_slots = %d, want default_pool and 1", got.Pool, got.PoolSlots)
+	}
+}

@@ -24,6 +24,7 @@ func newDagsCommand() *cobra.Command {
 	}
 	cmd.AddCommand(newDagsListCommand())
 	cmd.AddCommand(newDagsDeleteCommand())
+	cmd.AddCommand(newDagsVersionsCommand())
 	return cmd
 }
 
@@ -40,7 +41,7 @@ func newDagsListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c, err := apiclient.New(base, bearer)
+			c, err := cliAPIClient(base, bearer)
 			if err != nil {
 				return err
 			}
@@ -151,7 +152,7 @@ func deleteDag(ctx context.Context, serverURL, token, dagID string, deregister b
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	resp, err := cliHTTPClient(30 * time.Second).Do(req)
 	if err != nil {
 		return 0, "", fmt.Errorf("calling %s: %w", u, err)
 	}

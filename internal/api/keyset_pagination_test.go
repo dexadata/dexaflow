@@ -46,10 +46,21 @@ func (f *keysetRunRepo) ListDagRuns(_ context.Context, _, _ string, limit, offse
 
 func keysetRunServer(repo DagRunRepository) *gin.Engine {
 	admin := &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}
-	return NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: &fakeAuthn{user: admin},
-		RateLimiter: auth.NewRateLimiter(100, time.Minute), CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
-		DagRuns: repo,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: admin},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			DagRuns: repo,
+		},
 	})
 }
 
@@ -92,7 +103,7 @@ func decodeRunPage(t *testing.T, body []byte) (ids []string, total int, keys []s
 }
 
 // Walking the runs with the cursor from the response header visits every run
-// once, in the offset order, and every page keeps the /api/v2 body shape.
+// once, in the offset order, and every page keeps the /api/v2 body fields.
 func TestDagRunsCursorWalksEveryRunOnce(t *testing.T) {
 	repo := &keysetRunRepo{fakeRunRepo: fakeRunRepo{runs: fiveRuns()}}
 	srv := keysetRunServer(repo)
@@ -107,8 +118,12 @@ func TestDagRunsCursorWalksEveryRunOnce(t *testing.T) {
 		if total != 5 {
 			t.Errorf("page %d total_entries = %d, want 5", page, total)
 		}
-		if len(keys) != 2 {
-			t.Errorf("page %d body keys = %v, want exactly dag_runs and total_entries", page, keys)
+		// A cursor page may also name Airflow 3.3's next_cursor and
+		// previous_cursor; the 3.2 fields are unchanged.
+		for _, k := range keys {
+			if k != "dag_runs" && k != "total_entries" && (page == 0 || k != "next_cursor" && k != "previous_cursor") {
+				t.Errorf("page %d body keys = %v, want dag_runs and total_entries (plus the cursor fields on cursor pages)", page, keys)
+			}
 		}
 		seen = append(seen, ids...)
 		next := rec.Header().Get(nextCursorHeader)
@@ -132,6 +147,47 @@ func TestDagRunsCursorWalksEveryRunOnce(t *testing.T) {
 	if repo.gotAfter == nil || repo.gotAfter.Key != "r2" || repo.gotLimit != 3 {
 		t.Errorf("last cursor call = %+v limit %d, want after r2 with limit+1", repo.gotAfter, repo.gotLimit)
 	}
+	// The first page counted; every cursor after it carries that total, so
+	// the store skips the COUNT (#1612).
+	if repo.gotAfter != nil && repo.gotAfter.Total != 5 {
+		t.Errorf("cursor total = %d, want the first page's 5", repo.gotAfter.Total)
+	}
+}
+
+// The body cursors of cursor mode carry the total too, and a cursor issued
+// before they did still opens its page, which then counts.
+func TestDagRunsBodyCursorCarriesTotal(t *testing.T) {
+	repo := &keysetRunRepo{fakeRunRepo: fakeRunRepo{runs: fiveRuns()}}
+	srv := keysetRunServer(repo)
+	rec := authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns?limit=2&cursor=", "")
+	var body struct {
+		NextCursor *string `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.NextCursor == nil {
+		t.Fatalf("first cursor page = %s (%v)", rec.Body.String(), err)
+	}
+	rec = authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns?limit=2&cursor="+*body.NextCursor, "")
+	if rec.Code != http.StatusOK || repo.gotAfter == nil || repo.gotAfter.Total != 5 {
+		t.Fatalf("status %d, cursor call %+v, want the first page's total 5", rec.Code, repo.gotAfter)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.NextCursor == nil {
+		t.Fatalf("second cursor page = %s (%v)", rec.Body.String(), err)
+	}
+	if cur, err := decodeCursor(*body.NextCursor); err != nil || cur.Total != 5 {
+		t.Errorf("second page's next cursor = %+v (%v), want total 5 kept", cur, err)
+	}
+	old := encodeWire(cursorWire{At: "2026-09-01T03:00:00Z", Key: "r4"})
+	rec = authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns?limit=2&cursor="+old, "")
+	if rec.Code != http.StatusOK || repo.gotAfter == nil || repo.gotAfter.Total != 0 {
+		t.Fatalf("status %d, cursor call %+v, want an old cursor accepted with no total", rec.Code, repo.gotAfter)
+	}
+}
+
+// A cursor whose total is negative was not issued by this server.
+func TestDecodeCursorRejectsNegativeTotal(t *testing.T) {
+	if _, err := decodeCursor(encodeWire(cursorWire{At: "2026-09-01T03:00:00Z", Key: "r4", Total: -1})); err == nil {
+		t.Fatal("accepted a cursor with a negative total")
+	}
 }
 
 // The state filter reaches the keyset query instead of the in-memory scan.
@@ -145,6 +201,67 @@ func TestDagRunsCursorForwardsStateFilter(t *testing.T) {
 	}
 	if len(repo.gotStates) != 1 || repo.gotStates[0] != "failed" {
 		t.Fatalf("states = %v, want [failed]", repo.gotStates)
+	}
+}
+
+// The keyset query knows only states, so a list narrowed by run id, type or
+// date pages by offset: every page keeps the filter (#1928).
+func TestDagRunsCursorKeepsNonStateFilters(t *testing.T) {
+	repo := &keysetRunRepo{fakeRunRepo: fakeRunRepo{runs: append(fiveRuns(),
+		domain.DagRun{DagID: "etl", RunID: "other", LogicalDate: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), State: domain.DagRunStateSuccess})}}
+	srv := keysetRunServer(repo)
+	// A keyset cursor issued by the unfiltered list must not drop the filter
+	// either: it is read for its offset.
+	keyset := encodeKeysetCursorAt(domain.PageCursor{At: time.Date(2026, 9, 1, 3, 0, 0, 0, time.UTC), Key: "r4"}, 2)
+	rec := authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns?limit=2&run_id_prefix_pattern=r&cursor=", "")
+	seen := []string{}
+	for page := 0; ; page++ {
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+		}
+		var body struct {
+			runPage
+			NextCursor *string `json:"next_cursor"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.TotalEntries != 5 {
+			t.Errorf("page %d total_entries = %d, want 5 (the filtered count)", page, body.TotalEntries)
+		}
+		for _, r := range body.DagRuns {
+			seen = append(seen, r.DagRunID)
+		}
+		if h := rec.Header().Get(nextCursorHeader); h != "" {
+			t.Errorf("page %d sent a keyset cursor header %q for a filtered list", page, h)
+		}
+		if body.NextCursor == nil {
+			break
+		}
+		if page > 5 {
+			t.Fatal("cursor never ran out")
+		}
+		rec = authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns?limit=2&run_id_prefix_pattern=r&cursor="+*body.NextCursor, "")
+	}
+	rec = authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns?limit=2&run_id_prefix_pattern=r&cursor="+keyset, "")
+	ids, _, _ := decodeRunPage(t, rec.Body.Bytes())
+	if strings.Join(ids, ",") != "r3,r2" {
+		t.Errorf("keyset cursor with a filter = %v, want r3,r2 (offset 2 of the filtered list)", ids)
+	}
+	if got := strings.Join(seen, ","); got != "r5,r4,r3,r2,r1" {
+		t.Fatalf("walked %s, want r5,r4,r3,r2,r1 (never \"other\")", got)
+	}
+	if repo.gotAfter != nil {
+		t.Errorf("a filtered list went through the keyset query, which drops the filter: %+v", repo.gotAfter)
+	}
+}
+
+// A date bound that does not parse is the client's error, not an unfiltered page.
+func TestDagRunsRejectsUnparsableDateBound(t *testing.T) {
+	srv := keysetRunServer(&keysetRunRepo{fakeRunRepo: fakeRunRepo{runs: fiveRuns()}})
+	rec := authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns?start_date_gte=yesterday", "")
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "start_date_gte") {
+		t.Fatalf("status = %d body=%s, want 400 naming start_date_gte", rec.Code, rec.Body.String())
 	}
 }
 
@@ -238,8 +355,8 @@ func TestEventLogsCursorWalksEveryEntryOnce(t *testing.T) {
 	if rec.Header().Get(nextCursorHeader) != "" {
 		t.Error("next cursor on the last page")
 	}
-	if reader.gotDag != "etl" || reader.gotAfter == nil || reader.gotAfter.Key != "20" {
-		t.Errorf("cursor call dag=%q after=%+v", reader.gotDag, reader.gotAfter)
+	if reader.gotDag != "etl" || reader.gotAfter == nil || reader.gotAfter.Key != "20" || reader.gotAfter.Total != 3 {
+		t.Errorf("cursor call dag=%q after=%+v, want after 20 carrying the total 3", reader.gotDag, reader.gotAfter)
 	}
 }
 

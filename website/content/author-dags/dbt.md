@@ -271,10 +271,13 @@ never at 5am.
 
 ### The baked manifest
 
-Dexaflow compiles from `dbt parse`'s `target/manifest.json`. **`dexaflow compile`
-runs `dbt parse` on your machine** — both editions, not inside the image build —
-and the resulting manifest is copied into the DAG image alongside the project.
-Pin a pre-built one with `dbt.manifest` to skip the parse (see
+Dexaflow compiles from the `manifest.json` that `dbt parse` writes.
+**`dexaflow compile` runs `dbt parse` on your machine**, in both editions and not
+inside the image build. It points `DBT_TARGET_PATH` and `DBT_LOG_PATH` at a
+scratch directory that is removed after the manifest is read, so the compile
+writes no `target/` or `logs/` into your project
+([#1060](https://github.com/dexadata/dexaflow/issues/1060)); the DAG it renders
+from that manifest is what ships. Pin a pre-built one with `dbt.manifest` to skip the parse (see
 [No local dbt](#no-local-dbt)).
 
 **Which `dbt` runs the parse is not the same in both editions**, and the

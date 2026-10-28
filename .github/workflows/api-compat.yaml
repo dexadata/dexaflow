@@ -1,0 +1,85 @@
+# Fails a pull request that breaks a public API without saying so: the agent
+# gRPC protocol (buf breaking), the REST API (oasdiff on docs/api/openapi.yaml)
+# and the Go client (apidiff on pkg/client), each against the base branch. An
+# intended break passes with the `breaking-change` label and a changelog
+# fragment of kind Changed or Removed. See scripts/api-compat.sh (#1554).
+#
+# A standalone workflow, like the CHANGELOG guard, so it can trigger on
+# `labeled` / `unlabeled`: applying the label re-runs this check alone.
+name: API compatibility
+on:
+  pull_request:
+    branches: [main, "release-*"]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+# pull-requests: read lets the job read the CURRENT labels from the API rather
+# than the event payload, a snapshot that can predate a label set at creation.
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  # proxy.golang.org sometimes resets a large module download ("stream error:
+  # INTERNAL_ERROR"), which failed whole jobs before any test ran. With "|" Go
+  # falls back to the module's own source on any proxy error (with "," only on
+  # 404/410); go.sum and sum.golang.org still verify every module.
+  GOPROXY: https://proxy.golang.org|direct
+  GO_VERSION: "1.26.10"
+
+# Same keying as the CHANGELOG guard: a newer push cancels the older run, and a
+# label change on the same commit does not cancel that commit's run.
+concurrency:
+  group: ${{ format('{0}-pr-{1}-{2}', github.workflow, github.event.pull_request.number, github.event.pull_request.head.sha) }}
+  cancel-in-progress: true
+
+jobs:
+  api-compat:
+    name: API breaking changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      # Pinned so a new release of a checker cannot turn every open pull request
+      # red at once. Bump deliberately. The versions are literals, not variables,
+      # so scripts/check-workflow-pins.sh can read them (#1553). x/exp has no
+      # tags, so apidiff is pinned to a pseudo-version.
+      - name: Install oasdiff and apidiff
+        run: |
+          set -euo pipefail
+          go install github.com/oasdiff/oasdiff@v1.33.0
+          go install golang.org/x/exp/cmd/apidiff@v0.0.0-20250620022241-b7579e27df2b
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      # base_ref goes through the environment rather than into the command
+      # text: git refnames permit characters the shell would act on (#970).
+      - name: Check out the base branch beside the pull request
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          git worktree add --detach "$RUNNER_TEMP/base" FETCH_HEAD
+      - name: Read the breaking-change label
+        id: label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if gh api "repos/$GITHUB_REPOSITORY/issues/$PR/labels" --jq '.[].name' | grep -qx 'breaking-change'; then
+            echo "set=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "set=0" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Compare proto, OpenAPI and pkg/client with the base branch
+        env:
+          BREAKING_CHANGE_LABEL: ${{ steps.label.outputs.set }}
+        run: bash scripts/api-compat.sh "$RUNNER_TEMP/base"

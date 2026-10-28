@@ -113,6 +113,11 @@ func TestListWarmBoundRunningTIsIntegration(t *testing.T) {
 	if mine.TaskID != "load" || mine.TryNumber != 1 {
 		t.Errorf("identity = (task %q, try %d), want (load, 1)", mine.TaskID, mine.TryNumber)
 	}
+	// The reaper writes its killed marker to the attempt's log stream, which is
+	// keyed by tenant and dag id (#861).
+	if mine.DagID != liveDag || mine.TenantID == "" {
+		t.Errorf("log stream identity = (tenant %q, dag %q), want (a tenant, %s)", mine.TenantID, mine.DagID, liveDag)
+	}
 }
 
 // TestListStaleQueuedCarriesWarmWorkerIDIntegration: a queued warm attempt shows
@@ -129,10 +134,7 @@ func TestListStaleQueuedCarriesWarmWorkerIDIntegration(t *testing.T) {
 	dedDag := fmt.Sprintf("stale_dedicated_%d", stamp)
 	dedRun := seedQueuedTaskNoBind(t, repo, sched, ctx, dedDag, "load")
 
-	got, err := sched.ListStaleQueuedCandidates(ctx)
-	if err != nil {
-		t.Fatalf("ListStaleQueuedCandidates: %v", err)
-	}
+	got := allStaleQueued(t, sched, ctx, 0)
 
 	var warmSeen, dedSeen bool
 	for _, c := range got {

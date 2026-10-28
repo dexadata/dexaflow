@@ -8,6 +8,21 @@ LIMIT $2 OFFSET $3;
 -- name: CountConnections :one
 SELECT count(*) FROM connections WHERE tenant_id = $1;
 
+-- name: ListConnectionsFiltered :many
+SELECT conn_id, conn_type, host, conn_schema, login, port, extra, description
+FROM connections
+WHERE tenant_id = $1
+  AND (sqlc.narg('connection_id_pattern')::text IS NULL OR conn_id ILIKE '%' || sqlc.narg('connection_id_pattern') || '%')
+  AND (sqlc.narg('connection_id_prefix_pattern')::text IS NULL OR conn_id ILIKE sqlc.narg('connection_id_prefix_pattern') || '%')
+ORDER BY conn_id
+LIMIT $2 OFFSET $3;
+
+-- name: CountConnectionsFiltered :one
+SELECT count(*) FROM connections
+WHERE tenant_id = $1
+  AND (sqlc.narg('connection_id_pattern')::text IS NULL OR conn_id ILIKE '%' || sqlc.narg('connection_id_pattern') || '%')
+  AND (sqlc.narg('connection_id_prefix_pattern')::text IS NULL OR conn_id ILIKE sqlc.narg('connection_id_prefix_pattern') || '%');
+
 -- name: ListConnectionSecrets :many
 -- All of a tenant's connections WITH the encrypted password, for delivering
 -- credentials to task pods (ADR 0021). Never use this for UI/API responses,

@@ -28,14 +28,10 @@ func emptyObject() gin.HandlerFunc {
 	}
 }
 
-// zeroTaskInstanceStateCount is the Airflow 3.2.1 TaskInstanceStateCount with
+// zeroTaskInstanceStateCount is the Airflow TaskInstanceStateCount with
 // every required state counter at zero.
 func zeroTaskInstanceStateCount() gin.H {
-	return gin.H{
-		"no_status": 0, "removed": 0, "scheduled": 0, "queued": 0, "running": 0,
-		"success": 0, "restarting": 0, "failed": 0, "up_for_retry": 0,
-		"up_for_reschedule": 0, "upstream_failed": 0, "skipped": 0, "deferred": 0,
-	}
+	return tiStatesObject(nil)
 }
 
 // registerUIStubs mounts graceful empty responses for unimplemented /ui screens.
@@ -48,4 +44,12 @@ func registerUIStubs(r gin.IRouter) {
 	r.GET("/ui/teams", emptyCollection("teams"))
 	r.GET("/ui/connections/hook_meta", connectionHookMetaHandler())
 	r.GET("/ui/next_run_assets/:dag_id", emptyObject())
+	// Read by the Airflow 3.3 DAG and run pages. Dexaflow has no deadline
+	// alerts, and the run duration stats panel is optional: duration null
+	// hides it.
+	r.GET("/ui/dags/:dag_id/deadlineAlerts", emptyCollection("deadline_alerts"))
+	r.GET("/ui/dags/:dag_id/dagRuns/:dag_run_id/deadlines", emptyCollection("deadlines"))
+	r.GET("/ui/dags/:dag_id/dagRuns/:dag_run_id/stats", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"duration": nil})
+	})
 }

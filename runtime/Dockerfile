@@ -18,8 +18,14 @@
 # GO_VERSION is not authoritative here either: go.mod's `toolchain` line is the
 # source of truth for the toolchain, and scripts/check-go-toolchain-pin.sh fails
 # this default when it falls behind (#1036).
-ARG GO_VERSION=1.26.9
+ARG GO_VERSION=1.26.10
 ARG PYTHON_VERSION=3.11
+# RUNTIME_VARIANT picks the published image: `base` (the default, the image
+# every DAG image starts FROM) or `data`, the base plus the connector providers
+# and dbt of runtime/data/requirements.txt, for a
+# platform that runs DAGs on the runtime as is, with no image build (engine
+# source mode). `data` is built for PYTHON_VERSION 3.11 only: its lock is.
+ARG RUNTIME_VARIANT=base
 
 # ── Stage 1: build the static agent binary ───────────────────────────────────
 # Deliberately still bookworm while stage 2 is trixie — do not "fix" the
@@ -75,7 +81,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
 # against: the compiler emits `apt-get install` into the generated DAG image
 # (internal/cli/compile_build.go), so the package versions a DAG gets move with
 # this line. That makes it a user-visible change, not an internal one.
-FROM python:${PYTHON_VERSION}-slim-trixie
+FROM python:${PYTHON_VERSION}-slim-trixie AS runtime-base
 
 LABEL org.opencontainers.image.source="https://github.com/dexadata/dexaflow"
 LABEL org.opencontainers.image.description="Dexaflow task base image (agent + Python runtime)"
@@ -100,6 +106,22 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 # not kept is the silence: a filesystem permission that moves because a distro
 # default moved is the kind of drift that surfaces as an unexplained EACCES
 # three releases later, so it is now stated here and independent of the suite.
+# The system trust store (/etc/ssl/certs) is upgraded here, not left to the
+# base image. Debian removed emSign ECC Root CA - G3, whose intermediates were
+# compromised, in ca-certificates 20250419+deb13u1 (DSA-6572-1, #2067), but a
+# slim base image keeps the ca-certificates it was built with, and a Python
+# line past its end of life (3.10 from October 2026) is not rebuilt: the
+# v0.5.5-rc.2 py3.10 image still carried 20250419. ssl, urllib and pip's
+# truststore read this store; the certifi pins below cover requests and httpx.
+# tests/test_runtime_image_trust_store.py in runtime/python fails without it.
+# DL3008 (pin apt versions) is ignored on purpose: the point of the step is the
+# newest ca-certificates of the base's Debian release, and a pinned version
+# would freeze the store this step exists to refresh.
+# hadolint ignore=DL3008
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends --only-upgrade ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd --gid 65532 leoflow \
  && useradd --create-home --home-dir /home/leoflow --uid 65532 --gid 65532 leoflow \
  && chmod 0700 /home/leoflow
@@ -109,6 +131,33 @@ COPY --from=agent-build /out/dexaflow-agent /usr/local/bin/dexaflow-agent
 # rename launch the agent as `leoflow-agent`, and executor.agent_path defaults to it.
 RUN ln -s dexaflow-agent /usr/local/bin/leoflow-agent
 COPY runtime/python /opt/leoflow-runtime
+
+# pip is pinned to one release on every Python line (#1299). The slim base images
+# ship whatever pip the line was released with (23.0.1 on 3.10, 24.0 on 3.11,
+# 25.0.1 on 3.12, 26.2.1 on 3.13), and the older three carry fixable findings
+# in pip itself (six or seven per line, CVE-2025-8869 among them, the newest
+# fixed in 26.2.0). A DAG image
+# runs this pip for its `requirements:` (internal/cli/compile_build.go), so the
+# version is user-visible: pinning it here gives every line the same resolver
+# instead of four. It is upgraded first so every later install runs on it.
+#
+# 26.2.2 is the floor, not just the newest release: it is the first pip that
+# vendors certifi 2026.10.19, which drops emSign ECC Root CA - G3
+# (GHSA-6q48-6c7w-9gw2, #2067); 26.2.1 vendors certifi 2026.6.17, which still
+# holds it. pip verifies its downloads (a DAG image installing its
+# `requirements:`) against that vendored bundle AND the system store through
+# truststore, so this pin removes the certifi half only; /etc/ssl/certs is
+# the ca-certificates upgrade above.
+# tests/test_runtime_image_trust_store.py in runtime/python fails below it.
+#
+# pip 26 also ships a CycloneDX SBOM of the packages it vendors
+# (pip/_vendor/bom.cdx.json), which Trivy reads. That makes pip's vendored
+# urllib3 2.7.0, msgpack 1.1.2 and setuptools 70.3.0 (pkg_resources only) show
+# up as findings; older pips vendor the same or older copies without saying so.
+# No pip release vendors fixed versions yet, so those are accepted, by purl, in
+# .trivyignore.yaml with the reasoning; bump this pin when one does.
+ARG PIP_VERSION=26.2.2
+RUN pip install --no-cache-dir "pip==${PIP_VERSION}"
 RUN pip install --no-cache-dir /opt/leoflow-runtime
 
 # Dexaflow DAGs are authored with the Apache Airflow Task SDK (`from airflow.sdk
@@ -117,6 +166,22 @@ RUN pip install --no-cache-dir /opt/leoflow-runtime
 # the 3.3.x line Dexaflow targets (ADR 0003 / parser SDK version).
 ARG AIRFLOW_TASK_SDK_VERSION=1.3.1
 RUN pip install --no-cache-dir "apache-airflow-task-sdk==${AIRFLOW_TASK_SDK_VERSION}"
+
+# certifi is the CA bundle `requests` and `httpx` verify a task's HTTPS calls
+# against, in place of the system trust store (other clients, such as urllib or
+# OpenSSL defaults, read /etc/ssl/certs and are not covered by this pin). It
+# comes in transitively with the Task SDK, so unpinned it is whatever release
+# was newest when this layer was built: 2026.7.22 in the published images,
+# which still trusts emSign ECC Root CA - G3, whose intermediates were
+# compromised (GHSA-6q48-6c7w-9gw2, #2067).
+# 2026.10.19 is the first release without it. Installed after the Task SDK so
+# the pin is the version left in the image, and exact like the pins above so a
+# rebuild does not move it; tests/test_runtime_image_trust_store.py in
+# runtime/python fails when it falls below that release or moves before the
+# Task SDK install. A DAG's own `requirements:` can still move certifi, as they
+# can move any package of this image.
+ARG CERTIFI_VERSION=2026.10.19
+RUN pip install --no-cache-dir "certifi==${CERTIFI_VERSION}"
 
 # setuptools is upgraded ONLY where the base image already ships it. The
 # python:3.10 and 3.11 slim images preinstall setuptools 79.0.1, whose vendored
@@ -154,3 +219,36 @@ WORKDIR /home/leoflow
 
 # The agent is PID 1; it fetches the task spec and runs the user code.
 ENTRYPOINT ["dexaflow-agent"]
+
+# ── Stage 3 (variant `data`): the base plus connectors and dbt ───────────────
+# Every package comes from runtime/data/requirements.txt, compiled with hashes
+# from requirements.in (runtime/data/README.md), so a rebuild installs the same
+# files and pip refuses anything else. The lock repeats the base's own pins
+# (Task SDK, certifi), so nothing above moves; only setuptools moves, to a
+# release without pkg_resources (runtime/data/README.md). The lock is complete
+# and was resolved with runtime/data/overrides.txt, which lifts declared
+# bounds on purpose, so pip installs it as is (--no-deps) instead of resolving
+# again and refusing those bounds.
+#
+# mysqlclient (apache-airflow-providers-mysql) ships only as a source
+# distribution: it builds against libmariadb here, in the same layer that then
+# removes the compiler and headers, so only the shared library stays.
+FROM runtime-base AS runtime-data
+USER 0:0
+COPY runtime/data/requirements.txt /opt/dexaflow-data/requirements.txt
+# hadolint ignore=DL3008
+RUN test "$(python -c 'import sys; print("%d.%d" % sys.version_info[:2])')" = 3.11 \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends libmariadb3 \
+ && apt-get install -y --no-install-recommends gcc libc6-dev pkg-config libmariadb-dev \
+ && pip install --no-cache-dir --no-deps --require-hashes -r /opt/dexaflow-data/requirements.txt \
+ && apt-get purge -y --auto-remove gcc libc6-dev pkg-config libmariadb-dev \
+ && rm -rf /var/lib/apt/lists/*
+# Fail the build, not a customer's task, when a promised import is missing.
+RUN python -c "import airflow.providers.postgres, airflow.providers.mysql, airflow.providers.amazon, airflow.providers.databricks, airflow.providers.snowflake, airflow.providers.http, airflow.providers.google.cloud.hooks.bigquery, airflow.providers.common.sql, psycopg2, MySQLdb, boto3, google.cloud.bigquery, google.cloud.storage, databricks.sql, snowflake.connector, dbt.cli.main, dbt.adapters.postgres, dbt.adapters.snowflake, dbt.adapters.bigquery, dbt.adapters.bigquery.clients, dbt.adapters.databricks" \
+ && dbt --version
+USER 65532:65532
+
+# The published image: the variant RUNTIME_VARIANT names.
+# hadolint ignore=DL3006
+FROM runtime-${RUNTIME_VARIANT}

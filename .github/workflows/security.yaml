@@ -15,7 +15,19 @@ permissions:
   security-events: write    # Required for SARIF upload to GitHub Security tab
 
 env:
-  GO_VERSION: "1.26.9"
+  # proxy.golang.org sometimes resets a large module download ("stream error:
+  # INTERNAL_ERROR"), which failed whole jobs before any test ran. With "|" Go
+  # falls back to the module's own source on any proxy error (with "," only on
+  # 404/410); go.sum and sum.golang.org still verify every module.
+  GOPROXY: https://proxy.golang.org|direct
+  GO_VERSION: "1.26.10"
+  # The Trivy binary the trivy-action steps run. The action is pinned to its
+  # v0.36.0 release (#1553); before, it was pinned to a master commit with a
+  # `# master` comment, so Dependabot moved it to every new master tip. That
+  # master commit differs from v0.36.0 only in the action's default Trivy
+  # version (v0.75.0 against v0.70.0), its setup-trivy and cache pins, and
+  # docs, so naming the binary here keeps the scanner exactly where it was.
+  TRIVY_VERSION: "v0.75.0"
 
 # A newer push to the same pull request supersedes this run, so the older one
 # is cancelled instead of holding runners the newer one needs. Every other run
@@ -38,31 +50,25 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
 
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
 
       - name: Run govulncheck
         run: govulncheck -show verbose ./...
 
-      # `./...` matches packages in THIS module and nothing else, so it does not
-      # reach the second binary we publish: the golang-migrate CLI in
-      # `leoflow-migrate`, which deploy/Dockerfile.migrate compiles from
-      # upstream's own `cmd/migrate` main package at the version pinned in our
-      # go.mod (#1039). That package is inside our module graph but outside
-      # `./...`, which is precisely the gap that let the old third-party image
-      # accumulate 50 fixable CRITICAL/HIGH unseen — naming it here is what
-      # keeps the gap closed rather than merely reset.
-      #
-      # The build tags matter: golang-migrate registers database drivers behind
-      # them, so an untagged analysis would scan a binary with no drivers in it
-      # — not the one that ships. scripts/check-migrate-cli-build-tags.sh fails
-      # CI when these tags and the Dockerfile's disagree.
-      - name: Run govulncheck on the published migrate CLI
-        run: govulncheck -tags postgres,pgx5 -show verbose github.com/golang-migrate/migrate/v4/cmd/migrate
+      # `./...` also covers the second binary we publish: the migrate image
+      # runs `./cmd/dexaflow-migrate` (#1020), one of this module's packages,
+      # with its pgx5 driver imported rather than selected by build tags. Until
+      # #1020 the image shipped golang-migrate's own `cmd/migrate`, outside
+      # `./...`, and a second step here scanned it by path with its build tags.
+      # scripts/check-migrate-cli-build-tags.sh fails CI if the Dockerfile stops
+      # building that package or this step stops covering `./...`.
 
   # ─────────────────────────────────────────────────────────────────────
   # CodeQL: GitHub's semantic SAST (ADR 0014)
@@ -78,17 +84,67 @@ jobs:
         language: [go, python]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           languages: ${{ matrix.language }}
           queries: security-extended,security-and-quality
 
-      - uses: github/codeql-action/autobuild@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+      - uses: github/codeql-action/autobuild@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
 
-      - uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           category: "/language:${{ matrix.language }}"
+
+  # ─────────────────────────────────────────────────────────────────────
+  # CodeQL high-alert gate (ADR 0072, amending ADR 0014; #494)
+  # The analysis above only uploads: it is green whatever it finds. This job
+  # reads the alerts the upload produced and fails when the pull request
+  # introduces an open alert of high or critical security severity. Alerts
+  # already open on the base branch are warnings here, not failures (see the
+  # script's header).
+  #
+  # It needs only the default GITHUB_TOKEN, scoped to reading code scanning
+  # alerts, which a pull request from a fork gets too. analyze waits for the
+  # upload to be processed (wait-for-processing defaults to true), so the
+  # alerts are there by the time this starts.
+  #
+  # always() and the result check below, rather than a plain `needs:`: when
+  # the analysis fails or is cancelled a needs-gated job is SKIPPED, and a
+  # skipped job satisfies a required check. This gate must report red then,
+  # not vanish.
+  # ─────────────────────────────────────────────────────────────────────
+  codeql-gate:
+    name: CodeQL high-alert gate
+    needs: codeql
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: read
+    steps:
+      - name: Require a finished CodeQL analysis
+        env:
+          ANALYSIS: ${{ needs.codeql.result }}
+        run: |
+          if [ "$ANALYSIS" != "success" ]; then
+            echo "::error::The CodeQL analysis ended '${ANALYSIS}', so its alerts cannot be judged. Re-run the CodeQL job."
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The base branch goes through the environment, never into the command
+      # text: git refnames permit characters the shell would act on (#970).
+      - name: Fail on new high or critical CodeQL alerts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+        run: bash scripts/codeql-alert-gate.sh --pr "$PR" --base "$BASE_REF"
 
   # ─────────────────────────────────────────────────────────────────────
   # Trivy: FILESYSTEM scanning of this repository (ADR 0014)
@@ -112,6 +168,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # Filesystem scan of the repo (dependencies + committed secrets).
       # trivy-ignorefile-exempt: .trivyignore.yaml holds accepted CONTAINER IMAGE
@@ -120,8 +178,9 @@ jobs:
       # different owner, and wiring the image list in here would let one accepted
       # base-image finding silently suppress the same CVE in code we wrote.
       - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@d2a0b60797ff03db6132bd4e2b293f9b37081297 # master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: ${{ env.TRIVY_VERSION }}
           scan-type: fs
           scan-ref: .
           severity: CRITICAL,HIGH
@@ -135,7 +194,7 @@ jobs:
       # so a PR run cannot collide with or overwrite the main branch baseline under
       # the shared trivy-fs category (#437).
       - name: Upload Trivy SARIF to GitHub Security
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         if: always() && github.event_name != 'pull_request'
         with:
           sarif_file: trivy-fs.sarif
@@ -216,6 +275,8 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -247,8 +308,9 @@ jobs:
       # findings are excluded here too — an alert nobody can ever close is not
       # visibility, it is noise that teaches people to ignore the tab.
       - name: Trivy image scan (SARIF report)
-        uses: aquasecurity/trivy-action@d2a0b60797ff03db6132bd4e2b293f9b37081297 # master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: ${{ env.TRIVY_VERSION }}
           scan-type: image
           image-ref: leoflow-server:ci
           scanners: vuln
@@ -261,7 +323,7 @@ jobs:
       # upload only off pull_request, so a PR run cannot overwrite the main
       # branch baseline under a shared category.
       - name: Upload Trivy SARIF to GitHub Security
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         if: always() && github.event_name != 'pull_request'
         with:
           sarif_file: trivy-server-image.sarif
@@ -269,8 +331,9 @@ jobs:
 
       # Gate: fixable CRITICAL/HIGH only.
       - name: Trivy image scan (gate)
-        uses: aquasecurity/trivy-action@d2a0b60797ff03db6132bd4e2b293f9b37081297 # master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: ${{ env.TRIVY_VERSION }}
           scan-type: image
           image-ref: leoflow-server:ci
           scanners: vuln
@@ -289,9 +352,9 @@ jobs:
   # produced or closeable by a commit here.
   #
   # #1039 changed what the image is, and therefore which lane it belongs in.
-  # `deploy/Dockerfile.migrate` now compiles golang-migrate's own CLI from the
-  # version in our go.mod onto distroless static, so the image is a Go binary we
-  # build, our SQL files, and the six base packages distroless carries
+  # `deploy/Dockerfile.migrate` now compiles our dexaflow-migrate wrapper (#1020;
+  # golang-migrate's own CLI before it) onto distroless static, so the image is a
+  # Go binary we build, our SQL files, and the six base packages distroless carries
   # (base-files, ca-certificates, media-types, netbase, tzdata, tzdata-legacy).
   # Not zero OS packages — six instead of Alpine's full set. Every finding in the
   # Go half is closed by a `go get` or a toolchain bump, which is the criterion
@@ -328,6 +391,8 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/docker-hub-mirror
         with:
           python-versions: none
@@ -342,8 +407,9 @@ jobs:
       # Report: every FIXABLE finding at any severity, so the Security tab shows
       # the MEDIUM/LOW ones the gate deliberately does not block on.
       - name: Trivy image scan (SARIF report)
-        uses: aquasecurity/trivy-action@d2a0b60797ff03db6132bd4e2b293f9b37081297 # master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: ${{ env.TRIVY_VERSION }}
           scan-type: image
           image-ref: leoflow-migrate:ci
           scanners: vuln
@@ -355,7 +421,7 @@ jobs:
       # Same rule as every other scan here (#437): gate on every event, upload
       # only off pull_request so a PR run cannot overwrite the main baseline.
       - name: Upload Trivy SARIF to GitHub Security
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         if: always() && github.event_name != 'pull_request'
         with:
           sarif_file: trivy-migrate-image.sarif
@@ -363,8 +429,9 @@ jobs:
 
       # Gate: fixable CRITICAL/HIGH only.
       - name: Trivy image scan (gate)
-        uses: aquasecurity/trivy-action@d2a0b60797ff03db6132bd4e2b293f9b37081297 # master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: ${{ env.TRIVY_VERSION }}
           scan-type: image
           image-ref: leoflow-migrate:ci
           scanners: vuln
@@ -384,6 +451,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
       # Run the pinned gitleaks binary directly (no Docker / Docker Hub). The v2
       # action makes GitHub API calls that crash under the default token; and a
@@ -436,6 +504,8 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Check every published Python line against endoflife.date
         id: eol

@@ -19,9 +19,11 @@ func newDoctorCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor",
 		Short: "Report host platform, dependencies, and the achievable operating tier.",
-		Long: "doctor inspects the host (OS, architecture, libc), checks for Python 3.11, " +
+		Long: "doctor inspects the host (OS, architecture, libc), checks for Python 3.11+, " +
 			"Docker, k3d, and kubectl, and reports which operating tier is achievable. " +
-			"It changes nothing; run `dexaflow setup` to bootstrap.",
+			"With a target set it also runs the checks of the deploy preflight: the control plane " +
+			"answers and the token may deploy, and, in a DAG project, the registry accepts a push. " +
+			"It changes nothing but a saved session it refreshes, as deploy does; run `dexaflow setup` to bootstrap.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			r := setup.Detect(setup.Probe{
@@ -31,7 +33,11 @@ func newDoctorCommand() *cobra.Command {
 				Stat:     os.Stat,
 				Getwd:    os.Getwd,
 			})
+			// The same probe `dexaflow setup` runs, so doctor reports the
+			// interpreter setup will actually use (#1700).
+			r.ProbeSetupPython(cmd.Context(), exec.LookPath, setup.PythonVersion)
 			renderDoctor(cmd.OutOrStdout(), r)
+			renderProDoctor(cmd.OutOrStdout(), proDoctor(cmd))
 			return nil
 		},
 	}
@@ -51,14 +57,7 @@ func renderDoctor(w io.Writer, r setup.Report) {
 	p("dexaflow doctor\n\n")
 	p("  platform      %s\n", plat)
 	p("  python 3.11+  %s\n", found(r.PythonAvailable, r.PythonPath, "no python3.11/3.12/3.13 on PATH; will download a relocatable CPython 3.11 on `dexaflow setup`"))
-	// Said separately, because the line above answers a different question than
-	// the one the reader is about to act on. It reports what can PARSE a dag.py,
-	// where 3.12 and 3.13 qualify; `dexaflow setup` resolves its interpreter with
-	// LookPath("python3.11") and nothing else, so a host with only 3.12 sees a
-	// green line and then a download it was not told about (#1224).
-	if r.PythonAvailable && r.Python311Path == "" {
-		p("                but `dexaflow setup` needs python3.11 specifically and will download a managed CPython 3.11 (needs outbound network). Install python3.11 to avoid it.\n")
-	}
+	renderDoctorSetupPython(p, r)
 	p("  docker        %s\n", found(r.Docker, "found", "not found"))
 	p("  k3d           %s\n", found(r.K3d, "found", "not found (fetched on demand for the k8s tier)"))
 	p("  kubectl       %s\n", found(r.Kubectl, "found", "not found (fetched on demand for the k8s tier)"))
@@ -75,6 +74,24 @@ func renderDoctor(w io.Writer, r setup.Report) {
 		p("  native filesystem (~/...) so `dexaflow lite` hot-reload (inotify) works.\n")
 	}
 	p("\n  next: run `dexaflow setup` to bootstrap the managed runtime.\n")
+}
+
+// renderDoctorSetupPython says what `dexaflow setup` will do about Python. It is
+// separate from the "python 3.11+" line because that line answers what can
+// PARSE a dag.py, by binary name, while this one answers what setup will use and
+// whether anything will be downloaded, from the same version probe setup runs
+// (Report.SetupPython). Answering both in one sentence is how a host was once
+// told its Python was fine and then watched setup download (#1224).
+func renderDoctorSetupPython(p func(string, ...any), r setup.Report) {
+	switch {
+	case r.SetupPython.Path != "":
+		p("                `dexaflow setup` will use %s (Python 3.%d) for the parser; nothing to download\n", r.SetupPython.Path, r.SetupPython.Minor)
+		if r.Python311Path == "" {
+			p("                no host Python 3.11: a DAG declaring python_version 3.11 (the default) downloads a managed CPython 3.11 when its venv is first built (needs outbound network). Install python3.11 to avoid it.\n")
+		}
+	case r.PythonAvailable:
+		p("                but `dexaflow setup` uses only a Python 3.11 to 3.13 and will download a managed CPython 3.11 (needs outbound network). Install python3.11, python3.12 or python3.13 to avoid it.\n")
+	}
 }
 
 // found renders a present/absent line: when present it shows detail (a path or

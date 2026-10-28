@@ -61,7 +61,7 @@
       "standardFields": {
         "description": "描述",
         "host": "主机地址",
-        "login": "登录",
+        "login": "账号",
         "password": "密码",
         "port": "端口",
         "url_schema": "Schema"
@@ -120,7 +120,8 @@
       "includeDeferred": "包含延迟任务",
       "nameMaxLength": "名称最多只能包含 256 个字符",
       "nameRequired": "名称是必填的",
-      "slots": "配额"
+      "slots": "配额",
+      "slotsHelperText": "使用 -1 表示无限配额。"
     },
     "noPoolsFound": "找不到资源池",
     "pool_one": "资源池",
@@ -176,6 +177,7 @@
           "title": "非严格模式"
         }
       },
+      "parsingFile": "正在解析文件...",
       "title": "导入变量",
       "upload": "上传 JSON 文件",
       "uploadPlaceholder": "上传包含变量的 JSON 文件 (例如：{\"key\": \"value\", ...})"

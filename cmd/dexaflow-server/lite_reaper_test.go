@@ -50,17 +50,25 @@ func (s *liteReapStore) MarkTaskCredentialCeiling(_ context.Context, id string, 
 	s.ceilingPins = append(s.ceilingPins, fmt.Sprintf("%s/%d/%d", id, try, epoch))
 	return true, nil
 }
-func (s *liteReapStore) ListStaleQueuedCandidates(context.Context) ([]executor.StaleQueuedCandidate, error) {
+func (s *liteReapStore) ListStaleQueuedCandidates(context.Context, time.Duration, executor.ReapCursor) ([]executor.StaleQueuedCandidate, error) {
 	return []executor.StaleQueuedCandidate{{TaskInstanceID: "live-queued", DagRunID: "r2", TaskID: "t", TryNumber: 1, QueuedAt: time.Now().Add(-time.Hour)}}, nil
 }
 func (s *liteReapStore) MarkTaskDispatchLost(_ context.Context, id string, _, _ int) (bool, error) {
 	s.queuedMarked = append(s.queuedMarked, id)
 	return true, nil
 }
-func (s *liteReapStore) ListRunningTasks(context.Context, time.Duration) ([]executor.PodLostCandidate, error) {
+
+func (s *liteReapStore) MarkTaskStartExpired(context.Context, string, int, int) (bool, error) {
+	return false, nil
+}
+func (s *liteReapStore) ListRunningTasks(context.Context, time.Duration, executor.ReapCursor) ([]executor.PodLostCandidate, error) {
 	return []executor.PodLostCandidate{{TaskInstanceID: "no-pod", DagRunID: "r3", TaskID: "t", TryNumber: 1, AttemptEpoch: 3, RunningSince: time.Now().Add(-time.Hour)}}, nil
 }
 func (s *liteReapStore) MarkTaskPodLost(_ context.Context, id string, _, _ int) (bool, error) {
+	s.podMarked = append(s.podMarked, id)
+	return true, nil
+}
+func (s *liteReapStore) MarkTaskPodLostOOMKilled(_ context.Context, id string, _, _ int) (bool, error) {
 	s.podMarked = append(s.podMarked, id)
 	return true, nil
 }

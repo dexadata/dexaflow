@@ -102,7 +102,10 @@ def post():
     print("post")
 
 
-with DAG("mix", schedule="@daily"):
+# schedule=None: the script triggers exactly ONE run. Under a real schedule the
+# scheduler adds a run of its own on unpause, and the two runs build the same
+# dbt models into the same schema at once, so one of them can fail.
+with DAG("mix", schedule=None, catchup=False):
     before = PythonOperator(task_id="pre", python_callable=pre)
     models = dbt_group("transform")
     after = PythonOperator(task_id="post", python_callable=post)
@@ -265,8 +268,11 @@ jq -e '[.tasks[] | .entrypoint // "" | test("--(project|profiles)-dir /") | not]
 k3d_import "$CLUSTER" "$BASE_IMAGE" "$DAG_IMAGE"
 
 log "Pushing + triggering"
-TOKEN="$("$ROOT/bin/leoflow" auth create-token --server "$API" --username admin@leoflow.local --password admin)"
+TOKEN="$(admin_token "$ROOT/bin/leoflow" "$API" admin)"
 "$ROOT/bin/leoflow" push "$PROJ/dag.json" --server "$API" --token "$TOKEN"
+# New DAGs are paused at creation, and a manual run of a paused DAG waits
+# until the DAG is unpaused.
+unpause_dag "$API" "$DAG_ID" "$TOKEN" || fail "unpausing $DAG_ID failed"
 RUN_ID="$(curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{}' "$API/api/v2/dags/$DAG_ID/dagRuns" | jq -r '.dag_run_id')"
 [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ] || fail "no dag_run_id returned"

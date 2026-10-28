@@ -225,12 +225,15 @@ deregister_dag() {
   "$ROOT/bin/leoflow" dags delete "$1" --deregister --server "$API" --token "$TOKEN" >/dev/null 2>&1 || true
 }
 
-TOKEN="$("$ROOT/bin/leoflow" auth create-token --server "$API" --username admin@leoflow.local --password admin)" \
+TOKEN="$(admin_token "$ROOT/bin/leoflow" "$API" admin)" \
   || fatal "could not mint an admin token against $API"
 [ -n "$TOKEN" ] || fatal "empty admin token from $API"
 deregister_dag "$DAG_ID"
 "$ROOT/bin/leoflow" push "$WORKDIR/$DAG_ID/dag.json" --server "$API" --token "$TOKEN" >/dev/null \
   || fatal "pushing $DAG_ID failed — the scenarios below would all report a missing run id"
+# New DAGs are paused at creation, and a manual run of a paused DAG waits
+# until the DAG is unpaused.
+unpause_dag "$API" "$DAG_ID" "$TOKEN" || fatal "unpausing $DAG_ID failed"
 
 trigger_run() {
   curl -fsS --max-time 10 -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
@@ -388,6 +391,9 @@ DOCKER
   deregister_dag "$RECOVER_DAG_ID"
   "$ROOT/bin/leoflow" push "$WORKDIR/$RECOVER_DAG_ID/dag.json" --server "$API" --token "$TOKEN" >/dev/null \
     || fatal "C: pushing $RECOVER_DAG_ID failed"
+  # New DAGs are paused at creation, and a manual run of a paused DAG waits
+  # until the DAG is unpaused.
+  unpause_dag "$API" "$RECOVER_DAG_ID" "$TOKEN" || fatal "C: unpausing $RECOVER_DAG_ID failed"
 }
 
 recover_run_state() {  # $1=run
@@ -580,6 +586,9 @@ DOCKER
   deregister_dag "$OUTAGE_DAG_ID"
   "$ROOT/bin/leoflow" push "$WORKDIR/$OUTAGE_DAG_ID/dag.json" --server "$API" --token "$TOKEN" >/dev/null \
     || fatal "D: pushing $OUTAGE_DAG_ID failed"
+  # New DAGs are paused at creation, and a manual run of a paused DAG waits
+  # until the DAG is unpaused.
+  unpause_dag "$API" "$OUTAGE_DAG_ID" "$TOKEN" || fatal "D: unpausing $OUTAGE_DAG_ID failed"
 }
 
 scenario_outage_recovery() {

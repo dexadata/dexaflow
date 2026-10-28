@@ -35,6 +35,9 @@ type fakeStore struct {
 	warmMu       sync.Mutex
 	warmBindings []warmBindingCall
 	bindWarmErr  error
+	// bindWarmFailures makes the first N BindWarmAttempt calls fail with
+	// bindWarmErr; zero means every call returns bindWarmErr.
+	bindWarmFailures int
 }
 
 type warmBindingCall struct {
@@ -77,8 +80,11 @@ func (s *fakeStore) RecordHeartbeat(_ context.Context, id auth.AgentIdentity) er
 
 func (s *fakeStore) BindWarmAttempt(_ context.Context, runID, taskID string, tryNumber, _ int, workerPod string) error {
 	s.warmMu.Lock()
+	defer s.warmMu.Unlock()
 	s.warmBindings = append(s.warmBindings, warmBindingCall{runID, taskID, tryNumber, workerPod})
-	s.warmMu.Unlock()
+	if s.bindWarmFailures > 0 && len(s.warmBindings) > s.bindWarmFailures {
+		return nil
+	}
 	return s.bindWarmErr
 }
 
@@ -170,6 +176,8 @@ func TestGetTaskSpecMapsStoreData(t *testing.T) {
 		TimeoutSeconds:      300,
 		DeclaredVariables:   []string{"region"},
 		DeclaredConnections: []string{"warehouse"},
+		RunConfJSON:         `{"table":"orders"}`,
+		RunType:             "manual",
 	}}
 	srv, a := newServer(store)
 
@@ -200,6 +208,13 @@ func TestGetTaskSpecMapsStoreData(t *testing.T) {
 	}
 	if got := spec.GetDeclaredConnections(); len(got) != 1 || got[0] != "warehouse" {
 		t.Errorf("declared connections = %v, want [warehouse]", got)
+	}
+	// The run conf and run type feed the runtime's dag_run (#1843).
+	if got := spec.GetRunConfJson(); got != `{"table":"orders"}` {
+		t.Errorf("run conf = %q", got)
+	}
+	if got := spec.GetRunType(); got != "manual" {
+		t.Errorf("run type = %q, want manual", got)
 	}
 }
 

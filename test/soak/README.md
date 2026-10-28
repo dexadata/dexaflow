@@ -20,6 +20,7 @@ bash test/soak/soak.sh --duration 12h --faults standard   # overnight with fault
 bash test/soak/soak.sh --duration 6m  --faults selftest-red   # must go RED
 make soak            # the default run
 make soak-selftest   # proves the assertions can fail: must exit exactly 1
+                     # (after checking that an interrupted soak exits 2)
 ```
 
 Everything runs locally: one Postgres container and one `dexaflow lite` process.
@@ -147,7 +148,8 @@ loop**. `grep -rn SchedulerLoopDuration --include='*.go'` returns the metric
 definition, the metrics unit test, and `test/load/scheduler_ceiling`, which
 observes it by hand precisely because the product does not. The tables
 `scheduler_loops` and `replicas` (migration `004_scheduler_control.up.sql`,
-commented "purely for observability") are written by no Go code at all.
+commented "purely for observability") were written by no Go code at all;
+migration `051_drop_unwritten_tables` dropped them (#1186).
 
 So there is no in-product signal for tick duration. The soak therefore times
 `SchedulerStore.ActiveRuns` itself, from its own read-only connection. That call
@@ -366,9 +368,15 @@ attempts served per warm worker. Plus one correctness assertion that matters mor
 than any of the numbers: on a reused pod, attempt N must resolve the same
 Connection values as attempt 1, and a superseded attempt's token must not.
 
-> **Status: written, not yet executed.** The script is in the tree and reuses the
-> k3d patterns from `test/e2e/chaos-runtime.sh`, but it has not been run to
-> completion. Treat its output format as a proposal until the first green run.
+> **Status: not yet run green on a cluster.** The script builds the base image
+> and the two DAG images the way `test/e2e/e2e.sh` does (`dexaflow compile
+> --build` from `dexaflow.yaml`), imports them with `k3d_import`, migrates its
+> database, boots each arm with a JWT secret and registers and unpauses the DAGs
+> with the `test/e2e/lib.sh` helpers. It exits 2 whenever it has no latency for
+> both arms, so `make soak-warmpool-ab` can no longer pass having measured
+> nothing (#1920). `bash test/soak/warmpool-ab.sh --self-test` runs its decision
+> logic and its whole flow against stubbed tools. It has not completed on a
+> cluster, so treat its output format as a proposal until the first green run.
 > It prints this warning itself.
 
 ---
@@ -527,10 +535,13 @@ open-ended one:
    `time.ParseDuration` has no day unit and would reject `2d` outright.
 2. **The harness watchdog.** A background timer that sends `SIGTERM` to the
    harness at `duration + 5 min`, so a hung monitor cannot hold the run open.
-3. **`trap cleanup EXIT INT TERM`.** Idempotent teardown on every exit path:
-   kills the monitor, the control plane and the fixture, `docker unpause`es the
-   Postgres container (a fault injector that died mid-pause would otherwise leave
-   it frozen and holding memory), collects the evidence, and stops the container.
+3. **`trap cleanup EXIT`, and `INT`/`TERM` exit 2.** One teardown on every exit
+   path: kills the monitor, the control plane and the fixture, `docker unpause`es
+   the Postgres container (a fault injector that died mid-pause would otherwise
+   leave it frozen and holding memory), collects the evidence, and stops the
+   container. A signal before the verdict (Ctrl-C, the watchdog) exits 2, never
+   0, so an interrupted run cannot read as a pass (#1921);
+   `bash test/soak/soak.sh --self-test` proves it with stubbed docker and go.
 
 The default is conservative on purpose. A weekend run is an explicit
 `--duration 48h`, typed by a human who has read this section.
@@ -611,7 +622,7 @@ than one with an honest gap list.
 | `dags/` | the six DAG projects |
 | `fixture/` | the loopback HTTP server the operator leg points at |
 | `monitor/` | the continuous invariant checker (`package main`, `test/load` convention) |
-| `warmpool-ab.sh` | the k3d warm-pool A/B (written, not yet executed) |
+| `warmpool-ab.sh` | the k3d warm-pool A/B (not yet run green on a cluster; `--self-test` covers its logic) |
 | `schedule/install.sh` | installs a local launchd agent or systemd user timer |
 
 ### Evidence layout

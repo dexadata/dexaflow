@@ -1,0 +1,170 @@
+suite: Pro source mode env wiring (ADR 0067, #1540)
+templates:
+  # secret.yaml is in scope so the deployment's `checksum/secret` annotation can
+  # resolve its `include` reference (same reason as deployment_test.yaml).
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+  namespace: leoflow
+set:
+  nameOverride: leoflow
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+tests:
+  # Off is the server default, so an install that never turns the mode on
+  # carries neither variable and renders exactly what it did before.
+  - it: renders no source-mode env by default
+    template: deployment.yaml
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED")]
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE")]
+
+  # The server ignores the image while the mode is off, so the chart does too.
+  - it: renders no source-mode env while off, even with an image set
+    template: deployment.yaml
+    set:
+      execution.sourceMode.image: ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED")]
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE")]
+
+  - it: renders both variables when on with a digest-pinned image
+    template: deployment.yaml
+    set:
+      execution.sourceMode.enabled: true
+      execution.sourceMode.image: ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED
+            value: "true"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE
+            value: ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+  # Register (api) and dispatch (scheduler) both read the setting, so a split
+  # install has to carry it on both Deployments.
+  - it: renders both variables on the api and the scheduler of a split install
+    template: deployment.yaml
+    set:
+      split.enabled: true
+      logs.persistence.enabled: false
+      logs.sink.provider: s3
+      logs.sink.bucket: b
+      execution.sourceMode.enabled: true
+      execution.sourceMode.image: registry.local/runtime@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE
+            value: registry.local/runtime@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        documentIndex: 0
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE
+            value: registry.local/runtime@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        documentIndex: 1
+
+  # The server refuses to boot on each of these (validateSourceMode), so the
+  # render refuses them first, in the chart's vocabulary.
+  - it: refuses to render source mode on without an image
+    template: deployment.yaml
+    set:
+      execution.sourceMode.enabled: true
+    asserts:
+      - failedTemplate:
+          errorPattern: "execution.sourceMode.image must be pinned by a full digest"
+
+  - it: refuses to render source mode on with a tag-only image
+    template: deployment.yaml
+    set:
+      execution.sourceMode.enabled: true
+      execution.sourceMode.image: ghcr.io/dexadata/dexaflow-runtime:0.5.3
+    asserts:
+      - failedTemplate:
+          errorPattern: "execution.sourceMode.image must be pinned by a full digest"
+
+  - it: refuses to render source mode on with a short digest
+    template: deployment.yaml
+    set:
+      execution.sourceMode.enabled: true
+      execution.sourceMode.image: ghcr.io/dexadata/dexaflow-runtime@sha256:0123456789abcdef
+    asserts:
+      - failedTemplate:
+          errorPattern: "execution.sourceMode.image must be pinned by a full digest"
+
+  - it: refuses to render source mode on with an uppercase digest the server rejects
+    template: deployment.yaml
+    set:
+      execution.sourceMode.enabled: true
+      execution.sourceMode.image: ghcr.io/dexadata/dexaflow-runtime@sha256:0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef
+    asserts:
+      - failedTemplate:
+          errorPattern: "execution.sourceMode.image must be pinned by a full digest"
+
+  # `helm upgrade --reuse-values` from v0.5.3 carries no execution.sourceMode.
+  - it: renders when values from a release without sourceMode are reused
+    template: deployment.yaml
+    set:
+      execution.sourceMode: null
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED")]
+
+  - it: renders both split Deployments when values without sourceMode are reused
+    template: deployment.yaml
+    set:
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+      execution.sourceMode: null
+    asserts:
+      - hasDocuments:
+          count: 2
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED")]
+
+  # ADR 0095: warm pools for source-mode versions are a separate opt-in, off
+  # by default, and only reach the server with the mode itself on.
+  - it: renders no warm-pools variable unless asked
+    template: deployment.yaml
+    set:
+      execution.sourceMode.enabled: true
+      execution.sourceMode.image: ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS")]
+
+  - it: renders the warm-pools variable when on with the mode on
+    template: deployment.yaml
+    set:
+      execution.sourceMode.enabled: true
+      execution.sourceMode.image: ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      execution.sourceMode.warmPools: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS
+            value: "true"
+
+  - it: renders no warm-pools variable while the mode is off
+    template: deployment.yaml
+    set:
+      execution.sourceMode.warmPools: true
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS")]

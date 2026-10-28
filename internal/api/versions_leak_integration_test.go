@@ -24,7 +24,7 @@ import (
 //
 // A NUL byte in the DAG description is the cheapest way to make the server
 // itself raise an error mapConflict has never heard of: Postgres refuses it
-// with 22021 (invalid byte sequence for encoding "UTF8") on the UpsertDag
+// with 22021 (invalid byte sequence for encoding "UTF8") on the EnsureDag
 // write. Before #961 that reached the tenant as
 // "upserting dag: ERROR: ... (SQLSTATE 22021)".
 func TestRegisterVersionUnmappedSQLSTATEIsOpaqueIntegration(t *testing.T) {
@@ -39,13 +39,21 @@ func TestRegisterVersionUnmappedSQLSTATEIsOpaqueIntegration(t *testing.T) {
 	}
 	t.Cleanup(pg.Close)
 
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		TokenTTLSecs:  3600,
-		Versions:      storage.NewRepository(pg),
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
+		Stores: StoreDeps{
+			Versions: storage.NewRepository(pg),
+		},
 	})
 
 	dagID := fmt.Sprintf("api_leak_%d", time.Now().UnixNano())

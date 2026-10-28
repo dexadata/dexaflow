@@ -22,6 +22,26 @@ func (q *Queries) CountVariables(ctx context.Context, tenantID pgtype.UUID) (int
 	return count, err
 }
 
+const countVariablesFiltered = `-- name: CountVariablesFiltered :one
+SELECT count(*) FROM variables
+WHERE tenant_id = $1
+  AND ($2::text IS NULL OR key ILIKE '%' || $2 || '%')
+  AND ($3::text IS NULL OR key ILIKE $3 || '%')
+`
+
+type CountVariablesFilteredParams struct {
+	TenantID         pgtype.UUID `json:"tenant_id"`
+	KeyPattern       *string     `json:"key_pattern"`
+	KeyPrefixPattern *string     `json:"key_prefix_pattern"`
+}
+
+func (q *Queries) CountVariablesFiltered(ctx context.Context, arg CountVariablesFilteredParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countVariablesFiltered, arg.TenantID, arg.KeyPattern, arg.KeyPrefixPattern)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteVariable = `-- name: DeleteVariable :execrows
 DELETE FROM variables WHERE tenant_id = $1 AND key = $2
 `
@@ -136,6 +156,97 @@ func (q *Queries) ListVariables(ctx context.Context, arg ListVariablesParams) ([
 	return items, nil
 }
 
+const listVariablesFiltered = `-- name: ListVariablesFiltered :many
+SELECT key, value, description
+FROM variables
+WHERE tenant_id = $1
+  AND ($4::text IS NULL OR key ILIKE '%' || $4 || '%')
+  AND ($5::text IS NULL OR key ILIKE $5 || '%')
+ORDER BY key
+LIMIT $2 OFFSET $3
+`
+
+type ListVariablesFilteredParams struct {
+	TenantID         pgtype.UUID `json:"tenant_id"`
+	Limit            int32       `json:"limit"`
+	Offset           int32       `json:"offset"`
+	KeyPattern       *string     `json:"key_pattern"`
+	KeyPrefixPattern *string     `json:"key_prefix_pattern"`
+}
+
+type ListVariablesFilteredRow struct {
+	Key         string  `json:"key"`
+	Value       string  `json:"value"`
+	Description *string `json:"description"`
+}
+
+func (q *Queries) ListVariablesFiltered(ctx context.Context, arg ListVariablesFilteredParams) ([]ListVariablesFilteredRow, error) {
+	rows, err := q.db.Query(ctx, listVariablesFiltered,
+		arg.TenantID,
+		arg.Limit,
+		arg.Offset,
+		arg.KeyPattern,
+		arg.KeyPrefixPattern,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListVariablesFilteredRow{}
+	for rows.Next() {
+		var i ListVariablesFilteredRow
+		if err := rows.Scan(&i.Key, &i.Value, &i.Description); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVariablesForEncryptionSweep = `-- name: ListVariablesForEncryptionSweep :many
+SELECT id, key, value FROM variables
+WHERE starts_with(value, $1::text) = $2::boolean
+ORDER BY id
+`
+
+type ListVariablesForEncryptionSweepParams struct {
+	Prefix string `json:"prefix"`
+	Sealed bool   `json:"sealed"`
+}
+
+type ListVariablesForEncryptionSweepRow struct {
+	ID    pgtype.UUID `json:"id"`
+	Key   string      `json:"key"`
+	Value string      `json:"value"`
+}
+
+// Every variable across every tenant whose stored value does (sealed = true) or
+// does not (sealed = false) start with the ciphertext tag (#507). It backs the
+// variable_encryption boot sweeps, which seal plaintext rows ("on") or restore
+// them ("decrypt"), and the key rotation sweep, which reads the sealed ones.
+func (q *Queries) ListVariablesForEncryptionSweep(ctx context.Context, arg ListVariablesForEncryptionSweepParams) ([]ListVariablesForEncryptionSweepRow, error) {
+	rows, err := q.db.Query(ctx, listVariablesForEncryptionSweep, arg.Prefix, arg.Sealed)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListVariablesForEncryptionSweepRow{}
+	for rows.Next() {
+		var i ListVariablesForEncryptionSweepRow
+		if err := rows.Scan(&i.ID, &i.Key, &i.Value); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listVariablesScoped = `-- name: ListVariablesScoped :many
 SELECT key, value, description
 FROM variables
@@ -177,6 +288,28 @@ func (q *Queries) ListVariablesScoped(ctx context.Context, arg ListVariablesScop
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateVariableValueGuarded = `-- name: UpdateVariableValueGuarded :execrows
+UPDATE variables SET value = $1
+WHERE id = $2 AND value = $3
+`
+
+type UpdateVariableValueGuardedParams struct {
+	Value  string      `json:"value"`
+	ID     pgtype.UUID `json:"id"`
+	Expect string      `json:"expect"`
+}
+
+// Rewrites one stored value only if it is still the one the sweep read, so a
+// concurrent write wins and the sweep counts the row as skipped. updated_at is
+// left alone: the variable's value did not change, only its stored form.
+func (q *Queries) UpdateVariableValueGuarded(ctx context.Context, arg UpdateVariableValueGuardedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateVariableValueGuarded, arg.Value, arg.ID, arg.Expect)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertVariable = `-- name: UpsertVariable :exec

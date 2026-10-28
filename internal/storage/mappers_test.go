@@ -158,3 +158,18 @@ func TestMapTaskInstanceNoFailureReasonIsEmpty(t *testing.T) {
 		t.Errorf("FailureReason = %q, want empty for a successful instance", ti.FailureReason)
 	}
 }
+
+// TestMapTaskInstanceCarriesPoolAndSlots (#1589): the mapper reads the pool and
+// the pool_slots the admission gate charges from the row, so the API reports a
+// task instance's real weight. A NULL pool is the implicit default_pool.
+func TestMapTaskInstanceCarriesPoolAndSlots(t *testing.T) {
+	gpu := "gpu"
+	ti := mapTaskInstance(queries.TaskInstance{TaskID: "train", Pool: &gpu, PoolSlots: 4}, "etl", "r1")
+	if ti.Pool != "gpu" || ti.PoolSlots != 4 {
+		t.Errorf("pool = %q, slots = %d, want gpu and 4", ti.Pool, ti.PoolSlots)
+	}
+	ti = mapTaskInstance(queries.TaskInstance{TaskID: "extract", PoolSlots: 1}, "etl", "r1")
+	if ti.Pool != "default_pool" || ti.PoolSlots != 1 {
+		t.Errorf("pool = %q, slots = %d, want default_pool and 1", ti.Pool, ti.PoolSlots)
+	}
+}

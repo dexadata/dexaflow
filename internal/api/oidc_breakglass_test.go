@@ -9,7 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/dexadata/dexaflow/internal/auth"
-	"github.com/dexadata/dexaflow/internal/config"
 )
 
 // emailPassAuthn issues a token only for one specific email+password, so the
@@ -30,16 +29,22 @@ func (a emailPassAuthn) Authenticate(context.Context, string) (*auth.User, error
 // breakGlassServer builds a server in OIDC break-glass mode: the credential path
 // admits only the given allowlisted email (with the given password).
 func breakGlassServer(allow []string, authn auth.Authenticator, audit AuthAuditWriter) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: authn,
-		RateLimiter:   auth.NewRateLimiter(50, time.Minute),
-		HealthChecks:  map[string]HealthChecker{},
-		CORSOrigins:   []string{"*"},
-		TokenTTLSecs:  3600,
-		AuthAudit:     audit,
-		OIDCEnabled:   true,
-		OIDCSettings:  config.OIDCSection{BreakGlassEmails: allow},
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger:       discardLogger(),
+			HealthChecks: map[string]HealthChecker{},
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: authn,
+			RateLimiter:   auth.NewRateLimiter(50, time.Minute),
+			TokenTTLSecs:  3600,
+			AuthAudit:     audit,
+			OIDCEnabled:   true,
+			OIDCSettings:  OIDCSettings{BreakGlassEmails: allow},
+		},
 	})
 }
 
@@ -103,14 +108,20 @@ func TestBreakGlassAllowsOnlyAllowlistedEmail(t *testing.T) {
 func TestJWTModeCredentialPathUngated(t *testing.T) {
 	audit := &fakeAuthAudit{}
 	// No BreakGlassEmails, no OIDCFlow → bg is nil, path ungated.
-	srv := NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: credAuthn{}, // issues for password "right", any username
-		RateLimiter:   auth.NewRateLimiter(50, time.Minute),
-		HealthChecks:  map[string]HealthChecker{},
-		CORSOrigins:   []string{"*"},
-		TokenTTLSecs:  3600,
-		AuthAudit:     audit,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger:       discardLogger(),
+			HealthChecks: map[string]HealthChecker{},
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: credAuthn{}, // issues for password "right", any username
+			RateLimiter:   auth.NewRateLimiter(50, time.Minute),
+			TokenTTLSecs:  3600,
+			AuthAudit:     audit,
+		},
 	})
 
 	rec := do(srv, http.MethodPost, "/auth/token", `{"username":"anyone@corp.example","password":"right"}`)

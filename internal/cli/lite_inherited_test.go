@@ -16,6 +16,7 @@ import (
 // a flag to remove them — so the count has to arrive unasked, in the block
 // already carrying the URL, the login and the project path.
 func TestAnnounceReadyInheritedDags(t *testing.T) {
+	t.Parallel()
 	t.Run("names the count and the way out when there are leftovers", func(t *testing.T) {
 		var out bytes.Buffer
 		announceReady(&out, "127.0.0.1", 8088, "admin@leoflow.local", "/ws", 3)

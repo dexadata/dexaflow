@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -149,6 +150,37 @@ func pausedFilter(c *gin.Context) *bool {
 	return &b
 }
 
+// favoriteFilter reads the optional ?is_favorite= query param. Absent or unparseable
+// returns nil (no filter); "true"/"false" returns a pointer to the bool.
+func favoriteFilter(c *gin.Context) *bool {
+	raw, ok := c.GetQuery("is_favorite")
+	if !ok {
+		return nil
+	}
+	b, err := strconv.ParseBool(raw)
+	if err != nil {
+		return nil
+	}
+	return &b
+}
+
+// parseQueryStrings reads param from repeated query params and/or comma-separated
+// values, preserving order and dropping blanks/duplicates.
+func parseQueryStrings(c *gin.Context, param string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, raw := range c.QueryArray(param) {
+		for _, v := range strings.Split(raw, ",") {
+			v = strings.TrimSpace(v)
+			if v != "" && !seen[v] {
+				seen[v] = true
+				out = append(out, v)
+			}
+		}
+	}
+	return out
+}
+
 // strPtrOrNil returns nil for an empty string so the JSON field renders null.
 func strPtrOrNil(s string) *string {
 	if s == "" {
@@ -163,15 +195,30 @@ func strPtrOrNil(s string) *string {
 func uiDagsHandler(dags DagRepository, latest DagLatestRunsReader, favorites FavoriteStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// #217 diagnostic: the SPA polls this every 1s on Lite and reportedly
-		// freezes when a DAG breaks. If a single slow ListDagsFiltered or
+		// freezes when a DAG breaks. If a single slow ListDagsWithFilter or
 		// LatestRunsForDags lights up here while the watcher is reloading the
 		// workspace, that's the contention point. Two timings: per-query +
 		// total. Grep the log for "duration_ms" outliers.
 		t0 := time.Now()
 		limit, offset := pagination(c)
 		tenant := tenantOf(c)
-		ds, total, err := dags.ListDagsFiltered(c.Request.Context(), tenant,
-			c.Query("last_dag_run_state"), pausedFilter(c), limit, offset)
+		filter := domain.DagFilter{
+			DagIDPattern:                c.Query("dag_id_pattern"),
+			DagIDPrefixPattern:          c.Query("dag_id_prefix_pattern"),
+			DagDisplayNamePattern:       c.Query("dag_display_name_pattern"),
+			DagDisplayNamePrefixPattern: c.Query("dag_display_name_prefix_pattern"),
+			LastDagRunState:             c.Query("last_dag_run_state"),
+			Paused:                      pausedFilter(c),
+			Tags:                        parseQueryStrings(c, "tags"),
+			TagsMatchMode:               c.Query("tags_match_mode"),
+			Owners:                      parseQueryStrings(c, "owners"),
+			IsFavorite:                  favoriteFilter(c),
+			UserID:                      favoriteUserID(c),
+			OrderBy:                     c.Query("order_by"),
+			Limit:                       limit,
+			Offset:                      offset,
+		}
+		ds, total, err := dags.ListDagsWithFilter(c.Request.Context(), tenant, filter)
 		if err != nil {
 			handleRepoError(c, err)
 			return
@@ -179,7 +226,7 @@ func uiDagsHandler(dags DagRepository, latest DagLatestRunsReader, favorites Fav
 		listMs := time.Since(t0).Milliseconds()
 		runsLimit := defaultDagRunsLimit
 		if n, perr := strconv.Atoi(c.Query("dag_runs_limit")); perr == nil && n > 0 {
-			runsLimit = n
+			runsLimit = capPageLimit(c, n)
 		}
 		ids := make([]string, len(ds))
 		for i, d := range ds {

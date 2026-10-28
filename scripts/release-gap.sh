@@ -22,8 +22,10 @@
 # A pull request merged with a merge commit shows on main's first-parent line
 # as "Merge pull request #N from ...", and is judged by that number like a
 # squash merge. The commits cut-release.sh makes itself ("release: prepare
-# vX", "release: promote vX GA", "docs: publish vX at the documentation root")
-# are release mechanics, not changes, and never count as missing.
+# vX", "release: promote vX GA", "docs: publish vX at the documentation root",
+# "changelog: sync vX to main") are release mechanics, not changes, and never
+# count as missing. The sync is the patch's own changelog coming back to main,
+# so picking it onto the release branch would be circular.
 #
 # A commit that should not ship in the patch (an ADR, a feature held for the
 # next minor) is skipped by a line in .github/release-skip.txt ON THE RELEASE
@@ -65,7 +67,7 @@ pr_of() {
 
 # release_mechanics: true for the commits cut-release.sh lands on main itself.
 release_mechanics() {
-  printf '%s\n' "$1" | grep -qE '^(release: (prepare|promote) v[0-9]|docs: publish v[0-9][^ ]* at the documentation root)'
+  printf '%s\n' "$1" | grep -qE '^(release: (prepare|promote) v[0-9]|docs: publish v[0-9][^ ]* at the documentation root|changelog: sync v[0-9][^ ]*( and v[0-9][^ ]*|, v[0-9][^ ]*)* to main)'
 }
 
 # milestone_of <pr>: the milestone title of a pull request, empty when it has
@@ -135,6 +137,9 @@ gap() {
 }
 
 self_test() {
+  # A git hook exports these, and the fixture repositories below would follow
+  # them to the repository being committed to.
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_PREFIX
   local fail=0 tmp out
   _eq() { [ "$1" = "$2" ] || { printf 'FAIL: %s\n  got:  %s\n  want: %s\n' "$3" "$1" "$2"; fail=1; }; }
   _eq "$(pr_of 'fix(x): y (#1355)')" "1355" "pr_of reads the squash suffix"
@@ -144,6 +149,9 @@ self_test() {
   _eq "$(_rm 'release: prepare v0.9.1-rc.1')" "yes" "a prepare commit is release mechanics"
   _eq "$(_rm 'release: promote v0.9.1 GA')" "yes" "a promote commit is release mechanics"
   _eq "$(_rm 'docs: publish v0.9.1 at the documentation root (#9)')" "yes" "the docs promotion is release mechanics"
+  _eq "$(_rm 'changelog: sync v0.9.1 to main (#9)')" "yes" "the changelog sync is release mechanics"
+  _eq "$(_rm 'changelog: sync v0.5.1, v0.5.2 and v0.5.3 to main (#9)')" "yes" "so is a sync of several patches"
+  _eq "$(_rm 'changelog: sync wording in the docs (#9)')" "no" "a subject that only starts alike is not"
   _eq "$(_rm 'fix(release): prepare step')" "no" "an ordinary fix is not"
   _held() { if held_for_later "$1" "$2"; then echo held; else echo ships; fi; }
   _eq "$(_held v0.5.2 0.5.1)"  "held"  "a milestone for the next patch holds the commit"

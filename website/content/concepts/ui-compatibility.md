@@ -11,12 +11,13 @@ description: "What the Airflow-compatible UI supports, and where it intentionall
 {{% alert title="Status update — superseded by the implementation" color="success" %}}
 This began as a **Phase 5 investigation (2026-05-22)** arguing the *naive* goal
 (unmodified Airflow UI on `/api/v2` alone) was not viable. **That realistic path
-was taken and it works:** Dexaflow serves the unmodified Apache Airflow 3.2.1
+was taken and it works:** Dexaflow serves the unmodified Apache Airflow 3.3.2
 React SPA **and** implements the internal `/ui/*` API (ADR 0017 / ADR 0018). The
 grid, graph, dashboard, and run views run against Dexaflow today (Demo + Lite,
 browser-verified). The standing risk below is real and accepted: `/ui/*` is
 internal/unstable (AIP-84), so a new Airflow UI version can break a screen — we
-pin to 3.2.1 and guard with a browser contract sweep.
+pin to 3.3.2 (3.2.1 until v0.5.4) and guard with a browser contract sweep. See
+[Upgrading the bundle](#upgrading-the-bundle) for what the 3.3 move changed.
 {{% /alert %}}
 
 **Original investigation (historical):** why the *naive* goal — run the unmodified
@@ -90,11 +91,12 @@ Dexaflow exposes today aligns well on shape:
 - ⚠️ `/dags/{id}/versions` is **Dexaflow-specific** (DAG-as-image versioning), not
   an Airflow endpoint.
 
-## Decision: path 2 — serve the unmodified 3.2.1 UI, implement a pinned `/ui/*`
+## Decision: path 2, serve the unmodified Airflow UI and implement a pinned `/ui/*`
 
-We pursue **path 2**: serve the **unmodified** Apache Airflow **3.2.1** React UI
-assets and implement, in the Dexaflow control plane, the `/ui/*` (and the few
-extra `/api/v2/*`) endpoints that exact version calls — **pinned to 3.2.1**. We
+We pursue **path 2**: serve the **unmodified** Apache Airflow React UI assets
+(pinned to **3.3.2** since v0.5.4, **3.2.1** before) and implement, in the
+Dexaflow control plane, the `/ui/*` (and the few extra `/api/v2/*`) endpoints
+that exact version calls. We
 accept the version-lock and the re-chase-on-upgrade cost; in return we get the
 familiar Airflow UI without forking it.
 
@@ -103,13 +105,14 @@ familiar Airflow UI without forking it.
 1. **Authoritative shapes, never guessed.** Every endpoint we implement is
    matched against the version-pinned spec
    `airflow-core/src/airflow/api_fastapi/core_api/openapi/_private_ui.yaml`
-   at tag `3.2.1` (the `/ui` API) and `v2-rest-api-generated.yaml` (public).
+   at the pinned tag (the `/ui` API) and `v2-rest-api-generated.yaml` (public).
    That file is the single source of truth for field names and types.
 2. **Do not fork or strip the SPA.** The UI is a compiled Vite bundle; surgically
    removing components is impractical and forking + rebuilding it is the brittle
    path we are avoiding. Instead we **shape the UI from the backend** (below).
 3. **Pin everything.** The Airflow image tag, the spec, and the asset bundle are
-   all pinned to 3.2.1. Upgrades are a deliberate, tested event.
+   all pinned to one version (`AIRFLOW_UI_VERSION` in the `Makefile`). Upgrades
+   are a deliberate, tested event.
 
 ## Graceful degradation — hide the uncovered, never break
 
@@ -127,9 +130,9 @@ backend, in three tiers:
    return `501` with a `detail` hint the UI surfaces as a toast
    ("Not available in Dexaflow yet").
 
-## The `/ui/*` surface (Airflow 3.2.1, from `_private_ui.yaml`)
+## The `/ui/*` surface (from `_private_ui.yaml`)
 
-22 operations. Tiers map to the degradation strategy above.
+22 operations in 3.2.1, 24 in 3.3.2. Tiers map to the degradation strategy above.
 
 | Tier | Endpoint | Response schema (authoritative) |
 |---|---|---|
@@ -146,12 +149,15 @@ backend, in three tiers:
 | Degrade | `GET /ui/dashboard/historical_metrics_data` | empty stats |
 | Degrade | `GET /ui/dashboard/dag_stats` | empty stats |
 | Degrade | `GET /ui/calendar/{dag_id}` | empty |
-| Degrade | `GET /ui/gantt/{dag_id}/{run_id}` | empty |
+| **Core** | `GET /ui/gantt/{dag_id}/{run_id}` | `GanttResponse`: every attempt of every task of the run (3.3 adds `scheduled_dttm`, `queued_dttm`) |
 | Degrade | `GET /ui/dependencies` | empty graph |
 | Degrade | `GET /ui/backfills` | empty list |
 | Degrade | `GET /ui/next_run_assets/{dag_id}` | empty |
-| Degrade | `GET /ui/partitioned_dag_runs` · `GET /ui/pending_partitioned_dag_run/{dag_id}/{partition_key}` | empty |
+| Degrade | `GET /ui/partitioned_dag_runs` | empty (`partitioned_dag_runs: []`, `total: 0`) |
+| Degrade | `GET /ui/pending_partitioned_dag_run/{dag_id}` | `501` (no empty form for a single run) |
 | Degrade | `GET /ui/dags/{dag_id}/dagRuns/{dag_run_id}/deadlines` | empty |
+| Degrade | `GET /ui/dags/{dag_id}/deadlineAlerts` (3.3) | empty |
+| Degrade | `GET /ui/dags/{dag_id}/dagRuns/{dag_run_id}/stats` (3.3) | `duration: null` (the stats panel stays hidden) |
 | Degrade | `GET /ui/teams` | empty |
 | Degrade | `GET /ui/connections/hook_meta` | empty |
 
@@ -161,14 +167,14 @@ already exposes; the UI calls those directly.
 ## Serving & auth architecture
 
 ```
-browser ──▶ static SPA assets (Airflow 3.2.1, unmodified)
+browser ──▶ static SPA assets (Airflow 3.3.2, unmodified)
         ──▶ /ui/*    ─┐
         ──▶ /api/v2/* ─┼─▶ dexaflow-server   (reverse proxy serves assets + routes API)
                        ─┘
 ```
 
 - A reverse proxy (or a static-file route in dexaflow-server) serves the pinned
-  3.2.1 SPA bundle and routes `/ui/*` and `/api/v2/*` to the control plane.
+  SPA bundle and routes `/ui/*` and `/api/v2/*` to the control plane.
 - **Auth (dual-path — corrected 2026-05-22).** The earlier assumption that the UI
   logs in via `POST /ui/auth/token` was **wrong**: the spec's `GenerateTokenBody`
   carries **no credentials** (only an optional `token_type`), so `/ui/auth/token`
@@ -184,6 +190,22 @@ browser ──▶ static SPA assets (Airflow 3.2.1, unmodified)
     fallback (do not remove until 5.3 or Phase 6). The JWT is sent as
     `Authorization: Bearer` on subsequent calls; Dexaflow's existing JWT issuance
     backs both, secret shared via configuration.
+
+### Dexaflow screens inside the UI
+
+The bundle is never edited, so a screen that only Dexaflow has reaches the UI
+through Airflow 3's own extension point: `GET /api/v2/plugins` lists a built-in
+plugin named `dexaflow` whose `external_views` the UI turns into menu entries.
+Each view is a page served by the control plane and shown in the UI's
+same-origin frame at `/plugin/<url_route>`. The page calls the API with the
+session cookie, so the API's checks are the only checks, and it answers with a
+CSP that allows only its own script (by hash), calls to its own origin and a
+same-origin frame. The plugin lists a view only when the API behind it is
+mounted; with none, the response is the empty collection the stub served.
+
+| Menu entry | View `url_route` | Page | API |
+|---|---|---|---|
+| User menu, **API tokens** | `api-tokens` | `/dexaflow/api-tokens` | `GET` and `DELETE /api/v2/apiTokens` ([ADR 0074](/project/adrs/0074-scoped-api-tokens/), #1886) |
 
 ## Learnings log
 
@@ -290,3 +312,108 @@ browser ──▶ static SPA assets (Airflow 3.2.1, unmodified)
 - [Apache Airflow 3 is Generally Available](https://airflow.apache.org/blog/airflow-three-point-oh-is-here/)
 - [AIP-84 UI REST API](https://cwiki.apache.org/confluence/display/AIRFLOW/AIP-84+UI+REST+API)
 - [Airflow REST API endpoints & data models (DeepWiki)](https://deepwiki.com/apache/airflow/9.3-rest-api-endpoints-and-data-models)
+
+## Upgrading the bundle
+
+The bundle is the `airflow/ui/dist` directory of the pinned Airflow release.
+`make fetch-airflow-ui` extracts it from the `apache/airflow:<version>` image
+(the same files ship in the `apache-airflow-core` wheel on PyPI), writes the
+`VERSION` marker and rebrands the Docs and GitHub nav links. The bundle is
+unverified until the contract sweep (`test/ui-contract/run.sh`) and the UI smoke
+(`test/e2e/ui-smoke.js`) pass against it.
+
+### 3.2.1 to 3.3.2 (v0.5.4)
+
+What the 3.3 UI reads that the 3.2 UI did not, and what Dexaflow serves for it:
+
+- **Cursor paging of the runs and task instance tables.** The 3.3 UI sends
+  `cursor` (empty on the first page) and no `offset`, and moves with the
+  `next_cursor` and `previous_cursor` the body names. `GET .../dagRuns` and
+  `GET .../dagRuns/{dag_run_id}/taskInstances` now name them whenever the request
+  carries `cursor`; a request without it gets the 3.2 body unchanged.
+- **Mark as success or failed.** The dialog previews with
+  `PATCH .../taskInstances/{task_id}/dry_run` and reads `task_instances` from the
+  answer. Both the preview and the PATCH now answer the
+  `TaskInstanceCollectionResponse` Airflow declares (a bare task instance crashed
+  the dialog).
+- **Clear a whole run.** `POST .../dagRuns/{dag_run_id}/clear` is implemented
+  (dry run lists the affected task instances, the clear resets them and re-queues
+  the run). `only_new` is refused with `400`, since Dexaflow cannot yet tell which
+  tasks a newer DAG version added.
+- **Gantt.** `GET /ui/gantt/{dag_id}/{run_id}` is implemented; the catch-all `{}`
+  crashed the 3.3 Gantt view.
+- **Pinned version on runs.** `GET .../dagRuns` and
+  `GET .../dagRuns/{dag_run_id}` name the version each run is pinned to in
+  `dag_versions`. The 3.3 Clear dialogs, opened from the run page or from a row
+  of the runs table, read an empty list as a run carried over from Airflow 2 and
+  force "Run with latest bundle version".
+- **New fields.** `has_note` on grid runs, `partition_date` (always `null`) on
+  runs, `awaiting_input` in the task instance state counts, and the
+  `*_counts_are_lower_bounds` flags (always `false`: the dashboard counts are
+  exact).
+
+The two upstream regressions that held the bump back were re-checked against the
+3.3.2 bundle in a real browser: after Mark as failed the task instance badge
+updates without a reload (apache/airflow#67883, fixed upstream by
+apache/airflow#67212, which 3.3.0 carries), and the page stays responsive with
+one grid re-stream per mark (apache/airflow#67884 did not reproduce). After a
+Clear, the log view shows one attempt tab per try and each tab loads its own
+attempt (the #241 flow).
+
+Known gaps the 3.3 UI exposes, none of them a crash:
+
+- The note typed in the 3.3 Clear dialog is not stored (run and task instance
+  notes are not editable yet).
+- A run whose version is no longer registered carries no `dag_versions`, so the
+  Clear dialog shows "run on latest version" as forced for it; the request it
+  sends still keeps the run's own version. Every other run names its pinned
+  version, in `GET .../dagRuns/{dag_run_id}` and in the run list alike.
+- "Run with latest bundle version" follows Airflow 3.2
+  ([ADR 0086](/project/adrs/0086-clear-rebinds-a-finished-run-with-its-task-set/)):
+  a finished run with no task queued or running moves to the current version,
+  which creates the task instances of the tasks that version adds and marks
+  `removed` the ones of the tasks it dropped. A run that has not finished keeps
+  its version and the clear applies on it.
+  - **The UI does not say when the option was not applied.** Both Clear routes
+    (`clearTaskInstances` and `dagRuns/{dag_run_id}/clear`), dry run included,
+    name such a run in the added field `run_on_latest_version_not_applied`,
+    with the reason. The 3.3.2 Clear dialogs read only the fields Airflow
+    defines, so they show the usual preview and no message; the run keeps
+    showing the version it had. [Clearing a run that is still
+    running](/author-dags/dag-authoring/#clearing-a-run-that-is-still-running)
+    shows how to read the field and how to move the run once it has finished.
+- Deadline alerts and run duration stats answer empty.
+- The calls below are not served yet. Each one answers `501` with the detail
+  "... is not available in Dexaflow yet", which the UI shows as an error toast,
+  and a list read answers its empty collection, so no view breaks on them:
+  - The bulk actions of the runs table (select runs, then "Clear Dag Runs",
+    "Mark Dag Runs as..." or "Delete Dag Runs"):
+    `POST /api/v2/dags/{dag_id}/clearDagRuns` (dry run preview included) and
+    the bulk `PATCH /api/v2/dags/{dag_id}/dagRuns`. Clear, mark or delete the
+    runs one at a time from each run.
+  - Marking a whole task group:
+    `PATCH .../dagRuns/{dag_run_id}/taskGroupInstances/{group_id}` and its
+    `/dry_run`. Mark the task instances one at a time.
+  - Clearing partitions: `POST /api/v2/dags/{dag_id}/clearPartitions`.
+  - The asset and task state stores: `/api/v2/assets/{asset_id}/state-store`
+    and `.../taskInstances/{task_id}/state-store`, each with `/{key}`. The two
+    list reads answer an empty collection; reading one key, writing
+    (`PUT`, `PATCH`) and deleting answer `501`.
+  - Partitioned runs: `GET /ui/partitioned_dag_runs` answers an empty list and
+    `GET /ui/pending_partitioned_dag_run/{dag_id}` answers `501`.
+  - Bulk actions on task instances (`PATCH .../dagRuns/{dag_run_id}/taskInstances`)
+    and deleting a task instance (`DELETE .../taskInstances/{task_id}`). Clear
+    or mark the task instances one at a time.
+  - Bulk edits of variables and connections (`PATCH /api/v2/variables`,
+    `PATCH /api/v2/connections`). Edit or delete them one at a time.
+  - Creating, updating and deleting XCom entries under
+    `.../taskInstances/{task_id}/xcomEntries`. Reading them works.
+  - Reparsing a DAG file (`PUT /api/v2/parseDagFile/{file_token}`). Dexaflow
+    registers DAGs with `dexaflow deploy` or `dexaflow push`, not by parsing a
+    DAGs folder.
+  - Asset events: `GET .../dagRuns/{dag_run_id}/upstreamAssetEvents` and the
+    queued event reads (`/api/v2/assets/{asset_id}/queuedEvents`,
+    `/api/v2/dags/{dag_id}/assets/queuedEvents` and
+    `/api/v2/dags/{dag_id}/assets/{asset_id}/queuedEvents`) answer empty
+    collections; clearing queued events (`DELETE` on those paths) answers `501`.
+

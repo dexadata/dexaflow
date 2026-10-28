@@ -154,13 +154,15 @@ func describeBootDatastore(o *devOptions) string {
 }
 
 // liteServerEnviron is the server's environment: the inherited one without any
-// variable Lite sets for the key handling, then Lite's own. The server prefers
-// DEXAFLOW_* over LEOFLOW_*, so an exported DEXAFLOW_SECRET_KEY would otherwise
-// beat the LEOFLOW_SECRET_KEY built from config.yaml, and new rows would land
-// under a key the file does not record (ADR 0065 gap 7).
+// variable Lite sets for the key handling or the database, then Lite's own. The
+// server prefers DEXAFLOW_* over LEOFLOW_*, so an exported DEXAFLOW_SECRET_KEY
+// would otherwise beat the LEOFLOW_SECRET_KEY built from config.yaml, and new
+// rows would land under a key the file does not record (ADR 0065 gap 7). An
+// exported DEXAFLOW_DATABASE_URL would likewise beat the LEOFLOW_DATABASE_URL
+// of Lite's own database, the only one Lite runs on (#1185).
 func liteServerEnviron(base, env []string) []string {
 	drop := map[string]bool{}
-	for _, suffix := range []string{"SECRET_KEY", "SECRET_KEY_REENCRYPT_ON_BOOT", "SECRET_KEY_MIGRATION_LOCK"} {
+	for _, suffix := range []string{"SECRET_KEY", "SECRET_KEY_REENCRYPT_ON_BOOT", "SECRET_KEY_MIGRATION_LOCK", "DATABASE_URL"} {
 		drop["DEXAFLOW_"+suffix] = true
 		drop["LEOFLOW_"+suffix] = true
 	}

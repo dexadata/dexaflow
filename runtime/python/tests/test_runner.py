@@ -2,6 +2,9 @@
 
 import itertools
 import json
+import sys
+import types
+from datetime import datetime, timezone
 
 import pytest
 
@@ -99,20 +102,246 @@ def test_render_bash_no_template_is_unchanged():
     assert runner._render_bash("echo hello", {"ds": "x"}) == "echo hello"
 
 
-def test_render_bash_bad_template_falls_back_to_raw():
-    # A broken/undefined template must never fail the task — fall back to the raw command
-    # (the env vars $LEOFLOW_DS/$AIRFLOW_VAR_* still reach it).
-    raw = "echo {{ nope.bad }}"
-    assert runner._render_bash(raw, {}) == raw
+def test_render_bash_undefined_template_fails_with_field_and_error():
+    # A template that cannot render must fail the attempt, never run the raw
+    # "{{ ... }}" text (#1845). The error names the field and keeps Jinja's message.
+    with pytest.raises(runner.TemplateRenderError) as info:
+        runner._render_bash("echo {{ nope.bad }}", {})
+    assert info.value.field == "bash_command"
+    assert "'nope' is undefined" in str(info.value)
+    assert "'bash_command'" in str(info.value)
+
+
+def test_render_bash_syntax_error_fails():
+    with pytest.raises(runner.TemplateRenderError) as info:
+        runner._render_bash("echo {{ ds", {"ds": "2026-06-14"})
+    assert info.value.field == "bash_command"
+
+
+def test_render_bash_literal_braces_need_a_raw_block():
+    # A command that carries literal braces for another tool (docker --format, a Go
+    # template) is a Jinja syntax error now that render errors fail; a raw block,
+    # as on Airflow, passes the braces through untouched and unquoted.
+    with pytest.raises(runner.TemplateRenderError):
+        runner._render_bash("docker ps --format '{{.Names}}'", {})
+    out = runner._render_bash(
+        "docker ps --format '{% raw %}{{.Names}}{% endraw %}' {{ ds }}", {"ds": "2026-06-14"})
+    assert out == "docker ps --format '{{.Names}}' 2026-06-14"
 
 
 def test_render_bash_sandbox_blocks_template_injection():
     # The bash command is rendered with a SandboxedEnvironment (Airflow parity), so a
     # server-side template-injection payload that reaches for Python internals is refused
-    # at render time. The render fails closed → fall back to the raw command, never
-    # executing the injection nor leaking the resolved attribute.
+    # at render time. The render fails closed: the attempt fails, nothing is executed
+    # and the resolved attribute never reaches the shell.
     raw = "echo {{ ''.__class__.__mro__[1].__subclasses__() }}"
-    assert runner._render_bash(raw, {}) == raw
+    with pytest.raises(runner.TemplateRenderError) as info:
+        runner._render_bash(raw, {})
+    assert "SecurityError" in str(info.value)
+
+
+def test_render_bash_without_jinja_fails_instead_of_running_raw(monkeypatch):
+    # No jinja2 in the image means the template cannot render: fail, do not run the
+    # raw template text (#1845). The Task SDK in the base image brings jinja2.
+    monkeypatch.setitem(sys.modules, "jinja2.sandbox", None)
+    with pytest.raises(runner.TemplateRenderError) as info:
+        runner._render_bash("echo {{ ds }}", {"ds": "2026-06-14"})
+    assert "jinja2" in str(info.value)
+
+
+def test_run_bash_render_error_never_execs(monkeypatch, capsys):
+    execs = []
+    monkeypatch.setattr(runner.os, "execvp", lambda *a: execs.append(a))
+    with pytest.raises(runner.TemplateRenderError):
+        runner.run_bash("echo {{ ds }} {{ nope.x }}")
+    assert execs == []
+    out = capsys.readouterr().out
+    assert "'bash_command'" in out
+    assert "'nope' is undefined" in out
+
+
+def test_run_bash_renders_macros_and_logical_date(monkeypatch):
+    # The two keys common templates use that the context lacked (#1843):
+    # macros.ds_add raised UndefinedError and logical_date rendered empty.
+    execs = []
+    monkeypatch.setattr(runner.os, "execvp", lambda *a: execs.append(a))
+    monkeypatch.setenv("LEOFLOW_DS", "2026-06-14")
+    monkeypatch.setenv("LEOFLOW_TS", "2026-06-14T05:30:00Z")
+    runner.run_bash("echo {{ macros.ds_add(ds, 1) }} {{ logical_date.strftime('%Y%m%dT%H%M') }}")
+    assert execs == [("bash", ["bash", "-c", "echo 2026-06-15 20260614T0530"])]
+
+
+def test_operator_context_logical_date(monkeypatch):
+    monkeypatch.setenv("LEOFLOW_TS", "2026-06-14T05:30:00Z")
+    assert runner._operator_context()["logical_date"] == datetime(
+        2026, 6, 14, 5, 30, tzinfo=timezone.utc)
+    monkeypatch.delenv("LEOFLOW_TS")
+    ctx = runner._operator_context()
+    assert "logical_date" in ctx
+    assert ctx["logical_date"] is None
+
+
+def test_operator_context_date_keys(monkeypatch):
+    # The keys the Task SDK derives from the logical date, with its own formats (#1843).
+    monkeypatch.setenv("LEOFLOW_DAG_ID", "report")
+    monkeypatch.setenv("LEOFLOW_TASK_ID", "build")
+    monkeypatch.setenv("LEOFLOW_TS", "2026-06-14T05:30:00Z")
+    monkeypatch.setenv("LEOFLOW_DS", "2026-06-14")
+    ctx = runner._operator_context()
+    assert ctx["ds_nodash"] == "20260614"
+    assert ctx["ts_nodash"] == "20260614T053000"
+    assert ctx["ts_nodash_with_tz"] == "20260614T053000+0000"
+    assert ctx["task_instance_key_str"] == "report__build__20260614"
+
+
+def test_operator_context_date_keys_absent_without_logical_date(monkeypatch):
+    # The Task SDK sets them only for a run with a logical date; a run without one
+    # keys task_instance_key_str by run_id instead.
+    monkeypatch.delenv("LEOFLOW_TS", raising=False)
+    monkeypatch.setenv("LEOFLOW_DAG_ID", "report")
+    monkeypatch.setenv("LEOFLOW_TASK_ID", "build")
+    monkeypatch.setenv("LEOFLOW_RUN_ID", "manual__1")
+    ctx = runner._operator_context()
+    for key in ("ds_nodash", "ts_nodash", "ts_nodash_with_tz"):
+        assert key not in ctx
+    assert ctx["task_instance_key_str"] == "report__build__manual__1"
+
+
+def test_operator_context_try_number(monkeypatch):
+    monkeypatch.setenv("LEOFLOW_TRY_NUMBER", "3")
+    assert runner._operator_context()["try_number"] == 3
+
+
+def test_operator_context_dag_run(monkeypatch):
+    # dag_run was None, so operators and callbacks reading dag_run.conf crashed (#1843).
+    monkeypatch.setenv("LEOFLOW_DAG_ID", "report")
+    monkeypatch.setenv("LEOFLOW_RUN_ID", "manual__2026-06-14T05:30:00+00:00")
+    monkeypatch.setenv("LEOFLOW_TS", "2026-06-14T05:30:00Z")
+    monkeypatch.setenv("LEOFLOW_DATA_INTERVAL_START", "2026-06-13T05:30:00Z")
+    monkeypatch.setenv("LEOFLOW_DATA_INTERVAL_END", "2026-06-14T05:30:00Z")
+    monkeypatch.setenv("LEOFLOW_RUN_CONF", '{"table": "orders"}')
+    monkeypatch.setenv("LEOFLOW_RUN_TYPE", "scheduled")
+    dag_run = runner._operator_context()["dag_run"]
+    assert dag_run.dag_id == "report"
+    assert dag_run.run_id == "manual__2026-06-14T05:30:00+00:00"
+    assert dag_run.logical_date == datetime(2026, 6, 14, 5, 30, tzinfo=timezone.utc)
+    assert dag_run.data_interval_start == datetime(2026, 6, 13, 5, 30, tzinfo=timezone.utc)
+    assert dag_run.data_interval_end == datetime(2026, 6, 14, 5, 30, tzinfo=timezone.utc)
+    assert dag_run.conf == {"table": "orders"}
+    assert dag_run.run_type == "scheduled"
+
+
+def test_operator_context_dag_run_conf_is_the_conf_not_params(monkeypatch):
+    # params layers DAG and task defaults under the conf; dag_run.conf is the
+    # conf alone, as on Airflow.
+    monkeypatch.setenv("LEOFLOW_PARAMS", '{"table": "orders", "limit": 5}')
+    monkeypatch.setenv("LEOFLOW_RUN_CONF", '{"table": "orders"}')
+    assert runner._operator_context()["dag_run"].conf == {"table": "orders"}
+
+
+def test_operator_context_dag_run_bad_conf_is_empty(monkeypatch):
+    monkeypatch.setenv("LEOFLOW_RUN_CONF", "null")
+    assert runner._operator_context()["dag_run"].conf == {}
+    monkeypatch.setenv("LEOFLOW_RUN_CONF", "{oops")
+    assert runner._operator_context()["dag_run"].conf == {}
+
+
+def test_operator_context_dag_run_without_delivered_conf_says_so(monkeypatch):
+    # A control plane older than the agent delivers no conf and no run type: the
+    # attribute is missing with a message naming it, not a made-up empty conf.
+    monkeypatch.delenv("LEOFLOW_RUN_CONF", raising=False)
+    monkeypatch.delenv("LEOFLOW_RUN_TYPE", raising=False)
+    dag_run = runner._operator_context()["dag_run"]
+    with pytest.raises(AttributeError, match="'conf'.*Dexaflow"):
+        _ = dag_run.conf
+    assert not hasattr(dag_run, "run_type")
+
+
+def test_operator_context_dag_and_task_identity(monkeypatch):
+    # Outside an operator run the runtime has no DAG or task object; the stand-ins
+    # carry their ids, and ti.task is the same task (#1843).
+    monkeypatch.setenv("LEOFLOW_DAG_ID", "report")
+    monkeypatch.setenv("LEOFLOW_TASK_ID", "build")
+    ctx = runner._operator_context()
+    assert ctx["dag"].dag_id == "report"
+    assert ctx["task"].task_id == "build"
+    assert ctx["task"].dag_id == "report"
+    assert ctx["ti"].task is ctx["task"]
+
+
+@pytest.mark.parametrize("key,name", [
+    ("dag", "get_task"), ("task", "execute"), ("dag_run", "start_date"), ("ti", "hostname")])
+def test_operator_context_missing_attribute_names_it(key, name):
+    # A provider that reaches for an attribute the runtime lacks gets an error that
+    # names it and says Dexaflow does not provide it, not a bare AttributeError.
+    obj = runner._operator_context()[key]
+    with pytest.raises(AttributeError, match=f"'{name}'.*Dexaflow does not provide"):
+        getattr(obj, name)
+    assert getattr(obj, name, "fallback") == "fallback"
+
+
+def test_standalone_ti_max_tries(monkeypatch):
+    monkeypatch.setenv("LEOFLOW_TRY_NUMBER", "2")
+    monkeypatch.setenv("LEOFLOW_MAX_TRIES", "4")
+    assert runner._operator_context()["ti"].max_tries == 4
+    monkeypatch.delenv("LEOFLOW_MAX_TRIES")
+    assert runner._operator_context()["ti"].max_tries == 2
+
+
+def test_run_bash_renders_the_new_context_keys(monkeypatch):
+    execs = []
+    monkeypatch.setattr(runner.os, "execvp", lambda *a: execs.append(a))
+    monkeypatch.setenv("LEOFLOW_DAG_ID", "report")
+    monkeypatch.setenv("LEOFLOW_TASK_ID", "build")
+    monkeypatch.setenv("LEOFLOW_TS", "2026-06-14T05:30:00Z")
+    monkeypatch.setenv("LEOFLOW_RUN_CONF", '{"table": "orders"}')
+    runner.run_bash("echo {{ ds_nodash }} {{ dag.dag_id }}.{{ task.task_id }} "
+                    "{{ dag_run.conf.table }}")
+    assert execs == [("bash", ["bash", "-c", "echo 20260614 report.build orders"])]
+
+
+def test_run_task_failure_callback_gets_the_exception(tmp_path, monkeypatch):
+    # Airflow hands on_failure_callback the error as context["exception"] (#1843).
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(tmp_path / "rv.json"))
+    monkeypatch.setenv("LEOFLOW_ON_FAILURE_CALLBACK", "1")
+    body = ("SEEN = []\n"
+            "def _cb(context):\n"
+            "    SEEN.append(repr(context.get('exception')))\n"
+            "def task():\n"
+            "    raise ValueError('bad row')\n"
+            "task.on_failure_callback = _cb\n")
+    mod = _write_module(tmp_path, monkeypatch, body)
+
+    with pytest.raises(ValueError):
+        runner.run(f"{mod}:task")
+
+    assert sys.modules[mod].SEEN == ["ValueError('bad row')"]
+
+
+def test_operator_context_macros_prefer_the_task_sdk(monkeypatch):
+    # When the Task SDK is installed (the base image), macros are its own module, so
+    # templates behave as on Airflow; the built-in subset is only the fallback.
+    fake = types.ModuleType("airflow.sdk.execution_time.macros")
+    fake.ds_add = lambda ds, days: f"sdk:{ds}:{days}"
+    monkeypatch.setitem(sys.modules, "airflow.sdk.execution_time.macros", fake)
+    assert runner._operator_context()["macros"].ds_add("2026-06-14", 1) == "sdk:2026-06-14:1"
+
+
+def test_operator_context_macros_fall_back_without_the_sdk(monkeypatch):
+    monkeypatch.setitem(sys.modules, "airflow.sdk.execution_time.macros", None)
+    macros = runner._operator_context()["macros"]
+    assert macros.ds_add("2026-06-14", -14) == "2026-05-31"
+    assert macros.ds_format("2026-06-14", "%Y-%m-%d", "%d/%m/%Y") == "14/06/2026"
+
+
+def test_fallback_macros_export_the_task_sdk_modules():
+    # Templates reach the standard modules through macros, as with the Task SDK,
+    # so the fallback lists them as its public names, not as stray imports.
+    from leoflow_runtime import macros
+
+    for name in ("datetime", "json", "random", "time", "timedelta", "uuid"):
+        assert name in macros.__all__
+        assert getattr(macros, name) is not None
 
 
 def test_run_without_return_writes_no_file(tmp_path, monkeypatch):
@@ -157,7 +386,7 @@ def test_run_lifecycle_never_logs_kwargs_values(tmp_path, monkeypatch, capsys):
         f"expected the keys-only kwargs line in:\n{stdout}"
     )
     # The pulled metadata line is still expected (size only).
-    assert "[leoflow] pulled raw" in stdout
+    assert "[dexaflow] pulled raw" in stdout
     assert "(26 B)" in stdout  # the JSON-encoded secret has 26 bytes
 
 
@@ -165,7 +394,7 @@ def test_run_logs_xcom_pulls_with_size(tmp_path, monkeypatch, capsys):
     """When an upstream XCom is consumed, the runtime MUST log it with the wire
     size — invaluable when debugging "received None" in a downstream task
     (was the upstream silent? did the name match? how big is the payload?).
-    The line goes inside the Pre task execution group with the [leoflow]
+    The line goes inside the Pre task execution group with the [dexaflow]
     prefix.
     """
     out = tmp_path / "rv.json"
@@ -181,9 +410,9 @@ def test_run_logs_xcom_pulls_with_size(tmp_path, monkeypatch, capsys):
     runner.run(f"{mod}:task")
 
     stdout = capsys.readouterr().out
-    # Each pulled XCom gets its own [leoflow] pulled line with byte size.
-    assert "[leoflow] pulled raw (10 B)" in stdout, f"missing raw pull line:\n{stdout}"
-    assert "[leoflow] pulled summary (4 B)" in stdout, f"missing summary pull line:\n{stdout}"
+    # Each pulled XCom gets its own [dexaflow] pulled line with byte size.
+    assert "[dexaflow] pulled raw (10 B)" in stdout, f"missing raw pull line:\n{stdout}"
+    assert "[dexaflow] pulled summary (4 B)" in stdout, f"missing summary pull line:\n{stdout}"
 
 
 def test_run_emits_flat_lifecycle_lines(tmp_path, monkeypatch, capsys):
@@ -212,9 +441,9 @@ def test_run_emits_flat_lifecycle_lines(tmp_path, monkeypatch, capsys):
     assert "::group::" not in stdout, f"::group:: marker leaked into stdout:\n{stdout}"
     assert "::endgroup::" not in stdout, f"::endgroup:: marker leaked into stdout:\n{stdout}"
     # All three lifecycle lines and the user print MUST be present, in order.
-    loading = stdout.find("[leoflow] loading")
+    loading = stdout.find("[dexaflow] loading")
     user_line = stdout.find("USER_LINE_INSIDE_TASK")
-    returned = stdout.find("[leoflow] returned")
+    returned = stdout.find("[dexaflow] returned")
     assert loading != -1, f"missing loading line in:\n{stdout}"
     assert user_line != -1, f"missing user print in:\n{stdout}"
     assert returned != -1, f"missing returned line in:\n{stdout}"
@@ -252,6 +481,36 @@ def test_run_unwraps_taskflow_decorator(tmp_path, monkeypatch):
     runner.run(f"{mod}:task")
 
     assert json.loads(out.read_text()) == {"ran": True}
+
+
+def test_run_overridden_task_runs_the_function_under_its_own_task_id(tmp_path, monkeypatch):
+    """``estimate.override(task_id="estimate_03")(3)`` (#1681): the parser emits the
+    entrypoint ``module:estimate`` and the task_id ``estimate_03``. Importing the
+    module runs the overrides again (as Airflow does), and the runner still
+    resolves the module-level decorator, unwraps it and runs the function under
+    the task_id the agent sets, with the literal captured for that task."""
+    out = tmp_path / "rv.json"
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(out))
+    monkeypatch.setenv("LEOFLOW_TASK_ID", "estimate_03")
+    monkeypatch.setenv("LEOFLOW_CALL_ARGS_JSON", json.dumps({"worker": 3}))
+    body = (
+        "class _TaskDecorator:\n"
+        "    def __init__(self, fn, **kwargs):\n"
+        "        self.function, self.kwargs = fn, kwargs\n"
+        "    def override(self, **kwargs):\n"
+        "        return _TaskDecorator(self.function, **{**self.kwargs, **kwargs})\n"
+        "    def __call__(self, *a, **k):\n"
+        "        return object()  # an XComArg, never the result\n"
+        "def _estimate(worker, ti=None):\n"
+        "    return {'worker': worker, 'task_id': ti.task_id}\n"
+        "estimate = _TaskDecorator(_estimate)\n"
+        "_ = [estimate.override(task_id=f'estimate_{n:02d}')(n) for n in range(4)]\n"
+    )
+    mod = _write_module(tmp_path, monkeypatch, body)
+
+    runner.run(f"{mod}:estimate")
+
+    assert json.loads(out.read_text()) == {"worker": 3, "task_id": "estimate_03"}
 
 
 def test_run_resolves_xcom_input_arguments(tmp_path, monkeypatch):
@@ -359,6 +618,36 @@ def test_run_operator_executes_captured_provider_operator(tmp_path, monkeypatch)
         {"bash_command": "echo generic-op-ran"},
     )
     assert json.loads((tmp_path / "ret.json").read_text()) == "generic-op-ran"
+
+
+def test_run_operator_real_operator_renders_sdk_macros(tmp_path, monkeypatch):
+    """With the real Task SDK, macros resolve to its own module (#1843)."""
+    pytest.importorskip("airflow.providers.standard.operators.bash")
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(tmp_path / "ret.json"))
+    monkeypatch.setenv("LEOFLOW_TASK_ID", "t")
+    monkeypatch.setenv("LEOFLOW_DS", "2026-06-14")
+    monkeypatch.setenv("LEOFLOW_TS", "2026-06-14T05:30:00Z")
+    runner.run_operator(
+        "airflow.providers.standard.operators.bash.BashOperator",
+        {"bash_command": "echo {{ macros.ds_add(ds, 1) }} {{ logical_date.year }}"},
+    )
+    assert json.loads((tmp_path / "ret.json").read_text()) == "2026-06-15 2026"
+
+
+def test_run_operator_real_operator_render_error_names_field(tmp_path, monkeypatch, capsys):
+    """With the real Task SDK templater, a field that cannot render fails the
+    attempt before execute(), naming the field (#1845)."""
+    pytest.importorskip("airflow.providers.standard.operators.bash")
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(tmp_path / "ret.json"))
+    monkeypatch.setenv("LEOFLOW_TASK_ID", "t")
+    with pytest.raises(runner.TemplateRenderError) as info:
+        runner.run_operator(
+            "airflow.providers.standard.operators.bash.BashOperator",
+            {"bash_command": "echo {{ nope.x }}"},
+        )
+    assert info.value.field == "bash_command"
+    assert not (tmp_path / "ret.json").exists()
+    assert "'nope' is undefined" in capsys.readouterr().out
 
 
 def test_merge_operator_xcom_injects_upstream_values(monkeypatch):

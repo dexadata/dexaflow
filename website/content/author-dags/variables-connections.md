@@ -9,7 +9,8 @@ description: Expose Variables and Connections to your task pods.
 ---
 
 Dexaflow stores **Variables** and **Connections** in the control plane (connection
-secrets encrypted at rest, AES-256-GCM, ADR 0019; on Lite read
+secrets encrypted at rest, AES-256-GCM, ADR 0019; Variables too when the operator
+sets [`variable_encryption: on`](/reference/configuration/#encrypting-variables); on Lite read
 [what that protects](#encryption-at-rest-on-lite)) and delivers them to task pods
 at runtime as environment variables, so your task reads them with the **native
 Airflow APIs** *and* as plain env (ADR 0021).
@@ -102,16 +103,17 @@ The control plane's secret-delivery policy (`auth.secret_scoping`, [ADR
 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)) has two modes:
 
 - **`permissive`** (the shipped default) delivers the **whole tenant vault** to
-  every task regardless of declaration, and only logs a warning when a task's
-  declared set is narrower than what it received. An **undeclared** Variable or
-  Connection still resolves — `Variable.get` does **not** return empty under
-  this default. A clean warning trail proves only that no DAG whose
-  declarations still *resolve* is over-served; it does **not** prove that no DAG
-  would lose secrets under `enforce`. Two populations never appear in the trail:
-  a DAG that declares nothing, and a DAG whose declared names no longer exist in
-  the vault — the warning counts only declared names that actually resolve, so an
-  all-stale declaration counts as zero. Both receive the whole vault today and
-  nothing under `enforce`
+  every task regardless of declaration, and only logs a warning (and records a
+  `secret.scope_warning` audit event) when a task's declared set is narrower
+  than what it received. An **undeclared** Variable or Connection still
+  resolves: `Variable.get` does **not** return empty under this default. A task
+  that declares nothing, or whose declared names no longer exist in the vault,
+  is warned about with `declared=0`, because under `enforce` it would receive
+  nothing. The warning counts only declared names that actually resolve, so an
+  all-stale declaration counts as zero. A DAG that declares nothing at all is
+  warned about once per DAG version and kind on each control plane replica, not
+  on every attempt; the other warnings are per delivery. Count distinct DAGs
+  with `declared=0` to size the migration backlog
   ([#800](https://github.com/dexadata/dexaflow/issues/800)).
 - **`enforce`** delivers **only** the declared subset — an undeclared name is
   not delivered, and `Variable.get`/`BaseHook.get_connection` for it comes back
@@ -143,9 +145,17 @@ def use_secrets():
     print(os.environ["AIRFLOW_VAR_GREETING"]) # also a plain env var
 ```
 
+In a `bash` task, reference the same names as shell variables
+(`"$AIRFLOW_VAR_GREETING"`) rather than rendering a secret with
+`{{ var.value.x }}` or `{{ conn.x }}`: a rendered value becomes part of the
+process command line, which `ps` and logs can expose. See
+[Bash templating](/author-dags/dag-authoring/) and
+[ADR 0070](/project/adrs/0070-secrets-by-env-reference/).
+
 Scope is global (per tenant). Delivery requires a secure agent channel (TLS, #58)
-or, in dev, the explicit `DEXAFLOW_AGENT_ALLOW_INSECURE_SECRETS=true` (set by
-`dexaflow lite`). Pro on Kubernetes (including GKE) **requires** TLS — the chart
+or, in dev, the explicit `DEXAFLOW_AGENT_ALLOW_INSECURE_SECRETS=true` (config
+key `agent.allow_insecure_secrets`, set by `dexaflow lite`). Pro on Kubernetes
+(including GKE) **requires** TLS: the chart
 ships `agentTLS.enabled: true` by default and the server refuses the insecure
 bypass; the plaintext escape hatch is Lite-only, for local iteration. See
 [ADR 0021](/project/adrs/0021-exposing-variables-connections-to-pods/).

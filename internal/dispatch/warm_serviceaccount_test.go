@@ -8,26 +8,6 @@ import (
 	"github.com/dexadata/dexaflow/internal/executor"
 )
 
-func TestWarmSACompatible(t *testing.T) {
-	cases := []struct {
-		name   string
-		task   domain.TaskSpec
-		warmSA string
-		want   bool
-	}{
-		{"no execution", domain.TaskSpec{}, "leoflow-task", true},
-		{"empty SA uses default", domain.TaskSpec{Execution: &domain.Execution{}}, "leoflow-task", true},
-		{"SA equals warm default", domain.TaskSpec{Execution: &domain.Execution{ServiceAccount: "leoflow-task"}}, "leoflow-task", true},
-		{"pinned different SA", domain.TaskSpec{Execution: &domain.Execution{ServiceAccount: "custom-sa"}}, "leoflow-task", false},
-		{"pinned SA, no warm default", domain.TaskSpec{Execution: &domain.Execution{ServiceAccount: "custom-sa"}}, "", false},
-	}
-	for _, c := range cases {
-		if got := warmSACompatible(c.task, c.warmSA); got != c.want {
-			t.Errorf("%s: warmSACompatible = %v, want %v", c.name, got, c.want)
-		}
-	}
-}
-
 // A task pinning a ServiceAccount different from the warm workers' must NOT be
 // placed on a warm worker (which can't adopt it) — it takes the dedicated path,
 // which honors the pinned SA.

@@ -1,7 +1,8 @@
-// Package ui embeds and serves the pinned Apache Airflow 3.2.1 React SPA bundle.
-// The control plane ships the UI in-binary (ADR 0017); the bundle is produced
+// Package ui embeds and serves the pinned Apache Airflow React SPA bundle
+// (AIRFLOW_UI_VERSION in the Makefile, recorded in assets/VERSION). The
+// control plane ships the UI in-binary (ADR 0017); the bundle is produced
 // reproducibly by `make fetch-airflow-ui`, which extracts the dist directory
-// from the apache/airflow:3.2.1 image. The serving contract mirrors Airflow's
+// from the apache/airflow:<version> image. The serving contract mirrors Airflow's
 // own FastAPI app: static files under /static and an index.html SPA fallback
 // for every other path, with the <base href> templated per request.
 package ui

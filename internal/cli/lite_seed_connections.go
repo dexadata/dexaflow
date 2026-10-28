@@ -90,7 +90,7 @@ func seedDeclaredConnections(ctx context.Context, cmd *cobra.Command, ws *Worksp
 	if len(names) == 0 {
 		return
 	}
-	c, err := apiclient.New(serverURL, token)
+	c, err := cliAPIClient(serverURL, token)
 	if err != nil {
 		return
 	}

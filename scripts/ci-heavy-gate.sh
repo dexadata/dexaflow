@@ -19,9 +19,19 @@
 # every time and no remedy can clear the check. changelog-guard.yaml carries
 # that lesson, learned from the v0.4.7 cut (#1176).
 #
+# A second scope, `warm-pools`, answers a narrower question for the warm pools
+# leg of deploy-e2e (#1707): does this change touch warm placement or the deploy
+# path? That leg repeats the deploy scenario with warm pools on, and the runner
+# queue is small, so it runs only when a file on that path changed (WARM_RE),
+# on every event: pull requests diff against their base branch, merge queue
+# runs against the queue's base commit and pushes against the commit before
+# the push. When no diff can be computed it runs, like the default scope.
+#
 # Usage:
 #   scripts/ci-heavy-gate.sh <event-name> <base-ref>   # writes run=… to $GITHUB_OUTPUT
+#   scripts/ci-heavy-gate.sh --scope warm-pools <event-name> <base-ref-or-sha>
 #   scripts/ci-heavy-gate.sh --decide                  # reads a file list on stdin, prints run|skip
+#   scripts/ci-heavy-gate.sh --decide-warm             # the same for the warm-pools scope
 #   scripts/ci-heavy-gate.sh --self-test
 set -euo pipefail
 
@@ -46,17 +56,57 @@ decide() {
 	if [ -z "${files//[[:space:]]/}" ]; then
 		echo run; return
 	fi
-	if printf '%s\n' "$files" | grep -qvE "$SKIP_RE"; then
+	# Filtered into a variable, never `| grep -q`: under pipefail an early exit
+	# of grep -q sends SIGPIPE to the writer, the pipeline returns 141 and a
+	# large diff read as skip.
+	local code; code="$(printf '%s\n' "$files" | grep -vE "$SKIP_RE" || true)"
+	if [ -n "$code" ]; then
 		echo run
 	else
 		echo skip
 	fi
 }
 
+# WARM_RE: the paths the warm pools leg runs on: warm placement and the warm
+# worker (dispatch, executor, agent, agentrpc, the token exchange, the agent
+# binary and protocol, the agent token), the scheduler that picks the version
+# a task is dispatched for, the storage that resolves that version, its warm
+# targets and the warm binding (BindWarmAttempt in runs.sql and its generated
+# runs.sql.go), the warm eligibility rules (resource unit, default limits), the
+# deploy command and the image build, and the leg itself. Deliberately left
+# out: cmd/dexaflow-server/, internal/config/, go.mod and ci.yaml, which would
+# run the leg on most pull requests (57 of 100 merges with them; 37 of the last
+# 100 with this list). Documented in test/README.md (`warm-paths`) and checked
+# against it by the self-test.
+WARM_RE='^(internal/dispatch/|internal/executor/|internal/agentrpc/|internal/agent/|internal/kubeexchange/|internal/scheduler/|internal/storage/scheduler_store\.go|internal/storage/agent_store\.go|internal/storage/queries/runs\.sql|internal/domain/resource_unit\.go|internal/domain/default_limits\.go|internal/auth/agent_token\.go|internal/cli/deploy|internal/build/|cmd/dexaflow-agent/|proto/|test/e2e/deploy-e2e\.sh|test/e2e/lib\.sh|scripts/ci-heavy-gate\.sh)'
+
+# decide_warm: like decide, for the warm-pools scope. A file the default scope
+# skips (prose, docs) never runs the leg, even under a warm path; otherwise one
+# file under WARM_RE runs it. An empty list runs, for the reason decide gives.
+decide_warm() {
+	local files; files="$(cat)"
+	if [ -z "${files//[[:space:]]/}" ]; then
+		echo run; return
+	fi
+	# Into a variable first, for the SIGPIPE reason decide gives.
+	local warm; warm="$(printf '%s\n' "$files" | grep -vE "$SKIP_RE" | grep -E "$WARM_RE" || true)"
+	if [ -n "$warm" ]; then
+		echo run
+	else
+		echo skip
+	fi
+}
+
+# documented_block NAME: the lines of the fenced block marked NAME in
+# test/README.md.
+documented_block() {
+	awk -v tag="$1" '$0 == "```" tag {inb=1; next} inb && /^```$/ {exit} inb {print}' "$ROOT/test/README.md" 2>/dev/null
+}
+
 # documented_skip_paths: the skip list as test/README.md states it, read from
 # the fenced block marked `skip-paths`.
 documented_skip_paths() {
-	awk '/^```skip-paths$/ {inb=1; next} inb && /^```$/ {exit} inb {print}' "$ROOT/test/README.md" 2>/dev/null
+	documented_block skip-paths
 }
 
 self_test() {
@@ -90,23 +140,91 @@ self_test() {
 	local actual; actual="$(printf '%s\n' "$SKIP_RE" | sed -E 's/^\^\(//; s/\)$//' | tr '|' '\n' | awk 'NF' | sort)"
 	_eq "$documented" "$actual" "test/README.md documents exactly the paths this gate skips"
 
+	# The warm pools scope (#1707): the second deploy-e2e leg runs only when a
+	# file on the warm placement or deploy path changed.
+	_eq "$(printf '%s\n' 'internal/dispatch/dispatch.go' | decide_warm)" "run" "warm: a dispatch change runs"
+	_eq "$(printf '%s\n' 'internal/executor/warmpool.go' | decide_warm)" "run" "warm: an executor change runs"
+	_eq "$(printf '%s\n' 'internal/agentrpc/worker_registry.go' | decide_warm)" "run" "warm: the worker registry runs"
+	_eq "$(printf '%s\n' 'internal/storage/scheduler_store.go' | decide_warm)" "run" "warm: the warm target source runs"
+	_eq "$(printf '%s\n' 'internal/cli/deploy.go' | decide_warm)" "run" "warm: the deploy command runs"
+	_eq "$(printf '%s\n' 'test/e2e/deploy-e2e.sh' | decide_warm)" "run" "warm: the deploy e2e itself runs"
+	_eq "$(printf '%s\n' 'internal/config/server.go' 'cmd/dexaflow-server/main.go' | decide_warm)" "skip" "warm: config and server wiring alone skip"
+	_eq "$(printf '%s\n' 'internal/api/dags.go' 'website/x.md' | decide_warm)" "skip" "warm: an API-only change skips"
+	_eq "$(printf '%s\n' 'internal/storage/repository.go' | decide_warm)" "skip" "warm: other storage files skip"
+	_eq "$(printf '%s\n' 'internal/storage/queries/runs.sql.go' | decide_warm)" "run" "warm: the warm binding query runs"
+	_eq "$(printf '%s\n' 'internal/domain/resource_unit.go' | decide_warm)" "run" "warm: the warm eligibility rules run"
+	_eq "$(printf '%s\n' 'internal/auth/agent_token.go' | decide_warm)" "run" "warm: the agent token runs"
+	_eq "$(printf '%s\n' 'internal/domain/dag.go' | decide_warm)" "skip" "warm: other domain files skip"
+	_eq "$(printf '%s\n' 'internal/dispatch/README.md' | decide_warm)" "skip" "warm: prose under a warm path still skips"
+	_eq "$(printf '%s\n' 'internal/api/dags.go' 'internal/agent/warm.go' | decide_warm)" "run" "warm: one warm file anywhere runs"
+	_eq "$(printf '' | decide_warm)" "run" "warm: an empty file list runs, it does not skip"
+
+	# A large diff: `printf | grep -q` under pipefail returned 141 once grep -q
+	# exited early and the writer took SIGPIPE, and the gate read that as skip.
+	local big; big="$(seq 1 5000 | sed 's#^#internal/api/some/longer/path/file#; s#$#.go#')"
+	_eq "$(printf '%s\n' "$big" | decide)" "run" "a 5000-file code diff runs"
+	_eq "$(printf '%s\n' 'internal/dispatch/dispatch.go' "$big" | decide_warm)" "run" "warm: a 5000-file diff with a warm file first runs"
+	_eq "$(printf '%s\n' "$big" | decide_warm)" "skip" "warm: a 5000-file diff with no warm file skips"
+	local documented_warm; documented_warm="$(documented_block warm-paths | awk 'NF' | sort)"
+	local actual_warm; actual_warm="$(printf '%s\n' "$WARM_RE" | sed -E 's/^\^\(//; s/\)$//' | tr '|' '\n' | awk 'NF' | sort)"
+	_eq "$documented_warm" "$actual_warm" "test/README.md documents exactly the paths the warm scope runs on"
+
 	if [ "$fail" -eq 0 ]; then echo "self-test: PASS"; return 0; else echo "self-test: FAIL"; return 1; fi
 }
 
 case "${1:-}" in
-	--self-test) self_test; exit $? ;;
-	--decide)    decide; exit 0 ;;
+	--self-test)   self_test; exit $? ;;
+	--decide)      decide; exit 0 ;;
+	--decide-warm) decide_warm; exit 0 ;;
+esac
+
+scope=heavy
+if [ "${1:-}" = "--scope" ]; then
+	scope="${2:-}"; shift 2 || true
+fi
+case "$scope" in
+	heavy|warm-pools) ;;
+	*) echo "unknown scope '$scope' (want heavy or warm-pools)" >&2; exit 2 ;;
 esac
 
 event="${1:-}"; base="${2:-}"
-[ -n "$event" ] || { echo "usage: $(basename "$0") <event-name> <base-ref> | --decide | --self-test" >&2; exit 2; }
+[ -n "$event" ] || { echo "usage: $(basename "$0") [--scope warm-pools] <event-name> <base-ref> | --decide | --decide-warm | --self-test" >&2; exit 2; }
 
 emit() { # <run|skip>
 	local run=true; [ "$1" = skip ] && run=false
 	[ -n "${GITHUB_OUTPUT:-}" ] && echo "run=$run" >> "$GITHUB_OUTPUT"
+	if [ "$scope" = warm-pools ]; then
+		if [ "$run" = true ]; then echo "A warm placement or deploy path changed, running the warm pools leg."
+		else
+			echo "Nothing on the warm placement or deploy path changed, skipping the warm pools leg."
+			# A skipped leg still reports green, so say on the run page that it
+			# did not run rather than leave a green check that tested nothing.
+			if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+				echo "Warm pools leg skipped: no file on the warm placement or deploy path changed (\`warm-paths\` in test/README.md)." >> "$GITHUB_STEP_SUMMARY"
+			fi
+		fi
+		return
+	fi
 	if [ "$run" = true ]; then echo "Code change detected, running the heavy k3d E2E."
 	else echo "Docs or tooling only change, skipping the heavy k3d E2E."; fi
 }
+
+# The warm-pools scope decides by path on every event. Outside a pull request
+# the base is a commit (the merge queue's base, or the commit before a push);
+# a missing or all-zero one (a new branch) runs the leg.
+if [ "$scope" = warm-pools ] && [ "$event" != "pull_request" ]; then
+	if ! [[ "$base" =~ ^[0-9a-f]{40}$ ]] || [[ "$base" =~ ^0+$ ]]; then
+		echo "No base commit for event '$event', running the warm pools leg."
+		[ -n "${GITHUB_OUTPUT:-}" ] && echo "run=true" >> "$GITHUB_OUTPUT"
+		exit 0
+	fi
+	git cat-file -e "${base}^{commit}" 2>/dev/null || git fetch origin "$base" >/dev/null 2>&1 ||
+		{ echo "FAIL: could not fetch base commit '${base}'" >&2; exit 1; }
+	files="$(git diff --name-only "${base}...HEAD")"
+	echo "Changed files:"; printf '%s\n' "$files" | sed 's/^/  /'
+	emit "$(printf '%s\n' "$files" | decide_warm)"
+	exit 0
+fi
 
 if [ "$event" != "pull_request" ]; then
 	echo "Not a pull_request event, running the heavy k3d E2E."
@@ -126,4 +244,8 @@ git fetch origin "${base}:refs/remotes/origin/${base}" >/dev/null 2>&1 ||
 
 files="$(git diff --name-only "origin/${base}...HEAD")"
 echo "Changed files:"; printf '%s\n' "$files" | sed 's/^/  /'
-emit "$(printf '%s\n' "$files" | decide)"
+if [ "$scope" = warm-pools ]; then
+	emit "$(printf '%s\n' "$files" | decide_warm)"
+else
+	emit "$(printf '%s\n' "$files" | decide)"
+fi

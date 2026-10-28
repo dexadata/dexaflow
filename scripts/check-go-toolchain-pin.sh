@@ -180,7 +180,9 @@ if pinned_workflows == 0:
 # moved alone and this gate still printed OK. Its pin is ALSO reconciled against
 # security.yaml by scripts/check-migrate-cli-build-tags.sh, so the two gates form
 # a two-hop chain; neither header said so, which is how a seam becomes a hole.
-for rel in ("runtime/Dockerfile", "deploy/Dockerfile.server", "deploy/Dockerfile.migrate", "scripts/chaos/Dockerfile"):
+# .devcontainer/Dockerfile (#1574) is the contributor toolchain: its base
+# image is the Go a fresh devcontainer builds and tests with.
+for rel in ("runtime/Dockerfile", "deploy/Dockerfile.server", "deploy/Dockerfile.migrate", "scripts/chaos/Dockerfile", ".devcontainer/Dockerfile"):
 	text = read(rel)
 	m = re.search(r"^ARG GO_VERSION=(\S+)\s*$", text, re.M)
 	if not m:
@@ -220,6 +222,7 @@ scan = [
 	"deploy/Dockerfile.server.release",
 	"deploy/Dockerfile.migrate",
 	"scripts/chaos/Dockerfile",
+	".devcontainer/Dockerfile",
 	"Makefile",
 ]
 scan += [f".github/workflows/{n}" for n in sorted(os.listdir(wfdir)) if n.endswith((".yaml", ".yml"))]
@@ -271,7 +274,7 @@ self_test() {
 	# Builds a minimal repo root whose copies all say 1.26.6.
 	_mkroot() { # <dir>
 		local d="$1"
-		mkdir -p "$d/website" "$d/.github/workflows" "$d/runtime" "$d/deploy" "$d/scripts/chaos"
+		mkdir -p "$d/website" "$d/.github/workflows" "$d/runtime" "$d/deploy" "$d/scripts/chaos" "$d/.devcontainer"
 		_gomod "$d" 1.26.0 1.26.6
 		_website "$d" 1.26.6
 		_makefile "$d" 1.26.6
@@ -279,6 +282,7 @@ self_test() {
 		_dockerfile "$d" deploy/Dockerfile.server 1.26.6 'FROM golang:${GO_VERSION}-bookworm AS build'
 		_dockerfile "$d" deploy/Dockerfile.migrate 1.26.6 'FROM golang:${GO_VERSION}-bookworm AS build'
 		_dockerfile "$d" scripts/chaos/Dockerfile 1.26.6 'FROM python:3.12-slim'
+		_dockerfile "$d" .devcontainer/Dockerfile 1.26.6 'FROM golang:${GO_VERSION}-bookworm'
 		_ci "$d" 1.26.6
 		_release "$d" 1.26.6
 	}
@@ -303,6 +307,7 @@ self_test() {
 	}
 
 	_noop() { :; }
+	_devcontainer_drifts() { _dockerfile "$1" .devcontainer/Dockerfile 1.26.5 'FROM golang:${GO_VERSION}-bookworm'; }
 	_dependabot_bumps_one_dockerfile() { _dockerfile "$1" deploy/Dockerfile.server 1.26.6 'FROM golang:1.27-bookworm AS build'; }
 	_stale_runtime_arg() { _dockerfile "$1" runtime/Dockerfile 1.26.3 'FROM golang:${GO_VERSION}-bookworm AS agent-build'; }
 	_floating_arg() { _dockerfile "$1" runtime/Dockerfile 1.26 'FROM golang:${GO_VERSION}-bookworm AS agent-build'; }
@@ -339,6 +344,7 @@ self_test() {
 
 	_case "an agreeing tree passes"                    0 "agrees everywhere (go1.26.6)" _noop
 	_case "a Dependabot bump to one Dockerfile"        1 "golang:1.27-bookworm" _dependabot_bumps_one_dockerfile
+	_case "the devcontainer's Go is covered"           1 ".devcontainer/Dockerfile" _devcontainer_drifts
 	# The migrate Dockerfile arrived after this gate and was covered only by the
 	# `golang:` literal scan, so its ARG default could move alone and the gate
 	# still said OK. Confirmed on the real tree before this case existed.

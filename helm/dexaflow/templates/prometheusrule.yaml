@@ -1,0 +1,33 @@
+{{- /*
+Optional Prometheus Operator PrometheusRule with the schema-wait alert of ADR
+0090 decision 6: a control plane that stays not ready on its schema with
+nobody looking is almost as bad as a crash loop. Requires the
+monitoring.coreos.com CRDs (kube-prometheus-stack). Disabled by default.
+The severity and description are Prometheus templates, escaped so Helm
+leaves them as they are.
+*/ -}}
+{{- $rule := (.Values.metrics | default dict).prometheusRule | default dict }}
+{{- if $rule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "leoflow.fullname" . }}
+  namespace: {{ $rule.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "leoflow.labels" . | nindent 4 }}
+    {{- with $rule.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: dexaflow-schema
+      rules:
+        - alert: DexaflowSchemaNotReady
+          expr: dexaflow_schema_ready{namespace="{{ .Release.Namespace }}"} == 0
+          for: 5m
+          labels:
+            severity: '{{`{{ if eq $labels.reason "database replaced" }}critical{{ else }}warning{{ end }}`}}'
+          annotations:
+            summary: A Dexaflow control plane has waited 5 minutes for its database schema
+            description: '{{`Pod {{ $labels.pod }} is not ready: {{ $labels.reason }}. Its /readyz and its log say what to run.`}}'
+{{- end }}

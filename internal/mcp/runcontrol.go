@@ -47,12 +47,13 @@ func (h *handlers) registerRunControl(s *mcpsdk.Server) {
 	}
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "trigger_run",
-		Description: "Start a new run of a DAG now, optionally with a conf object. Ask the user before calling it.",
+		Description: "Trigger a new run of a DAG, optionally with a conf object. On a paused DAG the run waits in queued until the DAG is unpaused. Ask the user before calling it.",
 		Annotations: &mcpsdk.ToolAnnotations{DestructiveHint: boolPtr(false), OpenWorldHint: boolPtr(true)},
 	}, h.triggerRun)
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name: "clear_task",
 		Description: "Clear task instances of a DAG run so they run again (by default only failed ones). " +
+			"On a paused DAG the cleared tasks wait until the DAG is unpaused. " +
 			"A clear that touches one task instance happens at once. One that touches more only returns a plan: " +
 			"show it to the user, and call apply_plan with its plan_id only if they agree.",
 		Annotations: &mcpsdk.ToolAnnotations{DestructiveHint: boolPtr(true), OpenWorldHint: boolPtr(true)},
@@ -64,7 +65,8 @@ func (h *handlers) registerRunControl(s *mcpsdk.Server) {
 	}, h.pauseDag)
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name: "unpause_dag",
-		Description: "Unpause a DAG. For a DAG with a schedule this only returns a plan, because unpausing starts runs: " +
+		Description: "Unpause a DAG. For a DAG with a schedule, or with queued runs waiting for the unpause, this only returns a plan, " +
+			"because unpausing starts runs: " +
 			"show it to the user, and call apply_plan with its plan_id only if they agree.",
 		Annotations: &mcpsdk.ToolAnnotations{DestructiveHint: boolPtr(false), IdempotentHint: true, OpenWorldHint: boolPtr(true)},
 	}, h.unpauseDag)
@@ -216,6 +218,45 @@ func dagState(ctx context.Context, api *apiclient.ClientWithResponses, dagID str
 	return deref(d.IsPaused), schedule, deref(d.Catchup), nil
 }
 
+// queuedRuns counts the DAG's runs in queued. On a paused DAG they are the
+// runs triggered or cleared while it was paused, which wait for the unpause
+// and then start oldest first, no more at a time than max_active_runs allows.
+func queuedRuns(ctx context.Context, api *apiclient.ClientWithResponses, dagID string) (int, error) {
+	limit := 1
+	resp, err := api.ListDagRunsWithResponse(ctx, dagID, &apiclient.ListDagRunsParams{
+		Limit: &limit,
+		State: &[]apiclient.ListDagRunsParamsState{apiclient.ListDagRunsParamsState("queued")},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("counting queued runs of %s: %w", dagID, err)
+	}
+	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
+		return 0, cpError("counting queued runs of "+dagID, resp.StatusCode(), resp.Body)
+	}
+	return deref(resp.JSON200.TotalEntries), nil
+}
+
+// unpauseSummary says what an unpause starts: the schedule, the runs catchup
+// may add, and the queued runs waiting for the unpause.
+func unpauseSummary(dagID, schedule string, catchup bool, queued int) string {
+	summary := fmt.Sprintf("Unpausing DAG %q", stripControl(dagID))
+	if schedule != "" {
+		summary += fmt.Sprintf(" starts its schedule %q.", stripControl(schedule))
+		if catchup {
+			summary += " Catchup is on, so runs for intervals missed while it was paused may start too."
+		}
+	} else {
+		summary += " starts the runs waiting for it."
+	}
+	switch {
+	case queued == 1:
+		summary += " 1 queued run will start."
+	case queued > 1:
+		summary += fmt.Sprintf(" %d queued runs will start, oldest first, as max_active_runs allows.", queued)
+	}
+	return summary
+}
+
 func (h *handlers) unpauseDag(ctx context.Context, req *mcpsdk.CallToolRequest, in dagInput) (*mcpsdk.CallToolResult, controlOutput, error) {
 	if in.DagID == "" {
 		return nil, controlOutput{}, errors.New("dag_id is required")
@@ -228,15 +269,18 @@ func (h *handlers) unpauseDag(ctx context.Context, req *mcpsdk.CallToolRequest, 
 	if err != nil {
 		return nil, controlOutput{}, err
 	}
-	if !paused || schedule == "" {
+	queued := 0
+	if paused {
+		if queued, err = queuedRuns(ctx, api, in.DagID); err != nil {
+			return nil, controlOutput{}, err
+		}
+	}
+	if !paused || (schedule == "" && queued == 0) {
 		out, perr := h.setPaused(ctx, api, in.DagID, false)
 		return nil, out, perr
 	}
-	summary := fmt.Sprintf("Unpausing DAG %q starts its schedule %q.", stripControl(in.DagID), stripControl(schedule))
-	if catchup {
-		summary += " Catchup is on, so runs for intervals missed while it was paused may start too."
-	}
-	out, err := h.planned(req, plan{Action: planUnpause, DagID: in.DagID, Schedule: schedule}, summary)
+	out, err := h.planned(req, plan{Action: planUnpause, DagID: in.DagID, Schedule: schedule, Queued: queued},
+		unpauseSummary(in.DagID, schedule, catchup, queued))
 	if err != nil {
 		return nil, controlOutput{}, err
 	}
@@ -475,6 +519,14 @@ func (h *handlers) applyUnpause(ctx context.Context, api *apiclient.ClientWithRe
 	if !paused || schedule != p.Schedule {
 		return controlOutput{}, fmt.Errorf("DAG %q changed since the plan was made (paused %v, schedule %q); make a new plan",
 			stripControl(p.DagID), paused, strings.TrimSpace(stripControl(schedule)))
+	}
+	queued, err := queuedRuns(ctx, api, p.DagID)
+	if err != nil {
+		return controlOutput{}, err
+	}
+	if queued > p.Queued {
+		return controlOutput{}, fmt.Errorf("DAG %q has %d queued runs now, the plan showed %d; make a new plan",
+			stripControl(p.DagID), queued, p.Queued)
 	}
 	return h.setPaused(ctx, api, p.DagID, false)
 }

@@ -66,17 +66,25 @@ func (f *fakeReaperStore) MarkTaskCredentialCeiling(_ context.Context, tiID stri
 	f.agentMarked = append(f.agentMarked, tiID)
 	return true, nil
 }
-func (f *fakeReaperStore) ListStaleQueuedCandidates(context.Context) ([]StaleQueuedCandidate, error) {
+func (f *fakeReaperStore) ListStaleQueuedCandidates(context.Context, time.Duration, ReapCursor) ([]StaleQueuedCandidate, error) {
 	return f.queuedCands, nil
 }
 func (f *fakeReaperStore) MarkTaskDispatchLost(_ context.Context, tiID string, _, _ int) (bool, error) {
 	f.queuedMarked = append(f.queuedMarked, tiID)
 	return true, nil
 }
-func (f *fakeReaperStore) ListRunningTasks(context.Context, time.Duration) ([]PodLostCandidate, error) {
+
+func (f *fakeReaperStore) MarkTaskStartExpired(context.Context, string, int, int) (bool, error) {
+	return false, nil
+}
+func (f *fakeReaperStore) ListRunningTasks(context.Context, time.Duration, ReapCursor) ([]PodLostCandidate, error) {
 	return f.runningCands, nil
 }
 func (f *fakeReaperStore) MarkTaskPodLost(_ context.Context, tiID string, _, _ int) (bool, error) {
+	f.podMarked = append(f.podMarked, tiID)
+	return true, nil
+}
+func (f *fakeReaperStore) MarkTaskPodLostOOMKilled(_ context.Context, tiID string, _, _ int) (bool, error) {
 	f.podMarked = append(f.podMarked, tiID)
 	return true, nil
 }

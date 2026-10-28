@@ -18,6 +18,8 @@ import (
 type fakeConnStore struct {
 	conns    map[string]domain.Connection
 	writeErr error
+	getErr   error
+	writes   int
 }
 
 func (f *fakeConnStore) ListConnections(_ context.Context, _ string, _, _ int) ([]domain.Connection, int, error) {
@@ -28,7 +30,32 @@ func (f *fakeConnStore) ListConnections(_ context.Context, _ string, _, _ int) (
 	return out, len(out), nil
 }
 
+func (f *fakeConnStore) ListConnectionsFiltered(_ context.Context, _ string, pattern, prefixPattern string, limit, offset int) ([]domain.Connection, int, error) {
+	out := make([]domain.Connection, 0, len(f.conns))
+	for _, c := range f.conns {
+		if prefixPattern != "" && !strings.HasPrefix(c.ConnID, prefixPattern) {
+			continue
+		}
+		if pattern != "" && !strings.Contains(c.ConnID, pattern) {
+			continue
+		}
+		out = append(out, c)
+	}
+	total := len(out)
+	if offset >= total {
+		return []domain.Connection{}, total, nil
+	}
+	end := offset + limit
+	if limit <= 0 || end > total {
+		end = total
+	}
+	return out[offset:end], total, nil
+}
+
 func (f *fakeConnStore) GetConnection(_ context.Context, _, id string) (domain.Connection, error) {
+	if f.getErr != nil {
+		return domain.Connection{}, f.getErr
+	}
 	if c, ok := f.conns[id]; ok {
 		return c, nil
 	}
@@ -39,6 +66,7 @@ func (f *fakeConnStore) GetConnection(_ context.Context, _, id string) (domain.C
 // mirroring the repository's COALESCE upsert: a nil field preserves the stored
 // value, a non-nil field overwrites it (an empty string clears).
 func (f *fakeConnStore) SetConnectionPatch(_ context.Context, _ string, p domain.ConnectionPatch) error {
+	f.writes++
 	if f.writeErr != nil {
 		return f.writeErr
 	}
@@ -82,12 +110,20 @@ func (f *fakeConnStore) DeleteConnection(_ context.Context, _, id string) error 
 }
 
 func connServer(store ConnectionStore) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Connections:   store,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Connections: store,
+		},
 	})
 }
 
@@ -198,6 +234,10 @@ func TestConnectionWriteWithoutKeyReturns503(t *testing.T) {
 		`{"connection_id":"pg","conn_type":"postgres","password":"x"}`)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("write without key = %d, want 503", rec.Code)
+	}
+	// The detail tells the operator what to set, under the current name.
+	if body := rec.Body.String(); !strings.Contains(body, "DEXAFLOW_SECRET_KEY") || strings.Contains(body, "LEOFLOW_") {
+		t.Errorf("503 detail must name DEXAFLOW_SECRET_KEY only, got %s", body)
 	}
 }
 
@@ -483,4 +523,136 @@ func TestConnectionsEmptyStubWithoutStore(t *testing.T) {
 	if col["total_entries"].(float64) != 0 {
 		t.Errorf("nil store should yield empty collection, got %v", col)
 	}
+}
+
+// A connection whose extra no configured key opens (#1677) is listed with the
+// others, its extra withheld as null and flagged extra_unreadable, so one bad
+// row does not fail GET /api/v2/connections for the whole tenant. The extra is
+// null rather than the "***" mask because the Airflow edit form JSON.parses it
+// and a mask, which is not JSON, crashed the page. Readable connections carry no
+// flag.
+func TestConnectionListMarksAnUnreadableExtra(t *testing.T) {
+	store := &fakeConnStore{conns: map[string]domain.Connection{
+		"lost": {ConnID: "lost", ConnType: "http", Host: "api.example.com", ExtraUnreadable: true},
+		"pg":   {ConnID: "pg", ConnType: "postgres", Extra: `{"sslmode":"require"}`},
+	}}
+	rec := authGet(connServer(store), http.MethodGet, "/api/v2/connections", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/v2/connections = %d, body %s", rec.Code, rec.Body)
+	}
+	var out struct {
+		Connections []map[string]any `json:"connections"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]map[string]any{}
+	for _, c := range out.Connections {
+		got[c["connection_id"].(string)] = c
+	}
+	lost := got["lost"]
+	if lost == nil || lost["extra_unreadable"] != true || lost["host"] != "api.example.com" {
+		t.Errorf("unreadable connection = %v, want its fields and extra_unreadable true", lost)
+	}
+	if extra, present := lost["extra"]; !present || extra != nil {
+		t.Errorf("unreadable connection extra = %#v (present %v), want JSON null", extra, present)
+	}
+	if pg := got["pg"]; pg == nil || pg["extra"] != `{"sslmode":"require"}` {
+		t.Errorf("readable connection = %v", pg)
+	} else if _, flagged := pg["extra_unreadable"]; flagged {
+		t.Errorf("readable connection carries extra_unreadable: %v", pg)
+	}
+}
+
+// Reading one unreadable connection is still an error, but its detail tells
+// the operator what happened instead of the generic internal-error phrase.
+func TestConnectionGetUnreadableExplainsTheError(t *testing.T) {
+	store := &fakeConnStore{getErr: domain.Safef(domain.ErrValueUnreadable, "connection %q is encrypted with a secret key this server does not have", "lost")}
+	rec := authGet(connServer(store), http.MethodGet, "/api/v2/connections/lost", "")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("GET /api/v2/connections/lost = %d, want 500", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `connection \"lost\" is encrypted with a secret key this server does not have`) {
+		t.Errorf("body %s does not explain the failure", body)
+	}
+}
+
+// TestConnectionWriteNeverReplacesAnUnreadableExtra: the stored extra of an
+// unreadable connection (#1677) is the only copy of that credential, so no
+// write may replace it. The Airflow edit form opens such a connection with
+// "{}" (the listing serves extra null) and saves it with extra omitted; older
+// clients echo the "***" mask; a script may send null, "" or a new object.
+// Every one of them is refused with the message that names the connection,
+// before anything reaches the store, on PATCH and on the POST upsert alike.
+func TestConnectionWriteNeverReplacesAnUnreadableExtra(t *testing.T) {
+	unreadable := domain.Safef(domain.ErrValueUnreadable, "connection %q is encrypted with a secret key this server does not have", "lost")
+	bodies := map[string]string{
+		"edit form, extra omitted": `{"conn_type":"http","host":"new.example.com"}`,
+		"mask echoed":              `{"conn_type":"http","extra":"***"}`,
+		"extra null":               `{"conn_type":"http","extra":null}`,
+		"extra cleared":            `{"conn_type":"http","extra":""}`,
+		"empty object":             `{"conn_type":"http","extra":"{}"}`,
+		"new extra":                `{"conn_type":"http","extra":"{\"token\":\"t2\"}"}`,
+	}
+	for name, body := range bodies {
+		for _, method := range []string{http.MethodPatch, http.MethodPost} {
+			t.Run(method+" "+name, func(t *testing.T) {
+				store := &fakeConnStore{getErr: unreadable}
+				path, payload := "/api/v2/connections/lost", body
+				if method == http.MethodPost {
+					path, payload = "/api/v2/connections", `{"connection_id":"lost",`+strings.TrimPrefix(body, "{")
+				}
+				rec := authGet(connServer(store), method, path, payload)
+				if rec.Code != http.StatusInternalServerError {
+					t.Errorf("%s %s = %d (%s), want 500", method, path, rec.Code, rec.Body)
+				}
+				if !strings.Contains(rec.Body.String(), `connection \"lost\" is encrypted with a secret key this server does not have`) {
+					t.Errorf("body %s does not name the connection", rec.Body)
+				}
+				if store.writes != 0 {
+					t.Errorf("%s reached the store %d time(s), want none", method, store.writes)
+				}
+			})
+		}
+	}
+}
+
+func TestListConnectionsFilters(t *testing.T) {
+	store := &fakeConnStore{
+		conns: map[string]domain.Connection{
+			"aws_default":   {ConnID: "aws_default", ConnType: "aws"},
+			"aws_east":      {ConnID: "aws_east", ConnType: "aws"},
+			"google_cloud":  {ConnID: "google_cloud", ConnType: "gcp"},
+			"postgres_prod": {ConnID: "postgres_prod", ConnType: "postgres"},
+		},
+	}
+	srv := connServer(store)
+
+	t.Run("prefix pattern filter", func(t *testing.T) {
+		rec := authGet(srv, http.MethodGet, "/api/v2/connections?connection_id_prefix_pattern=aws", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET = %d, want 200", rec.Code)
+		}
+		var resp connectionCollectionDTO
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decoding body: %v", err)
+		}
+		if resp.TotalEntries != 2 || len(resp.Connections) != 2 {
+			t.Errorf("got total %d, conns %d; want 2", resp.TotalEntries, len(resp.Connections))
+		}
+	})
+
+	t.Run("substring pattern filter", func(t *testing.T) {
+		rec := authGet(srv, http.MethodGet, "/api/v2/connections?connection_id_pattern=east", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET = %d, want 200", rec.Code)
+		}
+		var resp connectionCollectionDTO
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decoding body: %v", err)
+		}
+		if resp.TotalEntries != 1 || len(resp.Connections) != 1 || resp.Connections[0].ConnectionID != "aws_east" {
+			t.Errorf("got total %d, conns %+v; want 1 (aws_east)", resp.TotalEntries, resp.Connections)
+		}
+	})
 }

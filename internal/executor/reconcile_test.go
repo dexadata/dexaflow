@@ -82,6 +82,11 @@ func (f *fakeReporter) FailTask(_ context.Context, id string, tryNumber, _ int, 
 	return nil
 }
 
+func (f *fakeReporter) FailTaskInfra(_ context.Context, id string, tryNumber, _ int, reason string) error {
+	f.put(id, settledOutcome{kind: settleInfra, tryNumber: tryNumber, reason: reason})
+	return nil
+}
+
 func (f *fakeReporter) SucceedTask(_ context.Context, id string, tryNumber, _ int) error {
 	f.put(id, settledOutcome{kind: settleSucceeded, tryNumber: tryNumber})
 	return nil
@@ -625,6 +630,13 @@ func (f *epochFencingReporter) match(try, epoch int) bool { return try == f.try 
 func (f *epochFencingReporter) FailTask(_ context.Context, _ string, try, epoch int, _ string) error {
 	if f.match(try, epoch) {
 		f.settled = append(f.settled, "failed")
+	}
+	return nil
+}
+
+func (f *epochFencingReporter) FailTaskInfra(_ context.Context, _ string, try, epoch int, _ string) error {
+	if f.match(try, epoch) {
+		f.settled = append(f.settled, "infra")
 	}
 	return nil
 }

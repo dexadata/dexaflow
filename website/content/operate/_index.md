@@ -47,7 +47,7 @@ the day-2 operations that keep a control plane healthy.
   <div class="lf-card">
     <span class="lf-card__icon"><i class="fa-solid fa-arrow-up-right-dots"></i></span>
     <span class="lf-card__title">Upgrades &amp; backup</span>
-    <span class="lf-card__desc">Day-2 lifecycle: <a href="/operate/upgrades/">upgrades</a> and <a href="/operate/backup-restore/">backup &amp; restore</a>.</span>
+    <span class="lf-card__desc">Day-2 lifecycle: <a href="/operate/upgrades/">upgrades</a> and <a href="/operate/backup-restore/">backup &amp; restore</a>, and a <a href="/operate/database-lost-restored-repointed/">database lost, restored or repointed</a>.</span>
   </div>
   <div class="lf-card">
     <span class="lf-card__icon"><i class="fa-solid fa-heart-pulse"></i></span>

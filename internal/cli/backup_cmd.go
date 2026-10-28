@@ -31,6 +31,8 @@ func newBackupCommand() *cobra.Command {
 			"of the managed Postgres, the config (admin hash, JWT secret, and the key that decrypts your connection secrets), and a small " +
 			"MANIFEST.json. Pair with `dexaflow lite restore` to migrate to another machine, " +
 			"survive an OS reinstall, or roll back a botched pre-alpha upgrade.\n\n" +
+			"The dump is of Lite's own database: Lite does not read DEXAFLOW_DATABASE_URL " +
+			"(or LEOFLOW_DATABASE_URL), so a backup never covers another database.\n\n" +
 			"Backup only covers the managed Postgres path (the default Lite shape). " +
 			"For the Docker datastore path, capture the volume with `docker volume export` " +
 			"instead.",
@@ -81,6 +83,7 @@ func runBackup(cmd *cobra.Command, output string) error {
 		return fmt.Errorf("encoding manifest: %w", err)
 	}
 
+	noteForeignDatabaseURL(out, "the backup holds Lite's own database, not that one")
 	devPrintf(out, "▸ snapshotting datastore via pg_dump …\n")
 	dumpPath := filepath.Join(os.TempDir(), fmt.Sprintf("leoflow-backup-dump-%d.sql", os.Getpid()))
 	defer func() { _ = os.Remove(dumpPath) }() //nolint:errcheck // temp file cleanup; the dump path is ours

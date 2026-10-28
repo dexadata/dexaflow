@@ -49,6 +49,7 @@ func runsServer(t *testing.T, now time.Time) *httptest.Server {
 func runState(s apiclient.DAGRunState) *apiclient.DAGRunState { return &s }
 
 func TestCollectRunsFiltersByState(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	srv := runsServer(t, now)
 	defer srv.Close()
@@ -68,6 +69,7 @@ func TestCollectRunsFiltersByState(t *testing.T) {
 }
 
 func TestFilterRunsByAge(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	old := now.Add(-3 * time.Hour)
 	recent := now.Add(-1 * time.Minute)

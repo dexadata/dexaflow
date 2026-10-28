@@ -404,8 +404,7 @@ $(tail -30 "$WORKDIR/server.log")"
 # the ~30s of compile and image import: a stale `running` task instance is
 # re-dispatched by this control plane, and the sooner its DAG is gone the smaller
 # that window is.
-TOKEN="$("$ROOT/bin/leoflow" auth create-token --server "$API" \
-  --username admin@leoflow.local --password admin)" || fail "minting an admin token failed"
+TOKEN="$(admin_token "$ROOT/bin/leoflow" "$API" admin)" || fail "minting an admin token failed"
 log "Sweeping DAGs left by earlier invocations (prefix '$DAG_PREFIX')"
 purge_stale_dags "$TOKEN"
 
@@ -425,6 +424,9 @@ k3d_import "$CLUSTER" "$BASE_IMAGE" "$DAG_IMAGE"
 
 log "Pushing + triggering"
 "$ROOT/bin/leoflow" push "$PROJ/dag.json" --server "$API" --token "$TOKEN" || fail "dexaflow push failed"
+# New DAGs are paused at creation, and a manual run of a paused DAG waits
+# until the DAG is unpaused.
+unpause_dag "$API" "$DAG_ID" "$TOKEN" || fail "unpausing $DAG_ID failed"
 RUN_ID="$(curl -fsS --max-time "$CURL_MAX_TIME" -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" -d '{}' \
   "$API/api/v2/dags/$DAG_ID/dagRuns" | jq -r '.dag_run_id')" || fail "triggering the run failed"

@@ -11,7 +11,7 @@ description: The two editions (Lite and Pro) and the three runtime modes (Lite �
 ---
 
 Dexaflow ships in **two editions** that share the same engine, the same
-Airflow-3.2.x UI, and the same DAG format (`dag.py` + `dexaflow.yaml`): **Lite**
+Airflow 3.3 UI, and the same DAG format (`dag.py` + `dexaflow.yaml`): **Lite**
 (the full control plane on one host — laptop, VM, or internal server) and **Pro**
 (Helm-installed on Kubernetes). You author a DAG once and it runs on either. A
 third, contributor-facing **Demo** mode is a production-shaped reference
@@ -97,7 +97,33 @@ present it uses the `postgres:16` container; when it is not, it falls back to an
 **embedded managed Postgres** (a pinned, checksum-verified relocatable build
 downloaded under `~/.dexaflow`, on a local Unix socket) — so `dexaflow lite` runs on
 a **Docker-free host with nothing to install**. (Force either with
-`--postgres docker|managed`.)
+`--postgres docker|managed`.) The Docker Postgres is started with
+`docker compose`, so auto also falls back to the managed Postgres when the
+Docker daemon answers but the Compose v2 plugin is not installed, and says so.
+An explicit `--postgres docker` on such a host stops with what to do: install
+the Compose v2 plugin, or use `--postgres managed`.
+
+An install restored with `dexaflow lite restore` is pinned to the managed
+Postgres, where the restored data lives, so a plain `dexaflow lite` starts it
+even where Docker runs. An explicit `--postgres docker` or `--postgres managed`
+pins the install the same way, and later runs follow it until another explicit
+choice ([ADR 0094](/project/adrs/0094-lite-auto-follows-the-pinned-datastore/)).
+
+The managed Postgres has builds for Linux (glibc and musl) and macOS; Ubuntu
+22.04 and 24.04 are tested on bare containers. It links libxml2, Kerberos,
+OpenSSL 3, zstd and lz4 from the host, and the musl build also links ICU 74.
+Desktop installs have them; on a bare container or a minimal server Lite stops
+before starting Postgres, names each missing library and, on Debian, Ubuntu and
+Alpine, prints the command that installs them. The glibc build does not use ICU,
+so the host's ICU release does not matter.
+
+Lite **owns its database**: it runs only on the Postgres it starts, and it does
+not read `DEXAFLOW_DATABASE_URL` (or `LEOFLOW_DATABASE_URL`). One exported in
+your shell is not passed to the Lite server, and `dexaflow lite` prints a note
+when it names another database. `--no-up` only skips starting the Docker
+Postgres when Lite's own is already running; it does not point Lite at another
+database. `dexaflow db reset` refuses, dropping nothing, while either variable
+names a database other than Lite's. To run on a Postgres of your own, use Pro.
 
 Either way Lite needs **no Redis** — scheduler locks use Postgres advisory locks and
 XCom is stored in Postgres. The Postgres-backed XCom is *durable* (it survives a

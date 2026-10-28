@@ -1,44 +1,198 @@
 {
-  "_chunk-zsgVPwQN.js": {
-    "file": "assets/chunk-zsgVPwQN.js",
-    "name": "chunk"
+  "_editor.api2-Baa-R5iR.js": {
+    "file": "assets/editor.api2-Baa-R5iR.js",
+    "name": "editor.api2",
+    "imports": [
+      "_rolldown-runtime-C0FnF6B9.js",
+      "_iconRegistry-DBaJdest.js",
+      "_findInput-k1UYUjrq.js",
+      "_languageFeatureDebounce-Bm45g4Me.js"
+    ]
+  },
+  "_findInput-k1UYUjrq.js": {
+    "file": "assets/findInput-k1UYUjrq.js",
+    "name": "findInput",
+    "imports": [
+      "_iconRegistry-DBaJdest.js"
+    ]
+  },
+  "_iconRegistry-DBaJdest.js": {
+    "file": "assets/iconRegistry-DBaJdest.js",
+    "name": "iconRegistry"
+  },
+  "_languageFeatureDebounce-Bm45g4Me.js": {
+    "file": "assets/languageFeatureDebounce-Bm45g4Me.js",
+    "name": "languageFeatureDebounce",
+    "imports": [
+      "_iconRegistry-DBaJdest.js"
+    ]
+  },
+  "_rolldown-runtime-C0FnF6B9.js": {
+    "file": "assets/rolldown-runtime-C0FnF6B9.js",
+    "name": "rolldown-runtime"
+  },
+  "_toggleHighContrast-B8DNTOdj.js": {
+    "file": "assets/toggleHighContrast-B8DNTOdj.js",
+    "name": "toggleHighContrast",
+    "imports": [
+      "_iconRegistry-DBaJdest.js",
+      "_findInput-k1UYUjrq.js",
+      "_editor.api2-Baa-R5iR.js",
+      "_languageFeatureDebounce-Bm45g4Me.js",
+      "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/find/browser/findController.js",
+      "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/folding/browser/folding.js"
+    ],
+    "assets": [
+      "assets/codicon-ngg6Pgfi.ttf"
+    ]
   },
   "index.html": {
-    "file": "assets/index-DHyr8oiy.js",
+    "file": "assets/index-1ifPC3Lo.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
     "imports": [
-      "_chunk-zsgVPwQN.js"
+      "_rolldown-runtime-C0FnF6B9.js"
     ],
     "dynamicImports": [
-      "node_modules/.pnpm/cross-fetch@4.0.0/node_modules/cross-fetch/dist/browser-ponyfill.js",
+      "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/editor.api.js",
+      "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/folding/browser/folding.js",
+      "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/find/browser/findController.js",
+      "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/editor.worker.js?worker&url",
+      "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/language/json/json.worker.js?worker&url",
+      "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/language/json/monaco.contribution.js",
+      "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/basic-languages/python/python.js",
       "src/pages/Dag/Overview/FailedLogs.tsx"
     ],
     "assets": [
-      "assets/sqlparser_rs_wasm_bg-CLYUWfXF.wasm"
+      "assets/sqlparser_rs_wasm_bg-CrrMS2XC.wasm"
     ]
   },
-  "node_modules/.pnpm/@guanmingchiu+sqlparser-ts@0.61.1/node_modules/@guanmingchiu/sqlparser-ts/wasm/sqlparser_rs_wasm_bg.wasm": {
-    "file": "assets/sqlparser_rs_wasm_bg-CLYUWfXF.wasm",
-    "src": "node_modules/.pnpm/@guanmingchiu+sqlparser-ts@0.61.1/node_modules/@guanmingchiu/sqlparser-ts/wasm/sqlparser_rs_wasm_bg.wasm"
+  "node_modules/.pnpm/@guanmingchiu+sqlparser-ts@0.62.0/node_modules/@guanmingchiu/sqlparser-ts/wasm/sqlparser_rs_wasm_bg.wasm": {
+    "file": "assets/sqlparser_rs_wasm_bg-CrrMS2XC.wasm",
+    "src": "node_modules/.pnpm/@guanmingchiu+sqlparser-ts@0.62.0/node_modules/@guanmingchiu/sqlparser-ts/wasm/sqlparser_rs_wasm_bg.wasm"
   },
-  "node_modules/.pnpm/cross-fetch@4.0.0/node_modules/cross-fetch/dist/browser-ponyfill.js": {
-    "file": "assets/browser-ponyfill-BqCQyHSc.js",
-    "name": "browser-ponyfill",
-    "src": "node_modules/.pnpm/cross-fetch@4.0.0/node_modules/cross-fetch/dist/browser-ponyfill.js",
+  "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon-modifiers.css": {
+    "file": "assets/codicon-modifiers-CrHn8x7n.css",
+    "src": "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon-modifiers.css"
+  },
+  "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon.css": {
+    "file": "assets/codicon-CVhb7u6D.css",
+    "src": "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon.css"
+  },
+  "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon.ttf": {
+    "file": "assets/codicon-ngg6Pgfi.ttf",
+    "src": "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon.ttf"
+  },
+  "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/basic-languages/python/python.js": {
+    "file": "assets/python-CgTA9WCJ.js",
+    "name": "python",
+    "src": "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/basic-languages/python/python.js",
     "isDynamicEntry": true,
     "imports": [
-      "_chunk-zsgVPwQN.js"
+      "_editor.api2-Baa-R5iR.js",
+      "_toggleHighContrast-B8DNTOdj.js",
+      "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/find/browser/findController.js",
+      "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/folding/browser/folding.js"
+    ],
+    "css": [
+      "assets/codicon-modifiers-CrHn8x7n.css",
+      "assets/codicon-CVhb7u6D.css"
+    ],
+    "assets": [
+      "assets/codicon-ngg6Pgfi.ttf"
+    ]
+  },
+  "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/find/browser/findController.js": {
+    "file": "assets/findController-BxEk_UdB.js",
+    "name": "findController",
+    "src": "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/find/browser/findController.js",
+    "isDynamicEntry": true,
+    "imports": [
+      "_iconRegistry-DBaJdest.js",
+      "_findInput-k1UYUjrq.js"
+    ]
+  },
+  "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/folding/browser/folding.js": {
+    "file": "assets/folding-DNrP02yo.js",
+    "name": "folding",
+    "src": "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/folding/browser/folding.js",
+    "isDynamicEntry": true,
+    "imports": [
+      "_iconRegistry-DBaJdest.js",
+      "_languageFeatureDebounce-Bm45g4Me.js"
+    ]
+  },
+  "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/editor.api.js": {
+    "file": "assets/editor.api-O51EAt5L.js",
+    "name": "editor.api",
+    "src": "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/editor.api.js",
+    "isDynamicEntry": true,
+    "imports": [
+      "_editor.api2-Baa-R5iR.js"
+    ]
+  },
+  "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/editor.worker.js?worker&url": {
+    "file": "assets/editor.worker-CbhMZY8-.js",
+    "name": "editor.worker",
+    "src": "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/editor.worker.js?worker&url",
+    "isDynamicEntry": true
+  },
+  "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/language/json/json.worker.js?worker&url": {
+    "file": "assets/json.worker-BvpanNvB.js",
+    "name": "json.worker",
+    "src": "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/language/json/json.worker.js?worker&url",
+    "isDynamicEntry": true
+  },
+  "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/language/json/jsonMode.js": {
+    "file": "assets/jsonMode-l_SMGJsK.js",
+    "name": "jsonMode",
+    "src": "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/language/json/jsonMode.js",
+    "isDynamicEntry": true,
+    "imports": [
+      "_editor.api2-Baa-R5iR.js",
+      "_toggleHighContrast-B8DNTOdj.js",
+      "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/find/browser/findController.js",
+      "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/folding/browser/folding.js"
+    ],
+    "css": [
+      "assets/codicon-modifiers-CrHn8x7n.css",
+      "assets/codicon-CVhb7u6D.css"
+    ],
+    "assets": [
+      "assets/codicon-ngg6Pgfi.ttf"
+    ]
+  },
+  "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/language/json/monaco.contribution.js": {
+    "file": "assets/monaco.contribution-Bz0tTNjD.js",
+    "name": "monaco.contribution",
+    "src": "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/language/json/monaco.contribution.js",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_editor.api2-Baa-R5iR.js",
+      "_toggleHighContrast-B8DNTOdj.js",
+      "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/find/browser/findController.js",
+      "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/editor/contrib/folding/browser/folding.js"
+    ],
+    "dynamicImports": [
+      "node_modules/.pnpm/monaco-editor@0.55.1/node_modules/monaco-editor/esm/vs/language/json/jsonMode.js"
+    ],
+    "css": [
+      "assets/codicon-modifiers-CrHn8x7n.css",
+      "assets/codicon-CVhb7u6D.css"
+    ],
+    "assets": [
+      "assets/codicon-ngg6Pgfi.ttf"
     ]
   },
   "src/pages/Dag/Overview/FailedLogs.tsx": {
-    "file": "assets/FailedLogs-CcoU1U4W.js",
+    "file": "assets/FailedLogs-CMHvzIx3.js",
     "name": "FailedLogs",
     "src": "src/pages/Dag/Overview/FailedLogs.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "_chunk-zsgVPwQN.js",
+      "_rolldown-runtime-C0FnF6B9.js",
       "index.html"
     ]
   }

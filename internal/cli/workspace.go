@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -22,11 +21,13 @@ type WorkspaceSpec struct {
 	// workspace is empty (caller is expected to scaffold a starter then).
 	Projects []Project
 	// RootCfg is a synthesized LeoflowConfig representing the workspace as a
-	// whole: union of every project's pip dependencies, the highest declared
-	// python_version, and otherwise schema defaults. It is the single cfg the
-	// venv setup uses; multi-DAG aware code paths should iterate Projects
-	// instead.
+	// whole: the highest declared python_version and otherwise schema defaults.
+	// It carries no dependencies: Lite provisions one venv per DAG from each
+	// project's own `dependencies:` (ensureWorkspaceDagVenvs), so multi-DAG
+	// aware code paths iterate Projects instead.
 	RootCfg *domain.LeoflowConfig
+	// broken lists the dexaflow.yaml files discovery could not parse.
+	broken []brokenConfig
 }
 
 // ResolveWorkspace scans the workspace directory and returns its full
@@ -37,12 +38,13 @@ type WorkspaceSpec struct {
 // Behavior:
 //   - Walks subdirs via DiscoverProjects (max-depth 5, skips exclude_paths
 //     defaults + hidden dirs, fails loud on duplicate dag_id).
-//   - Synthesizes RootCfg by unioning every project's Dependencies (de-duped)
-//     and picking the highest PythonVersion (per-component numeric compare,
-//     so "3.10" > "3.9"). Detects per-package version conflicts in the
-//     dependency union: two projects pinning the same package to different
-//     versions cannot share a venv, so the workspace fails to resolve
-//     ([[simple-reliable-then-grow]] — loud reject over silent merge).
+//   - Validates that every project's dependencies are pip specifiers, naming
+//     the project and the bad entry. Two projects pinning the same package to
+//     different versions is NOT an error: each DAG gets its own venv under
+//     ~/.dexaflow/dev/venvs/<dag_id>/ and its tasks run with that interpreter
+//     (#346, #1458), so the pins never meet (#1679).
+//   - Synthesizes RootCfg with the highest PythonVersion (per-component
+//     numeric compare, so "3.10" > "3.9").
 //   - Returns a non-nil RootCfg even when Projects is empty, so the caller
 //     can scaffold against schema defaults without an extra nil-check.
 //
@@ -53,23 +55,21 @@ func ResolveWorkspace(dir string) (*WorkspaceSpec, error) {
 	if err != nil {
 		return nil, err
 	}
-	projects, err := DiscoverProjects(abs)
+	projects, broken, err := discoverWorkspace(abs)
 	if err != nil {
 		return nil, err
 	}
 	root := &domain.LeoflowConfig{}
 	root.ApplyDefaults()
 	if len(projects) > 0 {
-		deps, derr := unionDependencies(projects)
-		if derr != nil {
+		if derr := validateDependencies(projects); derr != nil {
 			return nil, derr
 		}
-		root.Dependencies = deps
 		if py := highestPythonVersion(projects); py != "" {
 			root.PythonVersion = py
 		}
 	}
-	return &WorkspaceSpec{Path: abs, Projects: projects, RootCfg: root}, nil
+	return &WorkspaceSpec{Path: abs, Projects: projects, RootCfg: root, broken: broken}, nil
 }
 
 // WatchedPaths returns the file paths the mtime-polling watcher should track:
@@ -103,77 +103,23 @@ func (w *WorkspaceSpec) WatchedPaths() []string {
 	return paths
 }
 
-// unionDependencies returns the de-duplicated union of pip specifiers across
-// every project. Two projects pinning the same package name to different
-// specifiers is a hard error: a shared venv cannot host conflicting versions,
-// so we refuse to compile rather than silently picking one ([[simple-reliable-
-// then-grow]]). The error names the package and lists every (project,
-// specifier) pair so the user can reconcile.
-//
-// Identity rule: package names are compared case-insensitively (PEP 503
-// canonicalization), so "Pandas==2.1.0" and "pandas==2.1.0" are the same
-// package. Identical full specifiers (case-insensitive on the name) are
-// merged.
-func unionDependencies(projects []Project) ([]string, error) {
-	// pkg name (lower-cased) -> [observations]. Each observation records the
-	// canonical specifier and the project that declared it; we report a
-	// conflict iff a single key gathered multiple distinct specifiers.
-	type obs struct {
-		spec    string
-		project string
-	}
-	byPkg := map[string][]obs{}
+// validateDependencies checks that every project's `dependencies:` entry starts
+// with a pip package name, so a malformed entry is reported with its project
+// before any venv is provisioned. It does not compare projects with each other:
+// each DAG resolves its pins in its own venv, so differing pins across DAGs are
+// expected (#1679).
+func validateDependencies(projects []Project) error {
 	for _, p := range projects {
-		for _, dep := range p.Config.Dependencies {
-			rawName := pipPackageName(dep)
-			if rawName == "" {
-				// Malformed specifier — surface in the error message rather
-				// than silently dropping.
-				return nil, fmt.Errorf("project %q has malformed pip specifier %q in dependencies", p.DagID, dep)
-			}
-			name := strings.ToLower(rawName)
-			// Canonicalize the spec by lower-casing the name portion only —
-			// "Pandas==2.1.0" and "pandas==2.1.0" must be treated as the same
-			// specifier for conflict detection. Version selectors and extras
-			// keep their original casing (they are case-sensitive in pip).
-			canonSpec := name + strings.TrimPrefix(strings.TrimSpace(dep), rawName)
-			byPkg[name] = append(byPkg[name], obs{spec: canonSpec, project: p.DagID})
-		}
-	}
-	// Detect conflicts: a single package with two distinct specifiers across
-	// projects.
-	for pkg, obss := range byPkg {
-		distinct := map[string][]string{}
-		for _, o := range obss {
-			distinct[o.spec] = append(distinct[o.spec], o.project)
-		}
-		if len(distinct) <= 1 {
+		if p.Config == nil {
 			continue
 		}
-		// Build a deterministic error message listing every conflicting
-		// (spec, projects) tuple.
-		var b strings.Builder
-		fmt.Fprintf(&b, "multi-DAG workspace cannot reconcile pip dependency %q across projects (a shared venv cannot host conflicting versions):\n", pkg)
-		specs := make([]string, 0, len(distinct))
-		for s := range distinct {
-			specs = append(specs, s)
+		for _, dep := range p.Config.Dependencies {
+			if pipPackageName(dep) == "" {
+				return fmt.Errorf("project %q has malformed pip specifier %q in dependencies", p.DagID, dep)
+			}
 		}
-		sort.Strings(specs)
-		for _, s := range specs {
-			ps := append([]string(nil), distinct[s]...)
-			sort.Strings(ps)
-			fmt.Fprintf(&b, "  - %q in: %s\n", s, strings.Join(ps, ", "))
-		}
-		b.WriteString("Pin a single version across the projects, or split them into separate workspaces.")
-		return nil, fmt.Errorf("%s", b.String())
 	}
-	// No conflict: collect the canonical (first-seen) specifier for each pkg.
-	out := make([]string, 0, len(byPkg))
-	for _, obss := range byPkg {
-		out = append(out, obss[0].spec)
-	}
-	sort.Strings(out)
-	return out, nil
+	return nil
 }
 
 // pipPackageNamePattern matches the package name at the start of a pip
@@ -182,10 +128,9 @@ func unionDependencies(projects []Project) ([]string, error) {
 // (`==`, `>=`, `~=`, etc.), an environment marker (`;`), or a URL hint.
 var pipPackageNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*`)
 
-// pipPackageName extracts the package name from a pip specifier so the
-// dependency-conflict detector can group "pandas==2.1.0" and "pandas>=2.0"
-// under the same key. Returns "" for malformed input — caller decides whether
-// to error.
+// pipPackageName extracts the package name from a pip specifier ("pandas" from
+// "pandas>=2.0"). Returns "" for malformed input; the caller decides whether to
+// error.
 func pipPackageName(spec string) string {
 	return pipPackageNamePattern.FindString(strings.TrimSpace(spec))
 }

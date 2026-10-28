@@ -17,7 +17,7 @@
 # re-extracts idempotently (no EEXIST) and records the bundled version.
 #
 # Opt-in: it downloads a ~11 MB PostgreSQL from GitHub and needs a host where the
-# relocatable build can run (glibc + ICU/Kerberos). Skipped unless enabled:
+# relocatable build can run (glibc + libxml2/Kerberos). Skipped unless enabled:
 #   LEOFLOW_E2E_MANAGED_PG=1 bash test/e2e/lite-managed-pg-reextract.sh
 set -euo pipefail
 

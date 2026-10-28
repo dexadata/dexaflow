@@ -317,6 +317,7 @@ env LEOFLOW_UI_EDITION=pro \
     LEOFLOW_SERVER_METRICS_ADDR="0.0.0.0:19090" \
     LEOFLOW_DATABASE_URL="$DB" \
     SSL_CERT_FILE="$WORK/idp.crt" \
+    LEOFLOW_EXECUTOR_TYPE=subprocess \
     "$ROOT/bin/leoflow-server" >"$WORK/sso-server.log" 2>&1 &
 PIDS+=($!)
 
@@ -332,6 +333,7 @@ env LEOFLOW_AUTH_JWT_SECRET=plain-e2e \
     LEOFLOW_SERVER_METRICS_ADDR="0.0.0.0:19091" \
     LEOFLOW_SERVER_GRPC_ADDR="0.0.0.0:19092" \
     LEOFLOW_DATABASE_URL="$DB" \
+    LEOFLOW_EXECUTOR_TYPE=subprocess \
     "$ROOT/bin/leoflow-server" >"$WORK/plain-server.log" 2>&1 &
 PIDS+=($!)
 

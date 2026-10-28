@@ -25,10 +25,18 @@ func (dbDownAuthn) Authenticate(context.Context, string) (*auth.User, error) {
 }
 
 func authnServer(a auth.Authenticator) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: a,
-		RateLimiter: auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: a,
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+			TokenTTLSecs:  3600,
+		},
 	})
 }
 
@@ -55,10 +63,18 @@ func TestLoginBadCredentialsReturns401(t *testing.T) {
 // outage locks every user out once the budget drains. With a tiny limit, repeated
 // DB-down logins must all stay 503, never flip to 429 (#843 / review invariant).
 func TestLoginBackendDownDoesNotConsumeRateLimit(t *testing.T) {
-	srv := NewServer(Dependencies{
-		Logger: discardLogger(), Authenticator: dbDownAuthn{},
-		RateLimiter: auth.NewRateLimiter(2, time.Minute), // tiny budget
-		CORSOrigins: []string{"*"}, TokenTTLSecs: 3600,
+	srv := newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: dbDownAuthn{},
+			RateLimiter:   auth.NewRateLimiter(2, time.Minute), // tiny budget
+			TokenTTLSecs:  3600,
+		},
 	})
 	body := `{"username":"admin@leoflow.local","password":"x"}`
 	for i := 0; i < 5; i++ {

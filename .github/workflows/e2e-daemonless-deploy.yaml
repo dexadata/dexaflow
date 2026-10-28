@@ -1,0 +1,84 @@
+name: E2E daemonless deploy
+
+# The daemonless deploy journey on a real cluster (#1888): `dexaflow deploy
+# examples/taskflow_sales` from the dexaflow-cli image with no container daemon
+# reachable, on the dependency layer built from wheels with uv (ADR 0073,
+# ADR 0078), against a k3d cluster that then runs the DAG green. Each builder
+# has unit tests and deploy-e2e.sh covers the daemon path, but no job ran this
+# whole journey. test/e2e/daemonless-deploy-e2e.sh holds the logic and says
+# what proves each part; `make e2e-daemonless-deploy` runs it locally.
+#
+# On rc tags and by hand, not per pull request: the runner queue is small and
+# the job builds two images and a cluster. Like e2e-gates.yaml, start it by hand
+# (workflow_dispatch) on the release-X.Y commit to be cut, since the rc tag's
+# own run comes after the cut.
+on:
+  push:
+    tags: ["v*-rc.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# The concurrency pattern every workflow here uses. This workflow has no
+# pull_request trigger, so every run of it stands alone.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('{0}-run-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # See e2e-gates.yaml: fall back to the module's source on any proxy error.
+  GOPROXY: https://proxy.golang.org|direct
+  GO_VERSION: "1.26.10"
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  daemonless-deploy:
+    name: E2E daemonless deploy (k3d, dexaflow-cli image, no daemon)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: leoflow
+          POSTGRES_PASSWORD: leoflow
+          POSTGRES_DB: leoflow
+        ports: [5432:5432]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: mirror.gcr.io/library/redis:7
+        ports: [6379:6379]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      # k3d pods dial the runner control plane via host.k3d.internal (Linux only).
+      LEOFLOW_E2E_HOST_ADDR: host.k3d.internal
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The runtime base (python:3.11) and the dexaflow-cli image (python:3.13)
+      # build FROM Docker Hub images; pull them through the mirror.
+      - uses: ./.github/actions/docker-hub-mirror
+        with:
+          python-versions: "3.11 3.13"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Install k3d + kubectl + migrate
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/v5.7.4/install.sh | TAG=v5.7.4 bash
+          curl -fsSLO "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          sudo install -m 0755 kubectl /usr/local/bin/kubectl
+          go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.20.1
+      - name: Apply migrations
+        run: ~/go/bin/migrate -path migrations -database "postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable" up
+      - name: Build binaries
+        run: make build
+      - name: Self-test the assertions
+        run: bash test/e2e/daemonless-deploy-e2e.sh --self-test
+      - name: Deploy examples/taskflow_sales with no container daemon and run it
+        run: bash test/e2e/daemonless-deploy-e2e.sh

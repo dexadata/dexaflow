@@ -40,16 +40,22 @@ func issuerSessionServerWith(t *testing.T, o issuerSessionOpts) http.Handler {
 	if logger == nil {
 		logger = discardLogger()
 	}
-	return NewServer(Dependencies{
-		Logger:               logger,
-		RateLimiter:          auth.NewRateLimiter(100, time.Minute),
-		JWTSecret:            "test-secret",
-		TokenTTLSecs:         900,
-		TrustedIssuer:        fakeTrustedIssuer{issuer.Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme"}},
-		TrustedIssuerUsers:   o.users,
-		TrustedIssuerOrigins: []string{"https://portal.example.com"},
-		ExternalSignInURL:    o.signInURL,
-		AuthAudit:            o.audit,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: logger,
+		},
+		Auth: AuthDeps{
+			RateLimiter:       auth.NewRateLimiter(100, time.Minute),
+			JWTSecret:         "test-secret",
+			TokenTTLSecs:      900,
+			ExternalSignInURL: o.signInURL,
+			AuthAudit:         o.audit,
+		},
+		Issuers: IssuerDeps{
+			TrustedIssuer:        fakeTrustedIssuer{issuer.Identity{Subject: "user-42", Email: "ana@acme.com", Tenant: "acme"}},
+			TrustedIssuerUsers:   o.users,
+			TrustedIssuerOrigins: []string{"https://portal.example.com"},
+		},
 	})
 }
 
@@ -65,11 +71,6 @@ func postSessionAccept(h http.Handler, form url.Values, origin, accept string) *
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
-}
-
-func setsSessionCookie(rec *httptest.ResponseRecorder) bool {
-	c := rec.Header().Get("Set-Cookie")
-	return strings.HasPrefix(c, authTokenCookie+"=") && !strings.HasPrefix(c, authTokenCookie+"=;")
 }
 
 // issuerRefusal is one way the handoff is refused: the request that causes it,
@@ -105,6 +106,7 @@ func issuerRefusals() []issuerRefusal {
 		{"store failure", good, portal, func() *fakeIssuerUsers {
 			return &fakeIssuerUsers{err: errors.New("db down")}
 		}, http.StatusInternalServerError, "server_error"},
+		{"issuer keys unavailable", url.Values{"token": {"keys-down"}}, portal, activeAcmeUser, http.StatusServiceUnavailable, "server_error"},
 	}
 }
 

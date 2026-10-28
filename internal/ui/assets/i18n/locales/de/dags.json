@@ -10,17 +10,28 @@
   "filters": {
     "allRunTypes": "Alle Arten von Läufen",
     "allStates": "Alle Stati",
+    "anyRunState": "Beliebiger Lauf",
+    "anyRunStatePlaceholder": "Beliebigen Laufzustand auswählen…",
     "favorite": {
       "all": "Alle",
       "favorite": "Favorisierte",
       "unfavorite": "Nicht favorisierte"
     },
+    "favoriteState": "Favorisierter Zustand",
+    "favoriteStatePlaceholder": "Favorisierten Zustand auswählen…",
+    "lastRunState": "Letzter Lauf",
+    "lastRunStatePlaceholder": "Letzten Laufzustand auswählen…",
+    "noTimetableTypesFound": "Keine Zeitplantypen gefunden",
     "paused": {
       "active": "Aktiv",
       "all": "Alle",
       "paused": "Pausiert"
     },
-    "runIdPatternFilter": "Dag Läufe suchen"
+    "pausedPlaceholder": "Pausierten Zustand auswählen…",
+    "pausedState": "Pausierter Zustand",
+    "requiresHitlAction": "Erfordert HITL-Aktion",
+    "runIdPatternFilter": "Dag Läufe suchen",
+    "timetableType": "Zeitplantyp"
   },
   "ownerLink": "Besitzer Verlinkungen zu {{owner}}",
   "runAndTaskActions": {
@@ -33,6 +44,11 @@
       "buttonTooltip": "Umschalttaste+C zum Zurücksetzen tippen",
       "error": "Fehler beim Zurücksetzen von {{type}}",
       "title": "{{type}} bereinigen und neu planen"
+    },
+    "clearAllMapped": {
+      "button": "Alle gemappten Tasks zurücksetzen",
+      "buttonTooltip": "Umschalttaste+C zum Zurücksetzen aller gemappten Task-Instanzen tippen",
+      "title": "Alle gemappten Task-Instanzen zurücksetzen"
     },
     "confirmationDialog": {
       "description": "Der Task befindet sich derzeit in dem Zustand {{state}}, ausgelöst durch den Benutzer {{user}} um {{time}}. \nDer Task kann nicht zurückgesetzt werden, bevor er abgeschlossen ist, oder ein Benutzer im Zurücksetz-Dialog die Option \"Zurücksetzen von laufenden Tasks verhindern\" deaktiviert.",
@@ -68,6 +84,7 @@
       "preventRunningTasks": "Zurücksetzen von laufenden Tasks verhindern",
       "queueNew": "Neue Tasks einplanen",
       "runOnLatestVersion": "Mit neuester Bündel-Version ausführen",
+      "runOnLatestVersionForced": "Verwendet immer die neueste Version — es gibt keine frühere Version, zu der zurückgekehrt werden kann",
       "upstream": "Vorangegangene"
     }
   },
@@ -84,8 +101,8 @@
       "desc": "Sortiert nach Anzeigename (Z-A)"
     },
     "lastRunStartDate": {
-      "asc": "Sortiert nach letztem Startdatum (Erster-Letzter)",
-      "desc": "Sortiert nach letztem Startdatum (Letzter-Erster)"
+      "asc": "Sortiert nach Startdatum des letzten Laufes (Früheste-Späteste)",
+      "desc": "Sortiert nach Startdatum des letzten Laufes (Späteste-Früheste)"
     },
     "lastRunState": {
       "asc": "Sortiert nach dem Status des letzten Laufes (A-Z)",

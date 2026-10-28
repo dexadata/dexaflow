@@ -15,11 +15,15 @@ cluster and no executor, so they run on a laptop with just Postgres up.
 | 1 | Scheduler ceiling — per-tick cost vs. active runs `N` | [`scheduler_ceiling/`](scheduler_ceiling/) | ✅ implemented |
 | 2 | Dispatch throughput — queue depth vs. arrival rate | — | not yet (see _Adding an experiment_) |
 | 3 | Reaper cost — orphan/heartbeat sweep vs. run count | — | not yet |
-| 4 | API read fan-out — dashboard queries under many DAGs | — | not yet |
+| 4 | UI refresh cycle: what one auto-refresh of a page costs, and the viewers an interval allows | [`ui_refresh/`](ui_refresh/) | ✅ implemented |
 | 5 | Log tailer — SSE fan-out under many concurrent viewers | — | not yet |
 | 6 | Query plans at scale: hot queries on 1M runs and 5M task instances | [`query_plans/`](query_plans/) | ✅ implemented |
+| 7 | Code-only deploy: p50 of `dexaflow deploy` after a DAG code change, and the warm-up of the new version's pool | [`deploy_p50/`](deploy_p50/) | ✅ implemented |
 
-Experiments 1 and 6 are built. The others are documented extension points.
+Experiments 1, 4, 6 and 7 are built. The others are documented extension points.
+Experiments 4 and 7 drive a running control plane instead of the packages:
+Experiment 4 needs only an api role process and its Postgres, Experiment 7
+the CLI, and its warm-up half a cluster with warm pools on.
 
 ## Prerequisites
 
@@ -75,19 +79,78 @@ delta observed during each window. The harness cleans up every DAG it created on
 exit (best-effort); a fresh `migrate up` on an empty database is always the clean
 slate.
 
-### Known limitation: `dexaflow_scheduler_loop_duration_seconds` is not wired
+### Loop duration: the harness times `Step` itself
 
-The declared SLI `dexaflow_scheduler_loop_duration_seconds` is **defined** in
-`internal/observability/metrics.go` but is **never `Observe`d inside the scheduler
-loop** (grep confirms: only `metrics_test.go` observes it). A `/metrics` scrape
-today would therefore report an empty histogram for it. Until that observation is
-wired into `Scheduler.tick`/`Step`, this harness times `Step` **directly** (the
-faithful equivalent) and also feeds each measured duration into the real
-histogram object, so a future scrape — or a one-line follow-up that moves the
-`Observe` into the loop — sees the same distribution. `dexaflow_scheduler_step_downs_total`
+Since 0.5.4 the product observes `dexaflow_scheduler_loop_duration_seconds` around
+every leader tick (`Scheduler.tick`, #1186), so a `/metrics` scrape of a running
+leader shows the real distribution. This harness calls `Step` directly instead of
+going through the tick loop, so it times each `Step` itself and feeds the measured
+duration into the same histogram object; the two measure the same work. `dexaflow_scheduler_step_downs_total`
 **is** scraped from the live registry (it stays 0 here: leadership never churns in
 the harness). `dexaflow_dispatch_queue_depth` is a dispatcher gauge and is out of
 scope for Experiment 1 (no dispatcher is wired).
+
+## Experiment 4: UI refresh cycle
+
+The embedded UI polls. On a page whose data holds a run in progress it
+refetches a fixed set of queries every `ui.autoRefreshIntervalSeconds` (30 s
+on Pro, 1 s on Lite), so the load the UI puts on the control plane is that set
+times the viewers divided by the interval (#1196). Experiment 4 measures the
+set: it replays one page's refresh, a _profile_, against a running control
+plane as V viewers that each issue cycles back to back, and reports the cycles
+per second the control plane sustains, the latency of a cycle and, with
+`--db`, the database transactions one cycle costs. A viewer at interval I
+issues one cycle every I seconds, so the sustained rate times I is the number
+of viewers the control plane serves on that page at I.
+
+The profiles hold what the SPA repeats every interval in steady state. They
+were recorded from the Airflow 3.3.2 UI in headless Chromium against an api
+role process: the page load requests and the queries that refresh on a longer
+period are not in them.
+
+| Profile | Page | Requests per cycle |
+|---|---|---:|
+| `dag` | a DAG's grid while a run is in progress | 9 |
+| `run` | one run in progress, with its task instance table | 9 |
+| `idle` | a DAG's grid with no run in progress (only the latest run is polled) | 1 |
+
+The home dashboard and the DAG list did not repeat any request within 15 s at
+a 3 s interval in that recording: the dashboard only refreshes while runs are
+pending, and the DAG list refreshes every ten intervals while none of its DAGs
+has a run in progress.
+
+Start an api role process against a seeded database (any installation with a
+DAG that has a run in progress works), then:
+
+```sh
+DEXAFLOW_PASS=admin go run ./test/load/ui_refresh \
+  --url http://localhost:8080 --dag my_dag --profile dag --viewers 1,10,50 \
+  --db "$DATABASE_URL"
+```
+
+Flags:
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--url` | `$DEXAFLOW_URL`, then `$LEOFLOW_URL` | control plane URL |
+| `--user` | `admin@dexaflow.local` | user to sign in as |
+| `--pass` | `$DEXAFLOW_PASS`, then `$LEOFLOW_PASS` | password |
+| `--dag` | required | DAG whose pages are replayed |
+| `--run` | the DAG's newest run | run of the `run` profile |
+| `--profile` | `dag` | `dag`, `run` or `idle` |
+| `--viewers` | `1,10,50` | concurrent viewer counts, one row each |
+| `--window` | `10s` | measured window per row |
+| `--parallel` | `6` | requests one viewer has in flight, as a browser's 6 connections per host |
+| `--intervals` | `1,5,10,30` | intervals of the capacity table |
+| `--db` | `$DATABASE_URL`, then `$DEXAFLOW_DATABASE_URL`, then `$LEOFLOW_DATABASE_URL` | the control plane's database, to count transactions per cycle; optional |
+
+Output is a Markdown table per viewer count (cycles and requests per second,
+cycle p50, p95 and p99, database transactions per cycle, error rate) and the
+capacity table. The transaction count reads `pg_stat_database`, so it includes
+whatever else uses the database during the window: measure on a database the
+experiment has to itself. The harness, the control plane and Postgres share the
+host when run on a laptop, so the rate is a floor of what a dedicated control
+plane sustains. Recorded results live in [`BASELINE.md`](BASELINE.md).
 
 ## Experiment 6: query plans at scale
 
@@ -133,6 +196,94 @@ Output is a Markdown table per case: median, best and worst execution time, the
 time spent in triggers (FK checks and cascades, already part of execution time)
 and the tables read with a sequential scan. Recorded results live in
 [`BASELINE.md`](BASELINE.md).
+
+## Experiment 7: code-only deploy and warm-up
+
+A deploy that changed only DAG code should not pay for a build: the registry
+already holds the dependency image, so the CLI appends the code as one layer
+through the registry API and registers the new digest (ADR 0077). The target
+is a p50 under 30 seconds (#1706). With warm pools on, the new version's pool
+starts when it becomes current (ADR 0082), and its pods pull only the code
+layer, since the node has the dependency layers already (#1707).
+
+`deploy_p50` drives the real `dexaflow deploy` binary. It scaffolds a project
+with `dexaflow init`, gives it pinned dependencies and a registry, and deploys
+it once cold; that deploy builds the dependency image and is not counted. It
+then changes a comment line of `dag.py` before each of `--n` deploys and times
+each one from the start of the command to its exit (compile, content label,
+pre-check, code layer push, digest read and register). Every measured deploy
+must report `builder: code-layer`; one that took another path did not measure
+a code-only deploy, and the run fails.
+
+Prerequisites: a built CLI (`make build`), the parser on `PYTHONPATH`, `uv` on
+`PATH` (the cold deploy builds the dependency image from wheels without a
+daemon), a running control plane and a CLI config logged in to it.
+
+```sh
+make build
+bin/dexaflow auth login --server http://localhost:8080 --username admin@dexaflow.local \
+  --password admin --config /tmp/p50-cli.yaml
+PYTHONPATH=parser go run ./test/load/deploy_p50 --cli bin/dexaflow \
+  --config /tmp/p50-cli.yaml --local-registry --n 20
+```
+
+`--local-registry` serves an in-memory registry on the loopback inside the
+harness and builds the scaffold on a stand-in runtime base pushed there (it
+holds only what the dependency layer reads from a base, and runs nothing). It
+needs no container daemon, no cluster and no access to a public registry, and
+it gives the lower bound: the CLI and the register, with no network between
+the CLI and the registry. It also counts the registry requests of each deploy;
+on a remote registry each of them costs a round trip. A control plane with
+`executor.type=subprocess` is enough for it. Measure against a real registry
+with `--registry <prefix>` instead, with the registry login a deploy to it
+needs. `--warm` refuses `--local-registry`: a cluster cannot pull from the
+harness's loopback.
+
+The warm-up half runs on a cluster with warm pools on, such as the k3d setup of
+`test/e2e/deploy-e2e.sh` with `DEXAFLOW_E2E_WARM_POOLS=on`:
+
+```sh
+PYTHONPATH=parser go run ./test/load/deploy_p50 --cli bin/dexaflow \
+  --config /tmp/p50-cli.yaml --registry k3d-registry.localhost:5111 \
+  --platform linux/amd64 --warm --n 10
+```
+
+With `--warm` the project declares `min_idle_workers: 1` and deploys with
+`--active`, since only an unpaused DAG that declares a warm floor is
+prewarmed. After each deploy the harness polls the warm worker pods
+(`leoflow.io/warm-worker=true` in `--namespace`) for one whose image is the
+digest the deploy registered, and records when it appeared and when it became
+Ready, from the end of the deploy, with the pull time the kubelet reported in
+its `Pulled` event. The project builds on the published runtime base, which
+the pods run.
+
+Flags:
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--cli` | `bin/dexaflow` | the CLI binary |
+| `--config`, `--server`, `--token` | none | passed to `deploy` when set |
+| `--registry` | none | registry prefix the image is pushed to |
+| `--local-registry` | `false` | push to an in-memory loopback registry instead |
+| `--project` | none | deploy this project instead of a scaffold |
+| `--workdir` | a new temporary directory | where the scaffold is written |
+| `--dag-id` | `deploy_p50` | `dag_id` of the scaffold; use a new one per run against a shared server |
+| `--platform` | `linux/<host arch>` | the platform built |
+| `--python` | `3.12` | `python_version` of the scaffold |
+| `--base-image` | the published runtime base (the stand-in with `--local-registry`) | `base_image` of the scaffold |
+| `--dependency` | `requests==2.32.3` | a pinned dependency of the scaffold; repeat for more |
+| `--n` | `10` | measured deploys after the cold one |
+| `--target` | `30s` | the p50 of the measured deploys must be under it |
+| `--warm` | `false` | also measure the warm-up |
+| `--kubeconfig`, `--namespace` | default rules, `leoflow` | the cluster and namespace of the warm workers |
+| `--warm-target` | `1m` | the p50 to a Ready warm worker must be under it |
+| `--warm-timeout` | `3m` | how long to wait for each version's warm worker |
+| `--deploy-arg` | none | an extra `deploy` flag; repeat for more |
+
+Output is a Markdown table with one row per deploy (time, builder path,
+registry requests, and with `--warm` the warm worker's appearance, Ready time
+and image pull), the p50, p95 and maximum, and a `PASS` or `FAIL` line; the
+exit code is 1 on `FAIL`. Recorded results live in [`BASELINE.md`](BASELINE.md).
 
 ## Adding an experiment
 

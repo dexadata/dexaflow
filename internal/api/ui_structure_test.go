@@ -26,13 +26,35 @@ func (f *fakeSpecReader) GetCurrentSpec(context.Context, string, string) (domain
 	return f.spec, nil
 }
 
+// GetDagVersionSpec serves the fake's spec as the DAG's only version, so the
+// source endpoint reads the same spec as the structure endpoints.
+func (f *fakeSpecReader) GetDagVersionSpec(_ context.Context, _, _ string, n int) (domain.DagVersion, domain.DAGSpec, error) {
+	if f.err != nil {
+		return domain.DagVersion{}, domain.DAGSpec{}, f.err
+	}
+	if n > 1 {
+		return domain.DagVersion{}, domain.DAGSpec{}, domain.ErrNotFound
+	}
+	return domain.DagVersion{ID: "v-uuid", VersionNumber: 1, IsCurrent: true}, f.spec, nil
+}
+
 func structureServer(specs DagSpecReader) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Specs:         specs,
+	sources, _ := specs.(DagSourceReader)
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			DagSources: sources,
+			Specs:      specs,
+		},
 	})
 }
 

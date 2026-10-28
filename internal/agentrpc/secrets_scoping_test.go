@@ -177,3 +177,91 @@ func TestSecretScopingUnknownFallsBackToPermissive(t *testing.T) {
 		t.Errorf("an unknown scoping policy must fall back to permissive whole-vault: got %v scoped=%v", vresp.Variables, sec.scopedVar)
 	}
 }
+
+// TestSecretScopingPermissiveEmptyDeclarationEmitsWarning verifies that under
+// permissive scoping, a task that declares no secrets when the vault has secrets
+// emits a scope warning and audit record (declared=0, delivered=N). This is the
+// population that would break under enforce (#800).
+func TestSecretScopingPermissiveEmptyDeclarationEmitsWarning(t *testing.T) {
+	store := &fakeStore{spec: TaskSpec{}} // empty declaration
+	srv, a := newServer(store)
+	sec := &fakeSecrets{
+		vars:  map[string]string{"FOO": "bar", "BAR": "baz"},
+		conns: map[string]string{"pg": "postgres://u:p@h/db"},
+	}
+	audit := &fakeScopeAuditor{}
+	srv.SetSecrets(sec, true)
+	srv.SetSecretScopeAuditor(audit)
+	srv.SetSecretScoping(ScopingPermissive)
+	ctx := ctxWithToken(t, a)
+
+	vresp, err := srv.GetVariables(ctx, &agentv1.GetVariablesRequest{})
+	if err != nil {
+		t.Fatalf("GetVariables: %v", err)
+	}
+	if len(vresp.Variables) != 2 {
+		t.Fatalf("permissive must deliver the whole vault: got %v", vresp.Variables)
+	}
+	if len(audit.events) != 1 {
+		t.Fatalf("permissive with empty declaration must emit a scope warning for variables: got %d events", len(audit.events))
+	}
+	ev := audit.events[0]
+	if ev.kind != "variables" || ev.declared != 0 || ev.total != 2 {
+		t.Errorf("audit event mismatch: got %+v, want kind=variables declared=0 total=2", ev)
+	}
+
+	cresp, err := srv.GetConnections(ctx, &agentv1.GetConnectionsRequest{})
+	if err != nil {
+		t.Fatalf("GetConnections: %v", err)
+	}
+	if len(cresp.ConnectionUris) != 1 {
+		t.Fatalf("permissive must deliver the whole vault: got %v", cresp.ConnectionUris)
+	}
+	if len(audit.events) != 2 {
+		t.Fatalf("permissive with empty declaration must emit a scope warning for connections: got %d events", len(audit.events))
+	}
+	evConn := audit.events[1]
+	if evConn.kind != "connections" || evConn.declared != 0 || evConn.total != 1 {
+		t.Errorf("audit event mismatch: got %+v, want kind=connections declared=0 total=1", evConn)
+	}
+}
+
+// TestSecretScopingEmptyDeclarationWarnsOncePerDag guards the volume of the #800
+// warning: a DAG that declares nothing is warned about once per DAG version and
+// kind, not on every attempt, so the default permissive policy does not write an
+// audit row per delivery for every DAG that never declared secrets. A narrower,
+// non-empty declaration keeps its per-delivery warning (ADR 0055 E1b).
+func TestSecretScopingEmptyDeclarationWarnsOncePerDag(t *testing.T) {
+	store := &fakeStore{spec: TaskSpec{}}
+	srv, a := newServer(store)
+	srv.SetSecrets(&fakeSecrets{
+		vars:  map[string]string{"FOO": "bar", "BAR": "baz"},
+		conns: map[string]string{"pg": "postgres://u:p@h/db"},
+	}, true)
+	audit := &fakeScopeAuditor{}
+	srv.SetSecretScopeAuditor(audit)
+	srv.SetSecretScoping(ScopingPermissive)
+	ctx := ctxWithToken(t, a)
+
+	for i := 0; i < 3; i++ {
+		if _, err := srv.GetVariables(ctx, &agentv1.GetVariablesRequest{}); err != nil {
+			t.Fatalf("GetVariables: %v", err)
+		}
+		if _, err := srv.GetConnections(ctx, &agentv1.GetConnectionsRequest{}); err != nil {
+			t.Fatalf("GetConnections: %v", err)
+		}
+	}
+	if len(audit.events) != 2 {
+		t.Fatalf("an empty declaration must be warned once per kind, got %d events: %+v", len(audit.events), audit.events)
+	}
+
+	store.spec = TaskSpec{DeclaredVariables: []string{"FOO"}}
+	for i := 0; i < 2; i++ {
+		if _, err := srv.GetVariables(ctx, &agentv1.GetVariablesRequest{}); err != nil {
+			t.Fatalf("GetVariables: %v", err)
+		}
+	}
+	if len(audit.events) != 4 {
+		t.Fatalf("a narrower declaration must still be warned on every delivery, got %d events", len(audit.events))
+	}
+}

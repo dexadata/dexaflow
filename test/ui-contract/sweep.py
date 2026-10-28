@@ -9,7 +9,8 @@ endpoint, or a changed Accept header surfaces here as a broken view).
 
 Config via env (all optional):
   LEOFLOW_BASE_URL   default http://host.docker.internal:8080
-  LEOFLOW_USER       default admin@leoflow.local
+  LEOFLOW_USER       default admin@dexaflow.local, or admin@leoflow.local
+                     when only that one logs in (installs from before the rename)
   LEOFLOW_PASSWORD   default admin
   LEOFLOW_DAG_ID     default: first DAG that has a run (auto-discovered)
   LEOFLOW_RUN_ID     default: that DAG's latest run (auto-discovered)
@@ -25,8 +26,35 @@ import time
 import urllib.request
 
 BASE = os.environ.get("LEOFLOW_BASE_URL", "http://host.docker.internal:8080")
-USER = os.environ.get("LEOFLOW_USER", "admin@leoflow.local")
 PWD = os.environ.get("LEOFLOW_PASSWORD", "admin")
+ADMIN_CANDIDATES = ("admin@dexaflow.local", "admin@leoflow.local")
+
+
+def token_for(user):
+    """Return an access token for user, or "" when the login is refused."""
+    data = json.dumps({"username": user, "password": PWD}).encode()
+    req = urllib.request.Request(BASE + "/auth/token", data=data,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:  # noqa: S310 (trusted local URL)
+            return json.load(r).get("access_token", "")
+    except Exception:  # noqa: BLE001 (any failure means this user does not log in)
+        return ""
+
+
+def resolve_user():
+    """LEOFLOW_USER, else the first bootstrap admin address that logs in."""
+    if os.environ.get("LEOFLOW_USER"):
+        return os.environ["LEOFLOW_USER"]
+    for candidate in ADMIN_CANDIDATES:
+        if token_for(candidate):
+            return candidate
+    return ADMIN_CANDIDATES[0]
+
+
+# Set by discover(), the first call of every entry point (main() here and in
+# clear_version_toggle.py), so importing this module makes no request.
+USER = ""
 OUT = os.environ.get("UICONTRACT_OUT", "")
 
 # Console errors that are environmental, not contract breaks. Keep this list
@@ -46,15 +74,12 @@ def api(path, token=None):
 
 def discover():
     """Find a DAG with a run + a task instance, so the task-scoped views resolve."""
-    token = ""
-    try:
-        data = json.dumps({"username": USER, "password": PWD}).encode()
-        req = urllib.request.Request(BASE + "/auth/token", data=data,
-                                     headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=15) as r:  # noqa: S310
-            token = json.load(r).get("access_token", "")
-    except Exception as e:
-        print(f"WARN: could not get token ({e}); task views may be skipped")
+    global USER  # resolved once, on first use, never at import time
+    if not USER:
+        USER = resolve_user()
+    token = token_for(USER)
+    if not token:
+        print(f"WARN: could not get a token for {USER}; task views may be skipped")
     dag = os.environ.get("LEOFLOW_DAG_ID", "")
     run = os.environ.get("LEOFLOW_RUN_ID", "")
     task = os.environ.get("LEOFLOW_TASK_ID", "")

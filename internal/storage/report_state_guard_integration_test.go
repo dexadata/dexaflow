@@ -73,7 +73,7 @@ func TestReportStateDoesNotClobberTerminalIntegration(t *testing.T) {
 	}
 
 	// The partition heals and the abandoned agent reports success.
-	id := auth.AgentIdentity{TenantID: "default", DagID: dagID, RunID: runUUID, TaskID: "load", TryNumber: 1}
+	id := auth.AgentIdentity{TenantID: defaultTenantID(), DagID: dagID, RunID: runUUID, TaskID: "load", TryNumber: 1}
 	err := exec.ReportState(ctx, id, domain.TaskStateSuccess, 0, "")
 	if !errors.Is(err, agentrpc.ErrStaleReport) {
 		t.Fatalf("ReportState = %v, want ErrStaleReport — the caller must be able to tell a rejected late report from a successful write", err)
@@ -117,7 +117,7 @@ func TestReportStateIgnoresStaleTryNumberIntegration(t *testing.T) {
 	}
 
 	// The straggler from attempt 1 finally reports success.
-	stale := auth.AgentIdentity{TenantID: "default", DagID: dagID, RunID: runUUID, TaskID: "load", TryNumber: 1}
+	stale := auth.AgentIdentity{TenantID: defaultTenantID(), DagID: dagID, RunID: runUUID, TaskID: "load", TryNumber: 1}
 	if err := exec.ReportState(ctx, stale, domain.TaskStateSuccess, 0, ""); !errors.Is(err, agentrpc.ErrStaleReport) {
 		t.Fatalf("ReportState (stale attempt) = %v, want ErrStaleReport", err)
 	}

@@ -1,51 +1,69 @@
 # Example DAGs
 
-Twenty reference projects covering every supported task type, operator pattern,
-and connector. Each directory ships:
+Reference projects covering every supported task type, operator pattern, and
+connector. Each directory ships:
 
-- `dag.py` — the DAG, written against the Airflow SDK 3.2.x
-- `dexaflow.yaml` — Dexaflow's deploy config (python version, dependencies,
-  per-task overrides)
-- `Dockerfile` — the DAG image (#318); kept in sync with `dexaflow.yaml` by
-  `scripts/sync-example-dockerfiles.sh`
+- `dag.py`: the DAG, written against the Airflow SDK 3.2.x
+- `dexaflow.yaml`: Dexaflow's deploy config (python version, dependencies,
+  connectors, per-task overrides)
+
+There is no `Dockerfile`. The DAG image is generated from `dexaflow.yaml` when
+it is built, `FROM` the published runtime base, so what the yaml declares is
+what the image contains. A `Dockerfile` placed next to `dag.py` would be used
+verbatim instead and the yaml's dependencies would stop reaching the image, so
+the examples never ship one (`internal/cli/examples_dockerfile_test.go` fails
+if one appears).
 
 A handful also ship `README.md` files (the connector cookbook entries plus
-`lifecycle` and `http_load` — those are the canonical templates for adding
+`lifecycle` and `http_load`; those are the canonical templates for adding
 prose to the others).
 
-## Lite — the dev loop
+## Lite: the dev loop
 
 ```sh
 dexaflow lite examples/<name>/      # hot-reload at http://localhost:8088
 ```
 
-`dexaflow lite` watches the workspace, synthesizes the Dockerfile if one is
-missing (the script-generated ones in this tree mirror what `lite` would
-produce — checking them in lets a Pro operator copy the same file verbatim
-without running Lite), builds the image into the local k3d cluster (or runs
-the DAG in-process under `--executor=subprocess`), and re-registers the DAG
-on every save.
+`dexaflow lite` watches the workspace, builds the image into the local k3d
+cluster (or runs the DAG in-process under `--executor=subprocess`), and
+re-registers the DAG on every save.
 
-## Pro — the deploy loop
+The k3d mode writes a `Dockerfile` into the example directory, `FROM` the
+`leoflow-base` image Lite builds on your machine, and leaves it there. Delete it
+before a Pro deploy: a `Dockerfile` in the directory is built verbatim, and that
+base exists on no other builder.
+
+## Pro: the deploy loop
+
+A Pro deploy pushes the DAG image to a registry your cluster can pull from.
+Each example's `dexaflow.yaml` ends with a commented `registry:` block, since
+the registry is yours: uncomment it, or leave it as it is when the target names
+the registry (`--registry` on `dexaflow target add`, below) or the cluster
+advertises one in its deploy defaults.
+
+The CLI needs a credential for that registry. For Artifact Registry, ECR and
+ACR, being signed in to the `gcloud`, `aws` or `az` CLI is enough while the
+image is built without a daemon (with `uv` on `PATH`); for any other registry,
+or when the local `docker` builds, sign in with the command
+[Registry credentials](https://dexaflow.dexadata.ai/operate/builders/#registry-credentials)
+names (`docker login <registry>` for most). Then add the control plane as a
+target, sign in to it and deploy:
 
 ```sh
-# 1. Compile + build the DAG image. The image tag must be a registry your
-#    cluster can pull from.
-dexaflow compile examples/<name>/ \
-  --image my-registry.example.com/<name>:<tag> --build --push -o dag.json
-
-# 2. Register the compiled artifact with the control plane.
-dexaflow push dag.json --server $DEXAFLOW_SERVER --token $DEXAFLOW_TOKEN
-
-# 3. Trigger from the UI, or:
-curl -X POST -H "Authorization: Bearer $DEXAFLOW_TOKEN" -H 'Content-Type: application/json' \
-  -d '{}' "$DEXAFLOW_SERVER/api/v2/dags/<name>/dagRuns"
+dexaflow target add prod https://pro.example.com --registry ghcr.io/your-org
+dexaflow auth login --target prod
+dexaflow deploy examples/<name>/ --active --trigger --follow   # compile, build, push, pin by digest, register, run
 ```
 
-The Pro walkthrough — building locally vs Cloud Build, image pull secrets,
-registry permissions — is in [`docs/deploy.md`](../docs/deploy.md). The
-managed-Connection examples (`*_load`, `gcp_gcs_load`, `http_load`) each ship
-a `README.md` walking through their specific Connection wiring.
+A new DAG starts paused, as in Airflow, and a run triggered while it is paused
+waits in `queued`. `--active` unpauses it in the same register, and `--follow`
+prints the run's task states and logs and exits with its result.
+
+The full walkthrough is [Deploy your first Pro DAG](https://dexaflow.dexadata.ai/operate/first-pro-dag/),
+and the pipeline recipes are in [CI/CD & deploy](https://dexaflow.dexadata.ai/operate/cicd-deploy/).
+The managed-Connection examples (`*_load`, `gcp_gcs_load`, `http_load`) each
+ship a `README.md` walking through their specific Connection wiring, and the
+connection a DAG expects has to exist on the control plane before it runs.
 
 ## Index
 
@@ -80,11 +98,7 @@ a `README.md` walking through their specific Connection wiring.
 ## Adding a new example
 
 1. Create `examples/<name>/dag.py` + `dexaflow.yaml` (use any existing example
-   as a template; `dexaflow init examples/<name>` scaffolds the pair).
-2. Run `bash scripts/sync-example-dockerfiles.sh` to generate the Dockerfile.
-3. (Optional) Add a `README.md` describing what the example exercises.
-4. Add a row to the index table above.
-
-CI runs `scripts/sync-example-dockerfiles.sh --check` so a Dockerfile out of
-sync with `dexaflow.yaml` fails the build — change the YAML, re-run the script,
-commit the regenerated Dockerfile in the same change.
+   as a template; `dexaflow init examples/<name>` scaffolds the pair). Declare
+   every package the DAG imports in `dependencies:` or `connectors:`.
+2. (Optional) Add a `README.md` describing what the example exercises.
+3. Add a row to the index table above.

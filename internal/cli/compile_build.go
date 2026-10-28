@@ -108,10 +108,10 @@ func releaseBaseTag(v string) string {
 
 // resolveBuildImage decides the image reference for a build. An explicit --image
 // flag always wins so a caller can pin any tag. Otherwise the reference is
-// derived from the registry block (url/image_name:version); a missing url or
-// image_name yields "" so the caller can fail with an actionable message rather
-// than building an untagged image.
-func resolveBuildImage(flagImage string, cfg *domain.LeoflowConfig, dagVersion, gitSHA string) string {
+// derived from the registry block (url/image_name:tag, the tag picked by
+// tag_strategy); a missing url or image_name yields "" so the caller can fail
+// with an actionable message rather than building an untagged image.
+func resolveBuildImage(flagImage string, cfg *domain.LeoflowConfig, dagVersion string, rev gitRevision) string {
 	if flagImage != "" {
 		return flagImage
 	}
@@ -129,7 +129,7 @@ func resolveBuildImage(flagImage string, cfg *domain.LeoflowConfig, dagVersion, 
 	//
 	// resolveImageTag was correct and had its own test the whole time. It just
 	// had one caller.
-	tag := resolveImageTag(cfg.Registry.TagStrategy, dagVersion, gitSHA)
+	tag := resolveImageTag(cfg.Registry.TagStrategy, dagVersion, rev)
 	return composeImageRef(cfg.Registry.URL, cfg.Registry.ImageName, tag)
 }
 
@@ -206,6 +206,14 @@ func writeInstallLayers(b *strings.Builder, cfg *domain.LeoflowConfig, deps []st
 		}
 		// Dependencies before COPY so the (rarely-changing) layer is cached across
 		// edits to the DAG source.
+		if cfg.Build != nil && cfg.Build.PackageIndex != nil {
+			// The index URL, credentials included, is a build secret mounted
+			// for this RUN only: it reaches no layer, ENV or image history,
+			// and the line itself names only the secret (ADR 0088).
+			fmt.Fprintf(b, "RUN --mount=type=secret,id=%s,required=true PIP_INDEX_URL=\"$(cat /run/secrets/%s)\" pip install --no-cache-dir -- %s\n",
+				domain.IndexSecretID, domain.IndexSecretID, args)
+			return nil
+		}
 		fmt.Fprintf(b, "RUN pip install --no-cache-dir -- %s\n", args)
 	}
 	return nil
@@ -318,7 +326,8 @@ func generatedDockerfile(cfg *domain.LeoflowConfig, dagSource string) (string, e
 	if cfg.Dbt != nil {
 		// A dbt project is the DAG source (ADR 0042): there is no dag.py to COPY and
 		// no Python module to import, so COPY the project directory (dbt_project.yml
-		// + models/ + baked manifest.json) to the workdir and set no PYTHONPATH. The
+		// + models/, and a pinned dbt.manifest when there is one; the CLI's own
+		// parse writes to a scratch dir, #1060) to the workdir and set no PYTHONPATH. The
 		// task runs `dbt --project-dir <project>` from WORKDIR /home/leoflow, so the
 		// project must land at /home/leoflow/<project> matching the baked --project-dir.
 		// The project is read-only to the task because COPY lands it root-owned, not
@@ -402,9 +411,11 @@ func ensureDockerignore(w io.Writer, dir string, cfg *domain.LeoflowConfig, ownD
 	if rerr != nil && !os.IsNotExist(rerr) {
 		return noop, nil, fmt.Errorf("reading %s: %w", path, rerr)
 	}
-	// A build killed before cleanup — Ctrl-C during a multi-minute `docker
-	// build`, which is THE interruption, not a rare one — leaves our merged
-	// file behind. Read back as-is it would look like the author's own work:
+	// A build killed before its cleanup ran leaves our merged file behind.
+	// Ctrl-C and SIGTERM no longer do (the CLI catches them and the cleanup
+	// runs, #1061), but SIGKILL, a crash or a second Ctrl-C while a cleanup
+	// hangs still can, and so could a release older than that fix. Read back
+	// as-is it would look like the author's own work:
 	// `had` would be true, and the next successful build would "restore" a
 	// leoflow block as if they had written it, permanently, still headed
 	// "removed after the build" and no longer tracking dexaflow.yaml.

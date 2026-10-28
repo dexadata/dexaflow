@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"sync"
 	"testing"
@@ -238,5 +240,77 @@ func TestHandoffSharesTheCooldown(t *testing.T) {
 	}
 	if n := f.calls.Load(); n != 1 {
 		t.Errorf("JWKS downloads = %d, want 1", n)
+	}
+}
+
+// TestWaitingForTheKeyDownloadHonorsTheCallersContext locks #1588: a caller
+// that queues behind a running JWKS download gives up when its own context
+// ends, instead of waiting up to the download timeout. The give-up reads as an
+// outage, not as a bad token, and the download it waited on still completes
+// for everyone else.
+func TestWaitingForTheKeyDownloadHonorsTheCallersContext(t *testing.T) {
+	release := make(chan struct{})
+	started := make(chan struct{}, 1)
+	f := newFakeJWKS(t)
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started <- struct{}{}
+		<-release
+		f.srv.Config.Handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(slow.Close)
+	// Runs before slow.Close, so a failing test does not hang on the held
+	// download.
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+	cfg := bearerConfig(f)
+	cfg.JWKSURL = slow.URL
+	v := New(context.Background(), cfg)
+	v.now = func() time.Time { return testNow }
+	raw := f.sign(t, bearerClaims(), f.key)
+
+	first := make(chan error, 1)
+	go func() {
+		_, err := v.VerifyBearer(context.Background(), raw)
+		first <- err
+	}()
+	<-started
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	waited := make(chan error, 1)
+	go func() {
+		_, err := v.VerifyBearer(ctx, raw)
+		waited <- err
+	}()
+	select {
+	case err := <-waited:
+		if !errors.Is(err, ErrKeysUnavailable) || errors.Is(err, ErrInvalidToken) {
+			t.Errorf("waiting caller: err = %v, want ErrKeysUnavailable and not ErrInvalidToken", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a caller waiting on the key download ignored its context")
+	}
+
+	unblock()
+	if err := <-first; err != nil {
+		t.Errorf("the download the caller waited on: %v", err)
+	}
+	if n := f.calls.Load(); n != 1 {
+		t.Errorf("JWKS downloads = %d, want 1", n)
+	}
+}
+
+// TestHandoffKeyOutageIsUnavailable locks #1588 for the handoff: a JWKS outage
+// is ErrKeysUnavailable, not an invalid token, as it is for the bearer.
+func TestHandoffKeyOutageIsUnavailable(t *testing.T) {
+	f := newFakeJWKS(t)
+	f.down.Store(true)
+	v := newClockedVerifier(f)
+
+	_, err := v.Verify(context.Background(), f.sign(t, goodClaims(), f.key))
+
+	if !errors.Is(err, ErrKeysUnavailable) || errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("err = %v, want ErrKeysUnavailable and not ErrInvalidToken", err)
 	}
 }

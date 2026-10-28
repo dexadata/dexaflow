@@ -22,7 +22,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ include "leoflow.fullname" . }}-tasks
-  namespace: {{ .Values.taskNamespace }}
+  namespace: {{ include "leoflow.taskNamespace" . }}
   labels:
     {{- include "leoflow.labels" . | nindent 4 }}
 spec:

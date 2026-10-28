@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,8 @@ import (
 type fakeVariableStore struct {
 	vars     map[string]domain.Variable
 	setCalls []domain.Variable
+	// getErr, when set, is what GetVariable returns for every key.
+	getErr error
 }
 
 func (f *fakeVariableStore) ListVariables(_ context.Context, _ string, _, _ int) ([]domain.Variable, int, error) {
@@ -26,7 +29,32 @@ func (f *fakeVariableStore) ListVariables(_ context.Context, _ string, _, _ int)
 	return out, len(out), nil
 }
 
+func (f *fakeVariableStore) ListVariablesFiltered(_ context.Context, _ string, pattern, prefixPattern string, limit, offset int) ([]domain.Variable, int, error) {
+	out := make([]domain.Variable, 0, len(f.vars))
+	for _, v := range f.vars {
+		if prefixPattern != "" && !strings.HasPrefix(v.Key, prefixPattern) {
+			continue
+		}
+		if pattern != "" && !strings.Contains(v.Key, pattern) {
+			continue
+		}
+		out = append(out, v)
+	}
+	total := len(out)
+	if offset >= total {
+		return []domain.Variable{}, total, nil
+	}
+	end := offset + limit
+	if limit <= 0 || end > total {
+		end = total
+	}
+	return out[offset:end], total, nil
+}
+
 func (f *fakeVariableStore) GetVariable(_ context.Context, _, key string) (domain.Variable, error) {
+	if f.getErr != nil {
+		return domain.Variable{}, f.getErr
+	}
 	if v, ok := f.vars[key]; ok {
 		return v, nil
 	}
@@ -62,12 +90,20 @@ func (f *fakeVariableStore) DeleteVariable(_ context.Context, _, key string) err
 }
 
 func variablesServer(store VariableStore) *gin.Engine {
-	return NewServer(Dependencies{
-		Logger:        discardLogger(),
-		Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
-		RateLimiter:   auth.NewRateLimiter(100, time.Minute),
-		CORSOrigins:   []string{"*"},
-		Variables:     store,
+	return newTestServer(Dependencies{
+		Observability: ObservabilityDeps{
+			Logger: discardLogger(),
+		},
+		Server: ServerDeps{
+			CORSOrigins: []string{"*"},
+		},
+		Auth: AuthDeps{
+			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
+			RateLimiter:   auth.NewRateLimiter(100, time.Minute),
+		},
+		Stores: StoreDeps{
+			Variables: store,
+		},
 	})
 }
 
@@ -248,4 +284,102 @@ func TestVariablesEmptyStubWithoutStore(t *testing.T) {
 	if col["total_entries"].(float64) != 0 {
 		t.Errorf("nil store should yield empty collection, got %v", col)
 	}
+}
+
+// #507: is_encrypted reports how the value is stored, as Airflow's field does;
+// masking still follows the key name, so turning encryption on changes no
+// value the UI shows.
+func TestVariableDTOReportsEncryption(t *testing.T) {
+	sealed := toVariableDTO(domain.Variable{Key: "region", Value: "eu", Encrypted: true})
+	if !sealed.IsEncrypted || sealed.Value != "eu" {
+		t.Errorf("sealed variable DTO = %+v", sealed)
+	}
+	plain := toVariableDTO(domain.Variable{Key: "api_token", Value: "t"})
+	if plain.IsEncrypted || plain.Value != secretMask {
+		t.Errorf("plaintext variable DTO = %+v", plain)
+	}
+}
+
+// A Variable no configured key opens (#507) is listed with the others, its
+// value masked and flagged value_unreadable, so one bad row does not empty the
+// tenant's Variables page. Readable variables carry no flag.
+func TestVariableListMarksAnUnreadableValue(t *testing.T) {
+	store := &fakeVariableStore{vars: map[string]domain.Variable{
+		"lost":   {Key: "lost", Encrypted: true, Unreadable: true},
+		"region": {Key: "region", Value: "eu", Encrypted: true},
+	}}
+	rec := authGet(variablesServer(store), http.MethodGet, "/api/v2/variables", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/v2/variables = %d, body %s", rec.Code, rec.Body)
+	}
+	var out struct {
+		Variables []map[string]any `json:"variables"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]map[string]any{}
+	for _, v := range out.Variables {
+		got[v["key"].(string)] = v
+	}
+	if lost := got["lost"]; lost == nil || lost["value"] != secretMask || lost["value_unreadable"] != true {
+		t.Errorf("unreadable variable = %v, want a masked value and value_unreadable true", lost)
+	}
+	if region := got["region"]; region == nil || region["value"] != "eu" {
+		t.Errorf("readable variable = %v", region)
+	} else if _, flagged := region["value_unreadable"]; flagged {
+		t.Errorf("readable variable carries value_unreadable: %v", region)
+	}
+}
+
+// Reading one unreadable Variable is still an error, but its detail tells the
+// operator what happened instead of the generic internal-error phrase.
+func TestVariableGetUnreadableExplainsTheError(t *testing.T) {
+	store := &fakeVariableStore{getErr: domain.Safef(domain.ErrValueUnreadable, "variable %q is encrypted with a key this server does not have", "lost")}
+	rec := authGet(variablesServer(store), http.MethodGet, "/api/v2/variables/lost", "")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("GET /api/v2/variables/lost = %d, want 500", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `variable \"lost\" is encrypted with a key this server does not have`) {
+		t.Errorf("body %s does not explain the failure", body)
+	}
+}
+
+func TestListVariablesFilters(t *testing.T) {
+	store := &fakeVariableStore{
+		vars: map[string]domain.Variable{
+			"env_staging": {Key: "env_staging", Value: "staging"},
+			"env_prod":    {Key: "env_prod", Value: "production"},
+			"app_timeout": {Key: "app_timeout", Value: "30"},
+		},
+	}
+	srv := variablesServer(store)
+
+	t.Run("prefix pattern filter", func(t *testing.T) {
+		rec := authGet(srv, http.MethodGet, "/api/v2/variables?variable_key_prefix_pattern=env_", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET = %d, want 200", rec.Code)
+		}
+		var resp variableCollectionDTO
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decoding body: %v", err)
+		}
+		if resp.TotalEntries != 2 || len(resp.Variables) != 2 {
+			t.Errorf("got total %d, vars %d; want 2", resp.TotalEntries, len(resp.Variables))
+		}
+	})
+
+	t.Run("substring pattern filter", func(t *testing.T) {
+		rec := authGet(srv, http.MethodGet, "/api/v2/variables?variable_key_pattern=prod", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET = %d, want 200", rec.Code)
+		}
+		var resp variableCollectionDTO
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decoding body: %v", err)
+		}
+		if resp.TotalEntries != 1 || len(resp.Variables) != 1 || resp.Variables[0].Key != "env_prod" {
+			t.Errorf("got total %d, vars %+v; want 1 (env_prod)", resp.TotalEntries, resp.Variables)
+		}
+	})
 }

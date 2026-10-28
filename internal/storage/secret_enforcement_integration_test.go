@@ -97,7 +97,7 @@ func seedDeclaringRun(t *testing.T, repo *storage.Repository, sched *storage.Sch
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo.SetCipher(cipher)
+	repo.Configure(storage.WithCipher(cipher))
 
 	for _, v := range []domain.Variable{{Key: "V_DECLARED", Value: "d"}, {Key: "V_OTHER", Value: "o"}} {
 		if err := repo.SetVariable(ctx, "default", v); err != nil {
@@ -225,7 +225,7 @@ func TestSecretRoundTripObserveDoesNotDenyNotLive(t *testing.T) {
 	if err := sched.ApplyTransition(ctx, runUUID, "declares", domain.TaskStateSuccess); err != nil {
 		t.Fatalf("ApplyTransition to success: %v", err)
 	}
-	if live, err := exec.IsTaskInstanceLive(ctx, auth.AgentIdentity{RunID: runUUID, TaskID: "declares", TryNumber: 1}); err != nil || live {
+	if live, err := exec.IsTaskInstanceLive(ctx, auth.AgentIdentity{TenantID: defaultTenantID(), RunID: runUUID, TaskID: "declares", TryNumber: 1}); err != nil || live {
 		t.Fatalf("precondition: declares must be not-live, got live=%v err=%v", live, err)
 	}
 

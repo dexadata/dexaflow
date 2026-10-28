@@ -313,9 +313,10 @@ func TestBuildPodMergesLabelsAndAnnotations(t *testing.T) {
 	if pod.Annotations["leoflow.io/task-instance-id"] != "ti-1" {
 		t.Errorf("Dexaflow annotation overridden by DAG: %q, want ti-1", pod.Annotations["leoflow.io/task-instance-id"])
 	}
-	// Omission leaves only Dexaflow's own metadata (6 labels, 1 annotation).
+	// Omission leaves only Dexaflow's own metadata (6 labels, 2 annotations:
+	// the task instance id and the raw task id, #1598).
 	base := BuildPod(sampleReq())
-	if len(base.Labels) != 6 || len(base.Annotations) != 1 {
+	if len(base.Labels) != 6 || len(base.Annotations) != 2 {
 		t.Errorf("unexpected base metadata: labels=%v annotations=%v", base.Labels, base.Annotations)
 	}
 }

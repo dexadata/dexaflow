@@ -1,9 +1,12 @@
 package api
 
 import (
+	"cmp"
+	"context"
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -152,8 +155,8 @@ func toTaskResponse(spec domain.DAGSpec, t domain.TaskSpec) taskResponseDTO {
 		// (the Tasks Details view calls Object.keys on it, so it must not be null).
 		RetryDelay:        timeDeltaDTO{Type: "TimeDelta", Seconds: 300},
 		DownstreamTaskIDs: downstreamIDs(spec.Tasks, t.TaskID),
-		Pool:              "default_pool",
-		PoolSlots:         1,
+		Pool:              cmp.Or(t.Pool, domain.DefaultPoolName),
+		PoolSlots:         t.EffectivePoolSlots(),
 		PriorityWeight:    1,
 		WeightRule:        "downstream",
 		UIColor:           "#fff",
@@ -247,14 +250,30 @@ func taskDetailHandler(specs DagSpecReader) gin.HandlerFunc {
 	}
 }
 
-// dagSourceHandler implements GET /api/v2/dagSources/{dag_id} — the Code view.
-// It returns the original dag.py Python (captured at compile time), matching
-// Airflow. Versions compiled before source capture fall back to the compiled
+// DagSourceReader reads one version of a DAG and the spec registered with it:
+// the version numbered versionNumber (the version_number of the dagVersions
+// listing), or the newest version when versionNumber is 0. It returns
+// domain.ErrNotFound when the caller's tenant has no such version. The spec
+// may be shared with a cache: callers only read it.
+type DagSourceReader interface {
+	GetDagVersionSpec(ctx context.Context, tenant, dagID string, versionNumber int) (domain.DagVersion, domain.DAGSpec, error)
+}
+
+// dagSourceHandler implements GET /api/v2/dagSources/{dag_id}, the Code view,
+// with Airflow 3.2's semantics: the version_number query parameter selects the
+// DAG version whose source is served, and without it (or with 0) the newest
+// version is served (not necessarily the current one, after a rollback). An unknown
+// version is a 404. It returns the original dag.py Python captured at compile
+// time; versions compiled before source capture fall back to the compiled
 // spec JSON so the tab still renders.
-func dagSourceHandler(specs DagSpecReader) gin.HandlerFunc {
+func dagSourceHandler(sources DagSourceReader) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		dagID := c.Param("dag_id")
-		spec, err := specs.GetCurrentSpec(c.Request.Context(), tenantOf(c), dagID)
+		number, ok := sourceVersionNumber(c)
+		if !ok {
+			return
+		}
+		version, spec, err := sources.GetDagVersionSpec(c.Request.Context(), tenantOf(c), dagID, number)
 		if err != nil {
 			handleRepoError(c, err)
 			return
@@ -271,20 +290,69 @@ func dagSourceHandler(specs DagSpecReader) gin.HandlerFunc {
 		c.JSON(http.StatusOK, gin.H{
 			"content":          content,
 			"dag_id":           dagID,
-			"version_number":   1,
+			"version_number":   version.VersionNumber,
 			"dag_display_name": dagID,
 		})
 	}
 }
 
-// registerUITasks mounts the task + source endpoints when a spec reader is set.
-func registerUITasks(r gin.IRouter, specs DagSpecReader) {
+// sourceVersionNumber reads dagSources' optional version_number: 0, the
+// newest version, when it is absent or 0 (Airflow tests `if version_number:`).
+// A value that is not an integer is a 400. A negative one names no version,
+// so the reader answers it with a 404, as in Airflow. It reports false after
+// aborting the request.
+func sourceVersionNumber(c *gin.Context) (int, bool) {
+	raw, set := c.GetQuery("version_number")
+	if !set {
+		return 0, true
+	}
+	number, err := strconv.Atoi(raw)
+	if err != nil {
+		AbortProblem(c, http.StatusBadRequest, "bad request", "version_number must be an integer")
+		return 0, false
+	}
+	return number, true
+}
+
+// dagVersionSpecHandler implements GET
+// /api/v2/dags/{dag_id}/dagVersions/{version_number}/spec: the dag.json
+// registered with that version, current or not, as dagSpecHandler serves the
+// current one. `dexaflow promote` reads it to register the same version on
+// another control plane (#1708). A number that is not an integer is a 400;
+// one that names no version of the caller's tenant, 0 and negatives
+// included, is a 404 (0 is not the newest version here, unlike dagSources).
+func dagVersionSpecHandler(sources DagSourceReader) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		number, err := strconv.Atoi(c.Param("version_number"))
+		if err != nil {
+			AbortProblem(c, http.StatusBadRequest, "bad request", "version_number must be an integer")
+			return
+		}
+		if number <= 0 {
+			AbortProblem(c, http.StatusNotFound, "not found", "version not found")
+			return
+		}
+		_, spec, err := sources.GetDagVersionSpec(c.Request.Context(), tenantOf(c), c.Param("dag_id"), number)
+		if err != nil {
+			handleRepoError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, spec)
+	}
+}
+
+// registerUITasks mounts the task and spec endpoints when a spec reader is
+// set, and the source endpoint when a source reader is.
+func registerUITasks(r gin.IRouter, specs DagSpecReader, sources DagSourceReader) {
+	if sources != nil {
+		r.GET("/api/v2/dagSources/:dag_id", RequirePermission("read", "dag"), dagSourceHandler(sources))
+		r.GET("/api/v2/dags/:dag_id/dagVersions/:version_number/spec", RequirePermission("read", "dag"), dagVersionSpecHandler(sources))
+	}
 	if specs == nil {
 		return
 	}
 	r.GET("/api/v2/dags/:dag_id/tasks", RequirePermission("read", "task"), tasksHandler(specs))
 	r.GET("/api/v2/dags/:dag_id/tasks/:task_id", RequirePermission("read", "task"), taskDetailHandler(specs))
-	r.GET("/api/v2/dagSources/:dag_id", RequirePermission("read", "dag"), dagSourceHandler(specs))
 	r.GET("/api/v2/dags/:dag_id/spec", RequirePermission("read", "dag"), dagSpecHandler(specs))
 }
 

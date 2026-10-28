@@ -22,14 +22,9 @@ import (
 // replace a live SSO session and a JWT-only deployment ran with a session cookie
 // any script could read.
 
-// loginPageTemplate is a self-contained login form. Its script posts to
-// /auth/token, whose response carries the session cookie, and navigates to next.
-var loginPageTemplate = template.Must(template.New("login").Parse(`<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dexaflow — Sign in</title>
-<style>
- body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;
+// signInPageCSS is the look of Dexaflow's own sign-in pages: the login form
+// and the CLI consent page (cli_consent.go) share it.
+const signInPageCSS = ` body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;
    min-height:100vh;align-items:center;justify-content:center;margin:0}
  form{background:#1e293b;padding:2rem;border-radius:12px;width:320px;box-shadow:0 10px 30px rgba(0,0,0,.4)}
  h1{font-size:1.25rem;margin:0 0 1rem}
@@ -46,7 +41,16 @@ var loginPageTemplate = template.Must(template.New("login").Parse(`<!doctype htm
  details{margin-top:1.1rem}
  summary{color:#94a3b8;font-size:.8rem;cursor:pointer}
  code{font-size:.72rem;color:#cbd5e1}
-</style></head><body>
+`
+
+// loginPageTemplate is a self-contained login form. Its script posts to
+// /auth/token, whose response carries the session cookie, and navigates to next.
+var loginPageTemplate = template.Must(template.New("login").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dexaflow — Sign in</title>
+<style>
+{{ .CSS }}</style></head><body>
 <form id="f" autocomplete="on">
  <h1>Sign in to Dexaflow</h1>
 {{ if .SSOFailed }} <p class="ssoerr" role="alert">Dexaflow could not complete the sign-in on its side, so you are
@@ -86,9 +90,14 @@ var loginPageTemplate = template.Must(template.New("login").Parse(`<!doctype htm
        body: JSON.stringify({username: f.username.value, password: f.password.value})
      });
      if (!r.ok) {
+       // 503 is an outage (the user store could not be reached), not a wrong
+       // password: saying "Invalid credentials" would send the user to retype
+       // a password that may be right (#1099).
        document.getElementById('e').textContent = r.status === 429
          ? 'Too many attempts. Wait about a minute, then try again.'
-         : 'Invalid credentials';
+         : r.status === 503
+           ? 'Sign-in is temporarily unavailable. Try again shortly.'
+           : 'Invalid credentials';
        return;
      }
      // The session cookie arrived with the response. The body still carries the
@@ -154,7 +163,7 @@ func (o loginPageOpts) autoRedirectTarget(c *gin.Context) (string, bool) {
 	if c.Query(ssoErrorParam) != "" || c.Query(loginLocalParam) != "" {
 		return "", false
 	}
-	next := sanitizeNext(c.Query("next"))
+	next := sanitizeNext(c.Query("next"), c.Request.Host)
 	if o.externalSignIn != "" {
 		return withNext(o.externalSignIn, next), true
 	}
@@ -180,10 +189,32 @@ func withNext(raw, next string) string {
 }
 
 // sanitizeNext keeps the post-login redirect on this origin: a single-slash
-// absolute path only, defaulting to "/". This blocks open redirects (e.g.
-// "//evil.com" or "https://evil.com").
-func sanitizeNext(next string) string {
-	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
+// absolute path only, defaulting to "/". This blocks open redirects (such as
+// "//evil.com" or "https://evil.com"). When given an absolute in-app URL whose
+// host matches the current request host, its origin is stripped so the local
+// path, query and hash are preserved safely (#1127). host is the request's Host;
+// empty accepts paths only.
+func sanitizeNext(next, host string) string {
+	if next == "" {
+		return "/"
+	}
+	if strings.HasPrefix(next, "http://") || strings.HasPrefix(next, "https://") {
+		u, err := url.Parse(next)
+		if err != nil {
+			return "/"
+		}
+		if host == "" || !strings.EqualFold(u.Host, host) {
+			return "/"
+		}
+		target := u.RequestURI()
+		if u.Fragment != "" {
+			target += "#" + u.Fragment
+		}
+		next = target
+	}
+	// Browsers drop tabs and newlines from a URL and read "\\" as "/", so
+	// "/\t/evil.com" or "/\\evil.com" would leave the origin.
+	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.ContainsAny(next, "\\\t\r\n") {
 		return "/"
 	}
 	return next
@@ -212,7 +243,7 @@ func loginPageHandler(o loginPageOpts) gin.HandlerFunc {
 		c.Status(http.StatusOK)
 		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.Header("Cache-Control", "no-cache")
-		next := sanitizeNext(c.Query("next"))
+		next := sanitizeNext(c.Query("next"), c.Request.Host)
 		// Next is embedded as a JS string literal. NextQuery goes into an href, and
 		// html/template URL-escapes a value in that context ITSELF, so escaping it
 		// here too produced next=%252Fdags: the OIDC handler then saw a literal
@@ -237,7 +268,9 @@ func loginPageHandler(o loginPageOpts) gin.HandlerFunc {
 			// the form only when it is a way in.
 			Collapse bool
 			Focus    bool
+			CSS      template.CSS
 		}{
+			CSS:        template.CSS(signInPageCSS),
 			Next:       template.JS("'" + template.JSEscapeString(next) + "'"),
 			NextQuery:  next,
 			SSO:        o.sso,
@@ -251,16 +284,16 @@ func loginPageHandler(o loginPageOpts) gin.HandlerFunc {
 	}
 }
 
-// logoutHandler implements GET /api/v2/auth/logout: it clears the _token cookie
+// logoutHandler implements GET /api/v2/auth/logout: it clears the session cookie
 // and returns to the login page, or to the operator's external sign-out when
 // one is configured (#1288). It clears through the same helper both login
 // paths set through, so the deletion can never disagree with the cookie it is
 // deleting.
-func logoutHandler(insecureCookies bool, externalSignOut string) gin.HandlerFunc {
+func logoutHandler(session sessionCookieSpec, externalSignOut string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Both halves are needed and they are about different things. The helper
 		// is how the deletion can never disagree with the cookie it deletes.
-		clearSessionCookie(c, insecureCookies)
+		clearSessionCookie(c, session)
 		if externalSignOut != "" {
 			c.Redirect(http.StatusFound, externalSignOut)
 			return

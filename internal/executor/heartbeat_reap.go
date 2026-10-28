@@ -168,11 +168,16 @@ type agentLostReaper struct {
 	// ceilingStops tracks the background stops runPastCeiling starts, so a
 	// test can wait for them.
 	ceilingStops sync.WaitGroup
+	// ceilingPager and silentPager walk the running list across sweeps for
+	// the two Lite passes, so live attempts cannot hide the rest behind a full
+	// page (R-07, #1597).
+	ceilingPager reapPager
+	silentPager  reapPager
 }
 
 // runningLister is the ListRunningTasks slice of PodLostReapStore.
 type runningLister interface {
-	ListRunningTasks(ctx context.Context, grace time.Duration) ([]PodLostCandidate, error)
+	ListRunningTasks(ctx context.Context, grace time.Duration, after ReapCursor) ([]PodLostCandidate, error)
 }
 
 func newAgentLostReaper(store HeartbeatReapStore, logger *slog.Logger, threshold time.Duration, rec DecisionRecorder) *agentLostReaper {
@@ -234,10 +239,11 @@ func (r *agentLostReaper) runPastCeiling(ctx context.Context, now time.Time) err
 	if !ok || r.running == nil || r.ceiling <= 0 {
 		return nil
 	}
-	candidates, err := r.running.ListRunningTasks(ctx, r.ceiling)
+	candidates, err := r.running.ListRunningTasks(ctx, r.ceiling, r.ceilingPager.after())
 	if err != nil {
 		return err
 	}
+	advancePager(&r.ceilingPager, candidates)
 	for _, c := range candidates {
 		if c.RunningSince.IsZero() || now.Sub(c.RunningSince) <= r.ceiling {
 			continue
@@ -345,10 +351,11 @@ func (r *agentLostReaper) runNeverHeartbeated(ctx context.Context, now time.Time
 	if r.procs == nil || r.running == nil {
 		return nil
 	}
-	candidates, err := r.running.ListRunningTasks(ctx, r.threshold)
+	candidates, err := r.running.ListRunningTasks(ctx, r.threshold, r.silentPager.after())
 	if err != nil {
 		return err
 	}
+	advancePager(&r.silentPager, candidates)
 	for _, c := range candidates {
 		if c.Heartbeated || !IsPodLostCandidate(c, r.threshold, now) {
 			continue
@@ -461,7 +468,9 @@ func (r *agentLostReaper) reapOne(ctx context.Context, c AgentLostCandidate, now
 		r.record("agent_lost_teardown_gate_skip")
 		return
 	}
-	if derr := r.pods.DeleteTaskPod(ctx, c.attempt()); derr != nil {
+	td, derr := r.pods.DeleteTaskPod(ctx, c.attempt())
+	recordPreserved(r.record, "agent_lost_terminal_pod_preserved", td)
+	if derr != nil {
 		r.logger.Error("deleting agent-lost task pod",
 			"ti", c.TaskInstanceID, "run", c.DagRunID, "task", c.TaskID, "try", c.TryNumber, "error", derr)
 		r.record("agent_lost_pod_delete_error")
@@ -484,22 +493,29 @@ func (r *agentLostReaper) writeAgentLostMarker(c AgentLostCandidate, now time.Ti
 // Best-effort, like writeAgentLostMarker: a nil sink or a write error never
 // blocks the reap.
 func (r *agentLostReaper) writeMarker(c AgentLostCandidate, now time.Time, msg string) {
-	if r.sink == nil {
-		return
-	}
 	ref := logs.Ref{
 		TenantID: c.TenantID, DagID: c.DagID, RunID: c.DagRunID, TaskID: c.TaskID,
 		TryNumber: c.TryNumber, AttemptEpoch: c.AttemptEpoch,
 	}
-	ev := logs.Event{
+	if err := appendKilledMarker(r.sink, ref, now, msg); err != nil {
+		r.record("agent_lost_log_marker_error")
+	}
+}
+
+// appendKilledMarker appends msg as the final system line of the attempt ref
+// names, so a log the reaper cut short ends with the reason instead of a
+// silent truncation (#861). A nil sink is a no-op. The caller meters an error
+// and carries on: the DB state and server slog remain the source of truth.
+func appendKilledMarker(sink logSink, ref logs.Ref, now time.Time, msg string) error {
+	if sink == nil {
+		return nil
+	}
+	return sink.AppendEvent(ref, logs.Event{
 		Time:    now,
 		Level:   "error",
 		Stream:  "system",
 		Message: msg,
-	}
-	if err := r.sink.AppendEvent(ref, ev); err != nil {
-		r.record("agent_lost_log_marker_error")
-	}
+	})
 }
 
 func (r *agentLostReaper) record(decision string) {

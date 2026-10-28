@@ -14,6 +14,7 @@ import (
 // inside the artifact the threat model is about. So the command warns instead,
 // and the user decides.
 func TestUninstallWarnsWhenItWouldStrandAPreservedDatastore(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		hasKey    bool
