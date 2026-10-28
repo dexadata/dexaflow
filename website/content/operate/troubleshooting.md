@@ -20,7 +20,7 @@ guides cover a clean first run; this page is where you land when one goes wrong.
 dexaflow doctor                          # host check (OS, python, docker, k3d, kubectl, recommended tier); with a target, the deploy preflight too
 dexaflow version                         # version + commit + build date
 tail -f /tmp/leoflow-lite.log           # the live boot log when you ran `dexaflow lite` via lite-redeploy
-journalctl -u dexaflow-server -f         # Pro / systemd hosts
+journalctl -u dexaflow-server -f         # Cluster / systemd hosts
 ```
 
 {{% alert title="Every binary reports its version" color="success" %}}
@@ -48,7 +48,7 @@ dexaflow-mcp --version
 
 ## The migration Job
 
-On Pro, `helm install` and `helm upgrade` run the migrations in a
+On Cluster, `helm install` and `helm upgrade` run the migrations in a
 pre-install/pre-upgrade hook Job. When it fails, Helm prints only
 `failed pre-install: resource Job/<namespace>/<release>-migrate not ready ...
 Job Failed`; the reason is in the pod's log:
@@ -82,7 +82,7 @@ Exit code 2 is a command line the image cannot run, which only a changed
 
 ## A control plane that is up but not ready
 
-A Pro control plane that finds its database schema absent or behind does not
+A Cluster control plane that finds its database schema absent or behind does not
 exit. It stays up, `/healthz` answers 200 so Kubernetes does not restart it,
 and `/readyz` answers 503 with the reason and what to run. It serves nothing
 else meanwhile: every other request, the API and the UI included, gets the
@@ -125,7 +125,7 @@ restarted pod waits as above with a `database replaced` reason.
 
 ## A replaced database
 
-Each Pro release records an installation id: the migration Job writes it into
+Each Cluster release records an installation id: the migration Job writes it into
 the database (the one-row `installation` table) and into a ConfigMap named
 `<release>-installation` that it creates in the release namespace, and the
 control plane reads it from the ConfigMap. When the database answers with
@@ -188,7 +188,7 @@ recorded and nothing is compared, unless your own migration step runs the
 | `the Postgres port 5432 is already in use` | Another Postgres holds the port the Docker Postgres maps. Lite owns its database and does not run on another Postgres, so stop that one, or run `dexaflow lite --postgres managed`, a private Postgres on a Unix socket that needs no port. |
 | `refusing to reset, nothing was dropped: DEXAFLOW_DATABASE_URL is set and points at ...` | `dexaflow db reset` only drops Lite's own database, which the message names (host, port, database). Lite does not read `DEXAFLOW_DATABASE_URL` or `LEOFLOW_DATABASE_URL`, so while either names another database the reset refuses rather than drop a database you did not name. Unset the variable and run it again. |
 | `provision incomplete: dev database` | The managed Postgres did not start. End-users run `dexaflow setup` to bootstrap the managed runtime. Contributors on a source checkout use `dexaflow lite provision`. If Docker is the chosen backend, confirm the daemon is up. |
-| Pro refuses to boot with `DEXAFLOW_AGENT_ALLOW_INSECURE_SECRETS=true` set | The Pro edition rejects this flag (config key `agent.allow_insecure_secrets`) at boot (it would expose plaintext secrets). Unset it for Pro deployments; it stays valid for Lite where the agent talks loopback gRPC without TLS by design. |
+| Cluster refuses to boot with `DEXAFLOW_AGENT_ALLOW_INSECURE_SECRETS=true` set | The cluster edition rejects this flag (config key `agent.allow_insecure_secrets`) at boot (it would expose plaintext secrets). Unset it for Cluster deployments; it stays valid for Lite where the agent talks loopback gRPC without TLS by design. |
 | `jwt_secret is empty; falling back to the dev-only constant` | First boot before `dexaflow setup` has run, or `DEXAFLOW_SECRET_KEY` not set. Run `dexaflow setup` — it provisions a per-install secret. Not fatal on Lite (the constant works), but rotate before sharing the install. |
 | Permission denied on `/tmp/leoflow-*` | Older Lite versions shared `/tmp/leoflow*` paths across users on multi-user hosts. Update to the latest release — paths are now per-user. |
 
@@ -262,7 +262,7 @@ attempt of one task. Without a task, `-f` follows the run to its end. The sink d
 (must be writable; `dexaflow lite` points it at a temp dir).
 
 {{% alert title="Not kubectl logs" color="warning" %}}
-On Pro, `kubectl logs <pod>` shows only the **agent wrapper's** own stderr —
+On Cluster, `kubectl logs <pod>` shows only the **agent wrapper's** own stderr:
 never the task's stdout/stderr, which the agent ships to the control plane's
 log sink instead. Use the UI, the API route above, or `dexaflow runs logs`.
 {{% /alert %}}

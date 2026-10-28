@@ -1210,6 +1210,29 @@ func TestStagingVolumesIntegration(t *testing.T) {
 			t.Errorf("deleted volume %s still listed active", pvc)
 		}
 	}
+
+	// A cleared and re-run run recreates the same deterministic PVC: recording it
+	// again must bring the row back to active, or the orphan sweep (#1615) sees
+	// a live run's claim as unrecorded and deletes it once the TTL passes.
+	if err := store.RecordStagingVolume(ctx, tenantUUID, dagID, runUUID, pvc, "5Gi"); err != nil {
+		t.Fatalf("record after delete: %v", err)
+	}
+	vols, err = store.ListActiveStagingVolumes(ctx)
+	if err != nil {
+		t.Fatalf("list after re-record: %v", err)
+	}
+	revived := false
+	for _, v := range vols {
+		if v.PVCName == pvc {
+			revived = true
+			if time.Since(v.CreatedAt) > time.Minute {
+				t.Errorf("revived volume kept its old created_at %v; the orphan TTL must restart", v.CreatedAt)
+			}
+		}
+	}
+	if !revived {
+		t.Fatalf("re-recorded volume %s not listed active after a re-run", pvc)
+	}
 }
 
 // TestClearRebindsRunToCurrentVersion guards the OPT-IN mutability rule
@@ -1724,5 +1747,19 @@ func TestFilteredListQueriesIntegration(t *testing.T) {
 	}
 	if total != 1 || len(tis) != 1 || tis[0].TaskID != "transform" {
 		t.Errorf("list tis pool: got %d (len %d), want 1 (transform)", total, len(tis))
+	}
+}
+
+// An unknown last_dag_run_state is the client's mistake: it must come back as
+// a validation error (400), not reach Postgres and fail the enum cast (500,
+// #2202). A known state still filters.
+func TestListDagsWithFilterRefusesAnUnknownRunState(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	_, _, err := repo.ListDagsWithFilter(ctx, "default", domain.DagFilter{LastDagRunState: "bogus", Limit: 10})
+	if !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("unknown state: err = %v, want ErrValidation", err)
+	}
+	if _, _, err := repo.ListDagsWithFilter(ctx, "default", domain.DagFilter{LastDagRunState: "success", Limit: 10}); err != nil {
+		t.Fatalf("known state: %v", err)
 	}
 }

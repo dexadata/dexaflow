@@ -230,6 +230,8 @@ type Dag struct {
 	CurrentVersionID pgtype.UUID        `json:"current_version_id"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	NextRunAt        pgtype.Timestamptz `json:"next_run_at"`
+	ScheduleEpoch    int64              `json:"schedule_epoch"`
 }
 
 type DagFavorite struct {
@@ -405,6 +407,9 @@ type Tenant struct {
 	RunsDay                    pgtype.Date        `json:"runs_day"`
 	RunsDayCount               int32              `json:"runs_day_count"`
 	MaxTaskPoolSlots           int32              `json:"max_task_pool_slots"`
+	SuspendedAt                pgtype.Timestamptz `json:"suspended_at"`
+	SuspensionMode             *string            `json:"suspension_mode"`
+	SuspensionReason           string             `json:"suspension_reason"`
 }
 
 type User struct {

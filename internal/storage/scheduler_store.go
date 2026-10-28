@@ -178,6 +178,7 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 			TenantID:          uuidToString(run.TenantID),
 			State:             domain.DagRunState(run.State),
 			Held:              row.DagPaused,
+			Suspension:        domain.SuspensionMode(row.TenantSuspensionMode),
 			MaxActiveRuns:     int(row.DagMaxActiveRuns),
 			Tasks:             spec.Tasks,
 			Graph:             graph,
@@ -726,10 +727,10 @@ func (s *SchedulerStore) MarkRunAlertDelivered(ctx context.Context, runID string
 	})
 }
 
-// ScheduledDAGs returns active, unpaused, cron-scheduled DAGs with the logical
-// date of their most recent run.
-func (s *SchedulerStore) ScheduledDAGs(ctx context.Context) ([]scheduler.ScheduledDAG, error) {
-	rows, err := s.q.ListScheduledDags(ctx)
+// ScheduledDAGs lists the scheduled DAGs that may be due at now: those with no
+// stored next due time and those whose time is at or before now (#2175).
+func (s *SchedulerStore) ScheduledDAGs(ctx context.Context, now time.Time) ([]scheduler.ScheduledDAG, error) {
+	rows, err := s.q.ListScheduledDags(ctx, pgtype.Timestamptz{Time: now, Valid: true})
 	if err != nil {
 		return nil, fmt.Errorf("listing scheduled dags: %w", err)
 	}
@@ -743,9 +744,27 @@ func (s *SchedulerStore) ScheduledDAGs(ctx context.Context) ([]scheduler.Schedul
 			StartDate:     timePtr(r.StartDate),
 			Catchup:       r.Catchup,
 			MaxActiveRuns: int(r.MaxActiveRuns),
+			NextRunAt:     timePtr(r.NextRunAt),
+			ScheduleEpoch: r.ScheduleEpoch,
 		})
 	}
 	return out, nil
+}
+
+// SetNextRunAt stores when the DAG is next due, unless its schedule epoch
+// moved past epoch since it was listed: a new version or a deleted run cleared
+// the time, and the next tick computes it again from the DAG as it is now.
+func (s *SchedulerStore) SetNextRunAt(ctx context.Context, tenantID, dagID string, epoch int64, at time.Time) error {
+	tid, err := parseUUID(tenantID)
+	if err != nil {
+		return fmt.Errorf("next run tenant id %q: %w", tenantID, err)
+	}
+	if err := s.q.SetDagNextRunAt(ctx, queries.SetDagNextRunAtParams{
+		NextRunAt: pgtype.Timestamptz{Time: at, Valid: true}, TenantID: tid, DagID: dagID, ScheduleEpoch: epoch,
+	}); err != nil {
+		return fmt.Errorf("storing next run: %w", err)
+	}
+	return nil
 }
 
 // CreateScheduledRun inserts a scheduled run for the DAG dagID owned by the
@@ -1241,4 +1260,20 @@ func reapCursorArgs(c executor.ReapCursor) (pgtype.Timestamptz, pgtype.UUID, err
 		return pgtype.Timestamptz{}, pgtype.UUID{}, fmt.Errorf("reap cursor: %w", err)
 	}
 	return pgtype.Timestamptz{Time: c.At, Valid: true}, id, nil
+}
+
+// FailStoppedTenantTaskInstances fails the queued and running task instances
+// of the tenant while it is suspended in stop mode, and returns how many it
+// failed (scheduler.TenantStopper, #2181). Once the suspension is lifted or
+// changed to another mode it fails nothing.
+func (s *SchedulerStore) FailStoppedTenantTaskInstances(ctx context.Context, tenantID string) (int64, error) {
+	tid, err := parseUUID(tenantID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := s.q.FailStoppedTenantTaskInstances(ctx, tid)
+	if err != nil {
+		return 0, fmt.Errorf("failing the task instances of a stopped tenant: %w", err)
+	}
+	return n, nil
 }

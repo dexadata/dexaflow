@@ -163,6 +163,7 @@ type Server struct {
 	tailBudget           *tailBudget
 	secrets              SecretsStore
 	secretAudit          SecretScopeAuditor
+	emptyScopeWarned     emptyScopeWarnings
 	liveness             TaskLivenessChecker
 	livenessMode         string
 	livenessAudit        SecretLivenessAuditor

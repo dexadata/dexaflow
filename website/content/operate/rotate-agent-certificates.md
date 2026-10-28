@@ -5,7 +5,7 @@ description: "Renew the agent gRPC server certificate and roll the CA that task 
 ---
 
 Task pods verify the control plane's gRPC server certificate against the CA
-bundle in `agentTLS.caConfigMap` (see [Pro TLS](/operate/pro-tls/) for how the
+bundle in `agentTLS.caConfigMap` (see [Cluster TLS](/operate/cluster-tls/) for how the
 trust is set up). This page covers the two rotations that channel needs:
 renewing the **server certificate**, and replacing the **CA** that signs it.
 

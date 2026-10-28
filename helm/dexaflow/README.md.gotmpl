@@ -466,7 +466,7 @@ boot and would otherwise leave an edited tenant map sitting on disk unread.
 
 For a one-cluster evaluation (kind, minikube, k3d, scratch namespace), the
 chart deliberately won't fall back to embedded datastores — that's Lite's
-job, not Pro's (see `templates/deployment.yaml:8-13`). The supported PoC
+job, not Cluster's (see `templates/deployment.yaml:8-13`). The supported PoC
 path is to install Bitnami's Postgres + Redis charts alongside Dexaflow:
 
 - Recipe: [`helm/dexaflow/examples/README.md`](https://github.com/dexadata/dexaflow/tree/main/helm/dexaflow/examples/README.md)

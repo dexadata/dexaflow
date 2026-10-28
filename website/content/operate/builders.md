@@ -29,15 +29,15 @@ no container daemon on your machine.
 Every build prints the builder it took and why before it starts:
 
 ```console
-$ dexaflow deploy --server https://pro.example.com --yes
-server:     https://pro.example.com (--server)
-registry:   us-central1-docker.pkg.dev/acme/dags/first-pro-dag (from dexaflow.yaml)
+$ dexaflow deploy --server https://cluster.example.com --yes
+server:     https://cluster.example.com (--server)
+registry:   us-central1-docker.pkg.dev/acme/dags/first-cluster-dag (from dexaflow.yaml)
 platforms:  linux/amd64 (from the default)
 ...
 builder:    remote (cloud-build, project acme-ci), the project ships its own Dockerfile, which needs a real build, so the remote builder from dexaflow.yaml builds the whole image
 ...
-Deployed first_pro_dag -> https://pro.example.com
-  image us-central1-docker.pkg.dev/acme/dags/first-pro-dag@sha256:9f2c...
+Deployed first_cluster_dag -> https://cluster.example.com
+  image us-central1-docker.pkg.dev/acme/dags/first-cluster-dag@sha256:9f2c...
 ```
 
 With no remote builder configured, a build that no earlier path covers falls
@@ -720,7 +720,7 @@ the registry cannot be read or answers something that is not a list. The
 error keeps the cause and says how to build one platform:
 
 ```text
-Error: the multi-platform build failed: building for linux/amd64,linux/arm64 with local-daemon (docker) needs a tool that pushes one image per platform under one manifest list, such as docker with buildx or with the containerd image store enabled, or podman. Otherwise build one platform: set build.platforms in dexaflow.yaml (or pass --platform where the command has it), for example linux/amd64: the pushed image ghcr.io/your-org/first-pro-dag@sha256:... is not a manifest list holding every platform; missing linux/arm64
+Error: the multi-platform build failed: building for linux/amd64,linux/arm64 with local-daemon (docker) needs a tool that pushes one image per platform under one manifest list, such as docker with buildx or with the containerd image store enabled, or podman. Otherwise build one platform: set build.platforms in dexaflow.yaml (or pass --platform where the command has it), for example linux/amd64: the pushed image ghcr.io/your-org/first-cluster-dag@sha256:... is not a manifest list holding every platform; missing linux/arm64
 ```
 
 `compile --build --push` runs the same check; a one-platform build is a plain

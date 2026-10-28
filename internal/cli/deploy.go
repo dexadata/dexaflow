@@ -91,7 +91,7 @@ func newDeployCommand() *cobra.Command {
 	var o deployOptions
 	cmd := &cobra.Command{
 		Use:   "deploy [path | dag_id]",
-		Short: "Build, push, and register a DAG to a control plane (Pro).",
+		Short: "Build, push, and register a DAG to a control plane (Cluster).",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("changed-since") && o.changedSince == "" {
@@ -465,7 +465,7 @@ func requireRegistry(cfg *domain.LeoflowConfig) error {
 		return nil
 	}
 	return fmt.Errorf(`deploy requires a container registry, but none is configured.
-  A Pro deploy pushes the DAG image to a registry your cluster can pull from
+  A cluster deploy pushes the DAG image to a registry your cluster can pull from
   (Lite runs locally and needs none). Set one, for one DAG or for all:
 
       dexaflow.yaml:              registry: {url: ghcr.io/<your-org>}

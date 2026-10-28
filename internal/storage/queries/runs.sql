@@ -83,7 +83,14 @@ WHERE r.tenant_id = sqlc.arg(tenant_id) AND r.dag_id = sqlc.arg(dag_id)
 
 -- name: DeleteDagRun :execrows
 -- Removes one run; its task_instances and XCom rows cascade (ON DELETE CASCADE).
-DELETE FROM dag_runs WHERE tenant_id = $1 AND dag_id = $2 AND run_id = $3;
+-- The DAG's stored next due time is cleared in the same statement (#2175): the
+-- deleted run may have been its latest, which the time was computed from.
+WITH invalidate AS (
+  UPDATE dags d SET next_run_at = NULL, schedule_epoch = d.schedule_epoch + 1
+  WHERE d.tenant_id = sqlc.arg(tenant_id) AND d.id = sqlc.arg(dag_id)
+)
+DELETE FROM dag_runs r
+WHERE r.tenant_id = sqlc.arg(tenant_id) AND r.dag_id = sqlc.arg(dag_id) AND r.run_id = sqlc.arg(run_id);
 
 -- name: ListDagRunsByDag :many
 SELECT * FROM dag_runs
@@ -206,14 +213,21 @@ WHERE id = sqlc.arg(id)
 -- hash every row of dags, a cost that grows with the number of DAGs (about 10
 -- ms against 2 ms for 500 active runs over 20000 DAGs), while the scan stays
 -- on idx_dag_runs_state and the probe keeps the cost proportional to the
--- active runs.
+-- active runs. tenant_suspension_mode is the suspension mode of the run's
+-- tenant, '' when it is not suspended (#2181): under drain or stop the tick
+-- dispatches nothing of the run and does not start it. It is a second
+-- primary-key probe, of tenants, for the same reason.
 SELECT sqlc.embed(dag_runs),
   COALESCE(d.is_paused, false)::boolean AS dag_paused,
-  COALESCE(d.max_active_runs, 0)::integer AS dag_max_active_runs
+  COALESCE(d.max_active_runs, 0)::integer AS dag_max_active_runs,
+  COALESCE(tn.suspension_mode, '')::text AS tenant_suspension_mode
 FROM dag_runs
 LEFT JOIN LATERAL (
   SELECT dags.is_paused, dags.max_active_runs FROM dags WHERE dags.id = dag_runs.dag_id LIMIT 1
 ) d ON true
+LEFT JOIN LATERAL (
+  SELECT tenants.suspension_mode FROM tenants WHERE tenants.id = dag_runs.tenant_id LIMIT 1
+) tn ON true
 WHERE dag_runs.state IN ('queued', 'running')
 ORDER BY dag_runs.queued_at;
 
@@ -508,12 +522,35 @@ RETURNING *;
 -- should I backfill on this tick?" (catchup + start_date, see #129), and
 -- "may this DAG take another active run?" (max_active_runs, see #200). The
 -- owning tenant is returned because a dag_id is unique only within its tenant
--- (#209).
+-- (#209). The DAGs of a suspended tenant are left out (#2181); a suspension
+-- that lands after this read is refused when the run is created.
+-- Only the DAGs that may be due are listed (#2175): no stored next_run_at yet,
+-- or one at or before now, the scheduler's clock. idx_dags_next_run (054)
+-- holds exactly the DAGs the first four conditions keep.
 SELECT d.tenant_id, d.dag_id, d.schedule, d.catchup, d.start_date, d.max_active_runs,
+  d.next_run_at, d.schedule_epoch,
   (SELECT max(dr.logical_date) FROM dag_runs dr WHERE dr.dag_id = d.id) AS last_logical
 FROM dags d
+JOIN tenants t ON t.id = d.tenant_id
 WHERE d.is_active = true AND d.is_paused = false
-  AND d.schedule IS NOT NULL AND d.current_version_id IS NOT NULL;
+  AND d.schedule IS NOT NULL AND d.current_version_id IS NOT NULL
+  AND (d.next_run_at IS NULL OR d.next_run_at <= sqlc.arg(now)::timestamptz)
+  AND t.suspended_at IS NULL;
+
+-- name: SetDagNextRunAt :exec
+-- Stores when the DAG is next due, unless a change
+-- bumped its schedule_epoch since the scheduler listed it (#2175). SKIP LOCKED:
+-- a register or a retention delete holding the row would otherwise stall the
+-- tick until it commits. The time is only a hint, so a skipped write leaves the
+-- earlier one, and such a change usually clears it anyway.
+UPDATE dags d
+SET next_run_at = sqlc.arg(next_run_at)::timestamptz
+WHERE d.id = (
+  SELECT x.id FROM dags x
+  WHERE x.tenant_id = sqlc.arg(tenant_id) AND x.dag_id = sqlc.arg(dag_id)
+    AND x.schedule_epoch = sqlc.arg(schedule_epoch)::bigint
+  FOR NO KEY UPDATE SKIP LOCKED
+);
 
 -- name: CreateScheduledRunByDagID :execrows
 -- Zero rows means the slot's run already exists (or the DAG has no current
@@ -1418,6 +1455,13 @@ WHERE dag_run_id = $1
 --
 -- The epoch term is the heartbeat's: exact for a token carrying attempt_epoch,
 -- absent for a claim-less one (ADR 0051 amendment).
+--
+-- 'scheduled' is live too, for a token whose epoch matches (#2201), as in
+-- BindWarmAttempt: the dispatcher claims the epoch and hands the attempt out
+-- before it records queued, and a subprocess agent or a warm worker can ask for
+-- its secrets in that gap. Only the claim mints that epoch and every later
+-- dispatch moves it, so the match names the attempt just handed out. A token
+-- without an epoch cannot be pinned that way and needs queued or running.
 SELECT EXISTS (
     SELECT 1 FROM task_instances
     WHERE dag_run_id = $1
@@ -1425,7 +1469,8 @@ SELECT EXISTS (
       AND try_number = $3
       AND tenant_id = sqlc.arg(tenant_id)
       AND (sqlc.narg(attempt_epoch)::int IS NULL OR attempt_epoch = sqlc.narg(attempt_epoch)::int)
-      AND state IN ('queued', 'running')
+      AND (state IN ('queued', 'running')
+           OR (state = 'scheduled' AND sqlc.narg(attempt_epoch)::int IS NOT NULL))
 );
 
 -- name: ClaimAttemptEpoch :one
@@ -1946,3 +1991,24 @@ WHERE (r.tenant_id, r.id) IN (
     SELECT 1 FROM task_instances ti
     WHERE ti.dag_run_id = r.id
       AND ti.state NOT IN ('success', 'failed', 'skipped', 'upstream_failed', 'removed'));
+
+-- name: FailStoppedTenantTaskInstances :execrows
+-- Fails the queued and running task instances of a tenant suspended in stop
+-- mode (#2181), as a user's mark failed does: the row is the verdict, so the
+-- attempt's next heartbeat or state report matches no live row, the agent is
+-- told to terminate and kills its task process group. The tenants join keeps
+-- it a no-op once the suspension is lifted or changed to another mode, so the
+-- service API and every scheduler tick can run it. Scheduled task instances
+-- are left alone: nothing dispatches them while the tenant is suspended, and
+-- they run once it is resumed. idx_ti_active_tenant serves the scan.
+UPDATE task_instances ti
+SET state = 'failed',
+    ended_at = now(),
+    error_message = 'stopped: the tenant was suspended in stop mode',
+    last_failure_kind = NULL,
+    infra_confirmed_at = now()
+FROM tenants t
+WHERE t.id = ti.tenant_id
+  AND ti.tenant_id = sqlc.arg(tenant_id)
+  AND t.suspension_mode = 'stop'
+  AND ti.state IN ('queued', 'running');

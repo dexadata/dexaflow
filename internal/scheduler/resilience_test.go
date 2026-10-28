@@ -52,8 +52,12 @@ func (f *flakyStore) ActiveRuns(ctx context.Context) ([]RunState, error) {
 	return f.runs, nil
 }
 
-func (f *flakyStore) ScheduledDAGs(context.Context) ([]ScheduledDAG, error) {
+func (f *flakyStore) ScheduledDAGs(context.Context, time.Time) ([]ScheduledDAG, error) {
 	return f.scheduled, nil
+}
+
+func (f *flakyStore) SetNextRunAt(context.Context, string, string, int64, time.Time) error {
+	return nil
 }
 
 func (f *flakyStore) PoolBudgets(context.Context) (map[string]int, error) {
@@ -166,6 +170,7 @@ func (r *capturingRecorder) ObserveSchedulerReacquire(_ time.Duration) {}
 func (r *capturingRecorder) ObserveSchedulerLoop(time.Duration)        {}
 func (r *capturingRecorder) RecordTaskRetry(_, _ string)               {}
 func (r *capturingRecorder) RecordSchedulerWokenTick()                 {}
+func (r *capturingRecorder) ObserveScheduleDelay(time.Duration)        {}
 func (r *capturingRecorder) RecordAlert(dagID, channelType, result string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

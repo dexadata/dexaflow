@@ -27,7 +27,7 @@
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13068/badge)](https://www.bestpractices.dev/projects/13068)
 
 [![Edition: Lite](https://img.shields.io/badge/edition-Lite-1F6FEB?labelColor=4a4a4a)](https://dexaflow.dexadata.ai/concepts/editions/#dexaflow-lite)
-[![Edition: Pro](https://img.shields.io/badge/edition-Pro-8957E5?labelColor=4a4a4a)](https://dexaflow.dexadata.ai/concepts/editions/#dexaflow-pro-chart-installable)
+[![Edition: Cluster](https://img.shields.io/badge/edition-Cluster-8957E5?labelColor=4a4a4a)](https://dexaflow.dexadata.ai/concepts/editions/#dexaflow-cluster-chart-installable)
 
 ---
 
@@ -38,11 +38,11 @@
 | | |
 |---|---|
 | [Quickstart](https://dexaflow.dexadata.ai/get-started/quickstart/) · [Installation](https://dexaflow.dexadata.ai/get-started/installation/) | get Dexaflow running locally |
-| [Operating modes](https://dexaflow.dexadata.ai/concepts/editions/) · [Editions](https://dexaflow.dexadata.ai/concepts/editions/) | Lite · Pro · Demo — the runtime split and the packaging split |
+| [Operating modes](https://dexaflow.dexadata.ai/concepts/editions/) · [Editions](https://dexaflow.dexadata.ai/concepts/editions/) | Lite · Cluster · Demo: the runtime split and the packaging split |
 | [DAG authoring](https://dexaflow.dexadata.ai/author-dags/dag-authoring/) · [Variables & Connections](https://dexaflow.dexadata.ai/author-dags/variables-connections/) | write a DAG; the Lite → deploy lifecycle |
 | [**Map-reduce for ML**](https://dexaflow.dexadata.ai/author-dags/map-reduce/) | fan-out + reduce as a Python list comprehension |
 | [CI/CD & deploy examples](https://dexaflow.dexadata.ai/operate/cicd-deploy/) | GitHub Actions · GitLab · Cloud Build/Run · generic |
-| [Helm chart](helm/dexaflow/README.md) | Pro install: values reference, hardening, PoC recipe |
+| [Helm chart](helm/dexaflow/README.md) | Cluster install: values reference, hardening, PoC recipe |
 | [HTTP API (Scalar)](https://dexaflow.dexadata.ai/api-reference.html) · [Go packages](https://dexaflow.dexadata.ai/reference/go/) · [MCP server](https://dexaflow.dexadata.ai/reference/mcp/) | API references & the LLM-agent surface |
 | [Concepts & glossary](https://dexaflow.dexadata.ai/concepts/core-concepts/) · [Architecture](https://dexaflow.dexadata.ai/concepts/architecture/) · [ADRs](https://dexaflow.dexadata.ai/project/adrs/) | the model, the *why*, and every major decision |
 | [Troubleshooting](https://dexaflow.dexadata.ai/operate/troubleshooting/) · [Security policy](SECURITY.md) | when things break; how to report a vulnerability |
@@ -67,7 +67,7 @@ Dexaflow ships in two editions. Pick the track that matches your target:
 ### Lite — the full engine on a single host
 
 The **full Dexaflow control plane on one machine** — the same engine, the same
-Airflow 3.3 UI, the same `dag.py` + `dexaflow.yaml` as Pro, in a one-command,
+Airflow 3.3 UI, the same `dag.py` + `dexaflow.yaml` as Cluster, in a one-command,
 **no-Kubernetes** package. Light to run, powerful where it counts: real
 pod-per-task execution, a **durable** Postgres datastore, hot-reload, a real
 admin login. It is not a stripped-down demo — it is the whole engine scoped to
@@ -87,13 +87,13 @@ executor for higher-fidelity local runs. Linux + macOS, amd64 + arm64
 `~/.dexaflow/dev/venvs/<dag_id>/` so conflicting dependencies between DAGs
 coexist out of the box.
 
-### Pro — Kubernetes cluster (Helm)
+### Cluster: Kubernetes cluster (Helm)
 
 ```bash
 kubectl create namespace dexaflow
-helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version 0.5.6 -n dexaflow \
-  --set image.tag=v0.5.6 \
-  --set migrations.image.tag=v0.5.6 \
+helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version 0.5.7 -n dexaflow \
+  --set image.tag=v0.5.7 \
+  --set migrations.image.tag=v0.5.7 \
   --set database.url='postgres://USER:PASS@HOST:5432/dexaflow?sslmode=verify-full' \
   --set redis.url='rediss://HOST:6380/0' \
   --set auth.jwtSecret="$(openssl rand -base64 64)" \
@@ -105,7 +105,7 @@ A release installed before the rename keeps upgrading with
 `oci://ghcr.io/dexadata/charts/leoflow`; see
 [names from before the rename](https://dexaflow.dexadata.ai/reference/published-images/#names-from-before-the-rename).
 
-Pro deploys the control plane on a real cluster (`dexaflow-server` Deployment
+Cluster deploys the control plane on a real cluster (`dexaflow-server` Deployment
 + RBAC for the pod-per-task executor + a pre-install migrations Job). **External**
 Postgres 13+ and Redis 6+ are required (the chart fails the install otherwise —
 embedded datastores are Lite-only). Managed datastores work out of the box
@@ -281,7 +281,7 @@ in its own pod like any other (ADR 0040). Read
 
 🧪 **Experimental — pre-1.0.** The HTTP API (`/api/v2`), CLI, and Helm chart
 values may change between minor versions until **v1.0.0** locks them. **Lite**
-(single host) is the recommended way to run Dexaflow today. **Pro** (Kubernetes)
+(single host) is the recommended way to run Dexaflow today. **Cluster** (Kubernetes)
 is Helm-installable and in **active validation** — tested against GKE, not yet
 certified for production; pin to a specific tag, read the
 [upgrades guide](https://dexaflow.dexadata.ai/operate/upgrades/) before bumping, and exercise

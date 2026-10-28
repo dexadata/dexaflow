@@ -76,9 +76,28 @@ SET max_dags = COALESCE(sqlc.narg(max_dags)::int, max_dags),
 WHERE id = sqlc.arg(tenant_id)::uuid;
 
 -- name: GetTenantLimits :one
-SELECT max_dags, max_runs_per_day, min_schedule_interval_seconds, max_task_pool_slots
+-- The suspension is read with the limits, so run creation learns both from
+-- the one row it already reads (#2181).
+SELECT max_dags, max_runs_per_day, min_schedule_interval_seconds, max_task_pool_slots,
+    suspended_at, suspension_mode, suspension_reason
 FROM tenants
 WHERE id = $1;
+
+-- name: SuspendTenant :exec
+-- Sets or changes a tenant's suspension (#2181). A tenant already suspended
+-- keeps its suspended_at, so changing the reason does not restart the clock.
+UPDATE tenants
+SET suspended_at = COALESCE(suspended_at, now()),
+    suspension_mode = sqlc.arg(mode)::text,
+    suspension_reason = sqlc.arg(reason)::text,
+    updated_at = now()
+WHERE id = sqlc.arg(tenant_id)::uuid;
+
+-- name: ResumeTenant :exec
+-- Lifts a tenant's suspension; a tenant that is not suspended is unchanged.
+UPDATE tenants
+SET suspended_at = NULL, suspension_mode = NULL, suspension_reason = '', updated_at = now()
+WHERE id = $1 AND suspended_at IS NOT NULL;
 
 -- name: CountTenantDags :one
 SELECT count(*) FROM dags WHERE tenant_id = $1;

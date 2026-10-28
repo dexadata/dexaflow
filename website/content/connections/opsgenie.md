@@ -80,7 +80,7 @@ connectors:
   plaintext form you log. The key grants alert-create rights.
 - **Secrets in logs**: never `print()` the URI — it carries the API key.
 - **gRPC channel (agent ↔ control plane)**: secrets are served only over an
-  authenticated channel (ADR 0021); Pro must run with TLS.
+  authenticated channel (ADR 0021); Cluster must run with TLS.
 
 ## Related
 

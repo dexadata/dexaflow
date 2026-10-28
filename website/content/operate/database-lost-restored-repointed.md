@@ -14,7 +14,7 @@ each case and what to run. The design is
 
 ## What the control plane does
 
-On a Pro (Helm) install the control plane never crash-loops on its schema and
+On a Cluster (Helm) install the control plane never crash-loops on its schema and
 never migrates a database it does not recognize:
 
 - **It waits instead of exiting.** A pod that finds the schema absent or
@@ -27,7 +27,7 @@ never migrates a database it does not recognize:
   a release `dexaflow` in the namespace `dexaflow` the reason reads:
 
   ```text
-  schema absent: apply the migrations: `helm upgrade dexaflow oci://ghcr.io/dexadata/charts/dexaflow -n dexaflow --version 0.5.6 --reuse-values` runs the migration Job again; the server checks again on its own
+  schema absent: apply the migrations: `helm upgrade dexaflow oci://ghcr.io/dexadata/charts/dexaflow -n dexaflow --version {{< latest-version >}} --reuse-values` runs the migration Job again; the server checks again on its own
   ```
 
   With `migrations.enabled: false` it names your own migration step and the

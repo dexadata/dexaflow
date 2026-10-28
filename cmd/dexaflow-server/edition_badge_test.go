@@ -20,7 +20,8 @@ func TestEditionBadgeSelection(t *testing.T) {
 		wantPro   bool
 	}{
 		{name: "lite shows silver", edition: "lite", wantLite: true},
-		{name: "pro shows gold", edition: "pro", wantPro: true},
+		{name: "cluster shows gold", edition: "cluster", wantPro: true},
+		{name: "pro, the earlier name of cluster, shows gold", edition: "pro", wantPro: true},
 		{name: "demo shows neither", edition: "demo"},
 		{name: "empty edition shows neither", edition: ""},
 		{name: "dev-no-auth bypass forces silver", edition: "", devNoAuth: true, wantLite: true},

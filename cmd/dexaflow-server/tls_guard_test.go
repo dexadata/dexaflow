@@ -21,6 +21,8 @@ func TestRefuseInsecureSecretsInProd(t *testing.T) {
 	}{
 		{name: "lite + insecure: allowed (dev/inner loop)", edition: "lite", allowInsecure: true},
 		{name: "empty edition + insecure: allowed (dev fallback)", edition: "", allowInsecure: true},
+		{name: "cluster + insecure: REFUSED", edition: "cluster", allowInsecure: true,
+			wantErrSubstring: "DEXAFLOW_AGENT_ALLOW_INSECURE_SECRETS"},
 		{name: "pro + insecure: REFUSED", edition: "pro", allowInsecure: true,
 			wantErrSubstring: "DEXAFLOW_AGENT_ALLOW_INSECURE_SECRETS"},
 		{name: "pro + NO insecure: allowed (default secure)", edition: "pro", allowInsecure: false},
@@ -57,6 +59,8 @@ func TestRefuseProWithoutTLS(t *testing.T) {
 		wantErrSubstring string // empty = expect no error
 	}{
 		{name: "pro + cert+key: OK", edition: "pro", cert: "/c.pem", key: "/k.pem"},
+		{name: "cluster + no cert: REFUSED", edition: "cluster", cert: "", key: "/k.pem",
+			wantErrSubstring: "DEXAFLOW_SERVER_GRPC_TLS_CERT"},
 		{name: "pro + no cert: REFUSED", edition: "pro", cert: "", key: "/k.pem",
 			wantErrSubstring: "DEXAFLOW_SERVER_GRPC_TLS_CERT"},
 		{name: "pro + no key: REFUSED", edition: "pro", cert: "/c.pem", key: "",

@@ -38,7 +38,7 @@ flowchart LR
   EXR -->|"client-go · pod-per-task"| K8S[(Kubernetes)]
   EXR -->|dev| SUB[Subprocess]
   K8S --> POD[Worker pod<br/>agent ⇄ gRPC ⇄ user code]
-  REC -. "Pro · warm pools ON" .-> WP
+  REC -. "Cluster · warm pools ON" .-> WP
   subgraph WP["Warm pool · per dag_version"]
     W1[Warm worker pod]
     W2[Warm worker pod]
@@ -49,7 +49,7 @@ flowchart LR
 
   API --- PG[(Postgres<br/>metadata · audit_log<br/>Lite XCom/locks)]
   SCH --- PG
-  SCH -. Pro only .- RD[(Redis<br/>XCom + locks)]
+  SCH -. Cluster only .- RD[(Redis<br/>XCom + locks)]
 ```
 
 The two halves of the control plane are separate deployments joined only by
@@ -95,8 +95,8 @@ runs the user code, streams logs, pushes XCom, reports state. That channel is
 (server) TLS: the agent verifies the control plane's certificate against a CA and
 authenticates itself with its bearer token, never a client cert. The Helm chart
 auto-generates a stable self-signed CA + server cert by default
-(`agentTLS.autoGenerate`), so a stock Pro install is encrypted without
-cert-manager; see [Pro TLS](/operate/pro-tls/). (`internal/agent/dial.go` builds the
+(`agentTLS.autoGenerate`), so a stock Cluster install is encrypted without
+cert-manager; see [Cluster TLS](/operate/cluster-tls/). (`internal/agent/dial.go` builds the
 verifying transport; `internal/config/server.go` `GRPCTLSCert`/`GRPCTLSKey` gate
 the listener.)
 
@@ -114,7 +114,7 @@ uses its native, keyless-first SDK. (`internal/logs/object.go`.)
 
 **State.** Postgres holds metadata for every edition; on **Lite** it also holds
 XCom and the scheduler's advisory locks (no Redis required — [ADR 0026](/project/adrs/0026-lite-datastore-no-redis/)).
-On **Pro**, Redis stores XCom (≤256 KB) and the multi-node locks.
+On **Cluster**, Redis stores XCom (≤256 KB) and the multi-node locks.
 
 **Stack:** Go 1.26 · Gin · sqlc/pgx · golang-migrate · client-go · gRPC ·
 log/slog · Prometheus · OpenTelemetry · Cobra · Viper. Python only in the DAG
@@ -123,7 +123,7 @@ parser sidecar and inside user task containers.
 ## Execution: dedicated pods, warm pools, and the token transport
 
 By default each task attempt runs in its **own** pod ([ADR 0002](/project/adrs/0002-pod-per-task/)) —
-maximal isolation, at the cost of re-paying cold start every attempt. Two Pro
+maximal isolation, at the cost of re-paying cold start every attempt. Two Cluster
 features change how the executor and the agent credential behave, both **off by
 default** so a stock deployment is byte-for-byte the historical path:
 
