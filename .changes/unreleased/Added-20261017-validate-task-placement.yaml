@@ -1,9 +1,0 @@
-kind: Added
-body: |-
-  **Structured task placement fields are now validated at DAG registration.**
-  Task placement fields (`execution.tolerations`, `execution.affinity`,
-  `execution.topology_spread_constraints`, `execution.resource_claims`, and
-  `resources.claims`) are now strictly validated when a DAG is registered.
-  Malformed keys or invalid types now fail loudly at registration time rather
-  than being silently dropped at pod build. (#628)
-time: 2026-10-17T18:37:00.000000000+00:00
