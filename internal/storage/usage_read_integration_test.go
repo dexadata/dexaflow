@@ -35,7 +35,7 @@ func TestUsageEventsReadInServingOrder(t *testing.T) {
 	// Arrange
 	pg, _, _, _, ctx := openExecPG(t)
 	usage := storage.NewUsageStore(pg)
-	enableUsageEvents(t, usage, ctx)
+	enableUsageEvents(t, pg, usage, ctx)
 	old := time.Now().Add(-time.Hour)
 	ids := seedUsageEventsAt(t, pg.Pool, ctx, []struct {
 		xid uint64
@@ -72,7 +72,7 @@ func TestUsageEventsWaitForOlderTransactions(t *testing.T) {
 	// Arrange
 	pg, repo, sched, _, ctx := openExecPG(t)
 	usage := storage.NewUsageStore(pg)
-	enableUsageEvents(t, usage, ctx)
+	enableUsageEvents(t, pg, usage, ctx)
 	dagID := fmt.Sprintf("usage_horizon_%d", time.Now().UnixNano())
 	runUUID := seedRunningTask(t, repo, sched, ctx, dagID, "load")
 	older, err := pg.Pool.Begin(ctx)
@@ -115,8 +115,8 @@ func TestUsageEventsWaitForOlderTransactions(t *testing.T) {
 			mine = append(mine, e)
 		}
 	}
-	if len(mine) != 1 || mine[0].RunID == "" || mine[0].TaskID != "load" || mine[0].StartedAt == nil {
-		t.Errorf("events of the run after the older transaction ended = %+v, want the one settle with its run and start", mine)
+	if len(mine) != 1 || mine[0].RunID == "" || mine[0].TaskID != "load" || mine[0].StartedAt == nil || mine[0].EndedAt == nil {
+		t.Errorf("events of the run after the older transaction ended = %+v, want the one settle with its run and times", mine)
 	}
 }
 
@@ -133,7 +133,7 @@ func TestUsageEventsReadStates(t *testing.T) {
 		at  time.Time
 	}{{1, old}, {2, old}, {3, time.Now()}})
 	off, offErr := usage.ReadEvents(ctx, domain.UsageCursor{}, 10)
-	enableUsageEvents(t, usage, ctx)
+	enableUsageEvents(t, pg, usage, ctx)
 	if _, err := storage.NewRetentionStore(pg).DeleteUsageEvents(ctx, time.Date(2002, 1, 1, 0, 0, 0, 0, time.UTC), 10); err != nil {
 		t.Fatalf("DeleteUsageEvents: %v", err)
 	}

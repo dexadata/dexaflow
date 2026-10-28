@@ -20,9 +20,9 @@ func (c UsageCursor) Before(o UsageCursor) bool {
 // AttemptEpoch); with Revision it is the key a consumer dedupes on.
 type UsageEvent struct {
 	Cursor UsageCursor
-	Tenant string
-	// DagID and RunID are resolved when the event is served; they are empty
-	// once the run is deleted.
+	// Tenant, DagID and RunID are resolved when the event is served; they are
+	// empty once the tenant or the run is deleted.
+	Tenant         string
 	DagID, RunID   string
 	TaskInstanceID string
 	TaskID         string
@@ -33,8 +33,9 @@ type UsageEvent struct {
 	State          TaskState
 	PreviousState  TaskState
 	PoolSlots      int
-	// StartedAt is nil for a task that never started (skipped, upstream
-	// failed); EndedAt is nil until the task has ended.
+	// StartedAt and EndedAt are nil for a task that never started (skipped,
+	// upstream failed). EndedAt is the task's end time, or the time of the
+	// change that ended the attempt when the task has none.
 	StartedAt, EndedAt *time.Time
 	LastFailureKind    string
 	RecordedAt         time.Time

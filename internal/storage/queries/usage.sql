@@ -66,12 +66,13 @@ WHERE s.id AND p.id;
 -- The events after the cursor in serving order, (xid, id), among those whose
 -- writing transaction is below the snapshot's xmin: every transaction that
 -- wrote them has finished, and every row written later sorts after them. The
--- DAG and run ids are resolved here; they are empty once the run is deleted.
-SELECT e.id, e.xid, t.name AS tenant, COALESCE(d.dag_id, '')::text AS dag_id, COALESCE(r.run_id, '')::text AS run_id,
+-- tenant name and the DAG and run ids are resolved here; they are empty once
+-- the tenant or the run is deleted.
+SELECT e.id, e.xid, COALESCE(t.name, '')::text AS tenant, COALESCE(d.dag_id, '')::text AS dag_id, COALESCE(r.run_id, '')::text AS run_id,
        e.task_instance_id, e.task_id, e.map_index, e.try_number, e.attempt_epoch, e.revision,
        e.state, e.previous_state, e.pool_slots, e.started_at, e.ended_at, e.last_failure_kind, e.recorded_at
 FROM usage_events e
-JOIN tenants t ON t.id = e.tenant_id
+LEFT JOIN tenants t ON t.id = e.tenant_id
 LEFT JOIN dag_runs r ON r.id = e.dag_run_id
 LEFT JOIN dags d ON d.id = r.dag_id
 WHERE e.xid < pg_snapshot_xmin(pg_current_snapshot())

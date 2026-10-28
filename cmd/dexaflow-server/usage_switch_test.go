@@ -88,10 +88,11 @@ func TestUsageSwitchWriterLogsWhatItWrote(t *testing.T) {
 // TestUsageSwitchWriterExportsTheLag covers ADR 0096 point 4: while recording
 // is on, each cycle exports how long the oldest event has been held back; with
 // it off the gauge is 0 and the lag is not read; a failed read keeps the last
-// value.
+// value and warns.
 func TestUsageSwitchWriterExportsTheLag(t *testing.T) {
 	// Arrange
-	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	onStore := &fakeUsageSwitch{lag: 3 * time.Second}
 	offStore := &fakeUsageSwitch{lag: time.Hour}
 	failing := &fakeUsageSwitch{lagErr: errors.New("connection refused")}
@@ -111,5 +112,8 @@ func TestUsageSwitchWriterExportsTheLag(t *testing.T) {
 	}
 	if len(failed.set) != 0 {
 		t.Errorf("lag set after a failed read = %v, want nothing", failed.set)
+	}
+	if !strings.Contains(logs.String(), "could not read the usage events lag") {
+		t.Errorf("no warning for the failed lag read:\n%s", logs.String())
 	}
 }
