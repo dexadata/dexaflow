@@ -177,6 +177,41 @@ Read as capacity: about 280 cycles/s on a page with a run in progress is about
 with the whole host shared. One such viewer costs about 27 transactions per
 interval, so 50 of them at 5 s are about 270 transactions per second.
 
+## Primary key order
+
+Experiment 9 (`test/load/uuid_keys`, #525), recorded 2026-10-28 on `main` at
+`2a0bf40a` plus this experiment, on a 4 vCPU Intel Xeon at 2.80 GHz with
+15 GB of RAM, Go 1.26.10 and Postgres 16.15 with default settings
+(`shared_buffers` 128 MB), the harness and Postgres on the same host, with
+other test runs sharing it (both keys were measured in turns, so they shared
+the same load). 5,000,000 rows per key, 1,000 per transaction.
+
+| Key | Rows | Insert rows/s | Last tenth rows/s | WAL per row | PK index | Table | PK lookups/s |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| UUIDv4 | 5000000 | 61069 | 54915 | 244 B | 191 MiB | 640 MiB | 9221 |
+| UUIDv7 | 5000000 | 82694 | 84803 | 183 B | 150 MiB | 640 MiB | 11061 |
+
+What it says:
+
+- Once the key index outgrows the cache, a random key costs a third of the
+  insert rate (55,000 against 85,000 rows per second over the last tenth),
+  a third more WAL per row (full page images of the leaves it touches after
+  each checkpoint) and a key index 27% larger (leaves split half full). A
+  time-ordered key appends to the right edge and keeps its rate flat.
+- Point lookups of random rows by key are about a sixth slower with the
+  random key, whose larger index fits the cache less well.
+- The table itself is the same size: the heap is append-only whatever the key.
+- The control plane inserts task instances at a small fraction of these
+  rates, so the key order is not a throughput limit today. It shows up as
+  WAL volume, index bloat and cache pressure on a large install, which is
+  where #525 asked to look.
+
+A change of key would be one `ALTER TABLE ... ALTER COLUMN id SET DEFAULT`
+per hot table, with a UUIDv7 generator (Postgres 18 has `uuidv7()`; on 16 and
+17 it is a SQL function or the application). Existing ids keep working, since
+both are `uuid`. A UUIDv7 carries its creation time in its first 48 bits, and
+these ids are served by the API, so the change needs its own decision.
+
 ## Targets
 
 The gates of the performance plan, against the rows above (v0.5.0). Two were
