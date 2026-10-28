@@ -415,7 +415,7 @@ type Scheduler struct {
 	// run again. Tick-only, no lock.
 	warnedSuspensions map[string]string
 	// poolsEnabled turns on the cross-DAG named-pool admission gate (ADR 0053
-	// Stage 3). Pro-only: main calls EnablePools() only when the edition is "pro".
+	// Stage 3). Cluster edition only: main calls EnablePools() only on the cluster edition.
 	// While false (Lite / non-Pro), Step never loads pool budgets and never
 	// threads pool occupancy, so PlanRun's pool gate is a no-op and Lite plans
 	// byte-identically. Set once at construction (before ticking), read on the
@@ -587,8 +587,8 @@ func (s *Scheduler) SetRecorder(r Recorder) { s.recorder = r }
 func (s *Scheduler) SetDispatcher(d Dispatcher) { s.dispatcher = d }
 
 // EnablePools turns on the cross-DAG named-pool admission gate (ADR 0053 Stage
-// 3). It is Pro-only: main calls it exactly when the edition is "pro". Left
-// unset in Lite/non-Pro, where the pool gate stays a no-op and the tick never
+// 3). It belongs to the cluster edition: main calls it exactly there. Left
+// unset in Lite, where the pool gate stays a no-op and the tick never
 // queries pool budgets, so Lite plans byte-identically. Call once before the
 // scheduler starts ticking.
 func (s *Scheduler) EnablePools() { s.poolsEnabled = true }

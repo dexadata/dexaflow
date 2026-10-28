@@ -348,7 +348,7 @@ func (c *ServerConfig) validateProvider() error {
 }
 
 // validateOIDC enforces the fail-closed prerequisites for auth.provider: oidc
-// (D7): the Pro edition, and the fields the login flow cannot run without
+// (D7): the cluster edition, and the fields the login flow cannot run without
 // (issuer, client_id, redirect_url, and the tenant pin). The issuer must be
 // https so discovery and JWKS are fetched over TLS (keyless verify, ADR 0035).
 // A misconfigured OIDC deployment fails boot with an actionable message rather
@@ -366,8 +366,8 @@ func (c *ServerConfig) validateProvider() error {
 // the next one, so reporting them one at a time turns first-time SSO setup into
 // a chain of CrashLoopBackOffs.
 func (c *ServerConfig) validateOIDC() error {
-	if c.UI.Edition != "pro" {
-		return errors.New("auth.provider: oidc requires the Pro edition (set ui.edition: pro)")
+	if !c.ClusterEdition() {
+		return errors.New("auth.provider: oidc requires the cluster edition (set ui.edition: cluster)")
 	}
 	var missing []string
 	if c.Auth.OIDC.Issuer == "" {

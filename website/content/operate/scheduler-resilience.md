@@ -14,7 +14,7 @@ ships **five reapers** — small, single-purpose backstops that turn stuck state
 back into observable terminal state, so the dashboard never lies about what's
 actually running.
 
-This applies to **both editions**: Lite (single-process) and Pro
+This applies to **both editions**: Lite (single-process) and Cluster
 (multi-replica with [leader election](/project/adrs/0009-leader-election/)). The
 reapers run only on the leader — reaping writes state, and we want one writer
 across the fleet. On Kubernetes they run from the leader's **maintenance loop**

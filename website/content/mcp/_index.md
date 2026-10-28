@@ -86,7 +86,7 @@ go to **stderr** — stdout is the MCP protocol channel and carries nothing else
 This is the transport an MCP client (Claude Desktop / Code) launches for you; you
 rarely run it by hand.
 {{% /tab %}}
-{{% tab header="Streamable HTTP — the Pro service" %}}
+{{% tab header="Streamable HTTP: the Cluster service" %}}
 
 ```bash
 dexaflow-mcp --transport http --listen :9099 --server https://dexaflow.internal

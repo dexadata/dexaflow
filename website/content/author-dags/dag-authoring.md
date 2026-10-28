@@ -22,16 +22,16 @@ Scaffold one with `dexaflow init dags/my_pipeline`.
 ## Workspace layout (multi-DAG)
 
 > **Lite-specific.** The hot-reload watcher exists only in `dexaflow lite` — the
-> developer-mode loop. At **runtime** Pro has no "workspace": every DAG ships as
+> developer-mode loop. At **runtime** Cluster has no "workspace": every DAG ships as
 > its own image-and-`dag.json` pair, built by CI and registered via
 > `dexaflow push dag.json`, and the control plane never sees a directory of
 > siblings. See [The development → deploy lifecycle](#the-development--deploy-lifecycle).
 >
-> The same *discovery* does run at **build** time in Pro, in one place:
+> The same *discovery* does run at **build** time in Cluster, in one place:
 > [`dexaflow build [workspace]`](/operate/cicd-deploy/) walks a directory of
 > projects and builds each with its own `registry:`. That is a convenience for
 > the person at the keyboard — it produces the same one-image-per-DAG artifacts
-> and changes nothing about how Pro runs them.
+> and changes nothing about how Cluster runs them.
 
 `dexaflow lite` watches a **workspace** that can hold many DAGs as sibling
 subdirectories. The default workspace is `~/dexaflow/` (set by `dexaflow setup`).
@@ -107,7 +107,7 @@ with DAG("my_pipeline", schedule="@daily", catchup=False, tags=["etl"]):
     transform(extract())
 ```
 
-A DAG starts **paused** the first time it is deployed to Pro, as in Airflow, so
+A DAG starts **paused** the first time it is deployed to Cluster, as in Airflow, so
 its schedule waits for an unpause. Pass `is_paused_upon_creation=False` to
 `DAG(...)` or `@dag(...)` to have it start active (`True` keeps it paused on a
 server configured otherwise). It only matters on that first deploy; see
@@ -134,7 +134,7 @@ executor**, native-first by type. Nothing is silently dropped or mistranslated.
 
 | Task type | Airflow operator | Where it runs | Notes |
 |---|---|---|---|
-| `python` | `@task` (TaskFlow) **or** `PythonOperator` | agent in a pod (Pro) / subprocess (Lite) | The general-purpose escape hatch — any provider library you `pip install` is callable from inside a `@task`. |
+| `python` | `@task` (TaskFlow) **or** `PythonOperator` | agent in a pod (Cluster) / subprocess (Lite) | The general-purpose escape hatch: any provider library you `pip install` is callable from inside a `@task`. |
 | `bash` | `BashOperator` | agent | Executes a shell command. |
 | ~~`http_api`~~ (removed) | — | — | **Removed (ADR 0047/0048, #512).** `HttpOperator` now compiles to `airflow_operator` and runs in a **pod**, like any other provider operator — declare `connectors: [http]`. The old inline path ran the request in the control-plane process (an SSRF surface) and is gone. |
 | `airflow_operator` | **any provider operator/sensor** (Snowflake, S3, Postgres, BigQuery, …) | agent in a pod | The generic executor (ADR 0040): the runtime imports the class, instantiates it with your args, and calls `execute()`. Declare the provider or compile fails. |
@@ -533,7 +533,7 @@ tasks:
 
 `@task(pool_slots=4)` or an operator's `pool_slots=4` in `dag.py` sets the same
 thing. Most specific wins: `tasks.<id>.size` > `pool_slots` in `dag.py` >
-`defaults.size` > 1. Pools are enforced on Pro only; Lite ignores the size.
+`defaults.size` > 1. Pools are enforced on Cluster only; Lite ignores the size.
 
 When the operator sets a resource unit (`executor.unit`, for example 250m CPU
 and 512Mi memory per slot), the size also sizes the pod: a task of size 4 gets
@@ -583,7 +583,7 @@ and re-registers. A bad binding prints an error in the terminal **immediately**:
 ✗ dexaflow.yaml tasks: unknown task_id "transfrom"; the DAG defines [extract load transform]
 ```
 
-Lite is fully isolated from Demo/Pro (own database, cluster, and ports) —
+Lite is fully isolated from Demo/Cluster (own database, cluster, and ports):
 **no split brain**. See [Operating modes](/concepts/editions/).
 
 ### 2 · Deploy (authoritative, immutable)

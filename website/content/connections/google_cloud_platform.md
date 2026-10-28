@@ -51,7 +51,7 @@ Not handled in v1: `key_secret_project_id`, `credential_config_file`,
 ### Keyless (recommended)
 No key in the Connection. Credentials come from Application Default Credentials:
 
-- **Pro (GKE):** **Workload Identity** — the task pod runs as a Kubernetes SA
+- **Cluster (GKE):** **Workload Identity**: the task pod runs as a Kubernetes SA
   bound to a GCP service account; no key ever touches the cluster. See the
   chart's task-ServiceAccount knob and issue #56.
 - **Lite (subprocess):** your host ADC (`gcloud auth application-default login`
@@ -86,15 +86,15 @@ When a **dbt** task uses this connection, Dexaflow generates the BigQuery
 
 | Extra | dbt profile |
 |---|---|
-| `method: oauth` | `method: oauth` — **keyless**, via Application Default Credentials (Workload Identity on Pro). No key shipped. `dataset` required; `project` optional (defers to the ADC project). |
+| `method: oauth` | `method: oauth`: **keyless**, via Application Default Credentials (Workload Identity on Cluster). No key shipped. `dataset` required; `project` optional (defers to the ADC project). |
 | `keyfile_dict` (inline SA JSON) | `method: service-account-json` + `keyfile_json` |
 
 Set **`method: oauth`** in Extra to get the keyless profile; otherwise the mapper
 expects `keyfile_dict`. Prefer keyless — it ships no downloadable key.
 
-## Lite vs Pro
+## Lite vs Cluster
 
-| | Lite (subprocess) | Lite (k3d) | Pro (GKE) |
+| | Lite (subprocess) | Lite (k3d) | Cluster (GKE) |
 |---|---|---|---|
 | Keyless (ADC) | ✅ host ADC | ❌ (no metadata server) | ✅ Workload Identity |
 | `key_path` (K8s Secret) | ✅ (mount a file) | ✅ (k3d Secret) | ✅ (chart `taskSecret`) |

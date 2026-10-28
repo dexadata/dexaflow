@@ -298,11 +298,11 @@ func showLiteBadge(cfg *config.ServerConfig) bool {
 	return cfg.UI.Edition == "lite" || cfg.Auth.DevNoAuth
 }
 
-// showProBadge reports whether the served UI shows the gold PRO badge — the
-// Pro edition, set explicitly by the Helm chart (values.yaml: ui.edition=pro).
-// Demo and empty editions show no badge.
+// showProBadge reports whether the served UI shows the gold edition badge: the
+// cluster edition, set explicitly by the Helm chart (ui.edition). Demo and
+// empty editions show no badge.
 func showProBadge(cfg *config.ServerConfig) bool {
-	return cfg.UI.Edition == "pro"
+	return cfg.ClusterEdition()
 }
 
 // liteEditorFS builds the workspace filesystem backing the Lite web editor when

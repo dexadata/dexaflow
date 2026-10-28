@@ -11,7 +11,7 @@ description: Edit and run DAGs from the browser in Dexaflow Lite.
 
 Dexaflow **Lite** ships a small built-in code editor so you can edit a DAG project
 straight from the browser — no separate IDE, no extra process. It is a
-**Lite-only** convenience for the local, single-machine workflow; **Pro**
+**Lite-only** convenience for the local, single-machine workflow; **Cluster**
 teams author DAGs in their own editor and ship them through the GitOps flow.
 
 ![The Lite web editor: a file tree on the left and a Python DAG open with syntax highlighting](/assets/screenshots/lite-web-editor.png)
@@ -117,4 +117,4 @@ every path is confined to the workspace root, and absolute paths or `..` travers
 are rejected. Like the rest of Lite, it is meant for a **local / internal-network
 or VPN** deployment — see the
 [Lite security note](/concepts/editions/). It is gated to the Lite edition and is never
-registered in Pro.
+registered in Cluster.
