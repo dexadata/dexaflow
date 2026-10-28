@@ -28,9 +28,9 @@ observability:
 The scheduler leader writes `usage.events.enabled` to the database within 10
 seconds of taking the lead, and logs `usage events switch written` with the
 value. Recording is then on for every replica, older releases included,
-because the database writes the events. Turning it off stops recording;
-the events already recorded stay until retention deletes them while the
-janitor runs.
+because the database writes the events. Turning it off stops recording and
+the route answers `404`; the events already recorded stay, and retention
+deletes them only while the janitor runs for another class.
 
 ## What an event is
 
@@ -90,9 +90,10 @@ deleted. It resumes from `oldest_cursor`, and the gap is known.
 With `observability.usage_metrics` on, the scheduler leader also exports
 `dexaflow_task_attempts_total{tenant,state}` and
 `dexaflow_task_slot_seconds_total{tenant}` from the same events, so they and
-the API never disagree. Each attempt counts once, by the state it first ended
+the API read the same records. Each attempt counts once, by the state it first ended
 in; a later mark is in the API only. A leader starts counting when it takes
-the lead and does not replay what is kept, so a failover is a counter reset,
+the lead, again on each new term, and does not replay what is kept, so a
+failover is a counter reset,
 which `rate()` and `increase()` handle. Each tenant is a series of its own,
 which is why they are off by default.
 
@@ -100,6 +101,7 @@ which is why they are off by default.
 
 With recording off, the trigger is not even called for writes into other
 states and returns after one read for these. With it on, a single settle
-pays a few tenths of a millisecond and an upstream failure cascade about
-27 µs per task instance; the measurement is
+costs about the same as with it off, within the noise of the run, and an
+upstream failure cascade about 20 microseconds per task instance; the
+measurement is
 [Load Experiment 8](https://github.com/dexadata/dexaflow/blob/main/test/load/BASELINE.md#usage-event-trigger).

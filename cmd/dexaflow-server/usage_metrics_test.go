@@ -10,6 +10,9 @@ import (
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
+// leaderTerm is when the replica of these tests took the lead.
+var leaderTerm = time.Date(2026, 10, 28, 9, 0, 0, 0, time.UTC)
+
 // fakeUsageSource serves queued pages and records the cursors it was read at.
 type fakeUsageSource struct {
 	horizon  domain.UsageCursor
@@ -72,7 +75,7 @@ func TestUsageCounterStartsAtTheHorizonAndCountsFirstRevisions(t *testing.T) {
 		{Enabled: true, Events: []domain.UsageEvent{usageEvent(102, 3, "beta", domain.TaskStateSkipped, 0, 1, 0)}},
 	}}
 	rec := newFakeUsageCounters()
-	c := newUsageCounter(src, rec, func() bool { return true }, 2, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
+	c := newUsageCounter(src, rec, func() time.Time { return leaderTerm }, 2, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
 
 	// Act
 	c.cycle(context.Background())
@@ -98,29 +101,35 @@ func TestUsageCounterStartsAtTheHorizonAndCountsFirstRevisions(t *testing.T) {
 }
 
 // TestUsageCounterRestartsAfterLosingLeadership: a replica that loses the lead
-// drops its cursor, so when it leads again it starts at the new horizon and
+// drops its cursor, and one whose lead was lost and taken again between two
+// cycles notices the new term, so each takeover starts at the new horizon and
 // never counts what another leader counted meanwhile.
 func TestUsageCounterRestartsAfterLosingLeadership(t *testing.T) {
 	// Arrange
 	src := &fakeUsageSource{horizon: domain.UsageCursor{Xid: 10}}
-	leading := true
-	c := newUsageCounter(src, newFakeUsageCounters(), func() bool { return leading }, 100, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
+	since := leaderTerm
+	c := newUsageCounter(src, newFakeUsageCounters(), func() time.Time { return since }, 100, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
 
 	// Act
 	c.cycle(context.Background())
-	leading = false
+	since = time.Time{}
 	c.cycle(context.Background())
-	leading = true
+	since = leaderTerm.Add(time.Hour)
 	src.horizon = domain.UsageCursor{Xid: 50}
+	c.cycle(context.Background())
+	c.cycle(context.Background())
+	since = leaderTerm.Add(2 * time.Hour)
+	src.horizon = domain.UsageCursor{Xid: 90}
 	c.cycle(context.Background())
 	c.cycle(context.Background())
 
 	// Assert
-	if src.horizons != 2 {
-		t.Fatalf("horizons read = %d, want one per takeover", src.horizons)
+	if src.horizons != 3 {
+		t.Fatalf("horizons read = %d, want one per term", src.horizons)
 	}
-	if len(src.reads) != 1 || src.reads[0] != (domain.UsageCursor{Xid: 50}) {
-		t.Errorf("reads = %+v, want one read from the new horizon", src.reads)
+	want := []domain.UsageCursor{{Xid: 50}, {Xid: 90}}
+	if len(src.reads) != 2 || src.reads[0] != want[0] || src.reads[1] != want[1] {
+		t.Errorf("reads = %+v, want one read from each new horizon", src.reads)
 	}
 }
 
@@ -134,7 +143,7 @@ func TestUsageCounterSkipsAGapAndWaitsWhileOff(t *testing.T) {
 		{Enabled: true, Gone: true, Oldest: domain.UsageCursor{Xid: 40, ID: 7}},
 		{Enabled: false},
 	}}
-	c := newUsageCounter(src, newFakeUsageCounters(), func() bool { return true }, 100, slog.New(slog.NewTextHandler(&logs, nil)))
+	c := newUsageCounter(src, newFakeUsageCounters(), func() time.Time { return leaderTerm }, 100, slog.New(slog.NewTextHandler(&logs, nil)))
 
 	// Act
 	for range 3 {
@@ -164,18 +173,21 @@ func TestStartUsageCountersNeedsBothSettings(t *testing.T) {
 	defer cancel()
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
-	src, rec, never := &fakeUsageSource{}, newFakeUsageCounters(), func() bool { return false }
+	src, rec, never := &fakeUsageSource{}, newFakeUsageCounters(), func() time.Time { return time.Time{} }
 
 	// Act
 	metricsOff := startUsageCounters(ctx, true, false, src, rec, never, logger)
 	recordingOff := startUsageCounters(ctx, false, true, src, rec, never, logger)
+	noPrometheus := startUsageCounters(ctx, true, true, src, nil, never, logger)
 	both := startUsageCounters(ctx, true, true, src, rec, never, logger)
 
 	// Assert
-	if metricsOff || recordingOff || !both {
-		t.Fatalf("started: metrics off %v, recording off %v, both %v; want only both", metricsOff, recordingOff, both)
+	if metricsOff || recordingOff || noPrometheus || !both {
+		t.Fatalf("started: metrics off %v, recording off %v, no Prometheus %v, both %v; want only both", metricsOff, recordingOff, noPrometheus, both)
 	}
-	if !bytes.Contains(logs.Bytes(), []byte("usage.events.enabled is off")) {
-		t.Errorf("no warning that recording is off:\n%s", logs.String())
+	for _, want := range []string{"usage.events.enabled is off", "exports no Prometheus metrics"} {
+		if !bytes.Contains(logs.Bytes(), []byte(want)) {
+			t.Errorf("no warning containing %q:\n%s", want, logs.String())
+		}
 	}
 }

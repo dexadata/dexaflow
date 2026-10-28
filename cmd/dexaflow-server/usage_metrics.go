@@ -37,35 +37,45 @@ type usageCounters interface {
 // later re-mark is in the API only, since a counter cannot move a count from
 // one state to another.
 type usageCounter struct {
-	src      usageEventSource
-	rec      usageCounters
-	leading  func() bool
-	pageSize int
-	logger   *slog.Logger
-	// cursor is nil until this replica leads; it is dropped when it stops
-	// leading, so each takeover starts at the horizon of that moment.
+	src usageEventSource
+	rec usageCounters
+	// leaderSince is when this replica took the lead, zero while it does
+	// not lead (Scheduler.LeaderSince).
+	leaderSince func() time.Time
+	pageSize    int
+	logger      *slog.Logger
+	// cursor is nil until this replica leads. It belongs to the term that
+	// started at term, so a lead lost and taken again between two cycles
+	// still starts at the horizon of the new term.
 	cursor *domain.UsageCursor
+	term   time.Time
+	// failing is set while reads fail, so an outage warns once.
+	failing bool
 }
 
-func newUsageCounter(src usageEventSource, rec usageCounters, leading func() bool, pageSize int, logger *slog.Logger) *usageCounter {
-	return &usageCounter{src: src, rec: rec, leading: leading, pageSize: pageSize, logger: logger}
+func newUsageCounter(src usageEventSource, rec usageCounters, leaderSince func() time.Time, pageSize int, logger *slog.Logger) *usageCounter {
+	return &usageCounter{src: src, rec: rec, leaderSince: leaderSince, pageSize: pageSize, logger: logger}
 }
 
 // cycle runs one round. A replica that does not lead drops its cursor; one
-// that has just taken the lead only reads the horizon, so a failover is a
-// counter reset and never replays the events kept for the API.
+// that has just taken the lead, or taken it again, only reads the horizon,
+// so a failover is a counter reset and never replays the events kept for
+// the API or counts what another leader counted meanwhile.
 func (c *usageCounter) cycle(ctx context.Context) {
-	if !c.leading() {
+	since := c.leaderSince()
+	if since.IsZero() {
 		c.cursor = nil
 		return
 	}
-	if c.cursor == nil {
+	if c.cursor == nil || !since.Equal(c.term) {
 		h, err := c.src.Horizon(ctx)
 		if err != nil {
-			c.logger.Debug("could not read the usage events horizon", "error", err)
+			c.warn("could not read the usage events horizon; the usage counters wait", err)
+			c.cursor = nil
 			return
 		}
-		c.cursor = &h
+		c.failing = false
+		c.cursor, c.term = &h, since
 		return
 	}
 	for range usageCounterPages {
@@ -81,7 +91,7 @@ func (c *usageCounter) page(ctx context.Context) bool {
 	p, err := c.src.ReadEvents(ctx, *c.cursor, c.pageSize)
 	switch {
 	case err != nil:
-		c.logger.Debug("could not read usage events for the counters", "error", err)
+		c.warn("could not read usage events; the usage counters wait", err)
 		return false
 	case !p.Enabled:
 		return false
@@ -91,6 +101,7 @@ func (c *usageCounter) page(ctx context.Context) bool {
 		c.cursor = &p.Oldest
 		return true
 	}
+	c.failing = false
 	for _, e := range p.Events {
 		if e.Revision == 0 {
 			c.rec.RecordTaskAttempt(e.Tenant, string(e.State), slotSeconds(e))
@@ -98,6 +109,14 @@ func (c *usageCounter) page(ctx context.Context) bool {
 		c.cursor = &e.Cursor
 	}
 	return len(p.Events) == c.pageSize
+}
+
+// warn logs a read failure once per run of failures.
+func (c *usageCounter) warn(msg string, err error) {
+	if !c.failing {
+		c.logger.Warn(msg, "error", err)
+	}
+	c.failing = true
 }
 
 // slotSeconds is the attempt's size times its duration, 0 without both times.
@@ -109,17 +128,21 @@ func slotSeconds(e domain.UsageEvent) float64 {
 }
 
 // startUsageCounters runs the counters while recording and usage metrics are
-// both on, and reports whether it did. The ticker checks leadership itself,
-// so the counter sees each loss of the lead.
-func startUsageCounters(ctx context.Context, recording, metrics bool, src usageEventSource, rec usageCounters, leading func() bool, logger *slog.Logger) bool {
+// both on, and reports whether it did. The counter checks leadership itself,
+// by the time the lead was taken, so it sees each change of term.
+func startUsageCounters(ctx context.Context, recording, metrics bool, src usageEventSource, rec usageCounters, leaderSince func() time.Time, logger *slog.Logger) bool {
 	if !metrics {
 		return false
 	}
-	if !recording || rec == nil {
+	if !recording {
 		logger.Warn("observability.usage_metrics is on but usage.events.enabled is off; the usage counters stay empty")
 		return false
 	}
-	c := newUsageCounter(src, rec, leading, usageCounterPageSize, logger)
+	if rec == nil {
+		logger.Warn("observability.usage_metrics is on but this process exports no Prometheus metrics; the usage counters stay empty")
+		return false
+	}
+	c := newUsageCounter(src, rec, leaderSince, usageCounterPageSize, logger)
 	gatedtick.Start(ctx, "usage-counters", usageCounterInterval, nil, logger, func() { c.cycle(ctx) })
 	return true
 }
