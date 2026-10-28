@@ -715,7 +715,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      PLAYWRIGHT_VERSION: "1.63.0"
+      PLAYWRIGHT_VERSION: "1.64.1"
       LEOFLOW_E2E_DATABASE_URL: postgres://leoflow:leoflow@localhost:5432/leoflow_sso?sslmode=disable
     services:
       postgres:
@@ -766,7 +766,7 @@ jobs:
     timeout-minutes: 15
     env:
       PYTHONPATH: parser
-      PLAYWRIGHT_VERSION: "1.63.0"
+      PLAYWRIGHT_VERSION: "1.64.1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
