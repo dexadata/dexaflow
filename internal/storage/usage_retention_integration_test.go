@@ -35,6 +35,10 @@ func seedUsageEventsAt(t *testing.T, pool *pgxpool.Pool, ctx context.Context, ro
 	at  time.Time
 }) []int64 {
 	t.Helper()
+	var markXid, markID *int64
+	if err := pool.QueryRow(ctx, `SELECT xid::text::bigint, event_id FROM usage_events_pruned WHERE id`).Scan(&markXid, &markID); err != nil {
+		t.Fatalf("read usage_events_pruned: %v", err)
+	}
 	ids := make([]int64, len(rows))
 	for i, r := range rows {
 		if err := pool.QueryRow(ctx, `
@@ -49,7 +53,7 @@ func seedUsageEventsAt(t *testing.T, pool *pgxpool.Pool, ctx context.Context, ro
 	t.Cleanup(func() {
 		ctx := context.Background()
 		_, _ = pool.Exec(ctx, `DELETE FROM usage_events WHERE id = ANY($1)`, ids)
-		_, _ = pool.Exec(ctx, `UPDATE usage_events_pruned SET xid = NULL, event_id = NULL, pruned_at = NULL WHERE id`)
+		_, _ = pool.Exec(ctx, `UPDATE usage_events_pruned SET xid = $1::bigint::text::xid8, event_id = $2 WHERE id`, markXid, markID)
 	})
 	return ids
 }
@@ -125,5 +129,34 @@ func TestUsageEventRetentionCountMatchesTheDelete(t *testing.T) {
 	}
 	if _, _, ok := usagePrunedMark(t, pool, ctx); ok {
 		t.Error("the count moved the pruned mark")
+	}
+}
+
+// TestUsageEventRetentionMarkOnlyMovesForward: an expired event below the
+// mark (written by a transaction that stayed open past the window) is deleted
+// without moving the mark back, so a reader between the two is still told it
+// lost events.
+func TestUsageEventRetentionMarkOnlyMovesForward(t *testing.T) {
+	// Arrange
+	store, pool, ctx := openRetention(t)
+	old := time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
+	ids := seedUsageEventsAt(t, pool, ctx, []struct {
+		xid uint64
+		at  time.Time
+	}{{1, old}})
+	mustExec(t, pool, ctx, `UPDATE usage_events_pruned SET xid = '50'::xid8, event_id = $1 WHERE id`, ids[0]+1000)
+
+	// Act
+	n, err := store.DeleteUsageEvents(ctx, time.Date(2002, 1, 1, 0, 0, 0, 0, time.UTC), 10)
+
+	// Assert
+	if err != nil {
+		t.Fatalf("DeleteUsageEvents: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("deleted %d, want the expired event below the mark", n)
+	}
+	if xid, id, _ := usagePrunedMark(t, pool, ctx); xid != 50 || id != ids[0]+1000 {
+		t.Errorf("mark = (%d, %d), want it left at (50, %d)", xid, id, ids[0]+1000)
 	}
 }

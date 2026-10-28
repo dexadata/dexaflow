@@ -183,8 +183,10 @@ type Querier interface {
 	DeleteExpiredCLIDevices(ctx context.Context) (int64, error)
 	// Deletes the oldest usage events in serving order, (xid, id), up to
 	// row_limit, stopping at the first one recorded at or after the cutoff, so the
-	// deleted rows are always a prefix of what the service API serves. The pruned
-	// mark moves to the last one in the same statement.
+	// deleted rows are always a prefix of what the service API serves. Only
+	// events the API can serve are considered, and the pruned mark moves to the
+	// last one deleted in the same statement, forward only: an event a very long
+	// transaction commits below the mark is deleted without moving it back.
 	DeleteExpiredUsageEvents(ctx context.Context, arg DeleteExpiredUsageEventsParams) (int64, error)
 	DeleteExpiredXComIndex(ctx context.Context) error
 	DeleteImportError(ctx context.Context, arg DeleteImportErrorParams) error
@@ -666,7 +668,8 @@ type Querier interface {
 	// The events after the cursor in serving order, (xid, id), among those whose
 	// writing transaction is below the snapshot's xmin: every transaction that
 	// wrote them has finished, and every row written later sorts after them. The
-	// DAG and run ids are resolved here; they are empty once the run is deleted.
+	// tenant name and the DAG and run ids are resolved here; they are empty once
+	// the tenant or the run is deleted.
 	ListUsageEvents(ctx context.Context, arg ListUsageEventsParams) ([]ListUsageEventsRow, error)
 	// One row per user in the tenant, newest first, with every granted role name
 	// aggregated into a text array (empty when the user holds none). Paged by the

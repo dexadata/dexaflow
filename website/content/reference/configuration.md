@@ -1410,13 +1410,15 @@ the change ([how to use them](/operate/usage-events/)). It answers `404`
 while `usage.events.enabled` is off. The answer
 is `{"events": [...], "next_cursor": "...", "has_more": true}`, at most
 `limit` events (default 500, at most 5000); each event carries `cursor`,
-`tenant`, `dag_id` and `run_id` (empty once the run is deleted),
-`task_instance_id`, `task_id`, `map_index`, `try_number`, `attempt_epoch`,
-`revision`, `state`, `previous_state`, `pool_slots` (the task's size),
-`started_at` and `ended_at` (null when the task never started or has no end
-time), `last_failure_kind` (`infra` when an infrastructure fault, not the
-task, failed it; left out otherwise), and `recorded_at`. The duration is `ended_at` minus `started_at` when both are
-set.
+`tenant`, `dag_id` and `run_id` (empty once the tenant or the run is
+deleted), `task_instance_id`, `task_id`, `map_index`, `try_number`,
+`attempt_epoch`, `revision`, `state`, `previous_state`, `pool_slots` (the
+task's size), `started_at` and `ended_at` (both null when the task never
+started; `ended_at` is the time of the change that ended the attempt when
+the task has no end time of its own, as for a reschedule poke),
+`last_failure_kind` (`infra` when an infrastructure fault, not the task,
+failed it; left out otherwise), and `recorded_at`. The duration is
+`ended_at` minus `started_at` when both are set.
 
 How to consume it:
 

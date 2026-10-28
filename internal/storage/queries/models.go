@@ -432,6 +432,13 @@ type UsageEvent struct {
 	RecordedAt      pgtype.Timestamptz `json:"recorded_at"`
 }
 
+type UsageEventRevision struct {
+	TaskInstanceID pgtype.UUID `json:"task_instance_id"`
+	TryNumber      int32       `json:"try_number"`
+	AttemptEpoch   int32       `json:"attempt_epoch"`
+	Revision       int32       `json:"revision"`
+}
+
 type UsageEventsPruned struct {
 	ID       bool               `json:"id"`
 	Xid      pgtype.Uint64      `json:"xid"`

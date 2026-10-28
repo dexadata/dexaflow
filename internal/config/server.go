@@ -422,7 +422,7 @@ func (c *ServerConfig) Validate() error {
 	for _, check := range []func() error{
 		c.validateSecretPolicies,
 		c.validateExecution,
-		c.Retention.Validate,
+		func() error { return c.Retention.ValidateWith(c.Usage.Events.Enabled) },
 		c.validateExecutorPolicies,
 		c.validatePlatformIntegration,
 		c.validateDeployDefaults,

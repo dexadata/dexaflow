@@ -37,6 +37,8 @@ type usageSwitchWriter struct {
 	logger  *slog.Logger
 	written bool
 	failing bool
+	// lagFailing is set while lag reads fail, so an outage warns once.
+	lagFailing bool
 }
 
 // newUsageSwitchWriter builds the writer; a nil lag drops the gauge.
@@ -70,7 +72,7 @@ func (w *usageSwitchWriter) writeSwitch(ctx context.Context) {
 
 // exportLag sets the lag gauge: 0 while recording is off, and otherwise the
 // age of the oldest event held back by an older open transaction. A failed
-// read keeps the last value; the switch write already reports an outage.
+// read keeps the last value and warns once per run of failures.
 func (w *usageSwitchWriter) exportLag(ctx context.Context) {
 	if w.lag == nil {
 		return
@@ -81,9 +83,13 @@ func (w *usageSwitchWriter) exportLag(ctx context.Context) {
 	}
 	d, err := w.store.EventsLag(ctx)
 	if err != nil {
-		w.logger.Debug("could not read the usage events lag", "error", err)
+		if !w.lagFailing {
+			w.logger.Warn("could not read the usage events lag; dexaflow_usage_events_lag_seconds keeps its last value", "error", err)
+		}
+		w.lagFailing = true
 		return
 	}
+	w.lagFailing = false
 	w.lag.SetUsageEventsLag(d)
 }
 
