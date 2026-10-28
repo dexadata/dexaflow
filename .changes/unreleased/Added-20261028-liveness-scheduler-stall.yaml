@@ -1,0 +1,10 @@
+kind: Added
+body: |-
+  **An opt-in liveness check for a stalled scheduler leader (#539).**
+  `server.liveness_scheduler_stall` (for example `2m`) makes `/healthz` answer
+  `503` while the process leads the scheduler and its loop has not started an
+  iteration for that long, so the kubelet restarts the pod and another replica
+  takes the lease. A database outage does not trip it. It is `0s` by default,
+  which keeps `/healthz` unconditional, and a value under twice the scheduler
+  step timeout fails boot.
+time: 2026-10-28T20:30:00.000000000+00:00
