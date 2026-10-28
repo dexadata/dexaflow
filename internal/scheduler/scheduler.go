@@ -144,10 +144,10 @@ type RunState struct {
 	// loop populates it; it defaults to zero, leaving the gate unlimited when
 	// MaxActiveTasks is unset.
 	ActiveTaskCount int
-	// PoolsEnabled turns on the named-pool slot gate (ADR 0053 Stage 3, Pro only).
-	// The Step loop sets it from the scheduler's edition flag. Lite and any
-	// non-Pro deployment leave it false, so the pool gate is a no-op and planning
-	// is byte-identical to the max_active_tasks-only path.
+	// PoolsEnabled turns on the named-pool slot gate (ADR 0053 Stage 3). The
+	// Step loop sets it from the scheduler's pools flag (scheduler.pools.enabled).
+	// Left false, the pool gate is a no-op and planning is byte-identical to the
+	// max_active_tasks-only path.
 	PoolsEnabled bool
 	// ConfineUndefinedPools makes a task that names a pool its tenant has not
 	// defined draw on default_pool instead of running unlimited. The Step loop
@@ -415,10 +415,10 @@ type Scheduler struct {
 	// run again. Tick-only, no lock.
 	warnedSuspensions map[string]string
 	// poolsEnabled turns on the cross-DAG named-pool admission gate (ADR 0053
-	// Stage 3). Cluster edition only: main calls EnablePools() only on the cluster edition.
-	// While false (Lite / non-Pro), Step never loads pool budgets and never
-	// threads pool occupancy, so PlanRun's pool gate is a no-op and Lite plans
-	// byte-identically. Set once at construction (before ticking), read on the
+	// Stage 3). main calls EnablePools() when scheduler.pools.enabled is on.
+	// While false, Step never loads pool budgets and never
+	// threads pool occupancy, so PlanRun's pool gate is a no-op and planning is
+	// byte-identical. Set once at construction (before ticking), read on the
 	// single-threaded tick, so it needs no lock.
 	poolsEnabled bool
 	// confineUndefinedPools threads RunState.ConfineUndefinedPools; set once by
@@ -587,9 +587,9 @@ func (s *Scheduler) SetRecorder(r Recorder) { s.recorder = r }
 func (s *Scheduler) SetDispatcher(d Dispatcher) { s.dispatcher = d }
 
 // EnablePools turns on the cross-DAG named-pool admission gate (ADR 0053 Stage
-// 3). It belongs to the cluster edition: main calls it exactly there. Left
-// unset in Lite, where the pool gate stays a no-op and the tick never
-// queries pool budgets, so Lite plans byte-identically. Call once before the
+// 3). main calls it when scheduler.pools.enabled is on, which unset means the
+// cluster edition. Left unset, the pool gate stays a no-op and the tick never
+// queries pool budgets, so planning is byte-identical. Call once before the
 // scheduler starts ticking.
 func (s *Scheduler) EnablePools() { s.poolsEnabled = true }
 

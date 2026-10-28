@@ -735,6 +735,17 @@ settings:
     edition: both
     description: >-
       Scheduler tick interval, in milliseconds.
+  scheduler.pools.enabled:
+    edition: both
+    default_note: "which follows the edition: on for `cluster`, off otherwise"
+    description: >-
+      Turns named pools on ([ADR 0053](/project/adrs/0053-admission-and-placement/)): the
+      cross-DAG slot gate of the scheduler tick and the pools API behind the Pools
+      screen. Unset, it follows `ui.edition`, so an install that does not set it
+      behaves as before the key existed. Set it to `false` to run the cluster
+      edition without pools, or to `true` to use pools on another edition. With
+      pools off, `server.pools_read_only` and `scheduler.pool_starvation_threshold`
+      have no effect.
   scheduler.pool_starvation_threshold:
     edition: Cluster
     description: >-
@@ -1444,7 +1455,7 @@ settings:
       `cluster` for the Helm chart on Kubernetes, `lite` for the installable binary.
       `pro` is the earlier name of `cluster` and is still accepted; the Helm chart
       currently sets `pro`. `cluster` turns
-      on named pools, allows `auth.provider: oidc`, enforces TLS on the agent channel
+      on named pools unless `scheduler.pools.enabled` says otherwise, allows `auth.provider: oidc`, enforces TLS on the agent channel
       and shows the gold CLUSTER badge; `lite` shows the silver LITE badge. Empty or
       any other value shows no badge.
   ui.workspace:

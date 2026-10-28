@@ -131,6 +131,9 @@ func settingType(t reflect.Type) string {
 		return "list"
 	case reflect.Map:
 		return "map"
+	case reflect.Pointer:
+		// An optional value: unset means a default worked out at run time.
+		return settingType(t.Elem())
 	default:
 		return "string"
 	}
@@ -141,6 +144,8 @@ func settingType(t reflect.Type) string {
 // their shortest form.
 func renderDefault(v any) string {
 	switch d := v.(type) {
+	case nil:
+		return ""
 	case []string:
 		return strings.Join(d, ",")
 	case float64:

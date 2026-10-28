@@ -1,0 +1,8 @@
+kind: Added
+body: |-
+  **`scheduler.pools.enabled` turns named pools on or off (#2173, ADR 0097).**
+  Pools no longer depend on `ui.edition` alone: set the key to `false` to run
+  the cluster edition without pools, or to `true` to use them on another
+  edition. Unset, it follows the edition as before, so nothing changes for an
+  install that does not set it.
+time: 2026-10-28T19:30:00.000000000+00:00
