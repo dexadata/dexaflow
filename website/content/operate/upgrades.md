@@ -1159,15 +1159,17 @@ other step.
   through a 0.5.7 replica does not clear the stored time, so the change
   reaches the scheduler within the hour instead of on the next tick.
 - **`055_usage_events`** creates `usage_events`, the switch row
-  `usage_events_switch` and a trigger on `task_instances` that writes one
-  event per finished task attempt
+  `usage_events_switch`, `usage_event_revisions` (the last revision of each
+  attempt, deleted with its task instance) and a trigger on `task_instances`
+  that writes one event per finished task attempt
   ([ADR 0096](/project/adrs/0096-task-attempt-usage-events/),
   [#2174](https://github.com/dexadata/dexaflow/issues/2174)). The switch
   starts off and stays off until `usage.events.enabled` is on, so the
   trigger writes nothing for an install that does not use it. Creating the
   trigger takes a lock on `task_instances` that blocks writes to it (not
-  reads) for an instant, after waiting at most 5 seconds for the
-  transactions already open on the table. Previous releases never read the
+  reads). The lock waits up to 5 seconds for the transactions already open
+  on the table, and writes queue behind it while it waits; once granted it
+  is held for an instant. Previous releases never read the
   tables and keep running against the schema; with the switch on, their
   writes are recorded too, because the database writes the events.
 - **`056_usage_events_pruned`** creates `usage_events_pruned`, one row
