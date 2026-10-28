@@ -65,8 +65,11 @@ func (r *Repository) TenantSuspension(ctx context.Context, tenant string) (domai
 
 // SuspendTenant suspends the tenant, or changes the mode or reason of its
 // suspension (#2181). From then on no new run is created for it, manual or
-// scheduled; its DAGs keep their own paused flag. An unknown tenant is
-// ErrNotFound and a suspension the engine cannot apply is ErrValidation.
+// scheduled; its DAGs keep their own paused flag. Under stop it also fails the
+// tenant's queued and running task instances; the scheduler repeats that on
+// every tick, so an attempt dispatched while this call ran is stopped too. An
+// unknown tenant is ErrNotFound and a suspension the engine cannot apply is
+// ErrValidation.
 func (r *Repository) SuspendTenant(ctx context.Context, tenant string, s domain.TenantSuspension) error {
 	if err := s.Validate(); err != nil {
 		return err
@@ -77,6 +80,11 @@ func (r *Repository) SuspendTenant(ctx context.Context, tenant string, s domain.
 	}
 	if err := r.q.SuspendTenant(ctx, queries.SuspendTenantParams{TenantID: tid, Mode: string(s.Mode), Reason: s.Reason}); err != nil {
 		return fmt.Errorf("suspending tenant: %w", err)
+	}
+	if s.Mode == domain.SuspensionStop {
+		if _, err := r.q.FailStoppedTenantTaskInstances(ctx, tid); err != nil {
+			return fmt.Errorf("stopping the tenant's task instances: %w", err)
+		}
 	}
 	return nil
 }

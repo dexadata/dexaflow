@@ -1356,7 +1356,8 @@ trusted issuer may not sign in to (`auth.trusted_issuer.allowed_tenants`) is
 `403`. The user signs in only through the trusted issuer's handoff.
 
 `PUT /api/v2/service/tenants/{tenant}/suspension` with
-`{"mode": "hold", "reason": "contract ended"}` suspends the tenant. From then
+`{"mode": "hold", "reason": "contract ended"}` suspends the tenant (`mode` is
+`hold`, `drain` or `stop`, below). From then
 on it gets no new run: a triggered run answers `409` with the reason, for
 example `the tenant is suspended: contract ended`, and the scheduler leaves
 the tenant's DAGs out of its list. Work already queued or running finishes.
@@ -1364,10 +1365,34 @@ The tenant's DAGs keep their own paused flag, so nothing about them changes
 and lifting the suspension restores exactly what the tenant had. Its users
 still sign in and read; DAG versions can still be registered.
 
-`hold` is the only mode today; `drain` and `stop` answer `400`. The reason is
-optional, at most 500 bytes, and is shown to the tenant's users in the refusal,
-so it should say what they can do, not why internally. A second call changes
-the reason and keeps the time the suspension started. The answer, and
+The mode says how much of the tenant's work stops, each one adding to the
+one before:
+
+| Mode | New runs | Ready tasks | Queued and running task instances |
+| --- | --- | --- | --- |
+| `hold` | none | dispatched | finish |
+| `drain` | none | stay scheduled; a queued run is not started | the attempts already dispatched finish |
+| `stop` | none | stay scheduled; a queued run is not started | failed, as a mark failed does |
+
+Under `stop` the call fails the tenant's queued and running task instances
+with `stopped: the tenant was suspended in stop mode`, and the scheduler
+repeats it on every tick while the tenant is stopped, so a task dispatched
+while the call ran is stopped too. Each attempt learns it on its next
+heartbeat (15 seconds by default): the control plane answers that it must
+terminate and the agent kills the task's processes, as after a mark failed. A
+task with retries left goes to `up_for_retry` and, like every ready task of a
+drained or stopped tenant, waits scheduled until the tenant is resumed; one
+without retries stays failed, and its run fails like any other. Lifting the
+suspension dispatches the scheduled tasks and starts the queued runs on the
+next tick. A tick counts each stop it applies in
+`dexaflow_scheduler_decisions_total{decision_type="tenant_stopped"}`, and a
+stop it could not write in `decision_type="tenant_stop_error"`, retried on the
+next tick.
+
+Any other mode answers `400`. The reason is optional, at most 500 bytes, and
+is shown to the tenant's users in the refusal, so it should say what they can
+do, not why internally. A second call changes the mode or the reason and keeps
+the time the suspension started. The answer, and
 `GET` on the same path, is
 `{"tenant": "acme", "suspended": true, "mode": "hold", "reason": "...", "suspended_at": "..."}`,
 or `{"tenant": "acme", "suspended": false}`. `DELETE` on the same path lifts

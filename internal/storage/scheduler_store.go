@@ -178,6 +178,7 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 			TenantID:          uuidToString(run.TenantID),
 			State:             domain.DagRunState(run.State),
 			Held:              row.DagPaused,
+			Suspension:        domain.SuspensionMode(row.TenantSuspensionMode),
 			MaxActiveRuns:     int(row.DagMaxActiveRuns),
 			Tasks:             spec.Tasks,
 			Graph:             graph,
@@ -1259,4 +1260,20 @@ func reapCursorArgs(c executor.ReapCursor) (pgtype.Timestamptz, pgtype.UUID, err
 		return pgtype.Timestamptz{}, pgtype.UUID{}, fmt.Errorf("reap cursor: %w", err)
 	}
 	return pgtype.Timestamptz{Time: c.At, Valid: true}, id, nil
+}
+
+// FailStoppedTenantTaskInstances fails the queued and running task instances
+// of the tenant while it is suspended in stop mode, and returns how many it
+// failed (scheduler.TenantStopper, #2181). Once the suspension is lifted or
+// changed to another mode it fails nothing.
+func (s *SchedulerStore) FailStoppedTenantTaskInstances(ctx context.Context, tenantID string) (int64, error) {
+	tid, err := parseUUID(tenantID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := s.q.FailStoppedTenantTaskInstances(ctx, tid)
+	if err != nil {
+		return 0, fmt.Errorf("failing the task instances of a stopped tenant: %w", err)
+	}
+	return n, nil
 }
