@@ -74,6 +74,35 @@ func TestReadinessHandlerSurfacesDependencyHealth(t *testing.T) {
 	})
 }
 
+// TestLivenessCheckFailsHealthzOnlyWhenSet is #539: with no check /healthz
+// stays unconditional; a check that errors answers 503 with its reason.
+func TestLivenessCheckFailsHealthzOnlyWhenSet(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name  string
+		check LivenessCheck
+		want  int
+	}{
+		{name: "no check", check: nil, want: http.StatusOK},
+		{name: "passing check", check: func() error { return nil }, want: http.StatusOK},
+		{name: "failing check", check: func() error { return errors.New("scheduler leader has not ticked") }, want: http.StatusServiceUnavailable},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := gin.New()
+			r.GET("/healthz", livenessHandlerWith(tc.check))
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", http.NoBody))
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.want)
+			}
+			if tc.want != http.StatusOK && !strings.Contains(rec.Body.String(), "has not ticked") {
+				t.Errorf("body %q does not carry the reason", rec.Body.String())
+			}
+		})
+	}
+}
+
 // TestLivenessHandlerAlwaysOK: the liveness probe is intentionally trivial —
 // only an "am I alive" signal that K8s uses to decide whether to restart the
 // pod. It never reaches dependencies (a stuck postgres should NOT restart the

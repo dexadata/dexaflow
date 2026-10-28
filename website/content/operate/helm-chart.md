@@ -213,6 +213,21 @@ If a pod never passes the gate, or passes it and never turns ready, read
 for a schema that is absent, behind or dirty, the reason and what to run. The common causes are a database the pod cannot
 reach and a ServiceAccount that cannot `list`/`watch` pods in the task namespace.
 
+### Restarting a stalled scheduler
+
+`/healthz` is a static 200 by default, so a scheduler that holds the leader
+lease but whose loop stopped iterating stays live, and no other replica takes
+over. To have the kubelet restart such a pod, set
+`DEXAFLOW_SERVER_LIVENESS_SCHEDULER_STALL` through `extraEnv`, for example to
+`2m`: `/healthz` then answers 503 while this pod leads and its loop has not
+started an iteration for that long. The startup gate and the liveness probe
+both read it, and a pod that does not lead, or has not ticked since it took
+the lease, always passes. A database outage does not trip it, because the
+loop keeps iterating and failing fast; `/readyz` reports the database. The
+value must be at least twice the scheduler step timeout (`60s` at the default
+loop interval), or the server refuses to boot. See
+[`server.liveness_scheduler_stall`](/reference/configuration/).
+
 ### Timeouts under load
 
 `probes.liveness` and `probes.readiness` are exposed so you can loosen them

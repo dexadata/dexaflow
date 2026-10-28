@@ -203,6 +203,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 			HealthChecks:    checks,
 			ExecutorInfo:    executorInfo,
 			SchedulerHealth: schedulerHealth,
+			Liveness:        schedulerStallCheck(cfg, schedulerHealth),
 			ProbeBudget:     cfg.Server.ProbeBudget,
 		},
 		Server: api.ServerDeps{
