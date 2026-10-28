@@ -236,6 +236,39 @@ func TestAttemptSpecCacheBoundedAndExpires(t *testing.T) {
 	}
 }
 
+// TestAttemptSpecCacheEvictsTheOldestPut is #1621: a full cache drops the
+// entry whose last put is oldest, and a put of a cached attempt moves it to the
+// back, as its expiry moves.
+func TestAttemptSpecCacheEvictsTheOldestPut(t *testing.T) {
+	now := time.Unix(1000, 0)
+	c := newAttemptSpecCache(2, time.Minute, func() time.Time { return now })
+	try := func(n int) auth.AgentIdentity {
+		id := testIdentity()
+		id.TryNumber = n
+		return id
+	}
+	c.put(try(1), attemptSpec{})
+	now = now.Add(time.Second)
+	c.put(try(2), attemptSpec{})
+	now = now.Add(time.Second)
+	c.put(try(1), attemptSpec{}) // refreshed: try 2 is now the oldest
+	now = now.Add(time.Second)
+	c.put(try(3), attemptSpec{})
+
+	if _, ok := c.get(try(2)); ok {
+		t.Error("the oldest put survived a full cache")
+	}
+	for _, n := range []int{1, 3} {
+		if _, ok := c.get(try(n)); !ok {
+			t.Errorf("try %d was evicted, want it kept", n)
+		}
+	}
+	c.drop(try(1))
+	if n := c.len(); n != 1 {
+		t.Errorf("cache holds %d attempts after a drop, want 1", n)
+	}
+}
+
 // BenchmarkAttemptXComRPCs measures one attempt's spec and XCom RPCs:
 // GetTaskSpec, three FetchXCom and one PushXCom. loads/attempt is the number
 // of task spec loads (two Postgres queries each with the real store).
