@@ -1142,7 +1142,8 @@ SELECT EXISTS (
       AND try_number = $3
       AND tenant_id = $4
       AND ($5::int IS NULL OR attempt_epoch = $5::int)
-      AND state IN ('queued', 'running')
+      AND (state IN ('queued', 'running')
+           OR (state = 'scheduled' AND $5::int IS NOT NULL))
 )
 `
 
@@ -1170,6 +1171,13 @@ type IsTaskInstanceLiveParams struct {
 //
 // The epoch term is the heartbeat's: exact for a token carrying attempt_epoch,
 // absent for a claim-less one (ADR 0051 amendment).
+//
+// 'scheduled' is live too, for a token whose epoch matches (#2201), as in
+// BindWarmAttempt: the dispatcher claims the epoch and hands the attempt out
+// before it records queued, and a subprocess agent or a warm worker can ask for
+// its secrets in that gap. Only the claim mints that epoch and every later
+// dispatch moves it, so the match names the attempt just handed out. A token
+// without an epoch cannot be pinned that way and needs queued or running.
 func (q *Queries) IsTaskInstanceLive(ctx context.Context, arg IsTaskInstanceLiveParams) (bool, error) {
 	row := q.db.QueryRow(ctx, isTaskInstanceLive,
 		arg.DagRunID,
