@@ -79,3 +79,34 @@ func TestK8sClientConfig_NonPositiveFallsBackToClientGoDefaults(t *testing.T) {
 		t.Error("k8sClientConfig must not mutate the base config")
 	}
 }
+
+// The informers watch through a client without the per-call timeout, which
+// would cut every watch after 10s (#1621), on the maintenance limits.
+func TestNewK8sClients_InformerClientHasNoCallTimeout(t *testing.T) {
+	for _, limits := range []config.KubeClientSection{
+		{QPS: 5, Burst: 10},
+		{QPS: 50, Burst: 100, MaintenanceQPS: 20, MaintenanceBurst: 40},
+	} {
+		clients, err := newK8sClients(testBaseConfig(), limits)
+		if err != nil {
+			t.Fatalf("newK8sClients: %v", err)
+		}
+		if clients.informers == clients.maintenance || clients.informers == clients.dispatch {
+			t.Fatal("the informers share a client with a per-call timeout")
+		}
+		want := float32(limits.QPS)
+		if limits.MaintenanceQPS > 0 {
+			want = float32(limits.MaintenanceQPS)
+		}
+		if got := limiterOf(t, clients.informers).QPS(); got != want {
+			t.Errorf("informer QPS = %v, want the maintenance QPS %v", got, want)
+		}
+	}
+	base := testBaseConfig()
+	if got := k8sWatchConfig(base, 5, 10); got.Timeout != 0 {
+		t.Errorf("watch config timeout = %v, want 0", got.Timeout)
+	}
+	if base.Timeout != k8sClientTimeout {
+		t.Error("k8sWatchConfig must not mutate the base config")
+	}
+}
