@@ -263,7 +263,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// only to DEFER a reap; the live TaskPodPresence kill path is unchanged (#461).
 	// A typed-nil pointer would defeat the reconciler's / reaper's nil check, so
 	// the interfaces are only populated when the informer actually built.
-	podInformer := buildPodInformer(ctx, cfg, mcs, logger)
+	podInformer := buildPodInformer(ctx, cfg, clients.informers, logger)
 	var (
 		snapshotter executor.PodSnapshotter
 		cache       executor.PodPresenceCache
@@ -350,9 +350,10 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 		// deletes a worker with an in-flight attempt. store implements it.
 		var warmCache *executor.WarmPodInformer
 		if cfg.Execution.WarmPoolEventRefill {
-			// On the maintenance client, like the task-pod informer and the
-			// warm-pod client the reconciler checks it against (#1315).
-			warmCache = buildWarmPodInformer(ctx, mcs, cfg.Executor.TaskNamespace, warmPods, logger)
+			// On the informer client, with the maintenance limits of the
+			// warm-pod client the reconciler checks it against (#1315), and
+			// no per-call timeout to cut its watch (#1621).
+			warmCache = buildWarmPodInformer(ctx, clients.informers, cfg.Executor.TaskNamespace, warmPods, logger)
 			if warmCache != nil && warmPools != nil {
 				// A claimed worker leaves the idle buffer short: refill now.
 				warmPools.SetOnClaim(warmCache.Kick)

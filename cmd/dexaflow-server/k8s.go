@@ -51,11 +51,14 @@ func buildK8sClient(limits config.KubeClientSection) (kubernetes.Interface, erro
 }
 
 // k8sClients holds the pod-path Kubernetes clients. dispatch creates task pods;
-// maintenance serves the pod informer, reconciler, reapers, staging GC and warm
-// pool reconciler. They are the same client unless maintenance limits are set.
+// maintenance serves the reconciler, reapers, staging GC and warm pool
+// reconciler. They are the same client unless maintenance limits are set.
+// informers serves the pod and warm pod informers: the maintenance limits
+// without the per-call timeout, which would cut every watch (#1621).
 type k8sClients struct {
 	dispatch    kubernetes.Interface
 	maintenance kubernetes.Interface
+	informers   kubernetes.Interface
 }
 
 // buildK8sClients builds the pod-path clients from the in-cluster config or the
@@ -78,14 +81,32 @@ func newK8sClients(base *rest.Config, limits config.KubeClientSection) (k8sClien
 	if err != nil {
 		return k8sClients{}, fmt.Errorf("building kubernetes dispatch client: %w", err)
 	}
-	if limits.MaintenanceQPS <= 0 {
-		return k8sClients{dispatch: dispatchCS, maintenance: dispatchCS}, nil
+	maintQPS, maintBurst := limits.QPS, limits.Burst
+	maintCS := dispatchCS
+	if limits.MaintenanceQPS > 0 {
+		maintQPS, maintBurst = limits.MaintenanceQPS, limits.MaintenanceBurst
+		maintCS, err = kubernetes.NewForConfig(k8sClientConfig(base, maintQPS, maintBurst))
+		if err != nil {
+			return k8sClients{}, fmt.Errorf("building kubernetes maintenance client: %w", err)
+		}
 	}
-	maintCS, err := kubernetes.NewForConfig(k8sClientConfig(base, limits.MaintenanceQPS, limits.MaintenanceBurst))
+	informerCS, err := kubernetes.NewForConfig(k8sWatchConfig(base, maintQPS, maintBurst))
 	if err != nil {
-		return k8sClients{}, fmt.Errorf("building kubernetes maintenance client: %w", err)
+		return k8sClients{}, fmt.Errorf("building kubernetes informer client: %w", err)
 	}
-	return k8sClients{dispatch: dispatchCS, maintenance: maintCS}, nil
+	return k8sClients{dispatch: dispatchCS, maintenance: maintCS, informers: informerCS}, nil
+}
+
+// k8sWatchConfig is k8sClientConfig without the per-call timeout. A watch is
+// one long response, and an http.Client timeout counts the whole body, so the
+// 10s cap cut every informer watch every 10s and the reflector reopened it. The
+// apiserver ends each watch itself after the timeoutSeconds the reflector asks
+// for (5 to 10 minutes), and a reflector that cannot list only delays the
+// cache's sync, which its readers already survive by reading live.
+func k8sWatchConfig(base *rest.Config, qps float64, burst int) *rest.Config {
+	cfg := k8sClientConfig(base, qps, burst)
+	cfg.Timeout = 0
+	return cfg
 }
 
 // k8sClientConfig copies base with the given client-side limits. A non-positive

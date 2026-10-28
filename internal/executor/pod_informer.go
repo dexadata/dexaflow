@@ -92,6 +92,10 @@ func NewPodInformer(clientset kubernetes.Interface, namespace string) *PodInform
 	// nothing here reads; keep it out of the cache (ADR 0067 §3). SetTransform
 	// only fails once the informer has started, which it has not.
 	_ = informer.SetTransform(dropSourceAnnotation) //nolint:errcheck // cannot fail before Start
+	// CachedPodActive looks pods up by attempt, so a reap check reads the few
+	// pods of one try instead of filtering every task pod of the namespace
+	// (#1621). AddIndexers only fails once the informer has started.
+	_ = informer.AddIndexers(cache.Indexers{podAttemptIndex: podAttemptIndexFunc}) //nolint:errcheck // cannot fail before Start
 	return &PodInformer{
 		factory:   factory,
 		informer:  informer,
@@ -148,17 +152,14 @@ func (p *PodInformer) CachedPodActive(a Attempt) bool {
 	if !p.informer.HasSynced() {
 		return false
 	}
-	selector := labels.SelectorFromSet(labels.Set{
-		podLabelRunID:     labelValue(a.RunID),
-		podLabelTaskID:    labelValue(a.TaskID),
-		podLabelTryNumber: strconv.Itoa(a.TryNumber),
-	})
-	pods, err := p.lister.Pods(p.namespace).List(selector)
+	objs, err := p.informer.GetIndexer().ByIndex(podAttemptIndex,
+		podAttemptKey(labelValue(a.RunID), labelValue(a.TaskID), strconv.Itoa(a.TryNumber)))
 	if err != nil {
 		return false
 	}
-	for _, pod := range pods {
-		if !podMatchesAttempt(pod, a) {
+	for _, obj := range objs {
+		pod, ok := obj.(*corev1.Pod)
+		if !ok || !podMatchesAttempt(pod, a) {
 			continue
 		}
 		if phase := pod.Status.Phase; phase == corev1.PodPending || phase == corev1.PodRunning {
@@ -166,6 +167,32 @@ func (p *PodInformer) CachedPodActive(a Attempt) bool {
 		}
 	}
 	return false
+}
+
+// podAttemptIndex names the informer index of task pods by run, task and try.
+const podAttemptIndex = "attempt"
+
+// podAttemptKey is a pod's podAttemptIndex key, from its label values. The
+// separator cannot occur in a label value.
+func podAttemptKey(runID, taskID, tryNumber string) string {
+	return runID + "/" + taskID + "/" + tryNumber
+}
+
+// podAttemptIndexFunc indexes a pod by the labels CachedPodActive matched with
+// a selector before #1621; a pod missing one is not indexed, as the selector
+// would not have matched it.
+func podAttemptIndexFunc(obj any) ([]string, error) {
+	pod, ok := obj.(*corev1.Pod)
+	if !ok {
+		return nil, nil
+	}
+	run, okRun := pod.Labels[podLabelRunID]
+	task, okTask := pod.Labels[podLabelTaskID]
+	try, okTry := pod.Labels[podLabelTryNumber]
+	if !okRun || !okTask || !okTry {
+		return nil, nil
+	}
+	return []string{podAttemptKey(run, task, try)}, nil
 }
 
 // SnapshotTaskPods returns the managed task pods currently in the cache — the
