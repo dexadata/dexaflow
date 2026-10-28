@@ -64,10 +64,15 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      # No golangci-lint cache: on 2026-10-28 a restored cache made staticcheck
+      # report SA5011 after t.Fatal nil checks in files no PR touched, while a
+      # clean run of the same commit found nothing. A cold run takes about as
+      # long as a warm one here (four minutes), so the cache buys nothing.
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
+          skip-cache: true
 
   # ─────────────────────────────────────────────────────────────────────
   # Proto drift: the generated gRPC code (proto/agent/v1) is committed, so a

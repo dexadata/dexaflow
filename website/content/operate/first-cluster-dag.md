@@ -3,14 +3,15 @@
 aliases:
   - /first-pro-dag.html
 # --- end AUTO redirect aliases ---
-title: Deploy your first Pro DAG
+  - /operate/first-pro-dag/
+title: Deploy your first Cluster DAG
 weight: 10
-description: Take a DAG from Lite to a Kubernetes control plane — your first Pro deployment.
+description: Take a DAG from Lite to a Kubernetes control plane, your first Cluster deployment.
 ---
 
-This is the end-to-end Pro path: take one DAG from source to a running task on a
+This is the end-to-end Cluster path: take one DAG from source to a running task on a
 control plane — in **one command**. Where the 2-minute [Lite loop](/contribute/local-dev-loop/)
-hides the artifact boundary so you can iterate, Pro makes it explicit, because that
+hides the artifact boundary so you can iterate, Cluster makes it explicit, because that
 boundary is what `dexaflow deploy` automates for you.
 
 A DAG is an **immutable artifact** — a `dag.json` + a container image, versioned
@@ -49,11 +50,11 @@ when the build is done.
   the project ships its own `Dockerfile`.
 - **A container registry your cluster can pull from**: Docker Hub, GHCR,
   Amazon ECR, Google Artifact Registry, Azure ACR, or a private one. You push the
-  DAG image there; the control plane pulls it. (Lite needs none; this is a Pro
+  DAG image there; the control plane pulls it. (Lite needs none; this is a Cluster
   thing.)
-- **A reachable Pro control plane.** A throwaway one comes from the
+- **A reachable Cluster control plane.** A throwaway one comes from the
   [Helm chart](/operate/helm-chart/). To rehearse this whole page on your
-  machine, [Try Pro on a local cluster](/operate/local-cluster/) sets up a
+  machine, [Try the cluster edition on a local cluster](/operate/local-cluster/) sets up a
   local cluster, a registry and the chart (for testing only).
 
 ## Step 1: a workspace and a target
@@ -71,8 +72,8 @@ Initialized Dexaflow workspace in /home/you/acme-dags
   git: initialized a git repository
 …
 $ cd acme-dags
-$ dexaflow target add prod https://pro.example.com --registry ghcr.io/your-org
-Added target prod (https://pro.example.com) to /home/you/acme-dags/dexaflow.workspace.yaml
+$ dexaflow target add prod https://cluster.example.com --registry ghcr.io/your-org
+Added target prod (https://cluster.example.com) to /home/you/acme-dags/dexaflow.workspace.yaml
 prod is now the default target.
 
 Next: sign in once with
@@ -89,9 +90,9 @@ advertises a registry
 
 ```console
 $ dexaflow auth login --target prod
-Logging in to https://pro.example.com (target prod, from --target)
+Logging in to https://cluster.example.com (target prod, from --target)
 …
-Logged in to https://pro.example.com (target prod; token saved to /home/you/.dexaflow/config.yaml)
+Logged in to https://cluster.example.com (target prod; token saved to /home/you/.dexaflow/config.yaml)
 ```
 
 When the server offers single sign-on, `auth login` opens your browser on its
@@ -120,16 +121,16 @@ preflight names the command for your registry and tool (for ECR and docker,
 ## Step 3: a DAG (`dag.py` + `dexaflow.yaml`)
 
 ```console
-$ dexaflow new first_pro_dag
-Created DAG "first_pro_dag" in dags/first_pro_dag
+$ dexaflow new first_cluster_dag
+Created DAG "first_cluster_dag" in dags/first_cluster_dag
 …
 ```
 
-`new` writes `dags/first_pro_dag/dag.py`, `dexaflow.yaml` and a `.gitignore`.
+`new` writes `dags/first_cluster_dag/dag.py`, `dexaflow.yaml` and a `.gitignore`.
 Replace the first two with
 a two-task DAG that has one dependency:
 
-```python title="dags/first_pro_dag/dag.py"
+```python title="dags/first_cluster_dag/dag.py"
 from airflow.sdk import DAG, task
 
 @task
@@ -140,19 +141,19 @@ def extract() -> dict:
 def load(data: dict) -> None:
     print(f"loaded {data['rows']} rows")
 
-with DAG("first_pro_dag", schedule=None) as dag:
+with DAG("first_cluster_dag", schedule=None) as dag:
     load(extract())
 ```
 
-```yaml title="dags/first_pro_dag/dexaflow.yaml"
-dag_id: first_pro_dag
+```yaml title="dags/first_cluster_dag/dexaflow.yaml"
+dag_id: first_cluster_dag
 python_version: "3.11"
 dependencies:
   - requests==2.32.3
 # The target names the registry. To push this DAG elsewhere, set it here:
 # registry:
 #   url: ghcr.io/your-org
-#   image_name: first_pro_dag   # defaults to the dag_id
+#   image_name: first_cluster_dag   # defaults to the dag_id
 ```
 
 That is the whole project. A provider package is one line too: `connectors:
@@ -175,25 +176,25 @@ triggered while it is paused waits in `queued` until you unpause it.
 starts a run and follows it:
 
 ```console
-$ dexaflow deploy first_pro_dag --active --trigger --follow
+$ dexaflow deploy first_cluster_dag --active --trigger --follow
 workspace: /home/you/acme-dags (from /home/you/acme-dags/dexaflow.workspace.yaml)
-server:     https://pro.example.com (target prod, from default_target in /home/you/acme-dags/dexaflow.workspace.yaml)
-registry:   ghcr.io/your-org/first_pro_dag (from target "prod" in /home/you/acme-dags/dexaflow.workspace.yaml)
+server:     https://cluster.example.com (target prod, from default_target in /home/you/acme-dags/dexaflow.workspace.yaml)
+registry:   ghcr.io/your-org/first_cluster_dag (from target "prod" in /home/you/acme-dags/dexaflow.workspace.yaml)
 platforms:  linux/amd64 (from the default)
-Deploy /home/you/acme-dags/dags/first_pro_dag -> https://pro.example.com? [y/N] y
-preflight:  control plane https://pro.example.com answers, the token may deploy
-preflight:  ghcr.io/your-org/first_pro_dag accepts a push (credential from the docker config)
-preflight:  the server would register first_pro_dag 1a2b3c4 as a new DAG, active
-builder:    dependency-layer (uv 0.11.32), then code-layer, no dependency image ghcr.io/your-org/first_pro_dag:deps-9b07... in the registry (GET https://ghcr.io/v2/your-org/first_pro_dag/manifests/deps-9b07...: MANIFEST_UNKNOWN: ...): it is built from wheels without a daemon and pushed, then the DAG code is appended to it
+Deploy /home/you/acme-dags/dags/first_cluster_dag -> https://cluster.example.com? [y/N] y
+preflight:  control plane https://cluster.example.com answers, the token may deploy
+preflight:  ghcr.io/your-org/first_cluster_dag accepts a push (credential from the docker config)
+preflight:  the server would register first_cluster_dag 1a2b3c4 as a new DAG, active
+builder:    dependency-layer (uv 0.11.32), then code-layer, no dependency image ghcr.io/your-org/first_cluster_dag:deps-9b07... in the registry (GET https://ghcr.io/v2/your-org/first_cluster_dag/manifests/deps-9b07...: MANIFEST_UNKNOWN: ...): it is built from wheels without a daemon and pushed, then the DAG code is appended to it
 …  (compile → build for linux/amd64 → push → register)
-Deployed first_pro_dag -> https://pro.example.com
-  image ghcr.io/your-org/first_pro_dag@sha256:9f2c…
+Deployed first_cluster_dag -> https://cluster.example.com
+  image ghcr.io/your-org/first_cluster_dag@sha256:9f2c…
   registered version 1a2b3c4
   execution  every task runs on a dedicated pod: warm pools off
-next: first_pro_dag is active and has no schedule; it runs only when triggered (`dexaflow runs trigger first_pro_dag`).
+next: first_cluster_dag is active and has no schedule; it runs only when triggered (`dexaflow runs trigger first_cluster_dag`).
   triggered run manual__1717525200
-Following run manual__1717525200 of first_pro_dag (Ctrl-C stops following; the run keeps going)
-  https://pro.example.com/dags/first_pro_dag/runs/manual__1717525200
+Following run manual__1717525200 of first_cluster_dag (Ctrl-C stops following; the run keeps going)
+  https://cluster.example.com/dags/first_cluster_dag/runs/manual__1717525200
   extract  queued
   extract  running
   extract  success  2.9s
@@ -229,7 +230,7 @@ That one command crossed every boundary:
    (`builder:    code-layer, ...`). See [Builders](/operate/builders/).
 3. **push**: pushed it to the target's registry.
 4. **re-pin + register**: captured the image **digest**, wrote
-   `…@sha256:…` into `dag.json`, and registered that with the control plane. Pro
+   `…@sha256:…` into `dag.json`, and registered that with the control plane. Cluster
    now pulls **exactly** the bytes you built, with no `:latest` drift.
 5. **execution**: the server said where each task runs. Every task runs on a
    dedicated pod of its own unless the operator turned on
@@ -245,7 +246,7 @@ That one command crossed every boundary:
 Without `--trigger`, `deploy` only publishes the artifact. Without `--active`,
 a DAG deployed for the first time stays **paused**, as in Airflow: its schedule
 creates no run until you unpause it with the switch in the UI or
-`dexaflow admin dags unpause first_pro_dag`, and a run triggered meanwhile
+`dexaflow admin dags unpause first_cluster_dag`, and a run triggered meanwhile
 waits in `queued` until then. Later deploys keep the DAG paused or active as
 you left it, so `--active` is only needed the first time. To have new DAGs
 start active, set `is_paused_upon_creation=False` on the DAG or ask the
@@ -255,18 +256,18 @@ operator to set `DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION=false`; see
 
 Setting `is_paused` needs write on dags: the built-in deployer role and a
 deploy-only token cannot pass `--active`, so in CI an admin unpauses the DAG
-once instead (`dexaflow admin dags unpause first_pro_dag`).
+once instead (`dexaflow admin dags unpause first_cluster_dag`).
 
 If you trigger while the DAG is still paused, the command says so and the run
 waits:
 
 ```console
-$ dexaflow deploy first_pro_dag --trigger --follow
+$ dexaflow deploy first_cluster_dag --trigger --follow
 …
   triggered run manual__1717525200
-Following run manual__1717525200 of first_pro_dag (Ctrl-C stops following; the run keeps going)
-  https://pro.example.com/dags/first_pro_dag/runs/manual__1717525200
-note: first_pro_dag is paused: this run waits in queued until you unpause it: dexaflow admin dags unpause first_pro_dag
+Following run manual__1717525200 of first_cluster_dag (Ctrl-C stops following; the run keeps going)
+  https://cluster.example.com/dags/first_cluster_dag/runs/manual__1717525200
+note: first_cluster_dag is paused: this run waits in queued until you unpause it: dexaflow admin dags unpause first_cluster_dag
 ```
 
 Run the unpause from another terminal (or the switch in the UI) and the
@@ -285,7 +286,7 @@ run, so a script or a CI job can rely on it:
 | `130` | you pressed Ctrl-C |
 
 Ctrl-C and `--timeout` only stop following: the run keeps going, and
-`dexaflow runs status first_pro_dag --run <run_id>` shows it later. A run that
+`dexaflow runs status first_cluster_dag --run <run_id>` shows it later. A run that
 stays queued for two minutes gets a note: the pause when the DAG is paused,
 otherwise that no task has started and where to look. `dexaflow runs trigger
 <dag_id> --follow` and `dexaflow deploy --trigger --follow` follow a run the
@@ -301,7 +302,7 @@ the latest run.
 | `deploy requires a container registry…` | no registry from `--registry`, `DEXAFLOW_REGISTRY`, `dexaflow.yaml`, the target, the workspace defaults, your config file or the cluster | `--registry` on `dexaflow target add` (Step 1), or the `registry:` block in `dexaflow.yaml`; then the registry sign-in of Step 2 |
 | `denied` / `unauthorized` on push | no credential for the registry, or one that may not push there | the command the preflight names for your registry: a sign-in to the cloud's CLI for Artifact Registry, ECR and ACR, `dexaflow registry login <registry>` for the others, and the tool's own login when the local container tool builds ([Registry credentials](/operate/builders/#registry-credentials)); registry auth ≠ control-plane auth |
 | Task pod: `exec format error` | image arch ≠ cluster arch | build for the cluster's architecture: `dexaflow deploy --platform linux/arm64` on a Graviton cluster, or `build: {platforms: [linux/arm64]}` in `dexaflow.yaml`. The `platforms:` line of the output names where the value came from |
-| DAG runs but a task fails on a missing `conn_id` | connections live in the control plane, **not** in the image | deploy prints `note: this DAG expects connection(s): …`; create them on Pro (UI/API) first. See [Variables & Connections](/author-dags/variables-connections/) |
+| DAG runs but a task fails on a missing `conn_id` | connections live in the control plane, **not** in the image | deploy prints `note: this DAG expects connection(s): …`; create them on Cluster (UI/API) first. See [Variables & Connections](/author-dags/variables-connections/) |
 
 Hit something not on this list (an unsupported task type, `CreateContainerConfigError`,
 a `401`/`403`, a private-registry `ErrImagePull`, or a `409` on a second deploy)?
@@ -332,15 +333,15 @@ the workspace, where a save redeploys only the project it belongs to.
 ```console
 $ dexaflow deploy --watch
 …
-Deployed first_pro_dag -> https://pro.example.com
-  image ghcr.io/your-org/first-pro-dag@sha256:9f2c…
+Deployed first_cluster_dag -> https://cluster.example.com
+  image ghcr.io/your-org/first-cluster-dag@sha256:9f2c…
   registered version 1a2b3c4
 watching .: save a file to redeploy what changed (Ctrl-C to stop)
-[10:42:07] first_pro_dag: saved, deploying version 5d6e7f8
-preflight:  control plane https://pro.example.com answers, the token may deploy
+[10:42:07] first_cluster_dag: saved, deploying version 5d6e7f8
+preflight:  control plane https://cluster.example.com answers, the token may deploy
 …
-Deployed first_pro_dag -> https://pro.example.com
-[10:43:15] first_pro_dag: saved, no deployable change: version 5d6e7f8 is the current version; nothing registered
+Deployed first_cluster_dag -> https://cluster.example.com
+[10:43:15] first_cluster_dag: saved, no deployable change: version 5d6e7f8 is the current version; nothing registered
 ^C
 stopped watching
 ```
@@ -387,12 +388,12 @@ Every deploy that registers new content adds a version; the newest becomes
 current.
 
 ```console
-$ dexaflow dags versions first_pro_dag
+$ dexaflow dags versions first_cluster_dag
 VERSION  LABEL    CURRENT  CREATED           CREATOR ID                            COMMIT        IMAGE
 2        5d6e7f8  *        2026-10-02 09:12  7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a  5d6e7f81a9c2  sha256:4b1d0c9e2a7f
 1        1a2b3c4           2026-10-01 17:40  7f3c2a10-5b1e-4c3d-9a8e-2f6b1c0d4e5a  1a2b3c4d5e6f  sha256:9f2c81d07a3e
-$ dexaflow rollback first_pro_dag
-first_pro_dag: current version changed from 5d6e7f8 (#2) to 1a2b3c4 (#1).
+$ dexaflow rollback first_cluster_dag
+first_cluster_dag: current version changed from 5d6e7f8 (#2) to 1a2b3c4 (#1).
 New runs use 1a2b3c4 (#1) from the next scheduler tick; runs already created keep their version.
 ```
 
@@ -476,7 +477,7 @@ Keep the last `USER` numeric and non-root, or the task pod fails with
 
 ## From here
 
-- **Coming from Lite?** [From Lite to Pro](/operate/lite-to-pro/) lists what
+- **Coming from Lite?** [From Lite to Cluster](/operate/lite-to-cluster/) lists what
   changes between the two: the registry, the sign-in, paused new DAGs and
   where connections live.
 - **Automate it.** `dexaflow deploy --yes` is exactly what a pipeline runs on

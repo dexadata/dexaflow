@@ -71,14 +71,14 @@ percent-escaped.
 [README](https://github.com/dexadata/dexaflow/tree/main/examples/sqlite_load/README.md)
 walks through Connection setup and verification.
 
-## Lite vs Pro caveats
+## Lite vs Cluster caveats
 
 - **Lite (subprocess)** runs the task on the host. The path resolves
   against the host filesystem — a writable temp dir is fine for demos.
 - **Lite (k3d)** runs the task in a pod. The path resolves inside the
   pod; the file disappears when the pod exits unless you mount a
   hostPath or a PVC.
-- **Pro (Kubernetes)** same as k3d: persistence requires a volume. For
+- **Cluster (Kubernetes)** same as k3d: persistence requires a volume. For
   shared state across pods, sqlite is the wrong tool — use a real
   service (postgres / mysql) instead.
 

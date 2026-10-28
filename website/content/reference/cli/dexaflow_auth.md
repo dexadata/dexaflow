@@ -30,6 +30,6 @@ Manage authentication tokens.
 * [dexaflow auth ci-token](/reference/cli/dexaflow_auth_ci-token/)	 - Exchange a CI job's OIDC token for a deploy session.
 * [dexaflow auth create-token](/reference/cli/dexaflow_auth_create-token/)	 - Obtain a session JWT, or with --scope create a long-lived API token.
 * [dexaflow auth create-user](/reference/cli/dexaflow_auth_create-user/)	 - Create a user on the control plane (admin only).
-* [dexaflow auth login](/reference/cli/dexaflow_auth_login/)	 - Authenticate to a control plane (Pro) and store the token.
+* [dexaflow auth login](/reference/cli/dexaflow_auth_login/)	 - Authenticate to a control plane (Cluster) and store the token.
 * [dexaflow auth tokens](/reference/cli/dexaflow_auth_tokens/)	 - List and revoke API tokens.
 

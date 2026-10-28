@@ -78,7 +78,7 @@ func TestPoolsAPIReportsWeightedSlots(t *testing.T) {
 		},
 		Server: ServerDeps{
 			CORSOrigins: []string{"*"},
-			Edition:     "pro",
+			Pools:       true,
 		},
 		Auth: AuthDeps{
 			Authenticator: &fakeAuthn{user: &auth.User{ID: "u1", TenantID: "default", Roles: []string{"admin"}}},
