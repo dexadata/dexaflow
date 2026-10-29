@@ -77,8 +77,10 @@ def clear_bodies(page, dag, run, task, want_latest):
         )
     if toggle.is_checked() != want_latest:
         # The 3.3 SPA (Chakra v3) lays the styled control over the native input,
-        # so a plain click on the input is intercepted; set it directly.
-        toggle.set_checked(want_latest, force=True)
+        # so a plain click on the input is intercepted, and a forced one fails
+        # when the hidden input sits outside the viewport. Click it from the
+        # page instead: the browser toggles it and React sees the change.
+        toggle.evaluate("el => el.click()")
     if toggle.is_checked() != want_latest:
         raise AssertionError(f"could not set the toggle to {want_latest}")
 
