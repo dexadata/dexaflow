@@ -7,7 +7,7 @@ name = "leoflow-runtime"
 version = "0.1.0"
 description = "Dexaflow task runtime: runs user callables and bridges XCom inside task containers."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 dependencies = []
 

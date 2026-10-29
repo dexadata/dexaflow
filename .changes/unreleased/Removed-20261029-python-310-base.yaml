@@ -1,0 +1,12 @@
+kind: Removed
+body: |-
+  **The `py3.10` task base image is no longer published.** Python 3.10
+  reaches upstream end-of-life in October 2026 and its slim base stops
+  receiving OS security updates, so releases cut after 2026-10-31 build no
+  `dexaflow-runtime:py3.10` image. `python_version: "3.10"` is now refused by
+  `validate`, `compile`, `deploy` and `lite` with a message that names
+  `3.11` as the replacement. Tags already published stay pullable, so a
+  `base_image` pin to a `py3.10` tag still builds, and `compile` warns that
+  the base gets no security updates. The runtime package now requires
+  Python 3.11 or later (#1447).
+time: 2026-10-29T01:40:00.000000000-03:00
