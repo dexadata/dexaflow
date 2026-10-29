@@ -39,10 +39,15 @@ the platform in front of Dexaflow creates the user and sets its roles through
 the operator service API. While OIDC is on, password sign-in is refused except
 for the emails in `auth.oidc.break_glass_emails`.
 
-The API has no call yet to change a local user's roles or password or to
-deactivate one ([#2229](https://github.com/dexadata/dexaflow/issues/2229)). A
-deactivated user, whatever the way it was deactivated, is refused at its next
-request, and so are its session and its API tokens.
+An admin deactivates or reactivates a user of their tenant with
+`PATCH /api/v2/users/{user_id}` and the body `{"is_active": false}` (or
+`true`). The admin needs `write:user` and cannot deactivate their own account.
+A deactivated user is refused at its next request, and so are its session,
+its token renewals and its API tokens; a new sign-in is refused too. The
+change is recorded in the [audit log](/operate/audit-log/) as
+`user.deactivate` or `user.activate`. Reactivating restores the user with the
+roles it had. Changing a local user's roles or password through the API is
+not available yet ([#2229](https://github.com/dexadata/dexaflow/issues/2229)).
 
 ## Built-in roles
 
