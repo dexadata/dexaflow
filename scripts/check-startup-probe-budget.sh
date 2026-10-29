@@ -91,7 +91,7 @@ namecheck = boot_bound("oidcNameCheckTimeout")
 try:
 	import yaml
 except ImportError:
-	sys.exit("SKIP: PyYAML unavailable; cannot read the chart defaults")
+	sys.exit("FAIL: PyYAML unavailable; cannot read the chart defaults (pip install pyyaml)")
 values = yaml.safe_load(read(values_path)) or {}
 
 
@@ -159,6 +159,11 @@ self_test() {
 	_case "a raised name-check timeout is caught"     1 "tighter than the boot"      30 10 5 36  15 120
 	_case "a budget at the liveness budget is caught" 1 "not more than the"           2  4 5 14   1   1
 	_case "exactly floor plus headroom passes"        0 "startup probe budget: 150s" 30 10 5 30
+
+	# Without PyYAML nothing was checked, so the gate fails and says why (#969).
+	mkdir -p "$tmp/noyaml"
+	printf 'raise ImportError("PyYAML hidden by the self-test")\n' >"$tmp/noyaml/yaml.py"
+	PYTHONPATH="$tmp/noyaml" _case "a missing PyYAML fails and says so" 1 "FAIL: PyYAML unavailable" 30 10 5 36
 
 	# Either side renamed away must fail loudly rather than pass by not matching.
 	_write 30 10 5 36

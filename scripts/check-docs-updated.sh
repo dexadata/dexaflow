@@ -79,10 +79,21 @@ user_facing() {
 	done < <(printf '%s\n' "$changed" | grep -E "$FRAGMENT_RE" || true)
 }
 
-# touches_docs <changed-files>: true when the change edits the docs site.
-# A here-string, not a pipe: grep -q exits at the first match, and under
-# pipefail the writer's SIGPIPE on a long file list would read as "no docs".
-touches_docs() { grep -qE "^${DOCS_DIR}/" <<<"$1"; }
+# Reference trees the website build regenerates from source (gen-cli.sh,
+# gen-go.sh). A change there records that a generator ran, not that anyone
+# wrote a word: `dexaflow build` shipped with its regenerated CLI page and no
+# prose, and that page satisfied this gate (#1129).
+GENERATED_DOCS_RE="^${DOCS_DIR}/reference/(cli|go)/"
+
+# touches_docs <changed-files>: true when the change edits the docs site
+# outside the generated reference trees. Here-strings, not pipes: grep -q
+# exits at the first match, and under pipefail the writer's SIGPIPE on a long
+# file list would read as "no docs".
+touches_docs() {
+	local docs
+	docs=$(grep -E "^${DOCS_DIR}/" <<<"$1" || true)
+	[ -n "$docs" ] && grep -qvE "$GENERATED_DOCS_RE" <<<"$docs"
+}
 
 # skip_docs_reason <pr-body>: the reason a `Skip-docs:` line gives, empty when
 # there is none. Case-insensitive on the key, and the reason must say
@@ -227,6 +238,17 @@ self_test() {
 	[ "$rc" -ne 0 ] || { echo "self-test FAIL: an empty Skip-docs line without the label accepted" >&2; return 1; }
 	[ "$(skip_docs_reason $'a\n  Skip-docs: covered by #12  \n')" = "covered by #12" ] ||
 		{ echo "self-test FAIL: skip_docs_reason did not read the reason" >&2; return 1; }
+
+	# Generated reference pages are not prose (#1129): `dexaflow build` shipped
+	# with only its regenerated CLI page, and that satisfied this gate.
+	printf 'internal/cli/build.go\nwebsite/content/reference/cli/dexaflow_build.md\n' >"$tmp/gen"
+	rc=0; check X "$tmp/gen" >/dev/null 2>&1 || rc=$?
+	[ "$rc" -ne 0 ] || { echo "self-test FAIL: a regenerated CLI page counted as docs" >&2; return 1; }
+	printf 'internal/config/server.go\nwebsite/content/reference/go/internal-config.md\n' >"$tmp/gen"
+	rc=0; check X "$tmp/gen" >/dev/null 2>&1 || rc=$?
+	[ "$rc" -ne 0 ] || { echo "self-test FAIL: a regenerated Go reference page counted as docs" >&2; return 1; }
+	printf 'internal/cli/build.go\nwebsite/content/reference/cli/dexaflow_build.md\nwebsite/content/author-dags/build.md\n' >"$tmp/gen"
+	check X "$tmp/gen" >/dev/null 2>&1 || { echo "self-test FAIL: prose next to a generated page rejected" >&2; return 1; }
 
 	echo "check-docs-updated self-test: ok"
 }

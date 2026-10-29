@@ -1,0 +1,36 @@
+# Every scripts/check-*.sh that cut-release.sh's run_gates() runs, one basename
+# per line. run_gates() and check-script-selftests.sh compare the glob with
+# this list as a set and name what differs (#982): adding or removing a gate
+# must touch this file.
+check-airflow-ui-pin.sh
+check-changelog-entry.sh
+check-changelog-structure.sh
+check-chart-version-matches-tag.sh
+check-codeql-action-pins.sh
+check-dependabot-dirs.sh
+check-docs-updated.sh
+check-docs-version-menu.sh
+check-fork-safe-workflows.sh
+check-go-file-length.sh
+check-go-toolchain-pin.sh
+check-golangci-lint-pin.sh
+check-hugo-version-pin.sh
+check-lite-postgres-tag.sh
+check-lite-prepull-matches-compose.sh
+check-migrate-cli-build-tags.sh
+check-migrate-pod-selection.sh
+check-no-stale-deploy-path.sh
+check-no-tool-context.sh
+check-playwright-pin.sh
+check-pre-commit-git-env.sh
+check-python-host-interpreters.sh
+check-python-runtime-matrix.sh
+check-runtime-data-pins.sh
+check-script-selftests.sh
+check-service-image-registry.sh
+check-stale-versions.sh
+check-startup-probe-budget.sh
+check-trivyignore-entries.sh
+check-values-doc-comments.sh
+check-workflow-pins.sh
+check-workflow-tag-runs.sh

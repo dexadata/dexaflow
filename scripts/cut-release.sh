@@ -66,6 +66,8 @@ die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 # the copy of the same revision.
 # shellcheck source=scripts/docs-promote.sh
 . "$(dirname "${BASH_SOURCE[0]}")/docs-promote.sh"
+# shellcheck source=scripts/manifest-diff.sh
+. "$(dirname "${BASH_SOURCE[0]}")/manifest-diff.sh"
 
 # ---- pure logic (unit-testable, no network) --------------------------------
 
@@ -308,6 +310,26 @@ self_test() {
   _eq "$(run_verdict "$(latest_runs '[{"workflowName":"Docs guard","createdAt":"2026-10-08T16:30:32Z","status":"completed","conclusion":"success"},{"workflowName":"Docs guard","createdAt":"2026-10-08T16:30:32Z","status":"completed","conclusion":"failure"}]')")" "FAILED" "tied runs that both finished are both judged"
   _eq "$(run_verdict "$(latest_runs '[{"workflowName":"Docs guard","createdAt":"2026-10-08T16:30:32Z","status":"completed","conclusion":"cancelled"},{"workflowName":"Docs guard","createdAt":"2026-10-08T16:30:32Z","status":"in_progress","conclusion":""}]')")" "PENDING" "a tied sibling still running keeps the cut waiting"
   _eq "$(run_verdict '[{"status":"completed","conclusion":"cancelled"},{"status":"in_progress","conclusion":""}]')" "PENDING" "PENDING outranks BLOCKED"
+  # A GA must not date an empty [Unreleased] (#971).
+  local cl; cl="$(mktemp)"
+  printf '# Changelog\n\n## [Unreleased]\n\n## [0.5.7] - 2026-10-27\n\n### Added\n\n- old\n' >"$cl"
+  if unreleased_has_entries "$cl"; then echo "FAIL: an empty [Unreleased] reads as having entries (#971)"; fail=1; fi
+  printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- new\n\n## [0.5.7] - 2026-10-27\n' >"$cl"
+  unreleased_has_entries "$cl" || { echo "FAIL: [Unreleased] with entries reads as empty (#971)"; fail=1; }
+  printf '# Changelog\n\n## [Unreleased]\n' >"$cl"
+  if unreleased_has_entries "$cl"; then echo "FAIL: an empty last section reads as having entries (#971)"; fail=1; fi
+  # The wiring: date_the_changelog itself refuses, and leaves the file alone.
+  printf '# Changelog\n\n## [Unreleased]\n\n## [0.5.7] - 2026-10-27\n' >"$cl"
+  if (CHANGELOG="$cl"; date_the_changelog 9.9.9) >/dev/null 2>&1; then echo "FAIL: a GA dated an empty [Unreleased] (#971)"; fail=1; fi
+  grep -q '9.9.9' "$cl" && { echo "FAIL: the refused GA still wrote its section (#971)"; fail=1; }
+  printf '# Changelog\n\n## [Unreleased]\n\n- new\n' >"$cl"
+  (CHANGELOG="$cl"; date_the_changelog 9.9.9) >/dev/null 2>&1 || { echo "FAIL: a GA with entries was refused (#971)"; fail=1; }
+  grep -q '^## \[9.9.9\] - ' "$cl" || { echo "FAIL: the GA did not date [Unreleased] (#971)"; fail=1; }
+  rm -f "$cl"
+  # The release watch judges the same way (#1028). Shape of v0.4.5-rc.3: one
+  # tag push, two Release runs created in the same second, one cancelled.
+  _eq "$(release_verdict '[{"databaseId":34382995877,"workflowName":"Release","createdAt":"2026-09-09T17:27:14Z","status":"completed","conclusion":"cancelled"},{"databaseId":34382995390,"workflowName":"Release","createdAt":"2026-09-09T17:27:14Z","status":"completed","conclusion":"success"}]')" "GREEN" "a release run cancelled beside a successful twin is not judged (#1028)"
+  _eq "$(release_verdict '[{"databaseId":1,"workflowName":"Release","createdAt":"2026-09-09T17:27:14Z","status":"completed","conclusion":"cancelled"}]')" "BLOCKED cancelled" "a lone cancelled release run still blocks"
   # And the REST shape must not regress if anything ever feeds it in.
   _eq "$(run_verdict '[{"status":"completed","conclusion":null}]')" "PENDING" "a null conclusion is treated like an empty one"
 
@@ -642,9 +664,17 @@ JSON
   mkdir -p "$gd/scripts"
   printf '#!/bin/sh\nprintf "%%s\\n" "$*" >"%s/stale.argv"\n' "$gd" >"$gd/scripts/check-stale-versions.sh"
   printf '#!/bin/sh\nprintf "%%s\\n" "$*" >"%s/other.argv"\n' "$gd" >"$gd/scripts/check-other.sh"
-  ( ROOT="$gd" MIN_GATES=2 run_gates v9.9.9-rc.1 release-9.9 >/dev/null 2>&1 )
+  printf 'check-stale-versions.sh\ncheck-other.sh\n' >"$gd/gates.txt"
+  ( ROOT="$gd" GATES_MANIFEST="$gd/gates.txt" run_gates v9.9.9-rc.1 release-9.9 >/dev/null 2>&1 )
   _eq "$(cat "$gd/stale.argv" 2>/dev/null)" "--candidate v9.9.9-rc.1" "run_gates judges stale pins against the tag being cut"
   _eq "$(cat "$gd/other.argv" 2>/dev/null)" "" "and still runs every other gate bare"
+  # The gate set is compared with the manifest by name, not a count (#982): a
+  # rename keeps the count and must still stop the cut.
+  mv "$gd/scripts/check-other.sh" "$gd/scripts/check-renamed.sh"
+  local gerr grc=0
+  gerr="$( ( ROOT="$gd" GATES_MANIFEST="$gd/gates.txt" run_gates v9.9.9-rc.1 release-9.9 ) 2>&1 >/dev/null)" || grc=$?
+  _eq "$grc" "1" "a renamed gate stops the cut"
+  _eq "$(grep -c 'missing check-other.sh; unexpected check-renamed.sh' <<<"$gerr")" "1" "and the message names both sides"
   rm -rf "$gd"
 
   # The changelog sync runs after a patch GA tag and only then: a minor GA is
@@ -841,6 +871,12 @@ latest_runs() { # <runs-json>
     else . end' 2>/dev/null || printf '%s' "$1"
 }
 
+# release_verdict <runs-json>: run_verdict over the newest run of each release
+# workflow. One tag push can start two runs of the same workflow in the same
+# second, and GitHub cancels one of them; judging that one warned "a release
+# run did not finish" about a release its sibling had published (#1028).
+release_verdict() { run_verdict "$(latest_runs "$1")"; }
+
 # wait_sha_green <sha>: block until every run for <sha> is completed; rerun only
 # transient flakes (bounded); echo GREEN or RED. Robust to the post-rerun window
 # where gh briefly reports the prior conclusion (it waits for pending==0).
@@ -992,11 +1028,21 @@ bump_chart() { # <chart_version>
   perl -0pi -e "s/^version: .*/version: $cv/m; s/^appVersion: .*/appVersion: \"$cv\"/m" "$CHART"
 }
 
+# unreleased_has_entries <changelog>: true when the [Unreleased] section holds
+# any non-blank line before the next release heading.
+unreleased_has_entries() {
+  awk '/^## \[Unreleased\]/{u=1; next} u && /^## \[/{exit} u && NF{found=1; exit} END{exit !found}' "$1"
+}
+
 # date_the_changelog <chart_version>: GA only — move [Unreleased] to a dated
 # section and open a fresh [Unreleased]. rc keeps [Unreleased] untouched.
 date_the_changelog() {
   local cv="$1" today; today="$(date -u +%F)"
   grep -q '^## \[Unreleased\]' "$CHANGELOG" || die "CHANGELOG has no [Unreleased] section"
+  # The fold has already run, so an empty section means this GA records
+  # nothing it ships, and dating it would publish an empty release section
+  # that no gate questions (#971).
+  unreleased_has_entries "$CHANGELOG" || die "CHANGELOG [Unreleased] is empty after folding the fragments: a GA must record what it ships (add the missing entries, then re-run)"
   perl -0pi -e "s/^## \\[Unreleased\\]/## [Unreleased]\n\n## [$cv] - $today/m" "$CHANGELOG"
 }
 
@@ -1024,11 +1070,14 @@ run_gates() { # <tag> <base>
   local -a gates=("$ROOT"/scripts/check-*.sh)
   shopt -u nullglob
   # A gate renamed out of check-*.sh silently leaves the cut's gate set with no
-  # signal at all, so assert the floor.
-  [ "${#gates[@]}" -ge "${MIN_GATES:-20}" ] || {
-    echo "gate set shrank to ${#gates[@]} (expected >= ${MIN_GATES:-20}) — a check-*.sh was renamed or removed" >&2
+  # signal at all, so compare it with the committed manifest and name what
+  # differs (#982). check-script-selftests.sh makes the same comparison on every
+  # pull request; this one guards the cut itself.
+  local diff_msg
+  if ! diff_msg="$(for s in "${gates[@]}"; do basename "$s"; done | manifest_diff "${GATES_MANIFEST:-$ROOT/.github/ci/gates.txt}")"; then
+    echo "gate set differs: $diff_msg" >&2
     return 1
-  }
+  fi
   for s in "${gates[@]}"; do
     # Capture rather than discard: a bare "gate FAIL <name>" during a cut is
     # unrecoverable, since $logf does not exist until after the tag.
@@ -1362,15 +1411,15 @@ main() {
       break
     fi
     # --branch filters server-side, same window problem as wait_sha_green.
-    j=$(gh run list --branch "$tag" --limit 100 --json databaseId,status,conclusion 2>/dev/null \
+    j=$(gh run list --branch "$tag" --limit 100 --json databaseId,status,conclusion,workflowName,createdAt 2>/dev/null \
           | jq '[.[]]' 2>/dev/null)
     if [ "$started" = no ] && [ "$(runs_started "$j")" = yes ]; then
       started=yes; rstart=$SECONDS
       log "$tag release jobs started after $((SECONDS - qstart))s in the queue"
       echo "queue_wait_s=$((SECONDS - qstart))" >>"$logf"
     fi
-    # Same classification as wait_sha_green — see run_verdict.
-    verdict="$(run_verdict "$j")"
+    # Same classification as wait_sha_green, see run_verdict and release_verdict.
+    verdict="$(release_verdict "$j")"
     case "$verdict" in
       NONE)     sleep 20; continue ;;
       PENDING)  sleep 45; continue ;;

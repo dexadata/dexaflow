@@ -78,24 +78,29 @@ SH
 	chmod +x "$fakebin/curl" "$cosignbin/cosign"
 
 	# ── fake releases ──
-	_release() { # <tag> <name>
-		local tag="$1" name="$2" d stage nov="${1#v}"
+	_release() { # <tag> <name> [suffix...]: the binaries default to CLI, server and agent
+		local tag="$1" name="$2" d stage nov="${1#v}" platform
+		shift 2
+		local -a suffixes=("" -server -agent) files=()
+		[ $# -gt 0 ] && suffixes=("$@")
 		d="$tmp/releases/$tag"
 		stage="$tmp/stage-$tag"
 		mkdir -p "$d" "$stage"
-		for suffix in "" -server -agent; do
+		for suffix in "${suffixes[@]}"; do
 			printf '#!/bin/sh\necho %s%s\n' "$name" "$suffix" >"$stage/${name}${suffix}"
 			chmod +x "$stage/${name}${suffix}"
+			files+=("${name}${suffix}")
 		done
-		tar -czf "$d/${name}_${nov}_linux_amd64.tar.gz" -C "$stage" "$name" "${name}-server" "${name}-agent"
-		tar -czf "$d/${name}_${nov}_linux_arm64.tar.gz" -C "$stage" "$name" "${name}-server" "${name}-agent"
-		tar -czf "$d/${name}_${nov}_darwin_amd64.tar.gz" -C "$stage" "$name" "${name}-server" "${name}-agent"
-		tar -czf "$d/${name}_${nov}_darwin_arm64.tar.gz" -C "$stage" "$name" "${name}-server" "${name}-agent"
+		for platform in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64; do
+			tar -czf "$d/${name}_${nov}_${platform}.tar.gz" -C "$stage" "${files[@]}"
+		done
 		(cd "$d" && sha256sum ./*.tar.gz | sed 's# \./# #' >checksums.txt)
 		printf 'sig\n' >"$d/checksums.txt.sig"
 		printf 'pem\n' >"$d/checksums.txt.pem"
 	}
-	_release v0.5.4 dexaflow
+	# Current archives carry the MCP server too (#976); v0.4.8 shows that an
+	# archive without it still installs.
+	_release v0.5.4 dexaflow "" -server -agent -mcp
 	_release v0.4.8 leoflow
 
 	local out rc home log
@@ -133,6 +138,12 @@ SH
 	elif ! grep -qE -- "--signature [^ ]*checksums\.txt\.sig" "$log" || ! grep -qE -- "--certificate [^ ]*checksums\.txt\.pem" "$log"; then _bad "verified install succeeds" "sig/pem not passed: $(cat "$log")"
 	elif ! printf '%s' "$out" | grep -q 'signature verified'; then _bad "verified install succeeds" "no 'signature verified' line"
 	else _ok "cosign present: checksums.txt verified with the exact identity, install goes on"; fi
+
+	# 1b. Every binary in the archive is installed, the MCP server included,
+	# under its pre-rename name too (#976).
+	if ! _installed dexaflow-mcp; then _bad "the MCP server is installed" "dexaflow-mcp missing from $home/bin"
+	elif ! _installed leoflow-mcp; then _bad "the MCP server is installed" "leoflow-mcp link missing"
+	else _ok "the archive's MCP server is installed (dexaflow-mcp, leoflow-mcp)"; fi
 
 	# 2. cosign present and the signature does not verify: nothing installed.
 	_run 1 DEXAFLOW_VERSION=v0.5.4 FAKE_COSIGN_FAIL=1
