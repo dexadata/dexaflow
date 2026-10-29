@@ -43,6 +43,8 @@ The table is generated from the collectors the server registers: run
 | `dexaflow_db_pool_idle_conns` | gauge | `pool` | Idle connections in the database pool, by pool (main, health, scheduler). |
 | `dexaflow_db_pool_max_conns` | gauge | `pool` | Maximum connections the database pool may open, by pool (main, health, scheduler). |
 | `dexaflow_db_pool_total_conns` | gauge | `pool` | Open connections in the database pool, idle, lent out and being opened, by pool (main, health, scheduler). |
+| `dexaflow_dispatch_admission_duration_seconds` | histogram | _(none)_ | Time the dispatch admission hooks took for one task attempt. |
+| `dexaflow_dispatch_admission_total` | counter | `outcome` | Task attempts seen by the dispatch admission hooks (ADR 0100), by outcome (admitted, changed, held, refused, error, fail_open, breaker_open). |
 | `dexaflow_dispatch_at_capacity_total` | counter | _(none)_ | Dispatch requests rejected because the buffer was full. |
 | `dexaflow_dispatch_inner_errors_total` | counter | _(none)_ | Errors returned by the inner dispatcher inside a worker. |
 | `dexaflow_dispatch_latency_seconds` | histogram | _(none)_ | End-to-end latency of one buffered dispatch (enqueue to worker completion). |
