@@ -1,0 +1,45 @@
+suite: Logs PVC carries the StorageClass and access mode the cloud provisioner needs
+templates:
+  - pvc-logs.yaml
+release:
+  name: dexaflow
+# #526 bucket B: CI has no cloud provisioner (EBS, EFS, Filestore, Azure
+# Files), so the static contract is the claim the chart emits: the class and
+# access mode the operator set, and no storageClassName at all when unset, so
+# the cluster default applies instead of an empty class that binds nothing.
+tests:
+  - it: defaults to ReadWriteOnce on the cluster's default class
+    asserts:
+      - isKind:
+          of: PersistentVolumeClaim
+      - equal:
+          path: spec.accessModes
+          value: [ReadWriteOnce]
+      - notExists:
+          path: spec.storageClassName
+      - equal:
+          path: spec.resources.requests.storage
+          value: 50Gi
+
+  - it: names the StorageClass and RWX mode an HA install sets (EFS, Filestore)
+    set:
+      logs.persistence.storageClass: efs-sc
+      logs.persistence.accessMode: ReadWriteMany
+      logs.persistence.size: 200Gi
+    asserts:
+      - equal:
+          path: spec.storageClassName
+          value: efs-sc
+      - equal:
+          path: spec.accessModes
+          value: [ReadWriteMany]
+      - equal:
+          path: spec.resources.requests.storage
+          value: 200Gi
+
+  - it: renders no claim when persistence is off (object-store sink)
+    set:
+      logs.persistence.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0

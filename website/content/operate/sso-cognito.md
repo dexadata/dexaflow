@@ -129,3 +129,8 @@ request never reached the callback, and the problem is in front of Dexaflow.
 
 The [audit reason table](/operate/sso-google-workspace/#when-a-login-is-denied)
 decodes the rest.
+
+## Related
+
+- [Users, roles and API tokens](/operate/users-roles-tokens/): the built-in
+  roles your role mappings grant, sessions, and API tokens for CI.

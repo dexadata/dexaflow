@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// TestTenantSuspensionValidate: only hold is applied today, and the reason is
-// bounded because it is shown back in refusals and logs.
+// TestTenantSuspensionValidate: hold, drain and stop are the modes, and the
+// reason is bounded because it is shown back in refusals and logs.
 func TestTenantSuspensionValidate(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -17,7 +17,9 @@ func TestTenantSuspensionValidate(t *testing.T) {
 	}{
 		{name: "hold without a reason", s: TenantSuspension{Mode: SuspensionHold}, valid: true},
 		{name: "hold with a reason", s: TenantSuspension{Mode: SuspensionHold, Reason: "contract ended"}, valid: true},
-		{name: "drain is not applied yet", s: TenantSuspension{Mode: "drain"}, wants: "not supported yet"},
+		{name: "drain", s: TenantSuspension{Mode: SuspensionDrain}, valid: true},
+		{name: "stop", s: TenantSuspension{Mode: SuspensionStop, Reason: "abuse"}, valid: true},
+		{name: "unknown mode", s: TenantSuspension{Mode: "pause"}, wants: `use "hold", "drain" or "stop"`},
 		{name: "empty mode", s: TenantSuspension{}, wants: `use "hold"`},
 		{name: "reason too long", s: TenantSuspension{Mode: SuspensionHold, Reason: strings.Repeat("x", MaxSuspensionReasonLength+1)}, wants: "above the limit"},
 	} {
@@ -67,4 +69,14 @@ func safeMessage(err error) string {
 		return se.Message
 	}
 	return ""
+}
+
+// TestSuspensionModeHoldsDispatch: drain and stop dispatch nothing of the
+// tenant; hold lets its ready tasks go.
+func TestSuspensionModeHoldsDispatch(t *testing.T) {
+	for mode, want := range map[SuspensionMode]bool{"": false, SuspensionHold: false, SuspensionDrain: true, SuspensionStop: true} {
+		if got := mode.HoldsDispatch(); got != want {
+			t.Errorf("%q.HoldsDispatch() = %v, want %v", mode, got, want)
+		}
+	}
 }

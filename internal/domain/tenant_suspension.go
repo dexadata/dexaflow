@@ -5,10 +5,26 @@ import "time"
 // SuspensionMode says how much of a suspended tenant's work stops (#2181).
 type SuspensionMode string
 
-// SuspensionHold creates no new run for the tenant, manual or scheduled, and
-// lets the work already queued or running finish. It is the only mode the
-// engine applies today; the schema reserves "drain" and "stop" for later.
-const SuspensionHold SuspensionMode = "hold"
+// The suspension modes, each stopping more than the one before.
+const (
+	// SuspensionHold creates no new run for the tenant, manual or scheduled,
+	// and lets the work already queued or running finish.
+	SuspensionHold SuspensionMode = "hold"
+	// SuspensionDrain is hold, and also dispatches no task of the tenant: a
+	// ready task stays scheduled, a queued run is not started, and the
+	// attempts already dispatched finish.
+	SuspensionDrain SuspensionMode = "drain"
+	// SuspensionStop is drain, and also fails the tenant's queued and running
+	// task instances, so their attempts are told to terminate on their next
+	// heartbeat, as after a mark failed.
+	SuspensionStop SuspensionMode = "stop"
+)
+
+// HoldsDispatch reports whether the mode dispatches nothing of the tenant:
+// drain and stop.
+func (m SuspensionMode) HoldsDispatch() bool {
+	return m == SuspensionDrain || m == SuspensionStop
+}
 
 // MaxSuspensionReasonLength bounds the reason an operator gives, in bytes. It
 // is shown back in refusals and logs, so it stays short.
@@ -30,10 +46,12 @@ type TenantSuspension struct {
 func (s TenantSuspension) Active() bool { return s.Mode != "" }
 
 // Validate refuses a suspension the engine cannot apply: a mode other than
-// hold, or a reason longer than MaxSuspensionReasonLength.
+// hold, drain or stop, or a reason longer than MaxSuspensionReasonLength.
 func (s TenantSuspension) Validate() error {
-	if s.Mode != SuspensionHold {
-		return Safef(ErrValidation, "suspension mode %q is not supported: use %q (drain and stop are not supported yet)", s.Mode, SuspensionHold)
+	switch s.Mode {
+	case SuspensionHold, SuspensionDrain, SuspensionStop:
+	default:
+		return Safef(ErrValidation, "suspension mode %q is not supported: use %q, %q or %q", s.Mode, SuspensionHold, SuspensionDrain, SuspensionStop)
 	}
 	if len(s.Reason) > MaxSuspensionReasonLength {
 		return Safef(ErrValidation, "suspension reason is %d bytes, above the limit of %d", len(s.Reason), MaxSuspensionReasonLength)

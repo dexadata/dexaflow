@@ -8,8 +8,8 @@
     "build:preview": "hugo --gc --minify --environment development"
   },
   "devDependencies": {
-    "autoprefixer": "^10.4.20",
-    "postcss": "^8.4.47",
+    "autoprefixer": "^10.6.1",
+    "postcss": "^8.5.31",
     "postcss-cli": "^11.0.0"
   }
 }

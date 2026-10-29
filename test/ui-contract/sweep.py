@@ -89,6 +89,12 @@ def discover():
             if runs:
                 dag, run = d["dag_id"], runs[0]["dag_run_id"]
                 break
+    if dag and not run and token:
+        # A DAG named without a run: take its latest, so the run and task
+        # views are swept too instead of silently skipped.
+        runs = api(f"/api/v2/dags/{dag}/dagRuns?limit=1&order_by=-logical_date", token).get("dag_runs", [])
+        if runs:
+            run = runs[0]["dag_run_id"]
     if dag and run and not task and token:
         tis = api(f"/api/v2/dags/{dag}/dagRuns/{run}/taskInstances?limit=1", token).get("task_instances", [])
         if tis:

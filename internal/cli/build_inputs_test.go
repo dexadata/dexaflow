@@ -151,9 +151,7 @@ func envBuilder(t *testing.T) (builder, argvLog, envLog string) {
 		"echo \"$*\" >> \"" + argvLog + "\"\n" +
 		"printf '%s\\n' \"$" + indexSecretEnv + "\" >> \"" + envLog + "\"\n" +
 		"exit 0\n"
-	if err := os.WriteFile(builder, []byte(script), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, builder, script)
 	return builder, argvLog, envLog
 }
 

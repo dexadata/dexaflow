@@ -314,11 +314,10 @@ func (s *Server) GetTaskSpec(ctx context.Context, _ *agentv1.GetTaskSpecRequest)
 	if aerr := s.requireAttemptToken(id); aerr != nil {
 		return nil, aerr
 	}
-	spec, err := s.store.TaskSpec(ctx, *id)
+	spec, err := s.attemptSpecs.load(*id, func() (TaskSpec, error) { return s.store.TaskSpec(ctx, *id) })
 	if err != nil {
 		return nil, internalStatus("loading task spec", err, attemptAttrs(id)...)
 	}
-	s.attemptSpecs.put(*id, attemptSpecOf(spec))
 	return &agentv1.TaskSpec{
 		TenantId:                id.TenantID,
 		DagId:                   id.DagID,

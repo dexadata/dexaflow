@@ -12,7 +12,7 @@
 # This compares each surface against the base branch:
 #   - proto/          buf breaking, with the rules buf.yaml selects
 #   - OpenAPI         oasdiff breaking, failing on ERR level changes
-#   - pkg/client      apidiff, incompatible changes only
+#   - pkg/client, pkg/dagspec   apidiff, incompatible changes only
 #
 # A break is allowed when it is intended and announced: the pull request
 # carries the `breaking-change` label AND adds a changelog fragment of kind
@@ -39,7 +39,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LABEL="breaking-change"
 OPENAPI="docs/api/openapi.yaml"
-GO_PKGS=(./pkg/client)
+GO_PKGS=(./pkg/client ./pkg/dagspec)
 FRAGMENT_DIR=".changes/unreleased"
 ANNOUNCE_KINDS_RE='^(Changed|Removed)$'
 

@@ -161,9 +161,7 @@ func runLineUnderSh(t *testing.T, dockerfile, tool string) []string {
 	// space is still distinguishable from two arguments.
 	rec := "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> " + out + "; done\nexit 0\n"
 	for _, name := range []string{"pip", "apt-get", "rm"} {
-		if err := os.WriteFile(filepath.Join(bin, name), []byte(rec), 0o700); err != nil { //nolint:gosec // test fixture must be executable
-			t.Fatal(err)
-		}
+		writeExecutable(t, filepath.Join(bin, name), rec)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

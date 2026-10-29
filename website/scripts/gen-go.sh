@@ -27,7 +27,7 @@ OUT_DIR="${REPO_ROOT}/website/content/reference/go"
 PKGS=(
   ./internal/domain ./internal/scheduler ./internal/executor ./internal/dispatch
   ./internal/agent ./internal/agentrpc ./internal/storage ./internal/auth
-  ./internal/config ./internal/cli ./internal/api ./pkg/client
+  ./internal/config ./internal/cli ./internal/api ./pkg/client ./pkg/dagspec ./pkg/mcp
 )
 
 cd "${REPO_ROOT}"

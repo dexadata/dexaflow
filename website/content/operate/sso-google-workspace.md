@@ -314,3 +314,8 @@ the server log, so check it first when SSO looks dead:
 
 Boot fails outright, with the missing keys named in one message, when `issuer`,
 `clientId`, `redirectUrl` or the tenant pin are absent.
+
+## Related
+
+- [Users, roles and API tokens](/operate/users-roles-tokens/): the built-in
+  roles your role mappings grant, sessions, and API tokens for CI.

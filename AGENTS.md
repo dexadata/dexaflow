@@ -39,8 +39,10 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
    (`workflow_dispatch`) on the `release-X.Y` commit before the cut.
 5. **UI with Playwright.** When the candidate changes anything the browser shows
    (embedded UI assets, `/api/v2/` responses the UI reads, sign-in, login or SSO),
-   the Playwright flows (`test/e2e/ui-smoke.js`, `make e2e-sso`,
-   `test/ui-contract/`) ran against it, with screenshots of the changed screens.
+   the Playwright flows ran against it, with screenshots of the changed screens.
+   CI runs them on every PR: the `ui-smoke` job runs `test/e2e/ui-smoke.js` and
+   the `test/ui-contract/` sweep and clear dialog check, and `e2e-sso-login`
+   covers SSO; a green run of both jobs on the candidate's commit is the check.
 6. **Security.** Tenant isolation (no read or write across tenants, roles
    included), every new external input validated, new or bumped dependencies
    clean under `make vuln`, and the image scan (`image-scan.yaml`, Trivy) clean

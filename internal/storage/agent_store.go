@@ -297,7 +297,11 @@ func (s *ExecutionStore) BindWarmAttempt(ctx context.Context, runID, taskID stri
 // attempt epoch; a token without an epoch is matched on its try alone) is still
 // live (present and in an active, non-terminal state), derived from the same
 // predicate RecordHeartbeat writes on, but as a pure read with no
-// side-effect (ADR 0055). It is the read-only revocation signal the secret path
+// side-effect (ADR 0055). A scheduled attempt also counts when the token
+// carries the epoch the dispatch claimed: ClaimAttemptEpoch bumps the epoch
+// before the instance turns queued, so a task that starts fast can ask for a
+// secret in that gap (#2201). A token without an epoch never matches that
+// state. It is the read-only revocation signal the secret path
 // consults: a terminal, superseded (try_number moved on), or reaped attempt is
 // not live, so its token stops resolving secrets even while the signature holds.
 //

@@ -410,9 +410,7 @@ func TestBuildActuallyGetsTheDockerignore(t *testing.T) {
 	probe := filepath.Join(t.TempDir(), "fake-builder")
 	record := filepath.Join(t.TempDir(), "seen.txt")
 	script := "#!/bin/sh\ncp \"" + dir + "/.dockerignore\" \"" + record + "\" 2>/dev/null\nexit 0\n"
-	if err := os.WriteFile(probe, []byte(script), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, probe, script)
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})

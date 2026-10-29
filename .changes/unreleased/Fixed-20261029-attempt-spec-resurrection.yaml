@@ -1,0 +1,7 @@
+kind: Fixed
+body: |-
+  An attempt's cached XCom spec no longer outlives the attempt when one of its
+  XCom calls was loading the spec at the moment the attempt reported its end:
+  the load's result is no longer put back in the cache after the end dropped
+  the entry (#1616).
+time: 2026-10-29T02:00:00.000000+00:00
