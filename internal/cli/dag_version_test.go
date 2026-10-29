@@ -262,9 +262,7 @@ func recordingParser(t *testing.T, log string) string {
 		"{\"schema_version\":\"1.0\",\"dag_id\":\"etl\",\"dag_version\":\"$ver\",\"image\":\"$img\"," +
 		"\"tasks\":[{\"task_id\":\"t\",\"type\":\"python\",\"entrypoint\":\"dag:t\"}]}\n" +
 		"JSON\n"
-	if err := os.WriteFile(p, []byte(body), 0o755); err != nil { //nolint:gosec // test fixture must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, p, body)
 	return p
 }
 

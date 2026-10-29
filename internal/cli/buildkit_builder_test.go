@@ -46,9 +46,7 @@ done
 exit 0
 `
 	for name, script := range map[string]string{"kubectl": kubectl, "buildctl": buildctl} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
-			t.Fatal(err)
-		}
+		writeExecutable(t, filepath.Join(dir, name), script)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("FAKE_BUILDCTL_DIGEST", "")

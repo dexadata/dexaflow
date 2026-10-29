@@ -69,9 +69,7 @@ func fakeServer(t *testing.T, versionOut string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "dexaflow-server")
 	script := "#!/bin/sh\nif [ \"$1\" = version ]; then printf '" + versionOut + "'; exit 0; fi\necho booted >&2; exit 3\n"
-	if err := os.WriteFile(p, []byte(script), 0o700); err != nil { //nolint:gosec // test executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, p, script)
 	return p
 }
 

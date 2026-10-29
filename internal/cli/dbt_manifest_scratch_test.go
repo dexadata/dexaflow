@@ -29,9 +29,7 @@ func TestLoadDbtManifestParsesInScratchDir(t *testing.T) {
 		"echo '{\"metadata\":{\"dbt_version\":\"1.8.0\"}}' > \"$DBT_TARGET_PATH/manifest.json\"\n" +
 		"echo 'fake dbt log' > \"$DBT_LOG_PATH/dbt.log\"\n" +
 		"echo 'Done.'\n"
-	if err := os.WriteFile(filepath.Join(binDir, "dbt"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, filepath.Join(binDir, "dbt"), script)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	proj := t.TempDir()

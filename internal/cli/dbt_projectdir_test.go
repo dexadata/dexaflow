@@ -168,9 +168,7 @@ func TestDbtParseBinDoesNotDependOnTheRuntimeTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	venvDbt := filepath.Join(binDir, "dbt")
-	if err := os.WriteFile(venvDbt, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil { //nolint:gosec // test stub must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, venvDbt, "#!/bin/sh\nexit 0\n")
 
 	if got := dbtParseBinAt(home, "sales"); got != venvDbt {
 		t.Errorf("dbtParseBinAt = %q, want the DAG's own venv dbt %q", got, venvDbt)
@@ -201,9 +199,7 @@ func TestManifestParseUsesTheVenvDbtEvenForAnImageBoundCompile(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Exits 3 so the error is unmistakably THIS binary and not PATH's.
-	if err := os.WriteFile(filepath.Join(binDir, "dbt"), []byte("#!/bin/sh\nexit 3\n"), 0o755); err != nil { //nolint:gosec // a test stub must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, filepath.Join(binDir, "dbt"), "#!/bin/sh\nexit 3\n")
 	t.Setenv("HOME", home)
 	t.Setenv("PATH", t.TempDir()) // no dbt on PATH at all
 
