@@ -1265,6 +1265,14 @@ settings:
       env var sets it, matching the env-only control-plane chart. Keyless auth (IRSA
       / Workload Identity) uses the task pod's ServiceAccount: set `executor.task_service_account`
       accordingly. Helm: `secrets.backendKwargs`.
+  usage.events.enabled:
+    edition: both
+    description: >-
+      Record one usage event per finished task attempt, in the transaction that
+      finishes it ([ADR 0096](/project/adrs/0096-task-attempt-usage-events/)). The
+      scheduler leader writes this value to the database within 10 seconds of
+      taking leadership and keeps it there, so the leader's setting wins when
+      replicas disagree; its log says which value it wrote. Off by default.
   retention.dag_runs_days:
     edition: both
     default_note: off
