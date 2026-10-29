@@ -23,12 +23,13 @@ set -euo pipefail
 # repository being committed to: the fixtures' commits and tags landed there.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_PREFIX
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$ROOT/scripts/manifest-diff.sh"
 
 # scripts/ AND test/, because a self-test nothing runs is the defect this gate
 # exists to prevent, and it does not stop being that defect because the script
 # lives one directory over. test/gcp/provision.sh and test/gcp/teardown.sh both
 # shipped with a passing self-test that this loop could not see.
-found=0 failed=0
+found=0 failed=0 discovered=""
 # Discovery asks git what belongs to the repository, rather than walking the
 # filesystem. It used to be a hand-kept pair of directories, scripts/ and test/,
 # and the comment above already tells what that costs; it happened again when a
@@ -49,6 +50,7 @@ _selftest_candidates() { # <extension>
 for f in $(_selftest_candidates sh); do
 	grep -qE '^self_test\(\)' "$f" || continue
 	found=$((found + 1))
+	discovered+="${f#"$ROOT"/}"$'\n'
 	if out="$(bash "$f" --self-test 2>&1)"; then
 		echo "OK: $(basename "$f") --self-test"
 	else
@@ -71,6 +73,7 @@ for f in $(_selftest_candidates py); do
 	[ -f "$f" ] || continue
 	grep -qE '^def self_test\(' "$f" || continue
 	found=$((found + 1))
+	discovered+="${f#"$ROOT"/}"$'\n'
 	if out="$(python3 "$f" --self-test 2>&1)"; then
 		echo "OK: $(basename "$f") --self-test"
 	else
@@ -80,10 +83,19 @@ for f in $(_selftest_candidates py); do
 done
 
 # A rename or a lost self_test() would otherwise shrink this gate to nothing
-# while still exiting 0 — the same silent-shrink hole run_gates guards against.
-if [ "$found" -lt "${MIN_SELFTESTS:-20}" ]; then
-	echo "FAIL: found only $found self-test(s), expected at least ${MIN_SELFTESTS:-20}. Did a script lose its self_test()?" >&2
-	exit 1
+# while still exiting 0. The set is compared with a committed manifest rather
+# than a floor, so the failure names the script (#982).
+if ! diff_msg="$(cd "$ROOT" && manifest_diff .github/ci/selftests.txt <<<"$discovered")"; then
+	echo "FAIL: self-test set differs: $diff_msg" >&2
+	failed=$((failed + 1))
+fi
+# cut-release.sh's run_gates() makes the same comparison for the gate set, but
+# only at cut time. Checking it here too fails the pull request that adds or
+# renames a gate instead of the release that next runs it.
+gates="$(cd "$ROOT/scripts" && ls check-*.sh 2>/dev/null || true)"
+if ! diff_msg="$(cd "$ROOT" && manifest_diff .github/ci/gates.txt <<<"$gates")"; then
+	echo "FAIL: gate set differs: $diff_msg" >&2
+	failed=$((failed + 1))
 fi
 [ "$failed" -eq 0 ] || exit 1
 echo "check-script-selftests: $found self-test(s) pass"

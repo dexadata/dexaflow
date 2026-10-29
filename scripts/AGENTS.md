@@ -6,10 +6,12 @@ Rules for changing the scripts that gate CI and cut releases. The root
 - **Every `check-*.sh` is a release gate.** `cut-release.sh` runs every
   `scripts/check-*.sh` before a cut, so a new check must pass on a clean
   checkout with no network and no secrets, and a renamed one must keep the
-  `check-` prefix.
+  `check-` prefix. Adding, renaming or removing one updates
+  `.github/ci/gates.txt` in the same PR.
 - **Logic has a self-test.** A script with decision logic defines `self_test()`
   behind `--self-test`; `check-script-selftests.sh` finds and runs it by that
-  definition.
+  definition and compares the set with `.github/ci/selftests.txt`, so a new or
+  removed self-test updates that file too.
 - **A pinned tool has one source of truth.** The `check-*-pin.sh` scripts keep
   the version used locally and in CI equal; bump the pin and every place it
   names in the same PR.
