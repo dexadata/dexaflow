@@ -221,7 +221,7 @@ def write_dbt_profile(
 
 
 def write_dbt_default_duckdb(profile_name: str, profiles_dir: str, db_path: str = "") -> str:
-    """Write a default duckdb ``profiles.yml`` — Dexaflow's zero-server local warehouse
+    """Write a default duckdb ``profiles.yml``, Dexaflow's zero-server local warehouse
     when a dbt group has no managed connection (Lite). An empty db_path is in-memory.
     Written as JSON (valid YAML) so dbt reads it with no PyYAML dependency.
     """
