@@ -931,7 +931,7 @@ keys; set them through `extraEnv`.
 | Variable | Key | Type | Default | Edition | Purpose |
 |---|---|---|---|---|---|
 | `DEXAFLOW_RETENTION_DAG_RUNS_DAYS` | `retention.dag_runs_days` | int | `0`, off | both | Delete settled runs, with their task instances and history, that ended more than this many days ago. The newest run of each DAG is always kept. `0` keeps every run. |
-| `DEXAFLOW_RETENTION_AUDIT_LOG_DAYS` | `retention.audit_log_days` | int | `0`, off | both | Delete audit log entries older than this many days, per tenant and for the tenant-less system entries. `0` keeps the whole audit log. |
+| `DEXAFLOW_RETENTION_AUDIT_LOG_DAYS` | `retention.audit_log_days` | int | `0`, off | both | Delete audit log entries older than this many days, per tenant and for the tenant-less system entries. `0` keeps the whole audit log. See [Audit log](/operate/audit-log/). |
 | `DEXAFLOW_RETENTION_DRY_RUN` | `retention.dry_run` | bool | `false` | both | Only count what a cycle would delete; delete nothing. |
 | `DEXAFLOW_RETENTION_INTERVAL` | `retention.interval` | duration | `1h` | both | How often a cycle runs. Must be greater than zero when a class is on. |
 | `DEXAFLOW_RETENTION_BATCH_SIZE` | `retention.batch_size` | int | `1000` | both | Most rows one DELETE statement removes (1 to 50000), except the task instances of a single run larger than that, which go together. Also caps the runs per batch at 100. |
