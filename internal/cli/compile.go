@@ -231,17 +231,24 @@ func checkOutputWritable(output string) error {
 // author runs in a loop with dexaflow.yaml open, which is the exact moment the
 // warning is worth something.
 func checkProjectPreconditions(cmd *cobra.Command, dir string, cfg *domain.LeoflowConfig) error {
-	if verr := cfg.Validate(); verr != nil {
-		return fmt.Errorf("invalid %s: %w", projectConfigPath(dir), verr)
-	}
-	if derr := errDbtBlockWithDagSource(dir, cfg); derr != nil {
-		return derr
+	if verr := validateProject(dir, cfg); verr != nil {
+		return verr
 	}
 	// Stderr, not stdout: the compile summary and any piped output stay clean.
 	// Advisory only — a write failure here must not fail an otherwise good run.
 	warnDeprecatedPython(cmd.ErrOrStderr(), cfg)
 	warnIgnoredBuildFields(cmd.ErrOrStderr(), filepath.Base(projectConfigPath(dir)), cfg)
 	return nil
+}
+
+// validateProject is the part of checkProjectPreconditions that can refuse a
+// project, without its warnings, so `dexaflow build` can check a whole
+// workspace before building any of it (#1121).
+func validateProject(dir string, cfg *domain.LeoflowConfig) error {
+	if verr := cfg.Validate(); verr != nil {
+		return fmt.Errorf("invalid %s: %w", projectConfigPath(dir), verr)
+	}
+	return errDbtBlockWithDagSource(dir, cfg)
 }
 
 // prepareCompile loads the project config with its defaults, records where

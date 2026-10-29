@@ -385,13 +385,17 @@ so nothing about naming is new):
 ```bash
 dexaflow build my-dags/           # build every project under my-dags/
 dexaflow build my-dags/ --push    # ...and push each to its registry
+dexaflow build my-dags/ --dry-run # print each dag id and its image, build nothing
 ```
 
 Two behaviours matter more than the loop itself:
 
-- A project that declares **no `registry:`** is reported by name, not skipped
-  quietly. A command that covers less than the workspace without saying so leaves
-  you believing images exist.
+- A project that declares **no `registry:`** (or a blank one, which `deploy`
+  refuses too) is reported by name, not skipped quietly. A command that covers
+  less than the workspace without saying so leaves you believing images exist.
+- Every project's `dexaflow.yaml` is checked **before** anything is built, so a
+  typo in the last project fails the run at once instead of after the others
+  have built.
 - A failure **stops** the run, names the project, and lists what was already
   built. A half-built workspace (some images new, some stale) is invisible
   afterwards.

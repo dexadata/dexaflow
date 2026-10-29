@@ -1,0 +1,8 @@
+kind: Added
+body: |-
+  **`dexaflow build` checks the whole workspace first and has `--dry-run`.**
+  An invalid `dexaflow.yaml` in any project now fails the run before anything
+  is built, instead of after every project before it. `--dry-run` prints each
+  dag id with the image it would be built as and stops. A blank registry `url`
+  is now treated as no registry, as `deploy` already did (#1121).
+time: 2026-10-29T03:10:00.000000000-03:00
