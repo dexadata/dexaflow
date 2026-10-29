@@ -261,6 +261,8 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 			ServiceTenants: repo,
 			// The service API links users only in tenants the issuer may sign in to.
 			ServiceAllowedTenants: cfg.Auth.TrustedIssuer.AllowedTenants,
+			// Usage events (ADR 0096): the route answers 404 while recording is off.
+			ServiceUsage: storage.NewUsageStore(pg),
 		},
 		UI: api.UIDeps{
 			InstanceName:               cfg.UI.InstanceName,
