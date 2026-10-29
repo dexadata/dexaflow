@@ -5,15 +5,16 @@ weight: 990
 description: "ADR 0099: the server's wiring moves out of cmd/dexaflow-server into internal/serverapp, a thin public pkg/server runs it, and the shipped binary is its first caller. Options replace the log sink, the XCom backend, the authenticator, the trusted issuers, the UI and, with ADR 0100, the admission hook. The contract types those options take move to public packages and the internal packages alias them. Everything under pkg/ follows one compatibility rule: no breaking change in a patch, a deprecation of one minor before a removal."
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-29
-**Relates:** ADR 0028 (one codebase, one license), ADR 0050 (MCP server), ADR 0068 (patch safety bar), ADR 0096 (task attempt usage events), ADR 0100 (admission hook)
-**Issues:** #2176, #2178
+**Accepted:** 2026-10-29
+**Relates:** ADR 0028 (one codebase, one license), ADR 0050 (MCP server), ADR 0068 (patch safety bar), ADR 0096 (task attempt usage events), ADR 0100 (admission hook), #2178 (`pkg/mcp`, closed by #2239)
+**Issues:** #2176
 
 ## Context
 
 Every server package lives under `internal/`, and the server is wired in
-`cmd/dexaflow-server`: about 4,400 lines in 20 production files, and some 60
+`cmd/dexaflow-server`: about 4,400 lines in 22 production files, and 64
 test files that test `package main`. An operator who wants the server with one
 component replaced (a log sink for their storage, an authenticator for their
 identity system, a policy on what a task may run) has to copy that wiring or
@@ -26,7 +27,8 @@ because Go refuses an import of an `internal/` package from outside the module.
 
 Two public packages already exist and took different routes. `pkg/client` is
 generated and imports nothing internal. `pkg/dagspec` and `pkg/mcp` (#2178)
-import `internal/` packages and re-export a few of their types as aliases. An
+import `internal/` packages and re-export a few of their identifiers
+(`pkg/dagspec` re-exports the `ErrLimitExceeded` variable, `pkg/mcp` aliases types). An
 alias works for a caller, but the documentation of the type stays on the
 internal package, which pkg.go.dev does not show, and any change to the
 internal type changes the public one without anyone deciding it.
@@ -41,6 +43,13 @@ internal type changes the public one without anyone deciding it.
    reads the configuration the way the binary does (the config file, then
    the environment) and behaves exactly as `dexaflow-server` does today.
    `WithConfig` passes a configuration the caller already loaded.
+   `Run` is called once per process. It does what `main` does today before
+   and around `run`: the legacy environment mirroring
+   (`envcompat.MirrorProcess`), the default logger, and shutdown, which it
+   takes from the caller's `ctx` instead of installing its own signal
+   handler. The package exports `ErrDatabaseReplaced` and `ExitCode(err)`
+   so a caller keeps the binary's exit codes, and the version comes from
+   `debug.ReadBuildInfo` when the build sets no ldflags.
 
 2. **The wiring moves to `internal/serverapp`, and the binary calls
    `pkg/server`.** `cmd/dexaflow-server/main.go` keeps its flags and its
@@ -57,7 +66,20 @@ internal type changes the public one without anyone deciding it.
    usage events change and this one do not edit the same wiring at once.
    An option replaces the component the configuration would have built;
    the configuration keys of the replaced component are ignored, and boot
-   logs which component came from an option. The executor and the stores
+   logs which component came from an option.
+   - `WithAuthenticator` replaces only the API authenticator
+     (`api.Dependencies.Authenticator`). Agent and session tokens stay on
+     the JWT authenticator, and the `auth.jwt` keys keep applying.
+   - `WithTrustedIssuer` takes one issuer until multi-issuer support
+     lands: `Dependencies.TrustedIssuer` is a single value today, and
+     bearer mode needs the concrete verifier, so making it repeatable is
+     its own change.
+   - Optional interfaces a seam type-asserts are part of its contract:
+     `logs.MarkerSink` and `logs.LineWriter` for the log sink (and
+     `logs.Event`, which they name), `xcom.BatchBackend` for the XCom
+     backend, whose `List` takes a Redis-style glob.
+
+   The executor and the stores
    are not options: `executor.Request` changes in most patches and the
    stores are the schema, and freezing either would stop that.
 
@@ -78,12 +100,20 @@ internal type changes the public one without anyone deciding it.
    how `/api/v2` is treated. Adding an option, a method to a struct, or a
    field to a struct is not a break; adding a method to an exported
    interface is, so an interface that may grow takes an optional second
-   interface instead.
+   interface instead. ADR 0068 §2 item 4, which lists the public surfaces a
+   patch may only add to, is amended to include `pkg/`.
 
-6. **Examples are `Example` functions.** A runnable program that builds a
-   server with a custom log sink is an `Example` function of `pkg/server`:
-   it compiles and runs with the package's tests and is shown on
-   pkg.go.dev. `examples/` stays the DAG samples.
+6. **A custom authenticator cannot grant what only the server grants.** The
+   server clears `DeployAudience`, `Scoped` and `Scopes` on a `User` that a
+   custom authenticator returns before using it: those fields are set only
+   by the trusted issuer bearer and by scoped client tokens (ADR 0067).
+
+7. **Examples are `Example` functions.** A program that builds a server
+   with a custom log sink is an `Example` function of `pkg/server`. It needs
+   a database, so it has no `// Output:` line: it compiles with the
+   package's tests and is shown on pkg.go.dev. Examples of the contract
+   packages that need no server run with an `// Output:` line, as
+   `pkg/mcp`'s `ExampleAddTool` does. `examples/` stays the DAG samples.
 
 ## Consequences
 
@@ -118,4 +148,7 @@ internal type changes the public one without anyone deciding it.
 3. `pkg/server` with `Run`, `WithConfig` and the binary calling it.
 4. The contract packages and the options, one PR per seam, each with its
    `Example` and the GoDoc of every export.
-5. The compatibility rule in `AGENTS.md` and on the Go packages page.
+5. The compatibility rule in `AGENTS.md`, on the Go packages page and in
+   ADR 0068 §2 item 4.
+6. A CI API break check (`apidiff` or `gorelease`) on `pkg/` against the
+   previous tag.
