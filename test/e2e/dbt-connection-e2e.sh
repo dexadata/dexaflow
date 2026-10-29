@@ -50,7 +50,7 @@ dump_pods() {
     kubectl logs -n leoflow "$p" --all-containers --tail=80 >&2 2>&1 || true
   done
 }
-fail() { echo "FAIL: $*" >&2; dump_pods; exit 1; }
+fail() { echo "FAIL: $*" >&2; dump_task_instances "$API" "$DAG_ID" "${RUN_ID:-}" "${TOKEN:-}"; dump_pods; exit 1; }
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 
 SERVER_PID=""
@@ -179,6 +179,11 @@ curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: applicatio
 # until the DAG is unpaused.
 unpause_dag "$API" "$DAG_ID" "$TOKEN" || fail "unpausing $DAG_ID failed"
 log "Triggering a run"
+# A pod started before CoreDNS knows host.k3d.internal cannot reach the
+# runner (#919).
+if [ "$HOST_ADDR" = host.k3d.internal ]; then
+  k3d_wait_host_entry 60 || fail "CoreDNS never resolved host.k3d.internal"
+fi
 RUN_ID="$(curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{}' "$API/api/v2/dags/$DAG_ID/dagRuns" | jq -r '.dag_run_id')"
 [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ] || fail "no dag_run_id returned"
@@ -191,7 +196,7 @@ while :; do
   echo "  states: $(echo "$states" | tr '\n' ' ')"
   if echo "$states" | grep -qE 'failed|upstream_failed'; then
     echo "--- server.log tail ---"; tail -30 "$WORKDIR/server.log"
-    fail "a task failed — the managed-connection profile generation may be broken"
+    fail "a task failed: see its failure reason and pod below"
   fi
   if [ -n "$states" ] && ! echo "$states" | grep -qvE 'success'; then break; fi
   [ "$(date +%s)" -lt "$deadline" ] || fail "timeout waiting for all tasks to succeed"
