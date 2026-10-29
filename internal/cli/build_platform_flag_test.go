@@ -30,9 +30,7 @@ func argvBuilder(t *testing.T) (builder, log string) {
 		noBuildx +
 		"echo \"$*\" >> \"" + log + "\"\n" +
 		"exit 0\n"
-	if err := os.WriteFile(builder, []byte(script), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, builder, script)
 	return builder, log
 }
 
@@ -171,9 +169,7 @@ func failingBuilder(t *testing.T) string {
 	}
 	p := filepath.Join(t.TempDir(), "docker")
 	script := "#!/bin/sh\nif [ \"$1\" = build ]; then echo 'ERROR: Multi-platform build is not supported for the docker driver.' >&2; exit 1; fi\nexit 0\n"
-	if err := os.WriteFile(p, []byte(script), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, p, script)
 	return p
 }
 

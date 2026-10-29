@@ -57,9 +57,7 @@ func fakeParser(t *testing.T, dir, name, stderr string) string {
 		body += "cat >&2 <<'EOF'\n" + stderr + "\nEOF\nexit 1\n"
 	}
 	p := filepath.Join(dir, name)
-	if err := os.WriteFile(p, []byte(body), 0o755); err != nil { //nolint:gosec // G306: the fake must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, p, body)
 	return p
 }
 

@@ -66,9 +66,7 @@ func TestResolvePythonForVersion(t *testing.T) {
 	managedAt := func(t *testing.T, claims int) (string, func(context.Context, string) (int, int, error)) {
 		t.Helper()
 		p := filepath.Join(t.TempDir(), "python3.11")
-		if err := os.WriteFile(p, []byte("#!/fake"), 0o700); err != nil {
-			t.Fatal(err)
-		}
+		writeExecutable(t, p, "#!/fake")
 		return p, func(context.Context, string) (int, int, error) { return 3, claims, nil }
 	}
 
@@ -259,9 +257,7 @@ func writeFakeDagVenv(t *testing.T, home, dagID, builtOn string) (dir, py string
 		t.Fatal(err)
 	}
 	py = filepath.Join(bin, "python")
-	if err := os.WriteFile(py, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, py, "#!/bin/sh\nexit 0\n")
 	if err := os.WriteFile(filepath.Join(dir, "pyvenv.cfg"), []byte("version = "+builtOn+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

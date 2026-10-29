@@ -290,7 +290,5 @@ func cliCmd(t *testing.T, bin, home string, args ...string) *exec.Cmd {
 
 func writeScript(t *testing.T, path, body string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
-		t.Fatalf("writing %s: %v", path, err)
-	}
+	writeExecutable(t, path, body)
 }

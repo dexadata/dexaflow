@@ -20,9 +20,7 @@ func recordingBuilder(t *testing.T) (builder, record string) {
 	builder = filepath.Join(t.TempDir(), "fake-builder")
 	record = filepath.Join(t.TempDir(), "dockerfile.txt")
 	script := "#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ \"$1\" = -f ]; then printf %s \"$2\" > \"" + record + "\"; fi; shift; done\nexit 0\n"
-	if err := os.WriteFile(builder, []byte(script), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, builder, script)
 	return builder, record
 }
 

@@ -88,9 +88,7 @@ func fakeUV(t *testing.T, d *cliDeps) string {
 	}
 	dir := t.TempDir()
 	p := filepath.Join(dir, "uv")
-	if err := os.WriteFile(p, []byte(strings.ReplaceAll(fakeUVScript, "DIR", dir)), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, p, strings.ReplaceAll(fakeUVScript, "DIR", dir))
 	d.lookUV = func() (string, error) { return p, nil }
 	return dir
 }
@@ -629,9 +627,7 @@ func TestFindUVChecksTheVersion(t *testing.T) {
 		t.Skip("shell stubs are POSIX-only")
 	}
 	p := filepath.Join(t.TempDir(), "uv")
-	if err := os.WriteFile(p, []byte("#!/bin/sh\necho 'pip 24.0'\n"), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, p, "#!/bin/sh\necho 'pip 24.0'\n")
 	d.lookUV = func() (string, error) { return p, nil }
 	if u, why := findUV(testCtx(d)); u != nil || !strings.Contains(why, "not a uv version") {
 		t.Errorf("findUV = %+v, %q, want a refusal", u, why)

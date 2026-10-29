@@ -97,9 +97,7 @@ func fakeGH(t *testing.T, token string) {
 		"if [ \"$1 $2\" = \"auth token\" ]; then echo " + token + "; exit 0; fi\n" +
 		"if [ \"$1\" = api ]; then echo octocat; exit 0; fi\n" +
 		"exit 1\n"
-	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, filepath.Join(bin, "gh"), script)
 	t.Setenv("PATH", bin)
 }
 
@@ -173,9 +171,7 @@ func TestRunGHStopsAHangingGH(t *testing.T) {
 		t.Skip("shell stubs are POSIX-only")
 	}
 	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte("#!/bin/sh\nsleep 20 &\nexec sleep 20\n"), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, filepath.Join(bin, "gh"), "#!/bin/sh\nsleep 20 &\nexec sleep 20\n")
 	t.Setenv("PATH", bin+":/bin:/usr/bin")
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()

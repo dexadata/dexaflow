@@ -29,9 +29,7 @@ func TestLiteDbtBin(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtPath := filepath.Join(bin, "dbt")
-	if err := os.WriteFile(dbtPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, dbtPath, "#!/bin/sh\n")
 	if got := liteDbtBinAt(home, "sales"); got != dbtPath {
 		t.Errorf("with venv dbt: got %q, want %q", got, dbtPath)
 	}
