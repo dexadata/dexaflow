@@ -414,6 +414,7 @@ holds, then re-run.
 | 052 (tenant suspension) | 52 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 51 |
 | 053 (`next_run_at`) | 53 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the columns are not there yet | 52; retry when `dags` is quiet |
 | 054 (index build) | 54 | `DROP INDEX CONCURRENTLY IF EXISTS idx_dags_next_run;` | 53 |
+| 055 (UUIDv7 keys) | 55 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 54; retry when `dag_runs` and `task_instances` are quiet |
 
 **How to run `migrate force`.** The hook image is the `dexaflow-migrate`
 wrapper plus the SQL files at `/migrations`; it takes the golang-migrate CLI's
@@ -1221,6 +1222,34 @@ that blocks writes to it (not reads) for its few milliseconds, waiting at most
 the same database. Rows deleted by the upgrade do not come back. Rolling back
 further, to 0.5.4 with `retention.dag_runs_days` set, needs that down
 migration too, so its retention finds `task_state_history` again.
+
+### Upgrading to 0.5.9
+
+0.5.9 applies one migration, 055.
+
+- **`055_uuidv7_run_and_task_ids`** makes new runs and task instances get a
+  time-ordered UUIDv7 key instead of a random UUIDv4
+  ([ADR 0098](/project/adrs/0098-uuidv7-run-and-task-ids/),
+  [#525](https://github.com/dexadata/dexaflow/issues/525)). It creates the
+  function `dexaflow_uuidv7()` and makes it the default of `dag_runs.id` and
+  `task_instances.id`. Only the defaults change: existing ids keep their
+  value, the column type and the foreign keys are untouched, and nothing is
+  rewritten. Each table is locked only for the change of its default; the
+  transaction waits at most 5 seconds for those locks. Previous releases
+  never name these ids on insert, so their replicas keep running during the
+  rollout and their new rows get UUIDv7 keys too.
+
+**Rolling back 0.5.9.** On Cluster, `helm rollback` leaves the schema at 055
+and the previous control plane boots against it with the warning
+`database schema is ahead of this binary; proceeding`. On Lite, run the down
+migration first, with the 0.5.9 CLI or migrate image:
+
+```sh
+migrate -path migrations -database "$DATABASE_URL" goto 54
+```
+
+That restores `gen_random_uuid()` as the default and drops the function. Ids
+already made as UUIDv7 stay as they are and keep working.
 
 ## Ephemeral database loss (emptyDir Postgres)
 

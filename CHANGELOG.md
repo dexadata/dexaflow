@@ -6,6 +6,17 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **New runs and task instances get time-ordered UUIDv7 keys.** Migration 055
+  makes `dexaflow_uuidv7()` the default of `dag_runs.id` and
+  `task_instances.id` instead of the random `gen_random_uuid()`. New keys
+  append to the end of the primary key index, which Experiment 9 measured as
+  a third faster inserts, a third less WAL per row and a 27% smaller index on
+  a large table. Existing ids, the column type and the foreign keys are
+  unchanged, and the down migration restores the old default. A UUIDv7 id
+  carries the millisecond its row was created. (#525, ADR 0098)
+
 ## [0.5.7] - 2026-10-27
 
 ### Added

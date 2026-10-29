@@ -110,6 +110,7 @@ this page.
 - [ADR 0095: a source-mode version runs on warm workers, which receive its dag.py with each assignment](/project/adrs/0095-source-mode-on-warm-workers/)
 - [ADR 0096: every finished task attempt writes a usage event in the same transaction, read through the service API](/project/adrs/0096-task-attempt-usage-events/)
 - [ADR 0097: the Helm edition is called cluster, and named pools have their own switch](/project/adrs/0097-cluster-edition-name-and-pools-switch/)
+- [ADR 0098: new runs and task instances get time-ordered UUIDv7 keys](/project/adrs/0098-uuidv7-run-and-task-ids/)
 
 ## Template
 
