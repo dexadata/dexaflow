@@ -287,11 +287,10 @@ jobs:
   # author select a leg nobody publishes, both surface as a `docker pull` 404
   # inside the user's own build, which is the furthest point from the cause (#1031).
   #
-  # py3.10 is DEPRECATED: Python 3.10 goes EOL 2026-10-31 and docker-library/python
-  # stops rebuilding an EOL line the day after, so the base freezes with whatever
-  # OS CVEs it has. The leg keeps being published until then because `base_image`
-  # pins make a silent drop a broken build for somebody else; the schema carries
-  # the removal date and `dexaflow compile` warns the author.
+  # py3.10 was retired after its upstream EOL (#1447): releases cut after
+  # 2026-10-31 publish no py3.10 leg. Tags already published stay pullable, so a
+  # `base_image` pin keeps building; the schema records the retirement and
+  # `dexaflow compile` warns the author who pins it.
   runtime-image-build:
     name: Build dexaflow-runtime base (py${{ matrix.python }}, ${{ matrix.arch }})
     # Builds from the tag's source and uses nothing GoReleaser produces, so it
@@ -306,7 +305,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.11", "3.12", "3.13"]
+        python: ["3.11", "3.12", "3.13"]
         arch: [amd64, arm64]
         include:
           - arch: amd64
@@ -396,11 +395,10 @@ jobs:
   # author select a leg nobody publishes, both surface as a `docker pull` 404
   # inside the user's own build, which is the furthest point from the cause (#1031).
   #
-  # py3.10 is DEPRECATED: Python 3.10 goes EOL 2026-10-31 and docker-library/python
-  # stops rebuilding an EOL line the day after, so the base freezes with whatever
-  # OS CVEs it has. The leg keeps being published until then because `base_image`
-  # pins make a silent drop a broken build for somebody else; the schema carries
-  # the removal date and `dexaflow compile` warns the author.
+  # py3.10 was retired after its upstream EOL (#1447): releases cut after
+  # 2026-10-31 publish no py3.10 leg. Tags already published stay pullable, so a
+  # `base_image` pin keeps building; the schema records the retirement and
+  # `dexaflow compile` warns the author who pins it.
   runtime-image:
     name: Publish dexaflow-runtime base (py${{ matrix.python }})
     needs: runtime-image-build
@@ -409,7 +407,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.11", "3.12", "3.13"]
+        python: ["3.11", "3.12", "3.13"]
     permissions:
       contents: read
       packages: write
