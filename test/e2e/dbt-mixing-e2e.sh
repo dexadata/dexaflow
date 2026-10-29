@@ -99,7 +99,17 @@ def pre():
 
 
 def post():
-    print("post")
+    # The control plane runs this e2e with a read-only task root filesystem
+    # in a namespace that enforces PodSecurity restricted (#1016). Reaching
+    # here means the pod was admitted and the dbt tasks before it wrote only
+    # to /tmp; this checks the root really is read-only and /tmp writable.
+    with open("/proc/self/mounts") as f:
+        root = [line.split() for line in f if line.split()[1] == "/"]
+    if not root or "ro" not in root[-1][3].split(","):
+        raise SystemExit(f"the task root filesystem is not read-only: {root}")
+    with open("/tmp/rofs-probe", "w") as f:
+        f.write("ok")
+    print("post: root read-only, /tmp writable")
 
 
 # schedule=None: the script triggers exactly ONE run. Under a real schedule the
@@ -185,11 +195,17 @@ log "Creating k3d cluster + namespace"
 k3d cluster delete "$CLUSTER" >/dev/null 2>&1 || true
 k3d cluster create "$CLUSTER" --wait >/dev/null
 kubectl create namespace leoflow >/dev/null
+# Task pods must pass PodSecurity restricted, with their root filesystem
+# read-only (#1016): the admission and the /tmp emptyDir the executor mounts
+# for it are exercised by every task of this run.
+kubectl label namespace leoflow pod-security.kubernetes.io/enforce=restricted \
+  pod-security.kubernetes.io/enforce-version=latest >/dev/null
 
 log "Starting the control plane"
 export LEOFLOW_AUTH_JWT_SECRET="e2e-secret"
 export LEOFLOW_BOOTSTRAP_PASSWORD="admin"
 export LEOFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR="${HOST_ADDR}:${GRPC_PORT}"
+export LEOFLOW_EXECUTOR_DEFAULTS_READ_ONLY_TASK_ROOT_FILESYSTEM=true
 export LEOFLOW_LOGS_DIR="${WORKDIR}/logs"
 export LEOFLOW_SERVER_HTTP_ADDR="0.0.0.0:${HTTP_PORT}"
 export LEOFLOW_SERVER_METRICS_ADDR="0.0.0.0:${METRICS_PORT}"
