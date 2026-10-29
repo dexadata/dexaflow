@@ -1,0 +1,8 @@
+# The dbt-core every dbt install of the tests resolves (#957). The adapters
+# (dbt-postgres, dbt-duckdb, ...) bound dbt-core from below only, so an install
+# that pins just the adapter takes the newest dbt-core. From 1.12 that pulls
+# dbt-core-experimental-parser, which ships sdist-only and whose build fetches
+# over the network, so an image build can fail on a package index 5xx with
+# nothing of ours involved. Install with `pip install -c` this file; scripts
+# that cannot pass a constraints file read the pin with dbt_core_pin (lib.sh).
+dbt-core==1.9.*

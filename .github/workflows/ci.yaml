@@ -786,7 +786,9 @@ jobs:
   ui-smoke:
     name: UI smoke (headless SPA crash check)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 15 until the UI contract checks joined the job (#1932), which add about
+    # two minutes to a job that used about nine.
+    timeout-minutes: 20
     env:
       PYTHONPATH: parser
       PLAYWRIGHT_VERSION: "1.64.1"
@@ -889,7 +891,29 @@ jobs:
           LEOFLOW_URL=http://localhost:18080 LEOFLOW_USER="$ADMIN_EMAIL" LEOFLOW_PASS="$PW" \
             timeout --kill-after=30 180 node test/e2e/ui-smoke.js || rc=$?
           echo "ui-smoke node run: $((SECONDS - t0))s (rc=$rc)"
-          exit $rc
+          [ "$rc" -eq 0 ] || exit "$rc"
+
+          # The UI contract checks (#1932), against the same Lite. sweep.py
+          # loads 23 views and fails on any non-2xx /api or /ui call or console
+          # error; clear_version_toggle.py drives the Clear dialog's "Run with
+          # latest bundle version" toggle on a run older than the DAG's current
+          # version. The Python Playwright is pinned to the Node one, so it
+          # reuses the browser cached above. Measured: sweep ~90s, toggle ~10s.
+          pip install -q "playwright==$PLAYWRIGHT_VERSION"
+          export LEOFLOW_BASE_URL=http://localhost:18080 LEOFLOW_USER="$ADMIN_EMAIL" LEOFLOW_PASSWORD="$PW" LEOFLOW_DAG_ID=hello
+          t0=$SECONDS
+          timeout --kill-after=30 240 python test/ui-contract/sweep.py
+          echo "contract sweep: $((SECONDS - t0))s"
+          # A second version of hello, so its oldest run is on an older one and
+          # the dialog offers the toggle.
+          echo "# second version, for the clear dialog check" >> "$HOME/dexaflow/hello/dag.py"
+          for _ in $(seq 1 40); do
+            n=$(curl -fsS -H "Authorization: Bearer $TOK" http://localhost:18080/api/v2/dags/hello/dagVersions | python -c 'import json,sys; print(json.load(sys.stdin)["total_entries"])' || echo 0)
+            [ "$n" -ge 2 ] && break; sleep 3
+          done
+          [ "$n" -ge 2 ] || { echo "hello did not register a second version"; tail -40 /tmp/lite.log; exit 1; }
+          OLDEST=$(curl -fsS -H "Authorization: Bearer $TOK" "http://localhost:18080/api/v2/dags/hello/dagRuns?limit=1&order_by=run_after" | python -c 'import json,sys; print(json.load(sys.stdin)["dag_runs"][0]["dag_run_id"])')
+          LEOFLOW_RUN_ID="$OLDEST" timeout --kill-after=30 120 python test/ui-contract/clear_version_toggle.py
 
   # ─────────────────────────────────────────────────────────────────────
   # Full pod-per-task e2e on a real k3d cluster (test/e2e/e2e.sh): builds the
@@ -1151,10 +1175,9 @@ jobs:
           # on an HTTP 504 with nothing of ours involved. 1.9.11 has no such
           # dependency, which is what actually closes the hole.
           #
-          # NOTE: the sibling installs pin only dbt-postgres / dbt-duckdb, whose
-          # dbt-core requirement has no upper bound, so they still resolve
-          # dbt-core 1.12.x and remain exposed — tracked in #957.
-          pip install --quiet "dbt-core==1.9.*" "dbt-postgres==1.9.*"
+          # The pin lives in test/e2e/constraints-dbt.txt, shared with every
+          # other dbt install of the tests (#957).
+          pip install --quiet -c test/e2e/constraints-dbt.txt dbt-core "dbt-postgres==1.9.*"
       - name: Apply migrations
         if: steps.gate.outputs.run == 'true'
         run: ~/go/bin/migrate -path migrations -database "postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable" up
@@ -1184,7 +1207,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # dbt-core is pinned to 1.9.* on every leg — that keeps the resolver off the
+        # dbt-core is pinned to 1.9.* on every leg (test/e2e/constraints-dbt.txt,
+        # #957) — that keeps the resolver off the
         # 2.0 pre-release parser (a source build that fetches a wheel at build time),
         # so a plain source/wheel install is enough. One adapter per leg: their dep
         # pins conflict in a shared venv.
@@ -1197,7 +1221,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install ${{ matrix.adapter }} adapter + pytest
-        run: python -m pip install --quiet pytest "dbt-core==1.9.*" "dbt-${{ matrix.adapter }}==1.9.*"
+        run: python -m pip install --quiet -c test/e2e/constraints-dbt.txt pytest dbt-core "dbt-${{ matrix.adapter }}==1.9.*"
       - name: Contract test (${{ matrix.adapter }})
         run: PYTHONPATH=runtime/python python -m pytest runtime/python/tests/test_dbt_adapter_contracts.py -q -k ${{ matrix.adapter }}
 
