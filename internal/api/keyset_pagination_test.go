@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -358,6 +359,54 @@ func TestEventLogsCursorWalksEveryEntryOnce(t *testing.T) {
 	if reader.gotDag != "etl" || reader.gotAfter == nil || reader.gotAfter.Key != "20" || reader.gotAfter.Total != 3 {
 		t.Errorf("cursor call dag=%q after=%+v, want after 20 carrying the total 3", reader.gotDag, reader.gotAfter)
 	}
+}
+
+// failingAuditReader answers the keyset query with a repository error whose
+// text must not reach the client.
+type failingAuditReader struct{ keysetAuditReader }
+
+func (f *failingAuditReader) ListAuditLogsAfter(context.Context, string, string, domain.PageCursor, int) ([]domain.AuditLogEntry, int, error) {
+	return nil, 0, errors.New("pq: password authentication failed for user dexaflow_secret")
+}
+
+// The event log cursor's error paths (M-24, #1616): a malformed cursor is the
+// client's error and never reaches the store; a reader without keyset paging
+// refuses a cursor rather than ignoring it; a store error on the cursor path
+// is a 500 that carries none of the error's text.
+func TestEventLogsCursorErrorPaths(t *testing.T) {
+	entries := []domain.AuditLogEntry{{ID: 1, When: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), Action: "a"}}
+	valid := encodeCursor(domain.PageCursor{At: entries[0].When, Key: "1", Total: 1})
+
+	t.Run("malformed cursor", func(t *testing.T) {
+		reader := &keysetAuditReader{fakeAuditReader: fakeAuditReader{total: 1, entries: entries}}
+		for _, bad := range []string{"!!!", "bm90LWpzb24", "e30"} {
+			rec := authGet(auditServer(reader), http.MethodGet, "/api/v2/eventLogs?cursor="+bad, "")
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("cursor %q status = %d, want 400", bad, rec.Code)
+			}
+		}
+		if reader.gotAfter != nil {
+			t.Errorf("a malformed cursor reached the store: %+v", reader.gotAfter)
+		}
+	})
+	t.Run("reader without keyset paging", func(t *testing.T) {
+		rec := authGet(auditServer(&fakeAuditReader{total: 1, entries: entries}), http.MethodGet, "/api/v2/eventLogs?cursor="+valid, "")
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "cursor pagination is not available") {
+			t.Errorf("status = %d body=%s, want 400 saying cursor paging is not available", rec.Code, rec.Body.String())
+		}
+	})
+	t.Run("repository error", func(t *testing.T) {
+		rec := authGet(auditServer(&failingAuditReader{}), http.MethodGet, "/api/v2/eventLogs?cursor="+valid, "")
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("status = %d, want 500", rec.Code)
+		}
+		if body := rec.Body.String(); strings.Contains(body, "dexaflow_secret") || strings.Contains(body, "pq:") {
+			t.Errorf("the store's error text reached the client: %s", body)
+		}
+		if rec.Header().Get(nextCursorHeader) != "" {
+			t.Error("a failed page carried a next cursor")
+		}
+	})
 }
 
 // A browser client on another allowed origin can read the paging headers:

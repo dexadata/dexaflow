@@ -96,9 +96,7 @@ func TestResolveBinaryExplicitAndFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	name := "leoflow-fake-bin"
-	if err := os.WriteFile(filepath.Join(dir, "bin", name), []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, filepath.Join(dir, "bin", name), "#!/bin/sh\n")
 	t.Chdir(dir)
 	// The fallback must be absolute: the subprocess executor runs the agent in a
 	// different working directory, so a relative path would not resolve.
@@ -734,9 +732,7 @@ func TestCompanionVersionNilContextDoesNotPanic(t *testing.T) {
 
 func writeFakeBinary(t *testing.T, path string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, path, "#!/bin/sh\nexit 0\n")
 }
 
 // TestDevDockerfileCopiesDbtGroupProjects: the `dexaflow lite` cluster path had

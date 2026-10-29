@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -45,6 +46,10 @@ type handlers struct {
 	links         uiLinks          // web_url builder; zero value = no links
 	now           func() time.Time // clock for "today" and plan expiry; nil means time.Now
 	planKey       []byte           // signs run control plans; nil = run control off
+	version       string           // the server version the capabilities resource reports
+
+	mu    sync.Mutex
+	tools []string // every registered tool, in registration order
 }
 
 // Option configures NewServer.
@@ -103,28 +108,80 @@ func apiFor[P mcpsdk.Params](h *handlers, req *mcpsdk.ServerRequest[P]) (*apicli
 // deliberately absent (ADR 0050 D7). It also sends serverInstructions on
 // initialize and registers the read-only prompts (#1471).
 func NewServer(api *apiclient.ClientWithResponses, serverURL, version string, requireBearer bool, opts ...Option) *mcpsdk.Server {
-	h := &handlers{api: api, serverURL: serverURL, requireBearer: requireBearer}
+	return New(api, serverURL, version, requireBearer, opts...).SDK()
+}
+
+// Server is a Dexaflow MCP server together with what a program needs to add
+// tools of its own to it (#2178): the identity policy its tools follow and
+// the list the capabilities resource reports.
+type Server struct {
+	sdk *mcpsdk.Server
+	h   *handlers
+}
+
+// New builds the server NewServer returns, keeping hold of its handlers so
+// tools added later follow the same identity policy and are reported by the
+// capabilities resource.
+func New(api *apiclient.ClientWithResponses, serverURL, version string, requireBearer bool, opts ...Option) *Server {
+	h := &handlers{api: api, serverURL: serverURL, requireBearer: requireBearer, version: version}
 	for _, o := range opts {
 		o(h)
 	}
 	s := mcpsdk.NewServer(&mcpsdk.Implementation{Name: serverName, Version: version},
 		&mcpsdk.ServerOptions{Instructions: h.instructions()})
-	mcpsdk.AddTool(s, &mcpsdk.Tool{
+	addTool(h, s, &mcpsdk.Tool{
 		Name:        "list_dags",
 		Description: "List DAGs registered in the Dexaflow control plane, with their paused state.",
 	}, h.listDags)
-	mcpsdk.AddTool(s, &mcpsdk.Tool{
+	addTool(h, s, &mcpsdk.Tool{
 		Name:        "diagnose_run",
 		Description: "Diagnose a DAG run: its state, which task instances failed, and a truncated tail of each failed task's log — one call instead of list-runs/get-run/list-tasks/get-logs.",
 	}, h.diagnoseRun)
-	mcpsdk.AddTool(s, &mcpsdk.Tool{
+	addTool(h, s, &mcpsdk.Tool{
 		Name:        "search_logs",
 		Description: "Search a DAG run's logs for a case-insensitive substring, returning the matching lines (with line numbers) instead of the whole log. Give task_id to search that one task's attempt (fast path); OMIT task_id to search every task instance's log across the whole run — each match is then tagged with the task_id it came from. Returned matches are capped (truncated=true when there are more), but the true total is always reported.",
 	}, h.searchLogs)
 	h.registerResources(s)
+	h.registerCapabilities(s)
 	h.registerPrompts(s)
 	h.registerRunControl(s)
-	return s
+	return &Server{sdk: s, h: h}
+}
+
+// SDK returns the underlying go-sdk server, to run over a transport or to
+// register prompts and resources on.
+func (s *Server) SDK() *mcpsdk.Server { return s.sdk }
+
+// ClientFor returns the control-plane client a request must use under the
+// server's identity policy: the request's own bearer on the HTTP transport,
+// the process client on stdio. A tool added from outside calls the control
+// plane only through it.
+func (s *Server) ClientFor(extra *mcpsdk.RequestExtra) (*apiclient.ClientWithResponses, error) {
+	return s.h.clientFor(extra)
+}
+
+// RecordTool adds name to the tools the capabilities resource reports. A
+// program that registers a tool on SDK() directly calls it; pkg/mcp.AddTool
+// does it for its callers.
+func (s *Server) RecordTool(name string) { s.h.recordTool(name) }
+
+// addTool registers a stock tool and records its name for the capabilities
+// resource, so the resource and tools/list cannot drift apart.
+func addTool[In, Out any](h *handlers, s *mcpsdk.Server, t *mcpsdk.Tool, fn mcpsdk.ToolHandlerFor[In, Out]) {
+	mcpsdk.AddTool(s, t, fn)
+	h.recordTool(t.Name)
+}
+
+func (h *handlers) recordTool(name string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.tools = append(h.tools, name)
+}
+
+func (h *handlers) registeredTools() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.tools...)
 }
 
 // instructions is what a client hands its model on initialize: how the tools

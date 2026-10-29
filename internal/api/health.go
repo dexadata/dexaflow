@@ -62,6 +62,26 @@ func livenessHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
+// LivenessCheck is an opt-in liveness condition: a non-nil error fails
+// /healthz with 503 and the error's text, so the kubelet restarts the pod. Only
+// a fault a restart cures belongs here, never a dependency (see
+// livenessHandler).
+type LivenessCheck func() error
+
+// livenessHandlerWith is livenessHandler, failed by check when it is set.
+func livenessHandlerWith(check LivenessCheck) gin.HandlerFunc {
+	if check == nil {
+		return livenessHandler
+	}
+	return func(c *gin.Context) {
+		if err := check(); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unhealthy", "reason": err.Error()})
+			return
+		}
+		livenessHandler(c)
+	}
+}
+
 // checkDependency runs the full health contract for one dependency: Ping first,
 // then — only for a dependency that carries a schema — the schema assertion.
 //

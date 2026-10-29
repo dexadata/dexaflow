@@ -216,9 +216,7 @@ func TestCIScriptExchangesTheOIDCToken(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "deploy.sh")
 	writeTree(t, script, ciGolden(t)["github-oidc"][ciScriptPath])
 	bin := fakeTool(t, "dexaflow", fakeDexaflowOIDC)
-	if err := os.WriteFile(filepath.Join(bin, "uv"), []byte("#!/bin/sh\n"), 0o700); err != nil { //nolint:gosec // a test executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, filepath.Join(bin, "uv"), "#!/bin/sh\n")
 	run := func(env ...string) (string, error) {
 		logPath := filepath.Join(t.TempDir(), "log")
 		c := exec.CommandContext(t.Context(), "sh", script) //nolint:gosec // the script under test

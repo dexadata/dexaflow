@@ -112,8 +112,107 @@ func TestTenantSuspensionComesBeforeTheDailyCap(t *testing.T) {
 	}
 }
 
-// TestTenantSuspensionRefusesBadInput: an unknown tenant is not found, a mode
-// other than hold is a validation error, and resuming a tenant that is not
+// TestTenantSuspensionStopFailsActiveTaskInstances: suspending a tenant in
+// stop mode fails its queued and running task instances, as a mark failed
+// does, and leaves its scheduled ones for after the resume (#2181). The
+// scheduler's snapshot carries the mode, another tenant is untouched, and the
+// stop is a no-op once the tenant is resumed.
+func TestTenantSuspensionStopFailsActiveTaskInstances(t *testing.T) {
+	// Arrange
+	repo, sched, ctx := openRepo(t)
+	db := adminPool(ctx, t)
+	seed := func(tenant string) string {
+		if err := registerIn(ctx, t, repo, tenant, "etl", "v1", nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.CreateDagRun(ctx, tenant, "etl", domain.DagRun{
+			RunID: "m1", LogicalDate: time.Now().UTC(), State: domain.DagRunStateRunning, RunType: "manual",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		var runID string
+		if err := db.QueryRow(ctx, `SELECT r.id::text FROM dag_runs r JOIN tenants tn ON tn.id = r.tenant_id
+			WHERE tn.name = $1 AND r.run_id = 'm1'`, tenant).Scan(&runID); err != nil {
+			t.Fatal(err)
+		}
+		tasks := []domain.TaskSpec{{TaskID: "q"}, {TaskID: "r"}, {TaskID: "s"}}
+		if err := sched.MaterializeTasks(ctx, runID, tasks); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(ctx, `UPDATE task_instances SET state = (CASE task_id WHEN 'q' THEN 'queued'
+			WHEN 'r' THEN 'running' ELSE 'scheduled' END)::task_state WHERE dag_run_id = $1`, runID); err != nil {
+			t.Fatal(err)
+		}
+		return runID
+	}
+	states := func(runID string) map[string]string {
+		rows, err := db.Query(ctx, `SELECT task_id, state::text, COALESCE(error_message, '') FROM task_instances WHERE dag_run_id = $1`, runID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		out := map[string]string{}
+		for rows.Next() {
+			var id, st, msg string
+			if err := rows.Scan(&id, &st, &msg); err != nil {
+				t.Fatal(err)
+			}
+			if msg != "" {
+				st += ": " + msg
+			}
+			out[id] = st
+		}
+		return out
+	}
+	stopped := limitedTenant(ctx, t, repo, "stop", domain.TenantLimitsUpdate{})
+	other := limitedTenant(ctx, t, repo, "nostop", domain.TenantLimitsUpdate{})
+	stoppedRun, otherRun := seed(stopped), seed(other)
+
+	// Act
+	err := repo.SuspendTenant(ctx, stopped, domain.TenantSuspension{Mode: domain.SuspensionStop, Reason: "abuse"})
+
+	// Assert
+	if err != nil {
+		t.Fatalf("SuspendTenant: %v", err)
+	}
+	const msg = "failed: stopped: the tenant was suspended in stop mode"
+	if got := states(stoppedRun); got["q"] != msg || got["r"] != msg || got["s"] != "scheduled" {
+		t.Errorf("stopped tenant's task instances = %v, want q and r failed by the stop, s scheduled", got)
+	}
+	if got := states(otherRun); got["q"] != "queued" || got["r"] != "running" {
+		t.Errorf("other tenant's task instances = %v, want them untouched", got)
+	}
+	runs, err := sched.ActiveRuns(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modes := map[string]domain.SuspensionMode{}
+	for _, r := range runs {
+		modes[r.RunID] = r.Suspension
+	}
+	if modes[stoppedRun] != domain.SuspensionStop || modes[otherRun] != "" {
+		t.Errorf("snapshot suspension = stopped %q, other %q; want stop and none", modes[stoppedRun], modes[otherRun])
+	}
+
+	if _, err := db.Exec(ctx, `UPDATE task_instances SET state = 'running' WHERE dag_run_id = $1 AND task_id = 'q'`, stoppedRun); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := sched.FailStoppedTenantTaskInstances(ctx, tenantUUID(ctx, t, stopped)); err != nil || n != 1 {
+		t.Errorf("a tick's stop = %d, %v; want the attempt dispatched since failed", n, err)
+	}
+	if err := repo.ResumeTenant(ctx, stopped); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE task_instances SET state = 'running' WHERE dag_run_id = $1 AND task_id = 'q'`, stoppedRun); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := sched.FailStoppedTenantTaskInstances(ctx, tenantUUID(ctx, t, stopped)); err != nil || n != 0 {
+		t.Errorf("after resume, stop = %d, %v; want nothing failed", n, err)
+	}
+}
+
+// TestTenantSuspensionRefusesBadInput: an unknown tenant is not found, an
+// unknown mode is a validation error, and resuming a tenant that is not
 // suspended is a no-op.
 func TestTenantSuspensionRefusesBadInput(t *testing.T) {
 	// Arrange
@@ -122,15 +221,15 @@ func TestTenantSuspensionRefusesBadInput(t *testing.T) {
 
 	// Act
 	unknown := repo.SuspendTenant(ctx, uniqueTenant("missing"), domain.TenantSuspension{Mode: domain.SuspensionHold})
-	drain := repo.SuspendTenant(ctx, tenant, domain.TenantSuspension{Mode: "drain"})
+	unknownMode := repo.SuspendTenant(ctx, tenant, domain.TenantSuspension{Mode: "pause"})
 	resume := repo.ResumeTenant(ctx, tenant)
 
 	// Assert
 	if !errors.Is(unknown, domain.ErrNotFound) {
 		t.Errorf("unknown tenant: err = %v, want ErrNotFound", unknown)
 	}
-	if !errors.Is(drain, domain.ErrValidation) {
-		t.Errorf("drain mode: err = %v, want ErrValidation", drain)
+	if !errors.Is(unknownMode, domain.ErrValidation) {
+		t.Errorf("unknown mode: err = %v, want ErrValidation", unknownMode)
 	}
 	if resume != nil {
 		t.Errorf("resuming a tenant that is not suspended: %v, want nil", resume)

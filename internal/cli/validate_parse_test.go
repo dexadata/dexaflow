@@ -17,9 +17,7 @@ func writeFakeParser(t *testing.T, body string) string {
 		"out=\"\"\n" +
 		"while [ $# -gt 0 ]; do case \"$1\" in --output) out=\"$2\"; shift 2;; *) shift;; esac; done\n" +
 		body
-	if err := os.WriteFile(p, []byte(script), 0o755); err != nil { //nolint:gosec // test helper script must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, p, script)
 	return p
 }
 

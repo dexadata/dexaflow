@@ -247,3 +247,31 @@ func TestWarmBindingAndRequeueAreGuardedOnTheEpoch(t *testing.T) {
 		t.Errorf("the live attempt's ack must bind its worker, got %v", bound)
 	}
 }
+
+// TestDispatchedScheduledAttemptIsLiveForSecrets covers #2201: the dispatcher
+// claims the epoch and hands the attempt to the executor before it records
+// queued, so a subprocess agent or a warm worker can ask for its secrets while
+// the row is still scheduled. That attempt is the current one: its token
+// carries the epoch the claim just took, and every later dispatch moves it. A
+// token without an epoch cannot be pinned that way, so a scheduled row stays
+// not live for it, and a superseded dispatch of the same row is not live
+// either.
+func TestDispatchedScheduledAttemptIsLiveForSecrets(t *testing.T) {
+	f := seedStaleHeartbeat(t, "live_scheduled")
+	f.setState(t, "scheduled")
+	first := f.dispatch(t)
+
+	if live, err := f.exec.IsTaskInstanceLive(f.ctx, first); err != nil || !live {
+		t.Errorf("a dispatched attempt whose row is still scheduled must be live: live=%v err=%v", live, err)
+	}
+	if live, err := f.exec.IsTaskInstanceLive(f.ctx, f.legacyIdentity(first.TryNumber)); err != nil || live {
+		t.Errorf("a token without an epoch must not be live on a scheduled row: live=%v err=%v", live, err)
+	}
+	second := f.dispatch(t)
+	if live, err := f.exec.IsTaskInstanceLive(f.ctx, first); err != nil || live {
+		t.Errorf("a superseded dispatch must not be live: live=%v err=%v", live, err)
+	}
+	if live, err := f.exec.IsTaskInstanceLive(f.ctx, second); err != nil || !live {
+		t.Errorf("the latest dispatch must be live: live=%v err=%v", live, err)
+	}
+}

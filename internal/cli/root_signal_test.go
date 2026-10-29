@@ -34,17 +34,13 @@ func interruptedBuildProject(t *testing.T) (root *cobra.Command, dir, started st
 		"cat > \"$out\" <<'JSON'\n" +
 		"{\"schema_version\":\"1.0\",\"dag_id\":\"proj\",\"dag_version\":\"dev\",\"image\":\"test:v1\",\"tasks\":[{\"task_id\":\"hello\",\"type\":\"python\",\"entrypoint\":\"dag:hello\"}]}\n" +
 		"JSON\n"
-	if err := os.WriteFile(parser, []byte(pscript), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, parser, pscript)
 	// The builder stands in for a docker build that takes minutes: it says it
 	// started, then waits. exec keeps it one process, so the signal the CLI
 	// sends it is the one that ends it.
 	started = filepath.Join(t.TempDir(), "started")
 	builder := filepath.Join(t.TempDir(), "slow-docker.sh")
-	if err := os.WriteFile(builder, []byte("#!/bin/sh\n: > "+started+"\nexec sleep 60\n"), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, builder, "#!/bin/sh\n: > "+started+"\nexec sleep 60\n")
 	root = NewRootCommand()
 	root.SetOut(&bytes.Buffer{})
 	root.SetErr(&bytes.Buffer{})

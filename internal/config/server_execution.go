@@ -296,11 +296,21 @@ type SchedulerSection struct {
 	EagerPromotion bool            `mapstructure:"eager_promotion"`
 	Dispatch       DispatchSection `mapstructure:"dispatch"`
 	Alerts         AlertsSection   `mapstructure:"alerts"`
+	Pools          PoolsSection    `mapstructure:"pools"`
 	// PoolStarvationThreshold is how long a task held only by its pool waits
 	// before the pool is reserved for it, so tasks of fewer slots cannot keep
-	// a larger one out forever (ADR 0066 §4). 0 disables reservations. Pro only:
-	// Lite has no pools.
+	// a larger one out forever (ADR 0066 §4). 0 disables reservations. Read
+	// only while pools are on (see PoolsSection).
 	PoolStarvationThreshold time.Duration `mapstructure:"pool_starvation_threshold"`
+}
+
+// PoolsSection is scheduler.pools (#2173).
+type PoolsSection struct {
+	// Enabled turns named pools on (ADR 0053): the cross-DAG slot gate of the
+	// tick and the pools API. Unset, it follows the edition: on for the
+	// cluster edition, off otherwise, as before the key existed. Read it
+	// through ServerConfig.PoolsEnabled.
+	Enabled *bool `mapstructure:"enabled"`
 }
 
 // DispatchSection sizes the BufferedDispatcher (#127). BufferSize=0 keeps the

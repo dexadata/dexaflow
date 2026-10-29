@@ -533,7 +533,9 @@ tasks:
 
 `@task(pool_slots=4)` or an operator's `pool_slots=4` in `dag.py` sets the same
 thing. Most specific wins: `tasks.<id>.size` > `pool_slots` in `dag.py` >
-`defaults.size` > 1. Pools are enforced on Cluster only; Lite ignores the size.
+`defaults.size` > 1. The size counts only where pools are on, which is the
+cluster edition by default; see [Pools](/operate/pools/) for naming a pool and
+reading how full it is.
 
 When the operator sets a resource unit (`executor.unit`, for example 250m CPU
 and 512Mi memory per slot), the size also sizes the pod: a task of size 4 gets

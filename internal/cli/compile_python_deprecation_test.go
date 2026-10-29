@@ -405,3 +405,27 @@ func TestValidateSilentOnASupportedPythonLine(t *testing.T) {
 		t.Fatalf("validate warned about a supported line:\n%s", stderr.String())
 	}
 }
+
+// A base_image pin to a retired line still builds, because the published tags
+// are never deleted, but the base it freezes on gets no security updates. The
+// pin is the population the retirement is about, so it keeps its warning after
+// the line leaves the enum (#1447).
+func TestWarnRetiredPythonPinnedBaseImage(t *testing.T) {
+	t.Parallel()
+	r, ok := domain.RetiredPythonVersion("3.10")
+	if !ok {
+		t.Skip("3.10 is not recorded as retired")
+	}
+	pinned := publishedBaseRepo + ":py3.10-v0.5.7"
+	got := warn(&domain.LeoflowConfig{PythonVersion: r.Replacement, BaseImage: pinned})
+	mustContainAll(t, got,
+		"warning: base_image "+pinned+" pins Python 3.10, which is no longer published",
+		r.RemoveAfter,
+		"Fix: repoint base_image to "+publishedBaseRepo+":py"+r.Replacement+"-v0.5.7 in dexaflow.yaml and rebuild.",
+	)
+	mustContainNone(t, got, "deprecated")
+
+	var reminder strings.Builder
+	remindDeprecatedPythonAfterBuild(&reminder, &domain.LeoflowConfig{PythonVersion: r.Replacement, BaseImage: pinned})
+	mustContainAll(t, reminder.String(), "warning: built on the retired Python 3.10 line, selected by base_image")
+}

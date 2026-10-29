@@ -25,15 +25,15 @@
 
     "python_version": {
       "type": "string",
-      "description": "Python line of the published task base image (ghcr.io/dexadata/dexaflow-runtime:py<version>). This enum is the single source of truth for which base images the release publishes; scripts/check-python-runtime-matrix.sh fails when the release matrix, the Makefile, runtime/Dockerfile or the configuration reference disagree with it. 3.10 is deprecated and stops being published after its 2026-10-31 upstream EOL.",
-      "enum": ["3.10", "3.11", "3.12", "3.13"],
+      "description": "Python line of the published task base image (ghcr.io/dexadata/dexaflow-runtime:py<version>). This enum is the single source of truth for which base images the release publishes; scripts/check-python-runtime-matrix.sh fails when the release matrix, the Makefile, runtime/Dockerfile or the configuration reference disagree with it. A line that was retired after its upstream EOL is listed in x-leoflow-python-retired so the CLI can say why it is refused.",
+      "enum": ["3.11", "3.12", "3.13"],
       "default": "3.11",
-      "x-leoflow-python-deprecations": {
+      "x-leoflow-python-retired": {
         "3.10": {
           "eol": "2026-10-31",
           "remove_after": "2026-10-31",
           "replacement": "3.11",
-          "reason": "Python 3.10 reaches upstream end-of-life on 2026-10-31. docker-library/python stops rebuilding an EOL line the day after (python:3.9-slim was last rebuilt 2025-11-01, one day after 3.9 went EOL), so python:3.10-slim — and therefore leoflow-runtime:py3.10 — stops receiving OS security updates and accumulates unfixed CVEs indefinitely."
+          "reason": "Python 3.10 reaches upstream end-of-life in October 2026, after which docker-library/python stops rebuilding python:3.10-slim and the py3.10 task base receives no OS security updates. Releases cut after 2026-10-31 publish no py3.10 image."
         }
       }
     },

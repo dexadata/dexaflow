@@ -23,9 +23,7 @@ func stubPythons(t *testing.T, stubs map[string]string) string {
 	dir := t.TempDir()
 	for name, version := range stubs {
 		script := fmt.Sprintf("#!/bin/sh\necho %q\n", version)
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil { //nolint:gosec // test stub must be executable
-			t.Fatal(err)
-		}
+		writeExecutable(t, filepath.Join(dir, name), script)
 	}
 	t.Setenv("PATH", dir)
 	return dir
@@ -277,9 +275,7 @@ func TestPythonCanVenv(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, body string) string {
 		p := filepath.Join(dir, name)
-		if err := os.WriteFile(p, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil { //nolint:gosec // test stub must be executable
-			t.Fatal(err)
-		}
+		writeExecutable(t, p, "#!/bin/sh\n"+body+"\n")
 		return p
 	}
 	ok := write("ok", `[ "$1" = "-c" ] && case "$2" in *ensurepip*) exit 0;; esac; exit 1`)
@@ -303,9 +299,7 @@ func TestDevBasePythonWiresTheVenvFallback(t *testing.T) {
 		t.Fatalf("devBasePythonDeps left a hook nil: canVenv=%v logf=%v ensureManaged=%v", d.canVenv != nil, d.logf != nil, d.ensureManaged != nil)
 	}
 	broken := filepath.Join(t.TempDir(), "python3")
-	if err := os.WriteFile(broken, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil { //nolint:gosec // test stub must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, broken, "#!/bin/sh\nexit 1\n")
 	if d.canVenv(context.Background(), broken) {
 		t.Error("the wired venv probe accepts an interpreter that cannot import ensurepip")
 	}

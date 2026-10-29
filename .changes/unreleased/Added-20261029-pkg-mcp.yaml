@@ -1,0 +1,12 @@
+kind: Added
+body: |-
+  **Add MCP tools of your own without forking the server.** The new public Go
+  package `pkg/mcp` is the core `dexaflow-mcp` is built from: it serves the
+  stock tools, resources and prompts, and `mcp.AddTool` registers a tool
+  declared with the official MCP Go SDK types. The handler receives the
+  control-plane client of the caller (the request's bearer on HTTP, the
+  process token on stdio), so an added tool keeps the stock tools' blast
+  radius. A new `dexaflow://capabilities` resource reports the server version,
+  its transport, which tool groups are on and every tool it serves. The
+  `dexaflow-mcp` binary keeps its flags and behavior (#2178).
+time: 2026-10-29T12:00:00.000000000-03:00

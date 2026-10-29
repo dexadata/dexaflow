@@ -31,7 +31,7 @@ func ObservabilityHandler(registry *prometheus.Registry, checks map[string]Healt
 		opt(&o)
 	}
 	r := gin.New()
-	r.GET("/healthz", livenessHandler)
+	r.GET("/healthz", livenessHandlerWith(o.liveness))
 	r.GET("/readyz", readinessHandler(checks, o.probeBudget))
 	if registry != nil {
 		// By default every dexaflow_* family is also published under its
@@ -52,6 +52,13 @@ type ObservabilityOption func(*observabilityOptions)
 type observabilityOptions struct {
 	legacyNames bool
 	probeBudget time.Duration
+	liveness    LivenessCheck
+}
+
+// WithLivenessCheck lets check fail /healthz on the metrics listener, the
+// probe target of a scheduler-only pod.
+func WithLivenessCheck(check LivenessCheck) ObservabilityOption {
+	return func(o *observabilityOptions) { o.liveness = check }
 }
 
 // WithProbeBudget bounds /readyz on the metrics listener with the same

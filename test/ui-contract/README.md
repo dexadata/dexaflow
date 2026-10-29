@@ -12,6 +12,13 @@ view, instead of as an empty panel a user discovers later.
 This is a developer/CI smoke test (not part of `go test`); it needs a browser, so
 it runs in a Dockerized Playwright.
 
+## In CI
+
+The `ui-smoke` job of `.github/workflows/ci.yaml` runs `sweep.py` and
+`clear_version_toggle.py` on every pull request, against the same fresh Lite
+the headless smoke uses, after it registers a second version of the `hello`
+DAG so the oldest run's Clear dialog offers the version toggle.
+
 ## Run
 
 Against the local demo control plane (already running on `:8080`):

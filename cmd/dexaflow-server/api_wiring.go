@@ -203,6 +203,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 			HealthChecks:    checks,
 			ExecutorInfo:    executorInfo,
 			SchedulerHealth: schedulerHealth,
+			Liveness:        schedulerStallCheck(cfg, schedulerHealth),
 			ProbeBudget:     cfg.Server.ProbeBudget,
 		},
 		Server: api.ServerDeps{
@@ -212,7 +213,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 			MaxPageLimit:        cfg.Server.MaxPageLimit,
 			MaxRequestBodyBytes: cfg.Server.MaxRequestBodyBytes,
 			MaxUploadBodyBytes:  cfg.Server.MaxUploadBodyBytes,
-			Pools:               cfg.ClusterEdition(),
+			Pools:               cfg.PoolsEnabled(),
 			PoolsReadOnly:       cfg.Server.PoolsReadOnly,
 		},
 		Auth: api.AuthDeps{
