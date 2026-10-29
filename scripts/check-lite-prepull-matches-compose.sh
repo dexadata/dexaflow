@@ -29,6 +29,7 @@ JOB="lite-cold-start-smoke"
 
 check() { # <compose> <workflow>
 	python3 - "$1" "$2" "$JOB" <<'PY'
+import re
 import sys
 
 try:
@@ -60,34 +61,60 @@ if job_name not in jobs:
 
 # Only this job's steps. Another job in the same workflow may legitimately pull
 # something else, and a file-wide scan would read whichever came first.
-pulled = []
-for step in (jobs[job_name].get("steps") or []):
+PULL = re.compile(r"\bdocker\s+(?:image\s+)?pull\s+(.*)")
+pulled = []  # (step index, image)
+guarded = []  # names of `if:`-guarded steps that pull
+boot_at = None
+for i, step in enumerate(jobs[job_name].get("steps") or []):
 	run = step.get("run")
 	if not isinstance(run, str):
 		continue
+	if boot_at is None and "/readyz" in run:
+		boot_at = i
 	for line in run.splitlines():
 		stripped = line.strip()
 		if stripped.startswith("#"):
 			continue  # a commented-out pull is not a pull
-		if "docker pull " not in stripped:
+		m = PULL.search(stripped)
+		if not m:
 			continue
-		tail = stripped.split("docker pull ", 1)[1].split("&&")[0].split(";")[0]
+		if "if" in step:
+			# `if: false` is how a step gets disabled now; the run text stays
+			# in the parsed list but never executes (#984).
+			guarded.append(step.get("name") or f"step {i + 1}")
+			break
+		tail = m.group(1).split("&&")[0].split(";")[0]
 		# Skip flags so `docker pull --quiet postgres:16` still resolves.
 		for tok in tail.split():
 			if not tok.startswith("-"):
-				pulled.append(tok)
+				pulled.append((i, tok))
 				break
 
+if guarded and not pulled:
+	fail(
+		f"{workflow_path}'s `{job_name}` pull step carries an `if:` guard "
+		f"({', '.join(guarded)}).\n"
+		"A guarded pull may never run, so the image would be downloaded inside the\n"
+		"/readyz budget (#977). The pre-pull must be unconditional."
+	)
 if not pulled:
 	fail(
 		f"{workflow_path}'s `{job_name}` job has no `docker pull <image>` step.\n"
 		"The image must be pulled before the /readyz budget starts; without it the\n"
 		"download happens inside the budget and eats the boot margin (#977)."
 	)
-if len(set(pulled)) > 1:
-	fail(f"`{job_name}` pulls more than one image ({', '.join(sorted(set(pulled)))}); this gate expects one")
+images = sorted({img for _, img in pulled})
+if len(images) > 1:
+	fail(f"`{job_name}` pulls more than one image ({', '.join(images)}); this gate expects one")
 
-got = pulled[0]
+if boot_at is None:
+	fail(f"{workflow_path}'s `{job_name}` job has no step whose run mentions /readyz; cannot check the pull comes first")
+pull_at, got = pulled[0]
+if pull_at > boot_at:
+	fail(
+		f"`{job_name}` pulls {got} in step {pull_at + 1}, after the /readyz boot step ({boot_at + 1}).\n"
+		"A pull after boot does nothing for the budget; move it before the boot step."
+	)
 if got != want:
 	fail(
 		"the Lite pre-pull image does not match the compose Lite starts.\n"
@@ -122,7 +149,8 @@ self_test() {
 
 	local ok_compose ok_wf
 	ok_compose=$'services:\n  postgres:\n    image: postgres:16\n  redis:\n    image: redis:7\n'
-	ok_wf=$'jobs:\n  lite-cold-start-smoke:\n    steps:\n      - name: pre-pull\n        run: docker pull postgres:16\n'
+	local boot=$'      - name: boot\n        run: curl -fsS localhost:8080/readyz\n'
+	ok_wf=$'jobs:\n  lite-cold-start-smoke:\n    steps:\n      - name: pre-pull\n        run: docker pull postgres:16\n'"$boot"
 
 	_case "matching tags pass" 0 "matches the compose image (postgres:16)" "$ok_compose" "$ok_wf"
 
@@ -144,10 +172,10 @@ self_test() {
 
 	# The retry wrapper the pull needs is a multi-line block.
 	_case "a multi-line retry block still resolves" 0 "matches the compose image (postgres:16)" "$ok_compose" \
-		$'jobs:\n  lite-cold-start-smoke:\n    steps:\n      - run: |\n          for i in 1 2 3; do\n            docker pull postgres:16 && exit 0\n            sleep 10\n          done\n          exit 1\n'
+		$'jobs:\n  lite-cold-start-smoke:\n    steps:\n      - run: |\n          for i in 1 2 3; do\n            docker pull postgres:16 && exit 0\n            sleep 10\n          done\n          exit 1\n'"$boot"
 
 	_case "flags are skipped" 0 "matches the compose image (postgres:16)" "$ok_compose" \
-		$'jobs:\n  lite-cold-start-smoke:\n    steps:\n      - run: docker pull --quiet postgres:16\n'
+		$'jobs:\n  lite-cold-start-smoke:\n    steps:\n      - run: docker pull --quiet postgres:16\n'"$boot"
 
 	# Quoting and service order are YAML concerns now, not regex concerns.
 	_case "a quoted image compares by value" 0 "matches the compose image (postgres:16)" \
@@ -158,10 +186,28 @@ self_test() {
 	_case "a renamed job fails loudly" 1 "did it get renamed?" "$ok_compose" \
 		$'jobs:\n  lite-cold-start:\n    steps:\n      - run: docker pull postgres:16\n'
 
+	# `if: false` is the modern way to disable a step; its run text is still parsed (#984).
+	_case "an if-guarded pull is not a pull" 1 "carries an \`if:\` guard (pre-pull)" "$ok_compose" \
+		$'jobs:\n  lite-cold-start-smoke:\n    steps:\n      - name: pre-pull\n        if: false\n        run: docker pull postgres:16\n'"$boot"
+
+	_case "a pull after the boot step fails" 1 "after the /readyz boot step" "$ok_compose" \
+		"$(printf 'jobs:\n  lite-cold-start-smoke:\n    steps:\n')"$'\n'"$boot"$'      - run: docker pull postgres:16\n'
+
+	_case "a job with no /readyz step fails" 1 "no step whose run mentions /readyz" "$ok_compose" \
+		$'jobs:\n  lite-cold-start-smoke:\n    steps:\n      - run: docker pull postgres:16\n'
+
+	_case "docker image pull is a pull" 0 "matches the compose image (postgres:16)" "$ok_compose" \
+		$'jobs:\n  lite-cold-start-smoke:\n    steps:\n      - run: docker image pull postgres:16\n'"$boot"
+	_case "extra spaces still match" 0 "matches the compose image (postgres:16)" "$ok_compose" \
+		$'jobs:\n  lite-cold-start-smoke:\n    steps:\n      - run: docker  pull  postgres:16\n'"$boot"
+
 	if [ "$fail" -eq 0 ]; then echo "self-test: PASS"; return 0; else echo "self-test: FAIL"; return 1; fi
 }
 
 [ "${1:-}" = "--self-test" ] && { self_test; exit $?; }
 
+# Resolve caller-relative paths before moving to the repo root (#984).
+compose="${1:+$(realpath -- "$1")}"
+workflow="${2:+$(realpath -- "$2")}"
 cd "$(dirname "$0")/.."
-check "${1:-docker-compose.dev.yaml}" "${2:-.github/workflows/release.yaml}"
+check "${compose:-docker-compose.dev.yaml}" "${workflow:-.github/workflows/release.yaml}"
