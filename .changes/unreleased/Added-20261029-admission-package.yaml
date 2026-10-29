@@ -1,0 +1,10 @@
+kind: Added
+body: |-
+  **`pkg/admission`: the dispatch admission hook contract (ADR 0100).** The
+  public types of a hook that sees each task attempt after the server's own
+  checks and before its agent token is minted, and admits, changes, holds or
+  refuses it. The server already runs such hooks and counts their outcomes in
+  `dexaflow_dispatch_admission_total{outcome}`; the way to install one (the
+  webhook and its configuration, or an embedding server) follows in a later
+  release. (#2177)
+time: 2026-10-29T13:10:00.000000000+00:00

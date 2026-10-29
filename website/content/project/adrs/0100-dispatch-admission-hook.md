@@ -55,8 +55,10 @@ concurrency limits) before an attempt reaches the dispatcher.
    the default, with a flag for whether the task chose it. Those defaults
    are applied after the token today, so the dispatcher computes them before
    the hook. `Request` never carries the environment, the source, secrets or
-   the token. `Decision` is one of `Admit()`, `AdmitWith(Changes)` or
-   `Refuse(reason)`.
+   the token. `Decision` is one of `Admit()`, `AdmitWith(Changes)`,
+   `Hold(reason)` or `Refuse(reason)`. Tolerations are a typed
+   `Toleration` struct, not an untyped map, so the public shape does not
+   freeze one.
 
 2. **Where it runs.** After the built-in refusals of `refuseBeforeToken` (the
    unit, the allowlist, the image allowlist, the source-mode size), and before
@@ -81,8 +83,10 @@ concurrency limits) before an attempt reaches the dispatcher.
    placement case above. A service account a hook sets must be in
    `execution_allowlist.service_accounts` when that list is set, and is
    exempt when it is the default task ServiceAccount, as in the executor;
-   a service account the allowlist refuses refuses the attempt, naming the
-   hook. An attempt the hook changed takes a dedicated pod, the same rule
+   a priority class a hook sets must likewise be in
+   `execution_allowlist.priority_classes`. A value the allowlist refuses, or
+   a key, value or toleration Kubernetes would reject, refuses the attempt,
+   naming the hook, instead of failing later as a pod error. An attempt the hook changed takes a dedicated pod, the same rule
    as a task that sets its own placement (`domain.WarmPolicy`):
    `DedicatedReason` is evaluated on the task with the hook's changes
    applied. The register response may still report warm for a task that a
@@ -92,13 +96,20 @@ concurrency limits) before an attempt reaches the dispatcher.
    - `Refuse(reason)` is permanent: it fails the task through
      `FailDispatchRefused` without retries, and the task instance shows
      `dispatch refused: admission: <reason>`, the reason stripped of control
-     characters and cut to 512 bytes. A hook that wants a temporary hold
-     (a freeze window, a budget that resets) returns an error instead.
+     and format characters and cut to 512 bytes.
+   - `Hold(reason)` is a temporary hold (a freeze window, a budget that
+     resets): the dispatcher returns `executor.Unavailable`, the attempt is
+     offered again within the ADR 0093 window and fails with the reason once
+     it is spent. A hold is the hook working, so it never fails open and
+     never counts toward the breaker.
    - An error, a timeout (`execution.admission.timeout`, default 500ms) or
-     a panic is transient: the dispatcher returns `executor.Unavailable`
-     with the cause `admission hook unavailable: ...`, so the task is
+     a panic means the hook is broken. It is transient too: the dispatcher
+     returns `executor.Unavailable` with the cause
+     `admission hook unavailable: ...` (the error text cleaned and cut like a
+     reason), so the task is
      offered again without spending dispatch attempts and fails as
-     `dispatch_failed` once the ADR 0093 window (15 minutes) passes. A hook
+     `dispatch_failed` once the ADR 0093 window (15 minutes) passes, the
+     failure naming the hook rather than the Kubernetes API. A hook
      that is down holds tasks for that window rather than letting them run
      unchecked; `execution.admission.fail_open: true` admits them unchanged
      instead, and is logged at boot.
@@ -107,7 +118,10 @@ concurrency limits) before an attempt reaches the dispatcher.
      `scheduler.dispatch.buffer_size: 0`) the hook runs on the scheduler
      tick, so after a number of consecutive failures a breaker skips the
      hook for its backoff instead of waiting out the timeout on every
-     attempt.
+     attempt. Each hook has its own breaker, so one failing hook never
+     skips another, and after the backoff a single call probes the hook. A
+     cancelled dispatch (shutdown, an ended tick) is not a hook failure: it
+     neither counts toward the breaker nor fails open.
    - Outcomes and latency are counted on a metric labelled by outcome
      only, never by tenant or DAG.
 

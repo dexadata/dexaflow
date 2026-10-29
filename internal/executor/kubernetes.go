@@ -105,11 +105,21 @@ func (e *KubernetesExecutor) Execute(ctx context.Context, req Request) (Disposit
 	// ServiceAccount the dispatcher filled in for a task that named none: the
 	// allowlist does not govern that one.
 	authored := req.Execution
+	if req.AuthoredExecution != nil {
+		authored = *req.AuthoredExecution
+	}
 	if authored.ServiceAccount != "" && authored.ServiceAccount == req.DefaultServiceAccount {
 		authored.ServiceAccount = ""
 	}
 	if err := req.ExecutionPolicy.CheckTask(domain.TaskSpec{TaskID: req.TaskID, Execution: &authored}); err != nil {
 		return Refused, err
+	}
+	// An admission hook may have changed the service account (ADR 0100 §4); the
+	// one the pod runs as must still be on the allowlist.
+	if sa := req.Execution.ServiceAccount; req.AuthoredExecution != nil && sa != req.DefaultServiceAccount {
+		if err := req.ExecutionPolicy.CheckServiceAccount(sa); err != nil {
+			return Refused, fmt.Errorf("task %q: %w", req.TaskID, err)
+		}
 	}
 	if err := req.ExecutionPolicy.CheckImage(req.Image); err != nil {
 		return Refused, fmt.Errorf("task %q: %w", req.TaskID, err)
