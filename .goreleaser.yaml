@@ -1,8 +1,8 @@
 # GoReleaser configuration for Dexaflow pre-alpha releases.
 #
 # Produces static (CGO-free) binaries for linux/darwin × amd64/arm64, bundles all
-# three binaries per platform into a single archive (so install.sh fetches the CLI,
-# server, and agent in one download), publishes SHA-256 checksums, an SBOM per
+# four binaries per platform into a single archive (so install.sh fetches the CLI,
+# server, agent and MCP server in one download), publishes SHA-256 checksums, an SBOM per
 # archive, cosign keyless signatures (the checksums file AND the image
 # manifests), and the control-plane, MCP and CLI container images on GHCR.
 version: 2

@@ -34,7 +34,7 @@ import sys
 try:
 	import yaml
 except ImportError:
-	sys.exit("SKIP: PyYAML unavailable; cannot verify the Lite pre-pull tag")
+	sys.exit("FAIL: PyYAML unavailable; cannot verify the Lite pre-pull tag (pip install pyyaml)")
 
 compose_path, workflow_path, job_name = sys.argv[1], sys.argv[2], sys.argv[3]
 
@@ -125,6 +125,11 @@ self_test() {
 	ok_wf=$'jobs:\n  lite-cold-start-smoke:\n    steps:\n      - name: pre-pull\n        run: docker pull postgres:16\n'
 
 	_case "matching tags pass" 0 "matches the compose image (postgres:16)" "$ok_compose" "$ok_wf"
+
+	# Without PyYAML nothing was checked, so the gate fails and says why (#969).
+	mkdir -p "$tmp/noyaml"
+	printf 'raise ImportError("PyYAML hidden by the self-test")\n' >"$tmp/noyaml/yaml.py"
+	PYTHONPATH="$tmp/noyaml" _case "a missing PyYAML fails and says so" 1 "FAIL: PyYAML unavailable" "$ok_compose" "$ok_wf"
 
 	# The reviewer's one-line defeat of the previous parser.
 	_case "a commented-out pull is not a pull" 1 "has no \`docker pull <image>\` step" "$ok_compose" \
