@@ -25,9 +25,7 @@ func TestResolvePython3(t *testing.T) {
 
 	t.Run("managed build is trusted and preferred without exec", func(t *testing.T) {
 		managed := filepath.Join(t.TempDir(), "python3.11")
-		if err := os.WriteFile(managed, []byte("#!/fake"), 0o700); err != nil {
-			t.Fatal(err)
-		}
+		writeExecutable(t, managed, "#!/fake")
 		got, err := resolvePython3(ctx, managed,
 			func(string) (string, error) { return "/usr/bin/python3.11", nil },
 			neverRun)

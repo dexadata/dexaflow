@@ -119,6 +119,55 @@ func TestFindUserByIDUserWithoutRolesIntegration(t *testing.T) {
 	}
 }
 
+// A deactivated user (is_active = false) still loads from the one-statement
+// reload, with active false rather than an error, and the authenticator built
+// on it stops honoring that user's token at the next request and refuses to
+// renew it (#1326, #1616). The flag is set with an UPDATE: there is no
+// deactivate endpoint yet (#960 drives this through one when it ships).
+func TestFindUserByIDDeactivatedUserIntegration(t *testing.T) {
+	repo, _, ctx := countingRepo(t)
+	email := fmt.Sprintf("deactivated_%d@example.com", time.Now().UnixNano())
+	const password = "deactivated-secret-1"
+	created, err := repo.CreateUser(ctx, "default", email, password, []string{"viewer"})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	authn := auth.NewJWTAuthenticator(repo, "deactivated-test-secret", time.Hour)
+	token, err := authn.IssueToken(ctx, auth.Credentials{Tenant: "default", Username: email, Password: password})
+	if err != nil {
+		t.Fatalf("IssueToken: %v", err)
+	}
+	if _, err := authn.Authenticate(ctx, token); err != nil {
+		t.Fatalf("an active user's token was refused: %v", err)
+	}
+
+	uid, _ := parseUUID(created.ID)
+	conn, err := pgx.Connect(ctx, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	if _, err := conn.Exec(ctx, `UPDATE users SET is_active = false WHERE id = $1`, uid); err != nil {
+		t.Fatalf("deactivating: %v", err)
+	}
+	user, active, err := repo.FindUserByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("FindUserByID of a deactivated user: %v", err)
+	}
+	if active {
+		t.Error("FindUserByID reports a deactivated user as active")
+	}
+	if user == nil || user.Email != email {
+		t.Errorf("principal = %+v, want the deactivated user", user)
+	}
+	if _, err := authn.Authenticate(ctx, token); err == nil {
+		t.Error("a deactivated user's token still authenticates")
+	}
+	if _, ok, err := authn.RenewUserToken(ctx, token, time.Hour, 24*time.Hour); ok || err == nil {
+		t.Errorf("RenewUserToken for a deactivated user = ok %v, err %v; want a refusal", ok, err)
+	}
+}
+
 // TestTenantIDIsResolvedOnceIntegration pins the tenant cache: a tenant's id
 // never changes, so its name is looked up once per process, while an unknown
 // name is never cached (the tenant may be created later).

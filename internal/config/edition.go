@@ -24,3 +24,12 @@ func IsClusterEdition(edition string) bool {
 func (c *ServerConfig) ClusterEdition() bool {
 	return IsClusterEdition(c.UI.Edition)
 }
+
+// PoolsEnabled reports whether named pools are on: scheduler.pools.enabled
+// when it is set, otherwise the cluster edition (#2173).
+func (c *ServerConfig) PoolsEnabled() bool {
+	if c.Scheduler.Pools.Enabled != nil {
+		return *c.Scheduler.Pools.Enabled
+	}
+	return c.ClusterEdition()
+}

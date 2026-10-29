@@ -121,6 +121,9 @@ var serverDefaults = map[string]any{
 	"scheduler.loop_interval_ms":          1000,
 	"scheduler.enabled":                   true,
 	"scheduler.pool_starvation_threshold": "60s",
+	// No value: unset means follow the edition (PoolsEnabled). The key is
+	// listed so the environment can set it.
+	"scheduler.pools.enabled": nil,
 	// Off by default (ADR 0062 feature gate): promotion keeps its one-step-per-
 	// tick cadence until an operator opts in.
 	"scheduler.eager_promotion": false,
@@ -283,6 +286,8 @@ var serverDefaults = map[string]any{
 	"server.idle_timeout": "0s",
 	// The /readyz budget every earlier release hardcoded (#1050).
 	"server.probe_budget": "2s",
+	// Gate (ADR 0062): 0 keeps /healthz unconditional (#539).
+	"server.liveness_scheduler_stall": "0s",
 	// Trace sampling gates (ADR 0062): the defaults trace every request.
 	"observability.otel.sample_ratio":     1.0,
 	"observability.otel.skip_probe_spans": false,

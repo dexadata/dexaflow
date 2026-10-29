@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -21,9 +20,7 @@ func fakeLdd(t *testing.T, out string) {
 	dir := t.TempDir()
 	// printf is a shell builtin: PATH holds only the stub, so no cat.
 	script := "#!/bin/sh\nprintf '%s\\n' '" + out + "'\n"
-	if err := os.WriteFile(filepath.Join(dir, "ldd"), []byte(script), 0o700); err != nil { //nolint:gosec // test stub must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, filepath.Join(dir, "ldd"), script)
 	t.Setenv("PATH", dir)
 }
 

@@ -3,7 +3,6 @@ package cli
 import (
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -351,11 +350,8 @@ func TestDeployBuildsWithTheClusterPlatformAndBaseImage(t *testing.T) {
 	// The generated Dockerfile is removed after the build: the stub keeps a
 	// copy of what it was handed with -f.
 	seen := filepath.Join(t.TempDir(), "Dockerfile.seen")
-	writeTree(t, builder, "#!/bin/sh\n"+noBuildx+"echo \"$*\" >> \""+log+"\"\n"+
+	writeExecutable(t, builder, "#!/bin/sh\n"+noBuildx+"echo \"$*\" >> \""+log+"\"\n"+
 		"while [ $# -gt 0 ]; do if [ \"$1\" = -f ]; then cp \"$2\" \""+seen+"\"; fi; shift; done\nexit 0\n")
-	if err := os.Chmod(builder, 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
-		t.Fatal(err)
-	}
 	fake := &clusterServer{deployServer: &deployServer{}, body: clusterPlatformsBody}
 	srv := httptest.NewServer(fake)
 	defer srv.Close()

@@ -149,3 +149,35 @@ func TestPodInformer_HasSynced(t *testing.T) {
 		t.Error("HasSynced must be true once the cache synced")
 	}
 }
+
+// TestCachedPodActiveLooksUpOnlyTheAttemptsTry is #1621: the lookup goes
+// through the attempt index, and still tells apart pods of another try, another
+// task and another run, including a run id long enough to be hashed into its
+// label.
+func TestCachedPodActiveLooksUpOnlyTheAttemptsTry(t *testing.T) {
+	longRun := "scheduled__2026-10-28T19:00:00+00:00__" + "a-run-id-long-enough-to-pass-the-sixty-three-character-label-limit"
+	long := epochPod("long", longRun, "extract", 1, 0, corev1.PodPending)
+	long.Labels[podLabelRunID] = labelValue(longRun) // as BuildPod stamps it
+	cs := fake.NewClientset(
+		epochPod("other-try", "run-a", "extract", 2, 0, corev1.PodRunning),
+		epochPod("other-task", "run-a", "load", 1, 0, corev1.PodRunning),
+		epochPod("other-run", "run-b", "extract", 1, 0, corev1.PodRunning),
+		long,
+	)
+	pi := NewPodInformer(cs, "leoflow")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pi.Start(ctx)
+	if !pi.WaitForCacheSync(ctx) {
+		t.Fatal("cache did not sync")
+	}
+	if pi.CachedPodActive(Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 1}) {
+		t.Error("pods of another try, task or run must not make the attempt active")
+	}
+	if !pi.CachedPodActive(Attempt{RunID: "run-a", TaskID: "extract", TryNumber: 2}) {
+		t.Error("the try's own pod must read active")
+	}
+	if !pi.CachedPodActive(Attempt{RunID: longRun, TaskID: "extract", TryNumber: 1}) {
+		t.Error("a pod whose run id label is hashed must be found by its attempt")
+	}
+}

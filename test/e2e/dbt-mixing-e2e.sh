@@ -57,7 +57,7 @@ dump_pods() {
     kubectl logs -n leoflow "$p" --all-containers --tail=80 >&2 2>&1 || true
   done
 }
-fail() { echo "FAIL: $*" >&2; dump_pods; exit 1; }
+fail() { echo "FAIL: $*" >&2; dump_task_instances "$API" "$DAG_ID" "${RUN_ID:-}" "${TOKEN:-}"; dump_pods; exit 1; }
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 
 SERVER_PID=""
@@ -99,7 +99,17 @@ def pre():
 
 
 def post():
-    print("post")
+    # The control plane runs this e2e with a read-only task root filesystem
+    # in a namespace that enforces PodSecurity restricted (#1016). Reaching
+    # here means the pod was admitted and the dbt tasks before it wrote only
+    # to /tmp; this checks the root really is read-only and /tmp writable.
+    with open("/proc/self/mounts") as f:
+        root = [line.split() for line in f if line.split()[1] == "/"]
+    if not root or "ro" not in root[-1][3].split(","):
+        raise SystemExit(f"the task root filesystem is not read-only: {root}")
+    with open("/tmp/rofs-probe", "w") as f:
+        f.write("ok")
+    print("post: root read-only, /tmp writable")
 
 
 # schedule=None: the script triggers exactly ONE run. Under a real schedule the
@@ -117,6 +127,7 @@ dag_id: mix
 # The adapter is declared, not installed by a hand-written Dockerfile: the
 # generated one has to carry it, and that is half of what this test now proves.
 dependencies:
+  - "@DBT_CORE_PIN@"
   - dbt-postgres==1.9.*
   # A version FLOOR, on purpose (#1064). `RUN` is /bin/sh -c, so an unquoted
   # `>=` is a redirection: pip used to receive a bare `wheel`, the floor
@@ -129,6 +140,9 @@ dbt_groups:
     manifest: target/manifest.json
     granularity: node
 YAML
+# The dbt-core pin comes from the shared constraints file (#957); the heredoc
+# is quoted, so it is filled in here.
+sed -i "s|@DBT_CORE_PIN@|$(dbt_core_pin)|" "$PROJ/dexaflow.yaml"
 # Pin the DAG image to the host arch (see e2e.sh): the loader defaults to
 # linux/amd64, which fails FROM an arm64 base on a Lima/dev host → ErrImagePull.
 case "$(uname -m)" in arm64|aarch64) HOST_PLATFORM="linux/arm64" ;; *) HOST_PLATFORM="linux/amd64" ;; esac
@@ -181,11 +195,17 @@ log "Creating k3d cluster + namespace"
 k3d cluster delete "$CLUSTER" >/dev/null 2>&1 || true
 k3d cluster create "$CLUSTER" --wait >/dev/null
 kubectl create namespace leoflow >/dev/null
+# Task pods must pass PodSecurity restricted, with their root filesystem
+# read-only (#1016): the admission and the /tmp emptyDir the executor mounts
+# for it are exercised by every task of this run.
+kubectl label namespace leoflow pod-security.kubernetes.io/enforce=restricted \
+  pod-security.kubernetes.io/enforce-version=latest >/dev/null
 
 log "Starting the control plane"
 export LEOFLOW_AUTH_JWT_SECRET="e2e-secret"
 export LEOFLOW_BOOTSTRAP_PASSWORD="admin"
 export LEOFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR="${HOST_ADDR}:${GRPC_PORT}"
+export LEOFLOW_EXECUTOR_DEFAULTS_READ_ONLY_TASK_ROOT_FILESYSTEM=true
 export LEOFLOW_LOGS_DIR="${WORKDIR}/logs"
 export LEOFLOW_SERVER_HTTP_ADDR="0.0.0.0:${HTTP_PORT}"
 export LEOFLOW_SERVER_METRICS_ADDR="0.0.0.0:${METRICS_PORT}"
@@ -273,6 +293,11 @@ TOKEN="$(admin_token "$ROOT/bin/leoflow" "$API" admin)"
 # New DAGs are paused at creation, and a manual run of a paused DAG waits
 # until the DAG is unpaused.
 unpause_dag "$API" "$DAG_ID" "$TOKEN" || fail "unpausing $DAG_ID failed"
+# A pod started before CoreDNS knows host.k3d.internal cannot reach the
+# runner (#919).
+if [ "$HOST_ADDR" = host.k3d.internal ]; then
+  k3d_wait_host_entry 60 || fail "CoreDNS never resolved host.k3d.internal"
+fi
 RUN_ID="$(curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{}' "$API/api/v2/dags/$DAG_ID/dagRuns" | jq -r '.dag_run_id')"
 [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ] || fail "no dag_run_id returned"

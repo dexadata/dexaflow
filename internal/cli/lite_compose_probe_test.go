@@ -30,9 +30,7 @@ func dockerWithoutCompose(t *testing.T) (log string) {
 		"  compose) echo \"unknown shorthand flag: 'f' in -f\" >&2; echo \"Usage:  docker [OPTIONS] COMMAND [ARG...]\" >&2; exit 125 ;;\n" +
 		"esac\n" +
 		"exit 0\n"
-	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(script), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, filepath.Join(dir, "docker"), script)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return log
 }

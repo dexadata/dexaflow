@@ -73,9 +73,7 @@ func TestRecreatedVenvDoesNotTrustTheOldDepsMarker(t *testing.T) {
 		"  --version) echo 'Python 3.11.9'; exit 0;;\n" +
 		"  -m) if [ \"$2\" = venv ]; then /bin/mkdir -p \"$3/bin\"; /bin/cat > \"$3/bin/python\" <<'VENVPY'\n" + venvPy + "VENVPY\n /bin/chmod +x \"$3/bin/python\"; exit 0; fi;;\n" +
 		"esac\nexit 0\n"
-	if err := os.WriteFile(base, []byte(script), 0o755); err != nil { //nolint:gosec // a test stub must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, base, script)
 
 	// An empty PATH pins the installer to pip. detectInstaller prefers uv when
 	// it is on PATH, and leoflow itself recommends uv, so plenty of maintainer

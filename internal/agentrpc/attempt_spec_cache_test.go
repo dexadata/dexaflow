@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -236,6 +237,39 @@ func TestAttemptSpecCacheBoundedAndExpires(t *testing.T) {
 	}
 }
 
+// TestAttemptSpecCacheEvictsTheOldestPut is #1621: a full cache drops the
+// entry whose last put is oldest, and a put of a cached attempt moves it to the
+// back, as its expiry moves.
+func TestAttemptSpecCacheEvictsTheOldestPut(t *testing.T) {
+	now := time.Unix(1000, 0)
+	c := newAttemptSpecCache(2, time.Minute, func() time.Time { return now })
+	try := func(n int) auth.AgentIdentity {
+		id := testIdentity()
+		id.TryNumber = n
+		return id
+	}
+	c.put(try(1), attemptSpec{})
+	now = now.Add(time.Second)
+	c.put(try(2), attemptSpec{})
+	now = now.Add(time.Second)
+	c.put(try(1), attemptSpec{}) // refreshed: try 2 is now the oldest
+	now = now.Add(time.Second)
+	c.put(try(3), attemptSpec{})
+
+	if _, ok := c.get(try(2)); ok {
+		t.Error("the oldest put survived a full cache")
+	}
+	for _, n := range []int{1, 3} {
+		if _, ok := c.get(try(n)); !ok {
+			t.Errorf("try %d was evicted, want it kept", n)
+		}
+	}
+	c.drop(try(1))
+	if n := c.len(); n != 1 {
+		t.Errorf("cache holds %d attempts after a drop, want 1", n)
+	}
+}
+
 // BenchmarkAttemptXComRPCs measures one attempt's spec and XCom RPCs:
 // GetTaskSpec, three FetchXCom and one PushXCom. loads/attempt is the number
 // of task spec loads (two Postgres queries each with the real store).
@@ -261,4 +295,84 @@ func BenchmarkAttemptXComRPCs(b *testing.B) {
 		}
 	}
 	b.ReportMetric(float64(store.loads.Load())/float64(b.N), "loads/attempt")
+}
+
+// gatedSpecStore holds the first task spec load in flight until release is
+// closed, so a test can end the attempt while the load is still running.
+type gatedSpecStore struct {
+	*countingStore
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *gatedSpecStore) TaskSpec(ctx context.Context, id auth.AgentIdentity) (TaskSpec, error) {
+	first := false
+	s.once.Do(func() { first = true })
+	if first {
+		close(s.entered)
+		<-s.release
+	}
+	return s.countingStore.TaskSpec(ctx, id)
+}
+
+// TestAttemptSpecNotResurrectedByALoadInFlight (#1616, audit finding F5): a
+// spec load that started before the attempt reported its end must not put the
+// entry back after the end dropped it, or the ended attempt's view lives on
+// for up to attemptSpecCacheTTL. Both loaders are covered: the XCom RPCs and
+// GetTaskSpec.
+func TestAttemptSpecNotResurrectedByALoadInFlight(t *testing.T) {
+	for name, call := range map[string]func(*Server, context.Context) error{
+		"FetchXCom": func(srv *Server, ctx context.Context) error {
+			_, err := srv.FetchXCom(ctx, &agentv1.FetchXComRequest{UpstreamTaskId: "up1"})
+			return err
+		},
+		"GetTaskSpec": func(srv *Server, ctx context.Context) error {
+			_, err := srv.GetTaskSpec(ctx, &agentv1.GetTaskSpecRequest{})
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			st := &gatedSpecStore{countingStore: xcomAttemptStore(), entered: make(chan struct{}), release: make(chan struct{})}
+			srv, a := newServerX(st, xcomAttemptEntries())
+			ctx := ctxWithToken(t, a)
+			done := make(chan error, 1)
+			go func() { done <- call(srv, ctx) }()
+			<-st.entered
+			if _, err := srv.ReportState(ctx, &agentv1.ReportStateRequest{State: agentv1.TaskState_TASK_STATE_SUCCESS}); err != nil {
+				t.Fatalf("ReportState: %v", err)
+			}
+			close(st.release)
+			if err := <-done; err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			if n := srv.attemptSpecs.len(); n != 0 {
+				t.Errorf("the ended attempt's entry came back after its load finished (%d entries), want 0", n)
+			}
+			if n := srv.attemptSpecs.loadsInFlight(); n != 0 {
+				t.Errorf("%d loads still registered after every load finished, want 0", n)
+			}
+		})
+	}
+}
+
+// A load that fails, and one whose attempt did not end, leave no registration
+// behind, and the second one is cached as before.
+func TestAttemptSpecLoadRegistrationIsReleased(t *testing.T) {
+	store := xcomAttemptStore()
+	srv, a := newServerX(store, xcomAttemptEntries())
+	ctx := ctxWithToken(t, a)
+	runXComRPCs(t, srv, ctx)
+	if srv.attemptSpecs.len() != 1 || srv.attemptSpecs.loadsInFlight() != 0 {
+		t.Fatalf("after a load: %d entries, %d loads registered; want 1 and 0", srv.attemptSpecs.len(), srv.attemptSpecs.loadsInFlight())
+	}
+	failing := &countingStore{fakeStore: fakeStore{specErr: errors.New("store down")}}
+	srv2, a2 := newServerX(failing, xcomAttemptEntries())
+	ctx2 := ctxWithToken(t, a2)
+	if _, err := srv2.FetchXCom(ctx2, &agentv1.FetchXComRequest{UpstreamTaskId: "up1"}); err == nil {
+		t.Fatal("FetchXCom succeeded on a failing store")
+	}
+	if srv2.attemptSpecs.len() != 0 || srv2.attemptSpecs.loadsInFlight() != 0 {
+		t.Errorf("after a failed load: %d entries, %d loads registered; want 0 and 0", srv2.attemptSpecs.len(), srv2.attemptSpecs.loadsInFlight())
+	}
 }

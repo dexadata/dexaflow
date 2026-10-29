@@ -192,9 +192,7 @@ func TestCompileRecoversAfterConfigUpdate(t *testing.T) {
 	out := filepath.Join(dir, "dag.json")
 
 	brokenParser := filepath.Join(t.TempDir(), "broken-parser.sh")
-	if err := os.WriteFile(brokenParser, []byte("#!/usr/bin/env bash\nexit 1\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, brokenParser, "#!/usr/bin/env bash\nexit 1\n")
 	if err := os.WriteFile(configPath, []byte("parser_cmd: \""+brokenParser+"\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -215,9 +213,7 @@ func TestCompileRecoversAfterConfigUpdate(t *testing.T) {
 		"cat > \"$out\" <<'JSON'\n" +
 		"{\"schema_version\":\"1.0\",\"dag_id\":\"proj\",\"dag_version\":\"dev\",\"image\":\"test:v1\",\"tasks\":[{\"task_id\":\"hello\",\"type\":\"python\",\"entrypoint\":\"dag:hello\"}]}\n" +
 		"JSON\n"
-	if err := os.WriteFile(goodParser, []byte(goodScript), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, goodParser, goodScript)
 	if err := os.WriteFile(configPath, []byte("parser_cmd: \""+goodParser+"\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -258,9 +254,7 @@ func TestCompileFailThenRecoverIsClean(t *testing.T) {
 	// Step 1 — broken parser command. compile must fail.
 	brokenParser := filepath.Join(t.TempDir(), "broken-parser.sh")
 	brokenScript := "#!/usr/bin/env bash\necho 'No module named leoflow_parser' >&2\nexit 1\n"
-	if err := os.WriteFile(brokenParser, []byte(brokenScript), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, brokenParser, brokenScript)
 	if _, _, err := run(t, "compile", dir, "--output", out, "--image", "test:v1", "--parser-cmd", brokenParser); err == nil {
 		t.Fatal("compile with a broken parser-cmd should fail, but it succeeded")
 	}
@@ -277,9 +271,7 @@ func TestCompileFailThenRecoverIsClean(t *testing.T) {
 		"cat > \"$out\" <<'JSON'\n" +
 		"{\"schema_version\":\"1.0\",\"dag_id\":\"proj\",\"dag_version\":\"dev\",\"image\":\"test:v1\",\"tasks\":[{\"task_id\":\"hello\",\"type\":\"python\",\"entrypoint\":\"dag:hello\"}]}\n" +
 		"JSON\n"
-	if err := os.WriteFile(goodParser, []byte(goodScript), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, goodParser, goodScript)
 	if _, _, err := run(t, "compile", dir, "--output", out, "--image", "test:v1", "--parser-cmd", goodParser); err != nil {
 		t.Fatalf("compile with a working parser-cmd should recover after a prior failure, got %v", err)
 	}
@@ -308,9 +300,7 @@ func TestCompileProducesValidDAGJSON(t *testing.T) {
 		"cat > \"$out\" <<'JSON'\n" +
 		"{\"schema_version\":\"1.0\",\"dag_id\":\"proj\",\"dag_version\":\"dev\",\"image\":\"test:v1\",\"tasks\":[{\"task_id\":\"hello\",\"type\":\"python\",\"entrypoint\":\"dag:hello\"}]}\n" +
 		"JSON\n"
-	if err := os.WriteFile(parser, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, parser, script)
 	out := filepath.Join(dir, "dag.json")
 	if _, _, err := run(t, "compile", dir, "--output", out, "--image", "test:v1", "--parser-cmd", parser); err != nil {
 		t.Fatalf("compile: %v", err)
@@ -340,15 +330,11 @@ func TestCompileBuildsImageWhenRequested(t *testing.T) {
 		"cat > \"$out\" <<'JSON'\n" +
 		"{\"schema_version\":\"1.0\",\"dag_id\":\"proj\",\"dag_version\":\"dev\",\"image\":\"test:v1\",\"tasks\":[{\"task_id\":\"hello\",\"type\":\"python\",\"entrypoint\":\"dag:hello\"}]}\n" +
 		"JSON\n"
-	if err := os.WriteFile(parser, []byte(pscript), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, parser, pscript)
 	// Fake builder records its argv so we can assert the docker build invocation.
 	marker := filepath.Join(t.TempDir(), "built.txt")
 	builder := filepath.Join(t.TempDir(), "fake-docker.sh")
-	if err := os.WriteFile(builder, []byte("#!/usr/bin/env bash\necho \"$@\" > "+marker+"\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, builder, "#!/usr/bin/env bash\necho \"$@\" > "+marker+"\n")
 	out := filepath.Join(dir, "dag.json")
 	if _, _, err := run(t, "compile", dir, "--output", out, "--image", "test:v1",
 		"--parser-cmd", parser, "--build", "--builder", builder); err != nil {
@@ -379,14 +365,10 @@ func TestCompilePushesImage(t *testing.T) {
 		"cat > \"$out\" <<'JSON'\n" +
 		"{\"schema_version\":\"1.0\",\"dag_id\":\"proj\",\"dag_version\":\"dev\",\"image\":\"" + image + "\",\"tasks\":[{\"task_id\":\"hello\",\"type\":\"python\",\"entrypoint\":\"dag:hello\"}]}\n" +
 		"JSON\n"
-	if err := os.WriteFile(parser, []byte(pscript), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, parser, pscript)
 	marker := filepath.Join(t.TempDir(), "calls.txt")
 	builder := filepath.Join(t.TempDir(), "fake-docker.sh")
-	if err := os.WriteFile(builder, []byte("#!/usr/bin/env bash\necho \"$@\" >> "+marker+"\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, builder, "#!/usr/bin/env bash\necho \"$@\" >> "+marker+"\n")
 	out := filepath.Join(dir, "dag.json")
 	if _, _, err := run(t, "compile", dir, "--output", out, "--image", image,
 		"--parser-cmd", parser, "--build", "--push", "--builder", builder); err != nil {
