@@ -6,6 +6,241 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Database pool exhaustion is visible on `/metrics`.** Since readiness got
+  its own pool (#1046), a request pool that is fully lent out leaves `/readyz`
+  green while every API call queues. The server now exports the pgxpool
+  statistics of its main, health and (when `database.scheduler_max_conns` is
+  set) scheduler pools, labelled `pool`: `dexaflow_db_pool_acquired_conns`,
+  `dexaflow_db_pool_idle_conns`, `dexaflow_db_pool_total_conns`,
+  `dexaflow_db_pool_max_conns`, and the counters
+  `dexaflow_db_pool_empty_acquires_total` (a caller had to wait for a
+  connection), `dexaflow_db_pool_canceled_acquires_total` (a caller gave up)
+  and `dexaflow_db_pool_empty_acquire_wait_seconds_total`, each also published
+  under its `leoflow_` name (#1049).
+- **A disabled credential ceiling shows on `/metrics`, not only in the boot
+  log.** A scheduler process now exports
+  `dexaflow_resilience_backstop_disabled{config_key="auth.max_attempt_credential_lifetime"}`,
+  `1` when it booted with the ceiling disabled and `0` otherwise, so an alert
+  can ask whether any replica is running without the backstop for as long as
+  it runs. The boot `WARN` also carries a stable
+  `event=resilience_backstop_disabled` attribute to match on (#941).
+- **Each reaper meters the terminal pods its teardown preserves.** The
+  agent-lost, dispatch-lost, orphan-run and pod-lost reapers now record
+  `<reaper>_terminal_pod_preserved` (and `start_expired_terminal_pod_preserved`)
+  on `dexaflow_scheduler_decisions_total`, once per pod left in place for the
+  reconciler because it had already finished, so a climbing preserve rate is a
+  series instead of a log search (#933).
+- `server.max_request_body_bytes` and `server.max_upload_body_bytes` cap request
+  bodies on the API and UI listener, the second on the routes that take a DAG's
+  code or spec; a larger body is refused with `413`. Both default to `0`, no
+  limit, as before (#1613).
+- `logs.tail.replay_budget_bytes` bounds what the `on_demand` live-tail gates of
+  all log streams hold for replay together, dropping the held lines of the
+  stream silent the longest first; `dexaflow_log_tail_replay_bytes` and
+  `dexaflow_log_tail_replay_evictions_total` report what is held and dropped.
+  The default, `0`, sets no budget, as before (#1621).
+- **A metrics reference page.** `reference/metrics` lists every Prometheus family
+  the control plane exports, with its type, labels and meaning, including the 25
+  that no page described (the HTTP, XCom, Redis, task duration and cold start
+  families among them). The table is generated from the registered collectors
+  (`make gen-metrics-reference`), and `go test ./internal/tools/metricsref/` fails
+  while the page is stale.
+- **An operator can suspend a tenant without touching its DAGs.** With
+  `auth.service_token` set, `PUT /api/v2/service/tenants/{tenant}/suspension`
+  with `{"mode": "hold", "reason": "..."}` stops new runs for the tenant,
+  manual and scheduled: a trigger answers `409` with the reason, and the
+  scheduler leaves the tenant's DAGs out. Queued and running work finishes,
+  each DAG keeps its own paused flag, and `DELETE` on the same path restores
+  exactly what the tenant had. `GET` reads it; every change is audited.
+  Migration 052 adds the columns. `drain` and `stop` modes are not applied
+  yet. (#2181)
+- A public Go package, `pkg/dagspec`, validates a compiled `dag.json` with the
+  rules the engine applies at registration (schema, task graph, params,
+  placement, resource quantities and schedule), checks it against the tenant
+  limits `min_schedule_interval_seconds` and `max_task_pool_slots`, and serves
+  the `dag.json` JSON Schema, so a service that registers DAGs through the API
+  can refuse a bad one before it sends it (#1877).
+- The service API's tenant suspension applies the `drain` and `stop` modes.
+  `drain` also dispatches no task of the tenant and starts none of its queued
+  runs; `stop` also fails its queued and running task instances, whose attempts
+  terminate on their next heartbeat as after a mark failed. Lifting the
+  suspension dispatches the tasks left scheduled (#2181).
+- **`scheduler.pools.enabled` turns named pools on or off (#2173, ADR 0097).**
+  Pools no longer depend on `ui.edition` alone: set the key to `false` to run
+  the cluster edition without pools, or to `true` to use them on another
+  edition. Unset, it follows the edition as before, so nothing changes for an
+  install that does not set it.
+- **The database can record one usage event per finished task attempt.**
+  With `usage.events.enabled` on, every write that finishes an attempt also
+  writes a row to `usage_events` in the same transaction: the tenant, the
+  run, the task, the try, the attempt epoch, a revision for a later re-mark,
+  the state, the size and the times (ADR 0096). Migration 055 adds the table
+  and the trigger; recording is off by default and the scheduler leader
+  applies the setting. The service API route that reads the events comes
+  next. (#2174)
+- **An opt-in liveness check for a stalled scheduler leader (#539).**
+  `server.liveness_scheduler_stall` (for example `2m`) makes `/healthz` answer
+  `503` while the process leads the scheduler and its loop has not started an
+  iteration for that long, so the kubelet restarts the pod and another replica
+  takes the lease. A database outage does not trip it. It is `0s` by default,
+  which keeps `/healthz` unconditional, and a value under twice the scheduler
+  step timeout fails boot.
+- **The retention janitor deletes usage events after 30 days.** While
+  `usage.events.enabled` is on, events recorded more than
+  `retention.usage_events_days` ago (default 30, `0` keeps them) are deleted
+  oldest first, in the order the service API serves them, and counted under
+  `table="usage_events"` in `dexaflow_retention_rows_deleted_total`.
+  Migration 056 adds the row that marks the newest deleted event, so a
+  consumer that fell behind is told it lost events. (#2174)
+- **The operator service API serves the usage events.**
+  `GET /api/v2/service/usage?after=<cursor>&limit=<n>` returns the recorded
+  task attempt events of every tenant in an order where a later page never
+  brings an event before a cursor already returned, with the attempt and
+  revision a consumer dedupes on. It answers `404` while
+  `usage.events.enabled` is off and `410` with the oldest complete cursor to a
+  consumer that fell behind retention. `dexaflow_usage_events_lag_seconds`
+  shows how long a long transaction holds events back. (#2174)
+- **Load Experiment 9 measures the primary key order (#525).**
+  `test/load/uuid_keys` compares a random UUIDv4 key, the default of every
+  table, with a time-ordered UUIDv7 on a table of the width of a task
+  instance. At 5 million rows the random key inserts a third slower once its
+  index outgrows the cache, writes a third more WAL per row and builds a key
+  index 27% larger; `test/load/BASELINE.md` records the numbers. No schema
+  changes.
+- **Per-tenant usage counters, and a page on reading usage.** With
+  `observability.usage_metrics` on (off by default, one series per tenant),
+  the scheduler leader exports `dexaflow_task_attempts_total{tenant,state}`
+  and `dexaflow_task_slot_seconds_total{tenant}` from the usage events, so
+  they and the service API never disagree. The new operate page "Read usage
+  per tenant" covers turning recording on, the event key, a consumer loop,
+  the lag and the counters. (#2174)
+
+### Changed
+
+- `/readyz` bounds its dependency checks at `server.probe_budget`, which the Helm
+  chart renders as `probes.readiness.timeoutSeconds` minus one second, so raising
+  the readiness timeout for a slow metadatabase now gives the server the same
+  room instead of failing at a fixed 2s. The default timeout of 3 keeps the 2s
+  budget (#1050).
+- **Messages name Dexaflow and the `DEXAFLOW_*` variables.** `dexaflow setup` prints
+  the Dexaflow wordmark and "Dexaflow Lite setup", the `dexaflow lite` banner reads
+  "DEXAFLOW LITE", the server and MCP start logs say `dexaflow-server` and
+  `dexaflow-mcp`, and every error, warning and API problem detail that names an
+  environment variable (`DEXAFLOW_SECRET_KEY`, `DEXAFLOW_AUTH_JWT_SECRET`,
+  `DEXAFLOW_CONFIG`, `DEXAFLOW_USERNAME`, `DEXAFLOW_PASSWORD`, the gRPC TLS and
+  insecure-secrets switches) gives its current name. The `LEOFLOW_*` names keep
+  working; only the text changed. Install examples in the docs and the chart
+  README use a `dexaflow` namespace and database.
+- **The Helm edition is now called `cluster`.** `ui.edition` accepts `cluster`
+  for the Kubernetes edition delivered by the Helm chart, next to `lite` for the
+  installable binary. `pro`, the earlier name, keeps working exactly as before
+  and means the same thing, so no install has to change. Everything the edition
+  turns on (named pools, the OIDC provider, the TLS boot guards on the agent
+  channel and the edition badge, which now reads CLUSTER) behaves the same under
+  either name. The chart switches to `cluster` in a later release, after every
+  supported server accepts it, and `pro` gets a deprecation warning then. The
+  documentation now calls the Helm edition Cluster. (#2173)
+- **The scheduler reads only the DAGs that may be due on each tick.** It now
+  stores when each scheduled DAG is next due, at most an hour ahead, and lists
+  the DAGs whose time has come instead of every scheduled DAG, so a tick's read
+  grows with the DAGs that are due, not with all of them. Registering a version
+  or deleting a run clears the stored time. Migrations 053 and 054 add the
+  column and its index; the first tick after the upgrade computes every time.
+  New histogram `dexaflow_scheduler_schedule_delay_seconds`: the time from a
+  slot to the creation of its run. (#2175)
+
+### Removed
+
+- **The `scheduler_loops`, `replicas` and `task_state_history` tables are
+  dropped.** Migration 051 removes them, with their indexes, sequences and the
+  `trim_scheduler_loops()` function. They were created for observability and
+  audit and no release ever wrote a row to them, so the schema suggested data
+  that does not exist; the scheduler tick is measured by
+  `dexaflow_scheduler_loop_duration_seconds` and a task instance's attempts
+  are in `task_instance_history`. A row someone wrote to them by hand is
+  deleted by the upgrade. No release since 0.5.5 touches them, so the previous release keeps
+  running against the new schema during a rollout or after a rollback; the
+  down migration recreates them for a rollback to 0.5.4 with retention on. See
+  [Three unused tables are
+  dropped](https://dexaflow.dexadata.ai/operate/upgrades/#three-unused-tables-are-dropped).
+  (#1186)
+- **The `py3.10` task base image is no longer published.** Python 3.10
+  reaches upstream end-of-life in October 2026 and its slim base stops
+  receiving OS security updates, so releases cut after 2026-10-31 build no
+  `dexaflow-runtime:py3.10` image. `python_version: "3.10"` is now refused by
+  `validate`, `compile`, `deploy` and `lite` with a message that names
+  `3.11` as the replacement. Tags already published stay pullable, so a
+  `base_image` pin to a `py3.10` tag still builds, and `compile` warns that
+  the base gets no security updates. The runtime package now requires
+  Python 3.11 or later (#1447).
+
+### Fixed
+
+- **Task log reads on S3-compatible stores and canceled requests behave.** A
+  store that answers a missing log object with a 404 other than the modeled
+  `NoSuchKey` (no body, `NotFound`, or a store-specific code) now reads as "no
+  logs" instead of a server error; a missing bucket still fails loudly. A log
+  read now runs its object store calls under the request's context, so a
+  client that goes away cancels its in-flight GETs, and the server closes the
+  GCS client at shutdown (#647).
+- **The XCom schema cache is bounded by size, not only by count.** It kept up
+  to 256 compiled schemas keyed by their full text, so 256 large schemas could
+  hold any amount of control plane memory. It now keys by a hash of the schema
+  and keeps the schemas it holds under 8 MiB of schema text, evicting the least
+  recently used; a schema larger than that still validates and is not cached
+  (#1613).
+- Cursor pages of `GET /api/v2/dags/{dag_id}/dagRuns` and `GET /api/v2/eventLogs`
+  no longer count the whole filtered list on every page: the cursor carries the
+  total its first page counted. Migration 050 adds an index on
+  `audit_log (tenant_id, resource_id, occurred_at, id)`, so the event log
+  filtered to one DAG no longer reads every entry of the tenant (#1612).
+- **A server booting while the last migration finishes no longer stops.** The
+  boot gate read the schema version, then checked whether a migrator held its
+  lock. A migration of this binary's latest version that finished between the
+  two reads left the gate with a stale "dirty at the latest" and no lock, the
+  one fatal verdict, so the server exited instead of starting. The gate now
+  reads the version again before it gives that verdict.
+- A task that asks for a secret right after its dispatch no longer gets a
+  "not live" refusal when its instance has not turned `queued` yet: a
+  `scheduled` instance now counts as live for a token that carries the attempt
+  epoch the dispatch claimed. Tokens without an epoch keep the old rule (#2201).
+- `GET /api/v2/dags` and `GET /ui/dags` answer `400` for a `last_dag_run_state`
+  that is not a run state (queued, running, success or failed) instead of a
+  `500` from the database cast, so a client mistake no longer counts toward the
+  5xx alert (#2202).
+- **The pod informers no longer reopen their watch every 10 seconds (#1621).**
+  The 10 s per-call timeout of the Kubernetes client also cut the long-lived
+  watches of the task pod and warm pod informers, so each one reopened its
+  watch every 10 s. They now watch through a client of their own with the
+  same rate limits and no per-call timeout; the apiserver ends each watch
+  after the few minutes the reflector asks for. The informer's attempt
+  lookup is indexed instead of filtering every task pod, and the agent's
+  attempt spec cache evicts without scanning all of its entries.
+
+### Security
+
+- **go-jose is updated to 4.1.6 (CVE-2026-116587), golang.org/x/net to 0.62.0
+  (CVE-2026-78661, CVE-2026-97045) and the data runtime image to litellm 1.103
+  (CVE-2026-114612).** Earlier go-jose versions could spend
+  unbounded time parsing a JWK set that contains RSA keys; the server parses
+  the key set it downloads from a configured token issuer, such as an OIDC
+  identity provider or a CI provider, before it verifies a token. The
+  `py3.11-data` runtime image carried litellm 1.96.2, pulled by the Google
+  provider; the advisory is in the litellm proxy, which the image never runs.
+  The x/net fixes are in its HTML parser and renderer.
+- **The data runtime image is scanned before it is published.** The release
+  now scans `dexaflow-runtime:py3.11-data-<tag>` before tagging and signing it,
+  and stops on a fixable HIGH or CRITICAL finding in its Python packages or
+  the jars they bundle that `.trivyignore.yaml` does not accept. Pull requests
+  that change `runtime/data/` or `runtime/Dockerfile` run the same scan. The
+  litellm finding of `py3.11-data-v0.5.7` (CVE-2026-114612) is fixed by the
+  litellm 1.103 override already on this release. The jackson, guava and aiohttp
+  copies that ray 2.59.0 bundles have no fixed ray release yet; they are
+  accepted with an expiry, since the image has no JVM and nothing starts ray's
+  runtime-env agent (#2247).
+
 ## [0.5.7] - 2026-10-27
 
 ### Added

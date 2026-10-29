@@ -1,9 +1,0 @@
-kind: Added
-body: |-
-  A public Go package, `pkg/dagspec`, validates a compiled `dag.json` with the
-  rules the engine applies at registration (schema, task graph, params,
-  placement, resource quantities and schedule), checks it against the tenant
-  limits `min_schedule_interval_seconds` and `max_task_pool_slots`, and serves
-  the `dag.json` JSON Schema, so a service that registers DAGs through the API
-  can refuse a bad one before it sends it (#1877).
-time: 2026-10-28T13:00:00.000000+00:00
