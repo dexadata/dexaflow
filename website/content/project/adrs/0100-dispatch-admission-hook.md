@@ -142,7 +142,7 @@ concurrency limits) before an attempt reaches the dispatcher.
 
 8. **A webhook for installs without their own binary**, as a second slice:
    `execution.admission.webhook.url` receives the request as JSON
-   (`apiVersion: dexaflow.io/admission/v1`) and answers with the decision;
+   (`api_version: dexaflow.io/admission/v1`, snake_case fields like the rest of the API) and answers with the decision;
    TLS with an optional CA bundle, a bearer from a mounted file, the same
    timeout and fail mode. No redirect is followed, the response is capped at
    64 KiB and decoded strictly, and each request carries a UID the answer
