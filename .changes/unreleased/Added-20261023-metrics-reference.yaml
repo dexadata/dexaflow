@@ -1,9 +1,0 @@
-kind: Added
-body: |-
-  **A metrics reference page.** `reference/metrics` lists every Prometheus family
-  the control plane exports, with its type, labels and meaning, including the 25
-  that no page described (the HTTP, XCom, Redis, task duration and cold start
-  families among them). The table is generated from the registered collectors
-  (`make gen-metrics-reference`), and `go test ./internal/tools/metricsref/` fails
-  while the page is stale.
-time: 2026-10-23T15:40:00.000000000+00:00

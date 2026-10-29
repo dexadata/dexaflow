@@ -1,7 +1,0 @@
-kind: Fixed
-body: |-
-  `GET /api/v2/dags` and `GET /ui/dags` answer `400` for a `last_dag_run_state`
-  that is not a run state (queued, running, success or failed) instead of a
-  `500` from the database cast, so a client mistake no longer counts toward the
-  5xx alert (#2202).
-time: 2026-10-28T12:30:00.000000+00:00
