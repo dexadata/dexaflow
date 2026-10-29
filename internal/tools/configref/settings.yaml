@@ -757,7 +757,7 @@ settings:
       behaves as before the key existed. Set it to `false` to run the cluster
       edition without pools, or to `true` to use pools on another edition. With
       pools off, `server.pools_read_only` and `scheduler.pool_starvation_threshold`
-      have no effect.
+      have no effect. See [Pools](/operate/pools/).
   scheduler.pool_starvation_threshold:
     edition: Cluster
     description: >-
