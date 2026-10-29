@@ -1,0 +1,8 @@
+kind: Fixed
+body: |-
+  **The leader-settling gate reads when a sweep started, not when it ended.**
+  A pod reconciler sweep whose pod list was taken before a re-acquisition of
+  leadership, but which finished after it, could open the reapers' settling
+  gate with data from before the new leadership. The sweep is now stamped
+  with its start (#917).
+time: 2026-10-29T03:20:00.000000000-03:00

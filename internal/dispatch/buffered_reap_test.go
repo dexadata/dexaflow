@@ -235,7 +235,7 @@ func TestBuffered_SlowBufferTailIsNotReapedAsDispatchLost(t *testing.T) {
 	cfg := executor.DefaultReaperConfig()
 	cfg.DispatchLostThreshold = threshold
 	cfg.SettlingGrace = 0
-	reaper := executor.NewReaper(rows, cluster, nil, nil, nil, logger, cfg, nil)
+	reaper := executor.NewReaper(rows, cluster, nil, nil, nil, logger, cfg, executor.ReaperGates{})
 	time.Sleep(threshold + 50*time.Millisecond)
 	// The reaper lists one page per sweep, so sweep until it has walked every
 	// page of the buffer, the tail included.

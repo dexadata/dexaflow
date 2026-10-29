@@ -310,7 +310,7 @@ func TestPodLostReaper_UnreadableApiserverFailsClosed(t *testing.T) {
 // the server hands the Reaper must reach every reaper that fails a running
 // attempt whose log would otherwise stop mid-line (#861).
 func TestReaperSetLogSinkReachesEveryKillingReaper(t *testing.T) {
-	r := NewReaper(&fakeReaperStore{}, nil, nil, nil, nil, reapTestLogger(), DefaultReaperConfig(), nil)
+	r := NewReaper(&fakeReaperStore{}, nil, nil, nil, nil, reapTestLogger(), DefaultReaperConfig(), ReaperGates{})
 	sink := &fakeLogSink{}
 	r.SetLogSink(sink)
 	if r.agentLost.sink != sink || r.podLost.sink != sink || r.warmWorkerLost.sink != sink {

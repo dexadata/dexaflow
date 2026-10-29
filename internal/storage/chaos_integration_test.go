@@ -78,8 +78,7 @@ func TestChaosMidTickCrashRecoveryIntegration(t *testing.T) {
 		AgentLostThreshold:    time.Minute,
 		DispatchLostThreshold: 200 * time.Millisecond,
 		PodLostGrace:          time.Minute,
-	}, s.SteppingDown)
-	reaper.SetLeading(s.IsLeading)
+	}, executor.ReaperGates{InStepDown: s.SteppingDown, Leading: s.IsLeading})
 
 	// 3. Wait past the dispatch-lost threshold, then tick and reap. The reaper
 	//    must flip our queued TI to failed/dispatch_lost.

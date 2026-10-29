@@ -1,7 +1,6 @@
 package agentrpc
 
 import (
-	"errors"
 	"log/slog"
 
 	"github.com/dexadata/dexaflow/internal/auth"
@@ -26,21 +25,12 @@ import (
 // failures the handlers themselves see.
 const detailInternal = "the request could not be completed; see the control-plane logs"
 
-// safeMessage returns the phrase Dexaflow composed for this failure, or fallback
-// when the error carries no such phrase.
-//
-// The default is deny. Only a domain.SafeError — an error someone deliberately
-// wrote as client-facing — contributes text to a status message; everything
-// else, including every fmt.Errorf wrap of a driver error, is replaced. A newly
-// introduced storage error therefore cannot leak by omission: it leaks only if
-// someone rewrites it as a SafeError, the one construct whose GoDoc says its
-// message is shown verbatim.
+// safeMessage returns the phrase Dexaflow composed for this failure, or
+// fallback: domain.ClientMessageOr, the deny-by-default rule shared with the
+// HTTP API. Only the fallback phrases differ, on purpose: an agent is pointed at
+// the control-plane logs, an API client at the server logs.
 func safeMessage(err error, fallback string) string {
-	var safe *domain.SafeError
-	if errors.As(err, &safe) && safe.ClientMessage() != "" {
-		return safe.ClientMessage()
-	}
-	return fallback
+	return domain.ClientMessageOr(err, fallback)
 }
 
 // internalStatus is the single sanctioned way to turn a failure the agent

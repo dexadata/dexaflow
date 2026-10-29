@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 // writeBuildProject lays down a minimal buildable project: a dag.py and a
@@ -293,4 +295,77 @@ func nonEmptyLines(t *testing.T, path string) []string {
 		}
 	}
 	return out
+}
+
+// TestBuildCommandValidatesEveryProjectBeforeBuildingAny: an invalid
+// dexaflow.yaml in one project used to abort the run only when the loop reached
+// it, after every project before it had been built (#1121). The whole
+// workspace is checked first, so nothing is built.
+func TestBuildCommandValidatesEveryProjectBeforeBuildingAny(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stubs are POSIX-only")
+	}
+	ws := t.TempDir()
+	bin := t.TempDir()
+	writeBuildProject(t, ws, "alpha", "alpha-img")
+	zeta := writeBuildProject(t, ws, "zeta", "zeta-img")
+	yaml := "dag_id: zeta\nregistry:\n  url: reg.io/team\n  image_name: zeta-img\npython_version: \"2.7\"\n"
+	if err := os.WriteFile(filepath.Join(zeta, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(bin, "argv.log")
+	t.Setenv("LEOFLOW_PARSER_CMD", stubParser(t, bin))
+
+	_, err := runBuildCmd(t, "build", ws, "--builder", stubBuilder(t, bin, log, ""), "--dag-version", "v1")
+	if err == nil || !strings.Contains(err.Error(), "zeta") {
+		t.Fatalf("build err = %v, want a failure naming zeta", err)
+	}
+	if _, serr := os.Stat(log); serr == nil {
+		t.Errorf("the builder ran before the invalid project was reported: %q", nonEmptyLines(t, log))
+	}
+}
+
+// TestBuildCommandDryRunPrintsTheMappingAndBuildsNothing: --dry-run shows the
+// dag id to image mapping a build would use and stops (#1121). The first
+// version of the command shipped with every tag empty, which a dry run makes
+// visible on the first try.
+func TestBuildCommandDryRunPrintsTheMappingAndBuildsNothing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stubs are POSIX-only")
+	}
+	ws := t.TempDir()
+	bin := t.TempDir()
+	writeBuildProject(t, ws, "alpha", "alpha-img")
+	writeBuildProject(t, ws, "beta", "beta-img")
+	log := filepath.Join(bin, "argv.log")
+	t.Setenv("LEOFLOW_PARSER_CMD", stubParser(t, bin))
+
+	out, err := runBuildCmd(t, "build", ws, "--builder", stubBuilder(t, bin, log, ""), "--dag-version", "v2", "--dry-run")
+	if err != nil {
+		t.Fatalf("build --dry-run: %v", err)
+	}
+	for _, want := range []string{"alpha → reg.io/team/alpha-img:v2", "beta → reg.io/team/beta-img:v2", "dry run: nothing built"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output does not say %q:\n%s", want, out)
+		}
+	}
+	if _, serr := os.Stat(log); serr == nil {
+		t.Errorf("--dry-run ran the builder: %q", nonEmptyLines(t, log))
+	}
+	for _, p := range []string{"alpha", "beta"} {
+		if _, serr := os.Stat(filepath.Join(ws, p, "dag.json")); serr == nil {
+			t.Errorf("--dry-run compiled %s", p)
+		}
+	}
+}
+
+// TestBuildTreatsABlankRegistryAsNoneLikeDeploy: a whitespace-only url was
+// buildable by `build` and refused by `deploy`, two answers for one config
+// (#1121).
+func TestBuildTreatsABlankRegistryAsNoneLikeDeploy(t *testing.T) {
+	t.Parallel()
+	p := Project{DagID: "x", Path: "/x", Config: &domain.LeoflowConfig{Registry: &domain.RegistryConfig{URL: "  ", ImageName: "x"}}}
+	if hasRegistry(p) {
+		t.Error("hasRegistry() = true for a blank url; deploy's requireRegistry refuses it")
+	}
 }

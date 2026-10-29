@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -56,10 +57,10 @@ func buildTargets(projects []Project, label func(Project) projectLabel) (targets
 	return targets, skipped
 }
 
-// hasRegistry reports whether a project declares where its image goes.
+// hasRegistry reports whether a project declares where its image goes. It is
+// deploy's requireRegistry, so a blank url is no registry for both (#1121).
 func hasRegistry(p Project) bool {
-	return p.Config != nil && p.Config.Registry != nil &&
-		p.Config.Registry.URL != "" && p.Config.Registry.ImageName != ""
+	return requireRegistry(p.Config) == nil
 }
 
 // resolveProjectLabels labels every buildable project the way `dexaflow
@@ -125,6 +126,7 @@ func newBuildCommand() *cobra.Command {
 		builder    string
 		dagVersion string
 		sha        string
+		dryRun     bool
 	)
 	cmd := &cobra.Command{
 		Use:   "build [workspace]",
@@ -181,10 +183,8 @@ func newBuildCommand() *cobra.Command {
 				fmt.Fprintf(out, "no buildable project found under %s\n", ws)
 				return nil
 			}
-			for i, t := range targets {
-				//nolint:errcheck // informational
-				fmt.Fprintf(out, "▸ %s → %s\n", t.dagID, t.image)
-				o := compileOptions{
+			opts := func(t buildTarget) compileOptions {
+				return compileOptions{
 					cluster: cluster,
 					output:  filepath.Join(t.dir, "dag.json"),
 					image:   t.image,
@@ -202,7 +202,22 @@ func newBuildCommand() *cobra.Command {
 					// dag.json and the tag cannot disagree.
 					dagVersion: t.version,
 				}
-				if rerr := runCompile(cmd, t.dir, o); rerr != nil {
+			}
+			// Every project is checked before any is built: an invalid
+			// dexaflow.yaml in the fifth project must not cost four builds
+			// first, which is the half-built workspace stopping on failure
+			// exists to avoid (#1121).
+			if verr := preflightTargets(cmd, targets, opts); verr != nil {
+				return verr
+			}
+			if dryRun {
+				printBuildPlan(out, targets)
+				return nil
+			}
+			for i, t := range targets {
+				//nolint:errcheck // informational
+				fmt.Fprintf(out, "▸ %s → %s\n", t.dagID, t.image)
+				if rerr := runCompile(cmd, t.dir, opts(t)); rerr != nil {
 					// Named, and stopped: a partial workspace where some images
 					// are new and some are stale is worse than a clear failure,
 					// because the difference is invisible afterwards. Say which
@@ -215,20 +230,12 @@ func newBuildCommand() *cobra.Command {
 					return fmt.Errorf("building %s: %w", t.dagID, rerr)
 				}
 			}
-			// The skipped list is repeated here on purpose: it was printed
-			// before minutes of builder output, and a closing "built N" alone
-			// reads as "the workspace is built".
-			if len(skipped) > 0 {
-				//nolint:errcheck // informational
-				fmt.Fprintf(out, "built %d image(s), skipped %d: %s\n", len(targets), len(skipped), strings.Join(skipped, "; "))
-				return nil
-			}
-			//nolint:errcheck // informational
-			fmt.Fprintf(out, "built %d image(s)\n", len(targets))
+			printBuildSummary(out, len(targets), skipped)
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&push, "push", false, "push each built image to its registry")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "check every project and print the image each would be built as, then stop without building")
 	cmd.Flags().BoolVar(&rebuild, "rebuild", false, "build each dependency image again even when the registry holds one for its key (with --push)")
 	cmd.Flags().String("registry", "", registryFlagUsage)
 	cmd.Flags().StringVar(&builder, "builder", "docker", "image build tool to shell out to (e.g. docker, podman, nerdctl)")
@@ -236,6 +243,44 @@ func newBuildCommand() *cobra.Command {
 	cmd.Flags().StringVar(&sha, "sha", "", "commit sha for the git_sha tag strategy (default: git rev-parse --short HEAD in each project's directory)")
 	addPlatformFlag(cmd)
 	return cmd
+}
+
+// preflightTargets loads each project's config the way its compile will and
+// reports the first that would be refused, naming the project.
+func preflightTargets(cmd *cobra.Command, targets []buildTarget, opts func(buildTarget) compileOptions) error {
+	for _, t := range targets {
+		cfg, _, err := loadCompileConfig(cmd, t.dir, opts(t))
+		if err == nil {
+			err = validateProject(t.dir, cfg)
+		}
+		if err != nil {
+			return fmt.Errorf("checking %s before building: %w", t.dagID, err)
+		}
+	}
+	return nil
+}
+
+// printBuildSummary closes a workspace build. The skipped list is repeated on
+// purpose: it was printed before minutes of builder output, and a closing
+// "built N" alone reads as "the workspace is built".
+func printBuildSummary(out io.Writer, built int, skipped []string) {
+	if len(skipped) > 0 {
+		//nolint:errcheck // informational
+		fmt.Fprintf(out, "built %d image(s), skipped %d: %s\n", built, len(skipped), strings.Join(skipped, "; "))
+		return
+	}
+	//nolint:errcheck // informational
+	fmt.Fprintf(out, "built %d image(s)\n", built)
+}
+
+// printBuildPlan is --dry-run's output: each dag id with its image.
+func printBuildPlan(out io.Writer, targets []buildTarget) {
+	for _, t := range targets {
+		//nolint:errcheck // informational
+		fmt.Fprintf(out, "%s → %s\n", t.dagID, t.image)
+	}
+	//nolint:errcheck // informational
+	fmt.Fprintln(out, "dry run: nothing built")
 }
 
 // builtIDs lists the dag ids of targets already built, for the failure summary.

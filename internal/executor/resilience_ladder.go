@@ -31,11 +31,14 @@ import (
 //     reconciler's sweep and then the reapers as ONE ordered cycle, so a reap
 //     structurally follows a completed sweep — the settling gate additionally
 //     requires that a sweep completed under the new leader. This rung is what
-//     makes the grace meaningful on top of that ordering: at least two whole
-//     cycles fit inside it, so a settle that failed transiently on the first
-//     sweep (a DB hiccup) is retried before the gate can open, and the liveness
-//     valve at 2×grace has seen at least four cycles before it declares the
-//     sweep broken. A single cycle is not enough: the first tick under a new
+//     makes the grace meaningful on top of that ordering: at least two cycles
+//     START inside it, so a settle that failed transiently on the first sweep
+//     (a DB hiccup) gets a second sweep before the gate can open, and the
+//     liveness valve at 2×grace has seen at least four cycle starts before it
+//     declares the sweep broken. Starts, not completions: a cycle slower than
+//     the interval coalesces the ticks behind it. Each phase is bounded by the
+//     maintenance phase timeout, so a cycle that starts always ends, but the
+//     count of completions inside the grace is not structural. A single cycle is not enough: the first tick under a new
 //     leader may land anywhere in the interval, so "one interval below the
 //     grace" can mean zero completed cycles.
 //   - infra re-place delay < orphan threshold: a run whose only live task is
@@ -156,7 +159,7 @@ func ValidateResilienceLadder(l ResilienceLadder) error {
 		{lo: hb, hi: thr, why: "a live agent must heartbeat well inside the agent-lost silence window"},
 		{lo: thr, hi: grace, why: "the post-leadership settling grace must outlast the silence it forgives so the fleet can re-heartbeat"},
 		{lo: grace, hi: ttl, why: "a re-heartbeat must still authenticate and renew the bearer when the grace ends"},
-		{lo: twoRec, hi: grace, why: "at least two reconcile-then-reap cycles must complete under a new leader before the settling gate may open, so a transiently failed settle is retried before any reaper acts"},
+		{lo: twoRec, hi: grace, why: "at least two reconcile-then-reap cycles must start under a new leader before the settling gate may open, so a transiently failed settle is retried before any reaper acts"},
 		{lo: replace, hi: orphan, why: "a run parked in its longest infra re-place backoff must not be reaped as orphaned while it is still recovering"},
 		{
 			lo:  ladderRung{"task termination grace + 2 × maintenance interval", l.TaskTerminationGrace + 2*l.ReconcileInterval},

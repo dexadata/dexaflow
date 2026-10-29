@@ -24,6 +24,7 @@ dexaflow build [workspace] [flags]
 ```
       --builder string       image build tool to shell out to (e.g. docker, podman, nerdctl) (default "docker")
       --dag-version string   version recorded in each dag.json and used by the registry tag strategy (default: per project, git describe of its directory, or dev outside git, plus a hash of its content)
+      --dry-run              check every project and print the image each would be built as, then stop without building
   -h, --help                 help for build
       --platform strings     image platform to build for, os/arch (repeatable or comma-separated), over build.platforms in dexaflow.yaml, the target and the workspace defaults (default linux/amd64)
       --push                 push each built image to its registry

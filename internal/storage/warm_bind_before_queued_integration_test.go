@@ -90,7 +90,7 @@ func TestWarmAckBeforeQueuedKeepsBindingIntegration(t *testing.T) {
 	cfg := executor.DefaultReaperConfig()
 	cfg.PodLostGrace = 0
 	cfg.SettlingGrace = 0
-	r := executor.NewReaper(sched, noTaskPods{}, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), cfg, nil)
+	r := executor.NewReaper(sched, noTaskPods{}, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), cfg, executor.ReaperGates{})
 	time.Sleep(10 * time.Millisecond)
 	if err := r.ReapOnce(ctx); err != nil {
 		t.Fatalf("ReapOnce: %v", err)

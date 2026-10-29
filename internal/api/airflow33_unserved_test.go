@@ -230,11 +230,15 @@ func TestEmbeddedBundleCallsAreRoutedOrExplicitlyUnreached(t *testing.T) {
 	// This exact set is pinned so that any new unrouted call introduced by a
 	// future UI bump fails loudly.
 	unreachedCalls := map[apiCall]bool{
-		{http.MethodPost, "/api/v2/assets/events"}:                                         true,
-		{http.MethodPost, "/api/v2/assets/{asset_id}/materialize"}:                         true,
-		{http.MethodGet, "/api/v2/assets/{asset_id}"}:                                      true,
-		{http.MethodGet, "/api/v2/assets/aliases"}:                                         true,
-		{http.MethodGet, "/api/v2/assets/aliases/{asset_alias_id}"}:                        true,
+		{http.MethodPost, "/api/v2/assets/events"}:                  true,
+		{http.MethodPost, "/api/v2/assets/{asset_id}/materialize"}:  true,
+		{http.MethodGet, "/api/v2/assets/{asset_id}"}:               true,
+		{http.MethodGet, "/api/v2/assets/aliases"}:                  true,
+		{http.MethodGet, "/api/v2/assets/aliases/{asset_alias_id}"}: true,
+		// The generated client defines these, but no hook or screen of the
+		// bundle calls them (#1931), so they are not stubbed.
+		{http.MethodGet, "/api/v2/backfills"}:                                              true,
+		{http.MethodPost, "/api/v2/connections/defaults"}:                                  true,
 		{http.MethodPost, "/api/v2/backfills"}:                                             true,
 		{http.MethodPost, "/api/v2/backfills/dry_run"}:                                     true,
 		{http.MethodGet, "/api/v2/backfills/{backfill_id}"}:                                true,

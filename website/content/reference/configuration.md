@@ -102,8 +102,13 @@ and it chooses between two tag shapes based on the CLI you are running:
   `dexaflow-runtime:py<ver>`, a line every release republishes
 
 So two people compiling the same project can end up on different bases if one
-runs a released CLI and the other runs one built from source. Setting
-`base_image` explicitly overrides both rules and is used verbatim. The full tag
+runs a released CLI and the other runs one built from source. The build says
+which one it took, on a line such as
+`note: base ghcr.io/dexadata/dexaflow-runtime:py3.11-v0.5.13 (pinned by this release)`
+or `... (moving line; this is a development build)`. Setting
+`base_image` explicitly overrides both rules and is used verbatim, and the
+note then names the file it came from. A project that ships its own
+Dockerfile gets no note, since its `FROM` is its own. The full tag
 scheme for every published image is in
 [Published images](/reference/published-images/).
 

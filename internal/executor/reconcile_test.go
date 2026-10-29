@@ -459,6 +459,30 @@ func TestReconcileRecordsCompletedSweep(t *testing.T) {
 	}
 }
 
+// TestReconcileStampsTheSweepWithItsStart: the settling gate compares the
+// stamp with the leadership stamp, so it must say when the sweep's LIST was
+// taken, not when the sweep ended. A sweep whose LIST predates a re-acquisition
+// of leadership but completes after it would otherwise satisfy the gate with
+// pre-leadership data (#917).
+func TestReconcileStampsTheSweepWithItsStart(t *testing.T) {
+	start := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	calls := 0
+	r := NewReconciler(fake.NewClientset(managedPod("p-ok", "ti-ok", corev1.PodSucceeded)), "leoflow", &fakeReporter{})
+	r.now = func() time.Time {
+		calls++
+		return start.Add(time.Duration(calls-1) * time.Minute)
+	}
+	if err := r.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if calls < 2 {
+		t.Fatalf("the clock was read %d time(s); the test needs the sweep to read it after the LIST too", calls)
+	}
+	if got := r.LastSweepCompletedAt(); !got.Equal(start) {
+		t.Errorf("LastSweepCompletedAt = %v, want the sweep's start %v", got, start)
+	}
+}
+
 // TestReconcileSettlesTimeoutReasonFromRecord closes the loop on #930: an
 // execution_timeout whose report never landed is settled from the durable record
 // alone, and the operator sees the agent's diagnosis rather than the generic
