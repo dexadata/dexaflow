@@ -57,8 +57,8 @@ func TestUIConfigInstanceNameConfigurable(t *testing.T) {
 // TestUIConfigAutoRefreshIntervalConfigurable pins the contract behind the
 // "UI tasks finished but tela not updated" Lima feedback: the SPA's auto-
 // refresh interval (in seconds) MUST be a server-side setting so Lite can dial
-// it down to ~5s for the dev inner loop while Pro keeps the 30s production
-// default. A non-positive input falls back to the production default so a
+// it down to 1s for the dev inner loop while an operator can raise Pro's 5s
+// default (#1196). A non-positive input falls back to the default so a
 // misconfigured env var cannot accidentally drop the value to 0 (which would
 // hammer the DB).
 func TestUIConfigAutoRefreshIntervalConfigurable(t *testing.T) {
@@ -68,10 +68,10 @@ func TestUIConfigAutoRefreshIntervalConfigurable(t *testing.T) {
 		in   int
 		want float64 // JSON numbers come back as float64
 	}{
-		{"lite dev loop", 5, 5},
-		{"production default", 30, 30},
-		{"non-positive falls back to 30", 0, 30},
-		{"negative falls back to 30", -1, 30},
+		{"lite dev loop", 1, 1},
+		{"operator keeps the pre-0.6 cadence", 30, 30},
+		{"non-positive falls back to the default", 0, DefaultUIAutoRefreshIntervalSeconds},
+		{"negative falls back to the default", -1, DefaultUIAutoRefreshIntervalSeconds},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -109,8 +109,8 @@ func TestUIConfigIsPublicAndShaped(t *testing.T) {
 	if cfg["instance_name"] != "Dexaflow" {
 		t.Errorf("instance_name = %v, want Dexaflow", cfg["instance_name"])
 	}
-	if cfg["auto_refresh_interval"].(float64) != 30 {
-		t.Errorf("auto_refresh_interval = %v, want 30", cfg["auto_refresh_interval"])
+	if cfg["auto_refresh_interval"].(float64) != 5 {
+		t.Errorf("auto_refresh_interval = %v, want 5", cfg["auto_refresh_interval"])
 	}
 	// theme is required AND nullable in the spec (Theme object | null); null
 	// means "no custom Chakra theme". It is NOT the string "default".

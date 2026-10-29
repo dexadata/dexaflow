@@ -1473,8 +1473,8 @@ settings:
     edition: both
     description: >-
       SPA polling cadence for DAG / DagRun / task-instance state. `0` falls back
-      to the production-safe 30s default; `dexaflow lite` sets 1s for a snappy inner
-      loop. Helm: `ui.autoRefreshIntervalSeconds`, which the chart omits entirely
+      to the 5s default (30s before v0.6.0); `dexaflow lite` sets 1s for a snappy
+      inner loop. Helm: `ui.autoRefreshIntervalSeconds`, which the chart omits entirely
       when unset so the server default decides.
   ui.edition:
     edition: both

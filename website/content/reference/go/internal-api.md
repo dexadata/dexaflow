@@ -62,10 +62,10 @@ Package api implements the Airflow\-compatible HTTP control plane \(ADR 0007\).
 
 ## Constants
 
-<a name="DefaultUIAutoRefreshIntervalSeconds"></a>DefaultUIAutoRefreshIntervalSeconds is the production\-safe value returned by /ui/config when no explicit override is configured. Lite overrides this to a smaller value \(typically 5s\) for a snappy inner\-loop dev experience; Pro keeps 30s so the SPA's polling does not hammer a shared metadata DB.
+<a name="DefaultUIAutoRefreshIntervalSeconds"></a>DefaultUIAutoRefreshIntervalSeconds is the value returned by /ui/config when no explicit override is configured. Lite overrides it to 1s for a snappy inner loop. 5s is what a team watching runs progress expects, and one api process serves about 1,400 open tabs of a page with a run in progress at that rate \(Experiment 4, \#1196\); it was 30s before v0.6.0.
 
 ```go
-const DefaultUIAutoRefreshIntervalSeconds = 30
+const DefaultUIAutoRefreshIntervalSeconds = 5
 ```
 
 ## Variables
@@ -379,7 +379,7 @@ type Dependencies struct {
     // UIAutoRefreshIntervalSeconds controls the SPA's polling cadence for DAG /
     // DagRun / task-instance state refresh (Airflow's auto_refresh_interval).
     // Non-positive (the zero default) falls back to DefaultUIAutoRefreshIntervalSeconds
-    // (30s, production-safe). `dexaflow lite` sets it to ~5s for a snappy inner loop.
+    // (5s; 30s before v0.6.0). `dexaflow lite` sets it to 1s for a snappy inner loop.
     UIAutoRefreshIntervalSeconds int
     // DevNoAuth replaces JWT auth with a dev-only bypass that authenticates every
     // request as an admin (no login). It is for `leoflow dev` only and must never

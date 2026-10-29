@@ -1214,6 +1214,12 @@ type Querier interface {
 	// reads (ADR 0096 point 7). It reports a row only when the value moved, so
 	// the leader can log a change and stay quiet when it rewrites the same value.
 	SetUsageEventsEnabled(ctx context.Context, enabled bool) (int64, error)
+	// Activate or deactivate one user of the tenant (the admin user API, #960).
+	// No row means no such user in this tenant, which the caller answers as 404,
+	// so a user of another tenant is indistinguishable from a missing one. The
+	// per-request authz reload reads is_active, so the change takes effect on the
+	// user's next request, for sessions and API tokens alike.
+	SetUserActive(ctx context.Context, arg SetUserActiveParams) (SetUserActiveRow, error)
 	// Transitions a run's state and stamps the run's own timestamps so the UI can
 	// show its duration: started_at on first entry into 'running', ended_at on a
 	// terminal state. Other timestamps are preserved (the scheduler may re-run).

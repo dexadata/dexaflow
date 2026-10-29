@@ -33,6 +33,7 @@ Dexaflow database, one row per action, and belong to a tenant.
 | `ci_oidc.exchange` | A CI job exchanges its identity token for a Dexaflow token. |
 | `auth.break_glass` | A password sign-in while OIDC is on, allowed or refused. |
 | `user.create` | A user is created. |
+| `user.deactivate`, `user.activate` | An admin deactivates or reactivates a user through `PATCH /api/v2/users/{user_id}`. |
 | `service.tenant.ensure`, `service.tenant.suspend`, `service.tenant.resume`, `service.user.ensure` | A call to the [operator service API](/reference/configuration/#operator-service-api). |
 | `retention.purge` | The retention janitor deleted audit entries. |
 
