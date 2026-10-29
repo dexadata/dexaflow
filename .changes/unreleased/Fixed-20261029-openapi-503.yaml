@@ -1,0 +1,8 @@
+kind: Fixed
+body: |-
+  **The OpenAPI spec documents the `503` every protected route can return.**
+  Since the control plane answers `503` with `Retry-After` when a credential
+  cannot be checked during a store outage, a client generated from the spec
+  had no way to model it. Every operation that takes a bearer token now lists
+  the shared `AuthUnavailable` response, and `pkg/client` carries it (#1098).
+time: 2026-10-29T03:40:00.000000000-03:00

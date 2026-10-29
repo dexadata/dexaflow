@@ -9,7 +9,9 @@ description: "Upgrade a Dexaflow control plane safely, edition by edition."
 ---
 
 This page is the canonical answer to "I'm on `v0.x.y` and want to install a
-newer tag — what happens to my state?"
+newer tag: what happens to my state?" Before upgrading your cluster, your
+database or a DAG's Python line, check the
+[compatibility](/reference/compatibility/) page as well.
 
 {{% alert title="Upgrade contract" color="info" %}}
 The upgrade contract below is honored by the Lite edition; we test it on

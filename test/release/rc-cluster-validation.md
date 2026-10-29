@@ -52,6 +52,51 @@ install page <https://dexaflow.dexadata.ai/get-started/installation/>.
   `LEOFLOW_VERSION=<tag> curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/main/install.sh | sh`
   (explicit tag — "latest" skips pre-releases).
 
+### §0a A throwaway validation cluster (#1021, #1022)
+
+Nothing above says how to get from an empty cluster to those prerequisites.
+For a cluster that exists only for this run:
+
+- **Datastores.** Use the PoC recipe, not managed services:
+  [`helm/dexaflow/examples/README.md`](../../helm/dexaflow/examples/README.md)
+  applies plain Postgres and Redis and installs with
+  [`examples/poc.yaml`](../../helm/dexaflow/examples/poc.yaml). Their storage is
+  `emptyDir`: a node recycle wipes the database, and the control plane then
+  stops on a missing schema. Recreate the datastores and run the migration
+  again rather than debugging the pod. The database is the one `poc.yaml`
+  names (`dexaflow`), not a CI name.
+- **More than one control-plane replica** needs `logs.persistence.enabled=false`
+  (or a ReadWriteMany class): the chart refuses a ReadWriteOnce logs volume with
+  more than one control-plane pod.
+- **Reaching the UI.** The Service listens on 8080, not 80:
+  `kubectl -n <ns> port-forward svc/<release> 8080:8080`, then
+  `http://localhost:8080`.
+- **A registry for DAG images.** A real cluster cannot import local images.
+  Create one the cluster's nodes can pull from (an Artifact Registry repository
+  in the cluster's project, or ECR in its account), authenticate the push side
+  (`gcloud auth configure-docker <region>-docker.pkg.dev`, or
+  `aws ecr get-login-password | docker login ...`), and set `registry.url` in
+  the DAG's `dexaflow.yaml`. The registry outlives the cluster and keeps
+  billing: delete it in the teardown.
+- **Images built from the commit under test.** The control plane comes from
+  `deploy/Dockerfile.server`; pass `--build-arg VERSION=<rc> --build-arg
+  GIT_COMMIT=$(git rev-parse --short HEAD)` so `/api/v2/version` reports what
+  you built. The task base comes from `runtime/Dockerfile`, with the same two
+  build args. Build for `linux/amd64` on an amd64 builder: `docker buildx` from
+  an ARM laptop is slow and, on a full disk, corrupts the local store instead
+  of failing. Cloud Build (`gcloud builds submit`) avoids the local disk
+  entirely; it leaves a `gs://<project>_cloudbuild` source bucket that also
+  keeps billing.
+- **Judge a build by its exit status, never by the tail of its log.**
+  `docker build ... | tail` exits with `tail`'s status, so a failed build reads
+  as success. Write the log to a file and check the build's own status
+  (`docker build ... >build.log 2>&1; echo $?`), or run under
+  `set -o pipefail`.
+- **Teardown checklist.** `helm uninstall`, delete the namespace, delete the
+  cluster, then the two things that survive it: the image registry and, if
+  Cloud Build was used, the `_cloudbuild` bucket. Check the billing console
+  for anything left before calling the run closed.
+
 ---
 
 ## §1 Install (Helm / Pro)
@@ -107,7 +152,7 @@ helm install leoflow oci-or-repo/leoflow \
 ```
 
 Record: does the control plane reach `Ready`? Is `/api/v2/` + the UI reachable
-(via port-forward or the ingress)? Can you `dexaflow auth login` and get a JWT?
+(via `kubectl -n leoflow port-forward svc/leoflow 8080:8080`, or the ingress)? Can you `dexaflow auth login` and get a JWT?
 
 ---
 

@@ -285,6 +285,8 @@ paths:
               schema: { $ref: "#/components/schemas/UserCollection" }
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
     post:
       summary: Create a user
       description: |
@@ -317,6 +319,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/apiTokens:
     get:
@@ -344,6 +348,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
     post:
       summary: Create an API token (Dexaflow)
       description: >-
@@ -389,6 +395,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/apiTokens/{token_id}:
     parameters:
@@ -418,6 +426,8 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/connections:
     get:
@@ -439,6 +449,8 @@ paths:
               schema: { $ref: "#/components/schemas/ConnectionCollection" }
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
     post:
       summary: Create or replace a connection (upsert)
       description: |
@@ -485,6 +497,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
     patch:
       summary: Update a connection
       operationId: updateConnection
@@ -522,6 +536,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/variables:
     get:
@@ -542,6 +558,8 @@ paths:
               schema: { $ref: "#/components/schemas/VariableCollection" }
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
     post:
       summary: Create or replace a variable (upsert)
       description: |
@@ -567,6 +585,8 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/variables/{variable_key}:
     parameters:
@@ -585,6 +605,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
     delete:
       summary: Delete a variable
       operationId: deleteVariable
@@ -596,6 +618,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags:
     get:
@@ -623,6 +647,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DAGCollection"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}:
     parameters:
@@ -639,6 +665,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/DAG"
         "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
     patch:
       summary: Update DAG (typically pause/unpause)
       description: >-
@@ -664,6 +692,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/dagVersions:
     parameters:
@@ -679,6 +709,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DagVersionCollection"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/dagVersions/{version_number}:
     parameters:
@@ -698,6 +730,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/DagVersion" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/versions:
     parameters:
@@ -853,6 +887,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/versions/dry_run:
     parameters:
@@ -976,6 +1012,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/currentVersion:
     parameters:
@@ -1026,6 +1064,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/dagRuns:
     parameters:
@@ -1052,6 +1092,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DAGRunCollection"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
     post:
       summary: Trigger a DAG run
       operationId: triggerDagRun
@@ -1068,6 +1110,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DAGRun" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}:
     parameters:
@@ -1084,6 +1128,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/DAGRun" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear:
     parameters:
@@ -1134,6 +1180,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances:
     parameters:
@@ -1156,6 +1204,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaskInstanceCollection"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}:
     parameters:
@@ -1172,6 +1222,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TaskInstance" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
     patch:
       summary: Mark a task instance as success, failed or skipped
       description: >-
@@ -1197,6 +1249,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run:
     parameters:
@@ -1227,6 +1281,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/logs/{try_number}:
     parameters:
@@ -1247,6 +1303,8 @@ paths:
           content:
             text/plain:
               schema: { type: string }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/clearTaskInstances:
     parameters:
@@ -1279,6 +1337,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/xcoms/{dag_id}/{dag_run_id}/{task_id}/{key}:
     parameters:
@@ -1300,6 +1360,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/XComEntry" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dagSources/{dag_id}:
     parameters:
@@ -1332,6 +1394,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/spec:
     parameters:
@@ -1350,6 +1414,8 @@ paths:
                 additionalProperties: true
                 description: The compiled dag.json artifact (DAGSpec shape).
         "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/dagVersions/{version_number}/spec:
     parameters:
@@ -1386,6 +1452,8 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/monitor/health:
     get:
@@ -1398,6 +1466,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/HealthInfo" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/monitor/executor:
     get:
@@ -1410,6 +1480,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExecutorInfo" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/deployDefaults:
     get:
@@ -1441,6 +1513,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/version:
     get:
@@ -1453,6 +1527,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/VersionInfo" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /healthz:
     get:
