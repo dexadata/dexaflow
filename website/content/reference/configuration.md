@@ -24,7 +24,7 @@ chart's own values (image, replicas, ingress, Postgres/Redis wiring), see the
 |---|---|---|
 | `dag_id` *(required)* | string | Unique DAG id (`^[A-Za-z0-9_][A-Za-z0-9_-]{0,199}$`). |
 | `description`, `owner`, `tags` | string / string / list | Metadata. |
-| `python_version` | `3.10`\|`3.11`\|`3.12`\|`3.13` | Base image Python (default 3.11). `3.10` is **deprecated** — see [Python version support](#python-version-support). |
+| `python_version` | `3.11`\|`3.12`\|`3.13` | Base image Python (default 3.11). Lines past their upstream EOL are retired, see [Python version support](#python-version-support). |
 | `base_image` | string | Override the runtime base image. |
 | `dependencies` | list | pip specifiers baked into the image. Version floors (`"setuptools>=80.9.0"`) and [PEP 508](https://peps.python.org/pep-0508/) environment markers both work — see the `dependencies` row under [Defaults](#defaults) for what the build does with them. |
 | `connectors` | list | Short connector names (`postgres`, `http`, …) expanded at compile to their `apache-airflow-providers-*` packages. Sugar over `dependencies` — see [Installing a connector's provider](/connections/#installing-a-connectors-provider). |
@@ -47,7 +47,6 @@ build fails on the pull.
 
 | Line | Status | Upstream EOL | Published until |
 |---|---|---|---|
-| `3.10` | **Deprecated** | 2026-10-31 | 2026-10-31 |
 | `3.11` | Supported *(default)* | 2027-10-31 | — |
 | `3.12` | Supported | 2028-10-31 | — |
 | `3.13` | Supported | 2029-10-31 | — |
@@ -67,23 +66,24 @@ Airflow: `dbt-core` and `dbt-postgres` publish for 3.14, but `dbt-snowflake`,
 would give you an image where `dbt-postgres` installs and `dbt-snowflake` does
 not — discovered inside your build, not ours — so it is not published.
 
-**`3.10` is deprecated.** Python 3.10 reaches upstream end-of-life on
-2026-10-31, and `docker-library/python` stops rebuilding an EOL line the day
-after (`python:3.9-slim` was last rebuilt 2025-11-01, one day after 3.9 went
-EOL). From that point `python:3.10-slim` — and so
-`dexaflow-runtime:py3.10` — receives no further OS security updates and
-accumulates unfixed CVEs indefinitely. The `py3.10` leg keeps being published
-until 2026-10-31, so nothing breaks today; `dexaflow validate`, `dexaflow
-compile` and `dexaflow deploy` warn when your project resolves to it.
+**`3.10` is no longer published.** Python 3.10 reaches upstream end-of-life
+in October 2026, after which `docker-library/python` stops rebuilding
+`python:3.10-slim`, so a `py3.10` base would receive no OS security updates.
+Releases cut after 2026-10-31 publish no `py3.10` image (#1447). The
+`py3.10` tags already published stay pullable, so nothing that is running
+breaks, but they never change again.
 
-There are two ways to resolve to it, and they have different fixes:
+There are two ways a project can still be on it, and they have different fixes:
 
-- **You set `python_version: "3.10"`.** Set `python_version: "3.11"` (or later)
-  and rebuild.
+- **You set `python_version: "3.10"`.** `dexaflow validate`, `compile`,
+  `deploy` and `lite` refuse the project and name the replacement. Set
+  `python_version: "3.11"` (or later) and rebuild.
 - **You pinned `base_image` to a published `py3.10` tag** (`…:py3.10`,
-  `…:py3.10-v0.4.5`<!-- stale-version-ok: py3.10 runtimes stopped at 0.4.x -->). Repoint `base_image` to the matching `py3.11` tag and
-  rebuild. Changing `python_version` here does nothing: when `base_image` is
-  set it is used verbatim and `python_version` is not consulted for the `FROM`.
+  `…:py3.10-v0.5.7`). The build still works, because the tag still pulls, and
+  `dexaflow compile` warns that the base gets no security updates. Repoint
+  `base_image` to the matching `py3.11` tag and rebuild. Changing
+  `python_version` here does nothing: when `base_image` is set it is used
+  verbatim and `python_version` is not consulted for the `FROM`.
 
 Existing images keep running either way; the rebuild is what moves you.
 
@@ -381,7 +381,7 @@ roadmap item.
 |---|---|---|
 | `schema_version` | `"1.0"` | Stamps every artifact for forward-compat. |
 | `dag_id` | *subdir basename* | If `dexaflow.yaml` is absent, the parent directory name is used. Two subdirs resolving to the same `dag_id` is a hard error — see [Discovery rules](/author-dags/dag-authoring/#discovery-rules). |
-| `python_version` | `"3.11"` | Pick `3.10`, `3.11`, `3.12`, or `3.13`. It selects the task base image **and**, when you declare it explicitly, the interpreter every local tool judges the project with; see [Which interpreter reads your DAG](#which-interpreter-reads-your-dag). `dexaflow lite` builds that project's venv on it, so the dev loop and the cluster run the same minor. If no interpreter on the host reports that version, `dexaflow lite` stops and says so rather than substituting a different one, except for `3.11`, which it fetches as the managed CPython on first use; a venv already built on another minor is rebuilt, which reinstalls the runtime and your dependencies. Leaving the field out keeps the previous behaviour (any host Python 3.11+, managed build preferred), because then the image is `3.11` by the same default and the two already agree. A declared `build.base_image` makes this field inert on both sides, and a deprecated version warns and falls back instead of blocking. |
+| `python_version` | `"3.11"` | Pick `3.11`, `3.12`, or `3.13`. It selects the task base image **and**, when you declare it explicitly, the interpreter every local tool judges the project with; see [Which interpreter reads your DAG](#which-interpreter-reads-your-dag). `dexaflow lite` builds that project's venv on it, so the dev loop and the cluster run the same minor. If no interpreter on the host reports that version, `dexaflow lite` stops and says so rather than substituting a different one, except for `3.11`, which it fetches as the managed CPython on first use; a venv already built on another minor is rebuilt, which reinstalls the runtime and your dependencies. Leaving the field out keeps the previous behaviour (any host Python 3.11+, managed build preferred), because then the image is `3.11` by the same default and the two already agree. A declared `build.base_image` makes this field inert on both sides, and a deprecated version warns and falls back instead of blocking. |
 | `dag_source` | `"dag.py"` | DAG file relative to the project. |
 | `dependencies` | `[]` | pip specifiers baked into the image. Any [PEP 508](https://peps.python.org/pep-0508/) form works, including version floors (`"setuptools>=80.9.0"`) and environment markers (`'requests; python_version < "3.12"'`) — each entry is passed to pip as one literal argument, so shell characters in a specifier are never interpreted. A line break inside an entry is refused, since it would end the generated `RUN` instruction, and every entry is passed after a `--` so an entry beginning with a dash is treated as a package name rather than as an option to pip. |
 | `connectors` | `[]` | Short connector names expanded to provider packages at compile (ADR 0038). |
@@ -487,6 +487,7 @@ Key column is the same setting's path in that file.
 | `DEXAFLOW_SERVER_READ_TIMEOUT` | `server.read_timeout` | duration | `0s` | both | Longest time the API and metrics listeners spend reading one request, headers and body (a Go duration such as `60s`). Protects against clients that trickle a body to hold connections. Set it above your slowest legitimate upload. It never limits a response, so live log tails keep streaming. Headers must always arrive within 10 seconds, or within this timeout when it is shorter. `0s` means no limit. Helm: set it through `extraEnv`. |
 | `DEXAFLOW_SERVER_IDLE_TIMEOUT` | `server.idle_timeout` | duration | `0s` | both | Closes a keep-alive connection idle this long (a Go duration such as `120s`). `0s` keeps idle connections open, also when `DEXAFLOW_SERVER_READ_TIMEOUT` is set (the read timeout is never used as an idle timeout). Helm: set it through `extraEnv`. |
 | `DEXAFLOW_SERVER_PROBE_BUDGET` | `server.probe_budget` | duration | `2s` | both | How long `/readyz` may spend checking its dependencies, all checks sharing one deadline; past it the probe answers `503` naming the slow dependency. It must stay under the kubelet's readiness timeout, so the Helm chart sets it to `probes.readiness.timeoutSeconds` minus one second: raise that value to give a slow metadatabase more room. `0` means `2s`; a negative value fails boot. |
+| `DEXAFLOW_SERVER_LIVENESS_SCHEDULER_STALL` | `server.liveness_scheduler_stall` | duration | `0s` | both | Fails `/healthz` with `503`, so the kubelet restarts the pod and another replica takes the scheduler lease, while this process leads the scheduler and its loop has not started an iteration for this long (a Go duration such as `2m`). A database outage does not trip it: the loop keeps iterating and failing fast, and `/readyz` reports the database. An api role process never fails it for a scheduler in another process. `0s` keeps `/healthz` unconditional. A value under twice the scheduler step timeout (30 s, or 30 loop intervals when that is longer), so `60s` at the default interval, fails boot, as does a negative one. Helm: set it through `extraEnv`. |
 | `DEXAFLOW_SERVER_HTTP_TLS_CERT` | `server.http_tls_cert` | string | _(empty)_ | both | Path to a PEM certificate (chain) that makes the API and UI listener (`server.http_tls_cert`, on `DEXAFLOW_SERVER_HTTP_ADDR`) serve HTTPS instead of plain HTTP, so a load balancer can re-encrypt to the pod (#638). Set with `_KEY`; setting only one of the two fails boot. Empty (the default) keeps plain HTTP. The files are re-read when they change on disk, so a rotated certificate is served without a restart. TLS 1.2 is the minimum. The metrics listener stays plain HTTP. In the chart set `httpTLS.enabled` and `httpTLS.secretName`. See [In-transit encryption](/operate/in-transit-encryption/). |
 | `DEXAFLOW_SERVER_HTTP_TLS_KEY` | `server.http_tls_key` | string | _(empty)_ | both | Path to the PEM private key paired with `DEXAFLOW_SERVER_HTTP_TLS_CERT` (`server.http_tls_key`). Both must be set together. |
 | `DEXAFLOW_SERVER_POOLS_READ_ONLY` | `server.pools_read_only` | bool | `false` | Cluster | Makes the tenant-facing pool API (`/api/v2/pools`) read-only (`server.pools_read_only`). Create, resize and delete answer `403` with the detail `pools are read-only on this server: their slots are managed by the platform operator` for every role, tenant `admin` included, while list and get keep working. Turn it on when one engine serves many tenants and the platform operator sizes each tenant's pools: a tenant `operator` holds `write:pool`, and a tenant `admin` can grant itself anything, so a lock that spared admins would not hold a slot budget. The platform then changes pools out of band, not through this API. With the option on, a task that names a pool its tenant has not defined is also admitted against that tenant's `default_pool` instead of running unlimited, and the Pools screen counts it there; existing DAGs using such pool names start sharing `default_pool`. A tenant with no `default_pool` row stays unlimited (the gate never deadlocks). Set it on every role: with split API and scheduler roles, the API enforces the lock and the scheduler the `default_pool` fallback (the chart sets both). The platform sizes `default_pool` through the service API (`default_pool_slots`); other named pools have no platform API yet. Default `false` keeps pools writable under `write:pool`. In the chart set `config.poolsReadOnly`. |
@@ -563,7 +564,7 @@ recovery command a pod waiting for its schema names; see
 | `DEXAFLOW_AUTH_TRUSTED_ISSUER_HOST_PATTERN` | `auth.trusted_issuer.host_pattern` | string | _(empty)_ | both | Binds every browser session to its tenant's host, for an operator that serves each tenant on its own host in front of one Dexaflow, for example `{tenant}.example.com`. A handoff for a tenant is accepted only on that tenant's host, and a session cookie only on the host of the session's tenant. See [Binding sessions to tenant hosts](#binding-sessions-to-tenant-hosts). A host and optional port with exactly one `{tenant}`; boot fails otherwise, or when the issuer is not set. Empty binds nothing. Helm: `auth.trustedIssuer.hostPattern`. |
 | `DEXAFLOW_AUTH_CI_OIDC_SESSION_TTL_SECONDS` | `auth.ci_oidc.session_ttl_seconds` | int | `3600` | both | How long the session a CI token is exchanged for lives, 300 to 43200 seconds. It is not renewed: a later job exchanges again. Read only when an issuer is configured. Helm: `auth.ciOidc.sessionTtlSeconds`. |
 | `DEXAFLOW_AUTH_CI_OIDC_ISSUERS` | `auth.ci_oidc.issuers` | list | _(empty)_ | both | The CI OIDC issuers whose job tokens a pipeline exchanges for a deploy session, so it stores no deploy token ([ADR 0092](/project/adrs/0092-ci-deploys-with-oidc-tokens/)). Each entry has a `name`, a `provider` (`github`, `gitlab`, `cloudbuild` or `other`), the exact `issuer`, an optional `jwks_url` (discovered otherwise), the `audience` its tokens carry, the one `tenant` it deploys to, an optional `max_lifetime_seconds` (0 means 3600, at most 86400) and ordered `rules`, each mapping `claims` patterns to a `role` and optional `scopes`. The tenant never comes from a claim. In the configuration file, or as a JSON array of the same objects in this variable, which wins over the file. Empty (the default) leaves the exchange off. See [CI OIDC](/operate/cicd-deploy/#deploying-without-a-stored-token-ci-oidc). Helm: `auth.ciOidc.issuers`. |
-| `DEXAFLOW_AUTH_API_TOKENS_DISABLED` | `auth.api_tokens.disabled` | bool | `false` | both | `true` stops serving the [API tokens](/operate/cicd-deploy/#credentials-for-the-control-plane) a signed-in user mints for CI and scripts: `/api/v2/apiTokens` and the tokens screen are not served, and every API token is refused as an unknown bearer, including one minted before (it works again if they are served again before it expires). Turn it on when a platform in front of Dexaflow decides at each sign-in who may reach it, so no Dexaflow credential outlives that decision. `false` (the default) serves them. Helm: `auth.apiTokens.disabled`. |
+| `DEXAFLOW_AUTH_API_TOKENS_DISABLED` | `auth.api_tokens.disabled` | bool | `false` | both | `true` stops serving the [API tokens](/operate/users-roles-tokens/#api-tokens) a signed-in user mints for CI and scripts: `/api/v2/apiTokens` and the tokens screen are not served, and every API token is refused as an unknown bearer, including one minted before (it works again if they are served again before it expires). Turn it on when a platform in front of Dexaflow decides at each sign-in who may reach it, so no Dexaflow credential outlives that decision. `false` (the default) serves them. Helm: `auth.apiTokens.disabled`. |
 | `DEXAFLOW_AUTH_SERVICE_TOKEN` | `auth.service_token` | string | _(empty)_ | both | Turns on the [operator service API](#operator-service-api) under `/api/v2/service/` and is its bearer credential. At least 32 characters; boot fails on a shorter one. Keep it in a Secret. Empty leaves the API off and its routes absent. Helm: `auth.serviceToken`, or `auth.serviceTokenExistingSecret` naming a Secret with key `serviceToken`. |
 | `DEXAFLOW_AUTH_EXTERNAL_SIGNIN_URL` | `auth.external_signin_url` | string | _(empty)_ | both | Sends UI visitors without a session to your own sign-in instead of Dexaflow's page, for a Dexaflow served from a larger platform. The page they asked for travels in a `next` query parameter (a same-origin path, `/` when the request carried anything else), added to whatever query your URL already has; your flow is expected to return them with a Dexaflow session. A refused [trusted-issuer handoff](#trusted-issuer-handoff) is also sent back here, with an `error` code. API calls without a session still get `401`. `/api/v2/auth/login?local=1` and a refused single sign-on still render Dexaflow's page, so break-glass access survives an outage of your sign-in. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSigninUrl`. |
 | `DEXAFLOW_AUTH_EXTERNAL_SIGNOUT_URL` | `auth.external_signout_url` | string | _(empty)_ | both | Where `/api/v2/auth/logout` lands after clearing the session cookie, so your platform can end its own session too. Empty returns to Dexaflow's sign-in page. Absolute `http(s)` URL; boot fails otherwise. Helm: `auth.externalSignoutUrl`. |
@@ -738,6 +739,7 @@ See [Cluster deploy defaults](/operate/workspaces-and-targets/#cluster-deploy-de
 | `DEXAFLOW_SCHEDULER_DISPATCH_MAX_PER_TENANT_PER_TICK` | `scheduler.dispatch.max_per_tenant_per_tick` | int | `0` | both | Most tasks one tenant may dispatch in one tick, so a tenant with a wide fan-out or many runs leaves dispatch room for the others; the rest wait for the next tick with no attempt charged. `0` means no cap; negative fails boot. |
 | `DEXAFLOW_SCHEDULER_ALERTS_BLOCK_PRIVATE_DESTINATIONS` | `scheduler.alerts.block_private_destinations` | bool | `false` | both | Refuse on-failure alert requests to loopback, private, link-local (including the `169.254.169.254` metadata address), shared, unspecified, multicast and broadcast addresses. See [Alert destinations](#alert-destinations). |
 | `DEXAFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS` | `scheduler.alerts.allowed_cidrs` | list | _(empty)_ | both | CIDRs or single addresses exempted from that block (`scheduler.alerts.allowed_cidrs`, a list; comma-separated via the env var). Applied only while the block is on, but validated at startup either way: an invalid entry fails startup. |
+| `DEXAFLOW_SCHEDULER_POOLS_ENABLED` | `scheduler.pools.enabled` | bool | _(empty)_, which follows the edition: on for `cluster`, off otherwise | both | Turns named pools on ([ADR 0053](/project/adrs/0053-admission-and-placement/)): the cross-DAG slot gate of the scheduler tick and the pools API behind the Pools screen. Unset, it follows `ui.edition`, so an install that does not set it behaves as before the key existed. Set it to `false` to run the cluster edition without pools, or to `true` to use pools on another edition. With pools off, `server.pools_read_only` and `scheduler.pool_starvation_threshold` have no effect. See [Pools](/operate/pools/). |
 | `DEXAFLOW_SCHEDULER_POOL_STARVATION_THRESHOLD` | `scheduler.pool_starvation_threshold` | duration | `60s` | Cluster | How long a scheduled task of more than one slot that does not fit its pool (its dispatch backoff elapsed, its DAG under `max_active_tasks`) waits before the pool is reserved for it ([ADR 0066](/project/adrs/0066-weighted-pool-slots-and-resource-unit/)). While reserved the pool admits no other task, so tasks of fewer slots cannot keep a larger one out forever; the oldest waiter wins, one per pool; a task of size 1 never reserves, so an install that sets no `size` admits exactly as before; a tick in which something other than the pool holds the waiter keeps its waiting time; and a task larger than its whole pool is never reserved for (it is logged once instead). The state lives in the leader's memory. `0s` disables it; negative fails boot. Helm: `config.scheduler.poolStarvationThreshold`. |
 
 <!-- END GENERATED configref -->
@@ -929,7 +931,7 @@ keys; set them through `extraEnv`.
 | Variable | Key | Type | Default | Edition | Purpose |
 |---|---|---|---|---|---|
 | `DEXAFLOW_RETENTION_DAG_RUNS_DAYS` | `retention.dag_runs_days` | int | `0`, off | both | Delete settled runs, with their task instances and history, that ended more than this many days ago. The newest run of each DAG is always kept. `0` keeps every run. |
-| `DEXAFLOW_RETENTION_AUDIT_LOG_DAYS` | `retention.audit_log_days` | int | `0`, off | both | Delete audit log entries older than this many days, per tenant and for the tenant-less system entries. `0` keeps the whole audit log. |
+| `DEXAFLOW_RETENTION_AUDIT_LOG_DAYS` | `retention.audit_log_days` | int | `0`, off | both | Delete audit log entries older than this many days, per tenant and for the tenant-less system entries. `0` keeps the whole audit log. See [Audit log](/operate/audit-log/). |
 | `DEXAFLOW_RETENTION_USAGE_EVENTS_DAYS` | `retention.usage_events_days` | int | `30` | both | Delete usage events ([ADR 0096](/project/adrs/0096-task-attempt-usage-events/)) recorded more than this many days ago, oldest first in the order the service API serves them, so a consumer that is down can catch up for this long. The janitor starts for it only while `usage.events.enabled` is on. `0` keeps every event. |
 | `DEXAFLOW_RETENTION_DRY_RUN` | `retention.dry_run` | bool | `false` | both | Only count what a cycle would delete; delete nothing. |
 | `DEXAFLOW_RETENTION_INTERVAL` | `retention.interval` | duration | `1h` | both | How often a cycle runs. Must be greater than zero when a class is on. |
@@ -982,8 +984,8 @@ written stay. The chart has no value for this key; set it through `extraEnv`.
 | Variable | Key | Type | Default | Edition | Purpose |
 |---|---|---|---|---|---|
 | `DEXAFLOW_UI_INSTANCE_NAME` | `ui.instance_name` | string | `Dexaflow` | both | UI navbar label (`dexaflow lite` sets it to mark the environment). |
-| `DEXAFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS` | `ui.auto_refresh_interval_seconds` | int | `0` | both | SPA polling cadence for DAG / DagRun / task-instance state. `0` falls back to the production-safe 30s default; `dexaflow lite` sets 1s for a snappy inner loop. Helm: `ui.autoRefreshIntervalSeconds`, which the chart omits entirely when unset so the server default decides. |
-| `DEXAFLOW_UI_EDITION` | `ui.edition` | string | _(empty)_ | both | The edition the server runs as ([ADR 0027](/project/adrs/0027-product-editions-executors-delivery/)): `cluster` for the Helm chart on Kubernetes, `lite` for the installable binary. `pro` is the earlier name of `cluster` and is still accepted; the Helm chart currently sets `pro`. `cluster` turns on named pools, allows `auth.provider: oidc`, enforces TLS on the agent channel and shows the gold CLUSTER badge; `lite` shows the silver LITE badge. Empty or any other value shows no badge. |
+| `DEXAFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS` | `ui.auto_refresh_interval_seconds` | int | `0` | both | SPA polling cadence for DAG / DagRun / task-instance state. `0` falls back to the 5s default (30s before v0.6.0); `dexaflow lite` sets 1s for a snappy inner loop. Helm: `ui.autoRefreshIntervalSeconds`, which the chart omits entirely when unset so the server default decides. |
+| `DEXAFLOW_UI_EDITION` | `ui.edition` | string | _(empty)_ | both | The edition the server runs as ([ADR 0027](/project/adrs/0027-product-editions-executors-delivery/)): `cluster` for the Helm chart on Kubernetes, `lite` for the installable binary. `pro` is the earlier name of `cluster` and is still accepted; the Helm chart currently sets `pro`. `cluster` turns on named pools unless `scheduler.pools.enabled` says otherwise, allows `auth.provider: oidc`, enforces TLS on the agent channel and shows the gold CLUSTER badge; `lite` shows the silver LITE badge. Empty or any other value shows no badge. |
 | `DEXAFLOW_UI_WORKSPACE` | `ui.workspace` | string | _(empty)_ | both | DAG project directory the Lite web editor edits ([ADR 0025](/project/adrs/0025-lite-embedded-web-editor/)). Empty disables the editor. |
 | `DEXAFLOW_UI_MONACO_DIR` | `ui.monaco_dir` | string | _(empty)_ | both | Where the pinned Monaco bundle was fetched by `dexaflow setup`; the editor page is served Monaco from it. Empty shows a setup hint. |
 | `DEXAFLOW_UI_HOME_LINK_LABEL` | `ui.home_link.label` | string | _(empty)_ | both | Text of an optional link from the UI back to the platform you serve it from, shown on every page at the bottom-left and opened in the same tab. Set it together with `DEXAFLOW_UI_HOME_LINK_URL`. Helm: `ui.homeLink.label`. |
@@ -1377,7 +1379,8 @@ trusted issuer may not sign in to (`auth.trusted_issuer.allowed_tenants`) is
 `403`. The user signs in only through the trusted issuer's handoff.
 
 `PUT /api/v2/service/tenants/{tenant}/suspension` with
-`{"mode": "hold", "reason": "contract ended"}` suspends the tenant. From then
+`{"mode": "hold", "reason": "contract ended"}` suspends the tenant (`mode` is
+`hold`, `drain` or `stop`, below). From then
 on it gets no new run: a triggered run answers `409` with the reason, for
 example `the tenant is suspended: contract ended`, and the scheduler leaves
 the tenant's DAGs out of its list. Work already queued or running finishes.
@@ -1385,10 +1388,34 @@ The tenant's DAGs keep their own paused flag, so nothing about them changes
 and lifting the suspension restores exactly what the tenant had. Its users
 still sign in and read; DAG versions can still be registered.
 
-`hold` is the only mode today; `drain` and `stop` answer `400`. The reason is
-optional, at most 500 bytes, and is shown to the tenant's users in the refusal,
-so it should say what they can do, not why internally. A second call changes
-the reason and keeps the time the suspension started. The answer, and
+The mode says how much of the tenant's work stops, each one adding to the
+one before:
+
+| Mode | New runs | Ready tasks | Queued and running task instances |
+| --- | --- | --- | --- |
+| `hold` | none | dispatched | finish |
+| `drain` | none | stay scheduled; a queued run is not started | the attempts already dispatched finish |
+| `stop` | none | stay scheduled; a queued run is not started | failed, as a mark failed does |
+
+Under `stop` the call fails the tenant's queued and running task instances
+with `stopped: the tenant was suspended in stop mode`, and the scheduler
+repeats it on every tick while the tenant is stopped, so a task dispatched
+while the call ran is stopped too. Each attempt learns it on its next
+heartbeat (15 seconds by default): the control plane answers that it must
+terminate and the agent kills the task's processes, as after a mark failed. A
+task with retries left goes to `up_for_retry` and, like every ready task of a
+drained or stopped tenant, waits scheduled until the tenant is resumed; one
+without retries stays failed, and its run fails like any other. Lifting the
+suspension dispatches the scheduled tasks and starts the queued runs on the
+next tick. A tick counts each stop it applies in
+`dexaflow_scheduler_decisions_total{decision_type="tenant_stopped"}`, and a
+stop it could not write in `decision_type="tenant_stop_error"`, retried on the
+next tick.
+
+Any other mode answers `400`. The reason is optional, at most 500 bytes, and
+is shown to the tenant's users in the refusal, so it should say what they can
+do, not why internally. A second call changes the mode or the reason and keeps
+the time the suspension started. The answer, and
 `GET` on the same path, is
 `{"tenant": "acme", "suspended": true, "mode": "hold", "reason": "...", "suspended_at": "..."}`,
 or `{"tenant": "acme", "suspended": false}`. `DELETE` on the same path lifts

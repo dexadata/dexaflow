@@ -53,9 +53,7 @@ func TestRunSetupVenvless(t *testing.T) {
 	// It must answer the version probe: setup accepts a host interpreter on
 	// the version it reports, not on its name (#1700).
 	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "python3.11"), []byte("#!/bin/sh\necho 'Python 3.11.9'\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, filepath.Join(bin, "python3.11"), "#!/bin/sh\necho 'Python 3.11.9'\n")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	cmd := newSetupCommand()
@@ -166,9 +164,7 @@ func TestRunSetupReRunKeepsSettings(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "python3.11"), []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, filepath.Join(bin, "python3.11"), "#!/bin/sh\n")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	// Pre-existing config + manifest = a re-run: must not re-prompt or re-generate.
 	lf := filepath.Join(home, ".dexaflow")

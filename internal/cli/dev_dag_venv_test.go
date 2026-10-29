@@ -139,9 +139,7 @@ func TestEnsureDagVenvSkipsAllGatesWhenAlreadyFresh(t *testing.T) {
 	pyStub := filepath.Join(binDir, "python")
 	argvLog := filepath.Join(home, "py-argv")
 	stub := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argvLog + "\nexit 0\n"
-	if err := os.WriteFile(pyStub, []byte(stub), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, pyStub, stub)
 	// A pysrc fixture so runtimeSrcChecksum returns a stable value; then
 	// stamp the matching marker so the binary-upgrade gate skips.
 	runtimeRoot := writeRuntimeFixture(t, t.TempDir(), map[string]string{

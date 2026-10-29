@@ -70,6 +70,11 @@ type RunState struct {
 	// 0053, ADR 0066). A clear on a running run puts it back in queued while
 	// other tasks of it may still run, so a queued held run can hold slots.
 	Held bool
+	// Suspension is the suspension mode of the run's tenant, empty when it is
+	// not suspended (#2181). Under drain or stop the tick dispatches nothing
+	// of the run and does not start it while it is queued; under stop it also
+	// fails the run's queued and running task instances (stopSuspended).
+	Suspension domain.SuspensionMode
 	// MaxActiveRuns is the DAG's max_active_runs, read from its dags row (the
 	// same value run creation caps on). The tick starts a queued run only
 	// while fewer than this many runs of the DAG are running, oldest logical
@@ -144,10 +149,10 @@ type RunState struct {
 	// loop populates it; it defaults to zero, leaving the gate unlimited when
 	// MaxActiveTasks is unset.
 	ActiveTaskCount int
-	// PoolsEnabled turns on the named-pool slot gate (ADR 0053 Stage 3, Pro only).
-	// The Step loop sets it from the scheduler's edition flag. Lite and any
-	// non-Pro deployment leave it false, so the pool gate is a no-op and planning
-	// is byte-identical to the max_active_tasks-only path.
+	// PoolsEnabled turns on the named-pool slot gate (ADR 0053 Stage 3). The
+	// Step loop sets it from the scheduler's pools flag (scheduler.pools.enabled).
+	// Left false, the pool gate is a no-op and planning is byte-identical to the
+	// max_active_tasks-only path.
 	PoolsEnabled bool
 	// ConfineUndefinedPools makes a task that names a pool its tenant has not
 	// defined draw on default_pool instead of running unlimited. The Step loop
@@ -415,10 +420,10 @@ type Scheduler struct {
 	// run again. Tick-only, no lock.
 	warnedSuspensions map[string]string
 	// poolsEnabled turns on the cross-DAG named-pool admission gate (ADR 0053
-	// Stage 3). Cluster edition only: main calls EnablePools() only on the cluster edition.
-	// While false (Lite / non-Pro), Step never loads pool budgets and never
-	// threads pool occupancy, so PlanRun's pool gate is a no-op and Lite plans
-	// byte-identically. Set once at construction (before ticking), read on the
+	// Stage 3). main calls EnablePools() when scheduler.pools.enabled is on.
+	// While false, Step never loads pool budgets and never
+	// threads pool occupancy, so PlanRun's pool gate is a no-op and planning is
+	// byte-identical. Set once at construction (before ticking), read on the
 	// single-threaded tick, so it needs no lock.
 	poolsEnabled bool
 	// confineUndefinedPools threads RunState.ConfineUndefinedPools; set once by
@@ -587,9 +592,9 @@ func (s *Scheduler) SetRecorder(r Recorder) { s.recorder = r }
 func (s *Scheduler) SetDispatcher(d Dispatcher) { s.dispatcher = d }
 
 // EnablePools turns on the cross-DAG named-pool admission gate (ADR 0053 Stage
-// 3). It belongs to the cluster edition: main calls it exactly there. Left
-// unset in Lite, where the pool gate stays a no-op and the tick never
-// queries pool budgets, so Lite plans byte-identically. Call once before the
+// 3). main calls it when scheduler.pools.enabled is on, which unset means the
+// cluster edition. Left unset, the pool gate stays a no-op and the tick never
+// queries pool budgets, so planning is byte-identical. Call once before the
 // scheduler starts ticking.
 func (s *Scheduler) EnablePools() { s.poolsEnabled = true }
 
@@ -713,6 +718,25 @@ func (s *Scheduler) Heartbeat() (bool, time.Time) {
 	return time.Since(last) <= 3*s.interval+time.Second, last
 }
 
+// StalledFor reports whether this process leads and its scheduling loop has
+// not started an iteration for longer than limit, with the time of the last
+// one. A follower, and a leader before its first tick, are never stalled. A
+// database outage does not stall the loop: Step marks its start before it
+// reads anything and fails fast, so only a loop that stopped iterating (a
+// blocked goroutine) is reported. It backs the opt-in liveness check of
+// server.liveness_scheduler_stall (#539).
+func (s *Scheduler) StalledFor(limit time.Duration) (bool, time.Time) {
+	if !s.leading.Load() {
+		return false, time.Time{}
+	}
+	nanos := s.lastTick.Load()
+	if nanos == 0 {
+		return false, time.Time{}
+	}
+	last := time.Unix(0, nanos).UTC()
+	return time.Since(last) > limit, last
+}
+
 // Step runs one deterministic scheduling iteration over every active run. Each
 // run is advanced in isolation (see advanceSafely): a panic or error in one
 // run is contained, so it never blocks the other runs or new-run creation.
@@ -739,6 +763,7 @@ func (s *Scheduler) Step(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listing active runs: %w", err)
 	}
+	s.stopSuspended(ctx, runs)
 	activeByDAG := make(map[dagRef]int, len(runs))
 	// Per-DAG task-admission budget (max_active_tasks, ADR 0053 Stage 1).
 	// activeTasksByDAG is the snapshot of currently non-terminal (queued+running)
@@ -804,10 +829,12 @@ func (s *Scheduler) Step(ctx context.Context) error {
 }
 
 // waitsForUnpause reports whether the tick must leave the run untouched: a
-// queued run of a paused DAG is not started until the DAG is unpaused (#1705).
-// It stays in the snapshot the caps are computed from (see RunState.Held).
+// queued run of a paused DAG is not started until the DAG is unpaused (#1705),
+// nor one of a tenant suspended in drain or stop mode until it is resumed
+// (#2181). It stays in the snapshot the caps are computed from (see
+// RunState.Held).
 func (r RunState) waitsForUnpause() bool {
-	return r.Held && r.State == domain.DagRunStateQueued
+	return (r.Held || r.Suspension.HoldsDispatch()) && r.State == domain.DagRunStateQueued
 }
 
 // startableQueuedRuns returns the queued runs this tick moves to running, by
@@ -874,12 +901,18 @@ func (s *Scheduler) openDispatchWindow() {
 }
 
 // holdDispatch reports whether the tick must leave run's next ready task
-// scheduled instead of dispatching it: an earlier dispatch this tick was
+// scheduled instead of dispatching it: the run's tenant is suspended in drain
+// or stop mode, an earlier dispatch this tick was
 // deferred, the tick's dispatch budget is spent, or the run's tenant used its
 // dispatches for this tick. A held task is not touched, so it costs no dispatch
 // attempt and no backoff, and the next tick offers it again. When the budget
 // runs out, run is remembered so the next tick starts after it.
 func (s *Scheduler) holdDispatch(run RunState) bool {
+	// A tenant suspended in drain or stop mode gets no dispatch (#2181). The
+	// task stays scheduled and is offered again once the tenant is resumed.
+	if run.Suspension.HoldsDispatch() {
+		return true
+	}
 	if s.deferredRun != "" {
 		return true
 	}
@@ -1104,4 +1137,59 @@ func findTask(run RunState, taskID string) (domain.TaskSpec, bool) {
 		return domain.TaskSpec{}, false
 	}
 	return run.Tasks[i], true
+}
+
+// TenantStopper is the optional store seam of the stop suspension mode
+// (#2181): it fails the queued and running task instances of a tenant
+// suspended in stop mode and returns how many it failed. A store without it
+// leaves stop applying only what drain does.
+type TenantStopper interface {
+	FailStoppedTenantTaskInstances(ctx context.Context, tenantID string) (int64, error)
+}
+
+// stopSuspended fails, once per tenant, the queued and running task
+// instances of every tenant the snapshot shows suspended in stop mode with
+// such a task instance. The service API already did it when it suspended the
+// tenant; the tick repeats it so an attempt dispatched while that call ran is
+// stopped too. The attempt learns it on its next heartbeat, which matches no
+// live row, and the agent kills its task. This tick still sees the old states;
+// the next one plans from the failed rows (a retry stays scheduled under the
+// suspension). A failure is logged and retried next tick, it does not abort
+// the tick.
+func (s *Scheduler) stopSuspended(ctx context.Context, runs []RunState) {
+	stopper, ok := s.store.(TenantStopper)
+	if !ok {
+		return
+	}
+	done := map[string]bool{}
+	for i := range runs {
+		r := &runs[i]
+		if r.Suspension != domain.SuspensionStop || done[r.TenantID] || !hasActiveTask(r.States) {
+			continue
+		}
+		done[r.TenantID] = true
+		n, err := stopper.FailStoppedTenantTaskInstances(ctx, r.TenantID)
+		if err != nil {
+			s.logger.Warn("could not stop the task instances of a tenant suspended in stop mode; retrying next tick",
+				"tenant_id", r.TenantID, "error", err)
+			s.record("tenant_stop_error")
+			continue
+		}
+		if n > 0 {
+			s.logger.Info("stopped the task instances of a tenant suspended in stop mode",
+				"tenant_id", r.TenantID, "task_instances", n)
+			s.record("tenant_stopped")
+		}
+	}
+}
+
+// hasActiveTask reports whether a task instance of states is queued or
+// running.
+func hasActiveTask(states map[string]domain.TaskState) bool {
+	for _, st := range states {
+		if st == domain.TaskStateQueued || st == domain.TaskStateRunning {
+			return true
+		}
+	}
+	return false
 }

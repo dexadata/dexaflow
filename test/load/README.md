@@ -20,8 +20,9 @@ cluster and no executor, so they run on a laptop with just Postgres up.
 | 6 | Query plans at scale: hot queries on 1M runs and 5M task instances | [`query_plans/`](query_plans/) | ✅ implemented |
 | 7 | Code-only deploy: p50 of `dexaflow deploy` after a DAG code change, and the warm-up of the new version's pool | [`deploy_p50/`](deploy_p50/) | ✅ implemented |
 | 8 | Usage event trigger: what recording a usage event adds to a settle and to a 1,000-task cascade | [`usage_settle/`](usage_settle/) | ✅ implemented |
+| 9 | Primary key order: insert rate, WAL and index size of a random UUIDv4 key against a time-ordered UUIDv7 | [`uuid_keys/`](uuid_keys/) | ✅ implemented |
 
-Experiments 1, 4, 6, 7 and 8 are built. The others are documented extension points.
+Experiments 1, 4, 6, 7, 8 and 9 are built. The others are documented extension points.
 Experiments 4 and 7 drive a running control plane instead of the packages:
 Experiment 4 needs only an api role process and its Postgres, Experiment 7
 the CLI, and its warm-up half a cluster with warm pools on.
@@ -94,8 +95,8 @@ scope for Experiment 1 (no dispatcher is wired).
 ## Experiment 4: UI refresh cycle
 
 The embedded UI polls. On a page whose data holds a run in progress it
-refetches a fixed set of queries every `ui.autoRefreshIntervalSeconds` (30 s
-on Pro, 1 s on Lite), so the load the UI puts on the control plane is that set
+refetches a fixed set of queries every `ui.autoRefreshIntervalSeconds` (5 s
+on Pro by default, 30 s before v0.6.0, 1 s on Lite), so the load the UI puts on the control plane is that set
 times the viewers divided by the interval (#1196). Experiment 4 measures the
 set: it replays one page's refresh, a _profile_, against a running control
 plane as V viewers that each issue cycles back to back, and reports the cycles
@@ -318,3 +319,25 @@ go run ./test/load/usage_settle --tasks 1000 --samples 20
    scrape its `/metrics`, and say so in this table.
 4. Add a row to the _Experiments_ table above and a section here.
 5. It must `go build`, `go vet`, and `gofmt` clean, and actually run.
+
+## Experiment 9: primary key order
+
+Every table is keyed by `gen_random_uuid()`, a random UUIDv4, so each insert
+lands on a random leaf of the primary key index (#525). This experiment
+measures what that costs against a time-ordered UUIDv7 on a table of the
+width of a task instance row, without touching the schema:
+
+```sh
+DATABASE_URL='postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable' \
+  go run ./test/load/uuid_keys [--rows 2000000] [--batch 1000] [--lookups 20000]
+```
+
+It needs only a database it may create two scratch tables in
+(`load_uuid_v4`, `load_uuid_v7`, dropped at the end). Both keys are generated
+in the client and the two tables are filled in turns, `--batch` rows per
+transaction through `COPY`, so they see the same checkpoints and cache
+pressure. It prints the insert rate overall and over the last tenth of the
+rows, the WAL per row, the sizes of the key index and of the table, and the
+rate of point lookups by key, as a table for
+[BASELINE.md](BASELINE.md#primary-key-order).
+

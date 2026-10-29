@@ -47,9 +47,7 @@ case "$1 $2" in
 esac
 exit 0
 `
-	if err := os.WriteFile(filepath.Join(dir, "gcloud"), []byte(script), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, filepath.Join(dir, "gcloud"), script)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("FAKE_GCLOUD_DIGEST", "")
 	return argvLog, archiveLog

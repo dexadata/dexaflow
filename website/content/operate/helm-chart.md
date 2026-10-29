@@ -213,6 +213,21 @@ If a pod never passes the gate, or passes it and never turns ready, read
 for a schema that is absent, behind or dirty, the reason and what to run. The common causes are a database the pod cannot
 reach and a ServiceAccount that cannot `list`/`watch` pods in the task namespace.
 
+### Restarting a stalled scheduler
+
+`/healthz` is a static 200 by default, so a scheduler that holds the leader
+lease but whose loop stopped iterating stays live, and no other replica takes
+over. To have the kubelet restart such a pod, set
+`DEXAFLOW_SERVER_LIVENESS_SCHEDULER_STALL` through `extraEnv`, for example to
+`2m`: `/healthz` then answers 503 while this pod leads and its loop has not
+started an iteration for that long. The startup gate and the liveness probe
+both read it, and a pod that does not lead, or has not ticked since it took
+the lease, always passes. A database outage does not trip it, because the
+loop keeps iterating and failing fast; `/readyz` reports the database. The
+value must be at least twice the scheduler step timeout (`60s` at the default
+loop interval), or the server refuses to boot. See
+[`server.liveness_scheduler_stall`](/reference/configuration/).
+
 ### Timeouts under load
 
 `probes.liveness` and `probes.readiness` are exposed so you can loosen them
@@ -265,6 +280,42 @@ probes:
 The readiness check runs on its own dedicated database connection, separate from
 the pool serving API traffic, so a saturated control plane does not make every
 replica report itself unready at the same moment.
+
+## UI refresh interval
+
+The bundled UI polls DAG, run and task-instance state on a fixed interval.
+`ui.autoRefreshIntervalSeconds` sets it; left empty, the chart renders nothing
+and the server uses 5 seconds (30 before v0.6.0). Every open browser tab polls on its own, so the
+load grows with the number of tabs, not of users.
+
+What one refresh costs was measured in
+[Experiment 4](https://github.com/dexadata/dexaflow/blob/main/test/load/BASELINE.md#ui-refresh-cycle):
+a DAG or run page with a run in progress sends 9 requests and runs about 27
+database transactions per cycle, and one api process with Postgres on the same
+4 vCPU host sustained about 280 such cycles per second. Read as capacity:
+
+| Interval | Tabs of such a page one host serves | Transactions per second for 50 tabs |
+|---|---:|---:|
+| 30 s | about 8,400 | about 45 |
+| 10 s | about 2,800 | about 135 |
+| 5 s (default) | about 1,400 | about 270 |
+| 1 s | about 280 | about 1,350 |
+
+Those are ceilings for a host doing nothing else; size against your own DAG
+count and leave room for the scheduler and the API traffic that is not the UI.
+The default suits a team that watches runs progress; a busy shared database,
+or many tabs left open on wall displays, is the reason to raise it:
+
+```yaml
+ui:
+  autoRefreshIntervalSeconds: 30  # the default before v0.6.0
+```
+
+A zero or negative value is not a faster refresh: the server falls back to the
+default, so a misconfigured value cannot drop the interval to 0. The default
+moved from 30 to 5 seconds in v0.6.0
+([#1196](https://github.com/dexadata/dexaflow/issues/1196)); see the
+[upgrade note](/operate/upgrades/#upgrading-to-060-the-ui-refreshes-every-5-seconds).
 
 ## Memory limit for the Go runtime
 

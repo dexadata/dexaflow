@@ -44,6 +44,9 @@ type ObservabilityDeps struct {
 	// SchedulerHealth reports the scheduler's heartbeat for /monitor/health.
 	// When nil the component reports healthy (single-process role assumption).
 	SchedulerHealth Heartbeater
+	// Liveness, when set, can fail /healthz (server.liveness_scheduler_stall).
+	// Nil keeps /healthz unconditional.
+	Liveness LivenessCheck
 	// ProbeBudget (server.probe_budget) bounds /readyz and the dependency
 	// checks of /api/v2/monitor/health. Non-positive means 2s.
 	ProbeBudget time.Duration
@@ -76,7 +79,7 @@ type ServerDeps struct {
 	MaxRequestBodyBytes int64
 	MaxUploadBodyBytes  int64
 	// Pools registers the named-pool CRUD as real endpoints (ADR 0053). The
-	// server sets it on the cluster edition, the same condition as the
+	// server sets it from scheduler.pools.enabled, the same condition as the
 	// scheduler's pool gate; otherwise the Pools screen gets the graceful
 	// empty-collection stub.
 	Pools bool
@@ -207,7 +210,7 @@ type UIDeps struct {
 	// AutoRefreshIntervalSeconds controls the SPA's polling cadence for DAG /
 	// DagRun / task-instance state refresh (Airflow's auto_refresh_interval).
 	// Non-positive (the zero default) falls back to DefaultUIAutoRefreshIntervalSeconds
-	// (30s, production-safe). `dexaflow lite` sets it to ~5s for a snappy inner loop.
+	// (5s; 30s before v0.6.0). `dexaflow lite` sets it to 1s for a snappy inner loop.
 	AutoRefreshIntervalSeconds int
 	// Theme is the Chakra theme /ui/config hands the UI (Airflow's `[api]
 	// theme`: tokens, globalCss, icon, icon_dark_mode), already validated as a

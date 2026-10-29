@@ -116,9 +116,7 @@ func TestDevBasePythonPrefersManaged(t *testing.T) {
 	}
 	// Once present, the managed interpreter (which bundles venv) is preferred and
 	// trusted at the pinned version without re-executing it.
-	if err := os.WriteFile(managed, []byte("#!/bin/sh\n"), 0o755); err != nil { //nolint:gosec // test fixture
-		t.Fatal(err)
-	}
+	writeExecutable(t, managed, "#!/bin/sh\n")
 	got, err := devBasePython(context.Background(), io.Discard, home, "")
 	if err != nil {
 		t.Fatalf("devBasePython err = %v, want nil", err)

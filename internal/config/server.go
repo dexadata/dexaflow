@@ -145,6 +145,11 @@ type ServerSection struct {
 	// (#1050). The default, 2s, is the budget every earlier release used, and
 	// 0 means the same; a negative value fails boot.
 	ProbeBudget time.Duration `mapstructure:"probe_budget"`
+	// LivenessSchedulerStall fails /healthz, so the kubelet restarts the pod,
+	// when this process leads the scheduler and its loop has not started an
+	// iteration for this long (#539). 0, the default, leaves /healthz
+	// unconditional, as before; a negative value fails boot.
+	LivenessSchedulerStall time.Duration `mapstructure:"liveness_scheduler_stall"`
 	// HTTPTLSCert/HTTPTLSKey serve the API and UI listener (http_addr) over
 	// HTTPS with an operator-supplied PEM certificate and key (#638), so a load
 	// balancer can re-encrypt to the pod. Both must be set together; both empty
@@ -390,6 +395,9 @@ func (c *ServerConfig) validateNonNegative() error {
 	if c.Server.ProbeBudget < 0 {
 		return fmt.Errorf("server.probe_budget must not be negative (got %s); it bounds /readyz and must stay under the kubelet's readiness timeout, and 0 means 2s", c.Server.ProbeBudget)
 	}
+	if err := c.validateLivenessSchedulerStall(); err != nil {
+		return err
+	}
 	if c.Server.MaxPageLimit < 0 {
 		return fmt.Errorf("server.max_page_limit must not be negative (got %d); 0 leaves list pages uncapped", c.Server.MaxPageLimit)
 	}
@@ -542,4 +550,22 @@ func (c *ServerConfig) validateRole() error {
 		return fmt.Errorf("invalid server.role %q: must be one of %q, %q, %q (or empty = %q)",
 			c.Server.Role, RoleAll, RoleAPI, RoleScheduler, RoleAll)
 	}
+}
+
+// validateLivenessSchedulerStall refuses a negative server.liveness_scheduler_stall,
+// and one under twice the scheduler's step timeout (30s, or 30 loop intervals
+// when that is longer): one slow but legitimate tick must not restart the pod.
+func (c *ServerConfig) validateLivenessSchedulerStall() error {
+	limit := c.Server.LivenessSchedulerStall
+	if limit < 0 {
+		return fmt.Errorf("server.liveness_scheduler_stall must not be negative (got %s); 0 turns the check off", limit)
+	}
+	step := 30 * time.Duration(c.Scheduler.LoopIntervalMS) * time.Millisecond
+	if step < 30*time.Second {
+		step = 30 * time.Second
+	}
+	if limit > 0 && limit < 2*step {
+		return fmt.Errorf("server.liveness_scheduler_stall must be 0 or at least %s, twice the scheduler step timeout (got %s), so one slow tick does not restart the pod", 2*step, limit)
+	}
+	return nil
 }

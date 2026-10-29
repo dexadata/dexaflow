@@ -145,7 +145,7 @@ jobs:
       - name: Resolve the published Python lines
         env:
           # One step per line exists below. Keep in sync with the enum.
-          UPLOADED: "3.10 3.11 3.12 3.13"
+          UPLOADED: "3.11 3.12 3.13"
         run: |
           set -euo pipefail
           lines="$(python3 -c "import json,sys; \
@@ -268,13 +268,6 @@ jobs:
       # One category per image so the uploads do not overwrite each other. Not
       # on pull_request: a PR run would collide with the main-branch baseline
       # under a shared category, the same trap security.yaml documents (#437).
-      - name: Upload SARIF (leoflow-runtime py3.10)
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
-        if: always() && github.event_name != 'pull_request'
-        with:
-          sarif_file: scan-out/leoflow-runtime-py3.10.sarif
-          category: trivy-image-runtime-py310
-
       - name: Upload SARIF (leoflow-runtime py3.11)
         uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         if: always() && github.event_name != 'pull_request'

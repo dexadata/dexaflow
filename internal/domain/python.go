@@ -39,6 +39,10 @@ type pythonVersionSchema struct {
 	// conventional prefix for a vendor extension keyword, and a validator must be
 	// free to ignore it.
 	Deprecations map[string]PythonDeprecation `json:"x-leoflow-python-deprecations"` //nolint:tagliatelle // JSON Schema vendor-extension keyword; the name is fixed by the schema document
+	// Retired lines are no longer in the enum and no longer published. The
+	// record stays so the CLI can explain the refusal instead of printing a
+	// bare "value must be one of".
+	Retired map[string]PythonDeprecation `json:"x-leoflow-python-retired"` //nolint:tagliatelle // JSON Schema vendor-extension keyword; the name is fixed by the schema document
 }
 
 // pythonSupport is parsed once. A malformed schema is a build-time defect, not a
@@ -83,7 +87,29 @@ func loadPythonSupport() (pythonVersionSchema, error) {
 				"dexaflow.yaml schema: python_version %q has remove_after %q, want YYYY-MM-DD", v, d.RemoveAfter)
 		}
 	}
+	if err := checkRetiredPython(p); err != nil {
+		return pythonVersionSchema{}, err
+	}
 	return p, nil
+}
+
+// checkRetiredPython refuses a retired line that is still selectable, or one
+// whose replacement is not a supported, undeprecated line: the refusal would
+// then send the author somewhere they cannot go.
+func checkRetiredPython(p pythonVersionSchema) error {
+	for v, r := range p.Retired {
+		if slices.Contains(p.Enum, v) {
+			return fmt.Errorf("dexaflow.yaml schema retires python_version %q, which is still in the enum %v", v, p.Enum)
+		}
+		if _, deprecated := p.Deprecations[r.Replacement]; deprecated || !slices.Contains(p.Enum, r.Replacement) {
+			return fmt.Errorf("dexaflow.yaml schema: retired python_version %q points at replacement %q, "+
+				"which is not a supported line", v, r.Replacement)
+		}
+		if _, err := time.Parse(time.DateOnly, r.RemoveAfter); err != nil {
+			return fmt.Errorf("dexaflow.yaml schema: retired python_version %q has remove_after %q, want YYYY-MM-DD", v, r.RemoveAfter)
+		}
+	}
+	return nil
 }
 
 // SupportedPythonVersions returns the python_version values the project
@@ -116,4 +142,21 @@ func DeprecatedPythonVersion(v string) (PythonDeprecation, bool) {
 	}
 	d.Version = v
 	return d, true
+}
+
+// RetiredPythonVersion reports the record of a Python line that is no longer
+// published, if the schema carries one. Such a line is not in the enum, so
+// Validate refuses it; the record is what lets the refusal name the
+// replacement.
+func RetiredPythonVersion(v string) (PythonDeprecation, bool) {
+	p, err := pythonSupport()
+	if err != nil {
+		return PythonDeprecation{}, false
+	}
+	r, ok := p.Retired[v]
+	if !ok {
+		return PythonDeprecation{}, false
+	}
+	r.Version = v
+	return r, true
 }

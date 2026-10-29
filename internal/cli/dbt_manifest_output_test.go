@@ -22,9 +22,7 @@ func TestLoadDbtManifestParseFailureCarriesCause(t *testing.T) {
 	script := "#!/bin/sh\n" +
 		"echo 'Compilation Error: dbt found 1 package(s) missing, run dbt deps'\n" +
 		"exit 2\n"
-	if err := os.WriteFile(filepath.Join(binDir, "dbt"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, filepath.Join(binDir, "dbt"), script)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	proj := t.TempDir()

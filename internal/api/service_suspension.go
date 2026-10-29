@@ -56,11 +56,13 @@ func abortSuspensionError(c *gin.Context, err error, what string) {
 }
 
 // suspendTenantHandler implements PUT /api/v2/service/tenants/{tenant}/suspension
-// with {"mode": "hold", "reason": "..."} (#2181). From then on the tenant gets
-// no new run, manual or scheduled; the work already queued or running
-// finishes, and the tenant's DAGs keep their own paused flag. Calling it again
-// changes the reason and keeps the time the suspension started. "drain" and
-// "stop" are refused with a 400 until the engine applies them.
+// with {"mode": "hold" | "drain" | "stop", "reason": "..."} (#2181). From then
+// on the tenant gets no new run, manual or scheduled, and the tenant's DAGs
+// keep their own paused flag. Under hold the work already queued or running
+// finishes; drain also dispatches no task of the tenant; stop also fails its
+// queued and running task instances, whose attempts terminate on their next
+// heartbeat. Calling it again changes the mode or the reason and keeps the
+// time the suspension started.
 func suspendTenantHandler(deps Dependencies) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		name, ok := serviceTenantParam(c)

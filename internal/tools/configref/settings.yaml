@@ -126,6 +126,18 @@ settings:
       never limits a response, so live log tails keep streaming. Headers must always
       arrive within 10 seconds, or within this timeout when it is shorter. `0s`
       means no limit. Helm: set it through `extraEnv`.
+  server.liveness_scheduler_stall:
+    edition: both
+    description: >-
+      Fails `/healthz` with `503`, so the kubelet restarts the pod and another
+      replica takes the scheduler lease, while this process leads the scheduler
+      and its loop has not started an iteration for this long (a Go duration such
+      as `2m`). A database outage does not trip it: the loop keeps iterating and
+      failing fast, and `/readyz` reports the database. An api role process never
+      fails it for a scheduler in another process. `0s` keeps `/healthz`
+      unconditional. A value under twice the scheduler step timeout (30 s, or 30
+      loop intervals when that is longer), so `60s` at the default interval, fails
+      boot, as does a negative one. Helm: set it through `extraEnv`.
   server.idle_timeout:
     edition: both
     description: >-
@@ -532,7 +544,7 @@ settings:
   auth.api_tokens.disabled:
     edition: both
     description: >-
-      `true` stops serving the [API tokens](/operate/cicd-deploy/#credentials-for-the-control-plane)
+      `true` stops serving the [API tokens](/operate/users-roles-tokens/#api-tokens)
       a signed-in user mints for CI and scripts: `/api/v2/apiTokens` and the
       tokens screen are not served, and every API token is refused as an unknown
       bearer, including one minted before (it works again if they are served
@@ -735,6 +747,17 @@ settings:
     edition: both
     description: >-
       Scheduler tick interval, in milliseconds.
+  scheduler.pools.enabled:
+    edition: both
+    default_note: "which follows the edition: on for `cluster`, off otherwise"
+    description: >-
+      Turns named pools on ([ADR 0053](/project/adrs/0053-admission-and-placement/)): the
+      cross-DAG slot gate of the scheduler tick and the pools API behind the Pools
+      screen. Unset, it follows `ui.edition`, so an install that does not set it
+      behaves as before the key existed. Set it to `false` to run the cluster
+      edition without pools, or to `true` to use pools on another edition. With
+      pools off, `server.pools_read_only` and `scheduler.pool_starvation_threshold`
+      have no effect. See [Pools](/operate/pools/).
   scheduler.pool_starvation_threshold:
     edition: Cluster
     description: >-
@@ -1262,7 +1285,7 @@ settings:
     default_note: off
     description: >-
       Delete audit log entries older than this many days, per tenant and for the
-      tenant-less system entries. `0` keeps the whole audit log.
+      tenant-less system entries. `0` keeps the whole audit log. See [Audit log](/operate/audit-log/).
   retention.usage_events_days:
     edition: both
     description: >-
@@ -1459,8 +1482,8 @@ settings:
     edition: both
     description: >-
       SPA polling cadence for DAG / DagRun / task-instance state. `0` falls back
-      to the production-safe 30s default; `dexaflow lite` sets 1s for a snappy inner
-      loop. Helm: `ui.autoRefreshIntervalSeconds`, which the chart omits entirely
+      to the 5s default (30s before v0.6.0); `dexaflow lite` sets 1s for a snappy
+      inner loop. Helm: `ui.autoRefreshIntervalSeconds`, which the chart omits entirely
       when unset so the server default decides.
   ui.edition:
     edition: both
@@ -1469,7 +1492,7 @@ settings:
       `cluster` for the Helm chart on Kubernetes, `lite` for the installable binary.
       `pro` is the earlier name of `cluster` and is still accepted; the Helm chart
       currently sets `pro`. `cluster` turns
-      on named pools, allows `auth.provider: oidc`, enforces TLS on the agent channel
+      on named pools unless `scheduler.pools.enabled` says otherwise, allows `auth.provider: oidc`, enforces TLS on the agent channel
       and shows the gold CLUSTER badge; `lite` shows the silver LITE badge. Empty or
       any other value shows no badge.
   ui.workspace:

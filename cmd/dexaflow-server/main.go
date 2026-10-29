@@ -256,10 +256,36 @@ func run() error {
 	// scheduler-only pod (ADR 0049), which serves no API, still has a probe target
 	// for the kubelet. Additive on the api/"all" role, whose probes still hit the
 	// HTTP port.
-	metricsSrv := newHTTPServer(cfg.Server.MetricsAddr, api.ObservabilityHandler(tel.Registry, checks, observabilityOptions(cfg)...), cfg)
+	metricsSrv := newHTTPServer(cfg.Server.MetricsAddr, api.ObservabilityHandler(tel.Registry, checks, append(observabilityOptions(cfg), api.WithLivenessCheck(schedulerStallCheck(cfg, schedulerHealth)))...), cfg)
 
 	tel.Logger.Info("dexaflow-server started", "role", cfg.Server.EffectiveRole(), "http_addr", cfg.Server.HTTPAddr, "metrics_addr", cfg.Server.MetricsAddr, "serves_api", servesAPI, "serves_scheduler", servesScheduler)
 	return serveExit(ctx, serveHTTP(ctx, tel.Logger, servesAPI, apiSrv, metricsSrv))
+}
+
+// stallReporter is the in-process scheduler's view of its own loop. The api
+// role's LeaderHealthReader does not have it: a pod must not be restarted for
+// a scheduler that runs in another process.
+type stallReporter interface {
+	StalledFor(limit time.Duration) (bool, time.Time)
+}
+
+// schedulerStallCheck is the liveness check of server.liveness_scheduler_stall
+// (#539): it fails while this process leads the scheduler and its loop has not
+// started an iteration within the limit, so the kubelet restarts the pod and
+// another replica takes the lease. Nil, leaving /healthz unconditional, when
+// the setting is 0 or this process runs no scheduler.
+func schedulerStallCheck(cfg *config.ServerConfig, health api.Heartbeater) api.LivenessCheck {
+	limit := cfg.Server.LivenessSchedulerStall
+	reporter, ok := health.(stallReporter)
+	if limit <= 0 || !ok {
+		return nil
+	}
+	return func() error {
+		if stalled, last := reporter.StalledFor(limit); stalled {
+			return fmt.Errorf("scheduler leader has not ticked since %s (server.liveness_scheduler_stall %s)", last.Format(time.RFC3339), limit)
+		}
+		return nil
+	}
 }
 
 // observabilityOptions maps the observability.metrics config and

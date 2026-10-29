@@ -556,13 +556,8 @@ func TestCIScriptDeploysWhatChanged(t *testing.T) {
 	head := gitIn(t, root, "rev-parse", "HEAD")
 
 	bin := t.TempDir()
-	writeTree(t, filepath.Join(bin, "dexaflow"), fakeDexaflow)
-	writeTree(t, filepath.Join(bin, "uv"), "#!/bin/sh\necho uv 0.12.24\n")
-	for _, f := range []string{"dexaflow", "uv"} {
-		if err := os.Chmod(filepath.Join(bin, f), 0o700); err != nil { //nolint:gosec // a test executable
-			t.Fatal(err)
-		}
-	}
+	writeExecutable(t, filepath.Join(bin, "dexaflow"), fakeDexaflow)
+	writeExecutable(t, filepath.Join(bin, "uv"), "#!/bin/sh\necho uv 0.12.24\n")
 	runScript := func(base, token, status string, extra ...string) (log, summary, output string, err error) {
 		dir := t.TempDir()
 		logPath, sumPath := filepath.Join(dir, "log"), filepath.Join(dir, "summary.md")
@@ -805,10 +800,7 @@ func TestCIInitGitLabDefaultBranch(t *testing.T) {
 func fakeTool(t *testing.T, name, script string) string {
 	t.Helper()
 	dir := t.TempDir()
-	writeTree(t, filepath.Join(dir, name), script)
-	if err := os.Chmod(filepath.Join(dir, name), 0o700); err != nil { //nolint:gosec // a test executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, filepath.Join(dir, name), script)
 	return dir
 }
 

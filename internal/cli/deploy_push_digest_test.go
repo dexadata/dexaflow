@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -28,9 +27,7 @@ func buildxBuilder(t *testing.T, digest string) (builder, log string) {
 		"  prev=\"$a\"\n" +
 		"done\n" +
 		"exit 0\n"
-	if err := os.WriteFile(builder, []byte(script), 0o700); err != nil { //nolint:gosec // a test fixture that must be executable
-		t.Fatal(err)
-	}
+	writeExecutable(t, builder, script)
 	return builder, log
 }
 

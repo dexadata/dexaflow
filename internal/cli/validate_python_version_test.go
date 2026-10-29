@@ -212,9 +212,7 @@ func TestValidateActuallyConsultsPythonVersion(t *testing.T) {
 	stubDir := t.TempDir()
 	stub := "#!/bin/sh\ncase \"$1\" in --version) echo 'Python 3.12.0'; exit 0;; esac\n" +
 		"echo 'SyntaxError: invalid syntax' >&2\nexit 1\n"
-	if err := os.WriteFile(filepath.Join(stubDir, "python3"), []byte(stub), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, filepath.Join(stubDir, "python3"), stub)
 	t.Setenv("PATH", stubDir)
 	t.Setenv("HOME", t.TempDir()) // no managed interpreter either
 

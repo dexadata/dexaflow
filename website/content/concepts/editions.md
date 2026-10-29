@@ -174,6 +174,34 @@ the PodDisruptionBudget turns itself on when the control plane runs more than on
 replica (see [Control-plane HA](/operate/control-plane-ha/)). Runs on any K8s
 cluster with external Postgres + Redis.
 
+### What CI proves, and what it does not
+
+Every claim about Cluster rests on one of three kinds of evidence. Knowing
+which tells you what to check on your own cluster before you rely on it.
+
+- **Run on a real cluster in CI.** The pod-per-task e2e suites run on k3d for
+  every pull request: task pods, RBAC, the pod lifecycle, timeouts and the
+  reconciler. When the chart changes, a kind cluster with Calico and an NFS
+  StorageClass checks that the NetworkPolicies are enforced (k3d does not
+  enforce them) and that a ReadWriteMany log volume is shared by the API and
+  the scheduler.
+- **Checked as a contract in CI.** What a cloud controller reads from the
+  chart is asserted on the rendered manifests: load balancer annotations reach
+  the Service verbatim, and the log volume claims the StorageClass and access
+  mode you set. The S3 and GCS log backends run their real cloud clients
+  against an S3 API (LocalStack) and a GCS emulator (fake-gcs-server) in the
+  integration suite. These prove the request Dexaflow makes, not what the
+  cloud does with it.
+- **Not tested in CI.** Cloud IAM for pods (IRSA, Workload Identity) granting
+  what it should, a cloud load balancer actually provisioning, a provider's
+  CNI (such as the AWS VPC CNI) enforcing a policy as narrowly as written,
+  failure domains across several nodes, Kubernetes minor versions other than
+  the one CI runs, and cloud latency, throttling and consistency. These are
+  checked by hand on a short-lived cluster before a release candidate, with
+  the [cluster validation runbook](https://github.com/dexadata/dexaflow/blob/main/test/release/rc-cluster-validation.md),
+  and a release says which rows it ran. Check them on your own cluster before
+  you depend on them.
+
 ### Deployment topology (role split)
 
 Cluster can run the control plane as **one process** or **split into two deployments**

@@ -121,6 +121,9 @@ var serverDefaults = map[string]any{
 	"scheduler.loop_interval_ms":          1000,
 	"scheduler.enabled":                   true,
 	"scheduler.pool_starvation_threshold": "60s",
+	// No value: unset means follow the edition (PoolsEnabled). The key is
+	// listed so the environment can set it.
+	"scheduler.pools.enabled": nil,
 	// Off by default (ADR 0062 feature gate): promotion keeps its one-step-per-
 	// tick cadence until an operator opts in.
 	"scheduler.eager_promotion": false,
@@ -234,7 +237,7 @@ var serverDefaults = map[string]any{
 	// AutomaticEnv only binds env vars for keys it has seen via SetDefault or
 	// SetConfigFile. Without this line LEOFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS
 	// was silently dropped, so `dexaflow lite` (which exports the env var to
-	// poll every 1s) was actually running at the 30s production default.
+	// poll every 1s) was actually running at the 30s default of the time.
 	"ui.auto_refresh_interval_seconds":                0,
 	"auth.dev_no_auth":                                false,
 	"auth.service_token":                              "",
@@ -283,6 +286,8 @@ var serverDefaults = map[string]any{
 	"server.idle_timeout": "0s",
 	// The /readyz budget every earlier release hardcoded (#1050).
 	"server.probe_budget": "2s",
+	// Gate (ADR 0062): 0 keeps /healthz unconditional (#539).
+	"server.liveness_scheduler_stall": "0s",
 	// Trace sampling gates (ADR 0062): the defaults trace every request.
 	"observability.otel.sample_ratio":     1.0,
 	"observability.otel.skip_probe_spans": false,
