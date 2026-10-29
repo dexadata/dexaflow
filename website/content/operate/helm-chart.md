@@ -281,6 +281,42 @@ The readiness check runs on its own dedicated database connection, separate from
 the pool serving API traffic, so a saturated control plane does not make every
 replica report itself unready at the same moment.
 
+## UI refresh interval
+
+The bundled UI polls DAG, run and task-instance state on a fixed interval.
+`ui.autoRefreshIntervalSeconds` sets it; left empty, the chart renders nothing
+and the server uses 30 seconds. Every open browser tab polls on its own, so the
+load grows with the number of tabs, not of users.
+
+What one refresh costs was measured in
+[Experiment 4](https://github.com/dexadata/dexaflow/blob/main/test/load/BASELINE.md#ui-refresh-cycle):
+a DAG or run page with a run in progress sends 9 requests and runs about 27
+database transactions per cycle, and one api process with Postgres on the same
+4 vCPU host sustained about 280 such cycles per second. Read as capacity:
+
+| Interval | Tabs of such a page one host serves | Transactions per second for 50 tabs |
+|---|---:|---:|
+| 30 s (default) | about 8,400 | about 45 |
+| 10 s | about 2,800 | about 135 |
+| 5 s | about 1,400 | about 270 |
+| 1 s | about 280 | about 1,350 |
+
+Those are ceilings for a host doing nothing else; size against your own DAG
+count and leave room for the scheduler and the API traffic that is not the UI.
+A team that watches runs progress usually wants 5 or 10 seconds, and a busy
+shared database is the reason to stay at 30:
+
+```yaml
+ui:
+  autoRefreshIntervalSeconds: 10
+```
+
+A zero or negative value is not a faster refresh: the server falls back to 30
+seconds, so a misconfigured value cannot drop the interval to 0. The default is
+due to be revisited in v0.6.0 with an upgrade note
+([#1196](https://github.com/dexadata/dexaflow/issues/1196)); a patch release
+does not change it.
+
 ## Memory limit for the Go runtime
 
 The Go runtime does not read the container memory limit on its own. Without a

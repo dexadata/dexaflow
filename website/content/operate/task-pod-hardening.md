@@ -103,6 +103,49 @@ finished but not yet been garbage-collected.
 `restricted`-enforcing namespace with `readOnlyRootFilesystem: true`, running a
 hybrid DAG whose dbt models materialized normally.
 
+## Task-pod network policy
+
+`taskNetworkPolicy.enabled` renders a NetworkPolicy in the task namespace that
+selects every task pod by its `leoflow.io/run-id` label. It is off by default.
+Task pods run code your DAG authors wrote, and this is the network-layer
+control for it. Turned on, it:
+
+- denies all ingress to task pods (the agent dials out, nothing dials in);
+- allows DNS and the agent's connection back to the control-plane gRPC port;
+- allows all other egress except the cloud metadata range `169.254.0.0/16`,
+  plus any CIDRs in `taskNetworkPolicy.extraExcept`.
+
+```yaml
+taskNetworkPolicy:
+  enabled: true
+```
+
+Check these before you turn it on:
+
+- **Your CNI must enforce NetworkPolicy.** On one that does not, the object is
+  created and changes nothing.
+- **Tasks that use the metadata endpoint stop reaching it.** That is keyless
+  auth through GKE Workload Identity or EKS Pod Identity, and anything else
+  reading instance metadata from a task. Re-allow the single host with
+  `taskNetworkPolicy.allowMetadataEgress`, as
+  [External secrets](/operate/external-secrets/) shows. AWS IRSA needs nothing.
+- **Anything that connects into a running task pod is refused.** A DAG that
+  only calls out is unaffected.
+- **Internal services stay reachable** unless you also set
+  `taskNetworkPolicy.blockPrivateNetworks`, which denies the RFC 1918 ranges
+  and with them, on most clusters, the apiserver. Turn that on only when no DAG
+  calls an internal service, or allow those services back with
+  `taskNetworkPolicy.extraEgress`.
+
+To verify, run a task that calls `http://169.254.169.254/` and one that calls a
+service it needs: the first must time out and the second must answer.
+
+The policy is planned to be on by default from v0.6.0, with `enabled: false`
+as the opt-out and an upgrade note
+([#539](https://github.com/dexadata/dexaflow/issues/539)). A patch release
+does not change it, so setting `enabled` explicitly now, either way, keeps an
+upgrade to v0.6.0 from changing what your tasks can reach.
+
 ## Memory limits, and what happens without one
 
 A task pod gets the CPU, memory and ephemeral-storage `requests` and `limits` the
