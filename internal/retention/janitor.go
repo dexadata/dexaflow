@@ -1,6 +1,7 @@
 // Package retention deletes metadata rows past an operator-configured age. It
-// is opt-in per data class and runs on the scheduler leader only: every class
-// is off by default, so a default install never deletes a row. Deletes are
+// is opt-in per data class and runs on the scheduler leader only: runs and the
+// audit log are kept by default, and the usage events (ADR 0096), which exist
+// only once an operator turns their recording on, keep a 30 day window. Deletes are
 // tenant scoped, bounded per statement, paused between batches and capped per
 // cycle, so the janitor never turns into one long DELETE that holds locks or
 // floods the WAL.
@@ -20,6 +21,7 @@ const (
 	TableTaskInstanceHistory = "task_instance_history"
 	TableXComIndex           = "xcom_index"
 	TableAuditLog            = "audit_log"
+	TableUsageEvents         = "usage_events"
 )
 
 // maxRunsPerBatch bounds the runs one DeleteFinishedRuns call removes. Every
@@ -37,6 +39,7 @@ type Counts struct {
 	TaskInstanceHistory int64
 	XComIndex           int64
 	AuditLog            int64
+	UsageEvents         int64
 	// Capped reports that a dry-run count stopped at its per-tenant cap, so
 	// the counts are a lower bound. Deletes never set it.
 	Capped bool
@@ -50,13 +53,14 @@ func (c Counts) Add(o Counts) Counts {
 		TaskInstanceHistory: c.TaskInstanceHistory + o.TaskInstanceHistory,
 		XComIndex:           c.XComIndex + o.XComIndex,
 		AuditLog:            c.AuditLog + o.AuditLog,
+		UsageEvents:         c.UsageEvents + o.UsageEvents,
 		Capped:              c.Capped || o.Capped,
 	}
 }
 
 // Total is the number of rows across every table.
 func (c Counts) Total() int64 {
-	return c.DagRuns + c.TaskInstances + c.TaskInstanceHistory + c.XComIndex + c.AuditLog
+	return c.DagRuns + c.TaskInstances + c.TaskInstanceHistory + c.XComIndex + c.AuditLog + c.UsageEvents
 }
 
 func (c Counts) byTable() map[string]int64 {
@@ -66,6 +70,7 @@ func (c Counts) byTable() map[string]int64 {
 		TableTaskInstanceHistory: c.TaskInstanceHistory,
 		TableXComIndex:           c.XComIndex,
 		TableAuditLog:            c.AuditLog,
+		TableUsageEvents:         c.UsageEvents,
 	}
 }
 
@@ -81,9 +86,13 @@ type Store interface {
 	// DeleteAuditLog removes up to limit audit rows of tenant older than cutoff.
 	// An empty tenant means the tenant-less system rows.
 	DeleteAuditLog(ctx context.Context, tenant string, cutoff time.Time, limit int) (int64, error)
+	// DeleteUsageEvents removes up to limit usage events older than cutoff,
+	// oldest first in the order the service API serves them, and moves the
+	// pruned mark past them in the same transaction.
+	DeleteUsageEvents(ctx context.Context, cutoff time.Time, limit int) (int64, error)
 	// CountEligible counts what a cycle would delete, summed across all tenants;
 	// a nil cutoff skips that class.
-	CountEligible(ctx context.Context, runCutoff, auditCutoff *time.Time) (Counts, error)
+	CountEligible(ctx context.Context, runCutoff, auditCutoff, usageCutoff *time.Time) (Counts, error)
 	// RecordRetentionPurge writes an audit entry for rows of the audit log a
 	// cycle deleted in the scope of tenant ("" is the system rows).
 	RecordRetentionPurge(ctx context.Context, tenant string, rows int64, cutoff time.Time) error
@@ -100,6 +109,7 @@ type Recorder interface {
 type Config struct {
 	DagRunsDays     int
 	AuditLogDays    int
+	UsageEventsDays int
 	DryRun          bool
 	BatchSize       int
 	BatchPause      time.Duration
@@ -107,7 +117,9 @@ type Config struct {
 }
 
 // Enabled reports whether any class is configured.
-func (c Config) Enabled() bool { return c.DagRunsDays > 0 || c.AuditLogDays > 0 }
+func (c Config) Enabled() bool {
+	return c.DagRunsDays > 0 || c.AuditLogDays > 0 || c.UsageEventsDays > 0
+}
 
 // Janitor runs retention cycles.
 type Janitor struct {
@@ -134,11 +146,13 @@ type cycle struct {
 	done Counts
 }
 
-// lane is one stream of batches in a cycle: one tenant's runs, or one scope's
-// audit rows ("" is the tenant-less system rows).
+// lane is one stream of batches in a cycle: one tenant's runs, one scope's
+// audit rows ("" is the tenant-less system rows), or the usage events of every
+// tenant.
 type lane struct {
 	tenant string
 	audit  bool
+	usage  bool
 	cutoff time.Time
 	done   bool
 	purged int64
@@ -187,6 +201,9 @@ func (j *Janitor) lanes(tenants []string) []*lane {
 			out = append(out, &lane{tenant: t, audit: true, cutoff: cutoff})
 		}
 	}
+	if j.cfg.UsageEventsDays > 0 {
+		out = append(out, &lane{usage: true, cutoff: j.now().Add(-days(j.cfg.UsageEventsDays))})
+	}
 	return out
 }
 
@@ -227,6 +244,15 @@ func (j *Janitor) roundRobin(ctx context.Context, c *cycle, lanes []*lane) error
 // whichever is smaller, so a cycle never deletes more than the cap.
 func (j *Janitor) batch(ctx context.Context, c *cycle, l *lane) (int64, error) {
 	limit := min(int64(j.cfg.BatchSize), j.budget(c))
+	if l.usage {
+		n, err := j.store.DeleteUsageEvents(ctx, l.cutoff, int(limit))
+		if err != nil {
+			return 0, err
+		}
+		j.record(c, Counts{UsageEvents: n})
+		l.done = n < limit
+		return n, nil
+	}
 	if l.audit {
 		n, err := j.store.DeleteAuditLog(ctx, l.tenant, l.cutoff, int(limit))
 		if err != nil {
@@ -274,7 +300,7 @@ func (j *Janitor) resetEligible() {
 }
 
 func (j *Janitor) countOnly(ctx context.Context) (Counts, error) {
-	var runCutoff, auditCutoff *time.Time
+	var runCutoff, auditCutoff, usageCutoff *time.Time
 	if j.cfg.DagRunsDays > 0 {
 		t := j.now().Add(-days(j.cfg.DagRunsDays))
 		runCutoff = &t
@@ -283,7 +309,11 @@ func (j *Janitor) countOnly(ctx context.Context) (Counts, error) {
 		t := j.now().Add(-days(j.cfg.AuditLogDays))
 		auditCutoff = &t
 	}
-	got, err := j.store.CountEligible(ctx, runCutoff, auditCutoff)
+	if j.cfg.UsageEventsDays > 0 {
+		t := j.now().Add(-days(j.cfg.UsageEventsDays))
+		usageCutoff = &t
+	}
+	got, err := j.store.CountEligible(ctx, runCutoff, auditCutoff, usageCutoff)
 	if err != nil {
 		return Counts{}, err
 	}
@@ -294,7 +324,7 @@ func (j *Janitor) countOnly(ctx context.Context) (Counts, error) {
 	}
 	j.logger.Info("retention dry run: rows eligible for deletion, summed across all tenants",
 		"dag_runs", got.DagRuns, "task_instances", got.TaskInstances, "audit_log", got.AuditLog,
-		"lower_bound", got.Capped)
+		"usage_events", got.UsageEvents, "lower_bound", got.Capped)
 	return got, nil
 }
 
@@ -335,7 +365,7 @@ func (j *Janitor) RunCycle(ctx context.Context) {
 		j.logger.Error("retention cycle", "error", err, "rows_deleted", got.Total())
 	case !j.cfg.DryRun && got.Total() > 0:
 		j.logger.Info("retention cycle", "dag_runs", got.DagRuns, "task_instances", got.TaskInstances,
-			"audit_log", got.AuditLog, "rows_deleted", got.Total())
+			"audit_log", got.AuditLog, "usage_events", got.UsageEvents, "rows_deleted", got.Total())
 	}
 }
 

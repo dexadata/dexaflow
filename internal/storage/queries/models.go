@@ -439,6 +439,13 @@ type UsageEventRevision struct {
 	Revision       int32       `json:"revision"`
 }
 
+type UsageEventsPruned struct {
+	ID       bool               `json:"id"`
+	Xid      pgtype.Uint64      `json:"xid"`
+	EventID  *int64             `json:"event_id"`
+	PrunedAt pgtype.Timestamptz `json:"pruned_at"`
+}
+
 type UsageEventsSwitch struct {
 	ID        bool               `json:"id"`
 	Enabled   bool               `json:"enabled"`
