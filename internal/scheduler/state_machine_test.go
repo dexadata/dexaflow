@@ -21,20 +21,19 @@ var allTaskStates = []domain.TaskState{
 }
 
 // allowedTaskTransitions is the test's independent source of truth for the task
-// state machine; the implementation must agree with it on all 121 pairs.
-//
-// Only a clear writes removed (ADR 0086): it marks removed a task instance
-// that is not queued or running when the run's new version drops its task,
-// and brings a removed one back to none when the task returns.
+// state machine; the implementation must agree with it on all 121 pairs. It
+// matches what the storage queries and the planner do (#2146): the agent can
+// report before queued is recorded, a clear resets any state to none, and only
+// a clear writes removed (ADR 0086), never on a queued or running task.
 var allowedTaskTransitions = map[domain.TaskState][]domain.TaskState{
-	domain.TaskStateNone:            {domain.TaskStateScheduled, domain.TaskStateSkipped, domain.TaskStateUpstreamFailed, domain.TaskStateRemoved},
-	domain.TaskStateScheduled:       {domain.TaskStateQueued, domain.TaskStateRemoved},
-	domain.TaskStateQueued:          {domain.TaskStateRunning, domain.TaskStateFailed, domain.TaskStateUpForRetry},
-	domain.TaskStateRunning:         {domain.TaskStateSuccess, domain.TaskStateFailed, domain.TaskStateUpForRetry, domain.TaskStateUpForReschedule},
-	domain.TaskStateUpForRetry:      {domain.TaskStateScheduled, domain.TaskStateQueued, domain.TaskStateNone, domain.TaskStateRemoved},
-	domain.TaskStateUpForReschedule: {domain.TaskStateScheduled, domain.TaskStateQueued, domain.TaskStateNone, domain.TaskStateRemoved},
+	domain.TaskStateNone:            {domain.TaskStateScheduled, domain.TaskStateSkipped, domain.TaskStateUpstreamFailed, domain.TaskStateRunning, domain.TaskStateSuccess, domain.TaskStateFailed, domain.TaskStateRemoved},
+	domain.TaskStateScheduled:       {domain.TaskStateQueued, domain.TaskStateFailed, domain.TaskStateRunning, domain.TaskStateSuccess, domain.TaskStateSkipped, domain.TaskStateUpForReschedule, domain.TaskStateNone, domain.TaskStateRemoved},
+	domain.TaskStateQueued:          {domain.TaskStateRunning, domain.TaskStateSuccess, domain.TaskStateFailed, domain.TaskStateSkipped, domain.TaskStateUpForReschedule, domain.TaskStateScheduled, domain.TaskStateNone},
+	domain.TaskStateRunning:         {domain.TaskStateSuccess, domain.TaskStateFailed, domain.TaskStateSkipped, domain.TaskStateUpForReschedule, domain.TaskStateNone},
+	domain.TaskStateUpForRetry:      {domain.TaskStateNone, domain.TaskStateRemoved},
+	domain.TaskStateUpForReschedule: {domain.TaskStateNone, domain.TaskStateRemoved},
 	domain.TaskStateSuccess:         {domain.TaskStateNone, domain.TaskStateRemoved},
-	domain.TaskStateFailed:          {domain.TaskStateNone, domain.TaskStateRemoved},
+	domain.TaskStateFailed:          {domain.TaskStateUpForRetry, domain.TaskStateNone, domain.TaskStateSuccess, domain.TaskStateRemoved},
 	domain.TaskStateSkipped:         {domain.TaskStateNone, domain.TaskStateRemoved},
 	domain.TaskStateUpstreamFailed:  {domain.TaskStateNone, domain.TaskStateRemoved},
 	domain.TaskStateRemoved:         {domain.TaskStateNone},
@@ -67,8 +66,8 @@ var allDagRunStates = []domain.DagRunState{
 }
 
 var allowedDagRunTransitions = map[domain.DagRunState][]domain.DagRunState{
-	domain.DagRunStateQueued:  {domain.DagRunStateRunning, domain.DagRunStateFailed},
-	domain.DagRunStateRunning: {domain.DagRunStateSuccess, domain.DagRunStateFailed},
+	domain.DagRunStateQueued:  {domain.DagRunStateRunning},                                                     // a queued run finalizes only after it starts
+	domain.DagRunStateRunning: {domain.DagRunStateSuccess, domain.DagRunStateFailed, domain.DagRunStateQueued}, // a clear re-opens a running run
 	domain.DagRunStateSuccess: {domain.DagRunStateQueued},
 	domain.DagRunStateFailed:  {domain.DagRunStateQueued},
 }
