@@ -886,7 +886,8 @@ before enabling it in production.
 ### Retention (`retention.*`)
 
 The retention janitor deletes metadata rows past an age you choose, per data
-class. Every class is off by default (`0` days): a default install never
+class; [Data retention](/operate/data-retention/) walks through turning it on.
+Every class is off by default (`0` days): a default install never
 deletes a row. It runs on the scheduler leader only and rechecks leadership
 before every batch. A run is eligible once it settled (`success` or `failed`)
 more than `dag_runs_days` ago, every task instance of it is settled
