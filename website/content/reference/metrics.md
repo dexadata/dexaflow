@@ -74,10 +74,12 @@ The table is generated from the collectors the server registers: run
 | `dexaflow_scheduler_woken_ticks_total` | counter | _(none)_ | Scheduler ticks started early by a task completion instead of the loop interval (scheduler.eager_promotion). |
 | `dexaflow_schema_ready` | gauge | `reason` | 1 when the database schema is one this binary can serve, 0 while it waits for it, with the reason (schema absent, schema behind, schema dirty, schema unreadable). Alert on 0 for 5 minutes. |
 | `dexaflow_schema_wait_seconds` | gauge | _(none)_ | Seconds since this process found its database schema not ready, 0 when it is ready. |
+| `dexaflow_task_attempts_total` | counter | `tenant`, `state` | Finished task attempts by tenant and the state each first ended in, from the usage events; with observability.usage_metrics on. Counted by the scheduler leader from the moment it took the lead. |
 | `dexaflow_task_cold_start_seconds` | histogram | `dag_id` | Task cold start time. |
 | `dexaflow_task_duration_seconds` | histogram | `dag_id`, `task_id`, `task_type` | Task execution duration. |
 | `dexaflow_task_pod_creation_duration_seconds` | histogram | _(none)_ | Time to create a task pod. |
 | `dexaflow_task_retries_total` | counter | `dag_id`, `task_id` | Task retries. |
+| `dexaflow_task_slot_seconds_total` | counter | `tenant` | Pool slots times run time of finished task attempts by tenant, from the usage events; with observability.usage_metrics on. Counted by the scheduler leader from the moment it took the lead. |
 | `dexaflow_task_state_transitions_total` | counter | `from_state`, `to_state`, `dag_id` | Task state transitions. |
 | `dexaflow_tasks_undispatchable_total` | counter | `reason` | Tasks queued with no executor to launch them, by reason. |
 | `dexaflow_tls_reload_failures_total` | counter | `listener` | Rotated TLS certificate or key files that failed to load, by listener (api, agent_grpc). The listener keeps serving the last good certificate; alert on any increase (#637). |

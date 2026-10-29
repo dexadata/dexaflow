@@ -1,0 +1,10 @@
+kind: Added
+body: |-
+  **Per-tenant usage counters, and a page on reading usage.** With
+  `observability.usage_metrics` on (off by default, one series per tenant),
+  the scheduler leader exports `dexaflow_task_attempts_total{tenant,state}`
+  and `dexaflow_task_slot_seconds_total{tenant}` from the usage events, so
+  they and the service API never disagree. The new operate page "Read usage
+  per tenant" covers turning recording on, the event key, a consumer loop,
+  the lag and the counters. (#2174)
+time: 2026-10-28T21:30:00.000000000+00:00

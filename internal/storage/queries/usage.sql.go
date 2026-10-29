@@ -209,6 +209,20 @@ func (q *Queries) SetUsageEventsEnabled(ctx context.Context, enabled bool) (int6
 	return result.RowsAffected(), nil
 }
 
+const usageEventsHorizon = `-- name: UsageEventsHorizon :one
+SELECT pg_snapshot_xmin(pg_current_snapshot())::xid8 AS horizon
+`
+
+// The oldest transaction still running, or the next to start: every event
+// served now has a lower xid, and every event committed later a higher or
+// equal one.
+func (q *Queries) UsageEventsHorizon(ctx context.Context) (pgtype.Uint64, error) {
+	row := q.db.QueryRow(ctx, usageEventsHorizon)
+	var horizon pgtype.Uint64
+	err := row.Scan(&horizon)
+	return horizon, err
+}
+
 const usageEventsLagSeconds = `-- name: UsageEventsLagSeconds :one
 SELECT COALESCE(EXTRACT(EPOCH FROM now() - min(e.recorded_at)), 0)::float8 AS lag_seconds
 FROM usage_events e
