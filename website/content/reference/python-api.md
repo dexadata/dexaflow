@@ -31,6 +31,10 @@ never drifts from the package.
 
 Modules documented there:
 
+- `dexaflow`: the authoring primitives a `dag.py` imports, today
+  `dbt_group(name)`, which embeds a dbt project declared under `dbt_groups:` in
+  `dexaflow.yaml` as a task group (see [dbt](/author-dags/dbt/)). DAGs written
+  before the rename import the same names from `leoflow`.
 - `leoflow_runtime` — the package entry points (`run`, `xcom_pull`).
 - `leoflow_runtime.runner` — executes the task callable and captures its result.
 - `leoflow_runtime.xcom` — reads and writes XCom from inside the task container.

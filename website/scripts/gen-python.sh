@@ -24,6 +24,7 @@ PYTHON="${PYTHON:-python3}"
 # Modules to document: the package plus its public submodules. __main__ (the
 # CLI entry point) is intentionally omitted — it is not part of the API.
 MODULES=(
+  dexaflow
   leoflow_runtime
   leoflow_runtime.runner
   leoflow_runtime.xcom
@@ -35,7 +36,16 @@ if [ ! -x "${VENV}/bin/pdoc" ]; then
   "${PYTHON}" -m venv "${VENV}"
 fi
 "${VENV}/bin/pip" install -q --upgrade pip
-"${VENV}/bin/pip" install -q pdoc "${REPO_ROOT}/runtime/python"
+# The authoring package (`dexaflow`, with `dbt_group`) derives from the Task
+# SDK's BaseOperator, so pdoc can only import it with the SDK installed. The
+# version is the one the task base image installs (runtime/Dockerfile), so the
+# reference describes the same class hierarchy a task pod runs (#1004).
+SDK_VERSION="$(sed -n 's/^ARG AIRFLOW_TASK_SDK_VERSION=//p' "${REPO_ROOT}/runtime/Dockerfile")"
+if [ -z "${SDK_VERSION}" ]; then
+  echo "gen-python: no AIRFLOW_TASK_SDK_VERSION in runtime/Dockerfile" >&2
+  exit 1
+fi
+"${VENV}/bin/pip" install -q pdoc "${REPO_ROOT}/runtime/python" "apache-airflow-task-sdk==${SDK_VERSION}"
 
 echo "gen-python: rendering ${#MODULES[@]} modules into ${OUT_DIR}"
 rm -rf "${OUT_DIR}"

@@ -9,6 +9,14 @@ weight: 43
 
 Scaffold a new DAG project (dexaflow.yaml + dag.py).
 
+### Synopsis
+
+Scaffold a new DAG project (dexaflow.yaml + dag.py).
+
+With --dbt the project embeds a dbt project as a task group: a dag.py with Python
+tasks around dbt_group("transform"), and a duckdb dbt project under transform/
+that runs under `dexaflow lite` with no warehouse to set up.
+
 ```
 dexaflow init <path> [flags]
 ```
@@ -16,6 +24,7 @@ dexaflow init <path> [flags]
 ### Options
 
 ```
+      --dbt    scaffold a DAG that embeds a duckdb dbt project as a task group
   -h, --help   help for init
 ```
 

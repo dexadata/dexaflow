@@ -40,6 +40,18 @@
                     <a class="function" href="#run">run</a>
             </li>
             <li>
+                    <a class="class" href="#TemplateRenderError">TemplateRenderError</a>
+                            <ul class="memberlist">
+                        <li>
+                                <a class="function" href="#TemplateRenderError.__init__">TemplateRenderError</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#TemplateRenderError.field">field</a>
+                        </li>
+                </ul>
+
+            </li>
+            <li>
                     <a class="function" href="#run_bash">run_bash</a>
             </li>
             <li>
@@ -50,6 +62,18 @@
             </li>
             <li>
                     <a class="variable" href="#RESCHEDULE_EXIT_CODE">RESCHEDULE_EXIT_CODE</a>
+            </li>
+            <li>
+                    <a class="class" href="#NotProvidedError">NotProvidedError</a>
+                            <ul class="memberlist">
+                        <li>
+                                <a class="function" href="#NotProvidedError.__init__">NotProvidedError</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#NotProvidedError.name">name</a>
+                        </li>
+                </ul>
+
             </li>
             <li>
                     <a class="function" href="#run_operator">run_operator</a>
@@ -124,11 +148,54 @@ A None return writes nothing, so downstream tasks see no XCom.</p>
 <p>Emits three lifecycle lines so the UI's log panel is informative even when
 the user function is silent: <code>loading &lt;entrypoint&gt;</code>, <code>resolved kwargs:
 {...}</code> (when any), and <code>returned &lt;repr&gt;</code> (success) or no extra line on
-raise (the agent wraps the traceback). All three use <code>[leoflow]</code> prefix
+raise (the agent wraps the traceback). All three use <code>[dexaflow]</code> prefix
 via <code>_lifecycle()</code> so they are distinguishable from user <code>print()</code>.</p>
 </div>
 
 
+                </section>
+                <section id="TemplateRenderError">
+                    <div class="attr class">
+            
+    <span class="def">class</span>
+    <span class="name">TemplateRenderError</span><wbr>(<span class="base">builtins.RuntimeError</span>):
+
+        
+    </div>
+    <a class="headerlink" href="#TemplateRenderError"></a>
+    
+            <div class="docstring"><p>TemplateRenderError fails a task attempt whose templates cannot render.</p>
+
+<p>A template that fails to render must never run as its raw <code>{{ ... }}</code> text
+(#1845, ADR 0084): the attempt fails before <code>execute()</code> or <code>bash -c</code>, as on
+Airflow. <code><a href="#TemplateRenderError.field">field</a></code> names the template field that failed, or is None when it
+cannot be identified; the message carries the Jinja error.</p>
+</div>
+
+
+                            <div id="TemplateRenderError.__init__" class="classattr">
+                                <div class="attr function">
+            
+        <span class="name">TemplateRenderError</span><span class="signature pdoc-code condensed">(<span class="param"><span class="n">field</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span>, </span><span class="param"><span class="n">owner</span><span class="p">:</span> <span class="nb">str</span>, </span><span class="param"><span class="n">error</span><span class="p">:</span> <span class="ne">BaseException</span></span>)</span>
+
+        
+    </div>
+    <a class="headerlink" href="#TemplateRenderError.__init__"></a>
+    
+    
+
+                            </div>
+                            <div id="TemplateRenderError.field" class="classattr">
+                                <div class="attr variable">
+            <span class="name">field</span>
+
+        
+    </div>
+    <a class="headerlink" href="#TemplateRenderError.field"></a>
+    
+    
+
+                            </div>
                 </section>
                 <section id="run_bash">
                     <div class="attr function">
@@ -143,7 +210,8 @@ via <code>_lifecycle()</code> so they are distinguishable from user <code>print(
             <div class="docstring"><p>Render a bash command with the run context, then exec <code>bash -c</code> in place so
 bash's stdout/stderr/exit code flow to the agent unchanged (ADR 0040). The agent
 only routes a command here when it contains <code>{{</code> — plain bash stays a direct
-<code>bash -c</code> (no Python needed in bash-only images).</p>
+<code>bash -c</code> (no Python needed in bash-only images). A command that cannot render
+fails the attempt without running anything (ADR 0084).</p>
 </div>
 
 
@@ -183,6 +251,53 @@ only routes a command here when it contains <code>{{</code> — plain bash stays
     
     
 
+                </section>
+                <section id="NotProvidedError">
+                    <div class="attr class">
+            
+    <span class="def">class</span>
+    <span class="name">NotProvidedError</span><wbr>(<span class="base">builtins.AttributeError</span>):
+
+        
+    </div>
+    <a class="headerlink" href="#NotProvidedError"></a>
+    
+            <div class="docstring"><p>NotProvidedError is raised for a context attribute Dexaflow does not provide.</p>
+
+<p>The runtime builds the Airflow context itself (ADR 0040), so its task
+instance, task, DAG and DAG run objects carry the attributes the runtime has
+data for and no others. A provider that reaches for another one gets this
+error, which names the attribute, instead of a bare AttributeError deep inside
+the provider (#1843). It is an AttributeError, so <code>hasattr</code> and
+<code>getattr(obj, name, default)</code> keep working.</p>
+</div>
+
+
+                            <div id="NotProvidedError.__init__" class="classattr">
+                                <div class="attr function">
+            
+        <span class="name">NotProvidedError</span><span class="signature pdoc-code condensed">(<span class="param"><span class="n">owner</span><span class="p">:</span> <span class="nb">str</span>, </span><span class="param"><span class="n">name</span><span class="p">:</span> <span class="nb">str</span></span>)</span>
+
+        
+    </div>
+    <a class="headerlink" href="#NotProvidedError.__init__"></a>
+    
+    
+
+                            </div>
+                            <div id="NotProvidedError.name" class="classattr">
+                                <div class="attr variable">
+            <span class="name">name</span>
+
+        
+    </div>
+    <a class="headerlink" href="#NotProvidedError.name"></a>
+    
+            <div class="docstring"><p>attribute name</p>
+</div>
+
+
+                            </div>
                 </section>
                 <section id="run_operator">
                     <div class="attr function">

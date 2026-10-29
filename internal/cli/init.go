@@ -31,12 +31,21 @@ with DAG("%s", schedule="@daily", catchup=False, tags=["example"]):
 `
 
 func newInitCommand() *cobra.Command {
-	return &cobra.Command{
+	var withDbt bool
+	c := &cobra.Command{
 		Use:   "init <path>",
 		Short: "Scaffold a new DAG project (dexaflow.yaml + dag.py).",
-		Args:  cobra.ExactArgs(1),
+		Long: "Scaffold a new DAG project (dexaflow.yaml + dag.py).\n\n" +
+			"With --dbt the project embeds a dbt project as a task group: a dag.py with Python\n" +
+			"tasks around dbt_group(\"transform\"), and a duckdb dbt project under transform/\n" +
+			"that runs under `dexaflow lite` with no warehouse to set up.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			dagID, err := scaffoldProject(args[0])
+			scaffold := scaffoldProject
+			if withDbt {
+				scaffold = scaffoldDbtProject
+			}
+			dagID, err := scaffold(args[0])
 			if err != nil {
 				return err
 			}
@@ -49,6 +58,8 @@ func newInitCommand() *cobra.Command {
 			return err
 		},
 	}
+	c.Flags().BoolVar(&withDbt, "dbt", false, "scaffold a DAG that embeds a duckdb dbt project as a task group")
+	return c
 }
 
 // scaffoldProject writes a starter project (dexaflow.yaml + dag.py) into dir,
@@ -57,21 +68,37 @@ func newInitCommand() *cobra.Command {
 // which scaffolds into the workspace when it has no project yet.
 func scaffoldProject(dir string) (string, error) {
 	dagID := filepath.Base(filepath.Clean(dir))
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return "", fmt.Errorf("creating project directory: %w", err)
-	}
 	files := map[string]string{
 		projectConfigFile: fmt.Sprintf(leoflowTemplate, dagID),
 		"dag.py":          fmt.Sprintf(dagTemplate, dagID, dagID),
 		".gitignore":      gitignoreTemplate,
 	}
+	return dagID, writeProjectFiles(dir, files)
+}
+
+// scaffoldDbtProject writes the hybrid dbt starter (`dexaflow init --dbt`) into
+// dir and returns the derived dag id. See dbtScaffoldFiles for the shape.
+func scaffoldDbtProject(dir string) (string, error) {
+	dagID := filepath.Base(filepath.Clean(dir))
+	return dagID, writeProjectFiles(dir, dbtScaffoldFiles(dagID))
+}
+
+// writeProjectFiles creates dir and writes files into it. Keys are slash-separated
+// paths relative to dir; parent directories are created as needed.
+func writeProjectFiles(dir string, files map[string]string) error {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return fmt.Errorf("creating project directory: %w", err)
+	}
 	for name, content := range files {
-		p := filepath.Join(dir, name)
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			return fmt.Errorf("creating directory for %s: %w", name, err)
+		}
 		if err := os.WriteFile(p, []byte(content), 0o644); err != nil { //nolint:gosec // G306: scaffold files are non-sensitive source.
-			return "", fmt.Errorf("writing %s: %w", name, err)
+			return fmt.Errorf("writing %s: %w", name, err)
 		}
 	}
-	return dagID, nil
+	return nil
 }
 
 // gitignoreTemplate keeps the compiled artifact out of the author's repository.

@@ -1,0 +1,14 @@
+schema_version: "1.0"
+dag_id: dbt_hybrid
+description: Python tasks around an embedded dbt project (duckdb).
+python_version: "3.11"
+# dbt itself is a dependency of the DAG image. dbt-core is pinned next to the
+# adapter so pip cannot pick a dbt-core the adapter was not released with.
+dependencies:
+  - "dbt-core==1.9.*"
+  - "dbt-duckdb==1.9.*"
+# Each key is the name dag.py passes to dbt_group(). With no connection and no
+# profiles.yml in the project, dexaflow lite writes a local duckdb profile.
+dbt_groups:
+  transform:
+    project: transform
