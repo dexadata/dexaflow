@@ -117,6 +117,16 @@ vulnerabilities:
       and pip vendors the pure-Python msgpack; pip also runs with --no-cache-dir
       here. Fixed on pip's main branch (msgpack 1.2.1), not yet released (#1299).
     expired_at: 2026-12-31
+  - id: CVE-2026-114613
+    purls:
+      - pkg:pypi/msgpack@1.1.2
+    statement: >-
+      Memory leak in the msgpack C extension (msgpack._cmsgpack) when a map key
+      is rejected, in the msgpack 1.1.2 that pip 26.2.2 vendors. pip vendors the
+      pure-Python msgpack, which the advisory says is not affected, and uses it
+      only for its HTTP cache, off here (--no-cache-dir). No pip release vendors
+      msgpack 1.2.3 yet (#1299, #2247).
+    expired_at: 2026-12-31
   - id: CVE-2025-47273
     purls:
       - pkg:pypi/setuptools@70.3.0
