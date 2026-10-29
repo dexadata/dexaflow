@@ -367,6 +367,9 @@ type Querier interface {
 	// The id of a user of the tenant: no row when the user is gone or belongs to
 	// another tenant, so a stale token's subject records no creator.
 	GetTenantUserID(ctx context.Context, arg GetTenantUserIDParams) (pgtype.UUID, error)
+	// Whether recording is on and the pruned mark, read in the snapshot of the
+	// page they decide.
+	GetUsageEventsState(ctx context.Context) (GetUsageEventsStateRow, error)
 	GetUserByEmail(ctx context.Context, arg GetUserByEmailParams) (GetUserByEmailRow, error)
 	// The by-id lookup backing the per-request authz reload. Returns the tenant
 	// name (not the uuid) so the reconstructed principal matches the login path's
@@ -681,6 +684,12 @@ type Querier interface {
 	ListTenantIDs(ctx context.Context) ([]pgtype.UUID, error)
 	// "role:action:resource" for every grant of a tenant's built-in roles.
 	ListTenantRolePermissions(ctx context.Context, name string) ([]string, error)
+	// The events after the cursor in serving order, (xid, id), among those whose
+	// writing transaction is below the snapshot's xmin: every transaction that
+	// wrote them has finished, and every row written later sorts after them. The
+	// tenant name and the DAG and run ids are resolved here; they are empty once
+	// the tenant or the run is deleted.
+	ListUsageEvents(ctx context.Context, arg ListUsageEventsParams) ([]ListUsageEventsRow, error)
 	// One row per user in the tenant, newest first, with every granted role name
 	// aggregated into a text array (empty when the user holds none). Paged by the
 	// caller. Never selects password_hash — the list must not expose secrets.
@@ -1336,6 +1345,9 @@ type Querier interface {
 	// description is nullable, so it keeps the COALESCE preserve semantics: a NULL
 	// param keeps the stored description rather than wiping it.
 	UpsertVariable(ctx context.Context, arg UpsertVariableParams) error
+	// The age in seconds of the oldest event the route cannot serve yet, because
+	// a transaction older than it is still open; 0 when there is none.
+	UsageEventsLagSeconds(ctx context.Context) (float64, error)
 }
 
 var _ Querier = (*Queries)(nil)
