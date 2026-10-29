@@ -64,6 +64,10 @@ type Metrics struct {
 	// although they do not fit their size, by stage (register, dispatch;
 	// ADR 0066 §3).
 	UnitMisfits *prometheus.CounterVec
+	// Admissions counts the dispatch admission hooks' outcomes (ADR 0100);
+	// AdmissionDuration is how long the hook chain took for one attempt.
+	Admissions        *prometheus.CounterVec
+	AdmissionDuration prometheus.Histogram
 	// UnpinnedImages counts images not pinned by digest that
 	// deploy.require_digest warned about or refused, by stage (register,
 	// set_current) and outcome (warned, refused) (#1703).
@@ -243,6 +247,15 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "dexaflow_unit_misfit_total",
 			Help: "Tasks accepted under executor.unit.enforce=warn although their resources exceed pool_slots x unit, by stage (register, set_current, dispatch).",
 		}, []string{"stage"}),
+		Admissions: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_dispatch_admission_total",
+			Help: "Task attempts seen by the dispatch admission hooks (ADR 0100), by outcome (admitted, changed, held, refused, error, fail_open, breaker_open).",
+		}, []string{"outcome"}),
+		AdmissionDuration: f.NewHistogram(prometheus.HistogramOpts{
+			Name:    "dexaflow_dispatch_admission_duration_seconds",
+			Help:    "Time the dispatch admission hooks took for one task attempt.",
+			Buckets: []float64{0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1},
+		}),
 		UnpinnedImages: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_unpinned_image_total",
 			Help: "Images not pinned by digest that deploy.require_digest warned about (outcome=warned) or refused (outcome=refused), by stage (register, set_current). Dry runs are not counted.",
@@ -532,6 +545,13 @@ func (m *Metrics) RecordDispatchInnerError() { m.DispatchInnerErrors.Inc() }
 // although it does not fit its size. It satisfies dispatch.UnitMisfitRecorder
 // and api.UnitMisfitRecorder.
 func (m *Metrics) RecordUnitMisfit(stage string) { m.UnitMisfits.WithLabelValues(stage).Inc() }
+
+// RecordAdmission counts one attempt's admission outcome and how long the
+// hooks took. It satisfies dispatch.AdmissionRecorder.
+func (m *Metrics) RecordAdmission(outcome string, took time.Duration) {
+	m.Admissions.WithLabelValues(outcome).Inc()
+	m.AdmissionDuration.Observe(took.Seconds())
+}
 
 // RecordUnpinnedImage counts one image not pinned by digest that
 // deploy.require_digest warned about or refused at stage. It satisfies
