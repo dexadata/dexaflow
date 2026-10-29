@@ -1152,6 +1152,42 @@ settings:
       Ignored while source mode is off. See [Source
       mode](/operate/source-mode/#warm-workers). Helm:
       `execution.sourceMode.warmPools`.
+  execution.admission.webhook.url:
+    edition: both
+    description: >-
+      Ask this endpoint about every task attempt before it gets a credential or a
+      pod ([ADR 0100](/project/adrs/0100-dispatch-admission-hook/)). It answers
+      admit (optionally changing placement and pod metadata), hold or refuse. The
+      request carries the attempt's tenant, DAG, image, resources and execution
+      fields, never its environment, source, secrets or token. Must be `https`
+      unless the host is loopback. Empty (the default) installs no hook. See
+      [Admission hooks](/operate/admission-hooks/). Helm:
+      `execution.admission.webhook.url`.
+  execution.admission.webhook.ca_file:
+    edition: both
+    description: >-
+      PEM bundle the admission webhook's certificate must chain to, instead of the
+      system roots. Read at boot, so a changed bundle takes a restart. Helm:
+      `execution.admission.webhook.caConfigMap`.
+  execution.admission.webhook.token_file:
+    edition: both
+    description: >-
+      File holding a bearer token sent to the admission webhook as
+      `Authorization: Bearer`. Read on every call, so a rotated token is picked up
+      without a restart. Helm: `execution.admission.webhook.tokenSecret`.
+  execution.admission.timeout:
+    edition: both
+    description: >-
+      How long the dispatcher waits for each admission hook, at most `5s`. A hook
+      that does not answer in time holds the attempt like an error does. Helm:
+      `execution.admission.timeout`.
+  execution.admission.fail_open:
+    edition: both
+    description: >-
+      Admit an attempt unchanged when an admission hook errors, times out or is
+      skipped after repeated failures, instead of holding it until the hook is
+      back (and failing it after 15 minutes). A hook's own hold or refusal is
+      always applied. Logged at boot. Helm: `execution.admission.failOpen`.
   logs.dir:
     edition: both
     description: >-

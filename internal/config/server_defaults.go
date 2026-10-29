@@ -301,6 +301,12 @@ var serverDefaults = map[string]any{
 	"execution.source_mode.enabled":             false,
 	"execution.source_mode.image":               "",
 	"execution.source_mode.warm_pools":          false,
+	// Dispatch admission hooks (ADR 0100). An empty webhook URL installs none.
+	"execution.admission.timeout":            "500ms",
+	"execution.admission.fail_open":          false,
+	"execution.admission.webhook.url":        "",
+	"execution.admission.webhook.ca_file":    "",
+	"execution.admission.webhook.token_file": "",
 	// Event-driven warm-pool refill (ADR 0058). Registered so AutomaticEnv binds
 	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL; false keeps polling.
 	"execution.warm_pool_event_refill": false,

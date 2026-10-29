@@ -302,6 +302,19 @@ full sha256 digest (internal/config validateSourceMode, domain.IsDigestPinned).
 The pattern here is the server's, byte for byte, so a value the chart accepts is
 one the server accepts. Refuse at render rather than ship a CrashLoopBackOff.
 */ -}}
+{{- /*
+Dispatch admission webhook (ADR 0100 §8): the request carries tenant and DAG
+names, so the server refuses a plain http URL unless the host is loopback.
+Refuse at render, as for the source-mode image below.
+*/ -}}
+{{- $admissionURL := toString (((.Values.execution.admission | default dict).webhook | default dict).url | default "") -}}
+{{- if and $admissionURL (not (regexMatch "^(https://[^/@:\\s]+(:[0-9]+)?|http://(localhost|127(\\.(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])){3}|\\[::1\\])(:[0-9]+)?)(/\\S*)?$" $admissionURL)) -}}
+{{- fail (printf "execution.admission.webhook.url must be an https URL without credentials, or http only to a loopback host (got %q). The request carries tenant and DAG names; the server refuses to start otherwise (ADR 0100)." $admissionURL) -}}
+{{- end -}}
+{{- $admissionTimeout := toString ((.Values.execution.admission | default dict).timeout | default "") -}}
+{{- if and $admissionTimeout (not (regexMatch "^(([1-9][0-9]{0,2}|[1-4][0-9]{3}|5000)ms|[1-5]s)$" $admissionTimeout)) -}}
+{{- fail (printf "execution.admission.timeout must be a duration from 1ms to 5s, such as 500ms or 2s (got %q). A hook runs on the scheduler tick; the server refuses to start otherwise." $admissionTimeout) -}}
+{{- end -}}
 {{- $sourceMode := .Values.execution.sourceMode | default dict -}}
 {{- if $sourceMode.enabled -}}
 {{- $sourceImage := toString $sourceMode.image -}}

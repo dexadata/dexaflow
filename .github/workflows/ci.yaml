@@ -686,6 +686,39 @@ jobs:
       - name: Airflow on_failure_callback (#424)
         run: bash test/e2e/lite-callback.sh
 
+  # Admission webhook gate (ADR 0100, #2177): with
+  # execution.admission.webhook.url set, a refused attempt fails at once with
+  # the endpoint's reason and never runs, an admitted one runs as before, and
+  # the endpoint never sees the task's environment, source or token.
+  e2e-lite-admission:
+    name: E2E Lite (admission webhook gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: leoflow
+          POSTGRES_PASSWORD: leoflow
+          POSTGRES_DB: leoflow_dev
+        ports: [5432:5432]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      # leoflow lite spawns the parser via `python3 -m leoflow_parser`; ship its
+      # source on PYTHONPATH so the import resolves on a bare runner.
+      PYTHONPATH: parser
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Admission webhook (#2177)
+        run: bash test/e2e/lite-admission.sh
+
   # Lite dbt gate (#573): a duckdb dbt project — the credential-free focus adapter
   # — must compile with the zero-config profile step (#575), run through the
   # subprocess executor, and materialize its models. Pro dbt is covered by e2e-dbt

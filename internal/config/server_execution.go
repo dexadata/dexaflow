@@ -196,6 +196,8 @@ type ExecutionSection struct {
 	// SourceMode runs a version on the operator's runtime image from the dag.py
 	// it was registered with, with no image build (ADR 0067 §3). Off by default.
 	SourceMode SourceModeSection `mapstructure:"source_mode"`
+	// Admission configures the dispatch admission hooks (ADR 0100).
+	Admission AdmissionSection `mapstructure:"admission"`
 	// MaxAttemptsPerWorker caps how many attempts a warm worker serves before it is
 	// drained and recycled (ADR 0058 D9). Bounds credential-leak and stale-image
 	// exposure by forcing a fresh pod periodically. Default 50.
@@ -454,6 +456,9 @@ func (r RetentionSection) ValidateWith(usageRecording bool) error {
 // execution path, not here.
 func (c *ServerConfig) validateExecution() error {
 	if err := c.validateSourceMode(); err != nil {
+		return err
+	}
+	if err := c.Execution.Admission.validate(); err != nil {
 		return err
 	}
 	if !c.Execution.WarmPoolsEnabled {
