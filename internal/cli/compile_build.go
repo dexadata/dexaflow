@@ -106,6 +106,30 @@ func releaseBaseTag(v string) string {
 	return v
 }
 
+// baseImageNote is the line a build from a generated Dockerfile prints to say
+// which base it resolved and why (#1255). With base_image unset the answer
+// depends on the CLI running the build (baseImageRef), so two people compiling
+// the same project can land on different bases; the build says which one.
+// source names the file base_image came from, when known.
+func baseImageNote(baseImage, source, pythonVersion, cliVersion string) string {
+	if baseImage != "" {
+		if source == "" {
+			return fmt.Sprintf("note: base %s (from base_image)", baseImage)
+		}
+		return fmt.Sprintf("note: base %s (from base_image in %s)", baseImage, source)
+	}
+	ref := baseImageRef(publishedBaseRepo, pythonVersion, cliVersion)
+	if releaseBaseTag(cliVersion) != "" {
+		return fmt.Sprintf("note: base %s (pinned by this release)", ref)
+	}
+	return fmt.Sprintf("note: base %s (moving line; this is a development build)", ref)
+}
+
+// resolvedBaseNote is baseImageNote for the CLI running this build.
+func resolvedBaseNote(cfg *domain.LeoflowConfig, source string) string {
+	return baseImageNote(cfg.BaseImage, source, cfg.PythonVersion, version.Get().Version)
+}
+
 // resolveBuildImage decides the image reference for a build. An explicit --image
 // flag always wins so a caller can pin any tag. Otherwise the reference is
 // derived from the registry block (url/image_name:tag, the tag picked by

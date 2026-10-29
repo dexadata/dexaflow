@@ -1,0 +1,8 @@
+kind: Added
+body: |-
+  **`compile --build` names the base image it resolved.** With `base_image`
+  unset, the base depends on the CLI running the build: a release pins its
+  own versioned base, a development build takes the moving line. The build
+  now prints which one it took and why, or the file `base_image` came from
+  (#1255).
+time: 2026-10-29T03:00:00.000000000-03:00
