@@ -1,0 +1,147 @@
+suite: dispatch admission webhook wiring (ADR 0100)
+templates:
+  # secret.yaml is in scope so the deployment's `checksum/secret` annotation can
+  # resolve its `include` reference (same reason as deployment_test.yaml).
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+  namespace: leoflow
+set:
+  nameOverride: leoflow
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: leoflow-tls
+  agentTLS.caConfigMap: leoflow-ca
+tests:
+  # No URL installs no hook, so the install renders what it did before.
+  - it: renders no admission env or volume by default
+    template: deployment.yaml
+    set:
+      execution.admission.webhook.tokenSecret: tok
+      execution.admission.failOpen: true
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_URL")]
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_ADMISSION_FAIL_OPEN")]
+      - notExists:
+          path: spec.template.spec.volumes[?(@.name == "admission-token")]
+
+  - it: renders the webhook with its CA bundle, token, timeout and fail mode
+    template: deployment.yaml
+    set:
+      execution.admission.webhook.url: https://policy.policy.svc:8443/admit
+      execution.admission.webhook.caConfigMap: policy-ca
+      execution.admission.webhook.tokenSecret: policy-token
+      execution.admission.timeout: 1s
+      execution.admission.failOpen: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_URL
+            value: https://policy.policy.svc:8443/admit
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_CA_FILE
+            value: /etc/leoflow/admission-ca/ca.crt
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_TOKEN_FILE
+            value: /etc/leoflow/admission-token/token
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_ADMISSION_TIMEOUT
+            value: 1s
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_ADMISSION_FAIL_OPEN
+            value: "true"
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: admission-token
+            secret:
+              secretName: policy-token
+              items:
+                - key: token
+                  path: token
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: admission-ca
+            configMap:
+              name: policy-ca
+              items:
+                - key: ca.crt
+                  path: ca.crt
+
+  # The api role never dispatches, so neither the URL nor the token reaches it.
+  - it: renders the webhook only on the scheduler of a split install
+    template: deployment.yaml
+    set:
+      split.enabled: true
+      logs.persistence.enabled: false
+      logs.sink.provider: s3
+      logs.sink.bucket: b
+      execution.admission.webhook.url: https://policy.policy.svc/admit
+      execution.admission.webhook.tokenSecret: policy-token
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_URL")]
+        documentIndex: 0
+      - notExists:
+          path: spec.template.spec.volumes[?(@.name == "admission-token")]
+        documentIndex: 0
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_URL
+            value: https://policy.policy.svc/admit
+        documentIndex: 1
+      - exists:
+          path: spec.template.spec.volumes[?(@.name == "admission-token")]
+        documentIndex: 1
+
+  - it: accepts plain http to a loopback host
+    template: deployment.yaml
+    set:
+      execution.admission.webhook.url: http://127.0.0.1:9000/admit
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_URL
+            value: http://127.0.0.1:9000/admit
+
+  - it: refuses plain http to another host, as the server does
+    template: deployment.yaml
+    set:
+      execution.admission.webhook.url: http://policy.policy.svc/admit
+    asserts:
+      - failedTemplate:
+          errorPattern: "execution.admission.webhook.url must be an https URL"
+
+  - it: refuses a loopback-looking host that is not an address
+    template: deployment.yaml
+    set:
+      execution.admission.webhook.url: http://127.999.0.1/admit
+    asserts:
+      - failedTemplate:
+          errorPattern: "execution.admission.webhook.url must be an https URL"
+
+  - it: refuses a timeout the server would refuse
+    template: deployment.yaml
+    set:
+      execution.admission.webhook.url: https://policy.policy.svc/admit
+      execution.admission.timeout: 1m
+    asserts:
+      - failedTemplate:
+          errorPattern: "execution.admission.timeout must be a duration from 1ms to 5s"

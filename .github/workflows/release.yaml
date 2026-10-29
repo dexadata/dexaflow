@@ -28,6 +28,8 @@ env:
   GOPROXY: https://proxy.golang.org|direct
   GO_VERSION: "1.26.10"
   REGISTRY: ghcr.io
+  # The Trivy binary the data image scan runs, the same as security.yaml's.
+  TRIVY_VERSION: "v0.75.0"
 
 jobs:
   # ── The chart's tag gates, before anything is published ──
@@ -287,11 +289,10 @@ jobs:
   # author select a leg nobody publishes, both surface as a `docker pull` 404
   # inside the user's own build, which is the furthest point from the cause (#1031).
   #
-  # py3.10 is DEPRECATED: Python 3.10 goes EOL 2026-10-31 and docker-library/python
-  # stops rebuilding an EOL line the day after, so the base freezes with whatever
-  # OS CVEs it has. The leg keeps being published until then because `base_image`
-  # pins make a silent drop a broken build for somebody else; the schema carries
-  # the removal date and `dexaflow compile` warns the author.
+  # py3.10 was retired after its upstream EOL (#1447): releases cut after
+  # 2026-10-31 publish no py3.10 leg. Tags already published stay pullable, so a
+  # `base_image` pin keeps building; the schema records the retirement and
+  # `dexaflow compile` warns the author who pins it.
   runtime-image-build:
     name: Build dexaflow-runtime base (py${{ matrix.python }}, ${{ matrix.arch }})
     # Builds from the tag's source and uses nothing GoReleaser produces, so it
@@ -306,7 +307,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.11", "3.12", "3.13"]
+        python: ["3.11", "3.12", "3.13"]
         arch: [amd64, arm64]
         include:
           - arch: amd64
@@ -396,11 +397,10 @@ jobs:
   # author select a leg nobody publishes, both surface as a `docker pull` 404
   # inside the user's own build, which is the furthest point from the cause (#1031).
   #
-  # py3.10 is DEPRECATED: Python 3.10 goes EOL 2026-10-31 and docker-library/python
-  # stops rebuilding an EOL line the day after, so the base freezes with whatever
-  # OS CVEs it has. The leg keeps being published until then because `base_image`
-  # pins make a silent drop a broken build for somebody else; the schema carries
-  # the removal date and `dexaflow compile` warns the author.
+  # py3.10 was retired after its upstream EOL (#1447): releases cut after
+  # 2026-10-31 publish no py3.10 leg. Tags already published stay pullable, so a
+  # `base_image` pin keeps building; the schema records the retirement and
+  # `dexaflow compile` warns the author who pins it.
   runtime-image:
     name: Publish dexaflow-runtime base (py${{ matrix.python }})
     needs: runtime-image-build
@@ -409,7 +409,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.11", "3.12", "3.13"]
+        python: ["3.11", "3.12", "3.13"]
     permissions:
       contents: read
       packages: write
@@ -571,6 +571,30 @@ jobs:
           platforms: linux/${{ matrix.arch }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime,push-by-digest=true,name-canonical=true,push=true
+
+      # Reviewed before it is published (#2247). The image above is pushed by
+      # digest only: no tag points at it and nothing signs it until the
+      # runtime-data-image job runs, which needs this job's digest artifact. So
+      # a finding here stops the data image before any platform can pull it.
+      # The gate covers the language packages only (Python wheels and the jars
+      # inside them): their versions come from runtime/data/requirements.txt, a
+      # lock we compile, so a fixable HIGH or CRITICAL in one is ours to fix or
+      # to accept in .trivyignore.yaml with a statement and an expiry. The OS
+      # packages of the base stay in image-scan.yaml's reporting lane.
+      - name: Scan the data image's language packages
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PKG_TYPES: library
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: image
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime@${{ steps.build.outputs.digest }}
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
+          exit-code: 1
+          format: table
 
       - name: Record the digest
         env:

@@ -190,6 +190,9 @@ type Dispatcher struct {
 	// attempt may go to a warm worker, which receives the dag.py with the
 	// assignment (ADR 0095).
 	sourceModeWarm bool
+	// admission is the operator's chain of admission hooks (ADR 0100), run
+	// after refuseBeforeToken and before the token is minted. Nil: none.
+	admission *admissionChain
 }
 
 // UnitMisfitRecorder counts a task that does not fit the resource unit but is
@@ -301,6 +304,14 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	if refused != nil {
 		return executor.Refused, refused
 	}
+	// Admission hooks (ADR 0100) see the attempt once the built-in refusals
+	// passed and before any credential exists. authored is the task's own
+	// execution settings when a hook changed them, for the executor's
+	// allowlist re-check.
+	task, authored, disp, err := d.admit(ctx, runID, dagID, task, r, sourceMode)
+	if err != nil {
+		return disp, err
+	}
 	token, err := d.issuer.IssueAgentToken(auth.AgentIdentity{
 		TaskInstanceID: r.TaskInstanceID,
 		TenantID:       r.TenantID,
@@ -387,6 +398,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	if task.Execution != nil {
 		req.Execution = *task.Execution
 	}
+	req.AuthoredExecution = authored
 	// Default the task pod's ServiceAccount to the operator-configured one when the
 	// DAG did not set execution.service_account, so keyless works without every DAG
 	// opting in (the execution.service_account trap). An explicit per-task value

@@ -84,6 +84,12 @@ type Request struct {
 	// so no path that builds a Request can place a pod the operator did not
 	// allow. Nil allows everything.
 	ExecutionPolicy *domain.ExecutionPolicy
+	// AuthoredExecution, when not nil, is the task's own execution settings
+	// before an admission hook changed them (ADR 0100 §4). The allowlist
+	// governs what a DAG author sets, so the re-check below reads these
+	// instead of Execution; the dispatcher already checked the service account
+	// a hook set. Nil: Execution is what the author set.
+	AuthoredExecution *domain.Execution
 
 	// Source is the dag.py text captured at compile time. The SubprocessExecutor
 	// materializes it to a per-TI temp dir so `python -m leoflow_runtime

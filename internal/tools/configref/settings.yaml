@@ -1152,6 +1152,42 @@ settings:
       Ignored while source mode is off. See [Source
       mode](/operate/source-mode/#warm-workers). Helm:
       `execution.sourceMode.warmPools`.
+  execution.admission.webhook.url:
+    edition: both
+    description: >-
+      Ask this endpoint about every task attempt before it gets a credential or a
+      pod ([ADR 0100](/project/adrs/0100-dispatch-admission-hook/)). It answers
+      admit (optionally changing placement and pod metadata), hold or refuse. The
+      request carries the attempt's tenant, DAG, image, resources and execution
+      fields, never its environment, source, secrets or token. Must be `https`
+      unless the host is loopback. Empty (the default) installs no hook. See
+      [Admission hooks](/operate/admission-hooks/). Helm:
+      `execution.admission.webhook.url`.
+  execution.admission.webhook.ca_file:
+    edition: both
+    description: >-
+      PEM bundle the admission webhook's certificate must chain to, instead of the
+      system roots. Read at boot, so a changed bundle takes a restart. Helm:
+      `execution.admission.webhook.caConfigMap`.
+  execution.admission.webhook.token_file:
+    edition: both
+    description: >-
+      File holding a bearer token sent to the admission webhook as
+      `Authorization: Bearer`. Read on every call, so a rotated token is picked up
+      without a restart. Helm: `execution.admission.webhook.tokenSecret`.
+  execution.admission.timeout:
+    edition: both
+    description: >-
+      How long the dispatcher waits for each admission hook, at most `5s`. A hook
+      that does not answer in time holds the attempt like an error does. Helm:
+      `execution.admission.timeout`.
+  execution.admission.fail_open:
+    edition: both
+    description: >-
+      Admit an attempt unchanged when an admission hook errors, times out or is
+      skipped after repeated failures, instead of holding it until the hook is
+      back (and failing it after 15 minutes). A hook's own hold or refusal is
+      always applied. Logged at boot. Helm: `execution.admission.failOpen`.
   logs.dir:
     edition: both
     description: >-
@@ -1265,6 +1301,14 @@ settings:
       env var sets it, matching the env-only control-plane chart. Keyless auth (IRSA
       / Workload Identity) uses the task pod's ServiceAccount: set `executor.task_service_account`
       accordingly. Helm: `secrets.backendKwargs`.
+  usage.events.enabled:
+    edition: both
+    description: >-
+      Record one usage event per finished task attempt, in the transaction that
+      finishes it ([ADR 0096](/project/adrs/0096-task-attempt-usage-events/)). The
+      scheduler leader writes this value to the database within 10 seconds of
+      taking leadership and keeps it there, so the leader's setting wins when
+      replicas disagree; its log says which value it wrote. Off by default.
   retention.dag_runs_days:
     edition: both
     default_note: off
@@ -1278,6 +1322,14 @@ settings:
     description: >-
       Delete audit log entries older than this many days, per tenant and for the
       tenant-less system entries. `0` keeps the whole audit log. See [Audit log](/operate/audit-log/).
+  retention.usage_events_days:
+    edition: both
+    description: >-
+      Delete usage events ([ADR 0096](/project/adrs/0096-task-attempt-usage-events/))
+      recorded more than this many days ago, oldest first in the order the service
+      API serves them, so a consumer that is down can catch up for this long. The
+      janitor starts for it only while `usage.events.enabled` is on. `0` keeps every
+      event.
   retention.dry_run:
     edition: both
     description: >-
@@ -1449,6 +1501,15 @@ settings:
       `leoflow_*` name. The default keeps both, so dashboards and alerts on either
       name work. An opt-in for operators who do not need the `leoflow_*` names;
       it halves the scrape. Helm: set it through `extraEnv`.
+  observability.usage_metrics:
+    edition: both
+    description: >-
+      Advance `dexaflow_task_attempts_total{tenant,state}` and
+      `dexaflow_task_slot_seconds_total{tenant}` from the usage events
+      ([ADR 0096](/project/adrs/0096-task-attempt-usage-events/)). The scheduler
+      leader counts each attempt once, by the state it first ended in, from the
+      moment it took the lead, so a failover resets them. One series per tenant,
+      so off by default. Needs `usage.events.enabled`.
   ui.instance_name:
     edition: both
     description: >-
@@ -1457,8 +1518,8 @@ settings:
     edition: both
     description: >-
       SPA polling cadence for DAG / DagRun / task-instance state. `0` falls back
-      to the production-safe 30s default; `dexaflow lite` sets 1s for a snappy inner
-      loop. Helm: `ui.autoRefreshIntervalSeconds`, which the chart omits entirely
+      to the 5s default (30s before v0.6.0); `dexaflow lite` sets 1s for a snappy
+      inner loop. Helm: `ui.autoRefreshIntervalSeconds`, which the chart omits entirely
       when unset so the server default decides.
   ui.edition:
     edition: both

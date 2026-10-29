@@ -21,6 +21,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/observability"
 	"github.com/dexadata/dexaflow/internal/scheduler"
 	"github.com/dexadata/dexaflow/internal/storage"
+	"github.com/dexadata/dexaflow/pkg/admission"
 )
 
 // attemptTokenTTL is the short per-attempt agent-token lifetime minted at
@@ -117,11 +118,15 @@ func executorDispatchEnabled(cfg *config.ServerConfig, servesScheduler, runtimeP
 // error means the selected executor cannot be wired and the server must not
 // boot.
 func setupDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, store *storage.SchedulerStore, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (bool, io.Closer, error) {
+	hooks, err := admissionHooks(cfg)
+	if err != nil {
+		return false, nil, err
+	}
 	if cfg.Executor.Type == "subprocess" {
-		on, closer := setupSubprocessDispatch(ctx, cfg, sched, execStore, authn, warmPools, store, logSink, logger, metrics) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
+		on, closer := setupSubprocessDispatch(ctx, cfg, sched, execStore, authn, warmPools, store, logSink, logger, metrics, hooks) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 		return on, closer, nil
 	}
-	return setupK8sDispatch(ctx, cfg, sched, execStore, authn, store, warmPools, logSink, logger, metrics) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
+	return setupK8sDispatch(ctx, cfg, sched, execStore, authn, store, warmPools, logSink, logger, metrics, hooks) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 }
 
 // configureSubprocessDispatcher applies cfg to the dev-only subprocess
@@ -213,11 +218,12 @@ func resolveAgentControlAddr(cfg *config.ServerConfig) string {
 // runs the agent on the host with no isolation, so it is gated to dev use. It
 // also starts Lite's maintenance loop (#916): the reapers that mean something
 // without pods, gated on the agent process's liveness (see newLiteReaper).
-func setupSubprocessDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, warmPools *agentrpc.WorkerRegistry, store *storage.SchedulerStore, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (bool, io.Closer) {
+func setupSubprocessDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, warmPools *agentrpc.WorkerRegistry, store *storage.SchedulerStore, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics, hooks []admission.Hook) (bool, io.Closer) {
 	subExec := executor.NewSubprocessExecutor(cfg.Executor.AgentPath, logger)
 	subExec.SetWorkDir(cfg.Executor.SubprocessWorkDir)
 	dispatcher := dispatch.NewDispatcher(subExec, execStore, authn, resolveAgentControlAddr(cfg), attemptTokenTTL)
 	configureSubprocessDispatcher(dispatcher, cfg, warmPools)
+	applyAdmission(dispatcher, hooks, cfg, metrics, logger)
 	disp, closer := wrapBuffered(dispatcher, store, logger, metrics, cfg.Scheduler.Dispatch) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 	sched.SetDispatcher(disp)
 	var markers logs.MarkerSink
@@ -238,7 +244,7 @@ func setupSubprocessDispatch(ctx context.Context, cfg *config.ServerConfig, sche
 // executor reported itself healthy while every task it planned failed as
 // undispatchable. A deployment without a cluster selects
 // executor.type=subprocess, which needs no client.
-func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, store *storage.SchedulerStore, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (bool, io.Closer, error) {
+func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, store *storage.SchedulerStore, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics, hooks []admission.Hook) (bool, io.Closer, error) {
 	clients, perr := buildK8sClients(cfg.Executor.KubeClient)
 	if perr != nil {
 		return false, nil, fmt.Errorf("executor type %q requires a Kubernetes client to dispatch task pods, but none is available (set executor.type=subprocess to run without a cluster): %w", cfg.Executor.Type, perr)
@@ -256,6 +262,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	}
 	dispatcher := dispatch.NewDispatcher(podExec, execStore, authn, controlAddr, attemptTokenTTL)
 	configureK8sDispatcher(dispatcher, cfg, warmPools, metrics)
+	applyAdmission(dispatcher, hooks, cfg, metrics, logger)
 	disp, closer := wrapBuffered(dispatcher, store, logger, metrics, cfg.Scheduler.Dispatch) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 	sched.SetDispatcher(disp)
 	// Shared informer read-path (PR-10): one long-lived watch replaces the

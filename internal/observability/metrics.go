@@ -64,6 +64,10 @@ type Metrics struct {
 	// although they do not fit their size, by stage (register, dispatch;
 	// ADR 0066 §3).
 	UnitMisfits *prometheus.CounterVec
+	// Admissions counts the dispatch admission hooks' outcomes (ADR 0100);
+	// AdmissionDuration is how long the hook chain took for one attempt.
+	Admissions        *prometheus.CounterVec
+	AdmissionDuration prometheus.Histogram
 	// UnpinnedImages counts images not pinned by digest that
 	// deploy.require_digest warned about or refused, by stage (register,
 	// set_current) and outcome (warned, refused) (#1703).
@@ -92,6 +96,17 @@ type Metrics struct {
 	RetentionRowsDeleted   *prometheus.CounterVec
 	RetentionRowsEligible  *prometheus.GaugeVec
 	RetentionCycleDuration prometheus.Histogram
+
+	// UsageEventsLag is the age of the oldest usage event (ADR 0096) the
+	// service API cannot serve yet because an older transaction is still
+	// open, set by the leader; 0 while recording is off.
+	UsageEventsLag prometheus.Gauge
+	// TaskAttempts and TaskSlotSeconds are the per-tenant usage counters,
+	// advanced by the leader from the usage events when
+	// observability.usage_metrics is on. Their cardinality is the number of
+	// tenants, so they stay empty by default.
+	TaskAttempts    *prometheus.CounterVec
+	TaskSlotSeconds *prometheus.CounterVec
 
 	// TLSReloadFailures counts certificate or key files that changed on disk
 	// but failed to load, by listener (api, agent_grpc). The listener keeps
@@ -243,6 +258,15 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "dexaflow_unit_misfit_total",
 			Help: "Tasks accepted under executor.unit.enforce=warn although their resources exceed pool_slots x unit, by stage (register, set_current, dispatch).",
 		}, []string{"stage"}),
+		Admissions: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_dispatch_admission_total",
+			Help: "Task attempts seen by the dispatch admission hooks (ADR 0100), by outcome (admitted, changed, held, refused, error, fail_open, breaker_open).",
+		}, []string{"outcome"}),
+		AdmissionDuration: f.NewHistogram(prometheus.HistogramOpts{
+			Name:    "dexaflow_dispatch_admission_duration_seconds",
+			Help:    "Time the dispatch admission hooks took for one task attempt.",
+			Buckets: []float64{0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1},
+		}),
 		UnpinnedImages: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_unpinned_image_total",
 			Help: "Images not pinned by digest that deploy.require_digest warned about (outcome=warned) or refused (outcome=refused), by stage (register, set_current). Dry runs are not counted.",
@@ -313,7 +337,33 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help:    "Wall-clock duration of one retention janitor cycle, pauses included.",
 			Buckets: []float64{0.1, 1, 10, 30, 60, 300, 900, 1800},
 		}),
+		UsageEventsLag: f.NewGauge(prometheus.GaugeOpts{
+			Name: "dexaflow_usage_events_lag_seconds",
+			Help: "Age of the oldest usage event the service API cannot serve yet because an older transaction is still open; 0 while usage events are not recorded. Set by the scheduler leader.",
+		}),
+		TaskAttempts: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_task_attempts_total",
+			Help: "Finished task attempts by tenant and the state each first ended in, from the usage events; with observability.usage_metrics on. Counted by the scheduler leader from the moment it took the lead.",
+		}, []string{"tenant", "state"}),
+		TaskSlotSeconds: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_task_slot_seconds_total",
+			Help: "Pool slots times run time of finished task attempts by tenant, from the usage events; with observability.usage_metrics on. Counted by the scheduler leader from the moment it took the lead.",
+		}, []string{"tenant"}),
 	}
+}
+
+// RecordTaskAttempt counts one finished attempt of tenant in state and adds
+// its slot seconds.
+func (m *Metrics) RecordTaskAttempt(tenant, state string, slotSeconds float64) {
+	m.TaskAttempts.WithLabelValues(tenant, state).Inc()
+	if slotSeconds > 0 {
+		m.TaskSlotSeconds.WithLabelValues(tenant).Add(slotSeconds)
+	}
+}
+
+// SetUsageEventsLag sets the age of the oldest usage event held back.
+func (m *Metrics) SetUsageEventsLag(d time.Duration) {
+	m.UsageEventsLag.Set(d.Seconds())
 }
 
 // RecordRetentionDeleted counts n rows the retention janitor deleted from table.
@@ -532,6 +582,13 @@ func (m *Metrics) RecordDispatchInnerError() { m.DispatchInnerErrors.Inc() }
 // although it does not fit its size. It satisfies dispatch.UnitMisfitRecorder
 // and api.UnitMisfitRecorder.
 func (m *Metrics) RecordUnitMisfit(stage string) { m.UnitMisfits.WithLabelValues(stage).Inc() }
+
+// RecordAdmission counts one attempt's admission outcome and how long the
+// hooks took. It satisfies dispatch.AdmissionRecorder.
+func (m *Metrics) RecordAdmission(outcome string, took time.Duration) {
+	m.Admissions.WithLabelValues(outcome).Inc()
+	m.AdmissionDuration.Observe(took.Seconds())
+}
 
 // RecordUnpinnedImage counts one image not pinned by digest that
 // deploy.require_digest warned about or refused at stage. It satisfies

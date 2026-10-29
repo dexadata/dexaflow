@@ -372,6 +372,64 @@ func (r *Repository) ListUsers(ctx context.Context, tenant string, limit, offset
 	return out, int(total), nil
 }
 
+// SetUserActive activates or deactivates one user of the tenant and records
+// user.activate or user.deactivate in the audit log, in one transaction, so the
+// change and its record land together (#960). actorUserID is the admin acting.
+// An unknown user, a malformed id or a user of another tenant is
+// domain.ErrNotFound. The per-request authz reload reads the flag, so a
+// deactivated user's sessions and API tokens stop working at their next request.
+func (r *Repository) SetUserActive(ctx context.Context, tenant, actorUserID, userID string, active bool) (domain.User, error) {
+	id, err := parseUUID(userID)
+	if err != nil {
+		return domain.User{}, domain.Safef(domain.ErrNotFound, "user %q not found", userID)
+	}
+	tid, err := r.tenantID(ctx, tenant)
+	if err != nil {
+		return domain.User{}, err
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return domain.User{}, fmt.Errorf("beginning set-user-active tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
+	qtx := r.q.WithTx(tx)
+	row, err := qtx.SetUserActive(ctx, queries.SetUserActiveParams{Name: tenant, ID: id, IsActive: active})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.User{}, domain.Safef(domain.ErrNotFound, "user %q not found", userID)
+		}
+		return domain.User{}, fmt.Errorf("setting user active: %w", err)
+	}
+	action := "user.deactivate"
+	if active {
+		action = "user.activate"
+	}
+	var actor pgtype.UUID
+	if u, perr := parseUUID(actorUserID); perr == nil {
+		actor = u
+	}
+	meta, err := json.Marshal(map[string]any{"email": row.Email})
+	if err != nil {
+		return domain.User{}, fmt.Errorf("encoding audit metadata: %w", err)
+	}
+	if err := qtx.CreateAuditLog(ctx, queries.CreateAuditLogParams{
+		TenantID: tid, UserID: actor, Action: action,
+		ResourceType: strPtr("user"), ResourceID: strPtr(userID), Metadata: meta,
+	}); err != nil {
+		return domain.User{}, fmt.Errorf("writing %s audit: %w", action, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.User{}, fmt.Errorf("committing set-user-active tx: %w", err)
+	}
+	return domain.User{
+		ID:        uuidToString(row.ID),
+		Email:     row.Email,
+		Roles:     row.Roles,
+		IsActive:  row.IsActive,
+		CreatedAt: timeVal(row.CreatedAt),
+	}, nil
+}
+
 // SetUserPassword sets a user's bcrypt hash by email, returning whether a user
 // was updated (false when no such user exists). Used by `dexaflow lite
 // reset-password`.

@@ -24,7 +24,7 @@ chart's own values (image, replicas, ingress, Postgres/Redis wiring), see the
 |---|---|---|
 | `dag_id` *(required)* | string | Unique DAG id (`^[A-Za-z0-9_][A-Za-z0-9_-]{0,199}$`). |
 | `description`, `owner`, `tags` | string / string / list | Metadata. |
-| `python_version` | `3.10`\|`3.11`\|`3.12`\|`3.13` | Base image Python (default 3.11). `3.10` is **deprecated** — see [Python version support](#python-version-support). |
+| `python_version` | `3.11`\|`3.12`\|`3.13` | Base image Python (default 3.11). Lines past their upstream EOL are retired, see [Python version support](#python-version-support). |
 | `base_image` | string | Override the runtime base image. |
 | `dependencies` | list | pip specifiers baked into the image. Version floors (`"setuptools>=80.9.0"`) and [PEP 508](https://peps.python.org/pep-0508/) environment markers both work — see the `dependencies` row under [Defaults](#defaults) for what the build does with them. |
 | `connectors` | list | Short connector names (`postgres`, `http`, …) expanded at compile to their `apache-airflow-providers-*` packages. Sugar over `dependencies` — see [Installing a connector's provider](/connections/#installing-a-connectors-provider). |
@@ -47,7 +47,6 @@ build fails on the pull.
 
 | Line | Status | Upstream EOL | Published until |
 |---|---|---|---|
-| `3.10` | **Deprecated** | 2026-10-31 | 2026-10-31 |
 | `3.11` | Supported *(default)* | 2027-10-31 | — |
 | `3.12` | Supported | 2028-10-31 | — |
 | `3.13` | Supported | 2029-10-31 | — |
@@ -67,23 +66,24 @@ Airflow: `dbt-core` and `dbt-postgres` publish for 3.14, but `dbt-snowflake`,
 would give you an image where `dbt-postgres` installs and `dbt-snowflake` does
 not — discovered inside your build, not ours — so it is not published.
 
-**`3.10` is deprecated.** Python 3.10 reaches upstream end-of-life on
-2026-10-31, and `docker-library/python` stops rebuilding an EOL line the day
-after (`python:3.9-slim` was last rebuilt 2025-11-01, one day after 3.9 went
-EOL). From that point `python:3.10-slim` — and so
-`dexaflow-runtime:py3.10` — receives no further OS security updates and
-accumulates unfixed CVEs indefinitely. The `py3.10` leg keeps being published
-until 2026-10-31, so nothing breaks today; `dexaflow validate`, `dexaflow
-compile` and `dexaflow deploy` warn when your project resolves to it.
+**`3.10` is no longer published.** Python 3.10 reaches upstream end-of-life
+in October 2026, after which `docker-library/python` stops rebuilding
+`python:3.10-slim`, so a `py3.10` base would receive no OS security updates.
+Releases cut after 2026-10-31 publish no `py3.10` image (#1447). The
+`py3.10` tags already published stay pullable, so nothing that is running
+breaks, but they never change again.
 
-There are two ways to resolve to it, and they have different fixes:
+There are two ways a project can still be on it, and they have different fixes:
 
-- **You set `python_version: "3.10"`.** Set `python_version: "3.11"` (or later)
-  and rebuild.
+- **You set `python_version: "3.10"`.** `dexaflow validate`, `compile`,
+  `deploy` and `lite` refuse the project and name the replacement. Set
+  `python_version: "3.11"` (or later) and rebuild.
 - **You pinned `base_image` to a published `py3.10` tag** (`…:py3.10`,
-  `…:py3.10-v0.4.5`<!-- stale-version-ok: py3.10 runtimes stopped at 0.4.x -->). Repoint `base_image` to the matching `py3.11` tag and
-  rebuild. Changing `python_version` here does nothing: when `base_image` is
-  set it is used verbatim and `python_version` is not consulted for the `FROM`.
+  `…:py3.10-v0.5.7`). The build still works, because the tag still pulls, and
+  `dexaflow compile` warns that the base gets no security updates. Repoint
+  `base_image` to the matching `py3.11` tag and rebuild. Changing
+  `python_version` here does nothing: when `base_image` is set it is used
+  verbatim and `python_version` is not consulted for the `FROM`.
 
 Existing images keep running either way; the rebuild is what moves you.
 
@@ -381,7 +381,7 @@ roadmap item.
 |---|---|---|
 | `schema_version` | `"1.0"` | Stamps every artifact for forward-compat. |
 | `dag_id` | *subdir basename* | If `dexaflow.yaml` is absent, the parent directory name is used. Two subdirs resolving to the same `dag_id` is a hard error — see [Discovery rules](/author-dags/dag-authoring/#discovery-rules). |
-| `python_version` | `"3.11"` | Pick `3.10`, `3.11`, `3.12`, or `3.13`. It selects the task base image **and**, when you declare it explicitly, the interpreter every local tool judges the project with; see [Which interpreter reads your DAG](#which-interpreter-reads-your-dag). `dexaflow lite` builds that project's venv on it, so the dev loop and the cluster run the same minor. If no interpreter on the host reports that version, `dexaflow lite` stops and says so rather than substituting a different one, except for `3.11`, which it fetches as the managed CPython on first use; a venv already built on another minor is rebuilt, which reinstalls the runtime and your dependencies. Leaving the field out keeps the previous behaviour (any host Python 3.11+, managed build preferred), because then the image is `3.11` by the same default and the two already agree. A declared `build.base_image` makes this field inert on both sides, and a deprecated version warns and falls back instead of blocking. |
+| `python_version` | `"3.11"` | Pick `3.11`, `3.12`, or `3.13`. It selects the task base image **and**, when you declare it explicitly, the interpreter every local tool judges the project with; see [Which interpreter reads your DAG](#which-interpreter-reads-your-dag). `dexaflow lite` builds that project's venv on it, so the dev loop and the cluster run the same minor. If no interpreter on the host reports that version, `dexaflow lite` stops and says so rather than substituting a different one, except for `3.11`, which it fetches as the managed CPython on first use; a venv already built on another minor is rebuilt, which reinstalls the runtime and your dependencies. Leaving the field out keeps the previous behaviour (any host Python 3.11+, managed build preferred), because then the image is `3.11` by the same default and the two already agree. A declared `build.base_image` makes this field inert on both sides, and a deprecated version warns and falls back instead of blocking. |
 | `dag_source` | `"dag.py"` | DAG file relative to the project. |
 | `dependencies` | `[]` | pip specifiers baked into the image. Any [PEP 508](https://peps.python.org/pep-0508/) form works, including version floors (`"setuptools>=80.9.0"`) and environment markers (`'requests; python_version < "3.12"'`) — each entry is passed to pip as one literal argument, so shell characters in a specifier are never interpreted. A line break inside an entry is refused, since it would end the generated `RUN` instruction, and every entry is passed after a `--` so an entry beginning with a dash is treated as a package name rather than as an option to pip. |
 | `connectors` | `[]` | Short connector names expanded to provider packages at compile (ADR 0038). |
@@ -810,6 +810,11 @@ dedicated pod per task attempt.
 | Variable | Key | Type | Default | Edition | Purpose |
 |---|---|---|---|---|---|
 | `DEXAFLOW_EXECUTION_WARM_POOLS_ENABLED` | `execution.warm_pools_enabled` | bool | `false` | Cluster | Reuse one task pod across many attempts of the same DAG version. Off = dedicated pod-per-task. Validated fail-closed at boot: requires `agent_token_transport=exchange` **and** `secret_liveness_mode=enforce`. Helm: `execution.warmPoolsEnabled`. |
+| `DEXAFLOW_EXECUTION_ADMISSION_TIMEOUT` | `execution.admission.timeout` | duration | `500ms` | both | How long the dispatcher waits for each admission hook, at most `5s`. A hook that does not answer in time holds the attempt like an error does. Helm: `execution.admission.timeout`. |
+| `DEXAFLOW_EXECUTION_ADMISSION_FAIL_OPEN` | `execution.admission.fail_open` | bool | `false` | both | Admit an attempt unchanged when an admission hook errors, times out or is skipped after repeated failures, instead of holding it until the hook is back (and failing it after 15 minutes). A hook's own hold or refusal is always applied. Logged at boot. Helm: `execution.admission.failOpen`. |
+| `DEXAFLOW_EXECUTION_ADMISSION_WEBHOOK_URL` | `execution.admission.webhook.url` | string | _(empty)_ | both | Ask this endpoint about every task attempt before it gets a credential or a pod ([ADR 0100](/project/adrs/0100-dispatch-admission-hook/)). It answers admit (optionally changing placement and pod metadata), hold or refuse. The request carries the attempt's tenant, DAG, image, resources and execution fields, never its environment, source, secrets or token. Must be `https` unless the host is loopback. Empty (the default) installs no hook. See [Admission hooks](/operate/admission-hooks/). Helm: `execution.admission.webhook.url`. |
+| `DEXAFLOW_EXECUTION_ADMISSION_WEBHOOK_CA_FILE` | `execution.admission.webhook.ca_file` | string | _(empty)_ | both | PEM bundle the admission webhook's certificate must chain to, instead of the system roots. Read at boot, so a changed bundle takes a restart. Helm: `execution.admission.webhook.caConfigMap`. |
+| `DEXAFLOW_EXECUTION_ADMISSION_WEBHOOK_TOKEN_FILE` | `execution.admission.webhook.token_file` | string | _(empty)_ | both | File holding a bearer token sent to the admission webhook as `Authorization: Bearer`. Read on every call, so a rotated token is picked up without a restart. Helm: `execution.admission.webhook.tokenSecret`. |
 | `DEXAFLOW_EXECUTION_MAX_ATTEMPTS_PER_WORKER` | `execution.max_attempts_per_worker` | int | `50` | Cluster | Attempts a warm worker serves before it drains and recycles (D9). |
 | `DEXAFLOW_EXECUTION_MAX_WORKER_LIFETIME` | `execution.max_worker_lifetime` | duration | `1h` | Cluster | Wall-clock lifetime of a warm worker before it drains and recycles, independent of the attempt count (D9). A duration string. |
 | `DEXAFLOW_EXECUTION_MIN_IDLE_WORKERS` | `execution.min_idle_workers` | int | `0` | Cluster | Warm workers kept ready per DAG version when the DAG declares no warmth of its own (D6). `0` is scale-to-zero. Read only while warm pools are on. |
@@ -886,7 +891,8 @@ before enabling it in production.
 ### Retention (`retention.*`)
 
 The retention janitor deletes metadata rows past an age you choose, per data
-class. Every class is off by default (`0` days): a default install never
+class; [Data retention](/operate/data-retention/) walks through turning it on.
+Every class is off by default (`0` days): a default install never
 deletes a row. It runs on the scheduler leader only and rechecks leadership
 before every batch. A run is eligible once it settled (`success` or `failed`)
 more than `dag_runs_days` ago, every task instance of it is settled
@@ -932,11 +938,31 @@ keys; set them through `extraEnv`.
 |---|---|---|---|---|---|
 | `DEXAFLOW_RETENTION_DAG_RUNS_DAYS` | `retention.dag_runs_days` | int | `0`, off | both | Delete settled runs, with their task instances and history, that ended more than this many days ago. The newest run of each DAG is always kept. `0` keeps every run. |
 | `DEXAFLOW_RETENTION_AUDIT_LOG_DAYS` | `retention.audit_log_days` | int | `0`, off | both | Delete audit log entries older than this many days, per tenant and for the tenant-less system entries. `0` keeps the whole audit log. See [Audit log](/operate/audit-log/). |
+| `DEXAFLOW_RETENTION_USAGE_EVENTS_DAYS` | `retention.usage_events_days` | int | `30` | both | Delete usage events ([ADR 0096](/project/adrs/0096-task-attempt-usage-events/)) recorded more than this many days ago, oldest first in the order the service API serves them, so a consumer that is down can catch up for this long. The janitor starts for it only while `usage.events.enabled` is on. `0` keeps every event. |
 | `DEXAFLOW_RETENTION_DRY_RUN` | `retention.dry_run` | bool | `false` | both | Only count what a cycle would delete; delete nothing. |
 | `DEXAFLOW_RETENTION_INTERVAL` | `retention.interval` | duration | `1h` | both | How often a cycle runs. Must be greater than zero when a class is on. |
 | `DEXAFLOW_RETENTION_BATCH_SIZE` | `retention.batch_size` | int | `1000` | both | Most rows one DELETE statement removes (1 to 50000), except the task instances of a single run larger than that, which go together. Also caps the runs per batch at 100. |
 | `DEXAFLOW_RETENTION_BATCH_PAUSE` | `retention.batch_pause` | duration | `100ms` | both | Sleep between two batches, so the janitor never keeps the database busy. |
 | `DEXAFLOW_RETENTION_MAX_ROWS_PER_CYCLE` | `retention.max_rows_per_cycle` | int | `100000` | both | A cycle starts no new batch once it deleted this many rows, children included. |
+
+<!-- END GENERATED configref -->
+
+### Usage events (`usage.*`)
+
+With `usage.events.enabled` on, every write that finishes a task attempt also
+writes one row to `usage_events`, in the same transaction
+([ADR 0096](/project/adrs/0096-task-attempt-usage-events/)): the tenant, the
+run, the task, the try, the attempt epoch, a revision for a later re-mark,
+the state, the size (`pool_slots`) and the times. The scheduler leader writes
+the setting to the database within 10 seconds of taking leadership and keeps
+it there, so every replica records the same way. Turning it off stops the recording; the rows already
+written stay. The chart has no value for this key; set it through `extraEnv`.
+
+<!-- BEGIN GENERATED configref settings usage. -->
+
+| Variable | Key | Type | Default | Edition | Purpose |
+|---|---|---|---|---|---|
+| `DEXAFLOW_USAGE_EVENTS_ENABLED` | `usage.events.enabled` | bool | `false` | both | Record one usage event per finished task attempt, in the transaction that finishes it ([ADR 0096](/project/adrs/0096-task-attempt-usage-events/)). The scheduler leader writes this value to the database within 10 seconds of taking leadership and keeps it there, so the leader's setting wins when replicas disagree; its log says which value it wrote. Off by default. |
 
 <!-- END GENERATED configref -->
 
@@ -953,6 +979,7 @@ keys; set them through `extraEnv`.
 | `DEXAFLOW_OBSERVABILITY_LOG_LEVEL` | `observability.log_level` | string | `info` | both | Control-plane log verbosity: `debug`, `info`, `warn` (alias `warning`), or `error`. Unknown values fall back to `info`. |
 | `DEXAFLOW_OBSERVABILITY_LOG_FORMAT` | `observability.log_format` | string | `json` | both | Control-plane log format: `json` (default) or `text`. |
 | `DEXAFLOW_OBSERVABILITY_METRICS_DROP_LEGACY_NAMES` | `observability.metrics.drop_legacy_names` | bool | `false` | both | Stop publishing every `dexaflow_*` metric a second time under its pre-rename `leoflow_*` name. The default keeps both, so dashboards and alerts on either name work. An opt-in for operators who do not need the `leoflow_*` names; it halves the scrape. Helm: set it through `extraEnv`. |
+| `DEXAFLOW_OBSERVABILITY_USAGE_METRICS` | `observability.usage_metrics` | bool | `false` | both | Advance `dexaflow_task_attempts_total{tenant,state}` and `dexaflow_task_slot_seconds_total{tenant}` from the usage events ([ADR 0096](/project/adrs/0096-task-attempt-usage-events/)). The scheduler leader counts each attempt once, by the state it first ended in, from the moment it took the lead, so a failover resets them. One series per tenant, so off by default. Needs `usage.events.enabled`. |
 
 <!-- END GENERATED configref -->
 
@@ -963,7 +990,7 @@ keys; set them through `extraEnv`.
 | Variable | Key | Type | Default | Edition | Purpose |
 |---|---|---|---|---|---|
 | `DEXAFLOW_UI_INSTANCE_NAME` | `ui.instance_name` | string | `Dexaflow` | both | UI navbar label (`dexaflow lite` sets it to mark the environment). |
-| `DEXAFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS` | `ui.auto_refresh_interval_seconds` | int | `0` | both | SPA polling cadence for DAG / DagRun / task-instance state. `0` falls back to the production-safe 30s default; `dexaflow lite` sets 1s for a snappy inner loop. Helm: `ui.autoRefreshIntervalSeconds`, which the chart omits entirely when unset so the server default decides. |
+| `DEXAFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS` | `ui.auto_refresh_interval_seconds` | int | `0` | both | SPA polling cadence for DAG / DagRun / task-instance state. `0` falls back to the 5s default (30s before v0.6.0); `dexaflow lite` sets 1s for a snappy inner loop. Helm: `ui.autoRefreshIntervalSeconds`, which the chart omits entirely when unset so the server default decides. |
 | `DEXAFLOW_UI_EDITION` | `ui.edition` | string | _(empty)_ | both | The edition the server runs as ([ADR 0027](/project/adrs/0027-product-editions-executors-delivery/)): `cluster` for the Helm chart on Kubernetes, `lite` for the installable binary. `pro` is the earlier name of `cluster` and is still accepted; the Helm chart currently sets `pro`. `cluster` turns on named pools unless `scheduler.pools.enabled` says otherwise, allows `auth.provider: oidc`, enforces TLS on the agent channel and shows the gold CLUSTER badge; `lite` shows the silver LITE badge. Empty or any other value shows no badge. |
 | `DEXAFLOW_UI_WORKSPACE` | `ui.workspace` | string | _(empty)_ | both | DAG project directory the Lite web editor edits ([ADR 0025](/project/adrs/0025-lite-embedded-web-editor/)). Empty disables the editor. |
 | `DEXAFLOW_UI_MONACO_DIR` | `ui.monaco_dir` | string | _(empty)_ | both | Where the pinned Monaco bundle was fetched by `dexaflow setup`; the editor page is served Monaco from it. Empty shows a setup hint. |
@@ -1407,6 +1434,45 @@ caught when the run is created: the run is not created, the scheduler logs one
 warning for the tenant and counts it in
 `dexaflow_scheduler_decisions_total{decision_type="tenant_suspended"}`.
 
+`GET /api/v2/service/usage?after=<cursor>&limit=<n>` reads the usage events
+of every tenant ([ADR 0096](/project/adrs/0096-task-attempt-usage-events/)):
+one event each time a task attempt reaches an attempt-ending state
+(`success`, `failed`, `skipped`, `upstream_failed`, `removed`,
+`up_for_reschedule`), written by the database in the transaction that made
+the change ([how to use them](/operate/usage-events/)). It answers `404`
+while `usage.events.enabled` is off. The answer
+is `{"events": [...], "next_cursor": "...", "has_more": true}`, at most
+`limit` events (default 500, at most 5000); each event carries `cursor`,
+`tenant`, `dag_id` and `run_id` (empty once the tenant or the run is
+deleted), `task_instance_id`, `task_id`, `map_index`, `try_number`,
+`attempt_epoch`, `revision`, `state`, `previous_state`, `pool_slots` (the
+task's size), `started_at` and `ended_at` (both null when the task never
+started; `ended_at` is the time of the change that ended the attempt when
+the task has no end time of its own, as for a reschedule poke),
+`last_failure_kind` (`infra` when an infrastructure fault, not the task,
+failed it; left out otherwise), and `recorded_at`. The duration is
+`ended_at` minus `started_at` when both are set.
+
+How to consume it:
+
+- Start without `after`, then pass the `next_cursor` of each answer, also of
+  an empty one: it is the same cursor, so it can be stored every time. The
+  cursor is opaque.
+- Delivery is at least once. The key of an event is `task_instance_id`,
+  `try_number`, `attempt_epoch` and `revision`: dedupe on it, and keep the
+  highest revision of an attempt as its state, since a user marking a task
+  `success` or `failed` after it ended writes the next revision. To bill per
+  try rather than per execution, group on `task_instance_id` and
+  `try_number`. Each poke of a sensor in reschedule mode is its own attempt.
+- An event is served only once every transaction older than it has
+  finished, so a later page never brings an event that sorts before a cursor
+  already returned. A long transaction anywhere in the database delays
+  events, never loses them; `dexaflow_usage_events_lag_seconds` shows by how
+  much.
+- Events are deleted after `retention.usage_events_days` (default 30). A
+  cursor older than what is kept answers `410` with `oldest_cursor`: the
+  events between the two are lost, and the consumer resumes from there.
+
 Every call that reaches the database is recorded in the audit trail, as
 `service.tenant.ensure` (with whether the tenant was created),
 `service.user.ensure` (with the subject, email, roles and whether the user was
@@ -1416,7 +1482,9 @@ created), `service.tenant.suspend` (with the mode and reason) and
 The service token is a root-level credential: whoever holds it can create
 tenants and grant any role, `admin` included, in every tenant the trusted
 issuer covers. Keep it in a Secret, give it only to the automation that
-provisions tenants, and rotate it by changing the Secret and restarting.
+provisions tenants, and rotate it by changing the Secret and restarting. It
+also reads the usage of every tenant; the usage route is a read and is not
+audited.
 
 ### Alert destinations
 

@@ -33,6 +33,7 @@ Dexaflow database, one row per action, and belong to a tenant.
 | `ci_oidc.exchange` | A CI job exchanges its identity token for a Dexaflow token. |
 | `auth.break_glass` | A password sign-in while OIDC is on, allowed or refused. |
 | `user.create` | A user is created. |
+| `user.deactivate`, `user.activate` | An admin deactivates or reactivates a user through `PATCH /api/v2/users/{user_id}`. |
 | `service.tenant.ensure`, `service.tenant.suspend`, `service.tenant.resume`, `service.user.ensure` | A call to the [operator service API](/reference/configuration/#operator-service-api). |
 | `retention.purge` | The retention janitor deleted audit entries. |
 
@@ -96,9 +97,10 @@ By default the audit log is kept forever. `retention.audit_log_days`
 (`DEXAFLOW_RETENTION_AUDIT_LOG_DAYS`) deletes entries older than that many
 days, in every tenant. Each cycle that
 deletes entries writes a `retention.purge` entry with the number of rows and
-the cutoff, so the purge itself stays on record. The
-[configuration reference](/reference/configuration/) lists the other
-retention settings, such as the batch size and the dry run.
+the cutoff, so the purge itself stays on record.
+[Data retention](/operate/data-retention/) explains how to turn it on with a
+dry run first, and the [configuration reference](/reference/configuration/)
+lists the other retention settings, such as the batch size.
 
 If you need the log for longer than the database keeps it, export it on a
 schedule through the API, or replicate the `audit_log` table, before the

@@ -128,7 +128,15 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 		drain = func() { drainDispatch(dispatchCloser, logger) }
 		// On the scheduler pool, with the loop and the other janitors: off the
 		// API pool and its statement_timeout (#1339).
-		startRetention(ctx, cfg.Retention, storage.NewRetentionStore(schedPG), sched.IsLeading, metrics, logger)
+		startRetention(ctx, cfg.Retention, cfg.Usage.Events.Enabled, storage.NewRetentionStore(schedPG), sched.IsLeading, metrics, logger)
+		var usageLag usageLagGauge
+		var usageCount usageCounters
+		if metrics != nil {
+			usageLag, usageCount = metrics, metrics
+		}
+		usageStore := storage.NewUsageStore(schedPG)
+		startUsageSwitch(ctx, cfg.Usage.Events.Enabled, usageStore, usageLag, sched.IsLeading, logger)
+		startUsageCounters(ctx, cfg.Usage.Events.Enabled, cfg.Observability.UsageMetrics, usageStore, usageCount, sched.LeaderSince, logger)
 		health = sched
 		podDispatch = dispatchOn
 	}

@@ -414,6 +414,8 @@ holds, then re-run.
 | 052 (tenant suspension) | 52 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 51 |
 | 053 (`next_run_at`) | 53 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the columns are not there yet | 52; retry when `dags` is quiet |
 | 054 (index build) | 54 | `DROP INDEX CONCURRENTLY IF EXISTS idx_dags_next_run;` | 53 |
+| 055 (usage events) | 55 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 54; retry when `task_instances` is quiet |
+| 056 (usage events pruned mark) | 56 | nothing: one transaction, rolled back, and every statement can be repeated | 55 |
 | 057 (UUIDv7 keys) | 57 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 56; retry when `dag_runs` and `task_instances` are quiet |
 
 **How to run `migrate force`.** The hook image is the `dexaflow-migrate`
@@ -1122,7 +1124,7 @@ other step.
 
 ### Upgrading to 0.5.8
 
-0.5.8 applies five migrations, 050 to 054.
+0.5.8 applies seven migrations, 050 to 056.
 
 - **`050_audit_log_resource_index`** builds `idx_audit_resource` on
   `audit_log (tenant_id, resource_id, occurred_at DESC, id DESC)`, the index the
@@ -1157,6 +1159,26 @@ other step.
   columns. During a rolling upgrade, a version registered or a run deleted
   through a 0.5.7 replica does not clear the stored time, so the change
   reaches the scheduler within the hour instead of on the next tick.
+- **`055_usage_events`** creates `usage_events`, the switch row
+  `usage_events_switch`, `usage_event_revisions` (the last revision of each
+  attempt, deleted with its task instance) and a trigger on `task_instances`
+  that writes one event per finished task attempt
+  ([ADR 0096](/project/adrs/0096-task-attempt-usage-events/),
+  [#2174](https://github.com/dexadata/dexaflow/issues/2174)). The switch
+  starts off and stays off until `usage.events.enabled` is on, so the
+  trigger writes nothing for an install that does not use it. Creating the
+  trigger takes a lock on `task_instances` that blocks writes to it (not
+  reads). The lock waits up to 5 seconds for the transactions already open
+  on the table, and writes queue behind it while it waits; once granted it
+  is held for an instant. Previous releases never read the
+  tables and keep running against the schema; with the switch on, their
+  writes are recorded too, because the database writes the events.
+- **`056_usage_events_pruned`** creates `usage_events_pruned`, one row
+  that marks the newest usage event the retention janitor deleted, so the
+  service API can tell a consumer that it lost events. While recording is on,
+  the janitor deletes events older than `retention.usage_events_days`
+  (default 30). A new table that nothing else reads: no lock on a table in
+  use.
 
 #### Three unused tables are dropped
 
@@ -1202,18 +1224,21 @@ once a 0.5.8 replica leads. With retention off (the default) 0.5.4 never reads
 the three tables.
 
 **Rolling back 0.5.8.** On Cluster, `helm rollback <release> <revision>` leaves the
-schema at 054, and the previous control plane boots against it with the
+schema at 056, and the previous control plane boots against it with the
 warning `database schema is ahead of this binary; proceeding`; it reads the
 event log through the new index without knowing it, never touches the three
 tables, and ignores tenant suspensions: a suspended tenant gets runs again
-until 0.5.8 is back. On Lite, run the down migrations first, with the 0.5.8 CLI or
+until 0.5.8 is back. If usage events were on, the trigger keeps recording,
+and nothing turns the switch off or prunes the events until 0.5.8 leads
+again. On Lite, run the down migrations first, with the 0.5.8 CLI or
 migrate image:
 
 ```sh
 migrate -path migrations -database "$DATABASE_URL" goto 49
 ```
 
-That drops the next due times and their index, drops the suspension columns
+That drops the usage events, their pruned mark and their trigger, the next due times and their
+index, drops the suspension columns
 (every suspended tenant runs again),
 recreates the three tables, empty, exactly as before, and drops the index
 `CONCURRENTLY`. Recreating the tables takes a lock on `task_instances`
@@ -1250,6 +1275,25 @@ migrate -path migrations -database "$DATABASE_URL" goto 56
 
 That restores `gen_random_uuid()` as the default and drops the function. Ids
 already made as UUIDv7 stay as they are and keep working.
+
+### Upgrading to 0.6.0: the UI refreshes every 5 seconds
+
+The bundled UI now polls DAG, run and task-instance state every 5 seconds
+instead of 30 when `ui.autoRefreshIntervalSeconds` is unset
+([#1196](https://github.com/dexadata/dexaflow/issues/1196)). An open DAG or run
+page with a run in progress costs about 27 database transactions per refresh,
+so the same number of open tabs puts about six times the UI load on the
+metadata database; one api process serves about 1,400 such tabs at 5 seconds
+([Experiment 4](https://github.com/dexadata/dexaflow/blob/main/test/load/BASELINE.md#ui-refresh-cycle)).
+An install that already sets the value keeps it. To keep the old cadence, set
+it before upgrading:
+
+```yaml
+ui:
+  autoRefreshIntervalSeconds: 30
+```
+
+Rolling back to 0.5.x restores 30 seconds unless the value is set.
 
 ## Ephemeral database loss (emptyDir Postgres)
 
