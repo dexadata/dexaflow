@@ -412,6 +412,39 @@ type Tenant struct {
 	SuspensionReason           string             `json:"suspension_reason"`
 }
 
+type UsageEvent struct {
+	ID              int64              `json:"id"`
+	Xid             pgtype.Uint64      `json:"xid"`
+	TenantID        pgtype.UUID        `json:"tenant_id"`
+	DagRunID        pgtype.UUID        `json:"dag_run_id"`
+	TaskInstanceID  pgtype.UUID        `json:"task_instance_id"`
+	TaskID          string             `json:"task_id"`
+	MapIndex        int32              `json:"map_index"`
+	TryNumber       int32              `json:"try_number"`
+	AttemptEpoch    int32              `json:"attempt_epoch"`
+	Revision        int32              `json:"revision"`
+	State           TaskState          `json:"state"`
+	PreviousState   TaskState          `json:"previous_state"`
+	PoolSlots       int32              `json:"pool_slots"`
+	StartedAt       pgtype.Timestamptz `json:"started_at"`
+	EndedAt         pgtype.Timestamptz `json:"ended_at"`
+	LastFailureKind *string            `json:"last_failure_kind"`
+	RecordedAt      pgtype.Timestamptz `json:"recorded_at"`
+}
+
+type UsageEventRevision struct {
+	TaskInstanceID pgtype.UUID `json:"task_instance_id"`
+	TryNumber      int32       `json:"try_number"`
+	AttemptEpoch   int32       `json:"attempt_epoch"`
+	Revision       int32       `json:"revision"`
+}
+
+type UsageEventsSwitch struct {
+	ID        bool               `json:"id"`
+	Enabled   bool               `json:"enabled"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type User struct {
 	ID           pgtype.UUID        `json:"id"`
 	TenantID     pgtype.UUID        `json:"tenant_id"`

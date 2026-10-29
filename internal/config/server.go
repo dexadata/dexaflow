@@ -32,6 +32,7 @@ type ServerConfig struct {
 	UI            UISection            `mapstructure:"ui"`
 	Secrets       SecretsSection       `mapstructure:"secrets"`
 	Retention     RetentionSection     `mapstructure:"retention"`
+	Usage         UsageSection         `mapstructure:"usage"`
 	Deploy        DeploySection        `mapstructure:"deploy"`
 	Bootstrap     BootstrapSection     `mapstructure:"bootstrap"`
 	Agent         AgentSection         `mapstructure:"agent"`
