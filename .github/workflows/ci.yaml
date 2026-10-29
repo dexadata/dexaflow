@@ -1151,10 +1151,9 @@ jobs:
           # on an HTTP 504 with nothing of ours involved. 1.9.11 has no such
           # dependency, which is what actually closes the hole.
           #
-          # NOTE: the sibling installs pin only dbt-postgres / dbt-duckdb, whose
-          # dbt-core requirement has no upper bound, so they still resolve
-          # dbt-core 1.12.x and remain exposed — tracked in #957.
-          pip install --quiet "dbt-core==1.9.*" "dbt-postgres==1.9.*"
+          # The pin lives in test/e2e/constraints-dbt.txt, shared with every
+          # other dbt install of the tests (#957).
+          pip install --quiet -c test/e2e/constraints-dbt.txt dbt-core "dbt-postgres==1.9.*"
       - name: Apply migrations
         if: steps.gate.outputs.run == 'true'
         run: ~/go/bin/migrate -path migrations -database "postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable" up
@@ -1184,7 +1183,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # dbt-core is pinned to 1.9.* on every leg — that keeps the resolver off the
+        # dbt-core is pinned to 1.9.* on every leg (test/e2e/constraints-dbt.txt,
+        # #957) — that keeps the resolver off the
         # 2.0 pre-release parser (a source build that fetches a wheel at build time),
         # so a plain source/wheel install is enough. One adapter per leg: their dep
         # pins conflict in a shared venv.
@@ -1197,7 +1197,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install ${{ matrix.adapter }} adapter + pytest
-        run: python -m pip install --quiet pytest "dbt-core==1.9.*" "dbt-${{ matrix.adapter }}==1.9.*"
+        run: python -m pip install --quiet -c test/e2e/constraints-dbt.txt pytest dbt-core "dbt-${{ matrix.adapter }}==1.9.*"
       - name: Contract test (${{ matrix.adapter }})
         run: PYTHONPATH=runtime/python python -m pytest runtime/python/tests/test_dbt_adapter_contracts.py -q -k ${{ matrix.adapter }}
 

@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 # Shared helpers for the k3d end-to-end scripts.
 
+# DBT_CONSTRAINTS is the pip constraints file that pins dbt-core for every dbt
+# install of the tests (#957).
+DBT_CONSTRAINTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/constraints-dbt.txt"
+
+# dbt_core_pin prints the dbt-core requirement of DBT_CONSTRAINTS, for an
+# install that cannot take a constraints file, such as a DAG's dependencies.
+dbt_core_pin() {
+  grep -E '^dbt-core[=<>!~]' "$DBT_CONSTRAINTS"
+}
+
 # k3d_import imports images into a k3d cluster, working around a k3d bug where
 # `k3d image import` prints "Successfully imported" even when the in-node
 # containerd import actually failed ("ctr: open /k3d/images/...tar: no such file

@@ -133,10 +133,12 @@ YAML
 
 # The DAG image: the leoflow base (agent) + the dbt adapter + the project baked at
 # the agent's WORKDIR (/home/leoflow), so `dbt run --select X` finds dbt_project.yml.
+cp "$DBT_CONSTRAINTS" "$PROJ/constraints-dbt.txt"
 cat >"$PROJ/Dockerfile" <<DOCKER
 FROM ${BASE_IMAGE}
 USER root
-RUN pip install --no-cache-dir "dbt-postgres==1.9.*"
+COPY constraints-dbt.txt /tmp/constraints-dbt.txt
+RUN pip install --no-cache-dir -c /tmp/constraints-dbt.txt "dbt-postgres==1.9.*"
 COPY . /home/leoflow/
 ENV DBT_PROFILES_DIR=/home/leoflow
 RUN chown -R 65532:65532 /home/leoflow

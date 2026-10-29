@@ -23,6 +23,8 @@ DB_URL="${LEOFLOW_E2E_DB_URL:-postgres://leoflow:leoflow@localhost:5432/leoflow_
 BASE="http://127.0.0.1:${PORT}"
 DAG_ID="shopdbt"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=test/e2e/lib.sh
+source "$ROOT/test/e2e/lib.sh"
 TMP="$(mktemp -d)"
 WS="$TMP/ws"
 PROJ="$WS/$DAG_ID"
@@ -71,13 +73,14 @@ dbt:
   granularity: node
 # Lite installs these into the per-DAG venv, so \`dbt\` resolves on PATH for the task.
 dependencies:
+  - "$(dbt_core_pin)"
   - "dbt-duckdb==1.9.*"
 YAML
 
 echo "==> pre-parsing the manifest with dbt-duckdb (profile in a separate dir; project stays profiles-less)"
 PARSE_VENV="$TMP/parsevenv"
 python3 -m venv "$PARSE_VENV"
-"$PARSE_VENV/bin/pip" install -q "dbt-core==1.9.*" "dbt-duckdb==1.9.*"
+"$PARSE_VENV/bin/pip" install -q -c "$DBT_CONSTRAINTS" dbt-core "dbt-duckdb==1.9.*"
 mkdir -p "$TMP/parseprofiles"
 cat >"$TMP/parseprofiles/profiles.yml" <<YAML
 shop:

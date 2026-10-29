@@ -117,6 +117,7 @@ dag_id: mix
 # The adapter is declared, not installed by a hand-written Dockerfile: the
 # generated one has to carry it, and that is half of what this test now proves.
 dependencies:
+  - "@DBT_CORE_PIN@"
   - dbt-postgres==1.9.*
   # A version FLOOR, on purpose (#1064). `RUN` is /bin/sh -c, so an unquoted
   # `>=` is a redirection: pip used to receive a bare `wheel`, the floor
@@ -129,6 +130,9 @@ dbt_groups:
     manifest: target/manifest.json
     granularity: node
 YAML
+# The dbt-core pin comes from the shared constraints file (#957); the heredoc
+# is quoted, so it is filled in here.
+sed -i "s|@DBT_CORE_PIN@|$(dbt_core_pin)|" "$PROJ/dexaflow.yaml"
 # Pin the DAG image to the host arch (see e2e.sh): the loader defaults to
 # linux/amd64, which fails FROM an arm64 base on a Lima/dev host → ErrImagePull.
 case "$(uname -m)" in arm64|aarch64) HOST_PLATFORM="linux/arm64" ;; *) HOST_PLATFORM="linux/amd64" ;; esac
