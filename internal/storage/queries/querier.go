@@ -1345,6 +1345,10 @@ type Querier interface {
 	// description is nullable, so it keeps the COALESCE preserve semantics: a NULL
 	// param keeps the stored description rather than wiping it.
 	UpsertVariable(ctx context.Context, arg UpsertVariableParams) error
+	// The oldest transaction still running, or the next to start: every event
+	// served now has a lower xid, and every event committed later a higher or
+	// equal one.
+	UsageEventsHorizon(ctx context.Context) (pgtype.Uint64, error)
 	// The age in seconds of the oldest event the route cannot serve yet, because
 	// a transaction older than it is still open; 0 when there is none.
 	UsageEventsLagSeconds(ctx context.Context) (float64, error)

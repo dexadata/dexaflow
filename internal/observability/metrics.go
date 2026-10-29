@@ -101,6 +101,12 @@ type Metrics struct {
 	// service API cannot serve yet because an older transaction is still
 	// open, set by the leader; 0 while recording is off.
 	UsageEventsLag prometheus.Gauge
+	// TaskAttempts and TaskSlotSeconds are the per-tenant usage counters,
+	// advanced by the leader from the usage events when
+	// observability.usage_metrics is on. Their cardinality is the number of
+	// tenants, so they stay empty by default.
+	TaskAttempts    *prometheus.CounterVec
+	TaskSlotSeconds *prometheus.CounterVec
 
 	// TLSReloadFailures counts certificate or key files that changed on disk
 	// but failed to load, by listener (api, agent_grpc). The listener keeps
@@ -335,6 +341,23 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "dexaflow_usage_events_lag_seconds",
 			Help: "Age of the oldest usage event the service API cannot serve yet because an older transaction is still open; 0 while usage events are not recorded. Set by the scheduler leader.",
 		}),
+		TaskAttempts: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_task_attempts_total",
+			Help: "Finished task attempts by tenant and the state each first ended in, from the usage events; with observability.usage_metrics on. Counted by the scheduler leader from the moment it took the lead.",
+		}, []string{"tenant", "state"}),
+		TaskSlotSeconds: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "dexaflow_task_slot_seconds_total",
+			Help: "Pool slots times run time of finished task attempts by tenant, from the usage events; with observability.usage_metrics on. Counted by the scheduler leader from the moment it took the lead.",
+		}, []string{"tenant"}),
+	}
+}
+
+// RecordTaskAttempt counts one finished attempt of tenant in state and adds
+// its slot seconds.
+func (m *Metrics) RecordTaskAttempt(tenant, state string, slotSeconds float64) {
+	m.TaskAttempts.WithLabelValues(tenant, state).Inc()
+	if slotSeconds > 0 {
+		m.TaskSlotSeconds.WithLabelValues(tenant).Add(slotSeconds)
 	}
 }
 

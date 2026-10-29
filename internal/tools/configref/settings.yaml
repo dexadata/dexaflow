@@ -1501,6 +1501,15 @@ settings:
       `leoflow_*` name. The default keeps both, so dashboards and alerts on either
       name work. An opt-in for operators who do not need the `leoflow_*` names;
       it halves the scrape. Helm: set it through `extraEnv`.
+  observability.usage_metrics:
+    edition: both
+    description: >-
+      Advance `dexaflow_task_attempts_total{tenant,state}` and
+      `dexaflow_task_slot_seconds_total{tenant}` from the usage events
+      ([ADR 0096](/project/adrs/0096-task-attempt-usage-events/)). The scheduler
+      leader counts each attempt once, by the state it first ended in, from the
+      moment it took the lead, so a failover resets them. One series per tenant,
+      so off by default. Needs `usage.events.enabled`.
   ui.instance_name:
     edition: both
     description: >-
