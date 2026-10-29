@@ -1239,6 +1239,25 @@ the same database. Rows deleted by the upgrade do not come back. Rolling back
 further, to 0.5.4 with `retention.dag_runs_days` set, needs that down
 migration too, so its retention finds `task_state_history` again.
 
+### Upgrading to 0.6.0: the UI refreshes every 5 seconds
+
+The bundled UI now polls DAG, run and task-instance state every 5 seconds
+instead of 30 when `ui.autoRefreshIntervalSeconds` is unset
+([#1196](https://github.com/dexadata/dexaflow/issues/1196)). An open DAG or run
+page with a run in progress costs about 27 database transactions per refresh,
+so the same number of open tabs puts about six times the UI load on the
+metadata database; one api process serves about 1,400 such tabs at 5 seconds
+([Experiment 4](https://github.com/dexadata/dexaflow/blob/main/test/load/BASELINE.md#ui-refresh-cycle)).
+An install that already sets the value keeps it. To keep the old cadence, set
+it before upgrading:
+
+```yaml
+ui:
+  autoRefreshIntervalSeconds: 30
+```
+
+Rolling back to 0.5.x restores 30 seconds unless the value is set.
+
 ## Ephemeral database loss (emptyDir Postgres)
 
 When evaluating Dexaflow with an in-cluster Postgres running on `emptyDir`

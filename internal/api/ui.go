@@ -70,11 +70,12 @@ var uiConfigRequiredFields = []string{
 	"theme", "multi_team",
 }
 
-// DefaultUIAutoRefreshIntervalSeconds is the production-safe value returned by
-// /ui/config when no explicit override is configured. Lite overrides this to a
-// smaller value (typically 5s) for a snappy inner-loop dev experience; Pro
-// keeps 30s so the SPA's polling does not hammer a shared metadata DB.
-const DefaultUIAutoRefreshIntervalSeconds = 30
+// DefaultUIAutoRefreshIntervalSeconds is the value returned by /ui/config when
+// no explicit override is configured. Lite overrides it to 1s for a snappy
+// inner loop. 5s is what a team watching runs progress expects, and one api
+// process serves about 1,400 open tabs of a page with a run in progress at that
+// rate (Experiment 4, #1196); it was 30s before v0.6.0.
+const DefaultUIAutoRefreshIntervalSeconds = 5
 
 // registerUI mounts the Airflow 3.2.1 internal UI API (/ui/*) that the bundled
 // React app calls. Unimplemented /ui paths degrade gracefully via uiNoRoute.
