@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/dexadata/dexaflow/internal/build"
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/version"
 )
@@ -125,10 +126,12 @@ func baseImageNote(baseImage, source, pythonVersion, cliVersion string) string {
 	return fmt.Sprintf("note: base %s (moving line; this is a development build)", ref)
 }
 
-// noteGeneratedBase prints baseImageNote for the CLI running this build, and
-// nothing for a project's own Dockerfile, whose FROM the CLI did not choose.
-func noteGeneratedBase(w io.Writer, ownDockerfile bool, cfg *domain.LeoflowConfig, source string) {
-	if ownDockerfile {
+// noteGeneratedBase prints baseImageNote for the CLI running this build. It
+// prints nothing for a project's own Dockerfile, whose FROM the CLI did not
+// choose, nor on the skip path, which builds nothing: the reused image's base
+// was chosen when it was built.
+func noteGeneratedBase(w io.Writer, ownDockerfile bool, b build.Builder, cfg *domain.LeoflowConfig, source string) {
+	if ownDockerfile || b.Path() == build.PathSkip {
 		return
 	}
 	//nolint:errcheck // informational

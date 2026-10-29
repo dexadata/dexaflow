@@ -692,7 +692,7 @@ func buildImage(cmd *cobra.Command, dir string, o compileOptions, cfg *domain.Le
 	// we cannot read its COPY lines, so the secret warning softens rather
 	// than claiming what ships.
 	ownDockerfile := dockerfile != filepath.Join(dir, generatedDockerfileName)
-	noteGeneratedBase(cmd.ErrOrStderr(), ownDockerfile, cfg, o.baseImageSource)
+	noteGeneratedBase(cmd.ErrOrStderr(), ownDockerfile, b, cfg, o.baseImageSource)
 	warnShadowedByDockerfile(cmd.ErrOrStderr(), dockerfileShadow{
 		own: ownDockerfile, dockerfile: name, configFile: projectConfigPath(dir), baseImageSource: o.baseImageSource,
 	}, cfg)
