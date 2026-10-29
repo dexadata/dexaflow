@@ -405,6 +405,7 @@ jobs:
       DATABASE_URL: postgres://leoflow:leoflow@localhost:5432/leoflow_test?sslmode=disable
       REDIS_URL: redis://localhost:6379/0
       DEXAFLOW_TEST_S3_ENDPOINT: http://localhost:4566
+      DEXAFLOW_TEST_GCS_ENDPOINT: http://localhost:4443
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -426,6 +427,21 @@ jobs:
             sleep 2
           done
           echo "LocalStack S3 did not come up" >&2
+          exit 1
+
+      # The GCS API the log backend is tested against with its real client
+      # (#526 bucket A). A step, not a service: fake-gcs-server takes its scheme
+      # and host as flags, and a service container cannot be given arguments.
+      - name: Start the GCS emulator
+        run: |
+          docker run -d --name fake-gcs -p 4443:4443 mirror.gcr.io/fsouza/fake-gcs-server:1.52 \
+            -scheme http -port 4443 -public-host localhost:4443
+          for _ in $(seq 60); do
+            curl -sf http://localhost:4443/storage/v1/b >/dev/null && exit 0
+            sleep 1
+          done
+          echo "fake-gcs-server did not come up" >&2
+          docker logs fake-gcs >&2
           exit 1
 
       - name: Run integration tests
