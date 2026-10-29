@@ -222,3 +222,6 @@ test/gcp/runs/
 # Soak battery evidence (test/soak). Every run writes a timestamped directory of
 # samples, violations and logs here; none of it belongs in the repository.
 .soak/
+
+# go build ./internal/tools/metricsref from the root drops the binary here
+/metricsref
