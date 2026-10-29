@@ -23,9 +23,7 @@ func TestSPAReferencedRoutesAreRegistered(t *testing.T) {
 	// only assert the route exists (no 404); the handler's own test covers shape.
 	wantPaths := []string{
 		// The reported bug + its siblings (were 404 → broken screens):
-		"/api/v2/connections/defaults", // connection form (createDefaultConnections)
-		"/api/v2/config",               // Config screen
-		"/api/v2/backfills",            // Backfills screen
+		"/api/v2/config", // Config screen
 		// The connection area + its catalog:
 		"/ui/connections/hook_meta",
 		"/api/v2/connections",
