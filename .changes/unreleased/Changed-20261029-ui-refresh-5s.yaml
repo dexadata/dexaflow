@@ -1,0 +1,6 @@
+kind: Changed
+body: |-
+  The bundled UI refreshes DAG, run and task-instance state every 5 seconds
+  instead of 30 when `ui.autoRefreshIntervalSeconds` is unset. Set it to `30`
+  to keep the old cadence; see the upgrade note (#1196).
+time: 2026-10-29T12:00:00.000000+00:00

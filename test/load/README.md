@@ -95,8 +95,8 @@ scope for Experiment 1 (no dispatcher is wired).
 ## Experiment 4: UI refresh cycle
 
 The embedded UI polls. On a page whose data holds a run in progress it
-refetches a fixed set of queries every `ui.autoRefreshIntervalSeconds` (30 s
-on Pro, 1 s on Lite), so the load the UI puts on the control plane is that set
+refetches a fixed set of queries every `ui.autoRefreshIntervalSeconds` (5 s
+on Pro by default, 30 s before v0.6.0, 1 s on Lite), so the load the UI puts on the control plane is that set
 times the viewers divided by the interval (#1196). Experiment 4 measures the
 set: it replays one page's refresh, a _profile_, against a running control
 plane as V viewers that each issue cycles back to back, and reports the cycles

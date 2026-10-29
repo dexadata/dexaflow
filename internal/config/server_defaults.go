@@ -237,7 +237,7 @@ var serverDefaults = map[string]any{
 	// AutomaticEnv only binds env vars for keys it has seen via SetDefault or
 	// SetConfigFile. Without this line LEOFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS
 	// was silently dropped, so `dexaflow lite` (which exports the env var to
-	// poll every 1s) was actually running at the 30s production default.
+	// poll every 1s) was actually running at the 30s default of the time.
 	"ui.auto_refresh_interval_seconds":                0,
 	"auth.dev_no_auth":                                false,
 	"auth.service_token":                              "",
