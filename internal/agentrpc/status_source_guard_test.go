@@ -42,7 +42,7 @@ var statusConstructors = map[string]bool{"Error": true, "Errorf": true, "New": t
 //   - It is name-based. An error value named e, problem or cause passes it, and
 //     a status package imported under another alias evades it entirely.
 //   - It cannot see a bare error returned from a handler, which grpc-go renders
-//     as codes.Unknown with err.Error() as the message. Only the behavioural
+//     as codes.Unknown with err.Error() as the message. Only the behavioral
 //     sweep catches that.
 //   - The sweep in turn covers the collaborator seams it poisons today. A new
 //     handler behind a new seam arrives with a fake nobody poisons, so it is

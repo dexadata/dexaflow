@@ -125,9 +125,14 @@ func baseImageNote(baseImage, source, pythonVersion, cliVersion string) string {
 	return fmt.Sprintf("note: base %s (moving line; this is a development build)", ref)
 }
 
-// resolvedBaseNote is baseImageNote for the CLI running this build.
-func resolvedBaseNote(cfg *domain.LeoflowConfig, source string) string {
-	return baseImageNote(cfg.BaseImage, source, cfg.PythonVersion, version.Get().Version)
+// noteGeneratedBase prints baseImageNote for the CLI running this build, and
+// nothing for a project's own Dockerfile, whose FROM the CLI did not choose.
+func noteGeneratedBase(w io.Writer, ownDockerfile bool, cfg *domain.LeoflowConfig, source string) {
+	if ownDockerfile {
+		return
+	}
+	//nolint:errcheck // informational
+	fmt.Fprintln(w, baseImageNote(cfg.BaseImage, source, cfg.PythonVersion, version.Get().Version))
 }
 
 // resolveBuildImage decides the image reference for a build. An explicit --image

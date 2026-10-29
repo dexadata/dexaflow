@@ -48,11 +48,8 @@ func TestSchedulerTickHasNoReaperHook(t *testing.T) {
 // isReapSeam reports whether t can carry the reaper's entrypoint: an interface
 // with its ReapOnce method, or a func of its signature.
 func isReapSeam(t, reaperType, reapFunc reflect.Type) bool {
-	switch t.Kind() {
-	case reflect.Interface:
+	if t.Kind() == reflect.Interface {
 		return t.Implements(reaperType)
-	case reflect.Func:
-		return t == reapFunc
 	}
-	return false
+	return t == reapFunc
 }

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -206,18 +207,11 @@ func newBuildCommand() *cobra.Command {
 			// dexaflow.yaml in the fifth project must not cost four builds
 			// first, which is the half-built workspace stopping on failure
 			// exists to avoid (#1121).
-			for _, t := range targets {
-				if verr := preflightTarget(cmd, t, opts(t)); verr != nil {
-					return verr
-				}
+			if verr := preflightTargets(cmd, targets, opts); verr != nil {
+				return verr
 			}
 			if dryRun {
-				for _, t := range targets {
-					//nolint:errcheck // informational
-					fmt.Fprintf(out, "%s → %s\n", t.dagID, t.image)
-				}
-				//nolint:errcheck // informational
-				fmt.Fprintln(out, "dry run: nothing built")
+				printBuildPlan(out, targets)
 				return nil
 			}
 			for i, t := range targets {
@@ -236,16 +230,7 @@ func newBuildCommand() *cobra.Command {
 					return fmt.Errorf("building %s: %w", t.dagID, rerr)
 				}
 			}
-			// The skipped list is repeated here on purpose: it was printed
-			// before minutes of builder output, and a closing "built N" alone
-			// reads as "the workspace is built".
-			if len(skipped) > 0 {
-				//nolint:errcheck // informational
-				fmt.Fprintf(out, "built %d image(s), skipped %d: %s\n", len(targets), len(skipped), strings.Join(skipped, "; "))
-				return nil
-			}
-			//nolint:errcheck // informational
-			fmt.Fprintf(out, "built %d image(s)\n", len(targets))
+			printBuildSummary(out, len(targets), skipped)
 			return nil
 		},
 	}
@@ -260,17 +245,42 @@ func newBuildCommand() *cobra.Command {
 	return cmd
 }
 
-// preflightTarget loads one project's config the way its compile will and
-// reports what would refuse it, naming the project.
-func preflightTarget(cmd *cobra.Command, t buildTarget, o compileOptions) error {
-	cfg, _, err := loadCompileConfig(cmd, t.dir, o)
-	if err == nil {
-		err = validateProject(t.dir, cfg)
-	}
-	if err != nil {
-		return fmt.Errorf("checking %s before building: %w", t.dagID, err)
+// preflightTargets loads each project's config the way its compile will and
+// reports the first that would be refused, naming the project.
+func preflightTargets(cmd *cobra.Command, targets []buildTarget, opts func(buildTarget) compileOptions) error {
+	for _, t := range targets {
+		cfg, _, err := loadCompileConfig(cmd, t.dir, opts(t))
+		if err == nil {
+			err = validateProject(t.dir, cfg)
+		}
+		if err != nil {
+			return fmt.Errorf("checking %s before building: %w", t.dagID, err)
+		}
 	}
 	return nil
+}
+
+// printBuildSummary closes a workspace build. The skipped list is repeated on
+// purpose: it was printed before minutes of builder output, and a closing
+// "built N" alone reads as "the workspace is built".
+func printBuildSummary(out io.Writer, built int, skipped []string) {
+	if len(skipped) > 0 {
+		//nolint:errcheck // informational
+		fmt.Fprintf(out, "built %d image(s), skipped %d: %s\n", built, len(skipped), strings.Join(skipped, "; "))
+		return
+	}
+	//nolint:errcheck // informational
+	fmt.Fprintf(out, "built %d image(s)\n", built)
+}
+
+// printBuildPlan is --dry-run's output: each dag id with its image.
+func printBuildPlan(out io.Writer, targets []buildTarget) {
+	for _, t := range targets {
+		//nolint:errcheck // informational
+		fmt.Fprintf(out, "%s → %s\n", t.dagID, t.image)
+	}
+	//nolint:errcheck // informational
+	fmt.Fprintln(out, "dry run: nothing built")
 }
 
 // builtIDs lists the dag ids of targets already built, for the failure summary.
