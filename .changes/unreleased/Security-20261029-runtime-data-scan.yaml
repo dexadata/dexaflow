@@ -1,0 +1,13 @@
+kind: Security
+body: |-
+  **The data runtime image is scanned before it is published.** The release
+  now scans `dexaflow-runtime:py3.11-data-<tag>` before tagging and signing it,
+  and stops on a fixable HIGH or CRITICAL finding in its Python packages or
+  the jars they bundle that `.trivyignore.yaml` does not accept. Pull requests
+  that change `runtime/data/` or `runtime/Dockerfile` run the same scan. The
+  litellm finding of `py3.11-data-v0.5.7` (CVE-2026-114612) is fixed by the
+  litellm 1.103 override already on this release. The jackson, guava and aiohttp
+  copies that ray 2.59.0 bundles have no fixed ray release yet; they are
+  accepted with an expiry, since the image has no JVM and nothing starts ray's
+  runtime-env agent (#2247).
+time: 2026-10-29T13:10:00.000000000+00:00
