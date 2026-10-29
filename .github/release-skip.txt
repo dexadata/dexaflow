@@ -8,3 +8,4 @@
 #1517 ADR 0067 only, nothing to ship; the implementation is picked separately
 #1689 changelog sync of v0.5.1 to v0.5.3 back to main; release-0.5 already carries those sections
 #1923 changelog sync of v0.5.4 back to main; release-0.5 already carries that section
+#2210 empty on main: the skip-cache change already arrived with #2183, which is picked
