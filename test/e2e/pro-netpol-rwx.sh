@@ -3,11 +3,21 @@
 # real NetworkPolicy ENFORCEMENT and a real ReadWriteMany shared-logs PVC — on a
 # kind cluster with a real CNI (Calico) and an NFS RWX StorageClass. Intended as a
 # CI job (ubuntu-latest). Destructive; creates + deletes its own cluster.
+#
+# Two knobs widen it to the rest of #526 Layer 1:
+#   KIND_NODE_IMAGE  kindest/node image to run (empty: kind's default), so a CI
+#                    matrix can repeat the whole check per Kubernetes minor.
+#   KIND_WORKERS     worker nodes (default 0: one node). With 2 or more, the
+#                    api replicas are spread one per node, so the RWX log volume
+#                    is mounted from two nodes at once, and a drain of one api
+#                    node is checked against the PodDisruptionBudget.
 set -uo pipefail
 
 CLUSTER="leoflow-netpol-rwx"
 NS="leoflow"
 CALICO_VER="v3.28.2"
+KIND_NODE_IMAGE="${KIND_NODE_IMAGE:-}"
+KIND_WORKERS="${KIND_WORKERS:-0}"
 SECRET_KEY="$(openssl rand -hex 32)"   # ADR 0019: exactly 32 raw bytes or 64 hex chars
 pass(){ printf '  \033[1;32mPASS\033[0m %s\n' "$1"; }
 fail(){ printf '  \033[1;31mFAIL\033[0m %s\n' "$1"; FAILED=1; }
@@ -25,8 +35,12 @@ apiVersion: kind.x-k8s.io/v1alpha4
 networking:
   disableDefaultCNI: true
   podSubnet: "192.168.0.0/16"
+nodes:
+  - role: control-plane
 YAML
-kind create cluster --name "$CLUSTER" --config /tmp/kind-netpol.yaml --wait 120s || { echo "kind create failed"; exit 1; }
+for _ in $(seq 1 "$KIND_WORKERS"); do echo "  - role: worker" >>/tmp/kind-netpol.yaml; done
+kind create cluster --name "$CLUSTER" --config /tmp/kind-netpol.yaml ${KIND_NODE_IMAGE:+--image "$KIND_NODE_IMAGE"} --wait 120s || { echo "kind create failed"; exit 1; }
+kubectl version | sed 's/^/    /'
 
 log "install Calico + wait for it to be ready"
 kubectl apply -f "https://raw.githubusercontent.com/projectcalico/calico/${CALICO_VER}/manifests/calico.yaml" >/dev/null
@@ -79,6 +93,14 @@ kubectl -n "$NS" create secret tls leoflow-agent-tls --cert=/tmp/a.crt --key=/tm
 kubectl -n "$NS" create configmap leoflow-agent-ca --from-file=ca.crt=/tmp/a.crt >/dev/null
 
 # ── helm install: split + RWX shared logs + netpol scoped to a probe label ──────
+# On several workers the api replicas must land on different nodes, so the RWX
+# claim is a mount from two nodes rather than two pods on one.
+SPREAD=()
+if [ "$KIND_WORKERS" -ge 2 ]; then
+  SPREAD=(--set 'topologySpreadConstraints[0].maxSkew=1'
+          --set 'topologySpreadConstraints[0].topologyKey=kubernetes.io/hostname'
+          --set 'topologySpreadConstraints[0].whenUnsatisfiable=DoNotSchedule')
+fi
 log "helm install split.enabled=true, RWX logs (NFS), netpol ingress scoped to a label"
 helm install leoflow helm/dexaflow -n "$NS" --set nameOverride=leoflow \
   --set image.repository=leoflow-server --set image.tag=ci --set image.pullPolicy=IfNotPresent \
@@ -92,6 +114,7 @@ helm install leoflow helm/dexaflow -n "$NS" --set nameOverride=leoflow \
   --set logs.persistence.enabled=true --set logs.persistence.accessMode=ReadWriteMany --set logs.persistence.storageClass=nfs-rwx --set logs.persistence.size=1Gi \
   --set networkPolicy.enabled=true \
   --set 'networkPolicy.ingressFrom[0].podSelector.matchLabels.netpol-probe=allowed' \
+  "${SPREAD[@]}" \
   --wait --timeout 600s || { echo "helm install failed"; \
     echo "--- logs PVC ---"; kubectl -n "$NS" describe pvc leoflow-logs 2>&1 | tail -25; \
     echo "--- storageclasses ---"; kubectl get sc; \
@@ -151,6 +174,42 @@ code="$(kubectl -n "$NS" exec probe-allowed -- curl -s -m 8 -o /dev/null -w '%{h
 if [ "$code" != "200" ]; then
   pass "metrics :9090 is BLOCKED once metricsFrom names another namespace (http_code=${code:-none})"
 else fail "metrics :9090 still answered after narrowing metricsFrom — the value is decorative"; fi
+
+# ── Multi-node: RWX from two nodes, and a drain held by the PDB ─────────────────
+#
+# One node cannot show either claim: two api replicas on one node share one
+# mount, and a drain there takes both. With the replicas spread one per worker,
+# a drain of one api node must evict its replica while the other keeps serving,
+# and a drain of the second must then be refused, because the budget
+# (minAvailable 1) has no replica left to give.
+if [ "$KIND_WORKERS" -ge 2 ]; then
+  log "assert: api replicas on different nodes share the RWX log volume"
+  API_SEL="$(kubectl -n "$NS" get deploy leoflow-api -o jsonpath='{.spec.selector.matchLabels}' | jq -r 'to_entries | map("\(.key)=\(.value)") | join(",")')"
+  mapfile -t API_NODES < <(kubectl -n "$NS" get pods -l "$API_SEL" --field-selector=status.phase=Running -o jsonpath='{range .items[*]}{.spec.nodeName}{"\n"}{end}' | sort)
+  echo "    api pods on: ${API_NODES[*]}"
+  if [ "${#API_NODES[@]}" -eq 2 ] && [ "${API_NODES[0]}" != "${API_NODES[1]}" ]; then
+    pass "two api replicas Ready on two nodes, both mounting the RWX logs PVC"
+  else fail "api replicas are not one per node (${API_NODES[*]:-none}); the cross-node RWX mount was not exercised"; fi
+
+  log "assert: the PDB lets one api node drain and holds the second"
+  kubectl -n "$NS" get pdb leoflow-api >/dev/null 2>&1 && pass "api PodDisruptionBudget rendered" || fail "no api PodDisruptionBudget"
+  if [ "${#API_NODES[@]}" -eq 2 ]; then
+    # --pod-selector evicts only the api replica, so the datastores and probes
+    # on that node stay put and the check is about the budget alone.
+    if kubectl drain "${API_NODES[0]}" --pod-selector="$API_SEL" --ignore-daemonsets --delete-emptydir-data --timeout=90s >/dev/null 2>&1; then
+      pass "first api node drained (its replica evicted, the budget allowed one)"
+    else fail "drain of the first api node did not complete"; fi
+    code="$(kubectl -n "$NS" exec probe-allowed -- curl -s -m 8 -o /dev/null -w '%{http_code}' "http://${API_SVC}:8080/readyz" 2>/dev/null || true)"
+    [ "$code" = "200" ] && pass "api still answers during the drain (the other replica serves)" \
+      || fail "api did not answer during the drain (http_code=${code:-none})"
+    if kubectl drain "${API_NODES[1]}" --pod-selector="$API_SEL" --ignore-daemonsets --delete-emptydir-data --timeout=20s >/dev/null 2>&1; then
+      fail "second api node drained too: the PodDisruptionBudget did not hold the last replica"
+    else pass "second drain refused: the budget keeps the last api replica"; fi
+    kubectl uncordon "${API_NODES[0]}" "${API_NODES[1]}" >/dev/null 2>&1 || true
+    kubectl -n "$NS" rollout status deploy/leoflow-api --timeout=180s >/dev/null 2>&1 \
+      && pass "api back to 2 Ready replicas after uncordon" || fail "api did not recover after uncordon"
+  fi
+fi
 
 echo
 if [ "$FAILED" -ne 0 ]; then echo "PRO NETPOL+RWX: FAILED"; exit 1; fi

@@ -181,10 +181,13 @@ which tells you what to check on your own cluster before you rely on it.
 
 - **Run on a real cluster in CI.** The pod-per-task e2e suites run on k3d for
   every pull request: task pods, RBAC, the pod lifecycle, timeouts and the
-  reconciler. When the chart changes, a kind cluster with Calico and an NFS
-  StorageClass checks that the NetworkPolicies are enforced (k3d does not
-  enforce them) and that a ReadWriteMany log volume is shared by the API and
-  the scheduler.
+  reconciler. When the chart changes, a kind cluster with Calico, an NFS
+  StorageClass and two worker nodes checks that the NetworkPolicies are
+  enforced (k3d does not enforce them), that a ReadWriteMany log volume is
+  shared by the API and the scheduler and mounted from two nodes at once, and
+  that the PodDisruptionBudget lets one API node drain while the other keeps
+  serving. Every week the same check runs on each Kubernetes minor from 1.27
+  to 1.31.
 - **Checked as a contract in CI.** What a cloud controller reads from the
   chart is asserted on the rendered manifests: load balancer annotations reach
   the Service verbatim, and the log volume claims the StorageClass and access
@@ -195,8 +198,8 @@ which tells you what to check on your own cluster before you rely on it.
 - **Not tested in CI.** Cloud IAM for pods (IRSA, Workload Identity) granting
   what it should, a cloud load balancer actually provisioning, a provider's
   CNI (such as the AWS VPC CNI) enforcing a policy as narrowly as written,
-  failure domains across several nodes, Kubernetes minor versions other than
-  the one CI runs, and cloud latency, throttling and consistency. These are
+  real failure domains (the CI nodes share one machine), a provider's own
+  Kubernetes distribution, and cloud latency, throttling and consistency. These are
   checked by hand on a short-lived cluster before a release candidate, with
   the [cluster validation runbook](https://github.com/dexadata/dexaflow/blob/main/test/release/rc-cluster-validation.md),
   and a release says which rows it ran. Check them on your own cluster before
