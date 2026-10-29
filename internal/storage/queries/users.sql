@@ -76,6 +76,25 @@ SET password_hash = $3
 WHERE email = $2
   AND tenant_id = (SELECT id FROM tenants WHERE name = $1);
 
+-- name: SetUserActive :one
+-- Activate or deactivate one user of the tenant (the admin user API, #960).
+-- No row means no such user in this tenant, which the caller answers as 404,
+-- so a user of another tenant is indistinguishable from a missing one. The
+-- per-request authz reload reads is_active, so the change takes effect on the
+-- user's next request, for sessions and API tokens alike.
+UPDATE users u
+SET is_active = $3
+FROM tenants t
+WHERE t.id = u.tenant_id AND t.name = $1 AND u.id = $2
+RETURNING u.id, u.email, u.is_active, u.created_at,
+    ARRAY(
+        SELECT r.name
+        FROM user_roles ur
+        JOIN roles r ON r.id = ur.role_id
+        WHERE ur.user_id = u.id
+        ORDER BY r.name
+    )::text[] AS roles;
+
 -- name: ListUsers :many
 -- One row per user in the tenant, newest first, with every granted role name
 -- aggregated into a text array (empty when the user holds none). Paged by the
