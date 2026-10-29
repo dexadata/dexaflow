@@ -70,6 +70,9 @@ the model Kubernetes uses:
   evidence of the Docs line in the release's tracking issue. A `Skip-docs:`
   line added to a pull request afterwards needs a re-run of that job, or
   `gh workflow run docs-gap.yaml --ref <branch> -f version=X.Y.Z`.
+- **The compatibility page is read before each minor.** Before cutting
+  `vX.Y.0-rc.1`, read [`reference/compatibility.md`](website/content/reference/compatibility.md)
+  against the CI jobs it links and add the new release line's table (#1566).
 - **Only the newest release branch takes patches.** An older one gets a
   security fix only when the owner decides so for that fix.
 
