@@ -37,6 +37,17 @@ var statusConstructors = map[string]bool{"Error": true, "Errorf": true, "New": t
 // internalStatus and peerStatus are the only sanctioned ways to turn an error
 // into a status here; their parameter is deliberately named cause, not err,
 // because the value it carries is destined for the log and never for the wire.
+//
+// What this guard cannot see (#1078), so neither it nor the pair is exhaustive:
+//   - It is name-based. An error value named e, problem or cause passes it, and
+//     a status package imported under another alias evades it entirely.
+//   - It cannot see a bare error returned from a handler, which grpc-go renders
+//     as codes.Unknown with err.Error() as the message. Only the behavioural
+//     sweep catches that.
+//   - The sweep in turn covers the collaborator seams it poisons today. A new
+//     handler behind a new seam arrives with a fake nobody poisons, so it is
+//     caught by neither. Adding a seam means adding a case to
+//     TestAgentRPCStatusesCarryNoStorageErrorText.
 func TestNoErrorValueIsInterpolatedIntoAnAgentStatus(t *testing.T) {
 	fset := token.NewFileSet()
 	entries, err := os.ReadDir(".")
