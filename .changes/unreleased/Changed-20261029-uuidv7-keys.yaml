@@ -1,0 +1,11 @@
+kind: Changed
+body: |-
+  **New runs and task instances get time-ordered UUIDv7 keys.** Migration 057
+  makes `dexaflow_uuidv7()` the default of `dag_runs.id` and
+  `task_instances.id` instead of the random `gen_random_uuid()`. New keys
+  append to the end of the primary key index. On a large table Experiment 9
+  measured the random key at a third fewer inserts per second, a third more
+  WAL per row and a 27% larger index. Existing ids, the column type and the foreign keys are
+  unchanged, and the down migration restores the old default. A UUIDv7 id
+  carries the millisecond its row was created. (#525, ADR 0098)
+time: 2026-10-29T12:00:00.000000000+00:00
