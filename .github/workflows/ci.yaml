@@ -393,9 +393,18 @@ jobs:
         image: mirror.gcr.io/library/redis:7
         ports: [6379:6379]
         options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+      # The S3 API the segmented log layout is tested against (#1336, #1616):
+      # LocalStack, the same mirror image e2e-gates.yaml uses (minio/minio is
+      # no longer published on Docker Hub).
+      localstack:
+        image: mirror.gcr.io/localstack/localstack:4
+        env:
+          SERVICES: s3
+        ports: [4566:4566]
     env:
       DATABASE_URL: postgres://leoflow:leoflow@localhost:5432/leoflow_test?sslmode=disable
       REDIS_URL: redis://localhost:6379/0
+      DEXAFLOW_TEST_S3_ENDPOINT: http://localhost:4566
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -409,6 +418,15 @@ jobs:
         run: |
           go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.20.1
           migrate -path migrations -database "$DATABASE_URL" up
+
+      - name: Wait for the S3 store
+        run: |
+          for _ in $(seq 60); do
+            curl -sf http://localhost:4566/_localstack/health | grep -q '"s3": "\(running\|available\)"' && exit 0
+            sleep 2
+          done
+          echo "LocalStack S3 did not come up" >&2
+          exit 1
 
       - name: Run integration tests
         run: go test -tags integration -race ./...
