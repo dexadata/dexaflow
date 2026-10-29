@@ -16,7 +16,7 @@ type reapOncer interface {
 // the execution reaper: the Scheduler carries no field that satisfies the
 // reaper's ReapOnce shape and no method that accepts one. The reapers run from
 // the leader's maintenance loop, ordered after the pod reconciler's sweep, at
-// that loop's cadence — not at 1s from the tick. A func-typed field or
+// that loop's cadence, not at 1s from the tick. A func-typed field or
 // parameter of the reaper's signature counts too: it is the seam shape this
 // codebase prefers (#917). Re-adding a seam here would
 // re-open the class of race this closes (a reaper judging state the reconciler
