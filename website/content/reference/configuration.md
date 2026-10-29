@@ -24,7 +24,7 @@ chart's own values (image, replicas, ingress, Postgres/Redis wiring), see the
 |---|---|---|
 | `dag_id` *(required)* | string | Unique DAG id (`^[A-Za-z0-9_][A-Za-z0-9_-]{0,199}$`). |
 | `description`, `owner`, `tags` | string / string / list | Metadata. |
-| `python_version` | `3.10`\|`3.11`\|`3.12`\|`3.13` | Base image Python (default 3.11). `3.10` is **deprecated** — see [Python version support](#python-version-support). |
+| `python_version` | `3.11`\|`3.12`\|`3.13` | Base image Python (default 3.11). Lines past their upstream EOL are retired, see [Python version support](#python-version-support). |
 | `base_image` | string | Override the runtime base image. |
 | `dependencies` | list | pip specifiers baked into the image. Version floors (`"setuptools>=80.9.0"`) and [PEP 508](https://peps.python.org/pep-0508/) environment markers both work — see the `dependencies` row under [Defaults](#defaults) for what the build does with them. |
 | `connectors` | list | Short connector names (`postgres`, `http`, …) expanded at compile to their `apache-airflow-providers-*` packages. Sugar over `dependencies` — see [Installing a connector's provider](/connections/#installing-a-connectors-provider). |
@@ -47,7 +47,6 @@ build fails on the pull.
 
 | Line | Status | Upstream EOL | Published until |
 |---|---|---|---|
-| `3.10` | **Deprecated** | 2026-10-31 | 2026-10-31 |
 | `3.11` | Supported *(default)* | 2027-10-31 | — |
 | `3.12` | Supported | 2028-10-31 | — |
 | `3.13` | Supported | 2029-10-31 | — |
@@ -67,23 +66,24 @@ Airflow: `dbt-core` and `dbt-postgres` publish for 3.14, but `dbt-snowflake`,
 would give you an image where `dbt-postgres` installs and `dbt-snowflake` does
 not — discovered inside your build, not ours — so it is not published.
 
-**`3.10` is deprecated.** Python 3.10 reaches upstream end-of-life on
-2026-10-31, and `docker-library/python` stops rebuilding an EOL line the day
-after (`python:3.9-slim` was last rebuilt 2025-11-01, one day after 3.9 went
-EOL). From that point `python:3.10-slim` — and so
-`dexaflow-runtime:py3.10` — receives no further OS security updates and
-accumulates unfixed CVEs indefinitely. The `py3.10` leg keeps being published
-until 2026-10-31, so nothing breaks today; `dexaflow validate`, `dexaflow
-compile` and `dexaflow deploy` warn when your project resolves to it.
+**`3.10` is no longer published.** Python 3.10 reaches upstream end-of-life
+in October 2026, after which `docker-library/python` stops rebuilding
+`python:3.10-slim`, so a `py3.10` base would receive no OS security updates.
+Releases cut after 2026-10-31 publish no `py3.10` image (#1447). The
+`py3.10` tags already published stay pullable, so nothing that is running
+breaks, but they never change again.
 
-There are two ways to resolve to it, and they have different fixes:
+There are two ways a project can still be on it, and they have different fixes:
 
-- **You set `python_version: "3.10"`.** Set `python_version: "3.11"` (or later)
-  and rebuild.
+- **You set `python_version: "3.10"`.** `dexaflow validate`, `compile`,
+  `deploy` and `lite` refuse the project and name the replacement. Set
+  `python_version: "3.11"` (or later) and rebuild.
 - **You pinned `base_image` to a published `py3.10` tag** (`…:py3.10`,
-  `…:py3.10-v0.4.5`<!-- stale-version-ok: py3.10 runtimes stopped at 0.4.x -->). Repoint `base_image` to the matching `py3.11` tag and
-  rebuild. Changing `python_version` here does nothing: when `base_image` is
-  set it is used verbatim and `python_version` is not consulted for the `FROM`.
+  `…:py3.10-v0.5.7`). The build still works, because the tag still pulls, and
+  `dexaflow compile` warns that the base gets no security updates. Repoint
+  `base_image` to the matching `py3.11` tag and rebuild. Changing
+  `python_version` here does nothing: when `base_image` is set it is used
+  verbatim and `python_version` is not consulted for the `FROM`.
 
 Existing images keep running either way; the rebuild is what moves you.
 
@@ -381,7 +381,7 @@ roadmap item.
 |---|---|---|
 | `schema_version` | `"1.0"` | Stamps every artifact for forward-compat. |
 | `dag_id` | *subdir basename* | If `dexaflow.yaml` is absent, the parent directory name is used. Two subdirs resolving to the same `dag_id` is a hard error — see [Discovery rules](/author-dags/dag-authoring/#discovery-rules). |
-| `python_version` | `"3.11"` | Pick `3.10`, `3.11`, `3.12`, or `3.13`. It selects the task base image **and**, when you declare it explicitly, the interpreter every local tool judges the project with; see [Which interpreter reads your DAG](#which-interpreter-reads-your-dag). `dexaflow lite` builds that project's venv on it, so the dev loop and the cluster run the same minor. If no interpreter on the host reports that version, `dexaflow lite` stops and says so rather than substituting a different one, except for `3.11`, which it fetches as the managed CPython on first use; a venv already built on another minor is rebuilt, which reinstalls the runtime and your dependencies. Leaving the field out keeps the previous behaviour (any host Python 3.11+, managed build preferred), because then the image is `3.11` by the same default and the two already agree. A declared `build.base_image` makes this field inert on both sides, and a deprecated version warns and falls back instead of blocking. |
+| `python_version` | `"3.11"` | Pick `3.11`, `3.12`, or `3.13`. It selects the task base image **and**, when you declare it explicitly, the interpreter every local tool judges the project with; see [Which interpreter reads your DAG](#which-interpreter-reads-your-dag). `dexaflow lite` builds that project's venv on it, so the dev loop and the cluster run the same minor. If no interpreter on the host reports that version, `dexaflow lite` stops and says so rather than substituting a different one, except for `3.11`, which it fetches as the managed CPython on first use; a venv already built on another minor is rebuilt, which reinstalls the runtime and your dependencies. Leaving the field out keeps the previous behaviour (any host Python 3.11+, managed build preferred), because then the image is `3.11` by the same default and the two already agree. A declared `build.base_image` makes this field inert on both sides, and a deprecated version warns and falls back instead of blocking. |
 | `dag_source` | `"dag.py"` | DAG file relative to the project. |
 | `dependencies` | `[]` | pip specifiers baked into the image. Any [PEP 508](https://peps.python.org/pep-0508/) form works, including version floors (`"setuptools>=80.9.0"`) and environment markers (`'requests; python_version < "3.12"'`) — each entry is passed to pip as one literal argument, so shell characters in a specifier are never interpreted. A line break inside an entry is refused, since it would end the generated `RUN` instruction, and every entry is passed after a `--` so an entry beginning with a dash is treated as a package name rather than as an option to pip. |
 | `connectors` | `[]` | Short connector names expanded to provider packages at compile (ADR 0038). |

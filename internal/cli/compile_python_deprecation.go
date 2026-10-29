@@ -86,12 +86,12 @@ func warnDeprecatedPython(w io.Writer, cfg *domain.LeoflowConfig) {
 	if !ok {
 		return
 	}
-	d, ok := domain.DeprecatedPythonVersion(hit.version)
+	d, retired, ok := pythonLineNotice(hit.version)
 	if !ok {
 		return
 	}
 	var b strings.Builder
-	writeWrapped(&b, deprecationHeadline(hit, d), false)
+	writeWrapped(&b, deprecationHeadline(hit, d, retired), false)
 	writeWrapped(&b, d.Reason, true)
 	writeWrapped(&b, deprecationRemedy(hit, d), true)
 	// Deliberately unchecked: a warning that can abort the compile is not a
@@ -131,11 +131,18 @@ func remindDeprecatedPythonAfterBuild(w io.Writer, cfg *domain.LeoflowConfig) {
 	if !ok {
 		return
 	}
-	d, ok := domain.DeprecatedPythonVersion(hit.version)
+	d, retired, ok := pythonLineNotice(hit.version)
 	if !ok {
 		return
 	}
 	var b strings.Builder
+	if retired {
+		writeWrapped(&b, fmt.Sprintf(
+			"warning: built on the retired Python %s line, selected by %s; %s:py%s is no longer published and gets no security updates. See the warning above this build for the fix.",
+			d.Version, hit.field, publishedBaseRepo, d.Version), false)
+		_, _ = io.WriteString(w, b.String()) //nolint:errcheck // advisory output; a write failure must not fail the compile
+		return
+	}
 	writeWrapped(&b, fmt.Sprintf(
 		"warning: built on the deprecated Python %s line, selected by %s; %s:py%s stops being published after %s — see the warning above this build for the fix.",
 		d.Version, hit.field, publishedBaseRepo, d.Version, d.RemoveAfter), false)
@@ -146,13 +153,39 @@ func remindDeprecatedPythonAfterBuild(w io.Writer, cfg *domain.LeoflowConfig) {
 // Reporting `python_version 3.10` to an author whose file says
 // `python_version: "3.12"` next to a py3.10 base_image pin is a message about
 // somebody else's project.
-func deprecationHeadline(hit pythonDeprecationHit, d domain.PythonDeprecation) string {
+func deprecationHeadline(hit pythonDeprecationHit, d domain.PythonDeprecation, retired bool) string {
+	if retired {
+		return fmt.Sprintf("warning: %s %s pins Python %s, which is no longer published; no release cut after %s ships %s:py%s.",
+			hit.field, hitValue(hit), d.Version, d.RemoveAfter, publishedBaseRepo, d.Version)
+	}
 	if hit.field == fieldBaseImage {
 		return fmt.Sprintf("warning: base_image %s pins Python %s, which is deprecated; %s:py%s stops being published after %s.",
 			hit.ref, d.Version, publishedBaseRepo, d.Version, d.RemoveAfter)
 	}
 	return fmt.Sprintf("warning: python_version %s is deprecated; %s:py%s stops being published after %s.",
 		d.Version, publishedBaseRepo, d.Version, d.RemoveAfter)
+}
+
+// hitValue is the value the author wrote in the field that selected the line.
+func hitValue(hit pythonDeprecationHit) string {
+	if hit.field == fieldBaseImage {
+		return hit.ref
+	}
+	return hit.version
+}
+
+// pythonLineNotice finds the record of a Python line that is deprecated or
+// already retired. A retired line is out of the enum, so only a base_image pin
+// reaches it at compile; the pinned tag still pulls, which is exactly why the
+// author needs to hear that it no longer gets security updates (#1447).
+func pythonLineNotice(v string) (domain.PythonDeprecation, bool, bool) {
+	if d, ok := domain.DeprecatedPythonVersion(v); ok {
+		return d, false, true
+	}
+	if r, ok := domain.RetiredPythonVersion(v); ok {
+		return r, true, true
+	}
+	return domain.PythonDeprecation{}, false, false
 }
 
 // deprecationRemedy renders the `Fix:` line for the field that actually
