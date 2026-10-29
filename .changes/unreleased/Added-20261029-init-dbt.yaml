@@ -1,0 +1,11 @@
+kind: Added
+body: |-
+  **`dexaflow init --dbt` scaffolds a DAG with an embedded dbt project.** It
+  writes the hybrid shape the dbt guide teaches: a `dag.py` with Python tasks
+  around `dbt_group("transform")`, a `dexaflow.yaml` that declares the group
+  and installs `dbt-core` and `dbt-duckdb`, and a small duckdb project with
+  no `profiles.yml`, so `dexaflow lite` runs it with no warehouse to set up
+  (#1002). The same project ships as `examples/dbt_hybrid` (#1003), and the
+  Python reference now documents the `dexaflow` authoring package with
+  `dbt_group` (#1004).
+time: 2026-10-29T01:50:00.000000000-03:00
