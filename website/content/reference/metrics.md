@@ -83,6 +83,7 @@ The table is generated from the collectors the server registers: run
 | `dexaflow_tls_reload_failures_total` | counter | `listener` | Rotated TLS certificate or key files that failed to load, by listener (api, agent_grpc). The listener keeps serving the last good certificate; alert on any increase (#637). |
 | `dexaflow_unit_misfit_total` | counter | `stage` | Tasks accepted under executor.unit.enforce=warn although their resources exceed pool_slots x unit, by stage (register, set_current, dispatch). |
 | `dexaflow_unpinned_image_total` | counter | `stage`, `outcome` | Images not pinned by digest that deploy.require_digest warned about (outcome=warned) or refused (outcome=refused), by stage (register, set_current). Dry runs are not counted. |
+| `dexaflow_usage_events_lag_seconds` | gauge | _(none)_ | Age of the oldest usage event the service API cannot serve yet because an older transaction is still open; 0 while usage events are not recorded. Set by the scheduler leader. |
 | `dexaflow_xcom_pull_total` | counter | `dag_id` | XCom pulls. |
 | `dexaflow_xcom_push_total` | counter | `dag_id` | XCom pushes. |
 | `dexaflow_xcom_rejected_total` | counter | `reason` | Rejected XCom writes by reason. |

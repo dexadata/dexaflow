@@ -82,6 +82,9 @@ func registerService(r gin.IRouter, deps Dependencies) {
 	g.PUT("/tenants/:tenant/suspension", suspendTenantHandler(deps))
 	g.GET("/tenants/:tenant/suspension", tenantSuspensionHandler(deps))
 	g.DELETE("/tenants/:tenant/suspension", resumeTenantHandler(deps))
+	if deps.Issuers.ServiceUsage != nil {
+		g.GET("/usage", usageEventsHandler(deps))
+	}
 }
 
 // serviceAuth accepts only `Authorization: Bearer <service token>`. The

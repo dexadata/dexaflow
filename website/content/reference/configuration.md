@@ -1427,6 +1427,44 @@ caught when the run is created: the run is not created, the scheduler logs one
 warning for the tenant and counts it in
 `dexaflow_scheduler_decisions_total{decision_type="tenant_suspended"}`.
 
+`GET /api/v2/service/usage?after=<cursor>&limit=<n>` reads the usage events
+of every tenant ([ADR 0096](/project/adrs/0096-task-attempt-usage-events/)):
+one event each time a task attempt reaches an attempt-ending state
+(`success`, `failed`, `skipped`, `upstream_failed`, `removed`,
+`up_for_reschedule`), written by the database in the transaction that made
+the change. It answers `404` while `usage.events.enabled` is off. The answer
+is `{"events": [...], "next_cursor": "...", "has_more": true}`, at most
+`limit` events (default 500, at most 5000); each event carries `cursor`,
+`tenant`, `dag_id` and `run_id` (empty once the tenant or the run is
+deleted), `task_instance_id`, `task_id`, `map_index`, `try_number`,
+`attempt_epoch`, `revision`, `state`, `previous_state`, `pool_slots` (the
+task's size), `started_at` and `ended_at` (both null when the task never
+started; `ended_at` is the time of the change that ended the attempt when
+the task has no end time of its own, as for a reschedule poke),
+`last_failure_kind` (`infra` when an infrastructure fault, not the task,
+failed it; left out otherwise), and `recorded_at`. The duration is
+`ended_at` minus `started_at` when both are set.
+
+How to consume it:
+
+- Start without `after`, then pass the `next_cursor` of each answer, also of
+  an empty one: it is the same cursor, so it can be stored every time. The
+  cursor is opaque.
+- Delivery is at least once. The key of an event is `task_instance_id`,
+  `try_number`, `attempt_epoch` and `revision`: dedupe on it, and keep the
+  highest revision of an attempt as its state, since a user marking a task
+  `success` or `failed` after it ended writes the next revision. To bill per
+  try rather than per execution, group on `task_instance_id` and
+  `try_number`. Each poke of a sensor in reschedule mode is its own attempt.
+- An event is served only once every transaction older than it has
+  finished, so a later page never brings an event that sorts before a cursor
+  already returned. A long transaction anywhere in the database delays
+  events, never loses them; `dexaflow_usage_events_lag_seconds` shows by how
+  much.
+- Events are deleted after `retention.usage_events_days` (default 30). A
+  cursor older than what is kept answers `410` with `oldest_cursor`: the
+  events between the two are lost, and the consumer resumes from there.
+
 Every call that reaches the database is recorded in the audit trail, as
 `service.tenant.ensure` (with whether the tenant was created),
 `service.user.ensure` (with the subject, email, roles and whether the user was
@@ -1436,7 +1474,9 @@ created), `service.tenant.suspend` (with the mode and reason) and
 The service token is a root-level credential: whoever holds it can create
 tenants and grant any role, `admin` included, in every tenant the trusted
 issuer covers. Keep it in a Secret, give it only to the automation that
-provisions tenants, and rotate it by changing the Secret and restarting.
+provisions tenants, and rotate it by changing the Secret and restarting. It
+also reads the usage of every tenant; the usage route is a read and is not
+audited.
 
 ### Alert destinations
 

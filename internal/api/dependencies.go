@@ -197,6 +197,9 @@ type IssuerDeps struct {
 	// ServiceAllowedTenants are the tenants the service API may link issuer
 	// users in: auth.trusted_issuer.allowed_tenants, where "*" allows all.
 	ServiceAllowedTenants []string
+	// ServiceUsage serves GET /api/v2/service/usage (ADR 0096); nil leaves
+	// the route absent.
+	ServiceUsage UsageEventReader
 }
 
 // UIDeps are the embedded web UI and the Lite editor.
