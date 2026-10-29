@@ -106,7 +106,7 @@ func TestReaperReapOnceDrivesReapers(t *testing.T) {
 		queuedCands: []StaleQueuedCandidate{{TaskInstanceID: "stuck-ti", QueuedAt: past}},
 	}
 	rec := &capturingRecorder{}
-	r := NewReaper(store, nil, nil, nil, rec, reapTestLogger(), DefaultReaperConfig(), nil)
+	r := NewReaper(store, nil, nil, nil, rec, reapTestLogger(), DefaultReaperConfig(), ReaperGates{})
 
 	if err := r.ReapOnce(context.Background()); err != nil {
 		t.Fatalf("ReapOnce: %v", err)
@@ -160,7 +160,7 @@ func TestReaperReapOnceSkipsOnCanceledContext(t *testing.T) {
 	store := staleEverythingStore()
 	pods := &fakePodManager{active: map[string]bool{}}
 	rec := &capturingRecorder{}
-	r := NewReaper(store, pods, nil, &fakeWarmLister{}, rec, reapTestLogger(), DefaultReaperConfig(), nil)
+	r := NewReaper(store, pods, nil, &fakeWarmLister{}, rec, reapTestLogger(), DefaultReaperConfig(), ReaperGates{})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -181,7 +181,7 @@ func TestReaperReapOnceSkipsDuringStepDown(t *testing.T) {
 	pods := &fakePodManager{active: map[string]bool{}}
 	rec := &capturingRecorder{}
 	steppingDown := func() bool { return true }
-	r := NewReaper(store, pods, nil, &fakeWarmLister{}, rec, reapTestLogger(), DefaultReaperConfig(), steppingDown)
+	r := NewReaper(store, pods, nil, &fakeWarmLister{}, rec, reapTestLogger(), DefaultReaperConfig(), ReaperGates{InStepDown: steppingDown})
 
 	if err := r.ReapOnce(context.Background()); err != nil {
 		t.Fatalf("ReapOnce: %v", err)
@@ -198,16 +198,14 @@ func TestReaperReapOnceSkipsDuringStepDown(t *testing.T) {
 func TestReaperReapOnceSkipsWhenNotLeading(t *testing.T) {
 	follower := staleEverythingStore()
 	pods := &fakePodManager{active: map[string]bool{}}
-	r := NewReaper(follower, pods, nil, &fakeWarmLister{}, nil, reapTestLogger(), DefaultReaperConfig(), nil)
-	r.SetLeading(func() bool { return false })
+	r := NewReaper(follower, pods, nil, &fakeWarmLister{}, nil, reapTestLogger(), DefaultReaperConfig(), ReaperGates{Leading: func() bool { return false }})
 	if err := r.ReapOnce(context.Background()); err != nil {
 		t.Fatalf("ReapOnce: %v", err)
 	}
 	assertNothingDestroyed(t, follower, pods)
 
 	leader := staleEverythingStore()
-	r2 := NewReaper(leader, &fakePodManager{active: map[string]bool{}}, nil, &fakeWarmLister{}, nil, reapTestLogger(), DefaultReaperConfig(), func() bool { return false })
-	r2.SetLeading(func() bool { return true })
+	r2 := NewReaper(leader, &fakePodManager{active: map[string]bool{}}, nil, &fakeWarmLister{}, nil, reapTestLogger(), DefaultReaperConfig(), ReaperGates{InStepDown: func() bool { return false }, Leading: func() bool { return true }})
 	if err := r2.ReapOnce(context.Background()); err != nil {
 		t.Fatalf("ReapOnce: %v", err)
 	}
@@ -305,7 +303,7 @@ func TestReaperThreadsPresenceCacheToDispatchLost(t *testing.T) {
 	}
 	pods := &fakePodManager{active: map[string]bool{}}
 	cache := &fakePresenceCache{active: map[string]bool{"run-a/work/0": true}}
-	r := NewReaper(store, pods, cache, nil, nil, reapTestLogger(), DefaultReaperConfig(), nil)
+	r := NewReaper(store, pods, cache, nil, nil, reapTestLogger(), DefaultReaperConfig(), ReaperGates{})
 
 	if err := r.ReapOnce(context.Background()); err != nil {
 		t.Fatalf("ReapOnce: %v", err)
@@ -456,8 +454,7 @@ func TestNewReaperWiresGateIntoEveryReaper(t *testing.T) {
 	store := gateWiringStore()
 	pods := &fakePodManager{active: map[string]bool{}}
 	rec := &capturingRecorder{}
-	r := NewReaper(store, pods, nil, &fakeWarmLister{}, rec, reapTestLogger(), DefaultReaperConfig(), nil)
-	r.SetLeading(leadingOpenThenClosed(1))
+	r := NewReaper(store, pods, nil, &fakeWarmLister{}, rec, reapTestLogger(), DefaultReaperConfig(), ReaperGates{Leading: leadingOpenThenClosed(1)})
 
 	if err := r.ReapOnce(context.Background()); err != nil {
 		t.Fatalf("ReapOnce: %v", err)

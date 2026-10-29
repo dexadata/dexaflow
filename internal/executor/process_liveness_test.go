@@ -29,7 +29,7 @@ func (f *fakeProcessLiveness) AttemptProcessAlive(_ context.Context, runID, task
 // no presence cache, no warm lister, and the subprocess liveness seam in place
 // of pod liveness.
 func newLiteTestReaper(store *fakeReaperStore, procs ProcessLiveness, rec DecisionRecorder) *Reaper {
-	r := NewReaper(store, nil, nil, nil, rec, reapTestLogger(), DefaultReaperConfig(), nil)
+	r := NewReaper(store, nil, nil, nil, rec, reapTestLogger(), DefaultReaperConfig(), ReaperGates{})
 	r.SetProcessLiveness(procs)
 	return r
 }
@@ -275,7 +275,7 @@ func TestProReaperIgnoresNeverHeartbeatedTasksForAgentLost(t *testing.T) {
 		{TaskInstanceID: "never-hb", DagRunID: "r5", TaskID: "t", TryNumber: 1, RunningSince: past},
 	}}
 	pods := &fakePodManager{active: map[string]bool{"r5/t/1": true}}
-	r := NewReaper(store, pods, nil, &fakeWarmLister{}, &capturingRecorder{}, reapTestLogger(), DefaultReaperConfig(), nil)
+	r := NewReaper(store, pods, nil, &fakeWarmLister{}, &capturingRecorder{}, reapTestLogger(), DefaultReaperConfig(), ReaperGates{})
 	if err := r.ReapOnce(context.Background()); err != nil {
 		t.Fatalf("ReapOnce: %v", err)
 	}

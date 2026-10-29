@@ -294,7 +294,11 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	if mcs != cs {
 		reapPods = executor.NewKubernetesExecutor(mcs, cfg.Executor.TaskNamespace)
 	}
-	reaper := executor.NewReaper(store, reapPods, cache, warmLister, metrics, logger, executor.DefaultReaperConfig(), sched.SteppingDown)
+	// The destructive gate closes the moment this instance stops leading or
+	// starts stepping down: together with the run-context cancel, this keeps a
+	// draining leader from marking TIs failed or deleting pods on its way out,
+	// and the successor redoes the reap under its own settling gate.
+	reaper := executor.NewReaper(store, reapPods, cache, warmLister, metrics, logger, executor.DefaultReaperConfig(), executor.ReaperGates{InStepDown: sched.SteppingDown, Leading: sched.IsLeading})
 	// The same ceiling that floors the task pod's deadline and sets the warm
 	// attempt watchdog: a silent attempt older than it fails for the credential
 	// ceiling, as a task failure, instead of being re-placed as agent_lost (#1461).
@@ -328,11 +332,6 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	if podInformer != nil {
 		reaper.SetInformerSynced(podInformer.HasSynced)
 	}
-	// Close the reaper's destructive gate the moment this instance stops leading:
-	// together with the step-down flag and the run-context cancel, this keeps a
-	// draining or stepping-down leader from marking TIs failed or deleting pods
-	// on its way out, the successor redoes the reap under its own settling gate.
-	reaper.SetLeading(sched.IsLeading)
 	// Infra marks are provisional here, because this reconciler confirms them
 	// (ADR 0052 amendment, part 2). Lite never reaches this and keeps
 	// confirming at mark time.

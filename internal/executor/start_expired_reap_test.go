@@ -42,7 +42,7 @@ const testAttemptTokenTTL = 10 * time.Minute
 // newStartExpiredReaper wires a Reaper exactly as the Kubernetes server does:
 // pods for liveness and teardown, the attempt token TTL and the marker sink.
 func newStartExpiredReaper(store ReaperStore, pods PodManager, sink logSink) *Reaper {
-	r := NewReaper(store, pods, nil, nil, nil, reapTestLogger(), DefaultReaperConfig(), nil)
+	r := NewReaper(store, pods, nil, nil, nil, reapTestLogger(), DefaultReaperConfig(), ReaperGates{})
 	r.SetAttemptTokenTTL(testAttemptTokenTTL)
 	r.SetLogSink(sink)
 	return r
@@ -136,7 +136,7 @@ func TestDispatchLostReaper_StartDeadlineBypassesPresenceCache(t *testing.T) {
 		QueuedAt: now.Add(-testAttemptTokenTTL),
 	}}}}
 	pods := &fakePodManager{active: map[string]bool{"run-a/build/1": true}, pending: map[string]bool{"run-a/build/1": true}}
-	r := NewReaper(store, pods, alwaysActiveCache{}, nil, nil, reapTestLogger(), DefaultReaperConfig(), nil)
+	r := NewReaper(store, pods, alwaysActiveCache{}, nil, nil, reapTestLogger(), DefaultReaperConfig(), ReaperGates{})
 	r.SetAttemptTokenTTL(testAttemptTokenTTL)
 
 	if err := r.ReapOnce(context.Background()); err != nil {
@@ -160,7 +160,7 @@ func TestDispatchLostReaper_NoTTLKeepsDeferring(t *testing.T) {
 		QueuedAt: now.Add(-time.Hour),
 	}}}}
 	pods := &fakePodManager{active: map[string]bool{"run-a/build/1": true}, pending: map[string]bool{"run-a/build/1": true}}
-	r := NewReaper(store, pods, nil, nil, nil, reapTestLogger(), DefaultReaperConfig(), nil)
+	r := NewReaper(store, pods, nil, nil, nil, reapTestLogger(), DefaultReaperConfig(), ReaperGates{})
 
 	if err := r.ReapOnce(context.Background()); err != nil {
 		t.Fatalf("ReapOnce: %v", err)

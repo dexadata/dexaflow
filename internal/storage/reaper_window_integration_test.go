@@ -26,7 +26,7 @@ import (
 func windowReaper(sched executor.ReaperStore, cs *fake.Clientset) *executor.Reaper {
 	podExec := executor.NewKubernetesExecutor(cs, "ns")
 	warm := executor.NewKubernetesWarmPods(cs, "ns", nil)
-	return executor.NewReaper(sched, podExec, nil, warm, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), executor.DefaultReaperConfig(), nil)
+	return executor.NewReaper(sched, podExec, nil, warm, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), executor.DefaultReaperConfig(), executor.ReaperGates{})
 }
 
 // seedWindowRun registers a DAG of executor.ReapPageSize+1 tasks t0..tN and

@@ -385,7 +385,7 @@ type liteLeadership interface {
 // There is no informer and no reconciler, so those two conditions stay
 // satisfied. markers, when non-nil, receives the agent-lost log marker (#861).
 func newLiteReaper(store executor.ReaperStore, procs executor.ProcessLiveness, lead liteLeadership, markers logs.MarkerSink, rec executor.DecisionRecorder, logger *slog.Logger, credentialCeiling time.Duration) *executor.Reaper {
-	reaper := executor.NewReaper(store, nil, nil, nil, rec, logger, executor.DefaultReaperConfig(), lead.SteppingDown)
+	reaper := executor.NewReaper(store, nil, nil, nil, rec, logger, executor.DefaultReaperConfig(), executor.ReaperGates{InStepDown: lead.SteppingDown, Leading: lead.IsLeading})
 	reaper.SetProcessLiveness(procs)
 	// An attempt that outlived auth.max_attempt_credential_lifetime fails for
 	// that reason instead of being re-placed as agent_lost (#1461), and one still
@@ -395,7 +395,6 @@ func newLiteReaper(store executor.ReaperStore, procs executor.ProcessLiveness, l
 		reaper.SetLogSink(markers)
 	}
 	reaper.SetLeaderSince(lead.LeaderSince)
-	reaper.SetLeading(lead.IsLeading)
 	return reaper
 }
 
