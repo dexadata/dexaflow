@@ -60,6 +60,8 @@ paths:
                 $ref: "#/components/schemas/TokenResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/auth/token/renew:
     post:
@@ -70,7 +72,10 @@ paths:
         measured from first login. Lets a long CLI/dev session avoid re-logging in
         every token TTL while keeping the access token short-lived. Returns 401
         when the presented token is invalid, expired, or past max_lifetime, in
-        which case the client must log in again.
+        which case the client must log in again. Returns 503 with Retry-After
+        when the token could not be checked because the user store is
+        unreachable; the token may still be good, so the client waits and
+        retries instead of logging in again.
       operationId: renewToken
       tags: [Auth]
       responses:
@@ -82,6 +87,183 @@ paths:
                 $ref: "#/components/schemas/TokenResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
+
+  /api/v2/auth/ciToken:
+    post:
+      summary: Exchange a CI provider's OIDC token for a deploy session (Dexaflow)
+      description: >-
+        A CI job (GitHub Actions, GitLab CI, Google Cloud Build) posts the
+        OIDC token its provider minted for it. The token is checked against
+        the issuer entry of the server's auth.ci_oidc whose issuer and
+        audience it names (signature, issuer, audience, expiry, lifetime),
+        and the entry's rules map its claims to a role of the entry's tenant;
+        the first matching rule decides (ADR 0092). The tenant is the
+        entry's, never a claim's. The answer is a dxci_ session token for
+        that role, narrowed to the rule's scopes (dexaflow:deploy by
+        default), for the Authorization header only. Public: the token in
+        the body authenticates the caller. Served only when an issuer is
+        configured; 404 otherwise. Refused exchanges are limited per client
+        address.
+      operationId: exchangeCIToken
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CITokenRequest" }
+      responses:
+        "200":
+          description: A session for the role the matching rule names
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CITokenResponse" }
+        "400":
+          description: The body is not a JSON object with a token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          description: The token was not minted by a trusted CI issuer for this server, or is expired
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: No rule of the issuer admits the job, or the role it names does not exist in the tenant
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: Too many refused exchanges from this address
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: The provider's signing keys or the database could not be read
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v2/auth/methods:
+    get:
+      summary: Sign-in methods this server offers (Dexaflow)
+      description: >-
+        What dexaflow auth login reads before it chooses how to sign in. sso
+        is true when the OIDC single sign-on flow is served; password is true
+        when a password login can succeed for someone (always without SSO,
+        and only for break-glass accounts with it); device is true when the
+        device sign-in (POST /api/v2/auth/cli/device) is served too. The
+        values come from the same settings the sign-in page renders from.
+        Public. A server without this route answers 404, and the CLI then
+        uses a password; a server from before the device sign-in omits
+        device.
+      operationId: getAuthMethods
+      tags: [Auth]
+      security: []
+      responses:
+        "200":
+          description: The sign-in methods
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthMethods" }
+
+  /api/v2/auth/cli/device:
+    post:
+      summary: Start a device sign-in of the CLI (Dexaflow)
+      description: >-
+        The first step of dexaflow auth login --device, for a machine with no
+        browser (RFC 8628 shaped, served by Dexaflow, so the server stays the
+        only OIDC client). It answers a device_code the CLI keeps secret and
+        polls with, a user_code of eight consonants (XXXX-XXXX) the person
+        enters at verification_uri (verification_uri_complete has it filled
+        in), expires_in (600) and interval (5) in seconds. The page, GET and
+        POST /api/v2/auth/device, starts the server's own OIDC sign-in, the
+        UI's, and only after it asks for the code; a live code leads to a
+        consent page that shows the code and asks the person to confirm it
+        matches the terminal before approving. Only hashes of the codes are
+        stored. The body is ignored. Served only when single sign-on is
+        configured. Rate limited to three starts a minute per client address
+        (IPv6 by /64); 429 also when the address (IPv6 by /56) holds five
+        sign-ins in progress, 503 when the cluster holds its cap or starts
+        are busy.
+      operationId: startCLIDeviceLogin
+      tags: [Auth]
+      security: []
+      responses:
+        "200":
+          description: The device sign-in started
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CLIDeviceAuthorization" }
+        "429":
+          description: Too many starts, or sign-ins in progress, from this address
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Too many device sign-ins are in progress
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v2/auth/cli/token:
+    post:
+      summary: Exchange a CLI single sign-on code, or poll a device sign-in, for a token (Dexaflow)
+      description: >-
+        The last step of dexaflow auth login with single sign-on. The CLI
+        opens GET /api/v2/auth/oidc/login with a loopback redirect_uri
+        (http://127.0.0.1:<port>/... or http://[::1]:<port>/...), its own
+        state, and code_challenge with code_challenge_method S256. After the
+        IdP round trip, the callback resolves the user exactly as for the UI
+        and shows a consent page; only its same-origin form (POST
+        /api/v2/auth/cli/consent, with the CSRF token bound to its
+        SameSite=Strict cookie) redirects the browser to the loopback with a
+        one-time code. This route redeems that code, once per replica and
+        within 60 seconds, for the PKCE verifier (43 to 128 unreserved
+        characters) the challenge was derived from and the same redirect_uri,
+        and answers what POST /auth/token answers, with expires_in the
+        token's remaining lifetime. Every refusal (unknown,
+        expired, used, tampered, wrong verifier or redirect_uri) is the same
+        400, with error invalid_grant. Served only when single sign-on is
+        configured, and rate limited per client address with the other OIDC
+        routes.
+
+
+        With grant_type urn:ietf:params:oauth:grant-type:device_code and a
+        device_code from POST /api/v2/auth/cli/device, it polls a device
+        sign-in instead (RFC 8628 section 3.4): 400 with error
+        authorization_pending until the person approves, slow_down when
+        polled sooner than the interval (which grows by five seconds),
+        access_denied once when the person canceled, expired_token after
+        expires_in, and invalid_grant for any device code that is not live
+        (unknown, malformed or already redeemed). The approved sign-in is
+        redeemed once across every replica for the token POST /auth/token
+        answers. Polls have a per-address budget of their own. Another
+        grant_type is unsupported_grant_type.
+      operationId: exchangeCLILoginCode
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CLITokenRequest" }
+      responses:
+        "200":
+          description: The sign-in completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          description: The code was refused, or the device sign-in is not approved
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/CLITokenError" }
+        "429":
+          description: Too many requests from this address
 
   /api/v2/users:
     get:
@@ -103,6 +285,8 @@ paths:
               schema: { $ref: "#/components/schemas/UserCollection" }
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
     post:
       summary: Create a user
       description: |
@@ -135,6 +319,115 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
+
+  /api/v2/apiTokens:
+    get:
+      summary: List API tokens (Dexaflow)
+      description: >-
+        Lists the caller's unrevoked API tokens, newest first, expired ones
+        included. A caller who may manage accounts (write:user) sees every
+        token of the tenant. The token itself and its hash are never returned.
+        Not callable with an API token or any other scoped token (ADR 0074).
+      operationId: listAPITokens
+      tags: [API Tokens]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: A page of API tokens
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APITokenCollection" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The caller authenticated with a scoped token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
+    post:
+      summary: Create an API token (Dexaflow)
+      description: >-
+        Creates a long-lived, named API token owned by the caller (ADR 0074).
+        The response carries the token once; the server keeps only its
+        SHA-256 hash. The token authenticates as its owner, with the owner's
+        current roles narrowed to the token's scopes: deploy carries
+        dexaflow:deploy alone (it registers versions, sets the current
+        version, and reads the DAG list, DAGs, their details and versions,
+        and nothing else), read carries dexaflow:read. The
+        caller's roles must allow what the scope does (deploy needs deploy or
+        write on dags, read needs read on dags). An account holds at most 50
+        live tokens. Audited as api_token.create. Reusing the name of an
+        expired token retires that token, audited as api_token.retire_expired.
+        Not callable with an API token or any other scoped token.
+      operationId: createAPIToken
+      tags: [API Tokens]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAPITokenRequest" }
+      responses:
+        "201":
+          description: The token was created; this is the only time it is shown
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatedAPIToken" }
+        "400":
+          description: Invalid name, scope or lifetime, or too many live tokens
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The caller's roles do not allow the scope, or the caller used a scoped token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: The caller already holds a live token with this name
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
+
+  /api/v2/apiTokens/{token_id}:
+    parameters:
+      - name: token_id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      summary: Revoke an API token (Dexaflow)
+      description: >-
+        Revokes one of the caller's API tokens, or any token of the tenant for
+        a caller who may manage accounts (write:user). The token stops working
+        on its next request. Revoking a revoked token succeeds. Audited as
+        api_token.revoke. Not callable with an API token or any other scoped
+        token.
+      operationId: revokeAPIToken
+      tags: [API Tokens]
+      responses:
+        "204":
+          $ref: "#/components/responses/NoContent"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The caller authenticated with a scoped token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/connections:
     get:
@@ -156,6 +449,8 @@ paths:
               schema: { $ref: "#/components/schemas/ConnectionCollection" }
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
     post:
       summary: Create or replace a connection (upsert)
       description: |
@@ -202,6 +497,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
     patch:
       summary: Update a connection
       operationId: updateConnection
@@ -239,6 +536,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/variables:
     get:
@@ -259,6 +558,8 @@ paths:
               schema: { $ref: "#/components/schemas/VariableCollection" }
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
     post:
       summary: Create or replace a variable (upsert)
       description: |
@@ -284,6 +585,8 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/variables/{variable_key}:
     parameters:
@@ -302,6 +605,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
     delete:
       summary: Delete a variable
       operationId: deleteVariable
@@ -313,6 +618,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags:
     get:
@@ -340,6 +647,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DAGCollection"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}:
     parameters:
@@ -356,6 +665,8 @@ paths:
               schema:
                 $ref: "#/components/schemas/DAG"
         "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
     patch:
       summary: Update DAG (typically pause/unpause)
       description: >-
@@ -381,6 +692,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/dagVersions:
     parameters:
@@ -396,6 +709,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DagVersionCollection"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/dagVersions/{version_number}:
     parameters:
@@ -415,6 +730,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/DagVersion" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/versions:
     parameters:
@@ -426,7 +743,7 @@ paths:
         current. Re-registering content that is already registered (same spec
         hash) is a no-op answered with 200 and created false, and leaves the
         current version as it is. The same label with other content is
-        refused with 409. Needs write on dags (scope dexaflow:deploy).
+        refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
 
         Without is_paused, a DAG the register creates starts paused per its
         is_paused_upon_creation, else the server's dags_are_paused_at_creation,
@@ -434,9 +751,17 @@ paths:
         register in that state whether it is created, gets a new version or
         already had this content; a change to an existing DAG is audited as
         dag.pause or dag.unpause in the same transaction. Pausing is a
-        run-state write: a scoped token needs dexaflow:run as well as
-        dexaflow:deploy to send is_paused, else the register is refused with
-        403.
+        run-state write: sending is_paused also needs write on dags, and a
+        scoped token needs dexaflow:run as well as dexaflow:deploy, else the
+        register is refused with 403.
+
+        Under the server setting deploy.require_digest, an image that is not
+        pinned by a full digest (repository@sha256: and 64 hex characters)
+        is registered with a warning in warnings (warn), or refused with 400
+        (enforce). Off, the default, accepts any image.
+
+        POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and
+        writes nothing.
       operationId: registerDagVersion
       tags: [DAGs]
       parameters:
@@ -445,9 +770,84 @@ paths:
           required: false
           description: >-
             Sets the DAG's is_paused for this register (true or false). Any
-            other value is refused with 400. A scoped token needs the
-            dexaflow:run scope to send it (403 otherwise).
+            other value is refused with 400. Sending it needs write on dags,
+            and a scoped token also needs the dexaflow:run scope (403
+            otherwise).
           schema: { type: boolean }
+        - name: promoted_from
+          in: query
+          required: false
+          description: >-
+            Marks the register as a promotion (`dexaflow promote`): the name
+            of the target the version was read from, recorded with
+            promoted_from_server under promoted_from in the register's audit
+            entry. It is the caller's claim, recorded as sent and not
+            verified. A target name: lower case letters, digits, _ and -,
+            starting with a letter or digit, at most 63 characters; anything
+            else is refused with 400.
+          schema: { type: string, pattern: "^[a-z0-9][a-z0-9_-]{0,62}$" }
+        - name: promoted_from_server
+          in: query
+          required: false
+          description: >-
+            The URL of the control plane the version was promoted from, as
+            the caller claims it (not verified): an absolute http or https
+            URL without credentials and with no control or format character,
+            at most 2048 bytes. It needs promoted_from (400 otherwise).
+          schema: { type: string, maxLength: 2048 }
+        - name: build_commit
+          in: query
+          required: false
+          description: >-
+            Where the version was built (#1702), with the other build_*
+            parameters: the git commit of its sources, 7 to 64 lower case hex
+            characters. The build_* parameters are metadata of the register,
+            not part of dag.json: they change neither the spec, its hash nor
+            the version label. They are stored with the version the register
+            creates (build_info in DagVersion) and recorded in its audit
+            entry; a register of content already registered keeps the build
+            info of its first register. They are the caller's claim, recorded
+            as sent and not verified. A value that is empty or breaks its rule
+            is refused with 400.
+          schema: { type: string, pattern: "^[0-9a-f]{7,64}$" }
+        - name: build_repo
+          in: query
+          required: false
+          description: >-
+            The repository of the sources: an absolute http or https URL
+            without credentials, query string or fragment, valid UTF-8 with no
+            control or format character, at most 2048 bytes.
+          schema: { type: string, maxLength: 2048 }
+        - name: build_pipeline_url
+          in: query
+          required: false
+          description: >-
+            The CI pipeline run that built the version: an absolute http or
+            https URL without credentials, query string or fragment, valid
+            UTF-8 with no control or format character, at most 2048 bytes.
+          schema: { type: string, maxLength: 2048 }
+        - name: build_builder
+          in: query
+          required: false
+          description: >-
+            The builder that produced the image, at most 255 bytes, with no
+            control or format character.
+          schema: { type: string, maxLength: 255 }
+        - name: build_base_image
+          in: query
+          required: false
+          description: >-
+            The base image the DAG image was built from (it carries the task
+            agent), at most 512 bytes, with no space, control or format
+            character.
+          schema: { type: string, maxLength: 512 }
+        - name: build_cli_version
+          in: query
+          required: false
+          description: >-
+            The version of the CLI that built and registered the version, at
+            most 128 bytes, with no space, control or format character.
+          schema: { type: string, maxLength: 128 }
       requestBody:
         required: true
         content:
@@ -471,7 +871,14 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
-          description: The caller may not register, or a scoped token sent is_paused without dexaflow:run
+          description: The caller may not register (with a deploy audience set, only the trusted issuer's deploy-audience bearer may), or sent is_paused without write on dags or, with a scoped token, without dexaflow:run
+          headers:
+            Dexaflow-Deploy-Via:
+              description: >-
+                trusted-issuer when auth.trusted_issuer.deploy_audience is set
+                and the caller is not the trusted issuer's bearer for that
+                audience: deploys on this server go through the issuer.
+              schema: { type: string }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -480,6 +887,133 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
+
+  /api/v2/dags/{dag_id}/versions/dry_run:
+    parameters:
+      - $ref: "#/components/parameters/DagID"
+    post:
+      summary: Check the register of a compiled DAG version without registering it (Dexaflow)
+      description: >-
+        Runs every check POST /api/v2/dags/{dag_id}/versions runs for this
+        spec, as the same caller in the same tenant (permission and scope,
+        spec validation, the resource unit, source mode, the image, service
+        account and field allowlists, the tenant's limits, the declared
+        connections and variables, the version label, is_paused), and writes
+        nothing, audit included. It answers 200 with what the register would
+        do (created, dag_created, is_paused), dry_run true and the warnings it
+        would raise, or the refusal the register would give. Every answer past
+        the permission check carries the header Dexaflow-Dry-Run: true. A
+        server that predates this route answers it with 404 and registers
+        nothing. Needs deploy or write on dags (scope dexaflow:deploy).
+      operationId: dryRunDagVersion
+      tags: [DAGs]
+      parameters:
+        - name: is_paused
+          in: query
+          required: false
+          description: >-
+            The is_paused the register would be sent, checked as the register
+            checks it (400 for a value other than true or false, 403 without
+            write on dags or, for a scoped token, dexaflow:run).
+          schema: { type: boolean }
+        - name: promoted_from
+          in: query
+          required: false
+          description: >-
+            The promoted_from the register would be sent, checked as the
+            register checks it (a target name; 400 otherwise).
+          schema: { type: string, pattern: "^[a-z0-9][a-z0-9_-]{0,62}$" }
+        - name: promoted_from_server
+          in: query
+          required: false
+          description: >-
+            The promoted_from_server the register would be sent, checked as
+            the register checks it.
+          schema: { type: string, maxLength: 2048 }
+        - name: build_commit
+          in: query
+          required: false
+          description: >-
+            The build_commit the register would be sent, checked as the register
+            checks it (400 otherwise).
+          schema: { type: string, pattern: "^[0-9a-f]{7,64}$" }
+        - name: build_repo
+          in: query
+          required: false
+          description: >-
+            The build_repo the register would be sent, checked as the register
+            checks it (400 otherwise).
+          schema: { type: string, maxLength: 2048 }
+        - name: build_pipeline_url
+          in: query
+          required: false
+          description: >-
+            The build_pipeline_url the register would be sent, checked as the register
+            checks it (400 otherwise).
+          schema: { type: string, maxLength: 2048 }
+        - name: build_builder
+          in: query
+          required: false
+          description: >-
+            The build_builder the register would be sent, checked as the register
+            checks it (400 otherwise).
+          schema: { type: string, maxLength: 255 }
+        - name: build_base_image
+          in: query
+          required: false
+          description: >-
+            The build_base_image the register would be sent, checked as the register
+            checks it (400 otherwise).
+          schema: { type: string, maxLength: 512 }
+        - name: build_cli_version
+          in: query
+          required: false
+          description: >-
+            The build_cli_version the register would be sent, checked as the register
+            checks it (400 otherwise).
+          schema: { type: string, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DagSpec" }
+      responses:
+        "200":
+          description: What the register would do; nothing was written
+          headers:
+            Dexaflow-Dry-Run:
+              description: Always true on an answer of this route.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VersionRegistration" }
+        "400":
+          description: The register would refuse the spec as invalid or outside the operator's policy
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: The caller may not register (with a deploy audience set, only the trusted issuer's deploy-audience bearer may), or the register would refuse is_paused or a tenant limit
+          headers:
+            Dexaflow-Deploy-Via:
+              description: >-
+                trusted-issuer when auth.trusted_issuer.deploy_audience is set
+                and the caller is not the trusted issuer's bearer for that
+                audience: deploys on this server go through the issuer.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: The version label is registered with other content
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/currentVersion:
     parameters:
@@ -494,7 +1028,10 @@ paths:
         is_paused is never changed. The version must pass the checks a
         register of it would pass today. Naming the current version changes
         nothing (changed false). Audited as dag.version.set_current. Needs
-        write on dags (scope dexaflow:deploy).
+        deploy or write on dags (scope dexaflow:deploy). Under the server
+        setting deploy.require_digest, a version whose image is not pinned by
+        a full sha256 digest is made current with a warning in warnings
+        (warn), or refused with 400 (enforce).
       operationId: setDagCurrentVersion
       tags: [DAGs]
       requestBody:
@@ -515,11 +1052,20 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
-          description: The caller may not deploy, or the version exceeds a tenant limit
+          description: The caller may not deploy (with a deploy audience set, only the trusted issuer's deploy-audience bearer may), or the version exceeds a tenant limit
+          headers:
+            Dexaflow-Deploy-Via:
+              description: >-
+                trusted-issuer when auth.trusted_issuer.deploy_audience is set
+                and the caller is not the trusted issuer's bearer for that
+                audience: deploys on this server go through the issuer.
+              schema: { type: string }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/dagRuns:
     parameters:
@@ -546,6 +1092,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DAGRunCollection"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
     post:
       summary: Trigger a DAG run
       operationId: triggerDagRun
@@ -562,6 +1110,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DAGRun" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}:
     parameters:
@@ -578,6 +1128,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/DAGRun" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear:
     parameters:
@@ -600,7 +1152,9 @@ paths:
         "200":
           description: >-
             With dry_run (the default), the task instances the clear would
-            reset; otherwise the cleared run.
+            reset; otherwise the cleared run. Either carries
+            run_on_latest_version_not_applied when run_on_latest_version was
+            asked and the run keeps its version.
           content:
             application/json:
               schema:
@@ -618,6 +1172,16 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: >-
+            Not answered since ADR 0086, which replaced the refusal of a clear
+            onto a version with other tasks by the full re-bind. Kept declared
+            because Airflow declares it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances:
     parameters:
@@ -640,6 +1204,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaskInstanceCollection"
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}:
     parameters:
@@ -656,6 +1222,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TaskInstance" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
     patch:
       summary: Mark a task instance as success, failed or skipped
       description: >-
@@ -681,6 +1249,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run:
     parameters:
@@ -711,6 +1281,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/logs/{try_number}:
     parameters:
@@ -731,6 +1303,8 @@ paths:
           content:
             text/plain:
               schema: { type: string }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/clearTaskInstances:
     parameters:
@@ -747,11 +1321,24 @@ paths:
               $ref: "#/components/schemas/ClearTaskInstancesRequest"
       responses:
         "200":
-          description: List of cleared task instances
+          description: >-
+            The task instances cleared, or with dry_run (the default) the ones
+            the clear would reset. Carries run_on_latest_version_not_applied
+            when run_on_latest_version was asked and a run keeps its version.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaskInstanceCollection"
+        "409":
+          description: >-
+            Not answered since ADR 0086, which replaced the refusal of a clear
+            onto a version with other tasks by the full re-bind. Kept declared
+            because Airflow declares it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/xcoms/{dag_id}/{dag_run_id}/{task_id}/{key}:
     parameters:
@@ -773,21 +1360,42 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/XComEntry" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dagSources/{dag_id}:
     parameters:
       - $ref: "#/components/parameters/DagID"
     get:
       summary: Get a DAG's source (the dag.py text)
+      description: >-
+        The source registered with one version of the DAG, as in Airflow 3.2:
+        version_number selects the version, and without it (or with 0) the
+        newest version is served. After a rollback the newest version is not
+        the current one. A version the DAG does not have is a 404, and a
+        version_number that is not an integer is a 400.
       operationId: getDagSource
       tags: [DAGs]
+      parameters:
+        - name: version_number
+          in: query
+          required: false
+          description: The version_number of a version from the dagVersions listing; 0 is the newest.
+          schema: { type: integer }
       responses:
         "200":
           description: DAG source
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DagSource" }
+        "400":
+          description: version_number is not an integer
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/dags/{dag_id}/spec:
     parameters:
@@ -806,6 +1414,46 @@ paths:
                 additionalProperties: true
                 description: The compiled dag.json artifact (DAGSpec shape).
         "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
+
+  /api/v2/dags/{dag_id}/dagVersions/{version_number}/spec:
+    parameters:
+      - $ref: "#/components/parameters/DagID"
+      - name: version_number
+        in: path
+        required: true
+        description: The version_number of a version from the dagVersions listing.
+        schema: { type: integer }
+    get:
+      summary: Get the compiled spec registered with one version of a DAG (Dexaflow)
+      description: >-
+        The dag.json registered with this version, current or not, as GET
+        /api/v2/dags/{dag_id}/spec serves the current one. `dexaflow
+        promote` reads it to register the same version on another control
+        plane. The spec holds the DAG's source, environment literals and
+        params, so it needs read on dags, and a scoped token dexaflow:read
+        (dexaflow:deploy alone is refused).
+      operationId: getDagVersionSpec
+      tags: [DAGs]
+      responses:
+        "200":
+          description: The compiled dag.json of the version
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                description: The compiled dag.json artifact (DAGSpec shape).
+        "400":
+          description: version_number is not an integer
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/monitor/health:
     get:
@@ -818,6 +1466,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/HealthInfo" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/monitor/executor:
     get:
@@ -830,6 +1480,41 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExecutorInfo" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
+
+  /api/v2/deployDefaults:
+    get:
+      summary: Cluster deploy defaults (Dexaflow)
+      description: >-
+        The registry prefix, build platforms, base image and remote builder
+        the operator set in the server's deploy.defaults, the source mode
+        runtime image when deploy.defaults.source_mode advertises it, and the
+        task service account and warm pools when their switches advertise
+        them. dexaflow deploy applies the build values to whatever the
+        project, its workspace, its target and the CLI config leave unset,
+        and reports the task service account and warm pools. The values are the cluster's, the same for every tenant,
+        and none is a secret, except ci_oidc, the CI OIDC issuers of the
+        caller's tenant. Every field is always present; an unset one is
+        empty. A server without this route answers 404, and the CLI then
+        deploys with its local settings only. Needs read on dags (scope
+        dexaflow:read or dexaflow:deploy).
+      operationId: getDeployDefaults
+      tags: [DAGs]
+      responses:
+        "200":
+          description: The cluster's deploy defaults
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeployDefaults" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: The caller may not read DAGs
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /api/v2/version:
     get:
@@ -842,6 +1527,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/VersionInfo" }
+        "503":
+          $ref: "#/components/responses/AuthUnavailable"
 
   /healthz:
     get:
@@ -940,6 +1627,20 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     NoContent:
       description: Deleted (no content)
+    AuthUnavailable:
+      description: >-
+        The credential could not be checked because a store or key source the
+        control plane needs is unreachable. It says nothing about the
+        credential, so the client should not sign in again: it waits the
+        Retry-After and retries.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying. A small fixed value.
+          schema:
+            type: integer
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Error" }
     EncryptionUnavailable:
       description: >-
         No encryption key configured, so secrets cannot be stored. Set
@@ -971,6 +1672,51 @@ components:
         access_token: { type: string }
         token_type: { type: string, example: "bearer" }
         expires_in: { type: integer, example: 3600 }
+
+    AuthMethods:
+      type: object
+      required: [password, sso, device]
+      properties:
+        password: { type: boolean }
+        sso: { type: boolean }
+        device: { type: boolean, description: Whether the device sign-in of the CLI is served }
+
+    CLITokenRequest:
+      type: object
+      description: >-
+        A one-time code exchange (code, code_verifier and redirect_uri, with
+        grant_type absent or authorization_code), or a device poll
+        (grant_type urn:ietf:params:oauth:grant-type:device_code and
+        device_code).
+      properties:
+        grant_type:
+          type: string
+          description: Absent or authorization_code for a code exchange; the device grant for a poll
+        code: { type: string, description: The one-time code the loopback received }
+        code_verifier: { type: string, description: The PKCE verifier of the login's code_challenge }
+        redirect_uri: { type: string, description: The redirect_uri the login was started with }
+        device_code: { type: string, description: The device_code of a device sign-in }
+
+    CLITokenError:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            error:
+              type: string
+              description: The OAuth error code a client acts on
+              enum: [invalid_grant, unsupported_grant_type, authorization_pending, slow_down, access_denied, expired_token]
+
+    CLIDeviceAuthorization:
+      type: object
+      required: [device_code, user_code, verification_uri, verification_uri_complete, expires_in, interval]
+      properties:
+        device_code: { type: string, description: The secret the CLI polls with; never shown }
+        user_code: { type: string, example: "BCDF-GHJK", description: The code the person enters and confirms }
+        verification_uri: { type: string, description: The page the person enters the code on }
+        verification_uri_complete: { type: string, description: That page with the code filled in }
+        expires_in: { type: integer, example: 600 }
+        interval: { type: integer, example: 5, description: Minimum seconds between polls }
 
     CreateUserRequest:
       type: object
@@ -1031,6 +1777,73 @@ components:
           items: { $ref: "#/components/schemas/UserListItem" }
         total_entries: { type: integer }
 
+    CreateAPITokenRequest:
+      type: object
+      required: [name, scope]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+          description: >-
+            A name for the token, unique among the caller's live tokens: 1 to
+            64 letters, digits, dots, dashes or underscores, starting with a
+            letter or digit.
+        scope:
+          type: string
+          enum: [deploy, read]
+          description: >-
+            deploy registers versions, sets the current version and reads
+            DAGs; read only reads.
+        expires_in_seconds:
+          type: integer
+          format: int64
+          minimum: 3600
+          maximum: 31536000
+          description: Lifetime of the token. Defaults to 7776000 (90 days).
+
+    APIToken:
+      type: object
+      required: [id, name, scopes, created_at, expires_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        scopes:
+          type: array
+          items: { type: string }
+        owner_email:
+          type: string
+          description: Email of the token's owner (in lists).
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When the token last authenticated a request, recorded at most once
+            every five minutes; null when it was never used.
+
+    CreatedAPIToken:
+      allOf:
+        - $ref: "#/components/schemas/APIToken"
+        - type: object
+          required: [token]
+          properties:
+            token:
+              type: string
+              description: >-
+                The token, starting with dxf_. It is shown only in this
+                response and cannot be read again.
+
+    APITokenCollection:
+      type: object
+      properties:
+        api_tokens:
+          type: array
+          items: { $ref: "#/components/schemas/APIToken" }
+        total_entries: { type: integer }
+
     Connection:
       type: object
       required: [connection_id, conn_type]
@@ -1051,8 +1864,10 @@ components:
           description: >-
             Present and true in a listing when the extra is encrypted with a
             secret key the server does not have (for example after a key
-            rotation that dropped the old key). The extra is then masked.
-            Reading the connection alone answers 500 with a message naming it.
+            rotation that dropped the old key). The extra is then null, so a
+            client that parses it as JSON still can. Reading the connection
+            alone, or updating it, answers 500 with a message naming it, and the
+            stored extra is kept.
 
     ConnectionBody:
       type: object
@@ -1190,6 +2005,25 @@ components:
           type: string
           nullable: true
           description: Dexaflow. Id of the user who registered the version (not an email, since every reader of the DAG sees it); null when none was recorded.
+        build_info:
+          description: Dexaflow. Where the version was built, as its register sent it in the build_* parameters; null when it sent none. Served by the dagVersions routes and the currentVersion answer; the dag_version copies embedded in task instance, run and DAG details answers leave it out.
+          type: object
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/BuildInfo" }]
+
+    BuildInfo:
+      type: object
+      description: >-
+        Dexaflow. Where a DAG version was built (#1702), as the register
+        claimed it, not verified. Every field is optional and absent when it
+        was not sent.
+      properties:
+        commit: { type: string, description: The git commit of the sources. }
+        repo: { type: string, description: The repository of the sources (http or https URL). }
+        pipeline_url: { type: string, description: The CI pipeline run that built the version (http or https URL). }
+        builder: { type: string, description: The builder that produced the image. }
+        base_image: { type: string, description: The base image the DAG image was built from; it carries the task agent. }
+        cli_version: { type: string, description: The version of the CLI that built and registered the version. }
 
     DagCurrentVersionRequest:
       type: object
@@ -1210,6 +2044,10 @@ components:
           nullable: true
           allOf: [{ $ref: "#/components/schemas/DagVersion" }]
         to: { $ref: "#/components/schemas/DagVersion" }
+        warnings:
+          type: array
+          items: { type: string }
+          description: What the change let through with a warning (a task that does not fit its size under executor.unit.enforce=warn, an image not pinned by digest under deploy.require_digest=warn). Absent when there is none.
 
     DagSpec:
       type: object
@@ -1232,6 +2070,112 @@ components:
         created: { type: boolean, description: False when the content was already registered. }
         dag_created: { type: boolean, description: True when this register created the DAG (its first version); false for a new version of an existing DAG. }
         is_paused: { type: boolean, description: The DAG's is_paused after the register. }
+        dry_run: { type: boolean, description: "True on an answer of the dry run route: nothing was written, and the other fields say what the register would do. Absent from a register." }
+        warnings:
+          type: array
+          items: { type: string }
+          description: What the register lets through with a warning (a task that does not fit its size under executor.unit.enforce=warn, an image not pinned by digest under deploy.require_digest=warn). Always sent by the dry run route; sent by a register only when it has a warning to give.
+        execution: { $ref: "#/components/schemas/ExecutionReport" }
+        task_pods: { $ref: "#/components/schemas/TaskPodsReport" }
+
+    TaskPodsReport:
+      type: object
+      description: >-
+        What the version's task pods would run as (Dexaflow), sent by the dry
+        run route only, absent from a register. A server that starts no task
+        pods sends run_as_non_root false and no service account.
+      required: [run_as_non_root, service_accounts]
+      properties:
+        run_as_non_root:
+          type: boolean
+          description: >-
+            True when task pods refuse an image that runs as root or as a user
+            name rather than a number (executor.run_tasks_as_non_root).
+        service_accounts:
+          type: array
+          description: >-
+            Each ServiceAccount a task pod of the version would run as (the
+            task's execution.service_account, else executor.task_service_account,
+            else the namespace's default), sorted by name. A dry run looks up at
+            most 8.
+          items: { $ref: "#/components/schemas/TaskServiceAccountCheck" }
+
+    TaskServiceAccountCheck:
+      type: object
+      required: [name, tasks, state]
+      properties:
+        name: { type: string }
+        tasks: { type: array, items: { type: string }, description: The tasks whose pods run as it. }
+        state:
+          type: string
+          description: >-
+            One of found, missing or unchecked. found: it exists in the task namespace. missing: it does not, and
+            the pods of these tasks would not be created; when its name is not a valid ServiceAccount name (a
+            DNS-1123 subdomain), it is not looked up and detail says so. unchecked: the server
+            could not look it up (detail says why).
+        image_pull_secrets: { type: integer, description: "How many imagePullSecrets it carries; sent with state found." }
+        detail: { type: string, description: "Why it is unchecked, or why a missing name is not valid." }
+
+    ExecutionReport:
+      type: object
+      description: >-
+        Where the version's tasks run (Dexaflow), from the same decision
+        dispatch places an attempt with: on a warm worker of the version
+        (warm pools, ADR 0058) or on a dedicated pod. Sent by the register and
+        its dry run. A task is warm-eligible; it still takes a dedicated pod
+        when no warm worker is free. A task the dispatcher would offer to a
+        warm worker is reported dedicated when no warm worker of its version
+        can exist (no idle worker kept, or a server that runs none).
+      required: [warm_pools, tasks, pool]
+      properties:
+        warm_pools: { type: boolean, description: "execution.warm_pools_enabled on the server." }
+        tasks:
+          type: array
+          items: { $ref: "#/components/schemas/TaskExecution" }
+        pool: { $ref: "#/components/schemas/WarmPoolReport" }
+
+    TaskExecution:
+      type: object
+      required: [task_id, mode]
+      properties:
+        task_id: { type: string }
+        mode:
+          type: string
+          enum: [warm, dedicated]
+          x-enum-varnames: [TaskExecutionModeWarm, TaskExecutionModeDedicated]
+        reason:
+          type: string
+          description: >-
+            Why the task takes a dedicated pod, absent when warm-eligible: warm
+            pools off, staging enabled, source mode, service_account set, a
+            placement field set (node_selector set, tolerations set, ...), a
+            size larger than a warm pod, no idle warm workers kept for this
+            DAG, or a server that runs no warm workers.
+
+    WarmPoolReport:
+      type: object
+      required: [state, detail]
+      properties:
+        state:
+          type: string
+          enum: ["off", none, "on"]
+          description: >-
+            off: warm pools are off. none: this version gets no warm worker
+            (staging, source mode, no idle worker kept, or a server that runs
+            no warm workers: the subprocess executor, or pod dispatch
+            disabled). on: the version
+            keeps min_idle_workers idle warm workers, up to max_pool_size,
+            while it is the DAG's current version; for a DAG that declares
+            min_idle_workers they start at the next reconcile (when a paused
+            DAG is unpaused), else with the version's first run.
+        detail: { type: string, description: The state in a sentence for a person. }
+        min_idle_workers: { type: integer }
+        max_pool_size: { type: integer }
+        previous_pool:
+          type: string
+          enum: [draining]
+          x-enum-varnames: [WarmPoolReportPreviousPoolDraining]
+          description: draining for a new version of an existing DAG when this server keeps warm workers; the previous version's idle warm workers, if it has any, are removed, and each busy one once its attempt ends.
 
     DagVersionCollection:
       type: object
@@ -1246,7 +2190,7 @@ components:
       properties:
         content: { type: string, description: "The dag.py source text (compiled-spec JSON fallback for pre-source-capture versions)." }
         dag_id: { type: string }
-        version_number: { type: integer }
+        version_number: { type: integer, description: "The version whose source this is." }
         dag_display_name: { type: string }
 
     ComponentHealth:
@@ -1273,6 +2217,121 @@ components:
         agent_control_plane_addr: { type: string }
         execution_modes: { type: array, items: { type: string } }
 
+    DeployDefaults:
+      type: object
+      required: [registry, platforms, base_image]
+      properties:
+        registry:
+          type: string
+          description: Image prefix a deploy pushes to, such as ghcr.io/acme; empty when unset.
+        platforms:
+          type: array
+          items: { type: string }
+          description: Platforms a deploy builds for (os/arch or os/arch/variant); empty when unset.
+        base_image:
+          type: string
+          description: Base image for projects that set none; empty when unset.
+        source_mode_image:
+          type: string
+          description: >-
+            Runtime image, pinned by digest, a deploy registers a DAG's dag.py on
+            with no build (source mode, ADR 0067), for deploys that name none of
+            their own. It is the server's execution.source_mode.image, served
+            only when deploy.defaults.source_mode is on; empty otherwise. Absent
+            from servers that predate it.
+        remote_builder:
+          type: object
+          nullable: true
+          description: >-
+            Remote builder (ADR 0083) a deploy uses for builds no daemonless
+            path covers, for projects, targets and workspaces that name none:
+            the server's deploy.defaults.remote_builder, with one backend.
+            Null when unset.
+            Absent from servers that predate it.
+          properties:
+            cloud_build:
+              type: object
+              properties:
+                project: { type: string, description: Google Cloud project the build runs in. }
+                region: { type: string, description: Cloud Build region; absent when unset. }
+                worker_pool: { type: string, description: "Private pool, projects/<project>/locations/<region>/workerPools/<name>; absent when unset." }
+                service_account: { type: string, description: "Account the build runs as, projects/<project>/serviceAccounts/<email>; absent when unset." }
+            buildkit:
+              type: object
+              description: >-
+                The in-cluster BuildKit builder the Helm chart runs
+                (builder.enabled, #1883), which a deploy reaches with buildctl
+                over kubectl exec. Absent from servers that predate it.
+              properties:
+                namespace: { type: string, description: Namespace of the builder. }
+                pod_selector: { type: string, description: "Label selector of the builder pod, key=value pairs separated by commas; absent when unset." }
+        task_service_account:
+          type: string
+          description: >-
+            ServiceAccount task pods run as when a task sets no
+            execution.service_account: the server's
+            executor.task_service_account, served only when
+            deploy.defaults.task_service_account is on; empty otherwise. A
+            deploy reports it and never writes it into dag.json. Absent from
+            servers that predate it.
+        warm_pools:
+          type: object
+          nullable: true
+          description: >-
+            The server's warm pool settings (ADR 0058), served only when
+            deploy.defaults.warm_pools is on; null otherwise. A DAG that
+            declares no min_idle_workers gets min_idle_workers, every value
+            is capped at max_pool_size, and nothing is kept warm while
+            enabled is false. Absent from servers that predate it.
+          required: [enabled, min_idle_workers, max_pool_size]
+          properties:
+            enabled: { type: boolean, description: execution.warm_pools_enabled. }
+            min_idle_workers: { type: integer, description: execution.min_idle_workers. }
+            max_pool_size: { type: integer, description: execution.max_pool_size; 0 sets no cap. }
+        ci_oidc:
+          type: object
+          nullable: true
+          description: >-
+            The CI OIDC issuers (auth.ci_oidc, ADR 0092) of the caller's
+            tenant, which dexaflow ci init reads to write a pipeline that
+            deploys with its provider's token instead of a stored deploy
+            token; null when the tenant has none. Unlike the other fields it
+            depends on the caller. Absent from servers that predate it.
+          required: [issuers]
+          properties:
+            issuers:
+              type: array
+              items: { $ref: "#/components/schemas/CIOIDCIssuer" }
+    CIOIDCIssuer:
+      type: object
+      required: [name, provider, issuer, audience]
+      properties:
+        name: { type: string, description: The entry's name in auth.ci_oidc.issuers. }
+        provider: { type: string, enum: [github, gitlab, cloudbuild, other], description: The CI provider. }
+        issuer: { type: string, description: The exact iss of the provider's tokens. }
+        audience: { type: string, description: The aud a pipeline asks its token for. }
+    CITokenRequest:
+      type: object
+      required: [token]
+      additionalProperties: false
+      properties:
+        token: { type: string, description: The OIDC token the CI provider minted for the job. }
+    CITokenResponse:
+      type: object
+      required: [access_token, token_type, expires_in, expires_at, issuer, tenant, role, scopes]
+      properties:
+        access_token: { type: string, description: "The session token (dxci_...), for the Authorization header." }
+        token_type: { type: string, enum: [Bearer] }
+        expires_in: { type: integer, description: Seconds the session lives (auth.ci_oidc.session_ttl_seconds). }
+        expires_at: { type: string, format: date-time }
+        issuer: { type: string, description: The issuer entry that verified the token. }
+        tenant: { type: string, description: "The entry's tenant, which the session acts in." }
+        role: { type: string, description: The role the matching rule names. }
+        scopes:
+          type: array
+          items: { type: string }
+          description: The scopes the session is narrowed to.
+
     VersionInfo:
       type: object
       properties:
@@ -1291,6 +2350,7 @@ components:
     DAGRun:
       type: object
       properties:
+        run_on_latest_version_not_applied: { $ref: "#/components/schemas/ClearVersionNotApplied" }
         dag_id: { type: string }
         dag_run_id: { type: string }
         logical_date: { type: string, format: date-time }
@@ -1345,7 +2405,7 @@ components:
         state:
           type: string
           nullable: true
-          enum: [scheduled, queued, running, success, failed, skipped, upstream_failed, up_for_retry, none]
+          enum: [scheduled, queued, running, success, failed, skipped, upstream_failed, up_for_retry, removed, none]
         operator: { type: string }
         start_date: { type: string, format: date-time, nullable: true }
         end_date: { type: string, format: date-time, nullable: true }
@@ -1371,9 +2431,30 @@ components:
             token; check the control plane's RBAC for tokenreviews and the
             configured token audience.
 
+    ClearVersionNotApplied:
+      type: array
+      description: >-
+        Dexaflow-only. The runs a clear with run_on_latest_version keeps on
+        their own version, each with the reason (ADR 0086): only a finished
+        run with no task instance queued or running moves to the current
+        version. The clear still applies to these runs, on their version.
+        Left out when every run moved or the option was not asked, and on
+        every response other than the two clear routes.
+      items:
+        type: object
+        required: [dag_run_id, reason]
+        properties:
+          dag_run_id: { type: string }
+          reason:
+            type: string
+            description: >-
+              Why the run keeps its version, for example "the run is running:
+              only a finished run moves to the current version".
+
     TaskInstanceCollection:
       type: object
       properties:
+        run_on_latest_version_not_applied: { $ref: "#/components/schemas/ClearVersionNotApplied" }
         task_instances:
           type: array
           items: { $ref: "#/components/schemas/TaskInstance" }
@@ -1425,8 +2506,13 @@ components:
           nullable: true
           description: >-
             Which version the re-run executes. Unset or false keeps the version
-            the run was created with; true re-binds the run to the DAG's current
-            registered version.
+            the run was created with. true moves a finished run (success or
+            failed, with no task instance queued or running) to the DAG's
+            current registered version, creating the task instances of the
+            tasks that version adds and marking removed the ones of the tasks
+            it dropped. A run that has not finished keeps its version, as in
+            Airflow; the response then lists it in
+            run_on_latest_version_not_applied with the reason (ADR 0086).
         note:
           type: string
           nullable: true
@@ -1470,8 +2556,13 @@ components:
             Airflow) keeps the version the run was created with, so the re-run
             executes the image that produced the original attempt. true re-binds
             the run to the DAG's current registered version, so the re-run picks up
-            the newest image and config — use it to re-run a failed task against a
-            fix without creating a new run.
+            the newest image and config. Use it to re-run a failed task against a
+            fix without creating a new run. Only a finished run (success or
+            failed, with no task instance queued or running) moves: the clear
+            creates the task instances of the tasks the version adds and marks
+            removed the ones of the tasks it dropped. A run that has not
+            finished keeps its version, as in Airflow, and the response lists
+            it in run_on_latest_version_not_applied with the reason (ADR 0086).
         dry_run:
           type: boolean
           default: true

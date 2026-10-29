@@ -5084,6 +5084,11 @@ type ClientWithResponsesInterface interface {
 	GetReadyzWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadyzResponse, error)
 }
 
+// ListAPITokensResponse503Headers the declared response headers of an HTTP 503 response for ListAPITokens
+type ListAPITokensResponse503Headers struct {
+	RetryAfter *int
+}
+
 type ListAPITokensResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5093,6 +5098,10 @@ type ListAPITokensResponse struct {
 	JSON401 *Unauthorized
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Error
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *ListAPITokensResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -5108,6 +5117,11 @@ func (r ListAPITokensResponse) GetJSON401() *Unauthorized {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r ListAPITokensResponse) GetJSON403() *Error {
 	return r.JSON403
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListAPITokensResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -5139,6 +5153,11 @@ func (r ListAPITokensResponse) ContentType() string {
 	return ""
 }
 
+// CreateAPITokenResponse503Headers the declared response headers of an HTTP 503 response for CreateAPIToken
+type CreateAPITokenResponse503Headers struct {
+	RetryAfter *int
+}
+
 type CreateAPITokenResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5152,6 +5171,10 @@ type CreateAPITokenResponse struct {
 	JSON403 *Error
 	// JSON409 the response for an HTTP 409 `application/json` response
 	JSON409 *Error
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *CreateAPITokenResponse503Headers
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -5177,6 +5200,11 @@ func (r CreateAPITokenResponse) GetJSON403() *Error {
 // GetJSON409 returns the response for an HTTP 409 `application/json` response
 func (r CreateAPITokenResponse) GetJSON409() *Error {
 	return r.JSON409
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r CreateAPITokenResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -5208,6 +5236,11 @@ func (r CreateAPITokenResponse) ContentType() string {
 	return ""
 }
 
+// RevokeAPITokenResponse503Headers the declared response headers of an HTTP 503 response for RevokeAPIToken
+type RevokeAPITokenResponse503Headers struct {
+	RetryAfter *int
+}
+
 type RevokeAPITokenResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5217,6 +5250,10 @@ type RevokeAPITokenResponse struct {
 	JSON403 *Error
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *RevokeAPITokenResponse503Headers
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -5232,6 +5269,11 @@ func (r RevokeAPITokenResponse) GetJSON403() *Error {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r RevokeAPITokenResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RevokeAPITokenResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -5325,6 +5367,11 @@ func (r RenewTokenResponse) ContentType() string {
 	return ""
 }
 
+// ListConnectionsResponse503Headers the declared response headers of an HTTP 503 response for ListConnections
+type ListConnectionsResponse503Headers struct {
+	RetryAfter *int
+}
+
 type ListConnectionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5332,6 +5379,10 @@ type ListConnectionsResponse struct {
 	JSON200 *ConnectionCollection
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *ListConnectionsResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -5342,6 +5393,11 @@ func (r ListConnectionsResponse) GetJSON200() *ConnectionCollection {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListConnectionsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListConnectionsResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -5435,6 +5491,11 @@ func (r CreateConnectionResponse) ContentType() string {
 	return ""
 }
 
+// DeleteConnectionResponse503Headers the declared response headers of an HTTP 503 response for DeleteConnection
+type DeleteConnectionResponse503Headers struct {
+	RetryAfter *int
+}
+
 type DeleteConnectionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5442,6 +5503,10 @@ type DeleteConnectionResponse struct {
 	JSON401 *Unauthorized
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *DeleteConnectionResponse503Headers
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -5452,6 +5517,11 @@ func (r DeleteConnectionResponse) GetJSON401() *Unauthorized {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r DeleteConnectionResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r DeleteConnectionResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -5483,6 +5553,11 @@ func (r DeleteConnectionResponse) ContentType() string {
 	return ""
 }
 
+// GetConnectionResponse503Headers the declared response headers of an HTTP 503 response for GetConnection
+type GetConnectionResponse503Headers struct {
+	RetryAfter *int
+}
+
 type GetConnectionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5492,6 +5567,10 @@ type GetConnectionResponse struct {
 	JSON401 *Unauthorized
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetConnectionResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -5507,6 +5586,11 @@ func (r GetConnectionResponse) GetJSON401() *Unauthorized {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetConnectionResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetConnectionResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -5607,6 +5691,11 @@ func (r UpdateConnectionResponse) ContentType() string {
 	return ""
 }
 
+// GetDagSourceResponse503Headers the declared response headers of an HTTP 503 response for GetDagSource
+type GetDagSourceResponse503Headers struct {
+	RetryAfter *int
+}
+
 type GetDagSourceResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5616,6 +5705,10 @@ type GetDagSourceResponse struct {
 	JSON400 *Error
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetDagSourceResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -5631,6 +5724,11 @@ func (r GetDagSourceResponse) GetJSON400() *Error {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetDagSourceResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetDagSourceResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -5662,16 +5760,30 @@ func (r GetDagSourceResponse) ContentType() string {
 	return ""
 }
 
+// ListDagsResponse503Headers the declared response headers of an HTTP 503 response for ListDags
+type ListDagsResponse503Headers struct {
+	RetryAfter *int
+}
+
 type ListDagsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *DAGCollection
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *ListDagsResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ListDagsResponse) GetJSON200() *DAGCollection {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListDagsResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -5703,6 +5815,11 @@ func (r ListDagsResponse) ContentType() string {
 	return ""
 }
 
+// GetDagResponse503Headers the declared response headers of an HTTP 503 response for GetDag
+type GetDagResponse503Headers struct {
+	RetryAfter *int
+}
+
 type GetDagResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5710,6 +5827,10 @@ type GetDagResponse struct {
 	JSON200 *DAG
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetDagResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -5720,6 +5841,11 @@ func (r GetDagResponse) GetJSON200() *DAG {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetDagResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetDagResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -5751,6 +5877,11 @@ func (r GetDagResponse) ContentType() string {
 	return ""
 }
 
+// UpdateDagResponse503Headers the declared response headers of an HTTP 503 response for UpdateDag
+type UpdateDagResponse503Headers struct {
+	RetryAfter *int
+}
+
 type UpdateDagResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5758,6 +5889,10 @@ type UpdateDagResponse struct {
 	JSON200 *DAG
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *Error
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *UpdateDagResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -5768,6 +5903,11 @@ func (r UpdateDagResponse) GetJSON200() *DAG {
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
 func (r UpdateDagResponse) GetJSON400() *Error {
 	return r.JSON400
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r UpdateDagResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -5799,6 +5939,11 @@ func (r UpdateDagResponse) ContentType() string {
 	return ""
 }
 
+// ClearTaskInstancesResponse503Headers the declared response headers of an HTTP 503 response for ClearTaskInstances
+type ClearTaskInstancesResponse503Headers struct {
+	RetryAfter *int
+}
+
 type ClearTaskInstancesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5806,6 +5951,10 @@ type ClearTaskInstancesResponse struct {
 	JSON200 *TaskInstanceCollection
 	// JSON409 the response for an HTTP 409 `application/json` response
 	JSON409 *Error
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *ClearTaskInstancesResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -5816,6 +5965,11 @@ func (r ClearTaskInstancesResponse) GetJSON200() *TaskInstanceCollection {
 // GetJSON409 returns the response for an HTTP 409 `application/json` response
 func (r ClearTaskInstancesResponse) GetJSON409() *Error {
 	return r.JSON409
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ClearTaskInstancesResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -5852,6 +6006,11 @@ type SetDagCurrentVersionResponse403Headers struct {
 	DexaflowDeployVia *string
 }
 
+// SetDagCurrentVersionResponse503Headers the declared response headers of an HTTP 503 response for SetDagCurrentVersion
+type SetDagCurrentVersionResponse503Headers struct {
+	RetryAfter *int
+}
+
 type SetDagCurrentVersionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5865,8 +6024,12 @@ type SetDagCurrentVersionResponse struct {
 	JSON403 *Error
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
 	// Headers403 the parsed response headers for an HTTP 403 response
 	Headers403 *SetDagCurrentVersionResponse403Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *SetDagCurrentVersionResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -5892,6 +6055,11 @@ func (r SetDagCurrentVersionResponse) GetJSON403() *Error {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r SetDagCurrentVersionResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r SetDagCurrentVersionResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -5923,16 +6091,30 @@ func (r SetDagCurrentVersionResponse) ContentType() string {
 	return ""
 }
 
+// ListDagRunsResponse503Headers the declared response headers of an HTTP 503 response for ListDagRuns
+type ListDagRunsResponse503Headers struct {
+	RetryAfter *int
+}
+
 type ListDagRunsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *DAGRunCollection
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *ListDagRunsResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ListDagRunsResponse) GetJSON200() *DAGRunCollection {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListDagRunsResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -5964,16 +6146,30 @@ func (r ListDagRunsResponse) ContentType() string {
 	return ""
 }
 
+// TriggerDagRunResponse503Headers the declared response headers of an HTTP 503 response for TriggerDagRun
+type TriggerDagRunResponse503Headers struct {
+	RetryAfter *int
+}
+
 type TriggerDagRunResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *DAGRun
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *TriggerDagRunResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r TriggerDagRunResponse) GetJSON200() *DAGRun {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r TriggerDagRunResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -6005,6 +6201,11 @@ func (r TriggerDagRunResponse) ContentType() string {
 	return ""
 }
 
+// GetDagRunResponse503Headers the declared response headers of an HTTP 503 response for GetDagRun
+type GetDagRunResponse503Headers struct {
+	RetryAfter *int
+}
+
 type GetDagRunResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6012,6 +6213,10 @@ type GetDagRunResponse struct {
 	JSON200 *DAGRun
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetDagRunResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -6022,6 +6227,11 @@ func (r GetDagRunResponse) GetJSON200() *DAGRun {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetDagRunResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetDagRunResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -6053,6 +6263,11 @@ func (r GetDagRunResponse) ContentType() string {
 	return ""
 }
 
+// ClearDagRunResponse503Headers the declared response headers of an HTTP 503 response for ClearDagRun
+type ClearDagRunResponse503Headers struct {
+	RetryAfter *int
+}
+
 type ClearDagRunResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6066,6 +6281,10 @@ type ClearDagRunResponse struct {
 	JSON404 *NotFound
 	// JSON409 the response for an HTTP 409 `application/json` response
 	JSON409 *Error
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *ClearDagRunResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -6091,6 +6310,11 @@ func (r ClearDagRunResponse) GetJSON404() *NotFound {
 // GetJSON409 returns the response for an HTTP 409 `application/json` response
 func (r ClearDagRunResponse) GetJSON409() *Error {
 	return r.JSON409
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ClearDagRunResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -6122,16 +6346,30 @@ func (r ClearDagRunResponse) ContentType() string {
 	return ""
 }
 
+// ListTaskInstancesResponse503Headers the declared response headers of an HTTP 503 response for ListTaskInstances
+type ListTaskInstancesResponse503Headers struct {
+	RetryAfter *int
+}
+
 type ListTaskInstancesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *TaskInstanceCollection
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *ListTaskInstancesResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ListTaskInstancesResponse) GetJSON200() *TaskInstanceCollection {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListTaskInstancesResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -6163,16 +6401,30 @@ func (r ListTaskInstancesResponse) ContentType() string {
 	return ""
 }
 
+// GetTaskInstanceResponse503Headers the declared response headers of an HTTP 503 response for GetTaskInstance
+type GetTaskInstanceResponse503Headers struct {
+	RetryAfter *int
+}
+
 type GetTaskInstanceResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *TaskInstance
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetTaskInstanceResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetTaskInstanceResponse) GetJSON200() *TaskInstance {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetTaskInstanceResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -6204,6 +6456,11 @@ func (r GetTaskInstanceResponse) ContentType() string {
 	return ""
 }
 
+// PatchTaskInstanceResponse503Headers the declared response headers of an HTTP 503 response for PatchTaskInstance
+type PatchTaskInstanceResponse503Headers struct {
+	RetryAfter *int
+}
+
 type PatchTaskInstanceResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6213,6 +6470,10 @@ type PatchTaskInstanceResponse struct {
 	JSON400 *Error
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *PatchTaskInstanceResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -6228,6 +6489,11 @@ func (r PatchTaskInstanceResponse) GetJSON400() *Error {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r PatchTaskInstanceResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r PatchTaskInstanceResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -6259,6 +6525,11 @@ func (r PatchTaskInstanceResponse) ContentType() string {
 	return ""
 }
 
+// PatchTaskInstanceDryRunResponse503Headers the declared response headers of an HTTP 503 response for PatchTaskInstanceDryRun
+type PatchTaskInstanceDryRunResponse503Headers struct {
+	RetryAfter *int
+}
+
 type PatchTaskInstanceDryRunResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6268,6 +6539,10 @@ type PatchTaskInstanceDryRunResponse struct {
 	JSON400 *Error
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *PatchTaskInstanceDryRunResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -6283,6 +6558,11 @@ func (r PatchTaskInstanceDryRunResponse) GetJSON400() *Error {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r PatchTaskInstanceDryRunResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r PatchTaskInstanceDryRunResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -6314,9 +6594,23 @@ func (r PatchTaskInstanceDryRunResponse) ContentType() string {
 	return ""
 }
 
+// GetTaskLogsResponse503Headers the declared response headers of an HTTP 503 response for GetTaskLogs
+type GetTaskLogsResponse503Headers struct {
+	RetryAfter *int
+}
+
 type GetTaskLogsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetTaskLogsResponse503Headers
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetTaskLogsResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -6348,16 +6642,30 @@ func (r GetTaskLogsResponse) ContentType() string {
 	return ""
 }
 
+// ListDagVersionsResponse503Headers the declared response headers of an HTTP 503 response for ListDagVersions
+type ListDagVersionsResponse503Headers struct {
+	RetryAfter *int
+}
+
 type ListDagVersionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *DagVersionCollection
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *ListDagVersionsResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ListDagVersionsResponse) GetJSON200() *DagVersionCollection {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListDagVersionsResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -6389,6 +6697,11 @@ func (r ListDagVersionsResponse) ContentType() string {
 	return ""
 }
 
+// GetDagVersionResponse503Headers the declared response headers of an HTTP 503 response for GetDagVersion
+type GetDagVersionResponse503Headers struct {
+	RetryAfter *int
+}
+
 type GetDagVersionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6396,6 +6709,10 @@ type GetDagVersionResponse struct {
 	JSON200 *DagVersion
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetDagVersionResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -6406,6 +6723,11 @@ func (r GetDagVersionResponse) GetJSON200() *DagVersion {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetDagVersionResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetDagVersionResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -6437,6 +6759,11 @@ func (r GetDagVersionResponse) ContentType() string {
 	return ""
 }
 
+// GetDagSpecResponse503Headers the declared response headers of an HTTP 503 response for GetDagSpec
+type GetDagSpecResponse503Headers struct {
+	RetryAfter *int
+}
+
 type GetDagSpecResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6444,6 +6771,10 @@ type GetDagSpecResponse struct {
 	JSON200 *map[string]interface{}
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetDagSpecResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -6454,6 +6785,11 @@ func (r GetDagSpecResponse) GetJSON200() *map[string]interface{} {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetDagSpecResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetDagSpecResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -6490,6 +6826,11 @@ type RegisterDagVersionResponse403Headers struct {
 	DexaflowDeployVia *string
 }
 
+// RegisterDagVersionResponse503Headers the declared response headers of an HTTP 503 response for RegisterDagVersion
+type RegisterDagVersionResponse503Headers struct {
+	RetryAfter *int
+}
+
 type RegisterDagVersionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6505,8 +6846,12 @@ type RegisterDagVersionResponse struct {
 	JSON403 *Error
 	// JSON409 the response for an HTTP 409 `application/json` response
 	JSON409 *Error
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
 	// Headers403 the parsed response headers for an HTTP 403 response
 	Headers403 *RegisterDagVersionResponse403Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *RegisterDagVersionResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -6539,6 +6884,11 @@ func (r RegisterDagVersionResponse) GetJSON409() *Error {
 	return r.JSON409
 }
 
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RegisterDagVersionResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
+}
+
 // GetBody returns the raw response body bytes
 func (r RegisterDagVersionResponse) GetBody() []byte {
 	return r.Body
@@ -6568,16 +6918,30 @@ func (r RegisterDagVersionResponse) ContentType() string {
 	return ""
 }
 
+// GetMonitorExecutorResponse503Headers the declared response headers of an HTTP 503 response for GetMonitorExecutor
+type GetMonitorExecutorResponse503Headers struct {
+	RetryAfter *int
+}
+
 type GetMonitorExecutorResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *ExecutorInfo
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetMonitorExecutorResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetMonitorExecutorResponse) GetJSON200() *ExecutorInfo {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetMonitorExecutorResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -6609,16 +6973,30 @@ func (r GetMonitorExecutorResponse) ContentType() string {
 	return ""
 }
 
+// GetMonitorHealthResponse503Headers the declared response headers of an HTTP 503 response for GetMonitorHealth
+type GetMonitorHealthResponse503Headers struct {
+	RetryAfter *int
+}
+
 type GetMonitorHealthResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *HealthInfo
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetMonitorHealthResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetMonitorHealthResponse) GetJSON200() *HealthInfo {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetMonitorHealthResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -6650,6 +7028,11 @@ func (r GetMonitorHealthResponse) ContentType() string {
 	return ""
 }
 
+// ListUsersResponse503Headers the declared response headers of an HTTP 503 response for ListUsers
+type ListUsersResponse503Headers struct {
+	RetryAfter *int
+}
+
 type ListUsersResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6657,6 +7040,10 @@ type ListUsersResponse struct {
 	JSON200 *UserCollection
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *ListUsersResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -6667,6 +7054,11 @@ func (r ListUsersResponse) GetJSON200() *UserCollection {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListUsersResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListUsersResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -6698,6 +7090,11 @@ func (r ListUsersResponse) ContentType() string {
 	return ""
 }
 
+// CreateUserResponse503Headers the declared response headers of an HTTP 503 response for CreateUser
+type CreateUserResponse503Headers struct {
+	RetryAfter *int
+}
+
 type CreateUserResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6709,6 +7106,10 @@ type CreateUserResponse struct {
 	JSON401 *Unauthorized
 	// JSON409 the response for an HTTP 409 `application/json` response
 	JSON409 *Error
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *CreateUserResponse503Headers
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -6729,6 +7130,11 @@ func (r CreateUserResponse) GetJSON401() *Unauthorized {
 // GetJSON409 returns the response for an HTTP 409 `application/json` response
 func (r CreateUserResponse) GetJSON409() *Error {
 	return r.JSON409
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r CreateUserResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -6760,6 +7166,11 @@ func (r CreateUserResponse) ContentType() string {
 	return ""
 }
 
+// ListVariablesResponse503Headers the declared response headers of an HTTP 503 response for ListVariables
+type ListVariablesResponse503Headers struct {
+	RetryAfter *int
+}
+
 type ListVariablesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6767,6 +7178,10 @@ type ListVariablesResponse struct {
 	JSON200 *VariableCollection
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *ListVariablesResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -6777,6 +7192,11 @@ func (r ListVariablesResponse) GetJSON200() *VariableCollection {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListVariablesResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListVariablesResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -6808,6 +7228,11 @@ func (r ListVariablesResponse) ContentType() string {
 	return ""
 }
 
+// CreateVariableResponse503Headers the declared response headers of an HTTP 503 response for CreateVariable
+type CreateVariableResponse503Headers struct {
+	RetryAfter *int
+}
+
 type CreateVariableResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6817,6 +7242,10 @@ type CreateVariableResponse struct {
 	JSON400 *Error
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *CreateVariableResponse503Headers
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -6832,6 +7261,11 @@ func (r CreateVariableResponse) GetJSON400() *Error {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateVariableResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r CreateVariableResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -6863,6 +7297,11 @@ func (r CreateVariableResponse) ContentType() string {
 	return ""
 }
 
+// DeleteVariableResponse503Headers the declared response headers of an HTTP 503 response for DeleteVariable
+type DeleteVariableResponse503Headers struct {
+	RetryAfter *int
+}
+
 type DeleteVariableResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6870,6 +7309,10 @@ type DeleteVariableResponse struct {
 	JSON401 *Unauthorized
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *DeleteVariableResponse503Headers
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -6880,6 +7323,11 @@ func (r DeleteVariableResponse) GetJSON401() *Unauthorized {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r DeleteVariableResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r DeleteVariableResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -6911,6 +7359,11 @@ func (r DeleteVariableResponse) ContentType() string {
 	return ""
 }
 
+// GetVariableResponse503Headers the declared response headers of an HTTP 503 response for GetVariable
+type GetVariableResponse503Headers struct {
+	RetryAfter *int
+}
+
 type GetVariableResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6920,6 +7373,10 @@ type GetVariableResponse struct {
 	JSON401 *Unauthorized
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetVariableResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -6935,6 +7392,11 @@ func (r GetVariableResponse) GetJSON401() *Unauthorized {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetVariableResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetVariableResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -6966,16 +7428,30 @@ func (r GetVariableResponse) ContentType() string {
 	return ""
 }
 
+// GetVersionResponse503Headers the declared response headers of an HTTP 503 response for GetVersion
+type GetVersionResponse503Headers struct {
+	RetryAfter *int
+}
+
 type GetVersionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *VersionInfo
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetVersionResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetVersionResponse) GetJSON200() *VersionInfo {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetVersionResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -7007,6 +7483,11 @@ func (r GetVersionResponse) ContentType() string {
 	return ""
 }
 
+// GetXcomEntryResponse503Headers the declared response headers of an HTTP 503 response for GetXcomEntry
+type GetXcomEntryResponse503Headers struct {
+	RetryAfter *int
+}
+
 type GetXcomEntryResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -7014,6 +7495,10 @@ type GetXcomEntryResponse struct {
 	JSON200 *XComEntry
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *AuthUnavailable
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetXcomEntryResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -7024,6 +7509,11 @@ func (r GetXcomEntryResponse) GetJSON200() *XComEntry {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r GetXcomEntryResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetXcomEntryResponse) GetApplicationproblemJSON503() *AuthUnavailable {
+	return r.ApplicationproblemJSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -8019,6 +8509,26 @@ func ParseListAPITokensResponse(rsp *http.Response) (*ListAPITokensResponse, err
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers ListAPITokensResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8073,6 +8583,26 @@ func ParseCreateAPITokenResponse(rsp *http.Response) (*CreateAPITokenResponse, e
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers CreateAPITokenResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8116,6 +8646,26 @@ func ParseRevokeAPITokenResponse(rsp *http.Response) (*RevokeAPITokenResponse, e
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers RevokeAPITokenResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8202,6 +8752,26 @@ func ParseListConnectionsResponse(rsp *http.Response) (*ListConnectionsResponse,
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers ListConnectionsResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8285,6 +8855,26 @@ func ParseDeleteConnectionResponse(rsp *http.Response) (*DeleteConnectionRespons
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers DeleteConnectionResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8325,6 +8915,26 @@ func ParseGetConnectionResponse(rsp *http.Response) (*GetConnectionResponse, err
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers GetConnectionResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8419,6 +9029,26 @@ func ParseGetDagSourceResponse(rsp *http.Response) (*GetDagSourceResponse, error
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers GetDagSourceResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8445,6 +9075,26 @@ func ParseListDagsResponse(rsp *http.Response) (*ListDagsResponse, error) {
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers ListDagsResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8478,6 +9128,26 @@ func ParseGetDagResponse(rsp *http.Response) (*GetDagResponse, error) {
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers GetDagResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8511,6 +9181,26 @@ func ParseUpdateDagResponse(rsp *http.Response) (*UpdateDagResponse, error) {
 		}
 		response.JSON400 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers UpdateDagResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8544,6 +9234,26 @@ func ParseClearTaskInstancesResponse(rsp *http.Response) (*ClearTaskInstancesRes
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers ClearTaskInstancesResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8598,6 +9308,13 @@ func ParseSetDagCurrentVersionResponse(rsp *http.Response) (*SetDagCurrentVersio
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
 	}
 
 	switch {
@@ -8611,6 +9328,16 @@ func ParseSetDagCurrentVersionResponse(rsp *http.Response) (*SetDagCurrentVersio
 			headers.DexaflowDeployVia = &value
 		}
 		response.Headers403 = &headers
+	case rsp.StatusCode == 503:
+		var headers SetDagCurrentVersionResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8637,6 +9364,26 @@ func ParseListDagRunsResponse(rsp *http.Response) (*ListDagRunsResponse, error) 
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers ListDagRunsResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8663,6 +9410,26 @@ func ParseTriggerDagRunResponse(rsp *http.Response) (*TriggerDagRunResponse, err
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers TriggerDagRunResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8696,6 +9463,26 @@ func ParseGetDagRunResponse(rsp *http.Response) (*GetDagRunResponse, error) {
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers GetDagRunResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8750,6 +9537,26 @@ func ParseClearDagRunResponse(rsp *http.Response) (*ClearDagRunResponse, error) 
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers ClearDagRunResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8776,6 +9583,26 @@ func ParseListTaskInstancesResponse(rsp *http.Response) (*ListTaskInstancesRespo
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers ListTaskInstancesResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8802,6 +9629,26 @@ func ParseGetTaskInstanceResponse(rsp *http.Response) (*GetTaskInstanceResponse,
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers GetTaskInstanceResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8842,6 +9689,26 @@ func ParsePatchTaskInstanceResponse(rsp *http.Response) (*PatchTaskInstanceRespo
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers PatchTaskInstanceResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8882,6 +9749,26 @@ func ParsePatchTaskInstanceDryRunResponse(rsp *http.Response) (*PatchTaskInstanc
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers PatchTaskInstanceDryRunResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8898,6 +9785,29 @@ func ParseGetTaskLogsResponse(rsp *http.Response) (*GetTaskLogsResponse, error) 
 	response := &GetTaskLogsResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers GetTaskLogsResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8924,6 +9834,26 @@ func ParseListDagVersionsResponse(rsp *http.Response) (*ListDagVersionsResponse,
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers ListDagVersionsResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8957,6 +9887,26 @@ func ParseGetDagVersionResponse(rsp *http.Response) (*GetDagVersionResponse, err
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers GetDagVersionResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -8990,6 +9940,26 @@ func ParseGetDagSpecResponse(rsp *http.Response) (*GetDagSpecResponse, error) {
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers GetDagSpecResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -9051,6 +10021,13 @@ func ParseRegisterDagVersionResponse(rsp *http.Response) (*RegisterDagVersionRes
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
 	}
 
 	switch {
@@ -9064,6 +10041,16 @@ func ParseRegisterDagVersionResponse(rsp *http.Response) (*RegisterDagVersionRes
 			headers.DexaflowDeployVia = &value
 		}
 		response.Headers403 = &headers
+	case rsp.StatusCode == 503:
+		var headers RegisterDagVersionResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -9090,6 +10077,26 @@ func ParseGetMonitorExecutorResponse(rsp *http.Response) (*GetMonitorExecutorRes
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers GetMonitorExecutorResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -9116,6 +10123,26 @@ func ParseGetMonitorHealthResponse(rsp *http.Response) (*GetMonitorHealthRespons
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers GetMonitorHealthResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -9149,6 +10176,26 @@ func ParseListUsersResponse(rsp *http.Response) (*ListUsersResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers ListUsersResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -9196,6 +10243,26 @@ func ParseCreateUserResponse(rsp *http.Response) (*CreateUserResponse, error) {
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers CreateUserResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -9229,6 +10296,26 @@ func ParseListVariablesResponse(rsp *http.Response) (*ListVariablesResponse, err
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers ListVariablesResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -9269,6 +10356,26 @@ func ParseCreateVariableResponse(rsp *http.Response) (*CreateVariableResponse, e
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers CreateVariableResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -9305,6 +10412,26 @@ func ParseDeleteVariableResponse(rsp *http.Response) (*DeleteVariableResponse, e
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers DeleteVariableResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -9345,6 +10472,26 @@ func ParseGetVariableResponse(rsp *http.Response) (*GetVariableResponse, error) 
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers GetVariableResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -9371,6 +10518,26 @@ func ParseGetVersionResponse(rsp *http.Response) (*GetVersionResponse, error) {
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers GetVersionResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -9404,6 +10571,26 @@ func ParseGetXcomEntryResponse(rsp *http.Response) (*GetXcomEntryResponse, error
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuthUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers GetXcomEntryResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil

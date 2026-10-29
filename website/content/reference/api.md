@@ -29,6 +29,16 @@ OpenAPI-aware client (curl-with-schemas, Postman, an SDK generator) at it.
 See [ADR 0013](/project/adrs/0013-scalar-api-docs/) for why the API reference is
 Scalar embedded in the server binary.
 
+## When the credential cannot be checked
+
+Every route that takes a bearer token can answer `503` with a `Retry-After`
+header (in seconds) instead of `401`. It means the control plane could not
+reach a store it needs to check the credential, typically during a database
+failover, and says nothing about the credential itself. Wait the `Retry-After`
+and retry the same call; do not sign in again. The spec models it as the shared
+`AuthUnavailable` response on every protected operation, so a generated client
+has a typed case for it rather than an unknown status.
+
 ## Setting a run's state
 
 `PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}` with a `state` sets a run
