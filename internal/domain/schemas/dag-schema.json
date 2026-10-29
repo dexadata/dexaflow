@@ -259,7 +259,7 @@
             "pod"
           ],
           "default": "pod",
-          "description": "How a task runs. Every task (python, bash, airflow_operator) runs inside a worker pod via the agent; 'pod' is the only supported value and the default. Retained for forward compatibility."
+          "description": "Reserved. Every task (python, bash, airflow_operator) runs inside a worker pod via the agent; 'pod' is the only value, the default, and read by nothing. Kept so dag.json artifacts that carry it keep validating."
         },
         "entrypoint": {
           "type": "string",

@@ -32,8 +32,11 @@ const (
 	TaskTypeDbtGroup TaskType = "dbt_group"
 )
 
-// ExecutionMode selects how a task runs. Every task runs inside a worker pod;
-// the field is retained for forward compatibility and defaults to pod.
+// ExecutionMode is a reserved field. Since the inline http_api task type was
+// removed every task runs inside a worker pod, so "pod" is its only value and
+// nothing reads it. It stays in the schema because dag.json is closed
+// (additionalProperties: false) and artifacts that carry it must keep
+// validating (#521).
 type ExecutionMode string
 
 // Supported execution modes. See docs/api/dag-schema.json.
@@ -296,15 +299,6 @@ const ReservedMetadataPrefix = "leoflow.io/"
 // ReservedMetadataPrefix and therefore may only be set by Dexaflow itself.
 func IsReservedMetadataKey(key string) bool {
 	return strings.HasPrefix(key, ReservedMetadataPrefix)
-}
-
-// EffectiveExecutionMode returns the task's execution mode, defaulting to pod
-// when unset. Every task runs in a worker pod.
-func (t TaskSpec) EffectiveExecutionMode() ExecutionMode {
-	if t.ExecutionMode != "" {
-		return t.ExecutionMode
-	}
-	return ExecutionModePod
 }
 
 // EffectivePoolSlots is the number of pool slots the task takes: its
