@@ -79,7 +79,7 @@ There are two ways a project can still be on it, and they have different fixes:
   `deploy` and `lite` refuse the project and name the replacement. Set
   `python_version: "3.11"` (or later) and rebuild.
 - **You pinned `base_image` to a published `py3.10` tag** (`…:py3.10`,
-  `…:py3.10-v0.5.7`). The build still works, because the tag still pulls, and
+  `…:py3.10-v0.5.7`). The build still works, because the tag still pulls, and <!-- stale-version-ok: the last py3.10 tag -->
   `dexaflow compile` warns that the base gets no security updates. Repoint
   `base_image` to the matching `py3.11` tag and rebuild. Changing
   `python_version` here does nothing: when `base_image` is set it is used
