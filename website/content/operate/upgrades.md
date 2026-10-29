@@ -415,6 +415,7 @@ holds, then re-run.
 | 053 (`next_run_at`) | 53 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, so the columns are not there yet | 52; retry when `dags` is quiet |
 | 054 (index build) | 54 | `DROP INDEX CONCURRENTLY IF EXISTS idx_dags_next_run;` | 53 |
 | 055 (usage events) | 55 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 54; retry when `task_instances` is quiet |
+| 056 (usage events pruned mark) | 56 | nothing: one transaction, rolled back, and every statement can be repeated | 55 |
 
 **How to run `migrate force`.** The hook image is the `dexaflow-migrate`
 wrapper plus the SQL files at `/migrations`; it takes the golang-migrate CLI's
@@ -1121,7 +1122,7 @@ Kubernetes spelling. Rolling back to 0.5.6 restores the old behavior with no
 other step.
 ### Upgrading to 0.5.8
 
-0.5.8 applies six migrations, 050 to 055.
+0.5.8 applies seven migrations, 050 to 056.
 
 - **`050_audit_log_resource_index`** builds `idx_audit_resource` on
   `audit_log (tenant_id, resource_id, occurred_at DESC, id DESC)`, the index the
@@ -1170,6 +1171,12 @@ other step.
   is held for an instant. Previous releases never read the
   tables and keep running against the schema; with the switch on, their
   writes are recorded too, because the database writes the events.
+- **`056_usage_events_pruned`** creates `usage_events_pruned`, one row
+  that marks the newest usage event the retention janitor deleted, so the
+  service API can tell a consumer that it lost events. While recording is on,
+  the janitor deletes events older than `retention.usage_events_days`
+  (default 30). A new table that nothing else reads: no lock on a table in
+  use.
 
 #### Three unused tables are dropped
 
@@ -1215,19 +1222,20 @@ once a 0.5.8 replica leads. With retention off (the default) 0.5.4 never reads
 the three tables.
 
 **Rolling back 0.5.8.** On Cluster, `helm rollback <release> <revision>` leaves the
-schema at 055, and the previous control plane boots against it with the
+schema at 056, and the previous control plane boots against it with the
 warning `database schema is ahead of this binary; proceeding`; it reads the
 event log through the new index without knowing it, never touches the three
 tables, and ignores tenant suspensions: a suspended tenant gets runs again
 until 0.5.8 is back. If usage events were on, the trigger keeps recording,
-and nothing turns the switch off until 0.5.8 leads again. On Lite, run the down migrations first, with the 0.5.8 CLI or
+and nothing turns the switch off or prunes the events until 0.5.8 leads
+again. On Lite, run the down migrations first, with the 0.5.8 CLI or
 migrate image:
 
 ```sh
 migrate -path migrations -database "$DATABASE_URL" goto 49
 ```
 
-That drops the usage events and their trigger, the next due times and their
+That drops the usage events, their pruned mark and their trigger, the next due times and their
 index, drops the suspension columns
 (every suspended tenant runs again),
 recreates the three tables, empty, exactly as before, and drops the index

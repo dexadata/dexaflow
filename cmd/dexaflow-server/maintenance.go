@@ -151,18 +151,20 @@ func startXComSweep(ctx context.Context, backend *xcom.PostgresBackend, logger *
 	}()
 }
 
-// startRetention starts the retention janitor (D5) when any retention class is
-// configured and reports whether it did. Every class is off by default, so a
-// default install starts nothing and deletes nothing. The janitor runs on the
-// scheduler leader only and rechecks leadership before every batch.
-func startRetention(ctx context.Context, sec config.RetentionSection, store retention.Store, leading func() bool, rec retention.Recorder, logger *slog.Logger) bool {
-	if !sec.Enabled() {
+// startRetention starts the retention janitor (D5) when it has work and
+// reports whether it did: a run or audit class, or the usage events window
+// while usageRecording is on. Runs and the audit log are kept by default and
+// usage events are not recorded, so a default install starts nothing and
+// deletes nothing. The janitor runs on the scheduler leader only and rechecks
+// leadership before every batch.
+func startRetention(ctx context.Context, sec config.RetentionSection, usageRecording bool, store retention.Store, leading func() bool, rec retention.Recorder, logger *slog.Logger) bool {
+	if !sec.Active(usageRecording) {
 		return false
 	}
 	j := retention.New(store, retentionConfig(sec), rec, logger)
 	j.SetLeading(leading)
 	logger.Info("retention janitor enabled", "dag_runs_days", sec.DagRunsDays, "audit_log_days", sec.AuditLogDays,
-		"dry_run", sec.DryRun, "interval", sec.Interval, "batch_size", sec.BatchSize, "max_rows_per_cycle", sec.MaxRowsPerCycle)
+		"usage_events_days", sec.UsageEventsDays, "dry_run", sec.DryRun, "interval", sec.Interval, "batch_size", sec.BatchSize, "max_rows_per_cycle", sec.MaxRowsPerCycle)
 	gatedtick.Start(ctx, "retention", sec.Interval, leading, logger, func() { j.RunCycle(ctx) })
 	return true
 }
@@ -170,7 +172,7 @@ func startRetention(ctx context.Context, sec config.RetentionSection, store rete
 // retentionConfig maps the config section onto the janitor's settings.
 func retentionConfig(sec config.RetentionSection) retention.Config {
 	return retention.Config{
-		DagRunsDays: sec.DagRunsDays, AuditLogDays: sec.AuditLogDays, DryRun: sec.DryRun,
+		DagRunsDays: sec.DagRunsDays, AuditLogDays: sec.AuditLogDays, UsageEventsDays: sec.UsageEventsDays, DryRun: sec.DryRun,
 		BatchSize: sec.BatchSize, BatchPause: sec.BatchPause, MaxRowsPerCycle: sec.MaxRowsPerCycle,
 	}
 }

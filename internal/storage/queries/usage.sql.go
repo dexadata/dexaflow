@@ -7,7 +7,83 @@ package queries
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const countExpiredUsageEvents = `-- name: CountExpiredUsageEvents :one
+SELECT count(*) FROM (
+    SELECT bool_and(h.recorded_at < $1::timestamptz) OVER (ORDER BY h.xid, h.id) AS expired
+    FROM (
+        SELECT e.xid, e.id, e.recorded_at FROM usage_events e
+        WHERE e.xid < pg_snapshot_xmin(pg_current_snapshot())
+        ORDER BY e.xid, e.id
+        LIMIT $2::int
+    ) h
+) x
+WHERE x.expired
+`
+
+type CountExpiredUsageEventsParams struct {
+	Cutoff  pgtype.Timestamptz `json:"cutoff"`
+	MaxRows int32              `json:"max_rows"`
+}
+
+// Counts what DeleteExpiredUsageEvents would delete, looking at no more than
+// max_rows events.
+func (q *Queries) CountExpiredUsageEvents(ctx context.Context, arg CountExpiredUsageEventsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countExpiredUsageEvents, arg.Cutoff, arg.MaxRows)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const deleteExpiredUsageEvents = `-- name: DeleteExpiredUsageEvents :one
+WITH head AS (
+    SELECT h.xid, h.id, bool_and(h.recorded_at < $1::timestamptz) OVER (ORDER BY h.xid, h.id) AS expired
+    FROM (
+        SELECT e.xid, e.id, e.recorded_at FROM usage_events e
+        WHERE e.xid < pg_snapshot_xmin(pg_current_snapshot())
+        ORDER BY e.xid, e.id
+        LIMIT $2::int
+    ) h
+),
+gone AS (
+    DELETE FROM usage_events e
+    USING head
+    WHERE e.id = head.id AND head.expired
+    RETURNING e.xid, e.id
+),
+last_gone AS (
+    SELECT g.xid, g.id FROM gone g ORDER BY g.xid DESC, g.id DESC LIMIT 1
+),
+mark AS (
+    UPDATE usage_events_pruned p
+    SET xid = l.xid, event_id = l.id, pruned_at = now()
+    FROM last_gone l
+    WHERE p.id AND (p.xid IS NULL OR (l.xid, l.id) > (p.xid, p.event_id))
+    RETURNING p.id
+)
+SELECT count(*) FROM gone
+`
+
+type DeleteExpiredUsageEventsParams struct {
+	Cutoff   pgtype.Timestamptz `json:"cutoff"`
+	RowLimit int32              `json:"row_limit"`
+}
+
+// Deletes the oldest usage events in serving order, (xid, id), up to
+// row_limit, stopping at the first one recorded at or after the cutoff, so the
+// deleted rows are always a prefix of what the service API serves. Only
+// events the API can serve are considered, and the pruned mark moves to the
+// last one deleted in the same statement, forward only: an event a very long
+// transaction commits below the mark is deleted without moving it back.
+func (q *Queries) DeleteExpiredUsageEvents(ctx context.Context, arg DeleteExpiredUsageEventsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, deleteExpiredUsageEvents, arg.Cutoff, arg.RowLimit)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
 
 const setUsageEventsEnabled = `-- name: SetUsageEventsEnabled :execrows
 UPDATE usage_events_switch
