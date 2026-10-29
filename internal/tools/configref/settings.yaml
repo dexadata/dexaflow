@@ -544,7 +544,7 @@ settings:
   auth.api_tokens.disabled:
     edition: both
     description: >-
-      `true` stops serving the [API tokens](/operate/cicd-deploy/#credentials-for-the-control-plane)
+      `true` stops serving the [API tokens](/operate/users-roles-tokens/#api-tokens)
       a signed-in user mints for CI and scripts: `/api/v2/apiTokens` and the
       tokens screen are not served, and every API token is refused as an unknown
       bearer, including one minted before (it works again if they are served
@@ -1277,7 +1277,7 @@ settings:
     default_note: off
     description: >-
       Delete audit log entries older than this many days, per tenant and for the
-      tenant-less system entries. `0` keeps the whole audit log.
+      tenant-less system entries. `0` keeps the whole audit log. See [Audit log](/operate/audit-log/).
   retention.dry_run:
     edition: both
     description: >-
