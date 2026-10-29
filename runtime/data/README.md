@@ -47,6 +47,19 @@ Its output should list exactly the versions of `requirements.txt`.
   litellm, scipy and pyarrow, and roughly doubles the image (about 1.6 GB
   installed). Check `du` and the advisories (`pip-audit -r requirements.txt`)
   before adding another provider.
+- **Fixable findings in the lock block the image.** Its Python packages are
+  ours to choose, so a fixable HIGH or CRITICAL finding in one of them, or in a
+  jar a wheel bundles, is ours to fix before the image ships (#2247). The
+  release scans `py3.11-data-<tag>` before tagging and signing it and stops on
+  such a finding, and pull requests that change this directory,
+  `runtime/Dockerfile` or `.trivyignore.yaml` run the same scan
+  (`.github/workflows/runtime-data-scan.yaml`). Fix a finding by recompiling
+  with a patched version (an `overrides.txt` line if a dependency caps it). When
+  no release fixes it yet, accept it in `.trivyignore.yaml` with a statement
+  and an expiry, scoped by purl to the exact copy, as for ray's bundled jars.
+  OS packages of the base are reported by `image-scan.yaml`, not gated here.
+  To check before pushing, build the image and run
+  `trivy image --pkg-types library --severity HIGH,CRITICAL --ignore-unfixed --ignorefile .trivyignore.yaml <image>`.
 - **Every promised import is checked at build time.** The `runtime-data` stage
   of `runtime/Dockerfile` imports each provider, driver and dbt adapter, and
   runs `dbt --version`. When you add a package here, add its import there.
