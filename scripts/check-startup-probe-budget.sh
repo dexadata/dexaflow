@@ -3,9 +3,9 @@
 # halves of that claim live in different languages:
 #
 #   internal/storage/postgres.go   pgStartupBudget        how long the connect retry may spend
-#   cmd/dexaflow-server/startup_timeouts.go podInformerSyncTimeout how long the informer warm-up may spend
-#   cmd/dexaflow-server/startup_timeouts.go oidcDiscoveryTimeout   how long IdP discovery may spend
-#   cmd/dexaflow-server/startup_timeouts.go oidcNameCheckTimeout   how long the OIDC name lookups may spend
+#   internal/serverapp/startup_timeouts.go podInformerSyncTimeout how long the informer warm-up may spend
+#   internal/serverapp/startup_timeouts.go oidcDiscoveryTimeout   how long IdP discovery may spend
+#   internal/serverapp/startup_timeouts.go oidcNameCheckTimeout   how long the OIDC name lookups may spend
 #   helm/dexaflow/values.yaml       probes.startup.*       what the kubelet actually allows
 #
 # The invariant is
@@ -189,4 +189,4 @@ self_test() {
 [ "${1:-}" = "--self-test" ] && { self_test; exit $?; }
 
 cd "$(dirname "$0")/.."
-check "${1:-internal/storage/postgres.go}" "${2:-cmd/dexaflow-server/startup_timeouts.go}" "${3:-helm/dexaflow/values.yaml}"
+check "${1:-internal/storage/postgres.go}" "${2:-internal/serverapp/startup_timeouts.go}" "${3:-helm/dexaflow/values.yaml}"

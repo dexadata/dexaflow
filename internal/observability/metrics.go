@@ -402,7 +402,7 @@ func (m *Metrics) ObserveRedisDialDuration(d time.Duration) {
 	m.RedisDialDuration.Observe(d.Seconds())
 }
 
-// UpdateRedisPoolStats refreshes the three pool gauges. The cmd/dexaflow-server
+// UpdateRedisPoolStats refreshes the three pool gauges. The internal/serverapp
 // goroutine that calls this scrapes go-redis's PoolStats every N seconds.
 func (m *Metrics) UpdateRedisPoolStats(active, idle, total uint32) {
 	m.RedisPoolActive.Set(float64(active))

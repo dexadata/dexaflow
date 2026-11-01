@@ -290,7 +290,7 @@ func baseOIDCConfig(f *fakeIDP) config.OIDCSection {
 }
 
 // testOIDCSettings maps c onto the API's settings the way
-// cmd/dexaflow-server does.
+// internal/serverapp does.
 func testOIDCSettings(c config.OIDCSection) OIDCSettings {
 	return OIDCSettings{
 		Issuer:           c.Issuer,

@@ -454,7 +454,7 @@ func (r *Repository) SetUserPassword(ctx context.Context, tenant, email, hash st
 // is created and granted in one transaction, and an existing admin without the
 // role (left by a crash between the two steps in an older release, #513) gets it
 // back. Returns true only when the admin was newly created (false when an
-// existing one was reconciled). See cmd/dexaflow-server bootstrapAdmin.
+// existing one was reconciled). See internal/serverapp bootstrapAdmin.
 func (r *Repository) BootstrapAdminHash(ctx context.Context, tenant, email, hash string) (bool, error) {
 	tid, err := r.tenantID(ctx, tenant)
 	if err != nil {

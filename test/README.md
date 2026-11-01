@@ -95,7 +95,7 @@ for, the storage that resolves that version, the warm targets and the warm
 binding (`BindWarmAttempt` in `runs.sql`, and its generated `runs.sql.go`), the
 warm eligibility rules (`resource_unit.go`, `default_limits.go`), the deploy
 command and the image build, and the leg itself. The server wiring
-(`cmd/dexaflow-server/`), `internal/config/`, `go.mod` and `ci.yaml` are left
+(`internal/serverapp/` and `cmd/dexaflow-server/`), `internal/config/`, `go.mod` and `ci.yaml` are left
 out on purpose: with them the leg ran on 57 of 100 merges; with this list it
 runs on 37 of the last 100.
 A change confined to those paths that affects warm pools says in its pull

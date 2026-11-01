@@ -301,7 +301,7 @@ type OIDCSection struct {
 	// (oidc_provider, oidc_subject) and CreateOIDCUser, reached only from this
 	// path, is the sole statement that writes those columns, so no API, CLI or
 	// migration can pre-create an OIDC identity (ADR 0057, amendment on D4).
-	// cmd/dexaflow-server warns about this at boot.
+	// internal/serverapp warns about this at boot.
 	JITProvisioning bool `mapstructure:"jit_provisioning"`
 	// AutoRedirect starts the login flow on the sign-in page instead of rendering
 	// it, for a deployment where that page is a screen to acknowledge for nothing
