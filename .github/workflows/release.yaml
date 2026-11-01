@@ -581,10 +581,17 @@ jobs:
       # lock we compile, so a fixable HIGH or CRITICAL in one is ours to fix or
       # to accept in .trivyignore.yaml with a statement and an expiry. The OS
       # packages of the base stay in image-scan.yaml's reporting lane.
+      #
+      # The digest is an index with this job's one platform in it, and Trivy
+      # picks linux/amd64 from an index unless told otherwise, whatever the
+      # runner's architecture: without TRIVY_PLATFORM the arm64 half fails
+      # with "no child with platform linux/amd64" before scanning anything
+      # (v0.5.8-rc.2).
       - name: Scan the data image's language packages
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
           TRIVY_PKG_TYPES: library
+          TRIVY_PLATFORM: linux/${{ matrix.arch }}
         with:
           version: ${{ env.TRIVY_VERSION }}
           scan-type: image
