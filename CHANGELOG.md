@@ -6,6 +6,8 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.8] - 2026-11-01
+
 ### Added
 
 - **Database pool exhaustion is visible on `/metrics`.** Since readiness got
