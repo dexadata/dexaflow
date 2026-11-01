@@ -221,6 +221,12 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- **pyasn1 0.6.5 in the data runtime image.** The `py3.11-data` image moves
+  pyasn1 from 0.6.4 to 0.6.5, which fixes four denial of service findings in
+  its decoder (CVE-2026-119194, CVE-2026-119195, CVE-2026-119196 and
+  CVE-2026-119197). The release scan of the data image stopped v0.5.8-rc.1 on
+  them; nothing else in the lock changes.
+
 - **go-jose is updated to 4.1.6 (CVE-2026-116587), golang.org/x/net to 0.62.0
   (CVE-2026-78661, CVE-2026-97045) and the data runtime image to litellm 1.103
   (CVE-2026-114612).** Earlier go-jose versions could spend
