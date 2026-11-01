@@ -1,8 +1,0 @@
-kind: Security
-body: |-
-  **pyasn1 0.6.5 in the data runtime image.** The `py3.11-data` image moves
-  pyasn1 from 0.6.4 to 0.6.5, which fixes four denial of service findings in
-  its decoder (CVE-2026-119194, CVE-2026-119195, CVE-2026-119196 and
-  CVE-2026-119197). The release scan of the data image stopped v0.5.8-rc.1 on
-  them; nothing else in the lock changes.
-time: 2026-11-01T19:30:00.000000000+00:00

@@ -1,8 +1,0 @@
-kind: Added
-body: |-
-  `logs.tail.replay_budget_bytes` bounds what the `on_demand` live-tail gates of
-  all log streams hold for replay together, dropping the held lines of the
-  stream silent the longest first; `dexaflow_log_tail_replay_bytes` and
-  `dexaflow_log_tail_replay_evictions_total` report what is held and dropped.
-  The default, `0`, sets no budget, as before (#1621).
-time: 2026-10-23T12:00:00.000000+00:00

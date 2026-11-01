@@ -1,9 +1,0 @@
-kind: Fixed
-body: |-
-  **The XCom schema cache is bounded by size, not only by count.** It kept up
-  to 256 compiled schemas keyed by their full text, so 256 large schemas could
-  hold any amount of control plane memory. It now keys by a hash of the schema
-  and keeps the schemas it holds under 8 MiB of schema text, evicting the least
-  recently used; a schema larger than that still validates and is not cached
-  (#1613).
-time: 2026-10-23T02:30:00.000000000-03:00
