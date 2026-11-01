@@ -1,0 +1,27 @@
+# gremlins configuration (ADR 0101). scripts/mutation.sh is the entry point;
+# it reads the targets and accepted mutants under .github/mutation/.
+#
+# The mutator set is the gremlins default. Enabling another one changes every
+# package's efficacy, so it lands together with re-measured floors in
+# .github/mutation/targets.txt.
+unleash:
+  # Two mutants at a time on a four-CPU GitHub-hosted runner. Do not set
+  # test-cpu: gremlins v0.6.0 passes it to go test as one argument ("-cpu 2"),
+  # every test run then fails on the unknown flag, and every mutant reads as
+  # killed. `scripts/mutation.sh canary` catches that kind of mistake.
+  workers: 2
+  # A mutant's time limit is the coverage run's time multiplied by this. The
+  # coverage run of a small package takes well under a second, so the gremlins
+  # default reports most of its mutants as timed out.
+  timeout-coefficient: 10
+mutants:
+  arithmetic-base:
+    enabled: true
+  conditionals-boundary:
+    enabled: true
+  conditionals-negation:
+    enabled: true
+  increment-decrement:
+    enabled: true
+  invert-negatives:
+    enabled: true

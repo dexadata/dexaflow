@@ -89,6 +89,44 @@ delta_table() {
 	fi
 }
 
+# A tier 1 package (ADR 0101: the core, listed with tier 1 in
+# .github/mutation/targets.txt) may not lose more than this many points of
+# statement coverage against the base. The same tolerance ADR 0011 gives the
+# pre-commit hook for the total.
+TIER1_MAX_DROP=1.0
+TIER1_TARGETS="${TIER1_TARGETS:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.github/mutation/targets.txt}"
+
+# tier1_drops <base-coverprofile> <coverprofile>: one "| `<package>` | base |
+# this run | change |" row per tier 1 package that lost more than
+# TIER1_MAX_DROP points, largest drop first; nothing when none did. A package
+# only one side has is not a drop.
+tier1_drops() {
+	local dirs
+	[ -f "$TIER1_TARGETS" ] || return 0
+	dirs=$(sed -e 's/#.*//' "$TIER1_TARGETS" | awk 'NF >= 3 && $2 == 1 { print $1 }' | tr '\n' ' ')
+	[ -n "$dirs" ] || return 0
+	{
+		package_stats "$1" | sed 's/^/B\t/'
+		package_stats "$2" | sed 's/^/H\t/'
+	} | awk -F'\t' -v dirs="$dirs" -v max="$TIER1_MAX_DROP" '
+		BEGIN { n = split(dirs, d, " "); for (i = 1; i <= n; i++) tier1[d[i]] = 1 }
+		$3 == "*" { next }
+		{
+			pkg = $3; hit = 0
+			for (t in tier1) if (length(pkg) > length(t) && substr(pkg, length(pkg) - length(t)) == "/" t) hit = 1
+			if (!hit) next
+			pct = ($5 ? 100 * $4 / $5 : 0)
+			if ($1 == "B") base[pkg] = pct; else head[pkg] = pct
+		}
+		END {
+			for (p in base) if (p in head) {
+				diff = head[p] - base[p]
+				if (diff < -max) printf "%.4f\t| `%s` | %.1f%% | %.1f%% | %+.1f |\n", diff, p, base[p], head[p], diff
+			}
+		}
+	' | sort -n -k1,1 | cut -f2-
+}
+
 # total_delta <base-coverprofile> <coverprofile>: the change of the total, in
 # points, from the statement counts of both profiles.
 total_delta() {
@@ -206,6 +244,27 @@ self_test() {
 	_expect "a badge at the floor is green" '"color":"green"'
 	out=$(badge_json 90.0)
 	_expect "a badge from 90% is bright green" '"color":"brightgreen"'
+	printf '%s\n' '# comment' 'internal/a 1 80' 'internal/d 1 -' 'internal/c 2 65' >"$tmp/targets.txt"
+	TIER1_TARGETS="$tmp/targets.txt"
+	# a: 100.0% to 75.0% (tier 1, a drop); d: 0.0% to 50.0% (tier 1, a gain).
+	out=$(tier1_drops "$tmp/base.out" "$tmp/cover.out")
+	_expect "a tier 1 package that lost more than the tolerance is a drop" '| `github.com/x/y/internal/a` | 100.0% | 75.0% | -25.0 |'
+	case "$out" in *internal/d*) echo "  FAIL a tier 1 gain is a drop"; fail=1 ;; *) echo "  ok   a tier 1 gain is not a drop" ;; esac
+	out=$(tier1_drops "$tmp/cover.out" "$tmp/base.out")
+	_expect "the reverse: d lost 50 points" '| `github.com/x/y/internal/d` | 50.0% | 0.0% | -50.0 |'
+	case "$out" in *internal/e*) echo "  FAIL a package one side lacks is a drop"; fail=1 ;; *) echo "  ok   a package one side lacks is not a drop" ;; esac
+	printf '%s\n' 'mode: atomic' 'github.com/x/y/internal/c/c.go:1.1,2.2 4 1' >"$tmp/c_base.out"
+	out=$(tier1_drops "$tmp/c_base.out" "$tmp/cover.out")
+	_is_empty() { if [ -z "$out" ]; then printf '  ok   %s\n' "$1"; else printf '  FAIL %s: got:\n%s\n' "$1" "$out"; fail=1; fi; }
+	_is_empty "a tier 2 package may drop"
+	printf '%s\n' 'mode: atomic' 'github.com/x/y/internal/a/a.go:1.1,2.2 1000 1000' >"$tmp/a_base.out"
+	printf '%s\n' 'mode: atomic' 'github.com/x/y/internal/a/a.go:1.1,2.2 990 990' 'github.com/x/y/internal/a/a.go:3.1,4.2 10 0' >"$tmp/a_head.out"
+	out=$(tier1_drops "$tmp/a_base.out" "$tmp/a_head.out")
+	_is_empty "a drop of exactly the tolerance passes"
+	printf '%s\n' 'mode: atomic' 'github.com/x/y/internal/ab/a.go:1.1,2.2 4 4' >"$tmp/ab_base.out"
+	printf '%s\n' 'mode: atomic' 'github.com/x/y/internal/ab/a.go:1.1,2.2 4 0' >"$tmp/ab_head.out"
+	out=$(tier1_drops "$tmp/ab_base.out" "$tmp/ab_head.out")
+	_is_empty "a package whose name only starts like a tier 1 one is not tier 1"
 	if [ "$fail" -eq 0 ]; then
 		echo "coverage-gate self-test: ok"
 		return 0
@@ -242,7 +301,21 @@ fi
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
 	echo "badge=$(badge_json "$total")" >>"$GITHUB_OUTPUT"
 fi
+rc=0
 if awk -v t="$total" -v f="$FLOOR" 'BEGIN { exit !(t < f) }'; then
 	echo "::error::Coverage ${total}% is below floor ${FLOOR}% (see ADR 0011); add tests"
-	exit 1
+	rc=1
 fi
+if [ ${#base_args[@]} -gt 0 ] && [ -s "$base_filtered" ]; then
+	drops=$(tier1_drops "$base_filtered" "$filtered")
+	if [ -n "$drops" ]; then
+		echo "::error::A tier 1 package lost more than ${TIER1_MAX_DROP} points of coverage against ${base_args[1]} (ADR 0101); add tests"
+		printf '| Package | %s | This run | Change (points) |\n|---|---:|---:|---:|\n%s\n' "${base_args[1]}" "$drops"
+		if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+			printf '\n## Tier 1 coverage drop\n\nA core package may lose at most %s point of coverage in a change (ADR 0101).\n\n| Package | %s | This run | Change (points) |\n|---|---:|---:|---:|\n%s\n' \
+				"$TIER1_MAX_DROP" "${base_args[1]}" "$drops" >>"$GITHUB_STEP_SUMMARY"
+		fi
+		rc=1
+	fi
+fi
+exit "$rc"

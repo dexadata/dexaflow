@@ -37,6 +37,12 @@ How to work on Dexaflow itself.
     <span class="lf-card__desc">What to verify when reviewing Airflow compatibility, Kubernetes behavior, docs and developer experience, and where the evidence comes from.</span>
     <span class="lf-card__more">Review a change →</span>
   </a>
+  <a class="lf-card" href="/contribute/mutation-testing/">
+    <span class="lf-card__icon"><i class="fa-solid fa-bug"></i></span>
+    <span class="lf-card__title">Mutation testing and coverage</span>
+    <span class="lf-card__desc">The coverage floor, the per-package rule for the core, and what to do with a surviving mutant (<a href="/project/adrs/0101-mutation-testing-and-coverage-policy/">ADR 0101</a>).</span>
+    <span class="lf-card__more">Measure the tests →</span>
+  </a>
   <a class="lf-card" href="/contribute/build-docs/">
     <span class="lf-card__icon"><i class="fa-solid fa-book"></i></span>
     <span class="lf-card__title">Build the docs</span>
