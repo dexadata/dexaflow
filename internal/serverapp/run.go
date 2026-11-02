@@ -25,6 +25,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/storage"
 	"github.com/dexadata/dexaflow/internal/workspace"
 	"github.com/dexadata/dexaflow/internal/xcom"
+	"github.com/dexadata/dexaflow/pkg/admission"
 )
 
 // loadConfig returns cfg, or when it is nil the configuration the binary
@@ -68,12 +69,23 @@ func openVerifiedPostgres(ctx context.Context, cfg *config.ServerConfig, tel *ob
 	return pg, nil
 }
 
-// Run builds every component and serves until ctx is done. A nil cfg is
-// loaded the way the binary loads it: the config file named by
-// DEXAFLOW_CONFIG (or LEOFLOW_CONFIG), then the environment. Its error maps to
-// the process exit code through ExitCode.
-func Run(ctx context.Context, cfg *config.ServerConfig) error {
-	cfg, err := loadConfig(cfg)
+// Options are the components a caller of pkg/server supplies instead of, or
+// next to, the ones the configuration builds.
+type Options struct {
+	// Config is the configuration to run with. Nil loads it the way the
+	// binary does.
+	Config *config.ServerConfig
+	// AdmissionHooks run before the configured webhook, in this order
+	// (ADR 0100 §6).
+	AdmissionHooks []admission.Hook
+}
+
+// Run builds every component and serves until ctx is done. A nil
+// opts.Config is loaded the way the binary loads it: the config file named
+// by DEXAFLOW_CONFIG (or LEOFLOW_CONFIG), then the environment. Its error
+// maps to the process exit code through ExitCode.
+func Run(ctx context.Context, opts Options) error {
+	cfg, err := loadConfig(opts.Config)
 	if err != nil {
 		return err
 	}
@@ -191,7 +203,7 @@ func Run(ctx context.Context, cfg *config.ServerConfig) error {
 	// Start the scheduler-role components (agent gRPC, janitors, scheduler loop +
 	// dispatch). In the api role this starts nothing and returns a nil health handle
 	// + no-op stop; in "all"/"scheduler" it is the pre-0049 wiring unchanged.
-	schedulerHealth, podDispatch, stopScheduler, serr := startSchedulerSide(ctx, cfg, pg, repo, execStore, authn, xcomSvc, logSink, logTailer, allowInsecureSecrets, servesScheduler, tel.Logger, tel.Metrics)
+	schedulerHealth, podDispatch, stopScheduler, serr := startSchedulerSide(ctx, cfg, pg, repo, execStore, authn, xcomSvc, logSink, logTailer, allowInsecureSecrets, servesScheduler, opts.AdmissionHooks, tel.Logger, tel.Metrics)
 	if serr != nil {
 		return serr
 	}
