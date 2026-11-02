@@ -8,14 +8,18 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/dexadata/dexaflow/pkg/admission"
 	"github.com/dexadata/dexaflow/pkg/logsink"
 	"github.com/dexadata/dexaflow/pkg/server"
+	"github.com/dexadata/dexaflow/pkg/xcomstore"
 )
 
 // A program that runs the control plane as dexaflow-server does: configured
@@ -88,6 +92,66 @@ func (w *fileWriter) Close() error                      { return w.f.Close() }
 func ExampleWithLogSink() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	err := server.Run(ctx, server.WithLogSink(fileSink{dir: "/var/lib/task-logs"}))
+	stop()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(server.ExitCode(err))
+	}
+}
+
+// mapBackend keeps XCom values in the server's memory: enough for a single
+// replica that may lose them on a restart, as a test install can.
+type mapBackend struct {
+	mu sync.Mutex
+	m  map[string]mapEntry
+}
+
+type mapEntry struct {
+	e       xcomstore.Entry
+	expires time.Time
+}
+
+func (b *mapBackend) Push(_ context.Context, key string, e xcomstore.Entry, ttl time.Duration) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.m[key] = mapEntry{e: e, expires: time.Now().Add(ttl)}
+	return nil
+}
+
+func (b *mapBackend) Fetch(_ context.Context, key string) (xcomstore.Entry, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	v, ok := b.m[key]
+	if !ok || time.Now().After(v.expires) {
+		return xcomstore.Entry{}, xcomstore.ErrNotFound
+	}
+	return v.e, nil
+}
+
+func (b *mapBackend) Delete(_ context.Context, key string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.m, key)
+	return nil
+}
+
+func (b *mapBackend) List(_ context.Context, pattern string) ([]string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var keys []string
+	for k, v := range b.m {
+		if ok, _ := path.Match(pattern, k); ok && time.Now().Before(v.expires) {
+			keys = append(keys, k)
+		}
+	}
+	return keys, nil
+}
+
+// A control plane that keeps XCom values in a store of its own instead of
+// Redis or the embedded Postgres store.
+func ExampleWithXComBackend() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := server.Run(ctx, server.WithXComBackend(&mapBackend{m: map[string]mapEntry{}}))
 	stop()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

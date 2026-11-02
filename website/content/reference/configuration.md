@@ -540,6 +540,15 @@ recovery command a pod waiting for its schema names; see
 
 <!-- END GENERATED configref -->
 
+**A store of your own.** A program that runs the control plane with
+[`pkg/server`](/reference/go/pkg-server/) can keep XCom values elsewhere with
+`server.WithXComBackend`, which takes a
+[`pkg/xcomstore`](/reference/go/pkg-xcomstore/) `Backend`. It replaces the
+Redis store, or the embedded Postgres store when `redis.url` is empty, and
+boot logs `xcom: backend from options`. Redis, when configured, still serves
+the live log tail. The server keeps checking the size and schema of each value
+and recording its metadata in Postgres.
+
 ### Auth (`auth.*`)
 
 <!-- BEGIN GENERATED configref settings auth. !auth.oidc. secret_key secret_key_reencrypt_on_boot secret_key_migration_lock variable_encryption -->

@@ -14,6 +14,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/serverapp"
 	"github.com/dexadata/dexaflow/pkg/admission"
 	"github.com/dexadata/dexaflow/pkg/logsink"
+	"github.com/dexadata/dexaflow/pkg/xcomstore"
 )
 
 // runApp builds and serves the control plane; a test replaces it.
@@ -59,6 +60,22 @@ func WithLogSink(sink logsink.Sink) Option {
 	return func(s *settings) {
 		if sink != nil {
 			s.app.LogSink = sink
+		}
+	}
+}
+
+// WithXComBackend stores XCom values in backend instead of Redis or, with no
+// Redis configured, the embedded Postgres store; boot logs that the backend
+// came from an option. The server still checks the size and schema of each
+// value and records its metadata in Postgres, and Redis, when configured,
+// still serves the live log tail. A backend that is also an
+// xcomstore.BatchBackend serves a task's bulk pulls in one call. The caller
+// owns it: Run never closes it. A nil backend keeps the configured one; with
+// several options the last one wins.
+func WithXComBackend(backend xcomstore.Backend) Option {
+	return func(s *settings) {
+		if backend != nil {
+			s.app.XComBackend = backend
 		}
 	}
 }
