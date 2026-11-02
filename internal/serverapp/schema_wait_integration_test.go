@@ -295,7 +295,7 @@ func TestBootWaitsOnADirtySchemaAndRefusesOneDirtyAtItsLatest(t *testing.T) {
 // carries another installation id waits, not ready, with the reason database
 // replaced (and no ids) on /readyz and the metric; it boots once the right
 // database is back; and once serving, a readiness probe that finds the id
-// changed stops the process with errDatabaseReplaced.
+// changed stops the process with ErrDatabaseReplaced.
 func TestBootWaitsOnAReplacedDatabaseAndAServingOneStops(t *testing.T) {
 	dsn := scratchDatabase(t)
 	var out, errOut strings.Builder
@@ -350,8 +350,8 @@ ON CONFLICT (singleton) DO UPDATE SET id = EXCLUDED.id`, id); err != nil {
 	}
 	select {
 	case <-ctx.Done():
-		if !errors.Is(serveExit(ctx, nil), errDatabaseReplaced) {
-			t.Errorf("the server stopped with %v, want errDatabaseReplaced", context.Cause(ctx))
+		if !errors.Is(serveExit(ctx, nil), ErrDatabaseReplaced) {
+			t.Errorf("the server stopped with %v, want ErrDatabaseReplaced", context.Cause(ctx))
 		}
 	default:
 		t.Fatal("a readiness probe that found the database replaced did not stop the server")

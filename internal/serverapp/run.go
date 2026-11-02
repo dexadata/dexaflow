@@ -11,9 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/dexadata/dexaflow/internal/api"
@@ -28,6 +26,20 @@ import (
 	"github.com/dexadata/dexaflow/internal/workspace"
 	"github.com/dexadata/dexaflow/internal/xcom"
 )
+
+// loadConfig returns cfg, or when it is nil the configuration the binary
+// loads: the file named by LEOFLOW_CONFIG (mirrored from DEXAFLOW_CONFIG),
+// then the environment.
+func loadConfig(cfg *config.ServerConfig) (*config.ServerConfig, error) {
+	if cfg != nil {
+		return cfg, nil
+	}
+	loaded, err := config.LoadServer(os.Getenv("LEOFLOW_CONFIG"), nil)
+	if err != nil {
+		return nil, fmt.Errorf("loading config: %w", err)
+	}
+	return loaded, nil
+}
 
 // openVerifiedPostgres opens the pool and waits, serving only the probes and
 // metrics, until the schema is one this binary can serve (ADR 0090 decision
@@ -56,15 +68,14 @@ func openVerifiedPostgres(ctx context.Context, cfg *config.ServerConfig, tel *ob
 	return pg, nil
 }
 
-// Run loads the server configuration, builds every component and serves until
-// SIGINT or SIGTERM. Its error maps to the process exit code through ExitCode.
-func Run() error {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	cfg, err := config.LoadServer(os.Getenv("LEOFLOW_CONFIG"), nil)
+// Run builds every component and serves until ctx is done. A nil cfg is
+// loaded the way the binary loads it: the config file named by
+// DEXAFLOW_CONFIG (or LEOFLOW_CONFIG), then the environment. Its error maps to
+// the process exit code through ExitCode.
+func Run(ctx context.Context, cfg *config.ServerConfig) error {
+	cfg, err := loadConfig(cfg)
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return err
 	}
 	if verr := validateStartup(cfg); verr != nil {
 		return verr
@@ -222,6 +233,7 @@ func Run() error {
 	// scheduler-only pod (ADR 0049), which serves no API, still has a probe target
 	// for the kubelet. Additive on the api/"all" role, whose probes still hit the
 	// HTTP port.
+	//nolint:contextcheck // the readiness handler runs under each request's own context
 	metricsSrv := newHTTPServer(cfg.Server.MetricsAddr, api.ObservabilityHandler(tel.Registry, checks, append(observabilityOptions(cfg), api.WithLivenessCheck(schedulerStallCheck(cfg, schedulerHealth)))...), cfg)
 
 	tel.Logger.Info("dexaflow-server started", "role", cfg.Server.EffectiveRole(), "http_addr", cfg.Server.HTTPAddr, "metrics_addr", cfg.Server.MetricsAddr, "serves_api", servesAPI, "serves_scheduler", servesScheduler)
