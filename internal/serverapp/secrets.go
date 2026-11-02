@@ -146,7 +146,10 @@ func secretsKwargsJSON(sec config.SecretsSection) string {
 // operator-derived; a DAG can never influence it.
 type backendCoverage struct{ b secretsource.Backend }
 
+// CoversVariable reports whether the backend serves variables.
 func (c backendCoverage) CoversVariable(string) bool { return c.b.Covers(secretsource.KindVariable) }
+
+// CoversConnection reports whether the backend serves connections.
 func (c backendCoverage) CoversConnection(string) bool {
 	return c.b.Covers(secretsource.KindConnection)
 }
