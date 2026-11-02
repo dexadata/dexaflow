@@ -91,7 +91,7 @@ tests:
           path: spec.egress[2].to[0].ipBlock.except
           content: 169.254.0.0/16
 
-  - it: accepts both documented hosts, one ipBlock peer each
+  - it: accepts every documented host, one ipBlock peer each
     set:
       database.url: postgres://h/d
       redis.url: redis://h/0
@@ -99,6 +99,7 @@ tests:
       taskNetworkPolicy.enabled: true
       taskNetworkPolicy.allowMetadataEgress:
         - 169.254.169.254/32
+        - 169.254.169.252/32
         - 169.254.170.23/32
     asserts:
       - equal:
@@ -106,6 +107,9 @@ tests:
           value: 169.254.169.254/32
       - equal:
           path: spec.egress[3].to[1].ipBlock.cidr
+          value: 169.254.169.252/32
+      - equal:
+          path: spec.egress[3].to[2].ipBlock.cidr
           value: 169.254.170.23/32
 
   - it: accepts an IPv6 /128 (EKS Pod Identity on a dual-stack cluster)

@@ -47,7 +47,8 @@ taskNetworkPolicy:
   # ONLY for EKS Pod Identity or GKE WI — IRSA needs no exception (public STS).
   allowMetadataEgress: []
     # - 169.254.170.23/32   # EKS Pod Identity agent
-    # - 169.254.169.254/32  # GKE metadata server
+    # - 169.254.169.254/32  # GKE metadata server (Dataplane V2)
+    # - 169.254.169.252/32  # GKE metadata server on the node (network policy enforcement)
 ```
 
 Match the `allowMetadataEgress` line to your mechanism:
@@ -56,7 +57,7 @@ Match the `allowMetadataEgress` line to your mechanism:
 |---|---|---|
 | AWS **IRSA** | public STS | no |
 | AWS **Pod Identity** | `169.254.170.23` | `169.254.170.23/32` |
-| **GKE Workload Identity** | `169.254.169.254` | `169.254.169.254/32` |
+| **GKE Workload Identity** | `169.254.169.254`, served on the node at `169.254.169.252` port 988 | `169.254.169.254/32` and `169.254.169.252/32` ([why both](/operate/external-secrets/)) |
 
 The `/32` is not a suggestion: the chart **refuses to render** an entry wider
 than one host (IPv4 `/32`, IPv6 `/128`). A `169.254.0.0/16` would not widen the
