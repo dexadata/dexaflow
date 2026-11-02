@@ -205,10 +205,10 @@ git push -u origin fix/clear-error-message
   [`CONTRIBUTING.md`](https://github.com/dexadata/dexaflow/blob/main/CONTRIBUTING.md).
 - **Public APIs do not break by accident.** The API compatibility check
   compares `proto/` (`buf breaking`), `docs/api/openapi.yaml` (`oasdiff
-  breaking`) and the exported API of `pkg/client` (`apidiff`) with the base
-  branch. An intended break needs the **`breaking-change`** label, applied by a
-  maintainer, and a changelog fragment of kind `Changed` or `Removed` that names
-  it. Run `scripts/api-compat.sh <checkout-of-main>` to see the verdict locally.
+  breaking`) and the exported API of every package under `pkg/` (`apidiff`)
+  with the base branch. An intended break needs the **`breaking-change`**
+  label, applied by a maintainer, and a changelog fragment of kind `Changed` or
+  `Removed` that names it. Run `scripts/api-compat.sh <checkout-of-main>` to see the verdict locally.
 
 {{% alert title="Security-sensitive areas need extra review" color="danger" %}}
 Changes to `internal/auth/`, `internal/executor/`, `internal/storage/`,
