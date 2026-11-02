@@ -39,7 +39,7 @@ root = sys.argv[1]
 try:
 	import yaml
 except ImportError:
-	sys.exit("SKIP: PyYAML unavailable; cannot read the workflow HUGO_VERSION values")
+	sys.exit("FAIL: PyYAML unavailable; cannot read the workflow HUGO_VERSION values (pip install pyyaml)")
 
 
 def fail(msg):
@@ -163,6 +163,12 @@ self_test() {
 	_case "a non-semver pin is refused"                  1 "not an \`X.Y.Z\` Hugo release"      _not_semver
 	_case "a pin the URL stops using is caught"          1 "no longer interpolates it"          _url_no_longer_uses_it
 	_case "a moved workflow fails, not skips"            1 "does not exist"                     _moved
+	# A missing PyYAML is a gate that could not check, so it fails (#969). It
+	# used to print SKIP and exit 1, which cut-release reported as a FAIL anyway.
+	mkdir -p "$tmp/noyaml"
+	printf 'raise ImportError("PyYAML hidden by the self-test")\n' >"$tmp/noyaml/yaml.py"
+	_without_yaml() { :; }
+	PYTHONPATH="$tmp/noyaml" _case "a missing PyYAML fails and says so" 1 "FAIL: PyYAML unavailable" _without_yaml
 
 	if [ "$fail" -eq 0 ]; then echo "self-test: PASS"; return 0; fi
 	echo "self-test: FAIL"; return 1
