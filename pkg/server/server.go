@@ -36,6 +36,18 @@ type settings struct {
 	app serverapp.Options
 }
 
+// WithConfigFile reads the configuration from path instead of the file
+// DEXAFLOW_CONFIG names; the DEXAFLOW_* environment still applies on top of
+// it, as it does for the binary. Run fails when the file cannot be read. An
+// empty path keeps DEXAFLOW_CONFIG; with several options the last one wins.
+func WithConfigFile(path string) Option {
+	return func(s *settings) {
+		if path != "" {
+			s.app.ConfigFile = path
+		}
+	}
+}
+
 // WithAdmission registers a dispatch admission hook (ADR 0100). Every task
 // attempt is offered to it after Dexaflow's own checks and before the
 // attempt's agent token is minted. Hooks run in the order they are
@@ -155,7 +167,8 @@ func WithTrustedIssuer(ti authn.TrustedIssuer, allowedOrigins ...string) Option 
 // LEOFLOW_* names onto each other, as the binary does, so either spelling
 // configures the server. It reads the config file named by DEXAFLOW_CONFIG,
 // then the environment. It installs no signal handler: cancel ctx to stop the
-// server, for example with signal.NotifyContext.
+// server, for example with signal.NotifyContext. WithConfigFile names another
+// config file.
 func Run(ctx context.Context, opts ...Option) error {
 	var s settings
 	for _, o := range opts {

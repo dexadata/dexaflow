@@ -20,6 +20,7 @@ Compatibility: a patch release never breaks an exported identifier of this packa
 - [type Option](<#Option>)
   - [func WithAdmission\(h admission.Hook\) Option](<#WithAdmission>)
   - [func WithAuthenticator\(a authn.Authenticator\) Option](<#WithAuthenticator>)
+  - [func WithConfigFile\(path string\) Option](<#WithConfigFile>)
   - [func WithLogSink\(sink logsink.Sink\) Option](<#WithLogSink>)
   - [func WithTrustedIssuer\(ti authn.TrustedIssuer, allowedOrigins ...string\) Option](<#WithTrustedIssuer>)
   - [func WithUIServer\(ui UIServer\) Option](<#WithUIServer>)
@@ -36,7 +37,7 @@ var ErrDatabaseReplaced = serverapp.ErrDatabaseReplaced
 ```
 
 <a name="ExitCode"></a>
-## func [ExitCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L170>)
+## func [ExitCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L183>)
 
 ```go
 func ExitCode(err error) int
@@ -45,7 +46,7 @@ func ExitCode(err error) int
 ExitCode is the process exit code for an error Run returned: 0 for nil, 3 for ErrDatabaseReplaced, 1 for anything else.
 
 <a name="Run"></a>
-## func [Run](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L159>)
+## func [Run](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L172>)
 
 ```go
 func Run(ctx context.Context, opts ...Option) error
@@ -53,7 +54,7 @@ func Run(ctx context.Context, opts ...Option) error
 
 Run builds the control plane and serves until ctx is done, then shuts down and returns. Call it once per process.
 
-Before anything reads the environment it mirrors the DEXAFLOW\_\* and LEOFLOW\_\* names onto each other, as the binary does, so either spelling configures the server. It reads the config file named by DEXAFLOW\_CONFIG, then the environment. It installs no signal handler: cancel ctx to stop the server, for example with signal.NotifyContext.
+Before anything reads the environment it mirrors the DEXAFLOW\_\* and LEOFLOW\_\* names onto each other, as the binary does, so either spelling configures the server. It reads the config file named by DEXAFLOW\_CONFIG, then the environment. It installs no signal handler: cancel ctx to stop the server, for example with signal.NotifyContext. WithConfigFile names another config file.
 
 <details><summary>Example</summary>
 <p>
@@ -97,7 +98,7 @@ type Option func(*settings)
 ```
 
 <a name="WithAdmission"></a>
-### func [WithAdmission](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L46>)
+### func [WithAdmission](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L58>)
 
 ```go
 func WithAdmission(h admission.Hook) Option
@@ -145,7 +146,7 @@ func main() {
 </details>
 
 <a name="WithAuthenticator"></a>
-### func [WithAuthenticator](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L122>)
+### func [WithAuthenticator](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L134>)
 
 ```go
 func WithAuthenticator(a authn.Authenticator) Option
@@ -216,8 +217,49 @@ func main() {
 </p>
 </details>
 
+<a name="WithConfigFile"></a>
+### func [WithConfigFile](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L43>)
+
+```go
+func WithConfigFile(path string) Option
+```
+
+WithConfigFile reads the configuration from path instead of the file DEXAFLOW\_CONFIG names; the DEXAFLOW\_\* environment still applies on top of it, as it does for the binary. Run fails when the file cannot be read. An empty path keeps DEXAFLOW\_CONFIG; with several options the last one wins.
+
+<details><summary>Example</summary>
+<p>
+
+A control plane configured by a file of the program's own choosing, with the DEXAFLOW\_\* environment still on top.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/dexadata/dexaflow/pkg/server"
+)
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := server.Run(ctx, server.WithConfigFile("/etc/acme/dexaflow-server.yaml"))
+	stop()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(server.ExitCode(err))
+	}
+}
+```
+
+</p>
+</details>
+
 <a name="WithLogSink"></a>
-### func [WithLogSink](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L61>)
+### func [WithLogSink](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L73>)
 
 ```go
 func WithLogSink(sink logsink.Sink) Option
@@ -299,7 +341,7 @@ func main() {
 </details>
 
 <a name="WithTrustedIssuer"></a>
-### func [WithTrustedIssuer](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L142>)
+### func [WithTrustedIssuer](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L154>)
 
 ```go
 func WithTrustedIssuer(ti authn.TrustedIssuer, allowedOrigins ...string) Option
@@ -359,7 +401,7 @@ func main() {
 </details>
 
 <a name="WithUIServer"></a>
-### func [WithUIServer](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L101>)
+### func [WithUIServer](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L113>)
 
 ```go
 func WithUIServer(ui UIServer) Option
@@ -418,7 +460,7 @@ func main() {
 </details>
 
 <a name="WithXComBackend"></a>
-### func [WithXComBackend](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L77>)
+### func [WithXComBackend](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L89>)
 
 ```go
 func WithXComBackend(backend xcomstore.Backend) Option
@@ -511,7 +553,7 @@ func main() {
 </details>
 
 <a name="UIServer"></a>
-## type [UIServer](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L91-L94>)
+## type [UIServer](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L103-L106>)
 
 UIServer serves a web UI in place of the embedded one. The server mounts StaticHandler under /static/, with that prefix stripped from the request path, and calls Index for every other GET that matches no API or /ui/ route, with the base path the UI is served under. Index is reached only with a valid session: a visitor without one is redirected to the server's own sign\-in page first, so a UI never renders for a signed\-out visitor.
 

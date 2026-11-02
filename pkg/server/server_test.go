@@ -218,3 +218,19 @@ func TestWithAuthenticatorAndTrustedIssuerPassTheLastNonNil(t *testing.T) {
 		t.Fatalf("origins = %v, want the last issuer's", got.TrustedIssuerOrigins)
 	}
 }
+
+func TestWithConfigFilePassesTheLastPath(t *testing.T) {
+	orig := runApp
+	t.Cleanup(func() { runApp = orig })
+	var got string
+	runApp = func(ctx context.Context, o serverapp.Options) error {
+		got = o.ConfigFile
+		return nil
+	}
+	if err := Run(context.Background(), WithConfigFile("/etc/a.yaml"), WithConfigFile("/etc/b.yaml"), WithConfigFile("")); err != nil {
+		t.Fatal(err)
+	}
+	if got != "/etc/b.yaml" {
+		t.Fatalf("the server got config file %q, want /etc/b.yaml", got)
+	}
+}
