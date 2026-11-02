@@ -4,39 +4,46 @@ Cutting a release is one command: `scripts/cut-release.sh <version>`. The script
 owns the mechanical flow so it is not re-derived (and re-broken) by hand each time
 (#879). You own the *decisions*: whether to cut, the version, and rc-vs-GA.
 
-## Branches: main is always open, one release-X.Y per minor
+## Branches: main is always open, release branches only when needed
 
-Releases follow [ADR 0062](https://dexaflow.dexadata.ai/project/adrs/0062-release-branches-and-open-main/),
-the model Kubernetes uses:
+Releases follow [ADR 0102](https://dexaflow.dexadata.ai/project/adrs/0102-patches-from-main-until-main-diverges/),
+which amends [ADR 0062](https://dexaflow.dexadata.ai/project/adrs/0062-release-branches-and-open-main/):
 
 - **`main` never freezes.** Every change merges to `main` first, including a
   fix meant for a patch release.
-- **`X.Y.0` and its candidates are cut from `main`.** `scripts/cut-release.sh
-  0.6.0-rc.1` and `scripts/cut-release.sh 0.6.0` work as they always have.
-- **Right after `vX.Y.0` ships, create `release-X.Y` from that tag.** The GA cut
-  prints the command:
+- **Releases are cut from `main` by default.** `X.Y.0`, its candidates and
+  every later patch of the minor (`X.Y.Z-rc.N`, `X.Y.Z`) are prepared, merged
+  and tagged on `main`, as long as everything on `main` may ship in the next
+  patch of that minor under the safety bar of
+  [ADR 0068](https://dexaflow.dexadata.ai/project/adrs/0068-patch-content-gated-by-safety/).
+  `scripts/release-base.sh <version>` prints the branch a version is cut
+  from, and the cut, the release gap and the docs gap all ask it.
+- **A release branch opens only when `main` diverges.** The first change that
+  may not ship in the minor's next patch (a feature of the next minor that is
+  not ready, a breaking change) opens one: create `release-X.Y` from the
+  minor's newest GA tag, and add the line `X.Y release-X.Y` to
+  `.github/patch-branches.txt` in the pull request that brings that change.
 
-      git push origin vX.Y.0^{commit}:refs/heads/release-X.Y
+      git push origin vX.Y.Z^{commit}:refs/heads/release-X.Y
 
-- **Every later patch of the minor is cut from `release-X.Y`.** For
-  `X.Y.Z-rc.N` and `X.Y.Z` with `Z > 0` the script prepares, merges and tags on
-  `release-X.Y`, never on `main`, and stops with the command above when the
-  branch does not exist yet. The base branch comes from the version, not from
-  your checkout, so a patch cannot be cut from `main` by accident.
-- **Fixes reach a release branch only as cherry-picks.** Once the change is
-  merged to `main`, open a PR against `release-X.Y` with
-  `git cherry-pick -x <sha>` (the `-x` records the original commit), the title
-  prefixed `[release-X.Y]`, and a link to the original PR. Carry its changelog
-  fragment with it: patch notes are folded from the fragments on the release
-  branch. While the project is 0.x, any change that meets the safety bar of
-  [ADR 0068](https://dexaflow.dexadata.ai/project/adrs/0068-patch-content-gated-by-safety/)
-  may be cherry-picked, features and migrations included; picks keep the
-  migration order of `main`.
+  From then on the minor's patches are cut from `release-X.Y`, and the cut
+  refuses a patch from `main` once `main`'s chart names a later minor.
+- **Fixes reach a mapped release branch only as cherry-picks.** Once the
+  change is merged to `main`, it goes to `release-X.Y` with
+  `git cherry-pick -x <sha>` (the `-x` records the original commit), in one
+  `[release-X.Y] picks` pull request per day or per candidate rather than one
+  per change. Carry each change's changelog fragment with it: patch notes are
+  folded from the fragments on the release branch. Picks keep the migration
+  order of `main`.
+- **History:** patches v0.5.1 to v0.5.8 came from `release-0.5` under ADR
+  0062. Nothing was ever held back from that branch, so from v0.5.9 on the
+  0.5 patches come from `main` again and `release-0.5` takes no more picks.
 - **Every PR to `main` names its release as a milestone** (`v0.5.1`,
   `v0.5.2`, ...). The milestone guard check fails a PR without one. A PR
   milestoned for the patch being cut needs its cherry-pick; one milestoned for
   a later release stays on `main` until then.
-- **Nothing on `main` is left behind by accident.** `scripts/release-gap.sh
+- **Nothing on `main` is left behind by accident** (mapped minors only; for
+  a patch cut from `main` there is nothing to pick). `scripts/release-gap.sh
   X.Y.Z` lists every commit on `main` since `vX.Y.0` that `release-X.Y` does
   not carry, ignoring PRs milestoned for a later release and the lines of
   `.github/release-skip.txt` on the release branch (`#N reason` or
@@ -50,7 +57,7 @@ the model Kubernetes uses:
   with how long ago each commit merged and its open pick pull request.
 - **Nothing user-facing ships undocumented.** `scripts/docs-gap.sh X.Y.Z`
   lists every commit the release ships since the previous GA (on
-  `release-X.Y` for a patch, on `main` for a minor) that changes user-facing
+  the branch `scripts/release-base.sh` names for the version) that changes user-facing
   surface without editing `website/content/`: a chart value, the authoring
   schema, a CLI command, a server setting (`internal/config`), a migration,
   the OpenAPI document, or a changelog fragment of kind Added, Changed,
@@ -95,7 +102,7 @@ this section is the whole lifecycle.
    writes `.changes/unreleased/<timestamp>-<slug>.yaml` with a `kind` (one of
    the kinds in `.changie.yaml`) and a `body`. A pull request with no
    user-facing change carries the `skip-changelog` label instead.
-2. **A cherry-pick carries it to `release-X.Y`.** `git cherry-pick -x` copies
+2. **For a mapped minor, a cherry-pick carries it to `release-X.Y`.** `git cherry-pick -x` copies
    the fragment with the same file name and the same text. Keep both: the sync
    in step 5 matches the fragment on `main` to what shipped by that name, and
    by its text.
@@ -105,8 +112,8 @@ this section is the whole lifecycle.
    there; its entries wait in `[Unreleased]` for the GA.
 4. **A GA dates the section.** `[Unreleased]` becomes `## [X.Y.Z] - <date>`
    and a fresh, empty `[Unreleased]` opens above it.
-5. **A patch GA syncs back to `main`.** For `X.Y.Z` with `Z > 0`, steps 3 and
-   4 happened on `release-X.Y`, so `main` still has every fragment the patch
+5. **A patch GA from a release branch syncs back to `main`.** For `X.Y.Z`
+   with `Z > 0` cut from `release-X.Y`, steps 3 and 4 happened there, so `main` still has every fragment the patch
    shipped and no `[X.Y.Z]` section. Right after pushing the tag, the cut runs
    `scripts/changelog-sync.sh X.Y.Z --pr`, which opens
    `changelog: sync vX.Y.Z to main` from a branch `changelog/sync-vX.Y.Z`:
@@ -123,8 +130,8 @@ this section is the whole lifecycle.
    gets its pull request too (#1937). Its commit is signed off by
    `github-actions[bot]`, and with the `DOCS_PROMOTE_TOKEN` secret its checks
    start on their own (see [Publishing the docs root](#publishing-the-docs-root-ga)).
-6. **`X.Y.0` is cut from `main`.** Steps 3 and 4 happen on `main` itself, so
-   there is nothing to sync. This is the cut that would publish an unsynced
+6. **`X.Y.0`, and every patch cut from `main`, fold on `main`.** Steps 3 and
+   4 happen on `main` itself, so there is nothing to sync. This is the cut that would publish an unsynced
    patch's fragments a second time, which is why it checks first (below).
 
 ```
@@ -183,8 +190,10 @@ What checks it, and when:
 
 1. **Preflight**: required tools, clean tree, version validated, rc-vs-GA
    detected from the `-rc.N` suffix, and the base branch picked from the
-   version: `main` for `X.Y.0` and its candidates, `release-X.Y` for later
-   patches (it must exist on `origin`). Being checked out on another branch
+   version by `scripts/release-base.sh`: `main`, or `release-X.Y` for a patch
+   of a minor mapped in `.github/patch-branches.txt` (it must exist on
+   `origin`). A patch from `main` refuses once `main`'s chart names a later
+   minor. Being checked out on another branch
    only warns; the cut builds on `origin/<base>` either way. It also runs
    `scripts/changelog-sync.sh --check-all`: a cut from `main` refuses while
    `main` lacks the changelog of a patch already released, and a patch cut
