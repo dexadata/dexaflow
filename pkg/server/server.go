@@ -9,6 +9,7 @@ package server
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/dexadata/dexaflow/internal/envcompat"
 	"github.com/dexadata/dexaflow/internal/serverapp"
@@ -76,6 +77,30 @@ func WithXComBackend(backend xcomstore.Backend) Option {
 	return func(s *settings) {
 		if backend != nil {
 			s.app.XComBackend = backend
+		}
+	}
+}
+
+// UIServer serves a web UI in place of the embedded one. The server mounts
+// StaticHandler under /static/, with that prefix stripped from the request
+// path, and calls Index for every other GET that matches no API or /ui/
+// route, with the base path the UI is served under. Index is reached only
+// with a valid session: a visitor without one is redirected to the server's
+// own sign-in page first, so a UI never renders for a signed-out visitor.
+type UIServer interface {
+	StaticHandler() http.Handler
+	Index(w http.ResponseWriter, basePath string)
+}
+
+// WithUIServer serves ui in place of the embedded single page app; the ui.*
+// keys that configure the embedded one (banners, instance name, home link,
+// favicon, stylesheets) are then ignored, and boot logs that the UI came
+// from an option. The API, /ui/config included, is unchanged. A nil ui keeps
+// the embedded one; with several options the last one wins.
+func WithUIServer(ui UIServer) Option {
+	return func(s *settings) {
+		if ui != nil {
+			s.app.UIServer = ui
 		}
 	}
 }

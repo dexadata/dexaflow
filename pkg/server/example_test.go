@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -152,6 +154,33 @@ func (b *mapBackend) List(_ context.Context, pattern string) ([]string, error) {
 func ExampleWithXComBackend() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	err := server.Run(ctx, server.WithXComBackend(&mapBackend{m: map[string]mapEntry{}}))
+	stop()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(server.ExitCode(err))
+	}
+}
+
+// shellUI serves a UI built into dist/ by its own toolchain: the bundle under
+// /static/ and the same index.html for every client side route.
+type shellUI struct{ dist fs.FS }
+
+func (u shellUI) StaticHandler() http.Handler { return http.FileServerFS(u.dist) }
+
+func (u shellUI) Index(w http.ResponseWriter, _ string) {
+	b, err := fs.ReadFile(u.dist, "index.html")
+	if err != nil {
+		http.Error(w, "the UI is not built", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(b)
+}
+
+// A control plane that serves a UI of its own in place of the embedded one.
+func ExampleWithUIServer() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := server.Run(ctx, server.WithUIServer(shellUI{dist: os.DirFS("dist")}))
 	stop()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

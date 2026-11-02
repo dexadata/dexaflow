@@ -86,6 +86,9 @@ type Options struct {
 	// embedded Postgres store (ADR 0099 §3). Redis, when configured, still
 	// serves the live log tail. The caller owns the backend.
 	XComBackend xcom.Backend
+	// UIServer, when set, is served in place of the embedded SPA (ADR 0099
+	// §3).
+	UIServer api.UIServer
 }
 
 // Run builds every component and serves until ctx is done. A nil
@@ -244,7 +247,7 @@ func Run(ctx context.Context, opts Options) error {
 	// The API side (HTTP + embedded UI) is built only in the api/"all" role. The
 	// scheduler role serves no API, so none of the UI/handler machinery is even
 	// constructed: apiSrv stays nil and serveHTTP omits it.
-	apiSrv, aerr := startAPISide(ctx, cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, servesAPI)
+	apiSrv, aerr := startAPISide(ctx, cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, servesAPI, opts.UIServer)
 	if aerr != nil {
 		return aerr
 	}
