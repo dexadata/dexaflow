@@ -105,8 +105,7 @@ jobs:
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::'$version' is not a version (X.Y.Z)"; exit 1; }
           # Both checks judge the commit this run checked out, which must be
           # on the branch the version is cut from.
-          base=main
-          [ "${version##*.}" = 0 ] || base="release-${version%.*}"
+          base="$(bash scripts/release-base.sh "$version")"
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$GITHUB_REF_NAME" != "$base" ]; then
             echo "::error::v$version is cut from $base: run this workflow on that branch (gh workflow run docs-gap.yaml --ref $base -f version=$version)"; exit 1
           fi

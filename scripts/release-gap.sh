@@ -226,6 +226,15 @@ main() {
   version="${version%%-*}"
   [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "usage: release-gap.sh <X.Y.Z> [--fetch] [--offline]"
   minor="${version%.*}"
+  # A patch cut from main has nothing to pick: main is the branch it ships
+  # (ADR 0102). Only a minor mapped to release-X.Y has a gap to measure.
+  if [ "$fetch" = 1 ]; then
+    git -C "$ROOT" fetch -q origin "+refs/heads/main:refs/remotes/origin/main" || die "cannot reach origin"
+  fi
+  if [ "$(bash "$ROOT/scripts/release-base.sh" "$version")" = main ]; then
+    printf 'release-gap: v%s is cut from main (.github/patch-branches.txt does not map %s), so there is nothing to pick\n' "$version" "$minor" >&2
+    exit 0
+  fi
   if [ "$fetch" = 1 ]; then
     git -C "$ROOT" fetch -q origin --tags "+refs/heads/main:refs/remotes/origin/main" \
       "+refs/heads/release-$minor:refs/remotes/origin/release-$minor" || die "cannot reach origin"
