@@ -269,13 +269,13 @@ func TestRetentionCountEligibleIntegration(t *testing.T) {
 	store, pool, ctx := openRetention(t)
 	runCutoff := time.Now().Add(-30 * 24 * time.Hour)
 	auditCutoff := time.Now().Add(-90 * 24 * time.Hour)
-	before, err := store.CountEligible(ctx, &runCutoff, &auditCutoff)
+	before, err := store.CountEligible(ctx, &runCutoff, &auditCutoff, nil)
 	if err != nil {
 		t.Fatalf("CountEligible: %v", err)
 	}
 	f := seedRetention(t, pool, ctx)
 	mustExec(t, pool, ctx, `INSERT INTO audit_log (tenant_id, action, occurred_at) VALUES ($1, 'retention.count', now() - interval '400 days')`, f.tenant)
-	after, err := store.CountEligible(ctx, &runCutoff, &auditCutoff)
+	after, err := store.CountEligible(ctx, &runCutoff, &auditCutoff, nil)
 	if err != nil {
 		t.Fatalf("CountEligible: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestRetentionCountEligibleIntegration(t *testing.T) {
 	if !runExists(t, pool, ctx, f.runs["old_success"]) {
 		t.Error("CountEligible deleted a run")
 	}
-	runsOnly, err := store.CountEligible(ctx, &runCutoff, nil)
+	runsOnly, err := store.CountEligible(ctx, &runCutoff, nil, nil)
 	if err != nil || runsOnly.AuditLog != 0 {
 		t.Errorf("audit counted with its class off: %+v, %v", runsOnly, err)
 	}
@@ -324,7 +324,7 @@ func TestRetentionTenantIDsIntegration(t *testing.T) {
 func TestRetentionKeepsNewestRunOfEachDagIntegration(t *testing.T) {
 	store, pool, ctx := openRetention(t)
 	cutoff := time.Now().Add(-30 * 24 * time.Hour)
-	baseline, err := store.CountEligible(ctx, &cutoff, nil)
+	baseline, err := store.CountEligible(ctx, &cutoff, nil, nil)
 	if err != nil {
 		t.Fatalf("CountEligible: %v", err)
 	}
@@ -335,7 +335,7 @@ func TestRetentionKeepsNewestRunOfEachDagIntegration(t *testing.T) {
 	mustExec(t, pool, ctx, `UPDATE dag_runs SET logical_date = now() - interval '2 days' WHERE id = $1`, older)
 	mustExec(t, pool, ctx, `UPDATE dag_runs SET logical_date = now() - interval '1 day' WHERE id = $1`, newest)
 
-	before, err := store.CountEligible(ctx, &cutoff, nil)
+	before, err := store.CountEligible(ctx, &cutoff, nil, nil)
 	if err != nil {
 		t.Fatalf("CountEligible: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestRetentionKeepsNewestRunOfEachDagIntegration(t *testing.T) {
 	if !runExists(t, pool, ctx, newest) {
 		t.Fatal("the newest run of the DAG was deleted, want it kept")
 	}
-	after, err := store.CountEligible(ctx, &cutoff, nil)
+	after, err := store.CountEligible(ctx, &cutoff, nil, nil)
 	if err != nil {
 		t.Fatalf("CountEligible: %v", err)
 	}

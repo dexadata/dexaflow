@@ -27,7 +27,7 @@ decision logic on the scheduler's hot path.
   (`HasWarmTask`, its per-task half, in `ActiveWarmTargets`, #2065) use:
   change it there, never with a check of its own in dispatch, and keep
   `Dispatcher.WarmPolicy` and the server's `warmPolicy(cfg)` equal
-  (`warm_policy_test.go` here and in `cmd/dexaflow-server`).
+  (`warm_policy_test.go` here and in `internal/serverapp`).
 - **A refusal is permanent.** A task that may not run here (it does not fit
   the size ADR 0066 charges it) fails on its first attempt with the reason,
   and spends neither dispatch retries nor its own retries

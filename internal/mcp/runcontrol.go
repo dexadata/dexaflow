@@ -45,12 +45,12 @@ func (h *handlers) registerRunControl(s *mcpsdk.Server) {
 	if h.planKey == nil {
 		return
 	}
-	mcpsdk.AddTool(s, &mcpsdk.Tool{
+	addTool(h, s, &mcpsdk.Tool{
 		Name:        "trigger_run",
 		Description: "Trigger a new run of a DAG, optionally with a conf object. On a paused DAG the run waits in queued until the DAG is unpaused. Ask the user before calling it.",
 		Annotations: &mcpsdk.ToolAnnotations{DestructiveHint: boolPtr(false), OpenWorldHint: boolPtr(true)},
 	}, h.triggerRun)
-	mcpsdk.AddTool(s, &mcpsdk.Tool{
+	addTool(h, s, &mcpsdk.Tool{
 		Name: "clear_task",
 		Description: "Clear task instances of a DAG run so they run again (by default only failed ones). " +
 			"On a paused DAG the cleared tasks wait until the DAG is unpaused. " +
@@ -58,19 +58,19 @@ func (h *handlers) registerRunControl(s *mcpsdk.Server) {
 			"show it to the user, and call apply_plan with its plan_id only if they agree.",
 		Annotations: &mcpsdk.ToolAnnotations{DestructiveHint: boolPtr(true), OpenWorldHint: boolPtr(true)},
 	}, h.clearTask)
-	mcpsdk.AddTool(s, &mcpsdk.Tool{
+	addTool(h, s, &mcpsdk.Tool{
 		Name:        "pause_dag",
 		Description: "Pause a DAG: the scheduler starts no new runs of it until it is unpaused.",
 		Annotations: &mcpsdk.ToolAnnotations{DestructiveHint: boolPtr(false), IdempotentHint: true, OpenWorldHint: boolPtr(true)},
 	}, h.pauseDag)
-	mcpsdk.AddTool(s, &mcpsdk.Tool{
+	addTool(h, s, &mcpsdk.Tool{
 		Name: "unpause_dag",
 		Description: "Unpause a DAG. For a DAG with a schedule, or with queued runs waiting for the unpause, this only returns a plan, " +
 			"because unpausing starts runs: " +
 			"show it to the user, and call apply_plan with its plan_id only if they agree.",
 		Annotations: &mcpsdk.ToolAnnotations{DestructiveHint: boolPtr(false), IdempotentHint: true, OpenWorldHint: boolPtr(true)},
 	}, h.unpauseDag)
-	mcpsdk.AddTool(s, &mcpsdk.Tool{
+	addTool(h, s, &mcpsdk.Tool{
 		Name: "apply_plan",
 		Description: "Carry out a plan that clear_task or unpause_dag returned, exactly as it was shown, after the user agreed. " +
 			"A plan lasts 10 minutes, only its maker can apply it, and it is refused if what it would change has changed since.",

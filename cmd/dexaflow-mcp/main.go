@@ -22,9 +22,9 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/dexadata/dexaflow/internal/envcompat"
-	"github.com/dexadata/dexaflow/internal/mcp"
 	versioninfo "github.com/dexadata/dexaflow/internal/version"
 	apiclient "github.com/dexadata/dexaflow/pkg/client"
+	"github.com/dexadata/dexaflow/pkg/mcp"
 )
 
 // version is overridden at build time via -ldflags "-X main.version=...". This
@@ -109,7 +109,11 @@ func run() int {
 		}
 		opts = append(opts, opt)
 	}
-	srv := mcp.NewServer(apiClient, server, version, httpMode, opts...)
+	mode := mcp.TransportStdio
+	if httpMode {
+		mode = mcp.TransportHTTP
+	}
+	srv := mcp.NewServer(apiClient, server, version, mode, opts...)
 
 	if httpMode {
 		pr, err := protectedResource(resource, authServers, scopes)
@@ -120,7 +124,7 @@ func run() int {
 		return runHTTP(mcp.HTTPHandler(srv, pr), listen, server)
 	}
 	slog.Info("dexaflow-mcp starting", "server", server, "transport", "stdio", "version", version)
-	if err := srv.Run(context.Background(), &mcpsdk.StdioTransport{}); err != nil {
+	if err := srv.SDK().Run(context.Background(), &mcpsdk.StdioTransport{}); err != nil {
 		slog.Error("mcp server exited", "error", err)
 		return 1
 	}

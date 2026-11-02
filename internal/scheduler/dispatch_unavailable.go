@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -42,7 +43,12 @@ func holdUnavailable(ctx context.Context, hold unavailableHold, runID, taskID st
 	}
 	if outage := now.Sub(since); outage >= dispatchUnavailableWindow {
 		out.expired = true
-		out.reason = fmt.Sprintf("dispatch_failed: Kubernetes API unavailable for %s: %v", outage.Round(time.Second), cause)
+		subject := "Kubernetes API unavailable"
+		var s interface{ UnavailableSubject() string }
+		if errors.As(cause, &s) {
+			subject = s.UnavailableSubject()
+		}
+		out.reason = fmt.Sprintf("dispatch_failed: %s for %s: %v", subject, outage.Round(time.Second), cause)
 	}
 	return out, nil
 }

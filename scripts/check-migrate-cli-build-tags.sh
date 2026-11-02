@@ -81,13 +81,16 @@ dockerfile_builds_pkg() { # <pkg>
 # dockerfile_stamps_version exits 0 when the build line stamps
 # internal/version, so `-version` names the build instead of "dev".
 dockerfile_stamps_version() {
-	dockerfile_build_line | grep -qF 'internal/version.version='
+	dockerfile_build_line | grep -F 'internal/version.version=' >/dev/null
 }
 
 # workflow_scans_module exits 0 when a non-comment line of the workflow runs
-# govulncheck over `./...`, which is what reaches ./cmd/dexaflow-migrate.
+# govulncheck over `./...`, which is what reaches ./cmd/dexaflow-migrate. Like
+# go_imports_driver it reads all of stdin: with `grep -q` the match ends grep
+# before sed has written the rest of the workflow, sed dies of SIGPIPE and
+# pipefail reports the scan as missing.
 workflow_scans_module() {
-	sed '/^[[:space:]]*#/d' | grep -qE 'govulncheck[^|#]*[[:space:]]\./\.\.\.([[:space:]]|$)'
+	sed '/^[[:space:]]*#/d' | grep -E 'govulncheck[^|#]*[[:space:]]\./\.\.\.([[:space:]]|$)' >/dev/null
 }
 
 # workflow_scans_migrate_image exits 0 when the workflow still contains a Trivy
@@ -99,8 +102,8 @@ workflow_scans_module() {
 # assertion here green.
 workflow_scans_migrate_image() {
 	local body; body=$(sed '/^[[:space:]]*#/d')
-	printf '%s' "$body" | grep -qE 'image-ref:[[:space:]]*leoflow-migrate' &&
-		printf '%s' "$body" | grep -qF 'deploy/Dockerfile.migrate'
+	printf '%s' "$body" | grep -E 'image-ref:[[:space:]]*leoflow-migrate' >/dev/null &&
+		printf '%s' "$body" | grep -F 'deploy/Dockerfile.migrate' >/dev/null
 }
 
 # go_imports_driver exits 0 when Go source on stdin imports the pgx5 driver on

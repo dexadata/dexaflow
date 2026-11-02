@@ -152,7 +152,7 @@ e2e-lite-selfheal: ## Lite boot self-heal gate (#404); needs local Postgres (DES
 
 .PHONY: runtime-images
 runtime-images: ## Build the task base images for each supported Python version
-	for v in 3.10 3.11 3.12 3.13; do \
+	for v in 3.11 3.12 3.13; do \
 		docker build -f runtime/Dockerfile --build-arg PYTHON_VERSION=$$v -t leoflow-base:py$$v . ; \
 	done
 

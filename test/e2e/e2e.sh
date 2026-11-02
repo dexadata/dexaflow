@@ -535,6 +535,95 @@ echo "$cblog" | grep -q "running on_failure_callback" \
 log "callback pod-path OK: on_failure_callback ran in the pod on terminal failure (#424)"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# OOM (#1219): a task that allocates far past its memory limit must fail with
+# the OOMKilled reason, whichever way the node kills it. On cgroup v2 with
+# memory.oom.group=1 the kernel kills the whole container, agent included, and
+# the pod's status classifies it; with single-process OOM kills the agent
+# survives, writes a record, and the pod's OOMKilled reason must still win
+# over the record's bare exit code. The task first checks that the cgroup it
+# sees is its own: memory.max must be the declared 128Mi, not the node's RAM.
+log "OOM (#1219): a task over its memory limit fails as OOMKilled"
+OOMID="oomdag"
+mkdir -p "$WORKDIR/$OOMID"
+cat > "$WORKDIR/$OOMID/dexaflow.yaml" <<YAML
+schema_version: "1.0"
+dag_id: oomdag
+build:
+  platforms:
+    - ${HOST_PLATFORM}
+tasks:
+  hog:
+    retries: 0
+    resources:
+      limits: { memory: 128Mi }
+YAML
+cat > "$WORKDIR/$OOMID/dag.py" <<'PY'
+from airflow.sdk import DAG, task
+
+
+def _read(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+with DAG("oomdag", schedule=None):
+
+    @task
+    def hog():
+        limit = _read("/sys/fs/cgroup/memory.max") or _read("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+        if limit != str(128 * 1024 * 1024):
+            raise SystemExit(f"E2E_OOM_WRONG_CGROUP memory limit seen by the task is {limit!r}, want 134217728")
+        print(f"E2E_OOM_CGROUP memory.max={limit} memory.oom.group={_read('/sys/fs/cgroup/memory.oom.group')}", flush=True)
+        chunks = []
+        for _ in range(1024):
+            chunks.append(bytearray(1024 * 1024))
+        raise SystemExit("E2E_OOM_NOT_KILLED allocated 1 GiB under a 128Mi limit")
+
+    hog()
+PY
+cat > "$WORKDIR/$OOMID/Dockerfile" <<DOCKER
+FROM ${BASE_IMAGE}
+COPY dag.py /home/leoflow/dag.py
+ENV PYTHONPATH=/home/leoflow
+DOCKER
+OOM_IMAGE="leoflow-e2e-oomdag:local"
+"$ROOT/bin/leoflow" compile "$WORKDIR/$OOMID" --image "$OOM_IMAGE" \
+  --build --dockerfile Dockerfile -o "$WORKDIR/$OOMID/dag.json"
+k3d_import "$CLUSTER" "$OOM_IMAGE"
+"$ROOT/bin/leoflow" push "$WORKDIR/$OOMID/dag.json" --server "$API" --token "$TOKEN"
+unpause_dag "$API" oomdag "$TOKEN" || fail "unpausing oomdag failed"
+OOM_RUN="$(curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{}' "$API/api/v2/dags/oomdag/dagRuns" | jq -r '.dag_run_id')"
+[ -n "$OOM_RUN" ] && [ "$OOM_RUN" != "null" ] || fail "no oomdag dag_run_id returned"
+oom_deadline=$(( $(date +%s) + 240 ))
+while :; do
+  oom_ti="$(curl -fsS -H "Authorization: Bearer $TOKEN" \
+    "$API/api/v2/dags/oomdag/dagRuns/$OOM_RUN/taskInstances" \
+    | jq -c '.task_instances[] | select(.task_id=="hog") | {state, failure_reason}')"
+  oom_state="$(echo "$oom_ti" | jq -r '.state // empty')"
+  [ "$oom_state" = "failed" ] && break
+  [ "$oom_state" = "success" ] && fail "oomdag hog succeeded under a 128Mi limit"
+  [ "$(date +%s)" -gt "$oom_deadline" ] && fail "oomdag hog did not fail (state=${oom_state:-<none>})"
+  sleep 3
+done
+oom_reason="$(echo "$oom_ti" | jq -r '.failure_reason // ""')"
+log "hog failure reason: $oom_reason"
+echo "$oom_reason" | grep -q "E2E_OOM_WRONG_CGROUP" \
+  && fail "the task's cgroup does not carry its own memory limit (#1219): $oom_reason"
+echo "$oom_reason" | grep -q "OOMKilled" \
+  || fail "a task killed for memory was not reported as OOMKilled (#1219): ${oom_reason:-<empty>}"
+# Which kill the node made: the agent's record carries exit 255 when it
+# survived the task (single-process kill), the container's 137 when the whole
+# group was killed. Logged, not asserted: both are supported.
+case "$oom_reason" in
+  *"exit 255"*) log "OOM OK: single-process kill, the agent survived and the pod's reason won" ;;
+  *) log "OOM OK: group kill (memory.oom.group=1), classified from the pod status" ;;
+esac
+
+# ─────────────────────────────────────────────────────────────────────────────
 # system_packages: on the GENERATED Dockerfile path, and one real TLS handshake
 # from inside a task pod.
 #

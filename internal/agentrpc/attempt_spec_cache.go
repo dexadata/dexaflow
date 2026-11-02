@@ -75,6 +75,11 @@ type attemptSpecEntry struct {
 // Every entry lives ttl from its last put, so the order of the last puts is the
 // order of expiry: order holds the entries oldest first, and eviction takes
 // from its front instead of scanning the map (#1621).
+//
+// A load registers in loads while it reads the store, so a drop that lands
+// meanwhile marks it and the load's result is not cached: without that, the
+// put after a load that began before the attempt ended brought the entry back
+// for up to ttl (#1616). loads holds only the attempts with a load in flight.
 type attemptSpecCache struct {
 	mu      sync.Mutex
 	max     int
@@ -82,13 +87,55 @@ type attemptSpecCache struct {
 	now     func() time.Time
 	entries map[attemptKey]*list.Element // of *attemptSpecEntry
 	order   *list.List
+	loads   map[attemptKey]*specLoad
+}
+
+// specLoad is the registration of the loads in flight for one attempt.
+type specLoad struct {
+	refs    int
+	dropped bool // the attempt ended while a load was in flight
 }
 
 func newAttemptSpecCache(maxEntries int, ttl time.Duration, now func() time.Time) *attemptSpecCache {
 	return &attemptSpecCache{
 		max: maxEntries, ttl: ttl, now: now,
 		entries: make(map[attemptKey]*list.Element), order: list.New(),
+		loads: make(map[attemptKey]*specLoad),
 	}
+}
+
+// load reads an attempt's task spec through fetch and caches its XCom view,
+// unless the attempt was dropped while fetch ran. A failed fetch caches
+// nothing.
+func (c *attemptSpecCache) load(id auth.AgentIdentity, fetch func() (TaskSpec, error)) (TaskSpec, error) {
+	k := attemptKeyOf(id)
+	c.mu.Lock()
+	l := c.loads[k]
+	if l == nil {
+		l = &specLoad{}
+		c.loads[k] = l
+	}
+	l.refs++
+	c.mu.Unlock()
+
+	spec, err := fetch()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	l.refs--
+	if l.refs == 0 {
+		delete(c.loads, k)
+	}
+	if err == nil && !l.dropped {
+		c.putLocked(k, attemptSpecOf(spec), c.now())
+	}
+	return spec, err
+}
+
+func (c *attemptSpecCache) loadsInFlight() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.loads)
 }
 
 func (c *attemptSpecCache) get(id auth.AgentIdentity) (attemptSpec, bool) {
@@ -108,10 +155,13 @@ func (c *attemptSpecCache) get(id auth.AgentIdentity) (attemptSpec, bool) {
 }
 
 func (c *attemptSpecCache) put(id auth.AgentIdentity, spec attemptSpec) {
-	k := attemptKeyOf(id)
 	now := c.now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.putLocked(attemptKeyOf(id), spec, now)
+}
+
+func (c *attemptSpecCache) putLocked(k attemptKey, spec attemptSpec, now time.Time) {
 	if el, ok := c.entries[k]; ok {
 		e := entryAt(el)
 		e.spec, e.expires = spec, now.Add(c.ttl)
@@ -157,10 +207,14 @@ func (c *attemptSpecCache) removeLocked(el *list.Element) {
 }
 
 func (c *attemptSpecCache) drop(id auth.AgentIdentity) {
+	k := attemptKeyOf(id)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if el, ok := c.entries[attemptKeyOf(id)]; ok {
+	if el, ok := c.entries[k]; ok {
 		c.removeLocked(el)
+	}
+	if l := c.loads[k]; l != nil {
+		l.dropped = true
 	}
 }
 
@@ -177,11 +231,9 @@ func (s *Server) xcomSpec(ctx context.Context, id *auth.AgentIdentity) (attemptS
 	if spec, ok := s.attemptSpecs.get(*id); ok {
 		return spec, nil
 	}
-	spec, err := s.store.TaskSpec(ctx, *id)
+	spec, err := s.attemptSpecs.load(*id, func() (TaskSpec, error) { return s.store.TaskSpec(ctx, *id) })
 	if err != nil {
 		return attemptSpec{}, err
 	}
-	view := attemptSpecOf(spec)
-	s.attemptSpecs.put(*id, view)
-	return view, nil
+	return attemptSpecOf(spec), nil
 }

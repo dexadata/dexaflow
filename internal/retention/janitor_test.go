@@ -18,7 +18,12 @@ type fakeStore struct {
 	// auditBatches is consumed one entry per audit delete call, keyed by tenant
 	// ("" is the tenant-less system rows).
 	auditBatches map[string][]int64
+	// usageBatches is consumed one entry per usage event delete call.
+	usageBatches []int64
 	eligible     Counts
+
+	usageCalls  []auditCall
+	countCutoff []*time.Time
 
 	runCalls   []runCall
 	auditCalls []auditCall
@@ -72,8 +77,19 @@ func (f *fakeStore) RecordRetentionPurge(_ context.Context, tenant string, rows 
 	return nil
 }
 
-func (f *fakeStore) CountEligible(context.Context, *time.Time, *time.Time) (Counts, error) {
+func (f *fakeStore) DeleteUsageEvents(_ context.Context, cutoff time.Time, limit int) (int64, error) {
+	f.usageCalls = append(f.usageCalls, auditCall{cutoff: cutoff, limit: limit})
+	if len(f.usageBatches) == 0 {
+		return 0, nil
+	}
+	n := f.usageBatches[0]
+	f.usageBatches = f.usageBatches[1:]
+	return n, nil
+}
+
+func (f *fakeStore) CountEligible(_ context.Context, runCutoff, auditCutoff, usageCutoff *time.Time) (Counts, error) {
 	f.countCalls++
+	f.countCutoff = []*time.Time{runCutoff, auditCutoff, usageCutoff}
 	return f.eligible, nil
 }
 

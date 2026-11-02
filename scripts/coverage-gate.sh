@@ -24,7 +24,11 @@ FLOOR=80
 # the same category as /cmd/. Their pure logic IS tested
 # (test/soak/monitor/*_test.go); what cannot be covered honestly here is their
 # database and HTTP orchestration.
-EXCLUDE='(/internal/storage/queries/|/internal/storage/repository\.go:|/internal/storage/postgres\.go:|/internal/storage/redis\.go:|/internal/storage/scheduler_store\.go:|/internal/storage/agent_store\.go:|/internal/storage/xcom_index\.go:|/internal/xcom/redis_backend\.go:|/internal/logs/tail\.go:|/internal/scheduler/leader\.go:|/internal/cli/managed_postgres\.go:|/internal/cli/backup_cmd\.go:|/internal/cli/restore_cmd\.go:|/internal/cli/forget\.go:|/internal/cli/dbt_manifest\.go:|\.pb\.go:|\.gen\.go:|/internal/version/|/cmd/|/test/)'
+#
+# /internal/serverapp/ is the server wiring that lived in cmd/dexaflow-server
+# until ADR 0099 moved it, unchanged, behind pkg/server. It stays in the /cmd/
+# category: the e2e suites boot it, and its unit tests keep running.
+EXCLUDE='(/internal/storage/queries/|/internal/storage/repository\.go:|/internal/storage/postgres\.go:|/internal/storage/redis\.go:|/internal/storage/scheduler_store\.go:|/internal/storage/agent_store\.go:|/internal/storage/xcom_index\.go:|/internal/xcom/redis_backend\.go:|/internal/logs/tail\.go:|/internal/scheduler/leader\.go:|/internal/cli/managed_postgres\.go:|/internal/cli/backup_cmd\.go:|/internal/cli/restore_cmd\.go:|/internal/cli/forget\.go:|/internal/cli/dbt_manifest\.go:|\.pb\.go:|\.gen\.go:|/internal/version/|/internal/serverapp/|/cmd/|/test/)'
 
 # package_stats <coverprofile>: one "<percent>\t<package>\t<covered>\t<statements>"
 # line per package, read from the profile itself (statements per block,

@@ -32,6 +32,7 @@ type ServerConfig struct {
 	UI            UISection            `mapstructure:"ui"`
 	Secrets       SecretsSection       `mapstructure:"secrets"`
 	Retention     RetentionSection     `mapstructure:"retention"`
+	Usage         UsageSection         `mapstructure:"usage"`
 	Deploy        DeploySection        `mapstructure:"deploy"`
 	Bootstrap     BootstrapSection     `mapstructure:"bootstrap"`
 	Agent         AgentSection         `mapstructure:"agent"`
@@ -271,6 +272,10 @@ type ObservabilitySection struct {
 	LogLevel  string         `mapstructure:"log_level"`
 	LogFormat string         `mapstructure:"log_format"`
 	Metrics   MetricsSection `mapstructure:"metrics"`
+	// UsageMetrics advances dexaflow_task_attempts_total and
+	// dexaflow_task_slot_seconds_total from the usage events (ADR 0096), one
+	// series per tenant. Off by default; it needs usage.events.enabled.
+	UsageMetrics bool `mapstructure:"usage_metrics"`
 }
 
 // MetricsSection configures the Prometheus scrape.
@@ -425,7 +430,7 @@ func (c *ServerConfig) Validate() error {
 	for _, check := range []func() error{
 		c.validateSecretPolicies,
 		c.validateExecution,
-		c.Retention.Validate,
+		func() error { return c.Retention.ValidateWith(c.Usage.Events.Enabled) },
 		c.validateExecutorPolicies,
 		c.validatePlatformIntegration,
 		c.validateDeployDefaults,

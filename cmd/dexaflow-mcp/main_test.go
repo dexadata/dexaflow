@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/dexadata/dexaflow/internal/mcp"
+	"github.com/dexadata/dexaflow/pkg/mcp"
 )
 
 // TestProtectedResourceFromFlags locks the #1470 wiring: the comma-separated

@@ -407,6 +407,46 @@ async function resolveUser() {
     await apiTokensFlow(page, URL, USER, PASS);
   });
 
+  // Run list pagination (#1932): the runs table pages with a cursor, 50 rows
+  // a page. Fill hello past one page (the API refuses more than its 16 active
+  // runs, so trigger as runs finish), then walk next, the disabled next on the
+  // last page, and back.
+  await step('runs list: next, last page, previous', async () => {
+    const PAGE = 50;
+    const tok = await mintToken();
+    const headers = { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json' };
+    const total = async () => (await apiGet('/api/v2/dags/hello/dagRuns?limit=1')).total_entries || 0;
+    for (let i = 0, n = await total(); n <= PAGE; i++, n = await total()) {
+      if (i > 400) throw new Error(`hello has only ${n} runs after 400 triggers`);
+      const at = new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString();
+      const res = await page.request.post(`${URL}/api/v2/dags/hello/dagRuns`, {
+        headers, data: { dag_run_id: `pagination_${i}`, logical_date: at },
+      });
+      if (res.status() === 409) await page.waitForTimeout(500); // at the active-runs cap
+      else if (!res.ok()) throw new Error(`trigger answered ${res.status()}`);
+    }
+    const want = await total();
+    await page.goto(`${URL}/dags/hello/runs`, { waitUntil: 'networkidle' });
+    const rows = page.locator('tbody tr');
+    const prev = page.getByRole('button', { name: 'Previous page' });
+    const next = page.getByRole('button', { name: 'Next page' });
+    const rowsAre = async (n, where) => {
+      for (let i = 0; i < 20 && (await rows.count()) !== n; i++) await page.waitForTimeout(250);
+      const got = await rows.count();
+      if (got !== n) throw new Error(`${where}: ${got} rows, want ${n}`);
+    };
+    await rowsAre(PAGE, 'first page');
+    if (!(await prev.isDisabled())) throw new Error('first page: previous is enabled');
+    const firstRow = await rows.first().innerText();
+    await next.click({ timeout: 5000 });
+    await rowsAre(want - PAGE, 'last page');
+    if (!(await next.isDisabled())) throw new Error('last page: next is enabled');
+    if ((await rows.first().innerText()) === firstRow) throw new Error('next page shows the first page again');
+    await prev.click({ timeout: 5000 });
+    await rowsAre(PAGE, 'back on the first page');
+    if ((await rows.first().innerText()) !== firstRow) throw new Error('previous did not return to the first page');
+  });
+
   await browser.close();
 
   const failed = results.filter((r) => r.bad);

@@ -38,6 +38,7 @@ func TestRecordersIncrementCounters(t *testing.T) {
 	m.RecordSchedulerDecision("panic")              // backs the scheduler resilience metric
 	m.RecordUndispatchable("no_executor")           // backs the undispatchable signal (#46)
 	m.RecordUnitMisfit("register")                  // backs executor.unit.enforce=warn (ADR 0066)
+	m.RecordAdmission("refused", time.Millisecond)  // backs the admission hooks (ADR 0100)
 	m.RecordUnpinnedImage("register", "warned")     // backs deploy.require_digest (#1703)
 	m.RecordCIOIDCExchange("github-acme", "issued") // backs auth.ci_oidc (ADR 0092)
 	m.RecordSchedulerWokenTick()                    // backs scheduler.eager_promotion's wake rate
@@ -50,6 +51,7 @@ func TestRecordersIncrementCounters(t *testing.T) {
 		"dexaflow_scheduler_decisions_total":   1,
 		"dexaflow_tasks_undispatchable_total":  1,
 		"dexaflow_unit_misfit_total":           1,
+		"dexaflow_dispatch_admission_total":    1,
 		"dexaflow_unpinned_image_total":        1,
 		"dexaflow_ci_oidc_exchange_total":      1,
 		"dexaflow_scheduler_woken_ticks_total": 1,

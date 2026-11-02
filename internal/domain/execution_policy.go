@@ -228,6 +228,27 @@ func (p *ExecutionPolicy) CheckTask(t TaskSpec) error {
 	return errors.Join(errs...)
 }
 
+// CheckServiceAccount returns why sa may not be used under the policy, or nil.
+// It is the service account rule of CheckTask on its own, for a value that
+// did not come from the DAG (an admission hook's change, ADR 0100 §4).
+func (p *ExecutionPolicy) CheckServiceAccount(sa string) error {
+	if p == nil || sa == "" || p.serviceAccounts == nil || slices.Contains(p.serviceAccounts, sa) {
+		return nil
+	}
+	return fmt.Errorf("service account %q is not in executor.defaults.execution_allowlist.service_accounts (%s)",
+		sa, strings.Join(p.serviceAccounts, ", "))
+}
+
+// CheckPriorityClass returns why pc may not be used under the policy, or nil.
+// Like CheckServiceAccount, it is for a value that did not come from the DAG.
+func (p *ExecutionPolicy) CheckPriorityClass(pc string) error {
+	if p == nil || pc == "" || p.priorityClasses == nil || slices.Contains(p.priorityClasses, pc) {
+		return nil
+	}
+	return fmt.Errorf("priority class %q is not in executor.defaults.execution_allowlist.priority_classes (%s)",
+		pc, strings.Join(p.priorityClasses, ", "))
+}
+
 // CheckSpec returns every refusal across the DAG's tasks, or nil.
 func (p *ExecutionPolicy) CheckSpec(spec *DAGSpec) error {
 	if p == nil || spec == nil {

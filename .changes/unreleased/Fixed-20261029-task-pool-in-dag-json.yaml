@@ -1,0 +1,11 @@
+kind: Fixed
+body: |-
+  **A task's `pool` in `dag.py` now reaches the engine** (#2227). The compiler
+  dropped it, so on a cluster with pools on every task was admitted against
+  `default_pool`, whatever pool it named. `pool` is now captured from the
+  operator, from `@task(pool=...)` and from `default_args`, like `pool_slots`.
+  Once a DAG is redeployed, its tasks that name a pool are gated by that pool;
+  a pool the tenant has not defined does not gate them (under
+  `server.pools_read_only` they fall back to `default_pool`). Tasks in
+  `default_pool` produce the same `dag.json` as before.
+time: 2026-10-29T03:00:00.000000000+00:00

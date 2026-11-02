@@ -237,7 +237,7 @@ var serverDefaults = map[string]any{
 	// AutomaticEnv only binds env vars for keys it has seen via SetDefault or
 	// SetConfigFile. Without this line LEOFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS
 	// was silently dropped, so `dexaflow lite` (which exports the env var to
-	// poll every 1s) was actually running at the 30s production default.
+	// poll every 1s) was actually running at the 30s default of the time.
 	"ui.auto_refresh_interval_seconds":                0,
 	"auth.dev_no_auth":                                false,
 	"auth.service_token":                              "",
@@ -293,6 +293,9 @@ var serverDefaults = map[string]any{
 	"observability.otel.skip_probe_spans": false,
 	// Gate (ADR 0062): false keeps the leoflow_ twin of every metric family.
 	"observability.metrics.drop_legacy_names": false,
+	// Per-tenant usage counters from the usage events (ADR 0096); one series
+	// per tenant, so off by default.
+	"observability.usage_metrics": false,
 	// Warm isolation mode (X3.2, ADR 0058). Registered so AutomaticEnv binds
 	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM; false keeps
 	// today's writable warm root.
@@ -301,6 +304,12 @@ var serverDefaults = map[string]any{
 	"execution.source_mode.enabled":             false,
 	"execution.source_mode.image":               "",
 	"execution.source_mode.warm_pools":          false,
+	// Dispatch admission hooks (ADR 0100). An empty webhook URL installs none.
+	"execution.admission.timeout":            "500ms",
+	"execution.admission.fail_open":          false,
+	"execution.admission.webhook.url":        "",
+	"execution.admission.webhook.ca_file":    "",
+	"execution.admission.webhook.token_file": "",
 	// Event-driven warm-pool refill (ADR 0058). Registered so AutomaticEnv binds
 	// DEXAFLOW_/LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL; false keeps polling.
 	"execution.warm_pool_event_refill": false,
@@ -325,10 +334,14 @@ var serverDefaults = map[string]any{
 	// Digest-pinned images at register (#1703). off keeps every register as
 	// it was.
 	"deploy.require_digest": string(domain.DigestRequireOff),
+	// Task attempt usage events (ADR 0096): off, so the trigger of migration
+	// 055 records nothing until an operator turns it on.
+	"usage.events.enabled": false,
 	// Retention (the leader-only janitor). Every class ships off: nothing is
 	// deleted until an operator sets a window. The pacing values apply once one is.
 	"retention.dag_runs_days":      0,
 	"retention.audit_log_days":     0,
+	"retention.usage_events_days":  30,
 	"retention.dry_run":            false,
 	"retention.interval":           "1h",
 	"retention.batch_size":         1000,

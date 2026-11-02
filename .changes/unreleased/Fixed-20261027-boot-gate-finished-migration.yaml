@@ -1,9 +1,0 @@
-kind: Fixed
-body: |-
-  **A server booting while the last migration finishes no longer stops.** The
-  boot gate read the schema version, then checked whether a migrator held its
-  lock. A migration of this binary's latest version that finished between the
-  two reads left the gate with a stale "dirty at the latest" and no lock, the
-  one fatal verdict, so the server exited instead of starting. The gate now
-  reads the version again before it gives that verdict.
-time: 2026-10-27T00:40:00.000000000+00:00

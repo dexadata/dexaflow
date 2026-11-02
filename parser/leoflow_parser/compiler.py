@@ -396,8 +396,12 @@ _ON_FAILURE_CALLBACK = "on_failure_callback"
 # via _apply_scheduling_attrs. _split_operator_args skips them so they are not
 # mistaken for the operator's own args (and a timedelta does not trip its reject).
 _SCHEDULING_ATTR_NAMES = frozenset(
-    {"trigger_rule", "retries", "retry_delay", "execution_timeout", "pool_slots"}
+    {"trigger_rule", "retries", "retry_delay", "execution_timeout", "pool", "pool_slots"}
 )
+
+# _DEFAULT_POOL is Airflow's default pool and the engine's fallback for a task
+# that names none, so a task in it emits no pool key.
+_DEFAULT_POOL = "default_pool"
 
 # Task types whose runtime path is Python with a real try/except, so an
 # on_failure_callback can run in-process on the task's final failure (#424). A
@@ -605,7 +609,7 @@ def _seconds(value) -> int | None:
 
 
 def _apply_scheduling_attrs(task, dag, entry: dict[str, Any]) -> None:
-    """Capture retries / retry_delay / execution_timeout / pool_slots (operator or
+    """Capture retries / retry_delay / execution_timeout / pool / pool_slots (operator or
     default_args) onto the task entry, converting durations to seconds. Silently dropping these —
     the pre-#434 behavior — made a migrated DAG's retries=3 run once with no retry."""
     retries = _sched_attr(task, dag, "retries")
@@ -623,6 +627,11 @@ def _apply_scheduling_attrs(task, dag, entry: dict[str, Any]) -> None:
     pool_slots = _sched_attr(task, dag, "pool_slots")
     if pool_slots is not None and int(pool_slots) != 1:
         entry["pool_slots"] = int(pool_slots)
+    # pool (ADR 0053): the named, cross-DAG slot budget the task is admitted
+    # against. Dropping it put every task in default_pool, whatever it named.
+    pool = _sched_attr(task, dag, "pool")
+    if pool is not None and str(pool) not in ("", _DEFAULT_POOL):
+        entry["pool"] = str(pool)
 
 
 def _python_entrypoint(task, source: str) -> str:

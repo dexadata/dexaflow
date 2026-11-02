@@ -756,6 +756,32 @@ spec:
               value: "true"
             {{- end }}
             {{- end }}
+            {{- $admission := (.ctx.Values.execution.admission | default dict) }}
+            {{- $admissionWebhook := ($admission.webhook | default dict) }}
+            {{- if and $admissionWebhook.url (ne .role "api") }}
+            # Dispatch admission webhook (ADR 0100), on the roles that dispatch.
+            # Stamped only with a URL, so an install without one renders the
+            # env it had before. deployment.yaml has already refused a plain
+            # http URL.
+            - name: LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_URL
+              value: {{ $admissionWebhook.url | quote }}
+            {{- if $admissionWebhook.caConfigMap }}
+            - name: LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_CA_FILE
+              value: /etc/leoflow/admission-ca/ca.crt
+            {{- end }}
+            {{- if $admissionWebhook.tokenSecret }}
+            - name: LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_TOKEN_FILE
+              value: /etc/leoflow/admission-token/token
+            {{- end }}
+            {{- if $admission.timeout }}
+            - name: LEOFLOW_EXECUTION_ADMISSION_TIMEOUT
+              value: {{ $admission.timeout | quote }}
+            {{- end }}
+            {{- if $admission.failOpen }}
+            - name: LEOFLOW_EXECUTION_ADMISSION_FAIL_OPEN
+              value: "true"
+            {{- end }}
+            {{- end }}
             - name: LEOFLOW_DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -1045,6 +1071,18 @@ spec:
               mountPath: /etc/leoflow/redis-ca
               readOnly: true
             {{- end }}
+            {{- $admissionMount := ((.ctx.Values.execution.admission | default dict).webhook | default dict) }}
+            {{- if and $admissionMount.url $admissionMount.caConfigMap (ne .role "api") }}
+            - name: admission-ca
+              mountPath: /etc/leoflow/admission-ca
+              readOnly: true
+            {{- end }}
+            {{- if and $admissionMount.url $admissionMount.tokenSecret (ne .role "api") }}
+            # The api role never dispatches, so the token never reaches its pod.
+            - name: admission-token
+              mountPath: /etc/leoflow/admission-token
+              readOnly: true
+            {{- end }}
             {{- if .ctx.Values.auth.oidc.enabled }}
             # The only server config FILE this chart mounts, and it holds only
             # the two OIDC maps no env var can carry (see the env block above).
@@ -1093,6 +1131,23 @@ spec:
         - name: redis-ca
           configMap:
             name: {{ .ctx.Values.redis.caConfigMap }}
+        {{- end }}
+        {{- $admissionVolume := ((.ctx.Values.execution.admission | default dict).webhook | default dict) }}
+        {{- if and $admissionVolume.url $admissionVolume.caConfigMap (ne .role "api") }}
+        - name: admission-ca
+          configMap:
+            name: {{ $admissionVolume.caConfigMap }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
+        {{- if and $admissionVolume.url $admissionVolume.tokenSecret (ne .role "api") }}
+        - name: admission-token
+          secret:
+            secretName: {{ $admissionVolume.tokenSecret }}
+            items:
+              - key: token
+                path: token
         {{- end }}
         {{- if .ctx.Values.auth.oidc.enabled }}
         # `items` pins the projection to the single key the server is pointed at,

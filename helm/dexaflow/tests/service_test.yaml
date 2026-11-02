@@ -92,3 +92,29 @@ tests:
       - equal:
           path: spec.type
           value: LoadBalancer
+
+  # #526 bucket B: the cloud load balancer contract is the annotations the
+  # provider's controller reads. CI has no cloud LB, so the static contract is
+  # that they reach the Service verbatim, keys with dots and slashes intact.
+  - it: passes cloud load balancer annotations through verbatim (EKS NLB, GKE internal)
+    set:
+      service.type: LoadBalancer
+      service.annotations:
+        service.beta.kubernetes.io/aws-load-balancer-type: nlb
+        service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+        networking.gke.io/load-balancer-type: Internal
+    asserts:
+      - equal:
+          path: spec.type
+          value: LoadBalancer
+      - equal:
+          path: metadata.annotations
+          value:
+            service.beta.kubernetes.io/aws-load-balancer-type: nlb
+            service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+            networking.gke.io/load-balancer-type: Internal
+
+  - it: renders no annotations when none are set
+    asserts:
+      - notExists:
+          path: metadata.annotations

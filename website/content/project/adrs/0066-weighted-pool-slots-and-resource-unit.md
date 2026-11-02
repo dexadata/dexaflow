@@ -8,6 +8,7 @@ description: "ADR 0066: a task takes pool_slots slots of its pool (Airflow seman
 **Status:** Accepted
 **Date:** 2026-10-06 (proposed and accepted the same day by the project owner)
 **Relates:** ADR 0053 (admission and placement; this ADR changes what the Stage 3 pool gate counts), ADR 0023 (dexaflow.yaml config binding; adds one per-task and one DAG-default knob), ADR 0063 (operator executor policy, proposed; its resource ceiling composes with the unit below), ADR 0058 (warm worker pools; section 3 says which tasks may use them), ADR 0062 (ships in v0.5.2 under the exception recorded in its section 6.2), ADR 0011 (strict TDD).
+**Guide:** [Pools](/operate/pools/)
 
 > **Numbering.** 0063 (#1365) and 0064 (#1368) are open PRs. If another ADR
 > merges first under 0066, this file is renumbered before merge.

@@ -4,6 +4,7 @@ package storage_test
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -193,5 +194,39 @@ func TestKeysetPagesTrustTheCursorTotalIntegration(t *testing.T) {
 	}
 	if _, n, err := repo.ListAuditLogsAfter(ctx, "default", auditDag, domain.PageCursor{At: future, Key: "0"}, 10); err != nil || n != 2 {
 		t.Errorf("audit total without a carried one = %d, %v, want the count 2", n, err)
+	}
+}
+
+// TestListDagRunsPageMatchesListDagRunsIntegration (#1328, #1616): the
+// count-free page the grid and the run scans read returns, for every limit
+// and offset, exactly the runs ListDagRuns returns, in the same order, with
+// the same fields; an offset past the end is an empty page, not an error; and
+// another tenant's DAG id does not resolve.
+func TestListDagRunsPageMatchesListDagRunsIntegration(t *testing.T) {
+	repo, _, ctx := openRepo(t)
+	dagID, _ := seedKeysetRuns(t, 7)
+	for _, limit := range []int{1, 3, 7, 10} {
+		for offset := 0; offset <= 8; offset++ {
+			want, total, err := repo.ListDagRuns(ctx, "default", dagID, limit, offset)
+			if err != nil {
+				t.Fatalf("ListDagRuns(%d, %d): %v", limit, offset, err)
+			}
+			if total != 7 {
+				t.Fatalf("ListDagRuns total = %d, want 7", total)
+			}
+			got, err := repo.ListDagRunsPage(ctx, "default", dagID, limit, offset)
+			if err != nil {
+				t.Fatalf("ListDagRunsPage(%d, %d): %v", limit, offset, err)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("limit %d offset %d: ListDagRunsPage = %s, ListDagRuns = %s", limit, offset, runIDs(got), runIDs(want))
+			}
+			if wantLen := max(0, min(limit, 7-offset)); len(got) != wantLen {
+				t.Errorf("limit %d offset %d: %d runs, want %d", limit, offset, len(got), wantLen)
+			}
+		}
+	}
+	if _, err := repo.ListDagRunsPage(ctx, "no_such_tenant_page", dagID, 10, 0); err == nil {
+		t.Error("ListDagRunsPage served a DAG from another tenant")
 	}
 }

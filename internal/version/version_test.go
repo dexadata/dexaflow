@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"testing"
 )
@@ -69,5 +70,32 @@ func TestInfoCarriesNoBuildExpiry(t *testing.T) {
 	lower := strings.ToLower(s)
 	if strings.Contains(lower, "expires") || strings.Contains(lower, "expired") {
 		t.Errorf("Info.String() %q hints at expiry — the binary is meant to be timeless", s)
+	}
+}
+
+func TestDependencyVersion(t *testing.T) {
+	dep := func(path, v string, repl *debug.Module) *debug.Module {
+		return &debug.Module{Path: path, Version: v, Replace: repl}
+	}
+	cases := []struct {
+		name string
+		bi   debug.BuildInfo
+		want string
+	}{
+		{"this module's own build stays dev", debug.BuildInfo{Main: debug.Module{Path: modulePath, Version: "v0.5.9"}}, "dev"},
+		{"a program importing the module reports the required version",
+			debug.BuildInfo{Main: debug.Module{Path: "example.com/custom"}, Deps: []*debug.Module{dep("golang.org/x/net", "v0.1.0", nil), dep(modulePath, "v0.5.9", nil)}}, "v0.5.9"},
+		{"a replaced module reports the replacement's version",
+			debug.BuildInfo{Main: debug.Module{Path: "example.com/custom"}, Deps: []*debug.Module{dep(modulePath, "v0.5.9", &debug.Module{Path: "example.com/fork", Version: "v0.5.9-fork.1"})}}, "v0.5.9-fork.1"},
+		{"a local replace without a version falls back to the required one",
+			debug.BuildInfo{Main: debug.Module{Path: "example.com/custom"}, Deps: []*debug.Module{dep(modulePath, "v0.5.9", &debug.Module{Path: "../dexaflow"})}}, "v0.5.9"},
+		{"a program without the module stays dev", debug.BuildInfo{Main: debug.Module{Path: "example.com/other"}}, "dev"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := dependencyVersion(&tc.bi, "dev"); got != tc.want {
+				t.Errorf("dependencyVersion() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

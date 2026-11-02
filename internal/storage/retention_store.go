@@ -225,13 +225,27 @@ func (s *RetentionStore) RecordRetentionPurge(ctx context.Context, tenant string
 	return nil
 }
 
+// DeleteUsageEvents removes up to limit usage events older than cutoff, a
+// prefix of the order the service API serves them, and moves the pruned mark
+// to the last one in the same statement (see DeleteExpiredUsageEvents).
+func (s *RetentionStore) DeleteUsageEvents(ctx context.Context, cutoff time.Time, limit int) (int64, error) {
+	n, err := s.q.DeleteExpiredUsageEvents(ctx, queries.DeleteExpiredUsageEventsParams{
+		Cutoff: pgtype.Timestamptz{Time: cutoff, Valid: true}, RowLimit: int32(limit), //nolint:gosec // bounded by config validation
+	})
+	if err != nil {
+		return 0, fmt.Errorf("deleting expired usage events: %w", err)
+	}
+	return n, nil
+}
+
 // CountEligible counts what a retention cycle would delete, for the dry run:
 // expired settled runs and their task instances when runCutoff is set, audit
-// rows when auditCutoff is set (system rows included). Each tenant is counted
+// rows when auditCutoff is set (system rows included), usage events when
+// usageCutoff is set. Each tenant is counted
 // through its own index range and stops at the dry-run cap, so the count's cost
 // is bounded per tenant; Capped reports that some tenant reached it and the
 // totals are a lower bound.
-func (s *RetentionStore) CountEligible(ctx context.Context, runCutoff, auditCutoff *time.Time) (retention.Counts, error) {
+func (s *RetentionStore) CountEligible(ctx context.Context, runCutoff, auditCutoff, usageCutoff *time.Time) (retention.Counts, error) {
 	var c retention.Counts
 	tenants, err := s.TenantIDs(ctx)
 	if err != nil {
@@ -252,6 +266,16 @@ func (s *RetentionStore) CountEligible(ctx context.Context, runCutoff, auditCuto
 			return c, fmt.Errorf("counting expired system audit rows: %w", err)
 		}
 		c.AuditLog += n
+		c.Capped = c.Capped || n >= int64(s.dryRunLimit())
+	}
+	if usageCutoff != nil {
+		n, err := s.q.CountExpiredUsageEvents(ctx, queries.CountExpiredUsageEventsParams{
+			Cutoff: pgtype.Timestamptz{Time: *usageCutoff, Valid: true}, MaxRows: s.dryRunLimit(),
+		})
+		if err != nil {
+			return c, fmt.Errorf("counting expired usage events: %w", err)
+		}
+		c.UsageEvents = n
 		c.Capped = c.Capped || n >= int64(s.dryRunLimit())
 	}
 	return c, nil

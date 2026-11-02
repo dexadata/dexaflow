@@ -39,8 +39,10 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
    (`workflow_dispatch`) on the `release-X.Y` commit before the cut.
 5. **UI with Playwright.** When the candidate changes anything the browser shows
    (embedded UI assets, `/api/v2/` responses the UI reads, sign-in, login or SSO),
-   the Playwright flows (`test/e2e/ui-smoke.js`, `make e2e-sso`,
-   `test/ui-contract/`) ran against it, with screenshots of the changed screens.
+   the Playwright flows ran against it, with screenshots of the changed screens.
+   CI runs them on every PR: the `ui-smoke` job runs `test/e2e/ui-smoke.js` and
+   the `test/ui-contract/` sweep and clear dialog check, and `e2e-sso-login`
+   covers SSO; a green run of both jobs on the candidate's commit is the check.
 6. **Security.** Tenant isolation (no read or write across tenants, roles
    included), every new external input validated, new or bumped dependencies
    clean under `make vuln`, and the image scan (`image-scan.yaml`, Trivy) clean
@@ -114,13 +116,59 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
 
 ### CI hygiene
 
-The Actions queue has few runners, so every wasted run delays everyone.
+The account runs at most 20 Actions jobs at once, and one push to a pull
+request starts about 50 (CI, Security and the guards). A change to `main`
+runs CI again in the merge queue, and a pick to `release-X.Y` twice more.
+Every wasted push delays everyone, the release cut included.
 
 - Run the local checks before pushing: `make lint test`, or `make ci-local` for
-  every gate.
-- Push once, with all the fixes together, not one push per fix.
+  every gate. For a change to one area, the tests of the packages it touches
+  and the integration suite run before the push, not after a red CI.
+- Push once, with all the fixes together, not one push per fix. A pull request
+  is opened when its local checks pass, not to see what CI says.
 - Before pushing to a PR branch, cancel the runs of commits that push supersedes.
 - Before opening a PR, check that no open PR already covers the change.
+- A red job is read before anything is rerun. A flake is rerun with
+  `gh run rerun <id> --failed`, which repeats only the failed jobs, never the
+  whole run. A failure that comes back on a second push is reproduced locally
+  before a third one.
+- A new check that runs in seconds becomes a step of the `Repository gates`
+  job in `ci.yaml`, not a job of its own: a job costs a runner slot and half a
+  minute of setup. A new job that needs a cluster or a long build declares
+  `needs: [lint, repo-gates]`, like the k3d jobs, and says in its pull request
+  why it cannot run nightly or on rc tags instead.
+
+### Batching pull requests
+
+Each pull request costs at least two full CI runs, so the count of pull
+requests is the main cost the queue pays.
+
+- **One logical change, complete.** The docs, changelog fragment, comments
+  and tests a change makes stale go in the same pull request, not in a
+  follow-up opened after the merge.
+- **Small fixes of one kind travel together.** Typos, stale links or comment
+  fixes found in one review go in one pull request, not one each.
+- **Picks are batched.** Cherry-picks to `release-X.Y` go in one
+  `[release-X.Y] picks` pull request per day or per candidate, one
+  `git cherry-pick -x` commit per original change (as #2140 did with sixteen),
+  not one pull request per pick. A pick needed to unblock a failed cut may
+  ride in the next prepare pull request.
+
+### Changes that only run on a tag
+
+`release.yaml` and the other tag-only workflows run nowhere before a tag is
+pushed, so a defect in them costs a failed candidate and a new one (each cycle
+about ninety minutes: fix, pick, prepare, tag, release run).
+
+- A pull request that changes a tag-only step shows that step working before
+  it merges: the same command run locally against a real input (an image
+  digest, a lock, a chart), or the step run in a `workflow_dispatch` workflow,
+  with the output in "How it was tested".
+- Anything the release workflow refuses to publish has a cut-time gate that
+  asks the same question first. `scripts/check-runtime-data-lock.sh` scans
+  the data image lock with the release's Trivy criterion; `run_gates()` in
+  `cut-release.sh` runs it with every other `scripts/check-*.sh` right before
+  the tag.
 
 ### Commits, pull requests and text
 

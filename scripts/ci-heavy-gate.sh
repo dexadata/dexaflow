@@ -74,7 +74,7 @@ decide() {
 # targets and the warm binding (BindWarmAttempt in runs.sql and its generated
 # runs.sql.go), the warm eligibility rules (resource unit, default limits), the
 # deploy command and the image build, and the leg itself. Deliberately left
-# out: cmd/dexaflow-server/, internal/config/, go.mod and ci.yaml, which would
+# out: cmd/dexaflow-server/, internal/serverapp/, internal/config/, go.mod and ci.yaml, which would
 # run the leg on most pull requests (57 of 100 merges with them; 37 of the last
 # 100 with this list). Documented in test/README.md (`warm-paths`) and checked
 # against it by the self-test.
@@ -148,7 +148,7 @@ self_test() {
 	_eq "$(printf '%s\n' 'internal/storage/scheduler_store.go' | decide_warm)" "run" "warm: the warm target source runs"
 	_eq "$(printf '%s\n' 'internal/cli/deploy.go' | decide_warm)" "run" "warm: the deploy command runs"
 	_eq "$(printf '%s\n' 'test/e2e/deploy-e2e.sh' | decide_warm)" "run" "warm: the deploy e2e itself runs"
-	_eq "$(printf '%s\n' 'internal/config/server.go' 'cmd/dexaflow-server/main.go' | decide_warm)" "skip" "warm: config and server wiring alone skip"
+	_eq "$(printf '%s\n' 'internal/config/server.go' 'internal/serverapp/run.go' | decide_warm)" "skip" "warm: config and server wiring alone skip"
 	_eq "$(printf '%s\n' 'internal/api/dags.go' 'website/x.md' | decide_warm)" "skip" "warm: an API-only change skips"
 	_eq "$(printf '%s\n' 'internal/storage/repository.go' | decide_warm)" "skip" "warm: other storage files skip"
 	_eq "$(printf '%s\n' 'internal/storage/queries/runs.sql.go' | decide_warm)" "run" "warm: the warm binding query runs"

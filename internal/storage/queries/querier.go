@@ -111,6 +111,9 @@ type Querier interface {
 	CountExpiredSystemAuditLog(ctx context.Context, arg CountExpiredSystemAuditLogParams) (int64, error)
 	// Audit rows of one tenant older than the cutoff, at most max_rows.
 	CountExpiredTenantAuditLog(ctx context.Context, arg CountExpiredTenantAuditLogParams) (int64, error)
+	// Counts what DeleteExpiredUsageEvents would delete, looking at no more than
+	// max_rows events.
+	CountExpiredUsageEvents(ctx context.Context, arg CountExpiredUsageEventsParams) (int64, error)
 	CountImportErrorsFiltered(ctx context.Context, arg CountImportErrorsFilteredParams) (int64, error)
 	CountLiveAPITokens(ctx context.Context, arg CountLiveAPITokensParams) (int64, error)
 	// The live sign-ins, in all and from one requester.
@@ -178,6 +181,13 @@ type Querier interface {
 	// every minute, so the table holds only what is live or just expired (a CLI
 	// polling a just-expired sign-in still hears expired_token).
 	DeleteExpiredCLIDevices(ctx context.Context) (int64, error)
+	// Deletes the oldest usage events in serving order, (xid, id), up to
+	// row_limit, stopping at the first one recorded at or after the cutoff, so the
+	// deleted rows are always a prefix of what the service API serves. Only
+	// events the API can serve are considered, and the pruned mark moves to the
+	// last one deleted in the same statement, forward only: an event a very long
+	// transaction commits below the mark is deleted without moving it back.
+	DeleteExpiredUsageEvents(ctx context.Context, arg DeleteExpiredUsageEventsParams) (int64, error)
 	DeleteExpiredXComIndex(ctx context.Context) error
 	DeleteImportError(ctx context.Context, arg DeleteImportErrorParams) error
 	// The implicit default pool is never deletable (Airflow parity): the guard is in
@@ -357,6 +367,9 @@ type Querier interface {
 	// The id of a user of the tenant: no row when the user is gone or belongs to
 	// another tenant, so a stale token's subject records no creator.
 	GetTenantUserID(ctx context.Context, arg GetTenantUserIDParams) (pgtype.UUID, error)
+	// Whether recording is on and the pruned mark, read in the snapshot of the
+	// page they decide.
+	GetUsageEventsState(ctx context.Context) (GetUsageEventsStateRow, error)
 	GetUserByEmail(ctx context.Context, arg GetUserByEmailParams) (GetUserByEmailRow, error)
 	// The by-id lookup backing the per-request authz reload. Returns the tenant
 	// name (not the uuid) so the reconstructed principal matches the login path's
@@ -671,6 +684,12 @@ type Querier interface {
 	ListTenantIDs(ctx context.Context) ([]pgtype.UUID, error)
 	// "role:action:resource" for every grant of a tenant's built-in roles.
 	ListTenantRolePermissions(ctx context.Context, name string) ([]string, error)
+	// The events after the cursor in serving order, (xid, id), among those whose
+	// writing transaction is below the snapshot's xmin: every transaction that
+	// wrote them has finished, and every row written later sorts after them. The
+	// tenant name and the DAG and run ids are resolved here; they are empty once
+	// the tenant or the run is deleted.
+	ListUsageEvents(ctx context.Context, arg ListUsageEventsParams) ([]ListUsageEventsRow, error)
 	// One row per user in the tenant, newest first, with every granted role name
 	// aggregated into a text array (empty when the user holds none). Paged by the
 	// caller. Never selects password_hash — the list must not expose secrets.
@@ -1191,6 +1210,16 @@ type Querier interface {
 	// user marks failed is neither re-placed nor overridden by a late SUCCESS
 	// record (ADR 0052 amendment).
 	SetTaskInstanceStateByUser(ctx context.Context, arg SetTaskInstanceStateByUserParams) error
+	// Writes the one row of usage_events_switch that the usage event trigger
+	// reads (ADR 0096 point 7). It reports a row only when the value moved, so
+	// the leader can log a change and stay quiet when it rewrites the same value.
+	SetUsageEventsEnabled(ctx context.Context, enabled bool) (int64, error)
+	// Activate or deactivate one user of the tenant (the admin user API, #960).
+	// No row means no such user in this tenant, which the caller answers as 404,
+	// so a user of another tenant is indistinguishable from a missing one. The
+	// per-request authz reload reads is_active, so the change takes effect on the
+	// user's next request, for sessions and API tokens alike.
+	SetUserActive(ctx context.Context, arg SetUserActiveParams) (SetUserActiveRow, error)
 	// Transitions a run's state and stamps the run's own timestamps so the UI can
 	// show its duration: started_at on first entry into 'running', ended_at on a
 	// terminal state. Other timestamps are preserved (the scheduler may re-run).
@@ -1316,6 +1345,13 @@ type Querier interface {
 	// description is nullable, so it keeps the COALESCE preserve semantics: a NULL
 	// param keeps the stored description rather than wiping it.
 	UpsertVariable(ctx context.Context, arg UpsertVariableParams) error
+	// The oldest transaction still running, or the next to start: every event
+	// served now has a lower xid, and every event committed later a higher or
+	// equal one.
+	UsageEventsHorizon(ctx context.Context) (pgtype.Uint64, error)
+	// The age in seconds of the oldest event the route cannot serve yet, because
+	// a transaction older than it is still open; 0 when there is none.
+	UsageEventsLagSeconds(ctx context.Context) (float64, error)
 }
 
 var _ Querier = (*Queries)(nil)

@@ -1,0 +1,11 @@
+kind: Added
+body: |-
+  **Admission webhook.** Set `execution.admission.webhook.url` (Helm
+  `execution.admission.webhook.url`) and every task attempt is sent to your
+  endpoint before it gets a credential or a pod. The endpoint admits it,
+  changes its node selector, tolerations, priority class, labels or
+  annotations, holds it, or refuses it with a reason the task shows. A broken
+  endpoint holds attempts (up to 15 minutes) unless
+  `execution.admission.fail_open` is on. See
+  [Admission hooks](/operate/admission-hooks/). (#2177)
+time: 2026-10-29T13:40:00.000000000+00:00

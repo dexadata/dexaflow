@@ -132,3 +132,8 @@ A DAG registered before you tightened the list is still checked: each task that
 breaks the new list fails at dispatch with the same message, once, without
 spending dispatch retries or the task's own `retries`. The task pod is never
 created.
+
+To set placement per tenant yourself instead of leaving it to DAG authors, or
+to refuse work by a rule of your own, use an
+[admission hook](/operate/admission-hooks/): it runs after this check and may
+set fields this list keeps from authors.

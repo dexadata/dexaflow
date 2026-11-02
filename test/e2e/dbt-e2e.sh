@@ -55,7 +55,7 @@ dump_pods() {
     kubectl logs -n leoflow "$p" --all-containers --tail=80 >&2 2>&1 || true
   done
 }
-fail() { echo "FAIL: $*" >&2; dump_pods; exit 1; }
+fail() { echo "FAIL: $*" >&2; dump_task_instances "$API" "$DAG_ID" "${RUN_ID:-}" "${TOKEN:-}"; dump_pods; exit 1; }
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 
 SERVER_PID=""
@@ -133,10 +133,12 @@ YAML
 
 # The DAG image: the leoflow base (agent) + the dbt adapter + the project baked at
 # the agent's WORKDIR (/home/leoflow), so `dbt run --select X` finds dbt_project.yml.
+cp "$DBT_CONSTRAINTS" "$PROJ/constraints-dbt.txt"
 cat >"$PROJ/Dockerfile" <<DOCKER
 FROM ${BASE_IMAGE}
 USER root
-RUN pip install --no-cache-dir "dbt-postgres==1.9.*"
+COPY constraints-dbt.txt /tmp/constraints-dbt.txt
+RUN pip install --no-cache-dir -c /tmp/constraints-dbt.txt "dbt-postgres==1.9.*"
 COPY . /home/leoflow/
 ENV DBT_PROFILES_DIR=/home/leoflow
 RUN chown -R 65532:65532 /home/leoflow
@@ -183,6 +185,11 @@ TOKEN="$(admin_token "$ROOT/bin/leoflow" "$API" admin)"
 # New DAGs are paused at creation, and a manual run of a paused DAG waits
 # until the DAG is unpaused.
 unpause_dag "$API" "$DAG_ID" "$TOKEN" || fail "unpausing $DAG_ID failed"
+# A pod started before CoreDNS knows host.k3d.internal cannot reach the
+# runner (#919).
+if [ "$HOST_ADDR" = host.k3d.internal ]; then
+  k3d_wait_host_entry 60 || fail "CoreDNS never resolved host.k3d.internal"
+fi
 RUN_ID="$(curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{}' "$API/api/v2/dags/$DAG_ID/dagRuns" | jq -r '.dag_run_id')"
 [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ] || fail "no dag_run_id returned"

@@ -533,6 +533,19 @@ execution:
     warmPools: false
   # -- Refill warm pools on events instead of every 30s: read the warm fleet from a pod informer instead of a LIST per tick, react at once when a warm pod is deleted, fails or is claimed, and create replacements in parallel (up to 4). The periodic tick stays as a backstop. Ignored while `warmPoolsEnabled` is false.
   warmPoolEventRefill: false
+  # Dispatch admission hooks (ADR 0100): an endpoint of yours sees every task attempt before it gets a credential or a pod, and admits it (optionally changing its node selector, tolerations, priority class, labels and annotations), holds it or refuses it with a reason the task shows. See the docs page "Admission hooks". Nothing below reaches the server while `webhook.url` is empty.
+  admission:
+    webhook:
+      # -- Endpoint the control plane POSTs each attempt to. `https`, unless the host is loopback; the chart fails the render otherwise, as the server refuses to start. Empty (the default) installs no hook. Rendered as `LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_URL` only when set.
+      url: ""
+      # -- Name of a ConfigMap with key `ca.crt` holding the PEM bundle the endpoint's certificate must chain to, mounted at `/etc/leoflow/admission-ca/ca.crt` on the roles that dispatch. Read at boot, so a changed bundle takes a restart. Empty uses the system roots. Ignored while `url` is empty.
+      caConfigMap: ""
+      # -- Name of a Secret with key `token` holding a bearer token sent as `Authorization: Bearer`, mounted at `/etc/leoflow/admission-token/token` on the roles that dispatch. The server reads it on every call, so a rotated Secret is picked up without a restart. Empty sends none. Ignored while `url` is empty.
+      tokenSecret: ""
+    # -- How long the control plane waits for the endpoint, in `ms` or whole `s`, from `1ms` to `5s`; the chart refuses anything else, as the server does at boot. Empty keeps the server default, `500ms`. Rendered as `LEOFLOW_EXECUTION_ADMISSION_TIMEOUT` only with a `url`.
+    timeout: ""
+    # -- Admit an attempt unchanged when the endpoint errors, times out or is skipped after repeated failures, instead of holding it until the endpoint is back (and failing it after 15 minutes). The endpoint's own hold or refusal always applies. Rendered as `LEOFLOW_EXECUTION_ADMISSION_FAIL_OPEN` only when on with a `url`.
+    failOpen: false
 
 # Cluster deploy defaults (#1704): what `dexaflow deploy` uses on this cluster for whatever the project's `dexaflow.yaml`, its workspace, its target and the person's CLI config leave unset, so a platform team states its registry once instead of in every repository. Served to signed-in users who may read DAGs on `GET /api/v2/deployDefaults`, read by `dexaflow deploy` and `dexaflow build --push`; the deploy prints where each value came from. None of these is a secret: never put registry credentials here.
 deploy:
