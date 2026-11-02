@@ -13,6 +13,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/envcompat"
 	"github.com/dexadata/dexaflow/internal/serverapp"
 	"github.com/dexadata/dexaflow/pkg/admission"
+	"github.com/dexadata/dexaflow/pkg/logsink"
 )
 
 // runApp builds and serves the control plane; a test replaces it.
@@ -43,6 +44,21 @@ func WithAdmission(h admission.Hook) Option {
 	return func(s *settings) {
 		if h != nil {
 			s.app.AdmissionHooks = append(s.app.AdmissionHooks, h)
+		}
+	}
+}
+
+// WithLogSink stores task logs in sink instead of the backend logs.backend
+// configures, whose keys are then ignored; boot logs that the sink came from
+// an option. The sink serves every read of a task log too, so the API, the UI
+// and the CLI show what it stored. The caller owns it: Run never closes it.
+// The optional interfaces of package logsink apply, and a sink without
+// logsink.Resumer refuses an agent's reconnect of a log stream. A nil sink
+// keeps the configured one; with several options the last one wins.
+func WithLogSink(sink logsink.Sink) Option {
+	return func(s *settings) {
+		if sink != nil {
+			s.app.LogSink = sink
 		}
 	}
 }

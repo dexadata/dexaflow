@@ -9,10 +9,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// Channel is the Redis pub/sub channel a task attempt's live log lines are
+// tailChannel is the Redis pub/sub channel a task attempt's live log lines are
 // published on. Both the agent-facing writer and the read API derive it from
 // the same Ref, so they meet without an extra lookup.
-func (r Ref) Channel() string {
+func tailChannel(r Ref) string {
 	return "log_tail:" + r.TenantID + ":" + r.DagID + ":" + r.RunID + ":" + r.TaskID + ":" + strconv.Itoa(r.TryNumber)
 }
 
@@ -34,7 +34,7 @@ func NewRedisTailer(client *redis.Client) *RedisTailer { return &RedisTailer{cli
 
 // Publish sends one log line to the task's tail channel.
 func (t *RedisTailer) Publish(ctx context.Context, ref Ref, line string) error {
-	if err := t.client.Publish(ctx, ref.Channel(), line).Err(); err != nil {
+	if err := t.client.Publish(ctx, tailChannel(ref), line).Err(); err != nil {
 		return fmt.Errorf("publishing log tail: %w", err)
 	}
 	return nil
@@ -47,7 +47,7 @@ func (t *RedisTailer) Publish(ctx context.Context, ref Ref, line string) error {
 // pattern subscriber (say, a forwarder on log_tail:*) keeps every attempt
 // publishing. Both go in one round trip.
 func (t *RedisTailer) HasSubscribers(ctx context.Context, ref Ref) (bool, error) {
-	ch := ref.Channel()
+	ch := tailChannel(ref)
 	var numSub *redis.MapStringIntCmd
 	var numPat *redis.IntCmd
 	if _, err := t.client.Pipelined(ctx, func(p redis.Pipeliner) error {
@@ -64,7 +64,7 @@ func (t *RedisTailer) HasSubscribers(ctx context.Context, ref Ref) (bool, error)
 // function that ends the subscription. The line channel closes when the
 // subscription is canceled or the context is done.
 func (t *RedisTailer) Subscribe(ctx context.Context, ref Ref) (lines <-chan string, cancel func()) {
-	sub := t.client.Subscribe(ctx, ref.Channel())
+	sub := t.client.Subscribe(ctx, tailChannel(ref))
 	ch := make(chan string)
 	go func() {
 		defer close(ch)
