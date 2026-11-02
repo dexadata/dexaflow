@@ -195,7 +195,9 @@ What checks it, and when:
    for a **GA** move `CHANGELOG [Unreleased]` to `[X.Y.Z] - <date>`
    with a fresh empty `[Unreleased]` (an **rc** keeps `[Unreleased]`). See
    [How the changelog flows](#how-the-changelog-flows). Run every
-   `scripts/check-*.sh` gate against the tag. One of them,
+   `scripts/check-*.sh` gate against the tag; the set must equal
+   `.github/ci/gates.txt`, and the cut names any gate that is missing or
+   unexpected. One of them,
    `check-changelog-entry.sh`, is a pull-request gate with no question to ask
    when there is no pull request, so it reports `gate SKIP`; the cut log
    distinguishes SKIP from PASS to keep the count honest. Another,

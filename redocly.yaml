@@ -1,0 +1,8 @@
+# redocly lint reads this from the repository root (ci.yaml, "Lint OpenAPI spec").
+extends:
+  - recommended
+rules:
+  # pkg/client's method names come from operationId; without one oapi-codegen
+  # derives a name from the path, and neither it nor the recommended ruleset
+  # (which only warns) fails the build (#562).
+  operation-operationId: error

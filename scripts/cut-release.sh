@@ -66,6 +66,8 @@ die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 # the copy of the same revision.
 # shellcheck source=scripts/docs-promote.sh
 . "$(dirname "${BASH_SOURCE[0]}")/docs-promote.sh"
+# shellcheck source=scripts/manifest-diff.sh
+. "$(dirname "${BASH_SOURCE[0]}")/manifest-diff.sh"
 
 # ---- pure logic (unit-testable, no network) --------------------------------
 
@@ -662,9 +664,17 @@ JSON
   mkdir -p "$gd/scripts"
   printf '#!/bin/sh\nprintf "%%s\\n" "$*" >"%s/stale.argv"\n' "$gd" >"$gd/scripts/check-stale-versions.sh"
   printf '#!/bin/sh\nprintf "%%s\\n" "$*" >"%s/other.argv"\n' "$gd" >"$gd/scripts/check-other.sh"
-  ( ROOT="$gd" MIN_GATES=2 run_gates v9.9.9-rc.1 release-9.9 >/dev/null 2>&1 )
+  printf 'check-stale-versions.sh\ncheck-other.sh\n' >"$gd/gates.txt"
+  ( ROOT="$gd" GATES_MANIFEST="$gd/gates.txt" run_gates v9.9.9-rc.1 release-9.9 >/dev/null 2>&1 )
   _eq "$(cat "$gd/stale.argv" 2>/dev/null)" "--candidate v9.9.9-rc.1" "run_gates judges stale pins against the tag being cut"
   _eq "$(cat "$gd/other.argv" 2>/dev/null)" "" "and still runs every other gate bare"
+  # The gate set is compared with the manifest by name, not a count (#982): a
+  # rename keeps the count and must still stop the cut.
+  mv "$gd/scripts/check-other.sh" "$gd/scripts/check-renamed.sh"
+  local gerr grc=0
+  gerr="$( ( ROOT="$gd" GATES_MANIFEST="$gd/gates.txt" run_gates v9.9.9-rc.1 release-9.9 ) 2>&1 >/dev/null)" || grc=$?
+  _eq "$grc" "1" "a renamed gate stops the cut"
+  _eq "$(grep -c 'missing check-other.sh; unexpected check-renamed.sh' <<<"$gerr")" "1" "and the message names both sides"
   rm -rf "$gd"
 
   # The changelog sync runs after a patch GA tag and only then: a minor GA is
@@ -1060,11 +1070,14 @@ run_gates() { # <tag> <base>
   local -a gates=("$ROOT"/scripts/check-*.sh)
   shopt -u nullglob
   # A gate renamed out of check-*.sh silently leaves the cut's gate set with no
-  # signal at all, so assert the floor.
-  [ "${#gates[@]}" -ge "${MIN_GATES:-20}" ] || {
-    echo "gate set shrank to ${#gates[@]} (expected >= ${MIN_GATES:-20}) — a check-*.sh was renamed or removed" >&2
+  # signal at all, so compare it with the committed manifest and name what
+  # differs (#982). check-script-selftests.sh makes the same comparison on every
+  # pull request; this one guards the cut itself.
+  local diff_msg
+  if ! diff_msg="$(for s in "${gates[@]}"; do basename "$s"; done | manifest_diff "${GATES_MANIFEST:-$ROOT/.github/ci/gates.txt}")"; then
+    echo "gate set differs: $diff_msg" >&2
     return 1
-  }
+  fi
   for s in "${gates[@]}"; do
     # Capture rather than discard: a bare "gate FAIL <name>" during a cut is
     # unrecoverable, since $logf does not exist until after the tag.
