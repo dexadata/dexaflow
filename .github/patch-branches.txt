@@ -1,0 +1,14 @@
+# Which branch each minor's patches are cut from (ADR 0102).
+#
+# A minor that is not listed here has its patches cut from main, like its
+# X.Y.0. List a minor only when main takes a change that may not ship in that
+# minor's next patch: create release-X.Y from the minor's newest GA tag, add
+# the line below in the pull request that brings the change, and from then on
+# the minor's fixes reach release-X.Y as `git cherry-pick -x` pull requests.
+#
+# Format: one minor per line, `X.Y release-X.Y`. scripts/release-base.sh
+# reads this file from origin/main.
+#
+# 0.5: patches up to v0.5.8 came from release-0.5 (ADR 0062). From v0.5.9 on
+# they come from main again, since release-0.5 carried every change main had
+# (.github/release-skip.txt was empty) and the picks only doubled CI.
