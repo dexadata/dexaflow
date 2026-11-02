@@ -80,7 +80,7 @@ func TestDeployDefaultsWiringAgainstPostgres(t *testing.T) {
 		Tracer:   noop.NewTracerProvider().Tracer("test"),
 	}
 	authn := auth.NewJWTAuthenticator(repo, cfg.Auth.JWT.Secret, time.Hour)
-	apiSrv, buildErr := buildAPIServer(cfg, tel, authn, pg, repo, nil, nil, nil, nil, api.ExecutorInfo{}, nil, nil, nil)
+	apiSrv, buildErr := buildAPIServer(cfg, tel, authn, pg, repo, nil, nil, nil, nil, api.ExecutorInfo{}, nil, nil, nil, nil)
 	if buildErr != nil {
 		t.Fatalf("buildAPIServer: %v", buildErr)
 	}

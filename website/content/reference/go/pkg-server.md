@@ -20,7 +20,9 @@ Compatibility: a patch release never breaks an exported identifier of this packa
 - [type Option](<#Option>)
   - [func WithAdmission\(h admission.Hook\) Option](<#WithAdmission>)
   - [func WithLogSink\(sink logsink.Sink\) Option](<#WithLogSink>)
+  - [func WithUIServer\(ui UIServer\) Option](<#WithUIServer>)
   - [func WithXComBackend\(backend xcomstore.Backend\) Option](<#WithXComBackend>)
+- [type UIServer](<#UIServer>)
 
 
 ## Variables
@@ -32,7 +34,7 @@ var ErrDatabaseReplaced = serverapp.ErrDatabaseReplaced
 ```
 
 <a name="ExitCode"></a>
-## func [ExitCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L102>)
+## func [ExitCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L127>)
 
 ```go
 func ExitCode(err error) int
@@ -41,7 +43,7 @@ func ExitCode(err error) int
 ExitCode is the process exit code for an error Run returned: 0 for nil, 3 for ErrDatabaseReplaced, 1 for anything else.
 
 <a name="Run"></a>
-## func [Run](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L91>)
+## func [Run](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L116>)
 
 ```go
 func Run(ctx context.Context, opts ...Option) error
@@ -84,7 +86,7 @@ func main() {
 </details>
 
 <a name="Option"></a>
-## type [Option](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L31>)
+## type [Option](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L32>)
 
 Option changes how Run builds the server. More options come in later releases \(ADR 0099 §3\); adding one is not a breaking change.
 
@@ -93,7 +95,7 @@ type Option func(*settings)
 ```
 
 <a name="WithAdmission"></a>
-### func [WithAdmission](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L44>)
+### func [WithAdmission](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L45>)
 
 ```go
 func WithAdmission(h admission.Hook) Option
@@ -141,7 +143,7 @@ func main() {
 </details>
 
 <a name="WithLogSink"></a>
-### func [WithLogSink](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L59>)
+### func [WithLogSink](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L60>)
 
 ```go
 func WithLogSink(sink logsink.Sink) Option
@@ -222,8 +224,67 @@ func main() {
 </p>
 </details>
 
+<a name="WithUIServer"></a>
+### func [WithUIServer](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L100>)
+
+```go
+func WithUIServer(ui UIServer) Option
+```
+
+WithUIServer serves ui in place of the embedded single page app; the ui.\* keys that configure the embedded one \(banners, instance name, home link, favicon, stylesheets\) are then ignored, and boot logs that the UI came from an option. The API, /ui/config included, is unchanged. A nil ui keeps the embedded one; with several options the last one wins.
+
+<details><summary>Example</summary>
+<p>
+
+A control plane that serves a UI of its own in place of the embedded one.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"io/fs"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/dexadata/dexaflow/pkg/server"
+)
+
+// shellUI serves a UI built into dist/ by its own toolchain: the bundle under
+// /static/ and the same index.html for every client side route.
+type shellUI struct{ dist fs.FS }
+
+func (u shellUI) StaticHandler() http.Handler { return http.FileServerFS(u.dist) }
+
+func (u shellUI) Index(w http.ResponseWriter, _ string) {
+	b, err := fs.ReadFile(u.dist, "index.html")
+	if err != nil {
+		http.Error(w, "the UI is not built", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(b)
+}
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := server.Run(ctx, server.WithUIServer(shellUI{dist: os.DirFS("dist")}))
+	stop()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(server.ExitCode(err))
+	}
+}
+```
+
+</p>
+</details>
+
 <a name="WithXComBackend"></a>
-### func [WithXComBackend](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L75>)
+### func [WithXComBackend](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L76>)
 
 ```go
 func WithXComBackend(backend xcomstore.Backend) Option
@@ -314,5 +375,17 @@ func main() {
 
 </p>
 </details>
+
+<a name="UIServer"></a>
+## type [UIServer](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L90-L93>)
+
+UIServer serves a web UI in place of the embedded one. The server mounts StaticHandler under /static/, with that prefix stripped from the request path, and calls Index for every other GET that matches no API or /ui/ route, with the base path the UI is served under. Index is reached only with a valid session: a visitor without one is redirected to the server's own sign\-in page first, so a UI never renders for a signed\-out visitor.
+
+```go
+type UIServer interface {
+    StaticHandler() http.Handler
+    Index(w http.ResponseWriter, basePath string)
+}
+```
 
 Generated by [gomarkdoc](<https://github.com/princjef/gomarkdoc>)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"testing"
 
@@ -143,5 +144,33 @@ func TestWithXComBackendPassesTheLastNonNilBackend(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("the server got backend %v, want %v", got, want)
+	}
+}
+
+type stubUI struct{ name string }
+
+func (stubUI) StaticHandler() http.Handler       { return http.NotFoundHandler() }
+func (stubUI) Index(http.ResponseWriter, string) {}
+
+func TestWithUIServerPassesTheLastNonNilUI(t *testing.T) {
+	orig := runApp
+	t.Cleanup(func() { runApp = orig })
+	var got any
+	runApp = func(ctx context.Context, o serverapp.Options) error {
+		got = o.UIServer
+		return nil
+	}
+	if err := Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Fatalf("without the option the server got UI %v; want none, so it serves the embedded one", got)
+	}
+	want := stubUI{name: "second"}
+	if err := Run(context.Background(), WithUIServer(stubUI{name: "first"}), WithUIServer(want), WithUIServer(nil)); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("the server got UI %v, want %v", got, want)
 	}
 }

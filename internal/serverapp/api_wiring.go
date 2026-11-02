@@ -42,7 +42,7 @@ func loginRateLimit(cfg *config.ServerConfig) int {
 // build and its error handling do not inflate run()'s complexity. Under
 // provider: oidc it discovers the IdP and builds the login flow now, so a
 // misconfigured issuer fails boot closed rather than at first login.
-func startAPISide(ctx context.Context, cfg *config.ServerConfig, tel *observability.Telemetry, authn *auth.JWTAuthenticator, pg *storage.Postgres, repo *storage.Repository, xcomReader *storage.XComReader, logSink logs.Sink, logTailer logs.Tailer, checks map[string]api.HealthChecker, executorInfo api.ExecutorInfo, schedulerHealth api.Heartbeater, servesAPI bool) (*http.Server, error) {
+func startAPISide(ctx context.Context, cfg *config.ServerConfig, tel *observability.Telemetry, authn *auth.JWTAuthenticator, pg *storage.Postgres, repo *storage.Repository, xcomReader *storage.XComReader, logSink logs.Sink, logTailer logs.Tailer, checks map[string]api.HealthChecker, executorInfo api.ExecutorInfo, schedulerHealth api.Heartbeater, servesAPI bool, uiFromOptions api.UIServer) (*http.Server, error) {
 	if !servesAPI {
 		return nil, nil //nolint:nilnil // scheduler-only role serves no API; that is not an error
 	}
@@ -58,7 +58,7 @@ func startAPISide(ctx context.Context, cfg *config.ServerConfig, tel *observabil
 		startCLIDeviceSweep(ctx, repo, tel.Logger)
 	}
 	//nolint:contextcheck // buildAPIServer wires per-request handlers; each request carries its own context
-	srv, err := buildAPIServer(cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, oidcFlow, newTrustedIssuer(ctx, cfg))
+	srv, err := buildAPIServer(cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, oidcFlow, newTrustedIssuer(ctx, cfg), uiFromOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -163,6 +163,21 @@ func newUIServer(cfg *config.ServerConfig, logger *slog.Logger) (*ui.Server, api
 	return uiSrv, editorFS
 }
 
+// selectUIServer returns the UI the API serves and the Lite editor's
+// workspace. A UI passed as an option replaces the embedded SPA, and the ui.*
+// keys that configure the embedded one (banners, instance name, home link,
+// favicon, stylesheets) do not reach it; boot logs the choice. The embedded
+// SPA bundle is gzipped once, off the startup path, so no browser pays it.
+func selectUIServer(cfg *config.ServerConfig, fromOptions api.UIServer, logger *slog.Logger) (api.UIServer, api.WorkspaceFS) {
+	if fromOptions != nil {
+		logger.Info("ui: server from options, the embedded SPA is not served", "type", fmt.Sprintf("%T", fromOptions))
+		return fromOptions, liteEditorFS(cfg, logger)
+	}
+	uiSrv, editorFS := newUIServer(cfg, logger)
+	go uiSrv.Precompress()
+	return uiSrv, editorFS
+}
+
 // uiTheme returns ui.theme as raw JSON for /ui/config, or nil when unset.
 // Validate has already checked it is a JSON object.
 func uiTheme(cfg *config.ServerConfig) json.RawMessage {
@@ -185,13 +200,11 @@ func oidcSettings(o config.OIDCSection) api.OIDCSettings {
 	}
 }
 
-func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, authn *auth.JWTAuthenticator, pg *storage.Postgres, repo *storage.Repository, xcomReader *storage.XComReader, logSink logs.Sink, logTailer logs.Tailer, checks map[string]api.HealthChecker, executorInfo api.ExecutorInfo, schedulerHealth api.Heartbeater, oidcFlow *oidc.Flow, trustedIssuer api.TrustedIssuer) (*http.Server, error) {
+func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, authn *auth.JWTAuthenticator, pg *storage.Postgres, repo *storage.Repository, xcomReader *storage.XComReader, logSink logs.Sink, logTailer logs.Tailer, checks map[string]api.HealthChecker, executorInfo api.ExecutorInfo, schedulerHealth api.Heartbeater, oidcFlow *oidc.Flow, trustedIssuer api.TrustedIssuer, uiFromOptions api.UIServer) (*http.Server, error) {
 	if cfg.Auth.DevNoAuth {
 		tel.Logger.Warn("AUTHENTICATION DISABLED (auth.dev_no_auth): every request is treated as admin. Dev only: NEVER use in production")
 	}
-	uiSrv, editorFS := newUIServer(cfg, tel.Logger)
-	// Gzip the SPA bundle once, off the startup path, so no browser pays it.
-	go uiSrv.Precompress()
+	uiSrv, editorFS := selectUIServer(cfg, uiFromOptions, tel.Logger)
 
 	// CI OIDC (ADR 0092): unchanged deps unless auth.ci_oidc lists an issuer.
 	handler, err := api.NewServer(withCIOIDC(withAPITokens(api.Dependencies{

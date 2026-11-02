@@ -1057,6 +1057,17 @@ selections and the navigation highlight, on the light and the dark theme. The UI
 exposes part of its styling through the theme; anything else is a `globalCss`
 rule, and holds only as long as the bundle keeps the selector it targets.
 
+### A UI of your own
+
+A program that runs the control plane with
+[`pkg/server`](/reference/go/pkg-server/) can serve a web UI of its own with
+`server.WithUIServer` in place of the embedded one. The server mounts the UI's
+static handler under `/static/` and serves its index page for every other GET
+that matches no API route, only once the visitor has a valid session: a
+visitor without one is sent to the server's sign-in page first. The `ui.*`
+keys that brand the embedded UI do not apply to it, and boot logs
+`ui: server from options`.
+
 ### Trusted-issuer handoff
 
 When Dexaflow is part of a larger platform that already signs its users in,
