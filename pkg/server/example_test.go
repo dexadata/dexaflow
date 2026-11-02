@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/dexadata/dexaflow/pkg/admission"
+	"github.com/dexadata/dexaflow/pkg/authn"
 	"github.com/dexadata/dexaflow/pkg/logsink"
 	"github.com/dexadata/dexaflow/pkg/server"
 	"github.com/dexadata/dexaflow/pkg/xcomstore"
@@ -181,6 +183,72 @@ func (u shellUI) Index(w http.ResponseWriter, _ string) {
 func ExampleWithUIServer() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	err := server.Run(ctx, server.WithUIServer(shellUI{dist: os.DirFS("dist")}))
+	stop()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(server.ExitCode(err))
+	}
+}
+
+// directory signs users in against a company directory, here a fixed table,
+// and recognizes the tokens it hands out. tenantID is the tenant's name.
+type directory struct {
+	tenantID string
+	users    map[string]string // email -> password
+}
+
+func (d directory) IssueToken(_ context.Context, c authn.Credentials) (string, error) {
+	if pw, ok := d.users[c.Username]; !ok || pw != c.Password {
+		return "", authn.ErrInvalidCredentials
+	}
+	return "dir:" + c.Username, nil
+}
+
+func (d directory) Authenticate(_ context.Context, token string) (*authn.User, error) {
+	email, ok := strings.CutPrefix(token, "dir:")
+	if !ok || d.users[email] == "" {
+		return nil, authn.ErrInvalidToken
+	}
+	return &authn.User{
+		ID: email, TenantID: d.tenantID, Email: email,
+		Roles:       []string{"viewer"},
+		Permissions: []authn.Permission{{Action: "read", Resource: "*"}},
+	}, nil
+}
+
+// A control plane whose password sign-in goes to a directory of its own. The
+// sessions the server mints itself (SSO, handoff, renewal) keep working.
+func ExampleWithAuthenticator() {
+	dir := directory{tenantID: "default", users: map[string]string{"ada@example.com": "s3cret"}}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := server.Run(ctx, server.WithAuthenticator(dir))
+	stop()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(server.ExitCode(err))
+	}
+}
+
+// portal verifies the handoff tokens of the operator's own portal, here a
+// fixed table of one-time codes.
+type portal struct{ codes map[string]authn.Identity }
+
+func (portal) Provider() string { return "portal" }
+
+func (p portal) Verify(_ context.Context, raw string) (*authn.Identity, error) {
+	id, ok := p.codes[raw]
+	if !ok {
+		return nil, errors.New("unknown handoff code")
+	}
+	return &id, nil
+}
+
+// A control plane that opens UI sessions from the operator's portal, posted
+// from https://portal.example.com.
+func ExampleWithTrustedIssuer() {
+	p := portal{codes: map[string]authn.Identity{"c-1": {Subject: "u-42", Email: "ada@example.com", Tenant: "default"}}}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := server.Run(ctx, server.WithTrustedIssuer(p, "https://portal.example.com"))
 	stop()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

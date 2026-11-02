@@ -5,14 +5,17 @@ package auth
 import (
 	"context"
 	"errors"
-	"slices"
+
+	"github.com/dexadata/dexaflow/pkg/authn"
 )
 
 // ErrInvalidCredentials is returned when a username/password pair is rejected.
-var ErrInvalidCredentials = errors.New("invalid credentials")
+// It is the public contract's sentinel (ADR 0099).
+var ErrInvalidCredentials = authn.ErrInvalidCredentials
 
 // ErrInvalidToken is returned when a token is malformed, expired, or unsigned by us.
-var ErrInvalidToken = errors.New("invalid token")
+// It is the public contract's sentinel (ADR 0099).
+var ErrInvalidToken = authn.ErrInvalidToken
 
 // ErrTenantlessToken is joined with ErrInvalidToken when a token is trusted
 // from its signed claims but names no tenant: such a principal cannot be scoped
@@ -26,30 +29,13 @@ var ErrTenantlessToken = errors.New("token names no tenant")
 var ErrUserNotFound = errors.New("user not found")
 
 // Permission is an action on a resource (e.g. {Action: "read", Resource: "dag"}).
-type Permission struct {
-	Action   string `json:"action"`
-	Resource string `json:"resource"`
-}
+// It is defined by the public contract (ADR 0099).
+type Permission = authn.Permission
 
 // User is an authenticated principal with its tenant, roles, and permissions.
-type User struct {
-	ID          string
-	TenantID    string
-	Email       string
-	Roles       []string
-	Permissions []Permission
-	// Scoped marks a principal authenticated by a client token that carries
-	// OAuth scopes (ADR 0067): the scopes then narrow what its roles allow.
-	// Engine tokens and sessions are not scoped; only their roles decide.
-	Scoped bool
-	// Scopes are the scopes a Scoped principal's token carries.
-	Scopes []string
-	// DeployAudience marks a principal authenticated by a trusted-issuer
-	// bearer minted for auth.trusted_issuer.deploy_audience (#1773). When that
-	// setting is on, only such a principal may deploy. Only the issuer bearer
-	// sets it; no other credential can.
-	DeployAudience bool
-}
+// It is defined by the public contract (ADR 0099), with HasScope and
+// HasPermission.
+type User = authn.User
 
 // The scopes a trusted-issuer bearer token may carry (ADR 0067). No scope
 // implies another.
@@ -62,40 +48,12 @@ const (
 	ScopeDeploy = "dexaflow:deploy"
 )
 
-// HasScope reports whether the principal's token carries scope.
-func (u *User) HasScope(scope string) bool {
-	return slices.Contains(u.Scopes, scope)
-}
-
-// HasPermission reports whether the user may perform action on resource. The
-// admin role, or an admin action / wildcard resource permission, grants access.
-func (u *User) HasPermission(action, resource string) bool {
-	for _, r := range u.Roles {
-		if r == "admin" {
-			return true
-		}
-	}
-	for _, p := range u.Permissions {
-		if (p.Action == action || p.Action == "admin") && (p.Resource == resource || p.Resource == "*") {
-			return true
-		}
-	}
-	return false
-}
-
 // Credentials are the inputs to token issuance.
-type Credentials struct {
-	Tenant   string
-	Username string
-	Password string
-}
+type Credentials = authn.Credentials
 
 // Authenticator issues and validates authentication tokens. The MVP ships a
 // JWT implementation; the interface keeps OIDC/LDAP pluggable (ADR 0008).
-type Authenticator interface {
-	Authenticate(ctx context.Context, token string) (*User, error)
-	IssueToken(ctx context.Context, creds Credentials) (string, error)
-}
+type Authenticator = authn.Authenticator
 
 // UserStore loads users for authentication. storage implements it.
 type UserStore interface {

@@ -42,7 +42,7 @@ func loginRateLimit(cfg *config.ServerConfig) int {
 // build and its error handling do not inflate run()'s complexity. Under
 // provider: oidc it discovers the IdP and builds the login flow now, so a
 // misconfigured issuer fails boot closed rather than at first login.
-func startAPISide(ctx context.Context, cfg *config.ServerConfig, tel *observability.Telemetry, authn *auth.JWTAuthenticator, pg *storage.Postgres, repo *storage.Repository, xcomReader *storage.XComReader, logSink logs.Sink, logTailer logs.Tailer, checks map[string]api.HealthChecker, executorInfo api.ExecutorInfo, schedulerHealth api.Heartbeater, servesAPI bool, uiFromOptions api.UIServer) (*http.Server, error) {
+func startAPISide(ctx context.Context, cfg *config.ServerConfig, tel *observability.Telemetry, authn *auth.JWTAuthenticator, pg *storage.Postgres, repo *storage.Repository, xcomReader *storage.XComReader, logSink logs.Sink, logTailer logs.Tailer, checks map[string]api.HealthChecker, executorInfo api.ExecutorInfo, schedulerHealth api.Heartbeater, servesAPI bool, extras apiExtras) (*http.Server, error) {
 	if !servesAPI {
 		return nil, nil //nolint:nilnil // scheduler-only role serves no API; that is not an error
 	}
@@ -58,7 +58,7 @@ func startAPISide(ctx context.Context, cfg *config.ServerConfig, tel *observabil
 		startCLIDeviceSweep(ctx, repo, tel.Logger)
 	}
 	//nolint:contextcheck // buildAPIServer wires per-request handlers; each request carries its own context
-	srv, err := buildAPIServer(cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, oidcFlow, newTrustedIssuer(ctx, cfg), uiFromOptions)
+	srv, err := buildAPIServer(cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, oidcFlow, extras.withConfiguredIssuer(ctx, cfg))
 	if err != nil {
 		return nil, err
 	}
@@ -104,6 +104,26 @@ func discoverOIDCFlow(ctx context.Context, cfg *config.ServerConfig, logger *slo
 		"jit_provisioning", cfg.Auth.OIDC.JITProvisioning,
 		"break_glass_accounts", len(cfg.Auth.OIDC.BreakGlassEmails))
 	return flow, nil
+}
+
+// apiExtras are the API components a program built on pkg/server passed as
+// options (ADR 0099 §3); a zero field keeps the configured component.
+type apiExtras struct {
+	ui            api.UIServer
+	authenticator auth.Authenticator
+	issuer        api.TrustedIssuer
+	issuerOrigins []string
+}
+
+// withConfiguredIssuer returns e with the trusted issuer auth.trusted_issuer
+// configures, unless one came from options. validateOptions has already
+// refused both at once.
+func (e apiExtras) withConfiguredIssuer(ctx context.Context, cfg *config.ServerConfig) apiExtras {
+	if e.issuer == nil {
+		e.issuer = newTrustedIssuer(ctx, cfg)
+		e.issuerOrigins = cfg.Auth.TrustedIssuer.AllowedOrigins
+	}
+	return e
 }
 
 // newTrustedIssuer builds the #1284 verifier from auth.trusted_issuer, or nil
@@ -200,11 +220,11 @@ func oidcSettings(o config.OIDCSection) api.OIDCSettings {
 	}
 }
 
-func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, authn *auth.JWTAuthenticator, pg *storage.Postgres, repo *storage.Repository, xcomReader *storage.XComReader, logSink logs.Sink, logTailer logs.Tailer, checks map[string]api.HealthChecker, executorInfo api.ExecutorInfo, schedulerHealth api.Heartbeater, oidcFlow *oidc.Flow, trustedIssuer api.TrustedIssuer, uiFromOptions api.UIServer) (*http.Server, error) {
+func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, authn *auth.JWTAuthenticator, pg *storage.Postgres, repo *storage.Repository, xcomReader *storage.XComReader, logSink logs.Sink, logTailer logs.Tailer, checks map[string]api.HealthChecker, executorInfo api.ExecutorInfo, schedulerHealth api.Heartbeater, oidcFlow *oidc.Flow, extras apiExtras) (*http.Server, error) {
 	if cfg.Auth.DevNoAuth {
 		tel.Logger.Warn("AUTHENTICATION DISABLED (auth.dev_no_auth): every request is treated as admin. Dev only: NEVER use in production")
 	}
-	uiSrv, editorFS := selectUIServer(cfg, uiFromOptions, tel.Logger)
+	uiSrv, editorFS := selectUIServer(cfg, extras.ui, tel.Logger)
 
 	// CI OIDC (ADR 0092): unchanged deps unless auth.ci_oidc lists an issuer.
 	handler, err := api.NewServer(withCIOIDC(withAPITokens(api.Dependencies{
@@ -232,7 +252,7 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		Auth: api.AuthDeps{
 			// withAPITokens puts the API tokens (ADR 0074) in front of it unless
 			// auth.api_tokens.disabled is true.
-			Authenticator:        authn,
+			Authenticator:        requestAuthenticator(authn, extras.authenticator, tel.Logger),
 			RateLimiter:          auth.NewRateLimiter(loginRateLimit(cfg), time.Minute),
 			TokenTTLSecs:         cfg.Auth.JWT.TokenTTLSeconds,
 			TokenRenewer:         authn,
@@ -259,13 +279,15 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 		Issuers: api.IssuerDeps{
 			// Trusted-issuer handoff (#1284): nil unless auth.trusted_issuer is set,
 			// which leaves POST /api/v2/auth/session unregistered.
-			TrustedIssuer:        trustedIssuer,
+			// An issuer passed as an option brings its own origins and leaves
+			// the auth.trusted_issuer section empty (checked at startup).
+			TrustedIssuer:        extras.issuer,
 			TrustedIssuerUsers:   repo,
-			TrustedIssuerOrigins: cfg.Auth.TrustedIssuer.AllowedOrigins,
+			TrustedIssuerOrigins: extras.issuerOrigins,
 			// Host binding (#1463): empty unless auth.trusted_issuer.host_pattern is set.
 			TrustedIssuerHostPattern: cfg.Auth.TrustedIssuer.HostPattern,
 			// Trusted-issuer bearer (#1468): nil unless bearer audiences are set.
-			TrustedIssuerBearer: issuerBearer(trustedIssuer),
+			TrustedIssuerBearer: issuerBearer(extras.issuer),
 			// Deploys through the issuer only (#1773): off unless
 			// auth.trusted_issuer.deploy_audience is set.
 			DeployViaIssuer: cfg.Auth.TrustedIssuer.DeployAudience != "",

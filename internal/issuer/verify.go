@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dexadata/dexaflow/pkg/authn"
+
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
 )
 
@@ -84,19 +86,9 @@ type Config struct {
 	DeployAudience string
 }
 
-// Identity is what a verified token says about the user.
-type Identity struct {
-	Subject string
-	Email   string
-	Tenant  string
-	// Scopes are a bearer token's OAuth scopes (ADR 0067); nil for a handoff
-	// token, whose session is not scoped.
-	Scopes []string
-	// DeployAudience is true for a bearer whose `aud` is Config.DeployAudience
-	// alone (#1773); a token that also names another audience is not one. It says where the token was minted for,
-	// not what it may do: its scopes still decide that.
-	DeployAudience bool
-}
+// Identity is what a verified token says about the user. It is defined by
+// the public contract (ADR 0099).
+type Identity = authn.Identity
 
 // Verifier checks tokens against one trusted issuer.
 type Verifier struct {
@@ -206,7 +198,7 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (*Identity, error) {
 // signature, issuer and expiry already verified: a subject, a bounded and not
 // post-dated lifetime, and an allowed tenant. It returns the claims too, for
 // the checks that differ.
-func (v *Verifier) identity(tok *gooidc.IDToken, maxLifetime time.Duration) (*Identity, map[string]any, error) {
+func (v *Verifier) identity(tok *gooidc.IDToken, maxLifetime time.Duration) (ident *Identity, raw map[string]any, err error) {
 	if tok.Subject == "" {
 		return nil, nil, fmt.Errorf("%w: no subject", ErrInvalidToken)
 	}

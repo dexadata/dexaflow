@@ -14,6 +14,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/envcompat"
 	"github.com/dexadata/dexaflow/internal/serverapp"
 	"github.com/dexadata/dexaflow/pkg/admission"
+	"github.com/dexadata/dexaflow/pkg/authn"
 	"github.com/dexadata/dexaflow/pkg/logsink"
 	"github.com/dexadata/dexaflow/pkg/xcomstore"
 )
@@ -101,6 +102,48 @@ func WithUIServer(ui UIServer) Option {
 	return func(s *settings) {
 		if ui != nil {
 			s.app.UIServer = ui
+		}
+	}
+}
+
+// WithAuthenticator checks API requests and password sign-in with a, an
+// authenticator of your own, such as one backed by a company directory. A
+// request token goes to the server's own authenticator first, so the
+// sessions an SSO login, a trusted-issuer handoff or a renewal opens keep
+// working, and to a only when the server refuses it as invalid. Password
+// sign-in (POST /api/v2/auth/token) goes to a alone. API tokens and CI
+// sessions are still checked in front of both, and agent tokens never reach
+// a.
+//
+// The server authorizes the User a returns by its roles and permissions, and
+// clears its Scoped, Scopes and DeployAudience fields first: only the server
+// grants those (ADR 0099 §6). A nil a keeps the server's own sign-in; with
+// several options the last one wins.
+func WithAuthenticator(a authn.Authenticator) Option {
+	return func(s *settings) {
+		if a != nil {
+			s.app.Authenticator = a
+		}
+	}
+}
+
+// WithTrustedIssuer verifies the trusted-issuer handoff (POST
+// /api/v2/auth/session) with an issuer of your own, accepting a handoff only
+// when the browser posts it from one of allowedOrigins (scheme://host[:port],
+// one or more). A verified identity opens a UI session for the active user
+// linked to the issuer under its subject, in its tenant; it never creates a
+// user and never brings roles. Run refuses to start when allowedOrigins is
+// empty or invalid, or when auth.trusted_issuer is configured too.
+//
+// The bearer mode, the deploy audience and the host pattern of
+// auth.trusted_issuer need the built-in verifier and stay off with an issuer
+// from options. A nil ti keeps the configured issuer; with several options
+// the last one wins.
+func WithTrustedIssuer(ti authn.TrustedIssuer, allowedOrigins ...string) Option {
+	return func(s *settings) {
+		if ti != nil {
+			s.app.TrustedIssuer = ti
+			s.app.TrustedIssuerOrigins = allowedOrigins
 		}
 	}
 }

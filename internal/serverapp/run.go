@@ -28,6 +28,22 @@ import (
 	"github.com/dexadata/dexaflow/pkg/admission"
 )
 
+// startupConfig loads the configuration Run serves with and refuses one,
+// or a combination with opts, the server cannot start on.
+func startupConfig(opts Options) (*config.ServerConfig, error) {
+	cfg, err := loadConfig(opts.Config)
+	if err != nil {
+		return nil, err
+	}
+	if verr := validateStartup(cfg); verr != nil {
+		return nil, verr
+	}
+	if verr := validateAPIOptions(cfg, opts.TrustedIssuer, opts.TrustedIssuerOrigins); verr != nil {
+		return nil, verr
+	}
+	return cfg, nil
+}
+
 // loadConfig returns cfg, or when it is nil the configuration the binary
 // loads: the file named by LEOFLOW_CONFIG (mirrored from DEXAFLOW_CONFIG),
 // then the environment.
@@ -89,6 +105,15 @@ type Options struct {
 	// UIServer, when set, is served in place of the embedded SPA (ADR 0099
 	// §3).
 	UIServer api.UIServer
+	// Authenticator, when set, checks the request tokens the engine's own
+	// authenticator does not recognize and takes password sign-in (ADR 0099
+	// §3, §6).
+	Authenticator auth.Authenticator
+	// TrustedIssuer, when set, verifies trusted-issuer handoffs posted from
+	// TrustedIssuerOrigins in place of auth.trusted_issuer, which must then be
+	// empty.
+	TrustedIssuer        api.TrustedIssuer
+	TrustedIssuerOrigins []string
 }
 
 // Run builds every component and serves until ctx is done. A nil
@@ -96,12 +121,9 @@ type Options struct {
 // by DEXAFLOW_CONFIG (or LEOFLOW_CONFIG), then the environment. Its error
 // maps to the process exit code through ExitCode.
 func Run(ctx context.Context, opts Options) error {
-	cfg, err := loadConfig(opts.Config)
+	cfg, err := startupConfig(opts)
 	if err != nil {
 		return err
-	}
-	if verr := validateStartup(cfg); verr != nil {
-		return verr
 	}
 
 	tel, shutdownTel, err := observability.Setup(ctx, observability.Config{
@@ -247,7 +269,7 @@ func Run(ctx context.Context, opts Options) error {
 	// The API side (HTTP + embedded UI) is built only in the api/"all" role. The
 	// scheduler role serves no API, so none of the UI/handler machinery is even
 	// constructed: apiSrv stays nil and serveHTTP omits it.
-	apiSrv, aerr := startAPISide(ctx, cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, servesAPI, opts.UIServer)
+	apiSrv, aerr := startAPISide(ctx, cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, servesAPI, apiExtras{ui: opts.UIServer, authenticator: opts.Authenticator, issuer: opts.TrustedIssuer, issuerOrigins: opts.TrustedIssuerOrigins})
 	if aerr != nil {
 		return aerr
 	}

@@ -65,7 +65,7 @@ func (f *fakeServiceStore) EnsureTenant(_ context.Context, name, displayName str
 	return f.tenantCreated, f.tenantErr
 }
 
-func (f *fakeServiceStore) EnsureIssuerUser(_ context.Context, tenant, email, provider, subject string, roles []string) (*auth.User, bool, error) {
+func (f *fakeServiceStore) EnsureIssuerUser(_ context.Context, tenant, email, provider, subject string, roles []string) (found *auth.User, ok bool, err error) {
 	f.gotUserTenant, f.gotEmail, f.gotProv, f.gotSubj, f.gotRoles = tenant, email, provider, subject, roles
 	return f.user, f.userCreated, f.userErr
 }

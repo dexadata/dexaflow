@@ -293,7 +293,7 @@ func TestStartAPISideWiresHTTPTLS(t *testing.T) {
 		Tracer:   noop.NewTracerProvider().Tracer("test"),
 	}
 
-	srv, err := startAPISide(context.Background(), cfg, tel, nil, &storage.Postgres{}, nil, nil, nil, nil, nil, api.ExecutorInfo{}, nil, true, nil)
+	srv, err := startAPISide(context.Background(), cfg, tel, nil, &storage.Postgres{}, nil, nil, nil, nil, nil, api.ExecutorInfo{}, nil, true, apiExtras{})
 	if err != nil {
 		t.Fatalf("startAPISide: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestStartAPISideWiresHTTPTLS(t *testing.T) {
 	}
 
 	cfg.Server.HTTPTLSCert, cfg.Server.HTTPTLSKey = "", ""
-	plain, err := startAPISide(context.Background(), cfg, tel, nil, &storage.Postgres{}, nil, nil, nil, nil, nil, api.ExecutorInfo{}, nil, true, nil)
+	plain, err := startAPISide(context.Background(), cfg, tel, nil, &storage.Postgres{}, nil, nil, nil, nil, nil, api.ExecutorInfo{}, nil, true, apiExtras{})
 	if err != nil {
 		t.Fatalf("startAPISide: %v", err)
 	}

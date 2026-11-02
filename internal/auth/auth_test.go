@@ -22,11 +22,11 @@ type fakeStore struct {
 	byIDErr  error
 }
 
-func (f *fakeStore) FindUserByLogin(_ context.Context, _, _ string) (*User, string, error) {
+func (f *fakeStore) FindUserByLogin(_ context.Context, _, _ string) (found *User, passwordHash string, err error) {
 	return f.user, f.hash, f.err
 }
 
-func (f *fakeStore) FindUserByID(_ context.Context, _ string) (*User, bool, error) {
+func (f *fakeStore) FindUserByID(_ context.Context, _ string) (found *User, ok bool, err error) {
 	if f.byIDErr != nil {
 		return nil, false, f.byIDErr
 	}
