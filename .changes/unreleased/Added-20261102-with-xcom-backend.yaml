@@ -1,0 +1,8 @@
+kind: Added
+body: |-
+  **`server.WithXComBackend` keeps XCom values in a store of your own**
+  (ADR 0099, #2176). The new public package `pkg/xcomstore` holds the contract
+  (`Backend`, `Entry`, `ErrNotFound` and the optional `BatchBackend`); a
+  program built on `pkg/server` passes its backend, which replaces Redis or
+  the embedded Postgres store for values while Redis keeps the live log tail.
+time: 2026-11-02T02:45:00.000000000-03:00

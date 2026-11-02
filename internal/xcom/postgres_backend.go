@@ -71,9 +71,9 @@ func (b *PostgresBackend) Fetch(ctx context.Context, key string) (Entry, error) 
 
 // FetchMany reads every key with one query, in order. Absent or expired keys
 // come back as not found; a key requested twice is answered twice.
-func (b *PostgresBackend) FetchMany(ctx context.Context, keys []string) ([]Entry, []bool, error) {
-	entries := make([]Entry, len(keys))
-	found := make([]bool, len(keys))
+func (b *PostgresBackend) FetchMany(ctx context.Context, keys []string) (entries []Entry, found []bool, err error) {
+	entries = make([]Entry, len(keys))
+	found = make([]bool, len(keys))
 	if len(keys) == 0 {
 		return entries, found, nil
 	}

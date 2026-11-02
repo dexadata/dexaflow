@@ -20,6 +20,7 @@ Compatibility: a patch release never breaks an exported identifier of this packa
 - [type Option](<#Option>)
   - [func WithAdmission\(h admission.Hook\) Option](<#WithAdmission>)
   - [func WithLogSink\(sink logsink.Sink\) Option](<#WithLogSink>)
+  - [func WithXComBackend\(backend xcomstore.Backend\) Option](<#WithXComBackend>)
 
 
 ## Variables
@@ -31,7 +32,7 @@ var ErrDatabaseReplaced = serverapp.ErrDatabaseReplaced
 ```
 
 <a name="ExitCode"></a>
-## func [ExitCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L85>)
+## func [ExitCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L102>)
 
 ```go
 func ExitCode(err error) int
@@ -40,7 +41,7 @@ func ExitCode(err error) int
 ExitCode is the process exit code for an error Run returned: 0 for nil, 3 for ErrDatabaseReplaced, 1 for anything else.
 
 <a name="Run"></a>
-## func [Run](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L74>)
+## func [Run](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L91>)
 
 ```go
 func Run(ctx context.Context, opts ...Option) error
@@ -83,7 +84,7 @@ func main() {
 </details>
 
 <a name="Option"></a>
-## type [Option](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L30>)
+## type [Option](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L31>)
 
 Option changes how Run builds the server. More options come in later releases \(ADR 0099 §3\); adding one is not a breaking change.
 
@@ -92,7 +93,7 @@ type Option func(*settings)
 ```
 
 <a name="WithAdmission"></a>
-### func [WithAdmission](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L43>)
+### func [WithAdmission](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L44>)
 
 ```go
 func WithAdmission(h admission.Hook) Option
@@ -140,7 +141,7 @@ func main() {
 </details>
 
 <a name="WithLogSink"></a>
-### func [WithLogSink](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L58>)
+### func [WithLogSink](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L59>)
 
 ```go
 func WithLogSink(sink logsink.Sink) Option
@@ -210,6 +211,99 @@ func (w *fileWriter) Close() error                      { return w.f.Close() }
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	err := server.Run(ctx, server.WithLogSink(fileSink{dir: "/var/lib/task-logs"}))
+	stop()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(server.ExitCode(err))
+	}
+}
+```
+
+</p>
+</details>
+
+<a name="WithXComBackend"></a>
+### func [WithXComBackend](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L75>)
+
+```go
+func WithXComBackend(backend xcomstore.Backend) Option
+```
+
+WithXComBackend stores XCom values in backend instead of Redis or, with no Redis configured, the embedded Postgres store; boot logs that the backend came from an option. The server still checks the size and schema of each value and records its metadata in Postgres, and Redis, when configured, still serves the live log tail. A backend that is also an xcomstore.BatchBackend serves a task's bulk pulls in one call. The caller owns it: Run never closes it. A nil backend keeps the configured one; with several options the last one wins.
+
+<details><summary>Example</summary>
+<p>
+
+A control plane that keeps XCom values in a store of its own instead of Redis or the embedded Postgres store.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/signal"
+	"path"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/dexadata/dexaflow/pkg/server"
+	"github.com/dexadata/dexaflow/pkg/xcomstore"
+)
+
+// mapBackend keeps XCom values in the server's memory: enough for a single
+// replica that may lose them on a restart, as a test install can.
+type mapBackend struct {
+	mu sync.Mutex
+	m  map[string]mapEntry
+}
+
+type mapEntry struct {
+	e       xcomstore.Entry
+	expires time.Time
+}
+
+func (b *mapBackend) Push(_ context.Context, key string, e xcomstore.Entry, ttl time.Duration) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.m[key] = mapEntry{e: e, expires: time.Now().Add(ttl)}
+	return nil
+}
+
+func (b *mapBackend) Fetch(_ context.Context, key string) (xcomstore.Entry, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	v, ok := b.m[key]
+	if !ok || time.Now().After(v.expires) {
+		return xcomstore.Entry{}, xcomstore.ErrNotFound
+	}
+	return v.e, nil
+}
+
+func (b *mapBackend) Delete(_ context.Context, key string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.m, key)
+	return nil
+}
+
+func (b *mapBackend) List(_ context.Context, pattern string) ([]string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var keys []string
+	for k, v := range b.m {
+		if ok, _ := path.Match(pattern, k); ok && time.Now().Before(v.expires) {
+			keys = append(keys, k)
+		}
+	}
+	return keys, nil
+}
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := server.Run(ctx, server.WithXComBackend(&mapBackend{m: map[string]mapEntry{}}))
 	stop()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

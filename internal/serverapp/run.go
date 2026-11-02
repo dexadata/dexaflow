@@ -82,6 +82,10 @@ type Options struct {
 	// would build (ADR 0099 §3). The caller owns it: the server never closes
 	// it.
 	LogSink logs.Sink
+	// XComBackend, when set, stores XCom values in place of Redis or the
+	// embedded Postgres store (ADR 0099 §3). Redis, when configured, still
+	// serves the live log tail. The caller owns the backend.
+	XComBackend xcom.Backend
 }
 
 // Run builds every component and serves until ctx is done. A nil
@@ -142,7 +146,7 @@ func Run(ctx context.Context, opts Options) error {
 	// Datastore for XCom + live-log tailing: Redis when configured (production,
 	// ADR 0006), or the embedded Postgres/in-process backends when no Redis is
 	// set (Lite, ADR 0026). The signal is the presence of a Redis URL.
-	xcomBackend, logTailer, redisHealth, dsCleanup, err := selectDatastore(ctx, cfg, pg, tel.Logger, tel.Metrics)
+	xcomBackend, logTailer, redisHealth, dsCleanup, err := selectDatastore(ctx, cfg, pg, opts.XComBackend, tel.Logger, tel.Metrics)
 	if err != nil {
 		return err
 	}
@@ -492,13 +496,22 @@ func schedulerDatabase(cfg *config.ServerConfig) config.DatabaseSection {
 // a configured Redis URL it uses the production Redis backends (ADR 0006); with
 // no Redis configured it uses the embedded backends, XCom on Postgres and an
 // in-process tailer, so Lite needs no Redis (ADR 0026). It returns a health
-// checker for Redis (nil when embedded) and a cleanup to defer.
-func selectDatastore(ctx context.Context, cfg *config.ServerConfig, pg *storage.Postgres, logger *slog.Logger, metrics *observability.Metrics) (xcom.Backend, logs.Tailer, api.HealthChecker, func(), error) {
+// checker for Redis (nil when embedded) and a cleanup to defer. A backend
+// from options replaces the XCom store either way; Redis, when configured,
+// still serves the tailer.
+func selectDatastore(ctx context.Context, cfg *config.ServerConfig, pg *storage.Postgres, fromOptions xcom.Backend, logger *slog.Logger, metrics *observability.Metrics) (backend xcom.Backend, tailer logs.Tailer, redisHealth api.HealthChecker, cleanup func(), err error) {
+	if fromOptions != nil {
+		logger.Info("xcom: backend from options", "type", fmt.Sprintf("%T", fromOptions))
+	}
 	if cfg.Redis.URL == "" {
+		if fromOptions != nil {
+			logger.Info("embedded datastore: in-process log tailer (no Redis)")
+			return fromOptions, logs.NewMemoryTailer(), nil, func() {}, nil
+		}
 		logger.Info("embedded datastore: XCom on Postgres, in-process log tailer (no Redis)")
-		backend := xcom.NewPostgresBackend(pg.Pool)
-		startXComSweep(ctx, backend, logger)
-		return backend, logs.NewMemoryTailer(), nil, func() {}, nil
+		pgBackend := xcom.NewPostgresBackend(pg.Pool)
+		startXComSweep(ctx, pgBackend, logger)
+		return pgBackend, logs.NewMemoryTailer(), nil, func() {}, nil
 	}
 	rd, err := storage.NewRedis(ctx, cfg.Redis)
 	if err != nil {
@@ -511,13 +524,17 @@ func selectDatastore(ctx context.Context, cfg *config.ServerConfig, pg *storage.
 	// Lite already returned above (no Redis), so metrics is always non-nil
 	// here on the Pro path.
 	stopObs := storage.AttachRedisObservability(ctx, rd, metrics, 5*time.Second)
-	cleanup := func() {
+	cleanup = func() {
 		stopObs()
 		if cerr := rd.Close(); cerr != nil {
 			logger.Error("closing redis", "error", cerr)
 		}
 	}
-	return xcom.NewRedisBackend(rd.Client), logs.NewRedisTailer(rd.Client), rd, cleanup, nil
+	backend = xcom.NewRedisBackend(rd.Client)
+	if fromOptions != nil {
+		backend = fromOptions
+	}
+	return backend, logs.NewRedisTailer(rd.Client), rd, cleanup, nil
 }
 
 // healthChecks builds the health checks read by /readyz and

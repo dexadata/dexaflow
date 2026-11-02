@@ -25,7 +25,7 @@ func TestSelectDatastoreEmbeddedWhenNoRedis(t *testing.T) {
 
 	// Lite path takes the embedded branch BEFORE touching metrics, so a nil
 	// Metrics is safe here (and lets the test avoid registering Prometheus).
-	backend, tailer, redisHealth, cleanup, err := selectDatastore(ctx, cfg, pg, slog.Default(), nil)
+	backend, tailer, redisHealth, cleanup, err := selectDatastore(ctx, cfg, pg, nil, slog.Default(), nil)
 	if err != nil {
 		t.Fatalf("selectDatastore: %v", err)
 	}
@@ -39,5 +39,32 @@ func TestSelectDatastoreEmbeddedWhenNoRedis(t *testing.T) {
 	}
 	if _, ok := tailer.(*logs.MemoryTailer); !ok {
 		t.Errorf("embedded tailer = %T, want *logs.MemoryTailer", tailer)
+	}
+}
+
+// optionBackend stands for an XCom backend passed as an option.
+type optionBackend struct{ xcom.Backend }
+
+// TestSelectDatastoreUsesTheOptionBackend pins ADR 0099 §3 for XCom: a backend
+// passed as an option replaces the embedded Postgres store, and the tailer is
+// still chosen by the Redis setting.
+func TestSelectDatastoreUsesTheOptionBackend(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	custom := &optionBackend{}
+	backend, tailer, redisHealth, cleanup, err := selectDatastore(ctx, &config.ServerConfig{}, &storage.Postgres{}, custom, slog.Default(), nil)
+	if err != nil {
+		t.Fatalf("selectDatastore: %v", err)
+	}
+	defer cleanup()
+	if backend != custom {
+		t.Errorf("backend = %T, want the option's backend", backend)
+	}
+	if _, ok := tailer.(*logs.MemoryTailer); !ok {
+		t.Errorf("tailer = %T, want the in-process tailer with no Redis", tailer)
+	}
+	if redisHealth != nil {
+		t.Error("no Redis is configured, so no Redis health check")
 	}
 }

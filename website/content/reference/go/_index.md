@@ -24,6 +24,7 @@ reference:
 - `pkg/admission`: the dispatch admission hook contract (ADR 0100) (**public**)
 - `pkg/server`: runs the control plane from your own Go program (ADR 0099) (**public**)
 - `pkg/logsink`: the task log sink contract, for `server.WithLogSink` (ADR 0099) (**public**)
+- `pkg/xcomstore`: the XCom value store contract, for `server.WithXComBackend` (ADR 0099) (**public**)
 - `internal/domain` — core types (DAG, Task, Run, …)
 - `internal/scheduler` — the state machine
 - `internal/executor` — K8s / subprocess executors
