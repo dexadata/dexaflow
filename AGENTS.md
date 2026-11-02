@@ -260,7 +260,10 @@ about ninety minutes: fix, pick, prepare, tag, release run).
   tested". A fix without such a test is not done; see the
   [Fix a bug](https://dexaflow.dexadata.ai/contribute/recipes/fix-a-bug/) recipe.
 - **Mutation-test every new assertion.** Revert the fix, watch the test fail,
-  restore it, and check that the mutation actually applied.
+  restore it, and check that the mutation actually applied. For a tier 1
+  package, `scripts/mutation.sh diff origin/main` mutates every line the branch
+  changed; kill or accept each survivor it lists
+  ([Mutation testing](https://dexaflow.dexadata.ai/contribute/mutation-testing/)).
 - **Lock the wiring, not the leaf.** Drive the real entry point and assert on its
   output; bugs cluster where a correct helper gets a wrong input.
 - **A comment that describes behavior the code does not have is a bug.** When

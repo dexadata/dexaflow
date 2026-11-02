@@ -222,3 +222,6 @@ test/gcp/runs/
 # Soak battery evidence (test/soak). Every run writes a timestamped directory of
 # samples, violations and logs here; none of it belongs in the repository.
 .soak/
+
+# Mutation testing reports (scripts/mutation.sh).
+.mutation/

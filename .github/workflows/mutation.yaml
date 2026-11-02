@@ -1,0 +1,179 @@
+name: Mutation
+
+# Mutation testing (ADR 0101), with gremlins via scripts/mutation.sh.
+#
+# - pull_request: one advisory job that mutates only the lines the change
+#   touched in tier 1 packages and lists the survivors in the job summary. It
+#   is not a required check, and it runs only when Go code changed.
+# - schedule (weekly) and workflow_dispatch: the full run, one job per
+#   package, at most two at a time so it never takes the runners pull
+#   requests need, plus the coverage the integration suite gives the files the
+#   unit floor excludes. A package below its floor in
+#   .github/mutation/targets.txt fails its job. Before a release candidate,
+#   the release thread starts this by hand on the release branch.
+on:
+  pull_request:
+    branches: [main, "release-*"]
+    paths:
+      - "internal/**/*.go"
+      - "pkg/**/*.go"
+      - ".gremlins.yaml"
+      - ".github/mutation/**"
+      - "scripts/mutation.sh"
+      - ".github/workflows/mutation.yaml"
+  schedule:
+    # Sunday 05:00 UTC, after the nightly fuzz run.
+    - cron: "0 5 * * 0"
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: "Package dirs to run, space separated (empty: every tier 1 and tier 2 package)"
+        default: ""
+
+permissions:
+  contents: read
+
+# A newer push to a pull request cancels the older run; every other run has a
+# group of its own (same shape as ci.yaml).
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('{0}-run-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GO_VERSION: "1.26.10"
+
+jobs:
+  changed-lines:
+    name: Mutation (changed lines)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # gremlins diffs against the merge base with the base branch.
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Install gremlins
+        run: go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
+      - name: Mutate the changed lines of tier 1 packages
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: scripts/mutation.sh diff "origin/${BASE_REF}"
+
+  plan:
+    name: Mutation packages
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      packages: ${{ steps.list.outputs.packages }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: List the packages
+        id: list
+        env:
+          PACKAGES: ${{ inputs.packages }}
+        run: |
+          if [ -n "${PACKAGES:-}" ]; then
+            read -ra pkgs <<<"$PACKAGES"
+            list=$(printf '%s\n' "${pkgs[@]}")
+          else
+            list=$({ scripts/mutation.sh packages 1; scripts/mutation.sh packages 2; })
+          fi
+          echo "packages=$(printf '%s\n' "$list" | jq -R . | jq -cs .)" >>"$GITHUB_OUTPUT"
+
+  package:
+    name: Mutation (${{ matrix.package }})
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        package: ${{ fromJSON(needs.plan.outputs.packages) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Install gremlins
+        run: go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
+      - name: Mutate the package
+        env:
+          PACKAGE: ${{ matrix.package }}
+        run: scripts/mutation.sh run "$PACKAGE"
+      - name: Name the report
+        if: always()
+        id: name
+        env:
+          PACKAGE: ${{ matrix.package }}
+        run: echo "slug=$(printf '%s' "$PACKAGE" | tr '/' '_')" >>"$GITHUB_OUTPUT"
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutation-${{ steps.name.outputs.slug }}
+          path: .mutation/
+          if-no-files-found: ignore
+
+  integration-coverage:
+    name: Integration coverage of the bindings
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: leoflow
+          POSTGRES_PASSWORD: leoflow
+          POSTGRES_DB: leoflow_test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: mirror.gcr.io/library/redis:7
+        ports: [6379:6379]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgres://leoflow:leoflow@localhost:5432/leoflow_test?sslmode=disable
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Apply migrations
+        run: |
+          go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.20.1
+          migrate -path migrations -database "$DATABASE_URL" up
+      # The packages that hold the bindings. Tests that need the S3 or GCS
+      # emulators skip without them; the Integration tests job in ci.yaml runs
+      # those.
+      - name: Run the integration tests with coverage
+        run: |
+          go test -tags integration -coverprofile=integration.out -covermode=atomic \
+            ./internal/storage/... ./internal/scheduler/... ./internal/xcom/... \
+            ./internal/logs/... ./internal/cli/...
+      - name: Report the coverage of the bindings
+        if: always()
+        run: |
+          if [ -s integration.out ]; then
+            scripts/mutation.sh integration-coverage integration.out
+          else
+            echo "No coverage profile was written." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi

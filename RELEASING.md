@@ -424,6 +424,9 @@ scripts/cut-release.sh v0.4.4 --force-queue
 # Non-interactive (skips the confirm prompt — use only in trusted automation)
 scripts/cut-release.sh v0.4.4 --yes
 
+# Mutation floors on the release branch before a candidate (ADR 0101)
+gh workflow run mutation.yaml --ref release-0.5
+
 # Pure-logic self-test (no network) — also runnable in CI
 scripts/cut-release.sh --self-test
 ```

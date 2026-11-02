@@ -1,0 +1,14 @@
+# Surviving mutants accepted on purpose (ADR 0101).
+#
+# One line per mutant: <file>:<line>:<column> <MUTATOR> <reason>
+#
+# <file> is relative to the repository root, <MUTATOR> is the type gremlins
+# prints (CONDITIONALS_BOUNDARY, CONDITIONALS_NEGATION, ARITHMETIC_BASE,
+# INCREMENT_DECREMENT, INVERT_NEGATIVES, ...). The reason is required: name
+# why the mutated code behaves the same (an equivalent mutant) or why a test
+# for it is not worth its cost. An accepted mutant does not count against the
+# package's floor. A line that no longer matches a surviving mutant (the code
+# moved or a test now kills it) is reported by the run, so delete it.
+#
+# Example:
+# internal/retention/janitor.go:352:8 CONDITIONALS_BOUNDARY the cutoff is a whole day and never equals a row's timestamp
