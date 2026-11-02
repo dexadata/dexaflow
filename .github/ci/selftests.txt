@@ -28,6 +28,7 @@ scripts/check-playwright-pin.sh
 scripts/check-pre-commit-git-env.sh
 scripts/check-python-host-interpreters.sh
 scripts/check-python-runtime-matrix.sh
+scripts/check-runtime-data-lock.sh
 scripts/check-runtime-data-pins.sh
 scripts/check-service-image-registry.sh
 scripts/check-stale-versions.sh
@@ -48,6 +49,7 @@ scripts/fuzz.sh
 scripts/lint-new-text.sh
 scripts/manifest-diff.sh
 scripts/merge-queue-pr.sh
+scripts/mutation.sh
 scripts/prev-chart-version.sh
 scripts/python-eol-warn.sh
 scripts/rc-smoke.sh
