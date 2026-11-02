@@ -78,6 +78,10 @@ type Options struct {
 	// AdmissionHooks run before the configured webhook, in this order
 	// (ADR 0100 §6).
 	AdmissionHooks []admission.Hook
+	// LogSink, when set, stores task logs in place of the sink logs.backend
+	// would build (ADR 0099 §3). The caller owns it: the server never closes
+	// it.
+	LogSink logs.Sink
 }
 
 // Run builds every component and serves until ctx is done. A nil
@@ -173,13 +177,13 @@ func Run(ctx context.Context, opts Options) error {
 	// noise. Found by installing the chart, not by any test.
 	warnOIDCNames(ctx, repo, cfg, tel.Logger)
 
-	logSink, lerr := buildLogSink(ctx, cfg, tel.Logger)
+	logSink, closeSink, lerr := selectLogSink(ctx, cfg, opts.LogSink, tel.Logger)
 	if lerr != nil {
 		return lerr
 	}
 	// Deferred before the scheduler side's stop, so it runs after the agent
 	// streams have drained and their writers made the last flush.
-	defer closeLogSink(logSink, tel.Logger)
+	defer closeSink()
 	// Secrets are served over the agent channel only when explicitly allowed
 	// insecure (dev) until gRPC TLS lands (issue #58); otherwise the handlers
 	// fail closed on a plaintext channel.
@@ -442,6 +446,22 @@ func buildLogSink(ctx context.Context, cfg *config.ServerConfig, logger *slog.Lo
 	default:
 		return nil, fmt.Errorf("unknown logs.backend %q", cfg.Logs.Backend)
 	}
+}
+
+// selectLogSink returns the task log sink the server runs with, and how to
+// release it at shutdown. A sink passed as an option replaces the configured
+// one and stays the caller's to close; boot logs that it came from an option,
+// so a support conversation does not start from the logs.backend setting.
+func selectLogSink(ctx context.Context, cfg *config.ServerConfig, fromOptions logs.Sink, logger *slog.Logger) (sink logs.Sink, release func(), err error) {
+	if fromOptions != nil {
+		logger.Info("task logs: sink from options, logs.backend ignored", "type", fmt.Sprintf("%T", fromOptions))
+		return fromOptions, func() {}, nil
+	}
+	sink, err = buildLogSink(ctx, cfg, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sink, func() { closeLogSink(sink, logger) }, nil
 }
 
 // closeLogSink releases the client of a sink that holds one (the GCS object

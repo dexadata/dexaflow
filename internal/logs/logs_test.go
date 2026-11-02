@@ -14,8 +14,8 @@ func ref() Ref {
 }
 
 func TestRefChannel(t *testing.T) {
-	if got := ref().Channel(); got != "log_tail:acme:etl:run-1:extract:1" {
-		t.Errorf("Channel() = %q", got)
+	if got := tailChannel(ref()); got != "log_tail:acme:etl:run-1:extract:1" {
+		t.Errorf("tailChannel() = %q", got)
 	}
 }
 
