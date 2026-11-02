@@ -328,7 +328,9 @@ func TestFollowRunNamesThePauseOfAStalledRun(t *testing.T) {
 	fake := &fakeRunServer{paused: true, steps: []runStep{{state: "queued", tis: []fakeTI{{task: "extract"}}}}}
 	srv := newFakeRun(t, fake)
 	var out strings.Builder
-	ctx, cancel := context.WithTimeout(testCtx(d), 80*time.Millisecond)
+	// A stalled run is followed until ctx ends, so the window only bounds the
+	// test; 80ms was too short on a loaded runner to print even the header.
+	ctx, cancel := context.WithTimeout(testCtx(d), time.Second)
 	defer cancel()
 
 	_ = followRun(ctx, &out, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"},
@@ -353,7 +355,9 @@ func TestFollowRunHintsAtAStalledQueue(t *testing.T) {
 	fake := &fakeRunServer{steps: []runStep{{state: "queued", tis: []fakeTI{{task: "extract"}}}}}
 	srv := newFakeRun(t, fake)
 	var out strings.Builder
-	ctx, cancel := context.WithTimeout(testCtx(d), 80*time.Millisecond)
+	// A stalled run is followed until ctx ends, so the window only bounds the
+	// test; 80ms was too short on a loaded runner to print even the header.
+	ctx, cancel := context.WithTimeout(testCtx(d), time.Second)
 	defer cancel()
 
 	_ = followRun(ctx, &out, followTarget{base: srv.URL, token: "x", dagID: "etl", runID: "run-1"},
