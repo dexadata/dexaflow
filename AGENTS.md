@@ -22,8 +22,8 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
    `scripts/check-stale-versions.sh --candidate X.Y.Z` is clean on the
    candidate's commit (#1934), and the pages for every user-facing change read
    correctly on the docs site. The Docs gap workflow runs both checks on every
-   push to `release-X.Y` and on rc tags (#1938): link its green run on the
-   candidate's commit as the evidence.
+   rc tag, and on every push to a mapped `release-X.Y` (#1938): link its green
+   run on the candidate's commit as the evidence.
 2. **Algorithm.** Every change to scheduling, dispatch, state transitions,
    retries, pools or any other decision logic was read against its ADR and its
    tests, edge cases included.
@@ -36,7 +36,8 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
    (`.github/workflows/e2e-daemonless-deploy.yaml`, #1888). The performance
    gates workflow and the soak smoke run nightly on `main` and on rc tags, the
    daemonless deploy workflow on rc tags only, so start all three by hand
-   (`workflow_dispatch`) on the `release-X.Y` commit before the cut.
+   (`workflow_dispatch`) on the candidate's commit, on its base branch, before
+   the cut.
 5. **UI with Playwright.** When the candidate changes anything the browser shows
    (embedded UI assets, `/api/v2/` responses the UI reads, sign-in, login or SSO),
    the Playwright flows ran against it, with screenshots of the changed screens.
@@ -51,8 +52,9 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
    publication is planned for after that release ships (the only exception is
    active exploitation, see [`SECURITY.md`](SECURITY.md)). Track it without exposing details: a neutral
    item in the release milestone (no vulnerability description), the fix
-   developed in the advisory's private fork and merged to `main`, and
-   `scripts/release-gap.sh` confirming the fix is on `release-X.Y`. The line
+   developed in the advisory's private fork and merged to `main`, and, for a
+   patch cut from a mapped `release-X.Y`, `scripts/release-gap.sh` confirming
+   the fix is there. The line
    for this review lists the open advisories by identifier only.
 7. **Upgrade and rollback.** The new migrations were applied over a database of
    realistic size, upgrading from the previous release, and rolled back to the
@@ -68,7 +70,9 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
    or storage: the benchmarks of the area compared with the previous release, and
    a soak run (`make soak`) with no recorded violations.
 9. **Release checklist.**
-   - `scripts/release-gap.sh X.Y.Z` is empty (patches cut from `release-X.Y`).
+   - `scripts/release-gap.sh X.Y.Z` is empty (patches of a minor mapped to
+     `release-X.Y` in `.github/patch-branches.txt`; a patch cut from `main`
+     has nothing to pick).
    - The changelog fragments and release notes describe what ships.
    - `scripts/changelog-sync.sh --check-all --fetch` is clean: `main` carries
      the changelog of every patch already tagged (a minor cut refuses
@@ -89,22 +93,27 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
 - **`main` only changes through pull requests.** Every PR to `main` names its
   release as a milestone (`v0.5.2`, `v0.6.0`, ...); the milestone guard fails a
   PR without one.
-- **Fixes reach `release-X.Y` only as cherry-picks.** After the change merges to
-  `main`, open a PR against `release-X.Y` built with `git cherry-pick -x <sha>`,
-  titled `[release-X.Y] ...`, linking the original PR and carrying its changelog
-  fragment. `scripts/release-gap.sh` matches the `(cherry picked from commit ...)`
-  line that `-x` writes, so a pick without it counts as missing. See
-  [ADR 0062](https://dexaflow.dexadata.ai/project/adrs/0062-release-branches-and-open-main/)
-  and [`RELEASING.md`](RELEASING.md).
+- **Releases are cut from `main`, patches included, until `main` diverges**
+  ([ADR 0102](https://dexaflow.dexadata.ai/project/adrs/0102-patches-from-main-until-main-diverges/)).
+  `scripts/release-base.sh <version>` names the base. `main` must stay
+  shippable as the next patch: a change that may not ship in it opens
+  `release-X.Y` from the minor's newest GA tag and maps it in
+  `.github/patch-branches.txt`, in the same pull request.
+- **Fixes reach a mapped `release-X.Y` only as cherry-picks.** After the change
+  merges to `main`, it goes in a `[release-X.Y]` pull request built with
+  `git cherry-pick -x <sha>`, carrying its changelog fragment.
+  `scripts/release-gap.sh` matches the `(cherry picked from commit ...)` line
+  that `-x` writes, so a pick without it counts as missing. See
+  [`RELEASING.md`](RELEASING.md).
 - **Patch content is decided by the safety bar of
   [ADR 0068](https://dexaflow.dexadata.ai/project/adrs/0068-patch-content-gated-by-safety/),
   not by kind.** While the project is 0.x, features and migrations ship in
   patches when they meet it. A review does not ask to move a change to a minor
   for being a feature or adding a migration; it names the point of the bar the
   change fails, with evidence.
-- **Nothing merged to `main` is left out of the release branch by accident.**
-  What will never ship in the minor is listed with its reason in
-  `.github/release-skip.txt` on the release branch.
+- **Nothing merged to `main` is left out of a release branch by accident.**
+  What will never ship in a mapped minor is listed with its reason in
+  `.github/release-skip.txt` on its release branch.
 - **Every performance PR is reviewed by a specialist before it merges**, for
   regressions, security and reliability (ADR 0062).
 
@@ -148,7 +157,8 @@ requests is the main cost the queue pays.
   follow-up opened after the merge.
 - **Small fixes of one kind travel together.** Typos, stale links or comment
   fixes found in one review go in one pull request, not one each.
-- **Picks are batched.** Cherry-picks to `release-X.Y` go in one
+- **Picks are batched.** For a minor mapped to a release branch, cherry-picks
+  to `release-X.Y` go in one
   `[release-X.Y] picks` pull request per day or per candidate, one
   `git cherry-pick -x` commit per original change (as #2140 did with sixteen),
   not one pull request per pick. A pick needed to unblock a failed cut may

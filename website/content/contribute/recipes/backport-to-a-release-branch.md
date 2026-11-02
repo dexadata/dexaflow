@@ -5,9 +5,12 @@ weight: 30
 description: Carry a change merged to main into release-X.Y so the next patch ships it, in the shape release-gap.sh recognizes.
 ---
 
-Every change lands on `main` first; a patch ships it through a cherry-pick to
-`release-X.Y` ([ADR 0062](/project/adrs/0062-release-branches-and-open-main/)).
-Usually the maintainer does this step.
+Every change lands on `main` first. Patches are cut from `main` too, so most
+changes need no backport. Only a minor that `.github/patch-branches.txt` maps
+to `release-X.Y` takes its fixes through a cherry-pick
+([ADR 0102](/project/adrs/0102-patches-from-main-until-main-diverges/)).
+Usually the maintainer does this step, batching the day's picks (or a
+candidate's) in one pull request with one `cherry-pick -x` commit each.
 
 1. **Branch from the release branch**, not from `main`:
 

@@ -33,10 +33,10 @@ You write the fragment; the release tooling does everything else with it.
 
 ```mermaid
 flowchart LR
-  pr["PR to main<br/>adds .changes/unreleased/x.yaml"] --> pick["cherry-pick -x<br/>to release-X.Y<br/>(same file, same text)"]
+  pr["PR to main<br/>adds .changes/unreleased/x.yaml"] --> cutmain["next cut on main<br/>(patch or minor)<br/>folds x.yaml, deletes it"]
+  pr -. "minor mapped to release-X.Y" .-> pick["cherry-pick -x<br/>to release-X.Y<br/>(same file, same text)"]
   pick --> cut["patch cut X.Y.Z<br/>folds x.yaml into CHANGELOG.md,<br/>deletes it, dates [X.Y.Z]"]
   cut --> sync["changelog: sync vX.Y.Z to main<br/>adds [X.Y.Z], deletes x.yaml on main"]
-  pr -. "not picked" .-> minor["minor cut X.Y+1.0 on main<br/>folds x.yaml there"]
 ```
 
 - **Do not edit `CHANGELOG.md` dated sections** (`## [X.Y.Z] - <date>`).

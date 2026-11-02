@@ -59,10 +59,8 @@ release_mechanics() {
   printf '%s\n' "$1" | grep -qE '^(release: (prepare|promote) v[0-9]|docs: publish v[0-9][^ ]* at the documentation root|changelog: sync v[0-9][^ ]*( and v[0-9][^ ]*|, v[0-9][^ ]*)* to main)'
 }
 
-base_of() { # <version>: the branch the version is cut from (ADR 0062)
-  local v="${1#v}" patch minor
-  v="${v%%-*}"; patch="${v##*.}"; minor="${v%.*}"
-  if [ "$patch" = 0 ]; then printf 'main'; else printf 'release-%s' "$minor"; fi
+base_of() { # <version>: the branch the version is cut from (ADR 0102)
+  bash "$ROOT/scripts/release-base.sh" "$1"
 }
 
 # since_tag <repo> <ref> <version>: the newest GA tag reachable from <ref>
@@ -72,6 +70,19 @@ since_tag() {
   local repo="$1" ref="$2" v="${3#v}" t
   v="${v%%-*}"
   for t in $(git -C "$repo" tag --merged "$ref" --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -rV); do
+    [ "${t#v}" = "$v" ] && continue
+    [ "$(printf '%s\n%s\n' "${t#v}" "$v" | sort -V | tail -1)" = "$v" ] && { printf '%s' "$t"; return 0; }
+  done
+}
+
+# prev_ga <repo> <version>: the newest GA tag older than <version>, reachable
+# or not. When it is not reachable from the ref being judged, the previous
+# patch was cut from a release branch while this one is cut from main (ADR
+# 0102), and what it shipped is known by its cherry-pick lines.
+prev_ga() {
+  local repo="$1" v="${2#v}" t
+  v="${v%%-*}"
+  for t in $(git -C "$repo" tag --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -rV); do
     [ "${t#v}" = "$v" ] && continue
     [ "$(printf '%s\n%s\n' "${t#v}" "$v" | sort -V | tail -1)" = "$v" ] && { printf '%s' "$t"; return 0; }
   done
@@ -111,6 +122,14 @@ gap() {
   git -C "$repo" rev-parse -q --verify "$ref^{commit}" >/dev/null || die "$ref not found"
   since="$(since_tag "$repo" "$ref" "$version")"
   [ -n "$since" ] || die "no GA tag older than $version is reachable from $ref"
+  # The first patch cut from main after patches came from release-X.Y: the
+  # commits main has since $since that those patches already shipped as
+  # cherry-picks were judged at their own cut, so they are not judged again.
+  local prev shipped=""
+  prev="$(prev_ga "$repo" "$version")"
+  if [ -n "$prev" ] && [ "$prev" != "$since" ]; then
+    shipped="$(git -C "$repo" log --format=%B "$since..$prev" | sed -nE 's/.*cherry picked from commit ([0-9a-f]{40}).*/\1/p' | sort -u)"
+  fi
 
   local skips line key reason
   skips="$(git -C "$repo" show "$ref:$SKIP_FILE" 2>/dev/null | sed -E -e 's/^#([^0-9].*)?$//' -e '/^[[:space:]]*$/d')" || skips=""
@@ -125,6 +144,7 @@ gap() {
   while IFS=$'\t' read -r sha subject; do
     [ -n "$sha" ] || continue
     release_mechanics "$subject" && continue
+    [ -n "$shipped" ] && printf '%s\n' "$shipped" | grep -qx "$sha" && continue
     files="$(git -C "$repo" diff --name-only "$sha^1" "$sha" 2>/dev/null)"
     surface="$(cd "$repo" && user_facing "$files" "$sha")"
     [ -n "$surface" ] || continue
@@ -162,7 +182,8 @@ self_test() {
   unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_PREFIX
   local fail=0 tmp out
   _eq() { [ "$1" = "$2" ] || { printf 'FAIL: %s\n  got:  %s\n  want: %s\n' "$3" "$1" "$2"; fail=1; }; }
-  _eq "$(base_of 0.5.2)" "release-0.5" "a patch is cut from its release branch"
+  _eq "$(PATCH_BRANCHES_FILE=<(printf '0.5 release-0.5\n') base_of 0.5.2)" "release-0.5" "a mapped patch is cut from its release branch"
+  _eq "$(PATCH_BRANCHES_FILE=/dev/null base_of 0.5.2)" "main" "an unmapped patch is cut from main"
   _eq "$(base_of 0.6.0-rc.1)" "main" "a minor is cut from main"
   # Pull request metadata comes from a table here, not from GitHub.
   pr_meta() { case "$1" in 3) printf 'skip-docs\tinternal only' ;; 4) printf 'skip-docs\t' ;; 10) printf 'skip-docs\tcovered by the guide' ;; 14) printf '\tinternal only, from a fork' ;; esac; }
@@ -211,6 +232,16 @@ self_test() {
   _c internal/config/server.go "feat: after the GA (#13)"
   out="$(gap "$tmp" 0.9.2 main | sed -E 's/^[0-9a-f]+ //; s/ \[.*//')"
   _eq "$out" "feat: after the GA (#13)" "the next patch starts after the previous GA"
+
+  # A patch from main after one from release-0.9: what that one shipped as a
+  # pick was judged at its cut (ADR 0102).
+  local after; after="$(git -C "$tmp" rev-parse HEAD)"
+  _g checkout -q release-0.9
+  _g cherry-pick -x -X theirs "$after"; _g tag v0.9.2
+  _g checkout -q main
+  _c internal/config/server.go "feat: after the switch (#15)"
+  out="$(gap "$tmp" 0.9.3 main | sed -E 's/^[0-9a-f]+ //; s/ \[.*//')"
+  _eq "$out" "feat: after the switch (#15)" "a change a release-branch patch shipped is not judged again on main"
 
   printf '#13\n' >"$tmp/$SKIP_FILE"; _g add -A; _g commit -qm "skip without reason"
   ( gap "$tmp" 0.9.2 main ) >/dev/null 2>&1; _eq "$?" "2" "a skip without a reason is refused"

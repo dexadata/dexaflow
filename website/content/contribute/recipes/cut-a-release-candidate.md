@@ -11,15 +11,16 @@ script does and how to recover from a failed cut are in
 `scripts/cut-release.sh` is the single source of the steps; never repeat them
 by hand.
 
-1. **Know the base.** `X.Y.0` and its candidates are cut from `main`; a later
-   patch (`X.Y.Z`, Z > 0) is cut from `release-X.Y`. The script picks the base
-   from the version, not from your checkout
-   ([ADR 0062](/project/adrs/0062-release-branches-and-open-main/)).
+1. **Know the base.** Every release is cut from `main` unless
+   `.github/patch-branches.txt` maps a patch's minor to `release-X.Y`.
+   `scripts/release-base.sh X.Y.Z` prints it, and the script picks the base
+   the same way, never from your checkout
+   ([ADR 0102](/project/adrs/0102-patches-from-main-until-main-diverges/)).
 2. **Close the gaps.** The cut refuses a patch while the first list is not
    empty, and any candidate while the second is not:
 
    ```sh
-   scripts/release-gap.sh X.Y.Z --fetch   # main commits the patch would miss
+   scripts/release-gap.sh X.Y.Z --fetch   # mapped minors: main commits the patch would miss
    scripts/docs-gap.sh X.Y.Z --fetch      # user-facing changes without docs
    ```
 
@@ -32,7 +33,8 @@ by hand.
    (`.github/workflows/e2e-daemonless-deploy.yaml`: `dexaflow deploy` of
    `examples/taskflow_sales` from the `dexaflow-cli` image with no container
    daemon, then a run on k3d) on rc tags only, so start all three with
-   `workflow_dispatch` on the `release-X.Y` commit before the cut.
+   `workflow_dispatch` on the candidate's commit (on its base branch) before
+   the cut.
    On a machine where another project owns port 5432, run
    `DEXAFLOW_DEV_DB_PORT=55432 make rc-smoke`: the dev Postgres, the
    migrations, the integration tests, the k3d suites and the UI smoke all use

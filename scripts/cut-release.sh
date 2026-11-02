@@ -17,11 +17,12 @@
 #   scripts/cut-release.sh --self-test            # pure-logic cases, no network
 #   scripts/cut-release.sh 0.4.4 --force-queue    # tag even on a busy Actions queue
 #
-# Which branch a cut lands on follows from the version (ADR 0062): X.Y.0 and
-# its candidates are prepared and tagged on main; every later patch (X.Y.Z-rc.N
-# and X.Y.Z with Z > 0) on release-X.Y, which must already exist. That branch
-# is created once from the vX.Y.0 tag, and the GA cut prints the command. The
-# docs root promotion always targets main, whichever branch the tag came from.
+# Which branch a cut lands on follows from the version (ADR 0102, amending ADR
+# 0062), and scripts/release-base.sh is the one place that decides it: X.Y.0
+# and its candidates are prepared and tagged on main, and so is every later
+# patch (X.Y.Z-rc.N and X.Y.Z with Z > 0) unless .github/patch-branches.txt on
+# main maps the minor to release-X.Y, which must then exist. The docs root
+# promotion always targets main, whichever branch the tag came from.
 #
 # A `-rc.N` version keeps CHANGELOG `[Unreleased]`; a GA version (no `-rc`) moves
 # `[Unreleased]` to `[X.Y.Z] - <date>` and opens a fresh `[Unreleased]`.
@@ -29,7 +30,7 @@
 # Either way the cut first folds the pending `.changes/unreleased/*.yaml`
 # fragments into `[Unreleased]` and deletes them (scripts/changelog-fold.sh).
 #
-# A patch GA folds on release-X.Y, so main never sees that fold. Once the tag
+# A patch GA cut from release-X.Y folds there, so main never sees that fold. Once the tag
 # is pushed the cut opens `changelog: sync vX.Y.Z to main`
 # (scripts/changelog-sync.sh), and before every cut it checks that main is in
 # sync with every patch already tagged, so a minor cut from main cannot fold a
@@ -97,17 +98,20 @@ is_rc() { case "$1" in *-rc.*) return 0 ;; *) return 1 ;; esac; }
 valid_version() { [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; }
 # minor_of: "0.5.1-rc.2" -> "0.5".
 minor_of() { local v="${1#v}"; v="${v%%-*}"; printf '%s' "${v%.*}"; }
-# release_base: the branch a version is cut from (ADR 0062). X.Y.0 and its
-# candidates come from main; every later patch of X.Y comes from release-X.Y,
-# which is created from the vX.Y.0 tag right after that GA ships.
+# release_base: the branch a version is cut from (ADR 0102). main, unless the
+# version is a patch of a minor that .github/patch-branches.txt maps to its
+# release branch. scripts/release-base.sh owns the decision; a base it cannot
+# answer for stops the cut rather than guessing.
 release_base() {
-  local v="${1#v}" patch
-  v="${v%%-*}"; patch="${v##*.}"
-  if [ "$patch" = 0 ]; then printf 'main'; else printf 'release-%s' "$(minor_of "$v")"; fi
+  local b
+  b="$(bash "$ROOT/scripts/release-base.sh" "$1")" && [ -n "$b" ] || die "scripts/release-base.sh could not name the base branch of $1"
+  printf '%s' "$b"
 }
+# is_patch <version>: true for X.Y.Z with Z > 0, rc or GA.
+is_patch() { local v="${1#v}"; v="${v%%-*}"; [ "${v##*.}" != 0 ]; }
 
-# wants_changelog_sync <version>: true for a patch GA (X.Y.Z, Z > 0), the one
-# kind of cut whose fold happens on release-X.Y and never reaches main. An rc
+# wants_changelog_sync <version>: true for a patch GA cut from release-X.Y, the
+# one kind of cut whose fold happens off main and never reaches it. An rc
 # folds there too, but into [Unreleased], and its GA carries it on.
 wants_changelog_sync() {
   is_rc "$1" && return 1
@@ -187,18 +191,20 @@ self_test() {
   if is_rc "0.4.4"; then echo "FAIL: is_rc ga"; fail=1; fi
   for v in 0.4.4 0.4.4-rc.1 10.20.30 1.2.3-rc.15; do valid_version "$v" || { echo "FAIL: valid_version $v"; fail=1; }; done
   for v in v0.4.4 0.4 0.4.4-rc 0.4.4rc1 1.2.3-alpha; do valid_version "$v" && { echo "FAIL: valid_version accepted bad $v"; fail=1; }; done
-  # release_base decides which branch a tag is cut from (ADR 0062): every
-  # X.Y.0 and its candidates come from main, every later patch of that minor
-  # from release-X.Y. Cutting a patch from main would ship whatever main has
-  # gathered since the minor, which is the thing release branches exist to stop.
+  # release_base decides which branch a tag is cut from (ADR 0102): main,
+  # unless .github/patch-branches.txt maps a patch's minor to its release
+  # branch. scripts/release-base.sh owns the parsing and has its own cases;
+  # these check that the cut asks it, mapped and unmapped.
   _eq "$(minor_of 0.5.1-rc.2)"        "0.5"          "minor_of drops patch and rc"
   _eq "$(minor_of 10.20.30)"          "10.20"        "minor_of multi-digit"
-  _eq "$(release_base 0.5.0)"         "main"         "a minor GA is cut from main"
-  _eq "$(release_base 0.5.0-rc.3)"    "main"         "a minor rc is cut from main"
-  _eq "$(release_base 0.5.1)"         "release-0.5"  "a patch GA is cut from its release branch"
-  _eq "$(release_base 0.5.1-rc.1)"    "release-0.5"  "a patch rc is cut from its release branch"
-  _eq "$(release_base 10.20.3)"       "release-10.20" "multi-digit release branch"
-  _eq "$(release_base 0.5.10)"        "release-0.5"  "patch 10 is still a patch, not 0.5.1"
+  local pbf; pbf="$(mktemp)"; printf '0.5 release-0.5\n10.20 release-10.20\n' >"$pbf"
+  _eq "$(PATCH_BRANCHES_FILE="$pbf" release_base 0.5.0)"      "main"          "a minor GA is cut from main"
+  _eq "$(PATCH_BRANCHES_FILE="$pbf" release_base 0.5.0-rc.3)" "main"          "a minor rc is cut from main"
+  _eq "$(PATCH_BRANCHES_FILE="$pbf" release_base 0.5.1)"      "release-0.5"   "a mapped patch GA is cut from its release branch"
+  _eq "$(PATCH_BRANCHES_FILE="$pbf" release_base 0.5.1-rc.1)" "release-0.5"   "a mapped patch rc is cut from its release branch"
+  _eq "$(PATCH_BRANCHES_FILE="$pbf" release_base 10.20.3)"    "release-10.20" "multi-digit release branch"
+  _eq "$(PATCH_BRANCHES_FILE="$pbf" release_base 0.6.2)"      "main"          "an unmapped patch is cut from main"
+  if is_patch 0.5.10 && is_patch 0.5.1-rc.1 && ! is_patch 0.6.0 && ! is_patch 0.6.0-rc.2; then :; else echo "FAIL: is_patch"; fail=1; fi
   # FLAKE_RE decides whether a red run gets rerun or stops the cut, so both ways
   # of getting it wrong cost something real: too broad reruns past a genuine
   # regression, and a pattern that can never match does nothing while looking
@@ -677,12 +683,14 @@ JSON
   _eq "$(grep -c 'missing check-other.sh; unexpected check-renamed.sh' <<<"$gerr")" "1" "and the message names both sides"
   rm -rf "$gd"
 
-  # The changelog sync runs after a patch GA tag and only then: a minor GA is
-  # dated on main itself, and an rc leaves [Unreleased] for its GA to date.
-  _ws() { if wants_changelog_sync "$1"; then echo sync; else echo no; fi; }
-  _eq "$(_ws 0.5.4)"       "sync" "a patch GA syncs its changelog to main"
+  # The changelog sync runs after a patch GA tagged off main and only then: a
+  # minor GA, and a patch GA cut from main, are dated on main itself, and an
+  # rc leaves [Unreleased] for its GA to date.
+  _ws() { if PATCH_BRANCHES_FILE="$pbf" wants_changelog_sync "$1"; then echo sync; else echo no; fi; }
+  _eq "$(_ws 0.5.4)"       "sync" "a patch GA from a release branch syncs its changelog to main"
   _eq "$(_ws 0.5.10)"      "sync" "patch 10 is a patch"
   _eq "$(_ws 0.6.0)"       "no"   "a minor GA was dated on main already"
+  _eq "$(_ws 0.6.3)"       "no"   "a patch GA cut from main was dated on main already"
   _eq "$(_ws 0.5.4-rc.1)"  "no"   "an rc has nothing dated to sync"
   # sync_changelog_pr runs past the tag push, so it must return 0 whatever the
   # script does, and must pass the version and --pr through. Driven in this
@@ -880,6 +888,22 @@ release_verdict() { run_verdict "$(latest_runs "$1")"; }
 # wait_sha_green <sha>: block until every run for <sha> is completed; rerun only
 # transient flakes (bounded); echo GREEN or RED. Robust to the post-rerun window
 # where gh briefly reports the prior conclusion (it waits for pending==0).
+# wait_pr_merged <pr>: print the merge commit of <pr> once the merge queue
+# lands it. Fails when the PR is closed unmerged, or after CUT_QUEUE_MERGE_DEADLINE
+# seconds (default two hours: the queue runs the full CI for each entry).
+wait_pr_merged() {
+  local pr="$1" start=$SECONDS deadline="${CUT_QUEUE_MERGE_DEADLINE:-7200}" st
+  while [ $((SECONDS - start)) -le "$deadline" ]; do
+    st="$(gh pr view "$pr" --repo "$REPO" --json state,mergeCommit -q '"\(.state) \(.mergeCommit.oid // "")"' 2>/dev/null || true)"
+    case "$st" in
+      "MERGED "?*) printf '%s' "${st#MERGED }"; return 0 ;;
+      CLOSED*)     return 1 ;;
+    esac
+    sleep 30
+  done
+  return 1
+}
+
 wait_sha_green() {
   local sha="$1" reruns=0 j verdict failed rid isflake start=$SECONDS
   local deadline="${CUT_WAIT_DEADLINE:-5400}" # 90 min; a stuck-queued run must not hang the cut forever
@@ -1327,6 +1351,12 @@ main() {
   if [ "$base" != main ] && [ "$(minor_of "$cur")" != "$(minor_of "$cv")" ]; then
     die "$base carries chart $cur, not a $(minor_of "$cv").x version. Was it created from the wrong tag?"
   fi
+  # A patch cut from main ships everything main has. Once main's chart names
+  # a later minor (its rc was cut), main is no longer that minor's line: the
+  # patch needs release-X.Y (ADR 0102).
+  if [ "$base" = main ] && is_patch "$version" && [ "$(minor_of "$cur")" != "$(minor_of "$cv")" ]; then
+    die "main carries chart $cur, not a $(minor_of "$cv").x version, so a $cv patch cannot come from it. Create release-$(minor_of "$cv") from v$(minor_of "$cv")'s newest GA tag and map it in .github/patch-branches.txt (ADR 0102)"
+  fi
 
   local branch="release/$tag"
   # Safe re-run (M3): a prior failed cut can leave release/<tag> behind (local or
@@ -1365,10 +1395,21 @@ main() {
   log "prepare PR #$pr — waiting for CI"
   [ "$(wait_sha_green "$(git rev-parse "$branch")")" = GREEN ] || die "PR #$pr CI red (non-flake) — inspect and retry"
 
-  gh pr merge "$pr" --repo "$REPO" --squash --delete-branch --subject "$title" --body "$body" >/dev/null || die "merge failed"
+  if [ "$base" = main ]; then
+    # main merges only through the merge queue (protect-main), which refuses a
+    # direct merge and builds its own squash commit, so the prepare PR is
+    # enqueued and the cut waits for the commit the queue lands. With patches
+    # cut from main (ADR 0102) this is the path of most cuts, not only X.Y.0.
+    gh pr merge "$pr" --repo "$REPO" --squash --auto --delete-branch >/dev/null || die "could not enqueue PR #$pr"
+    log "PR #$pr enqueued; waiting for the merge queue"
+    sha="$(wait_pr_merged "$pr")" || die "PR #$pr did not merge (dequeued, closed or timed out): inspect it, then re-run with --resume once it merged"
+  else
+    gh pr merge "$pr" --repo "$REPO" --squash --delete-branch --subject "$title" --body "$body" >/dev/null || die "merge failed"
+    sleep 8; git fetch origin "$base" -q
+    sha="$(git rev-parse "origin/$base")"
+  fi
   log "PR #$pr merged"
-  sleep 8; git fetch origin "$base" -q
-  sha="$(git rev-parse "origin/$base")"
+  git fetch origin "$base" -q
   [ "$(git show "$sha:helm/dexaflow/Chart.yaml" | awk '/^version:/{print $2;exit}')" = "$cv" ] || die "guard: Chart at $sha is not $cv"
   fi
 
@@ -1508,12 +1549,9 @@ main() {
       warn "docs root NOT promoted: the $tag release workflows never reached PUBLISHED, and the root must not point at a release with no artifacts. The tag is pushed — once the release is good, promote by hand (RELEASING.md)."
     fi
   fi
-  # ADR 0062: every later patch of this minor is cut from release-X.Y, made
-  # from this tag. Printed, not done: it is a one-time decision about the
-  # minor, and the operator may want to wait for the release to settle.
-  if ! is_rc "$version" && [ "$base" = main ]; then
-    log "next: create release-$(minor_of "$version") for this minor's patches: git push origin $tag^{commit}:refs/heads/release-$(minor_of "$version")"
-  fi
+  # ADR 0102: the minor's patches are cut from main until main takes a change
+  # that may not ship in one. Only then is release-X.Y created, from the
+  # minor's newest GA tag, and mapped in .github/patch-branches.txt.
   log "done — log at $logf"
 }
 

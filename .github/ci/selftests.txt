@@ -54,6 +54,7 @@ scripts/prev-chart-version.sh
 scripts/python-eol-warn.sh
 scripts/rc-smoke.sh
 scripts/release-attest.sh
+scripts/release-base.sh
 scripts/release-check-public.sh
 scripts/release-gap.sh
 scripts/release-notes.sh
