@@ -8,7 +8,10 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
+
+	"github.com/dexadata/dexaflow/pkg/authn"
 
 	"github.com/dexadata/dexaflow/pkg/xcomstore"
 
@@ -172,5 +175,46 @@ func TestWithUIServerPassesTheLastNonNilUI(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("the server got UI %v, want %v", got, want)
+	}
+}
+
+type nopAuthn struct {
+	authn.Authenticator
+	name string
+}
+
+type nopIssuer struct {
+	authn.TrustedIssuer
+	name string
+}
+
+func TestWithAuthenticatorAndTrustedIssuerPassTheLastNonNil(t *testing.T) {
+	orig := runApp
+	t.Cleanup(func() { runApp = orig })
+	var got serverapp.Options
+	runApp = func(ctx context.Context, o serverapp.Options) error {
+		got = o
+		return nil
+	}
+	if err := Run(context.Background(), WithAuthenticator(nil), WithTrustedIssuer(nil, "https://ignored.example.com")); err != nil {
+		t.Fatal(err)
+	}
+	if got.Authenticator != nil || got.TrustedIssuer != nil || got.TrustedIssuerOrigins != nil {
+		t.Fatalf("nil options reached the server: %+v", got)
+	}
+	a := nopAuthn{name: "second"}
+	ti := nopIssuer{name: "second"}
+	if err := Run(context.Background(),
+		WithAuthenticator(nopAuthn{name: "first"}), WithAuthenticator(a),
+		WithTrustedIssuer(nopIssuer{name: "first"}, "https://first.example.com"),
+		WithTrustedIssuer(ti, "https://portal.example.com", "https://admin.example.com"),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if got.Authenticator != a || got.TrustedIssuer != ti {
+		t.Fatalf("the server got %v and %v, want the last ones", got.Authenticator, got.TrustedIssuer)
+	}
+	if strings.Join(got.TrustedIssuerOrigins, ",") != "https://portal.example.com,https://admin.example.com" {
+		t.Fatalf("origins = %v, want the last issuer's", got.TrustedIssuerOrigins)
 	}
 }

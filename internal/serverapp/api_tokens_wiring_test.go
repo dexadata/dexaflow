@@ -29,11 +29,11 @@ func (r tokenRepo) FindAPITokenByHash(_ context.Context, hash string) (*auth.API
 
 func (tokenRepo) TouchAPIToken(context.Context, string, time.Time) (bool, error) { return true, nil }
 
-func (tokenRepo) FindUserByLogin(context.Context, string, string) (*auth.User, string, error) {
+func (tokenRepo) FindUserByLogin(context.Context, string, string) (found *auth.User, passwordHash string, err error) {
 	return nil, "", auth.ErrUserNotFound
 }
 
-func (tokenRepo) FindUserByID(context.Context, string) (*auth.User, bool, error) {
+func (tokenRepo) FindUserByID(context.Context, string) (found *auth.User, ok bool, err error) {
 	return &auth.User{ID: "u1", TenantID: "acme", Roles: []string{"viewer"}}, true, nil
 }
 

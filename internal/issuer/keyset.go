@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dexadata/dexaflow/pkg/authn"
+
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
 	jose "github.com/go-jose/go-jose/v4"
 )
@@ -31,7 +33,10 @@ const (
 // ErrKeysUnavailable is a token that could not be checked because the
 // issuer's JWKS could not be downloaded. It says nothing about the token, so
 // the API answers 503 rather than "sign in again".
-var ErrKeysUnavailable = errors.New("issuer: signing keys unavailable")
+//
+// It wraps the public authn.ErrIssuerUnavailable, the sentinel the API checks,
+// so a trusted issuer passed as an option reports an outage the same way.
+var ErrKeysUnavailable = fmt.Errorf("issuer: signing keys unavailable: %w", authn.ErrIssuerUnavailable)
 
 // keyOutage carries, through the context go-oidc hands to the key set, the
 // fact that verification failed because the keys could not be downloaded:

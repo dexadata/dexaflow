@@ -177,7 +177,7 @@ func (s *fakeOIDCStore) seed(provider, subject string, u *auth.User, active bool
 	s.active[key(provider, subject)] = active
 }
 
-func (s *fakeOIDCStore) FindUserByOIDCSubject(_ context.Context, provider, subject string) (*auth.User, bool, error) {
+func (s *fakeOIDCStore) FindUserByOIDCSubject(_ context.Context, provider, subject string) (found *auth.User, ok bool, err error) {
 	u, ok := s.users[key(provider, subject)]
 	if !ok {
 		return nil, false, auth.ErrUserNotFound

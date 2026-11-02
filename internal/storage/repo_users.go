@@ -15,7 +15,7 @@ import (
 )
 
 // FindUserByLogin loads a user and its bcrypt hash for authentication.
-func (r *Repository) FindUserByLogin(ctx context.Context, tenant, username string) (*auth.User, string, error) {
+func (r *Repository) FindUserByLogin(ctx context.Context, tenant, username string) (found *auth.User, passwordHash string, err error) {
 	row, err := r.q.GetUserByEmail(ctx, queries.GetUserByEmailParams{Name: tenant, Email: username})
 	if err != nil {
 		// A genuine not-found is an auth failure (generic, no enumeration). Any other
@@ -50,7 +50,7 @@ func (r *Repository) FindUserByLogin(ctx context.Context, tenant, username strin
 // that is not a valid uuid, or that matches no row, yields auth.ErrUserNotFound
 // (the trusted in-process minting path has no backing user); any other failure
 // is returned as-is so the caller can fail closed.
-func (r *Repository) FindUserByID(ctx context.Context, id string) (*auth.User, bool, error) {
+func (r *Repository) FindUserByID(ctx context.Context, id string) (found *auth.User, ok bool, err error) {
 	uid, err := parseUUID(id)
 	if err != nil {
 		return nil, false, auth.ErrUserNotFound
@@ -82,7 +82,7 @@ func (r *Repository) FindUserByID(ctx context.Context, id string) (*auth.User, b
 // credential path would. A pair matching no row yields auth.ErrUserNotFound (the
 // signal to consider just-in-time provisioning); any other failure is returned
 // as-is so the caller can fail closed.
-func (r *Repository) FindUserByOIDCSubject(ctx context.Context, provider, subject string) (*auth.User, bool, error) {
+func (r *Repository) FindUserByOIDCSubject(ctx context.Context, provider, subject string) (found *auth.User, ok bool, err error) {
 	row, err := r.q.GetUserByOIDCSubject(ctx, queries.GetUserByOIDCSubjectParams{
 		OidcProvider: strPtr(provider), OidcSubject: strPtr(subject),
 	})
@@ -534,7 +534,7 @@ var _ auth.UserStore = (*Repository)(nil)
 // with them; an existing one keeps its id and gets its roles reconciled. A
 // subject already linked in another tenant is domain.ErrConflict, an unknown
 // tenant domain.ErrNotFound and an unknown role domain.ErrValidation.
-func (r *Repository) EnsureIssuerUser(ctx context.Context, tenant, email, provider, subject string, roles []string) (*auth.User, bool, error) {
+func (r *Repository) EnsureIssuerUser(ctx context.Context, tenant, email, provider, subject string, roles []string) (found *auth.User, ok bool, err error) {
 	existing, _, err := r.FindUserByOIDCSubject(ctx, provider, subject)
 	switch {
 	case errors.Is(err, auth.ErrUserNotFound):

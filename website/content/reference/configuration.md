@@ -597,6 +597,25 @@ and recording its metadata in Postgres.
 
 <!-- END GENERATED configref -->
 
+### Sign-in from your own Go program
+
+A program that runs the control plane with
+[`pkg/server`](/reference/go/pkg-server/) can replace two sign-in seams with
+types from [`pkg/authn`](/reference/go/pkg-authn/):
+
+- **`server.WithAuthenticator`** takes password sign-in
+  (`POST /api/v2/auth/token`) and checks the request tokens Dexaflow does not
+  recognize as its own. The sessions Dexaflow mints itself (SSO, the
+  trusted-issuer handoff, renewal), API tokens, CI sessions and agent tokens
+  keep working as before. The server authorizes the returned user by its roles
+  and permissions and clears `Scoped`, `Scopes` and `DeployAudience`, which
+  only Dexaflow grants. Boot logs `auth: authenticator from options`.
+- **`server.WithTrustedIssuer`** verifies the handoff described below with an
+  issuer of your own, posted from the origins the option lists. The server
+  refuses to start without a valid origin, or when `auth.trusted_issuer` is
+  configured too. The bearer mode, `deploy_audience` and `host_pattern` need
+  the built-in verifier and stay off.
+
 ### OIDC / SSO (`auth.oidc.*`)
 
 Read only when `DEXAFLOW_AUTH_PROVIDER=oidc`, which is Cluster-gated (`ui.edition:

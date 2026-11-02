@@ -485,6 +485,12 @@ func isLoopbackListenAddr(addr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// ValidOrigins reports whether list holds at least one origin and every
+// entry is an http or https scheme://host[:port] with nothing after it: the
+// rule auth.trusted_issuer.allowed_origins follows, for origins that come
+// from elsewhere than the configuration.
+func ValidOrigins(list []string) bool { return originsValid(list) }
+
 // originsValid reports whether list is non-empty and every entry is a bare
 // http(s) origin, the exact form a browser sends in the Origin header.
 func originsValid(list []string) bool {

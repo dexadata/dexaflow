@@ -1,0 +1,11 @@
+kind: Added
+body: |-
+  **`server.WithAuthenticator` and `server.WithTrustedIssuer` plug your own
+  sign-in into the control plane** (ADR 0099, #2176). The new public package
+  `pkg/authn` holds the contracts (`Authenticator`, `User`, `Credentials`,
+  `TrustedIssuer`, `Identity` and their errors). Password sign-in goes to the
+  authenticator from options while the sessions Dexaflow mints keep working,
+  and the server clears the scope and deploy-audience fields of the users it
+  returns. A trusted issuer from options takes the handoff from the origins it
+  lists.
+time: 2026-11-02T03:30:00.000000000-03:00

@@ -139,7 +139,7 @@ type ssoUsers struct {
 	user *auth.User
 }
 
-func (s *ssoUsers) FindUserByOIDCSubject(context.Context, string, string) (*auth.User, bool, error) {
+func (s *ssoUsers) FindUserByOIDCSubject(context.Context, string, string) (found *auth.User, ok bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.user == nil {

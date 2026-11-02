@@ -19,7 +19,9 @@ Compatibility: a patch release never breaks an exported identifier of this packa
 - [func Run\(ctx context.Context, opts ...Option\) error](<#Run>)
 - [type Option](<#Option>)
   - [func WithAdmission\(h admission.Hook\) Option](<#WithAdmission>)
+  - [func WithAuthenticator\(a authn.Authenticator\) Option](<#WithAuthenticator>)
   - [func WithLogSink\(sink logsink.Sink\) Option](<#WithLogSink>)
+  - [func WithTrustedIssuer\(ti authn.TrustedIssuer, allowedOrigins ...string\) Option](<#WithTrustedIssuer>)
   - [func WithUIServer\(ui UIServer\) Option](<#WithUIServer>)
   - [func WithXComBackend\(backend xcomstore.Backend\) Option](<#WithXComBackend>)
 - [type UIServer](<#UIServer>)
@@ -34,7 +36,7 @@ var ErrDatabaseReplaced = serverapp.ErrDatabaseReplaced
 ```
 
 <a name="ExitCode"></a>
-## func [ExitCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L127>)
+## func [ExitCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L170>)
 
 ```go
 func ExitCode(err error) int
@@ -43,7 +45,7 @@ func ExitCode(err error) int
 ExitCode is the process exit code for an error Run returned: 0 for nil, 3 for ErrDatabaseReplaced, 1 for anything else.
 
 <a name="Run"></a>
-## func [Run](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L116>)
+## func [Run](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L159>)
 
 ```go
 func Run(ctx context.Context, opts ...Option) error
@@ -86,7 +88,7 @@ func main() {
 </details>
 
 <a name="Option"></a>
-## type [Option](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L32>)
+## type [Option](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L33>)
 
 Option changes how Run builds the server. More options come in later releases \(ADR 0099 §3\); adding one is not a breaking change.
 
@@ -95,7 +97,7 @@ type Option func(*settings)
 ```
 
 <a name="WithAdmission"></a>
-### func [WithAdmission](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L45>)
+### func [WithAdmission](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L46>)
 
 ```go
 func WithAdmission(h admission.Hook) Option
@@ -142,8 +144,80 @@ func main() {
 </p>
 </details>
 
+<a name="WithAuthenticator"></a>
+### func [WithAuthenticator](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L122>)
+
+```go
+func WithAuthenticator(a authn.Authenticator) Option
+```
+
+WithAuthenticator checks API requests and password sign\-in with a, an authenticator of your own, such as one backed by a company directory. A request token goes to the server's own authenticator first, so the sessions an SSO login, a trusted\-issuer handoff or a renewal opens keep working, and to a only when the server refuses it as invalid. Password sign\-in \(POST /api/v2/auth/token\) goes to a alone. API tokens and CI sessions are still checked in front of both, and agent tokens never reach a.
+
+The server authorizes the User a returns by its roles and permissions, and clears its Scoped, Scopes and DeployAudience fields first: only the server grants those \(ADR 0099 §6\). A nil a keeps the server's own sign\-in; with several options the last one wins.
+
+<details><summary>Example</summary>
+<p>
+
+A control plane whose password sign\-in goes to a directory of its own. The sessions the server mints itself \(SSO, handoff, renewal\) keep working.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+
+	"github.com/dexadata/dexaflow/pkg/authn"
+	"github.com/dexadata/dexaflow/pkg/server"
+)
+
+// directory signs users in against a company directory, here a fixed table,
+// and recognizes the tokens it hands out. tenantID is the tenant's name.
+type directory struct {
+	tenantID string
+	users    map[string]string
+}
+
+func (d directory) IssueToken(_ context.Context, c authn.Credentials) (string, error) {
+	if pw, ok := d.users[c.Username]; !ok || pw != c.Password {
+		return "", authn.ErrInvalidCredentials
+	}
+	return "dir:" + c.Username, nil
+}
+
+func (d directory) Authenticate(_ context.Context, token string) (*authn.User, error) {
+	email, ok := strings.CutPrefix(token, "dir:")
+	if !ok || d.users[email] == "" {
+		return nil, authn.ErrInvalidToken
+	}
+	return &authn.User{
+		ID: email, TenantID: d.tenantID, Email: email,
+		Roles:       []string{"viewer"},
+		Permissions: []authn.Permission{{Action: "read", Resource: "*"}},
+	}, nil
+}
+
+func main() {
+	dir := directory{tenantID: "default", users: map[string]string{"ada@example.com": "s3cret"}}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := server.Run(ctx, server.WithAuthenticator(dir))
+	stop()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(server.ExitCode(err))
+	}
+}
+```
+
+</p>
+</details>
+
 <a name="WithLogSink"></a>
-### func [WithLogSink](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L60>)
+### func [WithLogSink](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L61>)
 
 ```go
 func WithLogSink(sink logsink.Sink) Option
@@ -224,8 +298,68 @@ func main() {
 </p>
 </details>
 
+<a name="WithTrustedIssuer"></a>
+### func [WithTrustedIssuer](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L142>)
+
+```go
+func WithTrustedIssuer(ti authn.TrustedIssuer, allowedOrigins ...string) Option
+```
+
+WithTrustedIssuer verifies the trusted\-issuer handoff \(POST /api/v2/auth/session\) with an issuer of your own, accepting a handoff only when the browser posts it from one of allowedOrigins \(scheme://host\[:port\], one or more\). A verified identity opens a UI session for the active user linked to the issuer under its subject, in its tenant; it never creates a user and never brings roles. Run refuses to start when allowedOrigins is empty or invalid, or when auth.trusted\_issuer is configured too.
+
+The bearer mode, the deploy audience and the host pattern of auth.trusted\_issuer need the built\-in verifier and stay off with an issuer from options. A nil ti keeps the configured issuer; with several options the last one wins.
+
+<details><summary>Example</summary>
+<p>
+
+A control plane that opens UI sessions from the operator's portal, posted from https://portal.example.com.
+
+```go
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/dexadata/dexaflow/pkg/authn"
+	"github.com/dexadata/dexaflow/pkg/server"
+)
+
+// portal verifies the handoff tokens of the operator's own portal, here a
+// fixed table of one-time codes.
+type portal struct{ codes map[string]authn.Identity }
+
+func (portal) Provider() string { return "portal" }
+
+func (p portal) Verify(_ context.Context, raw string) (*authn.Identity, error) {
+	id, ok := p.codes[raw]
+	if !ok {
+		return nil, errors.New("unknown handoff code")
+	}
+	return &id, nil
+}
+
+func main() {
+	p := portal{codes: map[string]authn.Identity{"c-1": {Subject: "u-42", Email: "ada@example.com", Tenant: "default"}}}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := server.Run(ctx, server.WithTrustedIssuer(p, "https://portal.example.com"))
+	stop()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(server.ExitCode(err))
+	}
+}
+```
+
+</p>
+</details>
+
 <a name="WithUIServer"></a>
-### func [WithUIServer](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L100>)
+### func [WithUIServer](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L101>)
 
 ```go
 func WithUIServer(ui UIServer) Option
@@ -284,7 +418,7 @@ func main() {
 </details>
 
 <a name="WithXComBackend"></a>
-### func [WithXComBackend](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L76>)
+### func [WithXComBackend](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L77>)
 
 ```go
 func WithXComBackend(backend xcomstore.Backend) Option
@@ -377,7 +511,7 @@ func main() {
 </details>
 
 <a name="UIServer"></a>
-## type [UIServer](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L90-L93>)
+## type [UIServer](<https://github.com/dexadata/dexaflow/blob/main/pkg/server/server.go#L91-L94>)
 
 UIServer serves a web UI in place of the embedded one. The server mounts StaticHandler under /static/, with that prefix stripped from the request path, and calls Index for every other GET that matches no API or /ui/ route, with the base path the UI is served under. Index is reached only with a valid session: a visitor without one is redirected to the server's own sign\-in page first, so a UI never renders for a signed\-out visitor.
 
