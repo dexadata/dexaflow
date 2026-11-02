@@ -1,6 +1,9 @@
 package domain
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // SafeError carries a message Dexaflow composed itself, attached to one of the
 // sentinel classes above. It exists so the API boundary can tell "a phrase we
@@ -52,4 +55,20 @@ func (e *SafeError) ClientMessage() string { return e.Message }
 // supplied or Dexaflow chose — never a driver, filesystem, or network error.
 func Safef(class error, format string, a ...any) error {
 	return &SafeError{Message: fmt.Sprintf(format, a...), Class: class}
+}
+
+// ClientMessageOr returns the phrase Dexaflow composed for err, or fallback
+// when err carries no such phrase. It is the deny-by-default rule every client
+// boundary applies: the HTTP API (safeDetail) and the agent gRPC service
+// (safeMessage) both read it from here, so the rule has one copy (#1078). Only
+// a SafeError, an error someone deliberately wrote as client-facing,
+// contributes text; everything else, including every fmt.Errorf wrap of a
+// driver error, is replaced, so a newly introduced storage error cannot leak by
+// omission.
+func ClientMessageOr(err error, fallback string) string {
+	var safe *SafeError
+	if errors.As(err, &safe) && safe.ClientMessage() != "" {
+		return safe.ClientMessage()
+	}
+	return fallback
 }

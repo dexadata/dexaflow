@@ -71,7 +71,6 @@ var scopelessReads = map[string]bool{
 	"GET /api/v2/assets/events":        true,
 	"GET /api/v2/providers":            true,
 	"GET /api/v2/jobs":                 true,
-	"GET /api/v2/backfills":            true,
 	"GET /api/v2/config":               true,
 	"GET /api/v2/dags/:dag_id/dagRuns/:dag_run_id/hitlDetails": true,
 	// Airflow 3.3 calls Dexaflow does not serve (airflow33_unserved.go).

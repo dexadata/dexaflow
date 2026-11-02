@@ -38,7 +38,7 @@ func newSettlingHarness(t *testing.T) *settlingHarness {
 		now:   time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
 	}
 	logger := slog.New(slog.NewTextHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	h.reaper = NewReaper(h.store, h.pods, nil, &fakeWarmLister{}, h.rec, logger, DefaultReaperConfig(), nil)
+	h.reaper = NewReaper(h.store, h.pods, nil, &fakeWarmLister{}, h.rec, logger, DefaultReaperConfig(), ReaperGates{})
 	h.reaper.now = func() time.Time { return h.now }
 	h.reaper.SetLeaderSince(func() time.Time { return h.since })
 	h.reaper.SetInformerSynced(func() bool { return h.synced })
@@ -177,7 +177,7 @@ func TestReapOnceDrillRaceHoldsPodLostUntilSweep(t *testing.T) {
 	h.store = &fakeReaperStore{runningCands: []PodLostCandidate{
 		{TaskInstanceID: "finished-during-outage", DagRunID: "run-a", TaskID: "work", TryNumber: 1, RunningSince: h.now.Add(-10 * time.Minute)},
 	}}
-	h.reaper = NewReaper(h.store, h.pods, nil, nil, h.rec, reapTestLogger(), DefaultReaperConfig(), nil)
+	h.reaper = NewReaper(h.store, h.pods, nil, nil, h.rec, reapTestLogger(), DefaultReaperConfig(), ReaperGates{})
 	h.reaper.now = func() time.Time { return h.now }
 	h.reaper.SetLeaderSince(func() time.Time { return h.since })
 	h.reaper.SetInformerSynced(func() bool { return h.synced })
@@ -216,7 +216,7 @@ func TestReapOnceSettlingCoversAgentLost(t *testing.T) {
 	h.store = &fakeReaperStore{agentCands: []AgentLostCandidate{
 		{TaskInstanceID: "stale", DagRunID: "r", TaskID: "t", TryNumber: 1, LastHeartbeat: h.now.Add(-2 * time.Minute)},
 	}}
-	h.reaper = NewReaper(h.store, h.pods, nil, nil, h.rec, reapTestLogger(), DefaultReaperConfig(), nil)
+	h.reaper = NewReaper(h.store, h.pods, nil, nil, h.rec, reapTestLogger(), DefaultReaperConfig(), ReaperGates{})
 	h.reaper.now = func() time.Time { return h.now }
 	h.reaper.SetLeaderSince(func() time.Time { return h.since })
 	h.reaper.SetInformerSynced(func() bool { return h.synced })
@@ -244,7 +244,7 @@ func TestReapOnceNilSettlingPredicatesAreOpen(t *testing.T) {
 	t.Run("nothing wired", func(t *testing.T) {
 		store := staleEverythingStore()
 		rec := &capturingRecorder{}
-		r := NewReaper(store, &fakePodManager{active: map[string]bool{}}, nil, &fakeWarmLister{}, rec, reapTestLogger(), DefaultReaperConfig(), nil)
+		r := NewReaper(store, &fakePodManager{active: map[string]bool{}}, nil, &fakeWarmLister{}, rec, reapTestLogger(), DefaultReaperConfig(), ReaperGates{})
 		if err := r.ReapOnce(context.Background()); err != nil {
 			t.Fatalf("ReapOnce: %v", err)
 		}
@@ -255,7 +255,7 @@ func TestReapOnceNilSettlingPredicatesAreOpen(t *testing.T) {
 	})
 	t.Run("leadership only, grace elapsed", func(t *testing.T) {
 		store := staleEverythingStore()
-		r := NewReaper(store, &fakePodManager{active: map[string]bool{}}, nil, &fakeWarmLister{}, nil, reapTestLogger(), DefaultReaperConfig(), nil)
+		r := NewReaper(store, &fakePodManager{active: map[string]bool{}}, nil, &fakeWarmLister{}, nil, reapTestLogger(), DefaultReaperConfig(), ReaperGates{})
 		r.SetLeaderSince(func() time.Time { return time.Now().Add(-time.Hour) })
 		if err := r.ReapOnce(context.Background()); err != nil {
 			t.Fatalf("ReapOnce: %v", err)
@@ -266,7 +266,7 @@ func TestReapOnceNilSettlingPredicatesAreOpen(t *testing.T) {
 		// mayReap owns the not-leading case; a zero leadership stamp must not be
 		// read as "settling forever".
 		store := staleEverythingStore()
-		r := NewReaper(store, &fakePodManager{active: map[string]bool{}}, nil, &fakeWarmLister{}, nil, reapTestLogger(), DefaultReaperConfig(), nil)
+		r := NewReaper(store, &fakePodManager{active: map[string]bool{}}, nil, &fakeWarmLister{}, nil, reapTestLogger(), DefaultReaperConfig(), ReaperGates{})
 		r.SetLeaderSince(func() time.Time { return time.Time{} })
 		r.SetLastSweepCompleted(func() time.Time { return time.Time{} })
 		if err := r.ReapOnce(context.Background()); err != nil {
@@ -285,7 +285,7 @@ func TestReapOnceSettlesAfterFirstReconcileSweep(t *testing.T) {
 	grace := DefaultReaperConfig().SettlingGrace
 	rec := NewReconciler(fake.NewClientset(), "leoflow", &fakeReporter{})
 	store := staleEverythingStore()
-	r := NewReaper(store, &fakePodManager{active: map[string]bool{}}, nil, &fakeWarmLister{}, nil, reapTestLogger(), DefaultReaperConfig(), nil)
+	r := NewReaper(store, &fakePodManager{active: map[string]bool{}}, nil, &fakeWarmLister{}, nil, reapTestLogger(), DefaultReaperConfig(), ReaperGates{})
 	r.SetLeaderSince(func() time.Time { return time.Now().Add(-grace - time.Second) })
 	r.SetInformerSynced(func() bool { return true })
 	r.SetLastSweepCompleted(rec.LastSweepCompletedAt)

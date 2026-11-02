@@ -224,7 +224,7 @@ func TestReapAgentLost_PastCeilingRespectsGateAndFence(t *testing.T) {
 // TestReaperSetAttemptLifetimeCeiling: the Reaper hands the operator's ceiling
 // to the agent-lost reaper, which is the only reaper that judges by it.
 func TestReaperSetAttemptLifetimeCeiling(t *testing.T) {
-	r := NewReaper(&fakeReaperStore{}, nil, nil, nil, nil, reapTestLogger(), DefaultReaperConfig(), nil)
+	r := NewReaper(&fakeReaperStore{}, nil, nil, nil, nil, reapTestLogger(), DefaultReaperConfig(), ReaperGates{})
 	r.SetAttemptLifetimeCeiling(11 * time.Minute)
 	if r.agentLost.ceiling != 11*time.Minute {
 		t.Errorf("agent-lost ceiling = %v, want 11m", r.agentLost.ceiling)

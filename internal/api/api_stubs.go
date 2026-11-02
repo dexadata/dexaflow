@@ -10,8 +10,9 @@ import (
 // implement yet (tags, warnings, import errors, assets, plugins,
 // human-in-the-loop). The 3.2.1 UI polls them on the DAG list and detail
 // screens; a 404 surfaces as a broken detail view and console errors. Each
-// returns a schema-valid empty collection so the UI degrades gracefully. Real
-// implementations are tracked per endpoint (GitHub issues #26–#32).
+// returns a schema-valid empty collection so the UI degrades gracefully. None
+// has a real implementation planned; website/content/concepts/ui-compatibility.md
+// lists what the UI degrades and why.
 
 // apiEmptyCollection renders a {<field>:[], total_entries:0} envelope.
 func apiEmptyCollection(field string) gin.HandlerFunc {
@@ -24,33 +25,26 @@ func apiEmptyCollection(field string) gin.HandlerFunc {
 // /api/v2 list endpoints the Airflow UI polls.
 func registerAPIStubs(r gin.IRouter) {
 	// /api/v2/dagTags is owned by registerDagTags (real when a DagRepository is
-	// set, empty stub otherwise), see #26, #1927.
-	r.GET("/api/v2/dagWarnings", apiEmptyCollection("dag_warnings")) // #27
+	// set, empty stub otherwise), see #1927.
+	r.GET("/api/v2/dagWarnings", apiEmptyCollection("dag_warnings"))
 	// /api/v2/importErrors is owned by registerImportErrors (real when an
-	// ImportErrorStore is set, empty stub otherwise) — see #28.
-	r.GET("/api/v2/plugins/importErrors", apiEmptyCollection("import_errors")) // #28
-	r.GET("/api/v2/assets", apiEmptyCollection("assets"))                      // #29
-	r.GET("/api/v2/assets/events", apiEmptyCollection("asset_events"))         // #29
+	// ImportErrorStore is set, empty stub otherwise).
+	r.GET("/api/v2/plugins/importErrors", apiEmptyCollection("import_errors"))
+	r.GET("/api/v2/assets", apiEmptyCollection("assets"))
+	r.GET("/api/v2/assets/events", apiEmptyCollection("asset_events"))
 	// /api/v2/plugins is owned by pluginsHandler: the built-in plugin that
 	// carries the API tokens screen when the token API is mounted (#1886).
 	// /api/v2/pools is owned by registerUIPools: real Pro-only CRUD when the Pro
-	// edition sets a PoolStore, else the same empty-collection stub (ADR 0053, #31).
-	r.GET("/api/v2/providers", apiEmptyCollection("providers")) // #30
-	r.GET("/api/v2/jobs", apiEmptyCollection("jobs"))           // #30
-	r.GET("/api/v2/backfills", apiEmptyCollection("backfills")) // Backfills screen
-	// The connection form's "create default connections" action: the SPA POSTs
-	// here when the Connections area opens and its generated client handles only
-	// 401/403 — an unhandled 404 crashed the React view, so the connector config
-	// page "wouldn't open". Dexaflow seeds no legacy default connections, so this
-	// is a no-op that returns the empty envelope the form reads (`.connections`).
-	r.POST("/api/v2/connections/defaults", apiEmptyCollection("connections"))
+	// edition sets a PoolStore, else the same empty-collection stub (ADR 0053).
+	r.GET("/api/v2/providers", apiEmptyCollection("providers"))
+	r.GET("/api/v2/jobs", apiEmptyCollection("jobs"))
 	// The Config screen reads {sections:[]} (not a collection envelope). Dexaflow
 	// does not expose the Airflow config, so render an empty (graceful) one.
 	r.GET("/api/v2/config", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"sections": []any{}})
 	})
 	// /api/v2/eventLogs is owned by registerUIAudit (real when an AuditLogReader
-	// is set, empty stub otherwise) — see #37.
-	// Human-in-the-loop details, polled at the DAG-run level (#32).
+	// is set, empty stub otherwise).
+	// Human-in-the-loop details, polled at the DAG-run level.
 	r.GET("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/hitlDetails", apiEmptyCollection("hitl_details"))
 }

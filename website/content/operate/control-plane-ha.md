@@ -39,7 +39,7 @@ dominated by the image pull. During it:
   leader-settling gate on the reapers is what keeps that from becoming a false
   `agent_lost` / `pod_lost` failure; the server also validates at boot that the
   timing ladder this depends on holds (heartbeat < agent-lost threshold <
-  settling grace < token TTL, and two maintenance cycles inside the grace),
+  settling grace < token TTL, and two maintenance cycles starting inside the grace),
   refusing to start if a knob was moved out of order. These bound the damage;
   they do not remove the window.
 - **Tasks starting or finishing in the window wait instead of failing.** An
@@ -107,6 +107,13 @@ Postgres advisory lock — and the API serves **active-active** from every repli
 - the API and UI stay up on the surviving replica;
 - a rolling upgrade is a real rolling upgrade instead of a stop-the-world
   `Recreate`.
+
+Failover is fast, but every election still costs one settling grace (180 s by
+default) during which no reaper acts, because the new leader must settle before
+it may declare anything lost. A two-replica rolling upgrade moves the lock
+twice, so it opens two such windows back to back: a task that genuinely dies
+during the upgrade can be failed several minutes later than it would be
+in steady state. Nothing is lost, only detected later.
 
 ### One switch: the HA profile
 
