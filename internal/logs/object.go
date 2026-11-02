@@ -113,7 +113,7 @@ func NewObjectSink(ctx context.Context, store ObjectStore, prefix string, logger
 // operator can reason about both the same way. path.Join (not filepath.Join)
 // keeps forward slashes on every OS, since object keys are not filesystem paths.
 func (o *ObjectSink) key(ref Ref) string {
-	return path.Join(o.prefix, ref.TenantID, ref.DagID, ref.RunID, ref.TaskID, ref.fileName())
+	return path.Join(o.prefix, ref.TenantID, ref.DagID, ref.RunID, ref.TaskID, refFileName(ref))
 }
 
 // segmentKey maps a Ref and a segment number to the segment's object key. The
@@ -124,7 +124,7 @@ func (o *ObjectSink) key(ref Ref) string {
 // listing in write order.
 func (o *ObjectSink) segmentKey(ref Ref, n int) string {
 	return path.Join(o.prefix, ref.TenantID, ref.DagID, ref.RunID, ref.TaskID,
-		ref.fileName()+".d", fmt.Sprintf("%08d.log", n))
+		refFileName(ref)+".d", fmt.Sprintf("%08d.log", n))
 }
 
 // ObjectLister is implemented by object stores that can list keys under a
@@ -143,7 +143,7 @@ var errNoObjectList = errors.New("object store cannot list")
 // store without ObjectLister, or a failed listing (S3 without s3:ListBucket),
 // returns an error and the caller probes instead.
 func (o *ObjectSink) StoredEpochs(ctx context.Context, ref Ref) ([]int, error) {
-	if err := ref.validate(); err != nil {
+	if err := validateRef(ref); err != nil {
 		return nil, err
 	}
 	lister, ok := o.store.(ObjectLister)
@@ -191,7 +191,7 @@ func (o *ObjectSink) StoredEpochs(ctx context.Context, ref Ref) ([]int, error) {
 // is. The store is checked for this answer at boot (checkSegmentedLayout), so
 // in practice only a failure that outlasts the retries gets here.
 func (o *ObjectSink) Open(ref Ref) (LogWriter, error) {
-	if err := ref.validate(); err != nil {
+	if err := validateRef(ref); err != nil {
 		return nil, err
 	}
 	if o.layout != ObjectLayoutSegmented {
@@ -230,7 +230,7 @@ func (o *ObjectSink) Open(ref Ref) (LogWriter, error) {
 // the network whose handler has not noticed yet) races the resumed one, and
 // either can overwrite the other's latest flush, as with two writers in Open.
 func (o *ObjectSink) Resume(ref Ref) (LogWriter, error) {
-	if err := ref.validate(); err != nil {
+	if err := validateRef(ref); err != nil {
 		return nil, err
 	}
 	if o.layout == ObjectLayoutSegmented {
@@ -335,7 +335,7 @@ func (o *ObjectSink) Close() error {
 // not an absent log, so a store outage does not read as a task that logged
 // nothing.
 func (o *ObjectSink) Read(ctx context.Context, ref Ref) (io.ReadCloser, error) {
-	if err := ref.validate(); err != nil {
+	if err := validateRef(ref); err != nil {
 		return nil, err
 	}
 	if o.layout != ObjectLayoutSegmented {
@@ -492,7 +492,7 @@ func (r *segmentReader) Close() error {
 // live writer never writes {try}.log, so the marker there cannot be overwritten;
 // Read serves it after the segments.
 func (o *ObjectSink) AppendEvent(ref Ref, ev Event) error {
-	if err := ref.validate(); err != nil {
+	if err := validateRef(ref); err != nil {
 		return err
 	}
 	key := o.key(ref)

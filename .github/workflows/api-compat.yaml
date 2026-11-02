@@ -1,6 +1,6 @@
 # Fails a pull request that breaks a public API without saying so: the agent
 # gRPC protocol (buf breaking), the REST API (oasdiff on docs/api/openapi.yaml)
-# and the Go client (apidiff on pkg/client), each against the base branch. An
+# and the Go packages under pkg/ (apidiff), each against the base branch. An
 # intended break passes with the `breaking-change` label and a changelog
 # fragment of kind Changed or Removed. See scripts/api-compat.sh (#1554).
 #
@@ -79,7 +79,7 @@ jobs:
           else
             echo "set=0" >> "$GITHUB_OUTPUT"
           fi
-      - name: Compare proto, OpenAPI and pkg/client with the base branch
+      - name: Compare proto, OpenAPI and the pkg/ packages with the base branch
         env:
           BREAKING_CHANGE_LABEL: ${{ steps.label.outputs.set }}
         run: bash scripts/api-compat.sh "$RUNNER_TEMP/base"

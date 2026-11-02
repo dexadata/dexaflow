@@ -30,6 +30,12 @@ The record of how Dexaflow got here and where it is going.
     <span class="lf-card__desc">What is planned next, and the road to the first release.</span>
     <span class="lf-card__more">See the roadmap →</span>
   </a>
+  <a class="lf-card" href="/project/versioning/">
+    <span class="lf-card__icon"><i class="fa-solid fa-code-branch"></i></span>
+    <span class="lf-card__title">Versioning and support</span>
+    <span class="lf-card__desc">What a release may change, how long each minor is supported, and how features are deprecated.</span>
+    <span class="lf-card__more">Read the policy →</span>
+  </a>
   <a class="lf-card" href="/project/planning/">
     <span class="lf-card__icon"><i class="fa-solid fa-clipboard-list"></i></span>
     <span class="lf-card__title">Planning</span>

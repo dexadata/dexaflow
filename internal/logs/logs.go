@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/dexadata/dexaflow/pkg/logsink"
 )
 
 // flushThreshold is the buffered-writer size; a full buffer flushes to storage,
@@ -23,13 +25,8 @@ const flushThreshold = 1 << 20 // 1 MB
 // Event is one structured log line: when it was emitted, its severity level and
 // source stream (stdout/stderr), and the message text. Logs are stored as JSONL
 // (one Event per line) so the UI's drill-down viewer can color by real level
-// instead of guessing.
-type Event struct {
-	Time    time.Time `json:"ts"`
-	Level   string    `json:"level"`
-	Stream  string    `json:"stream"`
-	Message string    `json:"msg"`
-}
+// instead of guessing. It is defined by the public contract (ADR 0099).
+type Event = logsink.Event
 
 // DecodeLine parses a stored log line into an Event. Lines that are not JSON
 // (legacy plain-text logs written before structured storage) decode as a
@@ -172,23 +169,13 @@ func jsonEncodableTime(t time.Time) bool {
 }
 
 // Ref identifies a task instance's log stream and maps to its storage location.
-//
-// AttemptEpoch names one execution of the try (ADR 0051 amendment): an infra
-// re-place, a reschedule poke or a repeated dispatch runs the same try again,
-// and each execution keeps its own stream. Epoch 0 maps to the key every log
-// had before the epoch existed, so those logs are still found.
-type Ref struct {
-	TenantID     string
-	DagID        string
-	RunID        string
-	TaskID       string
-	TryNumber    int
-	AttemptEpoch int
-}
+// It is defined by the public contract (ADR 0099), which documents the attempt
+// epoch.
+type Ref = logsink.Ref
 
-// fileName is the last segment of the ref's storage location:
+// refFileName is the last segment of the ref's storage location:
 // {try}.log for epoch 0 and {try}.e{epoch}.log otherwise.
-func (r Ref) fileName() string {
+func refFileName(r Ref) string {
 	if r.AttemptEpoch == 0 {
 		return fmt.Sprintf("%d.log", r.TryNumber)
 	}
@@ -197,24 +184,16 @@ func (r Ref) fileName() string {
 
 // LogWriter appends structured log events for one task attempt and flushes on
 // Close.
-type LogWriter interface {
-	WriteEvent(ev Event) error
-	Close() error
-}
+type LogWriter = logsink.LogWriter
 
 // LineWriter is implemented by LogWriters that also accept a line already
 // encoded by EncodeLine (without the trailing newline), so a caller that both
 // stores and publishes a line encodes it once. DiskSink and ObjectSink writers
 // implement it; a caller type-asserts and falls back to WriteEvent.
-type LineWriter interface {
-	WriteLine(line string) error
-}
+type LineWriter = logsink.LineWriter
 
 // Sink stores and retrieves task logs.
-type Sink interface {
-	Open(ref Ref) (LogWriter, error)
-	Read(ctx context.Context, ref Ref) (io.ReadCloser, error)
-}
+type Sink = logsink.Sink
 
 // MarkerSink appends a single event to an attempt's existing log while
 // PRESERVING prior content: O_APPEND on disk, read-modify-write on an object
@@ -222,9 +201,7 @@ type Sink interface {
 // whole object). A reaper uses it to add a terminal marker to a killed task's
 // log without clobbering the streamed output (#861). DiskSink and ObjectSink
 // both implement it; a caller holding a Sink type-asserts to reach it.
-type MarkerSink interface {
-	AppendEvent(ref Ref, ev Event) error
-}
+type MarkerSink = logsink.MarkerSink
 
 // DiskSink writes logs to ${root}/{tenant}/{dag}/{run}/{task}/{try}.log, or
 // {try}.e{epoch}.log for an execution with a non-zero attempt epoch.
@@ -257,13 +234,13 @@ func (d *DiskSink) withRoot(fn func(*os.Root) (*os.File, error)) (*os.File, erro
 
 // rel is the storage location relative to the sink root, for use with os.Root.
 func (d *DiskSink) rel(ref Ref) string {
-	return filepath.Join(ref.TenantID, ref.DagID, ref.RunID, ref.TaskID, ref.fileName())
+	return filepath.Join(ref.TenantID, ref.DagID, ref.RunID, ref.TaskID, refFileName(ref))
 }
 
 // ErrUnsafeRef reports a Ref whose fields cannot be used as path segments.
 var ErrUnsafeRef = errors.New("unsafe log reference")
 
-// validate rejects a Ref that would not resolve inside the sink root.
+// validateRef rejects a Ref that would not resolve inside the sink root.
 //
 // Every field is interpolated into the storage path, so a field carrying a
 // separator or a parent reference escapes the root — and since the caller also
@@ -275,9 +252,9 @@ var ErrUnsafeRef = errors.New("unsafe log reference")
 // This is the readable-error layer, not the containment: os.Root is what makes
 // an escape impossible, including the case a string check cannot see — a symlink
 // inside the root whose every path component is a legal name. Both are kept
-// because they fail differently. validate names the offending field, and os.Root
+// because they fail differently. validateRef names the offending field, and os.Root
 // holds even if this charset later turns out to be incomplete.
-func (r Ref) validate() error {
+func validateRef(r Ref) error {
 	for _, f := range []struct{ name, value string }{
 		{"tenant_id", r.TenantID},
 		{"dag_id", r.DagID},
@@ -316,7 +293,7 @@ func safeSegment(v string) error {
 
 // Open creates the log file (appending if it exists) and returns a buffered writer.
 func (d *DiskSink) Open(ref Ref) (LogWriter, error) {
-	if err := ref.validate(); err != nil {
+	if err := validateRef(ref); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(d.root, 0o750); err != nil {
@@ -387,7 +364,7 @@ func (d *DiskSink) Prune(now time.Time, retention time.Duration) error {
 // one directory read (see EpochLister). A task directory that does not exist
 // yet holds none.
 func (d *DiskSink) StoredEpochs(_ context.Context, ref Ref) ([]int, error) {
-	if err := ref.validate(); err != nil {
+	if err := validateRef(ref); err != nil {
 		return nil, err
 	}
 	dir, err := d.withRoot(func(root *os.Root) (*os.File, error) {
@@ -417,7 +394,7 @@ func (d *DiskSink) StoredEpochs(_ context.Context, ref Ref) ([]int, error) {
 
 // Read opens the log file for reading.
 func (d *DiskSink) Read(_ context.Context, ref Ref) (io.ReadCloser, error) {
-	if err := ref.validate(); err != nil {
+	if err := validateRef(ref); err != nil {
 		return nil, err
 	}
 	f, err := d.withRoot(func(root *os.Root) (*os.File, error) {

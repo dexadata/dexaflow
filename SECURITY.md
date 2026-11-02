@@ -66,17 +66,20 @@ on the disclosure.
 
 ### Supported Versions
 
-**Only the latest release.** Dexaflow is pre-1.0 and ships patches on a single
-line (v0.1.0 → v0.1.1 → v0.1.2); there is no previous minor to support, and
-under SemVer's 0.x contract a breaking change may land between any two releases
-(ADR 0037). Backporting to an older tag is not offered.
+| Line | Security fixes |
+|---|---|
+| The newest minor | Yes, as patches of its `release-X.Y` branch |
+| The previous minor | Yes, for 8 weeks after the next minor's `X.Y.0` final ships |
+| Older minors | No |
 
-Upgrading to the latest release is the remediation. If that is not possible for
-you, say so in the report — a targeted patch may be possible, but it is a
-case-by-case answer rather than a policy.
+The full policy, including what a patch may contain and how features are
+deprecated, is on the
+[versioning and support](website/content/project/versioning.md)
+page.
 
-This section previously promised support for "the previous minor version, for 90
-days", which described a versioning shape the project does not have.
+Upgrading to the latest patch of a supported line is the remediation. If that
+is not possible for you, say so in the report: a targeted patch may be
+possible, but it is a case-by-case answer rather than a policy.
 
 ## Repository Protections
 

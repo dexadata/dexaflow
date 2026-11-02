@@ -869,6 +869,14 @@ and cannot do.
 
 <!-- END GENERATED configref -->
 
+**A sink of your own.** A program that runs the control plane with
+[`pkg/server`](/reference/go/pkg-server/) can store task logs anywhere with
+`server.WithLogSink`, which takes a [`pkg/logsink`](/reference/go/pkg-logsink/)
+`Sink`. The `logs.backend` and `logs.sink.*` keys are then ignored, and boot
+logs `task logs: sink from options`. The sink serves the reads of the API, the
+UI and the CLI too, so it must return what it stored, and an error wrapping
+`fs.ErrNotExist` for a log it does not have. The server never closes it.
+
 ### External secrets (`secrets.*`)
 
 Operator-only ([ADR 0060](/project/adrs/0060-external-secrets-resolution/)):

@@ -32,7 +32,7 @@ func NewMemoryTailer() *MemoryTailer {
 func (t *MemoryTailer) Publish(_ context.Context, ref Ref, line string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	for _, ch := range t.subs[ref.Channel()] {
+	for _, ch := range t.subs[tailChannel(ref)] {
 		select {
 		case ch <- line:
 		default:
@@ -45,13 +45,13 @@ func (t *MemoryTailer) Publish(_ context.Context, ref Ref, line string) error {
 func (t *MemoryTailer) HasSubscribers(_ context.Context, ref Ref) (bool, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return len(t.subs[ref.Channel()]) > 0, nil
+	return len(t.subs[tailChannel(ref)]) > 0, nil
 }
 
 // Subscribe returns a channel of live log lines for the task and a cancel
 // function. The channel is closed on cancel or when the context is done.
 func (t *MemoryTailer) Subscribe(ctx context.Context, ref Ref) (lines <-chan string, cancel func()) {
-	key := ref.Channel()
+	key := tailChannel(ref)
 	ch := make(chan string, memTailerBuffer)
 	t.mu.Lock()
 	id := t.next

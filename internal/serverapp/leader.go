@@ -20,6 +20,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/scheduler"
 	"github.com/dexadata/dexaflow/internal/storage"
 	"github.com/dexadata/dexaflow/internal/xcom"
+	"github.com/dexadata/dexaflow/pkg/admission"
 )
 
 // startSchedulerSide starts the scheduler-role components (ADR 0049): the agent
@@ -31,7 +32,7 @@ import (
 // the caller defers unconditionally. The stop func fires drain-then-gRPC-stop,
 // matching the pre-0049 defer order (LIFO: drainDispatch before the bounded
 // graceful stop, see stopGRPCWithin).
-func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *storage.Postgres, repo *storage.Repository, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, xcomSvc *xcom.Service, logSink logs.Sink, logTailer logs.Tailer, allowInsecureSecrets bool, servesScheduler bool, logger *slog.Logger, metrics *observability.Metrics) (health api.Heartbeater, podDispatch bool, stop func(), err error) {
+func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *storage.Postgres, repo *storage.Repository, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, xcomSvc *xcom.Service, logSink logs.Sink, logTailer logs.Tailer, allowInsecureSecrets bool, servesScheduler bool, extraHooks []admission.Hook, logger *slog.Logger, metrics *observability.Metrics) (health api.Heartbeater, podDispatch bool, stop func(), err error) {
 	if !servesScheduler {
 		return nil, false, func() {}, nil
 	}
@@ -97,7 +98,7 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 
 	drain := func() {}
 	if cfg.Scheduler.Enabled {
-		sched, dispatchOn, dispatchCloser, serr := startScheduler(ctx, cfg, schedPG, repo, schedExec, authn, warmReg, logSink, logger, metrics)
+		sched, dispatchOn, dispatchCloser, serr := startScheduler(ctx, cfg, schedPG, repo, schedExec, authn, warmReg, logSink, extraHooks, logger, metrics)
 		if serr != nil {
 			releaseSchedPG()
 			// Bounded, like every other stop of this server. At boot no stream is
@@ -148,7 +149,7 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	return health, podDispatch, stop, nil
 }
 
-func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.Postgres, repo *storage.Repository, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (*scheduler.Scheduler, bool, io.Closer, error) {
+func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.Postgres, repo *storage.Repository, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, extraHooks []admission.Hook, logger *slog.Logger, metrics *observability.Metrics) (*scheduler.Scheduler, bool, io.Closer, error) {
 	// Built before the leader pool so a bad alert egress config cannot leak it.
 	alertClient, err := alertHTTPClient(cfg.Scheduler.Alerts)
 	if err != nil {
@@ -198,7 +199,7 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 		metrics,
 		logger,
 	))
-	podDispatch, dispatchCloser, err := setupDispatch(ctx, cfg, sched, execStore, authn, store, warmPools, logSink, logger, metrics)
+	podDispatch, dispatchCloser, err := setupDispatch(ctx, cfg, sched, execStore, authn, store, warmPools, logSink, extraHooks, logger, metrics)
 	if err != nil {
 		leaderPool.Close()
 		return nil, false, nil, err

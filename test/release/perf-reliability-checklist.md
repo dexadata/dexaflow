@@ -35,6 +35,7 @@ are listed in [Amended bars and known failures](#amended-bars-and-known-failures
 | A3 | Concurrency packages are not flaky | `go test -race -count=20 -shuffle=on ./internal/scheduler/ ./internal/dispatch/ ./internal/executor/ ./internal/agentrpc/ ./internal/agent/` | 0 failures in 20 runs | rc, GA, patch* (those paths) | local |
 | A4 | Failure-injection integration suite | `go test -tags integration -race -run 'TestChaos' ./internal/storage/` | Green | rc, GA, patch | local |
 | A5 | Defaults did not move | `git diff vPREV..HEAD -- internal/config/server.go helm/dexaflow/values.yaml` read against the changelog | Every changed default has a `Changed` changelog fragment; every new performance gate defaults off and binds under both `DEXAFLOW_*` and `LEOFLOW_*` | rc, GA, patch | local |
+| A6 | Mutation floors (ADR 0101) | `gh workflow run mutation.yaml --ref release-X.Y`, then link the run | Every package at or above its floor in `.github/mutation/targets.txt`; the mutation canary passed | rc, GA | CI |
 
 ## B. Micro benchmarks against the previous release
 

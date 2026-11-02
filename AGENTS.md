@@ -236,6 +236,16 @@ about ninety minutes: fix, pick, prepare, tag, release run).
 - **No global state** except metrics registries and configuration
   (`internal/config`).
 - **Interfaces live near their consumers,** in the package that uses them.
+- **`pkg/` is public API (ADR 0099).** A patch never breaks an exported
+  identifier of a package under `pkg/`. A minor may, once the identifier was
+  marked `Deprecated:` in the previous minor, with a `Changed` or `Removed`
+  changelog fragment that says what to use instead and the `breaking-change`
+  label (`scripts/api-compat.sh` checks every `pkg/` package with apidiff).
+  Adding a function, an option, a struct field or a method to a struct is not a
+  break; adding a method to an exported interface is, so an interface that may
+  grow gets an optional second interface the server type-asserts. Contract
+  types live in `pkg/`, and the `internal/` packages alias them; implementations
+  stay internal.
 
 ### Testing discipline
 
@@ -250,7 +260,10 @@ about ninety minutes: fix, pick, prepare, tag, release run).
   tested". A fix without such a test is not done; see the
   [Fix a bug](https://dexaflow.dexadata.ai/contribute/recipes/fix-a-bug/) recipe.
 - **Mutation-test every new assertion.** Revert the fix, watch the test fail,
-  restore it, and check that the mutation actually applied.
+  restore it, and check that the mutation actually applied. For a tier 1
+  package, `scripts/mutation.sh diff origin/main` mutates every line the branch
+  changed; kill or accept each survivor it lists
+  ([Mutation testing](https://dexaflow.dexadata.ai/contribute/mutation-testing/)).
 - **Lock the wiring, not the leaf.** Drive the real entry point and assert on its
   output; bugs cluster where a correct helper gets a wrong input.
 - **A comment that describes behavior the code does not have is a bug.** When

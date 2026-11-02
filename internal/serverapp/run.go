@@ -25,6 +25,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/storage"
 	"github.com/dexadata/dexaflow/internal/workspace"
 	"github.com/dexadata/dexaflow/internal/xcom"
+	"github.com/dexadata/dexaflow/pkg/admission"
 )
 
 // loadConfig returns cfg, or when it is nil the configuration the binary
@@ -68,12 +69,27 @@ func openVerifiedPostgres(ctx context.Context, cfg *config.ServerConfig, tel *ob
 	return pg, nil
 }
 
-// Run builds every component and serves until ctx is done. A nil cfg is
-// loaded the way the binary loads it: the config file named by
-// DEXAFLOW_CONFIG (or LEOFLOW_CONFIG), then the environment. Its error maps to
-// the process exit code through ExitCode.
-func Run(ctx context.Context, cfg *config.ServerConfig) error {
-	cfg, err := loadConfig(cfg)
+// Options are the components a caller of pkg/server supplies instead of, or
+// next to, the ones the configuration builds.
+type Options struct {
+	// Config is the configuration to run with. Nil loads it the way the
+	// binary does.
+	Config *config.ServerConfig
+	// AdmissionHooks run before the configured webhook, in this order
+	// (ADR 0100 §6).
+	AdmissionHooks []admission.Hook
+	// LogSink, when set, stores task logs in place of the sink logs.backend
+	// would build (ADR 0099 §3). The caller owns it: the server never closes
+	// it.
+	LogSink logs.Sink
+}
+
+// Run builds every component and serves until ctx is done. A nil
+// opts.Config is loaded the way the binary loads it: the config file named
+// by DEXAFLOW_CONFIG (or LEOFLOW_CONFIG), then the environment. Its error
+// maps to the process exit code through ExitCode.
+func Run(ctx context.Context, opts Options) error {
+	cfg, err := loadConfig(opts.Config)
 	if err != nil {
 		return err
 	}
@@ -161,13 +177,13 @@ func Run(ctx context.Context, cfg *config.ServerConfig) error {
 	// noise. Found by installing the chart, not by any test.
 	warnOIDCNames(ctx, repo, cfg, tel.Logger)
 
-	logSink, lerr := buildLogSink(ctx, cfg, tel.Logger)
+	logSink, closeSink, lerr := selectLogSink(ctx, cfg, opts.LogSink, tel.Logger)
 	if lerr != nil {
 		return lerr
 	}
 	// Deferred before the scheduler side's stop, so it runs after the agent
 	// streams have drained and their writers made the last flush.
-	defer closeLogSink(logSink, tel.Logger)
+	defer closeSink()
 	// Secrets are served over the agent channel only when explicitly allowed
 	// insecure (dev) until gRPC TLS lands (issue #58); otherwise the handlers
 	// fail closed on a plaintext channel.
@@ -191,7 +207,7 @@ func Run(ctx context.Context, cfg *config.ServerConfig) error {
 	// Start the scheduler-role components (agent gRPC, janitors, scheduler loop +
 	// dispatch). In the api role this starts nothing and returns a nil health handle
 	// + no-op stop; in "all"/"scheduler" it is the pre-0049 wiring unchanged.
-	schedulerHealth, podDispatch, stopScheduler, serr := startSchedulerSide(ctx, cfg, pg, repo, execStore, authn, xcomSvc, logSink, logTailer, allowInsecureSecrets, servesScheduler, tel.Logger, tel.Metrics)
+	schedulerHealth, podDispatch, stopScheduler, serr := startSchedulerSide(ctx, cfg, pg, repo, execStore, authn, xcomSvc, logSink, logTailer, allowInsecureSecrets, servesScheduler, opts.AdmissionHooks, tel.Logger, tel.Metrics)
 	if serr != nil {
 		return serr
 	}
@@ -430,6 +446,22 @@ func buildLogSink(ctx context.Context, cfg *config.ServerConfig, logger *slog.Lo
 	default:
 		return nil, fmt.Errorf("unknown logs.backend %q", cfg.Logs.Backend)
 	}
+}
+
+// selectLogSink returns the task log sink the server runs with, and how to
+// release it at shutdown. A sink passed as an option replaces the configured
+// one and stays the caller's to close; boot logs that it came from an option,
+// so a support conversation does not start from the logs.backend setting.
+func selectLogSink(ctx context.Context, cfg *config.ServerConfig, fromOptions logs.Sink, logger *slog.Logger) (sink logs.Sink, release func(), err error) {
+	if fromOptions != nil {
+		logger.Info("task logs: sink from options, logs.backend ignored", "type", fmt.Sprintf("%T", fromOptions))
+		return fromOptions, func() {}, nil
+	}
+	sink, err = buildLogSink(ctx, cfg, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sink, func() { closeLogSink(sink, logger) }, nil
 }
 
 // closeLogSink releases the client of a sink that holds one (the GCS object
