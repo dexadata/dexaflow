@@ -213,7 +213,7 @@ func derefString(s *string) string {
 // DeleteExpiredCLIDeviceAuthorizations forgets the device sign-ins that
 // expired more than ten minutes ago, with the addresses they were started
 // from, and reports how many. The server runs it every minute
-// (cmd/dexaflow-server), so no address outlives its sign-in by much more
+// (internal/serverapp), so no address outlives its sign-in by much more
 // than ten minutes even when nobody starts another.
 func (r *Repository) DeleteExpiredCLIDeviceAuthorizations(ctx context.Context) (int64, error) {
 	n, err := r.q.DeleteExpiredCLIDevices(ctx)
