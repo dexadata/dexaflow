@@ -10,9 +10,9 @@ import (
 // count tell it from a crash. 1 stays every other failure.
 const exitDatabaseReplaced = 3
 
-// errDatabaseReplaced stops a running server whose readiness probe found
+// ErrDatabaseReplaced stops a running server whose readiness probe found
 // another installation's database, or none, under it.
-var errDatabaseReplaced = errors.New("the database was replaced under this process (another installation id, none, or no schema); " +
+var ErrDatabaseReplaced = errors.New("the database was replaced under this process (another installation id, none, or no schema); " +
 	"exiting so no cache outlives the old database: the restart waits, not ready, until the right database is back or this one is accepted with installation.id")
 
 // replacedNotifier is told when readiness finds the database replaced;
@@ -22,12 +22,12 @@ type replacedNotifier interface {
 }
 
 // stopOnReplaced returns the context the server runs under, canceled with
-// errDatabaseReplaced the first time readiness finds the database replaced.
+// ErrDatabaseReplaced the first time readiness finds the database replaced.
 // Exiting is the only flush that is complete: it drops the tenant id cache
 // (#1614), the spec cache and every other cache without listing them.
 func stopOnReplaced(ctx context.Context, n replacedNotifier) (runCtx context.Context, release func()) {
 	c, cancel := context.WithCancelCause(ctx)
-	n.SetOnReplaced(func() { cancel(errDatabaseReplaced) })
+	n.SetOnReplaced(func() { cancel(ErrDatabaseReplaced) })
 	return c, func() { cancel(nil) }
 }
 
@@ -40,7 +40,7 @@ func serveExit(ctx context.Context, serveErr error) error {
 		return serveErr
 	}
 	cause := context.Cause(ctx)
-	if errors.Is(cause, errKeyLockLost) || errors.Is(cause, errDatabaseReplaced) {
+	if errors.Is(cause, errKeyLockLost) || errors.Is(cause, ErrDatabaseReplaced) {
 		return cause
 	}
 	return nil
@@ -48,7 +48,7 @@ func serveExit(ctx context.Context, serveErr error) error {
 
 // ExitCode is the process exit code for what Run returned.
 func ExitCode(err error) int {
-	if errors.Is(err, errDatabaseReplaced) {
+	if errors.Is(err, ErrDatabaseReplaced) {
 		return exitDatabaseReplaced
 	}
 	return 1

@@ -63,8 +63,8 @@ func TestStopOnReplacedCancelsWithItsOwnExitCode(t *testing.T) {
 	n.f()
 	<-ctx.Done()
 	err := serveExit(ctx, nil)
-	if !errors.Is(err, errDatabaseReplaced) {
-		t.Fatalf("serveExit = %v, want errDatabaseReplaced", err)
+	if !errors.Is(err, ErrDatabaseReplaced) {
+		t.Fatalf("serveExit = %v, want ErrDatabaseReplaced", err)
 	}
 	if got := ExitCode(fmt.Errorf("serving: %w", err)); got != exitDatabaseReplaced {
 		t.Errorf("exit code = %d, want %d", got, exitDatabaseReplaced)
@@ -81,7 +81,7 @@ func TestServeExit(t *testing.T) {
 	}
 	boom := errors.New("listener died")
 	ctx, cancel := context.WithCancelCause(context.Background())
-	cancel(errDatabaseReplaced)
+	cancel(ErrDatabaseReplaced)
 	if err := serveExit(ctx, boom); !errors.Is(err, boom) {
 		t.Errorf("serveExit = %v, want the serve error", err)
 	}

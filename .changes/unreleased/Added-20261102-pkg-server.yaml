@@ -1,0 +1,11 @@
+kind: Added
+body: |-
+  **`pkg/server` runs the control plane from your own Go program** (ADR 0099,
+  #2176). `server.Run(ctx)` behaves exactly as `dexaflow-server`: it mirrors the
+  `DEXAFLOW_*` and `LEOFLOW_*` names, reads `DEXAFLOW_CONFIG` and the
+  environment, and serves until `ctx` is done; `server.ExitCode` keeps the
+  binary's exit codes. The shipped binary is now a thin caller of it. Options
+  to replace a component (log sink, XCom backend, authenticator, trusted
+  issuer, UI, admission hook) follow in later releases. A program that imports
+  the module reports the module version it requires as its version.
+time: 2026-11-02T00:30:00.000000000-03:00

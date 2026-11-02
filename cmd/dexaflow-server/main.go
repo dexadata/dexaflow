@@ -1,16 +1,19 @@
 // Command dexaflow-server runs the Dexaflow control plane: the HTTP API, auth,
-// metrics, and (when enabled) the scheduler. The wiring lives in
-// internal/serverapp (ADR 0099); this command answers its flags and maps the
-// result to an exit code.
+// metrics, and (when enabled) the scheduler. It is the first caller of
+// pkg/server (ADR 0099): it answers its flags, stops the server on SIGINT or
+// SIGTERM and maps the result to an exit code.
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
-	"github.com/dexadata/dexaflow/internal/envcompat"
 	"github.com/dexadata/dexaflow/internal/serverapp"
 	"github.com/dexadata/dexaflow/internal/version"
+	"github.com/dexadata/dexaflow/pkg/server"
 )
 
 // usage is printed for `--help`. leoflow-server takes no positional args; it is
@@ -26,10 +29,6 @@ Flags:
 `
 
 func main() {
-	// DEXAFLOW_* and the pre-rename LEOFLOW_* names are interchangeable; mirror
-	// them before anything reads the environment.
-	serverapp.LogEnvCompat(envcompat.MirrorProcess())
-
 	// Answer `--version`/`--help` before loading any config, so an operator can
 	// query a deployed binary without a runnable environment (#593). Without
 	// this, `--help` falls through to a boot attempt that errors on missing
@@ -43,8 +42,13 @@ func main() {
 		fmt.Print(usage)
 		return
 	}
-	if err := serverapp.Run(); err != nil {
+	// server.Run mirrors the DEXAFLOW_* and LEOFLOW_* names before it reads
+	// the environment; the flags above read none of it.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := server.Run(ctx)
+	stop()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "dexaflow-server:", err)
-		os.Exit(serverapp.ExitCode(err))
+		os.Exit(server.ExitCode(err))
 	}
 }
