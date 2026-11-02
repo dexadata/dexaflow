@@ -290,7 +290,7 @@ certified for production; pin to a specific tag, read the
 Versioning follows [ADR 0037](https://dexaflow.dexadata.ai/project/adrs/0037-release-version-scheme/):
 `vX.Y.Z-rc.N → vX.Y.Z`, no separate alpha/beta. What a patch may contain, how long each minor is
 supported and how features are deprecated is in the
-[versioning and support policy](https://dexaflow.dexadata.ai/project/versioning/).
+[versioning and support policy](website/content/project/versioning.md).
 
 **Implemented today:**
 

@@ -74,7 +74,7 @@ on the disclosure.
 
 The full policy, including what a patch may contain and how features are
 deprecated, is on the
-[versioning and support](https://dexaflow.dexadata.ai/project/versioning/)
+[versioning and support](website/content/project/versioning.md)
 page.
 
 Upgrading to the latest patch of a supported line is the remediation. If that
