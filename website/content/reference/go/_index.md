@@ -20,6 +20,9 @@ reference:
 
 - `pkg/client` — the typed `/api/v2` client (**public**)
 - `pkg/dagspec`: validates a compiled `dag.json` with the registration rules (**public**)
+- `pkg/mcp`: the MCP server core, to build a server with tools of your own (**public**)
+- `pkg/admission`: the dispatch admission hook contract (ADR 0100) (**public**)
+- `pkg/server`: runs the control plane from your own Go program (ADR 0099) (**public**)
 - `internal/domain` — core types (DAG, Task, Run, …)
 - `internal/scheduler` — the state machine
 - `internal/executor` — K8s / subprocess executors

@@ -79,6 +79,36 @@ func TestKubernetesExecuteRefusesAServiceAccountOutsideTheAllowlist(t *testing.T
 	}
 }
 
+// An admission hook's changes (ADR 0100 §4) are not field-checked: the task's
+// own settings travel on AuthoredExecution and are what the allowlist sees.
+// The service account the pod runs as is still checked.
+func TestKubernetesExecuteChecksTheAuthoredExecutionAfterAdmission(t *testing.T) {
+	policy, err := domain.ParseExecutionPolicy(domain.ExecutionPolicyConfig{Fields: []string{"none"}, ServiceAccounts: []string{"etl"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := NewKubernetesExecutor(fake.NewClientset(), "leoflow")
+	req := sampleReq()
+	req.Execution.NodeSelector = map[string]string{"pool": "batch"}
+	req.Execution.ServiceAccount = "etl"
+	req.AuthoredExecution = &domain.Execution{}
+	req.ExecutionPolicy = policy
+	if disp, err := e.Execute(context.Background(), req); err != nil || disp != Dispatched {
+		t.Fatalf("hook placement: Execute = %v, %v; want Dispatched", disp, err)
+	}
+
+	req.Execution.ServiceAccount = "admin"
+	if disp, err := e.Execute(context.Background(), req); err == nil || disp != Refused || !strings.Contains(err.Error(), "admin") {
+		t.Fatalf("hook service account: Execute = %v, %v; want Refused", disp, err)
+	}
+
+	req.Execution.ServiceAccount = "etl"
+	req.AuthoredExecution = &domain.Execution{Affinity: map[string]any{"nodeAffinity": map[string]any{}}}
+	if disp, err := e.Execute(context.Background(), req); err == nil || disp != Refused {
+		t.Fatalf("authored field: Execute = %v, %v; want Refused", disp, err)
+	}
+}
+
 // The image allowlist (issue #537 C2) is enforced on the request's image.
 func TestKubernetesExecuteRefusesAnImageOutsideTheAllowlist(t *testing.T) {
 	policy, err := domain.ParseExecutionPolicy(domain.ExecutionPolicyConfig{Images: []string{"registry.example.com/*"}})

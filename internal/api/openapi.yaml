@@ -318,6 +318,52 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /api/v2/users/{user_id}:
+    patch:
+      summary: Activate or deactivate a user
+      description: |
+        Admin-only. Deactivates or reactivates an account of the caller's
+        tenant. A deactivated user's sessions and API tokens stop working at
+        their next request, their token renewal is refused, and they cannot
+        sign in; reactivating restores access with a fresh sign-in. The change
+        and a user.deactivate or user.activate audit entry are written
+        together. is_active is the only field accepted. An admin cannot
+        deactivate their own account. A user of another tenant answers 404.
+        Requires the write:user permission.
+      operationId: patchUser
+      tags: [Users]
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchUserRequest"
+      responses:
+        "200":
+          description: The user, with its new state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400":
+          description: The body is not an object with is_active alone
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The caller tried to deactivate their own account
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /api/v2/apiTokens:
     get:
       summary: List API tokens (Dexaflow)
@@ -1642,6 +1688,14 @@ components:
         expires_in: { type: integer, example: 600 }
         interval: { type: integer, example: 5, description: Minimum seconds between polls }
 
+    PatchUserRequest:
+      type: object
+      required: [is_active]
+      additionalProperties: false
+      properties:
+        is_active:
+          type: boolean
+          description: false deactivates the account, true reactivates it.
     CreateUserRequest:
       type: object
       required: [email, password]

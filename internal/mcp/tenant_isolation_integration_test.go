@@ -432,6 +432,15 @@ func isolationCases() map[string]func(*testing.T, *isolationFixture) {
 		"health://control-plane": func(t *testing.T, f *isolationFixture) {
 			f.assertNoLeak(t, f.readResource(t, "health://control-plane"))
 		},
+		// The capabilities resource describes the server and never calls the
+		// control plane, so no tenant's data can reach it.
+		mcp.CapabilitiesURI: func(t *testing.T, f *isolationFixture) {
+			o := f.readResource(t, mcp.CapabilitiesURI)
+			f.assertNoLeak(t, o)
+			if o.isError || !strings.Contains(o.text, "tool_groups") {
+				t.Errorf("%s did not answer its capabilities:\n%s", mcp.CapabilitiesURI, o.text)
+			}
+		},
 		"run://detail/{dag_id}/{run_id}": func(t *testing.T, f *isolationFixture) {
 			o := f.readResource(t, "run://detail/"+f.shared+"/r1")
 			f.assertNoLeak(t, o)

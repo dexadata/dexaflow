@@ -197,6 +197,9 @@ type IssuerDeps struct {
 	// ServiceAllowedTenants are the tenants the service API may link issuer
 	// users in: auth.trusted_issuer.allowed_tenants, where "*" allows all.
 	ServiceAllowedTenants []string
+	// ServiceUsage serves GET /api/v2/service/usage (ADR 0096); nil leaves
+	// the route absent.
+	ServiceUsage UsageEventReader
 }
 
 // UIDeps are the embedded web UI and the Lite editor.
@@ -207,7 +210,7 @@ type UIDeps struct {
 	// AutoRefreshIntervalSeconds controls the SPA's polling cadence for DAG /
 	// DagRun / task-instance state refresh (Airflow's auto_refresh_interval).
 	// Non-positive (the zero default) falls back to DefaultUIAutoRefreshIntervalSeconds
-	// (30s, production-safe). `dexaflow lite` sets it to ~5s for a snappy inner loop.
+	// (5s; 30s before v0.6.0). `dexaflow lite` sets it to 1s for a snappy inner loop.
 	AutoRefreshIntervalSeconds int
 	// Theme is the Chakra theme /ui/config hands the UI (Airflow's `[api]
 	// theme`: tokens, globalCss, icon, icon_dark_mode), already validated as a

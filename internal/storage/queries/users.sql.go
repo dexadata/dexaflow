@@ -440,6 +440,53 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUse
 	return items, nil
 }
 
+const setUserActive = `-- name: SetUserActive :one
+UPDATE users u
+SET is_active = $3
+FROM tenants t
+WHERE t.id = u.tenant_id AND t.name = $1 AND u.id = $2
+RETURNING u.id, u.email, u.is_active, u.created_at,
+    ARRAY(
+        SELECT r.name
+        FROM user_roles ur
+        JOIN roles r ON r.id = ur.role_id
+        WHERE ur.user_id = u.id
+        ORDER BY r.name
+    )::text[] AS roles
+`
+
+type SetUserActiveParams struct {
+	Name     string      `json:"name"`
+	ID       pgtype.UUID `json:"id"`
+	IsActive bool        `json:"is_active"`
+}
+
+type SetUserActiveRow struct {
+	ID        pgtype.UUID        `json:"id"`
+	Email     string             `json:"email"`
+	IsActive  bool               `json:"is_active"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Roles     []string           `json:"roles"`
+}
+
+// Activate or deactivate one user of the tenant (the admin user API, #960).
+// No row means no such user in this tenant, which the caller answers as 404,
+// so a user of another tenant is indistinguishable from a missing one. The
+// per-request authz reload reads is_active, so the change takes effect on the
+// user's next request, for sessions and API tokens alike.
+func (q *Queries) SetUserActive(ctx context.Context, arg SetUserActiveParams) (SetUserActiveRow, error) {
+	row := q.db.QueryRow(ctx, setUserActive, arg.Name, arg.ID, arg.IsActive)
+	var i SetUserActiveRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.IsActive,
+		&i.CreatedAt,
+		&i.Roles,
+	)
+	return i, err
+}
+
 const updateUserPassword = `-- name: UpdateUserPassword :execrows
 UPDATE users
 SET password_hash = $3

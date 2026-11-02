@@ -589,6 +589,12 @@ type HealthInfo struct {
 	Triggerer    *ComponentHealth `json:"triggerer,omitempty"`
 }
 
+// PatchUserRequest defines model for PatchUserRequest.
+type PatchUserRequest struct {
+	// IsActive false deactivates the account, true reactivates it.
+	IsActive bool `json:"is_active"`
+}
+
 // TaskExecution defines model for TaskExecution.
 type TaskExecution struct {
 	Mode TaskExecutionMode `json:"mode"`
@@ -954,6 +960,9 @@ type RegisterDagVersionJSONRequestBody = DagSpec
 
 // CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
 type CreateUserJSONRequestBody = CreateUserRequest
+
+// PatchUserJSONRequestBody defines body for PatchUser for application/json ContentType.
+type PatchUserJSONRequestBody = PatchUserRequest
 
 // CreateVariableJSONRequestBody defines body for CreateVariable for application/json ContentType.
 type CreateVariableJSONRequestBody = VariableBody
@@ -1552,6 +1561,38 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v2/users (the `CreateUser` operationId).
 	CreateUser(ctx context.Context, body CreateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatchUserWithBody Activate or deactivate a user
+	//
+	// Admin-only. Deactivates or reactivates an account of the caller's
+	// tenant. A deactivated user's sessions and API tokens stop working at
+	// their next request, their token renewal is refused, and they cannot
+	// sign in; reactivating restores access with a fresh sign-in. The change
+	// and a user.deactivate or user.activate audit entry are written
+	// together. is_active is the only field accepted. An admin cannot
+	// deactivate their own account. A user of another tenant answers 404.
+	// Requires the write:user permission.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /api/v2/users/{user_id} (the `PatchUser` operationId).
+	PatchUserWithBody(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PatchUser Activate or deactivate a user
+	//
+	// Admin-only. Deactivates or reactivates an account of the caller's
+	// tenant. A deactivated user's sessions and API tokens stop working at
+	// their next request, their token renewal is refused, and they cannot
+	// sign in; reactivating restores access with a fresh sign-in. The change
+	// and a user.deactivate or user.activate audit entry are written
+	// together. is_active is the only field accepted. An admin cannot
+	// deactivate their own account. A user of another tenant answers 404.
+	// Requires the write:user permission.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /api/v2/users/{user_id} (the `PatchUser` operationId).
+	PatchUser(ctx context.Context, userId string, body PatchUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListVariables List variables
 	//
@@ -2392,6 +2433,58 @@ func (c *Client) CreateUserWithBody(ctx context.Context, contentType string, bod
 // Corresponds with POST /api/v2/users (the `CreateUser` operationId).
 func (c *Client) CreateUser(ctx context.Context, body CreateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateUserRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PatchUserWithBody Activate or deactivate a user
+//
+// Admin-only. Deactivates or reactivates an account of the caller's
+// tenant. A deactivated user's sessions and API tokens stop working at
+// their next request, their token renewal is refused, and they cannot
+// sign in; reactivating restores access with a fresh sign-in. The change
+// and a user.deactivate or user.activate audit entry are written
+// together. is_active is the only field accepted. An admin cannot
+// deactivate their own account. A user of another tenant answers 404.
+// Requires the write:user permission.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /api/v2/users/{user_id} (the `PatchUser` operationId).
+func (c *Client) PatchUserWithBody(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchUserRequestWithBody(c.Server, userId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PatchUser Activate or deactivate a user
+//
+// Admin-only. Deactivates or reactivates an account of the caller's
+// tenant. A deactivated user's sessions and API tokens stop working at
+// their next request, their token renewal is refused, and they cannot
+// sign in; reactivating restores access with a fresh sign-in. The change
+// and a user.deactivate or user.activate audit entry are written
+// together. is_active is the only field accepted. An admin cannot
+// deactivate their own account. A user of another tenant answers 404.
+// Requires the write:user permission.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /api/v2/users/{user_id} (the `PatchUser` operationId).
+func (c *Client) PatchUser(ctx context.Context, userId string, body PatchUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPatchUserRequest(c.Server, userId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4227,6 +4320,53 @@ func NewCreateUserRequestWithBody(server string, contentType string, body io.Rea
 	return req, nil
 }
 
+// NewPatchUserRequest calls the generic PatchUser builder with application/json body
+func NewPatchUserRequest(server string, userId string, body PatchUserJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPatchUserRequestWithBody(server, userId, "application/json", bodyReader)
+}
+
+// NewPatchUserRequestWithBody constructs an http.Request for the PatchUser method, with any body, and a specified content type
+func NewPatchUserRequestWithBody(server string, userId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "user_id", userId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/users/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListVariablesRequest constructs an http.Request for the ListVariables method
 func NewListVariablesRequest(server string, params *ListVariablesParams) (*http.Request, error) {
 	var err error
@@ -4996,6 +5136,38 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v2/users (the `CreateUser` operationId).
 	CreateUserWithResponse(ctx context.Context, body CreateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateUserResponse, error)
+
+	// PatchUserWithBodyWithResponse Activate or deactivate a user
+	//
+	// Admin-only. Deactivates or reactivates an account of the caller's
+	// tenant. A deactivated user's sessions and API tokens stop working at
+	// their next request, their token renewal is refused, and they cannot
+	// sign in; reactivating restores access with a fresh sign-in. The change
+	// and a user.deactivate or user.activate audit entry are written
+	// together. is_active is the only field accepted. An admin cannot
+	// deactivate their own account. A user of another tenant answers 404.
+	// Requires the write:user permission.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/v2/users/{user_id} (the `PatchUser` operationId).
+	PatchUserWithBodyWithResponse(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchUserResponse, error)
+
+	// PatchUserWithResponse Activate or deactivate a user
+	//
+	// Admin-only. Deactivates or reactivates an account of the caller's
+	// tenant. A deactivated user's sessions and API tokens stop working at
+	// their next request, their token renewal is refused, and they cannot
+	// sign in; reactivating restores access with a fresh sign-in. The change
+	// and a user.deactivate or user.activate audit entry are written
+	// together. is_active is the only field accepted. An admin cannot
+	// deactivate their own account. A user of another tenant answers 404.
+	// Requires the write:user permission.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/v2/users/{user_id} (the `PatchUser` operationId).
+	PatchUserWithResponse(ctx context.Context, userId string, body PatchUserJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchUserResponse, error)
 
 	// ListVariablesWithResponse List variables
 	//
@@ -6760,6 +6932,75 @@ func (r CreateUserResponse) ContentType() string {
 	return ""
 }
 
+type PatchUserResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *User
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *Error
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PatchUserResponse) GetJSON200() *User {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PatchUserResponse) GetJSON400() *Error {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PatchUserResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PatchUserResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PatchUserResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetBody returns the raw response body bytes
+func (r PatchUserResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PatchUserResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PatchUserResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PatchUserResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListVariablesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -7830,6 +8071,50 @@ func (c *ClientWithResponses) CreateUserWithResponse(ctx context.Context, body C
 		return nil, err
 	}
 	return ParseCreateUserResponse(rsp)
+}
+
+// PatchUserWithBodyWithResponse Activate or deactivate a user
+//
+// Admin-only. Deactivates or reactivates an account of the caller's
+// tenant. A deactivated user's sessions and API tokens stop working at
+// their next request, their token renewal is refused, and they cannot
+// sign in; reactivating restores access with a fresh sign-in. The change
+// and a user.deactivate or user.activate audit entry are written
+// together. is_active is the only field accepted. An admin cannot
+// deactivate their own account. A user of another tenant answers 404.
+// Requires the write:user permission.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/v2/users/{user_id} (the `PatchUser` operationId).
+func (c *ClientWithResponses) PatchUserWithBodyWithResponse(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchUserResponse, error) {
+	rsp, err := c.PatchUserWithBody(ctx, userId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchUserResponse(rsp)
+}
+
+// PatchUserWithResponse Activate or deactivate a user
+//
+// Admin-only. Deactivates or reactivates an account of the caller's
+// tenant. A deactivated user's sessions and API tokens stop working at
+// their next request, their token renewal is refused, and they cannot
+// sign in; reactivating restores access with a fresh sign-in. The change
+// and a user.deactivate or user.activate audit entry are written
+// together. is_active is the only field accepted. An admin cannot
+// deactivate their own account. A user of another tenant answers 404.
+// Requires the write:user permission.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/v2/users/{user_id} (the `PatchUser` operationId).
+func (c *ClientWithResponses) PatchUserWithResponse(ctx context.Context, userId string, body PatchUserJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchUserResponse, error) {
+	rsp, err := c.PatchUser(ctx, userId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePatchUserResponse(rsp)
 }
 
 // ListVariablesWithResponse List variables
@@ -9188,6 +9473,60 @@ func ParseCreateUserResponse(rsp *http.Response) (*CreateUserResponse, error) {
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePatchUserResponse parses an HTTP response from a PatchUserWithResponse call
+func ParsePatchUserResponse(rsp *http.Response) (*PatchUserResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PatchUserResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest User
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Error

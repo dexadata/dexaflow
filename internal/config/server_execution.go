@@ -196,6 +196,8 @@ type ExecutionSection struct {
 	// SourceMode runs a version on the operator's runtime image from the dag.py
 	// it was registered with, with no image build (ADR 0067 §3). Off by default.
 	SourceMode SourceModeSection `mapstructure:"source_mode"`
+	// Admission configures the dispatch admission hooks (ADR 0100).
+	Admission AdmissionSection `mapstructure:"admission"`
 	// MaxAttemptsPerWorker caps how many attempts a warm worker serves before it is
 	// drained and recycled (ADR 0058 D9). Bounds credential-leak and stale-image
 	// exposure by forcing a fresh pod periodically. Default 50.
@@ -341,8 +343,9 @@ type DispatchSection struct {
 }
 
 // RetentionSection configures the leader-only retention janitor, which deletes
-// metadata rows past a per-class age. Every class is off by default (0 days):
-// nothing is ever deleted unless the operator configures a window. The pacing
+// metadata rows past a per-class age. Runs and the audit log are kept by
+// default (0 days); the usage events keep 30 days, and they exist only once
+// an operator turns their recording on. The pacing
 // knobs keep each statement small and each cycle bounded.
 type RetentionSection struct {
 	// DagRunsDays deletes finished (success or failed) dag runs, with their task
@@ -352,6 +355,10 @@ type RetentionSection struct {
 	// AuditLogDays deletes audit log entries older than this many days. 0
 	// (default) keeps the whole audit log.
 	AuditLogDays int `mapstructure:"audit_log_days"`
+	// UsageEventsDays deletes usage events (ADR 0096) recorded more than this
+	// many days ago, oldest first in the order the service API serves them.
+	// Default 30; 0 keeps every event.
+	UsageEventsDays int `mapstructure:"usage_events_days"`
 	// DryRun only counts the rows a cycle would delete, logs the counts and
 	// exports them as gauges, and deletes nothing.
 	DryRun bool `mapstructure:"dry_run"`
@@ -373,21 +380,38 @@ type RetentionSection struct {
 // janitor exists to avoid.
 const maxRetentionBatchSize = 50000
 
-// Enabled reports whether any retention class is configured.
+// Enabled reports whether the runs or the audit log class is configured.
 func (r RetentionSection) Enabled() bool {
 	return r.DagRunsDays > 0 || r.AuditLogDays > 0
 }
 
-// Validate rejects a negative window always, and pacing that would make the
-// janitor unbounded or a busy loop when a class is on.
-func (r RetentionSection) Validate() error {
+// Active reports whether the janitor has work: a run or audit class, or the
+// usage events window while recording is on. With recording off the table
+// only holds what an earlier recording left, pruned whenever the janitor runs
+// for another class.
+func (r RetentionSection) Active(usageRecording bool) bool {
+	return r.Enabled() || (usageRecording && r.UsageEventsDays > 0)
+}
+
+// Validate is ValidateWith for an install that does not record usage events.
+func (r RetentionSection) Validate() error { return r.ValidateWith(false) }
+
+// ValidateWith rejects a negative window always, and pacing that would make
+// the janitor unbounded or a busy loop when it has work (Active): a run or
+// audit class, or the usage events window while usageRecording is on. So the
+// default 30 day window checks nothing new on an install that does not
+// record.
+func (r RetentionSection) ValidateWith(usageRecording bool) error {
 	if r.DagRunsDays < 0 {
 		return fmt.Errorf("retention.dag_runs_days must be >= 0 (got %d); 0 keeps every run", r.DagRunsDays)
 	}
 	if r.AuditLogDays < 0 {
 		return fmt.Errorf("retention.audit_log_days must be >= 0 (got %d); 0 keeps the whole audit log", r.AuditLogDays)
 	}
-	if !r.Enabled() {
+	if r.UsageEventsDays < 0 {
+		return fmt.Errorf("retention.usage_events_days must be >= 0 (got %d); 0 keeps every usage event", r.UsageEventsDays)
+	}
+	if !r.Active(usageRecording) {
 		return nil
 	}
 	if r.BatchSize < 1 || r.BatchSize > maxRetentionBatchSize {
@@ -432,6 +456,9 @@ func (r RetentionSection) Validate() error {
 // execution path, not here.
 func (c *ServerConfig) validateExecution() error {
 	if err := c.validateSourceMode(); err != nil {
+		return err
+	}
+	if err := c.Execution.Admission.validate(); err != nil {
 		return err
 	}
 	if !c.Execution.WarmPoolsEnabled {

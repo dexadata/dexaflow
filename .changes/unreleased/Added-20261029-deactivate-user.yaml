@@ -1,0 +1,12 @@
+kind: Added
+body: |-
+  **Deactivate a user through the API.** `PATCH /api/v2/users/{user_id}` with
+  `{"is_active": false}` deactivates an account of the caller's tenant, and
+  `true` reactivates it; it needs `write:user` (admin). A deactivated user's
+  sessions and API tokens stop working at their next request, their token
+  renewal is refused and they cannot sign in. The change and a
+  `user.deactivate` or `user.activate` audit entry are written in one
+  transaction. An admin cannot deactivate their own account, and a user of
+  another tenant answers 404. Until now deactivation was a direct database
+  change (#960); changing roles and passwords through the API is #2229.
+time: 2026-10-29T00:30:00.000000000-03:00

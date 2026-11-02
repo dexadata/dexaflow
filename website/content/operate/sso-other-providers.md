@@ -83,3 +83,8 @@ control plane, `https://`, never the in-cluster Service name. This is identical
 across every IdP; see the worked example in
 `helm/dexaflow/examples/values-oidc-google.yaml` for the shape of the values
 file (swap `issuer`, `tenantClaim` and `tenantClaims` for your provider).
+
+## Related
+
+- [Users, roles and API tokens](/operate/users-roles-tokens/): the built-in
+  roles your role mappings grant, sessions, and API tokens for CI.

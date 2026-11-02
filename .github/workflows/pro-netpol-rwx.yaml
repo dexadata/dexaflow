@@ -5,6 +5,12 @@ name: Pro netpol + RWX (real-cluster verify)
 # kind cluster with a real CNI (Calico) and an NFS RWX StorageClass. Heavy
 # (~15 min), so it runs only when the chart or this test/job changes, plus on
 # demand. It is NOT part of the fast per-PR suite.
+#
+# Every run uses two worker nodes, so the RWX volume is mounted from two nodes
+# and a drain is checked against the PodDisruptionBudget. A pull request runs
+# one Kubernetes minor (kind's default); the weekly run and a manual run repeat
+# the whole check on every minor in the matrix below, so version skew is caught
+# without multiplying the jobs a pull request queues.
 on:
   pull_request:
     branches: [main, "release-*"]
@@ -14,6 +20,8 @@ on:
       - ".github/workflows/pro-netpol-rwx.yaml"
       - "deploy/Dockerfile.server"
       - "deploy/Dockerfile.migrate"
+  schedule:
+    - cron: "0 5 * * 1"
   workflow_dispatch: {}
 
 permissions:
@@ -31,9 +39,15 @@ concurrency:
 
 jobs:
   netpol-rwx:
-    name: kind + Calico (netpol enforced) + NFS RWX
+    name: kind + Calico (netpol enforced) + NFS RWX (${{ matrix.k8s }})
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      # kindest/node images published for kind v0.24.0, pinned by digest. The
+      # oldest is 1.27, the floor the chart still renders for.
+      matrix:
+        k8s: ${{ fromJSON(github.event_name == 'pull_request' && '["1.31"]' || '["1.27","1.28","1.29","1.30","1.31"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -54,4 +68,17 @@ jobs:
           version: v4.2.0
 
       - name: Pro split netpol-enforcement + RWX shared-logs verify
-        run: bash test/e2e/pro-netpol-rwx.sh
+        env:
+          KIND_WORKERS: "2"
+          K8S_MINOR: ${{ matrix.k8s }}
+        run: |
+          set -euo pipefail
+          case "$K8S_MINOR" in
+            1.27) img="kindest/node:v1.27.16@sha256:2d21a61643eafc439905e18705b8186f3296384750a835ad7a005dceb9546d20" ;;
+            1.28) img="kindest/node:v1.28.13@sha256:45d319897776e11167e4698f6b14938eb4d52eb381d9e3d7a9086c16c69a8110" ;;
+            1.29) img="kindest/node:v1.29.8@sha256:d46b7aa29567e93b27f7531d258c372e829d7224b25e3fc6ffdefed12476d3aa" ;;
+            1.30) img="kindest/node:v1.30.4@sha256:976ea815844d5fa93be213437e3ff5754cd599b040946b5cca43ca45c2047114" ;;
+            1.31) img="kindest/node:v1.31.0@sha256:53df588e04085fd41ae12de0c3fe4c72f7013bba32a20e7325357a1ac94ba865" ;;
+            *) echo "no kindest/node image pinned for $K8S_MINOR"; exit 1 ;;
+          esac
+          KIND_NODE_IMAGE="$img" bash test/e2e/pro-netpol-rwx.sh

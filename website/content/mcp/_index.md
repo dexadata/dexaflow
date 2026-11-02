@@ -254,6 +254,7 @@ construction (untrusted content, ADR 0050 D10).
 | `dag://source/{dag_id}` | The `dag.py` source of the DAG's current version (the one new runs use, also after a rollback), sanitized and size-capped. |
 | `dag://spec/{dag_id}` | The compiled `dag.json` artifact (the structured task graph). |
 | `health://control-plane` | Control-plane health: component status, executor capability, and version. |
+| `dexaflow://capabilities` | What this server offers: its version, its transport (`stdio` or `http`), which optional tool groups are on (`read`, `run_control`) and the name of every tool it serves, including tools added with [`pkg/mcp`](#adding-your-own-tools). Read it to adapt to a server without probing each tool. |
 
 ## Prompts
 
@@ -323,6 +324,50 @@ several environments, add one MCP-client entry per environment — the server ne
 routes by environment (ADR 0050 D4).
 {{% /alert %}}
 
+## Adding your own tools
+
+An install that wants a tool of its own (a runbook lookup, a diagnosis specific to
+its pipelines) does not need to fork the server. The public Go package
+[`pkg/mcp`](/reference/go/pkg-mcp/) is the core `dexaflow-mcp` is built from: it
+serves the stock tools, resources and prompts, and `mcp.AddTool` adds yours. Tools
+are declared with the types of the official
+[MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk), and the input and
+output schemas are inferred from your Go types.
+
+```go
+type runbookIn struct {
+	DagID string `json:"dag_id" jsonschema:"the DAG to find the runbook of"`
+}
+
+type runbookOut struct {
+	URL string `json:"url"`
+}
+
+func runbook(ctx context.Context, api *client.ClientWithResponses, _ *mcpsdk.CallToolRequest, in runbookIn) (*mcpsdk.CallToolResult, runbookOut, error) {
+	if _, err := api.GetDagWithResponse(ctx, in.DagID); err != nil {
+		return nil, runbookOut{}, err
+	}
+	return nil, runbookOut{URL: "https://wiki.example.com/runbooks/" + in.DagID}, nil
+}
+
+func main() {
+	api, _ := client.NewClientWithResponses(serverURL) // no token on HTTP
+	s := mcp.NewServer(api, serverURL, version, mcp.TransportHTTP)
+	mcp.AddTool(s, &mcpsdk.Tool{Name: "runbook", Description: "Find the runbook of a DAG."}, runbook)
+	_ = http.ListenAndServe(":8090", mcp.HTTPHandler(s, mcp.ProtectedResource{}))
+}
+```
+
+Your handler gets the control-plane client **of the caller**, already resolved: on
+the HTTP transport it carries the bearer of the request being served, and a
+request without one is refused before your handler runs; on stdio it is the
+process token. Use that client and never build one of your own, so your tool keeps
+the [blast radius](#security-the-blast-radius) of the stock ones. The same options
+as the stock binary are available (`mcp.WithUIBaseURL`, `mcp.WithRunControl`), and
+your tool shows up in `tools/list` and in `dexaflow://capabilities`. A complete,
+runnable program is the `ExampleAddTool` example in the
+[package reference](/reference/go/pkg-mcp/).
+
 ## Security: the blast radius
 
 {{% alert title="Read-only, and scoped to the caller's token" color="success" %}}
@@ -338,4 +383,5 @@ reads are **sanitized and size-capped** by construction, treated as untrusted co
 
 - [ADR 0050 — Model Context Protocol server](/project/adrs/0050-mcp-server/): the full design, the security posture, and the untrusted-content threat model.
 - [Go packages → `pkg/client`](/reference/go/): the typed `/api/v2` client the MCP is built on.
+- [Go packages → `pkg/mcp`](/reference/go/pkg-mcp/): the server core, to add tools of your own.
 - [HTTP API (Scalar)](/api-reference.html): the `/api/v2` surface itself.

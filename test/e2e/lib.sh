@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 # Shared helpers for the k3d end-to-end scripts.
 
+# DBT_CONSTRAINTS is the pip constraints file that pins dbt-core for every dbt
+# install of the tests (#957).
+DBT_CONSTRAINTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/constraints-dbt.txt"
+
+# dbt_core_pin prints the dbt-core requirement of DBT_CONSTRAINTS, for an
+# install that cannot take a constraints file, such as a DAG's dependencies.
+dbt_core_pin() {
+  grep -E '^dbt-core[=<>!~]' "$DBT_CONSTRAINTS"
+}
+
 # k3d_import imports images into a k3d cluster, working around a k3d bug where
 # `k3d image import` prints "Successfully imported" even when the in-node
 # containerd import actually failed ("ctr: open /k3d/images/...tar: no such file
@@ -130,4 +140,38 @@ admin_token() {
   local user
   user="$(admin_user "$@")" || return 1
   "$1" auth create-token --server "$2" --username "$user" --password "$3"
+}
+
+# k3d_wait_host_entry waits until the cluster's CoreDNS answers for
+# host.k3d.internal, the name task pods use to reach services on the runner.
+# k3d adds that entry to the coredns ConfigMap after the cluster reports ready,
+# so a run triggered right after cluster creation can start a pod that cannot
+# resolve it and fails within seconds (#919). It returns 1 after timeout
+# seconds (default 60) without the entry.
+#
+# Usage: k3d_wait_host_entry [timeout]
+k3d_wait_host_entry() {
+  local timeout="${1:-60}" deadline
+  deadline=$(( $(date +%s) + timeout ))
+  until kubectl -n kube-system get configmap coredns -o jsonpath='{.data.NodeHosts}' 2>/dev/null |
+    grep -qw 'host.k3d.internal'; do
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      printf 'k3d_wait_host_entry: CoreDNS has no host.k3d.internal entry after %ss\n' "$timeout" >&2
+      return 1
+    fi
+    sleep 2
+  done
+}
+
+# dump_task_instances prints every task instance of a run with its state, try
+# and failure reason, so a failed e2e says which task failed and why before
+# the cluster is deleted (#919). It never fails the caller.
+#
+# Usage: dump_task_instances <api> <dag_id> <run_id> <token>
+dump_task_instances() {
+  local api="$1" dag="$2" run="$3" token="$4"
+  [ -n "$run" ] || return 0
+  printf '\033[1;33m--- task instances of %s/%s ---\033[0m\n' "$dag" "$run" >&2
+  curl -fsS -H "Authorization: Bearer $token" "$api/api/v2/dags/$dag/dagRuns/$run/taskInstances" 2>/dev/null |
+    jq -r '.task_instances[] | "\(.task_id)\t\(.state)\ttry \(.try_number)\t\(.failure_reason // "")"' >&2 || true
 }

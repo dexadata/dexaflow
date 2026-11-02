@@ -1,0 +1,82 @@
+# Review of the data variant of the task image (runtime/data, #2247): the
+# pull request half of the gate release.yaml applies before it publishes
+# py3.11-data-<tag>.
+#
+# The data image's Python packages are a lock we compile and choose
+# (runtime/data/requirements.in), so a fixable HIGH or CRITICAL finding in them
+# is ours to fix before the image ships, not after. A lock recompile that
+# brings one is caught here, in its own pull request, instead of at the release.
+# Only the language packages are gated (Python wheels and the jars inside
+# them). The OS packages of the base are Debian's and stay in image-scan.yaml's
+# reporting lane: blocking on them would fail whoever opens the next unrelated
+# pull request.
+#
+# Runs only when the image's inputs change, since the build alone takes about
+# ten minutes. A finding that is accepted on purpose goes in .trivyignore.yaml
+# with a statement and an expiry, scoped by purl.
+
+name: Runtime data scan
+
+on:
+  pull_request:
+    branches: [main, "release-*"]
+    paths:
+      - "runtime/data/**"
+      - "runtime/Dockerfile"
+      - ".trivyignore.yaml"
+      - ".github/workflows/runtime-data-scan.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('{0}-run-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Matches release.yaml, so the agent baked into the scanned image is built
+  # with the toolchain that ships.
+  GO_VERSION: "1.26.10"
+  # The Trivy binary the scan runs, the same as release.yaml's and security.yaml's.
+  TRIVY_VERSION: "v0.75.0"
+
+jobs:
+  scan:
+    name: Scan the data image's language packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/docker-hub-mirror
+        with:
+          python-versions: "3.11"
+
+      - name: Build the data image
+        run: |
+          set -euo pipefail
+          docker build -f runtime/Dockerfile \
+            --build-arg "PYTHON_VERSION=3.11" \
+            --build-arg "RUNTIME_VARIANT=data" \
+            --build-arg "GO_VERSION=${GO_VERSION}" \
+            -t "dexaflow-runtime:py3.11-data" .
+
+      # The same criterion as the release step: fixable HIGH and CRITICAL
+      # findings in language packages, minus what .trivyignore.yaml accepts.
+      - name: Scan the language packages
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PKG_TYPES: library
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: image
+          image-ref: dexaflow-runtime:py3.11-data
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
+          exit-code: 1
+          format: table

@@ -153,6 +153,21 @@ func TestAsyncDispatchUnavailableWindow(t *testing.T) {
 		}
 	})
 
+	// A cause that names what kept the attempt waiting (an admission hook,
+	// ADR 0100) is named in the failure instead of the Kubernetes API.
+	t.Run("past_the_window_held_by_admission", func(t *testing.T) {
+		st := &fakeAsyncStore{active: true, unavailableSince: now.Add(-dispatchUnavailableWindow)}
+		h := NewAsyncDispatchFailures(st, nil)
+		h.now = func() time.Time { return now }
+		cause := subjectError{subject: "held by an admission hook", msg: "admission: held: freeze"}
+		if err := h.HandleDispatchFailure(context.Background(), "r1", "a", executor.Unavailable, cause); err != nil {
+			t.Fatal(err)
+		}
+		if len(st.failNotes) != 1 || st.failNotes[0] != "dispatch_failed: held by an admission hook for 15m0s: admission: held: freeze" {
+			t.Errorf("reason = %q", st.failNotes)
+		}
+	})
+
 	t.Run("moved_on", func(t *testing.T) {
 		st := &fakeAsyncStore{active: false}
 		h := NewAsyncDispatchFailures(st, nil)
@@ -164,3 +179,8 @@ func TestAsyncDispatchUnavailableWindow(t *testing.T) {
 		}
 	})
 }
+
+type subjectError struct{ subject, msg string }
+
+func (e subjectError) Error() string              { return e.msg }
+func (e subjectError) UnavailableSubject() string { return e.subject }

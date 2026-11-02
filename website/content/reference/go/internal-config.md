@@ -787,7 +787,7 @@ type UISection struct {
     // AutoRefreshIntervalSeconds is the SPA's polling cadence for DAG /
     // DagRun / task-instance state refresh (Airflow's auto_refresh_interval).
     // Zero (the default) falls back to api.DefaultUIAutoRefreshIntervalSeconds
-    // (30s, production-safe). `dexaflow lite` sets it to 1s for a snappy inner
+    // (5s; 30s before v0.6.0). `dexaflow lite` sets it to 1s for a snappy inner
     // loop so the SPA reflects state changes almost immediately during dev.
     AutoRefreshIntervalSeconds int `mapstructure:"auto_refresh_interval_seconds"`
     // Edition marks the running edition; "lite" shows the silver LITE badge and

@@ -1,8 +1,0 @@
-kind: Added
-body: |-
-  The service API's tenant suspension applies the `drain` and `stop` modes.
-  `drain` also dispatches no task of the tenant and starts none of its queued
-  runs; `stop` also fails its queued and running task instances, whose attempts
-  terminate on their next heartbeat as after a mark failed. Lifting the
-  suspension dispatches the tasks left scheduled (#2181).
-time: 2026-10-28T14:00:00.000000+00:00

@@ -69,6 +69,17 @@
 # All entries lapse on the same date on purpose: the next pip release (26.3)
 # is expected before it, and the findings coming back is the reminder to bump
 # PIP_VERSION in runtime/Dockerfile and delete what it fixes.
+#
+# The data variant (runtime/data) adds the second group below: the jackson and
+# guava jars bundled in ray's ray_dist.jar and the aiohttp ray vendors for its
+# runtime-env agent (#2247). ray comes from apache-airflow-providers-google,
+# and ray 2.59.0, the newest release, still bundles these versions. None of it
+# runs in a task: the image has no JVM to load the jar, and the runtime-env
+# agent is a ray cluster server nothing in the image starts. The purls name the
+# bundled versions only, so the site-packages aiohttp (a separate install) and
+# any other copy stay scanned. These entries lapse before the pip ones so the
+# next ray release is checked sooner: when the findings come back, recompile
+# the data lock and delete what the new ray fixes.
 
 vulnerabilities:
   - id: CVE-2026-97687
@@ -106,6 +117,16 @@ vulnerabilities:
       and pip vendors the pure-Python msgpack; pip also runs with --no-cache-dir
       here. Fixed on pip's main branch (msgpack 1.2.1), not yet released (#1299).
     expired_at: 2026-12-31
+  - id: CVE-2026-114613
+    purls:
+      - pkg:pypi/msgpack@1.1.2
+    statement: >-
+      Memory leak in the msgpack C extension (msgpack._cmsgpack) when a map key
+      is rejected, in the msgpack 1.1.2 that pip 26.2.2 vendors. pip vendors the
+      pure-Python msgpack, which the advisory says is not affected, and uses it
+      only for its HTTP cache, off here (--no-cache-dir). No pip release vendors
+      msgpack 1.2.3 yet (#1299, #2247).
+    expired_at: 2026-12-31
   - id: CVE-2025-47273
     purls:
       - pkg:pypi/setuptools@70.3.0
@@ -125,3 +146,81 @@ vulnerabilities:
       site-packages setuptools 80.10.2 (3.10 and 3.11 images) is still reported.
       No pip release vendors a fixed setuptools yet (#1299).
     expired_at: 2026-12-31
+  - id: CVE-2026-89407
+    purls:
+      - pkg:maven/com.fasterxml.jackson.core/jackson-core@2.18.8
+    statement: >-
+      jackson-core 2.18.8 inside ray's ray_dist.jar (ray 2.59.0), fixed in 2.18.11. The data image has no
+      JVM, so nothing loads the jar, and no ray release bundles a fixed version
+      yet. Recompile runtime/data when one does (#2247).
+    expired_at: 2027-01-31
+  - id: CVE-2026-89425
+    purls:
+      - pkg:maven/com.fasterxml.jackson.core/jackson-core@2.18.8
+    statement: >-
+      jackson-core 2.18.8 inside ray's ray_dist.jar (ray 2.59.0), fixed in 2.18.11. The data image has no
+      JVM, so nothing loads the jar, and no ray release bundles a fixed version
+      yet. Recompile runtime/data when one does (#2247).
+    expired_at: 2027-01-31
+  - id: CVE-2026-68497
+    purls:
+      - pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.18.8
+    statement: >-
+      jackson-databind 2.18.8 inside ray's ray_dist.jar (ray 2.59.0), fixed in 2.18.10. The data image has no
+      JVM, so nothing loads the jar, and no ray release bundles a fixed version
+      yet. Recompile runtime/data when one does (#2247).
+    expired_at: 2027-01-31
+  - id: CVE-2026-91776
+    purls:
+      - pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.18.8
+    statement: >-
+      jackson-databind 2.18.8 inside ray's ray_dist.jar (ray 2.59.0), fixed in 2.18.11. The data image has no
+      JVM, so nothing loads the jar, and no ray release bundles a fixed version
+      yet. Recompile runtime/data when one does (#2247).
+    expired_at: 2027-01-31
+  - id: CVE-2026-91777
+    purls:
+      - pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.18.8
+    statement: >-
+      jackson-databind 2.18.8 inside ray's ray_dist.jar (ray 2.59.0), fixed in 2.18.11. The data image has no
+      JVM, so nothing loads the jar, and no ray release bundles a fixed version
+      yet. Recompile runtime/data when one does (#2247).
+    expired_at: 2027-01-31
+  - id: CVE-2026-102554
+    purls:
+      - pkg:maven/com.google.guava/guava@32.0.1-jre
+    statement: >-
+      guava 32.0.1-jre inside ray's ray_dist.jar (ray 2.59.0), fixed in 33.7.2. The data image has no
+      JVM, so nothing loads the jar, and no ray release bundles a fixed version
+      yet. Recompile runtime/data when one does (#2247).
+    expired_at: 2027-01-31
+  - id: CVE-2026-111064
+    purls:
+      - pkg:pypi/aiohttp@3.14.3
+    statement: >-
+      aiohttp 3.14.3 that ray 2.59.0 vendors for its runtime-env agent
+      (ray/_private/runtime_env/agent/thirdparty_files), fixed in 3.14.4. The
+      agent is a ray cluster server that nothing in the data image starts; task
+      code imports the site-packages aiohttp, a separate and newer install that
+      stays scanned. Recompile runtime/data when a ray release vendors 3.14.4 (#2247).
+    expired_at: 2027-01-31
+  - id: CVE-2026-111066
+    purls:
+      - pkg:pypi/aiohttp@3.14.3
+    statement: >-
+      aiohttp 3.14.3 that ray 2.59.0 vendors for its runtime-env agent
+      (ray/_private/runtime_env/agent/thirdparty_files), fixed in 3.14.4. The
+      agent is a ray cluster server that nothing in the data image starts; task
+      code imports the site-packages aiohttp, a separate and newer install that
+      stays scanned. Recompile runtime/data when a ray release vendors 3.14.4 (#2247).
+    expired_at: 2027-01-31
+  - id: GHSA-2g87-pp6c-29x5
+    purls:
+      - pkg:pypi/aiohttp@3.14.3
+    statement: >-
+      aiohttp 3.14.3 that ray 2.59.0 vendors for its runtime-env agent
+      (ray/_private/runtime_env/agent/thirdparty_files), fixed in 3.14.4. The
+      agent is a ray cluster server that nothing in the data image starts; task
+      code imports the site-packages aiohttp, a separate and newer install that
+      stays scanned. Recompile runtime/data when a ray release vendors 3.14.4 (#2247).
+    expired_at: 2027-01-31

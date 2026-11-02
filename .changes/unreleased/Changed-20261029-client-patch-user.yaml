@@ -1,0 +1,9 @@
+kind: Changed
+body: |-
+  **`pkg/client`: `ClientInterface` and `ClientWithResponsesInterface` gain
+  the user update methods.** `PatchUser`, `PatchUserWithBody` and their
+  `WithResponse` variants are new methods of the generated interfaces. Code
+  that only calls the client is unaffected; a type of your own that implements
+  one of these interfaces (a hand-written mock, for example) must add the new
+  methods, or embed the interface, to keep compiling. (#960)
+time: 2026-10-29T12:15:00.000000000+00:00

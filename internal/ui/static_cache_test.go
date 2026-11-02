@@ -1,7 +1,10 @@
 package ui
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -152,5 +155,56 @@ func TestStaticMissingFileIsNotCached(t *testing.T) {
 	}
 	if _, ok := srv.static.entries.Load("assets/nope.js"); ok {
 		t.Error("a missing file left an entry in the static cache")
+	}
+}
+
+// TestStaticConcurrentFirstRequestsShareOneBuild (#1309, #1616): many first
+// requests for the same file racing each other and the startup Precompress
+// all get the same gzip body, which decompresses to the file, and the file is
+// read and compressed once. Run under -race this also guards the cache's
+// synchronization.
+func TestStaticConcurrentFirstRequestsShareOneBuild(t *testing.T) {
+	data := []byte(strings.Repeat("console.log('parallel');", 400))
+	cfs := &countingFS{FS: fstest.MapFS{"assets/app.js": {Data: data}}, opens: map[string]int{}}
+	srv := NewFromFS(cfs, "test")
+	h := srv.StaticHandler()
+
+	const n = 64
+	start := make(chan struct{})
+	bodies := make([][]byte, n)
+	codes := make([]int, n)
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		<-start
+		srv.Precompress()
+	})
+	for i := range n {
+		wg.Go(func() {
+			<-start
+			rec := staticGet(t, h, "/assets/app.js", map[string]string{"Accept-Encoding": "gzip"})
+			codes[i], bodies[i] = rec.Code, rec.Body.Bytes()
+		})
+	}
+	close(start)
+	wg.Wait()
+
+	for i := range n {
+		if codes[i] != http.StatusOK {
+			t.Fatalf("request %d: status %d", i, codes[i])
+		}
+		if !bytes.Equal(bodies[i], bodies[0]) {
+			t.Fatalf("request %d got a different gzip body than request 0", i)
+		}
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(bodies[0]))
+	if err != nil {
+		t.Fatalf("the body is not gzip: %v", err)
+	}
+	plain, err := io.ReadAll(zr)
+	if err != nil || !bytes.Equal(plain, data) {
+		t.Fatalf("the gzip body decompresses to %d bytes (err %v), want the %d-byte file", len(plain), err, len(data))
+	}
+	if got := cfs.opens["assets/app.js"]; got != 1 {
+		t.Errorf("file opened %d times by %d concurrent first requests and Precompress, want 1", got, n)
 	}
 }

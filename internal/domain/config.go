@@ -299,6 +299,9 @@ func (c *LeoflowConfig) Validate() error {
 	if err != nil {
 		return err
 	}
+	if err := c.validateRetiredPython(); err != nil {
+		return err
+	}
 	if err := validateAgainst(s.leoflow, c); err != nil {
 		return err
 	}
@@ -323,6 +326,19 @@ func (c *LeoflowConfig) Validate() error {
 		}
 	}
 	return c.ValidateDockerfileValues()
+}
+
+// validateRetiredPython refuses a python_version that is no longer published
+// with a message that names the replacement. It runs before the schema, whose
+// enum would refuse the same value as if it were a typo (#1447).
+func (c *LeoflowConfig) validateRetiredPython() error {
+	r, ok := RetiredPythonVersion(c.PythonVersion)
+	if !ok {
+		return nil
+	}
+	return fmt.Errorf("python_version %s is no longer published: no release cut after %s ships a py%s task base. "+
+		"Set python_version: %q in dexaflow.yaml and rebuild; existing images keep running",
+		r.Version, r.RemoveAfter, r.Version, r.Replacement)
 }
 
 // validateMinIdleWorkers refuses min_idle_workers on a DAG with staging

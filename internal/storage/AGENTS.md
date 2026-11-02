@@ -30,6 +30,14 @@ discussion issue first.
   `(try_number, attempt_epoch)`; see
   [`internal/dispatch/AGENTS.md`](../dispatch/AGENTS.md) for the rule and the
   tests that pin it.
+- **A state change is a transition of the scheduler's table.** A query that
+  moves a task instance or a dag run to another state must stay inside
+  `taskTransitions` / `dagRunTransitions` (`internal/scheduler/state_machine.go`).
+  The package's `TestMain` (`state_transitions_integration_test.go`) records
+  every state change a named query makes during the integration run and fails
+  on one the table lacks, or on an entry nothing makes. A new transition adds
+  its table entry, with the reason, in the same change. A query whose target
+  is the caller's argument goes in `callerChosen` there.
 - **SQL behavior is proven against Postgres.** A predicate, a lock or a
   conflict is tested in a `*_integration_test.go` file with the
   `//go:build integration` tag, run by `make test-integration` and by the

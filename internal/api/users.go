@@ -192,7 +192,8 @@ func handleUserWriteError(c *gin.Context, err error) {
 }
 
 // registerUsers mounts the admin user-management surface. The list is gated with
-// read:user and the create with write:user (both admin-only in practice — the
+// read:user, and the create and the activate/deactivate PATCH (when the store
+// implements UserActivator) with write:user (all admin-only in practice: the
 // admin role short-circuits every permission check). With no store wired the
 // list still renders an empty collection (matching the other Admin resources, so
 // the page never 404s), while the create route is left unregistered.
@@ -203,4 +204,7 @@ func registerUsers(r gin.IRouter, store UserStore, audit UserAuditWriter) {
 	}
 	r.GET("/api/v2/users", RequirePermission("read", "user"), listUsersHandler(store))
 	r.POST("/api/v2/users", RequirePermission("write", "user"), createUserHandler(store, audit))
+	if act, ok := store.(UserActivator); ok {
+		r.PATCH("/api/v2/users/:user_id", RequirePermission("write", "user"), patchUserHandler(act))
+	}
 }

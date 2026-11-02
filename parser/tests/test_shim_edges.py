@@ -894,3 +894,52 @@ def test_task_branch_override_still_rejected_as_branching(monkeypatch, tmp_path)
                 pick.override(task_id="choose")()
         """)
     assert "branching" in str(ei.value)
+
+
+# --- pool (ADR 0053) ---------------------------------------------------------------
+# A task's pool names the cross-DAG slot budget it is admitted against. Airflow's
+# default is default_pool, which is also the engine's fallback, so only another
+# name is emitted.
+
+def test_operator_and_task_pool_are_captured(monkeypatch, tmp_path):
+    """pool on an operator, on @task and from default_args reaches dag.json."""
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.providers.standard.operators.bash import BashOperator
+        from airflow.sdk import DAG, task
+        @task(pool="gpu")
+        def a() -> None: ...
+        with DAG("g", default_args={"pool": "etl"}):
+            a()
+            BashOperator(task_id="b", bash_command="true", pool="reports")
+            BashOperator(task_id="c", bash_command="true")
+    """)
+    assert _task(spec, "a")["pool"] == "gpu"
+    assert _task(spec, "b")["pool"] == "reports"
+    assert _task(spec, "c")["pool"] == "etl"
+
+
+def test_default_pool_emits_no_key(monkeypatch, tmp_path):
+    """pool unset or default_pool emits nothing, so existing dag.json files do not change."""
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.providers.standard.operators.bash import BashOperator
+        from airflow.sdk import DAG
+        with DAG("g"):
+            BashOperator(task_id="b", bash_command="true")
+            BashOperator(task_id="c", bash_command="true", pool="default_pool")
+    """)
+    assert "pool" not in _task(spec, "b")
+    assert "pool" not in _task(spec, "c")
+
+
+def test_provider_operator_pool_is_not_an_operator_arg(monkeypatch, tmp_path):
+    """On a generic provider operator pool is captured as the task's pool, not
+    passed to the operator's constructor."""
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.sdk import DAG
+        from airflow.providers.snowflake.operators.snowflake import SQLExecuteQueryOperator
+        with DAG("g"):
+            SQLExecuteQueryOperator(task_id="q", sql="select 1", conn_id="sf", pool="warehouse")
+    """)
+    q = _task(spec, "q")
+    assert q["pool"] == "warehouse"
+    assert "pool" not in q.get("operator_args", {})

@@ -3,6 +3,15 @@ name: CI
 # release-* is the per-minor branch every patch is tagged from (ADR 0062). A
 # cherry-pick PR to it gets the same CI as a PR to main, and so does the push
 # that merges it, because cut-release.sh tags only a merge commit that is green.
+#
+# A push to main is different: protect-main only merges through the merge
+# queue, and the queue fast-forwards main to the very commit its merge_group
+# run already tested, so that commit's checks are green before the push
+# arrives. Running every job again on the push tested the same tree twice and
+# took a third of the runner time a change costs. On a push to main only
+# `test` (whose coverage artifact the next delta reads) and the coverage badge
+# run; every other job carries the `if:` that skips it there. If main ever
+# merges outside the queue again, drop those conditions in the same change.
 on:
   push:
     branches: [main, "release-*"]
@@ -45,6 +54,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   lint:
     name: Lint (golangci-lint A+ enforcement)
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -81,6 +91,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   proto-drift:
     name: Proto generated code is in sync
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -118,6 +129,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   pkg-client-drift:
     name: pkg/client is in sync with the OpenAPI spec
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -145,6 +157,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   mcp-e2e:
     name: MCP server e2e (real binary over stdio + http)
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -165,6 +178,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   workflow-lint:
     name: Lint workflows (actionlint)
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -299,6 +313,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   shellcheck:
     name: shellcheck
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -318,6 +333,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   hadolint:
     name: hadolint
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # One job with a step per Dockerfile, not a matrix: the runners are
@@ -377,6 +393,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   integration:
     name: Integration tests
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -393,9 +410,19 @@ jobs:
         image: mirror.gcr.io/library/redis:7
         ports: [6379:6379]
         options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+      # The S3 API the segmented log layout is tested against (#1336, #1616):
+      # LocalStack, the same mirror image e2e-gates.yaml uses (minio/minio is
+      # no longer published on Docker Hub).
+      localstack:
+        image: mirror.gcr.io/localstack/localstack:4
+        env:
+          SERVICES: s3
+        ports: [4566:4566]
     env:
       DATABASE_URL: postgres://leoflow:leoflow@localhost:5432/leoflow_test?sslmode=disable
       REDIS_URL: redis://localhost:6379/0
+      DEXAFLOW_TEST_S3_ENDPOINT: http://localhost:4566
+      DEXAFLOW_TEST_GCS_ENDPOINT: http://localhost:4443
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -410,6 +437,30 @@ jobs:
           go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.20.1
           migrate -path migrations -database "$DATABASE_URL" up
 
+      - name: Wait for the S3 store
+        run: |
+          for _ in $(seq 60); do
+            curl -sf http://localhost:4566/_localstack/health | grep -q '"s3": "\(running\|available\)"' && exit 0
+            sleep 2
+          done
+          echo "LocalStack S3 did not come up" >&2
+          exit 1
+
+      # The GCS API the log backend is tested against with its real client
+      # (#526 bucket A). A step, not a service: fake-gcs-server takes its scheme
+      # and host as flags, and a service container cannot be given arguments.
+      - name: Start the GCS emulator
+        run: |
+          docker run -d --name fake-gcs -p 4443:4443 mirror.gcr.io/fsouza/fake-gcs-server:1.52 \
+            -scheme http -port 4443 -public-host localhost:4443
+          for _ in $(seq 60); do
+            curl -sf http://localhost:4443/storage/v1/b >/dev/null && exit 0
+            sleep 1
+          done
+          echo "fake-gcs-server did not come up" >&2
+          docker logs fake-gcs >&2
+          exit 1
+
       - name: Run integration tests
         run: go test -tags integration -race ./...
 
@@ -421,6 +472,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   e2e-db-outage:
     name: E2E Lite (database outage → 503, not 401)
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 12
     services:
@@ -461,6 +513,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   e2e-lite:
     name: E2E Lite (setup → login)
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -499,6 +552,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   binary-only-install:
     name: Binary-only install (no repo, no PYTHONPATH)
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -523,6 +577,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   e2e-lite-multidag:
     name: E2E Lite (multi-DAG materialization gate)
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -551,6 +606,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   e2e-lite-selfheal:
     name: E2E Lite (boot self-heal gate)
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -588,6 +644,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   e2e-lite-alerts:
     name: E2E Lite (on-failure alerting gate)
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -625,6 +682,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   e2e-lite-callback:
     name: E2E Lite (on_failure_callback gate)
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -652,12 +710,47 @@ jobs:
       - name: Airflow on_failure_callback (#424)
         run: bash test/e2e/lite-callback.sh
 
+  # Admission webhook gate (ADR 0100, #2177): with
+  # execution.admission.webhook.url set, a refused attempt fails at once with
+  # the endpoint's reason and never runs, an admitted one runs as before, and
+  # the endpoint never sees the task's environment, source or token.
+  e2e-lite-admission:
+    name: E2E Lite (admission webhook gate)
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: leoflow
+          POSTGRES_PASSWORD: leoflow
+          POSTGRES_DB: leoflow_dev
+        ports: [5432:5432]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      # leoflow lite spawns the parser via `python3 -m leoflow_parser`; ship its
+      # source on PYTHONPATH so the import resolves on a bare runner.
+      PYTHONPATH: parser
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Admission webhook (#2177)
+        run: bash test/e2e/lite-admission.sh
+
   # Lite dbt gate (#573): a duckdb dbt project — the credential-free focus adapter
   # — must compile with the zero-config profile step (#575), run through the
   # subprocess executor, and materialize its models. Pro dbt is covered by e2e-dbt
   # (k3d); this is the Lite half, which had no e2e at all.
   e2e-lite-dbt:
     name: E2E Lite (dbt duckdb)
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -717,6 +810,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   e2e-sso-login:
     name: SSO login page (real IdP handshake)
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -767,8 +861,11 @@ jobs:
 
   ui-smoke:
     name: UI smoke (headless SPA crash check)
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 15 until the UI contract checks joined the job (#1932), which add about
+    # two minutes to a job that used about nine.
+    timeout-minutes: 20
     env:
       PYTHONPATH: parser
       PLAYWRIGHT_VERSION: "1.64.1"
@@ -871,7 +968,29 @@ jobs:
           LEOFLOW_URL=http://localhost:18080 LEOFLOW_USER="$ADMIN_EMAIL" LEOFLOW_PASS="$PW" \
             timeout --kill-after=30 180 node test/e2e/ui-smoke.js || rc=$?
           echo "ui-smoke node run: $((SECONDS - t0))s (rc=$rc)"
-          exit $rc
+          [ "$rc" -eq 0 ] || exit "$rc"
+
+          # The UI contract checks (#1932), against the same Lite. sweep.py
+          # loads 23 views and fails on any non-2xx /api or /ui call or console
+          # error; clear_version_toggle.py drives the Clear dialog's "Run with
+          # latest bundle version" toggle on a run older than the DAG's current
+          # version. The Python Playwright is pinned to the Node one, so it
+          # reuses the browser cached above. Measured: sweep ~90s, toggle ~10s.
+          pip install -q "playwright==$PLAYWRIGHT_VERSION"
+          export LEOFLOW_BASE_URL=http://localhost:18080 LEOFLOW_USER="$ADMIN_EMAIL" LEOFLOW_PASSWORD="$PW" LEOFLOW_DAG_ID=hello
+          t0=$SECONDS
+          timeout --kill-after=30 240 python test/ui-contract/sweep.py
+          echo "contract sweep: $((SECONDS - t0))s"
+          # A second version of hello, so its oldest run is on an older one and
+          # the dialog offers the toggle.
+          echo "# second version, for the clear dialog check" >> "$HOME/dexaflow/hello/dag.py"
+          for _ in $(seq 1 40); do
+            n=$(curl -fsS -H "Authorization: Bearer $TOK" http://localhost:18080/api/v2/dags/hello/dagVersions | python -c 'import json,sys; print(json.load(sys.stdin)["total_entries"])' || echo 0)
+            [ "$n" -ge 2 ] && break; sleep 3
+          done
+          [ "$n" -ge 2 ] || { echo "hello did not register a second version"; tail -40 /tmp/lite.log; exit 1; }
+          OLDEST=$(curl -fsS -H "Authorization: Bearer $TOK" "http://localhost:18080/api/v2/dags/hello/dagRuns?limit=1&order_by=run_after" | python -c 'import json,sys; print(json.load(sys.stdin)["dag_runs"][0]["dag_run_id"])')
+          LEOFLOW_RUN_ID="$OLDEST" timeout --kill-after=30 120 python test/ui-contract/clear_version_toggle.py
 
   # ─────────────────────────────────────────────────────────────────────
   # Full pod-per-task e2e on a real k3d cluster (test/e2e/e2e.sh): builds the
@@ -884,6 +1003,10 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   operator-e2e:
     name: E2E operators (k3d pod-per-task)
+    # Cheap gates first: a lint or repository-gate failure is a red PR
+    # anyway, so the k3d cluster for it would only hold runner slots.
+    needs: [lint, repo-gates]
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -977,6 +1100,10 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   split-e2e:
     name: E2E split (k3d two-process api/scheduler)
+    # Cheap gates first: a lint or repository-gate failure is a red PR
+    # anyway, so the k3d cluster for it would only hold runner slots.
+    needs: [lint, repo-gates]
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -1058,6 +1185,10 @@ jobs:
   # the RC soak; a gated credentialed strategy is tracked in #574.
   e2e-dbt:
     name: E2E dbt (k3d pod-per-model)
+    # Cheap gates first: a lint or repository-gate failure is a red PR
+    # anyway, so the k3d cluster for it would only hold runner slots.
+    needs: [lint, repo-gates]
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -1133,10 +1264,9 @@ jobs:
           # on an HTTP 504 with nothing of ours involved. 1.9.11 has no such
           # dependency, which is what actually closes the hole.
           #
-          # NOTE: the sibling installs pin only dbt-postgres / dbt-duckdb, whose
-          # dbt-core requirement has no upper bound, so they still resolve
-          # dbt-core 1.12.x and remain exposed — tracked in #957.
-          pip install --quiet "dbt-core==1.9.*" "dbt-postgres==1.9.*"
+          # The pin lives in test/e2e/constraints-dbt.txt, shared with every
+          # other dbt install of the tests (#957).
+          pip install --quiet -c test/e2e/constraints-dbt.txt dbt-core "dbt-postgres==1.9.*"
       - name: Apply migrations
         if: steps.gate.outputs.run == 'true'
         run: ~/go/bin/migrate -path migrations -database "postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable" up
@@ -1161,12 +1291,14 @@ jobs:
   # A live-query gate needs real warehouse secrets and is maintainer-owned.
   dbt-adapter-contracts:
     name: dbt adapter contracts (${{ matrix.adapter }})
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        # dbt-core is pinned to 1.9.* on every leg — that keeps the resolver off the
+        # dbt-core is pinned to 1.9.* on every leg (test/e2e/constraints-dbt.txt,
+        # #957), which keeps the resolver off the
         # 2.0 pre-release parser (a source build that fetches a wheel at build time),
         # so a plain source/wheel install is enough. One adapter per leg: their dep
         # pins conflict in a shared venv.
@@ -1179,7 +1311,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install ${{ matrix.adapter }} adapter + pytest
-        run: python -m pip install --quiet pytest "dbt-core==1.9.*" "dbt-${{ matrix.adapter }}==1.9.*"
+        run: python -m pip install --quiet -c test/e2e/constraints-dbt.txt pytest dbt-core "dbt-${{ matrix.adapter }}==1.9.*"
       - name: Contract test (${{ matrix.adapter }})
         run: PYTHONPATH=runtime/python python -m pytest runtime/python/tests/test_dbt_adapter_contracts.py -q -k ${{ matrix.adapter }}
 
@@ -1196,6 +1328,10 @@ jobs:
   # placement or deploy path changed (test/README.md, `warm-paths`).
   deploy-e2e:
     name: ${{ matrix.warm_pools == 'on' && 'E2E deploy (k3d + registry, warm pools on)' || 'E2E deploy (k3d + registry)' }}
+    # Cheap gates first: a lint or repository-gate failure is a red PR
+    # anyway, so the k3d cluster for it would only hold runner slots.
+    needs: [lint, repo-gates]
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -1356,6 +1492,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   build:
     name: Build binaries
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [lint, test]
@@ -1392,6 +1529,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   openapi-lint:
     name: OpenAPI spec lint
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -1411,15 +1549,16 @@ jobs:
         run: redocly lint docs/api/openapi.yaml
 
   # ─────────────────────────────────────────────────────────────────────
-  # Dependabot directory check. Dependabot does not report a directory
-  # with no manifest — it finds nothing and says nothing — so an entry
-  # for a renamed or nonexistent path looks configured and updates
-  # nothing. Three docker entries pointed at /runtime/python-3.1{0,1,2},
-  # none of which are in the tree, and no base image was ever updated.
-  # A missing update is invisible by definition, so it needs a gate.
+  # Repository gates: the static checks that each run in seconds, one STEP per
+  # gate so a red one still names itself in the job summary. They used to be
+  # nine jobs, and each job costs a runner slot and about half a minute of
+  # setup; the account runs at most 20 jobs at once, so nine slots per push
+  # held up the k3d jobs behind them. A new check of this class becomes a step
+  # here, not a job. The comments below are the reasons each gate exists.
   # ─────────────────────────────────────────────────────────────────────
-  dependabot-dirs:
-    name: Dependabot directories resolve
+  repo-gates:
+    name: Repository gates
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -1428,12 +1567,19 @@ jobs:
           persist-credentials: false
       - name: Install PyYAML
         run: python3 -m pip install --user pyyaml
+
+      # ── dependabot-dirs ──
+      # Dependabot directory check. Dependabot does not report a directory
+      # with no manifest, it finds nothing and says nothing, so an entry
+      # for a renamed or nonexistent path looks configured and updates
+      # nothing. Three docker entries pointed at /runtime/python-3.1{0,1,2},
+      # none of which are in the tree, and no base image was ever updated.
+      # A missing update is invisible by definition, so it needs a gate.
       - name: Check every dependabot directory exists
         run: bash scripts/check-dependabot-dirs.sh
       # #1560: CONTRIBUTING.md promises fork contributors that no pull request
       # workflow uses a repository secret or runs on pull_request_target. A
       # cut-time-only gate would let a PR break that promise and stay green.
-      # Shares this job so the check costs no extra runner.
       - name: Workflows stay safe for pull requests from forks
         run: bash scripts/check-fork-safe-workflows.sh
       # #1688: a path filter does not apply to tag pushes, so a path-filtered
@@ -1441,158 +1587,75 @@ jobs:
       - name: Path-filtered workflows stay off tag pushes
         run: bash scripts/check-workflow-tag-runs.sh
 
-  # ─────────────────────────────────────────────────────────────────────
-  # Stale deploy-path check. The old GKE deploy directory was renamed to
-  # `deploy/k8s` (#690, cloud-agnostic recipe). A leftover reference to the
-  # old path in a script comment, README, docs link, or .gitignore points at
-  # a directory that no longer exists — scripts `cd` into nothing, doc links
-  # 404 — and no build step resolves the string, so the rot is invisible
-  # without a gate. (The guard script owns the literal old-path string.)
-  # ─────────────────────────────────────────────────────────────────────
-  # Container images the runner pulls in `Initialize containers`, before any
-  # step, must come from a registry that does not rate-limit anonymous pulls by
-  # shared source IP (#1007). Allowlist, parsed from the workflow YAML.
-  # ─────────────────────────────────────────────────────────────────────
-  service-image-registry:
-    name: Service images avoid a source-IP-rate-limited registry
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
+      # ── service-image-registry ──
+      # Container images the runner pulls in `Initialize containers`, before any
+      # step, must come from a registry that does not rate-limit anonymous pulls by
+      # shared source IP (#1007). Allowlist, parsed from the workflow YAML.
       - name: Check every workflow container image comes from an allowed registry
         run: bash scripts/check-service-image-registry.sh
 
-  # ─────────────────────────────────────────────────────────────────────
-  # Container-scan ignore list. Every finding we accept must say why and carry
-  # an expiry date, and the file holding them must actually be passed to a scan.
-  # Trivy honours `expired_at` — a lapsed entry stops suppressing, so neglect
-  # makes a finding come back rather than stay hidden — but nothing in Trivy
-  # requires an entry to have an expiry or a rationale at all, which makes the
-  # permanent unexplained entry the easiest one to write. The other half is
-  # wiring: a renamed ignore file, or a dropped `--ignorefile` flag, leaves
-  # entries that look accepted and suppress nothing. Both ends are checked.
-  # ─────────────────────────────────────────────────────────────────────
-  trivyignore-entries:
-    name: Container-scan ignore list is reviewable
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install PyYAML
-        run: python3 -m pip install --user pyyaml
+      # ── trivyignore-entries ──
+      # Container-scan ignore list. Every finding we accept must say why and carry
+      # an expiry date, and the file holding them must actually be passed to a scan.
+      # Trivy honours `expired_at`, a lapsed entry stops suppressing, so neglect
+      # makes a finding come back rather than stay hidden, but nothing in Trivy
+      # requires an entry to have an expiry or a rationale at all, which makes the
+      # permanent unexplained entry the easiest one to write. The other half is
+      # wiring: a renamed ignore file, or a dropped `--ignorefile` flag, leaves
+      # entries that look accepted and suppress nothing. Both ends are checked.
       - name: Check every accepted finding has a reason and an expiry
         run: bash scripts/check-trivyignore-entries.sh
 
-  # ─────────────────────────────────────────────────────────────────────
-  # The migrate binary we ship and the one CI scans must be one binary.
-  # `deploy/Dockerfile.migrate` compiles our `./cmd/dexaflow-migrate` (#1020),
-  # which security.yaml's `govulncheck ./...` covers only while the image keeps
-  # building that package with no build tags and the wrapper keeps importing
-  # its pgx5 driver. Same for the Go pin: Trivy keys stdlib findings to the
-  # toolchain in the binary. Each drift stays green while the coverage stops
-  # meaning anything, which is the shape of the gap #1039 closed.
-  # ─────────────────────────────────────────────────────────────────────
-  migrate-cli-build-tags:
-    name: Shipped migrate CLI is the one CI scans
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
+      # ── migrate-cli-build-tags ──
+      # The migrate binary we ship and the one CI scans must be one binary.
+      # `deploy/Dockerfile.migrate` compiles our `./cmd/dexaflow-migrate` (#1020),
+      # which security.yaml's `govulncheck ./...` covers only while the image keeps
+      # building that package with no build tags and the wrapper keeps importing
+      # its pgx5 driver. Same for the Go pin: Trivy keys stdlib findings to the
+      # toolchain in the binary. Each drift stays green while the coverage stops
+      # meaning anything, which is the shape of the gap #1039 closed.
       - name: Check the migrate CLI build tags and toolchain pin
         run: bash scripts/check-migrate-cli-build-tags.sh
 
-  # ─────────────────────────────────────────────────────────────────────
-  # Script self-tests. cut-release.sh and the check-* gates hold logic nothing
-  # else exercises — the tag normalizers, FLAKE_RE (which decides whether a red
-  # run is rerun or stops a release), and the gates' ref comparisons. A defect
-  # there surfaces mid-release. Discovery is by self_test() definition, so a new
-  # script's cases join this job by existing. No network, milliseconds.
-  # ─────────────────────────────────────────────────────────────────────
-  script-selftests:
-    name: Script self-tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
+      # ── script-selftests ──
+      # Script self-tests. cut-release.sh and the check-* gates hold logic nothing
+      # else exercises, the tag normalizers, FLAKE_RE (which decides whether a red
+      # run is rerun or stops a release), and the gates' ref comparisons. A defect
+      # there surfaces mid-release. Discovery is by self_test() definition, so a new
+      # script's cases join this job by existing. No network, milliseconds.
       # check-changelog-structure.sh validates changelog fragments with PyYAML,
       # and its self-test feeds it broken ones.
-      - name: Install PyYAML
-        run: python3 -m pip install --user pyyaml
       - name: Run every scripts/*.sh self-test
         run: bash scripts/check-script-selftests.sh
 
-  # ─────────────────────────────────────────────────────────────────────
-  # The Lite cold-start release gate pre-pulls the Postgres image by tag, and
-  # that job has no checkout (it installs from the published release), so the
-  # tag is duplicated in release.yaml. Checked here rather than only in the
-  # cut's own pre-flight: a bump to docker-compose.dev.yaml would otherwise go
-  # green through all of CI and surface mid-release.
-  # ─────────────────────────────────────────────────────────────────────
-  lite-prepull-tag:
-    name: Lite pre-pull tag matches the compose
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install PyYAML
-        run: python3 -m pip install --user pyyaml
+      # ── lite-prepull-tag ──
+      # The Lite cold-start release gate pre-pulls the Postgres image by tag, and
+      # that job has no checkout (it installs from the published release), so the
+      # tag is duplicated in release.yaml. Checked here rather than only in the
+      # cut's own pre-flight: a bump to docker-compose.dev.yaml would otherwise go
+      # green through all of CI and surface mid-release.
       - name: Check the Lite pre-pull tag
         run: bash scripts/check-lite-prepull-matches-compose.sh
 
-  # ─────────────────────────────────────────────────────────────────────
-  # Which Python lines we publish a task base image for is stated in five
-  # files, and only the schema enum is enforced by anything (the CLI's
-  # Validate() rejects everything else). By #1031 they had already drifted in
-  # both directions. Both directions fail in the user's build, minutes in: a
-  # selectable version with no published leg is a `docker pull` 404, a
-  # published leg outside the enum is a compile that refuses a good image.
-  # ─────────────────────────────────────────────────────────────────────
-  python-runtime-matrix:
-    name: Published Python matrix agrees everywhere
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install PyYAML
-        run: python3 -m pip install --user pyyaml
+      # ── python-runtime-matrix ──
+      # Which Python lines we publish a task base image for is stated in five
+      # files, and only the schema enum is enforced by anything (the CLI's
+      # Validate() rejects everything else). By #1031 they had already drifted in
+      # both directions. Both directions fail in the user's build, minutes in: a
+      # selectable version with no published leg is a `docker pull` 404, a
+      # published leg outside the enum is a compile that refuses a good image.
       - name: Check the published Python matrix against the schema enum
         run: bash scripts/check-python-runtime-matrix.sh
 
-  # ─────────────────────────────────────────────────────────────────────
-  # Duplicated version facts (#1036). A version string written in two places
-  # with nothing between them drifts, and the failure is not a broken build —
-  # it is that somebody reads one copy and reasons correctly from a false
-  # premise. That happened three times in one day: the Go toolchain said 1.26.6,
-  # 1.26.3, 1.26.4 and 1.27 in four files; a job named "Trivy (image scan)" ran
-  # a filesystem scan; and the two Python lists were read as one.
-  #
-  # One job rather than five, because they are one class and each runs in
-  # milliseconds — but one STEP per gate, so the check that went red names
-  # itself in the job summary before anyone opens the log. Each gate prints both
-  # locations and both values.
-  # ─────────────────────────────────────────────────────────────────────
-  version-facts:
-    name: Duplicated version facts agree
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install PyYAML
-        run: python3 -m pip install --user pyyaml
+      # ── version-facts ──
+      # Duplicated version facts (#1036). A version string written in two places
+      # with nothing between them drifts, and the failure is not a broken build:
+      # it is that somebody reads one copy and reasons correctly from a false
+      # premise. That happened three times in one day: the Go toolchain said 1.26.6,
+      # 1.26.3, 1.26.4 and 1.27 in four files; a job named "Trivy (image scan)" ran
+      # a filesystem scan; and the two Python lists were read as one.
+      #
+      # Each gate prints both locations and both values.
       - name: Go toolchain is one fact with one value
         run: bash scripts/check-go-toolchain-pin.sh
       - name: Host Python interpreters relate correctly to the published matrix
@@ -1636,19 +1699,16 @@ jobs:
       - name: Playwright pin agrees between package.json and CI
         run: bash scripts/check-playwright-pin.sh
 
-  # ─────────────────────────────────────────────────────────────────────
-  stale-deploy-path:
-    name: No stale legacy deploy path
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
+      # ── stale-deploy-path ──
+      # Stale deploy-path check. The old GKE deploy directory was renamed to
+      # `deploy/k8s` (#690, cloud-agnostic recipe). A leftover reference to the
+      # old path in a script comment, README, docs link, or .gitignore points at
+      # a directory that no longer exists (scripts `cd` into nothing, doc links
+      # 404) and no build step resolves the string, so the rot is invisible
+      # without a gate. (The guard script owns the literal old-path string.)
       - name: Check no stale legacy deploy path remains
         run: bash scripts/check-no-stale-deploy-path.sh
       # ADR 0069: files that configure one editor or assistant stay local.
-      # Shares this job so the check costs no extra runner.
       - name: No tool-specific context files are tracked
         run: bash scripts/check-no-tool-context.sh
 
@@ -1666,6 +1726,7 @@ jobs:
   # scripts/check-python-runtime-matrix.sh). #1031 read the two as one.
   python-parser:
     name: Python parser tests (py${{ matrix.python-version }})
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -1706,6 +1767,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   om-contract:
     name: OpenMetadata REST contract
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -1742,6 +1804,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   python-runtime:
     name: Python runtime tests
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -1783,6 +1846,7 @@ jobs:
   # green by skipping everything, which is the one way a contract leg lies.
   runtime-authoring-contract:
     name: Runtime authoring contract
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
