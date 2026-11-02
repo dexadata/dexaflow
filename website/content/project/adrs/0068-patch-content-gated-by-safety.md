@@ -7,6 +7,7 @@ description: "ADR 0068: while Dexaflow is 0.x, a patch may carry features and mi
 
 **Status:** Accepted
 **Date:** 2026-10-09 (proposed and accepted the same day by the project owner)
+**Amended by:** ADR 0099 (the Go packages under `pkg/` join the public surfaces of section 2, item 4)
 **Relates:** ADR 0037 (version scheme), ADR 0062 (release branches; this ADR replaces the fix-only list in its section 3 and the per-change exceptions in its section 6), ADR 0033 (RC tags and E2E gates).
 
 > **Numbering.** 0063 (#1365) and 0067 (#1517) are open PRs, so this record
@@ -52,6 +53,8 @@ the change is a fix or a feature.
 4. **No break of a public surface.** `/api/v2/`, the agent protocol,
    `dexaflow.yaml`, environment variables, CLI flags and Helm values only gain
    things in a patch. The API break checks are green or the change waits.
+   Since ADR 0099, the exported identifiers of the Go packages under `pkg/`
+   are a public surface too.
 5. **The candidate passed its reviews.** Every review of AGENTS.md section 1
    is recorded for the rc, including upgrade and rollback on realistic data
    for each new migration.

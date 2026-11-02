@@ -34,3 +34,20 @@ reference:
 - `internal/config` — configuration
 - `internal/cli` — the `leoflow` CLI
 - `internal/api` — HTTP handlers
+
+## Compatibility of the public packages
+
+The packages under `pkg/` are public API ([ADR 0099](/project/adrs/0099-public-server-package/)),
+and the `internal/` ones are not: Go refuses to import them from another module,
+and they change in any release.
+
+- **A patch release never breaks an exported identifier of `pkg/`.** Adding a
+  function, an option, a struct field or a method to a struct is not a break.
+- **A minor release may**, once the identifier was marked `Deprecated:` in the
+  previous minor. The changelog then says what changed and what to use instead.
+- **An interface you implement does not grow.** A method added to an exported
+  interface would break every implementation, so a new capability comes as an
+  optional second interface that the server checks for.
+
+Every pull request runs `apidiff` on each `pkg/` package against its base
+branch, and an incompatible change fails unless it is announced as above.

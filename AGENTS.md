@@ -236,6 +236,16 @@ about ninety minutes: fix, pick, prepare, tag, release run).
 - **No global state** except metrics registries and configuration
   (`internal/config`).
 - **Interfaces live near their consumers,** in the package that uses them.
+- **`pkg/` is public API (ADR 0099).** A patch never breaks an exported
+  identifier of a package under `pkg/`. A minor may, once the identifier was
+  marked `Deprecated:` in the previous minor, with a `Changed` or `Removed`
+  changelog fragment that says what to use instead and the `breaking-change`
+  label (`scripts/api-compat.sh` checks every `pkg/` package with apidiff).
+  Adding a function, an option, a struct field or a method to a struct is not a
+  break; adding a method to an exported interface is, so an interface that may
+  grow gets an optional second interface the server type-asserts. Contract
+  types live in `pkg/`, and the `internal/` packages alias them; implementations
+  stay internal.
 
 ### Testing discipline
 
