@@ -52,7 +52,7 @@ type fakeIssuerUsers struct {
 	subject  string
 }
 
-func (f *fakeIssuerUsers) FindUserByOIDCSubject(_ context.Context, provider, subject string) (*auth.User, bool, error) {
+func (f *fakeIssuerUsers) FindUserByOIDCSubject(_ context.Context, provider, subject string) (found *auth.User, ok bool, err error) {
 	f.provider, f.subject = provider, subject
 	if f.err != nil {
 		return nil, false, f.err

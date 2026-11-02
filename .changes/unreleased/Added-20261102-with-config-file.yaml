@@ -1,0 +1,6 @@
+kind: Added
+body: |-
+  **`server.WithConfigFile` names the config file of a control plane run from
+  your own program** (ADR 0099, #2176), in place of `DEXAFLOW_CONFIG`; the
+  `DEXAFLOW_*` environment still applies on top of it.
+time: 2026-11-02T04:00:00.000000000-03:00

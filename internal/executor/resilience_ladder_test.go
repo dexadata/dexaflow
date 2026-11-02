@@ -47,12 +47,12 @@ func TestValidateResilienceLadderDisabledCredentialCeilingPasses(t *testing.T) {
 	}
 }
 
-// TestValidateResilienceLadderRequiresTwoSweepsUnderGrace: at least TWO whole
-// maintenance cycles (reconcile sweep, then reap) must fit under the settling
+// TestValidateResilienceLadderRequiresTwoCycleStartsUnderGrace: at least TWO
+// maintenance cycles (reconcile sweep, then reap) must start under the settling
 // grace. A maintenance interval just under the grace (179s vs 180s) satisfies a
 // plain "interval < grace" ordering yet guarantees zero completed cycles in the
 // window, so the validator must reject it.
-func TestValidateResilienceLadderRequiresTwoSweepsUnderGrace(t *testing.T) {
+func TestValidateResilienceLadderRequiresTwoCycleStartsUnderGrace(t *testing.T) {
 	l := defaultLadder()
 	l.ReconcileInterval = 179 * time.Second
 	l.SettlingGrace = 180 * time.Second

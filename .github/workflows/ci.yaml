@@ -263,7 +263,7 @@ jobs:
         run: scripts/coverage-gate.sh coverage.out base-coverage.out "$BASE_LABEL"
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-${{ github.sha }}
           path: coverage.out
@@ -834,7 +834,7 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "20"
       - name: Build binaries
@@ -880,7 +880,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "20"
       - name: Build binaries
@@ -1087,6 +1087,15 @@ jobs:
           # admin@leoflow.local (test/e2e/lib.sh) into a failure in CI.
           DEXAFLOW_E2E_ADMIN_USER: admin@dexaflow.local
         run: bash test/e2e/e2e.sh
+      # The admission webhook on the pod path (ADR 0100, #2177): a refused
+      # attempt fails with the endpoint's reason and no pod is ever created for
+      # it. Its own small cluster; it builds no image, so it adds about two
+      # minutes to this job rather than a job of its own.
+      - name: Run the k3d admission e2e
+        if: steps.gate.outputs.run == 'true'
+        env:
+          DEXAFLOW_E2E_ADMIN_USER: admin@dexaflow.local
+        run: bash test/e2e/k8s-admission-e2e.sh
 
   # ─────────────────────────────────────────────────────────────────────
   # Two-process api/scheduler split e2e (ADR 0049; test/e2e/split-two-process.sh):
@@ -1538,7 +1547,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "20"
 

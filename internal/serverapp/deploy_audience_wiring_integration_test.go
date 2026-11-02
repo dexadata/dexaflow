@@ -127,7 +127,7 @@ func TestDeployAudienceWiringAgainstPostgres(t *testing.T) {
 	}
 	authn := auth.NewJWTAuthenticator(repo, cfg.Auth.JWT.Secret, time.Hour)
 	trusted := newTrustedIssuer(ctx, cfg)
-	apiSrv, buildErr := buildAPIServer(cfg, tel, authn, pg, repo, nil, nil, nil, nil, api.ExecutorInfo{}, nil, nil, trusted)
+	apiSrv, buildErr := buildAPIServer(cfg, tel, authn, pg, repo, nil, nil, nil, nil, api.ExecutorInfo{}, nil, nil, apiExtras{issuer: trusted, issuerOrigins: cfg.Auth.TrustedIssuer.AllowedOrigins})
 	if buildErr != nil {
 		t.Fatalf("buildAPIServer: %v", buildErr)
 	}

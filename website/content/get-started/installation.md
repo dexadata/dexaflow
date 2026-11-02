@@ -21,6 +21,10 @@ editions share the same Go control plane and the same Airflow-compatible
 HTTP API; Cluster adds the K8s executor, HA scheduler, and external-datastore
 expectations; Lite bundles everything in one host process.
 
+The Kubernetes, Helm, Postgres, Redis and Python versions each release line
+supports, and which of them CI tests, are on the
+[compatibility](/reference/compatibility/) page.
+
 ---
 
 ## Install Lite

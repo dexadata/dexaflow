@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/dexadata/dexaflow/pkg/xcomstore"
 )
 
 // MaxSizeBytes is the hard per-key XCom size limit (256 KB). Larger payloads
@@ -19,8 +21,10 @@ const DefaultTTL = 7 * 24 * time.Hour
 
 // Sentinel errors returned by the XCom subsystem.
 var (
-	// ErrNotFound is returned when a key is absent or expired.
-	ErrNotFound = errors.New("xcom not found")
+	// ErrNotFound is returned when a key is absent or expired. It is the
+	// public contract's sentinel (ADR 0099), so a backend from options that
+	// returns xcomstore.ErrNotFound is understood.
+	ErrNotFound = xcomstore.ErrNotFound
 	// ErrTooLarge is returned when a payload exceeds MaxSizeBytes.
 	ErrTooLarge = errors.New("xcom payload exceeds the 256KB limit")
 	// ErrSchemaMismatch is returned when a payload violates its declared schema.
@@ -43,12 +47,8 @@ func (k Key) String() string {
 }
 
 // Entry is a stored XCom value together with its metadata.
-type Entry struct {
-	Value       []byte    `json:"value"`
-	ContentType string    `json:"content_type"`
-	SizeBytes   int       `json:"size_bytes"`
-	CreatedAt   time.Time `json:"created_at"`
-}
+// It is defined by the public contract (ADR 0099).
+type Entry = xcomstore.Entry
 
 // IndexEntry is the Postgres-side metadata recorded for each push, used for UI
 // listing and expiry-based cleanup.
@@ -63,20 +63,13 @@ type IndexEntry struct {
 	ExpiresAt   time.Time
 }
 
-// Backend stores XCom entries with a TTL. RedisBackend is the production
-// implementation; tests use a fake.
-type Backend interface {
-	Push(ctx context.Context, key string, entry Entry, ttl time.Duration) error
-	Fetch(ctx context.Context, key string) (Entry, error)
-	Delete(ctx context.Context, key string) error
-	List(ctx context.Context, pattern string) ([]string, error)
-}
+// Backend stores XCom entries with a TTL. RedisBackend and PostgresBackend
+// are the built-in implementations; the contract is public (ADR 0099).
+type Backend = xcomstore.Backend
 
 // BatchBackend is a Backend that reads several keys in one round trip. found[i]
 // is false when keys[i] is absent or expired.
-type BatchBackend interface {
-	FetchMany(ctx context.Context, keys []string) (entries []Entry, found []bool, err error)
-}
+type BatchBackend = xcomstore.BatchBackend
 
 // Result is one value of a FetchMany: the entry, and whether it exists.
 type Result struct {

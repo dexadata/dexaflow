@@ -623,9 +623,10 @@ func NewReconciler(clientset kubernetes.Interface, namespace string, reporter Ou
 // (PR-10). Left unset, the reconciler keeps the live LIST — today's behavior.
 func (r *Reconciler) SetPodSnapshotter(s PodSnapshotter) { r.snapshot = s }
 
-// LastSweepCompletedAt reports when the last COMPLETED sweep finished: the
+// LastSweepCompletedAt reports when the last COMPLETED sweep started: the
 // task-pod set was listed and every pod visited, so every terminal pod present
-// at that moment had its chance to settle its task instance. Zero means no
+// when the list was taken had its chance to settle its task instance. The start,
+// not the end, so the stamp never claims data fresher than the LIST (#917). Zero means no
 // sweep has completed yet. It is the record the reaper's leader-settling gate
 // compares against the leadership stamp — the reapers act on signals a
 // control-plane restart manufactures (a task pod that exited during the outage
@@ -647,6 +648,10 @@ func (r *Reconciler) LastSweepCompletedAt() time.Time {
 // its task instance, and garbage-collects finished pods older than the grace
 // period. A completed sweep is stamped for LastSweepCompletedAt.
 func (r *Reconciler) Reconcile(ctx context.Context) error {
+	// Taken before the LIST: the stamp says how fresh the sweep's data is. A
+	// LIST from before a re-acquisition of leadership that completes after it
+	// must not pass the settling gate as a post-leadership sweep (#917).
+	started := r.now()
 	pods, err := r.listTaskPods(ctx)
 	if err != nil {
 		return err
@@ -690,7 +695,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 	}
 	// Every pod was visited: stamp the sweep before the collection, so its
 	// apiserver calls never delay the reaper's settling gate.
-	r.lastSweepCompleted.Store(r.now().UnixNano())
+	r.lastSweepCompleted.Store(started.UnixNano())
 	// Confirm the provisional infra marks against this sweep's pods (ADR 0052
 	// amendment, part 2).
 	r.confirmInfraMarks(ctx, pods)

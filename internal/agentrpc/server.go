@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dexadata/dexaflow/pkg/logsink"
+
 	"github.com/dexadata/dexaflow/internal/auth"
 	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/logs"
@@ -647,9 +649,7 @@ const (
 // LogResumer is implemented by log sinks that can continue an attempt's stored
 // log (logs.DiskSink, logs.ObjectSink): Resume opens a writer that keeps what
 // is already stored, where Open may start the attempt over.
-type LogResumer interface {
-	Resume(ref logs.Ref) (logs.LogWriter, error)
-}
+type LogResumer = logsink.Resumer
 
 // logOpener picks how StreamLogs opens the attempt's writer: Open for a first
 // stream, the sink's Resume for a stream the agent re-opened. A resume asked of

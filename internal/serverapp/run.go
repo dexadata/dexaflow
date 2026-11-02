@@ -25,16 +25,38 @@ import (
 	"github.com/dexadata/dexaflow/internal/storage"
 	"github.com/dexadata/dexaflow/internal/workspace"
 	"github.com/dexadata/dexaflow/internal/xcom"
+	"github.com/dexadata/dexaflow/pkg/admission"
 )
 
-// loadConfig returns cfg, or when it is nil the configuration the binary
-// loads: the file named by LEOFLOW_CONFIG (mirrored from DEXAFLOW_CONFIG),
-// then the environment.
-func loadConfig(cfg *config.ServerConfig) (*config.ServerConfig, error) {
-	if cfg != nil {
-		return cfg, nil
+// startupConfig loads the configuration Run serves with and refuses one,
+// or a combination with opts, the server cannot start on.
+func startupConfig(opts Options) (*config.ServerConfig, error) {
+	cfg, err := loadConfig(opts)
+	if err != nil {
+		return nil, err
 	}
-	loaded, err := config.LoadServer(os.Getenv("LEOFLOW_CONFIG"), nil)
+	if verr := validateStartup(cfg); verr != nil {
+		return nil, verr
+	}
+	if verr := validateAPIOptions(cfg, opts.TrustedIssuer, opts.TrustedIssuerOrigins); verr != nil {
+		return nil, verr
+	}
+	return cfg, nil
+}
+
+// loadConfig returns opts.Config, or when it is nil the configuration the
+// binary loads: the file opts.ConfigFile names, or else the one
+// LEOFLOW_CONFIG names (mirrored from DEXAFLOW_CONFIG), then the
+// environment.
+func loadConfig(opts Options) (*config.ServerConfig, error) {
+	if opts.Config != nil {
+		return opts.Config, nil
+	}
+	file := opts.ConfigFile
+	if file == "" {
+		file = os.Getenv("LEOFLOW_CONFIG")
+	}
+	loaded, err := config.LoadServer(file, nil)
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
 	}
@@ -68,17 +90,49 @@ func openVerifiedPostgres(ctx context.Context, cfg *config.ServerConfig, tel *ob
 	return pg, nil
 }
 
-// Run builds every component and serves until ctx is done. A nil cfg is
-// loaded the way the binary loads it: the config file named by
-// DEXAFLOW_CONFIG (or LEOFLOW_CONFIG), then the environment. Its error maps to
-// the process exit code through ExitCode.
-func Run(ctx context.Context, cfg *config.ServerConfig) error {
-	cfg, err := loadConfig(cfg)
+// Options are the components a caller of pkg/server supplies instead of, or
+// next to, the ones the configuration builds.
+type Options struct {
+	// Config is the configuration to run with. Nil loads it the way the
+	// binary does.
+	Config *config.ServerConfig
+	// ConfigFile, when set and Config is nil, is the config file to read in
+	// place of the one DEXAFLOW_CONFIG names. The environment still applies
+	// on top of it.
+	ConfigFile string
+	// AdmissionHooks run before the configured webhook, in this order
+	// (ADR 0100 §6).
+	AdmissionHooks []admission.Hook
+	// LogSink, when set, stores task logs in place of the sink logs.backend
+	// would build (ADR 0099 §3). The caller owns it: the server never closes
+	// it.
+	LogSink logs.Sink
+	// XComBackend, when set, stores XCom values in place of Redis or the
+	// embedded Postgres store (ADR 0099 §3). Redis, when configured, still
+	// serves the live log tail. The caller owns the backend.
+	XComBackend xcom.Backend
+	// UIServer, when set, is served in place of the embedded SPA (ADR 0099
+	// §3).
+	UIServer api.UIServer
+	// Authenticator, when set, checks the request tokens the engine's own
+	// authenticator does not recognize and takes password sign-in (ADR 0099
+	// §3, §6).
+	Authenticator auth.Authenticator
+	// TrustedIssuer, when set, verifies trusted-issuer handoffs posted from
+	// TrustedIssuerOrigins in place of auth.trusted_issuer, which must then be
+	// empty.
+	TrustedIssuer        api.TrustedIssuer
+	TrustedIssuerOrigins []string
+}
+
+// Run builds every component and serves until ctx is done. A nil
+// opts.Config is loaded the way the binary loads it: the config file named
+// by DEXAFLOW_CONFIG (or LEOFLOW_CONFIG), then the environment. Its error
+// maps to the process exit code through ExitCode.
+func Run(ctx context.Context, opts Options) error {
+	cfg, err := startupConfig(opts)
 	if err != nil {
 		return err
-	}
-	if verr := validateStartup(cfg); verr != nil {
-		return verr
 	}
 
 	tel, shutdownTel, err := observability.Setup(ctx, observability.Config{
@@ -126,7 +180,7 @@ func Run(ctx context.Context, cfg *config.ServerConfig) error {
 	// Datastore for XCom + live-log tailing: Redis when configured (production,
 	// ADR 0006), or the embedded Postgres/in-process backends when no Redis is
 	// set (Lite, ADR 0026). The signal is the presence of a Redis URL.
-	xcomBackend, logTailer, redisHealth, dsCleanup, err := selectDatastore(ctx, cfg, pg, tel.Logger, tel.Metrics)
+	xcomBackend, logTailer, redisHealth, dsCleanup, err := selectDatastore(ctx, cfg, pg, opts.XComBackend, tel.Logger, tel.Metrics)
 	if err != nil {
 		return err
 	}
@@ -161,13 +215,13 @@ func Run(ctx context.Context, cfg *config.ServerConfig) error {
 	// noise. Found by installing the chart, not by any test.
 	warnOIDCNames(ctx, repo, cfg, tel.Logger)
 
-	logSink, lerr := buildLogSink(ctx, cfg, tel.Logger)
+	logSink, closeSink, lerr := selectLogSink(ctx, cfg, opts.LogSink, tel.Logger)
 	if lerr != nil {
 		return lerr
 	}
 	// Deferred before the scheduler side's stop, so it runs after the agent
 	// streams have drained and their writers made the last flush.
-	defer closeLogSink(logSink, tel.Logger)
+	defer closeSink()
 	// Secrets are served over the agent channel only when explicitly allowed
 	// insecure (dev) until gRPC TLS lands (issue #58); otherwise the handlers
 	// fail closed on a plaintext channel.
@@ -191,7 +245,7 @@ func Run(ctx context.Context, cfg *config.ServerConfig) error {
 	// Start the scheduler-role components (agent gRPC, janitors, scheduler loop +
 	// dispatch). In the api role this starts nothing and returns a nil health handle
 	// + no-op stop; in "all"/"scheduler" it is the pre-0049 wiring unchanged.
-	schedulerHealth, podDispatch, stopScheduler, serr := startSchedulerSide(ctx, cfg, pg, repo, execStore, authn, xcomSvc, logSink, logTailer, allowInsecureSecrets, servesScheduler, tel.Logger, tel.Metrics)
+	schedulerHealth, podDispatch, stopScheduler, serr := startSchedulerSide(ctx, cfg, pg, repo, execStore, authn, xcomSvc, logSink, logTailer, allowInsecureSecrets, servesScheduler, opts.AdmissionHooks, tel.Logger, tel.Metrics)
 	if serr != nil {
 		return serr
 	}
@@ -224,7 +278,7 @@ func Run(ctx context.Context, cfg *config.ServerConfig) error {
 	// The API side (HTTP + embedded UI) is built only in the api/"all" role. The
 	// scheduler role serves no API, so none of the UI/handler machinery is even
 	// constructed: apiSrv stays nil and serveHTTP omits it.
-	apiSrv, aerr := startAPISide(ctx, cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, servesAPI)
+	apiSrv, aerr := startAPISide(ctx, cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, servesAPI, apiExtras{ui: opts.UIServer, authenticator: opts.Authenticator, issuer: opts.TrustedIssuer, issuerOrigins: opts.TrustedIssuerOrigins})
 	if aerr != nil {
 		return aerr
 	}
@@ -432,6 +486,22 @@ func buildLogSink(ctx context.Context, cfg *config.ServerConfig, logger *slog.Lo
 	}
 }
 
+// selectLogSink returns the task log sink the server runs with, and how to
+// release it at shutdown. A sink passed as an option replaces the configured
+// one and stays the caller's to close; boot logs that it came from an option,
+// so a support conversation does not start from the logs.backend setting.
+func selectLogSink(ctx context.Context, cfg *config.ServerConfig, fromOptions logs.Sink, logger *slog.Logger) (sink logs.Sink, release func(), err error) {
+	if fromOptions != nil {
+		logger.Info("task logs: sink from options, logs.backend ignored", "type", fmt.Sprintf("%T", fromOptions))
+		return fromOptions, func() {}, nil
+	}
+	sink, err = buildLogSink(ctx, cfg, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sink, func() { closeLogSink(sink, logger) }, nil
+}
+
 // closeLogSink releases the client of a sink that holds one (the GCS object
 // store, #647). A failure is logged: the process is stopping anyway.
 func closeLogSink(sink logs.Sink, logger *slog.Logger) {
@@ -460,13 +530,22 @@ func schedulerDatabase(cfg *config.ServerConfig) config.DatabaseSection {
 // a configured Redis URL it uses the production Redis backends (ADR 0006); with
 // no Redis configured it uses the embedded backends, XCom on Postgres and an
 // in-process tailer, so Lite needs no Redis (ADR 0026). It returns a health
-// checker for Redis (nil when embedded) and a cleanup to defer.
-func selectDatastore(ctx context.Context, cfg *config.ServerConfig, pg *storage.Postgres, logger *slog.Logger, metrics *observability.Metrics) (xcom.Backend, logs.Tailer, api.HealthChecker, func(), error) {
+// checker for Redis (nil when embedded) and a cleanup to defer. A backend
+// from options replaces the XCom store either way; Redis, when configured,
+// still serves the tailer.
+func selectDatastore(ctx context.Context, cfg *config.ServerConfig, pg *storage.Postgres, fromOptions xcom.Backend, logger *slog.Logger, metrics *observability.Metrics) (backend xcom.Backend, tailer logs.Tailer, redisHealth api.HealthChecker, cleanup func(), err error) {
+	if fromOptions != nil {
+		logger.Info("xcom: backend from options", "type", fmt.Sprintf("%T", fromOptions))
+	}
 	if cfg.Redis.URL == "" {
+		if fromOptions != nil {
+			logger.Info("embedded datastore: in-process log tailer (no Redis)")
+			return fromOptions, logs.NewMemoryTailer(), nil, func() {}, nil
+		}
 		logger.Info("embedded datastore: XCom on Postgres, in-process log tailer (no Redis)")
-		backend := xcom.NewPostgresBackend(pg.Pool)
-		startXComSweep(ctx, backend, logger)
-		return backend, logs.NewMemoryTailer(), nil, func() {}, nil
+		pgBackend := xcom.NewPostgresBackend(pg.Pool)
+		startXComSweep(ctx, pgBackend, logger)
+		return pgBackend, logs.NewMemoryTailer(), nil, func() {}, nil
 	}
 	rd, err := storage.NewRedis(ctx, cfg.Redis)
 	if err != nil {
@@ -479,13 +558,17 @@ func selectDatastore(ctx context.Context, cfg *config.ServerConfig, pg *storage.
 	// Lite already returned above (no Redis), so metrics is always non-nil
 	// here on the Pro path.
 	stopObs := storage.AttachRedisObservability(ctx, rd, metrics, 5*time.Second)
-	cleanup := func() {
+	cleanup = func() {
 		stopObs()
 		if cerr := rd.Close(); cerr != nil {
 			logger.Error("closing redis", "error", cerr)
 		}
 	}
-	return xcom.NewRedisBackend(rd.Client), logs.NewRedisTailer(rd.Client), rd, cleanup, nil
+	backend = xcom.NewRedisBackend(rd.Client)
+	if fromOptions != nil {
+		backend = fromOptions
+	}
+	return backend, logs.NewRedisTailer(rd.Client), rd, cleanup, nil
 }
 
 // healthChecks builds the health checks read by /readyz and

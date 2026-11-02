@@ -1,8 +1,6 @@
 package api
 
 import (
-	"errors"
-
 	"github.com/dexadata/dexaflow/internal/domain"
 )
 
@@ -27,19 +25,10 @@ const (
 	detailInternal        = "the request could not be completed; see the server logs"
 )
 
-// safeDetail returns the phrase Dexaflow composed for this failure, or fallback
-// when the error carries no such phrase.
-//
-// The default is deny. Only a domain.SafeError, an error someone deliberately
-// wrote as client-facing, contributes text to a response body; everything
-// else, including every fmt.Errorf wrap of a driver error, is replaced. That
-// way a newly introduced storage error cannot leak by omission: it leaks only
-// if someone rewrites it as a SafeError, which is the one construct whose
-// GoDoc says its message is shown to clients.
+// safeDetail returns the phrase Dexaflow composed for this failure, or
+// fallback: domain.ClientMessageOr, the deny-by-default rule shared with the
+// agent gRPC service. Only the fallback phrases differ, on purpose: an API
+// client is pointed at the server logs, an agent at the control-plane logs.
 func safeDetail(err error, fallback string) string {
-	var safe *domain.SafeError
-	if errors.As(err, &safe) && safe.ClientMessage() != "" {
-		return safe.ClientMessage()
-	}
-	return fallback
+	return domain.ClientMessageOr(err, fallback)
 }

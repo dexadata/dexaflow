@@ -228,8 +228,13 @@ manufacture. A finished pod is a present pod, and stays the reconciler's.
 The server validates the timing ladder these depend on at boot and refuses to
 start if a constant was moved out of order:
 `heartbeat (15 s) < agent-lost threshold (90 s) < settling grace (180 s) < attempt token TTL (10 min)`,
-and `2 × maintenance interval (60 s) < settling grace`, so at least two whole
-reconcile-then-reap cycles complete inside the grace.
+and `2 × maintenance interval (60 s) < settling grace`, so at least two
+reconcile-then-reap cycles start inside the grace. A violation stops the
+server at boot with an error that names both sides of the broken relation and
+their values. Every rung but one is a build-time constant, so for those the
+error says `build-time invariant violated` and the fix is a bug report, not a
+config change; the one operator knob on the ladder,
+`auth.max_attempt_credential_lifetime`, is named by its config key instead.
 On Kubernetes it also checks
 `task termination grace (30 s) + 2 × maintenance interval < infra confirmation valve (2 min) < orphan threshold (5 min)`
 (see below).
@@ -802,6 +807,8 @@ your Prometheus dashboard:
 | `dexaflow_reconcile_infra_override_total{mark}` (its own counter) | A durable SUCCESS record was settled over a provisional infra mark: the task finished while the control plane lost track of it, and was recovered instead of re-run. Expected after a control plane outage; a steady rate means the reapers fire on healthy tasks |
 | `infra_confirm_valve_open` | The planner acted on a provisional infra mark that the reconciler did not confirm within 2 min; the reconciler is not sweeping or cannot read pods. **Alert on this** |
 | `reap_gate_skip` | The pass was skipped because this instance is stepping down, no longer leads, or is shutting down — a healthy signal during rollouts |
+| `agent_lost_gate_skip`, `dispatch_lost_gate_skip`, `orphan_gate_skip`, `pod_lost_gate_skip`, `start_expired_gate_skip`, `warm_worker_lost_gate_skip` | The destructive gate closed between a reaper's list and its write (step-down, lost leadership or shutdown landed mid-pass), so that candidate was not marked. Healthy during rollouts; the new leader re-evaluates it |
+| `agent_lost_teardown_gate_skip`, `dispatch_lost_teardown_gate_skip`, `orphan_teardown_gate_skip`, `pod_lost_teardown_gate_skip`, `start_expired_teardown_gate_skip` | The mark was written but the gate closed before the pod teardown, so this pass did not stop the pod; the attempt is already failed, and the pod is collected later like any finished one. Healthy during rollouts |
 | `agent_lost_list_error`, `dispatch_lost_list_error`, `orphan_list_error`, `pod_lost_list_error`, `warm_worker_lost_list_error` | Reaper's list query failed; the next cycle will retry |
 | `dispatch_lost_pod_query_error`, `pod_lost_pod_query_error` | Pod liveness could not be read (K8s API error); the reaper deferred rather than risk a false positive |
 | `agent_lost_process_alive`, `dispatch_lost_process_alive` | Lite only: the attempt's agent process, or a process of its recorded task group that could not be stopped as an orphan, is still alive, so the reaper deferred. Sustained `agent_lost_process_alive` for one attempt means a wedged agent; stop it by hand |

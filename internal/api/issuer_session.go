@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dexadata/dexaflow/pkg/authn"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/dexadata/dexaflow/internal/auth"
@@ -37,13 +39,8 @@ const (
 )
 
 // TrustedIssuer verifies handoff tokens from the operator's trusted issuer.
-// issuer.Verifier implements it.
-type TrustedIssuer interface {
-	// Provider is the key the issuer's users are linked under.
-	Provider() string
-	// Verify checks a token and returns the identity it carries.
-	Verify(ctx context.Context, raw string) (*issuer.Identity, error)
-}
+// issuer.Verifier implements it; the contract is public (ADR 0099).
+type TrustedIssuer = authn.TrustedIssuer
 
 // TrustedIssuerUserStore resolves a linked user. storage implements it; it is
 // the same lookup a returning SSO login uses.
@@ -119,7 +116,7 @@ func issuerSessionHandler(d issuerSessionDeps) gin.HandlerFunc {
 			return
 		}
 		id, err := d.issuer.Verify(c.Request.Context(), raw)
-		if errors.Is(err, issuer.ErrKeysUnavailable) {
+		if errors.Is(err, authn.ErrIssuerUnavailable) {
 			// The issuer's keys could not be downloaded, so the token was
 			// never checked: a server-side outage, not a failed sign-in, and
 			// not audited as one (#1588), as on the bearer path (#1545).

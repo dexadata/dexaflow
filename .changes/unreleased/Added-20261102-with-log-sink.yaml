@@ -1,0 +1,9 @@
+kind: Added
+body: |-
+  **`server.WithLogSink` stores task logs with a sink of your own** (ADR 0099,
+  #2176). The new public package `pkg/logsink` holds the contract (`Sink`,
+  `LogWriter`, `Ref`, `Event` and the optional `LineWriter`, `Resumer` and
+  `MarkerSink`); a program built on `pkg/server` passes its sink and the
+  `logs.backend` keys are ignored. The sink also serves every read of a task
+  log.
+time: 2026-11-02T02:30:00.000000000-03:00

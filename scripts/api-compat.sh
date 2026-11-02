@@ -3,7 +3,8 @@
 #
 # Three surfaces are public and versioned (AGENTS.md, principle 8): the agent
 # gRPC protocol in proto/, the REST API described by docs/api/openapi.yaml, and
-# the Go client in pkg/client that is generated from it. buf.yaml has carried
+# the Go packages under pkg/ (the client generated from that document, and the
+# packages that embed or extend the server, ADR 0099). buf.yaml has carried
 # `breaking: FILE` for a long time and nothing ever ran `buf breaking`; there
 # was no diff of the OpenAPI document and none of the Go client either, so a
 # removed field, path or exported symbol reached main whenever a reviewer
@@ -12,7 +13,7 @@
 # This compares each surface against the base branch:
 #   - proto/          buf breaking, with the rules buf.yaml selects
 #   - OpenAPI         oasdiff breaking, failing on ERR level changes
-#   - pkg/client, pkg/dagspec   apidiff, incompatible changes only
+#   - every package under pkg/   apidiff, incompatible changes only
 #
 # A break is allowed when it is intended and announced: the pull request
 # carries the `breaking-change` label AND adds a changelog fragment of kind
@@ -39,7 +40,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LABEL="breaking-change"
 OPENAPI="docs/api/openapi.yaml"
-GO_PKGS=(./pkg/client ./pkg/dagspec)
+# The Go packages to compare: every package under pkg/ in the head, found by
+# run() unless set (the self-test sets it). A package the base does not have
+# yet is new, so it has nothing to break.
+GO_PKGS=()
 FRAGMENT_DIR=".changes/unreleased"
 ANNOUNCE_KINDS_RE='^(Changed|Removed)$'
 
@@ -128,10 +132,20 @@ go_breaks() { # <base-dir>
 	return "$found"
 }
 
+# public_go_pkgs: every Go package under pkg/ in the head, as ./pkg/<path>,
+# one per line. A failure to list them is a failure of the check.
+public_go_pkgs() {
+	(cd "$ROOT" && go list -f '{{.Dir}}' ./pkg/...) | sed "s#^$ROOT/#./#"
+}
+
 run() { # <base-dir>
 	local base="$1" name out rc breaks=0 broken=0
 	[ -d "$base" ] || { echo "FAIL: base checkout '$base' is not a directory" >&2; return 2; }
 	base="$(cd "$base" && pwd)"
+	if [ "${#GO_PKGS[@]}" -eq 0 ]; then
+		mapfile -t GO_PKGS < <(public_go_pkgs) || true
+		[ "${#GO_PKGS[@]}" -gt 0 ] || { echo "FAIL: no Go package found under pkg/" >&2; return 2; }
+	fi
 	for name in proto openapi go; do
 		rc=0; out=$("${name}_breaks" "$base" 2>&1) || rc=$?
 		case "$rc" in
@@ -207,6 +221,11 @@ self_test() {
 		printf 'package client\n\nfunc Keep() {}\n\nfunc Added() {}\n' >"$tmp/go/h/pkg/client/c.go"
 		_expect "apidiff: a removed exported func is a break" 1 "Gone" -- env ROOT="$tmp/go/h" bash -c "$(declare -f go_breaks); GO_PKGS=(./pkg/client); go_breaks $tmp/go/b"
 		_expect "apidiff: an added func is not" 0 "" -- env ROOT="$tmp/go/b" bash -c "$(declare -f go_breaks); GO_PKGS=(./pkg/client); go_breaks $tmp/go/b"
+		mkdir -p "$tmp/go/h/pkg/extra/sub"
+		printf 'package sub\n\nfunc New() {}\n' >"$tmp/go/h/pkg/extra/sub/s.go"
+		[ "$(env ROOT="$tmp/go/h" bash -c "$(declare -f public_go_pkgs); public_go_pkgs" | tr '\n' ' ')" = "./pkg/client ./pkg/extra/sub " ] ||
+			{ echo "  FAIL public_go_pkgs did not list every package under pkg/"; fail=1; }
+		_expect "apidiff: a package new in the head has nothing to break" 0 "not in the base" -- env ROOT="$tmp/go/h" bash -c "$(declare -f go_breaks); GO_PKGS=(./pkg/extra/sub); go_breaks $tmp/go/b"
 	else
 		echo "  skip apidiff fixtures: apidiff not installed"
 	fi

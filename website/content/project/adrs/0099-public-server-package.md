@@ -42,7 +42,11 @@ internal type changes the public one without anyone deciding it.
    `Run(ctx context.Context, opts ...Option) error`. Without options it
    reads the configuration the way the binary does (the config file, then
    the environment) and behaves exactly as `dexaflow-server` does today.
-   `WithConfig` passes a configuration the caller already loaded.
+   `WithConfigFile` names the config file to read in place of the one
+   `DEXAFLOW_CONFIG` names; the `DEXAFLOW_*` environment still applies on
+   top. (Amended 2026-11-02: the ADR first planned `WithConfig` with an
+   already loaded configuration, which would have made the whole
+   configuration type, about 300 keys, public API under the rule in 5.)
    `Run` is called once per process. It does what `main` does today before
    and around `run`: the legacy environment mirroring
    (`envcompat.MirrorProcess`), the default logger, and shutdown, which it
@@ -145,7 +149,7 @@ internal type changes the public one without anyone deciding it.
 1. This ADR, accepted.
 2. Move the wiring to `internal/serverapp` (rename only), after the usage
    events stack merges.
-3. `pkg/server` with `Run`, `WithConfig` and the binary calling it.
+3. `pkg/server` with `Run`, `WithConfigFile` and the binary calling it.
 4. The contract packages and the options, one PR per seam, each with its
    `Example` and the GoDoc of every export.
 5. The compatibility rule in `AGENTS.md`, on the Go packages page and in

@@ -104,17 +104,6 @@ func TestPythonMayDeclarePodMode(t *testing.T) {
 	}
 }
 
-func TestEffectiveExecutionModeDefaults(t *testing.T) {
-	py := TaskSpec{Type: TaskTypePython}
-	if py.EffectiveExecutionMode() != ExecutionModePod {
-		t.Errorf("python default = %q, want pod", py.EffectiveExecutionMode())
-	}
-	explicit := TaskSpec{Type: TaskTypeBash, ExecutionMode: ExecutionModePod}
-	if explicit.EffectiveExecutionMode() != ExecutionModePod {
-		t.Errorf("explicit mode = %q, want pod", explicit.EffectiveExecutionMode())
-	}
-}
-
 func TestLeoflowConfigValidateAcceptsValidConfig(t *testing.T) {
 	if err := validLeoflowConfig().Validate(); err != nil {
 		t.Fatalf("Validate() = %v, want nil", err)

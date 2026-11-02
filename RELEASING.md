@@ -77,8 +77,14 @@ which amends [ADR 0062](https://dexaflow.dexadata.ai/project/adrs/0062-release-b
   evidence of the Docs line in the release's tracking issue. A `Skip-docs:`
   line added to a pull request afterwards needs a re-run of that job, or
   `gh workflow run docs-gap.yaml --ref <branch> -f version=X.Y.Z`.
-- **Only the newest release branch takes patches.** An older one gets a
-  security fix only when the owner decides so for that fix.
+- **The compatibility page is read before each minor.** Before cutting
+  `vX.Y.0-rc.1`, read [`reference/compatibility.md`](website/content/reference/compatibility.md)
+  against the CI jobs it links and add the new release line's table (#1566).
+- **Only the newest release branch takes patches.** The previous one takes
+  security fixes for 8 weeks after the next minor's `X.Y.0` final ships, and
+  nothing after that. The
+  [versioning and support](https://dexaflow.dexadata.ai/project/versioning/)
+  policy is the public promise; keep the two in step.
 
 `release-X.Y` is a different name from the short-lived `release/<tag>` prepare
 branches the script opens, so the two never collide. Nothing ever merges a
@@ -204,7 +210,9 @@ What checks it, and when:
    for a **GA** move `CHANGELOG [Unreleased]` to `[X.Y.Z] - <date>`
    with a fresh empty `[Unreleased]` (an **rc** keeps `[Unreleased]`). See
    [How the changelog flows](#how-the-changelog-flows). Run every
-   `scripts/check-*.sh` gate against the tag. One of them,
+   `scripts/check-*.sh` gate against the tag; the set must equal
+   `.github/ci/gates.txt`, and the cut names any gate that is missing or
+   unexpected. One of them,
    `check-changelog-entry.sh`, is a pull-request gate with no question to ask
    when there is no pull request, so it reports `gate SKIP`; the cut log
    distinguishes SKIP from PASS to keep the count honest. Another,
@@ -432,6 +440,9 @@ scripts/cut-release.sh v0.4.4 --force-queue
 
 # Non-interactive (skips the confirm prompt — use only in trusted automation)
 scripts/cut-release.sh v0.4.4 --yes
+
+# Mutation floors on the release branch before a candidate (ADR 0101)
+gh workflow run mutation.yaml --ref release-0.5
 
 # Pure-logic self-test (no network) — also runnable in CI
 scripts/cut-release.sh --self-test

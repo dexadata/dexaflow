@@ -102,8 +102,13 @@ and it chooses between two tag shapes based on the CLI you are running:
   `dexaflow-runtime:py<ver>`, a line every release republishes
 
 So two people compiling the same project can end up on different bases if one
-runs a released CLI and the other runs one built from source. Setting
-`base_image` explicitly overrides both rules and is used verbatim. The full tag
+runs a released CLI and the other runs one built from source. The build says
+which one it took, on a line such as
+`note: base ghcr.io/dexadata/dexaflow-runtime:py3.11-v0.5.13 (pinned by this release)`
+or `... (moving line; this is a development build)`. Setting
+`base_image` explicitly overrides both rules and is used verbatim, and the
+note then names the file it came from. A project that ships its own
+Dockerfile gets no note, since its `FROM` is its own. The full tag
 scheme for every published image is in
 [Published images](/reference/published-images/).
 
@@ -540,6 +545,15 @@ recovery command a pod waiting for its schema names; see
 
 <!-- END GENERATED configref -->
 
+**A store of your own.** A program that runs the control plane with
+[`pkg/server`](/reference/go/pkg-server/) can keep XCom values elsewhere with
+`server.WithXComBackend`, which takes a
+[`pkg/xcomstore`](/reference/go/pkg-xcomstore/) `Backend`. It replaces the
+Redis store, or the embedded Postgres store when `redis.url` is empty, and
+boot logs `xcom: backend from options`. Redis, when configured, still serves
+the live log tail. The server keeps checking the size and schema of each value
+and recording its metadata in Postgres.
+
 ### Auth (`auth.*`)
 
 <!-- BEGIN GENERATED configref settings auth. !auth.oidc. secret_key secret_key_reencrypt_on_boot secret_key_migration_lock variable_encryption -->
@@ -582,6 +596,25 @@ recovery command a pod waiting for its schema names; see
 | `DEXAFLOW_VARIABLE_ENCRYPTION` | `variable_encryption` | string | `off` | both | How Variable values are stored. `off` writes plaintext, as every earlier release did. `on` encrypts every Variable value with `DEXAFLOW_SECRET_KEY` (AES-256-GCM, the cipher connections use) and encrypts the stored plaintext rows at startup. `decrypt` writes plaintext and turns every encrypted row back into plaintext at startup, the step before rolling back to a release older than 0.5.4. `on` and `decrypt` refuse to start without a usable key. Every mode reads both forms. Config key `variable_encryption`. See [Encrypting Variables](#encrypting-variables). |
 
 <!-- END GENERATED configref -->
+
+### Sign-in from your own Go program
+
+A program that runs the control plane with
+[`pkg/server`](/reference/go/pkg-server/) can replace two sign-in seams with
+types from [`pkg/authn`](/reference/go/pkg-authn/):
+
+- **`server.WithAuthenticator`** takes password sign-in
+  (`POST /api/v2/auth/token`) and checks the request tokens Dexaflow does not
+  recognize as its own. The sessions Dexaflow mints itself (SSO, the
+  trusted-issuer handoff, renewal), API tokens, CI sessions and agent tokens
+  keep working as before. The server authorizes the returned user by its roles
+  and permissions and clears `Scoped`, `Scopes` and `DeployAudience`, which
+  only Dexaflow grants. Boot logs `auth: authenticator from options`.
+- **`server.WithTrustedIssuer`** verifies the handoff described below with an
+  issuer of your own, posted from the origins the option lists. The server
+  refuses to start without a valid origin, or when `auth.trusted_issuer` is
+  configured too. The bearer mode, `deploy_audience` and `host_pattern` need
+  the built-in verifier and stay off.
 
 ### OIDC / SSO (`auth.oidc.*`)
 
@@ -869,6 +902,14 @@ and cannot do.
 
 <!-- END GENERATED configref -->
 
+**A sink of your own.** A program that runs the control plane with
+[`pkg/server`](/reference/go/pkg-server/) can store task logs anywhere with
+`server.WithLogSink`, which takes a [`pkg/logsink`](/reference/go/pkg-logsink/)
+`Sink`. The `logs.backend` and `logs.sink.*` keys are then ignored, and boot
+logs `task logs: sink from options`. The sink serves the reads of the API, the
+UI and the CLI too, so it must return what it stored, and an error wrapping
+`fs.ErrNotExist` for a log it does not have. The server never closes it.
+
 ### External secrets (`secrets.*`)
 
 Operator-only ([ADR 0060](/project/adrs/0060-external-secrets-resolution/)):
@@ -1039,6 +1080,17 @@ Set all eleven `brand` shades: the UI uses different shades for buttons,
 selections and the navigation highlight, on the light and the dark theme. The UI only
 exposes part of its styling through the theme; anything else is a `globalCss`
 rule, and holds only as long as the bundle keeps the selector it targets.
+
+### A UI of your own
+
+A program that runs the control plane with
+[`pkg/server`](/reference/go/pkg-server/) can serve a web UI of its own with
+`server.WithUIServer` in place of the embedded one. The server mounts the UI's
+static handler under `/static/` and serves its index page for every other GET
+that matches no API route, only once the visitor has a valid session: a
+visitor without one is sent to the server's sign-in page first. The `ui.*`
+keys that brand the embedded UI do not apply to it, and boot logs
+`ui: server from options`.
 
 ### Trusted-issuer handoff
 

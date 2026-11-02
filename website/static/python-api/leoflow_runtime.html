@@ -16,7 +16,14 @@
     <nav class="pdoc">
         <label id="navtoggle" for="togglestate" class="pdoc-button"><svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'><path stroke-linecap='round' stroke="currentColor" stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/></svg></label>
         <input id="togglestate" type="checkbox" aria-hidden="true" tabindex="-1">
-        <div>
+        <div>            <a class="pdoc-button module-list-button" href="index.html">
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-box-arrow-in-left" viewBox="0 0 16 16">
+  <path fill-rule="evenodd" d="M10 3.5a.5.5 0 0 0-.5-.5h-8a.5.5 0 0 0-.5.5v9a.5.5 0 0 0 .5.5h8a.5.5 0 0 0 .5-.5v-2a.5.5 0 0 1 1 0v2A1.5 1.5 0 0 1 9.5 14h-8A1.5 1.5 0 0 1 0 12.5v-9A1.5 1.5 0 0 1 1.5 2h8A1.5 1.5 0 0 1 11 3.5v2a.5.5 0 0 1-1 0v-2z"/>
+  <path fill-rule="evenodd" d="M4.146 8.354a.5.5 0 0 1 0-.708l3-3a.5.5 0 1 1 .708.708L5.707 7.5H14.5a.5.5 0 0 1 0 1H5.707l2.147 2.146a.5.5 0 0 1-.708.708l-3-3z"/>
+</svg>                &nbsp;
+                Module Index
+            </a>
+
 
             <input type="search" placeholder="Search..." role="searchbox" aria-label="search"
                    pattern=".+" required>
@@ -47,7 +54,7 @@
                     <h1 class="modulename">
 leoflow_runtime    </h1>
 
-                        <div class="docstring"><p>Leoflow task runtime: the helper that runs inside every task container.</p>
+                        <div class="docstring"><p>Dexaflow task runtime: the helper that runs inside every task container.</p>
 
 <p>It runs the user's Python callable, captures its return value as an XCom, and
 exposes upstream XCom inputs. The leoflow-agent invokes <code>python -m
@@ -77,7 +84,7 @@ A None return writes nothing, so downstream tasks see no XCom.</p>
 <p>Emits three lifecycle lines so the UI's log panel is informative even when
 the user function is silent: <code>loading &lt;entrypoint&gt;</code>, <code>resolved kwargs:
 {...}</code> (when any), and <code>returned &lt;repr&gt;</code> (success) or no extra line on
-raise (the agent wraps the traceback). All three use <code>[leoflow]</code> prefix
+raise (the agent wraps the traceback). All three use <code>[dexaflow]</code> prefix
 via <code>_lifecycle()</code> so they are distinguishable from user <code>print()</code>.</p>
 </div>
 

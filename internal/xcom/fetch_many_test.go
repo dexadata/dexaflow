@@ -19,13 +19,13 @@ func (b *batchingBackend) Fetch(ctx context.Context, key string) (Entry, error) 
 	return b.fakeBackend.Fetch(ctx, key)
 }
 
-func (b *batchingBackend) FetchMany(_ context.Context, keys []string) ([]Entry, []bool, error) {
+func (b *batchingBackend) FetchMany(_ context.Context, keys []string) (entries []Entry, found []bool, err error) {
 	b.batches++
 	if b.err != nil {
 		return nil, nil, b.err
 	}
-	entries := make([]Entry, len(keys))
-	found := make([]bool, len(keys))
+	entries = make([]Entry, len(keys))
+	found = make([]bool, len(keys))
 	for i, k := range keys {
 		entries[i], found[i] = b.entries[k]
 	}

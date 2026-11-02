@@ -46,3 +46,26 @@ func TestClientMessageIsTheComposedTextOnly(t *testing.T) {
 		t.Errorf("ClientMessage = %q", se.ClientMessage())
 	}
 }
+
+// TestClientMessageOrDeniesByDefault: only a SafeError's own phrase reaches a
+// client; any other error, including one that wraps a driver message, yields the
+// fallback (#1078, the rule both the HTTP API and the agent gRPC service apply).
+func TestClientMessageOrDeniesByDefault(t *testing.T) {
+	const fallback = "could not be completed"
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"safe error", Safef(ErrNotFound, "dag %q", "etl"), `dag "etl"`},
+		{"wrapped safe error", fmt.Errorf("loading: %w", Safef(ErrConflict, "busy")), "busy"},
+		{"driver error", errors.New(`ERROR: duplicate key value violates unique constraint "dags_pkey" (SQLSTATE 23505)`), fallback},
+		{"safe error with no phrase", &SafeError{Class: ErrValidation}, fallback},
+		{"nil", nil, fallback},
+	}
+	for _, c := range cases {
+		if got := ClientMessageOr(c.err, fallback); got != c.want {
+			t.Errorf("%s: ClientMessageOr() = %q, want %q", c.name, got, c.want)
+		}
+	}
+}

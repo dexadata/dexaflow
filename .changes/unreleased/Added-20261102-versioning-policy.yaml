@@ -1,0 +1,9 @@
+kind: Added
+body: |-
+  **A versioning and support policy.** The new Project, Versioning and support
+  page states what a 0.x patch may contain (ADR 0068), that the previous minor
+  gets security fixes for 8 weeks after the next minor ships, that a
+  deprecated feature is removed no earlier than two minors later and never in
+  a patch, and that the names from before the rename keep working with no
+  removal date. SECURITY.md and RELEASING.md now say the same. (#1556)
+time: 2026-11-02T02:30:00.000000000+00:00

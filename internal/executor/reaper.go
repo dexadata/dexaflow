@@ -138,6 +138,21 @@ type Reaper struct {
 	lastSweepCompleted func() time.Time
 }
 
+// ReaperGates are the two predicates of the reaper's destructive gate (mayReap).
+// They are one constructor parameter so that a wiring site cannot set one and
+// forget the other: both decide whether a mark or delete may happen, and the
+// leadership one used to be a setter called after construction (#903).
+type ReaperGates struct {
+	// InStepDown reports whether the scheduler is in a graceful leader
+	// step-down. Nil is "not stepping down".
+	InStepDown func() bool
+	// Leading reports whether this instance holds scheduler leadership. The
+	// maintenance loop already drives ReapOnce only while leading; this is the
+	// defensive re-check at the point of the write. Nil is "leading", so Lite
+	// and tests without an election are unaffected.
+	Leading func() bool
+}
+
 // NewReaper constructs the reapers and wires their pod-teardown / liveness
 // capability (pods) and, for the two K8s-aware reapers, the presence cache. The
 // wiring mirrors exactly what the scheduler used to do inline: every reaper gets
@@ -152,7 +167,7 @@ type Reaper struct {
 // defer. Nil (warm pools off / not wired) makes the warm reaper a no-op and the
 // dispatch-lost warm defer inert — with the flag off no TI ever carries a
 // warm_worker_id either, so both warm paths are doubly inert, byte-for-byte today.
-func NewReaper(store ReaperStore, pods PodManager, cache PodPresenceCache, warmPods WarmPodLister, rec DecisionRecorder, logger *slog.Logger, cfg ReaperConfig, inStepDown func() bool) *Reaper {
+func NewReaper(store ReaperStore, pods PodManager, cache PodPresenceCache, warmPods WarmPodLister, rec DecisionRecorder, logger *slog.Logger, cfg ReaperConfig, gates ReaperGates) *Reaper {
 	orphan := newOrphanReaper(store, logger, cfg.OrphanThreshold, rec)
 	orphan.pods = pods
 
@@ -179,29 +194,20 @@ func NewReaper(store ReaperStore, pods PodManager, cache PodPresenceCache, warmP
 		warmWorkerLost: warmWorkerLost,
 		logger:         logger,
 		rec:            rec,
-		inStepDown:     inStepDown,
+		inStepDown:     gates.InStepDown,
+		leading:        gates.Leading,
 		now:            time.Now,
 		settlingGrace:  cfg.SettlingGrace,
 	}
 	// One destructive gate, shared by every reaper: each re-checks it right before
 	// a mark or delete, so a cancel/step-down that lands mid-tick still stops the
-	// write. The closure reads r's predicates at call time, so SetLeading may be
-	// wired after construction.
+	// write.
 	orphan.gate = r.mayReap
 	agentLost.gate = r.mayReap
 	dispatchLost.gate = r.mayReap
 	podLost.gate = r.mayReap
 	warmWorkerLost.gate = r.mayReap
 	return r
-}
-
-// SetLeading wires the leadership predicate into the destructive gate, so a
-// reaper tick on an instance that no longer holds leadership marks and deletes
-// nothing. The maintenance loop already drives ReapOnce only while leading;
-// this is the defensive re-check at the point of the write. Nil leaves the gate
-// on ctx and step-down alone.
-func (r *Reaper) SetLeading(fn func() bool) {
-	r.leading = fn
 }
 
 // mayReap is the destructive gate: open only while the tick's context is live,
