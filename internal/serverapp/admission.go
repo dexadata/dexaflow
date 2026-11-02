@@ -11,13 +11,18 @@ import (
 	"github.com/dexadata/dexaflow/pkg/admission"
 )
 
-// admissionHooks builds the dispatch admission hooks execution.admission
-// configures (ADR 0100), in chain order. None configured returns nil. An
-// error (a CA bundle or token file that cannot be read) stops the boot.
-func admissionHooks(cfg *config.ServerConfig) ([]admission.Hook, error) {
+// admissionHooks builds the dispatch admission chain (ADR 0100): the hooks a
+// pkg/server caller registered, in their order, then the webhook
+// execution.admission configures. None of either returns nil. An error (a CA
+// bundle or token file that cannot be read) stops the boot.
+func admissionHooks(cfg *config.ServerConfig, extra []admission.Hook) ([]admission.Hook, error) {
+	hooks := append([]admission.Hook(nil), extra...)
 	a := cfg.Execution.Admission
 	if !a.Enabled() {
-		return nil, nil
+		if len(hooks) == 0 {
+			return nil, nil
+		}
+		return hooks, nil
 	}
 	wh, err := admissionwebhook.New(admissionwebhook.Config{
 		URL:       a.Webhook.URL,
@@ -30,7 +35,7 @@ func admissionHooks(cfg *config.ServerConfig) ([]admission.Hook, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []admission.Hook{wh}, nil
+	return append(hooks, wh), nil
 }
 
 // applyAdmission installs the hooks on a dispatcher. No hooks leave it as it
@@ -44,8 +49,16 @@ func applyAdmission(d *dispatch.Dispatcher, hooks []admission.Hook, cfg *config.
 		opts.Recorder = metrics
 	}
 	d.SetAdmission(hooks, opts)
-	logger.Info("dispatch admission hooks installed", "hooks", len(hooks), "webhook", endpointForLog(cfg.Execution.Admission.Webhook.URL),
+	logger.Info("dispatch admission hooks installed", "hooks", len(hooks), "from_options", len(hooks)-webhookCount(cfg), "webhook", endpointForLog(cfg.Execution.Admission.Webhook.URL),
 		"timeout", cfg.Execution.Admission.Timeout, "fail_open", cfg.Execution.Admission.FailOpen)
+}
+
+// webhookCount is 1 when execution.admission configures the webhook.
+func webhookCount(cfg *config.ServerConfig) int {
+	if cfg.Execution.Admission.Enabled() {
+		return 1
+	}
+	return 0
 }
 
 // endpointForLog drops the query and fragment of the webhook URL, which may

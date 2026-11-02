@@ -1087,6 +1087,15 @@ jobs:
           # admin@leoflow.local (test/e2e/lib.sh) into a failure in CI.
           DEXAFLOW_E2E_ADMIN_USER: admin@dexaflow.local
         run: bash test/e2e/e2e.sh
+      # The admission webhook on the pod path (ADR 0100, #2177): a refused
+      # attempt fails with the endpoint's reason and no pod is ever created for
+      # it. Its own small cluster; it builds no image, so it adds about two
+      # minutes to this job rather than a job of its own.
+      - name: Run the k3d admission e2e
+        if: steps.gate.outputs.run == 'true'
+        env:
+          DEXAFLOW_E2E_ADMIN_USER: admin@dexaflow.local
+        run: bash test/e2e/k8s-admission-e2e.sh
 
   # ─────────────────────────────────────────────────────────────────────
   # Two-process api/scheduler split e2e (ADR 0049; test/e2e/split-two-process.sh):

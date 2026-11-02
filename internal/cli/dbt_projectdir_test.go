@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -234,5 +235,131 @@ func TestManifestParseUsesTheVenvDbtEvenForAnImageBoundCompile(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exit status 3") {
 		t.Errorf("error %q does not show the venv stub ran", err)
+	}
+}
+
+// fakeHybridParser stands in for the dag.py parser: it writes a dag.json whose
+// middle task is a dbt_group placeholder, the shape `from dexaflow import
+// dbt_group` produces. It is a Python file run by python3, never an executable
+// written by the test, so there is no exec of a file still open for writing.
+const fakeHybridParser = `import json, sys
+args = sys.argv[1:]
+out = args[args.index("--output") + 1]
+json.dump({"schema_version": "1.0", "dag_id": "sales", "dag_version": "v1", "image": "img", "tasks": [
+    {"task_id": "extract", "type": "python", "entrypoint": "dag:extract"},
+    {"task_id": "analytics", "type": "dbt_group", "depends_on": ["extract"]},
+]}, open(out, "w"))
+`
+
+// TestHybridCompileWiresTheRightTarget is the dbt_groups twin of the test
+// above (#1011). A dag.py DAG reaches dbt through expandDbtGroupsInFile, which
+// computes its own project and profiles directories, so the dbt-only test
+// stays green with this call site broken: `expandDbtGroupsInFile(..., !o.build)`
+// or a dropped ProfilesDir in the group render.
+func TestHybridCompileWiresTheRightTarget(t *testing.T) {
+	t.Parallel()
+	python, lerr := exec.LookPath("python3")
+	if lerr != nil {
+		t.Skip("python3 not on PATH; the fake parser is a Python script")
+	}
+	manifest, merr := os.ReadFile(filepath.Join("..", "dbt", "testdata", "manifest_wide.json"))
+	if merr != nil {
+		t.Fatalf("reading fixture manifest: %v", merr)
+	}
+	for _, c := range []struct {
+		name        string
+		local       bool
+		hasProfiles bool
+		want        []string
+		deny        []string
+	}{
+		{
+			name: "an image-bound compile bakes in-image relative paths",
+			want: []string{"--project-dir analytics"},
+			deny: []string{"--project-dir /", "--profiles-dir"},
+		},
+		{
+			name:  "a Lite compile bakes the absolute workspace path",
+			local: true,
+			want:  []string{"--project-dir /"},
+		},
+		{
+			name:        "a project shipping profiles.yml is pointed at it",
+			hasProfiles: true,
+			want:        []string{"--project-dir analytics", "--profiles-dir analytics"},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			project := filepath.Join(dir, "analytics")
+			if err := os.MkdirAll(project, 0o750); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(project, "manifest.json"), manifest, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if c.hasProfiles {
+				if err := os.WriteFile(filepath.Join(project, "profiles.yml"), []byte("analytics:\n  target: dev\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			yaml := "schema_version: \"1.0\"\ndag_id: sales\nowner: t\ndbt_groups:\n  analytics:\n    project: analytics\n    manifest: manifest.json\n"
+			if err := os.WriteFile(filepath.Join(dir, "dexaflow.yaml"), []byte(yaml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "dag.py"), []byte("# parsed by the fake parser\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			parser := filepath.Join(t.TempDir(), "parser.py")
+			if err := os.WriteFile(parser, []byte(fakeHybridParser), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			cmd := &cobra.Command{}
+			cmd.SetContext(context.Background())
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			opts := compileOptions{
+				output: filepath.Join(dir, "dag.json"), image: "reg/sales:v1", dagVersion: "v1",
+				local: c.local, parserCmd: python + " " + parser,
+			}
+			if rerr := runCompile(cmd, dir, opts); rerr != nil {
+				t.Fatalf("runCompile: %v\noutput:\n%s", rerr, out.String())
+			}
+			data, rerr := os.ReadFile(filepath.Join(dir, "dag.json"))
+			if rerr != nil {
+				t.Fatal(rerr)
+			}
+			var spec struct {
+				Tasks []struct {
+					TaskID     string `json:"task_id"`
+					Entrypoint string `json:"entrypoint"`
+				} `json:"tasks"`
+			}
+			if uerr := json.Unmarshal(data, &spec); uerr != nil {
+				t.Fatal(uerr)
+			}
+			groupTasks := 0
+			for _, task := range spec.Tasks {
+				if !strings.HasPrefix(task.TaskID, "analytics__") {
+					continue
+				}
+				groupTasks++
+				for _, w := range c.want {
+					if !strings.Contains(task.Entrypoint, w) {
+						t.Errorf("task %q entrypoint %q is missing %q", task.TaskID, task.Entrypoint, w)
+					}
+				}
+				for _, d := range c.deny {
+					if strings.Contains(task.Entrypoint, d) {
+						t.Errorf("task %q entrypoint %q must not contain %q", task.TaskID, task.Entrypoint, d)
+					}
+				}
+			}
+			if groupTasks == 0 {
+				t.Fatalf("the dbt_group expanded to no tasks; dag.json:\n%s", data)
+			}
+		})
 	}
 }

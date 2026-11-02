@@ -117,8 +117,8 @@ func executorDispatchEnabled(cfg *config.ServerConfig, servesScheduler, runtimeP
 // agent on the host (dev only); "kubernetes" (default) launches task pods. An
 // error means the selected executor cannot be wired and the server must not
 // boot.
-func setupDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, store *storage.SchedulerStore, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, logger *slog.Logger, metrics *observability.Metrics) (bool, io.Closer, error) {
-	hooks, err := admissionHooks(cfg)
+func setupDispatch(ctx context.Context, cfg *config.ServerConfig, sched *scheduler.Scheduler, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, store *storage.SchedulerStore, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, extraHooks []admission.Hook, logger *slog.Logger, metrics *observability.Metrics) (bool, io.Closer, error) {
+	hooks, err := admissionHooks(cfg, extraHooks)
 	if err != nil {
 		return false, nil, err
 	}

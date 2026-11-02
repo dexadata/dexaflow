@@ -35,6 +35,15 @@ Author a `dag.py` and call `dbt_group("<name>")` where the models belong. The
 group is a task like any other: operators before it, operators after it, one
 graph. Configure the project under `dbt_groups:` in `dexaflow.yaml`.
 
+To start from a working project, `dexaflow init --dbt <path>` scaffolds this
+shape: a `dag.py` with Python tasks around `dbt_group("transform")`, a
+`dexaflow.yaml` that declares the group and installs `dbt-core` and
+`dbt-duckdb`, and a small duckdb project under `transform/` with no
+`profiles.yml`, so `dexaflow lite <path>` runs it with no warehouse to set up.
+[`examples/dbt_hybrid`](https://github.com/dexadata/dexaflow/tree/main/examples/dbt_hybrid)
+is the same project. On a cluster, give the group a `connection:` (see
+[The warehouse connection](#3-the-warehouse-connection)).
+
 {{% alert title="Packing models into fewer pods" color="info" %}}
 By default (`granularity: node`) each model is its own pod — like Cosmos. Set
 `granularity: level` or `folder` (as below) to pack models into **grouped tasks**:

@@ -212,6 +212,14 @@ for suffix in "" -server -agent; do
 		ln -sf "${bin}" "${INSTALL_DIR}/leoflow${suffix}"
 	fi
 done
+# The MCP server ships in the same archive from v0.4.5 on and was dropped on the
+# floor here (#976). Older archives lack it, so it is installed when present.
+if [ -f "${tmp}/${name}-mcp" ]; then
+	install -m 0755 "${tmp}/${name}-mcp" "${INSTALL_DIR}/${name}-mcp"
+	if [ "$name" = dexaflow ]; then
+		ln -sf "${name}-mcp" "${INSTALL_DIR}/leoflow-mcp"
+	fi
+fi
 info "installed binaries to ${INSTALL_DIR}"
 
 # ── PATH ──

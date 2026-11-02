@@ -1,0 +1,32 @@
+# Mutation testing targets (ADR 0101).
+#
+# One line per package: <package dir> <tier> <efficacy floor>.
+#
+# Efficacy is killed / (killed + lived) as gremlins reports it, after the
+# survivors listed in accepted.txt are taken out. The floor is the measured
+# efficacy rounded down to a whole number. Raise it when a run measures a
+# higher number; lower it only in a change that says why on the line above.
+# A floor of "-" reports without gating, for a package not measured yet.
+#
+# Tier 1 is the core (target 80%). Every other package under internal/ and
+# pkg/ that scripts/coverage-gate.sh counts is tier 2 (target 65%), listed
+# here once measured; `scripts/mutation.sh packages 2` lists them all.
+#
+# Measured on 2026-11-01 at main f2c70c14 with gremlins v0.6.0 and the unit
+# tests (no database). internal/storage reaches few of its mutants that way:
+# most of its code is tested by the integration suite (ADR 0101 section 6).
+# A "-" below is a package whose first full run had not finished; the first
+# weekly run sets it.
+
+internal/scheduler         1  -
+internal/executor          1  -
+internal/dispatch          1  86
+internal/agent             1  -
+internal/storage           1  88
+internal/retention         1  80
+internal/taskoutcome       1  84
+internal/gatedtick         1  55
+internal/auth              1  95
+internal/oidc              1  98
+internal/secrets           1  84
+internal/admissionwebhook  1  85

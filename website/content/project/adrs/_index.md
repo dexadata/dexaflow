@@ -113,6 +113,7 @@ this page.
 - [ADR 0098: new runs and task instances get time-ordered UUIDv7 keys](/project/adrs/0098-uuidv7-run-and-task-ids/)
 - [ADR 0099: a public pkg/server builds the server, and components are replaced through options](/project/adrs/0099-public-server-package/)
 - [ADR 0100: an admission hook admits, changes or refuses each task attempt before its token is minted](/project/adrs/0100-dispatch-admission-hook/)
+- [ADR 0101: mutation testing measures the tests, and coverage is gated per core package](/project/adrs/0101-mutation-testing-and-coverage-policy/)
 
 ## Template
 

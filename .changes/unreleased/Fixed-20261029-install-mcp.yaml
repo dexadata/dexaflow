@@ -1,0 +1,8 @@
+kind: Fixed
+body: |-
+  **`install.sh` installs the MCP server.** The release archive has carried
+  `dexaflow-mcp` since the MCP server shipped, but the installer copied only
+  the CLI, server and agent, so a `curl | sh` install had no MCP server and
+  said nothing about it. It now installs `dexaflow-mcp` (with its
+  `leoflow-mcp` link) whenever the archive holds it (#976).
+time: 2026-10-29T02:00:00.000000000-03:00

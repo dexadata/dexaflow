@@ -31,7 +31,7 @@ func TestSetupDispatch_KubernetesFailsClosedWhenClientUnavailable(t *testing.T) 
 	cfg.Executor.Type = "kubernetes"
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	on, closer, err := setupDispatch(context.Background(), cfg, nil, nil, nil, nil, nil, nil, logger, nil)
+	on, closer, err := setupDispatch(context.Background(), cfg, nil, nil, nil, nil, nil, nil, nil, logger, nil)
 	if err == nil {
 		t.Fatal("setupDispatch returned nil error on the Kubernetes executor with no Kubernetes client available; must fail closed (#704)")
 	}

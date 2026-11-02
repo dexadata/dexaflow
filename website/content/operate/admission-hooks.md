@@ -161,6 +161,29 @@ With `fail_open: true` a broken endpoint admits attempts unchanged instead.
 The server logs that at boot and on every such attempt. A `hold` or `refuse`
 still applies.
 
+## A hook in your own binary
+
+A program that builds the server with [`pkg/server`](/reference/go/pkg-server/)
+can register a hook in process instead of, or before, the webhook. It
+implements [`pkg/admission`](/reference/go/pkg-admission/)'s `Hook`, receives
+the same request and returns the same decisions, with no network hop:
+
+```go
+freeze := admission.HookFunc(func(_ context.Context, req *admission.Request) (admission.Decision, error) {
+	if req.TenantID == "acme" {
+		return admission.Refuse("acme is frozen until 06:00 UTC"), nil
+	}
+	return admission.Admit(), nil
+})
+err := server.Run(ctx, server.WithAdmission(freeze))
+```
+
+Hooks registered this way run in the order they were registered, before the
+webhook when one is configured. The first refusal wins and each later hook
+sees the earlier changes. `execution.admission.timeout` and `fail_open`, the
+checks on what a change may set, and the breaker apply to them as to the
+webhook. A hook must return once its context is done.
+
 ## Monitor it
 
 | Metric | Meaning |
