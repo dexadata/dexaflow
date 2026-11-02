@@ -70,8 +70,11 @@ the model Kubernetes uses:
   evidence of the Docs line in the release's tracking issue. A `Skip-docs:`
   line added to a pull request afterwards needs a re-run of that job, or
   `gh workflow run docs-gap.yaml --ref <branch> -f version=X.Y.Z`.
-- **Only the newest release branch takes patches.** An older one gets a
-  security fix only when the owner decides so for that fix.
+- **Only the newest release branch takes patches.** The previous one takes
+  security fixes for 8 weeks after the next minor's `X.Y.0` final ships, and
+  nothing after that. The
+  [versioning and support](https://dexaflow.dexadata.ai/project/versioning/)
+  policy is the public promise; keep the two in step.
 
 `release-X.Y` is a different name from the short-lived `release/<tag>` prepare
 branches the script opens, so the two never collide. Nothing ever merges a
