@@ -235,7 +235,7 @@ that reach an endpoint in that range therefore need an explicit egress exception
 |---|---|---|
 | AWS **IRSA** | STS (public) | works as-is |
 | AWS **Pod Identity** | `169.254.170.23` | **blocked** — needs an exception |
-| **GKE Workload Identity** | metadata server `169.254.169.254` | **blocked** — needs an exception |
+| **GKE Workload Identity** | metadata server `169.254.169.254`, served on the node at `169.254.169.252` port 988 | **blocked**, needs an exception |
 
 To use GKE WI or EKS Pod Identity, re-allow **just that host** with
 `taskNetworkPolicy.allowMetadataEgress` — a scoped `/32` exception (the rest of
@@ -246,9 +246,18 @@ To use GKE WI or EKS Pod Identity, re-allow **just that host** with
 taskNetworkPolicy:
   enabled: true
   allowMetadataEgress:
-    - 169.254.169.254/32   # GKE metadata server
+    - 169.254.169.254/32   # GKE metadata server (GKE Dataplane V2)
+    - 169.254.169.252/32   # GKE metadata server on the node (network policy enforcement)
     # - 169.254.170.23/32  # EKS Pod Identity
 ```
+
+On GKE, which address the policy has to allow depends on how the cluster
+enforces NetworkPolicy. Google's
+[Workload Identity troubleshooting](https://cloud.google.com/kubernetes-engine/docs/troubleshooting/authentication)
+asks for `169.254.169.252/32` on port 988 when the cluster uses network policy
+enforcement, and for `169.254.169.254/32` on port 80 on GKE Dataplane V2. List
+both unless you know which one your cluster uses; each stays a single host.
+A missing entry fails closed: the task gets no token, nothing else opens.
 
 AWS IRSA needs no NetworkPolicy change (it authenticates against the public STS
 endpoint, not the metadata range).

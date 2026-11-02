@@ -502,7 +502,9 @@ deploy, layer on:
   policy is opt-in rather than on by default:
   both clouds serve **keyless workload identity from the link-local range**, so
   turning the policy on breaks keyless external-secrets auth on GKE Workload
-  Identity (`169.254.169.254/32`) and EKS Pod Identity (`169.254.170.23/32`)
+  Identity (`169.254.169.254/32` and `169.254.169.252/32`, see
+  [External secrets](/operate/external-secrets/)) and EKS Pod Identity
+  (`169.254.170.23/32`)
   until the exception is added. AWS IRSA needs no exception — it uses the public
   STS endpoint. The install NOTES warn while the value is off.
 - **Both policies need a CNI that *enforces* NetworkPolicy.** A rendered policy
