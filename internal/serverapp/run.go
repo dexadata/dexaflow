@@ -31,7 +31,7 @@ import (
 // startupConfig loads the configuration Run serves with and refuses one,
 // or a combination with opts, the server cannot start on.
 func startupConfig(opts Options) (*config.ServerConfig, error) {
-	cfg, err := loadConfig(opts.Config)
+	cfg, err := loadConfig(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -44,14 +44,19 @@ func startupConfig(opts Options) (*config.ServerConfig, error) {
 	return cfg, nil
 }
 
-// loadConfig returns cfg, or when it is nil the configuration the binary
-// loads: the file named by LEOFLOW_CONFIG (mirrored from DEXAFLOW_CONFIG),
-// then the environment.
-func loadConfig(cfg *config.ServerConfig) (*config.ServerConfig, error) {
-	if cfg != nil {
-		return cfg, nil
+// loadConfig returns opts.Config, or when it is nil the configuration the
+// binary loads: the file opts.ConfigFile names, or else the one
+// LEOFLOW_CONFIG names (mirrored from DEXAFLOW_CONFIG), then the
+// environment.
+func loadConfig(opts Options) (*config.ServerConfig, error) {
+	if opts.Config != nil {
+		return opts.Config, nil
 	}
-	loaded, err := config.LoadServer(os.Getenv("LEOFLOW_CONFIG"), nil)
+	file := opts.ConfigFile
+	if file == "" {
+		file = os.Getenv("LEOFLOW_CONFIG")
+	}
+	loaded, err := config.LoadServer(file, nil)
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
 	}
@@ -91,6 +96,10 @@ type Options struct {
 	// Config is the configuration to run with. Nil loads it the way the
 	// binary does.
 	Config *config.ServerConfig
+	// ConfigFile, when set and Config is nil, is the config file to read in
+	// place of the one DEXAFLOW_CONFIG names. The environment still applies
+	// on top of it.
+	ConfigFile string
 	// AdmissionHooks run before the configured webhook, in this order
 	// (ADR 0100 §6).
 	AdmissionHooks []admission.Hook

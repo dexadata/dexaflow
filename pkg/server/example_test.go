@@ -255,3 +255,15 @@ func ExampleWithTrustedIssuer() {
 		os.Exit(server.ExitCode(err))
 	}
 }
+
+// A control plane configured by a file of the program's own choosing, with
+// the DEXAFLOW_* environment still on top.
+func ExampleWithConfigFile() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := server.Run(ctx, server.WithConfigFile("/etc/acme/dexaflow-server.yaml"))
+	stop()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(server.ExitCode(err))
+	}
+}
