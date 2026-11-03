@@ -113,6 +113,18 @@ NetworkPolicy — kindnet enforces nothing and the AWS VPC CNI enforces only wit
 its network-policy agent enabled, so a rendered policy is not proof of
 enforcement. Verify on your CNI before relying on it.
 {{- end }}
+{{- if and .Values.taskNetworkPolicy.enabled (not .Values.taskNetworkPolicy.blockPrivateNetworks) (.Capabilities.APIVersions.Has "cilium.io/v2") }}
+
+WARNING: this cluster runs Cilium (GKE Dataplane V2 included), and there the
+task NetworkPolicy's 169.254.0.0/16 block does not cover link-local addresses
+served by the task pod's own node: on GKE Dataplane V2 a task reaches the
+node's metadata server at 169.254.169.252:988 and gets a Workload Identity
+token even with allowMetadataEgress empty. Set
+     --set taskNetworkPolicy.blockPrivateNetworks=true
+which closes that path (allowMetadataEgress then opens exactly the hosts it
+lists), and re-allow the internal services your DAGs call with
+taskNetworkPolicy.extraEgress. See the task pod hardening page.
+{{- end }}
 {{- /* Postgres connection budget (#1088). At boot pgxpool opens only its floor,
 database.maxIdleConns, per pod, plus 3 (2 health checks, 1 scheduler leader lock);
 under load each pod grows toward database.maxOpenConns + 3, plus

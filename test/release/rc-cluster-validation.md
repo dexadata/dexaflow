@@ -282,13 +282,18 @@ the same carry-forward treatment for as long as #1089 stays open):
   passes vacuously), set `allowMetadataEgress: [169.254.170.23/32]`. **PASS:**
   from a task pod, `169.254.170.23` answers and `169.254.169.254` times out.
   Repeat on GKE Dataplane V2 and Calico; this is the path CNIs diverge on.
-  Retire this row when #1089 closes.
-- **#1067 the metrics port under a CNI that enforces ✔ (kind+Calico only).**
+  Measured on GKE 2026-11-03: Calico holds. Dataplane V2 does not unless
+  `blockPrivateNetworks=true`: link-local addresses of the task pod's own node
+  stay open (`169.254.169.252:988` returned a Workload Identity token with the
+  list empty). On every Cilium cluster also check, from a task pod with an
+  empty list, that `169.254.169.252:988` and a listener on another link-local
+  address of the node both time out. Keep this row; the EKS half is unmeasured.
+- **#1067 the metrics port under a CNI that enforces ✔ (kind+Calico, GKE Calico and Dataplane V2).**
   `pro-netpol-rwx.sh` already asserts `:9090` with `ingressFrom` narrowed on
   kind+Calico. **PASS on a cloud cluster:** the same holds under EKS's VPC CNI,
   and a real Prometheus in another namespace can scrape it. Retire this row when
   #1089 closes.
-- **#947 the rendered HPA is admitted ✔ (kind dry-run only).** kind dry-runs the
+- **#947 the rendered HPA is admitted ✔ (kind dry-run, GKE 1.36).** kind dry-runs the
   rendered HPA already. **PASS on a cloud cluster:** no admission webhook
   (OPA/Kyverno/Gatekeeper) rejects or mutates it, and `HPAScaleToZero` is
   confirmed off on the cluster's Kubernetes version; the `min<1` refusal

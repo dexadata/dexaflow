@@ -827,7 +827,7 @@ podDisruptionBudget:
 taskNetworkPolicy:
   # -- Enable the task-pod egress NetworkPolicy in `taskNamespace`. Denies ingress, allows DNS + the control-plane gRPC, then all other egress except the blocked ranges below.
   enabled: false
-  # -- ALSO deny RFC1918 private ranges, which on most clusters takes the apiserver with them — but not always: GKE's newer default Service range (34.118.224.0/20) is outside RFC1918, so print your own Service CIDR before assuming. IPv4 only, so on dual-stack an IPv6 metadata or apiserver endpoint is unaffected. OFF by default: a DAG calling an internal service is legitimate, and the policy cannot tell that from the apiserver by IP (ADR 0047). Turn on for high-security clusters; the control-plane gRPC is re-allowed explicitly.
+  # -- ALSO deny RFC1918 private ranges, which on most clusters takes the apiserver with them, but not always: GKE's newer default Service range (34.118.224.0/20) is outside RFC1918, so print your own Service CIDR before assuming. IPv4 only, so on dual-stack an IPv6 metadata or apiserver endpoint is unaffected. OFF by default: a DAG calling an internal service is legitimate, and the policy cannot tell that from the apiserver by IP (ADR 0047). Turn on for high-security clusters; the control-plane gRPC is re-allowed explicitly. On Cilium, GKE Dataplane V2 included, turn this ON with `taskNetworkPolicy.enabled`: without it the task pod's own node stays reachable on link-local addresses (GKE serves Workload Identity tokens at `169.254.169.252:988`) whatever `allowMetadataEgress` says.
   blockPrivateNetworks: false
   # -- Extra CIDRs to add to the egress `except` list (e.g. a specific internal admin subnet).
   extraExcept: []

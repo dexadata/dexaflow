@@ -259,6 +259,17 @@ enforcement, and for `169.254.169.254/32` on port 80 on GKE Dataplane V2. List
 both unless you know which one your cluster uses; each stays a single host.
 A missing entry fails closed: the task gets no token, nothing else opens.
 
+{{% alert title="GKE Dataplane V2: also set blockPrivateNetworks" color="warning" %}}
+On GKE Dataplane V2 (and other Cilium clusters) the `169.254.0.0/16` block does
+not cover link-local addresses served by the task pod's own node: a task reaches
+`169.254.169.252:988` and gets a Workload Identity token even with
+`allowMetadataEgress` empty. Set `taskNetworkPolicy.blockPrivateNetworks: true`
+there, which closes that path and leaves `allowMetadataEgress` opening exactly
+the hosts it lists, and re-allow the internal services your DAGs call with
+`taskNetworkPolicy.extraEgress`. See
+[Task pod hardening](/operate/task-pod-hardening/).
+{{% /alert %}}
+
 AWS IRSA needs no NetworkPolicy change (it authenticates against the public STS
 endpoint, not the metadata range).
 
