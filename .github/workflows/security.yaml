@@ -171,34 +171,55 @@ jobs:
         with:
           persist-credentials: false
 
-      # Filesystem scan of the repo (dependencies + committed secrets).
-      # trivy-ignorefile-exempt: .trivyignore.yaml holds accepted CONTAINER IMAGE
-      # findings — OS and vendored-binary CVEs in bases we do not author. This scan
-      # reads our own module graph and lock files, a different population with a
-      # different owner, and wiring the image list in here would let one accepted
-      # base-image finding silently suppress the same CVE in code we wrote.
-      - name: Trivy filesystem scan
+      # Filesystem scan of the repo (dependencies + committed secrets), in the
+      # same two steps as the image scans below. One trivy-action call cannot do
+      # both: with `format: sarif` the action ignores `severity:` (its log says
+      # "Building SARIF report with all severities"), so a single SARIF step
+      # with exit-code 1 gated on every fixable finding, UNKNOWN included. That
+      # is how GO-2026-5932, an UNKNOWN advisory on x/crypto/openpgp (a package
+      # we do not import), turned the job red on main and every PR.
+      #
+      # Report: every FIXABLE finding at any severity, for the Security tab.
+      - name: Trivy filesystem scan (SARIF report)
+        # trivy-ignorefile-exempt: .trivyignore.yaml holds accepted CONTAINER IMAGE
+        # findings, OS and vendored-binary CVEs in bases we do not author. This scan
+        # reads our own module graph and lock files, a different population with a
+        # different owner, and wiring the image list in here would let one accepted
+        # base-image finding silently suppress the same CVE in code we wrote.
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           version: ${{ env.TRIVY_VERSION }}
           scan-type: fs
           scan-ref: .
-          severity: CRITICAL,HIGH
-          exit-code: 1
           ignore-unfixed: true
           format: sarif
           output: trivy-fs.sarif
 
       # Upload the SARIF baseline to the Security tab only on push/schedule. On a
-      # PR the scan still gates the check (exit-code 1 above), but we do not upload
-      # so a PR run cannot collide with or overwrite the main branch baseline under
-      # the shared trivy-fs category (#437).
+      # PR the gate below still runs, but we do not upload so a PR run cannot
+      # collide with or overwrite the main branch baseline under the shared
+      # trivy-fs category (#437).
       - name: Upload Trivy SARIF to GitHub Security
         uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         if: always() && github.event_name != 'pull_request'
         with:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
+
+      # Gate: fixable CRITICAL/HIGH only.
+      - name: Trivy filesystem scan (gate)
+        # trivy-ignorefile-exempt: same population as the report step above, our
+        # own module graph, lock files and committed secrets; the image ignore
+        # list must not suppress a finding in code we wrote.
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: fs
+          scan-ref: .
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          exit-code: 1
+          format: table
 
   # ─────────────────────────────────────────────────────────────────────
   # leoflow-server image scan — the BLOCKING half of the container policy.
