@@ -136,6 +136,15 @@ Check these before you turn it on:
   and with them, on most clusters, the apiserver. Turn that on only when no DAG
   calls an internal service, or allow those services back with
   `taskNetworkPolicy.extraEgress`.
+- **On Cilium, GKE Dataplane V2 included, also set
+  `taskNetworkPolicy.blockPrivateNetworks=true`.** There the metadata block does
+  not cover link-local addresses served by the task pod's own node: measured on
+  GKE Dataplane V2, a task with `allowMetadataEgress` empty still reached the
+  node's metadata server at `169.254.169.252:988` and got a Workload Identity
+  token. With `blockPrivateNetworks` on, that path closes and
+  `allowMetadataEgress` opens exactly the hosts it lists. GKE with Calico network
+  policy enforcement blocks it without this setting. The install NOTES warn when
+  the chart sees Cilium and the setting is off.
 
 To verify, run a task that calls `http://169.254.169.254/` and one that calls a
 service it needs: the first must time out and the second must answer.

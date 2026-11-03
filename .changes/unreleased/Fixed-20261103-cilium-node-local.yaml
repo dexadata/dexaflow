@@ -1,0 +1,13 @@
+kind: Fixed
+body: |-
+  **Task NetworkPolicy on Cilium: the node's own link-local addresses were not
+  blocked** (GHSA-38p3-564h-jxp7). On GKE Dataplane V2 the task policy's
+  `169.254.0.0/16` block did not cover addresses served by the task pod's own
+  node, so a task reached the node's metadata server at `169.254.169.252:988`
+  and got a Workload Identity token even with `allowMetadataEgress` empty. GKE
+  with Calico was not affected. On Cilium set
+  `taskNetworkPolicy.blockPrivateNetworks=true`, which closes that path, and
+  re-allow the internal services your DAGs call with
+  `taskNetworkPolicy.extraEgress`. The install NOTES now warn when the chart
+  sees Cilium and that setting is off; the docs say the same.
+time: 2026-11-03T15:00:00.000000000+00:00

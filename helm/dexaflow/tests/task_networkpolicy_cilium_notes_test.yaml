@@ -1,0 +1,42 @@
+suite: task NetworkPolicy NOTES on Cilium (node-local link-local)
+# On GKE Dataplane V2 (Cilium) the task policy's 169.254.0.0/16 block does not
+# cover link-local addresses served by the task pod's own node: measured, a
+# task reached 169.254.169.252:988 and got a Workload Identity token with
+# allowMetadataEgress empty. blockPrivateNetworks=true closed it. The NOTES warn
+# when the chart sees Cilium's API group and that setting is off.
+templates:
+  - NOTES.txt
+set:
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+tests:
+  - it: warns on a Cilium cluster with the task policy on and blockPrivateNetworks off
+    capabilities:
+      apiVersions:
+        - cilium.io/v2
+    set:
+      taskNetworkPolicy.enabled: true
+    asserts:
+      - matchRegexRaw:
+          pattern: "169\\.254\\.169\\.252:988"
+      - matchRegexRaw:
+          pattern: "taskNetworkPolicy\\.blockPrivateNetworks=true"
+
+  - it: stays quiet on Cilium once blockPrivateNetworks is on
+    capabilities:
+      apiVersions:
+        - cilium.io/v2
+    set:
+      taskNetworkPolicy.enabled: true
+      taskNetworkPolicy.blockPrivateNetworks: true
+    asserts:
+      - notMatchRegexRaw:
+          pattern: "169\\.254\\.169\\.252:988"
+
+  - it: stays quiet without Cilium
+    set:
+      taskNetworkPolicy.enabled: true
+    asserts:
+      - notMatchRegexRaw:
+          pattern: "169\\.254\\.169\\.252:988"
