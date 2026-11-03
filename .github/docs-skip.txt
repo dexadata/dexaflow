@@ -15,3 +15,4 @@
 #1354 internal XCom fetch batching, no setting or visible behaviour
 #1392 migration 038 and attempt epochs documented in the 0.5.1 upgrade notes (#1446)
 #1394 attempt epoch token documented in the 0.5.1 upgrade notes (#1446)
+#2270 pkg/server documented by its generated reference (reference/go/pkg-server) and by the option sections of #2272, #2273, #2275, #2276 and #2280 (operate/admission-hooks, reference/configuration)
