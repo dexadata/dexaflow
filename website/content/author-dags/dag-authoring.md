@@ -322,6 +322,15 @@ The unsupported set, with the things Airflow users most often expect to
   today; what does **not** work is *dynamic* fan-**out** — expanding one task
   into N parallel instances at runtime from an upstream result. That is
   tracked separately.
+- **Task groups** (`TaskGroup`, `@task_group`) are refused at compile. Flatten
+  the group into plain tasks and prefix the ids by hand (for example
+  `extract_load` for `extract.load`). The dbt integration's own `dbt_group()` is
+  the one group construct that works
+  ([ADR 0043](/project/adrs/0043-taskgroup-split-fused-execution/)).
+- **Cross-DAG operators** (`ExternalTaskSensor`, `ExternalTaskMarker`,
+  `TriggerDagRunOperator`) and `LatestOnlyOperator` compile but fail at run time:
+  they need the Airflow metadata database, which a task pod does not have. See
+  [Operators that need the Airflow metadata database](/author-dags/operators-sensors/#operators-that-need-the-airflow-metadata-database).
 - **KubernetesPodOperator** — refused; the pod is the *runtime
   substrate* for every Dexaflow task already, so wrapping a user task
   in another pod is redundant and adds an isolation hole.
