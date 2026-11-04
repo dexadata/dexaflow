@@ -204,7 +204,7 @@ func newServer(deps Dependencies) *gin.Engine {
 	registerUI(r, deps.Auth.TokenTTLSecs, deps.UI.InstanceName, deps.UI.AutoRefreshIntervalSeconds, deps.UI.Theme, deps.sessionCookie())
 	registerUIViews(r, deps)
 	registerUIStructure(r, deps.Stores.Specs)
-	registerUISummaries(r, deps.Stores.TaskSummary, deps.UI.ETagRevalidation)
+	registerUISummaries(r, deps.Stores.TaskSummary, deps.Stores.DagRuns, deps.Stores.DagVersions, deps.UI.ETagRevalidation)
 	registerUIGantt(r, deps.Stores.Tasks)
 	registerUITasks(r, deps.Stores.Specs, deps.Stores.DagSources)
 	registerUIDashboard(r, deps.Stores.DashboardStats)

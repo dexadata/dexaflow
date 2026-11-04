@@ -1,0 +1,11 @@
+kind: Fixed
+body: |-
+  **Clicking a task in the grid opened the task page instead of the task
+  instance, so its logs could not be reached** (#2295). The Airflow 3.3 grid
+  and graph open a task instance only when the grid summary carries the run's
+  `dag_version_number`, which the server did not send, so every click landed
+  on the run-less task page, which has no Logs tab. The summaries now carry it,
+  the grid runs carry their `dag_versions` (the grid's version markers show
+  again), and the DAG details carry `is_favorite`, so the star in the DAG page
+  header shows whether the DAG is starred.
+time: 2026-11-04T14:00:00.000000000+00:00

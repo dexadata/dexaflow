@@ -31,6 +31,10 @@ type gridRunDTO struct {
 	// HasNote is required by the Airflow 3.3 GridRunsResponse; the grid
 	// shades the bar of a run that has a note.
 	HasNote bool `json:"has_note"`
+	// DagVersions is the version the run is pinned to (empty when the label no
+	// longer resolves). The 3.3 grid compares it between adjacent runs to draw
+	// its version-change markers.
+	DagVersions []dagVersionDTO `json:"dag_versions"`
 }
 
 func toGridRunDTO(r domain.DagRun) gridRunDTO {
@@ -46,6 +50,7 @@ func toGridRunDTO(r domain.DagRun) gridRunDTO {
 		HasMissedDeadline: false,
 		Duration:          runDurationSeconds(r),
 		HasNote:           r.Note != "",
+		DagVersions:       []dagVersionDTO{},
 	}
 }
 
@@ -131,7 +136,7 @@ func versionHandler() gin.HandlerFunc {
 
 // gridRunsHandler implements GET /ui/grid/runs/{dag_id}: recent runs as grid
 // columns, most-recent first (the repository orders by logical_date DESC).
-func gridRunsHandler(repo DagRunRepository) gin.HandlerFunc {
+func gridRunsHandler(repo DagRunRepository, versions DagVersionLister) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		limit, offset := pagination(c)
 		runs, err := listDagRunsPage(c, repo, c.Param("dag_id"), limit, offset)
@@ -139,9 +144,17 @@ func gridRunsHandler(repo DagRunRepository) gin.HandlerFunc {
 			handleRepoError(c, err)
 			return
 		}
+		var p pinnedVersions
+		if len(runs) > 0 {
+			p = pinnedDagVersions(c, versions)
+		}
 		out := make([]gridRunDTO, 0, len(runs))
 		for _, r := range runs {
-			out = append(out, toGridRunDTO(r))
+			dto := toGridRunDTO(r)
+			if v, ok := p.byLabel[r.Version]; ok && r.Version != "" {
+				dto.DagVersions = []dagVersionDTO{toDagVersionDTO(p.dagID, v)}
+			}
+			out = append(out, dto)
 		}
 		c.JSON(http.StatusOK, out)
 	}
@@ -170,7 +183,7 @@ func latestRunHandler(repo DagRunRepository) gin.HandlerFunc {
 func registerUIViews(r gin.IRouter, deps Dependencies) {
 	r.GET("/api/v2/version", RequireScope(auth.ScopeRead), versionHandler())
 	if deps.Stores.DagRuns != nil {
-		r.GET("/ui/grid/runs/:dag_id", RequirePermission("read", "dag_run"), gridRunsHandler(deps.Stores.DagRuns))
+		r.GET("/ui/grid/runs/:dag_id", RequirePermission("read", "dag_run"), gridRunsHandler(deps.Stores.DagRuns, deps.Stores.DagVersions))
 		r.GET("/ui/dags/:dag_id/latest_run", RequirePermission("read", "dag_run"), latestRunHandler(deps.Stores.DagRuns))
 	}
 	if deps.Stores.Dags != nil && deps.Stores.LatestRuns != nil {
