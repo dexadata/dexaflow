@@ -5,8 +5,9 @@ weight: 1030
 description: "ADR 0103: ExternalTaskSensor and TriggerDagRunOperator compile to declarative task types that the scheduler evaluates against its own database, scoped to the tenant, with no pod and no user code in the control plane. A waiting task sits in the reserved deferred state and wakes when the task it waits for settles. This is the one place where deferrable=True is honored, because the trigger is built in."
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-11-04
+**Accepted:** 2026-11-04 (proposed and accepted the same day by the project owner)
 **Amends:** ADR 0016 (deferrable tasks, a conscious non-goal) for these operators only: their wait is built in, so honoring `deferrable=True` runs no user code.
 **Relates:** ADR 0040 (Airflow operator support), ADR 0043 (TaskGroup), ADR 0048 (no user code in the control plane), ADR 0051 (orchestration vs execution state machines), ADR 0064 (branching and skip)
 **Issues:** #2340 (this ADR), #2336 (compile-time refusal until this ships), #2338 (TaskGroup)
@@ -74,21 +75,29 @@ Take **B**.
    `external_wait` task's own dependencies are met, the planner does not hand
    it to the dispatcher. It moves the task to the reserved `deferred` state
    (migration 006), which the Airflow UI already renders, and evaluates the
-   condition:
+   condition. The state machine (ADR 0051) gains `none` to `deferred`, and
+   `deferred` to `success`, `failed`, `none` (a clear) and `removed`. A
+   deferred task holds no pool slot, as pools already count only queued and
+   running tasks.
 
    - the target run is the one of `external_dag_id` in the **same tenant**
      whose logical date equals this run's logical date minus
-     `execution_delta`;
+     `execution_delta`, an exact match as in Airflow (a manual run therefore
+     matches only a target run with the same logical date). When several
+     target runs share that logical date, the most recently created one
+     counts;
    - **met**: every target task (or the run, when no task is named) is in
      `allowed_states` (default `success`). The task succeeds.
    - **failed**: any target is in `failed_states`. The task fails, or is
      skipped when `soft_fail` is set; the skip waits for the skip support of
      ADR 0064, and until then `soft_fail=True` is refused at compile.
    - **not yet**: the task stays `deferred` with `reschedule_at` set to now
-     plus `poke_interval`, reusing the reschedule rail (#380), so it consumes
-     no try.
-   - **timeout**: when `timeout` has passed since the task first deferred, it
-     fails with a reason that names the target.
+     plus `poke_interval`. This reuses the column the reschedule rail added
+     (#380), and like a reschedule it consumes no try.
+   - **timeout**: when `timeout` (Airflow's default, seven days) has passed
+     since the task first deferred, it fails with a reason that names the
+     target. Two DAGs that wait on each other for the same date therefore end
+     in two timeouts, not in a stuck scheduler.
    - `check_existence=True` fails the task at once when the target DAG or task
      does not exist in the tenant.
 
@@ -116,6 +125,10 @@ Take **B**.
 5. **Tenant scope is absolute.** Both types resolve the target DAG inside the
    task's tenant only. A target in another tenant is indistinguishable from a
    missing one. No pod gains any read or write path it does not have today.
+   Roles are per tenant today, so a DAG that may run in a tenant may trigger
+   any DAG of that tenant, as an author with the trigger permission could by
+   hand. If per-DAG permissions are ever added, `trigger_dag_run` is checked
+   against them.
 
 6. **`ExternalTaskMarker` comes in a second phase.** It compiles to a no-op
    marker carrying `external_dag_id`, `external_task_id` and
