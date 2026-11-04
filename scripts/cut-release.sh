@@ -1193,6 +1193,19 @@ main() {
   # mid-flight as "gate FAIL check-migrate-pod-selection.sh" rather than as a
   # named missing tool, which is the wrong place to learn it.
   for t in gh jq git helm-docs helm; do command -v "$t" >/dev/null || die "missing tool: $t"; done
+  # The gates are bash 4+ and GNU scripts run through the `bash`, `sed` and
+  # `date` on PATH. On macOS /bin comes first: its bash 3.2 has no mapfile
+  # (check-runtime-data-lock.sh dies with rc 127) and spends hours at 100% CPU
+  # in a self-test that takes a second on bash 5, and BSD sed and date fail the
+  # `sed -i` and `date -d` self-tests. v0.5.9-rc.1 hung there with no message.
+  local gate_bash_major
+  gate_bash_major="$(bash -c 'echo "${BASH_VERSINFO[0]}"' 2>/dev/null || echo 0)"
+  { [ "${BASH_VERSINFO[0]}" -ge 4 ] && [ "${gate_bash_major:-0}" -ge 4 ]; } ||
+    die "bash 4 or newer is required on PATH (found $(bash -c 'echo $BASH_VERSION' 2>/dev/null)); on macOS put Homebrew's bash first, e.g. mkdir -p /tmp/cutbin && ln -sf /opt/homebrew/bin/bash /tmp/cutbin/bash && PATH=/tmp/cutbin:\$PATH"
+  sed --version 2>/dev/null | grep -q GNU ||
+    die "GNU sed is required on PATH; on macOS: brew install gnu-sed and prepend /opt/homebrew/opt/gnu-sed/libexec/gnubin to PATH"
+  date -d @0 +%s >/dev/null 2>&1 ||
+    die "GNU date is required on PATH; on macOS: brew install coreutils and prepend /opt/homebrew/opt/coreutils/libexec/gnubin to PATH"
   python3 -c 'import yaml' 2>/dev/null || die "missing python module: PyYAML (pip install pyyaml) — several scripts/check-*.sh parse YAML"
 
   log "cutting $tag (chart $cv, $(is_rc "$version" && echo prerelease || echo GA)) from $base"

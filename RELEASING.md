@@ -194,7 +194,9 @@ What checks it, and when:
 
 ## The flow the script runs
 
-1. **Preflight**: required tools, clean tree, version validated, rc-vs-GA
+1. **Preflight**: required tools (bash 4 or newer, GNU sed and GNU date on
+   `PATH`, so on macOS put Homebrew's bash, `gnu-sed` and `coreutils` gnubin
+   ahead of `/bin`), clean tree, version validated, rc-vs-GA
    detected from the `-rc.N` suffix, and the base branch picked from the
    version by `scripts/release-base.sh`: `main`, or `release-X.Y` for a patch
    of a minor mapped in `.github/patch-branches.txt` (it must exist on
