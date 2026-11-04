@@ -9,9 +9,10 @@ weight: 20
 description: Use Airflow operators and sensors from your DAGs on Dexaflow.
 ---
 
-Dexaflow runs **any Apache Airflow operator or sensor** — `BigQueryInsertJobOperator`,
-`S3KeySensor`, `SnowflakeOperator`, the ~1,500 operators across the provider
-ecosystem — without re-implementing a single one. It does this by keeping the
+Dexaflow runs **any Apache Airflow operator or sensor** that does not need the
+Airflow metadata database (`BigQueryInsertJobOperator`, `S3KeySensor`,
+`SnowflakeOperator`, the ~1,500 operators across the provider ecosystem; see the
+[exceptions](#operators-that-need-the-airflow-metadata-database)) without re-implementing a single one. It does this by keeping the
 **pod-per-task** execution model and instantiating the real Airflow class inside
 the task container, driven by a thin Go control plane and a small Python runtime.
 
@@ -295,6 +296,24 @@ than half-running:
 
 - **Dynamic task mapping** — [#376](https://github.com/dexadata/dexaflow/issues/376).
 - **Branching** — [#377](https://github.com/dexadata/dexaflow/issues/377).
+
+### Operators that need the Airflow metadata database
+
+A few standard operators do their work by reading or writing Airflow's metadata
+database instead of an external system. A Dexaflow task pod has no such database,
+so these compile today but **fail at run time**, on their first attempt:
+
+| Operator | What it needs | Error you will see |
+| --- | --- | --- |
+| `ExternalTaskSensor` | the state of another DAG's runs and tasks | `the task instance has no attribute 'get_ti_count'` |
+| `ExternalTaskMarker` | the same cross-DAG lookup | `the task instance has no attribute 'get_ti_count'` |
+| `TriggerDagRunOperator` | a new run of another DAG, created by the scheduler | `DagRunTriggerException` |
+| `LatestOnlyOperator` | the DAG object and skip support for its downstream | `Operator <Task(LatestOnlyOperator): ...> has not been assigned to a Dag yet` |
+
+Cross-DAG dependencies are not supported yet. Until they are, run the dependent
+work in the same DAG, or wait on the upstream DAG's output (a file, a table, an
+API) with a sensor that checks it, such as `S3KeySensor` or `SqlSensor` with
+`mode="reschedule"`.
 
 **Reschedule-mode sensors *are* supported.** Set `mode="reschedule"` and the
 scheduler persists the next-poke time, frees the pod between pokes, and

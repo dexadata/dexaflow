@@ -1,0 +1,10 @@
+kind: Fixed
+body: |-
+  **The docs name the operators that compile but cannot run.**
+  `ExternalTaskSensor`, `ExternalTaskMarker`, `TriggerDagRunOperator` and
+  `LatestOnlyOperator` need the Airflow metadata database, which a task pod
+  does not have, so they fail on their first attempt. The operators page now
+  lists them with the error each one raises and a workaround, the DAG
+  authoring list of unsupported constructs names `TaskGroup`, and the
+  connector compatibility planning note no longer says sensors are rejected.
+time: 2026-11-04T11:30:00.000000000-03:00

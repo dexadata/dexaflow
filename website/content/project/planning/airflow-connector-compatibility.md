@@ -139,10 +139,16 @@ import time, before any task work runs. The cookbook page for the hook
 names the exact error so search engines route the user back to the right
 recipe.
 
-Out of scope (still rejected at compile time per the closed-set policy):
-sensors, dynamic task mapping (`.expand` / `.partial`), `TaskGroup`,
-branching operators, untyped operators outside the standard / http
+Out of scope when this note was written (rejected at compile time per the
+closed-set policy): sensors, dynamic task mapping (`.expand` / `.partial`),
+`TaskGroup`, branching operators, untyped operators outside the standard / http
 providers. Parser fails fast with "not supported by Dexaflow".
+
+> **Update (2026-11):** sensors and provider operators are supported since
+> [ADR 0040](/project/adrs/0040-airflow-operator-support/), in poke and reschedule
+> mode. Dynamic task mapping, branching and `TaskGroup` are still rejected; the
+> current list is in
+> [DAG authoring: Not supported](/author-dags/dag-authoring/#not-supported--dexaflow-compile-rejects-these).
 
 ## 0. TL;DR
 
