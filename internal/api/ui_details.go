@@ -75,10 +75,14 @@ func everyN(field string) (int, bool) {
 // every spec-required field is present; values Dexaflow does not yet model are
 // null or sensible defaults. See docs/ui-compatibility.md.
 type dagDetailsDTO struct {
-	DagID                       string           `json:"dag_id"`
-	DagDisplayName              string           `json:"dag_display_name"`
-	IsPaused                    bool             `json:"is_paused"`
-	IsStale                     bool             `json:"is_stale"`
+	DagID          string `json:"dag_id"`
+	DagDisplayName string `json:"dag_display_name"`
+	IsPaused       bool   `json:"is_paused"`
+	IsStale        bool   `json:"is_stale"`
+	// IsFavorite drives the star in the DAG page header, which reads it from
+	// details rather than the DAG list: without it the star always offers
+	// "favorite", even on a DAG the user already starred.
+	IsFavorite                  bool             `json:"is_favorite"`
 	LastParsedTime              *string          `json:"last_parsed_time"`
 	LastParseDuration           *float64         `json:"last_parse_duration"`
 	LastExpired                 *string          `json:"last_expired"`
@@ -228,7 +232,7 @@ func rfc3339Ptr(t *time.Time) *string {
 // latest_dag_version from the version lister — the Graph view reads the
 // version_number from there to fetch version-scoped structure, so a null version
 // leaves the graph blank.
-func dagDetailsHandler(repo DagRepository, versions DagVersionLister, specs DagSpecReader) gin.HandlerFunc {
+func dagDetailsHandler(repo DagRepository, versions DagVersionLister, specs DagSpecReader, favorites FavoriteStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		dagID := c.Param("dag_id")
 		d, err := repo.GetDag(c.Request.Context(), tenantOf(c), dagID)
@@ -266,6 +270,12 @@ func dagDetailsHandler(repo DagRepository, versions DagVersionLister, specs DagS
 			// Paired with the run's bundle_version by the SPA's clear dialog.
 			v := d.CurrentVersion
 			dto.BundleVersion = &v
+		}
+		// Best-effort, as on the DAG list: a lookup failure leaves the star unset.
+		if favorites != nil {
+			if favs, ferr := favorites.FavoriteDagIDs(c.Request.Context(), tenantOf(c), favoriteUserID(c)); ferr == nil {
+				dto.IsFavorite = favs[dagID]
+			}
 		}
 		c.JSON(http.StatusOK, dto)
 	}

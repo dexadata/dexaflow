@@ -161,9 +161,18 @@ async function resolveUser() {
 
   // 3) Run → task instance → logs → action menu (the high-churn detail area).
   await step('dag grid: a DAG', async () => { await page.goto(URL + '/dags/hello', { waitUntil: 'networkidle' }); });
-  await step('open a task cell', async () => {
-    const c = page.locator('svg rect, a[href*="tasks"], [data-testid*="task-instance"]').first();
-    if (await c.count()) await c.click({ timeout: 4000 });
+  // The grid cell must open the task instance (/runs/{r}/tasks/{t}), whose
+  // first tab is Logs. The Airflow 3.3 grid links a cell there only when its
+  // ti_summaries entry carries dag_version_number; without it the click lands
+  // on the run-less task page, which has no Logs tab at all.
+  await step('grid cell opens the task instance with a Logs tab', async () => {
+    const cell = page.locator('a[id^="grid-"]').first();
+    await cell.waitFor({ timeout: 8000 });
+    await cell.click({ timeout: 4000 });
+    await page.waitForURL(/\/runs\/[^/]+\/tasks\//, { timeout: 8000 })
+      .catch(() => { throw new Error(`grid cell opened ${page.url()}, not a task instance`); });
+    await page.getByRole('link', { name: /^logs?$/i }).first().waitFor({ timeout: 8000 })
+      .catch(() => { throw new Error('task instance page shows no Logs tab'); });
   });
   await step('open Logs tab', async () => {
     const l = page.getByRole('tab', { name: /log/i }).or(page.getByText(/^Logs?$/)).first();

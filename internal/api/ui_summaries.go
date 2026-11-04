@@ -19,18 +19,24 @@ type TaskSummaryReader interface {
 	TaskInstancesForRuns(ctx context.Context, tenant, dagID string, runIDs []string) ([]domain.TaskInstance, error)
 }
 
-// lightTISummaryDTO is the Airflow 3.2.1 LightGridTaskInstanceSummary. child_states
+// lightTISummaryDTO is the Airflow 3.3 LightGridTaskInstanceSummary. child_states
 // is null in the MVP (no dynamic task mapping); state is null for un-run tasks.
+//
+// dag_version_number is the version the cell's run is pinned to. The 3.3 grid
+// links a cell to its task instance only when it is set: a null number sends
+// the click to the run-less task page, which has no Logs tab. It also drives
+// the version-change markers between runs.
 type lightTISummaryDTO struct {
-	TaskID          string     `json:"task_id"`
-	TaskDisplayName string     `json:"task_display_name"`
-	State           *string    `json:"state"`
-	ChildStates     *struct{}  `json:"child_states"`
-	MinStartDate    *time.Time `json:"min_start_date"`
-	MaxEndDate      *time.Time `json:"max_end_date"`
+	TaskID           string     `json:"task_id"`
+	TaskDisplayName  string     `json:"task_display_name"`
+	State            *string    `json:"state"`
+	ChildStates      *struct{}  `json:"child_states"`
+	MinStartDate     *time.Time `json:"min_start_date"`
+	MaxEndDate       *time.Time `json:"max_end_date"`
+	DagVersionNumber *int       `json:"dag_version_number"`
 }
 
-// gridTISummariesDTO is one Airflow 3.2.1 GridTISummaries — the NDJSON record
+// gridTISummariesDTO is one Airflow 3.3 GridTISummaries, the NDJSON record
 // emitted per DAG run.
 type gridTISummariesDTO struct {
 	DagID         string              `json:"dag_id"`
@@ -138,7 +144,7 @@ func stateOrNil(s domain.TaskState) *string {
 // conditional GETs. With revalidate (ui.etag_revalidation) the response is
 // marked private, no-cache instead of the surface-wide no-store, so a browser
 // can actually send that ETag back.
-func tiSummariesHandler(reader TaskSummaryReader, revalidate bool) gin.HandlerFunc {
+func tiSummariesHandler(reader TaskSummaryReader, runs DagRunRepository, versions DagVersionLister, revalidate bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		dagID := c.Param("dag_id")
 		runIDs := parseRunIDs(c)
@@ -148,13 +154,16 @@ func tiSummariesHandler(reader TaskSummaryReader, revalidate bool) gin.HandlerFu
 			return
 		}
 		byRun, latest, count := aggregateSummaries(tis)
+		runVersions := runVersionNumbers(c, runs, versions, runIDs, byRun)
 
 		// #289: mark-state PATCH changes a TI's state without moving its
 		// started/ended timestamps, so the original `count + latest` ETag
 		// was identical before and after the mutation and the SPA's
 		// TanStack Query kept serving the cached body. Fold a fingerprint
 		// of every row into the ETag so any change invalidates it.
-		etag := fmt.Sprintf(`W/"%d-%d-%x"`, count, latest.UnixNano(), gridFingerprint(tis))
+		// The run's version number is folded in too: a clear that re-pins a run
+		// to the latest version changes it without touching any row.
+		etag := fmt.Sprintf(`W/"%d-%d-%x-%x"`, count, latest.UnixNano(), gridFingerprint(tis), versionFingerprint(runIDs, runVersions))
 		c.Header("ETag", etag)
 		if revalidate {
 			// The browser may keep a private copy but must revalidate it on
@@ -173,13 +182,15 @@ func tiSummariesHandler(reader TaskSummaryReader, revalidate bool) gin.HandlerFu
 		enc := json.NewEncoder(c.Writer)
 		for _, runID := range runIDs {
 			rec := gridTISummariesDTO{DagID: dagID, RunID: runID, TaskInstances: []lightTISummaryDTO{}}
+			number := runVersions[runID]
 			for _, a := range byRun[runID] {
 				rec.TaskInstances = append(rec.TaskInstances, lightTISummaryDTO{
-					TaskID:          a.taskID,
-					TaskDisplayName: a.taskID,
-					State:           stateOrNil(a.state),
-					MinStartDate:    a.minStart,
-					MaxEndDate:      a.maxEnd,
+					TaskID:           a.taskID,
+					TaskDisplayName:  a.taskID,
+					State:            stateOrNil(a.state),
+					MinStartDate:     a.minStart,
+					MaxEndDate:       a.maxEnd,
+					DagVersionNumber: number,
 				})
 			}
 			if err := enc.Encode(rec); err != nil {
@@ -189,12 +200,60 @@ func tiSummariesHandler(reader TaskSummaryReader, revalidate bool) gin.HandlerFu
 	}
 }
 
+// runVersionNumbers resolves the version number each requested run that has
+// task instances is pinned to, by label, falling back to the DAG's newest
+// version when the label no longer resolves (as runDagVersion does). It lists
+// the DAG's versions once and reads each run once. A run that cannot be read,
+// or a DAG with no versions, maps to nil, which keeps the old null.
+func runVersionNumbers(c *gin.Context, runs DagRunRepository, versions DagVersionLister, runIDs []string, byRun map[string]map[string]*taskAgg) map[string]*int {
+	out := make(map[string]*int, len(runIDs))
+	if runs == nil || versions == nil || len(byRun) == 0 {
+		return out
+	}
+	p := pinnedDagVersions(c, versions)
+	if p.newest == nil {
+		return out
+	}
+	for _, runID := range runIDs {
+		if len(byRun[runID]) == 0 {
+			continue
+		}
+		run, err := runs.GetDagRun(c.Request.Context(), tenantOf(c), p.dagID, runID)
+		if err != nil {
+			out[runID] = nil
+			continue
+		}
+		n := p.newest.VersionNumber
+		if v, ok := p.byLabel[run.Version]; ok && run.Version != "" {
+			n = v.VersionNumber
+		}
+		out[runID] = &n
+	}
+	return out
+}
+
+// versionFingerprint hashes the version number served for each run, in request
+// order, so the ETag changes when a run is re-pinned.
+func versionFingerprint(runIDs []string, numbers map[string]*int) uint64 {
+	h := uint64(fnvOffset64)
+	for _, runID := range runIDs {
+		h = fnvString(h, runID)
+		if n := numbers[runID]; n != nil {
+			h = fnvInt(fnvUint(h, 1), int64(*n))
+		} else {
+			h = fnvUint(h, 0)
+		}
+	}
+	return h
+}
+
 // registerUISummaries mounts the grid ti-summaries stream when a reader is set.
-func registerUISummaries(r gin.IRouter, reader TaskSummaryReader, revalidate bool) {
+// runs and versions may be nil; the cells then carry no dag_version_number.
+func registerUISummaries(r gin.IRouter, reader TaskSummaryReader, runs DagRunRepository, versions DagVersionLister, revalidate bool) {
 	if reader == nil {
 		return
 	}
-	r.GET("/ui/grid/ti_summaries/:dag_id", RequirePermission("read", "task_instance"), tiSummariesHandler(reader, revalidate))
+	r.GET("/ui/grid/ti_summaries/:dag_id", RequirePermission("read", "task_instance"), tiSummariesHandler(reader, runs, versions, revalidate))
 }
 
 // FNV-1a 64-bit parameters, inlined so the fingerprint hashes without
