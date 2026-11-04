@@ -10,7 +10,7 @@ description: "ADR 0103: ExternalTaskSensor and TriggerDagRunOperator compile to 
 **Accepted:** 2026-11-04 (proposed and accepted the same day by the project owner)
 **Amends:** ADR 0016 (deferrable tasks, a conscious non-goal) for these operators only: their wait is built in, so honoring `deferrable=True` runs no user code.
 **Relates:** ADR 0040 (Airflow operator support), ADR 0043 (TaskGroup), ADR 0048 (no user code in the control plane), ADR 0051 (orchestration vs execution state machines), ADR 0064 (branching and skip)
-**Issues:** #2340 (this ADR), #2336 (compile-time refusal until this ships), #2338 (TaskGroup)
+**Issues:** #2340 (this ADR), #2336 (compile-time refusal until this ships), #2338 (TaskGroup), #2342 to #2345 (phases)
 
 ## Context
 
@@ -139,6 +139,29 @@ Take **B**.
 7. **Lite gets it for free.** The scheduler is the same on Lite, and the
    design needs no pod, so both types work there unchanged.
 
+8. **Time waits follow the same pattern** (added 2026-11-04, accepted by the
+   project owner). The standard time sensors compile to `type: time_wait`
+   and never start a pod:
+
+   | Sensor | Captured | Target time |
+   | --- | --- | --- |
+   | `TimeDeltaSensor(delta=...)` | `delta` in seconds | data interval end plus `delta` |
+   | `DateTimeSensor(target_time=...)` | a literal datetime | that instant |
+   | `TimeSensor(target_time=...)` | a time of day | its next occurrence in the DAG's timezone |
+   | `WaitSensor(time_to_wait=...)` | seconds | task start plus the wait |
+
+   When the task's dependencies are met, the scheduler computes the target
+   once, defers the task with `reschedule_at` set to it, and marks it
+   `success` on the first tick past it: one wake, no polling, no try
+   consumed. A target beyond `timeout` fails the task at once. The `...Async`
+   variants and `deferrable=True` take the same path. A `target_time`
+   containing Jinja is refused at compile, with a message suggesting
+   `TimeDeltaSensor`, for the reason given in item 1. Sensors that wait on
+   an external system (S3, BigQuery, HTTP and the like) are **not** in this
+   set: their triggers are provider code that makes network calls with the
+   author's credentials, so they keep running in the pod, in `mode="reschedule"`
+   for long waits, and ADR 0016 still applies to them.
+
 ## Consequences
 
 - A cross-DAG wait costs one indexed query per tick for all waiters and no
@@ -165,7 +188,8 @@ Take **B**.
 2. `trigger_dag_run` for `TriggerDagRunOperator`, including
    `wait_for_completion`.
 3. `ExternalTaskMarker` and clear propagation; `/ui/dependencies`.
-4. After #2338: `external_task_group_id`. After ADR 0064: `soft_fail`.
+4. Time waits (item 8), after phase 1, in #2345.
+5. After #2338: `external_task_group_id`. After ADR 0064: `soft_fail`.
 
 ## Alternatives rejected
 

@@ -295,7 +295,7 @@ Capabilities that need scheduler/control-plane work are rejected loudly rather
 than half-running:
 
 - **Dynamic task mapping** — [#376](https://github.com/dexadata/dexaflow/issues/376).
-- **Branching** — [#377](https://github.com/dexadata/dexaflow/issues/377).
+- **Branching**: planned in [#787](https://github.com/dexadata/dexaflow/issues/787) ([ADR 0064](/project/adrs/0064-branching-and-skip/)).
 
 ### Operators that need the Airflow metadata database
 
@@ -310,8 +310,12 @@ so these compile today but **fail at run time**, on their first attempt:
 | `TriggerDagRunOperator` | a new run of another DAG, created by the scheduler | `DagRunTriggerException` |
 | `LatestOnlyOperator` | the DAG object and skip support for its downstream | `Operator <Task(LatestOnlyOperator): ...> has not been assigned to a Dag yet` |
 
-Cross-DAG dependencies are not supported yet. Until they are, run the dependent
-work in the same DAG, or wait on the upstream DAG's output (a file, a table, an
+Cross-DAG dependencies are not supported yet; they are planned as waits the
+scheduler evaluates itself, with no pod
+([ADR 0103](/project/adrs/0103-cross-dag-dependencies-in-the-scheduler/),
+[#2340](https://github.com/dexadata/dexaflow/issues/2340)), and
+`LatestOnlyOperator` in [#2348](https://github.com/dexadata/dexaflow/issues/2348).
+Until then, run the dependent work in the same DAG, or wait on the upstream DAG's output (a file, a table, an
 API) with a sensor that checks it, such as `S3KeySensor` or `SqlSensor` with
 `mode="reschedule"`.
 

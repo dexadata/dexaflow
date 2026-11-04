@@ -288,57 +288,114 @@ How it works, and the Phase-A limits:
 
 ### Not supported — `dexaflow compile` rejects these
 
-{{% alert title="If your DAG uses any of these, compile fails — by design" color="danger" %}}
-The contract is **loud rejection, not silent mistranslation**: every
-"skipped" branch would otherwise actually execute at runtime, so a
-DAG that imports a sensor or interpolates a Jinja template is
-refused at compile with a clear error naming the construct
-([#225](https://github.com/dexadata/dexaflow/issues/225)).
+{{% alert title="If your DAG uses any of these, it does not run on Dexaflow yet" color="danger" %}}
+The contract is **loud rejection, not silent mistranslation**: a construct
+Dexaflow cannot honor is refused at compile with an error naming it, rather
+than run with different semantics
+([#225](https://github.com/dexadata/dexaflow/issues/225)). The few exceptions,
+constructs that still compile and fail or are ignored later, are listed
+separately below and are being turned into compile errors.
 {{% /alert %}}
 
-The unsupported set, with the things Airflow users most often expect to
-"just work" called out first:
+Each entry names the workaround and, where support is planned, the tracking
+issue.
 
-- **Deferrable operators / sensors** — anything with `deferrable=True` (it suspends
-  the task onto a *trigger*) is not supported yet: Dexaflow has no triggerer (ADR
-  0040 Phase C). It fails at runtime with a clear message. Pass `deferrable=False`
-  — the operator runs synchronously in the pod (poke-style).
-- **Jinja templating** in `@task` — `{{ ds }}`, `{{ ti }}`, `{{ var.value.x }}`,
-  every `templates_dict=` knob. The control plane never re-parses
-  Python and the templating step is intentionally not implemented.
-  Workaround: build the values inside the `@task` from `airflow.sdk`
-  context.
-- **Branching** (`BranchPythonOperator`, `@task.branch`) and
-  **short-circuit** (`@task.short_circuit`, `ShortCircuitOperator`) —
-  refused for now: the current scheduler does not model
-  skipped-vs-executed downstream paths. On the backlog if
-  user demand justifies the scheduler change.
-- **Virtualenv operators** (`PythonVirtualenvOperator`,
-  `@task.virtualenv`) — refused because each DAG already ships as its
-  own image with its own dependencies; spinning up a venv at runtime
-  is the problem Dexaflow's one-image-per-DAG model already solved.
-- **Dynamic task mapping** (`.expand` / `.partial`) — refused. Static
-  fan-**in** (collecting a list of task calls into a downstream task) works
-  today; what does **not** work is *dynamic* fan-**out** — expanding one task
-  into N parallel instances at runtime from an upstream result. That is
-  tracked separately.
-- **Task groups** (`TaskGroup`, `@task_group`) are refused at compile. Flatten
-  the group into plain tasks and prefix the ids by hand (for example
-  `extract_load` for `extract.load`). The dbt integration's own `dbt_group()` is
-  the one group construct that works
-  ([ADR 0043](/project/adrs/0043-taskgroup-split-fused-execution/)).
+**Control flow and structure**
+
+- **Branching** (`BranchPythonOperator`, `@task.branch`) and **short-circuit**
+  (`@task.short_circuit`, `ShortCircuitOperator`): refused; the scheduler does
+  not model skipped downstream paths yet. Planned in
+  [#787](https://github.com/dexadata/dexaflow/issues/787)
+  ([ADR 0064](/project/adrs/0064-branching-and-skip/)).
+- **A task skipping itself** (`raise AirflowSkipException`): the task fails
+  instead of ending `skipped`. Planned with branching
+  ([#2347](https://github.com/dexadata/dexaflow/issues/2347)).
+- **Trigger rules** other than `all_success`, `all_failed`, `all_done`,
+  `one_success`, `one_failed` (for example `none_failed_min_one_success`, the
+  usual join after a branch): refused. Planned in
+  [#2346](https://github.com/dexadata/dexaflow/issues/2346).
+- **Task groups** (`TaskGroup`, `@task_group`): refused. Flatten the group into
+  plain tasks and prefix the ids by hand (for example `extract_load` for
+  `extract.load`). The dbt integration's own `dbt_group()` is the one group
+  construct that works. Planned as a grouping and UI construct, with no change
+  to execution, in [#2338](https://github.com/dexadata/dexaflow/issues/2338).
+- **Dynamic task mapping** (`.expand` / `.partial`): refused. Static fan-in
+  (collecting a list of task calls into a downstream task) works; dynamic
+  fan-out, expanding one task into N instances at run time, does not.
+- **Setup and teardown tasks** (`as_setup()`, `as_teardown()`): not supported;
+  express the cleanup as a downstream task with `trigger_rule="all_done"`.
+- **`chain()`, `cross_downstream()` and edge `Label`s**: not available yet; use
+  `>>` and lists (`a >> [b, c] >> d`). Planned in
+  [#2337](https://github.com/dexadata/dexaflow/issues/2337).
+- **`EmptyOperator`**: refused today. Use a trivial `@task` as the start or end
+  marker. Planned in [#2337](https://github.com/dexadata/dexaflow/issues/2337).
+
+**Dependencies between DAGs and scheduling**
+
 - **Cross-DAG operators** (`ExternalTaskSensor`, `ExternalTaskMarker`,
-  `TriggerDagRunOperator`) and `LatestOnlyOperator` compile but fail at run time:
-  they need the Airflow metadata database, which a task pod does not have. See
+  `TriggerDagRunOperator`) and `LatestOnlyOperator`: compile today but fail at
+  run time, because they need the Airflow metadata database, which a task pod
+  does not have. See
   [Operators that need the Airflow metadata database](/author-dags/operators-sensors/#operators-that-need-the-airflow-metadata-database).
-- **KubernetesPodOperator** — refused; the pod is the *runtime
-  substrate* for every Dexaflow task already, so wrapping a user task
-  in another pod is redundant and adds an isolation hole.
-- **Datasets / Assets triggers** — not implemented yet; the asset
-  graph is a 3.x Airflow feature on the backlog.
-- **Per-task `default_args` in `dag.py`** are ignored at the parser
-  level — use `dexaflow.yaml`'s `tasks.<id>:` override block instead,
-  which is checked at compile time.
+  Planned as waits the scheduler evaluates itself, with no pod
+  ([ADR 0103](/project/adrs/0103-cross-dag-dependencies-in-the-scheduler/),
+  [#2340](https://github.com/dexadata/dexaflow/issues/2340),
+  [#2348](https://github.com/dexadata/dexaflow/issues/2348)).
+- **Assets** (`schedule=[Asset(...)]`, `outlets=`): not implemented; the
+  import fails at compile. A design is tracked in
+  [#2352](https://github.com/dexadata/dexaflow/issues/2352).
+- **Timetables** (`CronTriggerTimetable`, `EventsTimetable`, custom ones):
+  refused. Use a cron string or a preset such as `@daily`.
+  `CronTriggerTimetable` is planned in
+  [#2351](https://github.com/dexadata/dexaflow/issues/2351).
+- **`depends_on_past`, `wait_for_downstream` and `priority_weight`**: accepted
+  but **ignored** today (the run proceeds as if they were not set), which is
+  about to become a compile error
+  ([#2336](https://github.com/dexadata/dexaflow/issues/2336)).
+  `depends_on_past` and `wait_for_downstream` are planned in
+  [#2350](https://github.com/dexadata/dexaflow/issues/2350).
+
+**Operators and sensors**
+
+- **Deferrable operators and sensors** (`deferrable=True`): refused at compile;
+  Dexaflow has no triggerer
+  ([ADR 0016](/project/adrs/0016-deferrable-tasks/)). Pass `deferrable=False`
+  for a synchronous poke, or use `mode="reschedule"` on a sensor for a long
+  wait.
+- **Time sensors** (`TimeDeltaSensor`, `DateTimeSensor`, `TimeSensor`,
+  `WaitSensor`): an operator argument that is a `timedelta` or a `datetime`
+  (other than `retry_delay` and `execution_timeout`) is refused, because the
+  value cannot be carried in `dag.json`, so `TimeDeltaSensor` does not
+  compile; the others run as ordinary sensors when their arguments are plain
+  values, one pod per poke. Planned as scheduler waits
+  with no pod in [#2345](https://github.com/dexadata/dexaflow/issues/2345).
+- **`PythonSensor(python_callable=...)` and `@task.sensor`**: refused. Poll the
+  condition inside a `@task`, or use a provider sensor in `mode="reschedule"`.
+  Planned in [#2339](https://github.com/dexadata/dexaflow/issues/2339).
+- **`@task.bash`**: not available yet; use `BashOperator`. Planned in
+  [#2337](https://github.com/dexadata/dexaflow/issues/2337).
+- **Virtualenv operators** (`PythonVirtualenvOperator`, `@task.virtualenv`,
+  `@task.external_python`): refused, by design. Each DAG already ships as its
+  own image with its own dependencies.
+- **KubernetesPodOperator**: refused, by design. Every Dexaflow task already
+  runs in its own pod, and an author-controlled pod spec is the escalation
+  surface the pod-per-task model exists to contain.
+
+**Python authoring**
+
+- **`from airflow.sdk import Variable` at module level**: the import fails at
+  compile. Import and call `Variable.get` inside the task. Planned in
+  [#2337](https://github.com/dexadata/dexaflow/issues/2337); calling
+  `Variable.get` at module level will stay an error.
+- **`templates_dict=` on `@task`/`PythonOperator`**: not captured. Build the
+  values inside the task from the `airflow.sdk` context. Jinja in an
+  operator's `template_fields` (for example `bash_command="echo {{ ds }}"`) is
+  rendered in the pod
+  ([ADR 0084](/project/adrs/0084-template-render-errors-fail-the-task/)).
+- **`default_args` in `dag.py`**: only `retries`, `retry_delay`,
+  `execution_timeout`, `pool` and `pool_slots` are read from it. Set everything else per task, or in
+  `dexaflow.yaml`'s `tasks.<id>:` override block, which is checked at compile
+  time.
 
 ### Run parameters and their schemas
 
