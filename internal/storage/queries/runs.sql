@@ -25,6 +25,16 @@ FROM dag_runs r
 LEFT JOIN dag_versions v ON v.id = r.dag_version_id
 WHERE r.tenant_id = $1 AND r.dag_id = $2 AND r.run_id = $3;
 
+-- name: DagRunVersionLabels :many
+-- The version label each listed run is pinned to, in one query. The grid's
+-- ti_summaries stream (polled every few seconds by every open grid) needs it
+-- for every run it shows; a GetDagRun per run made that one round trip per
+-- column. See GetDagRunWithVersion for the LEFT JOIN.
+SELECT r.run_id, v.version AS dag_version_label
+FROM dag_runs r
+LEFT JOIN dag_versions v ON v.id = r.dag_version_id
+WHERE r.tenant_id = $1 AND r.dag_id = $2 AND r.run_id = ANY(sqlc.arg(run_ids)::text[]);
+
 -- name: ListDagRunsByDagWithVersion :many
 -- See GetDagRunWithVersion. One join rather than a lookup per row.
 SELECT r.*, v.version AS dag_version_label

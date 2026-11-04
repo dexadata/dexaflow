@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -139,6 +141,74 @@ func TestGridRunsCarryPinnedDagVersion(t *testing.T) {
 		}
 		if len(col.DagVersions) != 1 || col.DagVersions[0].VersionNumber != n {
 			t.Errorf("run %s dag_versions = %+v, want version %d", col.RunID, col.DagVersions, n)
+		}
+	}
+}
+
+// batchRunRepo is a run repository that reads version labels in one call, as
+// the storage repository does. getCalls counts per-run reads, which the grid
+// stream must not make when the batch read exists.
+type batchRunRepo struct {
+	fakeRunRepo
+	labels     map[string]string
+	err        error
+	batchCalls int
+	getCalls   int
+}
+
+func (b *batchRunRepo) DagRunVersionLabels(_ context.Context, _, _ string, runIDs []string) (map[string]string, error) {
+	b.batchCalls++
+	if b.err != nil {
+		return nil, b.err
+	}
+	out := map[string]string{}
+	for _, id := range runIDs {
+		if l, ok := b.labels[id]; ok {
+			out[id] = l
+		}
+	}
+	return out, nil
+}
+
+func (b *batchRunRepo) GetDagRun(ctx context.Context, tenant, dagID, runID string) (domain.DagRun, error) {
+	b.getCalls++
+	return b.fakeRunRepo.GetDagRun(ctx, tenant, dagID, runID)
+}
+
+// TestTISummariesReadRunVersionsInOneQuery keeps the polled grid stream at one
+// label read per request, not one run read per column, with the same numbers
+// as the per-run path: pinned, newest when the label is gone or empty, null for
+// a run that does not exist, and null for every run when the read fails.
+func TestTISummariesReadRunVersionsInOneQuery(t *testing.T) {
+	reader := &fakeTaskSummary{tis: []domain.TaskInstance{
+		{RunID: "old", TaskID: "x", State: domain.TaskStateSuccess},
+		{RunID: "new", TaskID: "x", State: domain.TaskStateSuccess},
+		{RunID: "gone", TaskID: "x", State: domain.TaskStateSuccess},
+		{RunID: "nolabel", TaskID: "x", State: domain.TaskStateSuccess},
+		{RunID: "missing", TaskID: "x", State: domain.TaskStateSuccess},
+	}}
+	versions := &fakeVersionLister{versions: []domain.DagVersion{
+		{ID: "b", VersionNumber: 2, Version: "v2"},
+		{ID: "a", VersionNumber: 1, Version: "v1"},
+	}}
+	runs := &batchRunRepo{labels: map[string]string{"old": "v1", "new": "v2", "gone": "pruned", "nolabel": ""}}
+	got := summaryVersions(t, versionedSummariesServer(reader, runs, versions), "run_ids=old,new,gone,nolabel,missing")
+	for run, n := range map[string]int{"old": 1, "new": 2, "gone": 2, "nolabel": 2} {
+		if got[run] == nil || *got[run] != n {
+			t.Errorf("run %s dag_version_number = %v, want %d", run, got[run], n)
+		}
+	}
+	if got["missing"] != nil {
+		t.Errorf("missing run dag_version_number = %d, want null", *got["missing"])
+	}
+	if runs.batchCalls != 1 || runs.getCalls != 0 {
+		t.Errorf("label reads: batch %d, per run %d; want 1 and 0", runs.batchCalls, runs.getCalls)
+	}
+
+	failing := &batchRunRepo{err: errors.New("db down")}
+	for run, n := range summaryVersions(t, versionedSummariesServer(reader, failing, versions), "run_ids=old,new") {
+		if n != nil {
+			t.Errorf("run %s with a failed label read = %d, want null", run, *n)
 		}
 	}
 }

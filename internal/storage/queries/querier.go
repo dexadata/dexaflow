@@ -161,6 +161,11 @@ type Querier interface {
 	// answer (a no-op for a scheduled slot, a conflict for a manual run id) instead
 	// of a refusal, and nothing is written (createRunWithinDailyLimit).
 	DagRunExistsByDagID(ctx context.Context, arg DagRunExistsByDagIDParams) (bool, error)
+	// The version label each listed run is pinned to, in one query. The grid's
+	// ti_summaries stream (polled every few seconds by every open grid) needs it
+	// for every run it shows; a GetDagRun per run made that one round trip per
+	// column. See GetDagRunWithVersion for the LEFT JOIN.
+	DagRunVersionLabels(ctx context.Context, arg DagRunVersionLabelsParams) ([]DagRunVersionLabelsRow, error)
 	// Ends a sign-in once its outcome was answered: redeemed or denied. The
 	// poll answers that outcome only when this deleted the row, so a sign-in is
 	// answered once even if two polls read it.
