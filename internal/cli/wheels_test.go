@@ -191,7 +191,9 @@ func pushRuntimeBaseWithEnv(t *testing.T, ref string, env []string, platforms ..
 // host and the uv directory.
 func wheelProject(t *testing.T, d *cliDeps, deps string) (dir, host, uv string) {
 	t.Helper()
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	t.Setenv("HOME", cache) // os.UserCacheDir on macOS
 	dir, host, _ = splitProject(t, "")
 	pushRuntimeBaseIndex(t, host+"/runtime:py3.11", "linux/amd64")
 	editYAML(t, dir, "runtime:py3.12", "runtime:py3.11")
