@@ -632,6 +632,48 @@ func (q *Queries) DagRunExistsByDagID(ctx context.Context, arg DagRunExistsByDag
 	return run_exists, err
 }
 
+const dagRunVersionLabels = `-- name: DagRunVersionLabels :many
+SELECT r.run_id, v.version AS dag_version_label
+FROM dag_runs r
+LEFT JOIN dag_versions v ON v.id = r.dag_version_id
+WHERE r.tenant_id = $1 AND r.dag_id = $2 AND r.run_id = ANY($3::text[])
+`
+
+type DagRunVersionLabelsParams struct {
+	TenantID pgtype.UUID `json:"tenant_id"`
+	DagID    pgtype.UUID `json:"dag_id"`
+	RunIds   []string    `json:"run_ids"`
+}
+
+type DagRunVersionLabelsRow struct {
+	RunID           string  `json:"run_id"`
+	DagVersionLabel *string `json:"dag_version_label"`
+}
+
+// The version label each listed run is pinned to, in one query. The grid's
+// ti_summaries stream (polled every few seconds by every open grid) needs it
+// for every run it shows; a GetDagRun per run made that one round trip per
+// column. See GetDagRunWithVersion for the LEFT JOIN.
+func (q *Queries) DagRunVersionLabels(ctx context.Context, arg DagRunVersionLabelsParams) ([]DagRunVersionLabelsRow, error) {
+	rows, err := q.db.Query(ctx, dagRunVersionLabels, arg.TenantID, arg.DagID, arg.RunIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DagRunVersionLabelsRow{}
+	for rows.Next() {
+		var i DagRunVersionLabelsRow
+		if err := rows.Scan(&i.RunID, &i.DagVersionLabel); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteDagRun = `-- name: DeleteDagRun :execrows
 WITH invalidate AS (
   UPDATE dags d SET next_run_at = NULL, schedule_epoch = d.schedule_epoch + 1

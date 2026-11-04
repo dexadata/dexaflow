@@ -200,11 +200,19 @@ func tiSummariesHandler(reader TaskSummaryReader, runs DagRunRepository, version
 	}
 }
 
+// RunVersionLabeler reads the version label of many runs of one DAG in one
+// query. The storage repository implements it; a DagRunRepository without it
+// falls back to one GetDagRun per run.
+type RunVersionLabeler interface {
+	DagRunVersionLabels(ctx context.Context, tenant, dagID string, runIDs []string) (map[string]string, error)
+}
+
 // runVersionNumbers resolves the version number each requested run that has
 // task instances is pinned to, by label, falling back to the DAG's newest
 // version when the label no longer resolves (as runDagVersion does). It lists
-// the DAG's versions once and reads each run once. A run that cannot be read,
-// or a DAG with no versions, maps to nil, which keeps the old null.
+// the DAG's versions once and reads the runs' labels in one query when the
+// repository can (the grid polls this stream). A run that cannot be read, or a
+// DAG with no versions, maps to nil, which keeps the old null.
 func runVersionNumbers(c *gin.Context, runs DagRunRepository, versions DagVersionLister, runIDs []string, byRun map[string]map[string]*taskAgg) map[string]*int {
 	out := make(map[string]*int, len(runIDs))
 	if runs == nil || versions == nil || len(byRun) == 0 {
@@ -214,22 +222,44 @@ func runVersionNumbers(c *gin.Context, runs DagRunRepository, versions DagVersio
 	if p.newest == nil {
 		return out
 	}
+	wanted := make([]string, 0, len(runIDs))
 	for _, runID := range runIDs {
-		if len(byRun[runID]) == 0 {
-			continue
+		if len(byRun[runID]) > 0 {
+			wanted = append(wanted, runID)
 		}
-		run, err := runs.GetDagRun(c.Request.Context(), tenantOf(c), p.dagID, runID)
-		if err != nil {
-			out[runID] = nil
+	}
+	labels := runLabels(c, runs, p.dagID, wanted)
+	for _, runID := range wanted {
+		label, found := labels[runID]
+		if !found {
 			continue
 		}
 		n := p.newest.VersionNumber
-		if v, ok := p.byLabel[run.Version]; ok && run.Version != "" {
+		if v, hit := p.byLabel[label]; hit && label != "" {
 			n = v.VersionNumber
 		}
 		out[runID] = &n
 	}
 	return out
+}
+
+// runLabels returns the version label of each run in runIDs that exists. A
+// failed batch read returns none, so every cell keeps the null.
+func runLabels(c *gin.Context, runs DagRunRepository, dagID string, runIDs []string) map[string]string {
+	if l, isBatch := runs.(RunVersionLabeler); isBatch {
+		labels, err := l.DagRunVersionLabels(c.Request.Context(), tenantOf(c), dagID, runIDs)
+		if err != nil {
+			return nil
+		}
+		return labels
+	}
+	labels := make(map[string]string, len(runIDs))
+	for _, runID := range runIDs {
+		if run, err := runs.GetDagRun(c.Request.Context(), tenantOf(c), dagID, runID); err == nil {
+			labels[runID] = run.Version
+		}
+	}
+	return labels
 }
 
 // versionFingerprint hashes the version number served for each run, in request

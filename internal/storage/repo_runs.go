@@ -155,6 +155,32 @@ func (r *Repository) GetDagRun(ctx context.Context, tenant, dagID, runID string)
 	return mapDagRunWithVersion(run, dagID), nil
 }
 
+// DagRunVersionLabels returns the label of the version each of runIDs is
+// pinned to, keyed by run id, in one query. A run id with no run is absent; a
+// run whose version row is gone maps to "".
+func (r *Repository) DagRunVersionLabels(ctx context.Context, tenant, dagID string, runIDs []string) (map[string]string, error) {
+	if len(runIDs) == 0 {
+		return map[string]string{}, nil
+	}
+	dag, err := r.resolveDag(ctx, tenant, dagID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.q.DagRunVersionLabels(ctx, queries.DagRunVersionLabelsParams{TenantID: dag.TenantID, DagID: dag.ID, RunIds: runIDs})
+	if err != nil {
+		return nil, fmt.Errorf("dag run version labels: %w", err)
+	}
+	out := make(map[string]string, len(rows))
+	for _, row := range rows {
+		label := ""
+		if row.DagVersionLabel != nil {
+			label = *row.DagVersionLabel
+		}
+		out[row.RunID] = label
+	}
+	return out, nil
+}
+
 // DeleteDagRun removes one run (and, by cascade, its task instances and XCom).
 // It returns domain.ErrNotFound when no run with that id exists for the DAG, so
 // the API can answer 404 rather than a silent 204 for a bad id.
