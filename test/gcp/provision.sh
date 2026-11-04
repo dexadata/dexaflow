@@ -265,8 +265,12 @@ flags_known_to_gcloud() { # <subcommand words as one string> <argv...>
     echo "  ..   skipped: no gcloud on PATH, so '$sub' flags were not checked against its help"
     return 0
   fi
+  # TERM=dumb because gcloud styles its help whenever TERM names a capable
+  # terminal, even into a pipe: the flag then reads ESC[1m--release-channel,
+  # the "m" before it fails the word boundary below, and a documented flag is
+  # reported as missing. That stopped a release cut run from a macOS Terminal.
   # shellcheck disable=SC2086 # $sub is several words (a gcloud subcommand path)
-  help="$(gcloud $sub --help 2>/dev/null)" || true
+  help="$(TERM=dumb gcloud $sub --help 2>/dev/null)" || true
   if [ -z "$help" ]; then
     echo "  ..   skipped: 'gcloud $sub --help' produced nothing"
     return 0
@@ -382,6 +386,22 @@ self_test() {
   hours_of abch >/dev/null 2>&1 && { echo "  FAIL a non-numeric TTL is accepted as 0"; fail=1; } || echo "  ok   a non-numeric TTL is refused rather than silently read as zero"
 
   argv_self_test
+
+  # gcloud styles its help when TERM names a capable terminal, even into a
+  # pipe, and a styled flag fails the word boundary. A fake gcloud that does
+  # the same proves the check reads the plain help whatever TERM the caller
+  # has; without TERM=dumb this reports --release-channel as missing.
+  local fake; fake="$(mktemp -d)"
+  cat >"$fake/gcloud" <<'FAKE'
+#!/usr/bin/env bash
+[ "$1" = version ] && { echo "Google Cloud SDK 0.0.0 (fake)"; exit 0; }
+if [ "${TERM:-dumb}" = dumb ]; then echo "  --release-channel=CHANNEL"; else printf '  \033[1m--release-channel\033[m=CHANNEL\n'; fi
+FAKE
+  chmod +x "$fake/gcloud"
+  PATH="$fake:$PATH" TERM=xterm-256color flags_known_to_gcloud "container clusters create" --release-channel regular >/dev/null \
+    && echo "  ok   a styled help (TERM=xterm-256color) still documents --release-channel" \
+    || { echo "  FAIL the flag check read styled help and missed a documented flag"; fail=1; }
+  rm -rf "$fake"
 
   # seed_nodes decides how many nodes exist while the pool still has no expiry,
   # so it sizes the only window a killed script cannot protect. Cases rather
