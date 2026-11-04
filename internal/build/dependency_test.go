@@ -149,7 +149,7 @@ func depsLayer(t *testing.T, host string, inst Installer, platforms ...string) D
 // dropped, each with the packed tree appended and the image config of the
 // generated Dockerfile.
 func TestDependencyLayerPushesTheBaseWithTheInstalledTree(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	isolateUserCache(t)
 	host := testRegistry(t)
 	inst := &fakeInstaller{}
 	d := depsLayer(t, host, inst, "linux/amd64", "linux/arm64", "linux/s390x")
@@ -202,7 +202,7 @@ func TestDependencyLayerPushesTheBaseWithTheInstalledTree(t *testing.T) {
 // The same installed tree on the same base makes the same image, so a
 // dependency image can be rebuilt byte for byte.
 func TestDependencyLayerIsDeterministic(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	isolateUserCache(t)
 	host := testRegistry(t)
 	d := depsLayer(t, host, &fakeInstaller{}, "linux/amd64")
 	digests := make([]string, 0, 2)
@@ -232,7 +232,7 @@ func TestSetEnvReplacesAVariable(t *testing.T) {
 // A platform the base does not serve, and an installer failure, fail the
 // push before anything is written.
 func TestDependencyLayerFailures(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	isolateUserCache(t)
 	host := testRegistry(t)
 	d := depsLayer(t, host, &fakeInstaller{}, "linux/amd64")
 	if err := d.Push(context.Background(), host+"/dags/etl:deps-x", []string{"linux/arm64"}); err == nil || !strings.Contains(err.Error(), "linux/arm64") {
@@ -253,7 +253,7 @@ func TestDependencyLayerFailures(t *testing.T) {
 // builds the dependency image from wheels, then appends the code: no daemon
 // runs, and the builder line names the installer.
 func TestSelectBuildsTheDependencyImageFromWheels(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	isolateUserCache(t)
 	host, split := splitFixture(t)
 	d := depsLayer(t, host, &fakeInstaller{}, "linux/amd64")
 	split.Wheels = &d
@@ -376,7 +376,7 @@ func TestDependencyFilesNormalizeScripts(t *testing.T) {
 // the dependency image under its own key (the format the daemon's builds
 // use), the output says why, and the code is appended to it.
 func TestTheDaemonBuildsTheDependencyImageWhenTheWheelsFail(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	isolateUserCache(t)
 	host, split := splitFixture(t)
 	d := depsLayer(t, host, &fakeInstaller{fail: errors.New("uv: connection refused")}, "linux/amd64")
 	split.Wheels, split.DaemonDepsImage = &d, host+"/dags/etl:deps-daemon"
@@ -410,7 +410,7 @@ func TestTheDaemonBuildsTheDependencyImageWhenTheWheelsFail(t *testing.T) {
 // With no daemon to fall back on, or for dependencies the daemon's key
 // cannot cover (DaemonDepsImage empty), the wheel failure is the error.
 func TestTheWheelFailureStandsWithoutAFallback(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	isolateUserCache(t)
 	host, split := splitFixture(t)
 	d := depsLayer(t, host, &fakeInstaller{fail: errors.New("uv: connection refused")}, "linux/amd64")
 	split.Wheels = &d
@@ -448,7 +448,7 @@ func (m *missingOnce) Resolve(ctx context.Context, image string) (Pinned, error)
 // of the daemon's key, it is reused: no daemon runs, and the code is
 // appended to it.
 func TestAFailedWheelBuildReusesTheDaemonsDependencyImage(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	isolateUserCache(t)
 	host, split := splitFixture(t)
 	d := depsLayer(t, host, &fakeInstaller{fail: errors.New("uv: connection refused")}, "linux/amd64")
 	split.Wheels, split.DaemonDepsImage = &d, host+"/dags/etl:deps-daemon"
@@ -473,7 +473,7 @@ func TestAFailedWheelBuildReusesTheDaemonsDependencyImage(t *testing.T) {
 // A canceled build does not start the fallback: the cancellation is the
 // error.
 func TestACanceledBuildDoesNotFallBack(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	isolateUserCache(t)
 	host, split := splitFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

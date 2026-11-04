@@ -131,6 +131,7 @@ func TestSelectBuildsTheDependencyImageRemotely(t *testing.T) {
 // When the wheels fail after the path was chosen, the remote builder takes
 // the daemon's place for the dependency image of the daemon's key.
 func TestCodeLayerFallsBackToTheRemoteBuilderAfterTheWheels(t *testing.T) {
+	emptyDockerConfig(t, "")
 	host, split := splitFixture(t)
 	split.DaemonDepsImage = host + "/dags/etl:deps-daemon"
 	t.Setenv("PATH", t.TempDir()) // no daemon tool

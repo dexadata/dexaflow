@@ -375,7 +375,7 @@ func TestResolveUsesTheCloudSession(t *testing.T) {
 
 // The dependency layer pushes with its Registry's credentials.
 func TestDependencyLayerPushesWithItsRegistry(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	isolateUserCache(t)
 	withDockerConfig(t, "")
 	dst := basicAuthRegistry(t, "AWS", "pw")
 	cloud := fakeCloud{host: dst, user: "AWS", pass: "pw"}

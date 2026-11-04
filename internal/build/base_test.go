@@ -167,7 +167,7 @@ func countingRegistry(t *testing.T) (host string, blobReads *atomic.Int64) {
 // dpkg status, and the distributions in site-packages with the whiteouts of
 // later layers applied, for the platform asked from an index.
 func TestRegistryReadsTheRuntimeBase(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	isolateUserCache(t)
 	host := testRegistry(t)
 	pinned := pushRuntimeBase(t, host+"/runtime:py3.11", "linux/amd64", "linux/arm64")
 	got, err := Registry{}.Base(context.Background(), pinned, "linux/arm64")
@@ -192,7 +192,7 @@ func TestRegistryReadsTheRuntimeBase(t *testing.T) {
 
 // An opaque directory in a later layer hides what earlier layers put in it.
 func TestRegistryAppliesAnOpaqueSitePackages(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	isolateUserCache(t)
 	host := testRegistry(t)
 	img := baseImage(t, []string{"PYTHON_VERSION=3.11.9"}, append(runtimeLayers(t),
 		tarLayer(t, [2]string{sitePackages311 + ".wh..wh..opq", ""}, [2]string{sitePackages311 + "only-2.0.dist-info/RECORD", "x"}))...)
@@ -219,7 +219,7 @@ func TestRegistryAppliesAnOpaqueSitePackages(t *testing.T) {
 // An image whose config names no PYTHON_VERSION is not a runtime base: its
 // layers are not read.
 func TestRegistryReadsNoLayerOfAnImageThatIsNotARuntimeBase(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	isolateUserCache(t)
 	host, reads := countingRegistry(t)
 	img := baseImage(t, []string{"PATH=/bin"}, runtimeLayers(t)...)
 	r, err := name.ParseReference(host + "/other:1")
@@ -246,7 +246,7 @@ func TestRegistryReadsNoLayerOfAnImageThatIsNotARuntimeBase(t *testing.T) {
 // A second read of the same base platform image comes from the user cache
 // and downloads no blob.
 func TestRegistryCachesTheBaseListing(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	isolateUserCache(t)
 	host, reads := countingRegistry(t)
 	pinned := pushRuntimeBase(t, host+"/runtime:py3.11", "linux/amd64")
 	first, err := Registry{}.Base(context.Background(), pinned, "linux/amd64")
@@ -271,7 +271,7 @@ func TestRegistryCachesTheBaseListing(t *testing.T) {
 
 // A platform the index does not list is an error naming it.
 func TestRegistryBaseNamesAMissingPlatform(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	isolateUserCache(t)
 	host := testRegistry(t)
 	pinned := pushRuntimeBase(t, host+"/runtime:py3.11", "linux/amd64")
 	if _, err := (Registry{}).Base(context.Background(), pinned, "linux/arm64"); err == nil || !strings.Contains(err.Error(), "linux/arm64") {
@@ -295,7 +295,7 @@ func TestParseGlibc(t *testing.T) {
 
 // A single base image is read only for the platform its config names.
 func TestRegistryBaseChecksThePlatformOfASingleImage(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	isolateUserCache(t)
 	host := testRegistry(t)
 	r, err := name.ParseReference(host + "/runtime:one")
 	if err != nil {
@@ -353,7 +353,7 @@ func pushBase(t *testing.T, ref string, img v1.Image) Pinned {
 // is not there, and a variable that changes nothing pip installs is not
 // recorded.
 func TestRegistryRecordsThePipConfigurationOfTheBase(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	isolateUserCache(t)
 	host := testRegistry(t)
 	cases := map[string]struct {
 		env    []string
@@ -386,7 +386,7 @@ func TestRegistryRecordsThePipConfigurationOfTheBase(t *testing.T) {
 
 // A dpkg status a later layer deletes records no glibc.
 func TestRegistryHonorsAWhiteoutOfTheDpkgStatus(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	isolateUserCache(t)
 	host := testRegistry(t)
 	for name, wh := range map[string]string{"file": "var/lib/dpkg/.wh.status", "opaque": "var/lib/dpkg/.wh..wh..opq"} {
 		img := baseImage(t, []string{"PYTHON_VERSION=3.11.9"}, append(runtimeLayers(t), tarLayer(t, [2]string{wh, ""}))...)
@@ -402,7 +402,7 @@ func TestRegistryHonorsAWhiteoutOfTheDpkgStatus(t *testing.T) {
 
 // A PYTHON_VERSION that is not X.Y.Z makes no runtime base.
 func TestRegistryRefusesAMalformedPythonVersion(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	isolateUserCache(t)
 	host := testRegistry(t)
 	for i, v := range []string{"3.11", "3.11.9 --index-url x", "../3.11.9", "3.11.9rc1"} {
 		img := baseImage(t, []string{"PYTHON_VERSION=" + v}, runtimeLayers(t)...)
@@ -419,8 +419,7 @@ func TestRegistryRefusesAMalformedPythonVersion(t *testing.T) {
 // A cached listing is used only when it names the digest asked for and
 // holds nothing but name==version lines; otherwise the base is read again.
 func TestRegistryRereadsACachedListingItCannotTrust(t *testing.T) {
-	cache := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cache)
+	isolateUserCache(t)
 	host, reads := countingRegistry(t)
 	pinned := pushRuntimeBase(t, host+"/runtime:py3.11", "linux/amd64")
 	first, err := Registry{}.Base(context.Background(), pinned, "linux/amd64")
@@ -453,7 +452,7 @@ func TestRegistryRereadsACachedListingItCannotTrust(t *testing.T) {
 			t.Errorf("%s: a tampered cache was used (%d blob reads): %+v", name, reads.Load(), got)
 		}
 	}
-	if left, _ := filepath.Glob(filepath.Join(cache, "dexaflow", "base", "*.tmp*")); len(left) != 0 {
+	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(file), "*.tmp*")); len(left) != 0 {
 		t.Errorf("temporary cache files left: %v", left)
 	}
 }

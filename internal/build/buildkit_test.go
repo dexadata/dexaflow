@@ -189,6 +189,8 @@ func TestBuildKitReadyNamesWhatIsMissing(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "buildctl")); err != nil {
 		t.Fatal(err)
 	}
+	// Only the fakes: a real buildctl further down PATH would otherwise be found.
+	t.Setenv("PATH", dir)
 	if err := b.Ready(context.Background()); err == nil || !strings.Contains(err.Error(), "buildctl is not on PATH") || !strings.Contains(err.Error(), "github.com/moby/buildkit/releases") {
 		t.Errorf("Ready = %v, want it to say how to install buildctl", err)
 	}
