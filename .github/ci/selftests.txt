@@ -37,6 +37,7 @@ scripts/check-trivyignore-entries.sh
 scripts/check-workflow-pins.sh
 scripts/check-workflow-tag-runs.sh
 scripts/ci-heavy-gate.sh
+scripts/ci-install-playwright-deps.sh
 scripts/ci-local.sh
 scripts/codeql-alert-gate.sh
 scripts/coverage-gate.sh
