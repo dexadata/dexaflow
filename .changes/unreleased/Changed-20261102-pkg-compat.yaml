@@ -1,7 +1,0 @@
-kind: Changed
-body: |-
-  **Every Go package under `pkg/` now follows the public API compatibility rule**
-  (ADR 0099, #2176): no breaking change in a patch release, and a removal only
-  in a minor after a deprecation of one minor. The API compatibility check runs
-  `apidiff` on all of them, not only `pkg/client` and `pkg/dagspec`.
-time: 2026-11-02T03:45:00.000000000-03:00

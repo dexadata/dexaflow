@@ -6,6 +6,206 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Deactivate a user through the API.** `PATCH /api/v2/users/{user_id}` with
+  `{"is_active": false}` deactivates an account of the caller's tenant, and
+  `true` reactivates it; it needs `write:user` (admin). A deactivated user's
+  sessions and API tokens stop working at their next request, their token
+  renewal is refused and they cannot sign in. The change and a
+  `user.deactivate` or `user.activate` audit entry are written in one
+  transaction. An admin cannot deactivate their own account, and a user of
+  another tenant answers 404. Until now deactivation was a direct database
+  change (#960); changing roles and passwords through the API is #2229.
+- **`dexaflow init --dbt` scaffolds a DAG with an embedded dbt project.** It
+  writes the hybrid shape the dbt guide teaches: a `dag.py` with Python tasks
+  around `dbt_group("transform")`, a `dexaflow.yaml` that declares the group
+  and installs `dbt-core` and `dbt-duckdb`, and a small duckdb project with
+  no `profiles.yml`, so `dexaflow lite` runs it with no warehouse to set up
+  (#1002). The same project ships as `examples/dbt_hybrid` (#1003), and the
+  Python reference now documents the `dexaflow` authoring package with
+  `dbt_group` (#1004).
+- **`compile --build` names the base image it resolved.** With `base_image`
+  unset, the base depends on the CLI running the build: a release pins its
+  own versioned base, a development build takes the moving line. The build
+  now prints which one it took and why, or the file `base_image` came from
+  (#1255).
+- **`dexaflow build` checks the whole workspace first and has `--dry-run`.**
+  An invalid `dexaflow.yaml` in any project now fails the run before anything
+  is built, instead of after every project before it. `--dry-run` prints each
+  dag id with the image it would be built as and stops. A blank registry `url`
+  is now treated as no registry, as `deploy` already did (#1121).
+- **`pkg/admission`: the dispatch admission hook contract (ADR 0100).** The
+  public types of a hook that sees each task attempt after the server's own
+  checks and before its agent token is minted, and admits, changes, holds or
+  refuses it. The server already runs such hooks and counts their outcomes in
+  `dexaflow_dispatch_admission_total{outcome}`; the way to install one (the
+  webhook and its configuration, or an embedding server) follows in a later
+  release. (#2177)
+- **Admission webhook.** Set `execution.admission.webhook.url` (Helm
+  `execution.admission.webhook.url`) and every task attempt is sent to your
+  endpoint before it gets a credential or a pod. The endpoint admits it,
+  changes its node selector, tolerations, priority class, labels or
+  annotations, holds it, or refuses it with a reason the task shows. A broken
+  endpoint holds attempts (up to 15 minutes) unless
+  `execution.admission.fail_open` is on. See
+  [Admission hooks](/operate/admission-hooks/). (#2177)
+- **Add MCP tools of your own without forking the server.** The new public Go
+  package `pkg/mcp` is the core `dexaflow-mcp` is built from: it serves the
+  stock tools, resources and prompts, and `mcp.AddTool` registers a tool
+  declared with the official MCP Go SDK types. The handler receives the
+  control-plane client of the caller (the request's bearer on HTTP, the
+  process token on stdio), so an added tool keeps the stock tools' blast
+  radius. A new `dexaflow://capabilities` resource reports the server version,
+  its transport, which tool groups are on and every tool it serves. The
+  `dexaflow-mcp` binary keeps its flags and behavior (#2178).
+- **A versioning and support policy.** The new Project, Versioning and support
+  page states what a 0.x patch may contain (ADR 0068), that the previous minor
+  gets security fixes for 8 weeks after the next minor ships, that a
+  deprecated feature is removed no earlier than two minors later and never in
+  a patch, and that the names from before the rename keep working with no
+  removal date. SECURITY.md and RELEASING.md now say the same. (#1556)
+- **`pkg/server` runs the control plane from your own Go program** (ADR 0099,
+  #2176). `server.Run(ctx)` behaves exactly as `dexaflow-server`: it mirrors the
+  `DEXAFLOW_*` and `LEOFLOW_*` names, reads `DEXAFLOW_CONFIG` and the
+  environment, and serves until `ctx` is done; `server.ExitCode` keeps the
+  binary's exit codes. The shipped binary is now a thin caller of it. Options
+  to replace a component (log sink, XCom backend, authenticator, trusted
+  issuer, UI, admission hook) follow in later releases. A program that imports
+  the module reports the module version it requires as its version.
+- **`server.WithAdmission` installs an admission hook compiled into your own
+  binary** (ADR 0099, ADR 0100, #2176, #2177). A program built on `pkg/server`
+  registers any number of `pkg/admission` hooks; they run in registration
+  order, before the webhook `execution.admission.webhook.url` configures, under
+  the same timeout, fail mode, change checks and breaker.
+- **`server.WithLogSink` stores task logs with a sink of your own** (ADR 0099,
+  #2176). The new public package `pkg/logsink` holds the contract (`Sink`,
+  `LogWriter`, `Ref`, `Event` and the optional `LineWriter`, `Resumer` and
+  `MarkerSink`); a program built on `pkg/server` passes its sink and the
+  `logs.backend` keys are ignored. The sink also serves every read of a task
+  log.
+- **`server.WithXComBackend` keeps XCom values in a store of your own**
+  (ADR 0099, #2176). The new public package `pkg/xcomstore` holds the contract
+  (`Backend`, `Entry`, `ErrNotFound` and the optional `BatchBackend`); a
+  program built on `pkg/server` passes its backend, which replaces Redis or
+  the embedded Postgres store for values while Redis keeps the live log tail.
+- **`server.WithUIServer` serves a web UI of your own** (ADR 0099, #2176). A
+  program built on `pkg/server` passes a `server.UIServer`, which the server
+  mounts in place of the embedded UI, behind the same session check and
+  sign-in redirect.
+- **`server.WithAuthenticator` and `server.WithTrustedIssuer` plug your own
+  sign-in into the control plane** (ADR 0099, #2176). The new public package
+  `pkg/authn` holds the contracts (`Authenticator`, `User`, `Credentials`,
+  `TrustedIssuer`, `Identity` and their errors). Password sign-in goes to the
+  authenticator from options while the sessions Dexaflow mints keep working,
+  and the server clears the scope and deploy-audience fields of the users it
+  returns. A trusted issuer from options takes the handoff from the origins it
+  lists.
+- **`server.WithConfigFile` names the config file of a control plane run from
+  your own program** (ADR 0099, #2176), in place of `DEXAFLOW_CONFIG`; the
+  `DEXAFLOW_*` environment still applies on top of it.
+
+### Changed
+
+- The bundled UI refreshes DAG, run and task-instance state every 5 seconds
+  instead of 30 when `ui.autoRefreshIntervalSeconds` is unset. Set it to `30`
+  to keep the old cadence; see the upgrade note (#1196).
+- **New runs and task instances get time-ordered UUIDv7 keys.** Migration 057
+  makes `dexaflow_uuidv7()` the default of `dag_runs.id` and
+  `task_instances.id` instead of the random `gen_random_uuid()`. New keys
+  append to the end of the primary key index. On a large table Experiment 9
+  measured the random key at a third fewer inserts per second, a third more
+  WAL per row and a 27% larger index. Existing ids, the column type and the foreign keys are
+  unchanged, and the down migration restores the old default. A UUIDv7 id
+  carries the millisecond its row was created. (#525, ADR 0098)
+- **`pkg/client`: `ClientInterface` and `ClientWithResponsesInterface` gain
+  the user update methods.** `PatchUser`, `PatchUserWithBody` and their
+  `WithResponse` variants are new methods of the generated interfaces. Code
+  that only calls the client is unaffected; a type of your own that implements
+  one of these interfaces (a hand-written mock, for example) must add the new
+  methods, or embed the interface, to keep compiling. (#960)
+- **Every Go package under `pkg/` now follows the public API compatibility rule**
+  (ADR 0099, #2176): no breaking change in a patch release, and a removal only
+  in a minor after a deprecation of one minor. The API compatibility check runs
+  `apidiff` on all of them, not only `pkg/client` and `pkg/dagspec`.
+- golang.org/x/crypto moves to v0.58.1-0.20261009181718-2f1f834330b2, the
+  first revision that carries the fix for GO-2026-5932 (x/crypto/openpgp).
+  Dexaflow does not import that package; the bump keeps the filesystem
+  vulnerability scan green.
+
+### Fixed
+
+- An attempt's cached XCom spec no longer outlives the attempt when one of its
+  XCom calls was loading the spec at the moment the attempt reported its end:
+  the load's result is no longer put back in the cache after the end dropped
+  the entry (#1616).
+- **A task's `pool` in `dag.py` now reaches the engine** (#2227). The compiler
+  dropped it, so on a cluster with pools on every task was admitted against
+  `default_pool`, whatever pool it named. `pool` is now captured from the
+  operator, from `@task(pool=...)` and from `default_args`, like `pool_slots`.
+  Once a DAG is redeployed, its tasks that name a pool are gated by that pool;
+  a pool the tenant has not defined does not gate them (under
+  `server.pools_read_only` they fall back to `default_pool`). Tasks in
+  `default_pool` produce the same `dag.json` as before.
+- **`install.sh` installs the MCP server.** The release archive has carried
+  `dexaflow-mcp` since the MCP server shipped, but the installer copied only
+  the CLI, server and agent, so a `curl | sh` install had no MCP server and
+  said nothing about it. It now installs `dexaflow-mcp` (with its
+  `leoflow-mcp` link) whenever the archive holds it (#976).
+- **The leader-settling gate reads when a sweep started, not when it ended.**
+  A pod reconciler sweep whose pod list was taken before a re-acquisition of
+  leadership, but which finished after it, could open the reapers' settling
+  gate with data from before the new leadership. The sweep is now stamped
+  with its start (#917).
+- **The OpenAPI spec documents the `503` every protected route can return.**
+  Since the control plane answers `503` with `Retry-After` when a credential
+  cannot be checked during a store outage, a client generated from the spec
+  had no way to model it. Every operation that takes a bearer token now lists
+  the shared `AuthUnavailable` response, and `pkg/client` carries it (#1098).
+- **GKE Workload Identity behind the task NetworkPolicy: the docs now name
+  both metadata addresses** (#1089). The guides told you to re-allow only
+  `169.254.169.254/32`, which is what GKE Dataplane V2 needs; a cluster with
+  network policy enforcement reaches the metadata server on the node at
+  `169.254.169.252` port 988, so tasks there got no token. External secrets,
+  the cluster validation guide, the installation guide and the
+  `taskNetworkPolicy.allowMetadataEgress` value now list both, each still a
+  single host. No chart behavior changed.
+- **Task NetworkPolicy on Cilium: the node's own link-local addresses were not
+  blocked** (GHSA-38p3-564h-jxp7). On GKE Dataplane V2 the task policy's
+  `169.254.0.0/16` block did not cover addresses served by the task pod's own
+  node, so a task reached the node's metadata server at `169.254.169.252:988`
+  and got a Workload Identity token even with `allowMetadataEgress` empty. GKE
+  with Calico was not affected. On Cilium set
+  `taskNetworkPolicy.blockPrivateNetworks=true`, which closes that path, and
+  re-allow the internal services your DAGs call with
+  `taskNetworkPolicy.extraEgress`. The install NOTES now warn when the chart
+  sees Cilium and that setting is off; the docs say the same.
+- **Clicking a task in the grid opened the task page instead of the task
+  instance, so its logs could not be reached** (#2295). The Airflow 3.3 grid
+  and graph open a task instance only when the grid summary carries the run's
+  `dag_version_number`, which the server did not send, so every click landed
+  on the run-less task page, which has no Logs tab. The summaries now carry it,
+  the grid runs carry their `dag_versions` (the grid's version markers show
+  again), and the DAG details carry `is_favorite`, so the star in the DAG page
+  header shows whether the DAG is starred.
+- **The docs name the operators that compile but cannot run.**
+  `ExternalTaskSensor`, `ExternalTaskMarker`, `TriggerDagRunOperator` and
+  `LatestOnlyOperator` need the Airflow metadata database, which a task pod
+  does not have, so they fail on their first attempt. The operators page now
+  lists them with the error each one raises and a workaround, the DAG
+  authoring list of unsupported constructs names `TaskGroup`, and the
+  connector compatibility planning note no longer says sensors are rejected.
+- **The DAG authoring list of unsupported Airflow constructs is complete and
+  current.** It now names `EmptyOperator`, `chain()`, `Label`, setup and
+  teardown tasks, a module-level `Variable` import, `@task.bash`,
+  `PythonSensor`, `timedelta` operator arguments, timetables and the trigger
+  rules Dexaflow refuses, says that `depends_on_past`, `wait_for_downstream`
+  and `priority_weight` are ignored today, gives a workaround for each, and
+  links the issue that plans its support. It no longer says deferrable
+  operators fail at run time (they are refused at compile), that Jinja is
+  never rendered (operator template fields are), or that `default_args` is
+  ignored (scheduling fields are read from it).
+
 ## [0.5.8] - 2026-11-01
 
 ### Added
