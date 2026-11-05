@@ -1040,7 +1040,7 @@ promote_docs_pr() { # <tag>
     # main merges only through the merge queue, and gh refuses --delete-branch
     # whenever the queue is on, so the PR is enqueued and left to the queue.
     gh pr merge "$pr" --repo "$REPO" --squash --auto >/dev/null 2>&1 &&
-      log "docs promotion PR #$pr enqueued; the docs root serves $tag once it merges" || warn "docs promotion PR #$pr is green but could not be enqueued — enqueue it by hand"
+      log "docs promotion PR #$pr enqueued; the docs root serves $tag once it merges" || warn "docs promotion PR #$pr is green but could not be enqueued; enqueue it by hand"
   else
     warn "docs promotion PR #$pr is not green. The release is published, but the docs root still serves the previous GA. Fix and merge #$pr. If its checks never started, the workflow opened it with GITHUB_TOKEN, which starts no workflows: close and reopen it (RELEASING.md)."
   fi
