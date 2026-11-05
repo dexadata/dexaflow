@@ -851,7 +851,7 @@ jobs:
         run: |
           npm init -y >/dev/null 2>&1
           npm i --no-save playwright-core@"$PLAYWRIGHT_VERSION" playwright@"$PLAYWRIGHT_VERSION"
-          npx playwright install --with-deps chromium
+          bash scripts/ci-install-playwright-deps.sh
       # A step timeout so a hang fails as exit 124 naming the command, rather
       # than running the job out of budget into a `cancelled` that says nothing
       # about why (#975).
@@ -910,15 +910,17 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ env.PLAYWRIGHT_VERSION }}
-      # The install still runs on a cache hit: --with-deps installs OS packages
-      # the cache does not carry, and the browser download is the only part the
-      # cache shortcuts.
+      # The install still runs on a cache hit: the cache carries the browser,
+      # not the OS libraries it links against. The script skips apt when the
+      # runner image already has them (it does: --with-deps used to apt-get
+      # only fonts the tests never render, and a stalled mirror download of
+      # those fonts ran this step into its 6 minute ceiling).
       - name: Install Playwright + Chromium
         timeout-minutes: 6
         run: |
           npm init -y >/dev/null 2>&1
           npm i --no-save playwright-core@"$PLAYWRIGHT_VERSION" playwright@"$PLAYWRIGHT_VERSION"
-          npx playwright install --with-deps chromium
+          bash scripts/ci-install-playwright-deps.sh
       - name: Boot Lite and run the UI smoke
         run: |
           set -euo pipefail
