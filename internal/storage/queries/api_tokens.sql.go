@@ -282,6 +282,26 @@ func (q *Queries) RevokeAPIToken(ctx context.Context, arg RevokeAPITokenParams) 
 	return i, err
 }
 
+const revokeUserAPITokens = `-- name: RevokeUserAPITokens :execrows
+UPDATE api_tokens SET revoked_at = now()
+WHERE user_id = $1 AND tenant_id = $2 AND revoked_at IS NULL
+`
+
+type RevokeUserAPITokensParams struct {
+	UserID   pgtype.UUID `json:"user_id"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+}
+
+// Revokes every live API token of a user, in the transaction that deactivates
+// it, so its tokens stay revoked when the user is reactivated.
+func (q *Queries) RevokeUserAPITokens(ctx context.Context, arg RevokeUserAPITokensParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeUserAPITokens, arg.UserID, arg.TenantID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const touchAPIToken = `-- name: TouchAPIToken :execrows
 UPDATE api_tokens SET last_used_at = $1
 WHERE id = $2

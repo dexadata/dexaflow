@@ -67,3 +67,9 @@ SET revoked_at = now()
 WHERE id = sqlc.arg(id) AND tenant_id = sqlc.arg(tenant_id) AND revoked_at IS NULL
   AND (sqlc.narg(owner_id)::uuid IS NULL OR user_id = sqlc.narg(owner_id)::uuid)
 RETURNING id, name, user_id;
+
+-- name: RevokeUserAPITokens :execrows
+-- Revokes every live API token of a user, in the transaction that deactivates
+-- it, so its tokens stay revoked when the user is reactivated.
+UPDATE api_tokens SET revoked_at = now()
+WHERE user_id = $1 AND tenant_id = $2 AND revoked_at IS NULL;

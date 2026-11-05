@@ -12,7 +12,10 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `{"is_active": false}` deactivates an account of the caller's tenant, and
   `true` reactivates it; it needs `write:user` (admin). A deactivated user's
   sessions and API tokens stop working at their next request, their token
-  renewal is refused and they cannot sign in. The change and a
+  renewal is refused and they cannot sign in. Deactivating ends those
+  credentials for good: the user's API tokens are revoked, and a session it had
+  stays refused after a reactivation, so the user signs in again (migration
+  058 adds `users.sessions_valid_after`). The change and a
   `user.deactivate` or `user.activate` audit entry are written in one
   transaction. An admin cannot deactivate their own account, and a user of
   another tenant answers 404. Until now deactivation was a direct database

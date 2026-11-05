@@ -49,7 +49,7 @@ WHERE u.id = $1;
 -- The per-request authz reload in ONE round trip: what GetUserByID,
 -- GetUserRoles and GetUserPermissions return, folded into a single statement.
 -- Permissions are a JSON array of distinct [action, resource] pairs.
-SELECT u.id, t.name AS tenant, u.email, u.is_active,
+SELECT u.id, t.name AS tenant, u.email, u.is_active, u.sessions_valid_after,
        ARRAY(
            SELECT r.name
            FROM user_roles ur
@@ -81,9 +81,12 @@ WHERE email = $2
 -- No row means no such user in this tenant, which the caller answers as 404,
 -- so a user of another tenant is indistinguishable from a missing one. The
 -- per-request authz reload reads is_active, so the change takes effect on the
--- user's next request, for sessions and API tokens alike.
+-- user's next request, for sessions and API tokens alike. Deactivating also
+-- stamps sessions_valid_after, so the sessions the user had stay refused after
+-- a reactivation; reactivating leaves the stamp as it is.
 UPDATE users u
-SET is_active = $3
+SET is_active = $3,
+    sessions_valid_after = CASE WHEN $3 THEN u.sessions_valid_after ELSE now() END
 FROM tenants t
 WHERE t.id = u.tenant_id AND t.name = $1 AND u.id = $2
 RETURNING u.id, u.email, u.is_active, u.created_at,

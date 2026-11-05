@@ -45,8 +45,11 @@ An admin deactivates or reactivates a user of their tenant with
 A deactivated user is refused at its next request, and so are its session,
 its token renewals and its API tokens; a new sign-in is refused too. The
 change is recorded in the [audit log](/operate/audit-log/) as
-`user.deactivate` or `user.activate`. Reactivating restores the user with the
-roles it had. Changing a local user's roles or password through the API is
+`user.deactivate` or `user.activate`; the deactivation entry also counts the
+API tokens it revoked. Deactivating ends the user's credentials for good: its
+API tokens are revoked, and every session it had stays refused. Reactivating
+restores the user with the roles it had, and the user signs in again and
+creates new API tokens. Changing a local user's roles or password through the API is
 not available yet ([#2229](https://github.com/dexadata/dexaflow/issues/2229)).
 
 ## Built-in roles

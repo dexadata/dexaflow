@@ -39,8 +39,9 @@ func bearerRequest(srv *gin.Engine, method, path, token, body string) *httptest.
 // #960 asked for, over the real store and the real JWT authenticator: a user
 // signs in, renews, is deactivated by an admin through PATCH
 // /api/v2/users/{id}, and from then on both the renewal and the token the user
-// already holds are refused; the audit log records who deactivated whom; and
-// reactivating restores access with a fresh sign-in.
+// already holds are refused, and its api tokens revoked; the audit log records
+// who deactivated whom; and reactivating restores access with a fresh sign-in
+// only: the session and api token from before stay refused.
 func TestDeactivatedUserLosesRenewalAndAccessIntegration(t *testing.T) {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
@@ -103,6 +104,15 @@ func TestDeactivatedUserLosesRenewalAndAccessIntegration(t *testing.T) {
 		t.Fatalf("an active user's renewal = %d (%s)", rec.Code, rec.Body.String())
 	}
 
+	_, apiTokenHash, err := auth.NewAPIToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopes, _ := auth.APITokenScopes("deploy")
+	if _, err := repo.CreateAPIToken(ctx, tenant, user.ID, "ci", apiTokenHash, scopes, time.Now().Add(24*time.Hour)); err != nil {
+		t.Fatalf("creating an api token: %v", err)
+	}
+
 	rec := bearerRequest(adminSrv, http.MethodPatch, "/api/v2/users/"+user.ID, "admin", `{"is_active":false}`)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"is_active":false`) {
 		t.Fatalf("deactivating = %d (%s)", rec.Code, rec.Body.String())
@@ -117,15 +127,20 @@ func TestDeactivatedUserLosesRenewalAndAccessIntegration(t *testing.T) {
 		t.Error("a deactivated user signed in again")
 	}
 
+	if tok, err := repo.FindAPITokenByHash(ctx, apiTokenHash); err != nil || tok.RevokedAt == nil {
+		t.Errorf("the deactivated user's api token = %+v (%v), want it revoked", tok, err)
+	}
+
 	var action, actor, resource string
+	var revoked int
 	if err := pg.Pool.QueryRow(ctx, `
-		SELECT a.action, a.user_id::text, a.resource_id
+		SELECT a.action, a.user_id::text, a.resource_id, (a.metadata->>'revoked_api_tokens')::int
 		FROM audit_log a JOIN tenants t ON t.id = a.tenant_id
-		WHERE t.name = $1 AND a.resource_type = 'user' AND a.action LIKE 'user.%activate'`, tenant).Scan(&action, &actor, &resource); err != nil {
+		WHERE t.name = $1 AND a.resource_type = 'user' AND a.action LIKE 'user.%activate'`, tenant).Scan(&action, &actor, &resource, &revoked); err != nil {
 		t.Fatalf("reading the audit entry: %v", err)
 	}
-	if action != "user.deactivate" || actor != admin.ID || resource != user.ID {
-		t.Errorf("audit entry = %s by %s on %s, want user.deactivate by %s on %s", action, actor, resource, admin.ID, user.ID)
+	if action != "user.deactivate" || actor != admin.ID || resource != user.ID || revoked != 1 {
+		t.Errorf("audit entry = %s by %s on %s revoking %d api tokens, want user.deactivate by %s on %s revoking 1", action, actor, resource, revoked, admin.ID, user.ID)
 	}
 
 	// Another tenant's admin cannot reach the user at all.
@@ -150,6 +165,21 @@ func TestDeactivatedUserLosesRenewalAndAccessIntegration(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &dto); err != nil || !dto.IsActive || len(dto.Roles) != 1 || dto.Roles[0] != "viewer" {
 		t.Errorf("reactivated user = %+v (%v), want active with its viewer role", dto, err)
 	}
+	// Reactivating does not bring back what the user held before: the old
+	// session stays refused, for requests and renewal, and the api token stays
+	// revoked.
+	if rec := bearerRequest(real, http.MethodGet, "/api/v2/plugins", token, ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("a session from before the deactivation, after reactivation = %d, want 401 (%s)", rec.Code, rec.Body.String())
+	}
+	if rec := bearerRequest(real, http.MethodPost, "/api/v2/auth/token/renew", token, ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("renewing a session from before the deactivation, after reactivation = %d, want 401 (%s)", rec.Code, rec.Body.String())
+	}
+	if tok, err := repo.FindAPITokenByHash(ctx, apiTokenHash); err != nil || tok.RevokedAt == nil {
+		t.Errorf("the reactivated user's old api token = %+v (%v), want it still revoked", tok, err)
+	}
+	// Token times have whole seconds and a session from the cutoff's second is
+	// refused, so the fresh sign-in waits for the next second.
+	time.Sleep(time.Until(time.Now().Truncate(time.Second).Add(time.Second + 10*time.Millisecond)))
 	fresh, err := jwt.IssueToken(ctx, auth.Credentials{Tenant: tenant, Username: user.Email, Password: "bob-password"})
 	if err != nil {
 		t.Fatalf("signing in after reactivation: %v", err)

@@ -236,7 +236,7 @@ func (q *Queries) GetUserPermissions(ctx context.Context, userID pgtype.UUID) ([
 }
 
 const getUserPrincipalByID = `-- name: GetUserPrincipalByID :one
-SELECT u.id, t.name AS tenant, u.email, u.is_active,
+SELECT u.id, t.name AS tenant, u.email, u.is_active, u.sessions_valid_after,
        ARRAY(
            SELECT r.name
            FROM user_roles ur
@@ -259,12 +259,13 @@ WHERE u.id = $1
 `
 
 type GetUserPrincipalByIDRow struct {
-	ID          pgtype.UUID `json:"id"`
-	Tenant      string      `json:"tenant"`
-	Email       string      `json:"email"`
-	IsActive    bool        `json:"is_active"`
-	Roles       []string    `json:"roles"`
-	Permissions []byte      `json:"permissions"`
+	ID                 pgtype.UUID        `json:"id"`
+	Tenant             string             `json:"tenant"`
+	Email              string             `json:"email"`
+	IsActive           bool               `json:"is_active"`
+	SessionsValidAfter pgtype.Timestamptz `json:"sessions_valid_after"`
+	Roles              []string           `json:"roles"`
+	Permissions        []byte             `json:"permissions"`
 }
 
 // The per-request authz reload in ONE round trip: what GetUserByID,
@@ -278,6 +279,7 @@ func (q *Queries) GetUserPrincipalByID(ctx context.Context, id pgtype.UUID) (Get
 		&i.Tenant,
 		&i.Email,
 		&i.IsActive,
+		&i.SessionsValidAfter,
 		&i.Roles,
 		&i.Permissions,
 	)
@@ -442,7 +444,8 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUse
 
 const setUserActive = `-- name: SetUserActive :one
 UPDATE users u
-SET is_active = $3
+SET is_active = $3,
+    sessions_valid_after = CASE WHEN $3 THEN u.sessions_valid_after ELSE now() END
 FROM tenants t
 WHERE t.id = u.tenant_id AND t.name = $1 AND u.id = $2
 RETURNING u.id, u.email, u.is_active, u.created_at,
@@ -473,7 +476,9 @@ type SetUserActiveRow struct {
 // No row means no such user in this tenant, which the caller answers as 404,
 // so a user of another tenant is indistinguishable from a missing one. The
 // per-request authz reload reads is_active, so the change takes effect on the
-// user's next request, for sessions and API tokens alike.
+// user's next request, for sessions and API tokens alike. Deactivating also
+// stamps sessions_valid_after, so the sessions the user had stay refused after
+// a reactivation; reactivating leaves the stamp as it is.
 func (q *Queries) SetUserActive(ctx context.Context, arg SetUserActiveParams) (SetUserActiveRow, error) {
 	row := q.db.QueryRow(ctx, setUserActive, arg.Name, arg.ID, arg.IsActive)
 	var i SetUserActiveRow

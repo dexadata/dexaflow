@@ -69,6 +69,9 @@ func (r *Repository) FindUserByID(ctx context.Context, id string) (found *auth.U
 		return nil, false, fmt.Errorf("decoding permissions: %w", err)
 	}
 	user := &auth.User{ID: uuidToString(row.ID), TenantID: row.Tenant, Email: row.Email, Roles: row.Roles}
+	if row.SessionsValidAfter.Valid {
+		user.SessionsValidAfter = row.SessionsValidAfter.Time
+	}
 	for _, p := range perms {
 		user.Permissions = append(user.Permissions, auth.Permission{Action: p[0], Resource: p[1]})
 	}
@@ -378,6 +381,9 @@ func (r *Repository) ListUsers(ctx context.Context, tenant string, limit, offset
 // An unknown user, a malformed id or a user of another tenant is
 // domain.ErrNotFound. The per-request authz reload reads the flag, so a
 // deactivated user's sessions and API tokens stop working at their next request.
+// Deactivating also ends them for good: the user's live API tokens are revoked
+// and its session cutoff is stamped in the same transaction, so a later
+// reactivation does not bring back credentials issued before it.
 func (r *Repository) SetUserActive(ctx context.Context, tenant, actorUserID, userID string, active bool) (domain.User, error) {
 	id, err := parseUUID(userID)
 	if err != nil {
@@ -401,14 +407,21 @@ func (r *Repository) SetUserActive(ctx context.Context, tenant, actorUserID, use
 		return domain.User{}, fmt.Errorf("setting user active: %w", err)
 	}
 	action := "user.deactivate"
+	metadata := map[string]any{"email": row.Email}
 	if active {
 		action = "user.activate"
+	} else {
+		revoked, rerr := qtx.RevokeUserAPITokens(ctx, queries.RevokeUserAPITokensParams{UserID: id, TenantID: tid})
+		if rerr != nil {
+			return domain.User{}, fmt.Errorf("revoking api tokens of deactivated user: %w", rerr)
+		}
+		metadata["revoked_api_tokens"] = revoked
 	}
 	var actor pgtype.UUID
 	if u, perr := parseUUID(actorUserID); perr == nil {
 		actor = u
 	}
-	meta, err := json.Marshal(map[string]any{"email": row.Email})
+	meta, err := json.Marshal(metadata)
 	if err != nil {
 		return domain.User{}, fmt.Errorf("encoding audit metadata: %w", err)
 	}
