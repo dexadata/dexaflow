@@ -1,0 +1,99 @@
+name: Branch red watch
+
+# A red main (or release-X.Y) blocks every release (RELEASING.md, "Red CI
+# blocks a release"), so it gets an owner the moment it happens instead of
+# whenever someone looks. scripts/branch-red-watch.sh has the rules:
+#
+# - A watched workflow fails on the branch: on its first attempt, a
+#   transient failure (scripts/flake-patterns.sh) or one with no log is rerun
+#   once and nothing is reported yet; anything else is reported at once.
+# - Every hour, and after each report, every workflow's newest finished run
+#   on main and on each release-X.Y is read. Any red one opens or updates the
+#   issue "CI is red on <branch>" (label ci-red); when they are all green
+#   again, the issue is closed with the commit that fixed it.
+#
+# Successful runs do not start this workflow: a green main needs no job, and
+# the hourly sweep closes the issue. That keeps the watch to one short job
+# per failure plus one per hour, out of the 20 the account runs at once.
+
+on:
+  workflow_run:
+    # The workflows that run on pushes to main and release-X.Y, and the
+    # nightlies. The hourly sweep reads every workflow, so one missing here
+    # is reported late, not missed.
+    workflows:
+      - CI
+      - Security
+      - E2E external secrets (k3d + LocalStack)
+      - E2E performance gates
+      - E2E replaced database
+      - Soak harness smoke (short, bounded)
+      - Fuzz
+      - Image scan
+      - Database backup & restore drill
+      - Lite managed Postgres on Ubuntu
+      - Changelog sync
+      - Docs gap
+      - Website deploy (Hugo+Docsy → Pages, multi-version)
+    types: [completed]
+    branches: [main, "release-*"]
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One watch at a time, so two failures never open two issues. A run waiting
+# here is replaced by a newer one; the hourly sweep still reports what it
+# would have.
+concurrency:
+  group: branch-red-watch
+  cancel-in-progress: false
+
+jobs:
+  failed-run:
+    name: Rerun once or report a failed run
+    if: >-
+      github.repository == 'dexadata/dexaflow' &&
+      github.event_name == 'workflow_run' &&
+      contains(fromJSON('["failure","timed_out","startup_failure"]'), github.event.workflow_run.conclusion) &&
+      contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event.workflow_run.event)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write # rerun the failed jobs of a transient failure
+      issues: write  # open, update and close the "CI is red" issue
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rerun a transient failure once, or report the branch red
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH_RED_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: bash scripts/branch-red-watch.sh event "$RUN_ID"
+
+  sweep:
+    name: Open, update or close the red branch issues
+    if: github.repository == 'dexadata/dexaflow' && github.event_name != 'workflow_run'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Reconcile main and every release branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH_RED_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mapfile -t branches < <(gh api "repos/$BRANCH_RED_REPO/branches?per_page=100" --jq '.[].name | select(. == "main" or test("^release-[0-9]+\\.[0-9]+$"))')
+          bash scripts/branch-red-watch.sh reconcile "${branches[@]}"

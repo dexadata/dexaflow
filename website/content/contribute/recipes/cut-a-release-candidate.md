@@ -16,7 +16,21 @@ by hand.
    `scripts/release-base.sh X.Y.Z` prints it, and the script picks the base
    the same way, never from your checkout
    ([ADR 0102](/project/adrs/0102-patches-from-main-until-main-diverges/)).
-2. **Close the gaps.** The cut refuses a patch while the first list is not
+2. **Check the base is green.** No release is cut from a red `main` or
+   `release-X.Y`. The cut refuses while a check the base requires is red on
+   its tip or on the merge commit, and so does the Release workflow on the
+   tagged commit; there is no override for a required check. An open
+   `ci-red` issue ("CI is red on main") is fixed first:
+
+   ```sh
+   scripts/release-ci-gate.sh "$(git rev-parse origin/main)" main
+   ```
+
+   A red check the base does not require stops the cut at the merge commit
+   too, unless `--allow-red="<reason>"` records why it does not matter; the
+   reason goes into the tag annotation
+   ([RELEASING.md](https://github.com/dexadata/dexaflow/blob/main/RELEASING.md#red-ci-blocks-a-release)).
+3. **Close the gaps.** The cut refuses a patch while the first list is not
    empty, and any candidate while the second is not:
 
    ```sh
@@ -26,7 +40,7 @@ by hand.
 
    A change that will never ship in the minor goes in
    `.github/release-skip.txt` on the release branch, with its reason.
-3. **Run the end-to-end gates on the candidate's commit.** `make rc-smoke` runs
+4. **Run the end-to-end gates on the candidate's commit.** `make rc-smoke` runs
    the gates and the k3d suites. The performance gates workflow
    (`.github/workflows/e2e-gates.yaml`) and the soak smoke run nightly on `main`
    and on rc tags, and the daemonless deploy workflow
@@ -40,12 +54,12 @@ by hand.
    migrations, the integration tests, the k3d suites and the UI smoke all use
    that port, and the battery never resets a database it did not start.
    `make soak` already runs on its own Postgres on port 55433 (`SOAK_PG_PORT`).
-4. **Record every review** of
+5. **Record every review** of
    [AGENTS.md section 1](https://github.com/dexadata/dexaflow/blob/main/AGENTS.md#1-release-candidate-reviews)
    in the tracking issue of the `vX.Y.Z` milestone: one line each, with who did
    it, the result and a link to the evidence, including the reviews that do not
    apply and why. The script does not check these lines; whoever runs it does.
-5. **Preview, then cut:**
+6. **Preview, then cut:**
 
    ```sh
    scripts/cut-release.sh vX.Y.Z-rc.N --dry-run
@@ -56,9 +70,9 @@ by hand.
    and asks you to type the tag back before it pushes. It refuses while the
    Actions queue is busy: wait for it to drain and resume, or pass
    `--force-queue` when the release cannot wait.
-6. **Freeze pull request pushes** from the go-ahead until the release run is
+7. **Freeze pull request pushes** from the go-ahead until the release run is
    green, so release jobs do not wait behind PR runs.
-7. **If the cut stops after the prepare PR merged**, fix the cause and resume:
+8. **If the cut stops after the prepare PR merged**, fix the cause and resume:
    `scripts/cut-release.sh vX.Y.Z-rc.N --resume --dry-run`, then without
    `--dry-run`.
 

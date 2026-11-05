@@ -293,17 +293,31 @@ jobs:
         run: |
           set -euo pipefail
           repo="repos/${GITHUB_REPOSITORY}"
-          head=$(gh api "$repo/git/ref/heads/main" --jq .object.sha)
+          # The git data API sometimes answers 5xx or an empty body, which
+          # failed this job on 2026-11-05. Each call is retried, and an empty
+          # answer counts as a failure (a blob, tree or commit always has a sha).
+          api() {
+            local out i
+            for i in 1 2 3 4; do
+              if out=$(gh api "$@") && [ -n "$out" ]; then printf '%s' "$out"; return 0; fi
+              echo "::warning::gh api $1 failed (attempt $i), retrying" >&2
+              sleep $((i * 5))
+            done
+            return 1
+          }
+          [ -n "$BADGE" ] || { echo "::error::the test job published no badge"; exit 1; }
+          head=$(api "$repo/git/ref/heads/main" --jq .object.sha)
           if [ "$head" != "$GITHUB_SHA" ]; then
             echo "::notice::main moved to ${head:0:8}; its run publishes the badge"
             exit 0
           fi
-          blob=$(gh api "$repo/git/blobs" -f content="$BADGE" -f encoding=utf-8 --jq .sha)
-          tree=$(jq -n --arg sha "$blob" '{tree: [{path: "coverage.json", mode: "100644", type: "blob", sha: $sha}]}' |
-            gh api "$repo/git/trees" --input - --jq .sha)
-          commit=$(gh api "$repo/git/commits" -f "message=coverage of ${GITHUB_SHA}" -f "tree=$tree" --jq .sha)
-          gh api -X PATCH "$repo/git/refs/heads/badges" -f "sha=$commit" -F force=true >/dev/null 2>&1 ||
-            gh api "$repo/git/refs" -f ref=refs/heads/badges -f "sha=$commit" >/dev/null
+          blob=$(api "$repo/git/blobs" -f content="$BADGE" -f encoding=utf-8 --jq .sha)
+          # A file, not stdin: a retry must send the same body again.
+          jq -n --arg sha "$blob" '{tree: [{path: "coverage.json", mode: "100644", type: "blob", sha: $sha}]}' >"$RUNNER_TEMP/tree.json"
+          tree=$(api "$repo/git/trees" --input "$RUNNER_TEMP/tree.json" --jq .sha)
+          commit=$(api "$repo/git/commits" -f "message=coverage of ${GITHUB_SHA}" -f "tree=$tree" --jq .sha)
+          api -X PATCH "$repo/git/refs/heads/badges" -f "sha=$commit" -F force=true >/dev/null 2>&1 ||
+            api "$repo/git/refs" -f ref=refs/heads/badges -f "sha=$commit" >/dev/null
           echo "badges branch at ${commit:0:8}: $BADGE"
 
   # ─────────────────────────────────────────────────────────────────────

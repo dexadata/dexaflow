@@ -32,6 +32,33 @@ env:
   TRIVY_VERSION: "v0.75.0"
 
 jobs:
+  # ── Red CI blocks a release (RELEASING.md) ──
+  # The tagged commit must pass every check its branch's ruleset requires.
+  # cut-release.sh asks the same question twice before it tags; this job is
+  # for the tag it did not push, a tag pushed by hand. Running checks are
+  # waited for (15 min); a red or unfinished one fails the run before anything
+  # is built.
+  ci-gate:
+    name: Required checks green on the tagged commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      checks: read # the check runs of the tagged commit
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Gate, required checks of the base branch passed on the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CI_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          base="$(bash scripts/release-base.sh "${GITHUB_REF_NAME#v}")"
+          bash scripts/release-ci-gate.sh "$GITHUB_SHA" "$base" --wait 900
+
   # ── The chart's tag gates, before anything is published ──
   # These lived in helm-release.yaml, which pushed the chart on the tag event.
   # The push moved to `promote`; the gates stay at the front, so a chart that
@@ -40,6 +67,7 @@ jobs:
   # rbac-covers-executor, kubeconform) runs per PR in helm-ci.yaml.
   chart-preflight:
     name: Chart preflight (version, lint, contract)
+    needs: ci-gate
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # One build date for the run: the runtime image's amd64 and arm64 halves

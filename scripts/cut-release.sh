@@ -16,6 +16,18 @@
 #                                                 # the prepare PR merged
 #   scripts/cut-release.sh --self-test            # pure-logic cases, no network
 #   scripts/cut-release.sh 0.4.4 --force-queue    # tag even on a busy Actions queue
+#   scripts/cut-release.sh 0.4.4 --allow-red="<reason>"
+#                                                 # tag although a check the base
+#                                                 # does not require is red
+#
+# Red CI blocks a release (RELEASING.md). Before anything is prepared, every
+# required check of the base branch must pass on its tip
+# (scripts/release-ci-gate.sh): a red one stops the cut, a running one is
+# waited for. Before the tag, the merge commit must be green twice over: every
+# run, after the transient reruns, and every required check. A required check
+# has no override. A red check that the base does not require stops the cut
+# too, unless --allow-red=<reason> is passed; the reason is written into the
+# tag's annotation and .release-<tag>.log.
 #
 # Which branch a cut lands on follows from the version (ADR 0102, amending ADR
 # 0062), and scripts/release-base.sh is the one place that decides it: X.Y.0
@@ -45,18 +57,10 @@ CHART="$ROOT/helm/dexaflow/Chart.yaml"
 CHANGELOG="$ROOT/CHANGELOG.md"
 REPO="dexadata/dexaflow"
 
-# Transient CI failures that are safe to rerun — never a code signal. Matches the
-# classes seen in practice: registry rate-limits and 5xx, Go module-proxy stream
-# resets, the shallow-fetch merge-base gate, the lite cold-start /readyz timing
-# flake, a package index answering 5xx mid-resolve, and a k3d cluster that fails
-# to come up. Every alternative is covered by the table in self_test(); add a
-# pattern there first, with the line that motivated it, or it is not coverage.
-#
-# Deliberately absent: anything that also matches a failure of OUR OWN code. A
-# "returned error: 5xx" alternative looks like a registry pattern but is what
-# curl prints for a 5xx out of our control plane, which this harness queries
-# from 60 sites — it would rerun past the commonest real regression there is.
-FLAKE_RE='toomanyrequests|Rate exceeded|TLS handshake|i/o timeout|no space left|Connection reset|context deadline|Client\.Timeout|INTERNAL_ERROR|proxy\.golang\.org|stream ID [0-9]|readyz never responded|go mod download|failed to solve|returned error: 404|reserve cache|no merge base|exit code 128|HTTP Error 5[0-9][0-9]|Gateway Time-out|Cluster creation FAILED|failed Cluster Creation'
+# FLAKE_RE: the transient CI failures that are safe to rerun, shared with
+# branch-red-watch.sh. The list and why each pattern is there: flake-patterns.sh.
+# shellcheck source=scripts/flake-patterns.sh
+. "$(dirname "${BASH_SOURCE[0]}")/flake-patterns.sh"
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarn:\033[0m %s\n' "$*" >&2; }
@@ -155,6 +159,30 @@ sync_changelog_pr() { # <version>
   esac
   [ "$script" = "${CHANGELOG_SYNC_SCRIPT:-}" ] || [ "$script" = "$ROOT/scripts/changelog-sync.sh" ] || rm -f "$script"
   return 0
+}
+
+# tag_message <tag> [allow-red-reason]: the annotation of the release tag. An
+# override of a red check is part of the release's record, so it travels with
+# the tag, where the Release workflow and anyone running `git show <tag>` read
+# it.
+tag_message() { # <tag> [reason]
+  printf 'leoflow %s' "$1"
+  [ -n "${2:-}" ] && printf '\n\nRed-CI-override: %s' "$2"
+  return 0
+}
+
+# ci_gate <sha> <base> <wait-seconds> <what>: the required checks of <base>
+# on <sha> (scripts/release-ci-gate.sh). Dies on red and on undecided, with
+# no override: a required check is the line the merge queue holds every
+# change to, so a release does not get to cross it.
+ci_gate() { # <sha> <base> <wait> <what>
+  local rc=0
+  bash "$ROOT/scripts/release-ci-gate.sh" "$1" "$2" --wait "$3" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) die "$4 ${1:0:8} is red on $2 (above): a release is never cut from a red branch. Turn it green first (RELEASING.md, \"Red CI blocks a release\")" ;;
+    *) die "$4 ${1:0:8}: the required checks of $2 did not finish or could not be read (above), so nothing was judged. Wait for them, then re-run" ;;
+  esac
 }
 
 # commit_prepare <tag>: commits what is staged as the prepare commit, signed off
@@ -740,6 +768,26 @@ JSON
   fi
   rm -rf "$sp"
 
+  # Red CI blocks a release. The override of a red check that is not required
+  # travels in the tag annotation; without one the annotation is the old line.
+  _eq "$(tag_message v1.2.3)" "leoflow v1.2.3" "a tag without an override keeps the old annotation"
+  _eq "$(tag_message v1.2.3 'coverage badge API 502' | tail -1)" "Red-CI-override: coverage badge API 502" "the override reason is in the annotation"
+  # ci_gate: release-ci-gate.sh's exit status decides, and only 0 passes.
+  # Driven through a stub of the script, the way the cut calls it.
+  local cg; cg="$(mktemp -d)"; mkdir -p "$cg/scripts"
+  local code
+  for code in 0 1 2; do
+    printf '#!/usr/bin/env bash\necho "$*" >"%s/args"\nexit %s\n' "$cg" "$code" >"$cg/scripts/release-ci-gate.sh"
+    if ( ROOT="$cg"; ci_gate deadbeefcafe main 60 "main tip" ) >/dev/null 2>&1; then got=pass; else got=stop; fi
+    _eq "$got" "$([ "$code" = 0 ] && echo pass || echo stop)" "ci_gate on release-ci-gate.sh exit $code"
+  done
+  _eq "$(cat "$cg/args")" "deadbeefcafe main --wait 60" "ci_gate passes the sha, the base and the wait"
+  rm -rf "$cg"
+  # --allow-red without a reason stops before anything else runs.
+  # Asserted on the message: main dies later anyway in a test shell.
+  _eq "$( ( main 0.0.1 --allow-red ) 2>&1 | grep -c 'needs a reason')" 1 "--allow-red without a reason is refused"
+  _eq "$( ( main 0.0.1 '--allow-red=  ' ) 2>&1 | grep -c 'needs a reason')" 1 "--allow-red with a blank reason is refused"
+
   if [ "$fail" = 0 ]; then echo "self-test: PASS"; else echo "self-test: FAIL"; return 1; fi
 }
 
@@ -1166,9 +1214,12 @@ main() {
   # operator's shell or CI env can never silently bypass confirm_tag (M1). Only
   # --yes, parsed below, may set it.
   ASSUME_YES=0
-  local arg version="" dry=0 resume=0 force_queue=0
+  local arg version="" dry=0 resume=0 force_queue=0 allow_red=""
   for arg in "$@"; do
     case "$arg" in
+      --allow-red=*) allow_red="${arg#--allow-red=}"
+                     [ -n "${allow_red// /}" ] || die "--allow-red needs a reason: --allow-red=\"<why the red check does not matter for this release>\"" ;;
+      --allow-red) die "--allow-red needs a reason: --allow-red=\"<why the red check does not matter for this release>\"" ;;
       --self-test) self_test; exit $? ;;
       --dry-run)   dry=1 ;;
       --yes)       ASSUME_YES=1 ;;
@@ -1178,7 +1229,7 @@ main() {
       *)           version="$arg" ;;
     esac
   done
-  [ -n "$version" ] || die "usage: cut-release.sh <version> [--dry-run] [--yes] [--resume] [--force-queue]"
+  [ -n "$version" ] || die "usage: cut-release.sh <version> [--dry-run] [--yes] [--resume] [--force-queue] [--allow-red=<reason>]"
 
   version="${version#v}"
   valid_version "$version" || die "invalid version '$version' (want X.Y.Z or X.Y.Z-rc.N)"
@@ -1291,6 +1342,23 @@ main() {
       fi
     else
       warn "scripts/changelog-sync.sh is not on origin/main yet, so main was not checked for an unsynced patch changelog"
+    fi
+  fi
+
+  # Red CI blocks a release: the base's tip must pass every check the base
+  # requires before anything is prepared. A prepare PR built on a red tip
+  # inherits the failure, and the cut used to learn that only at the merge
+  # commit, an hour later. Running checks are waited for (CUT_TIP_WAIT_DEADLINE,
+  # default 30 min); a dry run reports without waiting. --resume skips it: the
+  # merge commit it picks up is judged below, by the same script.
+  if [ "$base_ok" = 1 ] && [ "$resume" != 1 ]; then
+    git fetch origin "$base" -q || die "cannot reach origin"
+    local tip; tip="$(git rev-parse "origin/$base")"
+    if [ "$dry" = 1 ]; then
+      bash "$ROOT/scripts/release-ci-gate.sh" "$tip" "$base" || warn "$base tip ${tip:0:8} is not green (above); the real cut waits for running checks and refuses on a red one"
+    else
+      log "$base tip ${tip:0:8}: required checks"
+      ci_gate "$tip" "$base" "${CUT_TIP_WAIT_DEADLINE:-1800}" "$base tip"
     fi
   fi
 
@@ -1440,11 +1508,16 @@ main() {
   fi
 
   log "$base CI on merge commit ${sha:0:8}"
-  [ "$(wait_sha_green "$sha")" = GREEN ] || die "$base red on the merge commit: NOT tagging"
+  if [ "$(wait_sha_green "$sha")" != GREEN ]; then
+    [ -n "$allow_red" ] || die "$base red on the merge commit: NOT tagging. If only a check that $base does not require is red and it does not matter for this release, re-run with --resume --allow-red=\"<reason>\""
+    warn "$base is red on the merge commit; --allow-red: $allow_red"
+  fi
+  # Every required check passed on the merge commit, whatever --allow-red says.
+  ci_gate "$sha" "$base" "${CUT_TIP_WAIT_DEADLINE:-1800}" "merge commit"
 
   check_queue "$force_queue" || die "the Actions queue is busy: the release jobs would wait behind it while nothing is promoted. Hold PR pushes until it drains (RELEASING.md, release freeze), then re-run with --resume, or pass --force-queue"
   confirm_tag "$tag"
-  git tag -a "$tag" "$sha" -m "leoflow $tag" || die "creating tag $tag failed"
+  git tag -a "$tag" "$sha" -m "$(tag_message "$tag" "$allow_red")" || die "creating tag $tag failed"
   git push origin "$tag" || die "pushing tag $tag failed — the tag is local only; 'git push origin $tag' when ready"
   log "tagged $tag @ ${sha:0:8}"
   # Provenance goes down the instant the push returns, never behind a fallible
@@ -1452,7 +1525,8 @@ main() {
   # PR, so a failure there cost the .release-<tag>.log line for an irreversible
   # act AND starved the release watch below — including #862's un-draft, which
   # is what lets a retracted draft release recover on a rerun.
-  { echo "tag=$tag sha=$sha date=$(date -u +%FT%TZ) kind=$(is_rc "$version" && echo rc || echo ga)"; } >>"$logf"
+  { echo "tag=$tag sha=$sha date=$(date -u +%FT%TZ) kind=$(is_rc "$version" && echo rc || echo ga)"
+    [ -z "$allow_red" ] || echo "red_ci_override=$allow_red"; } >>"$logf"
 
   # A patch GA folded its fragments on release-X.Y; bring that back to main
   # now, while the tag is fresh. It opens a pull request and does not wait on
