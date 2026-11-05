@@ -50,7 +50,17 @@ fi
 
 echo "[pre-commit] test + coverage gate"
 profile=$(mktemp)
-go test -coverprofile="$profile" ./... >/dev/null
+test_out=$(mktemp)
+# The output is kept rather than sent to /dev/null: a failing test used to stop
+# the commit with no word of which test it was.
+if ! go test -coverprofile="$profile" ./... >"$test_out" 2>&1; then
+	echo "::error:: go test failed:"
+	grep -E '^(--- FAIL|FAIL|panic:)' "$test_out" || tail -n 40 "$test_out"
+	echo "full output: $test_out"
+	rm -f "$profile"
+	exit 1
+fi
+rm -f "$test_out"
 # The exclude list and the floor live in scripts/coverage-gate.sh, shared with CI.
 scripts/coverage-gate.sh "$profile" || { rm -f "$profile"; exit 1; }
 rm -f "$profile"

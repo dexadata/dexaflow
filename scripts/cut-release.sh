@@ -1037,8 +1037,10 @@ promote_docs_pr() { # <tag>
   # exports CUT_WAIT_DEADLINE overrides this default and gets their own value,
   # whether it is larger or smaller.
   if [ "$(CUT_WAIT_DEADLINE="${CUT_DOCS_WAIT_DEADLINE:-${CUT_WAIT_DEADLINE:-1800}}" wait_sha_green "$sha")" = GREEN ]; then
-    gh pr merge "$pr" --repo "$REPO" --squash --delete-branch >/dev/null 2>&1 &&
-      log "docs root now serves $tag (PR #$pr)" || warn "docs promotion PR #$pr is green but did not merge — merge it by hand"
+    # main merges only through the merge queue, and gh refuses --delete-branch
+    # whenever the queue is on, so the PR is enqueued and left to the queue.
+    gh pr merge "$pr" --repo "$REPO" --squash --auto >/dev/null 2>&1 &&
+      log "docs promotion PR #$pr enqueued; the docs root serves $tag once it merges" || warn "docs promotion PR #$pr is green but could not be enqueued — enqueue it by hand"
   else
     warn "docs promotion PR #$pr is not green. The release is published, but the docs root still serves the previous GA. Fix and merge #$pr. If its checks never started, the workflow opened it with GITHUB_TOKEN, which starts no workflows: close and reopen it (RELEASING.md)."
   fi
@@ -1397,7 +1399,13 @@ main() {
   # to be folded in a second time at the next cut.
   git add helm/dexaflow/Chart.yaml helm/dexaflow/README.md CHANGELOG.md
   git add -A .changes 2>/dev/null || true
-  commit_prepare "$tag" || die "nothing to commit (already prepared?)"
+  # A refused commit is not an empty one: the pre-commit hook runs on this
+  # commit, and its failure used to surface as "nothing to commit", which hid
+  # a failing test behind a message about the staging area.
+  if git diff --cached --quiet; then
+    die "nothing to commit (already prepared?)"
+  fi
+  commit_prepare "$tag" || die "the prepare commit was refused, most likely by the pre-commit hook (its output is above); run scripts/pre-commit in $ROOT to see it again"
   git push -u origin "$branch" -q || die "pushing $branch failed"
 
   local title body
@@ -1413,9 +1421,14 @@ main() {
     # direct merge and builds its own squash commit, so the prepare PR is
     # enqueued and the cut waits for the commit the queue lands. With patches
     # cut from main (ADR 0102) this is the path of most cuts, not only X.Y.0.
-    gh pr merge "$pr" --repo "$REPO" --squash --auto --delete-branch >/dev/null || die "could not enqueue PR #$pr"
+    #
+    # No --delete-branch: gh refuses it while the merge queue is on ("Cannot
+    # use -d or --delete-branch when merge queue enabled"), which stopped the
+    # v0.5.9-rc.1 cut here. The branch is deleted after the merge instead.
+    gh pr merge "$pr" --repo "$REPO" --squash --auto >/dev/null || die "could not enqueue PR #$pr"
     log "PR #$pr enqueued; waiting for the merge queue"
     sha="$(wait_pr_merged "$pr")" || die "PR #$pr did not merge (dequeued, closed or timed out): inspect it, then re-run with --resume once it merged"
+    git push origin --delete "$branch" -q 2>/dev/null || warn "PR #$pr merged but $branch could not be deleted on origin; delete it by hand"
   else
     gh pr merge "$pr" --repo "$REPO" --squash --delete-branch --subject "$title" --body "$body" >/dev/null || die "merge failed"
     sleep 8; git fetch origin "$base" -q
