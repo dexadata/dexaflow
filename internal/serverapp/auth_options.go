@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"time"
 
 	"github.com/dexadata/dexaflow/internal/api"
 	"github.com/dexadata/dexaflow/internal/auth"
@@ -72,6 +73,7 @@ func withoutServerGrants(u *auth.User) *auth.User {
 	c.Scoped = false
 	c.Scopes = nil
 	c.DeployAudience = false
+	c.SessionsValidAfter = time.Time{}
 	return &c
 }
 

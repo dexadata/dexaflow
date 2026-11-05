@@ -133,10 +133,35 @@ func (a *JWTAuthenticator) Authenticate(ctx context.Context, token string) (*Use
 		// whoever is on call that they have an auth incident (#1087).
 		return nil, err
 	}
-	if !active {
+	if !active || sessionPredatesCutoff(&c, user) {
 		return nil, ErrInvalidToken
 	}
 	return user, nil
+}
+
+// sessionOrigin is when the token's session began: the preserved first-login
+// origin (oiat), or iat for a token minted before that claim existed. Zero when
+// the token carries neither.
+func sessionOrigin(c *jwtClaims) time.Time {
+	if c.OriginIssuedAt != nil {
+		return c.OriginIssuedAt.Time
+	}
+	if c.IssuedAt != nil {
+		return c.IssuedAt.Time
+	}
+	return time.Time{}
+}
+
+// sessionPredatesCutoff reports whether the token's session began at or before
+// the user's last deactivation, which ends it even once the user is active
+// again. JWT times have whole seconds, so a session from the same second as the
+// cutoff is refused: it may have begun before it. A token with no origin is
+// refused when a cutoff exists.
+func sessionPredatesCutoff(c *jwtClaims, user *User) bool {
+	if user.SessionsValidAfter.IsZero() {
+		return false
+	}
+	return sessionOrigin(c).Unix() <= user.SessionsValidAfter.Unix()
 }
 
 // sign mints a fresh user token for a login: TTL is the authenticator's
@@ -213,12 +238,7 @@ func (a *JWTAuthenticator) RenewUserToken(ctx context.Context, token string, ttl
 	}
 	// Preserve the session's first-login origin across renewals; fall back to iat
 	// for a token minted before the origin claim existed.
-	origin := time.Time{}
-	if c.OriginIssuedAt != nil {
-		origin = c.OriginIssuedAt.Time
-	} else if c.IssuedAt != nil {
-		origin = c.IssuedAt.Time
-	}
+	origin := sessionOrigin(&c)
 	if maxLifetime > 0 && !origin.IsZero() && a.clock().Sub(origin) > maxLifetime {
 		return "", false, nil // past the ceiling: let the credential lapse
 	}
@@ -271,7 +291,7 @@ func (a *JWTAuthenticator) reloadForRenewal(ctx context.Context, c *jwtClaims) (
 		// against the database that is already down.
 		return nil, err
 	}
-	if !active {
+	if !active || sessionPredatesCutoff(c, user) {
 		return nil, ErrInvalidToken
 	}
 	return user, nil

@@ -453,16 +453,17 @@ type UsageEventsSwitch struct {
 }
 
 type User struct {
-	ID           pgtype.UUID        `json:"id"`
-	TenantID     pgtype.UUID        `json:"tenant_id"`
-	Email        string             `json:"email"`
-	PasswordHash *string            `json:"password_hash"`
-	OidcSubject  *string            `json:"oidc_subject"`
-	OidcProvider *string            `json:"oidc_provider"`
-	IsActive     bool               `json:"is_active"`
-	LastLoginAt  pgtype.Timestamptz `json:"last_login_at"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	ID                 pgtype.UUID        `json:"id"`
+	TenantID           pgtype.UUID        `json:"tenant_id"`
+	Email              string             `json:"email"`
+	PasswordHash       *string            `json:"password_hash"`
+	OidcSubject        *string            `json:"oidc_subject"`
+	OidcProvider       *string            `json:"oidc_provider"`
+	IsActive           bool               `json:"is_active"`
+	LastLoginAt        pgtype.Timestamptz `json:"last_login_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	SessionsValidAfter pgtype.Timestamptz `json:"sessions_valid_after"`
 }
 
 type UserRole struct {

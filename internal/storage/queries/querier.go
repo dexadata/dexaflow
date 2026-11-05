@@ -1198,6 +1198,9 @@ type Querier interface {
 	// Revokes a live token of the tenant; owner_id NULL revokes any owner's. A
 	// revoked token matches no row, so it is not revoked or audited twice.
 	RevokeAPIToken(ctx context.Context, arg RevokeAPITokenParams) (RevokeAPITokenRow, error)
+	// Revokes every live API token of a user, in the transaction that deactivates
+	// it, so its tokens stay revoked when the user is reactivated.
+	RevokeUserAPITokens(ctx context.Context, arg RevokeUserAPITokensParams) (int64, error)
 	// A new current version can change the schedule, start_date or catchup, so the
 	// stored next due time is cleared and the schedule epoch bumped (#2175).
 	SetCurrentDagVersion(ctx context.Context, arg SetCurrentDagVersionParams) error
@@ -1223,7 +1226,9 @@ type Querier interface {
 	// No row means no such user in this tenant, which the caller answers as 404,
 	// so a user of another tenant is indistinguishable from a missing one. The
 	// per-request authz reload reads is_active, so the change takes effect on the
-	// user's next request, for sessions and API tokens alike.
+	// user's next request, for sessions and API tokens alike. Deactivating also
+	// stamps sessions_valid_after, so the sessions the user had stay refused after
+	// a reactivation; reactivating leaves the stamp as it is.
 	SetUserActive(ctx context.Context, arg SetUserActiveParams) (SetUserActiveRow, error)
 	// Transitions a run's state and stamps the run's own timestamps so the UI can
 	// show its duration: started_at on first entry into 'running', ended_at on a

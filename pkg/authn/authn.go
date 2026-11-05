@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"time"
 )
 
 // ErrInvalidCredentials is the error, or the wrapped error, IssueToken
@@ -73,6 +74,12 @@ type User struct {
 	// bearer minted for auth.trusted_issuer.deploy_audience. Only the server
 	// sets it: it is cleared on a User a replaced Authenticator returns.
 	DeployAudience bool
+	// SessionsValidAfter is when the user was last deactivated, zero if
+	// never. A session that began at or before it is refused, so
+	// reactivating a user does not bring back the sessions it had. Only the
+	// server sets it: it is cleared on a User a replaced Authenticator
+	// returns.
+	SessionsValidAfter time.Time
 }
 
 // HasScope reports whether the principal's token carries scope.
