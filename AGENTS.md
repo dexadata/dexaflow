@@ -116,6 +116,17 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
   `.github/release-skip.txt` on its release branch.
 - **Every performance PR is reviewed by a specialist before it merges**, for
   regressions, security and reliability (ADR 0062).
+- **No release from a red branch.** A candidate or GA is never tagged on a
+  commit of `main` or `release-X.Y` with a red or unfinished required check;
+  `cut-release.sh` and the Release workflow refuse it, with no override
+  ([RELEASING.md](RELEASING.md#red-ci-blocks-a-release)). A red check the
+  branch does not require stops the cut too, unless `--allow-red=<reason>`
+  records why it does not matter for that release.
+- **A red `main` is fixed first.** An open `ci-red` issue ("CI is red on
+  main", opened by the Branch red watch) comes before new work: read the
+  failed job, rerun it only if its log is a known transient, otherwise open
+  the fix. A transient message the watch did not recognize goes into
+  `scripts/flake-patterns.sh` with a self-test case in the same fix.
 
 ### Migrations
 

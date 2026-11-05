@@ -205,7 +205,10 @@ What checks it, and when:
    only warns; the cut builds on `origin/<base>` either way. It also runs
    `scripts/changelog-sync.sh --check-all`: a cut from `main` refuses while
    `main` lacks the changelog of a patch already released, and a patch cut
-   warns.
+   warns. Last, the base's tip must pass every check the base requires
+   (`scripts/release-ci-gate.sh`, see
+   [Red CI blocks a release](#red-ci-blocks-a-release)); running checks are
+   waited for, and a red one stops the cut before anything is prepared.
 2. **Prepare**: a `release/<tag>` branch off the base. Bump
    `helm/dexaflow/Chart.yaml` `version`+`appVersion` in lockstep (ADR 0028), regenerate the chart README with
    `helm-docs`, fold the pending changelog fragments into `[Unreleased]`, and
@@ -227,7 +230,9 @@ What checks it, and when:
    module-proxy resets, the shallow-fetch merge-base gate, the cold-start
    `/readyz` timeout) and never hard-failing on them; then squash-merges.
 4. **Guard → tag**: verifies the Chart at the merge commit matches the version,
-   waits for the base branch's CI on that commit, then, behind an explicit
+   waits for the base branch's CI on that commit (every run green after the
+   transient reruns, unless `--allow-red=<reason>`), checks again that every
+   required check passed there, then, behind an explicit
    **confirmation gate**, tags and pushes.
 5. **Sync the changelog to main** (**patch GA** only): right after the tag
    push and the `.release-<tag>.log` line, opens
@@ -378,6 +383,57 @@ the cut gave up: run the Docs promote workflow with the tag
 `hugo.toml` and bumps the README, and a PR without them fails
 `check-docs-version-menu.sh` and `check-stale-versions.sh`.
 
+## Red CI blocks a release
+
+No release candidate or GA is tagged on a commit of `main` or `release-X.Y`
+whose CI is red. Before this rule the cut judged only the prepare PR's merge
+commit, an hour into the cut, and a tag pushed by hand was judged by nothing,
+while `main` went red three times in one day and stayed red until someone
+looked.
+
+**What counts as red.** A check the base branch's ruleset requires (the
+`required_status_checks` rule, read from the API each time, so the gate and
+the merge queue agree) whose newest run that was not skipped did not pass:
+failure, cancelled, timed out, or never ran. A check still running is waited
+for, not judged. On `main` the push run skips the heavy jobs the merge queue
+already ran, so a skipped run is not a verdict. A check the base does not
+require (the coverage badge, an E2E job outside the required set) is reported
+as a warning by the gate and judged by the merge commit wait, where transient
+failures are rerun first.
+
+**Where it is enforced.**
+
+| Where | What it asks | Override |
+|---|---|---|
+| `cut-release.sh` preflight | the base's tip passes every required check (`CUT_TIP_WAIT_DEADLINE`, default 1800 s, for running ones) | none |
+| `cut-release.sh` before the tag | every run on the merge commit green after the transient reruns | `--allow-red=<reason>` |
+| `cut-release.sh` before the tag | every required check passed on the merge commit | none |
+| `release.yaml`, job `ci-gate` | every required check passed on the tagged commit, so a tag pushed by hand is judged too | none |
+
+A required check has no override: it is the line the merge queue holds every
+change to. `--allow-red=<reason>` is for a check the base does not require
+that is red for a reason that does not touch the release (an external API
+outage in the badge job); the reason goes into the tag annotation as
+`Red-CI-override: <reason>` and into `.release-<tag>.log` as
+`red_ci_override=`.
+
+**Keeping the branch green.** The Branch red watch workflow
+(`.github/workflows/branch-red.yaml`, `scripts/branch-red-watch.sh`) reruns a
+failed run of a watched workflow on `main` or `release-X.Y` once when its log
+matches `scripts/flake-patterns.sh` (or there is no log), and otherwise opens
+the issue **CI is red on `<branch>`** (label `ci-red`) with each red workflow
+and its run. Every hour it reads the newest finished run of every workflow on
+each branch, adds what turned red, and closes the issue when all of them are
+green again. An open `ci-red` issue is the first thing to fix: every release
+from that branch waits for it.
+
+```bash
+# The gate, by hand, on any commit (exit 0 green, 1 red, 2 not finished)
+scripts/release-ci-gate.sh "$(git rev-parse origin/main)" main --wait 600
+# What the watch would do now, without writing anything
+BRANCH_RED_DRY=1 scripts/branch-red-watch.sh reconcile main
+```
+
 ## Release authorization
 
 The tag + push (the irreversible publish) never happens without an explicit
@@ -439,6 +495,9 @@ scripts/cut-release.sh v0.4.4 --dry-run
 
 # Tag even though the Actions queue is busy (the cut refuses by default)
 scripts/cut-release.sh v0.4.4 --force-queue
+
+# Tag although a check main does not require is red on the merge commit (never a required one)
+scripts/cut-release.sh v0.4.4 --resume --allow-red="coverage badge: GitHub git data API outage"
 
 # Non-interactive (skips the confirm prompt — use only in trusted automation)
 scripts/cut-release.sh v0.4.4 --yes

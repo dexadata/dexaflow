@@ -17,9 +17,10 @@ retry that hides it only moves the cost.
 2. **Classify the failure from its log.**
    - **Infrastructure:** a registry rate limit, a module proxy reset, a runner
      that never started its service containers. `FLAKE_RE` in
-     `scripts/cut-release.sh` lists the messages the release cut already treats
-     as transient. A new infrastructure message belongs there, with a
-     `--self-test` case; a product or test failure never does.
+     `scripts/flake-patterns.sh` lists the messages the release cut and the
+     red branch watch already treat as transient. A new infrastructure message
+     belongs there, with a case in `scripts/cut-release.sh --self-test`; a
+     product or test failure never does.
    - **The test:** it asserts before the state it checks is written. Two real
      examples: a test re-ticked the scheduler before the asynchronous delivery
      stamp landed (#815), and a helper returned a file the moment it existed,
