@@ -1,7 +1,0 @@
-kind: Added
-body: |-
-  **`server.WithUIServer` serves a web UI of your own** (ADR 0099, #2176). A
-  program built on `pkg/server` passes a `server.UIServer`, which the server
-  mounts in place of the embedded UI, behind the same session check and
-  sign-in redirect.
-time: 2026-11-02T03:00:00.000000000-03:00

@@ -1,8 +1,0 @@
-kind: Added
-body: |-
-  **`server.WithAdmission` installs an admission hook compiled into your own
-  binary** (ADR 0099, ADR 0100, #2176, #2177). A program built on `pkg/server`
-  registers any number of `pkg/admission` hooks; they run in registration
-  order, before the webhook `execution.admission.webhook.url` configures, under
-  the same timeout, fail mode, change checks and breaker.
-time: 2026-11-02T01:30:00.000000000-03:00
