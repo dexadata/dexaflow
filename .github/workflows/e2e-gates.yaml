@@ -249,9 +249,7 @@ jobs:
       - name: Install k3d + kubectl + migrate
         run: |
           set -euo pipefail
-          curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/v5.7.4/install.sh | TAG=v5.7.4 bash
-          curl -fsSLO "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          sudo install -m 0755 kubectl /usr/local/bin/kubectl
+          bash scripts/ci-install-k3d-kubectl.sh
           go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.20.1
       - name: Apply migrations
         run: ~/go/bin/migrate -path migrations -database "postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable" up
@@ -420,9 +418,7 @@ jobs:
       - name: Install k3d + kubectl + migrate (+ psql when missing)
         run: |
           set -euo pipefail
-          curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/v5.7.4/install.sh | TAG=v5.7.4 bash
-          curl -fsSLO "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          sudo install -m 0755 kubectl /usr/local/bin/kubectl
+          bash scripts/ci-install-k3d-kubectl.sh
           go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.20.1
           command -v psql >/dev/null || { sudo apt-get update -q && sudo apt-get install -yq postgresql-client; }
       - name: Apply migrations
