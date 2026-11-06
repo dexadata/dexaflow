@@ -164,3 +164,55 @@ func findAgentLostCandidate(cands []executor.AgentLostCandidate, runUUID string)
 	}
 	return nil
 }
+
+// TestCountHeartbeatFleetIntegration pins the count the agent-lost reaper's
+// mass-silence guard reads (#1624): a running TI with no heartbeat yet is not
+// in the fleet, a stamped one is, and it counts as stale only once its stamp
+// is before the cut-off the reaper passes.
+func TestCountHeartbeatFleetIntegration(t *testing.T) {
+	repo, sched, exec, ctx := openExec(t)
+	dagID := fmt.Sprintf("hb_fleet_%d", time.Now().UnixNano())
+	tasks := []domain.TaskSpec{{TaskID: "t", Type: domain.TaskTypePython}}
+	registerSpec(t, repo, ctx, dagID, tasks)
+	if _, err := repo.CreateDagRun(ctx, "default", dagID, domain.DagRun{
+		RunID: "r1", State: domain.DagRunStateRunning, RunType: "manual", LogicalDate: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	runUUID := resolveRunUUID(t, sched, ctx, dagID)
+	if err := sched.MaterializeTasks(ctx, runUUID, tasks); err != nil {
+		t.Fatalf("MaterializeTasks: %v", err)
+	}
+	if err := sched.ApplyTransition(ctx, runUUID, "t", domain.TaskStateRunning); err != nil {
+		t.Fatal(err)
+	}
+	// Other tests share the database, so the assertions are on deltas.
+	future := time.Now().UTC().Add(time.Hour)
+	before, err := sched.CountHeartbeatFleet(ctx, future)
+	if err != nil {
+		t.Fatalf("CountHeartbeatFleet: %v", err)
+	}
+	if err := exec.RecordHeartbeat(ctx, auth.AgentIdentity{
+		TenantID: defaultTenantID(), RunID: runUUID, TaskID: "t", TryNumber: 1,
+	}); err != nil {
+		t.Fatalf("RecordHeartbeat: %v", err)
+	}
+	after, err := sched.CountHeartbeatFleet(ctx, future)
+	if err != nil {
+		t.Fatalf("CountHeartbeatFleet: %v", err)
+	}
+	if after.Total != before.Total+1 || after.Stale != before.Stale+1 {
+		t.Errorf("with a cut-off after the stamp: before %+v, after %+v, want both counts up by one", before, after)
+	}
+	past := time.Now().UTC().Add(-time.Hour)
+	fresh, err := sched.CountHeartbeatFleet(ctx, past)
+	if err != nil {
+		t.Fatalf("CountHeartbeatFleet: %v", err)
+	}
+	if fresh.Total != after.Total {
+		t.Errorf("Total must not depend on the cut-off: %d vs %d", fresh.Total, after.Total)
+	}
+	if fresh.Stale >= after.Stale {
+		t.Errorf("a cut-off before the stamp must not count it stale: stale %d with past cut-off, %d with future", fresh.Stale, after.Stale)
+	}
+}
