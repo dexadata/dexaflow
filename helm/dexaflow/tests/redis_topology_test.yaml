@@ -1,0 +1,104 @@
+suite: Redis through Sentinel or as a Cluster, and the client's timeouts (#2358)
+templates:
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: leoflow
+set:
+  database.url: postgres://h/d
+  auth.jwtSecret: jwt
+  secretKey: leoflow-unittest-secretkey-32by!
+  bootstrap.password: bootstrap-pw
+tests:
+  - it: a URL alone renders as before, with no topology or timeout env
+    set:
+      redis.url: redis://h/0
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_REDIS_URL
+            valueFrom: {secretKeyRef: {name: leoflow-dexaflow-credentials, key: redisUrl}}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_REDIS_SENTINEL_MASTER}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_REDIS_READ_TIMEOUT}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_REDIS_POOL_SIZE}
+          any: true
+
+  - it: Sentinel without a URL renders the master, the sentinels and their password
+    set:
+      redis.sentinel.master: mymaster
+      redis.sentinel.addrs: [s1:26379, s2:26379]
+      redis.sentinel.existingSecret: sentinel-creds
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_REDIS_SENTINEL_MASTER, value: mymaster}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_REDIS_SENTINEL_ADDRS, value: "s1:26379,s2:26379"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_REDIS_SENTINEL_PASSWORD
+            valueFrom: {secretKeyRef: {name: sentinel-creds, key: sentinelPassword}}
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_REDIS_URL}
+          any: true
+
+  - it: a Cluster renders its seed nodes and the explicit timeouts
+    set:
+      redis.url: rediss://:pw@unused:6379/0
+      redis.cluster.addrs: [cfg.cache.example:6379]
+      redis.readTimeout: 750ms
+      redis.dialTimeout: 2s
+      redis.poolSize: 20
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_REDIS_CLUSTER_ADDRS, value: "cfg.cache.example:6379"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_REDIS_READ_TIMEOUT, value: 750ms}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_REDIS_DIAL_TIMEOUT, value: 2s}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_REDIS_POOL_SIZE, value: "20"}
+
+  - it: no Redis at all fails the render
+    template: deployment.yaml
+    asserts:
+      - failedTemplate:
+          errorPattern: "redis.url, redis.existingSecret, redis.sentinel.master or redis.cluster.addrs is required"
+
+  - it: Sentinel and Cluster together fail the render
+    set:
+      redis.sentinel.master: m
+      redis.sentinel.addrs: [s:1]
+      redis.cluster.addrs: [c:1]
+    template: deployment.yaml
+    asserts:
+      - failedTemplate:
+          errorPattern: "not both"
+
+  - it: a Sentinel master without sentinels fails the render
+    set:
+      redis.sentinel.master: m
+    template: deployment.yaml
+    asserts:
+      - failedTemplate:
+          errorPattern: "needs redis.sentinel.addrs"
