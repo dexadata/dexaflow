@@ -24,8 +24,11 @@ seeing errors (`api_availability`).
 ```promql
 dexaflow:slo_errors:ratio_rate5m
 dexaflow:slo_errors:ratio_rate1h
-1 - avg_over_time(dexaflow:slo_errors:ratio_rate1h[30d]) / on (namespace, slo) (1 - dexaflow:slo_objective)
+dexaflow:slo_events:rate1h * 3600
 ```
+
+The budget spent over 30 days is on the
+[service level objectives](/operate/service-level-objectives/#queries) page.
 
 **Decide**, by `slo`:
 

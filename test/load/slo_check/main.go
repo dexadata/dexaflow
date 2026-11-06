@@ -3,20 +3,33 @@
 // control plane's /metrics, for a soak or a failure injection run that has no
 // Prometheus.
 //
-// Give it the scrapes in time order. Each objective's counters are summed as
-// increases between consecutive scrapes, with a counter that went down (the
-// process restarted) counted from zero, as Prometheus' increase() does: so a
-// run that kills the control plane needs a scrape every few seconds, or the
-// counts of the killed process since its last scrape are lost.
+// Scrape every control plane process separately, each into a directory of
+// its own, one file per scrape named by its Unix time in seconds; the file's
+// modification time stands in for a name that is not a number. Give the
+// directories as arguments:
 //
-// Usage (see test/load/README.md):
-//
-//	while sleep 15; do curl -s localhost:9090/metrics > "scrapes/$(date +%s).prom"; done &
+//	mkdir -p scrapes/server
+//	while sleep 15; do curl -s localhost:9090/metrics > "scrapes/server/$(date +%s).prom"; done &
 //	... run the soak ...
-//	go run ./test/load/slo_check scrapes/*.prom
+//	go run ./test/load/slo_check scrapes/*/
+//
+// Within a directory, each objective's counters are summed as increases
+// between consecutive scrapes. A changed process_start_time_seconds is a
+// restart, and so is a counter that went down: the new process's values
+// count from zero, as Prometheus' increase() does. A process killed between
+// two scrapes loses its counts since the last one, so keep the interval short
+// in a run that kills it. A scrape that does not parse (a process killed
+// while it answered) is skipped with a warning. The directories' increases
+// are then added up.
+//
+// Leadership is judged on the union of the directories: a stretch between two
+// scrapes of one process in which its leader tick count grew had a leader,
+// and every other stretch of the run, a stretch with no scrape included, did
+// not. The run's total time without a leader must stay under the monthly
+// budget, 15 minutes.
 //
 // It prints one row per objective and exits 1 when one is broken. An
-// objective with no event in the window is reported as not measured, never as
+// objective with no event in the run is reported as not measured, never as
 // met.
 package main
 
@@ -26,9 +39,13 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/common/expfmt"
@@ -39,9 +56,25 @@ import (
 // the platform caused, the ones DexaflowTasksLost counts.
 var lostDecisions = map[string]bool{"agent_lost": true, "pod_lost": true, "dispatch_lost": true, "warm_worker_lost": true}
 
-// scrape is one /metrics reading: every counter and histogram sample by
-// series key.
+// probePaths are not API traffic: the kubelet's probes and the scrape.
+var probePaths = map[string]bool{"/healthz": true, "/readyz": true, "/metrics": true}
+
+var serverError = regexp.MustCompile(`^5\d\d$`)
+
+const (
+	startTimeKey = "process_start_time_seconds{}"
+	leaderTicks  = "dexaflow_scheduler_loop_duration_seconds_count{}"
+)
+
+// scrape is one /metrics reading: every counter and histogram sample, and the
+// process start time, by series key.
 type scrape map[string]float64
+
+// timedScrape is a scrape and when it was taken.
+type timedScrape struct {
+	at time.Time
+	s  scrape
+}
 
 // objective is one row of the verdict.
 type objective struct {
@@ -75,31 +108,88 @@ func main() {
 	punctuality := flag.Float64("schedule-punctuality", 0.99, "share of scheduled runs created within 60 s of their slot")
 	taskStart := flag.Float64("task-start", 0.99, "share of attempts running within 120 s of queued")
 	platform := flag.Float64("platform-failures", 0.001, "highest share of attempts failed by the platform")
-	api := flag.Float64("api-availability", 0.999, "share of API requests answered without a 5xx")
+	api := flag.Float64("api-availability", 0.999, "share of API requests answered without a 5xx, probes left out")
+	leaderless := flag.Duration("leaderless", 15*time.Minute, "longest total time without a leader over the run")
 	flag.Parse()
-	if flag.NArg() < 2 {
-		fmt.Fprintln(os.Stderr, "slo_check: give at least two scrapes, in time order")
+	if flag.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "slo_check: give one directory of scrapes per control plane process")
 		os.Exit(2)
 	}
-	scrapes := make([]scrape, 0, flag.NArg())
-	for _, path := range flag.Args() {
-		s, err := parseFile(path)
+	sources := make([][]timedScrape, 0, flag.NArg())
+	for _, dir := range flag.Args() {
+		src, err := loadDir(dir, os.Stderr)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "slo_check: %s: %v\n", path, err)
+			fmt.Fprintf(os.Stderr, "slo_check: %s: %v\n", dir, err)
 			os.Exit(2)
 		}
-		scrapes = append(scrapes, s)
+		if len(src) < 2 {
+			fmt.Fprintf(os.Stderr, "slo_check: %s: fewer than two scrapes parse\n", dir)
+			os.Exit(2)
+		}
+		sources = append(sources, src)
 	}
-	rows := judge(increases(scrapes), *punctuality, *taskStart, *platform, *api)
-	if err := report(os.Stdout, rows); err != nil {
+	total := scrape{}
+	for _, src := range sources {
+		for k, v := range increases(src) {
+			total[k] += v
+		}
+	}
+	rows := judge(total, *punctuality, *taskStart, *platform, *api)
+	without, span := leaderlessTime(sources)
+	if err := report(os.Stdout, rows, without, span, *leaderless); err != nil {
 		fmt.Fprintf(os.Stderr, "slo_check: %v\n", err)
 		os.Exit(2)
 	}
+	broken := without > *leaderless
 	for _, o := range rows {
-		if o.Verdict() == "BROKEN" {
-			os.Exit(1)
-		}
+		broken = broken || o.Verdict() == "BROKEN"
 	}
+	if broken {
+		os.Exit(1)
+	}
+}
+
+// loadDir reads one process's scrapes in time order, warning about and
+// skipping the ones that do not parse.
+func loadDir(dir string, warn io.Writer) ([]timedScrape, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]timedScrape, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		at, err := scrapeTime(path, e)
+		if err != nil {
+			return nil, err
+		}
+		s, err := parseFile(path)
+		if err != nil {
+			if _, werr := fmt.Fprintf(warn, "slo_check: skipping %s: %v\n", path, err); werr != nil {
+				return nil, werr
+			}
+			continue
+		}
+		out = append(out, timedScrape{at: at, s: s})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].at.Before(out[j].at) })
+	return out, nil
+}
+
+// scrapeTime is the Unix time a file's name gives, or its modification time.
+func scrapeTime(path string, e os.DirEntry) (time.Time, error) {
+	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	if sec, err := strconv.ParseInt(base, 10, 64); err == nil {
+		return time.Unix(sec, 0), nil
+	}
+	info, err := e.Info()
+	if err != nil {
+		return time.Time{}, err
+	}
+	return info.ModTime(), nil
 }
 
 func parseFile(path string) (scrape, error) {
@@ -114,15 +204,23 @@ func parseFile(path string) (scrape, error) {
 	return s, err
 }
 
-// report writes one row per objective.
-func report(out io.Writer, rows []objective) error {
+// report writes one row per objective, then leadership.
+func report(out io.Writer, rows []objective, without, span, budget time.Duration) error {
 	var b strings.Builder
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	lines := make([]string, 0, 1+len(rows))
+	lines := make([]string, 0, 2+len(rows))
 	lines = append(lines, "objective\ttarget\tmeasured\tevents\tverdict")
 	for _, o := range rows {
 		lines = append(lines, fmt.Sprintf("%s\t%.4g\t%.5f\t%.0f\t%s", o.Name, o.Target, o.Ratio(), o.All, o.Verdict()))
 	}
+	verdict := "met"
+	switch {
+	case span == 0:
+		verdict = "not measured"
+	case without > budget:
+		verdict = "BROKEN"
+	}
+	lines = append(lines, fmt.Sprintf("leadership\tunder %s\t%s without a leader\tover %s\t%s", budget, without.Round(time.Second), span.Round(time.Second), verdict))
 	if _, err := io.WriteString(w, strings.Join(lines, "\n")+"\n"); err != nil {
 		return err
 	}
@@ -154,9 +252,19 @@ func parse(r io.Reader) (scrape, error) {
 				for _, b := range h.GetBucket() {
 					s[fmt.Sprintf("%s_bucket%s|le=%g", name, labels, b.GetUpperBound())] = float64(b.GetCumulativeCount())
 				}
-			case dto.MetricType_GAUGE, dto.MetricType_SUMMARY, dto.MetricType_UNTYPED, dto.MetricType_GAUGE_HISTOGRAM:
-				// No objective reads a gauge or a summary.
+			case dto.MetricType_GAUGE:
+				if name == "process_start_time_seconds" {
+					s[name+labels] = m.GetGauge().GetValue()
+				}
+			case dto.MetricType_SUMMARY, dto.MetricType_UNTYPED, dto.MetricType_GAUGE_HISTOGRAM:
+				// No objective reads a summary.
 			}
+		}
+	}
+	// The leader's tick count summed over its labels, for leadership.
+	for k, v := range s {
+		if strings.HasPrefix(k, "dexaflow_scheduler_loop_duration_seconds_count{") && k != leaderTicks {
+			s[leaderTicks] += v
 		}
 	}
 	return s, nil
@@ -171,37 +279,83 @@ func labelString(ls []*dto.LabelPair) string {
 	return "{" + strings.Join(parts, ",") + "}"
 }
 
-// increases sums each series' increase over consecutive scrapes; a value
-// below the previous one is a restart and counts from zero. A series absent
-// from a scrape (a restarted process that has not seen it yet) keeps its
-// previous value as the base.
-func increases(scrapes []scrape) scrape {
-	out := scrape{}
-	last := scrape{}
-	for k, v := range scrapes[0] {
-		last[k] = v
-		out[k] = 0
+// step is what one series gained from prev to cur, one process's
+// consecutive scrapes: everything when the process restarted.
+func step(prev, cur scrape, k string) float64 {
+	v := cur[k]
+	p, seen := prev[k]
+	restarted := prev[startTimeKey] != 0 && cur[startTimeKey] != prev[startTimeKey]
+	switch {
+	case restarted || !seen:
+		return v
+	case v >= p:
+		return v - p
+	default:
+		return v
 	}
-	for _, s := range scrapes[1:] {
-		for k, v := range s {
-			prev, seen := last[k]
-			switch {
-			case !seen:
-				out[k] += v
-			case v >= prev:
-				out[k] += v - prev
-			default:
-				out[k] += v
+}
+
+// increases sums each series' increase over one process's consecutive
+// scrapes.
+func increases(src []timedScrape) scrape {
+	out := scrape{}
+	for i := 1; i < len(src); i++ {
+		for k := range src[i].s {
+			if k == startTimeKey {
+				continue
 			}
-			last[k] = v
+			out[k] += step(src[i-1].s, src[i].s, k)
 		}
 	}
 	return out
 }
 
-// judge sums the increases into the five objectives the page states, leaving
-// out leadership, which the soak's leader_churn check judges, and outcome
-// durability, which its success_archived check judges.
+// leaderlessTime is the time of the run, from its first scrape to its last
+// over every process, that no stretch with a growing leader tick count
+// covers, and the run's span.
+func leaderlessTime(sources [][]timedScrape) (without, span time.Duration) {
+	type interval struct{ from, to time.Time }
+	var covered []interval
+	var first, last time.Time
+	for _, src := range sources {
+		for i, ts := range src {
+			if first.IsZero() || ts.at.Before(first) {
+				first = ts.at
+			}
+			if ts.at.After(last) {
+				last = ts.at
+			}
+			if i > 0 && step(src[i-1].s, ts.s, leaderTicks) > 0 {
+				covered = append(covered, interval{src[i-1].at, ts.at})
+			}
+		}
+	}
+	span = last.Sub(first)
+	sort.Slice(covered, func(i, j int) bool { return covered[i].from.Before(covered[j].from) })
+	var led time.Duration
+	var cur interval
+	for _, c := range covered {
+		switch {
+		case cur.to.IsZero():
+			cur = c
+		case !c.from.After(cur.to):
+			if c.to.After(cur.to) {
+				cur.to = c.to
+			}
+		default:
+			led += cur.to.Sub(cur.from)
+			cur = c
+		}
+	}
+	if !cur.to.IsZero() {
+		led += cur.to.Sub(cur.from)
+	}
+	return span - led, span
+}
+
+// judge sums the increases into the four ratio objectives the page states.
+// Leadership is judged by leaderlessTime, and outcome durability by the soak
+// monitor's success_archived check.
 func judge(inc scrape, punctuality, taskStart, platform, api float64) []objective {
 	sched := objective{Name: "schedule punctuality", Target: punctuality}
 	start := objective{Name: "task start", Target: taskStart}
@@ -219,9 +373,9 @@ func judge(inc scrape, punctuality, taskStart, platform, api float64) []objectiv
 			start.All += v
 		case name == "dexaflow_task_queue_wait_seconds_bucket" && strings.HasSuffix(rest, "|le=120"):
 			start.Good += v
-		case name == "dexaflow_http_requests_total":
+		case name == "dexaflow_http_requests_total" && !probePaths[label(rest, "path")]:
 			avail.All += v
-			if !strings.Contains(rest, "status=5") {
+			if !serverError.MatchString(label(rest, "status")) {
 				avail.Good += v
 			}
 		case name == "dexaflow_task_attempts_total":
@@ -236,6 +390,7 @@ func judge(inc scrape, punctuality, taskStart, platform, api float64) []objectiv
 
 // label is one label's value out of a series key's label part.
 func label(rest, name string) string {
+	rest, _, _ = strings.Cut(rest, "|")
 	for _, part := range strings.Split(strings.TrimSuffix(rest, "}"), ",") {
 		if k, v, ok := strings.Cut(part, "="); ok && k == name {
 			return v
