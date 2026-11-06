@@ -119,6 +119,10 @@ func settingType(t reflect.Type) string {
 	if t == reflect.TypeOf(time.Duration(0)) {
 		return "duration"
 	}
+	if t == reflect.TypeOf([]byte(nil)) {
+		// A YAML subtree kept verbatim (executor.policy), not a list.
+		return "object"
+	}
 	switch t.Kind() {
 	case reflect.Bool:
 		return "bool"

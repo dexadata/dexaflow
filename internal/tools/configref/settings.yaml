@@ -822,6 +822,20 @@ settings:
       CIDRs or single addresses exempted from that block (`scheduler.alerts.allowed_cidrs`,
       a list; comma-separated via the env var). Applied only while the block is
       on, but validated at startup either way: an invalid entry fails startup.
+  executor.policy:
+    edition: Cluster
+    description: >-
+      **Pod fields forced on every task pod**, whatever the DAG or an
+      [admission hook](/operate/admission-hooks/) set ([ADR 0063](/project/adrs/0063-executor-policy/)):
+      `force.runtime_class_name` and `force.service_account` replace the task's value,
+      `force.node_selector` is merged over the task's (the policy's keys win) and
+      `force.tolerations` are appended. Read only from a YAML or JSON config file,
+      because node label keys carry dots; a policy in a file of another format, an
+      unknown key or an invalid value fails boot, and so does a policy together with
+      `execution.warm_pools_enabled`. A forced service account must be in
+      `execution_allowlist.service_accounts` when that list is set. Ignored by Lite.
+      What a DAG may set at all is the execution allowlist below. See
+      [Forcing pod fields](/operate/placement-allowlist/#forcing-pod-fields).
   executor.type:
     edition: both
     description: >-
