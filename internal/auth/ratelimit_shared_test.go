@@ -117,8 +117,10 @@ func TestSharedLimiterFallsBackWhenTheCounterFails(t *testing.T) {
 	if a.Blocked("k") {
 		t.Fatal("a fresh address is blocked while the counter is down")
 	}
-	if !a.Allow("k") || !a.Allow("k") {
-		t.Fatal("the local limit refused events within it while the counter is down")
+	for i := 1; i <= 2; i++ {
+		if !a.Allow("k") {
+			t.Fatalf("the local limit refused event %d of 2 while the counter is down", i)
+		}
 	}
 	if a.Allow("k") {
 		t.Error("the local limit allowed a third event over its limit of 2")
