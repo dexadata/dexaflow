@@ -89,7 +89,7 @@ tests:
           path: spec.template.spec.containers[0].livenessProbe.httpGet.port
           value: http
 
-  - it: the scheduler Deployment is a single leader by default: role=scheduler, grpc+metrics ports, health probed on the metrics port (no HTTP API)
+  - it: "the scheduler Deployment is a single leader by default: role=scheduler, grpc+metrics ports, health probed on the metrics port (no HTTP API)"
     template: deployment.yaml
     documentIndex: 1
     set:
