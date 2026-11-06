@@ -21,10 +21,26 @@ def reset() -> None:
     COLLECTED.clear()
 
 
+# SETUP_TEARDOWN_REFUSAL is the message for Airflow's setup and teardown tasks
+# (#2336). Without it the shim raised an opaque AttributeError on as_setup().
+SETUP_TEARDOWN_REFUSAL = (
+    "setup and teardown tasks (as_setup(), as_teardown(), @setup, @teardown) are "
+    "not supported by Dexaflow: express the cleanup as a downstream task with "
+    "trigger_rule='all_done'"
+)
+
+
+def _refuse_setup_teardown(*_args, **_kwargs):
+    raise NotImplementedError(SETUP_TEARDOWN_REFUSAL)
+
+
 class XComArg:
     """Duck-typed stand-in for Airflow's XComArg: carries the producing operator
     and proxies dependency operators (``>>`` / ``<<``) to it, so TaskFlow chains
     like ``a() >> b()`` and ``x >> [y(), z()]`` wire edges correctly."""
+
+    as_setup = _refuse_setup_teardown
+    as_teardown = _refuse_setup_teardown
 
     def __init__(self, operator):
         self.operator = operator
@@ -77,6 +93,9 @@ class Param:
 
 class BaseOperator:
     """Minimal operator base: registers into the active DAG and tracks edges."""
+
+    as_setup = _refuse_setup_teardown
+    as_teardown = _refuse_setup_teardown
 
     def __init__(self, task_id, **kwargs):
         self.upstream_task_ids: set[str] = set()

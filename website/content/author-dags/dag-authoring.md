@@ -314,7 +314,8 @@ issue.
   `one_success`, `one_failed` (for example `none_failed_min_one_success`, the
   usual join after a branch): refused. Planned in
   [#2346](https://github.com/dexadata/dexaflow/issues/2346).
-- **Task groups** (`TaskGroup`, `@task_group`): refused. Flatten the group into
+- **Task groups** (`TaskGroup`, `@task_group`): refused at compile, with this
+  advice in the message. Flatten the group into
   plain tasks and prefix the ids by hand (for example `extract_load` for
   `extract.load`). The dbt integration's own `dbt_group()` is the one group
   construct that works. Planned as a grouping and UI construct, with no change
@@ -322,8 +323,9 @@ issue.
 - **Dynamic task mapping** (`.expand` / `.partial`): refused. Static fan-in
   (collecting a list of task calls into a downstream task) works; dynamic
   fan-out, expanding one task into N instances at run time, does not.
-- **Setup and teardown tasks** (`as_setup()`, `as_teardown()`): not supported;
-  express the cleanup as a downstream task with `trigger_rule="all_done"`.
+- **Setup and teardown tasks** (`as_setup()`, `as_teardown()`, `@setup`,
+  `@teardown`): refused at compile; express the cleanup as a downstream task
+  with `trigger_rule="all_done"`. Not planned beyond the refusal.
 - **`chain()`, `cross_downstream()` and edge `Label`s**: not available yet; use
   `>>` and lists (`a >> [b, c] >> d`). Planned in
   [#2337](https://github.com/dexadata/dexaflow/issues/2337).
@@ -333,9 +335,9 @@ issue.
 **Dependencies between DAGs and scheduling**
 
 - **Cross-DAG operators** (`ExternalTaskSensor`, `ExternalTaskMarker`,
-  `TriggerDagRunOperator`) and `LatestOnlyOperator`: compile today but fail at
-  run time, because they need the Airflow metadata database, which a task pod
-  does not have. See
+  `TriggerDagRunOperator`) and `LatestOnlyOperator`: refused at compile,
+  subclasses included, because they need the Airflow metadata database, which
+  a task pod does not have. See
   [Operators that need the Airflow metadata database](/author-dags/operators-sensors/#operators-that-need-the-airflow-metadata-database).
   Planned as waits the scheduler evaluates itself, with no pod
   ([ADR 0103](/project/adrs/0103-cross-dag-dependencies-in-the-scheduler/),
@@ -348,11 +350,11 @@ issue.
   refused. Use a cron string or a preset such as `@daily`.
   `CronTriggerTimetable` is planned in
   [#2351](https://github.com/dexadata/dexaflow/issues/2351).
-- **`depends_on_past`, `wait_for_downstream` and `priority_weight`**: accepted
-  but **ignored** today (the run proceeds as if they were not set), which is
-  about to become a compile error
-  ([#2336](https://github.com/dexadata/dexaflow/issues/2336)).
-  `depends_on_past` and `wait_for_downstream` are planned in
+- **`depends_on_past=True`, `wait_for_downstream=True` and a `priority_weight`
+  other than 1**: refused at compile, on a task or in the DAG's `default_args`,
+  because the scheduler does not honor them and the run would proceed as if
+  they were not set. Their default values (`False`, `False`, `1`) still
+  compile. `depends_on_past` and `wait_for_downstream` are planned in
   [#2350](https://github.com/dexadata/dexaflow/issues/2350).
 
 **Operators and sensors**
