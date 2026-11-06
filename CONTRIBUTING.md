@@ -279,6 +279,10 @@ For an end-to-end author→run loop without Kubernetes, use `dexaflow lite`
 
 See [`README.md`](README.md) for the high-level layout. Detailed module documentation lives in package-level `doc.go` files (mandatory per ADR 0012).
 
+## Governance
+
+How decisions are made and who reviews what: [`GOVERNANCE.md`](GOVERNANCE.md), [`MAINTAINERS.md`](MAINTAINERS.md) and [`.github/CODEOWNERS`](.github/CODEOWNERS).
+
 ## Communication
 
 See [`SUPPORT.md`](SUPPORT.md) for where to ask questions, report bugs, and report security issues.
