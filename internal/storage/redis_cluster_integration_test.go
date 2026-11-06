@@ -16,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/logs"
 	"github.com/dexadata/dexaflow/internal/storage"
 	"github.com/dexadata/dexaflow/internal/xcom"
 )
@@ -89,5 +90,56 @@ func TestRedisClusterXComAcrossSlots(t *testing.T) {
 	sort.Strings(want)
 	if fmt.Sprint(listed) != fmt.Sprint(want) {
 		t.Errorf("List saw %d keys, want %d", len(listed), len(want))
+	}
+}
+
+// The live log tail's subscriber count must see a subscriber whatever node
+// holds its connection: NUMSUB counts one node only, so a count on a random
+// node would stop the agent publishing (#2358).
+func TestRedisClusterLogTailSeesEverySubscriber(t *testing.T) {
+	addr := os.Getenv("DEXAFLOW_TEST_REDIS_CLUSTER")
+	if addr == "" {
+		t.Skip("DEXAFLOW_TEST_REDIS_CLUSTER is not set; start one with scripts/redis-cluster-up.sh")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	rd, err := storage.NewRedis(ctx, config.RedisSection{Cluster: config.RedisClusterSection{Addrs: []string{addr}}})
+	if err != nil {
+		t.Fatalf("NewRedis as a Cluster: %v", err)
+	}
+	defer rd.Close()
+	tailer := logs.NewRedisTailer(rd.Client)
+	for i := 0; i < 12; i++ {
+		ref := logs.Ref{TenantID: "t", DagID: "dag", RunID: fmt.Sprintf("run-%d", i), TaskID: "task", TryNumber: 1}
+		if has, err := tailer.HasSubscribers(ctx, ref); err != nil || has {
+			t.Fatalf("ref %d before subscribing: has %v, err %v", i, has, err)
+		}
+		lines, stop := tailer.Subscribe(ctx, ref)
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			has, err := tailer.HasSubscribers(ctx, ref)
+			if err != nil {
+				t.Fatalf("ref %d: %v", i, err)
+			}
+			if has {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("ref %d: a subscriber is listening and HasSubscribers says no one is", i)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if err := tailer.Publish(ctx, ref, "line"); err != nil {
+			t.Fatalf("publish: %v", err)
+		}
+		select {
+		case got := <-lines:
+			if got != "line" {
+				t.Errorf("ref %d: got %q", i, got)
+			}
+		case <-time.After(5 * time.Second):
+			t.Errorf("ref %d: the published line did not arrive", i)
+		}
+		stop()
 	}
 }

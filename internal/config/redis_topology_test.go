@@ -47,6 +47,8 @@ func TestRedisTopologyValidate(t *testing.T) {
 		"sentinel and cluster":     {Sentinel: RedisSentinelSection{Master: "m", Addrs: []string{"s:1"}}, Cluster: RedisClusterSection{Addrs: []string{"c:1"}}},
 		"master without sentinels": {Sentinel: RedisSentinelSection{Master: "m"}},
 		"sentinels without master": {Sentinel: RedisSentinelSection{Addrs: []string{"s:1"}}},
+		"sentinel password alone":  {Sentinel: RedisSentinelSection{Password: "p"}},
+		"cluster with a database":  {URL: "redis://:p@x/2", Cluster: RedisClusterSection{Addrs: []string{"c:1"}}},
 		"negative read timeout":    {URL: "redis://x", ReadTimeout: -time.Second},
 		"negative pool size":       {URL: "redis://x", PoolSize: -1},
 	}
@@ -56,9 +58,10 @@ func TestRedisTopologyValidate(t *testing.T) {
 		}
 	}
 	for name, r := range map[string]RedisSection{
-		"url":      {URL: "redis://x"},
-		"sentinel": {Sentinel: RedisSentinelSection{Master: "m", Addrs: []string{"s:1"}}},
-		"cluster":  {Cluster: RedisClusterSection{Addrs: []string{"c:1"}}},
+		"url":                     {URL: "redis://x"},
+		"cluster with database 0": {URL: "rediss://:p@x/0", Cluster: RedisClusterSection{Addrs: []string{"c:1"}}},
+		"sentinel":                {Sentinel: RedisSentinelSection{Master: "m", Addrs: []string{"s:1"}}},
+		"cluster":                 {Cluster: RedisClusterSection{Addrs: []string{"c:1"}}},
 	} {
 		if err := r.Validate(); err != nil {
 			t.Errorf("%s: Validate() = %v", name, err)

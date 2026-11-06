@@ -103,9 +103,10 @@ func TestRedisSentinelFailoverKeepsXComWorking(t *testing.T) {
 			retry(ctx, t, "fetch", &transient, func() error {
 				got, err := backend.Fetch(ctx, key)
 				if errors.Is(err, xcom.ErrNotFound) {
-					// A write the old master took but did not replicate
-					// before it was demoted: the agent pushes again.
-					return backend.Push(ctx, key, entry, time.Minute)
+					// SENTINEL FAILOVER waits for the replica to catch up,
+					// so an acknowledged push must survive the switch.
+					t.Errorf("push of %s was acknowledged and then lost in the failover", key)
+					return nil
 				}
 				if err == nil && string(got.Value) != string(entry.Value) {
 					return fmt.Errorf("value %s, want %s", got.Value, entry.Value)
