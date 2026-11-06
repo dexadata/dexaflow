@@ -65,7 +65,9 @@ Each tenant has its own:
 
 Names are per tenant: two tenants can both have a DAG `nightly` or a
 connection `warehouse`. An id from another tenant answers `404`, as if it did
-not exist.
+not exist. The integration suite checks this for every API route on every
+pull request: it calls each route as one tenant with another tenant's ids and
+fails on any answer or write that reaches the other tenant's objects.
 
 ## What is shared
 
