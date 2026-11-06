@@ -145,6 +145,14 @@ survive it:
 | Reserved static addresses | left by the above | billed **while reserved and unused** |
 | Artifact Registry repositories | the runners do not exist yet, and the first one will push DAG images somewhere the cluster can pull from | storage per GB per month, indefinitely, and nothing here ever deletes it |
 
+The chart itself creates one such disk per install: `logs.persistence.enabled`
+is on by default (right for production, where task logs must survive a pod
+restart) and provisions a 50 Gi `leoflow-logs` PVC, whose disk outlives the
+cluster. Four of them were found orphaned after one day of experiments
+(#1230), so `stack_up` installs with `logs.persistence.enabled=false` and the
+control plane logs to an emptyDir. A runner that installs the chart another way
+must do the same, or delete the PVC before deleting the cluster.
+
 `teardown.sh --leftovers` lists all four. It deletes nothing: none of them
 carries the `purpose=leoflow-experiment` label that makes deleting a cluster
 safe, so there is no way for a script to tell ours from the project's own, and a
