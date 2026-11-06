@@ -253,7 +253,7 @@ helm install dexaflow ./helm/dexaflow \
 The images keep the chart's `pullPolicy: IfNotPresent`, so the node uses the
 imported copies. After a rebuild, import again and restart the Deployment
 (`kubectl -n dexaflow rollout restart deploy/dexaflow`); for a chart change,
-`helm upgrade dexaflow ./helm/dexaflow -n dexaflow --reuse-values`.
+`helm upgrade dexaflow ./helm/dexaflow -n dexaflow --reset-then-reuse-values`.
 
 To test a change to the task runtime (the agent or the Python helper), build
 the base image locally and name it in the DAG's `dexaflow.yaml`:
