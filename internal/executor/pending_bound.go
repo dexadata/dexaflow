@@ -71,7 +71,8 @@ type PendingSettle int
 const (
 	// PendingSettled means the attempt had not started and is now failed.
 	PendingSettled PendingSettle = iota
-	// PendingStarted means the same attempt is running, so its pod is its live
+	// PendingStarted means the same attempt is running, or may be starting
+	// (a start committed while the settle ran), so its pod may be its live
 	// execution (placed, or its pull succeeded, since the snapshot) and must
 	// be left alone.
 	PendingStarted
@@ -181,6 +182,11 @@ func (r *Reconciler) classify(pod *corev1.Pod, now time.Time) verdict {
 // the kubelet retries, or nil.
 func pullWaiting(pod *corev1.Pod) *corev1.ContainerStateWaiting {
 	for _, cs := range pod.Status.ContainerStatuses {
+		// The task container only: a sidecar an admission webhook injected
+		// may fail its pull while the task runs.
+		if cs.Name != taskContainerName {
+			continue
+		}
 		if w := cs.State.Waiting; w != nil && imagePullWaiting[w.Reason] {
 			return w
 		}
