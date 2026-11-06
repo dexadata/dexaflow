@@ -14,13 +14,15 @@
 //	go run ./test/load/slo_check scrapes/*/
 //
 // Within a directory, each objective's counters are summed as increases
-// between consecutive scrapes. A changed process_start_time_seconds is a
-// restart, and so is a counter that went down: the new process's values
-// count from zero, as Prometheus' increase() does. A process killed between
-// two scrapes loses its counts since the last one, so keep the interval short
-// in a run that kills it. A scrape that does not parse (a process killed
-// while it answered) is skipped with a warning. The directories' increases
-// are then added up.
+// between consecutive scrapes. A counter that went down is a restart: the new
+// process's values count from zero, as Prometheus' increase() does. The
+// control plane exports no process start time, so a restarted process whose
+// counters climbed past the old values before the next scrape is undercounted,
+// and a process killed between two scrapes loses its counts since the last
+// one: keep the interval short in a run that kills it. A scrape that does not
+// parse, or holds no dexaflow_ series (an empty file from a refused
+// connection), is skipped with a warning. The directories' increases are then
+// added up.
 //
 // Leadership is judged on the union of the directories: a stretch between two
 // scrapes of one process in which its leader tick count grew had a leader,
@@ -34,6 +36,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -61,14 +64,21 @@ var probePaths = map[string]bool{"/healthz": true, "/readyz": true, "/metrics": 
 
 var serverError = regexp.MustCompile(`^5\d\d$`)
 
-const (
-	startTimeKey = "process_start_time_seconds{}"
-	leaderTicks  = "dexaflow_scheduler_loop_duration_seconds_count{}"
-)
+const leaderTicks = "dexaflow_scheduler_loop_duration_seconds_count{}"
 
-// scrape is one /metrics reading: every counter and histogram sample, and the
-// process start time, by series key.
+// scrape is one /metrics reading: every counter and histogram sample by
+// series key.
 type scrape map[string]float64
+
+// fromDexaflow reports whether the scrape holds a control plane series.
+func (s scrape) fromDexaflow() bool {
+	for k := range s {
+		if strings.HasPrefix(k, "dexaflow_") {
+			return true
+		}
+	}
+	return false
+}
 
 // timedScrape is a scrape and when it was taken.
 type timedScrape struct {
@@ -167,6 +177,9 @@ func loadDir(dir string, warn io.Writer) ([]timedScrape, error) {
 			return nil, err
 		}
 		s, err := parseFile(path)
+		if err == nil && !s.fromDexaflow() {
+			err = errors.New("no dexaflow_ series (the process did not answer)")
+		}
 		if err != nil {
 			if _, werr := fmt.Fprintf(warn, "slo_check: skipping %s: %v\n", path, err); werr != nil {
 				return nil, werr
@@ -253,9 +266,8 @@ func parse(r io.Reader) (scrape, error) {
 					s[fmt.Sprintf("%s_bucket%s|le=%g", name, labels, b.GetUpperBound())] = float64(b.GetCumulativeCount())
 				}
 			case dto.MetricType_GAUGE:
-				if name == "process_start_time_seconds" {
-					s[name+labels] = m.GetGauge().GetValue()
-				}
+				// A gauge marks the scrape as the control plane's.
+				s[name+labels] = 0
 			case dto.MetricType_SUMMARY, dto.MetricType_UNTYPED, dto.MetricType_GAUGE_HISTOGRAM:
 				// No objective reads a summary.
 			}
@@ -280,13 +292,12 @@ func labelString(ls []*dto.LabelPair) string {
 }
 
 // step is what one series gained from prev to cur, one process's
-// consecutive scrapes: everything when the process restarted.
+// consecutive scrapes: everything when it went down (a restart).
 func step(prev, cur scrape, k string) float64 {
 	v := cur[k]
 	p, seen := prev[k]
-	restarted := prev[startTimeKey] != 0 && cur[startTimeKey] != prev[startTimeKey]
 	switch {
-	case restarted || !seen:
+	case !seen:
 		return v
 	case v >= p:
 		return v - p
@@ -301,9 +312,6 @@ func increases(src []timedScrape) scrape {
 	out := scrape{}
 	for i := 1; i < len(src); i++ {
 		for k := range src[i].s {
-			if k == startTimeKey {
-				continue
-			}
 			out[k] += step(src[i-1].s, src[i].s, k)
 		}
 	}

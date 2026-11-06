@@ -360,11 +360,13 @@ go run ./test/load/slo_check scrapes/*/
 ```
 
 Within a directory, each objective's counters are summed as increases between
-consecutive scrapes; a changed `process_start_time_seconds` or a counter that
-went down is a restart, counted from zero, as `increase()` does. A process
-killed between two scrapes loses its counts since the last one, so keep the
-interval short in a run that kills it. A scrape that does not parse (cut off
-by a kill) is skipped with a warning. Leadership is the time of the run that
+consecutive scrapes; a counter that went down is a restart, counted from zero,
+as `increase()` does. The control plane exports no process start time, so a
+restarted process whose counters climbed past the old values before the next
+scrape is undercounted, and a process killed between two scrapes loses its
+counts since the last one: keep the interval short in a run that kills it. A
+scrape that does not parse (cut off by a kill) or holds no `dexaflow_` series
+(an empty file from a refused connection) is skipped with a warning. Leadership is the time of the run that
 no stretch with a growing leader tick count covers, on any process. It prints
 one row per objective with the target, the measured share and the number of
 events, and exits 1 when one is broken. An objective with no event is not
