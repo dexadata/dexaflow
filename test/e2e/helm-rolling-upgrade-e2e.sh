@@ -240,7 +240,10 @@ WATCH_PID=$!
 
 log "helm upgrade to this tree's chart and images while the tasks run"
 stop_pf
-helm upgrade "$RELEASE" "$ROOT/helm/dexaflow" -n "$NS" --reuse-values \
+# --reset-then-reuse-values, as the upgrade guide says: plain --reuse-values
+# drops the defaults of keys the previous chart did not have, and a template
+# that validates such a key then fails on "<nil>".
+helm upgrade "$RELEASE" "$ROOT/helm/dexaflow" -n "$NS" --reset-then-reuse-values \
   --set image.repository=dexaflow-server --set image.tag=e2e --set image.pullPolicy=IfNotPresent \
   --set migrations.image.repository=dexaflow-migrate --set migrations.image.tag=e2e \
   --set migrations.image.pullPolicy=IfNotPresent \
