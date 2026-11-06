@@ -45,13 +45,14 @@ type verdict struct {
 	reason     string     // failure reason (settleFailed, settleInfra)
 	at         time.Time  // next-poke time (settleReschedule)
 	fromRecord bool       // a durable outcome record drove this, not pod phase
+	collect    bool       // delete the pod right after the settle (a bound on a Pending pod)
 }
 
 // unrecoverableWaiting lists container "waiting" reasons that never self-resolve
-// and mean the agent never started, so no state will be reported.
+// and mean the agent never started, so no state will be reported. A failing
+// image pull is not one: the kubelet retries it, and Reconciler.classify
+// bounds it (#1609).
 var unrecoverableWaiting = map[string]bool{
-	"ImagePullBackOff":           true,
-	"ErrImagePull":               true,
 	"InvalidImageName":           true,
 	"CreateContainerError":       true,
 	"CreateContainerConfigError": true,
@@ -611,6 +612,9 @@ type Reconciler struct {
 	// infra mark visible (ADR 0052 amendment, part 1); nil leaves them off.
 	overrideRecorder InfraOverrideRecorder
 	overrideSink     logSink
+	// pendingTimeout is executor.pending_timeout_seconds (see classify); zero
+	// leaves an unschedulable pod waiting.
+	pendingTimeout time.Duration
 }
 
 // NewReconciler builds a Reconciler over the given cluster and outcome reporter.
@@ -658,7 +662,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 	}
 	runs := newRunTracker(r.settledRuns != nil)
 	for _, pod := range pods {
-		v := classifyPod(pod)
+		v := r.classify(pod, r.now())
 		if !v.terminal {
 			runs.block(pod)
 			continue
@@ -682,7 +686,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			// reschedule_at and flap the sensor. It exited cleanly (nothing to
 			// inspect), so collect it now instead of after the grace period, well
 			// before the next redispatch. (ADR 0052)
-			if v.settle == settleReschedule {
+			if v.settle == settleReschedule || v.collect {
 				r.collect(ctx, pod)
 				continue
 			}
