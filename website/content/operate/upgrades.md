@@ -1357,7 +1357,7 @@ Two changes to task pods that never start
   task bounded this way spends a retry and its next attempt starts the clock
   again. The clock starts no earlier than when the leader first saw the pod
   unschedulable, so time behind scheduling gates (Kueue) is not counted and
-  a leader change or restart starts it over. The bound only matters under the `exchange` agent credential
+  a leader change or restart may start it over. The bound only matters under the `exchange` agent credential
   transport: under `envvar`, the default, the `start_expired` bound already
   re-places a Pending pod after 8 minutes.
 

@@ -879,7 +879,7 @@ settings:
       Counted from when the pod became unschedulable, so leave room for a cluster
       autoscaler to add a node, and no earlier than when the leader first saw the pod
       unschedulable, so time behind scheduling gates (Kueue) is not counted and a
-      leader change or restart starts it over. It applies under the `exchange` agent credential transport: under
+      leader change or restart may start it over. It applies under the `exchange` agent credential transport: under
       `envvar` the `start_expired` bound re-places a Pending pod after 8 minutes
       first. `0` (the default) leaves such a pod waiting, holding its pool slot. Helm: `executor.pendingTimeoutSeconds`, which the `cluster`
       profile sets to `900`.

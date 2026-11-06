@@ -378,10 +378,15 @@ func (s *ExecutionStore) FailPendingTask(ctx context.Context, taskInstanceID str
 		return executor.PendingGone, err
 	case row.Applied > 0:
 		return executor.PendingSettled, nil
-	case row.AttemptState == "running":
-		return executor.PendingStarted, nil
-	default:
+	case row.AttemptState == "" || terminalTaskState(row.AttemptState):
 		return executor.PendingGone, nil
+	default:
+		// running, or a state the guard would have failed (none, scheduled,
+		// queued) although the update matched nothing: the statement read the
+		// row before a concurrent start committed, and the update re-checked
+		// it after (READ COMMITTED). Either way the attempt may be live, so
+		// its pod is left for the next sweep to judge afresh.
+		return executor.PendingStarted, nil
 	}
 }
 
@@ -694,4 +699,14 @@ func taskSDKRunType(trigger queries.DagRunTrigger) string {
 		return "asset_triggered"
 	}
 	return string(trigger)
+}
+
+// terminalTaskState reports whether a task instance state is final for its
+// attempt.
+func terminalTaskState(state string) bool {
+	switch state {
+	case "success", "failed", "skipped", "upstream_failed", "removed":
+		return true
+	}
+	return false
 }
