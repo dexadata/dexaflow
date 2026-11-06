@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -90,5 +92,37 @@ func TestRedisOptionsTimeouts(t *testing.T) {
 	}
 	if u.ReadTimeout != time.Second || u.DialTimeout != 0 || u.PoolSize != 0 {
 		t.Errorf("options = read %s dial %s pool %d", u.ReadTimeout, u.DialTimeout, u.PoolSize)
+	}
+}
+
+// With Sentinel or Cluster, TLS verifies each node against the address it
+// dials: ParseURL's ServerName (the URL's host) is cleared, with a URL and
+// with only a CA file, and a single node keeps it.
+func TestRedisOptionsTopologyTLSVerifiesTheDialedNode(t *testing.T) {
+	ca := filepath.Join(t.TempDir(), "ca.crt")
+	if err := os.WriteFile(ca, freshCAPEM(t), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cluster := config.RedisClusterSection{Addrs: []string{"node:6379"}}
+	sentinel := config.RedisSentinelSection{Master: "m", Addrs: []string{"s:26379"}}
+	for name, cfg := range map[string]config.RedisSection{
+		"cluster with a url":     {URL: "rediss://:pw@ignored:6379", Cluster: cluster},
+		"cluster with a ca only": {CAFile: ca, Cluster: cluster},
+		"sentinel with a url":    {URL: "rediss://:pw@ignored:6379", CAFile: ca, Sentinel: sentinel},
+	} {
+		u, err := redisUniversalOptions(cfg)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if u.TLSConfig == nil || u.TLSConfig.ServerName != "" {
+			t.Errorf("%s: TLS server name pinned to %q", name, u.TLSConfig.ServerName)
+		}
+	}
+	u, err := redisUniversalOptions(config.RedisSection{URL: "rediss://cache.example:6379"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.TLSConfig == nil || u.TLSConfig.ServerName != "cache.example" {
+		t.Errorf("a single node must keep the URL's host as the server name, got %+v", u.TLSConfig)
 	}
 }
