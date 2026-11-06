@@ -161,3 +161,44 @@ func TestForcePolicyNilChangesNothing(t *testing.T) {
 		t.Fatal("nil policy forces a service account")
 	}
 }
+
+func TestForcePolicySummaryAndServiceAccount(t *testing.T) {
+	var none *ForcePolicy
+	if none.Summary() != nil || none.ServiceAccount() != "" {
+		t.Fatalf("nil policy: summary %v, service account %q", none.Summary(), none.ServiceAccount())
+	}
+	p := mustForcePolicy(t, `
+force:
+  runtime_class_name: gvisor
+  service_account: dexaflow-task
+  node_selector: {pool: tasks}
+  tolerations: [{key: dedicated, operator: Equal, value: tasks, effect: NoSchedule}]
+`)
+	if got := strings.Join(p.Summary(), ","); got != "runtime_class_name,service_account,node_selector,tolerations" {
+		t.Fatalf("summary = %q", got)
+	}
+	if p.ServiceAccount() != "dexaflow-task" {
+		t.Fatalf("service account = %q", p.ServiceAccount())
+	}
+	if got := mustForcePolicy(t, "force: {node_selector: {pool: tasks}}").Summary(); strings.Join(got, ",") != "node_selector" {
+		t.Fatalf("node selector only: summary = %v", got)
+	}
+}
+
+func TestParseForcePolicyListsEveryProblemInOrder(t *testing.T) {
+	doc := "force: {runtime_class_name: Bad_Name, service_account: Also_Bad}"
+	_, first := ParseForcePolicy([]byte(doc))
+	if first == nil {
+		t.Fatal("want an error")
+	}
+	msg := first.Error()
+	rc, sa := strings.Index(msg, "runtime_class_name"), strings.Index(msg, "service_account")
+	if rc < 0 || sa < 0 || rc > sa {
+		t.Fatalf("want both problems, sorted: %s", msg)
+	}
+	for range 20 {
+		if _, err := ParseForcePolicy([]byte(doc)); err.Error() != msg {
+			t.Fatalf("error text changed between parses:\n%s\n%s", msg, err)
+		}
+	}
+}
