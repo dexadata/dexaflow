@@ -138,6 +138,9 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 		usageStore := storage.NewUsageStore(schedPG)
 		startUsageSwitch(ctx, cfg.Usage.Events.Enabled, usageStore, usageLag, sched.IsLeading, logger)
 		startUsageCounters(ctx, cfg.Usage.Events.Enabled, cfg.Observability.UsageMetrics, usageStore, usageCount, sched.LeaderSince, logger)
+		if metrics != nil {
+			startOldestWaiting(ctx, storage.NewTaskWaitStore(schedPG), metrics, sched.IsLeading, logger)
+		}
 		health = sched
 		podDispatch = dispatchOn
 	}

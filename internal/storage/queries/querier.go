@@ -897,6 +897,12 @@ type Querier interface {
 	// and provisional rule as MarkTaskDispatchLost: state='queued' (an agent that
 	// reported RUNNING wins) and the listed attempt, (try_number, attempt_epoch).
 	MarkTaskStartExpired(ctx context.Context, arg MarkTaskStartExpiredParams) (int64, error)
+	// Age of the oldest task instance waiting to start, per tenant and waiting
+	// state, for dexaflow_task_oldest_waiting_seconds (#2300). A scheduled row
+	// waits from scheduled_at (a free pool slot), a queued one from queued_at (its
+	// pod or worker). The state filter matches the partial index idx_ti_state, so
+	// the read touches only active rows. A tenant with nothing waiting has no row.
+	OldestWaitingTaskAges(ctx context.Context) ([]OldestWaitingTaskAgesRow, error)
 	// Every named pool's slot cap across all tenants, for the scheduler's per-tick
 	// cross-DAG admission budget (ADR 0053 Stage 3). Keyed by (tenant_id, name) so a
 	// pool name is scoped to its tenant. Pro-only: Lite never calls this.
@@ -1031,8 +1037,18 @@ type Querier interface {
 	// 0: it matches its own pre-upgrade attempt (rows migrate at 0) and never an
 	// attempt dispatched after the upgrade (the dispatch claim makes those >= 1).
 	// That keeps a superseded agent's RUNNING report off its replacement (#911).
-	// Returns the affected row count so the caller can tell a real write from a
-	// rejected late report instead of dropping it silently.
+	// Returns the updated row (none for a rejected late report) so the caller can
+	// tell a real write from a rejected one instead of dropping it silently.
+	//
+	// first_start is true on the report that moves the attempt to running for the
+	// first time, with queue_wait_seconds from queued_at to now, so
+	// dexaflow_task_queue_wait_seconds counts each attempt once (#2300).
+	// The self join on prev reads the row as it was before this UPDATE: RETURNING
+	// alone only sees the new started_at. Two concurrent first running reports of
+	// one attempt could both see started_at NULL; the agent sends one, so the
+	// histogram can at worst count a rare attempt twice and never moves a state.
+	// A row still in 'none' (the agent beat launchQueued, see below) has no
+	// queued_at yet and is not counted.
 	//
 	// The state set is deliberately wider than the siblings' ('scheduled','queued',
 	// 'running'): it also admits 'none'. Those writes are driven by the scheduler,
@@ -1043,7 +1059,7 @@ type Querier interface {
 	// while the row is still `none`. Excluding it would reject a correct report,
 	// trading a rare silent corruption for a frequent one. The settled states
 	// (success/failed/skipped/upstream_failed) are what this guard is for.
-	ReportTaskResult(ctx context.Context, arg ReportTaskResultParams) (int64, error)
+	ReportTaskResult(ctx context.Context, arg ReportTaskResultParams) ([]ReportTaskResultRow, error)
 	// A buffered dispatch failed inside the worker for a retriable reason: re-offer
 	// the task the way a synchronous failure is re-offered (RecordDispatchFailure,
 	// RecordDispatchBackpressure). Back to 'scheduled' with the next attempt held

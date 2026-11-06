@@ -24,6 +24,16 @@ import (
 type ExecutionStore struct {
 	q     *queries.Queries
 	specs *specCache
+	// queueWait receives the wait from queued to running of each attempt,
+	// once, on its first running report (#2300). Nil records nothing.
+	queueWait func(tenant string, seconds float64)
+}
+
+// SetQueueWaitObserver installs fn to receive, once per attempt, the seconds
+// from queued_at to the agent's first running report, with the tenant name.
+// Call it before the store serves reports.
+func (s *ExecutionStore) SetQueueWaitObserver(fn func(tenant string, seconds float64)) {
+	s.queueWait = fn
 }
 
 // NewExecutionStore builds an ExecutionStore over the given Postgres connection.
@@ -197,8 +207,11 @@ func (s *ExecutionStore) ReportState(ctx context.Context, id auth.AgentIdentity,
 	// means the report arrived after the row moved on — not that anything
 	// failed. Surface it as a distinct condition so the caller can acknowledge
 	// the agent without pretending the write happened.
-	if rows == 0 {
+	if len(rows) == 0 {
 		return agentrpc.ErrStaleReport
+	}
+	if row := rows[0]; row.FirstStart && s.queueWait != nil {
+		s.queueWait(row.TenantName, row.QueueWaitSeconds)
 	}
 	return nil
 }
