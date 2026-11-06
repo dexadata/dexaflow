@@ -26,6 +26,25 @@ dispatch families during an incident, see
 [Troubleshooting & observability](/operate/troubleshooting/) and
 [Scheduler resilience](/operate/scheduler-resilience/).
 
+## Grafana dashboard
+
+The chart ships an overview dashboard, `helm/dexaflow/dashboards/dexaflow-overview.json`:
+scheduler loop duration and schedule delay, leader step-downs, task queue wait,
+task state transitions and failure ratio, dispatch latency, undispatchable
+tasks and pod creation errors, API traffic, 5xx ratio and latency, database
+pool usage and waits, and Redis failures. It picks a Prometheus data source and
+one or more namespaces from the `dexaflow_build_info` series.
+
+Set `metrics.grafanaDashboard.enabled: true` to install it as a ConfigMap
+labeled `grafana_dashboard: "1"`, which the Grafana sidecar of
+kube-prometheus-stack loads. `metrics.grafanaDashboard.namespace`,
+`labels` and `annotations` match another sidecar setup. Without a sidecar,
+import the JSON file in Grafana by hand. A test holds every metric and label
+the dashboard and the alert rules query to the families listed below, so a
+rename cannot leave a panel empty.
+
+## Families
+
 The table is generated from the collectors the server registers: run
 `make gen-metrics-reference` after adding or changing a metric, and
 `go test ./internal/tools/metricsref/` fails while the page is stale.
