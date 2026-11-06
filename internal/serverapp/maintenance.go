@@ -232,6 +232,9 @@ func (o overrideObservers) wire(rec *executor.Reconciler) {
 	var recorder executor.InfraOverrideRecorder
 	if o.metrics != nil {
 		recorder = o.metrics
+		// The Pending bounds' settles are counted as scheduler decisions
+		// (#1609).
+		rec.SetDecisionRecorder(o.metrics)
 	}
 	rec.SetInfraOverrideObservers(recorder, o.sink)
 }
