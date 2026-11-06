@@ -15,6 +15,12 @@ it keeps XCom in Postgres and tails logs in process
 |---|---|---|---|
 | **XCom values** | the agent, through the control plane, when a task returns a value or pushes one | 7 days from the push (a TTL on every key, [ADR 0006](/project/adrs/0006-xcom-redis/)); the Postgres index row of each value is kept with its run | Yes. A downstream task of a run in flight that pulls a lost value fails. Finished runs keep their state, but their XCom values are gone from the UI and the API. |
 | **Live log tail** | the control plane, one publish per log line | none: Redis pub/sub keeps nothing | No data: a follower watching a log reconnects and the full log stays in the log sink. |
+| **Sign-in rate limits** | every API replica, one increment per counted attempt | the current one-minute window | The counts restart at zero: an address gets a fresh minute of attempts. If Redis is unreachable, each replica counts on its own until it is back. |
+
+The rate limits of the sign-in routes (failed password logins, token
+renewal, SSO, CLI device sign-in, CI token exchange) count in Redis so that
+the limit holds across API replicas and the HPA; without Redis each replica
+would allow the full limit on its own.
 
 Nothing takes a lock in Redis. Scheduling, leader election and dispatch state
 live in Postgres only, so a Redis outage never runs a task twice or loses a
