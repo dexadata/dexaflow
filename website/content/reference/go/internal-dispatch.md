@@ -29,6 +29,7 @@ Package dispatch launches pod\-path task instances: it resolves a task's executi
   - [func \(d \*Dispatcher\) SetAgentTokenTransport\(transport, audience string, expirationSeconds int64\)](<#Dispatcher.SetAgentTokenTransport>)
   - [func \(d \*Dispatcher\) SetAttemptLifetimeCeiling\(ceiling time.Duration\)](<#Dispatcher.SetAttemptLifetimeCeiling>)
   - [func \(d \*Dispatcher\) SetDefaultTaskServiceAccount\(name string\)](<#Dispatcher.SetDefaultTaskServiceAccount>)
+  - [func \(d \*Dispatcher\) SetForcePolicy\(p \*ForcePolicy\)](<#Dispatcher.SetForcePolicy>)
   - [func \(d \*Dispatcher\) SetPlatformDefaults\(p PlatformDefaults\)](<#Dispatcher.SetPlatformDefaults>)
   - [func \(d \*Dispatcher\) SetSecretsBackend\(class, kwargs string\)](<#Dispatcher.SetSecretsBackend>)
   - [func \(d \*Dispatcher\) SetSourceModeImage\(image string\)](<#Dispatcher.SetSourceModeImage>)
@@ -38,6 +39,11 @@ Package dispatch launches pod\-path task instances: it resolves a task's executi
   - [func \(d \*Dispatcher\) SetWarmPlacer\(p WarmPlacer\)](<#Dispatcher.SetWarmPlacer>)
   - [func \(d \*Dispatcher\) WarmPolicy\(\) domain.WarmPolicy](<#Dispatcher.WarmPolicy>)
 - [type FailureSink](<#FailureSink>)
+- [type ForcePolicy](<#ForcePolicy>)
+  - [func ParseForcePolicy\(doc \[\]byte\) \(\*ForcePolicy, error\)](<#ParseForcePolicy>)
+  - [func \(p \*ForcePolicy\) Apply\(task domain.TaskSpec\) \(domain.TaskSpec, bool\)](<#ForcePolicy.Apply>)
+  - [func \(p \*ForcePolicy\) ServiceAccount\(\) string](<#ForcePolicy.ServiceAccount>)
+  - [func \(p \*ForcePolicy\) Summary\(\) \[\]string](<#ForcePolicy.Summary>)
 - [type Inner](<#Inner>)
 - [type MetricsRecorder](<#MetricsRecorder>)
 - [type PlatformDefaults](<#PlatformDefaults>)
@@ -192,7 +198,7 @@ func (b *BufferedDispatcher) Dispatch(ctx context.Context, runID, dagID, dagVers
 Dispatch hands a task off to the inner dispatcher. In passthrough mode the inner call happens inline. In buffered mode the request is enqueued non\- blockingly: success returns \(Dispatched, nil\) immediately \(the scheduler then records the TI as \`queued\`\); a full or closed channel returns \(Deferred, ErrAtCapacity\). Deferred tells the scheduler nothing was attempted, so the TI stays scheduled for a later tick without touching its dispatch\-attempt budget \(review item S2: a full buffer is backpressure, not a dispatch failure\).
 
 <a name="Dispatcher"></a>
-## type [Dispatcher](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L145-L196>)
+## type [Dispatcher](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L145-L199>)
 
 Dispatcher builds executor requests for queued pod\-path tasks and runs them.
 
@@ -203,7 +209,7 @@ type Dispatcher struct {
 ```
 
 <a name="NewDispatcher"></a>
-### func [NewDispatcher](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L245>)
+### func [NewDispatcher](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L253>)
 
 ```go
 func NewDispatcher(exec executor.Executor, resolver Resolver, issuer TokenIssuer, controlAddr string, tokenTTL time.Duration) *Dispatcher
@@ -212,7 +218,7 @@ func NewDispatcher(exec executor.Executor, resolver Resolver, issuer TokenIssuer
 NewDispatcher builds a Dispatcher that launches tasks via exec, resolves their context with resolver, mints tokens with issuer \(valid for tokenTTL\), and tells the agent to reach the control plane at controlAddr.
 
 <a name="Dispatcher.Dispatch"></a>
-### func \(\*Dispatcher\) [Dispatch](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L298>)
+### func \(\*Dispatcher\) [Dispatch](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L306>)
 
 ```go
 func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID string, task domain.TaskSpec) (executor.Disposition, error)
@@ -230,7 +236,7 @@ func (d *Dispatcher) SetAdmission(hooks []admission.Hook, opts AdmissionOptions)
 SetAdmission installs the admission hooks, called in order for every attempt after the built\-in refusals and before the agent token is minted \(ADR 0100\). No hooks leave dispatch exactly as it was.
 
 <a name="Dispatcher.SetAgentTLSCAConfigMap"></a>
-### func \(\*Dispatcher\) [SetAgentTLSCAConfigMap](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L268>)
+### func \(\*Dispatcher\) [SetAgentTLSCAConfigMap](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L276>)
 
 ```go
 func (d *Dispatcher) SetAgentTLSCAConfigMap(name string)
@@ -239,7 +245,7 @@ func (d *Dispatcher) SetAgentTLSCAConfigMap(name string)
 SetAgentTLSCAConfigMap configures the CA ConfigMap mounted into task pods so agents verify the control plane's gRPC TLS cert \(issue \#58\). Empty = the agent stays on the insecure channel \(dev\).
 
 <a name="Dispatcher.SetAgentTokenTransport"></a>
-### func \(\*Dispatcher\) [SetAgentTokenTransport](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L288>)
+### func \(\*Dispatcher\) [SetAgentTokenTransport](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L296>)
 
 ```go
 func (d *Dispatcher) SetAgentTokenTransport(transport, audience string, expirationSeconds int64)
@@ -248,7 +254,7 @@ func (d *Dispatcher) SetAgentTokenTransport(transport, audience string, expirati
 SetAgentTokenTransport selects how the agent's bearer credential reaches the task pod \(ADR 0055 Fix \#3\). transport is "" / "envvar" \(the plaintext env\-var default\) or "exchange" \(project a ServiceAccount token the agent exchanges for a task\-scoped JWT\). audience and expirationSeconds configure the projected token and are read only under the exchange transport. Ignored by the subprocess \(Lite\) executor, which has no pod.
 
 <a name="Dispatcher.SetAttemptLifetimeCeiling"></a>
-### func \(\*Dispatcher\) [SetAttemptLifetimeCeiling](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L213>)
+### func \(\*Dispatcher\) [SetAttemptLifetimeCeiling](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L221>)
 
 ```go
 func (d *Dispatcher) SetAttemptLifetimeCeiling(ceiling time.Duration)
@@ -257,7 +263,7 @@ func (d *Dispatcher) SetAttemptLifetimeCeiling(ceiling time.Duration)
 SetAttemptLifetimeCeiling wires the operator's attempt credential ceiling \(auth.max\_attempt\_credential\_lifetime\) into every dispatched request, where the Kubernetes executor floors the pod's ActiveDeadlineSeconds with it when the task declares no execution timeout. A non\-positive value is "no ceiling" and applies no floor; the subprocess executor ignores it.
 
 <a name="Dispatcher.SetDefaultTaskServiceAccount"></a>
-### func \(\*Dispatcher\) [SetDefaultTaskServiceAccount](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L240>)
+### func \(\*Dispatcher\) [SetDefaultTaskServiceAccount](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L248>)
 
 ```go
 func (d *Dispatcher) SetDefaultTaskServiceAccount(name string)
@@ -265,8 +271,17 @@ func (d *Dispatcher) SetDefaultTaskServiceAccount(name string)
 
 SetDefaultTaskServiceAccount sets the ServiceAccount task pods run as when a DAG's task does not specify execution.service\_account. Empty leaves pods on the namespace default SA \(today's behavior\). Wiring the chart's task ServiceAccount here closes the trap where creating the SA silently had no effect until every DAG also set execution.service\_account.
 
+<a name="Dispatcher.SetForcePolicy"></a>
+### func \(\*Dispatcher\) [SetForcePolicy](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L204>)
+
+```go
+func (d *Dispatcher) SetForcePolicy(p *ForcePolicy)
+```
+
+SetForcePolicy installs the operator's executor policy \(ADR 0063\): the pod fields it forces are set on every attempt after the admission hooks ran. A nil policy, the default, changes nothing.
+
 <a name="Dispatcher.SetPlatformDefaults"></a>
-### func \(\*Dispatcher\) [SetPlatformDefaults](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L280>)
+### func \(\*Dispatcher\) [SetPlatformDefaults](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L288>)
 
 ```go
 func (d *Dispatcher) SetPlatformDefaults(p PlatformDefaults)
@@ -275,7 +290,7 @@ func (d *Dispatcher) SetPlatformDefaults(p PlatformDefaults)
 SetPlatformDefaults configures the per\-cluster task defaults applied at dispatch to fill gaps the DAG artifact left empty \(ADR 0023, layer L0\).
 
 <a name="Dispatcher.SetSecretsBackend"></a>
-### func \(\*Dispatcher\) [SetSecretsBackend](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L231>)
+### func \(\*Dispatcher\) [SetSecretsBackend](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L239>)
 
 ```go
 func (d *Dispatcher) SetSecretsBackend(class, kwargs string)
@@ -284,7 +299,7 @@ func (d *Dispatcher) SetSecretsBackend(class, kwargs string)
 SetSecretsBackend configures the operator's external secrets backend \(ADR 0060\): the provider class the in\-pod resolver drives and its raw kwargs JSON, delivered to the pod as operator\-owned LEOFLOW\_SECRETS\_\* env. Empty leaves external secrets off \(the chain stays vault\-only\).
 
 <a name="Dispatcher.SetSourceModeImage"></a>
-### func \(\*Dispatcher\) [SetSourceModeImage](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L258>)
+### func \(\*Dispatcher\) [SetSourceModeImage](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L266>)
 
 ```go
 func (d *Dispatcher) SetSourceModeImage(image string)
@@ -293,7 +308,7 @@ func (d *Dispatcher) SetSourceModeImage(image string)
 SetSourceModeImage turns Pro source mode on for versions on image \(ADR 0067 §3\); "" leaves it off, today's behavior. Lite does not set it: the subprocess executor always runs from the source.
 
 <a name="Dispatcher.SetSourceModeWarm"></a>
-### func \(\*Dispatcher\) [SetSourceModeWarm](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L263>)
+### func \(\*Dispatcher\) [SetSourceModeWarm](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L271>)
 
 ```go
 func (d *Dispatcher) SetSourceModeWarm(on bool)
@@ -302,7 +317,7 @@ func (d *Dispatcher) SetSourceModeWarm(on bool)
 SetSourceModeWarm lets source\-mode attempts run on warm workers, which receive the version's dag.py with each assignment \(ADR 0095\). Off, the default, keeps every source\-mode attempt on a dedicated pod.
 
 <a name="Dispatcher.SetTaskSecret"></a>
-### func \(\*Dispatcher\) [SetTaskSecret](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L274>)
+### func \(\*Dispatcher\) [SetTaskSecret](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L282>)
 
 ```go
 func (d *Dispatcher) SetTaskSecret(name, mountPath string)
@@ -311,7 +326,7 @@ func (d *Dispatcher) SetTaskSecret(name, mountPath string)
 SetTaskSecret configures a Kubernetes Secret mounted read\-only into every task pod at mountPath, so tasks can read a credential \(e.g. a GCP service\-account key referenced by a connection's key\_path\) from the cluster's secret store rather than from Dexaflow \(ADR 0035\). Empty name = nothing mounted.
 
 <a name="Dispatcher.SetUnitMisfitRecorder"></a>
-### func \(\*Dispatcher\) [SetUnitMisfitRecorder](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L206>)
+### func \(\*Dispatcher\) [SetUnitMisfitRecorder](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L214>)
 
 ```go
 func (d *Dispatcher) SetUnitMisfitRecorder(r UnitMisfitRecorder)
@@ -320,7 +335,7 @@ func (d *Dispatcher) SetUnitMisfitRecorder(r UnitMisfitRecorder)
 SetUnitMisfitRecorder wires the counter for tolerated unit misfits.
 
 <a name="Dispatcher.SetWarmPlacer"></a>
-### func \(\*Dispatcher\) [SetWarmPlacer](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L253>)
+### func \(\*Dispatcher\) [SetWarmPlacer](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L261>)
 
 ```go
 func (d *Dispatcher) SetWarmPlacer(p WarmPlacer)
@@ -329,7 +344,7 @@ func (d *Dispatcher) SetWarmPlacer(p WarmPlacer)
 SetWarmPlacer wires the warm\-worker placement seam \(ADR 0058 N1b1\-place\). With a placer set, Dispatch tries to place an admitted attempt on a free warm worker of its dag\_version and only falls back to a dedicated pod on a warm miss. Leave it unset \(nil\) — the default — to keep dedicated pod\-per\-task, today's behavior.
 
 <a name="Dispatcher.WarmPolicy"></a>
-### func \(\*Dispatcher\) [WarmPolicy](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L488>)
+### func \(\*Dispatcher\) [WarmPolicy](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L519>)
 
 ```go
 func (d *Dispatcher) WarmPolicy() domain.WarmPolicy
@@ -347,6 +362,55 @@ type FailureSink interface {
     MarkTaskDispatchFailed(ctx context.Context, runID, taskID, reason string) error
 }
 ```
+
+<a name="ForcePolicy"></a>
+## type [ForcePolicy](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/force_policy.go#L25-L30>)
+
+ForcePolicy is the operator's executor policy \(ADR 0063, executor.policy\): pod fields set on every task pod whatever the DAG says. It runs as the last admission step \(ADR 0100 §7\), after the operator's hooks, so neither a DAG nor a hook can undo it. What a DAG may set at all is the execution allowlist \(executor.defaults.execution\_allowlist\), not this policy.
+
+A nil \*ForcePolicy changes nothing, so callers need not branch on it.
+
+```go
+type ForcePolicy struct {
+    // contains filtered or unexported fields
+}
+```
+
+<a name="ParseForcePolicy"></a>
+### func [ParseForcePolicy](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/force_policy.go#L56>)
+
+```go
+func ParseForcePolicy(doc []byte) (*ForcePolicy, error)
+```
+
+ParseForcePolicy decodes and validates the executor.policy document. An empty document, or one that forces nothing, is no policy \(nil\).
+
+<a name="ForcePolicy.Apply"></a>
+### func \(\*ForcePolicy\) [Apply](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/force_policy.go#L151>)
+
+```go
+func (p *ForcePolicy) Apply(task domain.TaskSpec) (domain.TaskSpec, bool)
+```
+
+Apply returns task with the forced fields set, and whether anything was forced. The runtime class and the service account replace the task's, the node selector is merged over the task's \(the policy's keys win\), and the tolerations are appended. Neither the task's maps nor the policy's are shared with the result.
+
+<a name="ForcePolicy.ServiceAccount"></a>
+### func \(\*ForcePolicy\) [ServiceAccount](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/force_policy.go#L118>)
+
+```go
+func (p *ForcePolicy) ServiceAccount() string
+```
+
+ServiceAccount is the service account the policy forces, "" for none.
+
+<a name="ForcePolicy.Summary"></a>
+### func \(\*ForcePolicy\) [Summary](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/force_policy.go#L126>)
+
+```go
+func (p *ForcePolicy) Summary() []string
+```
+
+Summary lists the fields the policy forces, for the boot log.
 
 <a name="Inner"></a>
 ## type [Inner](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/buffered.go#L35-L37>)
@@ -480,7 +544,7 @@ type TokenIssuer interface {
 ```
 
 <a name="UnitMisfitRecorder"></a>
-## type [UnitMisfitRecorder](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L201-L203>)
+## type [UnitMisfitRecorder](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L209-L211>)
 
 UnitMisfitRecorder counts a task that does not fit the resource unit but is let through under executor.unit.enforce=warn, by stage \("register" or "dispatch"\). observability.Metrics satisfies it.
 
