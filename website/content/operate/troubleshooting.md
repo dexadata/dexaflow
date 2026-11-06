@@ -431,6 +431,9 @@ reason in the server logs and metrics. The image is
     labels:
       severity: warning
   ```
+- **Alerts:** `metrics.prometheusRule.enabled` renders this alert and the rest
+  of the page and ticket rules, each with a runbook; see
+  [Alerts and runbooks](/operate/runbooks/).
 - **Tracing:** OpenTelemetry — set `DEXAFLOW_OBSERVABILITY_OTEL_ENABLED=true`
   and `…_OTEL_ENDPOINT`.
 - **Logs:** structured `slog` (JSON by default), one line per HTTP request

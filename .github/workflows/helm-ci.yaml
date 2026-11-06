@@ -24,6 +24,7 @@ on:
       - "scripts/rbac-covers-executor.sh"
       - "scripts/check-values-doc-comments.sh"
       - "scripts/check-migrate-pod-selection.sh"
+      - "scripts/prometheus-rules-test.sh"
       - ".github/workflows/helm-ci.yaml"
       - ".github/ci/kind-datastores.yaml"
       - "deploy/Dockerfile.server"
@@ -134,6 +135,20 @@ jobs:
         run: python3 -m pip install --user pyyaml
       - name: check-migrate-pod-selection (migrate hook pod is not a control-plane endpoint)
         run: bash scripts/check-migrate-pod-selection.sh
+
+      # The PrometheusRule alerts (#2298): helm-unittest pins what renders,
+      # promtool proves each alert fires on the series it is meant for and not
+      # on its neighbours. The tarball is checked against the release's
+      # sha256sums.txt entry for v3.5.0.
+      - name: Install promtool
+        run: |
+          set -euo pipefail
+          curl -fsSLo /tmp/prometheus.tgz https://github.com/prometheus/prometheus/releases/download/v3.5.0/prometheus-3.5.0.linux-amd64.tar.gz
+          echo "e811827af26d822afb09a4f28314f61b618b12cff5369835a67f674d8b46f39a  /tmp/prometheus.tgz" | sha256sum -c -
+          tar xzf /tmp/prometheus.tgz -C /tmp prometheus-3.5.0.linux-amd64/promtool
+          sudo install /tmp/prometheus-3.5.0.linux-amd64/promtool /usr/local/bin/promtool
+      - name: prometheus-rules-test (every alert fires and stays quiet as tested)
+        run: bash scripts/prometheus-rules-test.sh
 
       # Contract test in the other direction: the Role must permit every
       # Kubernetes call the executor makes. Nothing else compares the two — the

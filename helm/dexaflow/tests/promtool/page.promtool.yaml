@@ -1,0 +1,238 @@
+# promtool unit tests for the page group of templates/prometheusrule.yaml
+# (#2298). scripts/prometheus-rules-test.sh renders the chart into rules.yaml
+# next to this file, in namespace "data", and runs promtool test rules.
+rule_files:
+- rules.yaml
+evaluation_interval: 1m
+tests:
+- name: schema not ready, a warning unless the database was replaced
+  interval: 1m
+  input_series:
+  - series: dexaflow_schema_ready{namespace="data",pod="a",reason="schema behind"}
+    values: '0x10'
+  - series: dexaflow_schema_ready{namespace="data",pod="b",reason="database replaced"}
+    values: '0x10'
+  - series: dexaflow_schema_ready{namespace="data",pod="c",reason="schema behind"}
+    values: 1x10
+  - series: dexaflow_schema_ready{namespace="other",pod="d",reason="schema behind"}
+    values: '0x10'
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: DexaflowSchemaNotReady
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: DexaflowSchemaNotReady
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        namespace: data
+        pod: a
+        reason: schema behind
+      exp_annotations:
+        summary: A Dexaflow control plane has waited 5 minutes for its database schema
+        description: 'Pod a is not ready: schema behind. Its /readyz and its log say what to run.'
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/schema-not-ready/
+    - exp_labels:
+        severity: critical
+        namespace: data
+        pod: b
+        reason: database replaced
+      exp_annotations:
+        summary: A Dexaflow control plane has waited 5 minutes for its database schema
+        description: 'Pod b is not ready: database replaced. Its /readyz and its log say what to run.'
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/schema-not-ready/
+- name: no scheduler leader while a scheduler replica is up
+  interval: 1m
+  input_series:
+  - series: dexaflow_scheduler_loop_duration_seconds_count{namespace="data",pod="s"}
+    values: 0+0x20
+  - series: dexaflow_build_info{namespace="data",pod="s",role="scheduler",version="v1",commit="c",go_version="g"}
+    values: 1x20
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: DexaflowNoSchedulerLeader
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: DexaflowNoSchedulerLeader
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+      exp_annotations:
+        description: Scheduler replicas are up but none leads, so no run is created and no task starts.
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/no-scheduler-leader/
+        summary: No Dexaflow scheduler replica has run a leader tick for 10 minutes
+- name: a ticking leader does not page
+  interval: 1m
+  input_series:
+  - series: dexaflow_scheduler_loop_duration_seconds_count{namespace="data",pod="s"}
+    values: 0+30x20
+  - series: dexaflow_build_info{namespace="data",pod="s",role="all",version="v1",commit="c",go_version="g"}
+    values: 1x20
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: DexaflowNoSchedulerLeader
+    exp_alerts: []
+- name: an api only install has no leader to miss
+  interval: 1m
+  input_series:
+  - series: dexaflow_scheduler_loop_duration_seconds_count{namespace="data",pod="a"}
+    values: 0+0x20
+  - series: dexaflow_build_info{namespace="data",pod="a",role="api",version="v1",commit="c",go_version="g"}
+    values: 1x20
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: DexaflowNoSchedulerLeader
+    exp_alerts: []
+- name: valve decisions page at once, other decisions do not
+  interval: 1m
+  input_series:
+  - series: dexaflow_scheduler_decisions_total{namespace="data",pod="s",decision_type="reap_settling_valve_open"}
+    values: 0 0 0 1 1 1 1 1 1 1
+  - series: dexaflow_scheduler_decisions_total{namespace="data",pod="s",decision_type="infra_confirm_valve_open"}
+    values: 0 0 0 0 0 2 2 2 2 2
+  - series: dexaflow_scheduler_decisions_total{namespace="data",pod="s",decision_type="reap_settling_skip"}
+    values: 0+5x9
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: DexaflowReaperSettlingValveOpen
+    exp_alerts: []
+  - eval_time: 4m
+    alertname: DexaflowReaperSettlingValveOpen
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+      exp_annotations:
+        description: The leader never settled within twice the grace period and the reapers ran anyway; the reconciler sweep or the pod informer is broken.
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/reaper-settling-valve-open/
+        summary: The Dexaflow reapers ran without a settled leader
+  - eval_time: 4m
+    alertname: DexaflowInfraConfirmValveOpen
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: DexaflowInfraConfirmValveOpen
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+      exp_annotations:
+        description: Provisional agent_lost, pod_lost or dispatch_lost marks went unconfirmed for 2 minutes; the reconciler is not sweeping or cannot read pods.
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/infra-confirm-valve-open/
+        summary: The Dexaflow planner acted on infra marks the reconciler never confirmed
+- name: queue wait p99 over 5 minutes for 15 minutes pages for that tenant only
+  interval: 1m
+  input_series:
+  - series: dexaflow_task_queue_wait_seconds_bucket{namespace="data",pod="a",tenant="slow",le="300"}
+    values: 0+0x40
+  - series: dexaflow_task_queue_wait_seconds_bucket{namespace="data",pod="a",tenant="slow",le="600"}
+    values: 0+10x40
+  - series: dexaflow_task_queue_wait_seconds_bucket{namespace="data",pod="a",tenant="slow",le="+Inf"}
+    values: 0+10x40
+  - series: dexaflow_task_queue_wait_seconds_bucket{namespace="data",pod="a",tenant="fast",le="300"}
+    values: 0+10x40
+  - series: dexaflow_task_queue_wait_seconds_bucket{namespace="data",pod="a",tenant="fast",le="600"}
+    values: 0+10x40
+  - series: dexaflow_task_queue_wait_seconds_bucket{namespace="data",pod="a",tenant="fast",le="+Inf"}
+    values: 0+10x40
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: DexaflowTaskQueueWaitHigh
+    exp_alerts: []
+  - eval_time: 35m
+    alertname: DexaflowTaskQueueWaitHigh
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+        tenant: slow
+      exp_annotations:
+        description: The p99 wait from queued to running of tenant slow is 9m 57s.
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/task-queue-wait-high/
+        summary: Dexaflow tasks wait too long to start
+- name: API 5xx ratio over 1 percent for 10 minutes
+  interval: 1m
+  input_series:
+  - series: dexaflow_http_requests_total{namespace="data",pod="a",method="GET",path="/api/v2/dags",status="200"}
+    values: 0+98x30
+  - series: dexaflow_http_requests_total{namespace="data",pod="a",method="GET",path="/api/v2/dags",status="503"}
+    values: 0+2x30
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: DexaflowAPIErrorRatioHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: DexaflowAPIErrorRatioHigh
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+      exp_annotations:
+        description: 2% of API requests failed with a 5xx over the last 5 minutes.
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/api-error-ratio-high/
+        summary: The Dexaflow API answers too many requests with a 5xx
+- name: API 5xx ratio at 1 percent does not page
+  interval: 1m
+  input_series:
+  - series: dexaflow_http_requests_total{namespace="data",pod="a",method="GET",path="/api/v2/dags",status="200"}
+    values: 0+99x30
+  - series: dexaflow_http_requests_total{namespace="data",pod="a",method="GET",path="/api/v2/dags",status="500"}
+    values: 0+1x30
+  - series: dexaflow_http_requests_total{namespace="data",pod="a",method="GET",path="/api/v2/dags",status="404"}
+    values: 0+50x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: DexaflowAPIErrorRatioHigh
+    exp_alerts: []
+- name: database pool canceled acquires for 10 minutes
+  interval: 1m
+  input_series:
+  - series: dexaflow_db_pool_canceled_acquires_total{namespace="data",pod="a",pool="api"}
+    values: 0+1x30
+  - series: dexaflow_db_pool_canceled_acquires_total{namespace="data",pod="a",pool="scheduler"}
+    values: 0+0x30
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: DexaflowDatabasePoolCanceledAcquires
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: DexaflowDatabasePoolCanceledAcquires
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+        pool: api
+      exp_annotations:
+        description: Callers of the api pool were canceled before a connection freed up, for 10 minutes.
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/database-pool-canceled-acquires/
+        summary: Dexaflow requests give up waiting for a database connection
+- name: redis failures for 10 minutes, client cancellations excluded
+  interval: 1m
+  input_series:
+  - series: dexaflow_redis_command_failures_total{namespace="data",pod="a",reason="timeout"}
+    values: 0+1x30
+  - series: dexaflow_redis_command_failures_total{namespace="data",pod="a",reason="canceled"}
+    values: 0+5x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: DexaflowRedisCommandFailures
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+        reason: timeout
+      exp_annotations:
+        description: Redis commands failed with reason timeout for 10 minutes; XCom reads and writes and the live log tail are affected.
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/redis-command-failures/
+        summary: Dexaflow Redis commands keep failing
+- name: a disabled resilience backstop pages
+  interval: 1m
+  input_series:
+  - series: dexaflow_resilience_backstop_disabled{namespace="data",pod="s",config_key="scheduler.reaper.enabled"}
+    values: 1x10
+  - series: dexaflow_resilience_backstop_disabled{namespace="data",pod="s",config_key="scheduler.orphan_reaper.enabled"}
+    values: '0x10'
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: DexaflowResilienceBackstopDisabled
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+        config_key: scheduler.reaper.enabled
+      exp_annotations:
+        description: The control plane booted with the backstop of scheduler.reaper.enabled disabled.
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/resilience-backstop-disabled/
+        summary: A Dexaflow resilience backstop is turned off

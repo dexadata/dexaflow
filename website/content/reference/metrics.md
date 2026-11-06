@@ -20,8 +20,10 @@ Labels carry what the meaning names. `dag_id` and `task_id` grow with the DAGs
 you deploy; `path` on the HTTP families is the route template, not the raw URL,
 so it stays bounded.
 
-For what to alert on and how to read the scheduler and dispatch families during
-an incident, see [Troubleshooting & observability](/operate/troubleshooting/) and
+The Helm chart ships alert rules on these families, each with a runbook: see
+[Alerts and runbooks](/operate/runbooks/). For how to read the scheduler and
+dispatch families during an incident, see
+[Troubleshooting & observability](/operate/troubleshooting/) and
 [Scheduler resilience](/operate/scheduler-resilience/).
 
 The table is generated from the collectors the server registers: run

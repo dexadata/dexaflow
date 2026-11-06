@@ -926,12 +926,29 @@ metrics:
     # -- Extra labels on the ServiceMonitor. Required when the Prometheus instance has a `serviceMonitorSelector` filter (e.g. `{release: kube-prometheus-stack}`).
     additionalLabels: {}
   prometheusRule:
-    # -- Render a PrometheusRule with the `DexaflowSchemaNotReady` alert: `dexaflow_schema_ready == 0` for 5 minutes, a warning, or critical when the reason is `database replaced` (ADR 0090). A control plane that waits for its schema stays up and not ready, so without an alert nobody may notice. Requires kube-prometheus-stack CRDs and a scrape of `/metrics` (`metrics.serviceMonitor.enabled`).
+    # -- Render a PrometheusRule with the Dexaflow alerts: a `dexaflow-page` group (schema not ready, no scheduler leader, reaper valves open, task queue wait, API 5xx ratio, database pool canceled acquires, Redis failures, a disabled resilience backstop) and a `dexaflow-ticket` group (leader step-downs, lost task attempts, TLS reload failures, failed alert dispatches, usage events lag, oldest queued task, mixed versions). Each alert links its runbook. Requires kube-prometheus-stack CRDs and a scrape of `/metrics` (`metrics.serviceMonitor.enabled`). See the Alerts and runbooks page of the docs.
     enabled: false
     # -- Namespace for the PrometheusRule resource. Defaults to the release namespace.
     namespace: ""
     # -- Extra labels on the PrometheusRule. Required when the Prometheus instance has a `ruleSelector` filter (e.g. `{release: kube-prometheus-stack}`).
     additionalLabels: {}
+    # -- Base of the `runbook_url` annotation of every alert; each alert appends its own page. Point it at a mirror of the docs when the cluster cannot reach the public site.
+    runbookBaseURL: "https://dexaflow.dexadata.ai/operate/runbooks/"
+    thresholds:
+      # -- `DexaflowTaskQueueWaitHigh` pages when the p99 wait from queued to running of a tenant stays above this many seconds for 15 minutes.
+      queueWaitP99Seconds: 300
+      # -- `DexaflowAPIErrorRatioHigh` pages when the share of API requests answered with a 5xx stays above this ratio for 10 minutes.
+      apiErrorRatio: 0.01
+      # -- `DexaflowSchedulerStepDowns` opens a ticket above this many leader step-downs in one hour, shutdowns excluded.
+      stepDownsPerHour: 3
+      # -- `DexaflowTasksLost` opens a ticket above this many attempts failed as agent_lost, pod_lost, dispatch_lost or warm_worker_lost in one hour, per reaper.
+      lostTasksPerHour: 10
+      # -- `DexaflowUsageEventsLag` opens a ticket when the usage events lag stays above this many seconds for 15 minutes.
+      usageEventsLagSeconds: 900
+      # -- `DexaflowOldestQueuedTask` opens a ticket when the oldest queued attempt of a tenant has waited more than this many seconds, for 5 minutes.
+      oldestQueuedSeconds: 600
+      # -- `DexaflowMixedVersions` opens a ticket when processes report more than one version for this long. Longer than your slowest rollout.
+      mixedVersionsFor: 30m
 
 ingress:
   # -- Enable an Ingress resource exposing the control plane via HTTP/HTTPS. Requires an Ingress controller (nginx/traefik/etc.) in the cluster.
