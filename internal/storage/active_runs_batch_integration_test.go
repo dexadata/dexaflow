@@ -5,6 +5,7 @@ package storage_test
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -32,7 +33,7 @@ func (c *countingDBTX) Exec(ctx context.Context, sql string, args ...any) (pgcon
 }
 
 func (c *countingDBTX) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	if strings.Contains(sql, "-- name: ListTaskInstancesByRun") {
+	if strings.Contains(sql, "-- name: ListTaskInstancePlanStateByRuns") {
 		c.tiReads.Add(1)
 	}
 	return c.pool.Query(ctx, sql, args...)
@@ -143,6 +144,75 @@ func TestActiveRunsLoadsTaskInstancesInOneQueryIntegration(t *testing.T) {
 			if got.Tries[ti.TaskID] != int(ti.TryNumber) || got.MaxTries[ti.TaskID] != int(ti.MaxTries) {
 				t.Errorf("run %s task %s: tries %d/%d, want %d/%d", id, ti.TaskID,
 					got.Tries[ti.TaskID], got.MaxTries[ti.TaskID], ti.TryNumber, ti.MaxTries)
+			}
+		}
+	}
+}
+
+// The tick reads through the hand-written sized scan (#2325); it must return
+// exactly what the sqlc-generated query returns for the same runs, NULL
+// columns included, so its column list cannot drift from the query's.
+func TestPlanStateSizedScanMatchesGeneratedIntegration(t *testing.T) {
+	repo, sched, pg, ctx := openInfra(t)
+	dagID := fmt.Sprintf("ti_sized_%d", time.Now().UnixNano())
+	tasks := []domain.TaskSpec{
+		{TaskID: "a", Type: domain.TaskTypePython},
+		{TaskID: "b", Type: domain.TaskTypePython, DependsOn: []string{"a"}},
+		{TaskID: "c", Type: domain.TaskTypePython, DependsOn: []string{"a"}},
+	}
+	registerSpec(t, repo, ctx, dagID, tasks)
+	if _, err := repo.CreateDagRun(ctx, "default", dagID, domain.DagRun{
+		RunID: "r0", State: domain.DagRunStateRunning, RunType: "manual", LogicalDate: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	var ids []pgtype.UUID
+	for _, run := range mustActive(t, sched, ctx) {
+		if run.DagID != dagID {
+			continue
+		}
+		if err := sched.MaterializeTasks(ctx, run.RunID, tasks); err != nil {
+			t.Fatalf("materialize: %v", err)
+		}
+		// One settled row with an end time, one with an infra mark, one
+		// untouched: every nullable column is both set and NULL somewhere.
+		if err := sched.ApplyTransition(ctx, run.RunID, "a", domain.TaskStateSuccess); err != nil {
+			t.Fatalf("transition: %v", err)
+		}
+		var id pgtype.UUID
+		if err := id.Scan(run.RunID); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	if _, err := pg.Pool.Exec(ctx, `UPDATE task_instances SET state = 'failed', last_failure_kind = 'infra',
+		infra_attempts = 1, next_dispatch_at = now(), dispatch_attempts = 2 WHERE dag_run_id = $1 AND task_id = 'b'`, ids[0]); err != nil {
+		t.Fatalf("mark infra: %v", err)
+	}
+	want, err := pg.Queries.ListTaskInstancePlanStateByRuns(ctx, ids)
+	if err != nil {
+		t.Fatalf("generated: %v", err)
+	}
+	for _, hint := range []int{0, 1, 100} {
+		got, err := pg.Queries.ListTaskInstancePlanStateByRunsSized(ctx, ids, hint)
+		if err != nil {
+			t.Fatalf("sized (hint %d): %v", hint, err)
+		}
+		byTask := func(rows []queries.ListTaskInstancePlanStateByRunsRow) map[string]queries.ListTaskInstancePlanStateByRunsRow {
+			m := map[string]queries.ListTaskInstancePlanStateByRunsRow{}
+			for _, r := range rows {
+				m[r.TaskID] = r
+			}
+			return m
+		}
+		w, g := byTask(want), byTask(got)
+		if len(w) != 3 || len(g) != len(w) {
+			t.Fatalf("hint %d: got %d rows, want %d (and 3)", hint, len(g), len(w))
+		}
+		for task, wr := range w {
+			gr := g[task]
+			if !reflect.DeepEqual(gr, wr) {
+				t.Errorf("hint %d task %s:\n got  %+v\n want %+v", hint, task, gr, wr)
 			}
 		}
 	}

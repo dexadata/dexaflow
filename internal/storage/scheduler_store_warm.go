@@ -279,7 +279,7 @@ func (s *SchedulerStore) warmRuns(ctx context.Context, rows []queries.ListActive
 			waiting = append(waiting, row)
 		}
 	}
-	tisByRun, err := s.taskInstancesByRun(ctx, waiting)
+	tisByRun, err := s.taskInstancesByRun(ctx, waiting, 0)
 	if err != nil {
 		return nil, err
 	}

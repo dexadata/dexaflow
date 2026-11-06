@@ -681,12 +681,14 @@ type Querier interface {
 	// does not record them, so every attempt reports the pool the task is charged
 	// to now (#1589).
 	ListTaskInstanceAttempts(ctx context.Context, arg ListTaskInstanceAttemptsParams) ([]ListTaskInstanceAttemptsRow, error)
+	// The scheduler tick's read (#2325): for every active run, in one round trip,
+	// only the columns the planner's projection reads (taskInstanceMaps), not the
+	// whole row. The pod, node, log and error columns a settled attempt carries
+	// are most of a row's width and nothing in planning reads them. No ORDER BY:
+	// the caller groups by dag_run_id itself and the projection builds maps, so a
+	// sort (which spilled to disk at 100k rows) buys nothing.
+	ListTaskInstancePlanStateByRuns(ctx context.Context, dagRunIds []pgtype.UUID) ([]ListTaskInstancePlanStateByRunsRow, error)
 	ListTaskInstancesByRun(ctx context.Context, arg ListTaskInstancesByRunParams) ([]TaskInstance, error)
-	// The batched form of ListTaskInstancesByRun for the scheduler tick: every
-	// active run's task instances in one round trip instead of one per run. Rows
-	// come grouped by run and, within a run, in the same task_id order the per-run
-	// query returns, so the caller can split them without re-sorting.
-	ListTaskInstancesByRuns(ctx context.Context, dagRunIds []pgtype.UUID) ([]TaskInstance, error)
 	ListTaskInstancesFiltered(ctx context.Context, arg ListTaskInstancesFilteredParams) ([]TaskInstance, error)
 	ListTenantDagTags(ctx context.Context, arg ListTenantDagTagsParams) ([]string, error)
 	// Retention janitor (performance item D5). Every statement is tenant scoped and
