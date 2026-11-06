@@ -4,7 +4,12 @@ Optional Prometheus Operator PrometheusRule (#2298). Two groups:
   ticket - something degrades and wants a look during working hours.
 The schema-wait alert of ADR 0090 decision 6 is the first page rule.
 Every rule carries a runbook_url under operate/runbooks/ and every threshold
-is a value under metrics.prometheusRule.thresholds. Requires the
+is a value under metrics.prometheusRule.thresholds. A third group, slo
+(#2314), records the error ratio of each service level objective of
+operate/service-level-objectives over four windows and alerts on a fast and
+a slow burn of its error budget (multiwindow burn rates over 30 days); the
+objectives are values under metrics.prometheusRule.slo.objectives and
+slo.enabled false leaves the group out. Requires the
 monitoring.coreos.com CRDs (kube-prometheus-stack). Disabled by default.
 Severities and descriptions that are Prometheus templates are escaped so
 Helm leaves them as they are. scripts/check-prometheus-rules.sh renders this
@@ -178,4 +183,81 @@ spec:
             summary: Dexaflow processes run more than one version
             description: A rollout left some control plane replicas on another version.
             runbook_url: {{ $runbooks }}/mixed-versions/
+{{- $slo := $rule.slo | default dict }}
+{{- if ne (toString $slo.enabled) "false" }}
+{{- $obj := $slo.objectives | default dict }}
+{{- $minEvents := $slo.minEventsPerWindow | default 100 }}
+{{- /* Each SLI as its error ratio over a window W (the share of bad events;
+an absent bad series, no 5xx yet, counts as zero against the total) and its
+event rate. The probes and the scrape are not API traffic. */ -}}
+{{- $api := printf "%s,path!~\"/healthz|/readyz|/metrics\"" $ns }}
+{{- $slis := list
+  (dict "name" "schedule_punctuality" "objective" ($obj.schedulePunctuality | default 0.99)
+    "expr" (printf "1 - (sum by (namespace) (rate(dexaflow_scheduler_schedule_delay_seconds_bucket{%s,le=~\"60(\\\\.0)?\"}[W])) / sum by (namespace) (rate(dexaflow_scheduler_schedule_delay_seconds_count{%s}[W])))" $ns $ns)
+    "events" (printf "sum by (namespace) (rate(dexaflow_scheduler_schedule_delay_seconds_count{%s}[W]))" $ns))
+  (dict "name" "task_start" "objective" ($obj.taskStart | default 0.99)
+    "expr" (printf "1 - (sum by (namespace) (rate(dexaflow_task_queue_wait_seconds_bucket{%s,le=~\"120(\\\\.0)?\"}[W])) / sum by (namespace) (rate(dexaflow_task_queue_wait_seconds_count{%s}[W])))" $ns $ns)
+    "events" (printf "sum by (namespace) (rate(dexaflow_task_queue_wait_seconds_count{%s}[W]))" $ns))
+  (dict "name" "platform_failures" "objective" ($obj.platformFailures | default 0.999)
+    "expr" (printf "(sum by (namespace) (rate(dexaflow_scheduler_decisions_total{%s,decision_type=~\"agent_lost|pod_lost|dispatch_lost|warm_worker_lost\"}[W])) or 0 * sum by (namespace) (rate(dexaflow_task_attempts_total{%s}[W]))) / sum by (namespace) (rate(dexaflow_task_attempts_total{%s}[W]))" $ns $ns $ns)
+    "events" (printf "sum by (namespace) (rate(dexaflow_task_attempts_total{%s}[W]))" $ns))
+  (dict "name" "api_availability" "objective" ($obj.apiAvailability | default 0.999)
+    "expr" (printf "(sum by (namespace) (rate(dexaflow_http_requests_total{%s,status=~\"5..\"}[W])) or 0 * sum by (namespace) (rate(dexaflow_http_requests_total{%s}[W]))) / sum by (namespace) (rate(dexaflow_http_requests_total{%s}[W]))" $api $api $api)
+    "events" (printf "sum by (namespace) (rate(dexaflow_http_requests_total{%s}[W]))" $api)) }}
+    - name: dexaflow-slo
+      rules:
+        {{- range $sli := $slis }}
+        - record: dexaflow:slo_objective
+          expr: vector({{ $sli.objective }})
+          labels:
+            namespace: {{ $.Release.Namespace }}
+            slo: {{ $sli.name }}
+        {{- range $w := list "5m" "30m" "1h" "6h" }}
+        - record: dexaflow:slo_errors:ratio_rate{{ $w }}
+          expr: {{ replace "[W]" (printf "[%s]" $w) $sli.expr | quote }}
+          labels:
+            slo: {{ $sli.name }}
+        {{- end }}
+        {{- range $w := list "1h" "6h" }}
+        - record: dexaflow:slo_events:rate{{ $w }}
+          expr: {{ replace "[W]" (printf "[%s]" $w) $sli.events | quote }}
+          labels:
+            slo: {{ $sli.name }}
+        {{- end }}
+        {{- end }}
+        # 1 while no scheduler replica has run a leader tick for 2 minutes,
+        # including when no scheduler is scraped at all (every pod down).
+        - record: dexaflow:scheduler_leaderless:bool
+          expr: |
+            (sum by (namespace) (rate(dexaflow_scheduler_loop_duration_seconds_count{ {{- $ns -}} }[2m])) == bool 0)
+            or label_replace(vector(1), "namespace", {{ .Release.Namespace | quote }}, "", "")
+        - alert: DexaflowErrorBudgetFastBurn
+          expr: |
+            dexaflow:slo_errors:ratio_rate1h{ {{- $ns -}} } > on (namespace, slo) (14.4 * (1 - dexaflow:slo_objective{ {{- $ns -}} }))
+            and on (namespace, slo)
+            dexaflow:slo_errors:ratio_rate5m{ {{- $ns -}} } > on (namespace, slo) (14.4 * (1 - dexaflow:slo_objective{ {{- $ns -}} }))
+            and on (namespace, slo)
+            dexaflow:slo_events:rate1h{ {{- $ns -}} } * 3600 >= {{ $minEvents }}
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: A Dexaflow service level objective burns its 30 day error budget fast
+            description: '{{`The {{ $labels.slo }} objective spent its error budget 14.4 times faster than it allows over the last hour, 2% of the monthly budget an hour.`}}'
+            runbook_url: {{ $runbooks }}/error-budget-burn/
+        - alert: DexaflowErrorBudgetSlowBurn
+          expr: |
+            dexaflow:slo_errors:ratio_rate6h{ {{- $ns -}} } > on (namespace, slo) (6 * (1 - dexaflow:slo_objective{ {{- $ns -}} }))
+            and on (namespace, slo)
+            dexaflow:slo_errors:ratio_rate30m{ {{- $ns -}} } > on (namespace, slo) (6 * (1 - dexaflow:slo_objective{ {{- $ns -}} }))
+            and on (namespace, slo)
+            dexaflow:slo_events:rate6h{ {{- $ns -}} } * 21600 >= {{ $minEvents }}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: A Dexaflow service level objective burns its 30 day error budget steadily
+            description: '{{`The {{ $labels.slo }} objective spent its error budget 6 times faster than it allows over the last 6 hours, 5% of the monthly budget in that time.`}}'
+            runbook_url: {{ $runbooks }}/error-budget-burn/
+{{- end }}
 {{- end }}

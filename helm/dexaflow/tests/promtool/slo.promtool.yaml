@@ -1,0 +1,169 @@
+# promtool unit tests for the slo group of templates/prometheusrule.yaml
+# (#2314): the error ratio recording rules and the two burn rate alerts.
+# scripts/prometheus-rules-test.sh renders the chart into rules.yaml next to
+# this file, in namespace "data", and runs promtool test rules.
+rule_files:
+- rules.yaml
+evaluation_interval: 1m
+tests:
+- name: error ratios of each objective, an absent bad series counting as zero
+  interval: 1m
+  input_series:
+  - series: dexaflow_scheduler_schedule_delay_seconds_bucket{namespace="data",pod="s",le="60"}
+    values: 0+98x30
+  - series: dexaflow_scheduler_schedule_delay_seconds_count{namespace="data",pod="s"}
+    values: 0+100x30
+  - series: dexaflow_task_queue_wait_seconds_bucket{namespace="data",pod="s",tenant="a",le="120.0"}
+    values: 0+999x30
+  - series: dexaflow_task_queue_wait_seconds_count{namespace="data",pod="s",tenant="a"}
+    values: 0+1000x30
+  - series: dexaflow_http_requests_total{namespace="data",pod="s",method="GET",path="/api",status="200"}
+    values: 0+100x30
+  # A probe failing on every replica is not an API error.
+  - series: dexaflow_http_requests_total{namespace="data",pod="s",method="GET",path="/readyz",status="503"}
+    values: 0+50x30
+  - series: dexaflow_task_attempts_total{namespace="data",pod="s",tenant="a",state="success"}
+    values: 0+100x30
+  - series: dexaflow_scheduler_decisions_total{namespace="data",pod="s",decision_type="pod_lost"}
+    values: 0+1x30
+  - series: dexaflow_scheduler_decisions_total{namespace="data",pod="s",decision_type="pod_lost_gate_skip"}
+    values: 0+50x30
+  promql_expr_test:
+  - expr: round(dexaflow:slo_errors:ratio_rate5m{slo="schedule_punctuality"}, 0.000001)
+    eval_time: 10m
+    exp_samples:
+    - labels: '{namespace="data",slo="schedule_punctuality"}'
+      value: 0.02
+  - expr: round(dexaflow:slo_errors:ratio_rate5m{slo="task_start"}, 0.000001)
+    eval_time: 10m
+    exp_samples:
+    - labels: '{namespace="data",slo="task_start"}'
+      value: 0.001
+  - expr: dexaflow:slo_errors:ratio_rate5m{slo="api_availability"}
+    eval_time: 10m
+    exp_samples:
+    - labels: 'dexaflow:slo_errors:ratio_rate5m{namespace="data",slo="api_availability"}'
+      value: 0
+  - expr: dexaflow:slo_errors:ratio_rate5m{slo="platform_failures"}
+    eval_time: 10m
+    exp_samples:
+    - labels: 'dexaflow:slo_errors:ratio_rate5m{namespace="data",slo="platform_failures"}'
+      value: 0.01
+  - expr: dexaflow:slo_objective{slo="api_availability"}
+    eval_time: 10m
+    exp_samples:
+    - labels: 'dexaflow:slo_objective{namespace="data",slo="api_availability"}'
+      value: 0.999
+
+- name: no scheduler scraped at all is leaderless too
+  interval: 1m
+  input_series:
+  - series: dexaflow_build_info{namespace="other",pod="o",role="all",version="v1",commit="c",go_version="g"}
+    values: 1x10
+  promql_expr_test:
+  - expr: dexaflow:scheduler_leaderless:bool
+    eval_time: 5m
+    exp_samples:
+    - labels: 'dexaflow:scheduler_leaderless:bool{namespace="data"}'
+      value: 1
+
+- name: a scheduler replica up and no leader tick is leaderless
+  interval: 1m
+  input_series:
+  - series: dexaflow_scheduler_loop_duration_seconds_count{namespace="data",pod="s"}
+    values: 0+60x10 600+0x10
+  - series: dexaflow_build_info{namespace="data",pod="s",role="scheduler",version="v1",commit="c",go_version="g"}
+    values: 1x20
+  promql_expr_test:
+  - expr: dexaflow:scheduler_leaderless:bool
+    eval_time: 5m
+    exp_samples:
+    - labels: 'dexaflow:scheduler_leaderless:bool{namespace="data"}'
+      value: 0
+  - expr: dexaflow:scheduler_leaderless:bool
+    eval_time: 15m
+    exp_samples:
+    - labels: 'dexaflow:scheduler_leaderless:bool{namespace="data"}'
+      value: 1
+
+- name: 2% of API requests failing burns the budget fast
+  interval: 1m
+  input_series:
+  - series: dexaflow_http_requests_total{namespace="data",pod="s",method="GET",path="/api",status="200"}
+    values: 0+980x60
+  - series: dexaflow_http_requests_total{namespace="data",pod="s",method="GET",path="/api",status="503"}
+    values: 0+20x60
+  - series: dexaflow_http_requests_total{namespace="other",pod="o",method="GET",path="/api",status="503"}
+    values: 0+20x60
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: DexaflowErrorBudgetFastBurn
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: DexaflowErrorBudgetFastBurn
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+        namespace: data
+        slo: api_availability
+      exp_annotations:
+        summary: A Dexaflow service level objective burns its 30 day error budget fast
+        description: The api_availability objective spent its error budget 14.4 times faster than it allows over the last hour, 2% of the monthly budget an hour.
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/error-budget-burn/
+
+- name: 1% of API requests failing burns the budget slowly, not fast
+  interval: 1m
+  input_series:
+  - series: dexaflow_http_requests_total{namespace="data",pod="s",method="GET",path="/api",status="200"}
+    values: 0+990x120
+  - series: dexaflow_http_requests_total{namespace="data",pod="s",method="GET",path="/api",status="503"}
+    values: 0+10x120
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: DexaflowErrorBudgetFastBurn
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: DexaflowErrorBudgetSlowBurn
+    exp_alerts: []
+  - eval_time: 60m
+    alertname: DexaflowErrorBudgetSlowBurn
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        namespace: data
+        slo: api_availability
+      exp_annotations:
+        summary: A Dexaflow service level objective burns its 30 day error budget steadily
+        description: The api_availability objective spent its error budget 6 times faster than it allows over the last 6 hours, 5% of the monthly budget in that time.
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/error-budget-burn/
+
+- name: errors within the budget do not alert
+  interval: 1m
+  input_series:
+  - series: dexaflow_http_requests_total{namespace="data",pod="s",method="GET",path="/api",status="200"}
+    values: 0+9995x120
+  - series: dexaflow_http_requests_total{namespace="data",pod="s",method="GET",path="/api",status="503"}
+    values: 0+5x120
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: DexaflowErrorBudgetFastBurn
+    exp_alerts: []
+  - eval_time: 60m
+    alertname: DexaflowErrorBudgetSlowBurn
+    exp_alerts: []
+
+# An install with a handful of attempts an hour: one lost attempt is a
+# 1.7% error ratio, over the fast burn threshold, yet no page under the
+# minimum event count.
+- name: a single bad event on sparse traffic does not page
+  interval: 1m
+  input_series:
+  - series: dexaflow_task_attempts_total{namespace="data",pod="s",tenant="a",state="success"}
+    values: 0+1x60
+  - series: dexaflow_scheduler_decisions_total{namespace="data",pod="s",decision_type="pod_lost"}
+    values: 0x55 1x5
+  alert_rule_test:
+  - eval_time: 58m
+    alertname: DexaflowErrorBudgetFastBurn
+    exp_alerts: []
+
