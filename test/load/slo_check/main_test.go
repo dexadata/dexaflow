@@ -1,9 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const before = `# TYPE dexaflow_scheduler_schedule_delay_seconds histogram
@@ -19,6 +23,7 @@ dexaflow_task_queue_wait_seconds_count{tenant="a"} 100
 # TYPE dexaflow_http_requests_total counter
 dexaflow_http_requests_total{method="GET",path="/api",status="200"} 1000
 dexaflow_http_requests_total{method="GET",path="/api",status="503"} 0
+dexaflow_http_requests_total{method="GET",path="/readyz",status="503"} 0
 # TYPE dexaflow_task_attempts_total counter
 dexaflow_task_attempts_total{tenant="a",state="success"} 100
 # TYPE dexaflow_scheduler_decisions_total counter
@@ -27,8 +32,9 @@ dexaflow_scheduler_decisions_total{decision_type="pod_lost_gate_skip"} 0
 `
 
 // after: 100 more runs, 2 late; 1000 more attempts started, 5 late, the
-// tenant b ones in a process that restarted; 10000 more requests, 5 5xx; 1000
-// more attempts finished, 1 lost and 50 gate skips, which fail nothing.
+// tenant b ones new in this scrape; 10000 more requests, 5 5xx, and 500 failed
+// probes, which are not API traffic; 1000 more attempts finished, 1 lost and
+// 50 gate skips, which fail nothing.
 const after = `# TYPE dexaflow_scheduler_schedule_delay_seconds histogram
 dexaflow_scheduler_schedule_delay_seconds_bucket{le="60"} 108
 dexaflow_scheduler_schedule_delay_seconds_bucket{le="+Inf"} 110
@@ -46,12 +52,22 @@ dexaflow_task_queue_wait_seconds_count{tenant="b"} 500
 # TYPE dexaflow_http_requests_total counter
 dexaflow_http_requests_total{method="GET",path="/api",status="200"} 10995
 dexaflow_http_requests_total{method="GET",path="/api",status="503"} 5
+dexaflow_http_requests_total{method="GET",path="/readyz",status="503"} 500
 # TYPE dexaflow_task_attempts_total counter
 dexaflow_task_attempts_total{tenant="a",state="success"} 1100
 # TYPE dexaflow_scheduler_decisions_total counter
 dexaflow_scheduler_decisions_total{decision_type="pod_lost"} 1
 dexaflow_scheduler_decisions_total{decision_type="pod_lost_gate_skip"} 50
 `
+
+// timed spaces scrapes 15 s apart.
+func timed(ss ...scrape) []timedScrape {
+	out := make([]timedScrape, len(ss))
+	for i, s := range ss {
+		out[i] = timedScrape{at: time.Unix(int64(1000+15*i), 0), s: s}
+	}
+	return out
+}
 
 func mustParse(t *testing.T, text string) scrape {
 	t.Helper()
@@ -71,7 +87,7 @@ func byName(rows []objective) map[string]objective {
 }
 
 func TestJudgeCountsGoodAndAllEvents(t *testing.T) {
-	rows := byName(judge(increases([]scrape{mustParse(t, before), mustParse(t, after)}), 0.99, 0.99, 0.001, 0.999))
+	rows := byName(judge(increases(timed(mustParse(t, before), mustParse(t, after))), 0.99, 0.99, 0.001, 0.999))
 	want := map[string][2]float64{
 		"schedule punctuality":     {98, 100},
 		"task start":               {995, 1000},
@@ -99,8 +115,60 @@ func TestIncreasesCountARestartFromZero(t *testing.T) {
 	a := mustParse(t, "# TYPE x counter\nx 100\n")
 	b := mustParse(t, "# TYPE x counter\nx 150\n")
 	c := mustParse(t, "# TYPE x counter\nx 20\n")
-	if got := increases([]scrape{a, b, c})["x{}"]; got != 70 {
+	if got := increases(timed(a, b, c))["x{}"]; got != 70 {
 		t.Errorf("increase = %v, want 50 then 20 after the restart", got)
+	}
+}
+
+// A new process start time is a restart even when the counter is already
+// back above the old value.
+func TestIncreasesCountAStartTimeChangeAsARestart(t *testing.T) {
+	a := mustParse(t, "# TYPE process_start_time_seconds gauge\nprocess_start_time_seconds 1\n# TYPE x counter\nx 100\n")
+	b := mustParse(t, "# TYPE process_start_time_seconds gauge\nprocess_start_time_seconds 2\n# TYPE x counter\nx 130\n")
+	if got := increases(timed(a, b))["x{}"]; got != 130 {
+		t.Errorf("increase = %v, want 130 counted from the restart", got)
+	}
+}
+
+const ticks = "# TYPE dexaflow_scheduler_loop_duration_seconds histogram\n" +
+	"dexaflow_scheduler_loop_duration_seconds_bucket{le=\"+Inf\"} %d\n" +
+	"dexaflow_scheduler_loop_duration_seconds_sum 1\n" +
+	"dexaflow_scheduler_loop_duration_seconds_count %d\n"
+
+func tick(t *testing.T, n int) scrape {
+	t.Helper()
+	return mustParse(t, fmt.Sprintf(ticks, n, n))
+}
+
+// Leadership is the union over processes: a stretch in which either
+// scheduler ticked had a leader; the stretch in which neither did, and the
+// one no scrape covers, did not.
+func TestLeaderlessTimeIsTheUncoveredPartOfTheRun(t *testing.T) {
+	at := func(sec int, s scrape) timedScrape { return timedScrape{at: time.Unix(int64(sec), 0), s: s} }
+	// Process a leads from 0 to 60 s, then stalls; b takes over from 120 s.
+	a := []timedScrape{at(0, tick(t, 10)), at(30, tick(t, 40)), at(60, tick(t, 70)), at(90, tick(t, 70)), at(120, tick(t, 70))}
+	b := []timedScrape{at(0, tick(t, 0)), at(60, tick(t, 0)), at(120, tick(t, 0)), at(150, tick(t, 30)), at(180, tick(t, 60))}
+	without, span := leaderlessTime([][]timedScrape{a, b})
+	if span != 180*time.Second || without != 60*time.Second {
+		t.Errorf("without %v over %v, want 1m0s over 3m0s", without, span)
+	}
+}
+
+// A scrape cut short by a killed process is skipped, not fatal.
+func TestLoadDirSkipsAScrapeThatDoesNotParse(t *testing.T) {
+	dir := t.TempDir()
+	for name, body := range map[string]string{"100.prom": before, "115.prom": "# TYPE x counter\nx{a=\"", "130.prom": after} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var warn strings.Builder
+	src, err := loadDir(dir, &warn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(src) != 2 || !src[0].at.Equal(time.Unix(100, 0)) || !strings.Contains(warn.String(), "115.prom") {
+		t.Errorf("loaded %d scrapes, warnings %q", len(src), warn.String())
 	}
 }
 
@@ -108,7 +176,7 @@ func TestIncreasesCountARestartFromZero(t *testing.T) {
 // must not pass.
 func TestNoEventIsNotMeasured(t *testing.T) {
 	empty := mustParse(t, "")
-	for _, o := range judge(increases([]scrape{empty, empty}), 0.99, 0.99, 0.001, 0.999) {
+	for _, o := range judge(increases(timed(empty, empty)), 0.99, 0.99, 0.001, 0.999) {
 		if o.Verdict() != "not measured" || !math.IsNaN(o.Ratio()) {
 			t.Errorf("%s: %s", o.Name, o.Verdict())
 		}

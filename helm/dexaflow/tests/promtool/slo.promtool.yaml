@@ -19,6 +19,9 @@ tests:
     values: 0+1000x30
   - series: dexaflow_http_requests_total{namespace="data",pod="s",method="GET",path="/api",status="200"}
     values: 0+100x30
+  # A probe failing on every replica is not an API error.
+  - series: dexaflow_http_requests_total{namespace="data",pod="s",method="GET",path="/readyz",status="503"}
+    values: 0+50x30
   - series: dexaflow_task_attempts_total{namespace="data",pod="s",tenant="a",state="success"}
     values: 0+100x30
   - series: dexaflow_scheduler_decisions_total{namespace="data",pod="s",decision_type="pod_lost"}
@@ -51,6 +54,18 @@ tests:
     exp_samples:
     - labels: 'dexaflow:slo_objective{namespace="data",slo="api_availability"}'
       value: 0.999
+
+- name: no scheduler scraped at all is leaderless too
+  interval: 1m
+  input_series:
+  - series: dexaflow_build_info{namespace="other",pod="o",role="all",version="v1",commit="c",go_version="g"}
+    values: 1x10
+  promql_expr_test:
+  - expr: dexaflow:scheduler_leaderless:bool
+    eval_time: 5m
+    exp_samples:
+    - labels: 'dexaflow:scheduler_leaderless:bool{namespace="data"}'
+      value: 1
 
 - name: a scheduler replica up and no leader tick is leaderless
   interval: 1m
@@ -136,3 +151,19 @@ tests:
   - eval_time: 60m
     alertname: DexaflowErrorBudgetSlowBurn
     exp_alerts: []
+
+# An install with a handful of attempts an hour: one lost attempt is a
+# 1.7% error ratio, over the fast burn threshold, yet no page under the
+# minimum event count.
+- name: a single bad event on sparse traffic does not page
+  interval: 1m
+  input_series:
+  - series: dexaflow_task_attempts_total{namespace="data",pod="s",tenant="a",state="success"}
+    values: 0+1x60
+  - series: dexaflow_scheduler_decisions_total{namespace="data",pod="s",decision_type="pod_lost"}
+    values: 0x55 1x5
+  alert_rule_test:
+  - eval_time: 58m
+    alertname: DexaflowErrorBudgetFastBurn
+    exp_alerts: []
+
