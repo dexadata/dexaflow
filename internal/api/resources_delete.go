@@ -7,8 +7,8 @@ import (
 )
 
 // deleteDagHandler implements DELETE /api/v2/dags/{dag_id}. By default (the UI
-// trash) it CLEARS the DAG's run history — deletes its runs, task instances, and
-// XCom while keeping the DAG registered — because a GitOps DAG does not reload on
+// trash) it CLEARS the DAG's run history (deletes its runs, task instances, and
+// XCom while keeping the DAG registered), because a GitOps DAG does not reload on
 // its own, so destroying it would be surprising and lossy (ADR 0020). With
 // ?deregister=true it removes the DAG artifact entirely (cascade). Returns 204.
 func deleteDagHandler(repo DagRepository, audit AuditWriter) gin.HandlerFunc {
