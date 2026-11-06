@@ -209,6 +209,13 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   never rendered (operator template fields are), or that `default_args` is
   ignored (scheduling fields are read from it).
 
+### Security
+
+- **klauspost/compress 1.20.2.** The control plane moves the indirect
+  dependency from 1.19.2 to 1.20.2, which fixes GO-2026-6865, a panic on
+  two-block frames. The object store log sink reaches the affected zstd and
+  huff0 code when it writes and reads task logs.
+
 ## [0.5.8] - 2026-11-01
 
 ### Added
