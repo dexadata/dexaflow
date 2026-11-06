@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -110,7 +111,11 @@ type tokenResponse struct {
 // the body is unchanged. A cross-origin caller gets the body and no cookie at
 // all; see browserMaySetSession for why setting one there would be a login-CSRF
 // hole that this endpoint did not have while it answered with a body only.
-func authTokenHandler(authn auth.Authenticator, limiter *auth.RateLimiter, ttlSeconds int, bg *breakGlass, session sessionCookieSpec) gin.HandlerFunc {
+//
+// With OIDC off (bg nil) every password sign-in that reaches the credential
+// check is recorded as auth.login with its outcome through audit (#2228); under
+// OIDC the break-glass entries record it instead.
+func authTokenHandler(authn auth.Authenticator, limiter *auth.RateLimiter, ttlSeconds int, bg *breakGlass, audit AuthAuditWriter, session sessionCookieSpec) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Peek the limiter up front but DON'T count this attempt yet: only failed
 		// logins consume the budget (recorded below). This is what keeps a user who
@@ -153,6 +158,8 @@ func authTokenHandler(authn auth.Authenticator, limiter *auth.RateLimiter, ttlSe
 				limiter.Allow(c.ClientIP()) // count the failure toward the lockout budget
 				if bg != nil {
 					recordBreakGlass(c, bg, tenant, username, "bad_credentials")
+				} else {
+					recordPasswordLogin(c, audit, tenant, username, "bad_credentials")
 				}
 				AbortProblem(c, http.StatusUnauthorized, "unauthorized", "invalid credentials")
 				return
@@ -167,6 +174,8 @@ func authTokenHandler(authn auth.Authenticator, limiter *auth.RateLimiter, ttlSe
 		}
 		if bg != nil {
 			recordBreakGlass(c, bg, tenant, username, "success")
+		} else {
+			recordPasswordLogin(c, audit, tenant, username, "success")
 		}
 		// Only a login that actually issued a token writes the cookie: every
 		// rejection above returns before this point, so a refused attempt can never
@@ -266,6 +275,22 @@ func renewTokenHandler(renewer TokenRenewer, ttlSeconds, maxLifetimeSeconds int,
 			return
 		}
 		AbortProblemCause(c, http.StatusUnauthorized, "unauthorized", "token cannot be renewed; log in again", invalidErr)
+	}
+}
+
+// auditPasswordLogin is the audit action of a password sign-in while OIDC is
+// off (#2228).
+const auditPasswordLogin = "auth.login"
+
+// recordPasswordLogin audits a password sign-in with OIDC off, best-effort like
+// recordBreakGlass. It records the username and the outcome, never the
+// password.
+func recordPasswordLogin(c *gin.Context, audit AuthAuditWriter, tenant, username, outcome string) {
+	if audit == nil {
+		return
+	}
+	if err := audit.RecordAuthEvent(c.Request.Context(), tenant, "", auditPasswordLogin, username, outcome, nil); err != nil {
+		slog.Warn("recording password sign-in audit", "outcome", outcome, "error", err)
 	}
 }
 

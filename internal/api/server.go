@@ -104,7 +104,7 @@ func newServer(deps Dependencies) *gin.Engine {
 	// (all password logins rejected) — not ungated. In JWT mode the credential path
 	// is the primary auth, so newBreakGlass returns nil (unchanged).
 	bg := newBreakGlass(deps.Auth.OIDCSettings.BreakGlassEmails, deps.Auth.AuthAudit, deps.Auth.OIDCEnabled)
-	r.POST("/auth/token", authTokenHandler(deps.Auth.Authenticator, deps.Auth.RateLimiter, deps.Auth.TokenTTLSecs, bg, deps.sessionCookie()))
+	r.POST("/auth/token", authTokenHandler(deps.Auth.Authenticator, deps.Auth.RateLimiter, deps.Auth.TokenTTLSecs, bg, deps.Auth.AuthAudit, deps.sessionCookie()))
 	// Transparent renewal (aresta #5): a still-valid bearer is re-minted with a
 	// fresh short TTL, bounded by max_lifetime. Under the public /api/v2/auth/
 	// prefix like login, it is self-gating — only a valid signed bearer can be
@@ -209,13 +209,13 @@ func newServer(deps Dependencies) *gin.Engine {
 	registerUITasks(r, deps.Stores.Specs, deps.Stores.DagSources)
 	registerUIDashboard(r, deps.Stores.DashboardStats)
 	registerUIAudit(r, deps.Stores.AuditLog)
-	registerUIVariables(r, deps.Stores.Variables)
+	registerUIVariables(r, deps.Stores.Variables, resourceAuditor(deps.Stores.Audit))
 	registerUsers(r, deps.Stores.Users, deps.Stores.UserAudit)
 	registerAPITokens(r, deps.Stores.APITokens, deps.Auth.AuthAudit)
 	registerAPITokensPage(r, deps, binding)
 	r.GET("/api/v2/plugins", pluginsHandler(deps.Stores.APITokens != nil))
-	registerUIConnections(r, deps.Stores.Connections, deps.Stores.ConnectionTest)
-	registerUIPools(r, deps.Stores.Pools, deps.Server.Pools, deps.Server.PoolsReadOnly)
+	registerUIConnections(r, deps.Stores.Connections, deps.Stores.ConnectionTest, resourceAuditor(deps.Stores.Audit))
+	registerUIPools(r, deps.Stores.Pools, deps.Server.Pools, deps.Server.PoolsReadOnly, resourceAuditor(deps.Stores.Audit))
 	registerUIFavorites(r, deps.Stores.Favorites)
 	registerImportErrors(r, deps.Stores.ImportErrors)
 	registerDagTags(r, deps.Stores.Dags)
