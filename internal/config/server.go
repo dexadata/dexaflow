@@ -250,6 +250,12 @@ type DatabaseSection struct {
 	// database (ADR 0090 decision 4). It needs a DSN that may run DDL, and the
 	// api role refuses it.
 	MigrateOnBoot bool `mapstructure:"migrate_on_boot"`
+	// RowLevelSecurity (DEXAFLOW_DATABASE_ROW_LEVEL_SECURITY, default false)
+	// binds each main pool connection a request uses to the request's tenant,
+	// so the row level security policies of migration 059 hide every other
+	// tenant's rows from it (ADR 0104). Boot fails unless row level security
+	// is on for the tenant tables (`dexaflow-migrate rls on`).
+	RowLevelSecurity bool `mapstructure:"row_level_security"`
 }
 
 // RedisSection configures the Redis connection.

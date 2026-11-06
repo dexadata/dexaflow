@@ -223,6 +223,16 @@ settings:
       or no schema is reported as `database replaced`, boot waits not ready on
       it, and a running server exits with code 3 when its database changes
       under it. Empty checks nothing.
+  database.row_level_security:
+    edition: both
+    description: >-
+      Binds each main pool connection an API request uses to the request's
+      tenant, so the row level security policies hide every other tenant's
+      rows from it ([ADR 0104](/project/adrs/0104-row-level-security/)). Turn the
+      policies on first with `dexaflow-migrate rls on`: boot fails unless every
+      tenant table enforces its policy, and when the server connects as a
+      superuser or a `BYPASSRLS` role. Not with PgBouncer in transaction mode.
+      See [Row level security](/operate/multitenancy/#row-level-security).
   database.migrate_on_boot:
     edition: '**Cluster only**'
     description: >-

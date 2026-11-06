@@ -24,6 +24,8 @@ Commands:
   goto V       migrate up or down to version V
   force V      set version V without running any SQL, and clear the dirty flag
   version      print the current version ("27" or "27 (dirty)")
+  rls ACTION   row level security of the tenant tables (ADR 0104): on, off
+               or status; on and off need the schema at version 59 or later
 
 Options:
   -database URL        the Postgres DSN (postgres://user:password@host:5432/db?sslmode=...)
@@ -94,6 +96,9 @@ func run(ctx context.Context, o options, c command, stdout io.Writer) (*opened, 
 		return nil, err
 	}
 	defer func() { _, _ = op.m.Close() }() //nolint:errcheck // best-effort close of source and database handles
+	if c.name == "rls" {
+		return op, runRLS(ctx, op, connURL(o.databaseURL), c.action, stdout)
+	}
 	if store == nil {
 		return op, execute(op, c, stdout)
 	}
@@ -204,8 +209,15 @@ func parseCommand(rest []string) (command, error) {
 			return c, fmt.Errorf("%s takes a version of %d or more, got %q", c.name, low, arg)
 		}
 		c.n = n
+	case "rls":
+		switch arg {
+		case "on", "off", "status":
+			c.action = arg
+		default:
+			return c, fmt.Errorf("rls takes on, off or status, got %q", arg)
+		}
 	default:
-		return c, fmt.Errorf("unknown command %q (this image runs up, goto, force and version; "+
+		return c, fmt.Errorf("unknown command %q (this image runs up, goto, force, version and rls; "+
 			"use the golang-migrate CLI for the others)", c.name)
 	}
 	return c, nil
