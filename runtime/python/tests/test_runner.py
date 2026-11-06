@@ -824,3 +824,54 @@ def test_render_bash_quotes_metachars_as_single_token(tmp_path):
     subprocess.run(["bash", "-c", rendered], check=False)  # noqa: S603,S607 — deliberately exec bash to prove the payload is inert
     assert not sentinel.exists(), (
         f"';' in conf started a new command: rendered={rendered!r} created {sentinel}")
+
+
+class _FakeBashDecorator:
+    """The shape of the Task SDK's @task.bash decorator the runtime reads: the
+    wrapped function, and the operator class that names itself "@task.bash"."""
+
+    operator_class = types.SimpleNamespace(custom_operator_name="@task.bash")
+
+    def __init__(self, function):
+        self.function = function
+
+
+def _task_bash_module(tmp_path, monkeypatch, returned: str) -> str:
+    body = (
+        "from tests.test_runner import _FakeBashDecorator\n"
+        "def _cmd():\n"
+        f"    return {returned}\n"
+        "cmd = _FakeBashDecorator(_cmd)\n"
+    )
+    return _write_module(tmp_path, monkeypatch, body)
+
+
+def test_task_bash_execs_the_returned_command(tmp_path, monkeypatch):
+    execs = []
+    monkeypatch.setattr(runner.os, "execvp", lambda *a: execs.append(a))
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(tmp_path / "rv.json"))
+    mod = _task_bash_module(tmp_path, monkeypatch, "'echo {{ params.who }}'")
+    monkeypatch.setenv("LEOFLOW_PARAMS", '{"who": "a b"}')
+
+    runner.run(f"{mod}:cmd")
+
+    assert execs == [("bash", ["bash", "-c", "echo 'a b'"])]
+    assert not (tmp_path / "rv.json").exists()
+
+
+@pytest.mark.parametrize("returned", ["''", "'   '", "None", "42"])
+def test_task_bash_refuses_a_non_command(tmp_path, monkeypatch, returned):
+    execs = []
+    monkeypatch.setattr(runner.os, "execvp", lambda *a: execs.append(a))
+    mod = _task_bash_module(tmp_path, monkeypatch, returned)
+
+    with pytest.raises(TypeError, match="must return a non-empty string"):
+        runner.run(f"{mod}:cmd")
+    assert execs == []
+
+
+def test_is_task_bash_ignores_other_decorators():
+    assert not runner._is_task_bash(lambda: None)
+    other = types.SimpleNamespace(
+        operator_class=types.SimpleNamespace(custom_operator_name="@task"))
+    assert not runner._is_task_bash(other)
