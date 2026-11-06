@@ -144,7 +144,7 @@ backend, in three tiers:
 | **Core** | `GET /ui/dags/{dag_id}/latest_run` | `DAGRunLightResponse` |
 | **Core** | `GET /ui/structure/structure_data` | `StructureDataResponse` (`nodes`, `edges`) — graph view |
 | **Core** | `GET /ui/grid/structure/{dag_id}` | grid topology |
-| **Core** | `GET /ui/grid/runs/{dag_id}` | `GridRunsResponse[]` (`dag_id`, `run_id`, `state`, `run_type`, `start_date`, `end_date`, `duration`, `dag_versions`, …); `dag_versions` holds the version the run is pinned to, which the grid compares between runs to draw its version markers |
+| **Core** | `GET /ui/grid/runs/{dag_id}` | `GridRunsResponse[]` (`dag_id`, `run_id`, `state`, `run_type`, `start_date`, `end_date`, `duration`, `dag_versions`, …); `dag_versions` holds the version the run is pinned to, which the grid compares between runs to draw its version markers. `duration` is whole seconds, at least 1 once the run started: the grid's duration axis formats it and half of it through dayjs, which prints the float remainder of a fractional value (`00:00:08.2.0000000000009095` for 8.002 s, against Airflow too), [#2366](https://github.com/dexadata/dexaflow/issues/2366). The run page and the runs list keep the exact duration |
 | **Core** | `GET /ui/grid/ti_summaries/{dag_id}` | per-run task-instance summaries, each with the run's `dag_version_number`: the 3.3 grid and graph open a task instance from a cell only when it is set, and fall back to the run-less task page (no Logs tab) when it is null |
 | Degrade | `GET /ui/dashboard/historical_metrics_data` | empty stats |
 | Degrade | `GET /ui/dashboard/dag_stats` | empty stats |
