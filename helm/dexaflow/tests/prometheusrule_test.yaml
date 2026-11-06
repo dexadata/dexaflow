@@ -112,7 +112,7 @@ tests:
           path: spec.groups[0].rules[4].expr
           pattern: '> 60\n?$'
       - equal:
-          path: spec.groups[1].rules[6].for
+          path: spec.groups[1].rules[7].for
           value: 2h
 
   # --reuse-values from a release whose values predate the thresholds.
@@ -126,7 +126,7 @@ tests:
           path: spec.groups[0].rules[4].expr
           pattern: '> 300\n?$'
       - equal:
-          path: spec.groups[1].rules[6].for
+          path: spec.groups[1].rules[7].for
           value: 30m
       - equal:
           path: spec.groups[0].rules[0].annotations.runbook_url
