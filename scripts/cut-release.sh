@@ -248,6 +248,8 @@ self_test() {
   # jobs across four PRs died inside one window with nothing of ours involved.
   _flake 'ERROR: failed to build: failed to solve: python:3.11-slim-bookworm: failed to resolve source metadata for docker.io/library/python:3.11-slim-bookworm: unexpected status from HEAD request to https://registry-1.docker.io/v2/library/python/manifests/3.11-slim-bookworm: 500 Internal Server Error'
   _flake 'toomanyrequests: You have reached your pull rate limit.'
+  # [observed] #1007: public.ecr.aws throttling a service container pull.
+  _flake 'Error response from daemon: toomanyrequests: Rate exceeded'
   _flake 'net/http: TLS handshake timeout'
   _flake 'dial tcp 140.82.121.4:443: i/o timeout'
   _flake 'write /home/runner/work/_temp/build: no space left on device'
@@ -278,20 +280,28 @@ self_test() {
   _real '--- FAIL: TestRegisterVersionDuplicateReturns409 (0.08s)'
   _real 'versions_conflict_integration_test.go:63: 409 body leaks raw pg internals ("23505")'
   _real 'Error: Process completed with exit code 1.'
+  # Removed alternatives that matched real failures (#956). [observed] #979: a
+  # draft release's assets 404, and treating it as a flake reran the deadlock.
+  _real 'curl: (22) The requested URL returned error: 404'
+  # git's catch-all exit status: a bad ref we introduce ourselves prints it.
+  _real "Error: The process '/usr/bin/git' failed with exit code 128"
+  # With a full base fetch (ci-heavy-gate.sh), a missing merge base reruns red.
+  _real 'fatal: origin/main...HEAD: no merge base'
+  # actions/cache prints this warning in jobs that then fail for a real reason.
+  _real 'Warning: Failed to save: Unable to reserve cache with key go-Linux-x64, another job may be creating this cache.'
+  # A module that does not exist fails go mod download every time.
+  _real 'go: github.com/dexadata/missing@v1.0.0: reading github.com/dexadata/missing/go.mod at revision v1.0.0: unknown revision v1.0.0 (go mod download)'
 
   # Every alternative must earn its place by matching one of the lines above. A
   # pattern that matches nothing is not harmless: it is a transient class we
   # believe is covered and is not. This is what catches a bad escape — FLAKE_RE
   # is single-quoted, so a doubled backslash reaches grep as a literal
   # backslash and `curl: \\(22\\)` can never match the `curl: (22)` it was
-  # written for. GRANDFATHERED lists the pre-existing alternatives that predate
-  # this table and for which no captured sample survives (#956); nothing may be
-  # added to it.
-  local GRANDFATHERED='Rate exceeded|go mod download|returned error: 404|reserve cache|no merge base|exit code 128'
+  # written for. No alternative is exempt: #956 removed the six that had no
+  # captured sample.
   local alt hit line
   while IFS= read -r alt; do
     [ -n "$alt" ] || continue
-    printf '%s' "$alt" | grep -qxE "$GRANDFATHERED" && continue
     hit=0
     for line in "${POS[@]}"; do
       printf '%s' "$line" | grep -qE -- "$alt" && { hit=1; break; }
