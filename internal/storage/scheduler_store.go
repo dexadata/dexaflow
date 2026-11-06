@@ -823,6 +823,10 @@ var _ scheduler.Store = (*SchedulerStore)(nil)
 var _ executor.WarmTargetSource = (*SchedulerStore)(nil)
 var _ executor.BusyWarmWorkerSource = (*SchedulerStore)(nil)
 
+// The pod reconciler fails a bounded Pending attempt only before it started
+// (#1609).
+var _ executor.PendingOutcomeReporter = (*ExecutionStore)(nil)
+
 // RecordStagingVolume records a per-run staging volume as active, keyed by PVC
 // name (idempotent — called per task as the PVC is ensured). ADR 0022.
 func (s *SchedulerStore) RecordStagingVolume(ctx context.Context, tenantID, dagID, runID, pvcName, size string) error {

@@ -877,8 +877,10 @@ settings:
       deletes it and fails the task with `unschedulable:` and the scheduler's message,
       a task failure under its retries ([#1609](https://github.com/dexadata/dexaflow/issues/1609)).
       Counted from when the pod became unschedulable, so leave room for a cluster
-      autoscaler to add a node. `0` (the default) leaves such a pod waiting, holding
-      its pool slot. Helm: `executor.pendingTimeoutSeconds`, which the `cluster`
+      autoscaler to add a node; the time behind scheduling gates (Kueue) is not
+      counted. It applies under the `exchange` agent credential transport: under
+      `envvar` the `start_expired` bound re-places a Pending pod after 8 minutes
+      first. `0` (the default) leaves such a pod waiting, holding its pool slot. Helm: `executor.pendingTimeoutSeconds`, which the `cluster`
       profile sets to `900`.
   executor.collect_settled_run_pods:
     edition: Cluster

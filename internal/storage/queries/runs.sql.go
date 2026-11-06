@@ -841,6 +841,49 @@ func (q *Queries) FailTaskInstanceIfActive(ctx context.Context, arg FailTaskInst
 	return err
 }
 
+const failTaskInstanceIfNotStarted = `-- name: FailTaskInstanceIfNotStarted :execrows
+UPDATE task_instances
+SET state = 'failed',
+    ended_at = now(),
+    last_failure_kind = CASE WHEN $1::bool THEN 'infra' ELSE last_failure_kind END,
+    infra_confirmed_at = CASE WHEN $1::bool THEN now() ELSE infra_confirmed_at END,
+    error_message = $2
+WHERE id = $3 AND try_number = $4
+  AND attempt_epoch = $5
+  AND state IN ('scheduled', 'queued')
+`
+
+type FailTaskInstanceIfNotStartedParams struct {
+	Infra        bool        `json:"infra"`
+	ErrorMessage *string     `json:"error_message"`
+	ID           pgtype.UUID `json:"id"`
+	TryNumber    int32       `json:"try_number"`
+	AttemptEpoch int32       `json:"attempt_epoch"`
+}
+
+// Settle a task instance failed from a bound on its Pending pod (#1609): the
+// pod stayed unschedulable past executor.pending_timeout_seconds, or its image
+// pull kept failing. Guarded like FailTaskInstanceIfActive on id, try_number
+// and attempt_epoch, but only before the attempt started: the reconciler
+// decides from a cache snapshot, and a pod placed since may already have
+// registered its agent and moved the row to running, which a bound must never
+// fail. With infra set the attempt goes to the infra re-place rail, confirmed
+// at once like FailTaskInstanceInfraIfActive. It reports the rows changed, so
+// the caller leaves a started attempt's pod alone.
+func (q *Queries) FailTaskInstanceIfNotStarted(ctx context.Context, arg FailTaskInstanceIfNotStartedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, failTaskInstanceIfNotStarted,
+		arg.Infra,
+		arg.ErrorMessage,
+		arg.ID,
+		arg.TryNumber,
+		arg.AttemptEpoch,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const failTaskInstanceInfraIfActive = `-- name: FailTaskInstanceInfraIfActive :exec
 UPDATE task_instances
 SET state = 'failed',

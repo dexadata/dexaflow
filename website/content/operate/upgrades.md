@@ -1352,7 +1352,13 @@ Two changes to task pods that never start
   since 0.5.10, gets the bound on upgrade. Set
   `executor.pendingTimeoutSeconds: 0` to keep waiting for a node, or a larger
   value when a cluster autoscaler or a reservation takes longer than 15
-  minutes to add one.
+  minutes to add one: size it above the slowest node your autoscaler adds
+  (a GPU node from zero, a Karpenter node class with a slow image), since a
+  task bounded this way spends a retry and its next attempt starts the clock
+  again. The time a pod spends behind scheduling gates (Kueue) is not
+  counted. The bound only matters under the `exchange` agent credential
+  transport: under `envvar`, the default, the `start_expired` bound already
+  re-places a Pending pod after 8 minutes.
 
 ## Ephemeral database loss (emptyDir Postgres)
 

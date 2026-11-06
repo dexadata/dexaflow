@@ -354,6 +354,30 @@ func (s *ExecutionStore) FailTask(ctx context.Context, taskInstanceID string, tr
 	})
 }
 
+// FailPendingTask fails an attempt that has not started yet, from a bound on
+// its Pending pod (#1609), guarded like FailTask but on the states before
+// running, and as infra when infra is set. It reports whether the row
+// changed: false means the attempt was superseded, settled, or started since
+// the reconciler's snapshot. It implements executor.PendingOutcomeReporter.
+func (s *ExecutionStore) FailPendingTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, reason string, infra bool) (bool, error) {
+	tid, err := parseUUID(taskInstanceID)
+	if err != nil {
+		return false, err
+	}
+	msg := reason
+	n, err := s.q.FailTaskInstanceIfNotStarted(ctx, queries.FailTaskInstanceIfNotStartedParams{
+		Infra:        infra,
+		ErrorMessage: &msg,
+		ID:           tid,
+		TryNumber:    toInt32(tryNumber),
+		AttemptEpoch: toInt32(attemptEpoch),
+	})
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // FailTaskInfra marks a task instance failed for an infrastructure reason by
 // its ID (last_failure_kind 'infra', confirmed), guarded like FailTask, so the
 // planner re-places it on the infra budget instead of spending a task retry.

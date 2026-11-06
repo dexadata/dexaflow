@@ -10,6 +10,11 @@ body: |-
   retry. The new `executor.pending_timeout_seconds` (Helm
   `executor.pendingTimeoutSeconds`, default `0`, off; `900` under the chart's
   `cluster` profile) fails a task whose pod stayed unschedulable that long,
-  with `unschedulable:` and the scheduler's message. Both delete the pod when
-  they settle its task.
+  with `unschedulable:` and the scheduler's message; it matters under the
+  `exchange` agent credential transport, since under `envvar` the
+  `start_expired` bound re-places a Pending pod after 8 minutes. Both bounds
+  settle an attempt only before it started and delete the pod when they
+  settle its task. Behavior change: a release on the `cluster` profile gets
+  the 15 minute bound on upgrade; raise `executor.pendingTimeoutSeconds` above
+  the slowest node your cluster autoscaler adds, or set it to `0`.
 time: 2026-11-06T20:00:00.000000000+00:00

@@ -1001,6 +1001,26 @@ WHERE id = sqlc.arg(id) AND try_number = sqlc.arg(try_number)
   AND attempt_epoch = sqlc.arg(attempt_epoch)
   AND state IN ('scheduled', 'queued', 'running');
 
+-- name: FailTaskInstanceIfNotStarted :execrows
+-- Settle a task instance failed from a bound on its Pending pod (#1609): the
+-- pod stayed unschedulable past executor.pending_timeout_seconds, or its image
+-- pull kept failing. Guarded like FailTaskInstanceIfActive on id, try_number
+-- and attempt_epoch, but only before the attempt started: the reconciler
+-- decides from a cache snapshot, and a pod placed since may already have
+-- registered its agent and moved the row to running, which a bound must never
+-- fail. With infra set the attempt goes to the infra re-place rail, confirmed
+-- at once like FailTaskInstanceInfraIfActive. It reports the rows changed, so
+-- the caller leaves a started attempt's pod alone.
+UPDATE task_instances
+SET state = 'failed',
+    ended_at = now(),
+    last_failure_kind = CASE WHEN sqlc.arg(infra)::bool THEN 'infra' ELSE last_failure_kind END,
+    infra_confirmed_at = CASE WHEN sqlc.arg(infra)::bool THEN now() ELSE infra_confirmed_at END,
+    error_message = sqlc.arg(error_message)
+WHERE id = sqlc.arg(id) AND try_number = sqlc.arg(try_number)
+  AND attempt_epoch = sqlc.arg(attempt_epoch)
+  AND state IN ('scheduled', 'queued');
+
 -- name: SucceedTaskInstanceIfActive :execrows
 -- Settle a task instance succeeded from its durable outcome record (ADR 0052),
 -- recovering a success whose report was lost. Guarded by id, try_number and
