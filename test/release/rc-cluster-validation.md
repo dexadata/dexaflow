@@ -524,9 +524,10 @@ LEOFLOW_CHAOS_ONLY=CD test/e2e/chaos-runtime.sh
 **PASS:** scenarios C and D both pass. Two caveats worth stating, because they
 bound what a green here means:
 
-- The script is **not in any workflow** — only `make chaos-runtime`, which
-  nothing invokes. An RC is the moment it actually gets run, which is why it is
-  named here at all.
+- The [Chaos weekly](https://github.com/dexadata/dexaflow/actions/workflows/chaos-weekly.yaml)
+  workflow runs it every week against main (#2306). When the rc is cut from
+  main, a green run on the rc's commit or a later one answers this row; cite
+  it. Otherwise run it here.
 - It runs the control plane as **host processes** from `bin/leoflow-server` on a
   k3d cluster it creates and deletes. So it validates **the tree at the RC tag**,
   not `ghcr.io/dexadata/dexaflow-server:<rc>`. Check out the tag and build

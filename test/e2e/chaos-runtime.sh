@@ -32,7 +32,8 @@
 # Select a subset with LEOFLOW_CHAOS_ONLY (e.g. LEOFLOW_CHAOS_ONLY=D, or "BD");
 # the shared setup always runs, so any scenario works on its own.
 #
-# NOT a `go test`; destructive; not gated in CI (slow). It mirrors the proven
+# NOT a `go test`; destructive; not a pull request gate (slow): the Chaos weekly
+# workflow (.github/workflows/chaos-weekly.yaml) runs it every week on main. It mirrors the proven
 # host-process split harness (split-two-process.sh) and reuses the k3d_import
 # work-around (lib.sh). Best run inside Lima (Linux) — the CGO services and k3d
 # behave as in prod there, unlike the macOS host.

@@ -1,0 +1,9 @@
+kind: Changed
+body: |-
+  **Weekly chaos run.** The runtime chaos scenarios (a scheduler killed mid-run,
+  a task pod deleted, an agent or the control plane killed between the outcome
+  record and the report) now run every week against main on a k3d cluster, in
+  the Chaos weekly workflow; a failure on main opens the "CI is red on main"
+  issue like any other red workflow. Patch reviews cite its last green run
+  instead of recording the rows as not run (#2306).
+time: 2026-11-06T20:45:00.000000000+00:00

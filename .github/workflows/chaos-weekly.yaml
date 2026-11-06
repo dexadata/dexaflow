@@ -1,0 +1,82 @@
+name: Chaos weekly
+
+# The runtime chaos scenarios of test/e2e/chaos-runtime.sh (#2306): A kills the
+# scheduler mid-run, B deletes a running task pod, C and D kill the agent or the
+# control plane between the durable outcome record and the report. They need a
+# k3d cluster, which a GitHub-hosted runner has and a patch review host does
+# not, so they run here every week against main, on demand, and on pull
+# requests that change the scenarios. A failed run on main is reported by the
+# branch red watch (branch-red.yaml): it opens or updates the one issue "CI is
+# red on main" and closes it on the next green run, and cut-release.sh then
+# asks for --allow-red with a reason before it cuts over it. Patch reviews cite
+# the last green run for the checklist rows E5 and E8.
+on:
+  schedule:
+    - cron: "15 5 * * 1"
+  workflow_dispatch: {}
+  pull_request:
+    branches: [main, "release-*"]
+    paths:
+      - "test/e2e/chaos-runtime.sh"
+      - ".github/workflows/chaos-weekly.yaml"
+
+permissions:
+  contents: read
+
+# A newer push to the same pull request supersedes this run; every other run gets
+# a group of its own (see e2e-replaced-database.yaml for why a shared group
+# cancels a waiting run).
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('{0}-run-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GOPROXY: https://proxy.golang.org|direct
+  GO_VERSION: "1.26.10"
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  chaos:
+    name: k3d, chaos scenarios A to D
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: leoflow
+          POSTGRES_PASSWORD: leoflow
+          POSTGRES_DB: leoflow
+        ports: [5432:5432]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: mirror.gcr.io/library/redis:7
+        ports: [6379:6379]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      LEOFLOW_E2E_HOST_ADDR: host.k3d.internal
+      PYTHONPATH: parser
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/docker-hub-mirror
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install k3d + kubectl + migrate
+        run: |
+          set -euo pipefail
+          bash scripts/ci-install-k3d-kubectl.sh
+          go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.20.1
+      - name: Apply migrations
+        run: ~/go/bin/migrate -path migrations -database "postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable" up
+      - name: Build binaries
+        run: make build
+      - name: Run the chaos scenarios
+        run: bash test/e2e/chaos-runtime.sh
