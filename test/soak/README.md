@@ -475,6 +475,15 @@ and `violations.jsonl` are `fsync`ed per record, and `summary.md` / `verdict.jso
 are rewritten atomically (temp file plus rename) on every sample. A soak that runs
 out of disk mid-write loses at most the record being written, never the report.
 
+**What happens when the environment leaves.** When the API stops answering for
+12 consecutive samples (two minutes at the default cadence), the monitor stops
+with `stop_reason: control_plane_gone`. When the metadatabase stops answering
+for as long, it stops with `stop_reason: datastore_unreachable` and the verdict
+reads `ABORTED: datastore unreachable at 29.2h` (or `FAIL (then ABORTED: ...)`
+when violations were recorded before the loss), and no violation is counted for
+the samples without a database (#1257): a soak whose Docker host stopped is a
+run that ended, not a product that failed. Both exit 2, the harness code.
+
 The free-space floor is deliberately the largest of the three: filling the
 *machine's* disk is a worse outcome than filling the soak's own budget, and 10 GiB
 is enough headroom for the operating system to stay comfortable.

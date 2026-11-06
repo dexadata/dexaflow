@@ -40,6 +40,10 @@ type sample struct {
 	SchedulerHealth string `json:"scheduler_health"`
 	HealthSource    string `json:"health_source"`
 	APIReachable    bool   `json:"api_reachable"`
+	// DatastoreUnreachable is true when the monitor's own trivial query to
+	// the metadatabase failed (#1257). Named for the failure so the zero value,
+	// and every fixture built from it, describes a reachable database.
+	DatastoreUnreachable bool `json:"datastore_unreachable,omitempty"`
 
 	// The active set: what the scheduler has to reason about right now.
 	ActiveRuns  int `json:"active_runs"`
@@ -273,6 +277,8 @@ func (c *collector) Sample(ctx context.Context, started time.Time) (sample, erro
 	var one int
 	if berr := c.pool.QueryRow(qctx, `SELECT 1`).Scan(&one); berr == nil {
 		s.BaselineProbeMS = float64(time.Since(b0)) / float64(time.Millisecond)
+	} else {
+		s.DatastoreUnreachable = true
 	}
 	t0 := time.Now()
 	runs, perr := c.store.ActiveRuns(qctx)

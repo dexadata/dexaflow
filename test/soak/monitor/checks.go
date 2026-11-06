@@ -51,6 +51,10 @@ type checker struct {
 	// unreachable counts CONSECUTIVE samples with no API. Reset on any reachable
 	// sample, so a blip during an injected restart does not accumulate.
 	unreachable int
+	// dbUnreachable counts consecutive samples whose metadatabase did not
+	// answer, and dbLostAtS is the elapsed time of the first of them (#1257).
+	dbUnreachable int
+	dbLostAtS     float64
 	// lastStepDowns is the previous sample's cumulative step-down counter, so
 	// leader_churn can report EVENTS instead of re-reporting a total.
 	//
@@ -144,6 +148,21 @@ func (c *checker) Check(s sample) []violation {
 	// Only the checks that describe a live system are suppressed.
 	c.checkCorrectness(s, add)
 
+	// The same holds for the datastore (#1257). The monitor reads its
+	// invariants from the metadatabase, so with the database gone every DAG
+	// looks starved and every run wedged, while the control plane may still be
+	// up and correctly retrying. That is not the product failing, it is the
+	// environment leaving: nothing is counted, and past the grace period the
+	// run stops and reports ABORTED rather than FAIL.
+	if s.DatastoreUnreachable {
+		if c.dbUnreachable == 0 {
+			c.dbLostAtS = s.ElapsedS
+		}
+		c.dbUnreachable++
+		return out
+	}
+	c.dbUnreachable = 0
+
 	if !s.APIReachable {
 		c.unreachable++
 		if c.unreachable >= unreachableSamplesBeforeGivingUp {
@@ -168,6 +187,14 @@ func (c *checker) Check(s sample) []violation {
 // At the shipped 10s cadence this is two minutes, which is far longer than any
 // injected fault and far shorter than a wasted weekend.
 const unreachableSamplesBeforeGivingUp = 12
+
+// DatastoreGone reports whether the metadatabase has not answered for the
+// grace period, so the caller stops the run and reports it ABORTED (#1257).
+func (c *checker) DatastoreGone() bool { return c.dbUnreachable >= unreachableSamplesBeforeGivingUp }
+
+// DatastoreLostAtS is the elapsed time, in seconds, of the first sample of the
+// current unreachable streak.
+func (c *checker) DatastoreLostAtS() float64 { return c.dbLostAtS }
 
 // Gone reports whether the run ended because the control plane disappeared, so
 // the caller can exit with the harness code instead of the violation one.
