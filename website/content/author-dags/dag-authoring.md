@@ -126,6 +126,66 @@ in 3.0 and relocated to `apache-airflow-providers-standard`. Importing one (e.g.
 message pointing at the replacement — use
 `from airflow.providers.standard.operators.bash import BashOperator` instead.
 
+### Dependencies between tasks
+
+Tasks are wired as on Airflow, and every form below compiles to the same
+`depends_on` lists in `dag.json`:
+
+- `a >> b`, `b << a`, and lists on either side: `a >> [b, c] >> d`,
+  `[a, b] >> c`.
+- `a.set_downstream(b)` and `b.set_upstream(a)`.
+- `chain(a, [b, c], [d, e], f)` links each element to the next: a task next to
+  a list links to every task in it, and two adjacent lists, which must have the
+  same length, link pairwise (`b >> d`, `c >> e`).
+- `cross_downstream([a, b], [c, d])` makes every task of the first list
+  upstream of every task of the second.
+- `Label("text")` on an edge (`a >> Label("ok") >> b`, also inside `chain`)
+  wires the edge; the label text is not kept, so the graph view shows the edge
+  without it.
+
+`chain`, `cross_downstream`, `Label` and `Variable` import from `airflow.sdk`.
+The older spellings (`airflow.models.baseoperator`, `airflow.utils.edgemodifier`,
+`airflow.models`) resolve to the same objects.
+
+For a start or end marker, `EmptyOperator` from
+`airflow.providers.standard.operators.empty` compiles to a bash task that runs
+`true`.
+
+### Generating tasks in a loop
+
+A DAG file is plain Python, so tasks built in a `for` loop compile, edges
+included:
+
+```python
+TABLES = ["orders", "customers", "items"]
+
+@task
+def load(table: str) -> None: ...
+
+with DAG("load_tables", schedule="@daily"):
+    for table in TABLES:
+        extract = BashOperator(task_id=f"extract_{table}", bash_command=f"extract {table}")
+        extract >> load.override(task_id=f"load_{table}")(table)
+```
+
+The loop can read its list from a file next to `dag.py` (a JSON or YAML
+config, for example), with three limits:
+
+- **The task list is fixed at compile.** `dexaflow compile` runs the loop once
+  and writes the resulting tasks to `dag.json`, which is immutable. A change to
+  the list, in the code or in the config file, takes effect on the next
+  deploy, not on the next run. A list read from a database, an API or a
+  Variable while the file is parsed is not supported (see `Variable.get`
+  below).
+- **One DAG per file.** A loop that creates several DAGs in one file
+  (`for country in COUNTRIES: with DAG(f"etl_{country}"): ...`) is refused
+  unless `dexaflow.yaml` names the one to build with `dag_id`. Give each DAG
+  its own directory, sharing the code through a helper module.
+- **No fan-out at run time.** A number of task instances decided by an upstream
+  result (`.expand()`, `.partial()`) is dynamic task mapping, which is refused
+  (see below). Return the list from one task and process it inside the next
+  one instead.
+
 ### Supported task types
 
 Dexaflow runs the common types on a **native fast path** and everything else — any
@@ -134,8 +194,8 @@ executor**, native-first by type. Nothing is silently dropped or mistranslated.
 
 | Task type | Airflow operator | Where it runs | Notes |
 |---|---|---|---|
-| `python` | `@task` (TaskFlow) **or** `PythonOperator` | agent in a pod (Cluster) / subprocess (Lite) | The general-purpose escape hatch: any provider library you `pip install` is callable from inside a `@task`. |
-| `bash` | `BashOperator` | agent | Executes a shell command. |
+| `python` | `@task` (TaskFlow) **or** `PythonOperator`, and `@task.bash` | agent in a pod (Cluster) / subprocess (Lite) | The general-purpose escape hatch: any provider library you `pip install` is callable from inside a `@task`. A `@task.bash` function runs in the pod and returns the command, which then runs with bash, as on Airflow. |
+| `bash` | `BashOperator`, and `EmptyOperator` | agent | Executes a shell command. An `EmptyOperator` compiles to a bash task that runs `true`: it costs one short pod and shows as a `BashOperator` in the UI. |
 | ~~`http_api`~~ (removed) | — | — | **Removed (ADR 0047/0048, #512).** `HttpOperator` now compiles to `airflow_operator` and runs in a **pod**, like any other provider operator — declare `connectors: [http]`. The old inline path ran the request in the control-plane process (an SSRF surface) and is gone. |
 | `airflow_operator` | **any provider operator/sensor** (Snowflake, S3, Postgres, BigQuery, …) | agent in a pod | The generic executor (ADR 0040): the runtime imports the class, instantiates it with your args, and calls `execute()`. Declare the provider or compile fails. |
 
@@ -326,11 +386,12 @@ issue.
 - **Setup and teardown tasks** (`as_setup()`, `as_teardown()`, `@setup`,
   `@teardown`): refused at compile; express the cleanup as a downstream task
   with `trigger_rule="all_done"`. Not planned beyond the refusal.
-- **`chain()`, `cross_downstream()` and edge `Label`s**: not available yet; use
-  `>>` and lists (`a >> [b, c] >> d`). Planned in
-  [#2337](https://github.com/dexadata/dexaflow/issues/2337).
-- **`EmptyOperator`**: refused today. Use a trivial `@task` as the start or end
-  marker. Planned in [#2337](https://github.com/dexadata/dexaflow/issues/2337).
+- **`chain_linear()`**: not available; use `chain()`, `cross_downstream()` or
+  `>>` with lists. `chain()`, `cross_downstream()` and edge `Label`s compile
+  (see [Dependencies between tasks](#dependencies-between-tasks)).
+- **`EmptyOperator` from `airflow.sdk`**: refused, because Airflow has no
+  `EmptyOperator` there either. Import it from
+  `airflow.providers.standard.operators.empty`.
 
 **Dependencies between DAGs and scheduling**
 
@@ -374,8 +435,10 @@ issue.
 - **`PythonSensor(python_callable=...)` and `@task.sensor`**: refused. Poll the
   condition inside a `@task`, or use a provider sensor in `mode="reschedule"`.
   Planned in [#2339](https://github.com/dexadata/dexaflow/issues/2339).
-- **`@task.bash`**: not available yet; use `BashOperator`. Planned in
-  [#2337](https://github.com/dexadata/dexaflow/issues/2337).
+- **`on_failure_callback` on `@task.bash`**: refused. The command replaces the
+  Python process, so nothing is left to run the callback; use a `@task` that
+  runs the command with `subprocess`, or a downstream task with
+  `trigger_rule="one_failed"`.
 - **Virtualenv operators** (`PythonVirtualenvOperator`, `@task.virtualenv`,
   `@task.external_python`): refused, by design. Each DAG already ships as its
   own image with its own dependencies.
@@ -385,10 +448,11 @@ issue.
 
 **Python authoring**
 
-- **`from airflow.sdk import Variable` at module level**: the import fails at
-  compile. Import and call `Variable.get` inside the task. Planned in
-  [#2337](https://github.com/dexadata/dexaflow/issues/2337); calling
-  `Variable.get` at module level will stay an error.
+- **`Variable.get` (or `set`) called at module level**: refused. The compiler
+  has no Variable store, and a value read while parsing would be frozen into
+  `dag.json`. Importing `Variable` at the top of the file is fine; call
+  `Variable.get` inside the task, or use `{{ var.value.<key> }}` in a templated
+  field.
 - **`templates_dict=` on `@task`/`PythonOperator`**: not captured. Build the
   values inside the task from the `airflow.sdk` context. Jinja in an
   operator's `template_fields` (for example `bash_command="echo {{ ds }}"`) is
