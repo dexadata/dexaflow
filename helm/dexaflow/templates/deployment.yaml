@@ -419,14 +419,14 @@ that does not depend on this chart's file.
 
 {{- /*
 Render one "all" Deployment (default, byte-identical to the pre-0049 monolith) or,
-when split.enabled, separate api and scheduler Deployments — ADR 0049. The
-scheduler is always a single leader (ADR 0009), so its replica count is pinned to 1
-here regardless of split.scheduler.replicaCount.
+when split.enabled, separate api and scheduler Deployments (ADR 0049). The
+scheduler runs 1 or 2 replicas (leoflow.splitSchedulerReplicas, ADR 0105): one
+leads (ADR 0009) and a second one stands by on the same lock.
 */ -}}
 {{- if .Values.split.enabled }}
 {{- include "leoflow.controlPlaneDeployment" (dict "ctx" . "role" "api" "replicas" .Values.split.api.replicaCount) | nindent 0 }}
 ---
-{{- include "leoflow.controlPlaneDeployment" (dict "ctx" . "role" "scheduler" "replicas" 1) | nindent 0 }}
+{{- include "leoflow.controlPlaneDeployment" (dict "ctx" . "role" "scheduler" "replicas" (include "leoflow.splitSchedulerReplicas" . | int)) | nindent 0 }}
 {{- else }}
 {{- include "leoflow.controlPlaneDeployment" (dict "ctx" . "role" "all" "replicas" .Values.replicaCount) | nindent 0 }}
 {{- end }}

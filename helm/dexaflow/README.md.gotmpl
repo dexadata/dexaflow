@@ -163,9 +163,10 @@ helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <x.y.z> -
 
 Involuntary disruptions — node failure, spot reclamation, a kernel panic — are
 stopped by **no** PDB or annotation, which is why the second replica is the
-posture that matters. Note that the api/scheduler **split** is not dispatch-HA:
-its scheduler is pinned to one replica with no standby and no PDB, so only
-non-split `replicaCount: 2` fails dispatch over today. The full reasoning,
+posture that matters. With the api/scheduler **split**, set
+`split.scheduler.replicaCount: 2` as well: its scheduler runs one replica with
+no standby and no PDB by default, and the second replica is the standby that
+fails dispatch over (ADR 0105). The full reasoning,
 per-platform PDB behavior, and the upgrade path from a single replica are in the
 [Control-plane HA and disruption posture](https://dexaflow.dexadata.ai/operate/control-plane-ha/)
 page.

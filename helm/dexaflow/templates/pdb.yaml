@@ -9,40 +9,47 @@ platforms that bound the wait eventually override the budget anyway. It protects
 the pod at the cost of cluster operations, so it is only safe-by-default for HA.
 An explicit podDisruptionBudget.enabled true/false always wins.
 */ -}}
-{{- if eq (include "leoflow.pdbEnabled" .) "true" }}
-{{- /* ADR 0049: in split mode the PDB protects the api Deployment (the
-multi-replica, active-active role). The scheduler is a single leader (ADR 0009);
-a PDB over one pod would block node drains, so it is deliberately excluded.
-Non-split covers the single "all" Deployment, unchanged. */ -}}
-{{- $role := ternary "api" "all" .Values.split.enabled -}}
-{{- /*
-A PodDisruptionBudget spec carries minAvailable OR maxUnavailable, never both:
-the apiserver rejects the pair, so a render that emitted both looked clean and
-then failed the install — the shape this chart refuses at render time
-everywhere else. This was a values-file comment until the budget became
-default-on for the HA replica floor, which put the pair one `--set` away from a
-real install. Truthiness deliberately matches the two `with` blocks below, so
-the guard judges exactly what would be rendered: a `0` or `""` on either key is
-omitted from the spec and is therefore not "set" here either (#905).
-*/ -}}
+{{- /* ADR 0049: in split mode the auto PDB protects the api Deployment (the
+multi-replica, active-active role) and keys on its replicas. Non-split covers
+the single "all" Deployment, unchanged.
+
+The split scheduler gets a budget of its own exactly when it runs a standby
+(split.scheduler.replicaCount: 2, ADR 0105), so a drain evicts the leader only
+while the standby is up to take the lock. Over its single default replica a
+budget would block every drain, so it never renders there, even with
+podDisruptionBudget.enabled: true; an explicit false turns both off. */ -}}
+{{- $roles := list -}}
+{{- if eq (include "leoflow.pdbEnabled" .) "true" -}}
+{{- $roles = append $roles (ternary "api" "all" .Values.split.enabled) -}}
+{{- end -}}
+{{- $pdbRaw := .Values.podDisruptionBudget.enabled -}}
+{{- $pdbOff := and (not (kindIs "invalid" $pdbRaw)) (eq (lower (toString $pdbRaw)) "false") -}}
+{{- if and .Values.split.enabled (gt (include "leoflow.splitSchedulerReplicas" . | int) 1) (not $pdbOff) -}}
+{{- $roles = append $roles "scheduler" -}}
+{{- end -}}
+{{- if $roles }}
 {{- if and .Values.podDisruptionBudget.minAvailable .Values.podDisruptionBudget.maxUnavailable -}}
 {{- fail (printf "podDisruptionBudget.minAvailable=%v and podDisruptionBudget.maxUnavailable=%v are both set: a PodDisruptionBudget spec carries exactly one of the two and the apiserver rejects both together, so the install would fail after a clean render. Set one and clear the other (podDisruptionBudget.maxUnavailable=\"\" keeps the chart's minAvailable default). See #905." .Values.podDisruptionBudget.minAvailable .Values.podDisruptionBudget.maxUnavailable) -}}
 {{- end -}}
+{{- range $i, $role := $roles }}
+{{- if $i }}
+---
+{{- end }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ include "leoflow.roleName" (dict "ctx" . "role" $role) }}
-  namespace: {{ .Release.Namespace }}
+  name: {{ include "leoflow.roleName" (dict "ctx" $ "role" $role) }}
+  namespace: {{ $.Release.Namespace }}
   labels:
-    {{- include "leoflow.labels" . | nindent 4 }}
+    {{- include "leoflow.labels" $ | nindent 4 }}
 spec:
-  {{- with .Values.podDisruptionBudget.minAvailable }}
+  {{- with $.Values.podDisruptionBudget.minAvailable }}
   minAvailable: {{ . }}
   {{- end }}
-  {{- with .Values.podDisruptionBudget.maxUnavailable }}
+  {{- with $.Values.podDisruptionBudget.maxUnavailable }}
   maxUnavailable: {{ . }}
   {{- end }}
-  {{- with .Values.podDisruptionBudget.unhealthyPodEvictionPolicy }}
+  {{- with $.Values.podDisruptionBudget.unhealthyPodEvictionPolicy }}
   # Kubernetes' default (IfHealthyBudget) refuses to evict even UNHEALTHY pods
   # once the budget is unmet, so with both replicas unready — bad DB credentials
   # after a rotation, an image-pull failure, a wedged rollout — a node drain hangs
@@ -51,5 +58,6 @@ spec:
   {{- end }}
   selector:
     matchLabels:
-      {{- include "leoflow.roleSelectorLabels" (dict "ctx" . "role" $role) | nindent 6 }}
+      {{- include "leoflow.roleSelectorLabels" (dict "ctx" $ "role" $role) | nindent 6 }}
+{{- end }}
 {{- end }}
