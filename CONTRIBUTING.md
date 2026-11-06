@@ -226,6 +226,13 @@ and applied by golang-migrate on start and by the chart's pre-upgrade Job.
 - **Every up has a down.** When a change cannot be undone (a data fix, an enum
   value), the down file is a comment that says why it is a no-op, and the up
   must be safe to apply again.
+- **No blocking lock on a large table.** `migrations/lock_safety_test.go`
+  refuses, on `task_instances`, `dag_runs` and the other tables that grow with
+  the work, the statements that hold a strong lock while they scan or rewrite
+  (a non-concurrent index, a type change, `SET NOT NULL`, a constraint
+  validated in place, a full-table `UPDATE`) and an `ALTER TABLE` without
+  `SET LOCAL lock_timeout`, and names the safe pattern (#2312). An accepted
+  exception goes in `migrations/lock_exceptions.txt` with its reason.
 - **Built-in roles change in every tenant.** A tenant created through the
   service API copies the built-in roles and their grants from `default` once,
   when it is created. A migration that adds, changes or revokes a built-in role
