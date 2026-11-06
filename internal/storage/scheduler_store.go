@@ -155,50 +155,60 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 		if err != nil {
 			return nil, err
 		}
-		spec := cached
-		spec.Tasks = make([]domain.TaskSpec, len(cached.Tasks))
-		copy(spec.Tasks, cached.Tasks)
-		applyDefaultRetries(&spec)
-		ts := taskInstanceMaps(tisByRun[run.ID])
-		// Build per-task retry_delay_seconds from the DAG spec so the planner
-		// can gate `up_for_retry → none` on the user-declared cooldown (#201).
-		// TaskSpec.RetryDelaySeconds is *int (omitempty); nil = no cooldown.
-		retryDelay := make(map[string]int, len(spec.Tasks))
-		for _, t := range spec.Tasks {
-			if t.RetryDelaySeconds != nil {
-				retryDelay[t.TaskID] = *t.RetryDelaySeconds
-			}
-		}
-		out = append(out, scheduler.RunState{
-			RunID:             uuidToString(run.ID),
-			DisplayRunID:      run.RunID,
-			LogicalDate:       rfc3339OrEmpty(run.LogicalDate),
-			DagID:             spec.DagID,
-			DagVersionID:      uuidToString(run.DagVersionID),
-			TenantID:          uuidToString(run.TenantID),
-			State:             domain.DagRunState(run.State),
-			Held:              row.DagPaused,
-			Suspension:        domain.SuspensionMode(row.TenantSuspensionMode),
-			MaxActiveRuns:     int(row.DagMaxActiveRuns),
-			Tasks:             spec.Tasks,
-			Graph:             graph,
-			States:            ts.states,
-			Tries:             ts.tries,
-			MaxTries:          ts.maxTries,
-			EndedAt:           ts.endedAt,
-			RetryDelaySeconds: retryDelay,
-			RescheduleAt:      ts.rescheduleAt,
-			NextDispatchAt:    ts.nextDispatchAt,
-			DispatchAttempts:  ts.dispatchAttempts,
-			InfraFailed:       ts.infraFailed,
-			InfraProvisional:  ts.infraProvisional,
-			InfraAttempts:     ts.infraAttempts,
-			Now:               time.Now(),
-			Alerts:            spec.Alerts,
-			MaxActiveTasks:    spec.MaxActiveTasks,
-		})
+		out = append(out, projectRunState(row, cached, graph, tisByRun[run.ID], time.Now()))
 	}
 	return out, nil
+}
+
+// projectRunState builds the scheduler's view of one active run from its row,
+// its version's cached spec and graph, and its task instances: the per-run
+// work ActiveRuns repeats on every tick once the rows are loaded. The cached
+// spec is shared read-only, so its Tasks are copied before applyDefaultRetries
+// fills a run's retry defaults.
+func projectRunState(row queries.ListActiveDagRunsRow, cached domain.DAGSpec, graph *scheduler.TaskGraph, tis []queries.TaskInstance, now time.Time) scheduler.RunState {
+	run := row.DagRun
+	spec := cached
+	spec.Tasks = make([]domain.TaskSpec, len(cached.Tasks))
+	copy(spec.Tasks, cached.Tasks)
+	applyDefaultRetries(&spec)
+	ts := taskInstanceMaps(tis)
+	// Build per-task retry_delay_seconds from the DAG spec so the planner
+	// can gate `up_for_retry → none` on the user-declared cooldown (#201).
+	// TaskSpec.RetryDelaySeconds is *int (omitempty); nil = no cooldown.
+	retryDelay := make(map[string]int, len(spec.Tasks))
+	for _, t := range spec.Tasks {
+		if t.RetryDelaySeconds != nil {
+			retryDelay[t.TaskID] = *t.RetryDelaySeconds
+		}
+	}
+	return scheduler.RunState{
+		RunID:             uuidToString(run.ID),
+		DisplayRunID:      run.RunID,
+		LogicalDate:       rfc3339OrEmpty(run.LogicalDate),
+		DagID:             spec.DagID,
+		DagVersionID:      uuidToString(run.DagVersionID),
+		TenantID:          uuidToString(run.TenantID),
+		State:             domain.DagRunState(run.State),
+		Held:              row.DagPaused,
+		Suspension:        domain.SuspensionMode(row.TenantSuspensionMode),
+		MaxActiveRuns:     int(row.DagMaxActiveRuns),
+		Tasks:             spec.Tasks,
+		Graph:             graph,
+		States:            ts.states,
+		Tries:             ts.tries,
+		MaxTries:          ts.maxTries,
+		EndedAt:           ts.endedAt,
+		RetryDelaySeconds: retryDelay,
+		RescheduleAt:      ts.rescheduleAt,
+		NextDispatchAt:    ts.nextDispatchAt,
+		DispatchAttempts:  ts.dispatchAttempts,
+		InfraFailed:       ts.infraFailed,
+		InfraProvisional:  ts.infraProvisional,
+		InfraAttempts:     ts.infraAttempts,
+		Now:               now,
+		Alerts:            spec.Alerts,
+		MaxActiveTasks:    spec.MaxActiveTasks,
+	}
 }
 
 // taskInstancesByRun loads the task instances of every given run in one query
