@@ -301,14 +301,20 @@ than half-running:
 
 A few standard operators do their work by reading or writing Airflow's metadata
 database instead of an external system. A Dexaflow task pod has no such database,
-so these compile today but **fail at run time**, on their first attempt:
+so `dexaflow compile` **refuses** them, and any subclass of them, naming the task,
+what the operator needs and what to do instead. Before 0.5.10 they compiled and
+failed on their first attempt, with the error in the last column:
 
-| Operator | What it needs | Error you will see |
+| Operator | What it needs | Error a task saw before 0.5.10 |
 | --- | --- | --- |
 | `ExternalTaskSensor` | the state of another DAG's runs and tasks | `the task instance has no attribute 'get_ti_count'` |
 | `ExternalTaskMarker` | the same cross-DAG lookup | `the task instance has no attribute 'get_ti_count'` |
 | `TriggerDagRunOperator` | a new run of another DAG, created by the scheduler | `DagRunTriggerException` |
-| `LatestOnlyOperator` | the DAG object and skip support for its downstream | `Operator <Task(LatestOnlyOperator): ...> has not been assigned to a Dag yet` |
+| `LatestOnlyOperator` | the DAG's run history and skip support for its downstream | `Operator <Task(LatestOnlyOperator): ...> has not been assigned to a Dag yet` |
+
+`LatestOnlyOperator` is a branch operator, and so is every `BaseBranchOperator`
+subclass, whatever its name: the compiler refuses them with the branching
+message.
 
 Cross-DAG dependencies are not supported yet; they are planned as waits the
 scheduler evaluates itself, with no pod

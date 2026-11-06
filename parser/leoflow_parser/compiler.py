@@ -193,6 +193,8 @@ def _load_dags_shim(source: str):
     try:
         runpy.run_path(source, run_name="__leoflow_dag__")
     except ModuleNotFoundError as exc:
+        if exc.name in _TASK_GROUP_MODULES:
+            return {}, _TASK_GROUP_REFUSAL
         if _is_removed_core_operator_module(exc.name):
             return {}, _removed_core_operator_hint(exc.name)
         if _is_provider_module(exc.name):
@@ -200,7 +202,7 @@ def _load_dags_shim(source: str):
         return {}, _unsupported(f"module {exc.name!r}")
     except ImportError as exc:
         # A missing name the shim does not provide (e.g. `chain`, a Branch operator).
-        return {}, _unsupported(str(exc))
+        return {}, _import_error_hint(exc)
     except NotImplementedError as exc:
         # A construct the shim deliberately rejects (e.g. dynamic task mapping).
         return {}, _unsupported(str(exc))
@@ -218,8 +220,48 @@ def _load_dags_shim(source: str):
 
 
 def _unsupported(detail: str) -> str:
+    if "not supported by Dexaflow" in detail:
+        return detail
     return (f"{detail}: not supported by Dexaflow "
             f"(supported: Bash, Http, Python/@task; no dynamic task mapping or task groups)")
+
+
+# Task groups (#2336): the import of TaskGroup or @task_group used to fail with
+# a bare "cannot import name 'TaskGroup'"; it now says what to do instead.
+_TASK_GROUP_NAMES = frozenset({"TaskGroup", "task_group"})
+_TASK_GROUP_MODULES = frozenset({"airflow.utils.task_group"})
+_TASK_GROUP_REFUSAL = (
+    "task groups (TaskGroup, @task_group) are not supported by Dexaflow: flatten "
+    "the group into plain tasks and prefix their ids by hand (for example "
+    "extract_load for extract.load). Grouping as a UI construct is planned in "
+    "https://github.com/dexadata/dexaflow/issues/2338 (#2338)."
+)
+_SETUP_TEARDOWN_NAMES = frozenset({"setup", "teardown"})
+
+
+def _import_error_hint(exc: ImportError) -> str:
+    """The message for a name the shim does not export. Task groups and the
+    setup and teardown decorators get their own advice; every other missing
+    name keeps the generic not-supported wording."""
+    missing = _missing_import_name(str(exc))
+    if missing in _TASK_GROUP_NAMES:
+        return _TASK_GROUP_REFUSAL
+    if missing in _SETUP_TEARDOWN_NAMES:
+        from airflow._core import SETUP_TEARDOWN_REFUSAL
+
+        return SETUP_TEARDOWN_REFUSAL
+    return _unsupported(str(exc))
+
+
+def _missing_import_name(message: str) -> str | None:
+    """The name in "cannot import name 'X' from ...", or None."""
+    prefix = "cannot import name '"
+    start = message.find(prefix)
+    if start < 0:
+        return None
+    start += len(prefix)
+    end = message.find("'", start)
+    return message[start:end] if end > start else None
 
 
 _REMOVED_CORE_OPERATORS_PREFIX = "airflow.operators."
@@ -344,9 +386,93 @@ def _reject_deferrable(task) -> None:
         )
 
 
+# Operators that do their work in the Airflow metadata database, which a task
+# pod does not have (#2336). They compiled as airflow_operator and failed on
+# their first attempt. Matched on every class of the task's MRO, so a subclass
+# is caught too; in the shim a captured class keeps its real name.
+_CROSS_DAG_ADVICE = (
+    "Run the dependent work in the same DAG, or wait on the upstream DAG's output "
+    "(a file, a table, an API) with a reschedule-mode sensor"
+)
+_METADATA_DB_OPERATORS = {
+    "ExternalTaskSensor": ("the state of another DAG's runs and tasks", _CROSS_DAG_ADVICE,
+                           "#2340"),
+    "ExternalTaskMarker": ("the state of another DAG's runs and tasks", _CROSS_DAG_ADVICE,
+                           "#2340"),
+    "TriggerDagRunOperator": ("a new run of another DAG, created by the scheduler",
+                              _CROSS_DAG_ADVICE, "#2340"),
+    "LatestOnlyOperator": ("the DAG's run history and skip support for its downstream tasks",
+                           "Check the run's logical date against the schedule in a @task "
+                           "and fail fast, or leave catchup off", "#2348"),
+}
+_METADATA_DB_DOCS = (
+    "https://dexaflow.dexadata.ai/author-dags/operators-sensors/"
+    "#operators-that-need-the-airflow-metadata-database"
+)
+
+
+def _class_names(task) -> list[str]:
+    """The names of every class in the task's MRO, the task's own first."""
+    return [klass.__name__ for klass in type(task).__mro__]
+
+
+def _reject_metadata_db_operator(task) -> None:
+    for base in _class_names(task):
+        needs = _METADATA_DB_OPERATORS.get(base)
+        if needs is None:
+            continue
+        what, advice, issue = needs
+        name = type(task).__name__
+        shown = name if name == base else f"{name} (a {base})"
+        raise ValueError(
+            f"operator {shown} on task {task.task_id!r} needs {what}, which Airflow "
+            "keeps in its metadata database, and a Dexaflow task pod has none: it "
+            f"would fail on its first attempt. {advice} (see {_METADATA_DB_DOCS}). "
+            f"Support is tracked in https://github.com/dexadata/dexaflow/issues/"
+            f"{issue[1:]} ({issue})."
+        )
+
+
+# Task arguments the scheduler does not honor (#2336). A DAG that sets one ran
+# with other semantics than on Airflow, with no word; the parser refuses them
+# instead. Each maps to its default, which stays accepted, and the issue that
+# tracks support.
+_UNHONORED_TASK_ARGS = {
+    "depends_on_past": (False, "#2350"),
+    "wait_for_downstream": (False, "#2350"),
+    "priority_weight": (1, None),
+}
+
+
+def _reject_unhonored_args(task, dag) -> None:
+    own = getattr(task, "__leoflow_args__", None) or {}
+    default_args = (getattr(dag, "default_args", None) or {}) if dag is not None else {}
+    for name, (default, issue) in _UNHONORED_TASK_ARGS.items():
+        if name in own:
+            value, origin = own[name], "set on the task"
+        elif hasattr(task, name) and not callable(getattr(task, name)):
+            value, origin = getattr(task, name), "set on the task"
+        elif name in default_args:
+            value, origin = default_args[name], "inherited from the DAG's default_args"
+        else:
+            continue
+        if value == default:
+            continue
+        tracked = (f" Support is planned in https://github.com/dexadata/dexaflow/issues/"
+                   f"{issue[1:]} ({issue})." if issue else "")
+        raise ValueError(
+            f"{name}={value!r} on task {task.task_id!r} ({origin}) is not honored by "
+            "the Dexaflow scheduler, which would ignore it and run the task with "
+            f"different semantics than Airflow. Remove it, or set it to {default!r}."
+            f"{tracked}"
+        )
+
+
 def _map_task(task, source: str, dag=None) -> dict[str, Any]:
+    _reject_metadata_db_operator(task)
     task_type = _operator_type(task)
     _reject_deferrable(task)
+    _reject_unhonored_args(task, dag)
     entry: dict[str, Any] = {"task_id": task.task_id, "type": task_type}
 
     upstream = sorted(task.upstream_task_ids)
@@ -543,6 +669,10 @@ def _operator_type(task) -> str:
     # Control-flow operators need scheduler branch/skip support we do not have yet
     # (ADR 0040 Phase D); refuse rather than mistranslate. Provider operators and
     # sensors ARE captured generically below.
+    # A BaseBranchOperator subclass is a branch operator whatever its name says
+    # (LatestOnlyOperator escaped this check that way, #2336).
+    if "BaseBranchOperator" in _class_names(task)[1:]:
+        name = f"{name} (a BaseBranchOperator)"
     for marker, feature in (
         ("Branch", "branching (@task.branch / BranchPythonOperator)"),
         ("ShortCircuit", "short-circuit (@task.short_circuit / ShortCircuitOperator)"),

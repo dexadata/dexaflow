@@ -16,8 +16,10 @@ set:
   auth.jwtSecret: s
 tests:
   # Off by default (ADR 0062): the rendered env is what it was before the knob.
-  - it: renders no GOMEMLIMIT by default
+  - it: renders no GOMEMLIMIT under the legacy profile
     template: deployment.yaml
+    set:
+      profile: legacy
     asserts:
       - notContains:
           path: spec.template.spec.containers[0].env
@@ -31,12 +33,26 @@ tests:
     template: deployment.yaml
     set:
       goMemLimit: null
+      profile: legacy
     asserts:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
             name: GOMEMLIMIT
           any: true
+
+  # The cluster profile turns it on at the default 80% even without the key.
+  - it: the cluster profile renders GOMEMLIMIT without a goMemLimit key
+    template: deployment.yaml
+    set:
+      goMemLimit: null
+      profile: cluster
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GOMEMLIMIT
+            value: 409MiB
 
   # 80% of the shipped 512Mi limit, in whole MiB (Go accepts the MiB suffix).
   - it: sets GOMEMLIMIT to 80% of the shipped memory limit when enabled

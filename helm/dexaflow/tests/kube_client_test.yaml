@@ -15,8 +15,10 @@ set:
 tests:
   # Unset values render nothing, so the server keeps client-go's QPS 5 / burst 10
   # on one shared client and an upgrade changes nothing.
-  - it: no kube client env by default
+  - it: no kube client env under the legacy profile
     template: deployment.yaml
+    set:
+      profile: legacy
     asserts:
       - notContains:
           path: spec.template.spec.containers[0].env

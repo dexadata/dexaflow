@@ -1,5 +1,8 @@
 # Default values for the Dexaflow control plane chart.
 
+# -- Install profile (#2323): `cluster` turns on the defaults the scheduler design assumes (buffered dispatch with 512 slots and 16 workers, Kubernetes client QPS 50 / burst 100 with a separate maintenance client at 20 / 40, and `GOMEMLIMIT` at `goMemLimit.percent` of the memory limit); `legacy` keeps the defaults of charts before 0.5.10. Empty (default): a fresh install gets `cluster`, and `helm upgrade` keeps the profile of the live release, so a release installed before profiles stays `legacy`. `helm template` and GitOps renderers cannot see the live release and get `cluster`: set `legacy` there to keep an older release's values. Each value the profile governs wins over it once set. The dedicated scheduler database pool (`database.schedulerMaxConns`) is not part of the profile until #1624 lands.
+profile: ""
+
 image:
   # -- Control-plane image. Published by GoReleaser on every tag, signed with cosign.
   repository: ghcr.io/dexadata/dexaflow-server
@@ -156,22 +159,23 @@ executor:
       serviceAccounts: []
       # -- When not empty, the only DAG images that may run: exact references (`busybox:1.36`) or prefixes ending in `*` (`registry.example.com/team-a/*`). Empty (default) allows any.
       images: []
-  # Client-side rate limits of the control plane's Kubernetes clients. 0 (the
-  # default) renders nothing and keeps client-go's QPS 5 / burst 10 on one client
-  # shared by dispatch and maintenance. A large fan out is paced by `qps`: at 5,
-  # creating 1,000 task pods takes over three minutes. Raise `qps` and set
-  # `maintenanceQps` together, so the pod informer, reconciler, reapers and GC get
-  # their own token bucket and cannot starve pod creation. A starting point for a
-  # busy cluster: qps 50, burst 100, maintenanceQps 20, maintenanceBurst 40.
+  # Client-side rate limits of the control plane's Kubernetes clients. Unset
+  # (null), the `profile` decides: `cluster` renders qps 50, burst 100,
+  # maintenanceQps 20, maintenanceBurst 40, so the pod informer, reconciler,
+  # reapers and GC get their own token bucket and cannot starve pod creation;
+  # `legacy` renders nothing and keeps client-go's QPS 5 / burst 10 on one client
+  # shared by dispatch and maintenance. At QPS 5, creating 1,000 task pods takes
+  # over three minutes. A set value wins over the profile, and 0 keeps the server
+  # default.
   kubeClient:
-    # -- Requests per second of the dispatch client (task pod creation; the agent token exchange uses its own client with the same limits). 0 = server default (5).
-    qps: 0
-    # -- Token-bucket burst of the dispatch client. 0 = server default (10).
-    burst: 0
-    # -- Requests per second of a SEPARATE maintenance client (informer, reconciler, reapers, staging GC, warm pool reconciler). 0 = share the dispatch client.
-    maintenanceQps: 0
-    # -- Token-bucket burst of the maintenance client. 0 = server default (10). Ignored while maintenanceQps is 0.
-    maintenanceBurst: 0
+    # -- (int) Requests per second of the dispatch client (task pod creation; the agent token exchange uses its own client with the same limits). Unset: 50 under the cluster profile, the server default (5) under legacy. 0 = server default.
+    qps: null
+    # -- (int) Token-bucket burst of the dispatch client. Unset: 100 under the cluster profile, the server default (10) under legacy. 0 = server default.
+    burst: null
+    # -- (int) Requests per second of a SEPARATE maintenance client (informer, reconciler, reapers, staging GC, warm pool reconciler). Unset: 20 under the cluster profile, shared with the dispatch client under legacy. 0 = share the dispatch client.
+    maintenanceQps: null
+    # -- (int) Token-bucket burst of the maintenance client. Unset: 40 under the cluster profile, the server default (10) under legacy. Ignored while maintenanceQps is 0.
+    maintenanceBurst: null
   # Resource unit of one pool slot (ADR 0066). Empty (default) changes nothing.
   # Set both and every task pod is sized pool_slots x unit wherever the task
   # leaves cpu or memory out, and a task that declares more than that is refused
@@ -231,20 +235,21 @@ config:
     enabled: true
     # -- Scheduler loop interval in milliseconds. Lower = faster reactivity, higher CPU. 1000ms is the production-tested default.
     loopIntervalMs: 1000
-    # Buffered dispatch (ADR 0031, #127). With `bufferSize` 0 (the default) the
-    # scheduler creates task pods inline, inside its tick, so a large fan out
-    # stretches the tick by every Kubernetes API call it makes. Above 0, the tick
-    # only enqueues and `workers` goroutines create the pods; a full buffer leaves
-    # the task scheduled for the next tick. A starting point for a busy cluster:
-    # bufferSize 512, workers 16. Unset values render nothing. A pod create
+    # Buffered dispatch (ADR 0031, #127). With `bufferSize` 0 the scheduler
+    # creates task pods inline, inside its tick, so a large fan out stretches the
+    # tick by every Kubernetes API call it makes. Above 0, the tick only enqueues
+    # and `workers` goroutines create the pods; a full buffer leaves the task
+    # scheduled for the next tick. Unset (null), the `profile` decides: `cluster`
+    # renders bufferSize 512 and workers 16, `legacy` renders nothing (synchronous
+    # dispatch). A set value wins over the profile. A pod create
     # that fails inside a worker is handled like a synchronous one: a quota
     # rejection (403) or apiserver throttling (429) puts the task back to
     # scheduled, and other errors are retried until the dispatch budget is spent.
     dispatch:
-      # -- Depth of the queued-dispatches channel (`scheduler.dispatch.buffer_size`). 0 = synchronous dispatch inside the tick (server default).
-      bufferSize: 0
-      # -- Goroutines creating task pods from the queue (`scheduler.dispatch.workers`). Ignored while `bufferSize` is 0; 0 with a buffer means 1.
-      workers: 0
+      # -- (int) Depth of the queued-dispatches channel (`scheduler.dispatch.buffer_size`). Unset: 512 under the cluster profile, synchronous dispatch under legacy. 0 = synchronous dispatch inside the tick (server default).
+      bufferSize: null
+      # -- (int) Goroutines creating task pods from the queue (`scheduler.dispatch.workers`). Unset: 16 under the cluster profile. Ignored while `bufferSize` is 0; 0 with a buffer means 1.
+      workers: null
     # -- How long a task held only by its pool waits before the pool is reserved for it (`scheduler.pool_starvation_threshold`, ADR 0066), so smaller tasks cannot keep a larger one out forever. A duration such as `2m`; `0s` disables it. Empty renders nothing and keeps the server default of 60s.
     poolStarvationThreshold: ""
   cors:
@@ -754,8 +759,9 @@ resources:
 
 # Soft memory limit for the Go runtime in the control-plane container.
 goMemLimit:
-  # -- Render `GOMEMLIMIT` as `percent` of `resources.limits.memory`, in whole MiB (80% of the shipped 512Mi is `409MiB`). The Go runtime does not read the container limit on its own, so without it the GC paces on heap growth alone and a burst can be OOM-killed before a collection runs; with it the GC works harder near the ceiling instead. Off by default, so the rendered env is unchanged. Requires `resources.limits.memory`: any Kubernetes byte quantity is read, whole or decimal (`512Mi`, `1.5Gi`, `.5Gi`), with a `Ki` to `Ei` or `k` to `E` suffix or a decimal exponent (`1e9`). The render fails on anything else (a sign, or the `m`/`u`/`n` sub-byte suffixes); for those leave this off and set `GOMEMLIMIT` through `extraEnv`. Applies to both Deployments in split mode.
-  enabled: false
+  # -- Render `GOMEMLIMIT` as `percent` of `resources.limits.memory`, in whole MiB (80% of the shipped 512Mi is `409MiB`). The Go runtime does not read the container limit on its own, so without it the GC paces on heap growth alone and a burst can be OOM-killed before a collection runs; with it the GC works harder near the ceiling instead. Requires `resources.limits.memory`: any Kubernetes byte quantity is read, whole or decimal (`512Mi`, `1.5Gi`, `.5Gi`), with a `Ki` to `Ei` or `k` to `E` suffix or a decimal exponent (`1e9`). The render fails on anything else (a sign, or the `m`/`u`/`n` sub-byte suffixes); for those leave this off and set `GOMEMLIMIT` through `extraEnv`. Applies to both Deployments in split mode. Unset (null), the `profile` decides: on under `cluster` when `resources.limits.memory` is set, off under `legacy`. A set value wins over the profile.
+  # @default -- null (on under the cluster profile)
+  enabled: null
   # -- Share of `resources.limits.memory` given to `GOMEMLIMIT`, from 1 to 100. The rest is headroom for memory the Go runtime does not track but the container is charged for, such as cgo allocations and kernel page cache.
   percent: 80
 

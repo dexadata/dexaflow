@@ -29,6 +29,9 @@ metadata:
   namespace: {{ .ctx.Release.Namespace }}
   labels:
     {{- include "leoflow.labels" .ctx | nindent 4 }}
+  annotations:
+    # The install profile this release runs (#2323); a later upgrade keeps it.
+    dexaflow.dexadata.ai/profile: {{ include "leoflow.profile" .ctx }}
 spec:
   replicas: {{ .replicas }}
   {{- /* Update strategy (#868): an explicit value wins; otherwise default to
@@ -172,7 +175,10 @@ spec:
             # database gives the server the same room (#1050).
             - name: LEOFLOW_SERVER_PROBE_BUDGET
               value: {{ include "leoflow.readinessProbeBudget" .ctx | quote }}
-            {{- if (.ctx.Values.goMemLimit | default dict).enabled }}
+            {{- $gml := (.ctx.Values.goMemLimit | default dict).enabled }}
+            {{- $gmlOn := eq (include "leoflow.profiled" (dict "ctx" .ctx "value" $gml "cluster" true)) "true" }}
+            {{- /* The cluster profile only turns it on where a memory limit exists; an explicit true without one fails in leoflow.goMemLimit. */}}
+            {{- if and $gmlOn (or (not (kindIs "invalid" $gml)) (dig "limits" "memory" "" (.ctx.Values.resources | default dict))) }}
             # Soft memory limit for the Go GC, a fraction of the container's
             # hard limit (leoflow.goMemLimit). Omitted when off.
             - name: GOMEMLIMIT
@@ -331,25 +337,16 @@ spec:
             - name: LEOFLOW_EXECUTOR_DEFAULTS_STAGING_STORAGE_CLASS
               value: {{ .ctx.Values.executor.defaults.staging.storageClass | quote }}
             {{- end }}
-            {{- with .ctx.Values.executor.kubeClient }}
-            {{- if .qps }}
-            # Kubernetes client rate limits (executor.kube_client). Unset keeps
-            # client-go's QPS 5 / burst 10 on one shared client.
-            - name: LEOFLOW_EXECUTOR_KUBE_CLIENT_QPS
-              value: {{ .qps | quote }}
-            {{- end }}
-            {{- if .burst }}
-            - name: LEOFLOW_EXECUTOR_KUBE_CLIENT_BURST
-              value: {{ .burst | quote }}
-            {{- end }}
-            {{- if .maintenanceQps }}
-            # A separate client and token bucket for maintenance work.
-            - name: LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_QPS
-              value: {{ .maintenanceQps | quote }}
-            {{- end }}
-            {{- if .maintenanceBurst }}
-            - name: LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_BURST
-              value: {{ .maintenanceBurst | quote }}
+            {{- /* Kubernetes client rate limits (executor.kube_client). Unset under
+                 the legacy profile keeps client-go's QPS 5 / burst 10 on one shared
+                 client; the cluster profile (#2323) raises them and gives
+                 maintenance work its own client and token bucket. 0 renders nothing. */}}
+            {{- $kc := .ctx.Values.executor.kubeClient | default dict }}
+            {{- range $k := list (list "LEOFLOW_EXECUTOR_KUBE_CLIENT_QPS" "qps" 50) (list "LEOFLOW_EXECUTOR_KUBE_CLIENT_BURST" "burst" 100) (list "LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_QPS" "maintenanceQps" 20) (list "LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_BURST" "maintenanceBurst" 40) }}
+            {{- $v := include "leoflow.profiled" (dict "ctx" $.ctx "value" (get $kc (index $k 1)) "cluster" (index $k 2)) }}
+            {{- if and $v (ne $v "0") }}
+            - name: {{ index $k 0 }}
+              value: {{ $v | quote }}
             {{- end }}
             {{- end }}
             {{- if .ctx.Values.executor.collectSettledRunPods }}
@@ -411,16 +408,16 @@ spec:
             - name: LEOFLOW_SCHEDULER_POOL_STARVATION_THRESHOLD
               value: {{ . | quote }}
             {{- end }}
-            {{- with .ctx.Values.config.scheduler.dispatch }}
-            {{- if .bufferSize }}
-            # Buffered dispatch (ADR 0031, #127): the tick enqueues, workers create
-            # the pods. Unset keeps the server default, synchronous dispatch.
-            - name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE
-              value: {{ .bufferSize | quote }}
-            {{- end }}
-            {{- if .workers }}
-            - name: LEOFLOW_SCHEDULER_DISPATCH_WORKERS
-              value: {{ .workers | quote }}
+            {{- /* Buffered dispatch (ADR 0031, #127): the tick enqueues, workers create
+                 the pods. Unset under the legacy profile keeps the server default,
+                 synchronous dispatch; the cluster profile (#2323) buffers 512 with
+                 16 workers. 0 renders nothing. */}}
+            {{- $disp := .ctx.Values.config.scheduler.dispatch | default dict }}
+            {{- range $k := list (list "LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE" "bufferSize" 512) (list "LEOFLOW_SCHEDULER_DISPATCH_WORKERS" "workers" 16) }}
+            {{- $v := include "leoflow.profiled" (dict "ctx" $.ctx "value" (get $disp (index $k 1)) "cluster" (index $k 2)) }}
+            {{- if and $v (ne $v "0") }}
+            - name: {{ index $k 0 }}
+              value: {{ $v | quote }}
             {{- end }}
             {{- end }}
             - name: LEOFLOW_DATABASE_MAX_OPEN_CONNS

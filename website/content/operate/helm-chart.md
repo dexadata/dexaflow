@@ -334,8 +334,12 @@ goMemLimit:
   percent: 80   # GOMEMLIMIT=409MiB
 ```
 
-It is off by default, so the rendered environment is unchanged until you turn it
-on, and it applies to both Deployments in split mode. The value is computed in
+A fresh install has it on through the `cluster` install profile whenever a
+memory limit is set; a release installed before 0.5.10 keeps it off until you
+turn it on or set `profile: cluster` (see
+[Upgrading to 0.5.10](/operate/upgrades/#upgrading-to-0510-the-install-profile)).
+`goMemLimit.enabled: false` turns it off under either profile. It applies to
+both Deployments in split mode. The value is computed in
 whole MiB from any Kubernetes byte quantity (`512Mi`, `1.5Gi`, `1e9`). The render
 fails on quantities that are not bytes, such as the `m` suffix; for those leave
 the switch off and set `GOMEMLIMIT` through `extraEnv`. The remaining share is
