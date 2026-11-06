@@ -115,6 +115,15 @@ twice, so it opens two such windows back to back: a task that genuinely dies
 during the upgrade can be failed several minutes later than it would be
 in steady state. Nothing is lost, only detected later.
 
+### The install profile
+
+A fresh install renders the chart's `cluster` profile: buffered dispatch,
+raised Kubernetes client limits with a separate maintenance client, and
+`GOMEMLIMIT` from the memory limit. An upgrade keeps the profile the release
+was installed with, so releases from before 0.5.10 stay on `legacy` until you
+set `profile: cluster`. The HA overlay below is independent of it. See
+[Upgrading to 0.5.10](/operate/upgrades/#upgrading-to-0510-the-install-profile).
+
 ### One switch: the HA profile
 
 The chart ships a complete overlay,

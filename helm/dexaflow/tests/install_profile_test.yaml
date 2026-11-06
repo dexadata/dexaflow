@@ -1,0 +1,226 @@
+suite: install profile, cluster defaults on new installs and kept on upgrade (#2323)
+# A fresh install gets the cluster profile: buffered dispatch, raised Kubernetes
+# client limits with a maintenance client, and GOMEMLIMIT. `helm upgrade` keeps
+# the profile of the live release, read from the annotation on its Deployment;
+# a Deployment from before profiles has none and keeps the legacy defaults.
+templates:
+  # secret.yaml is in scope so the deployment's checksum/secret include resolves.
+  - deployment.yaml
+  - secret.yaml
+release:
+  name: dexaflow
+  namespace: dexaflow
+set:
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: s
+tests:
+  - it: a fresh install renders the cluster profile
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: metadata.annotations["dexaflow.dexadata.ai/profile"]
+          value: cluster
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE, value: "512"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_SCHEDULER_DISPATCH_WORKERS, value: "16"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_EXECUTOR_KUBE_CLIENT_QPS, value: "50"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_EXECUTOR_KUBE_CLIENT_BURST, value: "100"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_QPS, value: "20"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_BURST, value: "40"}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: GOMEMLIMIT, value: 409MiB}
+      # The dedicated scheduler pool waits for #1624.
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_DATABASE_SCHEDULER_MAX_CONNS}
+          any: true
+
+  - it: every value the profile governs wins once set, 0 and false included
+    template: deployment.yaml
+    set:
+      config.scheduler.dispatch.bufferSize: 0
+      executor.kubeClient.qps: 80
+      executor.kubeClient.maintenanceQps: 0
+      goMemLimit.enabled: false
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE}
+          any: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_EXECUTOR_KUBE_CLIENT_QPS, value: "80"}
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_QPS}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: GOMEMLIMIT}
+          any: true
+
+  - it: the cluster profile leaves GOMEMLIMIT out without a memory limit
+    template: deployment.yaml
+    set:
+      resources.limits: null
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: GOMEMLIMIT}
+          any: true
+
+  - it: profile legacy renders the defaults of earlier charts
+    template: deployment.yaml
+    set:
+      profile: legacy
+    asserts:
+      - equal:
+          path: metadata.annotations["dexaflow.dexadata.ai/profile"]
+          value: legacy
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_EXECUTOR_KUBE_CLIENT_QPS}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: GOMEMLIMIT}
+          any: true
+
+  - it: refuses an unknown profile
+    template: deployment.yaml
+    set:
+      profile: fast
+    asserts:
+      - failedTemplate:
+          errorPattern: 'profile must be cluster, legacy or empty \(got "fast"\)'
+
+  - it: an upgrade of a release from before profiles keeps the legacy defaults
+    template: deployment.yaml
+    release:
+      name: dexaflow
+      namespace: dexaflow
+      upgrade: true
+    kubernetesProvider:
+      scheme: &scheme
+        "apps/v1/Deployment":
+          gvr: {group: apps, version: v1, resource: deployments}
+          namespaced: true
+      objects:
+        - apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: dexaflow
+            namespace: dexaflow
+            labels: {app.kubernetes.io/instance: dexaflow}
+          spec: {template: {spec: {containers: [{name: server}]}}}
+    asserts:
+      - equal:
+          path: metadata.annotations["dexaflow.dexadata.ai/profile"]
+          value: legacy
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: GOMEMLIMIT}
+          any: true
+
+  - it: an upgrade of a cluster profile release keeps the cluster profile
+    template: deployment.yaml
+    release:
+      name: dexaflow
+      namespace: dexaflow
+      upgrade: true
+    kubernetesProvider:
+      scheme: *scheme
+      objects:
+        - apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: dexaflow
+            namespace: dexaflow
+            labels: {app.kubernetes.io/instance: dexaflow}
+            annotations: {dexaflow.dexadata.ai/profile: cluster}
+          spec: {template: {spec: {containers: [{name: server}]}}}
+    asserts:
+      - equal:
+          path: metadata.annotations["dexaflow.dexadata.ai/profile"]
+          value: cluster
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE, value: "512"}
+
+  - it: an upgrade reads only this release's Deployment
+    template: deployment.yaml
+    release:
+      name: dexaflow
+      namespace: dexaflow
+      upgrade: true
+    kubernetesProvider:
+      scheme: *scheme
+      objects:
+        - apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: other
+            namespace: dexaflow
+            labels: {app.kubernetes.io/instance: other}
+            annotations: {dexaflow.dexadata.ai/profile: cluster}
+          spec: {template: {spec: {containers: [{name: server}]}}}
+    asserts:
+      - equal:
+          path: metadata.annotations["dexaflow.dexadata.ai/profile"]
+          value: legacy
+
+  - it: an explicit profile wins over the live one on upgrade
+    template: deployment.yaml
+    release:
+      name: dexaflow
+      namespace: dexaflow
+      upgrade: true
+    set:
+      profile: cluster
+    kubernetesProvider:
+      scheme: *scheme
+      objects:
+        - apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: dexaflow
+            namespace: dexaflow
+            labels: {app.kubernetes.io/instance: dexaflow}
+          spec: {template: {spec: {containers: [{name: server}]}}}
+    asserts:
+      - equal:
+          path: metadata.annotations["dexaflow.dexadata.ai/profile"]
+          value: cluster
+
+  - it: both split Deployments carry the profile
+    set:
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+    template: deployment.yaml
+    asserts:
+      - hasDocuments:
+          count: 2
+      - equal:
+          path: metadata.annotations["dexaflow.dexadata.ai/profile"]
+          value: cluster

@@ -15,8 +15,10 @@ set:
 tests:
   # The default renders nothing, so the server keeps synchronous dispatch
   # (buffer_size 0) and an upgrade changes nothing.
-  - it: no dispatch buffer env by default
+  - it: no dispatch buffer env under the legacy profile
     template: deployment.yaml
+    set:
+      profile: legacy
     asserts:
       - notContains:
           path: spec.template.spec.containers[0].env
