@@ -95,7 +95,7 @@ func xtWriteBodies(f *routeWalkFixture) map[string]string {
 		"POST /api/v2/connections": fmt.Sprintf(
 			`{"connection_id":%q,"conn_type":"http","host":"owned-by-a"}`, f.connection),
 		"POST /api/v2/pools":           fmt.Sprintf(`{"name":%q,"slots":2,"description":"owned-by-a"}`, f.pool),
-		"POST /api/v2/users":           fmt.Sprintf(`{"username":%q,"email":%q,"password":"a-Strong-pass-123","roles":["viewer"]}`, f.userEmail, f.userEmail),
+		"POST /api/v2/users":           fmt.Sprintf(`{"username":%q,"email":%q,"password":%q,"roles":["viewer"]}`, f.userEmail, f.userEmail, rwPassword),
 		"POST /api/v2/apiTokens":       fmt.Sprintf(`{"name":%q,"scope":"read","expires_in_seconds":3600}`, f.tokenName),
 		"PATCH /api/v2/users/:user_id": `{"is_active":false}`,
 		"PUT /api/v2/importErrors":     fmt.Sprintf(`{"filename":%q,"stack_trace":"owned-by-a"}`, f.importFile),
@@ -202,7 +202,7 @@ func newRouteWalkFixture(t *testing.T) *routeWalkFixture {
 		if _, err = repo.EnsureTenant(ctx, name, name, 0, domain.TenantLimitsUpdate{}); err != nil {
 			t.Fatalf("creating tenant %s: %v", name, err)
 		}
-		u, uerr := repo.CreateUser(ctx, name, "admin_"+name+"@example.com", "a-Strong-pass-123", []string{"admin"})
+		u, uerr := repo.CreateUser(ctx, name, "admin_"+name+"@example.com", rwPassword, []string{"admin"})
 		if uerr != nil {
 			t.Fatalf("creating the admin of %s: %v", name, uerr)
 		}
@@ -307,7 +307,7 @@ func (f *routeWalkFixture) seedB(t *testing.T, sink logs.Sink, backend xcom.Back
 	xtExpect(t, b, http.MethodPut, "/api/v2/importErrors",
 		fmt.Sprintf(`{"filename":%q,"stack_trace":%q}`, f.importFile, "trace "+f.marker), http.StatusNoContent)
 	xtExpect(t, b, http.MethodPost, "/api/v2/dags/"+f.dagID+"/favorite", "", http.StatusNoContent)
-	u, err := f.repo.CreateUser(f.ctx, f.tenantB, f.userEmail, "a-Strong-pass-123", []string{"viewer"})
+	u, err := f.repo.CreateUser(f.ctx, f.tenantB, f.userEmail, rwPassword, []string{"viewer"})
 	if err != nil {
 		t.Fatalf("creating B's user: %v", err)
 	}
@@ -360,6 +360,9 @@ func (f *routeWalkFixture) queries() map[string]string {
 			"&end_date=" + url.QueryEscape(now.Add(time.Hour).Format(time.RFC3339)),
 	}
 }
+
+// rwPassword is the password of the fixture's users.
+const rwPassword = "a-Strong-pass-123" // gitleaks:allow: test fixture, not a credential
 
 type walkCall struct {
 	key, method, path, body string
