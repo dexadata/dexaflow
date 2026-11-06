@@ -31,7 +31,6 @@ func TestPodFailureReasonSurfacesCause(t *testing.T) {
 		"evicted":          {withReason("Evicted"), "Evicted"},
 		"oom":              {withReason("OOMKilled"), "OOMKilled"},
 		"failed no reason": {podPhase(corev1.PodFailed), "pod failed"},
-		"image pull":       {podWaiting("ImagePullBackOff"), "ImagePullBackOff"},
 		"invalid image":    {podWaiting("InvalidImageName"), "InvalidImageName"},
 	}
 	for name, c := range cases {

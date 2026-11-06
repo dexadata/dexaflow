@@ -191,8 +191,11 @@ func retentionConfig(sec config.RetentionSection) retention.Config {
 // never the primary path. Each phase runs under its own one-interval budget
 // (maintenancePhaseTimeout). Lite/subprocess never calls this: no pods, no
 // reaping.
-func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace string, reporter executor.OutcomeReporter, confirmer executor.InfraConfirmer, overrides overrideObservers, reaper *executor.Reaper, leading func() bool, logger *slog.Logger, snapshotter executor.PodSnapshotter, settled executor.SettledRunChecker) {
+func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace string, reporter executor.OutcomeReporter, confirmer executor.InfraConfirmer, overrides overrideObservers, reaper *executor.Reaper, leading func() bool, logger *slog.Logger, snapshotter executor.PodSnapshotter, settled executor.SettledRunChecker, pendingTimeout time.Duration) {
 	rec := executor.NewReconciler(cs, namespace, reporter)
+	// executor.pending_timeout_seconds: fail a task whose pod no node can take
+	// (#1609); zero keeps such a pod waiting.
+	rec.SetPendingTimeout(pendingTimeout)
 	// The reconciler confirms the reapers' provisional infra marks (ADR 0052
 	// amendment, part 2); the caller makes the marks provisional in step.
 	rec.SetInfraConfirmer(confirmer)

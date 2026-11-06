@@ -148,6 +148,7 @@ var serverDefaults = map[string]any{
 	"executor.task_secret_name":                  "",
 	"executor.task_secret_mount_path":            "/etc/leoflow/secrets",
 	"executor.collect_settled_run_pods":          false,
+	"executor.pending_timeout_seconds":           0,
 	"executor.defaults.staging_access_mode":      "ReadWriteMany",
 	// Execution allowlist (issue #629): allow every field and any priority
 	// class, so an install that does not set it is unchanged. Each list binds
