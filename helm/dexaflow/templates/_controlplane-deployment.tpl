@@ -616,6 +616,18 @@ spec:
             # block, so last-wins keeps them working (tests/secret_scoping_test.yaml).
             - name: LEOFLOW_AUTH_SECRET_SCOPING
               value: {{ .ctx.Values.auth.secretScoping | quote }}
+            # The attempt credential ceiling (ADR 0055, #955) is stamped for the
+            # same reason as the scoping policy: before #955 `extraEnv` was its
+            # only route. It is not in the $guarded list either, so an operator
+            # who set it through extraEnv keeps winning (last value wins,
+            # tests/credential_lifetime_test.yaml). A duration travels as a
+            # quoted string and viper parses it.
+            {{- $credLifetime := .ctx.Values.auth.maxAttemptCredentialLifetime | toString }}
+            {{- if not (regexMatch "^(0|-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+)$" $credLifetime) }}
+            {{- fail (printf "auth.maxAttemptCredentialLifetime must be a Go duration such as 24h or 90m (0 disables the ceiling), got %q" $credLifetime) }}
+            {{- end }}
+            - name: LEOFLOW_AUTH_MAX_ATTEMPT_CREDENTIAL_LIFETIME
+              value: {{ $credLifetime | quote }}
             - name: LEOFLOW_EXECUTION_WARM_POOLS_ENABLED
               value: {{ .ctx.Values.execution.warmPoolsEnabled | quote }}
             {{- if .ctx.Values.execution.warmPoolsEnabled }}
