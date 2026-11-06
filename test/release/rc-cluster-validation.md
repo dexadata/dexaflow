@@ -664,6 +664,12 @@ mislead the next step: `kill $PF`.
 
 #### §4.6b — a rolling upgrade never drops the Service to zero endpoints
 
+The [E2E Helm rolling upgrade](https://github.com/dexadata/dexaflow/actions/workflows/e2e-helm-upgrade.yaml)
+workflow runs the endpoint part of this check on kind for every rc tag, from the
+previous GA chart and images to the rc, with tasks in flight (#2305, checklist
+row E10). Cite its run for the rc. The steps below remain for a real cluster
+and for the dirty schema case, which that workflow does not drive.
+
 The reason §4.6a is not the whole check. The migrate Job is a
 `pre-install,pre-upgrade` hook, so on **upgrade** it runs while the OLD pods are
 live and serving, and golang-migrate commits `dirty=true` for the duration of
