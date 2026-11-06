@@ -95,35 +95,35 @@ func TestVariableWritesAreAudited(t *testing.T) {
 	audit := &fakeResourceAudit{}
 	srv := resourceAuditServer(audit, &fakeVariableStore{}, nil, nil, nil, nil)
 
-	raExpect(t, srv, http.MethodPost, "/api/v2/variables", `{"key":"api_key","value":"s3cr3t-v1"}`, http.StatusCreated)
+	raExpect(t, srv, http.MethodPost, "/api/v2/variables", `{"key":"region_name","value":"hush0-v1"}`, http.StatusCreated)
 	got := audit.last(t)
-	wantEvent(t, got, "variable.create", "variable", "api_key")
+	wantEvent(t, got, "variable.create", "variable", "region_name")
 	if got.metadata["fields"] != "value" {
 		t.Errorf("create fields = %q, want value", got.metadata["fields"])
 	}
 
-	raExpect(t, srv, http.MethodPost, "/api/v2/variables", `{"key":"api_key","value":"s3cr3t-v2"}`, http.StatusCreated)
-	wantEvent(t, audit.last(t), "variable.update", "variable", "api_key")
+	raExpect(t, srv, http.MethodPost, "/api/v2/variables", `{"key":"region_name","value":"hush0-v2"}`, http.StatusCreated)
+	wantEvent(t, audit.last(t), "variable.update", "variable", "region_name")
 
-	raExpect(t, srv, http.MethodPatch, "/api/v2/variables/api_key", `{"value":"s3cr3t-v3","description":"rotated"}`, http.StatusOK)
+	raExpect(t, srv, http.MethodPatch, "/api/v2/variables/region_name", `{"value":"hush0-v3","description":"rotated"}`, http.StatusOK)
 	got = audit.last(t)
-	wantEvent(t, got, "variable.update", "variable", "api_key")
+	wantEvent(t, got, "variable.update", "variable", "region_name")
 	if got.metadata["fields"] != "description,value" {
 		t.Errorf("patch fields = %q, want description,value", got.metadata["fields"])
 	}
 
-	raExpect(t, srv, http.MethodDelete, "/api/v2/variables/api_key", "", http.StatusNoContent)
-	wantEvent(t, audit.last(t), "variable.delete", "variable", "api_key")
+	raExpect(t, srv, http.MethodDelete, "/api/v2/variables/region_name", "", http.StatusNoContent)
+	wantEvent(t, audit.last(t), "variable.delete", "variable", "region_name")
 
 	before := len(audit.events)
-	raExpect(t, srv, http.MethodDelete, "/api/v2/variables/api_key", "", http.StatusNotFound)
+	raExpect(t, srv, http.MethodDelete, "/api/v2/variables/region_name", "", http.StatusNotFound)
 	if len(audit.events) != before {
 		t.Errorf("a refused delete recorded %+v", audit.events[before:])
 	}
 	if len(audit.events) != 4 {
 		t.Errorf("recorded %d entries, want 4", len(audit.events))
 	}
-	noSecret(t, audit.events, "s3cr3t")
+	noSecret(t, audit.events, "hush0")
 }
 
 // TestConnectionWritesAreAudited: the entry names the fields set, the
@@ -133,14 +133,14 @@ func TestConnectionWritesAreAudited(t *testing.T) {
 	srv := resourceAuditServer(audit, nil, &fakeConnStore{}, nil, nil, nil)
 
 	raExpect(t, srv, http.MethodPost, "/api/v2/connections",
-		`{"connection_id":"wh","conn_type":"postgres","host":"db","password":"pw-s3cr3t","extra":"{\"token\":\"x-s3cr3t\"}"}`, http.StatusCreated) // gitleaks:allow: test fixture, not a credential
+		`{"connection_id":"wh","conn_type":"postgres","host":"db","password":"pw-hush0","extra":"{\"token\":\"x-hush0\"}"}`, http.StatusCreated) // gitleaks:allow: test fixture, not a credential
 	got := audit.last(t)
 	wantEvent(t, got, "connection.create", "connection", "wh")
 	if got.metadata["fields"] != "conn_type,extra,host,password" {
 		t.Errorf("create fields = %q, want conn_type,extra,host,password", got.metadata["fields"])
 	}
 
-	raExpect(t, srv, http.MethodPatch, "/api/v2/connections/wh", `{"conn_type":"postgres","password":"pw2-s3cr3t"}`, http.StatusOK) // gitleaks:allow: test fixture, not a credential
+	raExpect(t, srv, http.MethodPatch, "/api/v2/connections/wh", `{"conn_type":"postgres","password":"pw2-hush0"}`, http.StatusOK) // gitleaks:allow: test fixture, not a credential
 	got = audit.last(t)
 	wantEvent(t, got, "connection.update", "connection", "wh")
 	if got.metadata["fields"] != "conn_type,password" {
@@ -149,7 +149,7 @@ func TestConnectionWritesAreAudited(t *testing.T) {
 
 	raExpect(t, srv, http.MethodDelete, "/api/v2/connections/wh", "", http.StatusNoContent)
 	wantEvent(t, audit.last(t), "connection.delete", "connection", "wh")
-	noSecret(t, audit.events, "s3cr3t")
+	noSecret(t, audit.events, "hush0")
 }
 
 // TestPoolWritesAreAudited: a resize records the slots before and after.
@@ -216,9 +216,9 @@ func TestPasswordSignInIsAuditedWithoutOIDC(t *testing.T) {
 			AuthAudit:     audit,
 		},
 	})
-	raExpect(t, srv, http.MethodPost, "/auth/token", `{"username":"ana@example.com","password":"pw-s3cr3t","tenant":"acme"}`, http.StatusOK) // gitleaks:allow: test fixture, not a credential
+	raExpect(t, srv, http.MethodPost, "/auth/token", `{"username":"ana@example.com","password":"pw-hush0","tenant":"acme"}`, http.StatusOK) // gitleaks:allow: test fixture, not a credential
 	authn.issueErr = auth.ErrInvalidCredentials
-	raExpect(t, srv, http.MethodPost, "/auth/token", `{"username":"ana@example.com","password":"wrong-s3cr3t","tenant":"acme"}`, http.StatusUnauthorized) // gitleaks:allow: test fixture, not a credential
+	raExpect(t, srv, http.MethodPost, "/auth/token", `{"username":"ana@example.com","password":"wrong-hush0","tenant":"acme"}`, http.StatusUnauthorized) // gitleaks:allow: test fixture, not a credential
 
 	if len(audit.events) != 2 {
 		t.Fatalf("recorded %+v, want two auth.login entries", audit.events)
@@ -229,7 +229,7 @@ func TestPasswordSignInIsAuditedWithoutOIDC(t *testing.T) {
 			t.Errorf("entry %d = %+v, want auth.login %s for ana@example.com in acme", i, e, outcome)
 		}
 		for k, v := range e.extra {
-			if strings.Contains(v, "s3cr3t") {
+			if strings.Contains(v, "hush0") {
 				t.Errorf("entry %d extra %s carries the password", i, k)
 			}
 		}

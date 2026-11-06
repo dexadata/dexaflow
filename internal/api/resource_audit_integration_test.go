@@ -38,7 +38,7 @@ func TestResourceWritesReachTheEventLogIntegration(t *testing.T) {
 	})
 	key := "audit_var_" + f.suffix
 	pool := "audit_pool_" + f.suffix
-	xtExpect(t, srv, http.MethodPost, "/api/v2/variables", fmt.Sprintf(`{"key":%q,"value":"value-s3cr3t"}`, key), http.StatusCreated)
+	xtExpect(t, srv, http.MethodPost, "/api/v2/variables", fmt.Sprintf(`{"key":%q,"value":"value-hush0"}`, key), http.StatusCreated)
 	xtExpect(t, srv, http.MethodPost, "/api/v2/pools", fmt.Sprintf(`{"name":%q,"slots":2}`, pool), http.StatusCreated)
 	xtExpect(t, srv, http.MethodPatch, "/api/v2/pools/"+pool, `{"slots":4}`, http.StatusOK)
 
@@ -48,7 +48,7 @@ func TestResourceWritesReachTheEventLogIntegration(t *testing.T) {
 			t.Errorf("event log misses %s: %s", want, clipAudit(body))
 		}
 	}
-	if strings.Contains(body, "s3cr3t") {
+	if strings.Contains(body, "hush0") {
 		t.Errorf("event log carries the variable's value: %s", clipAudit(body))
 	}
 	if other := xtExpect(t, f.a, http.MethodGet, "/api/v2/eventLogs?limit=1000", "", http.StatusOK); strings.Contains(other, key) {
