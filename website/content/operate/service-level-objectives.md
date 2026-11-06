@@ -81,7 +81,9 @@ scale, or a long-term store). For API availability:
 ) / (1 - 0.999)
 ```
 
-1 means the whole budget is spent. The others follow the same shape: the late
+1 means the whole budget is spent. Add `namespace="<release namespace>"` to
+every selector when one Prometheus scrapes more than one release. The others
+follow the same shape: the late
 share is `1 - sum(increase(<histogram>_bucket{le=~"60(\\.0)?"}[30d])) / sum(increase(<histogram>_count[30d]))`
 for schedule punctuality (`le` 120 for task start), and lost attempts over
 `dexaflow_task_attempts_total` for platform failures. Minutes without a leader
@@ -105,7 +107,9 @@ on, so an alert stops soon after the cause does.
 The minimum (`metrics.prometheusRule.slo.minEventsPerWindow`, 100) keeps a
 single bad event on sparse traffic from paging: an install that finishes 60
 attempts an hour would otherwise page on one lost pod. Below it, the budget
-still counts the event; only the alert waits. A third tier (a 1x burn over 3
+still counts the event; only the alert waits, so an install that never reaches
+100 events in an hour (one that only runs a few schedules) gets no fast burn
+alert for that objective and relies on the slow one and the 30 day query. A third tier (a 1x burn over 3
 days, as a ticket) is left to the 30 day budget query above.
 
 Leadership has no burn rate alert: [DexaflowNoSchedulerLeader](/operate/runbooks/no-scheduler-leader/)
