@@ -4,22 +4,15 @@ Numbers every performance change is measured against. A PR that changes one of
 these paths quotes the matching row before and after its change, run on the same
 machine; when a batch of the performance plan closes, its rows are updated here.
 
-Recorded 2026-10-02 on `main` at `fc4b56c` (the benchmarks come from PR 1306), on a 4 vCPU Intel Xeon at 2.10 GHz
-with 15 GB of RAM, Go 1.26.6 and Postgres 16.14 with default settings
-(`shared_buffers` 160 MB, `work_mem` 4 MB). Absolute times move with the
-machine; compare ratios, and re-record both sides on the same host.
-
-**Release and status.** `fc4b56c` is part of v0.5.0: these tables describe
-v0.5.0, before the performance changes that shipped in v0.5.1 (#1309 to #1354:
-the gzip cache of the UI bundle, the `dag_runs.dag_version_id` index, the
-lateral probe for each DAG's latest run, the one-query tick read and others).
-Most rows no longer describe what ships and **need a refresh**: re-record every
-table on the reference host on a named release and commit, and replace this
-paragraph with them (#1617, B3 of the
-[release checklist](../release/perf-reliability-checklist.md)). Until then, compare a change
-with the previous release measured on your own host, as B1 does, and not with
-these numbers. Rows added later say where their numbers come from, and the
-[accepted changes](#accepted-changes-of-the-bar) name their release.
+Each section names the commit, release and host it was recorded on. The Go
+benchmarks, the scheduler tick read and the query plans were re-recorded
+2026-11-06 on `main` at `3c8c1ede` (the v0.5.9 candidate: v0.5.9-rc.2 plus
+#2373) with the v0.5.10 benchmark changes of #1617 and #2324, on a 4 vCPU Intel
+Xeon at 2.10 GHz with 15 GB of RAM (the host of the v0.5.0 recording), Go
+1.26.10 and Postgres 16.15 with default settings. They describe v0.5.9, after
+the v0.5.1 performance changes. Absolute times move with the machine; compare
+ratios, and re-record both sides on the same host. The v0.5.0 numbers they
+replace are in the history of this file (`fc4b56c`).
 
 ## Go benchmarks
 
@@ -33,43 +26,62 @@ Median of 5 runs.
 
 | Benchmark | Case | Time | Memory | Allocations |
 |---|---|---:|---:|---:|
-| `BenchmarkStepSteadyState` | 100 runs x 20 tasks | 0.53 ms | 515 KB | 1,218 |
-| `BenchmarkStepSteadyState` | 1,000 runs x 20 tasks | 4.76 ms | 5.2 MB | 12,024 |
-| `BenchmarkStepSteadyState` | 200 runs x 500 tasks | 19.1 ms | 30.1 MB | 2,418 |
-| `BenchmarkStepQueueFanOut` | 1,000 tasks | 5.14 ms | 494 KB | 62 |
-| `BenchmarkStepQueueFanOut` | 5,000 tasks | 118 ms | 2.7 MB | 111 |
-| `BenchmarkPlanRunFanOut` | 100 tasks | 22.6 µs | 20.7 KB | 11 |
-| `BenchmarkPlanRunFanOut` | 1,000 tasks | 242 µs | 301 KB | 17 |
-| `BenchmarkPlanRunFanOut` | 5,000 tasks | 1.34 ms | 1.3 MB | 53 |
-| `BenchmarkActiveRunProjection` | 20 tasks | 9.1 µs | 16.4 KB | 47 |
-| `BenchmarkActiveRunProjection` | 500 tasks | 153 µs | 430 KB | 207 |
-| `BenchmarkTopoSortFanOut` | 1,000 tasks | 3.14 ms | 842 KB | 1,030 |
-| `BenchmarkTopoSortFanOut` | 5,000 tasks | 68.6 ms | 4.0 MB | 5,070 |
-| `BenchmarkStaticHandlerBundle` | 5 MB bundle, gzip | 417 ms | 9.1 MB | 63 |
-| `BenchmarkStaticHandlerBundle` | 5 MB bundle, identity | 3.18 ms | 10.5 MB | 28 |
-| `BenchmarkWarmPoolTick` | 60 versions, run | see below | 50.2 KB | 51 |
-| `BenchmarkWarmPoolTick` | 60 versions, rationed prewarm | see below | 62.3 KB | 88 |
+| `BenchmarkStepSteadyState` | 100 runs x 20 tasks | 0.455 ms | 406 KiB | 1,423 |
+| `BenchmarkStepSteadyState` | 1,000 runs x 20 tasks | 4.73 ms | 4.07 MiB | 14,029 |
+| `BenchmarkStepSteadyState` | 200 runs x 500 tasks | 20.9 ms | 17.9 MiB | 3,023 |
+| `BenchmarkStepQueueFanOut` | 1,000 tasks | 0.583 ms | 479 KiB | 89 |
+| `BenchmarkStepQueueFanOut` | 5,000 tasks | 3.28 ms | 2.62 MiB | 140 |
+| `BenchmarkPlanRunFanOut` | 100 tasks | 19.2 µs | 17.4 KiB | 12 |
+| `BenchmarkPlanRunFanOut` | 1,000 tasks | 182 µs | 182 KiB | 14 |
+| `BenchmarkPlanRunFanOut` | 5,000 tasks | 1.01 ms | 859 KiB | 26 |
+| `BenchmarkActiveRunProjection` | 20 tasks | 10.2 µs | 17.0 KiB | 52 |
+| `BenchmarkActiveRunProjection` | 500 tasks | 178 µs | 455 KiB | 212 |
+| `BenchmarkTopoSortFanOut` | 1,000 tasks | 0.745 ms | 839 KiB | 1,031 |
+| `BenchmarkTopoSortFanOut` | 5,000 tasks | 3.83 ms | 3.93 MiB | 5,071 |
+| `BenchmarkStaticHandlerBundle` | 5 MB bundle, gzip | 0.574 ms | 2.01 MiB | 36 |
+| `BenchmarkStaticHandlerBundle` | 5 MB bundle, identity | 6.78 ms | 16.0 MiB | 42 |
+| `BenchmarkWarmPoolTick` | 60 versions, run | 50.2 µs | 52.8 KiB | 51 |
+| `BenchmarkWarmPoolTick` | 60 versions, rationed prewarm | 72.6 µs | 64.4 KiB | 88 |
 
-`BenchmarkWarmPoolTick` (#1906) came after the recording above, and its time
-has not been recorded on the baseline host yet: re-record it with the next
-update of this table (B3 of the release checklist). Its memory and allocations
-do not depend on the machine (they do on the Go version: the Go 1.26.6 of the
-header applies). It measures one steady warm pool reconcile tick,
-the work the leader repeats every warm pool interval, over 60 versions of 3
+`BenchmarkActiveRunProjection` now calls `projectRunState`, the function
+`ActiveRuns` runs for each run (#1617); before, it timed a copy of that code, so
+its rows are not comparable with the v0.5.0 ones. `BenchmarkWarmPoolTick`
+(#1906) measures one steady warm pool reconcile tick over 60 versions of 3
 tenants under a per-tenant cap, with the Kubernetes and database reads faked
-and nothing to create or delete. The second case adds 30 prewarm-only versions
-the cap rations (ADR 0082). Before #1906 the first case cost 75.1 KB and 238
-allocations per tick and the second 84.7 KB and 286 (v0.5.3 had 57.6 KB and
-226 for the first); the v0.5.4-rc.1 recheck measured the first case at
-68.8 µs at v0.5.4 against 55.4 µs at v0.5.3 on a quiet 4 vCPU host.
+and nothing to create or delete; the second case adds 30 prewarm-only versions
+the cap rations (ADR 0082).
 
 What stands out:
 
-- Queueing a fan out grows faster than linearly: 5x the tasks costs 23x the time
-  (5.1 ms to 118 ms), all inside one scheduler tick.
-- The topological sort grows the same way: 5x the tasks costs 22x the time.
-- Serving the UI bundle with gzip recompresses it on every request: 417 ms of
-  CPU per request against 3.2 ms without compression.
+- Against v0.5.0, the v0.5.1 changes show where they were aimed: queueing a
+  5,000-task fan out went from 118 ms to 3.3 ms, the topological sort of 5,000
+  tasks from 68.6 ms to 3.8 ms, and serving the UI bundle with gzip from 417 ms
+  to 0.57 ms (the compressed bundle is cached).
+- `BenchmarkStepSteadyState` at 1,000 runs x 20 tasks is level with v0.5.0
+  (4.73 ms against 4.76 ms): the tick's planning cost did not move, and its
+  database read, which dominates the real tick, is below.
+
+## Scheduler tick read
+
+```sh
+make bench-integration BENCH_DATABASE_URL='postgres://...'   # a migrated database of its own
+```
+
+`BenchmarkActiveRunsIntegration` (#2324) reads every active run the way the
+tick does, through `SchedulerStore.ActiveRuns` on a real Postgres. It seeds 200
+running runs of one 500-task DAG, 100,000 task instances spread over the states
+of a busy run (40% success, 20% running, 20% none, 10% queued, 10% failed) with
+the pod, node, host, log and error columns a real attempt fills. Median of 5
+runs, spec cache warm.
+
+| Benchmark | Case | Time | Memory | Allocations |
+|---|---|---:|---:|---:|
+| `BenchmarkActiveRunsIntegration` | 200 runs x 500 task instances | 555 ms | 555 MiB | 1,326,364 |
+
+This is the read before planning, every tick, and it is 27 times the planning
+cost of the same 200 x 500 case above (`BenchmarkStepSteadyState`, 20.9 ms on
+a fake store). It is the bar of B4 in the release checklist; #2325 and #2332
+are the work meant to lower it.
 
 ## Query plans at scale
 
@@ -84,32 +96,33 @@ audit rows in one tenant, about 2.3 GB. Postgres execution time from
 
 | Query | Caller | Median ms | Best ms | Worst ms | Trigger ms | Seq scans |
 |---|---|---:|---:|---:|---:|---|
-| ListDagsFiltered (state) | /ui/dags state chip | 320.0 | 296.6 | 336.3 | 0.0 | none |
-| ListDagsFiltered | /ui/dags | 0.0 | 0.0 | 0.0 | 0.0 | none |
-| CountDagsFiltered (state) | /ui/dags state chip | 356.6 | 313.8 | 370.1 | 0.0 | dags |
-| CountDagsByLatestRunState | dashboard | 452.9 | 422.7 | 461.2 | 0.0 | none |
-| CountDagRunStatesInWindow | dashboard history | 71.6 | 70.4 | 74.7 | 0.0 | dag_runs, dags |
-| CountTaskInstanceStatesInWindow | dashboard history | 710.2 | 618.8 | 750.2 | 0.0 | dag_runs, dags, task_instances |
-| ListActiveDagRuns | scheduler tick | 0.1 | 0.1 | 0.2 | 0.0 | none |
-| ListRunningTasks | pod-lost reaper | 2.1 | 1.9 | 2.1 | 0.0 | dags |
-| ListActiveStagingVolumes | staging GC | 403.8 | 364.8 | 499.9 | 0.0 | dag_runs, staging_volumes |
-| PoolSlotUsage | /api/v2/pools | 296.0 | 259.7 | 305.3 | 0.0 | task_instances |
-| CountAuditLogs (dag) | audit page | 66.4 | 57.1 | 69.6 | 0.0 | audit_log |
-| ListAuditLogs (dag) | audit page | 11.0 | 10.7 | 11.1 | 0.0 | none |
-| DeleteDag | DAG deletion | 4767.7 | 4667.0 | 5193.2 | 4766.4 | none |
+| ListDagsFiltered (state) | /ui/dags state chip | 4.3 | 3.5 | 4.5 | 0.0 | none |
+| ListDagsFiltered | /ui/dags | 0.2 | 0.2 | 0.3 | 0.0 | none |
+| CountDagsFiltered (state) | /ui/dags state chip | 5.0 | 3.3 | 5.8 | 0.0 | dags |
+| CountDagsByLatestRunState | dashboard | 3.6 | 3.4 | 3.7 | 0.0 | dags |
+| CountDagRunStatesInWindow | dashboard history | 66.0 | 63.2 | 67.7 | 0.0 | dag_runs, dags |
+| CountTaskInstanceStatesInWindow | dashboard history | 811.5 | 793.4 | 816.5 | 0.0 | dag_runs, dags, task_instances |
+| ListActiveDagRuns | scheduler tick | 0.6 | 0.5 | 0.6 | 0.0 | none |
+| ListRunningTasks | pod-lost reaper | 1.8 | 1.6 | 1.9 | 0.0 | dags |
+| ListActiveStagingVolumes | staging GC | 0.7 | 0.7 | 0.7 | 0.0 | staging_volumes |
+| PoolSlotUsage | /api/v2/pools | 0.3 | 0.3 | 0.3 | 0.0 | none |
+| CountAuditLogs (dag) | audit page | 0.7 | 0.6 | 0.9 | 0.0 | none |
+| ListAuditLogs (dag) | audit page | 0.1 | 0.1 | 0.1 | 0.0 | none |
+| ListAuditLogsAfter (dag) | audit page by cursor | 0.1 | 0.1 | 0.1 | 0.0 | none |
+| ListDagRunsByDagAfter | /api/v2 dag runs by cursor | 0.1 | 0.1 | 0.2 | 0.0 | none |
+| DeleteDag | DAG deletion | 76.0 | 55.0 | 76.1 | 75.1 | none |
 
 What stands out:
 
-- Deleting a DAG with 51 versions takes 4.8 s, all of it in FK triggers:
-  `dag_runs.dag_version_id` has no index, so each deleted version scans
-  `dag_runs`.
-- The latest run state queries (`ListDagsFiltered` with a state filter,
-  `CountDagsFiltered`, `CountDagsByLatestRunState`) take 320 to 450 ms because
-  their `DISTINCT ON (dag_id)` walks every run.
-- `ListActiveStagingVolumes` runs every minute and takes 400 ms: the join casts
-  `dag_runs.id` to text, which rules out the primary key index.
-- `PoolSlotUsage` scans all 5,000,000 task instances to count a handful of
-  active ones.
+- Every query the v0.5.1 changes targeted is now a few milliseconds: the latest
+  run state queries went from 320 to 450 ms to 3.6 to 5.0 ms,
+  `ListActiveStagingVolumes` from 404 ms to 0.7 ms, `PoolSlotUsage` from
+  296 ms to 0.3 ms, and `DeleteDag` with 51 versions from 4.8 s to 76 ms.
+- The dashboard history counts still count every row of their window:
+  `CountTaskInstanceStatesInWindow` takes 812 ms here (710 ms at v0.5.0, inside
+  the noise of a seed that differs run to run) and `CountDagRunStatesInWindow`
+  66 ms. They are the only rows above 20 ms; the release checklist compares
+  them with the previous release.
 
 ## Code-only deploy
 
@@ -237,16 +250,17 @@ these ids are served by the API, so the change needs its own decision.
 
 ## Targets
 
-The gates of the performance plan, against the rows above (v0.5.0). Two were
-never met and are no longer absolute bars of the release checklist; its section
-"Amended bars and known failures" says why.
+The gates of the performance plan, set against the v0.5.0 numbers, and where
+the v0.5.9 rows above stand. Two were never met and are no longer absolute bars
+of the release checklist; its section "Amended bars and known failures" says
+why.
 
-| Gate | Baseline | Target | Status |
+| Gate | v0.5.0 | Target | v0.5.9 (rows above) |
 |---|---|---|---|
-| Scheduler tick, 1,000 active runs x 20 tasks (batch 3) | 4.76 ms | under 2 ms | Not met: 5.35 ms in the v0.5.4 release checks on `1f1b4cb1`, unchanged since v0.5.3 (#1922). The checklist compares it with the previous release (B1) instead |
-| UI bundle served with gzip (batch 4) | 417 ms | under 5 ms | Still an absolute bar (B2) |
-| Hot queries above, at this dataset size (batch 2) | up to 710 ms | each under 20 ms | Still an absolute bar (C1) except the dashboard history counts, which count every row of their window: 37 ms and 277 ms at one fifth of this dataset in the v0.5.4 release checks, the same as v0.5.3 (#1922). The checklist compares them with the previous release |
-| DeleteDag with 51 versions (batch 2) | 4,768 ms | under 100 ms | Still an absolute bar (C1) |
+| Scheduler tick, 1,000 active runs x 20 tasks (batch 3) | 4.76 ms | under 2 ms | Not met: 4.73 ms. The checklist compares it with the previous release (B1) instead |
+| UI bundle served with gzip (batch 4) | 417 ms | under 5 ms | Met: 0.57 ms. Still an absolute bar (B2) |
+| Hot queries above, at this dataset size (batch 2) | up to 710 ms | each under 20 ms | Met except the dashboard history counts (66 ms and 812 ms), which count every row of their window; the checklist compares them with the previous release (C1) |
+| DeleteDag with 51 versions (batch 2) | 4,768 ms | under 100 ms | Met: 76 ms. Still an absolute bar (C1) |
 
 ## Accepted changes of the bar
 

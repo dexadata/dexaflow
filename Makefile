@@ -264,6 +264,11 @@ test-db: ## Create (if missing) and migrate the isolated integration-test databa
 test-integration: test-db ## Run //go:build integration tests against the isolated test DB
 	DATABASE_URL="$(TEST_DATABASE_URL)" go test -tags integration -race ./...
 
+.PHONY: bench-integration
+bench-integration: ## Benchmark the scheduler tick read (ActiveRuns) on a migrated database of its own, BENCH_DATABASE_URL (#2324)
+	@test -n "$(BENCH_DATABASE_URL)" || { echo "set BENCH_DATABASE_URL to a migrated database of its own: every active run in it is read"; exit 2; }
+	DATABASE_URL="$(BENCH_DATABASE_URL)" go test -tags integration -run '^$$' -bench 'ActiveRunsIntegration' -benchmem -count $(or $(COUNT),5) ./internal/storage/
+
 .PHONY: cover
 cover: test ## Show total Go coverage
 	go tool cover -func=coverage.out | tail -1
