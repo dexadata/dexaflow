@@ -563,7 +563,16 @@ func selectDatastore(ctx context.Context, cfg *config.ServerConfig, pg *storage.
 	// Lite already returned above (no Redis), so metrics is always non-nil
 	// here on the Pro path.
 	stopObs := storage.AttachRedisObservability(ctx, rd, metrics, 5*time.Second)
+	// A policy other than noeviction lets Redis delete the XCom values of
+	// running DAGs under memory pressure (#2354): warn, or refuse to boot with
+	// redis.require_noeviction.
+	if _, cerr := storage.CheckRedisEviction(ctx, rd, cfg.Redis.RequireNoEviction, logger); cerr != nil {
+		stopObs()
+		return nil, nil, nil, nil, errors.Join(fmt.Errorf("redis: %w", cerr), rd.Close())
+	}
+	stopMem := storage.WatchRedisMemory(ctx, rd, metrics, logger, 30*time.Second)
 	cleanup = func() {
+		stopMem()
 		stopObs()
 		if cerr := rd.Close(); cerr != nil {
 			logger.Error("closing redis", "error", cerr)

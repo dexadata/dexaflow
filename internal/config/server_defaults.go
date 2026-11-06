@@ -58,7 +58,9 @@ var serverDefaults = map[string]any{
 	// Registered so AutomaticEnv binds LEOFLOW_REDIS_CA_FILE (the Helm chart sets
 	// it when redis.caConfigMap is configured); without it, verified TLS to a
 	// managed rediss:// endpoint silently falls back to system roots only (#725).
-	"redis.ca_file":              "",
+	"redis.ca_file": "",
+	// Warn, do not refuse, on an eviction policy other than noeviction (#2354).
+	"redis.require_noeviction":   false,
 	"auth.provider":              "jwt",
 	"auth.jwt.secret":            "",
 	"auth.jwt.token_ttl_seconds": 3600,

@@ -280,6 +280,15 @@ settings:
       encryption, Azure Cache) whose server cert is signed by a provider/per-instance
       CA not in the container's system roots. Empty falls back to system roots only.
       The Helm chart sets it when `redis.caConfigMap` is configured.
+  redis.require_noeviction:
+    edition: Cluster
+    description: >-
+      Refuse to boot unless Redis runs `maxmemory-policy noeviction`, or when the
+      policy cannot be read from `INFO memory` (#2354). XCom values carry a TTL,
+      so a `volatile-*` policy (the default of several managed services) evicts
+      them first under memory pressure and the downstream task fails with "not
+      found". Off (the default), an unsafe policy logs a warning at boot and sets
+      `dexaflow_redis_eviction_policy_safe` to 0. Helm: `redis.requireNoEviction`.
   auth.provider:
     edition: both
     description: >-

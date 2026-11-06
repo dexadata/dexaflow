@@ -159,3 +159,32 @@ tests:
   - eval_time: 35m
     alertname: DexaflowMixedVersions
     exp_alerts: []
+- name: an unsafe redis eviction policy for 15 minutes opens a ticket
+  interval: 1m
+  input_series:
+  - series: dexaflow_redis_eviction_policy_safe{namespace="data",pod="a"}
+    values: 0x30
+  - series: dexaflow_redis_eviction_policy_safe{namespace="data",pod="b"}
+    values: 0x30
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: DexaflowRedisEvictionPolicyUnsafe
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: DexaflowRedisEvictionPolicyUnsafe
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations:
+        description: Redis runs a maxmemory-policy other than noeviction, so it may delete XCom values of running DAGs when memory fills.
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/redis-eviction-policy-unsafe/
+        summary: Redis may evict XCom values under memory pressure
+- name: a noeviction redis stays quiet
+  interval: 1m
+  input_series:
+  - series: dexaflow_redis_eviction_policy_safe{namespace="data",pod="a"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: DexaflowRedisEvictionPolicyUnsafe
+    exp_alerts: []

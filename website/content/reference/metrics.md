@@ -63,10 +63,13 @@ The table is generated from the collectors the server registers: run
 | `dexaflow_redis_command_failures_total` | counter | `reason` | Redis command failures classified by reason (timeout, connection_refused, auth, canceled, other). Alert on rate(...[5m]) to surface a degrading client-side path before user-visible XCom errors (#312 sibling). |
 | `dexaflow_redis_dial_duration_seconds` | histogram | _(none)_ | Wall-clock time per Redis dial: TCP connect plus, with rediss://, the TLS handshake. |
 | `dexaflow_redis_dial_failures_total` | counter | `reason` | Failures at TCP/TLS dial time to Redis, classified by reason (tls_handshake, connection_refused, dns, timeout, other). |
+| `dexaflow_redis_evicted_keys` | gauge | _(none)_ | Redis evicted_keys as reported by INFO stats: keys the server deleted to stay under maxmemory since it started. Resets when Redis restarts. |
+| `dexaflow_redis_eviction_policy_safe` | gauge | _(none)_ | 1 when Redis runs maxmemory-policy noeviction, 0 when it may delete keys under memory pressure. XCom values carry a TTL, so a volatile-* policy evicts them first and their downstream tasks fail with not found (#2354). |
 | `dexaflow_redis_pool_active_conns` | gauge | _(none)_ | Redis pool: connections currently checked out for a command. |
 | `dexaflow_redis_pool_idle_conns` | gauge | _(none)_ | Redis pool: idle connections available for the next command. |
 | `dexaflow_redis_pool_timeouts_total` | counter | _(none)_ | Redis pool checkout timeouts: a caller waited PoolTimeout for an idle connection. A non-zero rate means the pool is too small or commands are too slow. |
 | `dexaflow_redis_pool_total_conns` | gauge | _(none)_ | Redis pool: total connections (active + idle). Saturating against PoolSize is the leading indicator of throughput issues. |
+| `dexaflow_redis_used_memory_bytes` | gauge | _(none)_ | Redis used_memory as reported by INFO memory. |
 | `dexaflow_resilience_backstop_disabled` | gauge | `config_key` | 1 when this process booted with the resilience backstop of config_key disabled, 0 when it is in place. Set once at boot by processes that run the scheduler; alert on max(...) > 0. |
 | `dexaflow_retention_cycle_duration_seconds` | histogram | _(none)_ | Wall-clock duration of one retention janitor cycle, pauses included. |
 | `dexaflow_retention_rows_deleted_total` | counter | `table` | Metadata rows the retention janitor deleted, by table. |
