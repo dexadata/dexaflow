@@ -28,11 +28,14 @@ the issue they name closes.
 | Field | Value |
 |---|---|
 | RC under test | `<tag>` |
+| Image under test | `published rc` (the tag's own image) **or** `local build` (an image built from a commit, because the rc predates a fix this run validates) |
+| Commit under test | `<full SHA>`: for a published rc, `git rev-list -n1 <tag>`; for a local build, the commit it was built from |
+| Version check (§1b) | `git_version` reported by the running control plane: `<sha>`, matches the commit above (yes / no) |
 | Cloud / cluster | `<AWS EKS / GCP GKE>` (context: `<kubectl-context>`) |
 | CNI | `<AWS VPC CNI / GKE Dataplane V2 / Calico>` — note it, §5 depends on it |
 | Node provisioning | (managed node group / Karpenter / GKE node pool?) |
 | GKE mode | `<Standard / Autopilot>` — Autopilot mutates pod specs; see §5 |
-| Server image | `ghcr.io/dexadata/dexaflow-server:<tag>` |
+| Server image | `ghcr.io/dexadata/dexaflow-server:<tag>`, or the reference of the local build |
 | Date / operator | `<date>` / `<who>` |
 
 Links: release <https://github.com/dexadata/dexaflow/releases/tag/TAG> ·
@@ -165,6 +168,33 @@ helm install leoflow oci-or-repo/leoflow \
 
 Record: does the control plane reach `Ready`? Is `/api/v2/` + the UI reachable
 (via `kubectl -n leoflow port-forward svc/leoflow 8080:8080`, or the ingress)? Can you `dexaflow auth login` and get a JWT?
+
+### §1b Check that the control plane runs the commit under test (#1019)
+
+Tags are immutable (ADR 0033), so a fix that merged after an rc is not in that
+rc's image. Installing the published rc and validating a row whose fix merged
+later fails the row for the wrong reason, and a row that passes for a reason
+unrelated to its fix reads as proof the fix works. Right after the install
+above, before §2, and again after any image change:
+
+```bash
+kubectl -n <ns> port-forward svc/<release> 8080:8080 &
+curl -fsS -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v2/version   # {"version":"<ui>","git_version":"<sha>"}
+git rev-list -n1 <tag>                           # the commit the rc was cut from
+```
+
+- `$TOKEN` is the JWT from `dexaflow auth login` (§1); the route needs the
+  `read` scope.
+- `git_version` must equal the **Commit under test** of the header (a prefix
+  match is enough when the build stamped a short SHA). If it does not, stop:
+  the cluster runs something else.
+- For each §3a row, check that the fix it validates is in the commit under
+  test: `git merge-base --is-ancestor <fix commit> <commit under test>`. A fix
+  that is not there is recorded **NOT IN BUILD**, never FAIL or PASS.
+- When the fixes this run must validate merged after the rc, either cut a new
+  rc, or build the server image from the commit that will become the GA, set
+  **Image under test** to `local build`, and say so in the §6 summary: the
+  result then proves that commit, not the published rc.
 
 ---
 
@@ -826,6 +856,7 @@ cloud reads as proof, and that is the failure §5 exists to prevent.
 
 | # | Check | PASS/FAIL | Notes / evidence |
 |---|---|---|---|
+| §1b | the control plane's `git_version` is the commit under test; rows whose fix is not in it are NOT IN BUILD | | |
 | §2 | smoke: task→success | | |
 | #17 | hybrid: python tasks succeed (§3a) | | |
 | #20 | dbt_groups project present in the image, both shapes (§3a) | | |
