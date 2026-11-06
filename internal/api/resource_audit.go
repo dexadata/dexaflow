@@ -41,7 +41,7 @@ func recordResourceAudit(c *gin.Context, w ResourceAuditWriter, action, resource
 		return
 	}
 	if err := w.RecordResourceAudit(c.Request.Context(), tenantOf(c), actingUserID(c), action, resourceType, resourceID, metadata); err != nil {
-		slog.Warn("recording resource audit", "action", action, "resource", resourceID, "error", err)
+		slog.Warn("recording resource audit", "action", action, "resource", logSafe(resourceID), "error", logSafe(err.Error()))
 	}
 }
 
@@ -52,7 +52,7 @@ func recordDagAudit(c *gin.Context, w AuditWriter, action, runID string) {
 		return
 	}
 	if err := w.RecordRunActionAudit(c.Request.Context(), tenantOf(c), actingUserID(c), action, c.Param("dag_id"), runID, nil); err != nil {
-		slog.Warn("recording dag audit", "action", action, "dag", c.Param("dag_id"), "error", err)
+		slog.Warn("recording dag audit", "action", action, "dag", logSafe(c.Param("dag_id")), "error", logSafe(err.Error()))
 	}
 }
 

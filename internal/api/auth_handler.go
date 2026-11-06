@@ -290,7 +290,7 @@ func recordPasswordLogin(c *gin.Context, audit AuthAuditWriter, tenant, username
 		return
 	}
 	if err := audit.RecordAuthEvent(c.Request.Context(), tenant, "", auditPasswordLogin, username, outcome, nil); err != nil {
-		slog.Warn("recording password sign-in audit", "outcome", outcome, "error", err)
+		slog.Warn("recording password sign-in audit", "outcome", outcome, "error", logSafe(err.Error()))
 	}
 }
 
