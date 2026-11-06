@@ -115,6 +115,14 @@ spec:
             summary: A Dexaflow resilience backstop is turned off
             description: '{{`The control plane booted with the backstop of {{ $labels.config_key }} disabled.`}}'
             runbook_url: {{ $runbooks }}/resilience-backstop-disabled/
+        - alert: DexaflowAgentLostReapingHeld
+          expr: sum(increase(dexaflow_scheduler_decisions_total{ {{- $ns -}} ,decision_type=~"agent_lost_mass_silence_hold|agent_lost_mass_silence_valve_open"}[10m])) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: Most Dexaflow running tasks stopped heartbeating at once
+            description: The agent-lost reaper held because most running attempts went silent together, which points at heartbeat writes failing on the control plane; after 10 minutes it reaps them anyway.
+            runbook_url: {{ $runbooks }}/agent-lost-reaping-held/
     - name: dexaflow-ticket
       rules:
         - alert: DexaflowSchedulerStepDowns

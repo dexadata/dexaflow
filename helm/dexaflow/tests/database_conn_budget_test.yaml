@@ -160,3 +160,18 @@ tests:
           pattern: "NOTE: under load the control plane can grow to 57 Postgres connections"
       - matchRegexRaw:
           pattern: "2 pod\\(s\\) x \\(database.maxOpenConns=20 \\+ database.schedulerMaxConns=5 \\+ 3\\) \\+ 1 migration Job"
+
+  - it: NOTES count database.agentMaxConns in the peak next to the scheduler pool
+    template: NOTES.txt
+    set:
+      replicaCount: 2
+      database.schedulerMaxConns: 5
+      database.agentMaxConns: 4
+      logs.persistence.enabled: false
+      logs.sink.provider: s3
+      logs.sink.bucket: b
+    asserts:
+      - matchRegexRaw:
+          pattern: "NOTE: under load the control plane can grow to 65 Postgres connections"
+      - matchRegexRaw:
+          pattern: "2 pod\\(s\\) x \\(database.maxOpenConns=20 \\+ database.schedulerMaxConns=5 \\+ database.agentMaxConns=4 \\+ 3\\) \\+ 1 migration Job"

@@ -11,6 +11,7 @@ const (
 	poolMain      = "main"
 	poolHealth    = "health"
 	poolScheduler = "scheduler"
+	poolAgent     = "agent"
 )
 
 // PoolCollector exports pgxpool statistics of the control plane's database
@@ -59,6 +60,7 @@ func (c *PoolCollector) Collect(ch chan<- prometheus.Metric) {
 	c.collect(ch, poolMain, c.pg.Pool)
 	c.collect(ch, poolHealth, c.pg.health)
 	c.collect(ch, poolScheduler, c.pg.schedulerPool.Load())
+	c.collect(ch, poolAgent, c.pg.agentPool.Load())
 }
 
 func (c *PoolCollector) collect(ch chan<- prometheus.Metric, name string, pool *pgxpool.Pool) {

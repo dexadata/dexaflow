@@ -1,0 +1,17 @@
+kind: Fixed
+body: |-
+  **Healthy tasks reaped as `agent_lost` when the API saturates the main
+  pool.** Heartbeats are written through the main database pool, which the API
+  shares, while with `database.scheduler_max_conns` set the agent-lost reaper
+  runs on its own pool: API traffic that held every main connection silenced
+  every heartbeat, and the reaper failed healthy attempts as lost. Two fixes
+  (#1624). The heartbeat reaper now holds when at least 10 running attempts,
+  and at least half of those that heartbeat, go silent in the same window,
+  which is the signature of failed heartbeat writes rather than lost agents; it
+  meters `agent_lost_mass_silence_hold`, reaps anyway after 10 minutes
+  (`agent_lost_mass_silence_valve_open`), and the chart's new
+  `DexaflowAgentLostReapingHeld` alert pages on both. And the new
+  `database.agent_max_conns` (Helm `database.agentMaxConns`, default `0`,
+  off) gives the agent handlers a pool of their own; set it together with
+  `database.scheduler_max_conns`.
+time: 2026-11-06T19:30:00.000000000+00:00

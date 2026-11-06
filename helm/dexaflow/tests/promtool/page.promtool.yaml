@@ -117,6 +117,41 @@ tests:
         description: Provisional agent_lost, pod_lost or dispatch_lost marks went unconfirmed for 2 minutes; the reconciler is not sweeping or cannot read pods.
         runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/infra-confirm-valve-open/
         summary: The Dexaflow planner acted on infra marks the reconciler never confirmed
+- name: a held or valve-open agent-lost reap pages, an ordinary agent loss does not
+  interval: 1m
+  input_series:
+  - series: dexaflow_scheduler_decisions_total{namespace="data",pod="s",decision_type="agent_lost_mass_silence_hold"}
+    values: 0 0 0 1 2 3 3 3 3 3
+  - series: dexaflow_scheduler_decisions_total{namespace="data",pod="s",decision_type="agent_lost"}
+    values: 0+5x9
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: DexaflowAgentLostReapingHeld
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: DexaflowAgentLostReapingHeld
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+      exp_annotations:
+        description: The agent-lost reaper held because most running attempts went silent together, which points at heartbeat writes failing on the control plane; after 10 minutes it reaps them anyway.
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/agent-lost-reaping-held/
+        summary: Most Dexaflow running tasks stopped heartbeating at once
+- name: agent-lost valve open pages on its own
+  interval: 1m
+  input_series:
+  - series: dexaflow_scheduler_decisions_total{namespace="data",pod="s",decision_type="agent_lost_mass_silence_valve_open"}
+    values: 0 0 1 1 1 1
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: DexaflowAgentLostReapingHeld
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+      exp_annotations:
+        description: The agent-lost reaper held because most running attempts went silent together, which points at heartbeat writes failing on the control plane; after 10 minutes it reaps them anyway.
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/agent-lost-reaping-held/
+        summary: Most Dexaflow running tasks stopped heartbeating at once
 - name: queue wait p99 over 5 minutes for 15 minutes pages for that tenant only
   interval: 1m
   input_series:

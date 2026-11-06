@@ -173,6 +173,11 @@ type agentLostReaper struct {
 	// page (R-07, #1597).
 	ceilingPager reapPager
 	silentPager  reapPager
+	// silentSince is when the current mass silence began (see
+	// massSilenceHold), zero while the fleet heartbeats.
+	silentSince time.Time
+	// clock is time.Now outside tests.
+	clock func() time.Time
 }
 
 // runningLister is the ListRunningTasks slice of PodLostReapStore.
@@ -181,7 +186,7 @@ type runningLister interface {
 }
 
 func newAgentLostReaper(store HeartbeatReapStore, logger *slog.Logger, threshold time.Duration, rec DecisionRecorder) *agentLostReaper {
-	return &agentLostReaper{store: store, logger: logger, threshold: threshold, recorder: rec}
+	return &agentLostReaper{store: store, logger: logger, threshold: threshold, recorder: rec, clock: time.Now}
 }
 
 // run lists every candidate, fails the stale ones, returns any infra-level
@@ -194,7 +199,7 @@ func (r *agentLostReaper) run(ctx context.Context) error {
 			r.record("agent_lost_panic")
 		}
 	}()
-	now := time.Now().UTC()
+	now := r.clock().UTC()
 	// The ceiling pass runs first, so an attempt it settles is not listed again
 	// below as a silent agent in the same pass.
 	ceilingErr := r.runPastCeiling(ctx, now)
@@ -206,6 +211,9 @@ func (r *agentLostReaper) run(ctx context.Context) error {
 	candidates, err := r.store.ListAgentLostCandidates(ctx)
 	if err != nil {
 		return errors.Join(ceilingErr, err)
+	}
+	if r.massSilenceHold(ctx, candidates, now) {
+		return errors.Join(ceilingErr, r.runNeverHeartbeated(ctx, now))
 	}
 	for _, c := range candidates {
 		if !IsAgentLost(c, r.threshold, now) {

@@ -46,6 +46,7 @@ metrics:
 | [DexaflowDatabasePoolCanceledAcquires](database-pool-canceled-acquires/) | canceled connection acquires on a pool every 5 minutes for 10 minutes | |
 | [DexaflowRedisCommandFailures](redis-command-failures/) | Redis command failures (client cancellations excluded) every 5 minutes for 10 minutes | |
 | [DexaflowResilienceBackstopDisabled](resilience-backstop-disabled/) | a resilience backstop is disabled, for 5 minutes | |
+| [DexaflowAgentLostReapingHeld](agent-lost-reaping-held/) | any `agent_lost_mass_silence_hold` or `agent_lost_mass_silence_valve_open` decision in 10 minutes | |
 
 ## Ticket
 
