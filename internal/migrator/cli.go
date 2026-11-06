@@ -169,6 +169,22 @@ func usage(stderr io.Writer, problem string) int {
 	return ExitUsage
 }
 
+// parseVersionArg reads the version force and goto take.
+func parseVersionArg(name, arg string) (int, error) {
+	if arg == "" {
+		return 0, fmt.Errorf("%s needs a version", name)
+	}
+	n, err := strconv.Atoi(arg)
+	low := 0
+	if name == "force" {
+		low = -1 // golang-migrate's "no version"
+	}
+	if err != nil || n < low {
+		return 0, fmt.Errorf("%s takes a version of %d or more, got %q", name, low, arg)
+	}
+	return n, nil
+}
+
 // parseCommand reads the subcommand and its argument.
 func parseCommand(rest []string) (command, error) {
 	if len(rest) == 0 {
@@ -197,25 +213,16 @@ func parseCommand(rest []string) (command, error) {
 		}
 		c.n, c.hasN = n, true
 	case "force", "goto":
-		if arg == "" {
-			return c, fmt.Errorf("%s needs a version", c.name)
-		}
-		n, err := strconv.Atoi(arg)
-		low := 0
-		if c.name == "force" {
-			low = -1 // golang-migrate's "no version"
-		}
-		if err != nil || n < low {
-			return c, fmt.Errorf("%s takes a version of %d or more, got %q", c.name, low, arg)
+		n, err := parseVersionArg(c.name, arg)
+		if err != nil {
+			return c, err
 		}
 		c.n = n
 	case "rls":
-		switch arg {
-		case "on", "off", "status":
-			c.action = arg
-		default:
+		if arg != "on" && arg != "off" && arg != "status" {
 			return c, fmt.Errorf("rls takes on, off or status, got %q", arg)
 		}
+		c.action = arg
 	default:
 		return c, fmt.Errorf("unknown command %q (this image runs up, goto, force, version and rls; "+
 			"use the golang-migrate CLI for the others)", c.name)

@@ -48,7 +48,7 @@ func runRLS(ctx context.Context, op *opened, dsn, action string, stdout io.Write
 	}
 	defer func() { _ = db.Close() }() //nolint:errcheck // best-effort close of a handle we own
 	if action != "status" {
-		if err := setRLS(ctx, db, action == "on"); err != nil {
+		if err = setRLS(ctx, db, action == "on"); err != nil {
 			return Classify(err, op.target)
 		}
 	}

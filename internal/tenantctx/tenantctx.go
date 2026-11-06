@@ -27,6 +27,8 @@ func Without(ctx context.Context) context.Context {
 
 // From reports the tenant ctx carries, "" for none.
 func From(ctx context.Context) string {
-	t, _ := ctx.Value(key{}).(string)
-	return t
+	if t, ok := ctx.Value(key{}).(string); ok {
+		return t
+	}
+	return ""
 }

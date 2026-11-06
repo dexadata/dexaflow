@@ -15,8 +15,9 @@ func TestRowSecurityTablesMatchMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	re := regexp.MustCompile(`CREATE POLICY ` + RowSecurityPolicy + ` ON (\w+)`)
-	var got []string
-	for _, m := range re.FindAllStringSubmatch(string(up), -1) {
+	matches := re.FindAllStringSubmatch(string(up), -1)
+	got := make([]string, 0, len(matches))
+	for _, m := range matches {
 		got = append(got, m[1])
 	}
 	want := slices.Clone(RowSecurityTables)

@@ -36,7 +36,7 @@ const nilTenant = "00000000-0000-0000-0000-000000000000"
 func bindTenant(ctx context.Context, conn *pgx.Conn) (bool, error) {
 	want := tenantctx.From(ctx)
 	data := conn.PgConn().CustomData()
-	if have, _ := data[boundTenantData].(string); have == want {
+	if have, ok := data[boundTenantData].(string); ok && have == want {
 		return true, nil
 	}
 	var err error
@@ -97,8 +97,7 @@ ORDER BY c.relname`, migrations.RowSecurityTables, migrations.RowSecurityPolicy)
 	}
 	out, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (RowSecurityStatus, error) {
 		var s RowSecurityStatus
-		err := r.Scan(&s.Table, &s.Enabled, &s.Forced, &s.Policy)
-		return s, err
+		return s, r.Scan(&s.Table, &s.Enabled, &s.Forced, &s.Policy)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("reading row level security state: %w", err)
