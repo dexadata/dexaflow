@@ -133,7 +133,7 @@ type Metrics struct {
 	TaskOldestWaiting *prometheus.GaugeVec
 
 	// BuildInfo is dexaflow_build_info: one series per process, value 1,
-	// labelled with the version, commit, Go version and role it runs (#2299).
+	// labeled with the version, commit, Go version and role it runs (#2299).
 	BuildInfo *prometheus.GaugeVec
 
 	// schema backs dexaflow_schema_ready and dexaflow_schema_wait_seconds
@@ -352,7 +352,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 
 		BuildInfo: f.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "dexaflow_build_info",
-			Help: "Always 1, labelled with the version, commit and Go version of the binary and the role the process runs. " +
+			Help: "Always 1, labeled with the version, commit and Go version of the binary and the role the process runs. " +
 				"count by (version) (dexaflow_build_info) > 1 means a rollout left replicas on another version.",
 		}, []string{"version", "commit", "go_version", "role"}),
 
