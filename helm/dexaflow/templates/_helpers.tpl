@@ -763,7 +763,8 @@ smaller suffixes (m, u, n) and signs are refused, as is anything else: the
 render fails with the way out rather than shipping a guess.
 */}}
 {{- define "leoflow.goMemLimit" -}}
-{{- $pct := .Values.goMemLimit.percent -}}
+{{- $pct := (.Values.goMemLimit | default dict).percent -}}
+{{- if kindIs "invalid" $pct -}}{{- $pct = 80 -}}{{- end -}}
 {{- if not (regexMatch "^[0-9]+$" (toString $pct)) -}}
 {{- fail (printf "goMemLimit.percent must be between 1 and 100 (got %v)" $pct) -}}
 {{- end -}}
@@ -862,4 +863,67 @@ helm.sh/chart: {{ include "leoflow.chart" . }}
 {{ include "leoflow.maintenanceSelectorLabels" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/*
+Install profile (#2323). "cluster" turns on the defaults the scheduler design
+assumes (ADR 0031): buffered dispatch, raised Kubernetes client limits with a
+separate maintenance client, and GOMEMLIMIT. "legacy" keeps the defaults of the
+charts before it. Resolution order:
+
+  1. profile, when set.
+  2. On `helm upgrade`, the profile the release's live Deployment carries in
+     its dexaflow.dexadata.ai/profile annotation; a live Deployment without
+     one was installed before profiles and is "legacy", and so is an upgrade
+     that finds no live Deployment. So an existing release keeps its
+     effective values.
+  3. "cluster": a fresh install, and `helm template` (GitOps renderers), which
+     report an install. A GitOps release installed before profiles sets
+     profile: legacy to keep its values (see the upgrade guide).
+
+A value the profile governs is null in values.yaml; any value set, 0 or false
+included, wins over the profile.
+*/}}
+{{- define "leoflow.profile" -}}
+{{- $p := .Values.profile | default "" | toString | trim -}}
+{{- if and $p (not (has $p (list "cluster" "legacy"))) -}}
+{{- fail (printf "profile must be cluster, legacy or empty (got %q)" $p) -}}
+{{- end -}}
+{{- if not $p -}}
+{{- if .Release.IsUpgrade -}}
+{{- $p = include "leoflow.liveProfile" . | default "legacy" -}}
+{{- else -}}
+{{- $p = "cluster" -}}
+{{- end -}}
+{{- end -}}
+{{- $p -}}
+{{- end -}}
+
+{{/*
+The profile annotation of this release's live control-plane Deployment, or ""
+when there is none or it predates profiles.
+*/}}
+{{- define "leoflow.liveProfile" -}}
+{{- $found := "" -}}
+{{- $list := lookup "apps/v1" "Deployment" .Release.Namespace "" | default dict -}}
+{{- range $d := ($list.items | default list) -}}
+{{- $labels := $d.metadata.labels | default dict -}}
+{{- if and (not $found) (eq (get $labels "app.kubernetes.io/instance") $.Release.Name) -}}
+{{- $found = get ($d.metadata.annotations | default dict) "dexaflow.dexadata.ai/profile" -}}
+{{- end -}}
+{{- end -}}
+{{- $found -}}
+{{- end -}}
+
+{{/*
+A value the profile governs: the value when set (0 and false included), else
+the cluster default under the cluster profile, else "" (render nothing).
+Usage: include "leoflow.profiled" (dict "ctx" $ "value" .Values.x "cluster" 512)
+*/}}
+{{- define "leoflow.profiled" -}}
+{{- if not (kindIs "invalid" .value) -}}
+{{- .value -}}
+{{- else if eq (include "leoflow.profile" .ctx) "cluster" -}}
+{{- .cluster -}}
+{{- end -}}
 {{- end -}}

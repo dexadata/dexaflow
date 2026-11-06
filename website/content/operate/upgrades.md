@@ -1279,6 +1279,38 @@ migrate -path migrations -database "$DATABASE_URL" goto 56
 That restores `gen_random_uuid()` as the default and drops the function. Ids
 already made as UUIDv7 stay as they are and keep working.
 
+### Upgrading to 0.5.10: the install profile
+
+0.5.10 adds a chart value, `profile`
+([#2323](https://github.com/dexadata/dexaflow/issues/2323)). Under `cluster`,
+the values below that you leave unset render the defaults the scheduler design
+assumes ([ADR 0031](/project/adrs/0031-scheduler-architecture/)); under `legacy` they
+render nothing, as in earlier charts.
+
+| Value | `cluster` | `legacy` |
+|---|---|---|
+| `config.scheduler.dispatch.bufferSize` / `workers` | `512` / `16` (buffered dispatch) | not rendered (synchronous dispatch in the tick) |
+| `executor.kubeClient.qps` / `burst` | `50` / `100` | not rendered (client-go's 5 / 10) |
+| `executor.kubeClient.maintenanceQps` / `maintenanceBurst` | `20` / `40` (a client of its own) | not rendered (shares the dispatch client) |
+| `goMemLimit.enabled` | on, at `goMemLimit.percent` of `resources.limits.memory`, when a limit is set | off |
+
+A fresh install gets `cluster`. An upgrade keeps the profile of the live
+release, read from the `dexaflow.dexadata.ai/profile` annotation on its
+Deployment, so a release installed before 0.5.10 stays `legacy` and renders
+exactly what it rendered before. Any of these values that you set wins over
+the profile, `0` and `false` included.
+
+| Your install | What the upgrade does |
+|---|---|
+| `helm upgrade` of a release from before 0.5.10 | Stays `legacy`; nothing changes. |
+| You want the new defaults on an existing release | `helm upgrade ... --set profile=cluster`. Task pods keep running; the control plane restarts with buffered dispatch. |
+| Rendered by `helm template`, ArgoCD or Flux | The renderer cannot read the live release and renders `cluster`. Set `profile: legacy` in your values **before** syncing 0.5.10 to keep the earlier behavior. |
+
+The dedicated scheduler database pool (`database.schedulerMaxConns`) is not part
+of the profile yet: with it on and the API pool saturated, agent heartbeats can
+stall while the reapers keep running on their own pool
+([#1624](https://github.com/dexadata/dexaflow/issues/1624)).
+
 ### Upgrading to 0.6.0: the UI refreshes every 5 seconds
 
 The bundled UI now polls DAG, run and task-instance state every 5 seconds
