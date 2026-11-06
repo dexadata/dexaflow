@@ -1,0 +1,10 @@
+kind: Fixed
+body: |-
+  **Grid duration axis label.** The DAG grid labelled its duration axis with a
+  floating point remainder, such as `00:00:08.2.0000000000009095`, whenever the
+  longest run had a fractional duration: the Airflow UI hands dayjs a
+  fractional number of seconds and prints the remainder of the conversion to
+  milliseconds, against Airflow as well. The grid runs view now sends whole
+  seconds (at least 1 for a run that started), which the axis prints exactly;
+  the run page and the runs list keep the exact duration (#2366).
+time: 2026-11-06T17:20:00.000000000+00:00

@@ -2,6 +2,7 @@ package api
 
 import (
 	"hash/fnv"
+	"math"
 	"net/http"
 	"time"
 
@@ -48,7 +49,7 @@ func toGridRunDTO(r domain.DagRun) gridRunDTO {
 		State:             string(r.State),
 		RunType:           r.RunType,
 		HasMissedDeadline: false,
-		Duration:          runDurationSeconds(r),
+		Duration:          gridDurationSeconds(r),
 		HasNote:           r.Note != "",
 		DagVersions:       []dagVersionDTO{},
 	}
@@ -109,6 +110,22 @@ func runDurationSeconds(r domain.DagRun) float64 {
 		end = *r.EndedAt
 	}
 	return end.Sub(*r.StartedAt).Seconds()
+}
+
+// gridDurationSeconds is runDurationSeconds in whole seconds, and at least 1
+// for a run that started (#2366). The grid labels its duration axis with the
+// longest run and half of it, through a formatter that hands dayjs a fractional
+// number of seconds: dayjs keeps the float remainder of seconds x 1000 as the
+// milliseconds and prints it, so 8.002 s reads 00:00:08.2.0000000000009095. The
+// same happens against Airflow, which sends microseconds. A whole number of
+// seconds, and half of one, are exact in milliseconds. A run under a second
+// shows as 1 s, so its bar stays visible.
+func gridDurationSeconds(r domain.DagRun) float64 {
+	d := runDurationSeconds(r)
+	if d <= 0 {
+		return 0
+	}
+	return math.Max(1, math.Round(d))
 }
 
 // synthRunID derives a stable non-negative integer key from a run_id.
