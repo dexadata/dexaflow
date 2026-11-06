@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -26,11 +27,11 @@ type Tailer interface {
 // RedisTailer fans task log lines out over Redis pub/sub so the API can stream
 // them live to the UI without polling.
 type RedisTailer struct {
-	client *redis.Client
+	client redis.UniversalClient
 }
 
 // NewRedisTailer builds a RedisTailer over the given go-redis client.
-func NewRedisTailer(client *redis.Client) *RedisTailer { return &RedisTailer{client: client} }
+func NewRedisTailer(client redis.UniversalClient) *RedisTailer { return &RedisTailer{client: client} }
 
 // Publish sends one log line to the task's tail channel.
 func (t *RedisTailer) Publish(ctx context.Context, ref Ref, line string) error {
@@ -45,17 +46,46 @@ func (t *RedisTailer) Publish(ctx context.Context, ref Ref, line string) error {
 // would receive. NUMSUB counts the channel's own subscribers; NUMPAT counts
 // pattern subscriptions, which NUMSUB cannot attribute to a channel, so any
 // pattern subscriber (say, a forwarder on log_tail:*) keeps every attempt
-// publishing. Both go in one round trip.
+// publishing. Both go in one round trip. On a Redis Cluster both count only
+// the node they run on, while a subscriber may hold its connection on any
+// node, so every node is asked and the counts are summed (#2358).
 func (t *RedisTailer) HasSubscribers(ctx context.Context, ref Ref) (bool, error) {
 	ch := tailChannel(ref)
+	if cc, ok := t.client.(*redis.ClusterClient); ok {
+		var heard atomic.Bool
+		err := cc.ForEachShard(ctx, func(ctx context.Context, node *redis.Client) error {
+			n, err := countSubscribers(ctx, node, ch)
+			if n {
+				heard.Store(true)
+			}
+			return err
+		})
+		if heard.Load() {
+			return true, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("counting log tail subscribers: %w", err)
+		}
+		return false, nil
+	}
+	n, err := countSubscribers(ctx, t.client, ch)
+	if err != nil {
+		return false, fmt.Errorf("counting log tail subscribers: %w", err)
+	}
+	return n, nil
+}
+
+// countSubscribers asks one node for the channel's subscribers and the
+// pattern subscriptions, in one round trip.
+func countSubscribers(ctx context.Context, c redis.Cmdable, ch string) (bool, error) {
 	var numSub *redis.MapStringIntCmd
 	var numPat *redis.IntCmd
-	if _, err := t.client.Pipelined(ctx, func(p redis.Pipeliner) error {
+	if _, err := c.Pipelined(ctx, func(p redis.Pipeliner) error {
 		numSub = p.PubSubNumSub(ctx, ch)
 		numPat = p.PubSubNumPat(ctx)
 		return nil
 	}); err != nil {
-		return false, fmt.Errorf("counting log tail subscribers: %w", err)
+		return false, err
 	}
 	return numSub.Val()[ch] > 0 || numPat.Val() > 0, nil
 }

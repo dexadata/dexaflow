@@ -35,7 +35,7 @@ tests:
       auth.jwtSecret: jwt
     asserts:
       - failedTemplate:
-          errorMessage: "redis.url or redis.existingSecret is required: the Pro edition needs an external Redis (the embedded XCom + log tailer is Lite-only)."
+          errorMessage: "redis.url, redis.existingSecret, redis.sentinel.master or redis.cluster.addrs is required: the Pro edition needs an external Redis (the embedded XCom + log tailer is Lite-only)."
 
   - it: omits LEOFLOW_SECRET_KEY env entry when neither secretKey nor secretKeyExistingSecret is set
     template: deployment.yaml

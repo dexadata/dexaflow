@@ -5,7 +5,8 @@ weight: 33
 description: "What a Cluster install keeps in Redis, the settings and topologies the production profile requires, how to size it, and what a flush or a lost instance costs."
 ---
 
-A Cluster control plane needs an external Redis (`redis.url`). Lite does not:
+A Cluster control plane needs an external Redis (`redis.url`, or a Sentinel
+or Redis Cluster, see [Supported topologies](#supported-topologies)). Lite does not:
 it keeps XCom in Postgres and tails logs in process
 ([ADR 0026](/project/adrs/0026-lite-datastore-no-redis/)).
 
@@ -38,9 +39,47 @@ run: it fails the XCom calls made during the outage.
   Cache for Redis (Standard or Premium). The client reconnects to the same
   name after a failover.
 
-**Not supported:** Redis Sentinel and Redis Cluster (sharded) endpoints. The
-client speaks to one endpoint and does not follow a Sentinel or a cluster
-redirect; support is tracked in #2358.
+- **Redis Sentinel** (since 0.6.0, [#2358](https://github.com/dexadata/dexaflow/issues/2358)):
+  set `redis.sentinel.master` and `redis.sentinel.addrs` (Helm the same
+  names). The client asks the sentinels for the master and follows a
+  failover to the new one. `redis.url`, when set, only gives the master's
+  user and password, the database and TLS (`rediss://`); its host is not
+  dialed, so any name does, for example `rediss://:<password>@sentinel/0`.
+  A master with a password needs that URL. `redis.sentinel.existingSecret`
+  (key `sentinelPassword`) holds the sentinels' own password when they have
+  one. With TLS, the sentinels and the master share the URL's TLS settings
+  and CA, and each certificate is checked against the address dialed (the
+  master's is the address the sentinels report).
+- **Redis Cluster** (since 0.6.0): list seed nodes in `redis.cluster.addrs`;
+  one configuration endpoint (ElastiCache cluster mode) is enough. The client
+  discovers the other nodes and follows slot moves. A Cluster has database 0
+  only. The URL, when set, gives the user, password and TLS the same way, and
+  each node's certificate is checked against the address the cluster reports
+  for it. XCom reads several keys at once with one pipelined batch per node
+  instead of an `MGET`, which a Cluster refuses across hash slots, so the keys
+  keep their format and values pushed before a move to a Cluster stay
+  readable.
+
+A failover is ridden through: the errors of its window (a refused
+connection, `READONLY` from a demoted master, `MASTERDOWN`) are the transient
+kind the agent retries, so a task pushing or pulling XCom during it waits
+instead of failing. The integration test of #2358 fails a Sentinel pair over
+while tasks push and fetch, and checks that no acknowledged push is lost. It
+drives a coordinated failover (`SENTINEL FAILOVER`); after a crashed master
+the sentinels wait their `down-after-milliseconds` first, and the lower
+timeouts below make the client notice sooner. Redis replicates
+asynchronously, so a write the crashed master acknowledged but had not sent
+to its replica is lost: the task that reads it fails with a missing XCom and
+is retried as usual.
+
+### Client timeouts and pool
+
+| Setting | Default | When to change it |
+|---|---|---|
+| `redis.dial_timeout` (Helm `redis.dialTimeout`) | 5 s | Lower it (for example `2s`) so a reconnect after a failover gives up on a dead node sooner. |
+| `redis.read_timeout` (Helm `redis.readTimeout`) | 3 s | Lower it so a read on a dead master fails, and is retried on the new one, sooner. Keep it above the slowest XCom read, a 256 KB value over your network. |
+| `redis.write_timeout` (Helm `redis.writeTimeout`) | the read timeout | Rarely; a write is bounded like a read. |
+| `redis.pool_size` (Helm `redis.poolSize`) | 10 per CPU, per node | Raise it when `dexaflow_redis_pool_total_conns` sits at the pool size under load. On a Cluster that metric sums every node's pool, so compare it with the pool size times the number of nodes. |
 
 ## Sizing
 

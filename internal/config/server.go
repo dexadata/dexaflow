@@ -264,6 +264,81 @@ type RedisSection struct {
 	// The Helm chart sets this via LEOFLOW_REDIS_CA_FILE when
 	// `redis.caConfigMap` is configured, pointing at the mounted ConfigMap.
 	CAFile string `mapstructure:"ca_file"`
+	// Sentinel, when its master is set, reaches Redis through Sentinel
+	// (#2358): the client asks the sentinels at Addrs for the master and
+	// follows a failover. URL then only supplies the credentials, the
+	// database and TLS.
+	Sentinel RedisSentinelSection `mapstructure:"sentinel"`
+	// Cluster, when it lists addresses, reaches a Redis Cluster through
+	// those seed nodes (#2358). URL then only supplies the credentials and
+	// TLS; a Cluster has database 0 only.
+	Cluster RedisClusterSection `mapstructure:"cluster"`
+	// DialTimeout, ReadTimeout and WriteTimeout bound one connection attempt
+	// and one command's read and write. Zero keeps the client's defaults:
+	// 5 s to dial, 3 s to read, and the read timeout to write.
+	DialTimeout  time.Duration `mapstructure:"dial_timeout"`
+	ReadTimeout  time.Duration `mapstructure:"read_timeout"`
+	WriteTimeout time.Duration `mapstructure:"write_timeout"`
+	// PoolSize is the connection pool size per node. Zero keeps the client's
+	// default, 10 connections per CPU.
+	PoolSize int `mapstructure:"pool_size"`
+}
+
+// RedisSentinelSection names a Sentinel-managed Redis master.
+type RedisSentinelSection struct {
+	// Master is the name of the master the sentinels monitor.
+	Master string `mapstructure:"master"`
+	// Addrs are the sentinels' host:port addresses.
+	Addrs []string `mapstructure:"addrs"`
+	// Password authenticates to the sentinels, when they require it; the
+	// master's own password comes from the URL.
+	Password string `mapstructure:"password"`
+}
+
+// RedisClusterSection lists the seed nodes of a Redis Cluster.
+type RedisClusterSection struct {
+	// Addrs are host:port addresses of some of the cluster's nodes; the
+	// client discovers the rest.
+	Addrs []string `mapstructure:"addrs"`
+}
+
+// Configured reports whether a Redis is configured at all, by URL, Sentinel or
+// Cluster. None means the embedded datastore (Lite, ADR 0026).
+func (r RedisSection) Configured() bool {
+	return r.URL != "" || r.Sentinel.Master != "" || len(r.Cluster.Addrs) > 0
+}
+
+// Validate refuses a Redis configuration the client cannot use.
+func (r RedisSection) Validate() error {
+	switch {
+	case r.Sentinel.Master != "" && len(r.Cluster.Addrs) > 0:
+		return fmt.Errorf("redis.sentinel.master and redis.cluster.addrs are both set; a Redis is reached through Sentinel or as a Cluster, not both")
+	case r.Sentinel.Master != "" && len(r.Sentinel.Addrs) == 0:
+		return fmt.Errorf("redis.sentinel.master is set without redis.sentinel.addrs; list the sentinels' host:port addresses")
+	case r.Sentinel.Master == "" && (len(r.Sentinel.Addrs) > 0 || r.Sentinel.Password != ""):
+		return fmt.Errorf("redis.sentinel.addrs or redis.sentinel.password is set without redis.sentinel.master; name the master the sentinels monitor")
+	case r.DialTimeout < 0 || r.ReadTimeout < 0 || r.WriteTimeout < 0:
+		return fmt.Errorf("redis.dial_timeout, redis.read_timeout and redis.write_timeout must not be negative; 0 keeps the client's default")
+	case r.PoolSize < 0:
+		return fmt.Errorf("redis.pool_size must not be negative (got %d); 0 keeps the client's default", r.PoolSize)
+	case len(r.Cluster.Addrs) > 0 && redisURLDatabase(r.URL) != "":
+		return fmt.Errorf("redis.url names database %s, and a Redis Cluster has database 0 only; drop the /%s from the URL", redisURLDatabase(r.URL), redisURLDatabase(r.URL))
+	}
+	return nil
+}
+
+// redisURLDatabase is the database a redis URL's path names, "" for none or
+// database 0.
+func redisURLDatabase(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "unix" {
+		return ""
+	}
+	db := strings.Trim(u.Path, "/")
+	if db == "0" {
+		return ""
+	}
+	return db
 }
 
 // ObservabilitySection configures logging, metrics, and tracing.
@@ -481,6 +556,7 @@ func (c *ServerConfig) Validate() error {
 		c.validateCIOIDC,
 		c.validateMigrateOnBoot,
 		c.validateBootstrap,
+		c.Redis.Validate,
 	} {
 		if err := check(); err != nil {
 			return err

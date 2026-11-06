@@ -830,11 +830,45 @@ spec:
             - name: LEOFLOW_DATABASE_MIGRATE_ON_BOOT
               value: "true"
             {{- end }}
+            {{- if or .ctx.Values.redis.existingSecret .ctx.Values.redis.url }}
             - name: LEOFLOW_REDIS_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ .ctx.Values.redis.existingSecret | default (include "leoflow.credentialsSecretName" .ctx) }}
                   key: redisUrl
+            {{- end }}
+            {{- with .ctx.Values.redis.sentinel }}
+            {{- if .master }}
+            # Redis through Sentinel (#2358): the URL only gives the master's
+            # credentials, the database and TLS.
+            - name: LEOFLOW_REDIS_SENTINEL_MASTER
+              value: {{ .master | quote }}
+            - name: LEOFLOW_REDIS_SENTINEL_ADDRS
+              value: {{ join "," .addrs | quote }}
+            {{- if .existingSecret }}
+            - name: LEOFLOW_REDIS_SENTINEL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .existingSecret }}
+                  key: sentinelPassword
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- with .ctx.Values.redis.cluster.addrs }}
+            # Redis Cluster seed nodes (#2358).
+            - name: LEOFLOW_REDIS_CLUSTER_ADDRS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- range $k := list (list "LEOFLOW_REDIS_DIAL_TIMEOUT" "dialTimeout") (list "LEOFLOW_REDIS_READ_TIMEOUT" "readTimeout") (list "LEOFLOW_REDIS_WRITE_TIMEOUT" "writeTimeout") }}
+            {{- with get $.ctx.Values.redis (index $k 1) }}
+            - name: {{ index $k 0 }}
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with .ctx.Values.redis.poolSize }}
+            - name: LEOFLOW_REDIS_POOL_SIZE
+              value: {{ . | quote }}
+            {{- end }}
             {{- if .ctx.Values.redis.caConfigMap }}
             # #312 — Verified TLS to managed Redis (Memorystore
             # SERVER_AUTHENTICATION, ElastiCache in-transit, Azure Cache).
