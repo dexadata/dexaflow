@@ -192,8 +192,8 @@ git push -u origin fix/clear-error-message
   the **`skip-changelog`** label. Dependabot PRs are exempt without either.
 - **User-facing changes update the docs in the same PR.** A chart value, the
   authoring schema, a CLI command, a server setting, a migration, the OpenAPI
-  document, or a changelog fragment of kind Added, Changed, Deprecated or
-  Removed needs an edit under `website/content/`. When nothing in the PR is
+  document, or a changelog fragment of kind Breaking, Upgrade, Added, Changed,
+  Deprecated or Removed needs an edit under `website/content/`. When nothing in the PR is
   user-discoverable, put a `Skip-docs: <reason>` line in the PR description
   (the **`skip-docs`** label is optional); the label without a reason fails
   the docs guard, and the release cut reads the reason back.

@@ -26,6 +26,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHANGELOG="${LEOFLOW_CHANGELOG:-$ROOT/CHANGELOG.md}"
 REPO_URL="https://github.com/dexadata/dexaflow"
+UPGRADES_URL="https://dexaflow.dexadata.ai/operate/upgrades/"
 
 # section <changelog-file> <heading>: print the body under `## <heading>`, up to
 # the next `## ` heading. A pure filter, so the self-test needs no git and no
@@ -75,6 +76,42 @@ notes_body() { # <changelog> <tag>
 	printf '%s\n' "$body"
 }
 
+# kind_block <body> <kind>: the entries under `### <kind>` in a section body,
+# up to the next `### ` heading, edges trimmed. Empty when the kind is absent.
+kind_block() { # <body> <kind>
+	printf '%s\n' "$1" | awk -v want="### $2" '
+		$0 == want   { inside = 1; next }
+		inside && /^### / { exit }
+		inside       { print }
+	' | trim_blank_edges
+}
+
+# without_kinds <body> <kind>...: the section body with those `### <kind>`
+# blocks removed, so an entry is printed once, in the opening.
+without_kinds() { # <body> <kind>...
+	local body="$1"; shift
+	printf '%s\n' "$body" | awk -v drop="$(IFS=,; echo "$*")" '
+		BEGIN { n = split(drop, d, ","); for (i = 1; i <= n; i++) skip["### " d[i]] = 1 }
+		/^### / { dropping = ($0 in skip) }
+		!dropping { print }
+	' | trim_blank_edges
+}
+
+# opening <body>: what an operator reads before upgrading (#1557), in front of
+# the per kind lists. Highlights when the release has them; Breaking changes
+# and Action required always, with "None." when there is no entry, so that a
+# release without them says so instead of leaving the reader to search.
+opening() { # <body>
+	local hl br up
+	hl="$(kind_block "$1" Highlights)"
+	br="$(kind_block "$1" Breaking)"
+	up="$(kind_block "$1" Upgrade)"
+	if [ -n "$hl" ]; then printf '### Highlights\n\n%s\n\n' "$hl"; fi
+	printf '### Breaking changes\n\n%s\n\n' "${br:-None.}"
+	printf '### Action required\n\n%s\n\n' "${up:-None.}"
+	printf 'Read the [upgrades guide](%s) for the version you upgrade to before you upgrade.\n' "$UPGRADES_URL"
+}
+
 # previous_tag <tag>: the tag before this one, for the compare link. Silent when
 # there is none (the first release) rather than printing a broken link.
 previous_tag() { # <tag>
@@ -109,6 +146,21 @@ self_test() {
 	# Edges trimmed, paragraphs kept.
 	_eq "$(printf '%s' "$ga" | head -1)" "### Fixed" "no leading blank line"
 	_eq "$(printf '%s' "$ga" | tail -1 | tr -d ' ')" "secondparagraph" "no trailing blank line"
+
+	# The opening (#1557): the three kinds an operator reads first.
+	local b2 op rest
+	b2="$(printf '%s\n' '### Highlights' '' '- why this release' '' '### Upgrade' '' '- run the migration' '' '### Fixed' '' '- a fix')"
+	op="$(opening "$b2")"
+	_eq "$(printf '%s' "$op" | grep -c '^### ')" "3" "the opening has Highlights, Breaking changes and Action required"
+	_eq "$(printf '%s' "$op" | grep -A2 '^### Breaking changes' | tail -1)" "None." "no Breaking entry says None."
+	_eq "$(printf '%s' "$op" | grep -A2 '^### Action required' | tail -1)" "- run the migration" "Upgrade entries are the Action required section"
+	_eq "$(printf '%s' "$op" | grep -c 'a fix')" "0" "the opening carries no other kind"
+	rest="$(without_kinds "$b2" Highlights Breaking Upgrade)"
+	_eq "$(printf '%s' "$rest" | grep -c 'why this release\|run the migration')" "0" "an opening entry is not printed twice"
+	_eq "$(printf '%s' "$rest" | head -1)" "### Fixed" "the other kinds follow, edges trimmed"
+	op="$(opening "$ga")"
+	_eq "$(printf '%s' "$op" | grep -c '^### Highlights')" "0" "no Highlights heading when none were written"
+	_eq "$(printf '%s' "$op" | grep -c '^None\.$')" "2" "a release with no Breaking or Upgrade entry says None. twice"
 
 	if [ "$fail" -eq 0 ]; then echo "self-test: PASS"; return 0; else echo "self-test: FAIL"; return 1; fi
 }
@@ -149,7 +201,10 @@ curl -fsSL https://raw.githubusercontent.com/dexadata/dexaflow/${tag}/install.sh
 
 HEADER
 
-printf '%s\n\n' "$body"
+opening "$body"
+printf '\n---\n\n'
+rest="$(without_kinds "$body" Highlights Breaking Upgrade)"
+[ -z "$rest" ] || printf '%s\n\n' "$rest"
 
 prev="$(previous_tag "$tag")"
 echo '---'

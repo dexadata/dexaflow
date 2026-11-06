@@ -33,7 +33,7 @@ FRAGMENT_DIR="$ROOT/.changes/unreleased"
 # Keep them in step: a label here that changie does not emit is inert, and one
 # changie emits that is missing here still survives, but lands after the known
 # kinds instead of in its declared position.
-KINDS="Added,Changed,Deprecated,Removed,Fixed,Security"
+KINDS="Highlights,Breaking,Upgrade,Added,Changed,Deprecated,Removed,Fixed,Security"
 
 # merge_unreleased <changelog> <rendered>: prints the whole CHANGELOG with the
 # rendered block folded into [Unreleased]. A pure filter over two files, so the
