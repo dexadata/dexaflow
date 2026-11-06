@@ -92,6 +92,12 @@ type Metrics struct {
 	RedisPoolIdle        prometheus.Gauge
 	RedisPoolTotalConns  prometheus.Gauge
 	RedisPoolTimeouts    prometheus.Counter
+	// RedisEvictionPolicySafe is 1 when Redis runs maxmemory-policy noeviction (#2354).
+	RedisEvictionPolicySafe prometheus.Gauge
+	// RedisUsedMemory is the server's used_memory, in bytes.
+	RedisUsedMemory prometheus.Gauge
+	// RedisEvictedKeys is the server's evicted_keys since it started.
+	RedisEvictedKeys prometheus.Gauge
 
 	// Retention janitor (D5): rows deleted per table, rows a dry run found
 	// eligible per table, and the duration of each cycle.
@@ -317,6 +323,18 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help: "Rotated TLS certificate or key files that failed to load, by listener (api, agent_grpc). " +
 				"The listener keeps serving the last good certificate; alert on any increase (#637).",
 		}, []string{"listener"}),
+		RedisEvictionPolicySafe: f.NewGauge(prometheus.GaugeOpts{
+			Name: "dexaflow_redis_eviction_policy_safe",
+			Help: "1 when Redis runs maxmemory-policy noeviction, 0 when it may delete keys under memory pressure. XCom values carry a TTL, " +
+				"so a volatile-* policy evicts them first and their downstream tasks fail with not found (#2354).",
+		}),
+		RedisUsedMemory: f.NewGauge(prometheus.GaugeOpts{
+			Name: "dexaflow_redis_used_memory_bytes", Help: "Redis used_memory as reported by INFO memory.",
+		}),
+		RedisEvictedKeys: f.NewGauge(prometheus.GaugeOpts{
+			Name: "dexaflow_redis_evicted_keys",
+			Help: "Redis evicted_keys as reported by INFO stats: keys the server deleted to stay under maxmemory since it started. Resets when Redis restarts.",
+		}),
 		RedisPoolTimeouts: f.NewCounter(prometheus.CounterOpts{
 			Name: "dexaflow_redis_pool_timeouts_total", Help: "Redis pool checkout timeouts: a caller waited PoolTimeout for an idle connection. A non-zero rate means the pool is too small or commands are too slow.",
 		}),
@@ -482,6 +500,21 @@ func (m *Metrics) UpdateRedisPoolStats(active, idle, total uint32) {
 // connection — the leading indicator that the pool is too small for the
 // command rate.
 func (m *Metrics) RecordRedisPoolTimeout() { m.RedisPoolTimeouts.Inc() }
+
+// SetRedisMemory publishes what INFO reports about the Redis eviction policy,
+// used memory and evicted keys (#2354). No-op on a nil receiver.
+func (m *Metrics) SetRedisMemory(evictionSafe bool, usedBytes, evictedKeys int64) {
+	if m == nil {
+		return
+	}
+	v := 0.0
+	if evictionSafe {
+		v = 1
+	}
+	m.RedisEvictionPolicySafe.Set(v)
+	m.RedisUsedMemory.Set(float64(usedBytes))
+	m.RedisEvictedKeys.Set(float64(evictedKeys))
+}
 
 // SetLogTailReplayBytes reports what the live-tail gates hold for replay.
 // No-op on a nil receiver.

@@ -354,6 +354,8 @@ redis:
   existingSecret: ""
   # -- Name of a ConfigMap with a `ca.crt` key containing the PEM CA bundle the client trusts when negotiating TLS to a `rediss://` URL (#312). Required when the managed-Redis server cert is signed by a provider / per-instance CA that is not in the system roots — Memorystore SERVER_AUTHENTICATION, ElastiCache in-transit encryption, Azure Cache for Redis. Mounted read-only at `/etc/leoflow/redis-ca` and exposed to the server via `LEOFLOW_REDIS_CA_FILE`. Leave empty when Redis uses a public CA or no TLS.
   caConfigMap: ""
+  # -- Refuse to boot unless Redis runs `maxmemory-policy noeviction`, or when the policy cannot be read (#2354). XCom values carry a TTL, so a `volatile-*` policy, the default of several managed services, evicts them first under memory pressure and the downstream task fails with "not found". Off, an unsafe policy logs a warning at boot, sets `dexaflow_redis_eviction_policy_safe` to 0 and fires `DexaflowRedisEvictionPolicyUnsafe`.
+  requireNoEviction: false
 
 auth:
   # Trusted-issuer handoff (#1284): a platform that already signs its users in

@@ -279,6 +279,11 @@ type RedisSection struct {
 	// The Helm chart sets this via LEOFLOW_REDIS_CA_FILE when
 	// `redis.caConfigMap` is configured, pointing at the mounted ConfigMap.
 	CAFile string `mapstructure:"ca_file"`
+	// RequireNoEviction refuses to boot unless Redis runs maxmemory-policy
+	// noeviction, or when the policy cannot be read (#2354). Off, an unsafe
+	// policy only logs a warning and sets dexaflow_redis_eviction_policy_safe
+	// to 0.
+	RequireNoEviction bool `mapstructure:"require_noeviction"`
 }
 
 // ObservabilitySection configures logging, metrics, and tracing.

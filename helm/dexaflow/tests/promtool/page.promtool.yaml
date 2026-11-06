@@ -271,3 +271,23 @@ tests:
         description: The control plane booted with the backstop of scheduler.reaper.enabled disabled.
         runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/resilience-backstop-disabled/
         summary: A Dexaflow resilience backstop is turned off
+- name: redis evicting keys pages, a flat counter does not
+  interval: 1m
+  input_series:
+  - series: dexaflow_redis_evicted_keys{namespace="data",pod="a"}
+    values: 0x10 0 3 9 9 9
+  - series: dexaflow_redis_evicted_keys{namespace="data",pod="b"}
+    values: 0x10 0 3 9 9 9
+  alert_rule_test:
+  - eval_time: 9m
+    alertname: DexaflowRedisEvictingKeys
+    exp_alerts: []
+  - eval_time: 14m
+    alertname: DexaflowRedisEvictingKeys
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+      exp_annotations:
+        description: Redis evicted keys in the last 10 minutes; XCom values of running DAGs may be gone and their downstream tasks fail with not found.
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/redis-evicting-keys/
+        summary: Redis is deleting keys to stay under maxmemory
