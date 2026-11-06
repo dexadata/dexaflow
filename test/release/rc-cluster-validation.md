@@ -8,6 +8,12 @@ whole class of behavior is therefore only provable on a real cloud cluster. ADR
 0033 leaves the human RC verification open ("whatever the rc is meant to
 validate") — this file is that checklist.
 
+**Target configuration:** install the
+[production profile](https://dexaflow.dexadata.ai/operate/production-profile/)
+(`values-ha.yaml`, managed Postgres and Redis, object log sink) unless a row
+says otherwise. It is the configuration the project recommends for production,
+and a row run on anything else proves that other configuration only (#2297).
+
 **How to use:** fill in the run header, follow §0→§6, record PASS/FAIL in §6, and
 open one issue per FAIL (root-caused, file:line if known — same bar as the
 #722–#729 batch). For the **next** RC, keep §0/§2/§4/§5 as-is and refresh only
@@ -37,6 +43,12 @@ install page <https://dexaflow.dexadata.ai/get-started/installation/>.
 ---
 
 ## §0 Prerequisites
+
+Which rows need what (#2370): the §3a dbt rows (#17, #20, #993, #994, #852,
+#1005, rows 11 and 12) need the dbt task images built and pushed to the
+registry below; every other row runs on the chart's own images. The rows that
+only EKS can prove are listed in §5b; on GKE record them **NOT VERIFIED
+(cloud)**.
 
 - `kubectl` pointed at the target cluster (EKS / GKE Standard / other); `helm` v3.
 - **External Postgres + Redis** reachable from the cluster (the chart runs on any
@@ -199,7 +211,7 @@ one deployment; each row leaves the cluster in the state the next one needs.
 
 | # | What it proves | How to run it, and what decides it | ★/✔ |
 |---|---|---|---|
-| 1 | Boot survives a cache it cannot sync (#1083) | Remove `list`/`watch` on pods from the control plane's Role, in `executor.taskNamespace`. **Decides:** the pod reaches Ready, `/readyz` **answers** (503 or 200, never connection refused), the warn line names the namespace and the budget, and `restartCount` stays 0 across five minutes. Pre-fix it climbed by one every ~70s. | ★ |
+| 1 | Boot survives a cache it cannot sync (#1083) | Remove `list`/`watch` on pods from the control plane's Role, in `executor.taskNamespace`, with `kubectl apply --server-side --field-manager=helm --force-conflicts -f <edited role>`. A plain `kubectl apply` takes ownership of the rules, and every later `helm upgrade` in this file then fails on a field conflict (seen on the v0.5.9-rc.1 run, #2370); restore the Role with the same flags, or with `helm upgrade --reuse-values` once no other field manager owns it. **Decides:** the pod reaches Ready, `/readyz` **answers** (503 or 200, never connection refused), the warn line names the namespace and the budget, and `restartCount` stays 0 across five minutes. Pre-fix it climbed by one every ~70s. | ★ |
 | 2 | The same failure under a CNI that enforces (#1083) | The trigger the local gates structurally cannot produce: kindnet accepts NetworkPolicy and ignores it. On EKS with the VPC CNI policy agent **actually enabled** (assert the agent is running first, or this passes vacuously), set `networkPolicy.egress` to Postgres and Redis only, omitting 443 to the apiserver. **Decides:** same as row 1. | ★ |
 | 3 | A slow boot is not a restart loop (#1150) | With row 1's broken RBAC still in place. **Decides:** `startupProbe` is present on the rendered pod, the container is not killed while the gate is failing, and the restart count stays 0 for longer than `10 + 3*20 = 70s`, which is where the pre-fix kill landed. | ★ |
 | 4 | An unsatisfiable SSO config fails boot, by name (#1143) | Set `auth.provider: oidc` with issuer, client id and redirect URL but **no** `tenant_claim`. **Decides:** boot fails with a message naming `auth.oidc.tenant_claim` and `auth.oidc.tenant_claims`, and saying the map loads only from the YAML file named by `LEOFLOW_CONFIG`. A green boot here is the bug: it then rejects 100% of logins, and the cause reaches only the audit row and the server log (#1162) while the browser is returned to the sign-in page with a marker that carries no reason (#1167). In an SSO-only deployment nobody can log in to read the audit log, so the boot message is the only channel left. | ★ |
@@ -301,30 +313,23 @@ the same carry-forward treatment for as long as #1089 stays open):
 
 **Standing checks (no expiry):**
 
-- **#800 zero-declaration blind spot.** The #722 row below validates the population
-  that *does* warn, so a green RC has been certifying past the one that does not.
-  With `secretScoping=permissive` (default), run a DAG declaring **no** variables
-  and **no** connections against a tenant that has several connections defined.
-  **PASS (today's behavior, and the blind spot made executable):** the task
-  receives **every** connection in the vault — observe this with a probe task that
-  prints the `AIRFLOW_CONN_*` **names** it was handed, never their values — and
-  `GET /api/v2/eventLogs` shows
-  **no** `secret.scope_warning` row for that run. That silence is exactly what an
-  operator would read as "safe to flip to `enforce`", while this same DAG would
-  receive **nothing** after the flip. Until #800's code half lands, this row is
-  the reminder that a clean trail is not evidence; when it lands, this row
-  inverts — the run must then produce a warning naming zero declarations.
-- **#800 stale-declaration blind spot** — the second population the trail never
-  shows, and the likelier one in practice, since secret rotation produces it. The
-  warning counts only declared names that actually *resolve*, so a DAG whose
-  declarations all point at names since deleted from the vault collapses to zero
-  declared and never warns — registration-time validation (#724) guards the
-  moment of registration, not later deletion. With `secretScoping=permissive`,
+- **#800 zero-declaration.** With `secretScoping=permissive` (default), run a
+  DAG declaring **no** variables and **no** connections against a tenant that
+  has several connections defined. **PASS:** the task still receives every
+  connection in the vault (observe this with a probe task that prints the
+  `AIRFLOW_CONN_*` **names** it was handed, never their values), and
+  `GET /api/v2/eventLogs` shows a `secret.scope_warning` row for that run that
+  names zero declarations. Before #800's code half landed this population wrote
+  no row, which an operator would read as "safe to flip to `enforce`"; the
+  v0.5.9-rc.1 run confirmed the warning (#2370).
+- **#800 stale declaration.** The likelier population in practice, since secret
+  rotation produces it: registration-time validation (#724) guards the moment
+  of registration, not a later deletion. With `secretScoping=permissive`,
   register a DAG declaring `conn_a`, run it, then delete `conn_a` from the vault
-  and run it again. **PASS (today's behavior):** the second run receives **every**
-  connection in the vault and `GET /api/v2/eventLogs` shows **no**
-  `secret.scope_warning` row for it. Flip that same DAG to `enforce` and confirm
-  it receives **nothing** — and that no audit row explains why.
+  and run it again. **PASS:** the second run writes a `secret.scope_warning`
+  row in `GET /api/v2/eventLogs`. Flip to `enforce` and run a DAG that declares
+  `conn_a` (deleted) and `conn_b` (present): the task receives `conn_b` only,
+  and nothing for the deleted name.
 - **#722 secret-audit ✔** — with `secretLivenessMode=observe`, run a DAG that
   declares fewer secrets than the vault. **PASS:** `GET /api/v2/eventLogs` shows a
   `secret.scope_warning` row (not just a log line). Flip a scenario to `enforce`
@@ -334,8 +339,15 @@ the same carry-forward treatment for as long as #1089 stays open):
 - **#724 validation 400 ✔** — register a DAG version declaring an unknown
   connection. **PASS:** API returns **400** (not 500); message points at
   `dexaflow connections set`.
-- **#727 migration-job SA token ✔** — `kubectl get job <migrate> -o yaml`.
-  **PASS:** `spec.template.spec.automountServiceAccountToken: false`.
+- **#727 migration-job SA token ✔** (`helm get hooks <release> -n <ns>`: the
+  Job and its ServiceAccount, Role and RoleBinding are hooks, deleted once the
+  hooks succeed, so read them from the release, not from the cluster).
+  **PASS:** the Job's pod spec has `automountServiceAccountToken: true` with
+  its own `serviceAccountName` (not the control plane's), and that account's
+  Role grants `create` on ConfigMaps plus `get` and `update` on the
+  `<fullname>-installation` ConfigMap only. The token is mounted on purpose
+  since ADR 0090: the migrate wrapper records the installation id in that
+  ConfigMap (fbc229d9). A token bound to any wider Role is a FAIL.
 - **#729 managed-PG idempotent** — Lite/local, not a cloud cluster. Run the opt-in
   E2E `test/e2e/lite-managed-pg-reextract.sh` on a networked host with managed-PG.
 - **task pods non-root by default** — the rc.2 behavior change, still standing.
@@ -568,7 +580,9 @@ kubectl get endpoints -n "$NS" -l app.kubernetes.io/instance=leoflow  # pod's IP
 ```
 
 **PASS:** `kubectl wait` returns success (it did not time out), `/readyz` answers
-**503**, the pod's IP is no longer in the Service's endpoints, and the 503 body
+**503** (if the forward already died because the process exited, as the next
+paragraph expects, read the 503 from the restarted pod below), the pod's IP is
+no longer in the Service's endpoints, and the 503 body
 names only the dependency — **no DSN, credentials or internal hostname**, since
 the endpoint is unauthenticated. The version detail is in the pod log.
 
@@ -578,37 +592,50 @@ is the schema verdict; `postgres unavailable` is a database that could not be
 only the first one is this check. A run that shows `postgres unavailable` here
 has proved something about the pool, not about #1023.
 
-**Liveness must NOT fire, and this is the half that needs patience.** Liveness is
-`periodSeconds: 20 × failureThreshold: 3`, so a restart needs **60s of continuous
-failure**. `RESTARTS` read immediately after the DROP is `0` whether liveness is
-schema-blind or not, so the instant check proves nothing. Hold the broken state
-for ~90s and assert `/healthz` stays 200 the whole time — a positive assertion,
-not the absence of a restart:
+**The pod restarts once, and only once (ADR 0090 decision 5).** Dropping the
+schema also drops the installation id the process read at boot, so the next
+readiness probe sees the id gone and the process exits with its own code
+(seen as exit 3 on the v0.5.9-rc.1 run, #2370). Exiting is the only complete
+flush of its caches. The restarted process boots under decision 1: it stays
+up, not ready, and waits for the replacement to be accepted. What must not
+happen is a crash loop, and liveness, which is schema-blind on purpose, must
+not add restarts of its own. Liveness is `periodSeconds: 20 x
+failureThreshold: 3`, so hold the broken state for about 90s after the
+restart and sample `/healthz` (forward to the new pod: the old forward died
+with the container):
 
 ```bash
+kubectl wait --for=jsonpath='{.status.containerStatuses[0].restartCount}'=1 --timeout=120s -n "$NS" "$POD"
+kubectl port-forward -n "$NS" "$POD" 8080:8080 & PF=$!
 end=$((SECONDS+90))
 while [ $SECONDS -lt $end ]; do
   printf '%s ' "$(curl -sS -o /dev/null -w '%{http_code}' localhost:8080/healthz)"
   sleep 10
 done; echo
 kubectl get pod -n "$NS" "$POD" -o jsonpath='{.status.containerStatuses[0].restartCount}{"\n"}'
+curl -sS localhost:8080/readyz     # 503, reason: database replaced: no schema
 ```
 
-**PASS:** every sample is `200` and the restart count is unchanged from before
-the DROP. A `CrashLoopBackOff`, or any 5xx from `/healthz`, is a FAIL — liveness
-is deliberately schema-blind, because restarting creates no schema and a crash
-loop would cost you the pod you need to diagnose.
+**PASS:** the restart count went from 0 to exactly 1 and stays 1, every
+`/healthz` sample is `200`, and `/readyz` answers 503 naming `database
+replaced: no schema`. A `CrashLoopBackOff`, a second restart, or any 5xx from
+`/healthz` is a FAIL.
 
-**Recovery — two traps, both of which have cost time.**
+**Recovery: two traps, both of which have cost time.**
 
-*The Job is not there to re-run.* `migration-job.yaml` carries
-`helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded`, so after a
-successful install the Job object is **deleted**. `kubectl create job
---from=job/leoflow-migrate` answers `NotFound`. What re-runs the migration is a
-Helm operation that fires the `pre-upgrade` hook:
+*Re-running the migration is not enough, by design.* The migrate wrapper
+compares the installation id it recorded with the database's and refuses an
+emptied database with exit code 8 (`database replaced: no schema`), so a
+`helm upgrade --reuse-values` fails here. Accepting the replacement is an
+explicit step: change `installation.id`, as the
+[replaced database page](https://dexaflow.dexadata.ai/operate/database-lost-restored-repointed/)
+says. The `pre-upgrade` hook then migrates the empty schema and records the
+new id (the Job object of the install is already deleted by its
+`hook-delete-policy`, so `kubectl create job --from=job/...` answers
+`NotFound`):
 
 ```bash
-helm upgrade leoflow <chart> -n "$NS" --reuse-values --wait
+helm upgrade leoflow <chart> -n "$NS" --reuse-values --set installation.id=$(uuidgen) --wait
 ```
 
 *`CREATE SCHEMA public` does not restore who may use it.* The recreated schema is
@@ -625,8 +652,9 @@ GRANT USAGE, CREATE ON SCHEMA public TO <migrate role>;
 GRANT USAGE ON SCHEMA public TO <api role>;   -- only if you run the split identity
 ```
 
-**PASS:** `/readyz` returns to 200 and the pod re-enters the endpoints **without
-a restart** — the check is per-probe, so recovery needs no pod churn. Note that
+**PASS:** `/readyz` returns to 200 and the pod re-enters the endpoints with no
+further restart: the waiting process sees the accepted schema on its next
+probe, so recovery needs no pod churn. Note that
 `--wait` now blocks on real readiness, which is the #1023 fix seen from the other
 side: before it, `helm upgrade --wait` reported success against this database.
 
@@ -807,8 +835,8 @@ cloud reads as proof, and that is the failure §5 exists to prevent.
 | #852 | read-only rootfs: pod admitted, dbt tasks succeed (§3a; no cloud delta) | | |
 | #1005 | `docker run … dbt --debug parse`: full or partial? (local, §3a — a question, not a gate) | | |
 | #15 | stray top-level key fails validate AND compile; Lite discovery unaffected (§3a) | | |
-| #800 | zero-declaration: no scope_warning, task gets every connection (§3b) | | |
-| #800 | stale-declaration: deleted conn → no warning; enforce → nothing (§3b) | | |
+| #800 | zero-declaration: scope_warning naming zero declarations, task gets every connection (§3b) | | |
+| #800 | stale declaration: scope_warning; enforce: only the declared connection that exists (§3b) | | |
 | #722 | audit rows written | | |
 | #723 | retry not wedged (§4.2) | | |
 | #724 | validation → 400 | | |
@@ -816,12 +844,12 @@ cloud reads as proof, and that is the failure §5 exists to prevent.
 | #802 | partial resource pair → Burstable + boot WARN + compile error (§4.3) | | |
 | #804 | control-plane policy on, task policy off → no policy **selects** a task pod (§4.4) | | |
 | #726 | api has no tls.key (§4.1) | | |
-| #727 | migrate job no SA token | | |
+| #727 | migrate job: own SA, Role limited to the installation ConfigMap | | |
 | #728 | warm TMPDIR fresh (§4.2) | | |
 | #729 | managed-PG re-extract (Lite host) | | |
 | — | task pods non-root by default | | |
 | HA | HA-profile upgrade: a PDB exists that nobody asked for (§4.5) | | |
-| #1023 | schema dropped under a running pod: `/readyz` 503, pod leaves endpoints, no restart across 90s (§4.6a) | | |
+| #1023 | schema dropped under a running pod: `/readyz` 503, pod leaves endpoints, exactly one restart, no crash loop across 90s, recovery by a new `installation.id` (§4.6a) | | |
 | #1023 | in-flight migration above the running binary: endpoints never empty, `/readyz` stays 200; dirty at the same version still goes NotReady (§4.6b) | | |
 | ADR 0052 | `LEOFLOW_CHAOS_ONLY=CD chaos-runtime.sh` — C and D pass (§4.5) | | |
 

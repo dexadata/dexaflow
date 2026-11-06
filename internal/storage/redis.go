@@ -13,7 +13,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/config"
 )
 
-// Redis wraps a go-redis client used for XCom and locks.
+// Redis wraps a go-redis client used for XCom values and the live log tail.
 type Redis struct {
 	Client *redis.Client
 }

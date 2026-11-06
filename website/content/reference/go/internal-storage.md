@@ -399,7 +399,7 @@ SchemaVersion reads the applied migration version from golang\-migrate's schema\
 <a name="Redis"></a>
 ## type [Redis](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis.go#L17-L19>)
 
-Redis wraps a go\-redis client used for XCom and locks.
+Redis wraps a go\-redis client used for XCom values and the live log tail.
 
 ```go
 type Redis struct {

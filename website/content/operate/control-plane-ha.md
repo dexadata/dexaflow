@@ -711,6 +711,9 @@ Nothing needs configuring: all of this applies to every install.
 
 ## Related
 
+- [Production profile](/operate/production-profile/): this page's HA
+  posture as part of the one configuration recommended for production.
+- [Redis requirements](/operate/redis/): the Redis an HA control plane shares.
 - [Helm chart](/operate/helm-chart/) — the entry point and the chart README
   with the full values table.
 - [Scheduler resilience](/operate/scheduler-resilience/) — what happens to

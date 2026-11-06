@@ -339,7 +339,7 @@ database:
   # -- Random extra lifetime, in milliseconds, added to each pooled connection so replicas started together do not all reconnect at once. 0 (default) adds none.
   connMaxLifetimeJitterMs: 0
 
-# Redis (XCom + locks).
+# Redis (XCom values and the live log tail; nothing takes a lock in Redis).
 redis:
   # -- External Redis URI. Required for Cluster (the embedded XCom is Lite-only). Example: `redis://host:6379/0`, or `rediss://host:6380/0` for TLS.
   url: ""

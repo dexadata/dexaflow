@@ -49,7 +49,7 @@ flowchart LR
 
   API --- PG[(Postgres<br/>metadata · audit_log<br/>Lite XCom/locks)]
   SCH --- PG
-  SCH -. Cluster only .- RD[(Redis<br/>XCom + locks)]
+  SCH -. Cluster only .- RD[(Redis<br/>XCom + live log tail)]
 ```
 
 The two halves of the control plane are separate deployments joined only by

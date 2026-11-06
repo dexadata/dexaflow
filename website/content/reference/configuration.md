@@ -540,7 +540,7 @@ recovery command a pod waiting for its schema names; see
 
 | Variable | Key | Type | Default | Edition | Purpose |
 |---|---|---|---|---|---|
-| `DEXAFLOW_REDIS_URL` | `redis.url` | string | _(empty)_ | **Cluster only** | Redis URL (XCom + locks). Empty selects the embedded Lite edition: XCom on Postgres, in-process log tailer ([ADR 0026](/project/adrs/0026-lite-datastore-no-redis/)). Cluster sets it via the Helm chart. |
+| `DEXAFLOW_REDIS_URL` | `redis.url` | string | _(empty)_ | **Cluster only** | Redis URL (XCom values and the live log tail, see [Redis requirements](/operate/redis/)). Empty selects the embedded Lite edition: XCom on Postgres, in-process log tailer ([ADR 0026](/project/adrs/0026-lite-datastore-no-redis/)). Cluster sets it via the Helm chart. |
 | `DEXAFLOW_REDIS_CA_FILE` | `redis.ca_file` | string | _(empty)_ | Cluster | Absolute path to a PEM CA bundle trusted when negotiating TLS to a `rediss://` URL (#312). Needed for managed Redis (Memorystore, ElastiCache in-transit encryption, Azure Cache) whose server cert is signed by a provider/per-instance CA not in the container's system roots. Empty falls back to system roots only. The Helm chart sets it when `redis.caConfigMap` is configured. |
 
 <!-- END GENERATED configref -->
