@@ -62,7 +62,16 @@ var serverDefaults = map[string]any{
 	// managed rediss:// endpoint silently falls back to system roots only (#725).
 	"redis.ca_file": "",
 	// Warn, do not refuse, on an eviction policy other than noeviction (#2354).
-	"redis.require_noeviction":   false,
+	"redis.require_noeviction": false,
+	// Sentinel, Cluster and the client's timeouts and pool size (#2358).
+	"redis.sentinel.master":      "",
+	"redis.sentinel.addrs":       []string{},
+	"redis.sentinel.password":    "",
+	"redis.cluster.addrs":        []string{},
+	"redis.dial_timeout":         "0s",
+	"redis.read_timeout":         "0s",
+	"redis.write_timeout":        "0s",
+	"redis.pool_size":            0,
 	"auth.provider":              "jwt",
 	"auth.jwt.secret":            "",
 	"auth.jwt.token_ttl_seconds": 3600,

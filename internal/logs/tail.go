@@ -26,11 +26,11 @@ type Tailer interface {
 // RedisTailer fans task log lines out over Redis pub/sub so the API can stream
 // them live to the UI without polling.
 type RedisTailer struct {
-	client *redis.Client
+	client redis.UniversalClient
 }
 
 // NewRedisTailer builds a RedisTailer over the given go-redis client.
-func NewRedisTailer(client *redis.Client) *RedisTailer { return &RedisTailer{client: client} }
+func NewRedisTailer(client redis.UniversalClient) *RedisTailer { return &RedisTailer{client: client} }
 
 // Publish sends one log line to the task's tail channel.
 func (t *RedisTailer) Publish(ctx context.Context, ref Ref, line string) error {
