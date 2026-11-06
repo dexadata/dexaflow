@@ -48,17 +48,30 @@ func pullFailingPod(name, tiID, reason string, since time.Time) *corev1.Pod {
 	return p
 }
 
-func reconcileOnce(t *testing.T, pod *corev1.Pod, pendingTimeout time.Duration) (*fakeReporter, *fake.Clientset) {
+func reconcileOnce(t *testing.T, pod *corev1.Pod, pendingTimeout time.Duration) (*pendingReporter, *fake.Clientset) {
 	t.Helper()
 	cs := fake.NewClientset(pod)
-	reporter := &fakeReporter{}
+	reporter := &pendingReporter{}
 	r := NewReconciler(cs, "leoflow", reporter)
-	r.now = func() time.Time { return pendingNow }
 	r.SetPendingTimeout(pendingTimeout)
+	prime(t, r)
+	r.now = func() time.Time { return pendingNow }
 	if err := r.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	return reporter, cs
+}
+
+// prime runs a sweep a day before pendingNow, before any bound is due, so the
+// reconciler has seen every pod: the unschedulable clock starts no earlier
+// than its first sight (unschedTracker), and a day back leaves the pod's own
+// condition time the later one.
+func prime(t *testing.T, r *Reconciler) {
+	t.Helper()
+	r.now = func() time.Time { return pendingNow.Add(-24 * time.Hour) }
+	if err := r.Reconcile(context.Background()); err != nil {
+		t.Fatalf("priming Reconcile: %v", err)
+	}
 }
 
 func podGone(t *testing.T, cs *fake.Clientset, name string) bool {
@@ -169,21 +182,25 @@ func TestInvalidImageNameStaysTerminal(t *testing.T) {
 }
 
 // pendingReporter is a reporter with the before-start guard: started marks the
-// attempts that moved to running since the snapshot, failing the settle of
-// every attempt when err is set.
+// attempts that moved to running since the snapshot and gone the ones
+// superseded or settled, failing the settle of every attempt when err is set.
 type pendingReporter struct {
 	fakeReporter
 	started map[string]bool
+	gone    map[string]bool
 	err     error
 	infra   map[string]bool
 }
 
-func (p *pendingReporter) FailPendingTask(_ context.Context, id string, try, _ int, reason string, infra bool) (bool, error) {
+func (p *pendingReporter) FailPendingTask(_ context.Context, id string, try, _ int, reason string, infra bool) (PendingSettle, error) {
 	if p.err != nil {
-		return false, p.err
+		return PendingGone, p.err
 	}
 	if p.started[id] {
-		return false, nil
+		return PendingStarted, nil
+	}
+	if p.gone[id] {
+		return PendingGone, nil
 	}
 	if p.infra == nil {
 		p.infra = map[string]bool{}
@@ -194,7 +211,7 @@ func (p *pendingReporter) FailPendingTask(_ context.Context, id string, try, _ i
 		kind = settleInfra
 	}
 	p.put(id, settledOutcome{kind: kind, tryNumber: try, reason: reason})
-	return true, nil
+	return PendingSettled, nil
 }
 
 type decisionLog []string
@@ -204,8 +221,9 @@ func (d *decisionLog) RecordSchedulerDecision(s string) { *d = append(*d, s) }
 func reconcilePending(t *testing.T, cs *fake.Clientset, reporter OutcomeReporter, pendingTimeout time.Duration) *decisionLog {
 	t.Helper()
 	r := NewReconciler(cs, "leoflow", reporter)
-	r.now = func() time.Time { return pendingNow }
 	r.SetPendingTimeout(pendingTimeout)
+	prime(t, r)
+	r.now = func() time.Time { return pendingNow }
 	var d decisionLog
 	r.SetDecisionRecorder(&d)
 	if err := r.Reconcile(context.Background()); err != nil {
@@ -235,12 +253,36 @@ func TestPendingBoundUsesTheBeforeStartGuard(t *testing.T) {
 	}
 }
 
-// TestPendingBoundLeavesAStartedAttempt is the review's race (#1609): the
-// snapshot shows the pod Pending past its bound, but it was placed since and
-// its agent moved the attempt to running. The guarded settle changes nothing,
-// and the pod, changed since the snapshot, fails the delete's
-// resourceVersion precondition and keeps running.
+// TestPendingBoundLeavesAStartedAttempt is the reviews' race (#1609): the
+// snapshot shows the pod Pending past its bound, but its pull succeeded (or
+// it was placed) since and its agent moved the attempt to running, possibly
+// before the kubelet pushed the pod's new status, so the snapshot's
+// resourceVersion may still be current. The guarded settle changes nothing
+// and the pod is not deleted at all.
 func TestPendingBoundLeavesAStartedAttempt(t *testing.T) {
+	cs := fake.NewClientset(pullFailingPod("p1", "ti1", "ImagePullBackOff", pendingNow.Add(-imagePullGrace)))
+	deletes := 0
+	cs.PrependReactor("delete", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
+		deletes++
+		return false, nil, nil
+	})
+	reporter := &pendingReporter{started: map[string]bool{"ti1": true}}
+	d := reconcilePending(t, cs, reporter, 0)
+	if len(reporter.settled) != 0 {
+		t.Errorf("settled = %+v, want none for a started attempt", reporter.settled)
+	}
+	if strings.Join(*d, ",") != "pending_bound_image_pull_started" {
+		t.Errorf("decisions = %v, want the started attempt counted", *d)
+	}
+	if deletes != 0 || podGone(t, cs, "p1") {
+		t.Errorf("a started attempt's pod was deleted (%d delete calls)", deletes)
+	}
+}
+
+// TestPendingBoundCollectsAGoneAttempt: an attempt superseded or settled
+// already leaves its Pending pod a leftover, which the bound still collects,
+// with the snapshot's UID and resourceVersion as preconditions.
+func TestPendingBoundCollectsAGoneAttempt(t *testing.T) {
 	pod := unschedulablePod("p1", "ti1", pendingNow.Add(-16*time.Minute))
 	pod.UID = "uid-1"
 	pod.ResourceVersion = "7"
@@ -249,22 +291,50 @@ func TestPendingBoundLeavesAStartedAttempt(t *testing.T) {
 	cs.PrependReactor("delete", "pods", func(a k8stesting.Action) (bool, runtime.Object, error) {
 		o := a.(k8stesting.DeleteActionImpl).DeleteOptions
 		opts = &o
-		return true, nil, apierrors.NewConflict(schema.GroupResource{Resource: "pods"}, "p1", errors.New("the resourceVersion changed"))
+		return false, nil, nil
 	})
-	reporter := &pendingReporter{started: map[string]bool{"ti1": true}}
+	reporter := &pendingReporter{gone: map[string]bool{"ti1": true}}
 	d := reconcilePending(t, cs, reporter, 15*time.Minute)
-	if len(reporter.settled) != 0 {
-		t.Errorf("settled = %+v, want none for a started attempt", reporter.settled)
-	}
-	if strings.Join(*d, ",") != "pending_bound_unschedulable_skipped" {
-		t.Errorf("decisions = %v, want the skip counted", *d)
+	if strings.Join(*d, ",") != "pending_bound_unschedulable_gone" {
+		t.Errorf("decisions = %v", *d)
 	}
 	if opts == nil || opts.Preconditions == nil || opts.Preconditions.UID == nil || *opts.Preconditions.UID != "uid-1" ||
 		opts.Preconditions.ResourceVersion == nil || *opts.Preconditions.ResourceVersion != "7" {
 		t.Errorf("delete options = %+v, want the snapshot's UID and resourceVersion as preconditions", opts)
 	}
+	if !podGone(t, cs, "p1") {
+		t.Error("a gone attempt's leftover pod must be collected")
+	}
+}
+
+// TestPendingBoundConflictKeepsThePod: a pod that changed since the snapshot
+// fails the delete's precondition and is left to the next sweep.
+func TestPendingBoundConflictKeepsThePod(t *testing.T) {
+	cs := fake.NewClientset(unschedulablePod("p1", "ti1", pendingNow.Add(-16*time.Minute)))
+	cs.PrependReactor("delete", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewConflict(schema.GroupResource{Resource: "pods"}, "p1", errors.New("the resourceVersion changed"))
+	})
+	reconcilePending(t, cs, &pendingReporter{}, 15*time.Minute)
 	if podGone(t, cs, "p1") {
 		t.Error("a pod that changed since the snapshot must not be deleted")
+	}
+}
+
+// TestPendingBoundRefusesAnUnguardedReporter: a reporter without the
+// before-start guard would fail a running attempt, so the bound settles
+// nothing, keeps the pod and says so.
+func TestPendingBoundRefusesAnUnguardedReporter(t *testing.T) {
+	cs := fake.NewClientset(unschedulablePod("p1", "ti1", pendingNow.Add(-16*time.Minute)))
+	reporter := &fakeReporter{}
+	d := reconcilePending(t, cs, reporter, 15*time.Minute)
+	if len(reporter.settled) != 0 {
+		t.Errorf("settled = %+v through an unguarded reporter", reporter.settled)
+	}
+	if strings.Join(*d, ",") != "pending_bound_unguarded" {
+		t.Errorf("decisions = %v", *d)
+	}
+	if podGone(t, cs, "p1") {
+		t.Error("the pod must be kept")
 	}
 }
 
@@ -282,8 +352,8 @@ func TestPendingBoundFailedSettleKeepsThePod(t *testing.T) {
 // TestPendingTimeoutSkipsTheTimeGated: a pod that waited behind scheduling
 // gates (Kueue) keeps the condition's lastTransitionTime when the scheduler
 // turns the reason to Unschedulable, so the gated time used to count against
-// the bound. Seen gated, its clock starts when the reconciler first saw it
-// unschedulable.
+// the bound and fail the task as soon as its gate lifted. The clock starts no
+// earlier than the reconciler's first sight of the pod unschedulable.
 func TestPendingTimeoutSkipsTheTimeGated(t *testing.T) {
 	gated := unschedulablePod("p1", "ti1", pendingNow.Add(-20*time.Minute))
 	gated.UID = "uid-1"
@@ -322,19 +392,38 @@ func TestPendingTimeoutSkipsTheTimeGated(t *testing.T) {
 	}
 }
 
-// TestGateTrackerPrunes: a pod gone from the sweep is forgotten.
-func TestGateTrackerPrunes(t *testing.T) {
-	var g gateTracker
+// TestPendingTimeoutStartsOverOnANewReconciler: a new leader (or a restart)
+// has not seen the pod, so its clock starts at its first sight, delaying the
+// bound rather than firing it for time it cannot account for.
+func TestPendingTimeoutStartsOverOnANewReconciler(t *testing.T) {
+	pod := unschedulablePod("p1", "ti1", pendingNow.Add(-16*time.Minute))
+	pod.UID = "uid-1"
+	cs := fake.NewClientset(pod)
+	reporter := &pendingReporter{}
+	r := NewReconciler(cs, "leoflow", reporter)
+	r.now = func() time.Time { return pendingNow }
+	r.SetPendingTimeout(15 * time.Minute)
+	if err := r.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(reporter.settled) != 0 {
+		t.Errorf("settled = %+v on the reconciler's first sight", reporter.settled)
+	}
+}
+
+// TestUnschedTrackerPrunes: a pod not seen unschedulable during the sweep is
+// forgotten; one seen during it (by the sweep or an event) is kept.
+func TestUnschedTrackerPrunes(t *testing.T) {
+	var u unschedTracker
 	p := unschedulablePod("p1", "ti1", pendingNow)
 	p.UID = "uid-1"
-	p.Spec.SchedulingGates = []corev1.PodSchedulingGate{{Name: "g"}}
-	g.seeGated(p)
-	g.prune([]*corev1.Pod{p})
-	if len(g.ungated) != 1 {
-		t.Fatalf("a swept pod was forgotten")
+	u.since(p, pendingNow, pendingNow)
+	u.prune(pendingNow)
+	if len(u.first) != 1 {
+		t.Fatal("a pod seen during the sweep was forgotten")
 	}
-	g.prune(nil)
-	if len(g.ungated) != 0 {
-		t.Errorf("a pod gone from the sweep is kept: %v", g.ungated)
+	u.prune(pendingNow.Add(time.Second))
+	if len(u.first) != 0 {
+		t.Errorf("a pod not seen since the sweep started is kept: %v", u.first)
 	}
 }
