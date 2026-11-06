@@ -348,6 +348,10 @@ track, such as cgo allocations and page cache.
 
 ## Related
 
+- [Production profile](/operate/production-profile/): the one configuration
+  of this chart the project recommends for production until 1.0.
+- [Redis requirements](/operate/redis/): eviction policy, persistence,
+  topologies and sizing of the Redis the chart points at.
 - [Editions & operating modes](/concepts/editions/): what Cluster gives you and its
   validation status.
 - [Deploy your first Cluster DAG](/operate/first-cluster-dag/): the promotion walkthrough.

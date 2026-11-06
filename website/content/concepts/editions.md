@@ -163,9 +163,11 @@ Cluster is the control plane for a Kubernetes cluster: SSO/OIDC authentication, 
 role-based access control, multi-tenant isolation, the Kubernetes executor at
 scale, first-class observability, and the GitOps deploy flow (DAGs as immutable
 images + `dag.json`, shipped from CI). The Helm chart is **Helm-installable and in
-active validation** — tested against GKE, not yet certified for production. Pin a
-specific tag and read the release notes before upgrading (pre-1.0, breaking changes
-ship between minor versions with a migration note, ADR 0037).
+active validation**, tested against GKE. For production, run the
+[production profile](/operate/production-profile/): it is the one configuration
+the release checks run on until 1.0, and anything outside it is best effort. Pin
+a specific tag and read the release notes before upgrading (pre-1.0, breaking
+changes ship between minor versions with a migration note, ADR 0037).
 
 Install via the **[Helm chart](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md)**
 (chart-test gated, multi-arch images published per release, signed with cosign).

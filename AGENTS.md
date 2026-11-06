@@ -81,6 +81,9 @@ yet: whoever runs `scripts/cut-release.sh` for the rc checks them by hand first.
      ([RELEASING.md](RELEASING.md#how-the-changelog-flows)). The Changelog
      sync workflow runs the same check on `main` every day; a green run
      without a notice is the evidence.
+   - The Supported Versions table of `SECURITY.md`, the support window of
+     `project/versioning.md` and the release base of ADR 0102 still say the
+     same thing (#2303).
    - `leoflow.yaml`, `LEOFLOW_*` variables and `~/.leoflow` still work next to
      `dexaflow.yaml`, `DEXAFLOW_*` and `~/.dexaflow`.
    - No commit in the range carries a `Co-Authored-By` trailer, a session link

@@ -13,9 +13,11 @@ reasoning.
 Releases are tagged `vX.Y.Z`, with release candidates `vX.Y.Z-rc.N` before
 each final and no separate alpha or beta
 ([ADR 0037](/project/adrs/0037-release-version-scheme/)). A new minor
-(`X.Y.0`) is cut from `main`; every later patch of that minor is cut from its
-`release-X.Y` branch
-([ADR 0062](/project/adrs/0062-release-branches-and-open-main/)).
+(`X.Y.0`) and its patches are cut from `main` for as long as everything on
+`main` may ship in the minor's next patch. When `main` takes a change that may
+not, the minor gets a `release-X.Y` branch and its later patches are cut from
+it ([ADR 0102](/project/adrs/0102-patches-from-main-until-main-diverges/),
+which amends [ADR 0062](/project/adrs/0062-release-branches-and-open-main/)).
 
 ### What a patch may contain while the project is 0.x
 
@@ -51,7 +53,7 @@ new ADR.
 
 | Line | What it receives |
 |---|---|
-| The newest minor | Every fix: bugs, regressions and security, as patches of its `release-X.Y` branch. |
+| The newest minor | Every fix: bugs, regressions and security, as patches cut from `main`, or from the minor's `release-X.Y` branch once `main` has diverged from it ([ADR 0102](/project/adrs/0102-patches-from-main-until-main-diverges/)). |
 | The previous minor | Security fixes only, for **8 weeks** after the next minor's `X.Y.0` final ships. |
 | Older minors | Nothing. Upgrade to a supported line. |
 

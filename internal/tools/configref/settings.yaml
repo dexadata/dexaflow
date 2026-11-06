@@ -269,7 +269,7 @@ settings:
   redis.url:
     edition: '**Cluster only**'
     description: >-
-      Redis URL (XCom + locks). Empty selects the embedded Lite edition: XCom on
+      Redis URL (XCom values and the live log tail, see [Redis requirements](/operate/redis/)). Empty selects the embedded Lite edition: XCom on
       Postgres, in-process log tailer ([ADR 0026](/project/adrs/0026-lite-datastore-no-redis/)).
       Cluster sets it via the Helm chart.
   redis.ca_file:

@@ -16,7 +16,10 @@ Columns:
 - **Where**: `CI` (a workflow run on the commit being tagged), `local` (any
   machine with Postgres 16 and Redis 7), `k3d` (a local cluster, `make dev-up`,
   on a host where k3d can start pods: see [Where the k3d items run](#where-the-k3d-items-run)),
-  `cluster` (a real cloud cluster, see [rc-cluster-validation.md](rc-cluster-validation.md)).
+  `cluster` (a real cloud cluster, see [rc-cluster-validation.md](rc-cluster-validation.md)),
+  installed with the
+  [production profile](https://dexaflow.dexadata.ai/operate/production-profile/)
+  unless the item names another configuration (#2297).
 
 Numbers are compared with the previous release on the same machine. Absolute
 targets come from [test/load/BASELINE.md](../load/BASELINE.md); when a target and

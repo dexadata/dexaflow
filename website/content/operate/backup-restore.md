@@ -169,27 +169,75 @@ dexaflow lite
 ## Cluster (Helm)
 
 The Helm-installed Cluster control plane does **not** ship its own
-backup/restore commands. Cluster operators own the Postgres backup story
-via standard tooling:
+backup and restore commands: its state lives in services you run or rent, and
+each is backed up with that service's own tooling. What matters is knowing
+every piece of state, what losing each one costs, and which targets the
+[production profile](/operate/production-profile/) sets for them.
 
-- Managed Postgres providers (RDS, Cloud SQL, etc.) offer point-in-time
-  recovery and automated snapshots.
-- Self-hosted Postgres: use `pg_dump` / `pg_dumpall` on a cron + an offsite
-  archive (S3, GCS).
-- Persistent volumes: capture via Velero or your cluster's volume snapshot
-  controller.
+### What state exists
 
-After restoring a backup into a running installation, restart the control
-plane pods (`kubectl rollout restart deployment`). Each pod caches tenant ids
-for its lifetime, and a restored database whose tenants carry different ids
-would otherwise be queried with the old ones.
+| State | Holds | Losing it costs |
+|---|---|---|
+| **Postgres** | Everything durable: DAGs and versions, runs, task instances, users, roles, tokens, connections and variables (encrypted), pools, the audit log, the XCom index, the installation id | The installation. Without a backup it is a fresh install. |
+| **Redis** | XCom values (7 day TTL) and the live log tail ([Redis requirements](/operate/redis/)) | XCom values: runs in flight whose next task pulls one fail; finished runs show no XCom. Nothing durable. |
+| **Log bucket** | Task logs written by the object sink | The logs of past attempts. Runs and their states are unaffected. |
+| **`secretKey`** | The AES-256 key that encrypts connection passwords and extras at rest ([ADR 0019](/project/adrs/0019-secret-encryption-at-rest/)) | Every stored connection secret: a restored database stays unreadable without the key it was written with. Back it up with the database. |
+| **`auth.jwtSecret`** | The HMAC key that signs API and agent tokens | Every issued token. A new secret signs everyone out, and the agent tokens of running task pods stop being accepted; no stored data is lost. |
+| **Agent CA** (`agentTLS`) | The CA task pods use to verify the control plane | A new CA (auto-generated or yours) makes running task pods distrust the control plane until they finish; new pods get the new bundle. |
+
+The installation id is part of Postgres and also lives in the
+`<fullname>-installation` ConfigMap; a restore of the same installation brings
+the matching id back ([database lost, restored or repointed](/operate/database-lost-restored-repointed/)).
+
+### Recommended targets
+
+| State | RPO | RTO | Provider settings that meet them |
+|---|---|---|---|
+| Postgres | 5 minutes | 1 hour | Point-in-time recovery with a retention of at least 7 days, automated daily snapshots, a standby in another zone. RDS, Cloud SQL and Azure Database archive WAL continuously; the RPO is the archive lag. |
+| Redis | about 1 second | 15 minutes | AOF with `appendfsync everysec`, or the provider's replication with persistence and automatic failover. XCom is short lived, so a daily snapshot is enough to recover from a lost instance. |
+| Log bucket | 0 for written objects | none | Bucket versioning on, a lifecycle rule that expires old versions, and the bucket in a region (or dual region) that outlives the cluster. |
+| Secrets | 0 | 15 minutes | Kept outside the cluster in a secret manager and referenced by name (`secretKeyExistingSecret`, `auth.existingSecret`), never only in a `values.yaml` on one machine. |
+
+The restore drill below measures the Postgres RTO: run it at least once per
+release you deploy and keep the time it took next to the target.
+
+### Restore
+
+**Postgres, from a snapshot or a point in time.** Restore into a new instance
+(the provider's restore never overwrites the running one), then point the
+release at it with `helm upgrade --reuse-values --set database.url=...`. The
+restored database carries the installation id of this installation, so the
+control plane accepts it. Restart the control plane pods afterwards
+(`kubectl rollout restart deployment`): each pod caches tenant ids for its
+lifetime, and a restored database whose tenants carry different ids would
+otherwise be queried with the old ones. A restored database from another
+installation, or one older than 0.5.6, is refused until you accept it, as
+[database lost, restored or repointed](/operate/database-lost-restored-repointed/)
+shows.
+
+**Postgres restored to a point older than Redis.** Runs and task instances go
+back to that point; XCom values written after it stay in Redis under runs the
+database no longer knows and expire with their TTL. Attempts that were running
+at the restore point come back as running with no pod behind them, and the
+scheduler fails or retries them as lost tasks after the settling grace. Nothing
+needs to be done by hand beyond the restart above.
+
+**Redis restored to a point older than Postgres, or flushed.** The database is
+intact. XCom values pushed after the Redis snapshot are missing: a run in
+flight whose next task pulls one fails that task. Clear the upstream task of
+each failed run so it pushes again, or rerun the run.
+
+**The log bucket.** Restore the objects (or a previous version of them) under
+the same keys; the UI reads them again with no restart. Missing logs only show
+as missing in the UI.
+
+**A lost `secretKey`.** There is no recovery for the secrets it encrypted. Set
+a new key, then set every connection password and extra again
+(`dexaflow connections set`).
 
 What the control plane reports after a restore, a failover or a changed
 `database.url`, and the command that recovers each case, is on
 [database lost, restored or repointed](/operate/database-lost-restored-repointed/).
-
-The PR that hardens the Helm chart (#96) will add a `BACKUP.md` to the
-chart README pointing at the upstream guidance.
 
 ## Regular restore drills
 
