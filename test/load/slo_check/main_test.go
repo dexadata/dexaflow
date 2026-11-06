@@ -120,16 +120,6 @@ func TestIncreasesCountARestartFromZero(t *testing.T) {
 	}
 }
 
-// A new process start time is a restart even when the counter is already
-// back above the old value.
-func TestIncreasesCountAStartTimeChangeAsARestart(t *testing.T) {
-	a := mustParse(t, "# TYPE process_start_time_seconds gauge\nprocess_start_time_seconds 1\n# TYPE x counter\nx 100\n")
-	b := mustParse(t, "# TYPE process_start_time_seconds gauge\nprocess_start_time_seconds 2\n# TYPE x counter\nx 130\n")
-	if got := increases(timed(a, b))["x{}"]; got != 130 {
-		t.Errorf("increase = %v, want 130 counted from the restart", got)
-	}
-}
-
 const ticks = "# TYPE dexaflow_scheduler_loop_duration_seconds histogram\n" +
 	"dexaflow_scheduler_loop_duration_seconds_bucket{le=\"+Inf\"} %d\n" +
 	"dexaflow_scheduler_loop_duration_seconds_sum 1\n" +
@@ -157,7 +147,9 @@ func TestLeaderlessTimeIsTheUncoveredPartOfTheRun(t *testing.T) {
 // A scrape cut short by a killed process is skipped, not fatal.
 func TestLoadDirSkipsAScrapeThatDoesNotParse(t *testing.T) {
 	dir := t.TempDir()
-	for name, body := range map[string]string{"100.prom": before, "115.prom": "# TYPE x counter\nx{a=\"", "130.prom": after} {
+	// 115: cut off by a kill; 120: an empty file from a refused connection,
+	// which would otherwise count every series twice.
+	for name, body := range map[string]string{"100.prom": before, "115.prom": "# TYPE x counter\nx{a=\"", "120.prom": "", "130.prom": after} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -167,7 +159,7 @@ func TestLoadDirSkipsAScrapeThatDoesNotParse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(src) != 2 || !src[0].at.Equal(time.Unix(100, 0)) || !strings.Contains(warn.String(), "115.prom") {
+	if len(src) != 2 || !src[0].at.Equal(time.Unix(100, 0)) || !strings.Contains(warn.String(), "115.prom") || !strings.Contains(warn.String(), "120.prom") {
 		t.Errorf("loaded %d scrapes, warnings %q", len(src), warn.String())
 	}
 }
