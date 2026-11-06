@@ -57,7 +57,9 @@ type publishQueue struct {
 
 func newPublishQueue(pub LogPublisher, ref logs.Ref) *publishQueue {
 	q := &publishQueue{pub: pub, ref: ref, lines: make(chan string, tailPublishQueueDepth), done: make(chan struct{})}
-	q.batch, _ = pub.(LogBatchPublisher)
+	if bp, ok := pub.(LogBatchPublisher); ok {
+		q.batch = bp
+	}
 	q.room = sync.NewCond(&q.mu)
 	return q
 }
