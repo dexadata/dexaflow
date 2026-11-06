@@ -60,9 +60,10 @@ func redisOptions(url, caPath string) (*redis.Options, error) {
 // redisUniversalOptions builds the client options from the configuration: a
 // single node from the URL, a Sentinel-managed master from redis.sentinel, or
 // a Cluster from redis.cluster. With Sentinel or Cluster the URL, when set,
-// supplies the credentials, the database and TLS; its host is not used. The
-// explicit timeouts and pool size override the URL's and the client's
-// defaults when positive.
+// supplies the credentials, the database and TLS; its host is not used, and
+// TLS verifies each node against the address it dials (the master a sentinel
+// names, a cluster node), never the URL's host. The explicit timeouts and
+// pool size override the URL's and the client's defaults when positive.
 func redisUniversalOptions(cfg config.RedisSection) (*redis.UniversalOptions, error) {
 	base := &redis.Options{}
 	if cfg.URL != "" {
@@ -76,6 +77,14 @@ func redisUniversalOptions(cfg config.RedisSection) (*redis.UniversalOptions, er
 			return nil, err
 		}
 		base.TLSConfig = tlsOpts.TLSConfig
+	}
+	topology := cfg.Sentinel.Master != "" || len(cfg.Cluster.Addrs) > 0
+	if topology && base.TLSConfig != nil {
+		// ParseURL pins ServerName to the URL's host, and go-redis hands one
+		// TLS config to every sentinel, master and cluster node. Empty, the
+		// TLS dial verifies the host of the address each connection dials.
+		base.TLSConfig = base.TLSConfig.Clone()
+		base.TLSConfig.ServerName = ""
 	}
 	u := &redis.UniversalOptions{
 		Addrs:        []string{base.Addr},

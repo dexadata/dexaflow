@@ -354,7 +354,8 @@ redis:
   caConfigMap: ""
   # Sentinel or Cluster instead of one endpoint (#2358). With either, `url` or
   # `existingSecret` is optional and only gives the credentials, the database
-  # and TLS; its host is not used.
+  # and TLS; its host is not dialed, and TLS checks each node against the
+  # address dialed. A master with a password needs it.
   sentinel:
     # -- Name of the master the sentinels monitor. Set with `addrs` to reach Redis through Sentinel, which follows a failover.
     master: ""

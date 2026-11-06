@@ -315,14 +315,30 @@ func (r RedisSection) Validate() error {
 		return fmt.Errorf("redis.sentinel.master and redis.cluster.addrs are both set; a Redis is reached through Sentinel or as a Cluster, not both")
 	case r.Sentinel.Master != "" && len(r.Sentinel.Addrs) == 0:
 		return fmt.Errorf("redis.sentinel.master is set without redis.sentinel.addrs; list the sentinels' host:port addresses")
-	case r.Sentinel.Master == "" && len(r.Sentinel.Addrs) > 0:
-		return fmt.Errorf("redis.sentinel.addrs is set without redis.sentinel.master; name the master the sentinels monitor")
+	case r.Sentinel.Master == "" && (len(r.Sentinel.Addrs) > 0 || r.Sentinel.Password != ""):
+		return fmt.Errorf("redis.sentinel.addrs or redis.sentinel.password is set without redis.sentinel.master; name the master the sentinels monitor")
 	case r.DialTimeout < 0 || r.ReadTimeout < 0 || r.WriteTimeout < 0:
 		return fmt.Errorf("redis.dial_timeout, redis.read_timeout and redis.write_timeout must not be negative; 0 keeps the client's default")
 	case r.PoolSize < 0:
 		return fmt.Errorf("redis.pool_size must not be negative (got %d); 0 keeps the client's default", r.PoolSize)
+	case len(r.Cluster.Addrs) > 0 && redisURLDatabase(r.URL) != "":
+		return fmt.Errorf("redis.url names database %s, and a Redis Cluster has database 0 only; drop the /%s from the URL", redisURLDatabase(r.URL), redisURLDatabase(r.URL))
 	}
 	return nil
+}
+
+// redisURLDatabase is the database a redis URL's path names, "" for none or
+// database 0.
+func redisURLDatabase(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "unix" {
+		return ""
+	}
+	db := strings.Trim(u.Path, "/")
+	if db == "0" {
+		return ""
+	}
+	return db
 }
 
 // ObservabilitySection configures logging, metrics, and tracing.
