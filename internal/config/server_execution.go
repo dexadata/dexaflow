@@ -59,6 +59,12 @@ type ExecutorSection struct {
 	// finished pods stay for the grace period, so they can be inspected with
 	// kubectl.
 	CollectSettledRunPods bool `mapstructure:"collect_settled_run_pods"`
+	// PendingTimeoutSeconds, when positive, bounds how long a task pod may stay
+	// unschedulable (PodScheduled=False, reason Unschedulable): past it the pod
+	// is deleted and the task failed with a reason that names scheduling, so a
+	// node_selector no node matches no longer holds a pool slot forever
+	// (#1609). 0 (the default) leaves such a pod waiting for a node.
+	PendingTimeoutSeconds int `mapstructure:"pending_timeout_seconds"`
 	// KubeClient sets the client-side rate limits of the control plane's
 	// Kubernetes clients.
 	KubeClient KubeClientSection `mapstructure:"kube_client"`
@@ -67,6 +73,14 @@ type ExecutorSection struct {
 	// where the task leaves cpu or memory out, and a task that declares more
 	// than that is refused at registration and at dispatch.
 	Unit ExecutorUnitSection `mapstructure:"unit"`
+}
+
+// PendingTimeout is PendingTimeoutSeconds as a duration; zero when unset.
+func (e ExecutorSection) PendingTimeout() time.Duration {
+	if e.PendingTimeoutSeconds <= 0 {
+		return 0
+	}
+	return time.Duration(e.PendingTimeoutSeconds) * time.Second
 }
 
 // ExecutorUnitSection is executor.unit: the CPU and memory of one pool slot,

@@ -284,6 +284,19 @@ type Querier interface {
 	// comes from its leoflow.io/attempt-epoch label, absent meaning 0. The
 	// active-state guard prevents clobbering a terminal row.
 	FailTaskInstanceIfActive(ctx context.Context, arg FailTaskInstanceIfActiveParams) error
+	// Settle a task instance failed from a bound on its Pending pod (#1609): the
+	// pod stayed unschedulable past executor.pending_timeout_seconds, or its image
+	// pull kept failing. Guarded like FailTaskInstanceIfActive on id, try_number
+	// and attempt_epoch, but only before the attempt started: the reconciler
+	// decides from a cache snapshot, and a pod placed (or whose pull succeeded)
+	// since may already have registered its agent and moved the row to running,
+	// which a bound must never fail. With infra set the attempt goes to the infra
+	// re-place rail, confirmed at once like FailTaskInstanceInfraIfActive. It
+	// returns whether the row changed and the attempt's state as the statement
+	// found it (the CTE's snapshot, before the update; empty when the attempt is
+	// superseded), so the caller leaves a started attempt's pod alone and still
+	// collects a superseded or settled one.
+	FailTaskInstanceIfNotStarted(ctx context.Context, arg FailTaskInstanceIfNotStartedParams) (FailTaskInstanceIfNotStartedRow, error)
 	// Settle a task instance failed for an infrastructure reason from the pod
 	// reconciler (ADR 0051, #1595): the cluster stopped the pod (an eviction, a
 	// graceful node shutdown, a preemption), so the attempt goes to the infra

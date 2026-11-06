@@ -42,6 +42,9 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content: {name: GOMEMLIMIT, value: 409MiB}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_EXECUTOR_PENDING_TIMEOUT_SECONDS, value: "900"}
       # The dedicated scheduler pool waits for #1624.
       - notContains:
           path: spec.template.spec.containers[0].env
@@ -54,8 +57,13 @@ tests:
       config.scheduler.dispatch.bufferSize: 0
       executor.kubeClient.qps: 80
       executor.kubeClient.maintenanceQps: 0
+      executor.pendingTimeoutSeconds: 0
       goMemLimit.enabled: false
     asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_EXECUTOR_PENDING_TIMEOUT_SECONDS}
+          any: true
       - notContains:
           path: spec.template.spec.containers[0].env
           content: {name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE}
@@ -90,6 +98,10 @@ tests:
       - equal:
           path: metadata.annotations["dexaflow.dexadata.ai/profile"]
           value: legacy
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_EXECUTOR_PENDING_TIMEOUT_SECONDS}
+          any: true
       - notContains:
           path: spec.template.spec.containers[0].env
           content: {name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE}
@@ -224,3 +236,13 @@ tests:
       - equal:
           path: metadata.annotations["dexaflow.dexadata.ai/profile"]
           value: cluster
+
+  - it: an explicit pendingTimeoutSeconds renders under the legacy profile too
+    template: deployment.yaml
+    set:
+      profile: legacy
+      executor.pendingTimeoutSeconds: 600
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_EXECUTOR_PENDING_TIMEOUT_SECONDS, value: "600"}

@@ -354,6 +354,42 @@ func (s *ExecutionStore) FailTask(ctx context.Context, taskInstanceID string, tr
 	})
 }
 
+// FailPendingTask fails an attempt that has not started yet, from a bound on
+// its Pending pod (#1609), guarded like FailTask but on the states before
+// running, and as infra when infra is set. It reports whether it settled the
+// attempt, found it started (running since the reconciler's snapshot), or
+// found it gone (superseded or settled already). It implements
+// executor.PendingOutcomeReporter.
+func (s *ExecutionStore) FailPendingTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, reason string, infra bool) (executor.PendingSettle, error) {
+	tid, err := parseUUID(taskInstanceID)
+	if err != nil {
+		return executor.PendingGone, err
+	}
+	msg := reason
+	row, err := s.q.FailTaskInstanceIfNotStarted(ctx, queries.FailTaskInstanceIfNotStartedParams{
+		Infra:        infra,
+		ErrorMessage: &msg,
+		ID:           tid,
+		TryNumber:    toInt32(tryNumber),
+		AttemptEpoch: toInt32(attemptEpoch),
+	})
+	switch {
+	case err != nil:
+		return executor.PendingGone, err
+	case row.Applied > 0:
+		return executor.PendingSettled, nil
+	case row.AttemptState == "" || terminalTaskState(row.AttemptState):
+		return executor.PendingGone, nil
+	default:
+		// running, or a state the guard would have failed (none, scheduled,
+		// queued) although the update matched nothing: the statement read the
+		// row before a concurrent start committed, and the update re-checked
+		// it after (READ COMMITTED). Either way the attempt may be live, so
+		// its pod is left for the next sweep to judge afresh.
+		return executor.PendingStarted, nil
+	}
+}
+
 // FailTaskInfra marks a task instance failed for an infrastructure reason by
 // its ID (last_failure_kind 'infra', confirmed), guarded like FailTask, so the
 // planner re-places it on the infra budget instead of spending a task retry.
@@ -663,4 +699,14 @@ func taskSDKRunType(trigger queries.DagRunTrigger) string {
 		return "asset_triggered"
 	}
 	return string(trigger)
+}
+
+// terminalTaskState reports whether a task instance state is final for its
+// attempt.
+func terminalTaskState(state string) bool {
+	switch state {
+	case "success", "failed", "skipped", "upstream_failed", "removed":
+		return true
+	}
+	return false
 }

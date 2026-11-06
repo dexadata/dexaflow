@@ -1,6 +1,6 @@
 # Default values for the Dexaflow control plane chart.
 
-# -- Install profile (#2323): `cluster` turns on the defaults the scheduler design assumes (buffered dispatch with 512 slots and 16 workers, Kubernetes client QPS 50 / burst 100 with a separate maintenance client at 20 / 40, and `GOMEMLIMIT` at `goMemLimit.percent` of the memory limit); `legacy` keeps the defaults of charts before 0.5.10. Empty (default): a fresh install gets `cluster`, and `helm upgrade` keeps the profile of the live release, so a release installed before profiles stays `legacy`. `helm template` and GitOps renderers cannot see the live release and get `cluster`: set `legacy` there to keep an older release's values. Each value the profile governs wins over it once set. The dedicated scheduler database pool (`database.schedulerMaxConns`) is not part of the profile until #1624 lands.
+# -- Install profile (#2323): `cluster` turns on the defaults the scheduler design assumes (buffered dispatch with 512 slots and 16 workers, Kubernetes client QPS 50 / burst 100 with a separate maintenance client at 20 / 40, `GOMEMLIMIT` at `goMemLimit.percent` of the memory limit, and a 15 minute `executor.pendingTimeoutSeconds`); `legacy` keeps the defaults of charts before 0.5.10. Empty (default): a fresh install gets `cluster`, and `helm upgrade` keeps the profile of the live release, so a release installed before profiles stays `legacy`. `helm template` and GitOps renderers cannot see the live release and get `cluster`: set `legacy` there to keep an older release's values. Each value the profile governs wins over it once set. The dedicated scheduler database pool (`database.schedulerMaxConns`) is not part of the profile until #1624 lands.
 profile: ""
 
 image:
@@ -197,6 +197,9 @@ executor:
   # grants the executor Role `deletecollection` on pods; without that verb the
   # server deletes the pods one by one.
   collectSettledRunPods: false
+  # -- Seconds a task pod may stay unschedulable (a `node_selector` no node matches, a missing toleration, a request larger than any node, a volume that never binds) before the task is failed with `unschedulable:` and the pod deleted (#1609). Counted from when the pod became unschedulable; leave room for a cluster autoscaler. Null (default): 900 under the `cluster` profile, off under `legacy`. 0 turns it off: such a pod waits for a node, holding its pool slot.
+  # @default -- `null` (900 under the `cluster` profile)
+  pendingTimeoutSeconds: null
 
 # -- Ports the leoflow-server listens on. http: API + UI, metrics: Prometheus
 # /metrics, grpc: agent ↔ control plane channel (task pods dial back here).

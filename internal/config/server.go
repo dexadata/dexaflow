@@ -407,6 +407,9 @@ func (c *ServerConfig) validateNonNegative() error {
 	if c.Scheduler.Dispatch.TickBudget < 0 {
 		return fmt.Errorf("scheduler.dispatch.tick_budget must not be negative (got %s); 0 disables it", c.Scheduler.Dispatch.TickBudget)
 	}
+	if c.Executor.PendingTimeoutSeconds < 0 {
+		return fmt.Errorf("executor.pending_timeout_seconds must not be negative (got %d); 0 leaves an unschedulable task pod waiting", c.Executor.PendingTimeoutSeconds)
+	}
 	if c.Scheduler.Dispatch.MaxPerTenantPerTick < 0 {
 		return fmt.Errorf("scheduler.dispatch.max_per_tenant_per_tick must not be negative (got %d); 0 means no cap", c.Scheduler.Dispatch.MaxPerTenantPerTick)
 	}

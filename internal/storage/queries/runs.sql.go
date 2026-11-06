@@ -841,6 +841,63 @@ func (q *Queries) FailTaskInstanceIfActive(ctx context.Context, arg FailTaskInst
 	return err
 }
 
+const failTaskInstanceIfNotStarted = `-- name: FailTaskInstanceIfNotStarted :one
+WITH upd AS (
+  UPDATE task_instances
+  SET state = 'failed',
+      ended_at = now(),
+      last_failure_kind = CASE WHEN $4::bool THEN 'infra' ELSE last_failure_kind END,
+      infra_confirmed_at = CASE WHEN $4::bool THEN now() ELSE infra_confirmed_at END,
+      error_message = $5
+  WHERE id = $1 AND try_number = $2
+    AND attempt_epoch = $3
+    AND state IN ('scheduled', 'queued')
+  RETURNING 1
+)
+SELECT (SELECT count(*) FROM upd)::int AS applied,
+       COALESCE((SELECT ti.state::text FROM task_instances ti
+                 WHERE ti.id = $1 AND ti.try_number = $2
+                   AND ti.attempt_epoch = $3), '')::text AS attempt_state
+`
+
+type FailTaskInstanceIfNotStartedParams struct {
+	ID           pgtype.UUID `json:"id"`
+	TryNumber    int32       `json:"try_number"`
+	AttemptEpoch int32       `json:"attempt_epoch"`
+	Infra        bool        `json:"infra"`
+	ErrorMessage *string     `json:"error_message"`
+}
+
+type FailTaskInstanceIfNotStartedRow struct {
+	Applied      int32  `json:"applied"`
+	AttemptState string `json:"attempt_state"`
+}
+
+// Settle a task instance failed from a bound on its Pending pod (#1609): the
+// pod stayed unschedulable past executor.pending_timeout_seconds, or its image
+// pull kept failing. Guarded like FailTaskInstanceIfActive on id, try_number
+// and attempt_epoch, but only before the attempt started: the reconciler
+// decides from a cache snapshot, and a pod placed (or whose pull succeeded)
+// since may already have registered its agent and moved the row to running,
+// which a bound must never fail. With infra set the attempt goes to the infra
+// re-place rail, confirmed at once like FailTaskInstanceInfraIfActive. It
+// returns whether the row changed and the attempt's state as the statement
+// found it (the CTE's snapshot, before the update; empty when the attempt is
+// superseded), so the caller leaves a started attempt's pod alone and still
+// collects a superseded or settled one.
+func (q *Queries) FailTaskInstanceIfNotStarted(ctx context.Context, arg FailTaskInstanceIfNotStartedParams) (FailTaskInstanceIfNotStartedRow, error) {
+	row := q.db.QueryRow(ctx, failTaskInstanceIfNotStarted,
+		arg.ID,
+		arg.TryNumber,
+		arg.AttemptEpoch,
+		arg.Infra,
+		arg.ErrorMessage,
+	)
+	var i FailTaskInstanceIfNotStartedRow
+	err := row.Scan(&i.Applied, &i.AttemptState)
+	return i, err
+}
+
 const failTaskInstanceInfraIfActive = `-- name: FailTaskInstanceInfraIfActive :exec
 UPDATE task_instances
 SET state = 'failed',
