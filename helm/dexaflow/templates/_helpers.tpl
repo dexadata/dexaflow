@@ -868,7 +868,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{/*
 Install profile (#2323). "cluster" turns on the defaults the scheduler design
 assumes (ADR 0031): buffered dispatch, raised Kubernetes client limits with a
-separate maintenance client, and GOMEMLIMIT. "legacy" keeps the defaults of the
+separate maintenance client, GOMEMLIMIT, and the live log tail published on
+demand (#2356). "legacy" keeps the defaults of the
 charts before it. Resolution order:
 
   1. profile, when set.

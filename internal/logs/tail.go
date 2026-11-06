@@ -40,6 +40,25 @@ func (t *RedisTailer) Publish(ctx context.Context, ref Ref, line string) error {
 	return nil
 }
 
+// PublishBatch sends several log lines to the task's tail channel in one round
+// trip, in order: a pipeline of PUBLISH commands, which Redis runs in the order
+// sent. Used by the agent-facing writer to publish what piled up while the
+// previous round trip was in flight (#2356).
+func (t *RedisTailer) PublishBatch(ctx context.Context, ref Ref, lines []string) error {
+	if len(lines) == 0 {
+		return nil
+	}
+	ch := tailChannel(ref)
+	pipe := t.client.Pipeline()
+	for _, line := range lines {
+		pipe.Publish(ctx, ch, line)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("publishing %d log tail lines: %w", len(lines), err)
+	}
+	return nil
+}
+
 // HasSubscribers reports whether any client, on any replica, may be listening
 // on the attempt's tail channel, so the writer can skip publishing lines nobody
 // would receive. NUMSUB counts the channel's own subscribers; NUMPAT counts

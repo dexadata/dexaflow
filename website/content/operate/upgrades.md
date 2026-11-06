@@ -1311,6 +1311,26 @@ of the profile yet: with it on and the API pool saturated, agent heartbeats can
 stall while the reapers keep running on their own pool
 ([#1624](https://github.com/dexadata/dexaflow/issues/1624)).
 
+### Upgrading to 0.5.12: the live log tail is published on demand
+
+Under the `cluster` profile, `logs.tail.publish` now renders `on_demand` when
+it is unset ([#2356](https://github.com/dexadata/dexaflow/issues/2356)): a
+received log line is published for the live tail only while someone follows
+the attempt, instead of one Redis `PUBLISH` per line whether anyone follows or
+not. A follower still receives every line after it subscribed: the lines held
+since the last check are replayed when it is noticed, at most a second later.
+`legacy` keeps `always`, as before.
+
+| Your install | What the upgrade does |
+|---|---|
+| A release installed with 0.5.10 or later (`cluster`) | Switches to `on_demand`. Safe during the rolling upgrade: every version since 0.5.1 skips the replayed lines it already served. |
+| A release from before 0.5.10 (`legacy`) | Nothing changes. |
+| You want to keep publishing every line | Set `logs.tail.publish: always`. |
+
+Every log stream also publishes from its own queue now, in batches of up to
+256 lines per Redis round trip, so a follower costs a chatty task far less
+receive rate than before, under either mode.
+
 ### Upgrading to 0.6.0: the UI refreshes every 5 seconds
 
 The bundled UI now polls DAG, run and task-instance state every 5 seconds
