@@ -45,12 +45,14 @@ metrics:
 | [DexaflowAPIErrorRatioHigh](api-error-ratio-high/) | share of 5xx answers over the threshold for 10 minutes | `apiErrorRatio: 0.01` |
 | [DexaflowDatabasePoolCanceledAcquires](database-pool-canceled-acquires/) | canceled connection acquires on a pool every 5 minutes for 10 minutes | |
 | [DexaflowRedisCommandFailures](redis-command-failures/) | Redis command failures (client cancellations excluded) every 5 minutes for 10 minutes | |
+| [DexaflowRedisEvictingKeys](redis-evicting-keys/) | Redis `evicted_keys` grew in the last 10 minutes | |
 | [DexaflowResilienceBackstopDisabled](resilience-backstop-disabled/) | a resilience backstop is disabled, for 5 minutes | |
 
 ## Ticket
 
 | Alert | Fires when | Default |
 |---|---|---|
+| [DexaflowRedisEvictionPolicyUnsafe](redis-eviction-policy-unsafe/) | Redis runs a `maxmemory-policy` other than `noeviction`, for 15 minutes | |
 | [DexaflowSchedulerStepDowns](scheduler-step-downs/) | leader step-downs in one hour over the threshold, shutdowns excluded | `stepDownsPerHour: 3` |
 | [DexaflowTasksLost](tasks-lost/) | attempts failed as `agent_lost`, `pod_lost`, `dispatch_lost` or `warm_worker_lost` in one hour over the threshold | `lostTasksPerHour: 10` |
 | [DexaflowTLSReloadFailed](tls-reload-failed/) | a rotated certificate failed to load in the last 15 minutes | |

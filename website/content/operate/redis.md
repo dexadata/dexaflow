@@ -25,7 +25,7 @@ run: it fails the XCom calls made during the outage.
 | Setting | Value | Why |
 |---|---|---|
 | Version | Redis 7 (tested in CI); 6.0 or later | The [datastore compatibility matrix](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md#datastore-compatibility) of the chart. |
-| `maxmemory-policy` | `noeviction` | Every XCom key carries a TTL, so the `volatile-*` policies, the default of several managed services, evict exactly the XCom values of running DAGs first when memory fills, and the downstream task fails with "not found" (#2354). With `noeviction` a full Redis refuses the write and the pushing task fails with the reason instead. |
+| `maxmemory-policy` | `noeviction` | Every XCom key carries a TTL, so the `volatile-*` policies, the default of several managed services, evict exactly the XCom values of running DAGs first when memory fills, and the downstream task fails with "not found" (#2354). With `noeviction` a full Redis refuses the write and the pushing task fails with the reason instead. Dexaflow reads the policy from `INFO memory` at boot and every 30 seconds: anything else logs a warning, and `redis.require_noeviction` (Helm `redis.requireNoEviction`) refuses to boot instead. |
 | Persistence | AOF (`appendfsync everysec`) or the provider's replication with persistence | A restart without persistence is a flush (see the table above). AOF loses at most about a second of writes; RDB snapshots lose everything since the last snapshot, which can be minutes of XCom. |
 | TLS | `rediss://` URL; `redis.caConfigMap` when the provider signs with its own CA | Memorystore, ElastiCache in-transit encryption and Azure Cache sign with a provider CA ([verified TLS](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md#verified-tls-to-managed-redis-312)). |
 | Credentials | in `redis.existingSecret` (key `redisUrl`) | The URL carries the password. |
@@ -76,9 +76,14 @@ and the recovery step are recorded by the Redis failure injection runs
 Every role exports `dexaflow_redis_command_failures_total`,
 `dexaflow_redis_dial_failures_total`, `dexaflow_redis_dial_duration_seconds`
 and the pool gauges (`dexaflow_redis_pool_*`), listed in the
-[metrics reference](/reference/metrics/). Alert on a rising failure count, and
-on the provider's memory, eviction and failover metrics as well:
-`evicted_keys` above zero means the policy is not `noeviction`.
+[metrics reference](/reference/metrics/). The control plane also reads `INFO`
+every 30 seconds into `dexaflow_redis_eviction_policy_safe` (1 for
+`noeviction`), `dexaflow_redis_used_memory_bytes` and
+`dexaflow_redis_evicted_keys`. The chart's alerts page on evictions
+([DexaflowRedisEvictingKeys](/operate/runbooks/redis-evicting-keys/)) and open
+a ticket for an unsafe policy
+([DexaflowRedisEvictionPolicyUnsafe](/operate/runbooks/redis-eviction-policy-unsafe/)).
+Watch the provider's failover metrics as well.
 
 ## Related
 

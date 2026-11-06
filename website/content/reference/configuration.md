@@ -542,6 +542,7 @@ recovery command a pod waiting for its schema names; see
 |---|---|---|---|---|---|
 | `DEXAFLOW_REDIS_URL` | `redis.url` | string | _(empty)_ | **Cluster only** | Redis URL (XCom values and the live log tail, see [Redis requirements](/operate/redis/)). Empty selects the embedded Lite edition: XCom on Postgres, in-process log tailer ([ADR 0026](/project/adrs/0026-lite-datastore-no-redis/)). Cluster sets it via the Helm chart. |
 | `DEXAFLOW_REDIS_CA_FILE` | `redis.ca_file` | string | _(empty)_ | Cluster | Absolute path to a PEM CA bundle trusted when negotiating TLS to a `rediss://` URL (#312). Needed for managed Redis (Memorystore, ElastiCache in-transit encryption, Azure Cache) whose server cert is signed by a provider/per-instance CA not in the container's system roots. Empty falls back to system roots only. The Helm chart sets it when `redis.caConfigMap` is configured. |
+| `DEXAFLOW_REDIS_REQUIRE_NOEVICTION` | `redis.require_noeviction` | bool | `false` | Cluster | Refuse to boot unless Redis runs `maxmemory-policy noeviction`, or when the policy cannot be read from `INFO memory` (#2354). XCom values carry a TTL, so a `volatile-*` policy (the default of several managed services) evicts them first under memory pressure and the downstream task fails with "not found". Off (the default), an unsafe policy logs a warning at boot and sets `dexaflow_redis_eviction_policy_safe` to 0. Helm: `redis.requireNoEviction`. |
 
 <!-- END GENERATED configref -->
 
