@@ -66,16 +66,27 @@ func ParseForcePolicy(doc []byte) (*ForcePolicy, error) {
 	if d.Force == nil {
 		return nil, nil //nolint:nilnil // a document with no rule is no policy
 	}
-	f := d.Force
-	var errs []error
-	if f.RuntimeClassName != "" {
-		if msgs := validation.IsDNS1123Subdomain(f.RuntimeClassName); len(msgs) > 0 {
-			errs = append(errs, fmt.Errorf("force.runtime_class_name %q: %s", f.RuntimeClassName, strings.Join(msgs, "; ")))
-		}
+	p, errs := buildForcePolicy(d.Force)
+	if len(errs) > 0 {
+		sortErrors(errs)
+		return nil, fmt.Errorf("executor.policy: %w", errors.Join(errs...))
 	}
-	if f.ServiceAccount != "" {
-		if msgs := validation.IsDNS1123Subdomain(f.ServiceAccount); len(msgs) > 0 {
-			errs = append(errs, fmt.Errorf("force.service_account %q: %s", f.ServiceAccount, strings.Join(msgs, "; ")))
+	if p.runtimeClassName == "" && p.serviceAccount == "" && len(p.nodeSelector) == 0 && len(p.tolerations) == 0 {
+		return nil, nil //nolint:nilnil // an empty force block is no policy
+	}
+	return p, nil
+}
+
+// buildForcePolicy validates the force block, returning the policy it
+// describes and every problem found, so one boot reports them all.
+func buildForcePolicy(f *forceRules) (*ForcePolicy, []error) {
+	var errs []error
+	for field, name := range map[string]string{"runtime_class_name": f.RuntimeClassName, "service_account": f.ServiceAccount} {
+		if name == "" {
+			continue
+		}
+		if msgs := validation.IsDNS1123Subdomain(name); len(msgs) > 0 {
+			errs = append(errs, fmt.Errorf("force.%s %q: %s", field, name, strings.Join(msgs, "; ")))
 		}
 	}
 	for _, err := range checkMetadata(admission.Changes{NodeSelector: f.NodeSelector}) {
@@ -94,14 +105,7 @@ func ParseForcePolicy(doc []byte) (*ForcePolicy, error) {
 		}
 		p.tolerations = append(p.tolerations, fromAdmissionToleration(at))
 	}
-	if len(errs) > 0 {
-		sortErrors(errs)
-		return nil, fmt.Errorf("executor.policy: %w", errors.Join(errs...))
-	}
-	if p.runtimeClassName == "" && p.serviceAccount == "" && len(p.nodeSelector) == 0 && len(p.tolerations) == 0 {
-		return nil, nil //nolint:nilnil // an empty force block is no policy
-	}
-	return p, nil
+	return p, errs
 }
 
 // sortErrors orders errors by text, so a refusal that lists several problems
