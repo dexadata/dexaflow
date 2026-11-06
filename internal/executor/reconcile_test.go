@@ -40,12 +40,15 @@ func TestClassifyPod(t *testing.T) {
 		wantTerminal bool
 		wantSettle   settleKind
 	}{
-		"failed phase":       {podPhase(corev1.PodFailed), true, settleFailed},
-		"succeeded phase":    {podPhase(corev1.PodSucceeded), true, settleNothing},
-		"running":            {podPhase(corev1.PodRunning), false, settleNothing},
-		"pending":            {podPhase(corev1.PodPending), false, settleNothing},
-		"image pull backoff": {podWaiting("ImagePullBackOff"), true, settleFailed},
-		"err image pull":     {podWaiting("ErrImagePull"), true, settleFailed},
+		"failed phase":    {podPhase(corev1.PodFailed), true, settleFailed},
+		"succeeded phase": {podPhase(corev1.PodSucceeded), true, settleNothing},
+		"running":         {podPhase(corev1.PodRunning), false, settleNothing},
+		"pending":         {podPhase(corev1.PodPending), false, settleNothing},
+		// A failing pull is retried by the kubelet; Reconciler.classify bounds it
+		// (#1609, pending_bound_test.go).
+		"image pull backoff": {podWaiting("ImagePullBackOff"), false, settleNothing},
+		"err image pull":     {podWaiting("ErrImagePull"), false, settleNothing},
+		"invalid image name": {podWaiting("InvalidImageName"), true, settleFailed},
 		"crash loop":         {podWaiting("CrashLoopBackOff"), true, settleFailed},
 		"benign waiting":     {podWaiting("ContainerCreating"), false, settleNothing},
 	}
@@ -380,8 +383,8 @@ func TestPodFailureReasonIsBounded(t *testing.T) {
 // TestPodWaitingReasonExplainsItself keeps the unrecoverable-waiting reasons from
 // reaching the operator as a bare Kubernetes enum with no guidance.
 func TestPodWaitingReasonExplainsItself(t *testing.T) {
-	got := classifyPod(podWaiting("ImagePullBackOff"))
-	if !strings.Contains(got.reason, "ImagePullBackOff") {
+	got := classifyPod(podWaiting("InvalidImageName"))
+	if !strings.Contains(got.reason, "InvalidImageName") {
 		t.Errorf("reason = %q, want it to name the waiting reason", got.reason)
 	}
 	if !strings.Contains(got.reason, "image") {

@@ -1265,3 +1265,27 @@ it does not have, or a value of the wrong shape, instead of ignoring it. See
 
 Check a values file before the upgrade with
 `helm template <release> oci://ghcr.io/dexadata/charts/dexaflow --version 0.6.0 -f <your values>`.
+
+## Upgrading to 0.6.0: pending task pods are bounded
+
+Two changes to task pods that never start
+([#1609](https://github.com/dexadata/dexaflow/issues/1609)):
+
+- **A failing image pull no longer spends a retry at once.** `ErrImagePull`
+  and `ImagePullBackOff` used to fail the task on the first sweep that saw
+  them. The kubelet's back-off now gets 5 minutes from the pod's placement;
+  a pull still failing then fails the attempt as `image_pull_failed` on the
+  infra rail, which re-places the task without spending a retry, and deletes
+  the pod. A missing tag or pull secret therefore shows up as a task that
+  stays `queued` for 5 minutes per attempt and ends on the infra budget, with
+  the kubelet's message in its `error_message`. `InvalidImageName` still
+  fails the task at once.
+- **`executor.pending_timeout_seconds`** (Helm `executor.pendingTimeoutSeconds`)
+  fails a task whose pod no node can take, with `unschedulable:` and the
+  scheduler's message, once the pod has been unschedulable that long, and
+  deletes the pod. The server default is `0` (off). The chart's `cluster`
+  profile sets `900`, so a release on that profile, every fresh install
+  since 0.5.10, gets the bound on upgrade. Set
+  `executor.pendingTimeoutSeconds: 0` to keep waiting for a node, or a larger
+  value when a cluster autoscaler or a reservation takes longer than 15
+  minutes to add one.
