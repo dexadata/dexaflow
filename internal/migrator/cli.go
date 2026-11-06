@@ -198,6 +198,11 @@ func parseCommand(rest []string) (command, error) {
 	if len(rest) > 2 {
 		return c, fmt.Errorf("%s takes at most one argument, got %d", c.name, len(rest)-1)
 	}
+	return parseArgument(c, arg)
+}
+
+// parseArgument checks the argument of command c and records it.
+func parseArgument(c command, arg string) (command, error) {
 	switch c.name {
 	case "version":
 		if arg != "" {
