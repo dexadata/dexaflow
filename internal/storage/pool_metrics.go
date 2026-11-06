@@ -31,10 +31,11 @@ type PoolCollector struct {
 }
 
 // NewPoolCollector returns a collector for pg's main and health pools, and for
-// its dedicated scheduler pool while one is open (ForScheduler).
+// its dedicated scheduler and agent pools while they are open (ForScheduler,
+// ForAgents).
 func NewPoolCollector(pg *Postgres) *PoolCollector {
 	desc := func(name, help string) *prometheus.Desc {
-		return prometheus.NewDesc("dexaflow_db_pool_"+name, help+", by pool (main, health, scheduler).", []string{"pool"}, nil)
+		return prometheus.NewDesc("dexaflow_db_pool_"+name, help+", by pool (main, health, scheduler, agent).", []string{"pool"}, nil)
 	}
 	return &PoolCollector{
 		pg:            pg,

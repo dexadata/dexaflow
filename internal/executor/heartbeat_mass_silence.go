@@ -17,13 +17,29 @@ import (
 // heartbeat are silent in the same window, the reaper holds agent-lost reaping
 // and meters agent_lost_mass_silence_hold, which the chart alerts on.
 //
+// Once holding, it keeps holding until the silence is clearly over (fewer than
+// massSilenceExitMinStale silent attempts, or under a quarter of the fleet):
+// writes that half fail make the silent share swing around one half from tick
+// to tick, and a single threshold would reap a batch of healthy attempts on
+// every dip.
+//
 // The hold is bounded like the settling hold: after massSilenceValve of
 // continuous mass silence the reaper reaps anyway (the agents may really be
 // gone, a lost node pool) and meters agent_lost_mass_silence_valve_open. The
-// guard fails open: a store that cannot count the fleet reaps as before.
+// valve clock restarts when this reaper has not looked for massSilenceGap (a
+// pass skipped while not leading or settling), so an old hold is never
+// carried into a new term. When the fleet cannot be counted while the list
+// already shows a mass of silent attempts, the database is degraded: the
+// guard holds, metered as agent_lost_fleet_count_error, under the same valve.
+//
+// An attempt that went silent after outliving the credential ceiling
+// (OutlivedCredentialCeiling) is settled even under a hold: its silence is
+// the ceiling working, and a batch started together reaches it together.
 const (
-	massSilenceMinStale = 10
-	massSilenceValve    = 10 * time.Minute
+	massSilenceMinStale     = 10
+	massSilenceExitMinStale = 5
+	massSilenceValve        = 10 * time.Minute
+	massSilenceGap          = 2 * time.Minute
 )
 
 // HeartbeatFleet counts the running attempts that have heartbeated at least
@@ -44,33 +60,66 @@ type HeartbeatFleetCounter interface {
 }
 
 // massSilence reports whether a fleet count looks like failed heartbeat
-// writes rather than lost agents.
+// writes rather than lost agents: the bar to enter a hold.
 func massSilence(f HeartbeatFleet) bool {
 	return f.Stale >= massSilenceMinStale && 2*f.Stale >= f.Total
 }
 
+// massSilenceLasts reports whether a hold already in place goes on: the lower
+// bar to leave it.
+func massSilenceLasts(f HeartbeatFleet) bool {
+	return f.Stale >= massSilenceExitMinStale && 4*f.Stale >= f.Total
+}
+
+// resetSilence forgets a hold in progress.
+func (r *agentLostReaper) resetSilence() {
+	r.silentSince = time.Time{}
+	r.silentSeen = time.Time{}
+}
+
 // massSilenceHold reports whether this pass must skip reaping silent agents.
-// It counts the fleet only when the candidate list holds a silent attempt, so
-// a healthy tick pays no extra query.
+// The candidate list is ordered by last heartbeat, so its silent attempts are
+// the first min(silent, page) rows: the fleet is counted only when the list
+// alone already shows enough of them for the guard to matter, and a tick with
+// a few real losses pays no extra query.
 func (r *agentLostReaper) massSilenceHold(ctx context.Context, candidates []AgentLostCandidate, now time.Time) bool {
 	counter, ok := r.store.(HeartbeatFleetCounter)
-	if !ok || !anyAgentLost(candidates, r.threshold, now) {
-		r.silentSince = time.Time{}
+	if !ok {
+		return false
+	}
+	holding := !r.silentSince.IsZero()
+	if holding && now.Sub(r.silentSeen) > massSilenceGap {
+		r.resetSilence()
+		holding = false
+	}
+	floor := massSilenceMinStale
+	if holding {
+		floor = massSilenceExitMinStale
+	}
+	if r.silentCandidates(candidates, now) < floor {
+		r.resetSilence()
 		return false
 	}
 	fleet, err := counter.CountHeartbeatFleet(ctx, now.Add(-r.threshold))
-	if err != nil {
-		r.logger.Warn("agent-lost reaper could not count the heartbeat fleet; reaping without the mass-silence guard", "error", err)
+	var silent bool
+	switch {
+	case err != nil:
+		r.logger.Warn("agent-lost reaper could not count the heartbeat fleet while many attempts look silent; holding", "error", err)
 		r.record("agent_lost_fleet_count_error")
-		return false
+		silent = true
+	case holding:
+		silent = massSilenceLasts(fleet)
+	default:
+		silent = massSilence(fleet)
 	}
-	if !massSilence(fleet) {
-		r.silentSince = time.Time{}
+	if !silent {
+		r.resetSilence()
 		return false
 	}
 	if r.silentSince.IsZero() {
 		r.silentSince = now
 	}
+	r.silentSeen = now
 	elapsed := now.Sub(r.silentSince)
 	if elapsed >= massSilenceValve {
 		r.record("agent_lost_mass_silence_valve_open")
@@ -84,11 +133,14 @@ func (r *agentLostReaper) massSilenceHold(ctx context.Context, candidates []Agen
 	return true
 }
 
-func anyAgentLost(candidates []AgentLostCandidate, threshold time.Duration, now time.Time) bool {
+// silentCandidates counts the candidates past the threshold that did not
+// outlive the credential ceiling.
+func (r *agentLostReaper) silentCandidates(candidates []AgentLostCandidate, now time.Time) int {
+	n := 0
 	for _, c := range candidates {
-		if IsAgentLost(c, threshold, now) {
-			return true
+		if IsAgentLost(c, r.threshold, now) && !OutlivedCredentialCeiling(c, r.ceiling) {
+			n++
 		}
 	}
-	return false
+	return n
 }

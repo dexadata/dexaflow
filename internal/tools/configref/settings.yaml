@@ -190,8 +190,8 @@ settings:
   database.agent_max_conns:
     edition: both
     description: >-
-      Size of a dedicated pool for the agent handlers: heartbeats, state reports and
-      the other calls of running tasks (`database.agent_max_conns`; Helm
+      Size of a dedicated pool for the writes that prove a running task alive:
+      heartbeats, state reports and reschedules (`database.agent_max_conns`; Helm
       `database.agentMaxConns`), so API traffic that holds every main pool connection
       cannot block a heartbeat while the reapers, on the scheduler pool, judge agents
       silent ([#1624](https://github.com/dexadata/dexaflow/issues/1624)). Set it

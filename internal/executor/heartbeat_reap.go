@@ -173,9 +173,11 @@ type agentLostReaper struct {
 	// page (R-07, #1597).
 	ceilingPager reapPager
 	silentPager  reapPager
-	// silentSince is when the current mass silence began (see
-	// massSilenceHold), zero while the fleet heartbeats.
+	// silentSince is when the current mass silence began and silentSeen the
+	// last pass that saw it (see massSilenceHold); both zero while the fleet
+	// heartbeats.
 	silentSince time.Time
+	silentSeen  time.Time
 	// clock is time.Now outside tests.
 	clock func() time.Time
 }
@@ -212,11 +214,12 @@ func (r *agentLostReaper) run(ctx context.Context) error {
 	if err != nil {
 		return errors.Join(ceilingErr, err)
 	}
-	if r.massSilenceHold(ctx, candidates, now) {
-		return errors.Join(ceilingErr, r.runNeverHeartbeated(ctx, now))
-	}
+	hold := r.massSilenceHold(ctx, candidates, now)
 	for _, c := range candidates {
 		if !IsAgentLost(c, r.threshold, now) {
+			continue
+		}
+		if hold && !OutlivedCredentialCeiling(c, r.ceiling) {
 			continue
 		}
 		if processDefers(ctx, r.procs, r.logger, r.record, "agent_lost", c.TaskInstanceID, c.DagRunID, c.TaskID, c.TryNumber) {
