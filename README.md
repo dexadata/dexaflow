@@ -10,7 +10,7 @@
 
 <p align="center">
   <em>The workflow orchestrator that ate Apache Airflow's lunch.<br>
-  Same UI. Same vocabulary. Ten times the speed. Zero of the pain.<br>
+  Same UI. Same vocabulary. Zero of the pain.<br>
   <strong>Native map-reduce for ML/AI</strong> — fan-out + reduce as a Python list comprehension, no XCom plumbing, no broker, no special operator.</em>
 </p>
 
@@ -135,14 +135,18 @@ Dexaflow does not invent a new execution model. Pod-per-task is the right patter
 
 | Wound | Airflow today | Dexaflow |
 |---|---|---|
-| Scheduler latency | 3-10 seconds per decision | **<200 ms** — native Go, zero GIL |
-| Sensor concurrency | ~500 (asyncio Triggerer) | **100,000+** — each sensor is a 2 KB goroutine |
-| DAG parsing cost | Re-parsed every scheduler loop | **Zero** — DAG is pre-compiled to immutable JSON |
-| Worker lifecycle | Long-lived, leak-prone | **Ephemeral pod per task** — spawn, run, die |
-| Worker image size | 1.5 GB+ Airflow base | **200 MB typical** — each DAG is its own slim image |
-| Dependency isolation | Workaround via `KubernetesPodOperator` | **Native** — every DAG is a container |
-| Cold start | 15-45 s | **2-5 s target** — agent is a 15 MB static binary |
-| Observability | Retrofitted with effort | **Native** — Prometheus + OpenTelemetry + structured logs from commit one |
+| Scheduler decision | A Python loop that re-reads DAG files and holds the GIL | **A Go loop over pre-compiled specs.** Planning 1,000 active runs of 20 tasks takes 4.7 ms; the database read before it is the larger cost, 555 ms at 100,000 task instances, and is being lowered ([measured](test/load/BASELINE.md#scheduler-tick-read)) |
+| Sensor concurrency | Bounded by the asyncio Triggerer | **A deferred sensor is a goroutine, not a worker slot** (by design; no load test of sensor count yet) |
+| DAG parsing cost | Re-parsed every scheduler loop | **Zero**: the DAG is compiled once to an immutable spec |
+| Worker lifecycle | Long-lived, leak-prone | **Ephemeral pod per task**: spawn, run, die |
+| Worker image | One shared Airflow image for every DAG | **Each DAG is its own image**, built from its own dependencies |
+| Dependency isolation | Workaround via `KubernetesPodOperator` | **Native**: every DAG is a container |
+| Code change to running DAG | Rebuild and roll the shared image | **About a third of a second** for a code-only deploy with a local registry, whatever the dependencies ([measured](test/load/BASELINE.md#code-only-deploy)) |
+| Observability | Retrofitted with effort | **Native**: Prometheus, OpenTelemetry and structured logs |
+
+Every number above links to the run that produced it, with the commit and the
+host; the rest are properties of the design, stated as such. The full set is
+in [the performance baseline](test/load/BASELINE.md).
 
 This is not marketing. This is what falls out of replacing a Python control plane with Go and embracing the container as the unit of isolation.
 
