@@ -5,7 +5,11 @@
 // Pending pod that may have been placed and started since.
 package storage_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/dexadata/dexaflow/internal/executor"
+)
 
 // TestFailPendingTaskOnlyBeforeTheStart: a queued attempt is failed, as infra
 // when asked and confirmed at once; a running one, another attempt epoch or a
@@ -14,23 +18,23 @@ func TestFailPendingTaskOnlyBeforeTheStart(t *testing.T) {
 	f := seedStaleHeartbeat(t, "pending_bound_running")
 	try, epoch := f.tryNumber(t), f.attemptEpoch(t)
 
-	applied, err := f.exec.FailPendingTask(f.ctx, f.tiID, try, epoch, "unschedulable: late", false)
+	got, err := f.exec.FailPendingTask(f.ctx, f.tiID, try, epoch, "unschedulable: late", false)
 	if err != nil {
 		t.Fatalf("FailPendingTask (running): %v", err)
 	}
-	if applied {
-		t.Error("a bound reported a settle on a running attempt")
+	if got != executor.PendingStarted {
+		t.Errorf("a bound on a running attempt = %v, want PendingStarted", got)
 	}
 	f.wantState(t, "after a bound on a running attempt", "running")
 
 	f.setState(t, "queued")
-	if applied, err = f.exec.FailPendingTask(f.ctx, f.tiID, try, epoch+1, "unschedulable: stale", false); err != nil || applied {
-		t.Fatalf("FailPendingTask (stale epoch): applied=%v err=%v", applied, err)
+	if got, err = f.exec.FailPendingTask(f.ctx, f.tiID, try, epoch+1, "unschedulable: stale", false); err != nil || got != executor.PendingGone {
+		t.Fatalf("FailPendingTask (stale epoch) = %v, %v; want PendingGone", got, err)
 	}
 	f.wantState(t, "after a stale-epoch bound", "queued")
 
-	if applied, err = f.exec.FailPendingTask(f.ctx, f.tiID, try, epoch, "image_pull_failed: 429", true); err != nil || !applied {
-		t.Fatalf("FailPendingTask (queued, infra): applied=%v err=%v", applied, err)
+	if got, err = f.exec.FailPendingTask(f.ctx, f.tiID, try, epoch, "image_pull_failed: 429", true); err != nil || got != executor.PendingSettled {
+		t.Fatalf("FailPendingTask (queued, infra) = %v, %v; want PendingSettled", got, err)
 	}
 	f.wantState(t, "after the infra bound of a queued attempt", "failed")
 	if k := f.failureKind(t); k == nil || *k != "infra" {
@@ -54,9 +58,9 @@ func TestFailPendingTaskAsATaskFailure(t *testing.T) {
 	f.setState(t, "queued")
 	try, epoch := f.tryNumber(t), f.attemptEpoch(t)
 
-	applied, err := f.exec.FailPendingTask(f.ctx, f.tiID, try, epoch, "unschedulable: no node", false)
-	if err != nil || !applied {
-		t.Fatalf("FailPendingTask: applied=%v err=%v", applied, err)
+	got, err := f.exec.FailPendingTask(f.ctx, f.tiID, try, epoch, "unschedulable: no node", false)
+	if err != nil || got != executor.PendingSettled {
+		t.Fatalf("FailPendingTask = %v, %v; want PendingSettled", got, err)
 	}
 	f.wantState(t, "after the unschedulable bound", "failed")
 	if k := f.failureKind(t); k != nil {
@@ -65,7 +69,7 @@ func TestFailPendingTaskAsATaskFailure(t *testing.T) {
 	if f.confirmedAt(t) != nil {
 		t.Error("a task failure must not be infra-confirmed")
 	}
-	if applied, err = f.exec.FailPendingTask(f.ctx, f.tiID, try, epoch, "unschedulable: again", false); err != nil || applied {
-		t.Fatalf("a second bound on the failed row: applied=%v err=%v", applied, err)
+	if got, err = f.exec.FailPendingTask(f.ctx, f.tiID, try, epoch, "unschedulable: again", false); err != nil || got != executor.PendingGone {
+		t.Fatalf("a second bound on the failed row = %v, %v; want PendingGone", got, err)
 	}
 }
