@@ -198,3 +198,54 @@ func TestHeavyWritesOutliveTheStatementTimeout(t *testing.T) {
 		t.Errorf("main pool statement_timeout after the heavy writes = %q, want 200ms", got)
 	}
 }
+
+// TestAgentPoolIsItsOwn covers database.agent_max_conns (#1624): set, the
+// agent handlers get a pool of that size, apart from the main and scheduler
+// pools and without the API statement timeout, so API traffic holding every
+// main connection cannot block a heartbeat write; unset, they share the main
+// pool and releasing the handle leaves it open.
+func TestAgentPoolIsItsOwn(t *testing.T) {
+	url := tuningDatabaseURL(t)
+	ctx := context.Background()
+	cfg := config.DatabaseSection{URL: url, MaxOpenConns: 1, StatementTimeoutMS: 1234, SchedulerMaxConns: 2, AgentMaxConns: 3}
+	pg, err := storage.NewPostgres(ctx, cfg)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pg.Close)
+	agents, release, err := pg.ForAgents(ctx, cfg)
+	if err != nil {
+		t.Fatalf("agent pool: %v", err)
+	}
+	t.Cleanup(release)
+	if agents == pg || agents.Pool == pg.Pool {
+		t.Fatal("agent_max_conns is set but the agent handlers share the main pool")
+	}
+	if got := agents.Pool.Config().MaxConns; got != 3 {
+		t.Errorf("agent pool MaxConns = %d, want 3", got)
+	}
+	if got := showStatementTimeout(t, ctx, agents.Pool); got != "0" {
+		t.Errorf("agent pool statement_timeout = %q, want 0", got)
+	}
+	// Hold the only main pool connection: the agent pool still answers.
+	held, err := pg.Pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire main: %v", err)
+	}
+	defer held.Release()
+	actx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := agents.Pool.Ping(actx); err != nil {
+		t.Errorf("agent pool blocked behind a saturated main pool: %v", err)
+	}
+
+	shared, releaseShared, err := pg.ForAgents(ctx, config.DatabaseSection{URL: url})
+	if err != nil || shared != pg {
+		t.Fatalf("unset agent_max_conns must share the main pool: %v", err)
+	}
+	releaseShared()
+	held.Release()
+	if err := pg.Pool.Ping(ctx); err != nil {
+		t.Errorf("releasing the shared agent handle closed the main pool: %v", err)
+	}
+}

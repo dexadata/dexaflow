@@ -26,6 +26,11 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
+            name: LEOFLOW_DATABASE_AGENT_MAX_CONNS
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
             name: LEOFLOW_DATABASE_STATEMENT_TIMEOUT_MS
           any: true
       - notContains:
@@ -38,9 +43,15 @@ tests:
     template: deployment.yaml
     set:
       database.schedulerMaxConns: 4
+      database.agentMaxConns: 3
       database.statementTimeoutMs: 30000
       database.connMaxLifetimeJitterMs: 300000
     asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_DATABASE_AGENT_MAX_CONNS
+            value: "3"
       - contains:
           path: spec.template.spec.containers[0].env
           content:

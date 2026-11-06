@@ -39,13 +39,13 @@ The table is generated from the collectors the server registers: run
 | `dexaflow_auth_failures_total` | counter | `reason` | Authentication failures by reason. |
 | `dexaflow_build_info` | gauge | `version`, `commit`, `go_version`, `role` | Always 1, labeled with the version, commit and Go version of the binary and the role the process runs. count by (version) (dexaflow_build_info) > 1 means a rollout left replicas on another version. |
 | `dexaflow_ci_oidc_exchange_total` | counter | `issuer`, `outcome` | CI OIDC token exchanges (auth.ci_oidc, ADR 0092) by issuer entry (unknown when none matched) and outcome (issued, invalid_token, unknown_issuer, no_rule, role_missing, keys_unavailable, error). |
-| `dexaflow_db_pool_acquired_conns` | gauge | `pool` | Connections currently lent out by the database pool, by pool (main, health, scheduler). |
-| `dexaflow_db_pool_canceled_acquires_total` | counter | `pool` | Acquires that gave up waiting for a connection (their context ended), by pool (main, health, scheduler). |
-| `dexaflow_db_pool_empty_acquire_wait_seconds_total` | counter | `pool` | Time acquires spent waiting for a connection, in seconds, by pool (main, health, scheduler). |
-| `dexaflow_db_pool_empty_acquires_total` | counter | `pool` | Acquires that found no idle connection and had to wait for one, by pool (main, health, scheduler). |
-| `dexaflow_db_pool_idle_conns` | gauge | `pool` | Idle connections in the database pool, by pool (main, health, scheduler). |
-| `dexaflow_db_pool_max_conns` | gauge | `pool` | Maximum connections the database pool may open, by pool (main, health, scheduler). |
-| `dexaflow_db_pool_total_conns` | gauge | `pool` | Open connections in the database pool, idle, lent out and being opened, by pool (main, health, scheduler). |
+| `dexaflow_db_pool_acquired_conns` | gauge | `pool` | Connections currently lent out by the database pool, by pool (main, health, scheduler, agent). |
+| `dexaflow_db_pool_canceled_acquires_total` | counter | `pool` | Acquires that gave up waiting for a connection (their context ended), by pool (main, health, scheduler, agent). |
+| `dexaflow_db_pool_empty_acquire_wait_seconds_total` | counter | `pool` | Time acquires spent waiting for a connection, in seconds, by pool (main, health, scheduler, agent). |
+| `dexaflow_db_pool_empty_acquires_total` | counter | `pool` | Acquires that found no idle connection and had to wait for one, by pool (main, health, scheduler, agent). |
+| `dexaflow_db_pool_idle_conns` | gauge | `pool` | Idle connections in the database pool, by pool (main, health, scheduler, agent). |
+| `dexaflow_db_pool_max_conns` | gauge | `pool` | Maximum connections the database pool may open, by pool (main, health, scheduler, agent). |
+| `dexaflow_db_pool_total_conns` | gauge | `pool` | Open connections in the database pool, idle, lent out and being opened, by pool (main, health, scheduler, agent). |
 | `dexaflow_dispatch_admission_duration_seconds` | histogram | _(none)_ | Time the dispatch admission hooks took for one task attempt. |
 | `dexaflow_dispatch_admission_total` | counter | `outcome` | Task attempts seen by the dispatch admission hooks (ADR 0100), by outcome (admitted, changed, held, refused, error, fail_open, breaker_open). |
 | `dexaflow_dispatch_at_capacity_total` | counter | _(none)_ | Dispatch requests rejected because the buffer was full. |

@@ -187,6 +187,17 @@ settings:
       traffic that holds every main pool connection cannot stall a scheduler tick.
       It is opened in addition to the main pool, only by a process that runs the
       scheduler (`DEXAFLOW_SCHEDULER_ENABLED`). `0` keeps them on the main pool.
+  database.agent_max_conns:
+    edition: both
+    description: >-
+      Size of a dedicated pool for the writes that prove a running task alive:
+      heartbeats, state reports and reschedules (`database.agent_max_conns`; Helm
+      `database.agentMaxConns`), so API traffic that holds every main pool connection
+      cannot block a heartbeat while the reapers, on the scheduler pool, judge agents
+      silent ([#1624](https://github.com/dexadata/dexaflow/issues/1624)). Set it
+      together with `DEXAFLOW_DATABASE_SCHEDULER_MAX_CONNS`; `4` serves a few hundred
+      running tasks. It is opened in addition to the main pool, only by a process that
+      runs the scheduler. `0` keeps them on the main pool.
   database.statement_timeout_ms:
     edition: both
     description: >-
