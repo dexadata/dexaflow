@@ -4592,7 +4592,7 @@ type Connection struct {
 <a name="ConnectionBody"></a>
 ## type [ConnectionBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L326-L336>)
 
-ConnectionBody Connection create/replace payload. connection\_id is required on POST \(taken from the path on PATCH\). password and extra are write\-only. Every optional field is tri\-state: omit the key to preserve the stored value \(a partial write never wipes a field it does not mention, so the unreadable password survives a \`\-\-host\`\-only edit\), send an empty string to clear the field, or send a value to set it. A password equal to the mask \`\*\*\*\`, and any key inside \`extra\` whose value is exactly \`\*\*\*\`, is treated as "unchanged" — so re\-submitting a connection read back from GET \(whose secrets are masked\) never overwrites the real secret with the mask.
+ConnectionBody Connection create/replace payload. connection\_id is required on POST \(taken from the path on PATCH\). password and extra are write\-only. Every optional field is tri\-state: omit the key to preserve the stored value \(a partial write never wipes a field it does not mention, so the unreadable password survives a \`\-\-host\`\-only edit\), send an empty string to clear the field, or send a value to set it. A password equal to the mask \`\*\*\*\`, and any key inside \`extra\` whose value is exactly \`\*\*\*\`, is treated as "unchanged", so re\-submitting a connection read back from GET \(whose secrets are masked\) never overwrites the real secret with the mask.
 
 ```go
 type ConnectionBody struct {
@@ -4948,7 +4948,7 @@ type CreateUserRequest struct {
     // Email Login email. Normalized to lowercase, so it is unique case-insensitively within the tenant.
     Email string `json:"email"`
 
-    // Password Plaintext password (write-only; never returned). Must be at least 8 characters — the server rejects anything shorter with 400.
+    // Password Plaintext password (write-only; never returned). Must be at least 8 characters; the server rejects anything shorter with 400.
     Password *string `json:"password,omitempty"`
 
     // Roles Names of existing roles to grant; omit or empty to grant none.

@@ -151,7 +151,7 @@ func AbortProblemCause(c *gin.Context, status int, title, detail string, cause e
 
 AbortProblemCause writes an RFC 7807 problem whose detail is safe to show the caller, while handing the real error to the request log.
 
-It exists because the two audiences need different text. A storage failure carries the driver's own message — for Postgres, "severity: message \(SQLSTATE code\)" with our constraint, table and column names inside — and a tenant of a multi\-tenant control plane must not receive that \(CWE\-209\). The operator, on the other hand, cannot diagnose the failure without it. Redacting the response and dropping the cause would trade one defect for another, so cause is logged verbatim under its own field.
+It exists because the two audiences need different text. A storage failure carries the driver's own message, for Postgres, "severity: message \(SQLSTATE code\)" with our constraint, table and column names inside, and a tenant of a multi\-tenant control plane must not receive that \(CWE\-209\). The operator, on the other hand, cannot diagnose the failure without it. Redacting the response and dropping the cause would trade one defect for another, so cause is logged verbatim under its own field.
 
 cause may be nil, which makes this identical to AbortProblem.
 
@@ -1061,7 +1061,7 @@ type RunVersionLabeler interface {
 <a name="SchemaChecker"></a>
 ## type [SchemaChecker](<https://github.com/dexadata/dexaflow/blob/main/internal/api/health.go#L31-L33>)
 
-SchemaChecker is an optional capability a HealthChecker may also implement: asserting that the dependency's SCHEMA — not just its connection — is the one this binary requires. \*storage.Postgres implements it; Redis and other schema\-less dependencies do not, and keep the Ping\-only contract.
+SchemaChecker is an optional capability a HealthChecker may also implement: asserting that the dependency's SCHEMA, not just its connection, is the one this binary requires. \*storage.Postgres implements it; Redis and other schema\-less dependencies do not, and keep the Ping\-only contract.
 
 It exists because a Ping is not evidence of a usable database \(\#1023\). The invariant is enforced at boot, where the server waits, not ready, until schema\_migrations is present and current \(ADR 0090\); but a boot check says nothing about a database that changes UNDER a running pod, which is exactly what an ephemeral\-volume recycle, a restore from an older backup, a failover to a lagging replica, or a repointed database.url does.
 

@@ -870,7 +870,7 @@ SchemaReady is the readiness probe's entry point: it re\-asserts on every probe 
 
 It exists because a Ping only proves the connection. A database emptied by an ephemeral\-volume recycle, restored from an older backup, failed over to a lagging replica, or repointed by a changed database.url stays pingable while serving nothing \(\#1023\). One SELECT against a single\-row table, so it is cheap enough to run per probe; the caller bounds it with the probe's own deadline.
 
-The verdict is checkSchemaReady, NOT the boot gate — see there for the one state where the two must disagree.
+The verdict is checkSchemaReady, NOT the boot gate; see there for the one state where the two must disagree.
 
 <a name="Postgres.SchemaVersion"></a>
 ### func \(\*Postgres\) [SchemaVersion](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/schema_check.go#L18>)
@@ -1954,7 +1954,7 @@ SetPausedBy is SetPaused on behalf of the user actorUserID: a change of is\_paus
 func (r *Repository) SetPool(ctx context.Context, tenant string, p domain.Pool) error
 ```
 
-SetPool creates or updates a pool \(its slot cap and description\). The is\_default flag is not writable through this path — only the seed migration marks the implicit default pool.
+SetPool creates or updates a pool \(its slot cap and description\). The is\_default flag is not writable through this path: only the seed migration marks the implicit default pool.
 
 <a name="Repository.SetTaskInstanceState"></a>
 ### func \(\*Repository\) [SetTaskInstanceState](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L607>)
@@ -2416,7 +2416,7 @@ MarkStagingDeleted records that a staging volume's PVC was deleted and why \(run
 func (s *SchedulerStore) MarkTaskAgentLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error)
 ```
 
-MarkTaskAgentLost transitions one TI to \`failed\` with the agent\_lost reason. The WHERE state='running' guard makes this idempotent and prevents a late terminal report being overwritten — if the row already moved, we touch zero rows and return nil. It is pinned to the listed attempt, \(tryNumber, attemptEpoch\) \(ADR 0051 amendment\): a mark computed for a superseded execution is a no\-op on its replacement.
+MarkTaskAgentLost transitions one TI to \`failed\` with the agent\_lost reason. The WHERE state='running' guard makes this idempotent and prevents a late terminal report being overwritten: if the row already moved, we touch zero rows and return nil. It is pinned to the listed attempt, \(tryNumber, attemptEpoch\) \(ADR 0051 amendment\): a mark computed for a superseded execution is a no\-op on its replacement.
 
 <a name="SchedulerStore.MarkTaskCredentialCeiling"></a>
 ### func \(\*SchedulerStore\) [MarkTaskCredentialCeiling](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1020>)

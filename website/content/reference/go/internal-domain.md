@@ -557,7 +557,7 @@ It first refuses a TZ= or CRON\_TZ= prefix with no space after it. ParseStandard
 func Safef(class error, format string, a ...any) error
 ```
 
-Safef builds a SafeError in class with the formatted message. The message is shown to API clients verbatim, so it must contain only facts the caller supplied or Dexaflow chose — never a driver, filesystem, or network error.
+Safef builds a SafeError in class with the formatted message. The message is shown to API clients verbatim, so it must contain only facts the caller supplied or Dexaflow chose, never a driver, filesystem, or network error.
 
 <a name="SourceModeApplies"></a>
 ## func [SourceModeApplies](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/source_mode.go#L28>)
@@ -577,7 +577,7 @@ func SupportedPythonVersions() ([]string, error)
 
 SupportedPythonVersions returns the python\_version values the project publishes a task base image for, in schema order \(ascending\). The slice is a copy: callers may sort or filter it.
 
-This is the one list. scripts/check\-python\-runtime\-matrix.sh asserts that the release matrix, the Makefile target, the runtime Dockerfile and the configuration reference all agree with it, because a published image nobody can select — and a selectable version nobody publishes — both surface as a \`docker pull\` 404 inside the user's own build.
+This is the one list. scripts/check\-python\-runtime\-matrix.sh asserts that the release matrix, the Makefile target, the runtime Dockerfile and the configuration reference all agree with it, because a published image nobody can select, and a selectable version nobody publishes, both surface as a \`docker pull\` 404 inside the user's own build.
 
 <a name="TenantSchemaURL"></a>
 ## func [TenantSchemaURL](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/schema_loader.go#L28>)
@@ -606,7 +606,7 @@ Separators are banned, punctuation is not: Airflow\-generated ids embed an RFC33
 <a name="AlertRule"></a>
 ## type [AlertRule](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/config.go#L85-L94>)
 
-AlertRule is one channel to notify on an alert event. The endpoint and its secret always come from a managed connection \(Conn\), never a literal URL or token in dexaflow.yaml — that keeps credentials out of the compiled dag.json and mirrors the env\-ref secret discipline.
+AlertRule is one channel to notify on an alert event. The endpoint and its secret always come from a managed connection \(Conn\), never a literal URL or token in dexaflow.yaml: that keeps credentials out of the compiled dag.json and mirrors the env\-ref secret discipline.
 
 ```go
 type AlertRule struct {
@@ -814,7 +814,7 @@ ResetDagRun re\-opens the run so the scheduler looks at it again. Without it a t
 
 RunOnLatestVersion decides WHICH version the re\-run executes: the DAG's current one, or the one the run was pinned to when it was created.
 
-These were a single boolean. Folding the version decision into the re\-open meant there was no way to re\-run a task against the image that produced it — "clear last week's task" always executed today's code — and no way to re\-open a run without also moving it forward a version. Apache Airflow separates them the same way, calling the second \`run\_on\_latest\_version\`.
+These were a single boolean. Folding the version decision into the re\-open meant there was no way to re\-run a task against the image that produced it, "clear last week's task" always executed today's code, and no way to re\-open a run without also moving it forward a version. Apache Airflow separates them the same way, calling the second \`run\_on\_latest\_version\`.
 
 ```go
 type ClearOptions struct {
@@ -909,13 +909,13 @@ type Connection struct {
 func ParseConnectionURI(connID, uri string) (Connection, error)
 ```
 
-ParseConnectionURI reads an Airflow connection URI — the AIRFLOW\_CONN\_\<ID\> form a task consumes — back into a Connection.
+ParseConnectionURI reads an Airflow connection URI, the AIRFLOW\_CONN\_\<ID\> form a task consumes, back into a Connection.
 
 It is the inverse of the URI the control plane delivers to tasks, and it follows Airflow's own from\_uri semantics wherever the two could differ, because the value being parsed is one the user wrote for Airflow to read:
 
 - the scheme carries \`\-\` where the conn\_type has \`\_\` \(google\_cloud\_platform and friends are not legal URI schemes\), so it is reversed here exactly as the emitter applies it;
 - userinfo is percent\-decoded into login and password;
-- the path becomes the schema with ONE leading slash removed, which is what Airflow does — note this is lossy for an absolute path like sqlite's \`sqlite:///tmp/db\`, whose schema comes back as \`tmp/db\`. Matching Airflow is the right loss to take: the task resolves the connection through Airflow, so Airflow's reading is the meaning;
+- the path becomes the schema with ONE leading slash removed, which is what Airflow does; note this is lossy for an absolute path like sqlite's \`sqlite:///tmp/db\`, whose schema comes back as \`tmp/db\`. Matching Airflow is the right loss to take: the task resolves the connection through Airflow, so Airflow's reading is the meaning;
 - \`\_\_extra\_\_\` carries the JSON blob, as the emitter writes it.
 
 No error returned here ever contains the URI: the value is a credential, and an error is the most likely thing to be logged, wrapped or printed. Errors name the connection and the problem.
@@ -982,7 +982,7 @@ type DAG struct {
     // CurrentVersion is the LABEL of the DAG's current registered version, empty
     // when it cannot be resolved. Paired with DagRun.Version by the UI's clear
     // dialog, which offers "Run with latest bundle version" only when the two
-    // differ — see that field.
+    // differ; see that field.
     CurrentVersion string
 }
 ```
@@ -1098,7 +1098,7 @@ Validate checks the DAGSpec against the canonical dag.json schema and returns a 
 func (d *DAGSpec) ValidateSchedule() error
 ```
 
-ValidateSchedule checks that a DAG's cron schedule is parseable. An empty or absent schedule \(manual\-only\) and the recognized non\-cron Airflow schedules \(@once, @continuous\) are valid. A malformed cron expression — a 4\-field cron, a typo — is rejected here so it fails loudly at compile time; otherwise the scheduler silently can't parse it and the DAG simply never runs, with no error surfaced anywhere \(the worst failure mode\). The parser is robfig/cron's ParseStandard \(through ParseCron\), the same one the scheduler uses, so what validates here is exactly what the scheduler can run \(see scheduler/cron.go\).
+ValidateSchedule checks that a DAG's cron schedule is parseable. An empty or absent schedule \(manual\-only\) and the recognized non\-cron Airflow schedules \(@once, @continuous\) are valid. A malformed cron expression, a 4\-field cron, a typo, is rejected here so it fails loudly at compile time; otherwise the scheduler silently can't parse it and the DAG simply never runs, with no error surfaced anywhere \(the worst failure mode\). The parser is robfig/cron's ParseStandard \(through ParseCron\), the same one the scheduler uses, so what validates here is exactly what the scheduler can run \(see scheduler/cron.go\).
 
 <a name="DagFilter"></a>
 ## type [DagFilter](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L31-L46>)
@@ -1345,7 +1345,7 @@ type DbtConfig struct {
     // Project is the directory containing dbt_project.yml.
     Project string `json:"project,omitempty" yaml:"project,omitempty"`
     // Granularity is the task partition strategy: node, level or folder (ADR 0042
-    // §5). Empty means node. Tag and selector grouping are not implemented — the
+    // §5). Empty means node. Tag and selector grouping are not implemented: the
     // schema enum is the three above; see #398.
     Granularity string `json:"granularity,omitempty" yaml:"granularity,omitempty"`
     // Manifest optionally points to a pre-built manifest.json (the Pro/CI baked
@@ -1779,7 +1779,7 @@ type LeoflowConfig struct {
     PythonVersion string   `json:"python_version,omitempty" yaml:"python_version,omitempty"`
     // PythonVersionDefaulted reports that ApplyDefaults supplied PythonVersion
     // because the config declared none. It is not part of the authoring surface
-    // and never serialized — it exists so a consumer can tell "the author chose
+    // and never serialized: it exists so a consumer can tell "the author chose
     // 3.11" from "nobody said anything", which are the same string afterwards.
     // `dexaflow lite` needs the distinction: enforcing a version the CLI invented
     // refuses to boot over a choice the user never made (#1092 follow-up).
@@ -2170,7 +2170,7 @@ The distinction is a security boundary, not a style choice. A repository error u
 
 That inverts the safe/unsafe default: a new error is opaque to clients until someone deliberately writes it as a SafeError, so a newly wrapped driver error cannot leak by omission.
 
-Message is returned to API clients verbatim. Never interpolate a driver, filesystem, or network error into it — pass the caller\-facing facts \(a role name, a declared variable, a configured cap\) and let the underlying error reach the log through the wrap chain.
+Message is returned to API clients verbatim. Never interpolate a driver, filesystem, or network error into it: pass the caller\-facing facts \(a role name, a declared variable, a configured cap\) and let the underlying error reach the log through the wrap chain.
 
 ```go
 type SafeError struct {

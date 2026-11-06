@@ -273,7 +273,7 @@ MintCISession signs a CI session valid for ttl from now with the engine secret, 
 func MintUserToken(secret string, ttl time.Duration, user User) (string, error)
 ```
 
-MintUserToken signs a user JWT directly, without checking credentials against a store. It is for trusted in\-process callers only — notably \`dexaflow lite\`, which runs its own control plane and must register DAGs without a login round\-trip. The token validates under Authenticate using the same secret.
+MintUserToken signs a user JWT directly, without checking credentials against a store. It is for trusted in\-process callers only, notably \`dexaflow lite\`, which runs its own control plane and must register DAGs without a login round\-trip. The token validates under Authenticate using the same secret.
 
 <a name="NewAPIToken"></a>
 ## func [NewAPIToken](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/api_token.go#L77>)
@@ -697,9 +697,9 @@ NewJWTAuthenticator builds a JWTAuthenticator with the given user store, HS256 s
 func (a *JWTAuthenticator) Authenticate(ctx context.Context, token string) (*User, error)
 ```
 
-Authenticate validates a bearer token and resolves the current principal. After the signature and registered claims check out, it reloads the user's roles, permissions, and active flag from the store keyed by the token subject \(the user id\). The store — not the token — is the source of truth for authorization: this is what makes non\-admin role grants gate anything \(the token carries roles but never permissions\) and lets deactivating a user revoke their live tokens within the token TTL.
+Authenticate validates a bearer token and resolves the current principal. After the signature and registered claims check out, it reloads the user's roles, permissions, and active flag from the store keyed by the token subject \(the user id\). The store, not the token, is the source of truth for authorization: this is what makes non\-admin role grants gate anything \(the token carries roles but never permissions\) and lets deactivating a user revoke their live tokens within the token TTL.
 
-Two cases fall back to the signed claims instead of the reload: a nil store \(no data plane bound — the trusted in\-process minting context\) and a subject with no backing row \(a directly\-minted token, e.g. \`dexaflow lite\`\). Any other store failure fails closed, so a flaky database cannot silently disable revocation.
+Two cases fall back to the signed claims instead of the reload: a nil store \(no data plane bound, the trusted in\-process minting context\) and a subject with no backing row \(a directly\-minted token, e.g. \`dexaflow lite\`\). Any other store failure fails closed, so a flaky database cannot silently disable revocation.
 
 <a name="JWTAuthenticator.AuthenticateAgent"></a>
 ### func \(\*JWTAuthenticator\) [AuthenticateAgent](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/agent_token.go#L180>)
@@ -756,7 +756,7 @@ The session's original login time is preserved across every renewal \(the oiat c
 
 An invalid incoming token \(bad signature, wrong audience, expired\) returns an error and is never re\-minted.
 
-Renewal RE\-PROVES the principal: after the claims check and the ceiling check it reloads the user from the store, exactly as Authenticate does, and refuses \(ErrInvalidToken\) when the account is inactive or its row is gone. Issuing a credential is not weaker than using one, so a deactivated user must stop receiving fresh tokens, not merely stop being able to spend them. The same two carve\-outs Authenticate makes apply verbatim: a nil store \(no data plane bound — the trusted in\-process minting context\) and the dev\-token subject, which has no backing row by design. Any other store failure fails closed; that adds no failure mode, because a database blip that refuses this renewal would refuse the following request anyway, and the client's refresh is best\-effort. Roles on the re\-minted token come from the reload, so a role revoked mid\-session is reflected at once rather than carried forward from the old claims.
+Renewal RE\-PROVES the principal: after the claims check and the ceiling check it reloads the user from the store, exactly as Authenticate does, and refuses \(ErrInvalidToken\) when the account is inactive or its row is gone. Issuing a credential is not weaker than using one, so a deactivated user must stop receiving fresh tokens, not merely stop being able to spend them. The same two carve\-outs Authenticate makes apply verbatim: a nil store \(no data plane bound, the trusted in\-process minting context\) and the dev\-token subject, which has no backing row by design. Any other store failure fails closed; that adds no failure mode, because a database blip that refuses this renewal would refuse the following request anyway, and the client's refresh is best\-effort. Roles on the re\-minted token come from the reload, so a role revoked mid\-session is reflected at once rather than carried forward from the old claims.
 
 <a name="Permission"></a>
 ## type [Permission](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/auth.go#L33>)

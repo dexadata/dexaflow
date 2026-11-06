@@ -992,7 +992,7 @@ func (s *SchedulerStore) MarkTaskDispatchFailed(ctx context.Context, runID, task
 
 // MarkTaskAgentLost transitions one TI to `failed` with the agent_lost
 // reason. The WHERE state='running' guard makes this idempotent and prevents
-// a late terminal report being overwritten — if the row already moved, we
+// a late terminal report being overwritten: if the row already moved, we
 // touch zero rows and return nil. It is pinned to the listed attempt,
 // (tryNumber, attemptEpoch) (ADR 0051 amendment): a mark computed for a
 // superseded execution is a no-op on its replacement.

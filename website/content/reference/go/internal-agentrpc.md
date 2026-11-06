@@ -484,11 +484,11 @@ func (s *Server) AwaitAssignment(stream agentv1.AgentService_AwaitAssignmentServ
 
 AwaitAssignment is the warm\-worker assignment transport \(ADR 0058 N1b\): a long\-lived bidi stream over which the control plane pushes per\-attempt WorkAssignments down and the worker sends its registration, acks, and slot\-free signals up.
 
-Inert\-when\-off: if warm pools are not wired the handler refuses immediately with FailedPrecondition — the flag\-gated dormant state.
+Inert\-when\-off: if warm pools are not wired the handler refuses immediately with FailedPrecondition, the flag\-gated dormant state.
 
-Identity: the registry key is the worker's AUTHENTICATED identity from the stream's bearer token \(via identify\), NOT the dag\_version\_id in the register payload — a worker cannot claim an arbitrary identity through the message. The payload's dag\_version\_id only names which pool the worker serves and must be non\-empty.
+Identity: the registry key is the worker's AUTHENTICATED identity from the stream's bearer token \(via identify\), NOT the dag\_version\_id in the register payload: a worker cannot claim an arbitrary identity through the message. The payload's dag\_version\_id only names which pool the worker serves and must be non\-empty.
 
-After registration two flows run concurrently: the receive loop drains WorkerMessages \(acks feed the H1 lease machine, slot\-free frees the worker\) while the main select pumps assignments from the worker's outbound channel down the stream. The handler exits — deregistering the worker \(defer\) — on context cancellation, the control plane's shutdown signal \(SetShutdown\), a stream Send error, the receive loop ending \(clean EOF or a transport error\), a newer registration superseding this stream after it went silent past the liveness grace, or this replica losing scheduler leadership while the worker is idle \(FailedPrecondition, so the worker re\-dials toward the new leader\). A second stream for an identity whose first stream is still live is refused with AlreadyExists \(one live registration per identity\).
+After registration two flows run concurrently: the receive loop drains WorkerMessages \(acks feed the H1 lease machine, slot\-free frees the worker\) while the main select pumps assignments from the worker's outbound channel down the stream. The handler exits, deregistering the worker \(defer\), on context cancellation, the control plane's shutdown signal \(SetShutdown\), a stream Send error, the receive loop ending \(clean EOF or a transport error\), a newer registration superseding this stream after it went silent past the liveness grace, or this replica losing scheduler leadership while the worker is idle \(FailedPrecondition, so the worker re\-dials toward the new leader\). A second stream for an identity whose first stream is still live is refused with AlreadyExists \(one live registration per identity\).
 
 <a name="Server.EnableWarmPools"></a>
 ### func \(\*Server\) [EnableWarmPools](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/await_assignment.go#L38>)
@@ -991,7 +991,7 @@ NewWorkerRegistry builds a registry whose reclaim events are delivered to onRecl
 func (r *WorkerRegistry) Ack(assignmentID string, started bool) (*WarmBinding, bool)
 ```
 
-Ack settles the lease for assignmentID. started=true marks the worker busy, cancels the lease \(no reclaim\), and returns the WarmBinding to persist — the acked attempt's \(run, task, try\) plus the worker's pod name — with ok=true. started=false reclaims the assignment and returns ok=false. An ack for an unknown assignment \(already settled, or expired past its tombstone\) also returns ok=false. Only ok=true carries a non\-nil binding the handler should persist.
+Ack settles the lease for assignmentID. started=true marks the worker busy, cancels the lease \(no reclaim\), and returns the WarmBinding to persist \(the acked attempt's \(run, task, try\) plus the worker's pod name\) with ok=true. started=false reclaims the assignment and returns ok=false. An ack for an unknown assignment \(already settled, or expired past its tombstone\) also returns ok=false. Only ok=true carries a non\-nil binding the handler should persist.
 
 A late ack, one that arrives after the lease expired but while its tombstone is kept, is settled the same way: the worker runs the attempt whatever the server answers, so a started late ack still binds the attempt and marks the worker busy. A refused late ack returns the worker to the free set, which the expiry deliberately did not do.
 

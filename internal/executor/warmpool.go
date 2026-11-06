@@ -25,7 +25,7 @@ import (
 // The N1a boot validation guarantees max_pool_size >= 1 when warm pools are on and
 // EffectiveMinIdle is clamped to it upstream, so MaxPoolSize >= EffectiveMinIdle in
 // practice; the reconciler still handles MaxPoolSize < EffectiveMinIdle defensively
-// by taking the effective ceiling as max(EffectiveMinIdle, MaxPoolSize) — the idle
+// by taking the effective ceiling as max(EffectiveMinIdle, MaxPoolSize): the idle
 // buffer must always be creatable.
 // TenantID is the tenant that owns this dag_version, threaded through so the
 // per-tenant aggregate warm-pod cap (M4) can sum a tenant's promised idle floors

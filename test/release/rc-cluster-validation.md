@@ -18,7 +18,7 @@ and a row run on anything else proves that other configuration only (#2297).
 commit the run header and the §6 table as `test/release/results/<rc tag>.md`
 (copy [`results/TEMPLATE.md`](results/TEMPLATE.md)): `scripts/cut-release.sh`
 refuses the GA of a version whose rcs have no complete record (#1026). Open one
-issue per FAIL (root-caused, file:line if known — same bar as the
+issue per FAIL (root-caused, file:line if known: same bar as the
 #722–#729 batch). For the **next** RC, keep §0/§2/§4/§5 as-is and refresh only
 **§3a** (the "features this RC shipped") from that release's CHANGELOG
 `[Unreleased]` / release notes. **§3b carries forward** — those rows stand until
