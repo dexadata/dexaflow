@@ -133,14 +133,14 @@ func TestConnectionWritesAreAudited(t *testing.T) {
 	srv := resourceAuditServer(audit, nil, &fakeConnStore{}, nil, nil, nil)
 
 	raExpect(t, srv, http.MethodPost, "/api/v2/connections",
-		`{"connection_id":"wh","conn_type":"postgres","host":"db","password":"pw-s3cr3t","extra":"{\"token\":\"x-s3cr3t\"}"}`, http.StatusCreated)
+		`{"connection_id":"wh","conn_type":"postgres","host":"db","password":"pw-s3cr3t","extra":"{\"token\":\"x-s3cr3t\"}"}`, http.StatusCreated) // gitleaks:allow: test fixture, not a credential
 	got := audit.last(t)
 	wantEvent(t, got, "connection.create", "connection", "wh")
 	if got.metadata["fields"] != "conn_type,extra,host,password" {
 		t.Errorf("create fields = %q, want conn_type,extra,host,password", got.metadata["fields"])
 	}
 
-	raExpect(t, srv, http.MethodPatch, "/api/v2/connections/wh", `{"conn_type":"postgres","password":"pw2-s3cr3t"}`, http.StatusOK)
+	raExpect(t, srv, http.MethodPatch, "/api/v2/connections/wh", `{"conn_type":"postgres","password":"pw2-s3cr3t"}`, http.StatusOK) // gitleaks:allow: test fixture, not a credential
 	got = audit.last(t)
 	wantEvent(t, got, "connection.update", "connection", "wh")
 	if got.metadata["fields"] != "conn_type,password" {
@@ -216,9 +216,9 @@ func TestPasswordSignInIsAuditedWithoutOIDC(t *testing.T) {
 			AuthAudit:     audit,
 		},
 	})
-	raExpect(t, srv, http.MethodPost, "/auth/token", `{"username":"ana@example.com","password":"pw-s3cr3t","tenant":"acme"}`, http.StatusOK)
+	raExpect(t, srv, http.MethodPost, "/auth/token", `{"username":"ana@example.com","password":"pw-s3cr3t","tenant":"acme"}`, http.StatusOK) // gitleaks:allow: test fixture, not a credential
 	authn.issueErr = auth.ErrInvalidCredentials
-	raExpect(t, srv, http.MethodPost, "/auth/token", `{"username":"ana@example.com","password":"wrong-s3cr3t","tenant":"acme"}`, http.StatusUnauthorized)
+	raExpect(t, srv, http.MethodPost, "/auth/token", `{"username":"ana@example.com","password":"wrong-s3cr3t","tenant":"acme"}`, http.StatusUnauthorized) // gitleaks:allow: test fixture, not a credential
 
 	if len(audit.events) != 2 {
 		t.Fatalf("recorded %+v, want two auth.login entries", audit.events)

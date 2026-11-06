@@ -22,7 +22,7 @@ func TestResourceWritesReachTheEventLogIntegration(t *testing.T) {
 	if _, err := f.repo.EnsureTenant(f.ctx, f.tenantB, f.tenantB, 0, domain.TenantLimitsUpdate{}); err != nil {
 		t.Fatalf("seeding B's roles: %v", err)
 	}
-	admin, err := f.repo.CreateUser(f.ctx, f.tenantB, "audit_"+f.suffix+"@example.com", "a-Strong-pass-123", []string{"admin"})
+	admin, err := f.repo.CreateUser(f.ctx, f.tenantB, "audit_"+f.suffix+"@example.com", "a-Strong-pass-123", []string{"admin"}) // gitleaks:allow: test fixture, not a credential
 	if err != nil {
 		t.Fatalf("creating the admin: %v", err)
 	}
