@@ -345,8 +345,51 @@ func LoadServer(configFile string, flags *pflag.FlagSet) (*ServerConfig, error) 
 		if err := decodeDottedOIDCMaps(configFile, &c); err != nil {
 			return nil, err
 		}
+		if err := decodeExecutorPolicy(configFile, v.IsSet("executor.policy"), &c); err != nil {
+			return nil, err
+		}
 	}
 	return &c, nil
+}
+
+// decodeExecutorPolicy copies the executor.policy subtree of a YAML or JSON
+// config file into c.Executor.Policy (ADR 0063). Like the OIDC maps it
+// bypasses viper, whose "." key delimiter would split a node label key. The
+// subtree is decoded generically first, which resolves anchors and merge keys
+// defined anywhere in the file, then encoded again for the dispatcher's
+// parser. A policy in a config file of another format is an error, not a
+// policy silently left unenforced; set reports whether viper saw one. A null
+// or empty policy is no policy.
+func decodeExecutorPolicy(configFile string, set bool, c *ServerConfig) error {
+	switch strings.ToLower(filepath.Ext(configFile)) {
+	case ".yaml", ".yml", ".json", "":
+	default:
+		if set {
+			return fmt.Errorf("executor.policy is only read from a YAML or JSON config file, not %q", configFile)
+		}
+		return nil
+	}
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return fmt.Errorf("reading config file %q for executor.policy: %w", configFile, err)
+	}
+	var raw struct {
+		Executor struct {
+			Policy any `yaml:"policy"`
+		} `yaml:"executor"`
+	}
+	if err = yaml.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("decoding executor.policy from config file %q: %w", configFile, err)
+	}
+	if p := raw.Executor.Policy; p == nil || p == "" {
+		return nil
+	}
+	out, err := yaml.Marshal(raw.Executor.Policy)
+	if err != nil {
+		return fmt.Errorf("encoding executor.policy: %w", err)
+	}
+	c.Executor.Policy = out
+	return nil
 }
 
 // decodeDottedOIDCMaps reads the OIDC maps whose KEYS may contain dots directly

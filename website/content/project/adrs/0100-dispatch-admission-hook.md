@@ -8,7 +8,7 @@ description: "ADR 0100: the dispatcher calls an operator's admission hook for ev
 **Status:** Accepted
 **Date:** 2026-10-29
 **Accepted:** 2026-10-29
-**Relates:** ADR 0053 (admission and placement), ADR 0055 (agent token transport), ADR 0058 (warm pools), ADR 0062 (specialist review, §4), ADR 0063 (executor policy, proposed in #1365, not yet in this tree), ADR 0066 (resource unit), ADR 0099 (public server package)
+**Relates:** ADR 0053 (admission and placement), ADR 0055 (agent token transport), ADR 0058 (warm pools), ADR 0062 (specialist review, §4), [ADR 0063](/project/adrs/0063-executor-policy/) (executor policy, the last admission step), ADR 0066 (resource unit), ADR 0099 (public server package)
 **Issues:** #2177, #2176, #1372
 
 ## Context
@@ -139,6 +139,9 @@ concurrency limits) before an attempt reaches the dispatcher.
    ADR 0063 does; operator hooks may not. There is one place where an
    attempt is admitted, and #1372 is rebased onto this interface instead of
    adding its own disposition path.
+   *Note (2026-11-06):* ADR 0063 as accepted forces the runtime class, the
+   service account, the node selector and tolerations, and fills no resource
+   limits: the default limits (#537) and the resource unit already do.
 
 8. **A webhook for installs without their own binary**, as a second slice:
    `execution.admission.webhook.url` receives the request as JSON
