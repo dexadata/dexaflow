@@ -346,24 +346,28 @@ rate of point lookups by key, as a table for
 
 The [service level objectives](https://dexaflow.dexadata.ai/operate/service-level-objectives/)
 of the production profile, judged over a run that has no Prometheus: the
-long soak, a failure injection row (#2314). Scrape the control plane's
-metrics listener every 15 seconds for the whole run, then hand the scrapes
-over in time order:
+long soak, a failure injection row (#2314). Scrape every control plane
+process's metrics listener every 15 seconds for the whole run, each process
+into a directory of its own (on k3d, port-forward each pod, not the
+Service), then hand the directories over:
 
 ```sh
-mkdir -p scrapes
-while sleep 15; do curl -s localhost:9090/metrics > "scrapes/$(date +%s).prom"; done &
+mkdir -p scrapes/server
+while sleep 15; do curl -s localhost:9090/metrics > "scrapes/server/$(date +%s).prom"; done &
 # ... the run ...
 kill %1
-go run ./test/load/slo_check scrapes/*.prom
+go run ./test/load/slo_check scrapes/*/
 ```
 
-Each objective's counters are summed as increases between consecutive
-scrapes, and a counter that went down (a restarted process) counts from zero,
-as `increase()` does; a process killed between two scrapes loses its counts
-since the last one, so keep the interval short in a run that kills it. It
-prints one row per objective with the target, the measured share and the
-number of events, and exits 1 when one is broken. An objective with no event
-is not measured, never met. The flags `--schedule-punctuality`,
-`--task-start`, `--platform-failures` and `--api-availability` change the
+Within a directory, each objective's counters are summed as increases between
+consecutive scrapes; a changed `process_start_time_seconds` or a counter that
+went down is a restart, counted from zero, as `increase()` does. A process
+killed between two scrapes loses its counts since the last one, so keep the
+interval short in a run that kills it. A scrape that does not parse (cut off
+by a kill) is skipped with a warning. Leadership is the time of the run that
+no stretch with a growing leader tick count covers, on any process. It prints
+one row per objective with the target, the measured share and the number of
+events, and exits 1 when one is broken. An objective with no event is not
+measured, never met. The flags `--schedule-punctuality`, `--task-start`,
+`--platform-failures`, `--api-availability` and `--leaderless` change the
 targets; the defaults are the page's.
