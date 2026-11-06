@@ -114,6 +114,11 @@ type Querier interface {
 	// Counts what DeleteExpiredUsageEvents would delete, looking at no more than
 	// max_rows events.
 	CountExpiredUsageEvents(ctx context.Context, arg CountExpiredUsageEventsParams) (int64, error)
+	// Counts the running TIs that have heartbeated at least once, and those whose
+	// last heartbeat is older than the cut-off, for the agent-lost reaper's
+	// mass-silence guard (#1624). Read only when ListAgentLostCandidates returned a
+	// silent attempt; idx_ti_state covers the running rows.
+	CountHeartbeatFleet(ctx context.Context, staleBefore pgtype.Timestamptz) (CountHeartbeatFleetRow, error)
 	CountImportErrorsFiltered(ctx context.Context, arg CountImportErrorsFilteredParams) (int64, error)
 	CountLiveAPITokens(ctx context.Context, arg CountLiveAPITokensParams) (int64, error)
 	// The live sign-ins, in all and from one requester.
