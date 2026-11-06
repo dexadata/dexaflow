@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -33,11 +34,13 @@ import (
 // deleted. InvalidImageName never resolves and stays a task failure at once.
 //
 // Both bounds decide from a snapshot of a Pending pod, which can be stale: the
-// pod may have been placed since, and its agent registered. So a bound fails
-// the attempt only while it has not started (PendingOutcomeReporter), and the
-// pod is deleted with its UID and resourceVersion as preconditions: a pod that
-// changed since the snapshot (bound to a node, its pull succeeded) is left for
-// the next sweep to judge.
+// pod may have been placed or its pull may have succeeded since, and its agent
+// registered, possibly before the kubelet pushed the pod's new status. So a
+// bound fails the attempt only while it has not started
+// (PendingOutcomeReporter) and leaves the pod of a started attempt alone; a
+// pod it collects is deleted with its UID and resourceVersion as
+// preconditions, so one that changed since the snapshot is left for the next
+// sweep to judge.
 
 // imagePullGrace is how long a failing image pull is left to the kubelet's
 // back-off (10 s doubling to its 5 minute cap) before the attempt is settled
@@ -56,18 +59,38 @@ var imagePullWaiting = map[string]bool{
 func (r *Reconciler) SetPendingTimeout(d time.Duration) { r.pendingTimeout = d }
 
 // SetDecisionRecorder counts the Pending bounds' settles as scheduler
-// decisions: pending_bound_unschedulable, pending_bound_image_pull, and their
-// _skipped forms for an attempt that started or was settled since the
-// snapshot. Nil records nothing.
+// decisions: pending_bound_unschedulable and pending_bound_image_pull, their
+// _started forms for an attempt that is running since the snapshot (its pod
+// is left alone) and _gone forms for one superseded or settled already (its
+// pod is collected). Nil records nothing.
 func (r *Reconciler) SetDecisionRecorder(d DecisionRecorder) { r.decisions = d }
 
+// PendingSettle is what a Pending bound's settle found.
+type PendingSettle int
+
+const (
+	// PendingSettled means the attempt had not started and is now failed.
+	PendingSettled PendingSettle = iota
+	// PendingStarted means the same attempt is running, so its pod is its live
+	// execution (placed, or its pull succeeded, since the snapshot) and must
+	// be left alone.
+	PendingStarted
+	// PendingGone means the attempt was superseded or settled already; its pod is
+	// a leftover the bound may still collect.
+	PendingGone
+)
+
 // PendingOutcomeReporter fails an attempt only while it has not started
-// (scheduled or queued), as infra when infra is set, and reports whether the
-// row changed. The reconciler uses it for the Pending bounds when its
-// reporter implements it; storage.ExecutionStore does.
+// (scheduled or queued), as infra when infra is set, and reports what it
+// found. The reconciler uses it for the Pending bounds when its reporter
+// implements it; storage.ExecutionStore does.
 type PendingOutcomeReporter interface {
-	FailPendingTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, reason string, infra bool) (bool, error)
+	FailPendingTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, reason string, infra bool) (PendingSettle, error)
 }
+
+// errAttemptStarted is settleBound's answer for an attempt that started since
+// the snapshot: not a failure to log, but its pod must not be collected.
+var errAttemptStarted = errors.New("the attempt started since the pod was read")
 
 // Bound names, the suffix of their decisions.
 const (
@@ -75,28 +98,32 @@ const (
 	boundImagePull     = "image_pull"
 )
 
-// settleBound records a Pending bound's verdict: before the attempt started
-// only, when the reporter can guard on that, or with the active-state settle
-// of the other verdicts otherwise (a reporter without the guard, in tests).
+// settleBound records a Pending bound's verdict, before the attempt started
+// only. It returns errAttemptStarted for an attempt that is running since the
+// snapshot, so the caller leaves its pod alone. A reporter without the guard
+// is refused, since the active-state settles of the other verdicts would fail
+// a running attempt (#1609 review): the pod is left for the sweep and the
+// pending_bound_unguarded decision says the wiring is wrong.
 func (r *Reconciler) settleBound(ctx context.Context, tiID string, tryNumber, epoch int, v verdict) error {
-	infra := v.settle == settleInfra
 	pr, ok := r.reporter.(PendingOutcomeReporter)
 	if !ok {
-		if infra {
-			return r.reporter.FailTaskInfra(ctx, tiID, tryNumber, epoch, v.reason)
-		}
-		return r.reporter.FailTask(ctx, tiID, tryNumber, epoch, v.reason)
+		r.recordDecision("pending_bound_unguarded")
+		return errAttemptStarted
 	}
-	applied, err := pr.FailPendingTask(ctx, tiID, tryNumber, epoch, v.reason, infra)
-	if err != nil {
+	got, err := pr.FailPendingTask(ctx, tiID, tryNumber, epoch, v.reason, v.settle == settleInfra)
+	switch {
+	case err != nil:
 		return err
-	}
-	if !applied {
-		r.recordDecision("pending_bound_" + v.bound + "_skipped")
+	case got == PendingStarted:
+		r.recordDecision("pending_bound_" + v.bound + "_started")
+		return errAttemptStarted
+	case got == PendingGone:
+		r.recordDecision("pending_bound_" + v.bound + "_gone")
+		return nil
+	default:
+		r.recordDecision("pending_bound_" + v.bound)
 		return nil
 	}
-	r.recordDecision("pending_bound_" + v.bound)
-	return nil
 }
 
 func (r *Reconciler) recordDecision(d string) {
@@ -143,8 +170,7 @@ func (r *Reconciler) classify(pod *corev1.Pod, now time.Time) verdict {
 		return verdict{terminal: true, settle: settleInfra, collect: true, bound: boundImagePull, reason: imagePullReason(w)}
 	}
 	if r.pendingTimeout > 0 {
-		r.gates.seeGated(pod)
-		if c := unschedulable(pod); c != nil && now.Sub(r.gates.since(pod, unschedulableSince(pod, c), now)) > r.pendingTimeout {
+		if c := unschedulable(pod); c != nil && now.Sub(r.unsched.since(pod, unschedulableSince(pod, c), now)) > r.pendingTimeout {
 			return verdict{terminal: true, settle: settleFailed, collect: true, bound: boundUnschedulable, reason: unschedulableReason(c, r.pendingTimeout)}
 		}
 	}
@@ -210,81 +236,58 @@ func imagePullReason(w *corev1.ContainerStateWaiting) string {
 		w.Reason, imagePullGrace, strings.TrimSpace(w.Message)))
 }
 
-// gateTracker corrects the unschedulable clock of a pod that waited behind
-// scheduling gates (Kueue, a gate webhook). Such a pod is PodScheduled=False
-// with reason SchedulingGated first, and the scheduler keeps the condition's
-// lastTransitionTime when the reason turns Unschedulable, since the status
-// stays False: the time spent gated would count against
-// executor.pending_timeout_seconds. A pod this reconciler saw gated has its
-// clock start when it first saw it Unschedulable instead. A pod whose gate
-// was lifted before this process watched it keeps the condition's time. The
-// map holds Pending pods only and is pruned to the swept set every sweep.
-type gateTracker struct {
-	mu sync.Mutex
-	// ungated maps a pod seen gated to when it was first seen Unschedulable
-	// after that, zero while still gated.
-	ungated map[types.UID]time.Time
+// unschedTracker starts the unschedulable clock no earlier than when this
+// reconciler first saw the pod unschedulable. The condition's
+// lastTransitionTime alone over-counts a pod that waited behind scheduling
+// gates (Kueue, a gate webhook): such a pod is PodScheduled=False with reason
+// SchedulingGated first, and the scheduler keeps the time when the reason
+// turns Unschedulable, since the status stays False, so the time spent gated
+// would count against executor.pending_timeout_seconds and fail the task as
+// soon as its gate lifts. Taking the later of the two never over-counts. The
+// cost is that the clock starts over when leadership moves or the server
+// restarts, which delays a bound, the safe direction. The map holds the
+// unschedulable pods seen recently and is pruned every sweep.
+type unschedTracker struct {
+	mu    sync.Mutex
+	first map[types.UID]unschedSeen
 }
 
-// seeGated records a pod waiting behind its scheduling gates.
-func (g *gateTracker) seeGated(pod *corev1.Pod) {
-	if pod.UID == "" || !schedulingGated(pod) {
-		return
-	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.ungated == nil {
-		g.ungated = map[types.UID]time.Time{}
-	}
-	g.ungated[pod.UID] = time.Time{}
+type unschedSeen struct {
+	first, last time.Time
 }
 
-// since returns the later of from and when the pod, once seen gated, was
-// first seen Unschedulable.
-func (g *gateTracker) since(pod *corev1.Pod, from, now time.Time) time.Time {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	at, ok := g.ungated[pod.UID]
-	if !ok {
+// since returns the later of from and when this reconciler first saw the pod
+// unschedulable, now when this is the first time.
+func (u *unschedTracker) since(pod *corev1.Pod, from, now time.Time) time.Time {
+	if pod.UID == "" {
 		return from
 	}
-	if at.IsZero() {
-		at = now
-		g.ungated[pod.UID] = at
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.first == nil {
+		u.first = map[types.UID]unschedSeen{}
 	}
-	if at.After(from) {
-		return at
+	e, ok := u.first[pod.UID]
+	if !ok {
+		e.first = now
+	}
+	e.last = now
+	u.first[pod.UID] = e
+	if e.first.After(from) {
+		return e.first
 	}
 	return from
 }
 
-// prune forgets every pod not in pods.
-func (g *gateTracker) prune(pods []*corev1.Pod) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if len(g.ungated) == 0 {
-		return
-	}
-	keep := make(map[types.UID]bool, len(pods))
-	for _, p := range pods {
-		keep[p.UID] = true
-	}
-	for uid := range g.ungated {
-		if !keep[uid] {
-			delete(g.ungated, uid)
+// prune forgets every pod not seen unschedulable since before (the start of
+// the sweep that calls it), so a pod placed, settled or deleted is dropped
+// while one an event handler saw during the sweep is kept.
+func (u *unschedTracker) prune(before time.Time) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	for uid, e := range u.first {
+		if e.last.Before(before) {
+			delete(u.first, uid)
 		}
 	}
-}
-
-// schedulingGated reports whether the pod waits behind scheduling gates.
-func schedulingGated(pod *corev1.Pod) bool {
-	if len(pod.Spec.SchedulingGates) > 0 {
-		return true
-	}
-	for _, c := range pod.Status.Conditions {
-		if c.Type == corev1.PodScheduled && c.Status == corev1.ConditionFalse && c.Reason == corev1.PodReasonSchedulingGated {
-			return true
-		}
-	}
-	return false
 }

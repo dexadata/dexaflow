@@ -1355,8 +1355,9 @@ Two changes to task pods that never start
   minutes to add one: size it above the slowest node your autoscaler adds
   (a GPU node from zero, a Karpenter node class with a slow image), since a
   task bounded this way spends a retry and its next attempt starts the clock
-  again. The time a pod spends behind scheduling gates (Kueue) is not
-  counted. The bound only matters under the `exchange` agent credential
+  again. The clock starts no earlier than when the leader first saw the pod
+  unschedulable, so time behind scheduling gates (Kueue) is not counted and
+  a leader change or restart starts it over. The bound only matters under the `exchange` agent credential
   transport: under `envvar`, the default, the `start_expired` bound already
   re-places a Pending pod after 8 minutes.
 

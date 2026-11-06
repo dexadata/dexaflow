@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -618,9 +619,9 @@ type Reconciler struct {
 	pendingTimeout time.Duration
 	// decisions counts the Pending bounds' settles; nil records nothing.
 	decisions DecisionRecorder
-	// gates restarts the unschedulable clock of a pod that waited behind
-	// scheduling gates (see gateTracker).
-	gates gateTracker
+	// unsched starts a pod's unschedulable clock no earlier than this
+	// reconciler's first sight of it (see unschedTracker).
+	unsched unschedTracker
 }
 
 // NewReconciler builds a Reconciler over the given cluster and outcome reporter.
@@ -680,6 +681,8 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		// try again next tick.
 		if v.settle != settleNothing {
 			if err := r.settlePod(ctx, pod, v); err != nil {
+				// A failed settle, or a Pending bound on an attempt that
+				// started since the snapshot: keep the pod either way.
 				runs.block(pod)
 				continue
 			}
@@ -710,7 +713,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 	// Every pod was visited: stamp the sweep before the collection, so its
 	// apiserver calls never delay the reaper's settling gate.
 	r.lastSweepCompleted.Store(started.UnixNano())
-	r.gates.prune(pods)
+	r.unsched.prune(started)
 	// Confirm the provisional infra marks against this sweep's pods (ADR 0052
 	// amendment, part 2).
 	r.confirmInfraMarks(ctx, pods)
@@ -773,6 +776,9 @@ func (r *Reconciler) settlePod(ctx context.Context, pod *corev1.Pod, v verdict) 
 		return nil
 	}
 	if err := r.recordOutcome(ctx, tiID, tryNumber, epoch, v); err != nil {
+		if errors.Is(err, errAttemptStarted) {
+			return err
+		}
 		slog.Error("recording task pod outcome", "pod", pod.Name, "task_instance", tiID,
 			"settle", v.settle, "from_record", v.fromRecord, "error", err)
 		return err
