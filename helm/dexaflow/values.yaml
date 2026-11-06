@@ -957,6 +957,16 @@ metrics:
       oldestQueuedSeconds: 600
       # -- `DexaflowMixedVersions` opens a ticket when processes report more than one version for this long. Longer than your slowest rollout.
       mixedVersionsFor: 30m
+  grafanaDashboard:
+    # -- Render a ConfigMap with the Dexaflow overview dashboard (scheduler loop and schedule delay, leader step-downs, task queue wait, failure ratio, dispatch, API traffic and errors, database pool and Redis). The Grafana sidecar of kube-prometheus-stack loads every ConfigMap carrying `labels`. Needs a Prometheus data source that scrapes `/metrics` (`metrics.serviceMonitor.enabled`). The JSON is also in the chart's `dashboards/` directory for a manual import.
+    enabled: false
+    # -- Namespace of the ConfigMap. Defaults to the release namespace; set it to the namespace the Grafana sidecar watches when it does not search all namespaces.
+    namespace: ""
+    # -- Labels the Grafana sidecar selects dashboards by. `grafana_dashboard: "1"` is the kube-prometheus-stack default.
+    labels:
+      grafana_dashboard: "1"
+    # -- Annotations on the ConfigMap, for example `grafana_folder: Dexaflow` to choose the folder with a sidecar that reads it.
+    annotations: {}
 
 ingress:
   # -- Enable an Ingress resource exposing the control plane via HTTP/HTTPS. Requires an Ingress controller (nginx/traefik/etc.) in the cluster.
