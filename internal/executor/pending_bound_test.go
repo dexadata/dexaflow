@@ -427,3 +427,18 @@ func TestUnschedTrackerPrunes(t *testing.T) {
 		t.Errorf("a pod not seen since the sweep started is kept: %v", u.first)
 	}
 }
+
+// TestImagePullBoundWatchesTheTaskContainerOnly: a sidecar an admission
+// webhook injected may fail its pull while the task container runs; that is
+// not the task's pull, so no bound fires.
+func TestImagePullBoundWatchesTheTaskContainerOnly(t *testing.T) {
+	pod := pullFailingPod("p1", "ti1", "ImagePullBackOff", pendingNow.Add(-imagePullGrace))
+	pod.Status.ContainerStatuses[0].Name = "istio-proxy"
+	pod.Status.ContainerStatuses = append(pod.Status.ContainerStatuses, corev1.ContainerStatus{
+		Name: taskContainerName, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+	})
+	reporter, cs := reconcileOnce(t, pod, 0)
+	if len(reporter.settled) != 0 || podGone(t, cs, "p1") {
+		t.Errorf("a sidecar's failing pull settled the task: %+v", reporter.settled)
+	}
+}
