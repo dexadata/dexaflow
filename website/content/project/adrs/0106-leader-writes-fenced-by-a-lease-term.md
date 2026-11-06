@@ -1,8 +1,8 @@
 ---
-title: "ADR 0105: Leader writes are fenced by a lease term"
-linkTitle: "0105 · Leader writes fenced by a lease term"
-weight: 1050
-description: "ADR 0105: every acquisition of scheduler leadership increments a term in a scheduler_lease row. The leader renews by term, tags its database sessions and its pods with it, and a new leader ends the sessions of older terms, so a deposed leader can no longer write or create pods after the new leader's first tick. The advisory lock stays as the acquisition mutex. Amends ADR 0009 and ADR 0031."
+title: "ADR 0106: Leader writes are fenced by a lease term"
+linkTitle: "0106 · Leader writes fenced by a lease term"
+weight: 1060
+description: "ADR 0106: every acquisition of scheduler leadership increments a term in a scheduler_lease row. The leader renews by term, tags its database sessions and its pods with it, and a new leader ends the sessions of older terms, so a deposed leader can no longer write or create pods after the new leader's first tick. The advisory lock stays as the acquisition mutex. Amends ADR 0009 and ADR 0031."
 ---
 
 **Status:** Proposed
