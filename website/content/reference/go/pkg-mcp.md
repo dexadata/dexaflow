@@ -120,7 +120,7 @@ func main() {
 	mcp.AddTool(s, &mcpsdk.Tool{Name: "runbook", Description: "Find the runbook of a DAG."}, runbook)
 
 	serverT, clientT := mcpsdk.NewInMemoryTransports()
-	if _, err := s.SDK().Connect(ctx, serverT, nil); err != nil {
+	if _, err = s.SDK().Connect(ctx, serverT, nil); err != nil {
 		panic(err)
 	}
 	session, err := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "example"}, nil).Connect(ctx, clientT, nil)
