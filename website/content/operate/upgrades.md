@@ -112,6 +112,33 @@ helm upgrade <release> oci://ghcr.io/dexadata/charts/leoflow --version <VERSION>
   -n leoflow --reset-then-reuse-values
 ```
 
+### Supported upgrade paths
+
+You do not have to take every patch. One `helm upgrade` may skip any number
+of releases, as long as it starts from a supported release:
+
+| Upgrading to | Supported from, in one step |
+|---|---|
+| any 0.6.x | 0.5.0 or later |
+| any 0.5.x | 0.5.0 or later |
+
+Every migration in between then runs in the one migration Job, in order. The
+[skip-version upgrade test](https://github.com/dexadata/dexaflow/blob/main/test/upgrade/skip-version.sh)
+holds every release candidate to this, weekly and on each rc tag
+([#2311](https://github.com/dexadata/dexaflow/issues/2311)): it seeds a
+database at 0.5.0 with 1,000 DAGs, 1 million runs, 5 million task
+instances, 500,000 archived tries and 1 million audit rows, upgrades it to
+the candidate in one step, and checks that every migration finished within
+5 minutes, that no index was left `INVALID`, that the schema equals a fresh
+install's (`pg_dump --schema-only`), and that the control plane becomes
+ready and runs a new DAG while it still serves the old runs.
+
+Read the "Upgrading to" sections of every release you skip, in order: their
+steps still apply, and the migrations of all of them run in that one Job, so
+size its `activeDeadlineSeconds` and Helm's `--timeout` for their sum. Upgrade
+from a release older than the table in two steps, through the oldest
+supported one.
+
 ### Use `--reset-then-reuse-values`, not `--reuse-values`
 
 `--reuse-values` does **not** merge the new chart's defaults. Helm rebuilds the
