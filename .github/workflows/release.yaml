@@ -514,6 +514,16 @@ jobs:
           fi
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
+      # The agent stamp (#894): a renamed internal/version variable or a lost
+      # VERSION build argument links an agent that reports `dev`, and only a
+      # task pod would show it. Checked before signing, so a broken stamp
+      # fails this job, the gate retracts the release, and nothing is signed.
+      - name: Assert the baked agent reports this release
+        env:
+          SOURCE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime
+          DIGEST: ${{ steps.manifest.outputs.digest }}
+        run: bash scripts/release-check-agent-stamp.sh "${SOURCE}@${DIGEST}" "${GITHUB_REF_NAME}"
+
       - name: Sign image with cosign (keyless)
         env:
           DIGEST: ${{ steps.manifest.outputs.digest }}
@@ -723,6 +733,16 @@ jobs:
             exit 1
           fi
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      # The agent stamp (#894): a renamed internal/version variable or a lost
+      # VERSION build argument links an agent that reports `dev`, and only a
+      # task pod would show it. Checked before signing, so a broken stamp
+      # fails this job, the gate retracts the release, and nothing is signed.
+      - name: Assert the baked agent reports this release
+        env:
+          SOURCE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime
+          DIGEST: ${{ steps.manifest.outputs.digest }}
+        run: bash scripts/release-check-agent-stamp.sh "${SOURCE}@${DIGEST}" "${GITHUB_REF_NAME}"
 
       - name: Sign image with cosign (keyless)
         env:

@@ -475,8 +475,29 @@ jobs:
           docker logs fake-gcs >&2
           exit 1
 
+      # The storage package runs beside the rest with -coverpkg over the
+      # storage layer, so the floor below measures the files the unit floor
+      # excludes (#1618). -coverpkg on the whole ./... run instruments storage
+      # in every test binary and took about 12 minutes against about 14 for
+      # the whole step; on the storage package alone it costs nothing
+      # measurable.
       - name: Run integration tests
-        run: go test -tags integration -race ./...
+        run: |
+          set -uo pipefail
+          storage=github.com/dexadata/dexaflow/internal/storage
+          mapfile -t others < <(go list -tags integration ./... | grep -vx "$storage")
+          go test -tags integration -race -coverpkg=./internal/storage/... \
+            -coverprofile=storage-integration.out ./internal/storage/ >storage-integration.log 2>&1 &
+          pid=$!
+          rc=0
+          go test -tags integration -race "${others[@]}" || rc=$?
+          src=0
+          wait "$pid" || src=$?
+          cat storage-integration.log
+          [ "$rc" -eq 0 ] && [ "$src" -eq 0 ]
+
+      - name: Enforce the storage coverage floor
+        run: scripts/coverage-gate.sh --storage storage-integration.out
 
   # ─────────────────────────────────────────────────────────────────────
   # What the control plane TELLS a caller when its database dies mid-flight.

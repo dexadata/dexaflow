@@ -155,7 +155,7 @@ jobs:
   # from that name twice in one day, in both directions (#1036). Container
   # images are scanned by two blocking jobs below — `server-image` and
   # `migrate-image` (#1039) — and by .github/workflows/image-scan.yaml, which
-  # covers leoflow-runtime on a schedule (#1034). A third copy here would only
+  # covers dexaflow-runtime on a schedule (#1034). A third copy here would only
   # duplicate them.
   #
   # Runs on PRs too (#437): a fixable dependency CVE must fail its own PR check,
@@ -222,18 +222,18 @@ jobs:
           format: table
 
   # ─────────────────────────────────────────────────────────────────────
-  # leoflow-server image scan — the BLOCKING half of the container policy.
+  # dexaflow-server image scan: the BLOCKING half of the container policy.
   #
   # This is the one image whose contents are entirely ours: distroless static
-  # (Debian 13, the same base as leoflow-migrate) plus a Go binary built from
+  # (Debian 13, the same base as dexaflow-migrate) plus a Go binary built from
   # this repository's go.mod. Apart from the six distroless base packages (see
   # the migrate job below) there is no OS package set to inherit CVEs from, so a
   # finding here is caused by a commit and closed by a `go get`. That makes it
   # the only image where a PR-blocking gate is fair: the person who turns it
   # red is the person who can turn it green.
   #
-  # `leoflow-migrate` is gated by its own job below, on the same criterion, since
-  # #1039 made it true of that image too. `leoflow-runtime` is NOT gated here: it
+  # `dexaflow-migrate` is gated by its own job below, on the same criterion, since
+  # #1039 made it true of that image too. `dexaflow-runtime` is NOT gated here: it
   # inherits a Debian package set that acquires CVEs with no commit of ours, so a
   # blocking gate on it would fail whoever pushes next rather than whoever can fix
   # it, and would be switched off within a week. It is scanned on a schedule
@@ -242,7 +242,7 @@ jobs:
   # Policy: fixable only, CRITICAL/HIGH blocks. `ignore-unfixed` is what makes
   # this sustainable: severity says how bad a finding is, fixability says whether
   # anyone can do anything about it, and only the second is a gate criterion.
-  # Baseline at the time of writing: leoflow-server reports ZERO findings under
+  # Baseline at the time of writing: dexaflow-server reports ZERO findings under
   # this policy (1 total finding, nothing CRITICAL/HIGH, nothing fixable), so the
   # gate starts green and any red is a real regression.
   #
@@ -276,7 +276,7 @@ jobs:
   # keeps "a finding here is closed by a commit" true.
   #
   # Residual gap, stated rather than papered over: this builds HEAD's binary, not
-  # a published tag. A CVE in an already-published `leoflow-server` that HEAD no
+  # a published tag. A CVE in an already-published `dexaflow-server` that HEAD no
   # longer produces is not visible here — the daily scan and the Security tab
   # baseline from `main` are where that shows up.
   #
@@ -288,7 +288,7 @@ jobs:
   # forever.
   # ─────────────────────────────────────────────────────────────────────
   server-image:
-    name: Trivy (leoflow-server image)
+    name: Trivy (dexaflow-server image)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -321,8 +321,8 @@ jobs:
       # deploy/Dockerfile.server.release is the file .goreleaser.yaml points at
       # for both published arches. It COPYs `dexaflow-server` from the build
       # context, so the context is the staging directory holding it.
-      - name: Build leoflow-server image (the published Dockerfile)
-        run: docker build -f deploy/Dockerfile.server.release -t leoflow-server:ci dist/image-scan-context
+      - name: Build dexaflow-server image (the published Dockerfile)
+        run: docker build -f deploy/Dockerfile.server.release -t dexaflow-server:ci dist/image-scan-context
 
       # Report: every FIXABLE finding at any severity, so the Security tab shows
       # the MEDIUM/LOW ones the gate deliberately does not block on. Unfixed
@@ -333,7 +333,7 @@ jobs:
         with:
           version: ${{ env.TRIVY_VERSION }}
           scan-type: image
-          image-ref: leoflow-server:ci
+          image-ref: dexaflow-server:ci
           scanners: vuln
           ignore-unfixed: true
           trivyignores: .trivyignore.yaml
@@ -356,7 +356,7 @@ jobs:
         with:
           version: ${{ env.TRIVY_VERSION }}
           scan-type: image
-          image-ref: leoflow-server:ci
+          image-ref: dexaflow-server:ci
           scanners: vuln
           ignore-unfixed: true
           trivyignores: .trivyignore.yaml
@@ -365,7 +365,7 @@ jobs:
           format: table
 
   # ─────────────────────────────────────────────────────────────────────
-  # leoflow-migrate image scan — the second half of the BLOCKING gate.
+  # dexaflow-migrate image scan: the second half of the BLOCKING gate.
   #
   # This image was the strongest argument for the report-only lane: it was
   # `FROM migrate/migrate` — Alpine plus a third-party Go binary — and the daily
@@ -387,13 +387,13 @@ jobs:
   # Google to rebuild the base — so it gets a dated entry in .trivyignore.yaml,
   # which enforces a statement, an expiry and a 180-day cap. A reviewed,
   # self-expiring exception is what keeps a blocking gate from becoming a
-  # disabled one, and it is the same posture leoflow-server already runs under.
+  # disabled one, and it is the same posture dexaflow-server already runs under.
   #
   # A Go stdlib advisory with no released fix carries no FixedVersion, so
   # --ignore-unfixed drops it and the gate stays green until the patch ships —
   # at which point the remedy is an ARG GO_VERSION bump in this repo.
   #
-  # Unlike leoflow-server there is no separate release Dockerfile to reproduce:
+  # Unlike dexaflow-server there is no separate release Dockerfile to reproduce:
   # `deploy/Dockerfile.migrate` IS the file release.yaml builds and pushes, so
   # building it here scans the published recipe rather than an approximation.
   # Its pinned GO_VERSION defaults to the same toolchain as this workflow's, and
@@ -404,7 +404,7 @@ jobs:
   # unfiltered, too), so the gate starts green and any red is a real regression.
   # ─────────────────────────────────────────────────────────────────────
   migrate-image:
-    name: Trivy (leoflow-migrate image)
+    name: Trivy (dexaflow-migrate image)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -422,8 +422,8 @@ jobs:
       # scripts/check-migrate-cli-build-tags.sh asserts it equals this
       # workflow's GO_VERSION. Overriding it here would scan a toolchain the
       # release does not use.
-      - name: Build leoflow-migrate image (the published Dockerfile)
-        run: docker build -f deploy/Dockerfile.migrate -t leoflow-migrate:ci .
+      - name: Build dexaflow-migrate image (the published Dockerfile)
+        run: docker build -f deploy/Dockerfile.migrate -t dexaflow-migrate:ci .
 
       # Report: every FIXABLE finding at any severity, so the Security tab shows
       # the MEDIUM/LOW ones the gate deliberately does not block on.
@@ -432,7 +432,7 @@ jobs:
         with:
           version: ${{ env.TRIVY_VERSION }}
           scan-type: image
-          image-ref: leoflow-migrate:ci
+          image-ref: dexaflow-migrate:ci
           scanners: vuln
           ignore-unfixed: true
           trivyignores: .trivyignore.yaml
@@ -454,7 +454,7 @@ jobs:
         with:
           version: ${{ env.TRIVY_VERSION }}
           scan-type: image
-          image-ref: leoflow-migrate:ci
+          image-ref: dexaflow-migrate:ci
           scanners: vuln
           ignore-unfixed: true
           trivyignores: .trivyignore.yaml

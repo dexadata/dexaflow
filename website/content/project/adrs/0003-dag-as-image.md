@@ -87,6 +87,15 @@ To serve different audiences, Leoflow supports three progressive levels:
 > ADR is deliberately not one of them, because a decision record states what was
 > decided, not what is true today.
 
+> **Note (2026-11, #894).** Each release publishes the task base under an
+> immutable tag, `ghcr.io/dexadata/dexaflow-runtime:py<version>-v<X.Y.Z>`, and
+> `py<version>` is a moving alias that the release `promote` job re-points at
+> every GA of the newest minor (ADR 0071). The generated Dockerfile pins the
+> versioned tag of the released CLI that compiles it, and `base_image` in
+> `dexaflow.yaml` overrides it. The release workflow checks that the agent
+> baked into each published base reports that release before signing it
+> (`scripts/release-check-agent-stamp.sh`).
+
 The project maintains three base images from day one:
 
 - `leoflow/python-runtime:3.10`

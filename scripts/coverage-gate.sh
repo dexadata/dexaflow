@@ -7,6 +7,11 @@
 #
 # Usage:
 #   scripts/coverage-gate.sh <coverprofile> [<base-coverprofile> <base-label>]
+#   scripts/coverage-gate.sh --storage <integration-coverprofile>
+#
+# --storage gates the storage files the unit floor excludes (STORAGE_FILES
+# below) on a profile of the integration suite, the only tests that run them
+# against a real Postgres (#1618).
 #
 # With a base profile (CI fetches main's with scripts/coverage-base.sh), the
 # job summary also shows the change per package against it. The base only
@@ -29,6 +34,24 @@ FLOOR=80
 # until ADR 0099 moved it, unchanged, behind pkg/server. It stays in the /cmd/
 # category: the e2e suites boot it, and its unit tests keep running.
 EXCLUDE='(/internal/storage/queries/|/internal/storage/repository\.go:|/internal/storage/postgres\.go:|/internal/storage/redis\.go:|/internal/storage/scheduler_store\.go:|/internal/storage/agent_store\.go:|/internal/storage/xcom_index\.go:|/internal/xcom/redis_backend\.go:|/internal/logs/tail\.go:|/internal/scheduler/leader\.go:|/internal/cli/managed_postgres\.go:|/internal/cli/backup_cmd\.go:|/internal/cli/restore_cmd\.go:|/internal/cli/forget\.go:|/internal/cli/dbt_manifest\.go:|\.pb\.go:|\.gen\.go:|/internal/version/|/internal/serverapp/|/cmd/|/test/)'
+
+# The storage layer the unit floor excludes holds most of the decision logic
+# the 2026-10 audits found bugs in (#1618). The integration suite runs it
+# against a real Postgres, so CI measures it there, with
+# -coverpkg=./internal/storage/..., and gates it on its own floor. The floor
+# was set from the measured number (77.8% on 3c8c1ede, the storage package's
+# integration tests) to the whole number about three points below it, so the
+# gate starts green and a change that drops the storage layer's coverage by
+# more than that is caught.
+STORAGE_FILES='(/internal/storage/queries/|/internal/storage/repository\.go:|/internal/storage/postgres\.go:|/internal/storage/redis\.go:|/internal/storage/scheduler_store\.go:|/internal/storage/agent_store\.go:|/internal/storage/xcom_index\.go:)'
+STORAGE_FLOOR=75
+
+# storage_total <coverprofile>: the statement coverage of the STORAGE_FILES
+# blocks of the profile, one decimal, from the statement counts.
+storage_total() {
+	{ head -n1 "$1"; grep -E "$STORAGE_FILES" "$1" || true; } | package_stats /dev/stdin |
+		awk -F'\t' '$2 == "*" { printf "%.1f\n", ($4 ? 100 * $3 / $4 : 0); found = 1 } END { if (!found) print "0.0" }'
+}
 
 # package_stats <coverprofile>: one "<percent>\t<package>\t<covered>\t<statements>"
 # line per package, read from the profile itself (statements per block,
@@ -269,6 +292,20 @@ self_test() {
 	printf '%s\n' 'mode: atomic' 'github.com/x/y/internal/ab/a.go:1.1,2.2 4 0' >"$tmp/ab_head.out"
 	out=$(tier1_drops "$tmp/ab_base.out" "$tmp/ab_head.out")
 	_is_empty "a package whose name only starts like a tier 1 one is not tier 1"
+	printf '%s\n' 'mode: atomic' \
+		'github.com/x/y/internal/storage/scheduler_store.go:1.1,2.2 3 1' \
+		'github.com/x/y/internal/storage/scheduler_store.go:3.1,4.2 1 0' \
+		'github.com/x/y/internal/storage/queries/runs.sql.go:1.1,2.2 4 2' \
+		'github.com/x/y/internal/storage/scheduler_store.go:1.1,2.2 3 0' \
+		'github.com/x/y/internal/storage/janitor.go:1.1,2.2 10 0' \
+		'github.com/x/y/internal/api/api.go:1.1,2.2 10 0' >"$tmp/storage.out"
+	# scheduler_store: 3 of 4 (the repeated block counts once, covered);
+	# queries: 4 of 4; janitor.go and api.go are not storage files.
+	out=$(storage_total "$tmp/storage.out")
+	_expect "the storage total counts only the storage files" '87.5'
+	printf '%s\n' 'mode: atomic' 'github.com/x/y/internal/api/api.go:1.1,2.2 10 1' >"$tmp/nostorage.out"
+	out=$(storage_total "$tmp/nostorage.out")
+	_expect "a profile with no storage file totals zero" '0.0'
 	if [ "$fail" -eq 0 ]; then
 		echo "coverage-gate self-test: ok"
 		return 0
@@ -280,6 +317,22 @@ self_test() {
 if [ "${1:-}" = "--self-test" ]; then
 	self_test
 	exit $?
+fi
+
+if [ "${1:-}" = "--storage" ]; then
+	profile="${2:?usage: coverage-gate.sh --storage <integration-coverprofile>}"
+	[ -s "$profile" ] || { echo "::error::coverage profile '$profile' is missing or empty"; exit 1; }
+	total="$(storage_total "$profile")"
+	echo "Storage layer coverage (integration suite): ${total}% (floor: ${STORAGE_FLOOR}%)"
+	if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+		printf '## Storage layer coverage\n\n**%s%%** of the storage statements the unit floor excludes, under the integration suite (floor %s%%, #1618).\n' \
+			"$total" "$STORAGE_FLOOR" >>"$GITHUB_STEP_SUMMARY"
+	fi
+	if awk -v t="$total" -v f="$STORAGE_FLOOR" 'BEGIN { exit !(t < f) }'; then
+		echo "::error::Storage layer coverage ${total}% is below its floor ${STORAGE_FLOOR}% (#1618); add integration tests"
+		exit 1
+	fi
+	exit 0
 fi
 
 profile="${1:?usage: coverage-gate.sh <coverprofile>}"

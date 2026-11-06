@@ -461,13 +461,20 @@ warning: the project builds from its own Dockerfile (Dockerfile), so dependencie
 Use it only for what the yaml cannot express, and start from the published base:
 
 ```dockerfile title="Dockerfile"
-FROM ghcr.io/dexadata/dexaflow-runtime:py3.11
+FROM ghcr.io/dexadata/dexaflow-runtime:py3.11-{{< latest-version v >}}
 USER root
 RUN pip install --no-cache-dir requests==2.32.3
 COPY dag.py /home/leoflow/dag.py
 ENV PYTHONPATH=/home/leoflow
 USER 65532:65532
 ```
+
+Pin the base to a release, as above. `py3.11` alone is a moving alias that
+`promote` re-points at every GA of the newest minor, so the same Dockerfile
+would build on a different agent after the next release. The generated
+Dockerfile already pins `py<ver>-v<X.Y.Z>` when a released CLI compiles it,
+and `base_image` in `dexaflow.yaml` overrides it. Every published base carries an agent stamped with its release: the release workflow refuses
+to sign one that reports another version.
 
 Keep the last `USER` numeric and non-root, or the task pod fails with
 `CreateContainerConfigError`
