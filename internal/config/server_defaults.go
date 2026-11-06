@@ -42,7 +42,8 @@ var serverDefaults = map[string]any{
 	"database.installation_id": "",
 	// Off by default: migrations run in the chart's hook Job (ADR 0090
 	// decision 4 makes self-migration opt-in).
-	"database.migrate_on_boot": false,
+	"database.migrate_on_boot":    false,
+	"database.row_level_security": false,
 	// Empty by default: the process was not installed by the Helm chart, and
 	// the recovery hint keeps its placeholders. The chart sets all of them.
 	"helm.release":       "",

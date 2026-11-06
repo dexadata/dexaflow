@@ -117,6 +117,7 @@ this page.
 - [ADR 0101: mutation testing measures the tests, and coverage is gated per core package](/project/adrs/0101-mutation-testing-and-coverage-policy/)
 - [ADR 0102: patches are cut from main until main diverges from the minor](/project/adrs/0102-patches-from-main-until-main-diverges/)
 - [ADR 0103: cross-DAG waits and triggers are evaluated by the scheduler, without a pod](/project/adrs/0103-cross-dag-dependencies-in-the-scheduler/)
+- [ADR 0104: row level security binds each request's connection to its tenant](/project/adrs/0104-row-level-security/)
 
 ## Template
 

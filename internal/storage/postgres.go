@@ -122,6 +122,9 @@ func mainPoolConfig(cfg config.DatabaseSection) (*pgxpool.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.RowLevelSecurity {
+		enableTenantBinding(pc)
+	}
 	if cfg.StatementTimeoutMS > 0 {
 		set := "SET statement_timeout = " + strconv.Itoa(cfg.StatementTimeoutMS)
 		pc.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {

@@ -88,6 +88,16 @@ func openVerifiedPostgres(ctx context.Context, cfg *config.ServerConfig, tel *ob
 		pg.Close()
 		return nil, werr
 	}
+	// With row level security on, the main pool binds every request's
+	// connection to its tenant (ADR 0104). The binding is only a barrier when
+	// the tables enforce it and the server's role does not bypass it, so a
+	// half-done setup refuses to boot instead of looking protected.
+	if cfg.Database.RowLevelSecurity {
+		if rerr := pg.CheckRowSecurity(ctx); rerr != nil {
+			pg.Close()
+			return nil, rerr
+		}
+	}
 	return pg, nil
 }
 
