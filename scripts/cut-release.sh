@@ -1177,6 +1177,8 @@ run_gates() { # <tag> <base>
     if [[ "$s" == *chart-version-matches-tag* ]]; then out="$(bash "$s" "$tag" 2>&1)"
     elif [[ "$s" == *check-changelog-entry* ]]; then out="$(bash "$s" "origin/$base" 2>&1)"
     elif [[ "$s" == *check-stale-versions* ]]; then out="$(bash "$s" --candidate "$tag" 2>&1)"
+    # A GA needs the validation record of one of its rcs (#1026).
+    elif [[ "$s" == *check-rc-validation* ]]; then out="$(bash "$s" "$tag" 2>&1)"
     else out="$(bash "$s" 2>&1)"; fi
     rc=$?
     if [ "$rc" -ne 0 ]; then

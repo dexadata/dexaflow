@@ -25,6 +25,7 @@ check-playwright-pin.sh
 check-pre-commit-git-env.sh
 check-python-host-interpreters.sh
 check-python-runtime-matrix.sh
+check-rc-validation.sh
 check-reference-drift.sh
 check-runtime-data-lock.sh
 check-runtime-data-pins.sh
