@@ -32,6 +32,8 @@ Package executor runs task instances via Kubernetes, Docker, or a subprocess.
 - [type Disposition](<#Disposition>)
   - [func \(d Disposition\) String\(\) string](<#Disposition.String>)
 - [type Executor](<#Executor>)
+- [type HeartbeatFleet](<#HeartbeatFleet>)
+- [type HeartbeatFleetCounter](<#HeartbeatFleetCounter>)
 - [type HeartbeatReapStore](<#HeartbeatReapStore>)
 - [type InfraConfirmer](<#InfraConfirmer>)
 - [type InfraOverride](<#InfraOverride>)
@@ -522,6 +524,31 @@ type Executor interface {
 }
 ```
 
+<a name="HeartbeatFleet"></a>
+## type [HeartbeatFleet](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/heartbeat_mass_silence.go#L56-L59>)
+
+HeartbeatFleet counts the running attempts that have heartbeated at least once \(Total\) and, of those, the ones whose last heartbeat is older than the cut\-off the reaper asked about \(Stale\).
+
+```go
+type HeartbeatFleet struct {
+    Total int
+    Stale int
+}
+```
+
+<a name="HeartbeatFleetCounter"></a>
+## type [HeartbeatFleetCounter](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/heartbeat_mass_silence.go#L64-L68>)
+
+HeartbeatFleetCounter is the optional store seam of the mass\-silence guard. A HeartbeatReapStore that also implements it gets the guard; one that does not keeps the reaper's behavior from before the guard.
+
+```go
+type HeartbeatFleetCounter interface {
+    // CountHeartbeatFleet counts the running attempts with a heartbeat, and
+    // those whose last heartbeat is before staleBefore.
+    CountHeartbeatFleet(ctx context.Context, staleBefore time.Time) (HeartbeatFleet, error)
+}
+```
+
 <a name="HeartbeatReapStore"></a>
 ## type [HeartbeatReapStore](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/heartbeat_reap.go#L114-L131>)
 
@@ -937,7 +964,7 @@ func NewPodInformer(clientset kubernetes.Interface, namespace string) *PodInform
 NewPodInformer builds a shared pod informer over the given cluster, scoped to namespace and to pods carrying the leoflow.io/run\-id label \(managed task pods\). Resync is 0: reads are level\-triggered on demand, so there are no logic\-bearing handlers to re\-fire. It does not start watching until Start is called.
 
 <a name="PodInformer.CachedPodActive"></a>
-### func \(\*PodInformer\) [CachedPodActive](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_informer.go#L151>)
+### func \(\*PodInformer\) [CachedPodActive](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_informer.go#L152>)
 
 ```go
 func (p *PodInformer) CachedPodActive(a Attempt) bool
@@ -946,7 +973,7 @@ func (p *PodInformer) CachedPodActive(a Attempt) bool
 CachedPodActive reports whether the cache holds a pod for exactly the \(run, task, try, epoch\) attempt that is Pending or Running: the exact predicate TaskPodPresence uses, pinned to the same attempt \(\#723, ADR 0051 amendment\). It is the safe direction of the asymmetric\-trust contract: a true return may DEFER a reap; a false return is NEVER authoritative and the caller must fall through to the live read. Before the cache has synced it returns false, so a cold cache degrades to the live path rather than misreporting absence.
 
 <a name="PodInformer.HasSynced"></a>
-### func \(\*PodInformer\) [HasSynced](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_informer.go#L132>)
+### func \(\*PodInformer\) [HasSynced](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_informer.go#L133>)
 
 ```go
 func (p *PodInformer) HasSynced() bool
@@ -955,7 +982,7 @@ func (p *PodInformer) HasSynced() bool
 HasSynced reports whether the initial LIST has populated the cache. It is the live form of WaitForCacheSync's one\-shot answer, for a caller that must keep asking — the reaper's leader\-settling gate — so a cache that synced late \(a watch recovered after an RBAC fix\) is seen, and one that never synced is not mistaken for an empty cluster.
 
 <a name="PodInformer.Shutdown"></a>
-### func \(\*PodInformer\) [Shutdown](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_informer.go#L138>)
+### func \(\*PodInformer\) [Shutdown](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_informer.go#L139>)
 
 ```go
 func (p *PodInformer) Shutdown()
@@ -964,7 +991,7 @@ func (p *PodInformer) Shutdown()
 Shutdown stops the watch and waits for the informer goroutines to exit. Safe to call more than once \(Start's ctx\-cancel path and an explicit caller may race\).
 
 <a name="PodInformer.SnapshotTaskPods"></a>
-### func \(\*PodInformer\) [SnapshotTaskPods](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_informer.go#L202>)
+### func \(\*PodInformer\) [SnapshotTaskPods](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_informer.go#L203>)
 
 ```go
 func (p *PodInformer) SnapshotTaskPods() ([]*corev1.Pod, error)
@@ -973,7 +1000,7 @@ func (p *PodInformer) SnapshotTaskPods() ([]*corev1.Pod, error)
 SnapshotTaskPods returns the managed task pods currently in the cache — the reconciler's read replacement for its 30s LIST. It errors \(errCacheNotSynced\) before the initial sync so the reconciler retries next tick instead of acting on a cold cache that looks empty.
 
 <a name="PodInformer.Start"></a>
-### func \(\*PodInformer\) [Start](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_informer.go#L111>)
+### func \(\*PodInformer\) [Start](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_informer.go#L112>)
 
 ```go
 func (p *PodInformer) Start(ctx context.Context)
@@ -982,7 +1009,7 @@ func (p *PodInformer) Start(ctx context.Context)
 Start begins the watch in the background and stops it when ctx is canceled, so the informer is always\-on for the process lifetime \(warming the cache before leadership\). It is idempotent\-safe to call once per informer.
 
 <a name="PodInformer.WaitForCacheSync"></a>
-### func \(\*PodInformer\) [WaitForCacheSync](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_informer.go#L123>)
+### func \(\*PodInformer\) [WaitForCacheSync](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_informer.go#L124>)
 
 ```go
 func (p *PodInformer) WaitForCacheSync(ctx context.Context) bool
@@ -2050,7 +2077,7 @@ func NewWarmPodInformer(clientset kubernetes.Interface, namespace string) (*Warm
 NewWarmPodInformer builds the warm\-pod informer for namespace. It does not watch until Start is called.
 
 <a name="WarmPodInformer.BeginCreate"></a>
-### func \(\*WarmPodInformer\) [BeginCreate](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L198>)
+### func \(\*WarmPodInformer\) [BeginCreate](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L202>)
 
 ```go
 func (w *WarmPodInformer) BeginCreate(t WarmTarget)
@@ -2059,7 +2086,7 @@ func (w *WarmPodInformer) BeginCreate(t WarmTarget)
 BeginCreate records a create about to be issued for t, before the call so a watch event that beats the caller is still matched.
 
 <a name="WarmPodInformer.CachedWarmPods"></a>
-### func \(\*WarmPodInformer\) [CachedWarmPods](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L181>)
+### func \(\*WarmPodInformer\) [CachedWarmPods](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L185>)
 
 ```go
 func (w *WarmPodInformer) CachedWarmPods() ([]WarmPodInfo, bool)
@@ -2068,7 +2095,7 @@ func (w *WarmPodInformer) CachedWarmPods() ([]WarmPodInfo, bool)
 CachedWarmPods returns the cached warm fleet, mapped as ListWarmPods maps it, and whether the cache has synced. Before the first sync it returns false, so a cold cache is never read as an empty fleet.
 
 <a name="WarmPodInformer.Changes"></a>
-### func \(\*WarmPodInformer\) [Changes](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L168>)
+### func \(\*WarmPodInformer\) [Changes](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L172>)
 
 ```go
 func (w *WarmPodInformer) Changes() <-chan struct{}
@@ -2077,7 +2104,7 @@ func (w *WarmPodInformer) Changes() <-chan struct{}
 Changes delivers a signal each time the fleet lost a worker \(or Kick was called\). Signals coalesce: one pending signal stands for any number of events.
 
 <a name="WarmPodInformer.Covers"></a>
-### func \(\*WarmPodInformer\) [Covers](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L306>)
+### func \(\*WarmPodInformer\) [Covers](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L310>)
 
 ```go
 func (w *WarmPodInformer) Covers(names []string) bool
@@ -2086,7 +2113,7 @@ func (w *WarmPodInformer) Covers(names []string) bool
 Covers reports whether the cache has caught up with the named pods \(the ones the reconciler's last live LIST returned\): each is cached, or the informer saw it deleted. A name it never saw means the cache is behind the cluster \(a hung watch\), so the reconciler reads live instead of creating off a stale count.
 
 <a name="WarmPodInformer.CreatesPending"></a>
-### func \(\*WarmPodInformer\) [CreatesPending](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L232>)
+### func \(\*WarmPodInformer\) [CreatesPending](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L236>)
 
 ```go
 func (w *WarmPodInformer) CreatesPending(dagVersionID string) bool
@@ -2095,7 +2122,7 @@ func (w *WarmPodInformer) CreatesPending(dagVersionID string) bool
 CreatesPending reports whether dagVersionID has a create in flight or one the cache has not observed yet \(younger than warmCreateExpectationTTL\).
 
 <a name="WarmPodInformer.EndCreate"></a>
-### func \(\*WarmPodInformer\) [EndCreate](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L208>)
+### func \(\*WarmPodInformer\) [EndCreate](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L212>)
 
 ```go
 func (w *WarmPodInformer) EndCreate(t WarmTarget, podName string)
@@ -2104,7 +2131,7 @@ func (w *WarmPodInformer) EndCreate(t WarmTarget, podName string)
 EndCreate records that the create BeginCreate announced returned, with the created pod's name, or "" when it failed \(no expectation is kept\). A pod the watch already reported is matched here and leaves no expectation behind.
 
 <a name="WarmPodInformer.ExpectationExpired"></a>
-### func \(\*WarmPodInformer\) [ExpectationExpired](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L266>)
+### func \(\*WarmPodInformer\) [ExpectationExpired](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L270>)
 
 ```go
 func (w *WarmPodInformer) ExpectationExpired() bool
@@ -2113,7 +2140,7 @@ func (w *WarmPodInformer) ExpectationExpired() bool
 ExpectationExpired reports whether an expectation timed out unobserved since the last call, and clears the latch.
 
 <a name="WarmPodInformer.Kick"></a>
-### func \(\*WarmPodInformer\) [Kick](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L171>)
+### func \(\*WarmPodInformer\) [Kick](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L175>)
 
 ```go
 func (w *WarmPodInformer) Kick()
@@ -2122,7 +2149,7 @@ func (w *WarmPodInformer) Kick()
 Kick requests a reconcile without blocking; the pool's claim hook uses it too.
 
 <a name="WarmPodInformer.PendingCreatesByTenant"></a>
-### func \(\*WarmPodInformer\) [PendingCreatesByTenant](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L250>)
+### func \(\*WarmPodInformer\) [PendingCreatesByTenant](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L254>)
 
 ```go
 func (w *WarmPodInformer) PendingCreatesByTenant() map[string]int
@@ -2131,7 +2158,7 @@ func (w *WarmPodInformer) PendingCreatesByTenant() map[string]int
 PendingCreatesByTenant counts, per tenant, the creates in flight or not yet observed, across every dag\_version.
 
 <a name="WarmPodInformer.RecordTerminationsTo"></a>
-### func \(\*WarmPodInformer\) [RecordTerminationsTo](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L143>)
+### func \(\*WarmPodInformer\) [RecordTerminationsTo](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L147>)
 
 ```go
 func (w *WarmPodInformer) RecordTerminationsTo(k *KubernetesWarmPods)
@@ -2140,7 +2167,7 @@ func (w *WarmPodInformer) RecordTerminationsTo(k *KubernetesWarmPods)
 RecordTerminationsTo makes the informer record, on k, the warm\-worker container's terminated reason of every warm pod it sees turn terminal or get deleted, so k.LastTerminationReason answers for a worker deleted before any LIST saw it terminal \(\#1835\). The delete event carries the pod's final state. Call it before Start.
 
 <a name="WarmPodInformer.Start"></a>
-### func \(\*WarmPodInformer\) [Start](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L150>)
+### func \(\*WarmPodInformer\) [Start](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L154>)
 
 ```go
 func (w *WarmPodInformer) Start(ctx context.Context)
@@ -2149,7 +2176,7 @@ func (w *WarmPodInformer) Start(ctx context.Context)
 Start begins the watch and stops it when ctx is canceled.
 
 <a name="WarmPodInformer.WaitForCacheSync"></a>
-### func \(\*WarmPodInformer\) [WaitForCacheSync](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L162>)
+### func \(\*WarmPodInformer\) [WaitForCacheSync](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool_informer.go#L166>)
 
 ```go
 func (w *WarmPodInformer) WaitForCacheSync(ctx context.Context) bool

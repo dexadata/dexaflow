@@ -297,7 +297,7 @@ func UpdateUserStore(path string, update func(*UserStore) error) error
 UpdateUserStore reads the store at path, lets update change it, and writes the managed keys back \(the per\-server sessions, the targets, the selections and the single\-server server\_url/token pair\). Every other key, the order of the keys and their comments are kept. The file is created when absent and replaced atomically at 0600, whatever its mode was, because it holds tokens.
 
 <a name="ValidOrigins"></a>
-## func [ValidOrigins](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L535>)
+## func [ValidOrigins](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L544>)
 
 ```go
 func ValidOrigins(list []string) bool
@@ -785,7 +785,7 @@ func Load(configFile string, flags *pflag.FlagSet) (*Config, error)
 Load assembles configuration from defaults, the given file \(when non\-empty\), LEOFLOW\_\* environment variables, and the provided flag set, in increasing order of precedence. A nil flag set or empty file path is ignored.
 
 <a name="DatabaseSection"></a>
-## type [DatabaseSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L216-L253>)
+## type [DatabaseSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L216-L262>)
 
 DatabaseSection configures the Postgres connection pool.
 
@@ -800,6 +800,15 @@ type DatabaseSection struct {
     // a process with scheduler.enabled opens it. 0 (the default) keeps them on
     // the main pool.
     SchedulerMaxConns int `mapstructure:"scheduler_max_conns"`
+    // AgentMaxConns, when positive, gives the agent gRPC handlers' execution
+    // store (heartbeats, state reports, reschedules and the attempt liveness
+    // check) a pool of their own with this many connections; XCom, connection
+    // and secret reads stay on the main pool. API traffic that saturates the
+    // main pool then cannot block a heartbeat write while the reapers judge
+    // liveness from last_heartbeat_at (#1624). Only a process that serves the
+    // agent endpoint (a scheduler role) opens it. 0 (the default) keeps them
+    // on the main pool.
+    AgentMaxConns int `mapstructure:"agent_max_conns"`
     // StatementTimeoutMS, when positive, sets statement_timeout on every
     // connection of the main pool, which serves the API. It is never applied to
     // the leader election pool (its session holds the scheduler's advisory
@@ -1296,7 +1305,7 @@ type LogsSection struct {
 ```
 
 <a name="MetricsSection"></a>
-## type [MetricsSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L282-L287>)
+## type [MetricsSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L291-L296>)
 
 MetricsSection configures the Prometheus scrape.
 
@@ -1403,7 +1412,7 @@ type OIDCSection struct {
 ```
 
 <a name="OTelSection"></a>
-## type [OTelSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L290-L301>)
+## type [OTelSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L299-L310>)
 
 OTelSection configures OpenTelemetry export.
 
@@ -1465,7 +1474,7 @@ type ObjectLogSection struct {
 ```
 
 <a name="ObservabilitySection"></a>
-## type [ObservabilitySection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L270-L279>)
+## type [ObservabilitySection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L279-L288>)
 
 ObservabilitySection configures logging, metrics, and tracing.
 
@@ -1550,7 +1559,7 @@ type PoolsSection struct {
 ```
 
 <a name="RedisSection"></a>
-## type [RedisSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L256-L267>)
+## type [RedisSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L265-L276>)
 
 RedisSection configures the Redis connection.
 
@@ -1770,7 +1779,7 @@ type ServerConfig struct {
 ```
 
 <a name="LoadServer"></a>
-### func [LoadServer](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L305>)
+### func [LoadServer](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L314>)
 
 ```go
 func LoadServer(configFile string, flags *pflag.FlagSet) (*ServerConfig, error)
@@ -1806,7 +1815,7 @@ func (c *ServerConfig) PoolsEnabled() bool
 PoolsEnabled reports whether named pools are on: scheduler.pools.enabled when it is set, otherwise the cluster edition \(\#2173\).
 
 <a name="ServerConfig.Validate"></a>
-### func \(\*ServerConfig\) [Validate](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L460>)
+### func \(\*ServerConfig\) [Validate](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L469>)
 
 ```go
 func (c *ServerConfig) Validate() error
