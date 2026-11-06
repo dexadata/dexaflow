@@ -21,8 +21,9 @@ cluster and no executor, so they run on a laptop with just Postgres up.
 | 7 | Code-only deploy: p50 of `dexaflow deploy` after a DAG code change, and the warm-up of the new version's pool | [`deploy_p50/`](deploy_p50/) | ✅ implemented |
 | 8 | Usage event trigger: what recording a usage event adds to a settle and to a 1,000-task cascade | [`usage_settle/`](usage_settle/) | ✅ implemented |
 | 9 | Primary key order: insert rate, WAL and index size of a random UUIDv4 key against a time-ordered UUIDv7 | [`uuid_keys/`](uuid_keys/) | ✅ implemented |
+| 10 | Service level objectives over a soak or a failure injection run, from `/metrics` scrapes | [`slo_check/`](slo_check/) | ✅ implemented |
 
-Experiments 1, 4, 6, 7, 8 and 9 are built. The others are documented extension points.
+Experiments 1, 4, 6, 7, 8, 9 and 10 are built. The others are documented extension points.
 Experiments 4 and 7 drive a running control plane instead of the packages:
 Experiment 4 needs only an api role process and its Postgres, Experiment 7
 the CLI, and its warm-up half a cluster with warm pools on.
@@ -341,3 +342,28 @@ rows, the WAL per row, the sizes of the key index and of the table, and the
 rate of point lookups by key, as a table for
 [BASELINE.md](BASELINE.md#primary-key-order).
 
+## Experiment 10: service level objectives
+
+The [service level objectives](https://dexaflow.dexadata.ai/operate/service-level-objectives/)
+of the production profile, judged over a run that has no Prometheus: the
+long soak, a failure injection row (#2314). Scrape the control plane's
+metrics listener every 15 seconds for the whole run, then hand the scrapes
+over in time order:
+
+```sh
+mkdir -p scrapes
+while sleep 15; do curl -s localhost:9090/metrics > "scrapes/$(date +%s).prom"; done &
+# ... the run ...
+kill %1
+go run ./test/load/slo_check scrapes/*.prom
+```
+
+Each objective's counters are summed as increases between consecutive
+scrapes, and a counter that went down (a restarted process) counts from zero,
+as `increase()` does; a process killed between two scrapes loses its counts
+since the last one, so keep the interval short in a run that kills it. It
+prints one row per objective with the target, the measured share and the
+number of events, and exits 1 when one is broken. An objective with no event
+is not measured, never met. The flags `--schedule-punctuality`,
+`--task-start`, `--platform-failures` and `--api-availability` change the
+targets; the defaults are the page's.

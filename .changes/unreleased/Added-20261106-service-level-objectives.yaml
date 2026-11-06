@@ -1,0 +1,15 @@
+kind: Added
+body: |-
+  **Service level objectives.** A new Operate page states the objectives of
+  the production profile (schedule punctuality, task start, platform-caused
+  failures, API availability, leadership, outcome durability) with their
+  queries. With `metrics.prometheusRule.enabled`, the chart now also renders
+  a `dexaflow-slo` group: the error ratio of each objective over 5m, 30m, 1h
+  and 6h, and two alerts on its 30 day error budget,
+  `DexaflowErrorBudgetFastBurn` (critical) and `DexaflowErrorBudgetSlowBurn`
+  (warning). The objectives are values under
+  `metrics.prometheusRule.slo.objectives`; `slo.enabled: false` leaves the
+  group out. `test/load/slo_check` judges the objectives from `/metrics`
+  scrapes of a soak, and the release checklist holds a GA candidate to them
+  (#2314).
+time: 2026-11-06T21:00:00.000000000+00:00
