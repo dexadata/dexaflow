@@ -429,6 +429,10 @@ spec:
             - name: LEOFLOW_DATABASE_SCHEDULER_MAX_CONNS
               value: {{ . | quote }}
             {{- end }}
+            {{- with .ctx.Values.database.agentMaxConns }}
+            - name: LEOFLOW_DATABASE_AGENT_MAX_CONNS
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .ctx.Values.database.statementTimeoutMs }}
             - name: LEOFLOW_DATABASE_STATEMENT_TIMEOUT_MS
               value: {{ . | quote }}

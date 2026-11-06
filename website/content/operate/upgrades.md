@@ -1306,9 +1306,12 @@ the profile, `0` and `false` included.
 | You want the new defaults on an existing release | `helm upgrade ... --set profile=cluster`. Task pods keep running; the control plane restarts with buffered dispatch. |
 | Rendered by `helm template`, ArgoCD or Flux | The renderer cannot read the live release and renders `cluster`. Set `profile: legacy` in your values **before** syncing 0.5.10 to keep the earlier behavior. |
 
-The dedicated scheduler database pool (`database.schedulerMaxConns`) is not part
-of the profile yet: with it on and the API pool saturated, agent heartbeats can
-stall while the reapers keep running on their own pool
+The dedicated database pools (`database.schedulerMaxConns` and
+`database.agentMaxConns`) are not part of the profile: they add connections on
+every pod, so size them against the Postgres connection budget and set them
+together. With only the scheduler pool set and the API pool saturated, agent
+heartbeats could stall while the reapers kept running on their own pool; the
+agent pool and the heartbeat reaper's mass-silence hold close that
 ([#1624](https://github.com/dexadata/dexaflow/issues/1624)).
 
 ### Upgrading to 0.6.0: the UI refreshes every 5 seconds

@@ -223,6 +223,15 @@ type DatabaseSection struct {
 	// a process with scheduler.enabled opens it. 0 (the default) keeps them on
 	// the main pool.
 	SchedulerMaxConns int `mapstructure:"scheduler_max_conns"`
+	// AgentMaxConns, when positive, gives the agent gRPC handlers' execution
+	// store (heartbeats, state reports, reschedules and the attempt liveness
+	// check) a pool of their own with this many connections; XCom, connection
+	// and secret reads stay on the main pool. API traffic that saturates the
+	// main pool then cannot block a heartbeat write while the reapers judge
+	// liveness from last_heartbeat_at (#1624). Only a process that serves the
+	// agent endpoint (a scheduler role) opens it. 0 (the default) keeps them
+	// on the main pool.
+	AgentMaxConns int `mapstructure:"agent_max_conns"`
 	// StatementTimeoutMS, when positive, sets statement_timeout on every
 	// connection of the main pool, which serves the API. It is never applied to
 	// the leader election pool (its session holds the scheduler's advisory

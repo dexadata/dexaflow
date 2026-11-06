@@ -34,6 +34,7 @@ var serverDefaults = map[string]any{
 	// keeps one shared pool, no statement timeout and no lifetime jitter.
 	// Registered so the DEXAFLOW_/LEOFLOW_DATABASE_* variables bind.
 	"database.scheduler_max_conns":         0,
+	"database.agent_max_conns":             0,
 	"database.statement_timeout_ms":        0,
 	"database.conn_max_lifetime_jitter_ms": 0,
 	// Empty by default: no installation id is compared (Lite, and installs

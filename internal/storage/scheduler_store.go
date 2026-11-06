@@ -972,6 +972,21 @@ func (s *SchedulerStore) ListAgentLostCandidates(ctx context.Context) ([]executo
 	return out, nil
 }
 
+// The reapers type-assert the optional fleet counter, so a missing method
+// would silently turn the mass-silence guard off; this keeps it compiled in.
+var _ executor.HeartbeatFleetCounter = (*SchedulerStore)(nil)
+
+// CountHeartbeatFleet counts the running TIs with a heartbeat and those whose
+// last heartbeat is before staleBefore, for the agent-lost reaper's
+// mass-silence guard (#1624). It implements executor.HeartbeatFleetCounter.
+func (s *SchedulerStore) CountHeartbeatFleet(ctx context.Context, staleBefore time.Time) (executor.HeartbeatFleet, error) {
+	row, err := s.q.CountHeartbeatFleet(ctx, pgtype.Timestamptz{Time: staleBefore, Valid: true})
+	if err != nil {
+		return executor.HeartbeatFleet{}, fmt.Errorf("counting the heartbeat fleet: %w", err)
+	}
+	return executor.HeartbeatFleet{Total: int(row.Total), Stale: int(row.Stale)}, nil
+}
+
 // MarkTaskDispatchFailed transitions a TI to `failed` after its asynchronous
 // dispatch failed inside the BufferedDispatcher worker (#127). The SQL guard
 // only targets scheduled/queued rows, so a TI that already moved to running

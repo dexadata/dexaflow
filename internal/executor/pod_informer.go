@@ -89,9 +89,10 @@ func NewPodInformer(clientset kubernetes.Interface, namespace string) *PodInform
 	pods := factory.Core().V1().Pods()
 	informer := pods.Informer()
 	// A source-mode pod carries its dag.py (up to 128 KiB) in an annotation
-	// nothing here reads; keep it out of the cache (ADR 0067 §3). SetTransform
+	// nothing here reads (ADR 0067 §3), and managed fields are often the
+	// largest part of a pod (#2326); keep both out of the cache. SetTransform
 	// only fails once the informer has started, which it has not.
-	_ = informer.SetTransform(dropSourceAnnotation) //nolint:errcheck // cannot fail before Start
+	_ = informer.SetTransform(trimCachedTaskPod) //nolint:errcheck // cannot fail before Start
 	// CachedPodActive looks pods up by attempt, so a reap check reads the few
 	// pods of one try instead of filtering every task pod of the namespace
 	// (#1621). AddIndexers only fails once the informer has started.
@@ -218,4 +219,26 @@ func dropSourceAnnotation(obj any) (any, error) {
 		delete(pod.Annotations, SourceAnnotation)
 	}
 	return obj, nil
+}
+
+// stripManagedFields is a cache transform that removes metadata.managedFields
+// from a pod before it is stored. Nothing in the control plane reads them, and
+// they are often the largest part of a cached pod (#2326). Like
+// dropSourceAnnotation it edits the informer's own copy and passes anything
+// that is not a pod through unchanged.
+func stripManagedFields(obj any) (any, error) {
+	if pod, ok := obj.(*corev1.Pod); ok {
+		pod.ManagedFields = nil
+	}
+	return obj, nil
+}
+
+// trimCachedTaskPod is the task pod informer's cache transform: it drops the
+// source annotation and the managed fields.
+func trimCachedTaskPod(obj any) (any, error) {
+	obj, err := dropSourceAnnotation(obj)
+	if err != nil {
+		return nil, err
+	}
+	return stripManagedFields(obj)
 }
