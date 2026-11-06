@@ -283,7 +283,7 @@ func Run(ctx context.Context, opts Options) error {
 	// The API side (HTTP + embedded UI) is built only in the api/"all" role. The
 	// scheduler role serves no API, so none of the UI/handler machinery is even
 	// constructed: apiSrv stays nil and serveHTTP omits it.
-	apiSrv, aerr := startAPISide(ctx, cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, servesAPI, apiExtras{ui: opts.UIServer, authenticator: opts.Authenticator, issuer: opts.TrustedIssuer, issuerOrigins: opts.TrustedIssuerOrigins})
+	apiSrv, aerr := startAPISide(ctx, cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, servesAPI, apiExtras{ui: opts.UIServer, authenticator: opts.Authenticator, issuer: opts.TrustedIssuer, issuerOrigins: opts.TrustedIssuerOrigins, sharedLimits: sharedRateLimits(redisHealth)})
 	if aerr != nil {
 		return aerr
 	}

@@ -1,13 +1,37 @@
 package auth
 
 import (
+	"context"
+	"log/slog"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 )
 
+// SharedCounter is a counter every API replica reaches, such as Redis, that
+// a RateLimiter shares its budget through (#2357). Incr adds one event to key
+// and returns the count, expiring key after ttl; Get returns the count; Decr
+// takes one event back without going below zero.
+type SharedCounter interface {
+	Incr(ctx context.Context, key string, ttl time.Duration) (int64, error)
+	Get(ctx context.Context, key string) (int64, error)
+	Decr(ctx context.Context, key string) error
+}
+
+// sharedTimeout bounds one call to the shared counter, so a slow counter
+// costs a sign-in at most this long before the limiter falls back to its
+// own map.
+const sharedTimeout = 250 * time.Millisecond
+
 // RateLimiter is a per-key fixed-window limiter used to throttle failed logins
 // per client IP (ADR 0008).
+//
+// By itself it counts in process, so N API replicas allow N times the limit.
+// Share gives it a SharedCounter: the limit then holds across every replica,
+// counted in fixed windows aligned to the window length, and when the counter
+// fails the limiter falls back to its own map, which keeps the per replica
+// bound and locks nobody out.
 type RateLimiter struct {
 	mu      sync.Mutex
 	limit   int
@@ -21,6 +45,9 @@ type RateLimiter struct {
 	// window that sweeps waits for a pass over the map; every other call in
 	// that window skips it.
 	swept time.Time
+
+	shared SharedCounter
+	scope  string
 }
 
 type windowState struct {
@@ -38,12 +65,51 @@ func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
 	}
 }
 
+// Share makes the limiter count through counter under scope, which keeps the
+// keys of each limiter apart (login, renew, ...), and returns it. A nil
+// counter leaves the limiter in process.
+func (r *RateLimiter) Share(counter SharedCounter, scope string) *RateLimiter {
+	r.shared, r.scope = counter, scope
+	return r
+}
+
+// sharedKey is the counter key of key in the window that holds now:
+// rl:{scope}:{key}:{window index}.
+func (r *RateLimiter) sharedKey(key string, now time.Time) string {
+	return "rl:" + r.scope + ":" + key + ":" + itoa(now.UnixNano()/int64(r.window))
+}
+
+func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+// sharedCall runs fn against the shared counter with sharedTimeout, and
+// reports false when there is no counter or it failed, so the caller uses
+// the in-process count.
+func (r *RateLimiter) sharedCall(op string, fn func(ctx context.Context, key string) error, key string) bool {
+	if r.shared == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), sharedTimeout)
+	defer cancel()
+	if err := fn(ctx, r.sharedKey(key, r.now())); err != nil {
+		slog.Warn("shared rate limit unavailable, counting in process", "scope", r.scope, "op", op, "error", err)
+		return false
+	}
+	return true
+}
+
 // Blocked reports whether key has already reached its limit in the current
 // window, WITHOUT recording an attempt (a peek). The login handler uses it to
 // reject an over-limit caller up front while calling Allow only for actual
 // failures — so a successful login never consumes the budget and a user who
 // mistypes a few times is not locked out the moment they finally get it right.
 func (r *RateLimiter) Blocked(key string) bool {
+	var n int64
+	if r.sharedCall("get", func(ctx context.Context, k string) (err error) {
+		n, err = r.shared.Get(ctx, k)
+		return err
+	}, key) {
+		return n >= int64(r.limit)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	st, ok := r.buckets[key]
@@ -60,6 +126,13 @@ func (r *RateLimiter) Blocked(key string) bool {
 // Blocked peek, and gives the event back with Refund when it should not
 // count.
 func (r *RateLimiter) Allow(key string) bool {
+	var n int64
+	if r.sharedCall("incr", func(ctx context.Context, k string) (err error) {
+		n, err = r.shared.Incr(ctx, k, r.window)
+		return err
+	}, key) {
+		return n <= int64(r.limit)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := r.now()
@@ -79,6 +152,11 @@ func (r *RateLimiter) Allow(key string) bool {
 // Refund gives back one event of key's window, never going below zero. A
 // window that ended needs none: the next Allow starts a fresh one.
 func (r *RateLimiter) Refund(key string) {
+	if r.sharedCall("decr", func(ctx context.Context, k string) error {
+		return r.shared.Decr(ctx, k)
+	}, key) {
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	st, ok := r.buckets[key]

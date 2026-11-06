@@ -316,7 +316,12 @@ settings:
     description: >-
       Cap on **failed** `/auth/token` attempts per client IP per minute (anti-brute-force).
       A successful login consumes no budget. `dexaflow lite` raises this well above
-      the default (local single-user tool).
+      the default (local single-user tool). With Redis configured, the count is shared by every
+      API replica through Redis, so the cap holds for the whole install and not
+      once per replica; the other sign-in routes' limits (renewal, SSO, CLI device
+      sign-in, CI token exchange) are shared the same way. If Redis fails, each
+      replica falls back to counting on its own. Without Redis (Lite) the count
+      is per process.
   secret_key:
     edition: both
     description: >-
