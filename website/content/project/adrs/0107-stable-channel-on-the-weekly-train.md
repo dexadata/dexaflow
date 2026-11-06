@@ -1,8 +1,8 @@
 ---
-title: "ADR 0105: A stable channel on top of the weekly patch train"
-linkTitle: "0105 · Stable channel"
-weight: 1050
-description: "ADR 0105 (proposed): keep the weekly patch train and mark a patch stable once it has soaked, passed the chaos run and been out seven days without a regression report. The install script, the chart README and the production profile point production users at the newest stable patch, and every release body states its rollback class."
+title: "ADR 0107: A stable channel on top of the weekly patch train"
+linkTitle: "0107 · Stable channel"
+weight: 1070
+description: "ADR 0107 (proposed): keep the weekly patch train and mark a patch stable once it has soaked, passed the chaos run and been out seven days without a regression report. The install script, the chart README and the production profile point production users at the newest stable patch, and every release body states its rollback class."
 ---
 
 **Status:** Proposed

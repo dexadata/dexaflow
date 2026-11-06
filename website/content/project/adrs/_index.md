@@ -116,7 +116,7 @@ this page.
 - [ADR 0101: mutation testing measures the tests, and coverage is gated per core package](/project/adrs/0101-mutation-testing-and-coverage-policy/)
 - [ADR 0102: patches are cut from main until main diverges from the minor](/project/adrs/0102-patches-from-main-until-main-diverges/)
 - [ADR 0103: cross-DAG waits and triggers are evaluated by the scheduler, without a pod](/project/adrs/0103-cross-dag-dependencies-in-the-scheduler/)
-- [ADR 0105 (proposed): a stable channel on top of the weekly patch train](/project/adrs/0105-stable-channel-on-the-weekly-train/)
+- [ADR 0107 (proposed): a stable channel on top of the weekly patch train](/project/adrs/0107-stable-channel-on-the-weekly-train/)
 
 ## Template
 
