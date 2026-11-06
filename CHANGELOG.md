@@ -6,6 +6,8 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.9] - 2026-11-06
+
 ### Added
 
 - **Deactivate a user through the API.** `PATCH /api/v2/users/{user_id}` with
@@ -210,6 +212,15 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ignored (scheduling fields are read from it).
 
 ### Security
+
+- **oauthlib 4.0.1 in the data runtime image.** The `py3.11-data` image moves
+  oauthlib from 4.0.0 to 4.0.1, which fixes CVE-2026-49272
+  (GHSA-3jp2-3mrg-2vxc, HIGH): the device code grant of oauthlib's OAuth 2.0
+  provider issued a bearer token for any `device_code` sent with a known
+  client ID. The image only uses oauthlib as a client library (through
+  requests-oauthlib and databricks-sql-connector) and runs no OAuth provider,
+  so DAGs on earlier images were not exposed; the bump keeps the release scan
+  of the data image clean. Nothing else in the lock changes.
 
 - **klauspost/compress 1.20.2.** The control plane moves the indirect
   dependency from 1.19.2 to 1.20.2, which fixes GO-2026-6865, a panic on
