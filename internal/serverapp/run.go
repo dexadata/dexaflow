@@ -23,6 +23,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/scheduler"
 	"github.com/dexadata/dexaflow/internal/secrets"
 	"github.com/dexadata/dexaflow/internal/storage"
+	"github.com/dexadata/dexaflow/internal/version"
 	"github.com/dexadata/dexaflow/internal/workspace"
 	"github.com/dexadata/dexaflow/internal/xcom"
 	"github.com/dexadata/dexaflow/pkg/admission"
@@ -163,6 +164,7 @@ func Run(ctx context.Context, opts Options) error {
 	slog.SetDefault(tel.Logger)
 	warnStartup(cfg, tel.Logger)
 	recordResiliencePosture(cfg, tel.Metrics)
+	tel.Metrics.RecordBuildInfo(version.Get(), cfg.Server.EffectiveRole())
 
 	// Lite only: the key-migration lock is held before anything reads or writes
 	// a stored secret, and the server stops if it is lost (ADR 0065 section 3).
@@ -192,6 +194,9 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	authn := auth.NewJWTAuthenticator(repo, cfg.Auth.JWT.Secret, time.Duration(cfg.Auth.JWT.TokenTTLSeconds)*time.Second)
 	execStore := storage.NewExecutionStore(pg)
+	if tel.Metrics != nil {
+		execStore.SetQueueWaitObserver(tel.Metrics.ObserveTaskQueueWait)
+	}
 	xcomSvc := xcom.NewService(xcomBackend, storage.NewXComIndex(pg), xcom.DefaultTTL)
 	xcomReader := storage.NewXComReader(pg, xcomBackend)
 

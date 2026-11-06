@@ -6,6 +6,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+
+	"github.com/dexadata/dexaflow/internal/version"
 )
 
 // Metrics holds every Prometheus collector required by ADR 0010. Construct it
@@ -123,6 +125,16 @@ type Metrics struct {
 	// ResilienceBackstopDisabled is 1 for each resilience backstop a boot
 	// setting removed and 0 for each one in place, set once at boot (#941).
 	ResilienceBackstopDisabled *prometheus.GaugeVec
+
+	// TaskQueueWait is the wait of each attempt from queued to its first running
+	// report, and TaskOldestWaiting the age of the oldest attempt still waiting
+	// in scheduled or queued, both by tenant (#2300).
+	TaskQueueWait     *prometheus.HistogramVec
+	TaskOldestWaiting *prometheus.GaugeVec
+
+	// BuildInfo is dexaflow_build_info: one series per process, value 1,
+	// labeled with the version, commit, Go version and role it runs (#2299).
+	BuildInfo *prometheus.GaugeVec
 
 	// schema backs dexaflow_schema_ready and dexaflow_schema_wait_seconds
 	// (RecordSchemaState, ADR 0090 decision 6).
@@ -326,6 +338,24 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 				"Set once at boot by processes that run the scheduler; alert on max(...) > 0.",
 		}, []string{"config_key"}),
 
+		TaskQueueWait: f.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "dexaflow_task_queue_wait_seconds",
+			Help: "Seconds from an attempt's queued_at to its first running report, by tenant; one sample per attempt, " +
+				"recorded by the process that receives the report.",
+			Buckets: []float64{0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600, 1800, 3600},
+		}, []string{"tenant"}),
+		TaskOldestWaiting: f.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "dexaflow_task_oldest_waiting_seconds",
+			Help: "Age of the oldest task attempt waiting in state (scheduled: for a pool slot, queued: for its pod or worker), by tenant. " +
+				"Set by the scheduler leader every 15 seconds; a tenant with nothing waiting has no series.",
+		}, []string{"tenant", "state"}),
+
+		BuildInfo: f.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "dexaflow_build_info",
+			Help: "Always 1, labeled with the version, commit and Go version of the binary and the role the process runs. " +
+				"count by (version) (dexaflow_build_info) > 1 means a rollout left replicas on another version.",
+		}, []string{"version", "commit", "go_version", "role"}),
+
 		RetentionRowsDeleted: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_retention_rows_deleted_total", Help: "Metadata rows the retention janitor deleted, by table.",
 		}, []string{"table"}),
@@ -350,6 +380,43 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help: "Pool slots times run time of finished task attempts by tenant, from the usage events; with observability.usage_metrics on. Counted by the scheduler leader from the moment it took the lead.",
 		}, []string{"tenant"}),
 	}
+}
+
+// ObserveTaskQueueWait records one attempt's wait from queued to running.
+func (m *Metrics) ObserveTaskQueueWait(tenant string, seconds float64) {
+	if m == nil || m.TaskQueueWait == nil {
+		return
+	}
+	m.TaskQueueWait.WithLabelValues(tenant).Observe(seconds)
+}
+
+// WaitingAge is one series of dexaflow_task_oldest_waiting_seconds.
+type WaitingAge struct {
+	Tenant     string
+	State      string
+	AgeSeconds float64
+}
+
+// SetOldestWaiting replaces every dexaflow_task_oldest_waiting_seconds series
+// with ages, so a tenant that stopped waiting drops out. A nil ages clears it.
+func (m *Metrics) SetOldestWaiting(ages []WaitingAge) {
+	if m == nil || m.TaskOldestWaiting == nil {
+		return
+	}
+	m.TaskOldestWaiting.Reset()
+	for _, a := range ages {
+		m.TaskOldestWaiting.WithLabelValues(a.Tenant, a.State).Set(a.AgeSeconds)
+	}
+}
+
+// RecordBuildInfo sets dexaflow_build_info for this process. It replaces any
+// series an earlier call left, so a process never reports two versions.
+func (m *Metrics) RecordBuildInfo(info version.Info, role string) {
+	if m == nil || m.BuildInfo == nil {
+		return
+	}
+	m.BuildInfo.Reset()
+	m.BuildInfo.WithLabelValues(info.Version, info.GitCommit, info.GoVersion, role).Set(1)
 }
 
 // RecordTaskAttempt counts one finished attempt of tenant in state and adds

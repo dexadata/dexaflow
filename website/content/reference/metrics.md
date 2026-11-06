@@ -20,8 +20,10 @@ Labels carry what the meaning names. `dag_id` and `task_id` grow with the DAGs
 you deploy; `path` on the HTTP families is the route template, not the raw URL,
 so it stays bounded.
 
-For what to alert on and how to read the scheduler and dispatch families during
-an incident, see [Troubleshooting & observability](/operate/troubleshooting/) and
+The Helm chart ships alert rules on these families, each with a runbook: see
+[Alerts and runbooks](/operate/runbooks/). For how to read the scheduler and
+dispatch families during an incident, see
+[Troubleshooting & observability](/operate/troubleshooting/) and
 [Scheduler resilience](/operate/scheduler-resilience/).
 
 The table is generated from the collectors the server registers: run
@@ -35,6 +37,7 @@ The table is generated from the collectors the server registers: run
 | `dexaflow_agent_token_rejections_total` | counter | `reason` | Agent RPCs refused for their bearer token, by reason: expired (the credential lapsed: the agent could not renew it for a whole TTL, or its pod started after it ran out), wrong_audience (a token for another surface), bad_signature (another signing key), wrong_issuer, not_yet_valid, malformed, invalid, or missing (no bearer at all). |
 | `dexaflow_alerts_dispatched_total` | counter | `dag_id`, `type`, `result` | Native on-failure alerts dispatched, by channel type and outcome (sent, failed). Operators alert on rate of result="failed" to catch a broken alert path (#424). |
 | `dexaflow_auth_failures_total` | counter | `reason` | Authentication failures by reason. |
+| `dexaflow_build_info` | gauge | `version`, `commit`, `go_version`, `role` | Always 1, labeled with the version, commit and Go version of the binary and the role the process runs. count by (version) (dexaflow_build_info) > 1 means a rollout left replicas on another version. |
 | `dexaflow_ci_oidc_exchange_total` | counter | `issuer`, `outcome` | CI OIDC token exchanges (auth.ci_oidc, ADR 0092) by issuer entry (unknown when none matched) and outcome (issued, invalid_token, unknown_issuer, no_rule, role_missing, keys_unavailable, error). |
 | `dexaflow_db_pool_acquired_conns` | gauge | `pool` | Connections currently lent out by the database pool, by pool (main, health, scheduler). |
 | `dexaflow_db_pool_canceled_acquires_total` | counter | `pool` | Acquires that gave up waiting for a connection (their context ended), by pool (main, health, scheduler). |
@@ -79,7 +82,9 @@ The table is generated from the collectors the server registers: run
 | `dexaflow_task_attempts_total` | counter | `tenant`, `state` | Finished task attempts by tenant and the state each first ended in, from the usage events; with observability.usage_metrics on. Counted by the scheduler leader from the moment it took the lead. |
 | `dexaflow_task_cold_start_seconds` | histogram | `dag_id` | Task cold start time. |
 | `dexaflow_task_duration_seconds` | histogram | `dag_id`, `task_id`, `task_type` | Task execution duration. |
+| `dexaflow_task_oldest_waiting_seconds` | gauge | `tenant`, `state` | Age of the oldest task attempt waiting in state (scheduled: for a pool slot, queued: for its pod or worker), by tenant. Set by the scheduler leader every 15 seconds; a tenant with nothing waiting has no series. |
 | `dexaflow_task_pod_creation_duration_seconds` | histogram | _(none)_ | Time to create a task pod. |
+| `dexaflow_task_queue_wait_seconds` | histogram | `tenant` | Seconds from an attempt's queued_at to its first running report, by tenant; one sample per attempt, recorded by the process that receives the report. |
 | `dexaflow_task_retries_total` | counter | `dag_id`, `task_id` | Task retries. |
 | `dexaflow_task_slot_seconds_total` | counter | `tenant` | Pool slots times run time of finished task attempts by tenant, from the usage events; with observability.usage_metrics on. Counted by the scheduler leader from the moment it took the lead. |
 | `dexaflow_task_state_transitions_total` | counter | `from_state`, `to_state`, `dag_id` | Task state transitions. |

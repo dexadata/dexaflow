@@ -1,0 +1,161 @@
+# promtool unit tests for the ticket group of templates/prometheusrule.yaml
+# (#2298). See page.promtool.yaml for how they run.
+rule_files:
+- rules.yaml
+evaluation_interval: 1m
+tests:
+- name: leader step-downs above 3 an hour, rollouts excluded
+  interval: 1m
+  input_series:
+  - series: dexaflow_scheduler_step_downs_total{namespace="data",pod="s",reason="check_timeout"}
+    values: 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 2 2 2 2 2 3 3 3 3 3 4 4 4 4 4
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: DexaflowSchedulerStepDowns
+    exp_alerts: []
+  - eval_time: 26m
+    alertname: DexaflowSchedulerStepDowns
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations:
+        description: 4 leader step-downs in the last hour, rollouts excluded.
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/scheduler-step-downs/
+        summary: The Dexaflow scheduler leader keeps stepping down
+- name: shutdown step-downs are rollouts, not churn
+  interval: 1m
+  input_series:
+  - series: dexaflow_scheduler_step_downs_total{namespace="data",pod="s",reason="shutdown"}
+    values: 0+1x30
+  alert_rule_test:
+  - eval_time: 30m
+    alertname: DexaflowSchedulerStepDowns
+    exp_alerts: []
+- name: lost attempts above 10 an hour, by reaper
+  interval: 1m
+  input_series:
+  - series: dexaflow_scheduler_decisions_total{namespace="data",pod="s",decision_type="agent_lost"}
+    values: 0+1x30
+  - series: dexaflow_scheduler_decisions_total{namespace="data",pod="s",decision_type="pod_lost"}
+    values: 0+0.1x30
+  - series: dexaflow_scheduler_decisions_total{namespace="data",pod="s",decision_type="agent_lost_gate_skip"}
+    values: 0+5x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: DexaflowTasksLost
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        decision_type: agent_lost
+      exp_annotations:
+        description: 20 attempts failed as agent_lost in the last hour.
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/tasks-lost/
+        summary: Dexaflow reapers fail more task attempts than usual
+- name: a failed TLS reload opens a ticket
+  interval: 1m
+  input_series:
+  - series: dexaflow_tls_reload_failures_total{namespace="data",pod="a",listener="api"}
+    values: 0 0 1 1 1 1
+  - series: dexaflow_tls_reload_failures_total{namespace="data",pod="a",listener="agent_grpc"}
+    values: 0 0 0 0 0 0
+  alert_rule_test:
+  - eval_time: 1m
+    alertname: DexaflowTLSReloadFailed
+    exp_alerts: []
+  - eval_time: 3m
+    alertname: DexaflowTLSReloadFailed
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        listener: api
+      exp_annotations:
+        description: The api listener keeps serving its previous certificate, which will expire.
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/tls-reload-failed/
+        summary: A rotated Dexaflow TLS certificate failed to load
+- name: failed alert dispatches open a ticket, sent ones do not
+  interval: 1m
+  input_series:
+  - series: dexaflow_alerts_dispatched_total{namespace="data",pod="s",dag_id="etl",type="slack",result="failed"}
+    values: 0 0 1 1 1
+  - series: dexaflow_alerts_dispatched_total{namespace="data",pod="s",dag_id="etl",type="email",result="sent"}
+    values: 0+1x4
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: DexaflowAlertDispatchFailing
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        type: slack
+      exp_annotations:
+        description: On-failure alerts of type slack failed to send in the last 30 minutes.
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/alert-dispatch-failing/
+        summary: Dexaflow failure alerts are not reaching their channel
+- name: usage events lag over 15 minutes for 15 minutes
+  interval: 1m
+  input_series:
+  - series: dexaflow_usage_events_lag_seconds{namespace="data",pod="s"}
+    values: 1000x20
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: DexaflowUsageEventsLag
+    exp_alerts: []
+  - eval_time: 16m
+    alertname: DexaflowUsageEventsLag
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations:
+        description: The service API cannot serve usage events older than 16m 40s; an open transaction holds them back.
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/usage-events-lag/
+        summary: Dexaflow usage events lag behind
+- name: oldest queued task over 10 minutes, scheduled waits excluded
+  interval: 1m
+  input_series:
+  - series: dexaflow_task_oldest_waiting_seconds{namespace="data",pod="s",tenant="a",state="queued"}
+    values: 700x10
+  - series: dexaflow_task_oldest_waiting_seconds{namespace="data",pod="s",tenant="b",state="queued"}
+    values: 100x10
+  - series: dexaflow_task_oldest_waiting_seconds{namespace="data",pod="s",tenant="c",state="scheduled"}
+    values: 5000x10
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: DexaflowOldestQueuedTask
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        tenant: a
+      exp_annotations:
+        description: The oldest queued attempt of tenant a has waited 11m 40s for its pod or worker.
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/oldest-queued-task/
+        summary: A Dexaflow task has been queued for a long time
+- name: two versions for 30 minutes open a ticket
+  interval: 1m
+  input_series:
+  - series: dexaflow_build_info{namespace="data",pod="a",role="all",version="v0.5.9",commit="c1",go_version="g"}
+    values: 1x40
+  - series: dexaflow_build_info{namespace="data",pod="b",role="all",version="v0.5.10",commit="c2",go_version="g"}
+    values: 1x40
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: DexaflowMixedVersions
+    exp_alerts: []
+  - eval_time: 31m
+    alertname: DexaflowMixedVersions
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations:
+        description: A rollout left some control plane replicas on another version.
+        runbook_url: https://dexaflow.dexadata.ai/operate/runbooks/mixed-versions/
+        summary: Dexaflow processes run more than one version
+- name: one version across replicas is fine
+  interval: 1m
+  input_series:
+  - series: dexaflow_build_info{namespace="data",pod="a",role="api",version="v0.5.10",commit="c2",go_version="g"}
+    values: 1x40
+  - series: dexaflow_build_info{namespace="data",pod="b",role="scheduler",version="v0.5.10",commit="c2",go_version="g"}
+    values: 1x40
+  alert_rule_test:
+  - eval_time: 35m
+    alertname: DexaflowMixedVersions
+    exp_alerts: []

@@ -1,0 +1,10 @@
+kind: Added
+body: |-
+  **Build and queue wait metrics.** `dexaflow_build_info` carries the version,
+  commit, Go version and role of every process, so a rollout that left a
+  replica on another version shows (#2299). `dexaflow_task_queue_wait_seconds`
+  is the wait of each attempt from queued to its first running report, by
+  tenant, and `dexaflow_task_oldest_waiting_seconds` the age of the oldest
+  attempt still scheduled or queued, by tenant, set by the scheduler leader
+  every 15 seconds (#2300). Both feed the start latency alerts.
+time: 2026-11-06T16:00:00.000000000+00:00

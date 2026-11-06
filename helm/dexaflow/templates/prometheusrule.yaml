@@ -1,13 +1,20 @@
 {{- /*
-Optional Prometheus Operator PrometheusRule with the schema-wait alert of ADR
-0090 decision 6: a control plane that stays not ready on its schema with
-nobody looking is almost as bad as a crash loop. Requires the
+Optional Prometheus Operator PrometheusRule (#2298). Two groups:
+  page   - the control plane cannot schedule, settle or serve, now;
+  ticket - something degrades and wants a look during working hours.
+The schema-wait alert of ADR 0090 decision 6 is the first page rule.
+Every rule carries a runbook_url under operate/runbooks/ and every threshold
+is a value under metrics.prometheusRule.thresholds. Requires the
 monitoring.coreos.com CRDs (kube-prometheus-stack). Disabled by default.
-The severity and description are Prometheus templates, escaped so Helm
-leaves them as they are.
+Severities and descriptions that are Prometheus templates are escaped so
+Helm leaves them as they are. scripts/check-prometheus-rules.sh renders this
+file and runs promtool against helm/dexaflow/tests/promtool/.
 */ -}}
 {{- $rule := (.Values.metrics | default dict).prometheusRule | default dict }}
 {{- if $rule.enabled }}
+{{- $ns := printf "namespace=%q" .Release.Namespace }}
+{{- $t := $rule.thresholds | default dict }}
+{{- $runbooks := $rule.runbookBaseURL | default "https://dexaflow.dexadata.ai/operate/runbooks/" | trimSuffix "/" }}
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -20,14 +27,155 @@ metadata:
     {{- end }}
 spec:
   groups:
-    - name: dexaflow-schema
+    - name: dexaflow-page
       rules:
         - alert: DexaflowSchemaNotReady
-          expr: dexaflow_schema_ready{namespace="{{ .Release.Namespace }}"} == 0
+          expr: dexaflow_schema_ready{ {{- $ns -}} } == 0
           for: 5m
           labels:
             severity: '{{`{{ if eq $labels.reason "database replaced" }}critical{{ else }}warning{{ end }}`}}'
           annotations:
             summary: A Dexaflow control plane has waited 5 minutes for its database schema
             description: '{{`Pod {{ $labels.pod }} is not ready: {{ $labels.reason }}. Its /readyz and its log say what to run.`}}'
+            runbook_url: {{ $runbooks }}/schema-not-ready/
+        - alert: DexaflowNoSchedulerLeader
+          expr: |
+            sum(rate(dexaflow_scheduler_loop_duration_seconds_count{ {{- $ns -}} }[5m])) == 0
+            and sum(dexaflow_build_info{ {{- $ns -}} ,role=~"all|scheduler"}) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: No Dexaflow scheduler replica has run a leader tick for 10 minutes
+            description: Scheduler replicas are up but none leads, so no run is created and no task starts.
+            runbook_url: {{ $runbooks }}/no-scheduler-leader/
+        - alert: DexaflowReaperSettlingValveOpen
+          expr: sum(increase(dexaflow_scheduler_decisions_total{ {{- $ns -}} ,decision_type="reap_settling_valve_open"}[10m])) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: The Dexaflow reapers ran without a settled leader
+            description: The leader never settled within twice the grace period and the reapers ran anyway; the reconciler sweep or the pod informer is broken.
+            runbook_url: {{ $runbooks }}/reaper-settling-valve-open/
+        - alert: DexaflowInfraConfirmValveOpen
+          expr: sum(increase(dexaflow_scheduler_decisions_total{ {{- $ns -}} ,decision_type="infra_confirm_valve_open"}[10m])) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: The Dexaflow planner acted on infra marks the reconciler never confirmed
+            description: Provisional agent_lost, pod_lost or dispatch_lost marks went unconfirmed for 2 minutes; the reconciler is not sweeping or cannot read pods.
+            runbook_url: {{ $runbooks }}/infra-confirm-valve-open/
+        - alert: DexaflowTaskQueueWaitHigh
+          expr: |
+            histogram_quantile(0.99, sum by (tenant, le) (rate(dexaflow_task_queue_wait_seconds_bucket{ {{- $ns -}} }[15m])))
+            > {{ $t.queueWaitP99Seconds | default 300 }}
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: Dexaflow tasks wait too long to start
+            description: '{{`The p99 wait from queued to running of tenant {{ $labels.tenant }} is {{ $value | humanizeDuration }}.`}}'
+            runbook_url: {{ $runbooks }}/task-queue-wait-high/
+        - alert: DexaflowAPIErrorRatioHigh
+          expr: |
+            sum(rate(dexaflow_http_requests_total{ {{- $ns -}} ,status=~"5.."}[5m]))
+            / sum(rate(dexaflow_http_requests_total{ {{- $ns -}} }[5m]))
+            > {{ $t.apiErrorRatio | default 0.01 }}
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: The Dexaflow API answers too many requests with a 5xx
+            description: '{{`{{ $value | humanizePercentage }} of API requests failed with a 5xx over the last 5 minutes.`}}'
+            runbook_url: {{ $runbooks }}/api-error-ratio-high/
+        - alert: DexaflowDatabasePoolCanceledAcquires
+          expr: sum by (pool) (increase(dexaflow_db_pool_canceled_acquires_total{ {{- $ns -}} }[5m])) > 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: Dexaflow requests give up waiting for a database connection
+            description: '{{`Callers of the {{ $labels.pool }} pool were canceled before a connection freed up, for 10 minutes.`}}'
+            runbook_url: {{ $runbooks }}/database-pool-canceled-acquires/
+        - alert: DexaflowRedisCommandFailures
+          expr: sum by (reason) (increase(dexaflow_redis_command_failures_total{ {{- $ns -}} ,reason!="canceled"}[5m])) > 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: Dexaflow Redis commands keep failing
+            description: '{{`Redis commands failed with reason {{ $labels.reason }} for 10 minutes; XCom reads and writes and the live log tail are affected.`}}'
+            runbook_url: {{ $runbooks }}/redis-command-failures/
+        - alert: DexaflowResilienceBackstopDisabled
+          expr: max by (config_key) (dexaflow_resilience_backstop_disabled{ {{- $ns -}} }) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: A Dexaflow resilience backstop is turned off
+            description: '{{`The control plane booted with the backstop of {{ $labels.config_key }} disabled.`}}'
+            runbook_url: {{ $runbooks }}/resilience-backstop-disabled/
+    - name: dexaflow-ticket
+      rules:
+        - alert: DexaflowSchedulerStepDowns
+          expr: sum(increase(dexaflow_scheduler_step_downs_total{ {{- $ns -}} ,reason!="shutdown"}[1h])) > {{ $t.stepDownsPerHour | default 3 }}
+          labels:
+            severity: warning
+          annotations:
+            summary: The Dexaflow scheduler leader keeps stepping down
+            description: '{{`{{ $value | humanize }} leader step-downs in the last hour, rollouts excluded.`}}'
+            runbook_url: {{ $runbooks }}/scheduler-step-downs/
+        - alert: DexaflowTasksLost
+          expr: |
+            sum by (decision_type) (increase(dexaflow_scheduler_decisions_total{ {{- $ns -}} ,decision_type=~"agent_lost|pod_lost|dispatch_lost|warm_worker_lost"}[1h]))
+            > {{ $t.lostTasksPerHour | default 10 }}
+          labels:
+            severity: warning
+          annotations:
+            summary: Dexaflow reapers fail more task attempts than usual
+            description: '{{`{{ $value | humanize }} attempts failed as {{ $labels.decision_type }} in the last hour.`}}'
+            runbook_url: {{ $runbooks }}/tasks-lost/
+        - alert: DexaflowTLSReloadFailed
+          expr: sum by (listener) (increase(dexaflow_tls_reload_failures_total{ {{- $ns -}} }[15m])) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: A rotated Dexaflow TLS certificate failed to load
+            description: '{{`The {{ $labels.listener }} listener keeps serving its previous certificate, which will expire.`}}'
+            runbook_url: {{ $runbooks }}/tls-reload-failed/
+        - alert: DexaflowAlertDispatchFailing
+          expr: sum by (type) (increase(dexaflow_alerts_dispatched_total{ {{- $ns -}} ,result="failed"}[30m])) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: Dexaflow failure alerts are not reaching their channel
+            description: '{{`On-failure alerts of type {{ $labels.type }} failed to send in the last 30 minutes.`}}'
+            runbook_url: {{ $runbooks }}/alert-dispatch-failing/
+        - alert: DexaflowUsageEventsLag
+          expr: max(dexaflow_usage_events_lag_seconds{ {{- $ns -}} }) > {{ $t.usageEventsLagSeconds | default 900 }}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Dexaflow usage events lag behind
+            description: '{{`The service API cannot serve usage events older than {{ $value | humanizeDuration }}; an open transaction holds them back.`}}'
+            runbook_url: {{ $runbooks }}/usage-events-lag/
+        - alert: DexaflowOldestQueuedTask
+          expr: max by (tenant) (dexaflow_task_oldest_waiting_seconds{ {{- $ns -}} ,state="queued"}) > {{ $t.oldestQueuedSeconds | default 600 }}
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: A Dexaflow task has been queued for a long time
+            description: '{{`The oldest queued attempt of tenant {{ $labels.tenant }} has waited {{ $value | humanizeDuration }} for its pod or worker.`}}'
+            runbook_url: {{ $runbooks }}/oldest-queued-task/
+        - alert: DexaflowMixedVersions
+          expr: count(count by (version) (dexaflow_build_info{ {{- $ns -}} })) > 1
+          for: {{ $t.mixedVersionsFor | default "30m" }}
+          labels:
+            severity: warning
+          annotations:
+            summary: Dexaflow processes run more than one version
+            description: A rollout left some control plane replicas on another version.
+            runbook_url: {{ $runbooks }}/mixed-versions/
 {{- end }}

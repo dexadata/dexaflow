@@ -3134,6 +3134,48 @@ func (q *Queries) MarkTaskStartExpired(ctx context.Context, arg MarkTaskStartExp
 	return result.RowsAffected(), nil
 }
 
+const oldestWaitingTaskAges = `-- name: OldestWaitingTaskAges :many
+SELECT t.name::text AS tenant,
+       ti.state::text AS state,
+       COALESCE(GREATEST(EXTRACT(EPOCH FROM (now() - MIN(
+           CASE WHEN ti.state = 'queued' THEN ti.queued_at ELSE ti.scheduled_at END))), 0), 0)::float8 AS age_seconds
+FROM task_instances ti
+JOIN tenants t ON t.id = ti.tenant_id
+WHERE ti.state IN ('scheduled', 'queued')
+GROUP BY t.name, ti.state
+`
+
+type OldestWaitingTaskAgesRow struct {
+	Tenant     string  `json:"tenant"`
+	State      string  `json:"state"`
+	AgeSeconds float64 `json:"age_seconds"`
+}
+
+// Age of the oldest task instance waiting to start, per tenant and waiting
+// state, for dexaflow_task_oldest_waiting_seconds (#2300). A scheduled row
+// waits from scheduled_at (a free pool slot), a queued one from queued_at (its
+// pod or worker). The state filter matches the partial index idx_ti_state, so
+// the read touches only active rows. A tenant with nothing waiting has no row.
+func (q *Queries) OldestWaitingTaskAges(ctx context.Context) ([]OldestWaitingTaskAgesRow, error) {
+	rows, err := q.db.Query(ctx, oldestWaitingTaskAges)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OldestWaitingTaskAgesRow{}
+	for rows.Next() {
+		var i OldestWaitingTaskAgesRow
+		if err := rows.Scan(&i.Tenant, &i.State, &i.AgeSeconds); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const recordDispatchBackpressure = `-- name: RecordDispatchBackpressure :exec
 UPDATE task_instances
 SET next_dispatch_at = $3,
@@ -3378,20 +3420,27 @@ func (q *Queries) ReopenDagRunKeepingVersion(ctx context.Context, arg ReopenDagR
 	return err
 }
 
-const reportTaskResult = `-- name: ReportTaskResult :execrows
-UPDATE task_instances
+const reportTaskResult = `-- name: ReportTaskResult :many
+UPDATE task_instances AS ti
 SET state = $3::task_state,
     exit_code = $4,
     error_message = $5,
-    started_at = CASE WHEN $3::task_state = 'running' AND started_at IS NULL THEN now() ELSE started_at END,
-    ended_at = CASE WHEN $3::task_state IN ('success', 'failed', 'skipped', 'upstream_failed') THEN now() ELSE ended_at END,
-    duration_seconds = CASE WHEN $3::task_state IN ('success', 'failed') AND started_at IS NOT NULL
-        THEN EXTRACT(EPOCH FROM (now() - started_at)) ELSE duration_seconds END
-WHERE dag_run_id = $1 AND task_id = $2
-  AND tenant_id = $6
-  AND try_number = $7
-  AND attempt_epoch = COALESCE($8::int, 0)
-  AND state IN ('none', 'scheduled', 'queued', 'running')
+    started_at = CASE WHEN $3::task_state = 'running' AND ti.started_at IS NULL THEN now() ELSE ti.started_at END,
+    ended_at = CASE WHEN $3::task_state IN ('success', 'failed', 'skipped', 'upstream_failed') THEN now() ELSE ti.ended_at END,
+    duration_seconds = CASE WHEN $3::task_state IN ('success', 'failed') AND ti.started_at IS NOT NULL
+        THEN EXTRACT(EPOCH FROM (now() - ti.started_at)) ELSE ti.duration_seconds END
+FROM task_instances AS prev
+WHERE prev.id = ti.id
+  AND ti.dag_run_id = $1 AND ti.task_id = $2
+  AND ti.tenant_id = $6
+  AND ti.try_number = $7
+  AND ti.attempt_epoch = COALESCE($8::int, 0)
+  AND ti.state IN ('none', 'scheduled', 'queued', 'running')
+RETURNING
+    ($3::task_state = 'running' AND prev.started_at IS NULL AND prev.queued_at IS NOT NULL)::boolean AS first_start,
+    COALESCE(GREATEST(EXTRACT(EPOCH FROM (now() - prev.queued_at)), 0), 0)::float8 AS queue_wait_seconds,
+    COALESCE(CASE WHEN $3::task_state = 'running' AND prev.started_at IS NULL AND prev.queued_at IS NOT NULL
+        THEN (SELECT t.name FROM tenants t WHERE t.id = ti.tenant_id) END, '')::text AS tenant_name
 `
 
 type ReportTaskResultParams struct {
@@ -3403,6 +3452,12 @@ type ReportTaskResultParams struct {
 	TenantID     pgtype.UUID `json:"tenant_id"`
 	TryNumber    int32       `json:"try_number"`
 	AttemptEpoch *int32      `json:"attempt_epoch"`
+}
+
+type ReportTaskResultRow struct {
+	FirstStart       bool    `json:"first_start"`
+	QueueWaitSeconds float64 `json:"queue_wait_seconds"`
+	TenantName       string  `json:"tenant_name"`
 }
 
 // $3 is cast to task_state in every usage: without the cast Postgres deduces an
@@ -3430,8 +3485,18 @@ type ReportTaskResultParams struct {
 // 0: it matches its own pre-upgrade attempt (rows migrate at 0) and never an
 // attempt dispatched after the upgrade (the dispatch claim makes those >= 1).
 // That keeps a superseded agent's RUNNING report off its replacement (#911).
-// Returns the affected row count so the caller can tell a real write from a
-// rejected late report instead of dropping it silently.
+// Returns the updated row (none for a rejected late report) so the caller can
+// tell a real write from a rejected one instead of dropping it silently.
+//
+// first_start is true on the report that moves the attempt to running for the
+// first time, with queue_wait_seconds from queued_at to now, so
+// dexaflow_task_queue_wait_seconds counts each attempt once (#2300).
+// The self join on prev reads the row as it was before this UPDATE: RETURNING
+// alone only sees the new started_at. Two concurrent first running reports of
+// one attempt could both see started_at NULL; the agent sends one, so the
+// histogram can at worst count a rare attempt twice and never moves a state.
+// A row still in 'none' (the agent beat launchQueued, see below) has no
+// queued_at yet and is not counted.
 //
 // The state set is deliberately wider than the siblings' ('scheduled','queued',
 // 'running'): it also admits 'none'. Those writes are driven by the scheduler,
@@ -3442,8 +3507,8 @@ type ReportTaskResultParams struct {
 // while the row is still `none`. Excluding it would reject a correct report,
 // trading a rare silent corruption for a frequent one. The settled states
 // (success/failed/skipped/upstream_failed) are what this guard is for.
-func (q *Queries) ReportTaskResult(ctx context.Context, arg ReportTaskResultParams) (int64, error) {
-	result, err := q.db.Exec(ctx, reportTaskResult,
+func (q *Queries) ReportTaskResult(ctx context.Context, arg ReportTaskResultParams) ([]ReportTaskResultRow, error) {
+	rows, err := q.db.Query(ctx, reportTaskResult,
 		arg.DagRunID,
 		arg.TaskID,
 		arg.Column3,
@@ -3454,9 +3519,21 @@ func (q *Queries) ReportTaskResult(ctx context.Context, arg ReportTaskResultPara
 		arg.AttemptEpoch,
 	)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected(), nil
+	defer rows.Close()
+	items := []ReportTaskResultRow{}
+	for rows.Next() {
+		var i ReportTaskResultRow
+		if err := rows.Scan(&i.FirstStart, &i.QueueWaitSeconds, &i.TenantName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const requeueDispatch = `-- name: RequeueDispatch :execrows

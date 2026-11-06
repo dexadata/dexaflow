@@ -1,4 +1,4 @@
-suite: optional PrometheusRule for the schema wait (ADR 0090 decision 6)
+suite: optional PrometheusRule, schema wait (ADR 0090 decision 6) and the page and ticket groups (#2298)
 templates:
   - prometheusrule.yaml
 release:
@@ -74,3 +74,60 @@ tests:
       - equal:
           path: spec.groups[0].rules[0].expr
           value: dexaflow_schema_ready{namespace="data"} == 0
+
+  - it: renders a page and a ticket group, every alert with a runbook
+    set:
+      metrics.prometheusRule.enabled: true
+    asserts:
+      - equal:
+          path: spec.groups[0].name
+          value: dexaflow-page
+      - equal:
+          path: spec.groups[1].name
+          value: dexaflow-ticket
+      - lengthEqual:
+          path: spec.groups[0].rules
+          count: 9
+      - lengthEqual:
+          path: spec.groups[1].rules
+          count: 7
+      - equal:
+          path: spec.groups[0].rules[0].annotations.runbook_url
+          value: https://dexaflow.dexadata.ai/operate/runbooks/schema-not-ready/
+      - equal:
+          path: spec.groups[1].rules[6].annotations.runbook_url
+          value: https://dexaflow.dexadata.ai/operate/runbooks/mixed-versions/
+
+  - it: takes the runbook base and the thresholds from values
+    set:
+      metrics.prometheusRule.enabled: true
+      metrics.prometheusRule.runbookBaseURL: https://docs.example.internal/runbooks
+      metrics.prometheusRule.thresholds.queueWaitP99Seconds: 60
+      metrics.prometheusRule.thresholds.mixedVersionsFor: 2h
+    asserts:
+      - equal:
+          path: spec.groups[0].rules[0].annotations.runbook_url
+          value: https://docs.example.internal/runbooks/schema-not-ready/
+      - matchRegex:
+          path: spec.groups[0].rules[4].expr
+          pattern: '> 60\n?$'
+      - equal:
+          path: spec.groups[1].rules[6].for
+          value: 2h
+
+  # --reuse-values from a release whose values predate the thresholds.
+  - it: falls back to the documented defaults when thresholds are absent
+    set:
+      metrics.prometheusRule.enabled: true
+      metrics.prometheusRule.thresholds: null
+      metrics.prometheusRule.runbookBaseURL: null
+    asserts:
+      - matchRegex:
+          path: spec.groups[0].rules[4].expr
+          pattern: '> 300\n?$'
+      - equal:
+          path: spec.groups[1].rules[6].for
+          value: 30m
+      - equal:
+          path: spec.groups[0].rules[0].annotations.runbook_url
+          value: https://dexaflow.dexadata.ai/operate/runbooks/schema-not-ready/
