@@ -293,3 +293,27 @@ func TestAgentLostMassSilenceStillSettlesCeiling(t *testing.T) {
 		t.Errorf("credential ceiling settles under a hold = %v, want the one attempt", store.ceilingPins)
 	}
 }
+
+// TestReapOnceGateSkipForgetsTheHold: a pass skipped by the destructive gate
+// (lost leadership, step-down) forgets the hold, so the valve of a later
+// outage counts from that outage and not from the earlier term.
+func TestReapOnceGateSkipForgetsTheHold(t *testing.T) {
+	start := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	now := start
+	store := &fleetHeartbeatStore{fleet: HeartbeatFleet{Total: 20, Stale: 20}}
+	store.candidates = staleCandidates(20, start)
+	a := newAgentLostReaper(store, reapTestLogger(), 90*time.Second, &capturingRecorder{})
+	a.clock = func() time.Time { return now }
+	_ = a.run(context.Background())
+	if a.silentSince.IsZero() {
+		t.Fatal("setup: the first pass must start a hold")
+	}
+	leading := false
+	r := &Reaper{agentLost: a, logger: reapTestLogger(), leading: func() bool { return leading }, now: func() time.Time { return now }}
+	if err := r.ReapOnce(context.Background()); err != nil {
+		t.Fatalf("ReapOnce: %v", err)
+	}
+	if !a.silentSince.IsZero() {
+		t.Error("a gate skip must forget the hold in progress")
+	}
+}

@@ -35,6 +35,14 @@ import (
 // An attempt that went silent after outliving the credential ceiling
 // (OutlivedCredentialCeiling) is settled even under a hold: its silence is
 // the ceiling working, and a batch started together reaches it together.
+// Such attempts are left out of the page floor that decides whether to count;
+// the fleet count itself still includes them, so a ceiling batch can only
+// widen a hold that ten other silent attempts already justify.
+//
+// A pass whose candidate list fails to load does not refresh silentSeen, so a
+// list outage longer than massSilenceGap restarts the valve clock. Nothing is
+// reaped while the list fails, so that only stretches a hold on a degraded
+// database.
 const (
 	massSilenceMinStale     = 10
 	massSilenceExitMinStale = 5
