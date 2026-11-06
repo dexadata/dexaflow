@@ -68,7 +68,7 @@ on the disclosure.
 
 | Line | Security fixes |
 |---|---|
-| The newest minor | Yes, as patches cut from `main`, or from the minor's `release-X.Y` branch once `main` has diverged from it ([ADR 0102](https://dexaflow.dexadata.ai/project/adrs/0102-patches-from-main-until-main-diverges/)) |
+| The newest minor | Yes, as patches cut from `main`, or from the minor's `release-X.Y` branch once `main` has diverged from it ([ADR 0102](https://github.com/dexadata/dexaflow/blob/main/website/content/project/adrs/0102-patches-from-main-until-main-diverges.md)) |
 | The previous minor | Yes, for 8 weeks after the next minor's `X.Y.0` final ships |
 | Older minors | No |
 
