@@ -2,7 +2,7 @@
 #
 # ── Why this is not a PR gate ────────────────────────────────────────────────
 #
-# leoflow-runtime is python:3.x-slim, and that package set is not ours. A CVE
+# dexaflow-runtime is python:3.x-slim, and that package set is not ours. A CVE
 # lands in it because a Debian security team published an advisory, not because
 # anyone here pushed a commit — so a blocking gate on it fails whoever opens the
 # next unrelated pull request, and the person who can actually fix it (by
@@ -17,16 +17,16 @@
 # So: this workflow never fails the build. It publishes to the Security tab and
 # keeps exactly one tracking issue current. The blocking gate lives in
 # security.yaml and covers the images whose every byte comes from our go.mod:
-# leoflow-server, and — since #1039 rebuilt it from `FROM migrate/migrate` into
-# a distroless image holding a binary compiled from our own module graph —
-# leoflow-migrate. It used to be scanned here, and was the largest finding this
+# dexaflow-server, and (since #1039 rebuilt it from `FROM migrate/migrate` into
+# a distroless image holding a binary compiled from our own module graph)
+# dexaflow-migrate. It used to be scanned here, and was the largest finding this
 # workflow ever produced (84 fixable, 50 CRITICAL/HIGH); it moved lanes because
 # what the image contains changed, not because the policy softened.
 #
 # ── Why a fixability filter, not just a severity floor ───────────────────────
 #
 # Debian stable always carries CVEs that are unfixed there and never will be
-# fixed there. At the time of writing leoflow-runtime:py3.11 reports 273
+# fixed there. At the time of writing dexaflow-runtime:py3.11 reports 273
 # findings, of which 5 are CRITICAL and every one of those 5 is unfixed upstream
 # (`will_not_fix`, `fix_deferred`, `affected`). `--ignore-unfixed` takes that
 # 273 down to 14 — the ones a human could act on today. Severity says how bad a
@@ -153,7 +153,7 @@ jobs:
             internal/domain/schemas/leoflow-yaml-schema.json)"
           echo "schema enum: ${lines}"
           if [ "$lines" != "$UPLOADED" ]; then
-            echo "::error::the published Python lines (${lines}) and the SARIF upload steps in this workflow (${UPLOADED}) disagree. Add or remove an 'Upload SARIF (leoflow-runtime pyX.Y)' step and update UPLOADED."
+            echo "::error::the published Python lines (${lines}) and the SARIF upload steps in this workflow (${UPLOADED}) disagree. Add or remove an 'Upload SARIF (dexaflow-runtime pyX.Y)' step and update UPLOADED."
             exit 1
           fi
           echo "PY_LINES=${lines}" >> "$GITHUB_ENV"
@@ -194,20 +194,20 @@ jobs:
         run: |
           set -euo pipefail
           for py in ${PY_LINES}; do
-            echo "::group::build leoflow-runtime py${py}"
+            echo "::group::build dexaflow-runtime py${py}"
             docker build -f runtime/Dockerfile \
               --build-arg "PYTHON_VERSION=${py}" \
               --build-arg "GO_VERSION=${GO_VERSION}" \
-              -t "leoflow-runtime:py${py}" .
+              -t "dexaflow-runtime:py${py}" .
             echo "::endgroup::"
           done
           # The data variant (runtime/data): one leg, py3.11.
-          echo "::group::build leoflow-runtime data py3.11"
+          echo "::group::build dexaflow-runtime data py3.11"
           docker build -f runtime/Dockerfile \
             --build-arg "PYTHON_VERSION=3.11" \
             --build-arg "RUNTIME_VARIANT=data" \
             --build-arg "GO_VERSION=${GO_VERSION}" \
-            -t "leoflow-runtime:py3.11-data" .
+            -t "dexaflow-runtime:py3.11-data" .
           echo "::endgroup::"
           echo "::group::build dexaflow-cli"
           mkdir -p dist/cli-image-context
@@ -234,9 +234,9 @@ jobs:
             echo "::endgroup::"
           }
           for py in ${PY_LINES}; do
-            scan "leoflow-runtime-py${py}" "leoflow-runtime:py${py}"
+            scan "dexaflow-runtime-py${py}" "dexaflow-runtime:py${py}"
           done
-          scan "leoflow-runtime-data-py3.11" "leoflow-runtime:py3.11-data"
+          scan "dexaflow-runtime-data-py3.11" "dexaflow-runtime:py3.11-data"
           scan "dexaflow-cli" "dexaflow-cli:ci"
 
       # The complete picture, including the unfixed findings the policy filters
@@ -249,8 +249,8 @@ jobs:
           set -euo pipefail
           mkdir -p scan-out/unfiltered
           refs=""
-          for py in ${PY_LINES}; do refs="${refs} leoflow-runtime:py${py}"; done
-          refs="${refs} leoflow-runtime:py3.11-data"
+          for py in ${PY_LINES}; do refs="${refs} dexaflow-runtime:py${py}"; done
+          refs="${refs} dexaflow-runtime:py3.11-data"
           refs="${refs} dexaflow-cli:ci"
           for ref in ${refs}; do
             name="${ref//[:\/]/-}"
@@ -268,32 +268,32 @@ jobs:
       # One category per image so the uploads do not overwrite each other. Not
       # on pull_request: a PR run would collide with the main-branch baseline
       # under a shared category, the same trap security.yaml documents (#437).
-      - name: Upload SARIF (leoflow-runtime py3.11)
+      - name: Upload SARIF (dexaflow-runtime py3.11)
         uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         if: always() && github.event_name != 'pull_request'
         with:
-          sarif_file: scan-out/leoflow-runtime-py3.11.sarif
+          sarif_file: scan-out/dexaflow-runtime-py3.11.sarif
           category: trivy-image-runtime-py311
 
-      - name: Upload SARIF (leoflow-runtime py3.12)
+      - name: Upload SARIF (dexaflow-runtime py3.12)
         uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         if: always() && github.event_name != 'pull_request'
         with:
-          sarif_file: scan-out/leoflow-runtime-py3.12.sarif
+          sarif_file: scan-out/dexaflow-runtime-py3.12.sarif
           category: trivy-image-runtime-py312
 
-      - name: Upload SARIF (leoflow-runtime py3.13)
+      - name: Upload SARIF (dexaflow-runtime py3.13)
         uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         if: always() && github.event_name != 'pull_request'
         with:
-          sarif_file: scan-out/leoflow-runtime-py3.13.sarif
+          sarif_file: scan-out/dexaflow-runtime-py3.13.sarif
           category: trivy-image-runtime-py313
 
-      - name: Upload SARIF (leoflow-runtime data py3.11)
+      - name: Upload SARIF (dexaflow-runtime data py3.11)
         uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         if: always() && github.event_name != 'pull_request'
         with:
-          sarif_file: scan-out/leoflow-runtime-data-py3.11.sarif
+          sarif_file: scan-out/dexaflow-runtime-data-py3.11.sarif
           category: trivy-image-runtime-data-py311
 
       - name: Upload SARIF (dexaflow-cli)
@@ -308,8 +308,8 @@ jobs:
         run: |
           set -euo pipefail
           reports=""
-          for py in ${PY_LINES}; do reports="${reports} scan-out/leoflow-runtime-py${py}.json"; done
-          reports="${reports} scan-out/leoflow-runtime-data-py3.11.json scan-out/dexaflow-cli.json"
+          for py in ${PY_LINES}; do reports="${reports} scan-out/dexaflow-runtime-py${py}.json"; done
+          reports="${reports} scan-out/dexaflow-runtime-data-py3.11.json scan-out/dexaflow-cli.json"
           # shellcheck disable=SC2086 # deliberate word splitting over the report list.
           python3 scripts/trivy-report.py \
             ${reports} \

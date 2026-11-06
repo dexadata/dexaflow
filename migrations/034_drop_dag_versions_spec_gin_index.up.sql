@@ -1,6 +1,6 @@
 -- Drop the GIN index on dag_versions.spec (from 002, performance item D3). No
 -- query filters spec by JSONB containment (@>, <@), key existence (?, ?|, ?&)
--- or jsonpath (@?, @@); the spec is only ever read whole, by version id. The
+-- or jsonpath (@?, @@), and the spec is only ever read whole, by version id. The
 -- index only made every version insert decompose the full DAG document into
 -- GIN entries.
 --

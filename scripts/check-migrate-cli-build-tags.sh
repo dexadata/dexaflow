@@ -102,7 +102,7 @@ workflow_scans_module() {
 # assertion here green.
 workflow_scans_migrate_image() {
 	local body; body=$(sed '/^[[:space:]]*#/d')
-	printf '%s' "$body" | grep -E 'image-ref:[[:space:]]*leoflow-migrate' >/dev/null &&
+	printf '%s' "$body" | grep -E 'image-ref:[[:space:]]*dexaflow-migrate' >/dev/null &&
 		printf '%s' "$body" | grep -F 'deploy/Dockerfile.migrate' >/dev/null
 }
 
@@ -175,7 +175,7 @@ self_test() {
 
 	# The migrate image scan must be asserted to EXIST, not merely to agree.
 	_yes "a present migrate image scan is recognised" \
-		$'      - uses: aquasecurity/trivy-action@v0\n        with:\n          image-ref: leoflow-migrate:ci\n      - run: docker build -f deploy/Dockerfile.migrate -t leoflow-migrate:ci .\n' \
+		$'      - uses: aquasecurity/trivy-action@v0\n        with:\n          image-ref: dexaflow-migrate:ci\n      - run: docker build -f deploy/Dockerfile.migrate -t dexaflow-migrate:ci .\n' \
 		workflow_scans_migrate_image
 	_no "a deleted migrate image scan is caught" $'      - run: echo nothing scans the migrate image any more\n' workflow_scans_migrate_image
 
@@ -214,7 +214,7 @@ if ! workflow_scans_module <"$WORKFLOW"; then
 	note "$WORKFLOW no longer runs 'govulncheck ./...', which is what analyses $PKG, the binary in the migrate image."
 fi
 if ! workflow_scans_migrate_image <"$WORKFLOW"; then
-	note "$WORKFLOW no longer builds deploy/Dockerfile.migrate and scans it as leoflow-migrate. image-scan.yaml does not cover this image, so that job is the only scan of the container that holds the database DSN."
+	note "$WORKFLOW no longer builds deploy/Dockerfile.migrate and scans it as dexaflow-migrate. image-scan.yaml does not cover this image, so that job is the only scan of the container that holds the database DSN."
 fi
 
 # 2. The build must stamp the version, so `-version` names the build.

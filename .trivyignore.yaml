@@ -46,7 +46,7 @@
 #
 # ── Current state ────────────────────────────────────────────────────────────
 #
-# The blocking gate (leoflow-server) reports zero findings under the policy, so
+# The blocking gate (dexaflow-server) reports zero findings under the policy, so
 # nothing of its needs accepting. The entries below are the copies of urllib3,
 # msgpack and setuptools that pip VENDORS inside the runtime images (#1299).
 #
