@@ -5,7 +5,7 @@ weight: 75
 description: The alerts the Helm chart ships, what each one means, and what to do when it fires.
 ---
 
-The chart renders a `PrometheusRule` with two groups when
+The chart renders a `PrometheusRule` with three groups when
 `metrics.prometheusRule.enabled` is `true`. It needs the Prometheus Operator
 CRDs (kube-prometheus-stack) and a scrape of `/metrics`
 (`metrics.serviceMonitor.enabled`).
@@ -14,6 +14,9 @@ CRDs (kube-prometheus-stack) and a scrape of `/metrics`
   schedule, settle or serve right now. Route it to whoever is on call.
 - **ticket** (`severity: warning`): something degrades and needs a look during
   working hours.
+- **slo**: the error ratios of the [service level objectives](/operate/service-level-objectives/)
+  and two alerts on their error budgets, a fast burn (`critical`) and a slow
+  one (`warning`). Turn it off with `metrics.prometheusRule.slo.enabled: false`.
 
 Every rule is scoped to the release namespace and carries a `runbook_url`
 annotation that points at its page below. Set
@@ -70,3 +73,10 @@ fires and one that stays quiet for every alert. Change a rule and its test
 together.
 
 See [Metrics](/reference/metrics/) for every family the rules read.
+
+## Service level objectives
+
+| Alert | Fires when | Default |
+|---|---|---|
+| [DexaflowErrorBudgetFastBurn](error-budget-burn/) | an objective's error ratio above 14.4 times its budget's rate over 1 hour and 5 minutes, for 2 minutes (critical) | `slo.objectives`: see [Service level objectives](/operate/service-level-objectives/) |
+| [DexaflowErrorBudgetSlowBurn](error-budget-burn/) | above 6 times over 6 hours and 30 minutes, for 15 minutes (warning) | |

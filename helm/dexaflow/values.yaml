@@ -957,6 +957,18 @@ metrics:
       oldestQueuedSeconds: 600
       # -- `DexaflowMixedVersions` opens a ticket when processes report more than one version for this long. Longer than your slowest rollout.
       mixedVersionsFor: 30m
+    slo:
+      # -- Render the `dexaflow-slo` group (#2314): the error ratio of each service level objective over 5m, 30m, 1h and 6h (`dexaflow:slo_errors:ratio_rate<window>`), the objectives (`dexaflow:slo_objective`), `dexaflow:scheduler_leaderless:bool`, and two alerts on the 30 day error budget: `DexaflowErrorBudgetFastBurn` (critical, 14.4 times the allowed rate over 1h and 5m) and `DexaflowErrorBudgetSlowBurn` (warning, 6 times over 6h and 30m). See the Service level objectives page of the docs.
+      enabled: true
+      objectives:
+        # -- Share of scheduled runs created within 60 s of their slot.
+        schedulePunctuality: 0.99
+        # -- Share of task attempts running within 120 s of `queued`.
+        taskStart: 0.99
+        # -- One minus the highest share of finished attempts the platform may fail (`agent_lost`, `pod_lost`, `dispatch_lost`, `warm_worker_lost`). Needs `observability.usage_metrics` for the attempts count.
+        platformFailures: 0.999
+        # -- Share of API requests answered without a 5xx.
+        apiAvailability: 0.999
 
 ingress:
   # -- Enable an Ingress resource exposing the control plane via HTTP/HTTPS. Requires an Ingress controller (nginx/traefik/etc.) in the cluster.
