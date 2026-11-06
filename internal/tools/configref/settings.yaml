@@ -280,6 +280,55 @@ settings:
       encryption, Azure Cache) whose server cert is signed by a provider/per-instance
       CA not in the container's system roots. Empty falls back to system roots only.
       The Helm chart sets it when `redis.caConfigMap` is configured.
+  redis.sentinel.master:
+    edition: Cluster
+    description: >-
+      Name of the master a Redis Sentinel monitors. Set it with `redis.sentinel.addrs`
+      to reach Redis through Sentinel, which follows a failover to the new master
+      ([#2358](https://github.com/dexadata/dexaflow/issues/2358)). The URL, when set,
+      then only gives the master's password, the database and TLS. Helm:
+      `redis.sentinel.master`.
+  redis.sentinel.addrs:
+    edition: Cluster
+    description: >-
+      The sentinels' `host:port` addresses, comma separated in the environment. Helm:
+      `redis.sentinel.addrs`.
+  redis.sentinel.password:
+    edition: Cluster
+    description: >-
+      Password of the sentinels themselves, when they require one; the master's
+      password comes from the URL. Helm: `redis.sentinel.existingSecret`.
+  redis.cluster.addrs:
+    edition: Cluster
+    description: >-
+      Seed nodes of a Redis Cluster, `host:port`, comma separated in the environment;
+      one configuration endpoint (ElastiCache) is enough. The client discovers the
+      other nodes and follows slot moves. The URL, when set, then only gives the
+      password and TLS; a Cluster has database 0 only. XCom reads of several keys go
+      as one pipelined batch per node instead of an MGET, which a Cluster refuses
+      across slots, so keys keep their format. Helm: `redis.cluster.addrs`.
+  redis.dial_timeout:
+    edition: Cluster
+    description: >-
+      Bound on one connection attempt, a Go duration such as `2s`. `0s` keeps the
+      client's default, 5 s. Helm: `redis.dialTimeout`.
+  redis.read_timeout:
+    edition: Cluster
+    description: >-
+      Bound on reading one command's reply. `0s` keeps the client's default, 3 s. A
+      shorter one fails a read faster on a dead node, so the retry reaches the new
+      master sooner after a failover; keep it above the slowest XCom read (a 256 KB
+      value). Helm: `redis.readTimeout`.
+  redis.write_timeout:
+    edition: Cluster
+    description: >-
+      Bound on writing one command. `0s` keeps the client's default, the read
+      timeout. Helm: `redis.writeTimeout`.
+  redis.pool_size:
+    edition: Cluster
+    description: >-
+      Connections per Redis node in the client's pool. `0` keeps the client's
+      default, 10 per CPU. Helm: `redis.poolSize`.
   auth.provider:
     edition: both
     description: >-

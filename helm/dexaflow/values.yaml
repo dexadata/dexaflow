@@ -352,6 +352,27 @@ redis:
   existingSecret: ""
   # -- Name of a ConfigMap with a `ca.crt` key containing the PEM CA bundle the client trusts when negotiating TLS to a `rediss://` URL (#312). Required when the managed-Redis server cert is signed by a provider / per-instance CA that is not in the system roots — Memorystore SERVER_AUTHENTICATION, ElastiCache in-transit encryption, Azure Cache for Redis. Mounted read-only at `/etc/leoflow/redis-ca` and exposed to the server via `LEOFLOW_REDIS_CA_FILE`. Leave empty when Redis uses a public CA or no TLS.
   caConfigMap: ""
+  # Sentinel or Cluster instead of one endpoint (#2358). With either, `url` or
+  # `existingSecret` is optional and only gives the credentials, the database
+  # and TLS; its host is not used.
+  sentinel:
+    # -- Name of the master the sentinels monitor. Set with `addrs` to reach Redis through Sentinel, which follows a failover.
+    master: ""
+    # -- The sentinels' `host:port` addresses.
+    addrs: []
+    # -- Name of a Secret with key `sentinelPassword`, when the sentinels require a password of their own.
+    existingSecret: ""
+  cluster:
+    # -- Seed nodes of a Redis Cluster, `host:port`; one configuration endpoint is enough. A Cluster has database 0 only.
+    addrs: []
+  # -- Bound on one connection attempt, a Go duration such as `2s`. Empty keeps the client's default, 5s.
+  dialTimeout: ""
+  # -- Bound on reading one reply. Empty keeps the client's default, 3s. Keep it above the slowest XCom read.
+  readTimeout: ""
+  # -- Bound on writing one command. Empty keeps the client's default, the read timeout.
+  writeTimeout: ""
+  # -- Connections per Redis node. 0 keeps the client's default, 10 per CPU.
+  poolSize: 0
 
 auth:
   # Trusted-issuer handoff (#1284): a platform that already signs its users in

@@ -435,6 +435,8 @@ jobs:
     env:
       DATABASE_URL: postgres://leoflow:leoflow@localhost:5432/leoflow_test?sslmode=disable
       REDIS_URL: redis://localhost:6379/0
+      DEXAFLOW_TEST_REDIS_SENTINEL: 127.0.0.1:26390
+      DEXAFLOW_TEST_REDIS_CLUSTER: 127.0.0.1:7000
       DEXAFLOW_TEST_S3_ENDPOINT: http://localhost:4566
       DEXAFLOW_TEST_GCS_ENDPOINT: http://localhost:4443
     steps:
@@ -459,6 +461,14 @@ jobs:
           done
           echo "LocalStack S3 did not come up" >&2
           exit 1
+
+      # A Redis Sentinel pair the failover test drives and a three-node
+      # Redis Cluster (#2358): steps, since a sentinel needs its config file,
+      # the replica its master's address and the cluster a create call.
+      - name: Start a Redis Sentinel pair and a Redis Cluster
+        run: |
+          scripts/redis-sentinel-up.sh
+          scripts/redis-cluster-up.sh
 
       # The GCS API the log backend is tested against with its real client
       # (#526 bucket A). A step, not a service: fake-gcs-server takes its scheme

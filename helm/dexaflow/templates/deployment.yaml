@@ -8,8 +8,14 @@ not configured, rather than letting a misconfigured Pro deploy run embedded.
 {{- if and (not .Values.database.existingSecret) (not .Values.database.url) -}}
 {{- fail "database.url or database.existingSecret is required: the Pro edition needs an external Postgres (the embedded datastore is Lite-only)." -}}
 {{- end -}}
-{{- if and (not .Values.redis.existingSecret) (not .Values.redis.url) -}}
-{{- fail "redis.url or redis.existingSecret is required: the Pro edition needs an external Redis (the embedded XCom + log tailer is Lite-only)." -}}
+{{- if and (not .Values.redis.existingSecret) (not .Values.redis.url) (not .Values.redis.sentinel.master) (not .Values.redis.cluster.addrs) -}}
+{{- fail "redis.url, redis.existingSecret, redis.sentinel.master or redis.cluster.addrs is required: the Pro edition needs an external Redis (the embedded XCom + log tailer is Lite-only)." -}}
+{{- end -}}
+{{- if and .Values.redis.sentinel.master .Values.redis.cluster.addrs -}}
+{{- fail "redis.sentinel.master and redis.cluster.addrs are both set: a Redis is reached through Sentinel or as a Cluster, not both." -}}
+{{- end -}}
+{{- if and .Values.redis.sentinel.master (not .Values.redis.sentinel.addrs) -}}
+{{- fail "redis.sentinel.master needs redis.sentinel.addrs, the sentinels' host:port addresses." -}}
 {{- end -}}
 {{- /*
 Validate `secretKey` length up-front so a wrong key fails the install

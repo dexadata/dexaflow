@@ -542,7 +542,7 @@ func selectDatastore(ctx context.Context, cfg *config.ServerConfig, pg *storage.
 	if fromOptions != nil {
 		logger.Info("xcom: backend from options", "type", fmt.Sprintf("%T", fromOptions))
 	}
-	if cfg.Redis.URL == "" {
+	if !cfg.Redis.Configured() {
 		if fromOptions != nil {
 			logger.Info("embedded datastore: in-process log tailer (no Redis)")
 			return fromOptions, logs.NewMemoryTailer(), nil, func() {}, nil

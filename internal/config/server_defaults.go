@@ -58,7 +58,16 @@ var serverDefaults = map[string]any{
 	// Registered so AutomaticEnv binds LEOFLOW_REDIS_CA_FILE (the Helm chart sets
 	// it when redis.caConfigMap is configured); without it, verified TLS to a
 	// managed rediss:// endpoint silently falls back to system roots only (#725).
-	"redis.ca_file":              "",
+	"redis.ca_file": "",
+	// Sentinel, Cluster and the client's timeouts and pool size (#2358).
+	"redis.sentinel.master":      "",
+	"redis.sentinel.addrs":       []string{},
+	"redis.sentinel.password":    "",
+	"redis.cluster.addrs":        []string{},
+	"redis.dial_timeout":         "0s",
+	"redis.read_timeout":         "0s",
+	"redis.write_timeout":        "0s",
+	"redis.pool_size":            0,
 	"auth.provider":              "jwt",
 	"auth.jwt.secret":            "",
 	"auth.jwt.token_ttl_seconds": 3600,

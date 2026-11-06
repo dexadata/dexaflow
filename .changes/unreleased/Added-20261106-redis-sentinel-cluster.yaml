@@ -1,0 +1,13 @@
+kind: Added
+body: |-
+  **Redis through Sentinel or as a Redis Cluster, with explicit client
+  timeouts.** The server reached Redis at one URL with the client library's
+  defaults, so a self-managed Sentinel or a Redis Cluster could not be used
+  (#2358). `redis.sentinel.master` and `redis.sentinel.addrs` reach a
+  Sentinel-managed master and follow its failover; `redis.cluster.addrs` reaches
+  a Cluster, where XCom reads of several keys go as one pipelined batch per
+  node, so keys keep their format. `redis.dial_timeout`, `redis.read_timeout`,
+  `redis.write_timeout` and `redis.pool_size` bound the client, and keep its
+  defaults when unset. The chart has the same values under `redis`. A URL alone
+  behaves as before.
+time: 2026-11-06T21:30:00.000000000+00:00
