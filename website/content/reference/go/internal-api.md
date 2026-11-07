@@ -76,6 +76,7 @@ Package api implements the Airflow\-compatible HTTP control plane \(ADR 0007\).
   - [func WithoutLegacyMetricNames\(\) ObservabilityOption](<#WithoutLegacyMetricNames>)
 - [type PoolStore](<#PoolStore>)
 - [type Problem](<#Problem>)
+- [type ResourceAuditWriter](<#ResourceAuditWriter>)
 - [type RunVersionLabeler](<#RunVersionLabeler>)
 - [type SchemaChecker](<#SchemaChecker>)
 - [type ServerDeps](<#ServerDeps>)
@@ -167,7 +168,7 @@ BodyLimit caps the size of request bodies \(\#1613\): requestMax for every route
 A body whose Content\-Length is over the limit is refused with 413 before the handler runs. A body without one \(chunked\) is cut at the limit while the handler reads it; the handler then fails to decode it and answers a 4xx, which is replaced by the same 413 problem, so the client sees one answer whichever way the body arrived.
 
 <a name="CORS"></a>
-## func [CORS](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L109>)
+## func [CORS](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L110>)
 
 ```go
 func CORS(allowed []string) gin.HandlerFunc
@@ -176,7 +177,7 @@ func CORS(allowed []string) gin.HandlerFunc
 CORS allows the configured origins \(use "\*" to allow any\).
 
 <a name="DevBypassAuth"></a>
-## func [DevBypassAuth](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L172>)
+## func [DevBypassAuth](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L173>)
 
 ```go
 func DevBypassAuth() gin.HandlerFunc
@@ -200,7 +201,7 @@ Routes that return secrets, tokens or code \(variables, connections, XComs, auth
 A handler panic is passed on untouched: the held\-back response is dropped so gin.Recovery can still answer 500.
 
 <a name="JWTAuth"></a>
-## func [JWTAuth](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L181>)
+## func [JWTAuth](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L183>)
 
 ```go
 func JWTAuth(authn auth.Authenticator) gin.HandlerFunc
@@ -257,7 +258,7 @@ func Observe(metrics Metrics, tracer trace.Tracer) gin.HandlerFunc
 Observe wraps each request in an OTel span and records HTTP metrics \(ADR 0010\). A nil tracer falls back to the global \(no\-op\) tracer; nil metrics are skipped, so the middleware is safe in tests.
 
 <a name="RejectEncodedPathSeparators"></a>
-## func [RejectEncodedPathSeparators](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L493>)
+## func [RejectEncodedPathSeparators](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L498>)
 
 ```go
 func RejectEncodedPathSeparators() gin.HandlerFunc
@@ -266,7 +267,7 @@ func RejectEncodedPathSeparators() gin.HandlerFunc
 RejectEncodedPathSeparators refuses a request whose path carries a percent\-encoded slash \(%2F\) or backslash \(%5C\) with 400. gin routes on the decoded path, so /auth%2Ftoken is served as /auth/token, while a reverse proxy or load balancer in front of the server matches its rules on the raw path and would let it through a rule written for /auth/token. Refusing the encoded form keeps both sides reading the same path. The XCom key in the task instance route is the one exception \(see xcomEntriesSegment\).
 
 <a name="RequestID"></a>
-## func [RequestID](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L41>)
+## func [RequestID](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L42>)
 
 ```go
 func RequestID() gin.HandlerFunc
@@ -275,7 +276,7 @@ func RequestID() gin.HandlerFunc
 RequestID assigns a request id \(honoring an inbound X\-Request\-Id\) and echoes it.
 
 <a name="RequireDeployPermission"></a>
-## func [RequireDeployPermission](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L366>)
+## func [RequireDeployPermission](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L371>)
 
 ```go
 func RequireDeployPermission(viaIssuer bool) gin.HandlerFunc
@@ -284,7 +285,7 @@ func RequireDeployPermission(viaIssuer bool) gin.HandlerFunc
 RequireDeployPermission guards the routes that deploy a DAG: registering a version and setting the current version \(ADR 0074\). deploy:dag, the deployer role's grant, allows them, and so does write:dag, so a role that deployed before deploy:dag existed, a custom one included, still does. A scoped token also needs dexaflow:deploy. With viaIssuer \(auth.trusted\_issuer.deploy\_audience, \#1773\) the principal must also be a trusted\-issuer bearer of the deploy audience: a session, a password login token, an API token or a bearer of another audience is refused with 403, whatever its roles and scopes.
 
 <a name="RequireDeployRead"></a>
-## func [RequireDeployRead](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L399>)
+## func [RequireDeployRead](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L404>)
 
 ```go
 func RequireDeployRead() gin.HandlerFunc
@@ -293,7 +294,7 @@ func RequireDeployRead() gin.HandlerFunc
 RequireDeployRead guards a DAG read that a deploy needs: the DAG list, a DAG, its details and its versions \(ADR 0074\). It needs read:dag, and a scoped token needs dexaflow:read or dexaflow:deploy, so a deploy token reads what it deploys and none of the other reads its owner may have.
 
 <a name="RequirePermission"></a>
-## func [RequirePermission](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L334>)
+## func [RequirePermission](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L339>)
 
 ```go
 func RequirePermission(action, resource string) gin.HandlerFunc
@@ -302,7 +303,7 @@ func RequirePermission(action, resource string) gin.HandlerFunc
 RequirePermission enforces an RBAC permission on a route. For a principal whose token carries scopes \(ADR 0067\), a read route also needs dexaflow:read, and any other route is refused: a write a scoped token may call names its scope with RequireScopedPermission, so a write nobody mapped fails closed.
 
 <a name="RequireScope"></a>
-## func [RequireScope](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L353>)
+## func [RequireScope](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L358>)
 
 ```go
 func RequireScope(scope string) gin.HandlerFunc
@@ -311,7 +312,7 @@ func RequireScope(scope string) gin.HandlerFunc
 RequireScope is the scope check alone, for a protected route that checks no role permission \(any signed\-in user may call it\) and that a scoped token may reach when it carries scope. Without it, jwtAuth refuses a scoped token on the route.
 
 <a name="RequireScopedPermission"></a>
-## func [RequireScopedPermission](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L345>)
+## func [RequireScopedPermission](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L350>)
 
 ```go
 func RequireScopedPermission(action, resource, scope string) gin.HandlerFunc
@@ -320,7 +321,7 @@ func RequireScopedPermission(action, resource, scope string) gin.HandlerFunc
 RequireScopedPermission is RequirePermission for a write route that a scoped token may call when it carries scope \(ADR 0067\). The role check still runs first: a scope narrows what roles allow and never widens it.
 
 <a name="RequireUndeployPermission"></a>
-## func [RequireUndeployPermission](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L376>)
+## func [RequireUndeployPermission](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L381>)
 
 ```go
 func RequireUndeployPermission(viaIssuer bool) gin.HandlerFunc
@@ -338,7 +339,7 @@ func SchemaWaitHandler(registry *prometheus.Registry, reason func() string, opts
 SchemaWaitHandler is what a booting process serves while it waits for its database schema \(ADR 0090 decision 1\), on the API port and on the metrics port. /healthz answers 200, so liveness and the startup probe leave the pod up for diagnosis instead of restarting it into a crash loop. /readyz answers 503 with reason\(\), the fixed reason and what to do, which never carries the DSN or a host since the endpoint is unauthenticated. /metrics is served when registry is set, so the wait is visible. Every other request gets the same 503: no API route, and so no write path, exists before the schema is current.
 
 <a name="StructuredLogger"></a>
-## func [StructuredLogger](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L62>)
+## func [StructuredLogger](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L63>)
 
 ```go
 func StructuredLogger(logger *slog.Logger) gin.HandlerFunc
@@ -347,7 +348,7 @@ func StructuredLogger(logger *slog.Logger) gin.HandlerFunc
 StructuredLogger logs one structured line per request \(ADR 0010\).
 
 <a name="UserFromContext"></a>
-## func [UserFromContext](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L320>)
+## func [UserFromContext](<https://github.com/dexadata/dexaflow/blob/main/internal/api/middleware.go#L325>)
 
 ```go
 func UserFromContext(c *gin.Context) (*auth.User, bool)
@@ -403,7 +404,7 @@ type AuthAuditWriter interface {
 ```
 
 <a name="AuthDeps"></a>
-## type [AuthDeps](<https://github.com/dexadata/dexaflow/blob/main/internal/api/dependencies.go#L94-L154>)
+## type [AuthDeps](<https://github.com/dexadata/dexaflow/blob/main/internal/api/dependencies.go#L94-L159>)
 
 AuthDeps are the user sign\-in: the request authenticator, the password and OIDC login flows, and the session cookie.
 
@@ -415,8 +416,13 @@ type AuthDeps struct {
     Authenticator auth.Authenticator
     // RateLimiter caps the failed logins of POST /auth/token per client.
     // Required.
-    RateLimiter  *auth.RateLimiter
-    TokenTTLSecs int
+    RateLimiter *auth.RateLimiter
+    // SharedRateLimits, when set, is the counter every API replica reaches
+    // (Redis): the limiters the server builds for its other sign-in routes
+    // count through it, so N replicas allow the configured limit and not N
+    // times it (#2357). Nil keeps them in process.
+    SharedRateLimits auth.SharedCounter
+    TokenTTLSecs     int
     // TokenRenewer re-mints a still-valid user bearer with a fresh short TTL so a
     // long CLI/dev session need not re-login every TokenTTLSecs (aresta #5). Nil
     // leaves the renew route unregistered (renewal simply unavailable). In practice
@@ -687,7 +693,7 @@ type Dependencies struct {
 ```
 
 <a name="Dependencies.Validate"></a>
-### func \(Dependencies\) [Validate](<https://github.com/dexadata/dexaflow/blob/main/internal/api/dependencies.go#L342>)
+### func \(Dependencies\) [Validate](<https://github.com/dexadata/dexaflow/blob/main/internal/api/dependencies.go#L347>)
 
 ```go
 func (d Dependencies) Validate() error
@@ -696,7 +702,7 @@ func (d Dependencies) Validate() error
 Validate reports the dependencies d leaves out that the server cannot run without: the ones every server needs \(a logger, an authenticator, a login rate limiter\), and the ones a feature that is turned on reads on every request it serves. It names each missing one by its field path, such as Auth.Authenticator. A nil error means NewServer can build the server.
 
 <a name="ExecutionDeps"></a>
-## type [ExecutionDeps](<https://github.com/dexadata/dexaflow/blob/main/internal/api/dependencies.go#L244-L294>)
+## type [ExecutionDeps](<https://github.com/dexadata/dexaflow/blob/main/internal/api/dependencies.go#L249-L299>)
 
 ExecutionDeps are the checks a DAG registration runs against the execution and deploy settings, and what its answer reports about them.
 
@@ -817,7 +823,7 @@ type ImportErrorStore interface {
 ```
 
 <a name="IssuerDeps"></a>
-## type [IssuerDeps](<https://github.com/dexadata/dexaflow/blob/main/internal/api/dependencies.go#L159-L203>)
+## type [IssuerDeps](<https://github.com/dexadata/dexaflow/blob/main/internal/api/dependencies.go#L164-L208>)
 
 IssuerDeps are the callers whose credentials come from outside the login flow: the trusted issuer, the CI OIDC issuers and the operator service token.
 
@@ -1018,7 +1024,7 @@ func WithoutLegacyMetricNames() ObservabilityOption
 WithoutLegacyMetricNames serves each metric family once, under its dexaflow\_ name only \(observability.metrics.drop\_legacy\_names\). It halves the scrape and the per\-scrape copy of every family. It is an opt\-in for installs that do not need the leoflow\_ names; the default keeps them.
 
 <a name="PoolStore"></a>
-## type [PoolStore](<https://github.com/dexadata/dexaflow/blob/main/internal/api/ui_pools.go#L16-L22>)
+## type [PoolStore](<https://github.com/dexadata/dexaflow/blob/main/internal/api/ui_pools.go#L17-L23>)
 
 PoolStore reads and writes named task pools for the Admin UI \(ADR 0053 Stage 3\). Pools are tenant\-scoped; PoolSlotUsage reports per\-pool occupancy for the Airflow slot fields.
 
@@ -1044,6 +1050,17 @@ type Problem struct {
     Status   int    `json:"status"`
     Detail   string `json:"detail,omitempty"`
     Instance string `json:"instance,omitempty"`
+}
+```
+
+<a name="ResourceAuditWriter"></a>
+## type [ResourceAuditWriter](<https://github.com/dexadata/dexaflow/blob/main/internal/api/resource_audit.go#L15-L17>)
+
+ResourceAuditWriter records an accepted admin write to a named resource of the tenant: a variable, a connection or a pool \(\#2228\). metadata names the fields the request set and never carries a secret value.
+
+```go
+type ResourceAuditWriter interface {
+    RecordResourceAudit(ctx context.Context, tenant, userID, action, resourceType, resourceID string, metadata map[string]string) error
 }
 ```
 
@@ -1149,7 +1166,7 @@ type ServiceTenantStore interface {
 ```
 
 <a name="StoreDeps"></a>
-## type [StoreDeps](<https://github.com/dexadata/dexaflow/blob/main/internal/api/dependencies.go#L298-L331>)
+## type [StoreDeps](<https://github.com/dexadata/dexaflow/blob/main/internal/api/dependencies.go#L303-L336>)
 
 StoreDeps are the resource repositories. Routes for nil repositories are not registered.
 
@@ -1248,7 +1265,7 @@ type TaskSummaryReader interface {
 ```
 
 <a name="TokenRenewer"></a>
-## type [TokenRenewer](<https://github.com/dexadata/dexaflow/blob/main/internal/api/auth_handler.go#L21-L23>)
+## type [TokenRenewer](<https://github.com/dexadata/dexaflow/blob/main/internal/api/auth_handler.go#L22-L24>)
 
 TokenRenewer re\-mints a still\-valid user bearer with a fresh short TTL, bounded by max\_lifetime since first login. \*auth.JWTAuthenticator implements it via RenewUserToken; the handler depends on this narrow interface so the renew route can be tested without a real signing key. It takes a context because renewal re\-proves the principal against the user store, so it must be canceled with the request.
 
@@ -1307,7 +1324,7 @@ type TrustedIssuerUserStore interface {
 ```
 
 <a name="UIDeps"></a>
-## type [UIDeps](<https://github.com/dexadata/dexaflow/blob/main/internal/api/dependencies.go#L206-L240>)
+## type [UIDeps](<https://github.com/dexadata/dexaflow/blob/main/internal/api/dependencies.go#L211-L245>)
 
 UIDeps are the embedded web UI and the Lite editor.
 

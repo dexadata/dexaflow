@@ -64,7 +64,9 @@ Package auth provides JWT authentication, password hashing, the RBAC permission 
   - [func \(r \*RateLimiter\) Allow\(key string\) bool](<#RateLimiter.Allow>)
   - [func \(r \*RateLimiter\) Blocked\(key string\) bool](<#RateLimiter.Blocked>)
   - [func \(r \*RateLimiter\) Refund\(key string\)](<#RateLimiter.Refund>)
+  - [func \(r \*RateLimiter\) Share\(counter SharedCounter, scope string\) \*RateLimiter](<#RateLimiter.Share>)
 - [type RolePermissionStore](<#RolePermissionStore>)
+- [type SharedCounter](<#SharedCounter>)
 - [type User](<#User>)
 - [type UserStore](<#UserStore>)
 
@@ -204,7 +206,7 @@ func APITokenScopes(scope string) ([]string, bool)
 APITokenScopes returns the scopes an API token created for scope carries, and false when scope is not one a token may be created for.
 
 <a name="AddressBlock"></a>
-## func [AddressBlock](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/ratelimit.go#L123>)
+## func [AddressBlock](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/ratelimit.go#L201>)
 
 ```go
 func AddressBlock(ip string, v6Bits int) string
@@ -213,7 +215,7 @@ func AddressBlock(ip string, v6Bits int) string
 AddressBlock is AddressBucket with the IPv6 prefix length v6Bits: an IPv4 address as is, an IPv6 one by its /v6Bits, anything else as is.
 
 <a name="AddressBucket"></a>
-## func [AddressBucket](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/ratelimit.go#L117>)
+## func [AddressBucket](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/ratelimit.go#L195>)
 
 ```go
 func AddressBucket(ip string) string
@@ -768,9 +770,11 @@ type Permission = authn.Permission
 ```
 
 <a name="RateLimiter"></a>
-## type [RateLimiter](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/ratelimit.go#L11-L24>)
+## type [RateLimiter](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/ratelimit.go#L35-L51>)
 
 RateLimiter is a per\-key fixed\-window limiter used to throttle failed logins per client IP \(ADR 0008\).
+
+By itself it counts in process, so N API replicas allow N times the limit. Share gives it a SharedCounter: the limit then holds across every replica, counted in fixed windows aligned to the window length, and when the counter fails the limiter falls back to its own map, which keeps the per replica bound and locks nobody out.
 
 ```go
 type RateLimiter struct {
@@ -779,7 +783,7 @@ type RateLimiter struct {
 ```
 
 <a name="NewRateLimiter"></a>
-### func [NewRateLimiter](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/ratelimit.go#L32>)
+### func [NewRateLimiter](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/ratelimit.go#L59>)
 
 ```go
 func NewRateLimiter(limit int, window time.Duration) *RateLimiter
@@ -788,7 +792,7 @@ func NewRateLimiter(limit int, window time.Duration) *RateLimiter
 NewRateLimiter builds a limiter allowing limit events per window per key.
 
 <a name="RateLimiter.Allow"></a>
-### func \(\*RateLimiter\) [Allow](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/ratelimit.go#L62>)
+### func \(\*RateLimiter\) [Allow](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/ratelimit.go#L128>)
 
 ```go
 func (r *RateLimiter) Allow(key string) bool
@@ -797,7 +801,7 @@ func (r *RateLimiter) Allow(key string) bool
 Allow records an event for key and reports whether it is within the limit. The check and the spend are one step under the lock, so concurrent callers of a key never get more than the limit between them: a caller that must bound concurrent work spends with Allow before the work, not after a Blocked peek, and gives the event back with Refund when it should not count.
 
 <a name="RateLimiter.Blocked"></a>
-### func \(\*RateLimiter\) [Blocked](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/ratelimit.go#L46>)
+### func \(\*RateLimiter\) [Blocked](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/ratelimit.go#L105>)
 
 ```go
 func (r *RateLimiter) Blocked(key string) bool
@@ -806,13 +810,22 @@ func (r *RateLimiter) Blocked(key string) bool
 Blocked reports whether key has already reached its limit in the current window, WITHOUT recording an attempt \(a peek\). The login handler uses it to reject an over\-limit caller up front while calling Allow only for actual failures — so a successful login never consumes the budget and a user who mistypes a few times is not locked out the moment they finally get it right.
 
 <a name="RateLimiter.Refund"></a>
-### func \(\*RateLimiter\) [Refund](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/ratelimit.go#L81>)
+### func \(\*RateLimiter\) [Refund](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/ratelimit.go#L154>)
 
 ```go
 func (r *RateLimiter) Refund(key string)
 ```
 
 Refund gives back one event of key's window, never going below zero. A window that ended needs none: the next Allow starts a fresh one.
+
+<a name="RateLimiter.Share"></a>
+### func \(\*RateLimiter\) [Share](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/ratelimit.go#L71>)
+
+```go
+func (r *RateLimiter) Share(counter SharedCounter, scope string) *RateLimiter
+```
+
+Share makes the limiter count through counter under scope, which keeps the keys of each limiter apart \(login, renew, ...\), and returns it. A nil counter leaves the limiter in process.
 
 <a name="RolePermissionStore"></a>
 ## type [RolePermissionStore](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/ci_session.go#L88-L91>)
@@ -823,6 +836,19 @@ RolePermissionStore reads the grants of one role of one tenant. storage implemen
 type RolePermissionStore interface {
     // RolePermissions returns the role's grants, or ErrRoleNotFound.
     RolePermissions(ctx context.Context, tenant, role string) ([]Permission, error)
+}
+```
+
+<a name="SharedCounter"></a>
+## type [SharedCounter](<https://github.com/dexadata/dexaflow/blob/main/internal/auth/ratelimit.go#L16-L20>)
+
+SharedCounter is a counter every API replica reaches, such as Redis, that a RateLimiter shares its budget through \(\#2357\). Incr adds one event to key and returns the count, expiring key after ttl; Get returns the count; Decr takes one event back without going below zero.
+
+```go
+type SharedCounter interface {
+    Incr(ctx context.Context, key string, ttl time.Duration) (int64, error)
+    Get(ctx context.Context, key string) (int64, error)
+    Decr(ctx context.Context, key string) error
 }
 ```
 

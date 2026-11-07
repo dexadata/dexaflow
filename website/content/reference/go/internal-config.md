@@ -297,7 +297,7 @@ func UpdateUserStore(path string, update func(*UserStore) error) error
 UpdateUserStore reads the store at path, lets update change it, and writes the managed keys back \(the per\-server sessions, the targets, the selections and the single\-server server\_url/token pair\). Every other key, the order of the keys and their comments are kept. The file is created when absent and replaced atomically at 0600, whatever its mode was, because it holds tokens.
 
 <a name="ValidOrigins"></a>
-## func [ValidOrigins](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L544>)
+## func [ValidOrigins](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L555>)
 
 ```go
 func ValidOrigins(list []string) bool
@@ -785,7 +785,7 @@ func Load(configFile string, flags *pflag.FlagSet) (*Config, error)
 Load assembles configuration from defaults, the given file \(when non\-empty\), LEOFLOW\_\* environment variables, and the provided flag set, in increasing order of precedence. A nil flag set or empty file path is ignored.
 
 <a name="DatabaseSection"></a>
-## type [DatabaseSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L216-L262>)
+## type [DatabaseSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L216-L268>)
 
 DatabaseSection configures the Postgres connection pool.
 
@@ -836,6 +836,12 @@ type DatabaseSection struct {
     // database (ADR 0090 decision 4). It needs a DSN that may run DDL, and the
     // api role refuses it.
     MigrateOnBoot bool `mapstructure:"migrate_on_boot"`
+    // RowLevelSecurity (DEXAFLOW_DATABASE_ROW_LEVEL_SECURITY, default false)
+    // binds each main pool connection a request uses to the request's tenant,
+    // so the row level security policies of migration 059 hide every other
+    // tenant's rows from it (ADR 0104). Boot fails unless row level security
+    // is on for the tenant tables (`dexaflow-migrate rls on`).
+    RowLevelSecurity bool `mapstructure:"row_level_security"`
 }
 ```
 
@@ -1305,7 +1311,7 @@ type LogsSection struct {
 ```
 
 <a name="MetricsSection"></a>
-## type [MetricsSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L291-L296>)
+## type [MetricsSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L302-L307>)
 
 MetricsSection configures the Prometheus scrape.
 
@@ -1412,7 +1418,7 @@ type OIDCSection struct {
 ```
 
 <a name="OTelSection"></a>
-## type [OTelSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L299-L310>)
+## type [OTelSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L310-L321>)
 
 OTelSection configures OpenTelemetry export.
 
@@ -1474,7 +1480,7 @@ type ObjectLogSection struct {
 ```
 
 <a name="ObservabilitySection"></a>
-## type [ObservabilitySection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L279-L288>)
+## type [ObservabilitySection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L290-L299>)
 
 ObservabilitySection configures logging, metrics, and tracing.
 
@@ -1559,7 +1565,7 @@ type PoolsSection struct {
 ```
 
 <a name="RedisSection"></a>
-## type [RedisSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L265-L276>)
+## type [RedisSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L271-L287>)
 
 RedisSection configures the Redis connection.
 
@@ -1575,6 +1581,11 @@ type RedisSection struct {
     // The Helm chart sets this via LEOFLOW_REDIS_CA_FILE when
     // `redis.caConfigMap` is configured, pointing at the mounted ConfigMap.
     CAFile string `mapstructure:"ca_file"`
+    // RequireNoEviction refuses to boot unless Redis runs maxmemory-policy
+    // noeviction, or when the policy cannot be read (#2354). Off, an unsafe
+    // policy only logs a warning and sets dexaflow_redis_eviction_policy_safe
+    // to 0.
+    RequireNoEviction bool `mapstructure:"require_noeviction"`
 }
 ```
 
@@ -1779,7 +1790,7 @@ type ServerConfig struct {
 ```
 
 <a name="LoadServer"></a>
-### func [LoadServer](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L314>)
+### func [LoadServer](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L325>)
 
 ```go
 func LoadServer(configFile string, flags *pflag.FlagSet) (*ServerConfig, error)
@@ -1815,7 +1826,7 @@ func (c *ServerConfig) PoolsEnabled() bool
 PoolsEnabled reports whether named pools are on: scheduler.pools.enabled when it is set, otherwise the cluster edition \(\#2173\).
 
 <a name="ServerConfig.Validate"></a>
-### func \(\*ServerConfig\) [Validate](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L469>)
+### func \(\*ServerConfig\) [Validate](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L480>)
 
 ```go
 func (c *ServerConfig) Validate() error
