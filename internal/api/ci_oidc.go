@@ -103,7 +103,7 @@ func newCITokenDeps(deps Dependencies) *ciTokenDeps {
 	return &ciTokenDeps{
 		verifier: deps.Issuers.CIOIDC, roles: deps.Issuers.CIOIDCRoles, secret: deps.Auth.JWTSecret, ttl: ttl,
 		exchanges: deps.Issuers.CIOIDCExchanges, audit: deps.Auth.AuthAudit, logger: deps.Observability.Logger,
-		limiter: auth.NewRateLimiter(ciTokenFailuresPerMinute, time.Minute), now: time.Now,
+		limiter: deps.rateLimiter(ciTokenFailuresPerMinute, "ci_token"), now: time.Now,
 	}
 }
 

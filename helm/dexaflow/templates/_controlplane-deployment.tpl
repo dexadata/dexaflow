@@ -429,6 +429,10 @@ spec:
             - name: LEOFLOW_DATABASE_SCHEDULER_MAX_CONNS
               value: {{ . | quote }}
             {{- end }}
+            {{- with .ctx.Values.database.agentMaxConns }}
+            - name: LEOFLOW_DATABASE_AGENT_MAX_CONNS
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .ctx.Values.database.statementTimeoutMs }}
             - name: LEOFLOW_DATABASE_STATEMENT_TIMEOUT_MS
               value: {{ . | quote }}
@@ -843,6 +847,11 @@ spec:
             # find it via LEOFLOW_REDIS_CA_FILE.
             - name: LEOFLOW_REDIS_CA_FILE
               value: /etc/leoflow/redis-ca/ca.crt
+            {{- end }}
+            {{- if .ctx.Values.redis.requireNoEviction }}
+            # #2354: refuse to boot on a Redis that may evict XCom values.
+            - name: LEOFLOW_REDIS_REQUIRE_NOEVICTION
+              value: "true"
             {{- end }}
             - name: LEOFLOW_AUTH_JWT_SECRET
               valueFrom:

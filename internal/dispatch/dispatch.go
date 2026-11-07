@@ -193,7 +193,15 @@ type Dispatcher struct {
 	// admission is the operator's chain of admission hooks (ADR 0100), run
 	// after refuseBeforeToken and before the token is minted. Nil: none.
 	admission *admissionChain
+	// force is the operator's executor policy (ADR 0063), applied after the
+	// admission hooks so neither a DAG nor a hook can undo it. Nil: none.
+	force *ForcePolicy
 }
+
+// SetForcePolicy installs the operator's executor policy (ADR 0063): the pod
+// fields it forces are set on every attempt after the admission hooks ran. A
+// nil policy, the default, changes nothing.
+func (d *Dispatcher) SetForcePolicy(p *ForcePolicy) { d.force = p }
 
 // UnitMisfitRecorder counts a task that does not fit the resource unit but is
 // let through under executor.unit.enforce=warn, by stage ("register" or
@@ -312,6 +320,10 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	if err != nil {
 		return disp, err
 	}
+	// The executor policy runs last (ADR 0100 §7). What it forces is not the
+	// author's choice, so the allowlist re-check reads the task's own
+	// settings, kept in authored, as it does for a hook's changes.
+	task, authored = d.applyForcePolicy(task, authored)
 	token, err := d.issuer.IssueAgentToken(auth.AgentIdentity{
 		TaskInstanceID: r.TaskInstanceID,
 		TenantID:       r.TenantID,
@@ -430,6 +442,25 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	req.AgentTokenAudience = d.tokenAudience
 	req.AgentTokenExpirationSeconds = d.tokenExpirationSeconds
 	return d.exec.Execute(ctx, req)
+}
+
+// applyForcePolicy sets what the executor policy forces on the attempt. It
+// returns the task to dispatch and the task's own execution settings: the ones
+// admit kept when a hook changed the task, the task's as they were otherwise.
+func (d *Dispatcher) applyForcePolicy(task domain.TaskSpec, authored *domain.Execution) (domain.TaskSpec, *domain.Execution) {
+	if d.force == nil {
+		return task, authored
+	}
+	if authored == nil {
+		authored = &domain.Execution{}
+		if task.Execution != nil {
+			// A shallow copy is enough: nothing below writes through it, and
+			// Apply never writes through the task's maps.
+			*authored = *task.Execution
+		}
+	}
+	task, _ = d.force.Apply(task)
+	return task, authored
 }
 
 // refuseBeforeToken runs the checks that refuse an attempt for good before its

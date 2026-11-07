@@ -112,7 +112,7 @@ func newServer(deps Dependencies) *gin.Engine {
 	// IP on its own limiter (#801), never the login one, so renewal traffic
 	// cannot spend an address's password-login budget.
 	if deps.Auth.TokenRenewer != nil {
-		renewLimiter := auth.NewRateLimiter(renewRateLimitPerMinute, time.Minute)
+		renewLimiter := deps.rateLimiter(renewRateLimitPerMinute, "renew")
 		r.POST("/api/v2/auth/token/renew", rateLimitByIP(renewLimiter), renewTokenHandler(deps.Auth.TokenRenewer, deps.Auth.TokenTTLSecs, deps.Auth.TokenMaxLifetimeSecs, deps.sessionCookie()))
 	}
 	// The Airflow UI redirects unauthenticated users to GET /api/v2/auth/login.
@@ -137,7 +137,7 @@ func newServer(deps Dependencies) *gin.Engine {
 	// Trusted-issuer handoff (#1284): registered only when an issuer is
 	// configured, on its own per-IP limiter like the OIDC routes.
 	if deps.Issuers.TrustedIssuer != nil {
-		issuerLimiter := auth.NewRateLimiter(30, time.Minute)
+		issuerLimiter := deps.rateLimiter(30, "issuer")
 		// Refusals, the rate limit's included, go back to the external sign-in
 		// when one is configured (see issuerSessionDeps.refuse).
 		handoff := issuerSessionDeps{
@@ -160,7 +160,7 @@ func newServer(deps Dependencies) *gin.Engine {
 		// Rate-limit the OIDC endpoints on their own per-IP limiter (separate from
 		// the /auth/token budget), bounding state-generation / callback spam.
 		// The CLI code exchange (#1704) spends the same budget.
-		oidcLimiter := auth.NewRateLimiter(oidcRateLimitPerMinute, time.Minute)
+		oidcLimiter := deps.rateLimiter(oidcRateLimitPerMinute, "oidc")
 		codes := newCLICodes(deps.Auth.JWTSecret)
 		r.GET("/api/v2/auth/oidc/login", rateLimitByIP(oidcLimiter), oidcLoginHandler(deps.Auth.OIDCFlow, deps.Observability.Logger, deps.Auth.SessionCookieInsecure))
 		// The token route spends the OIDC budget on a code exchange and the

@@ -238,6 +238,8 @@ type cliDeviceDeps struct {
 	// post and codeFailures the per-user budget of wrong codes.
 	signInLimiter *auth.RateLimiter
 	codeFailures  *auth.RateLimiter
+	// startLimiter is the budget of the device start per address.
+	startLimiter *auth.RateLimiter
 }
 
 // newCLIDeviceDeps builds the device sign-in when it can be served: single
@@ -270,10 +272,11 @@ func newCLIDeviceDeps(deps Dependencies) *cliDeviceDeps {
 		idpOrigin:   originOf(deps.Auth.OIDCFlow.AuthEndpoint()),
 		jwtSecret:   deps.Auth.JWTSecret,
 		tokenTTL:    time.Duration(deps.Auth.TokenTTLSecs) * time.Second,
-		pollLimiter: auth.NewRateLimiter(devicePollRateLimitPerMinute, time.Minute),
+		pollLimiter: deps.rateLimiter(devicePollRateLimitPerMinute, "device_poll"),
 
-		signInLimiter: auth.NewRateLimiter(deviceSignInRateLimitPerMinute, time.Minute),
-		codeFailures:  auth.NewRateLimiter(deviceCodeFailuresPerMinute, time.Minute),
+		signInLimiter: deps.rateLimiter(deviceSignInRateLimitPerMinute, "device_sign_in"),
+		codeFailures:  deps.rateLimiter(deviceCodeFailuresPerMinute, "device_code"),
+		startLimiter:  deps.rateLimiter(deviceStartRateLimitPerMinute, "device_start"),
 	}
 }
 
@@ -282,8 +285,7 @@ func newCLIDeviceDeps(deps Dependencies) *cliDeviceDeps {
 // the code entry its own per user (verifyHandler, codeHandler); the code
 // entry and the consent also spend the OIDC routes' per-address budget.
 func registerCLIDevice(r *gin.Engine, d *cliDeviceDeps, oidcLimiter *auth.RateLimiter) {
-	startLimiter := auth.NewRateLimiter(deviceStartRateLimitPerMinute, time.Minute)
-	r.POST(cliDevicePath, rateLimitByAddress(startLimiter), d.startHandler())
+	r.POST(cliDevicePath, rateLimitByAddress(d.startLimiter), d.startHandler())
 	r.GET(deviceVerifyPath, d.verifyPageHandler())
 	r.POST(deviceVerifyPath, d.verifyHandler())
 	r.POST(cliDeviceCodePath, rateLimitByIP(oidcLimiter), d.codeHandler())

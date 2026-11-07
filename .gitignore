@@ -228,3 +228,6 @@ test/gcp/runs/
 
 # Mutation testing reports (scripts/mutation.sh).
 .mutation/
+
+# Python wheels downloaded by a local tool install; never part of the tree.
+/*.whl

@@ -11,6 +11,7 @@ const (
 	poolMain      = "main"
 	poolHealth    = "health"
 	poolScheduler = "scheduler"
+	poolAgent     = "agent"
 )
 
 // PoolCollector exports pgxpool statistics of the control plane's database
@@ -30,10 +31,11 @@ type PoolCollector struct {
 }
 
 // NewPoolCollector returns a collector for pg's main and health pools, and for
-// its dedicated scheduler pool while one is open (ForScheduler).
+// its dedicated scheduler and agent pools while they are open (ForScheduler,
+// ForAgents).
 func NewPoolCollector(pg *Postgres) *PoolCollector {
 	desc := func(name, help string) *prometheus.Desc {
-		return prometheus.NewDesc("dexaflow_db_pool_"+name, help+", by pool (main, health, scheduler).", []string{"pool"}, nil)
+		return prometheus.NewDesc("dexaflow_db_pool_"+name, help+", by pool (main, health, scheduler, agent).", []string{"pool"}, nil)
 	}
 	return &PoolCollector{
 		pg:            pg,
@@ -59,6 +61,7 @@ func (c *PoolCollector) Collect(ch chan<- prometheus.Metric) {
 	c.collect(ch, poolMain, c.pg.Pool)
 	c.collect(ch, poolHealth, c.pg.health)
 	c.collect(ch, poolScheduler, c.pg.schedulerPool.Load())
+	c.collect(ch, poolAgent, c.pg.agentPool.Load())
 }
 
 func (c *PoolCollector) collect(ch chan<- prometheus.Metric, name string, pool *pgxpool.Pool) {

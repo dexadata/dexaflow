@@ -24,6 +24,7 @@
 #   the grid route answers ETag, "private, no-cache", then 304 .. ui.etag_revalidation
 #   boot echo "buffered dispatch enabled", buffer 64, workers 4 . scheduler.dispatch.buffer_size, .workers
 #   boot echo "scheduler uses a dedicated database pool", 4 .... database.scheduler_max_conns
+#   boot echo "agent handlers use a dedicated database pool", 4  database.agent_max_conns
 #   k3d: boot echo "s3 object-store backend enabled", segmented  logs.backend, logs.sink.layout
 #   k3d: no finished task pod survives the next maintenance sweep executor.collect_settled_run_pods
 # database.statement_timeout_ms and logs.tail.publish leave no trace a client of
@@ -81,7 +82,8 @@ if [ -n "${SERVER_LOG:-}" ]; then
   }
   echoed 'buffered dispatch enabled.*buffer_size["=: ]+64\b.*workers["=: ]+4\b' "scheduler.dispatch.buffer_size=64 with workers=4"
   echoed 'scheduler uses a dedicated database pool.*max_conns["=: ]+4\b' "database.scheduler_max_conns=4"
-  echoes="buffered dispatch (64/4), dedicated scheduler pool (4)"
+  echoed 'agent handlers use a dedicated database pool.*max_conns["=: ]+4\b' "database.agent_max_conns=4"
+  echoes="buffered dispatch (64/4), dedicated scheduler pool (4), dedicated agent pool (4)"
   if [ "$LEG" = "k3d" ]; then
     echoed 'task logs: s3 object-store backend enabled.*layout["=: ]+"?segmented' "logs.backend=s3 with logs.sink.layout=segmented"
     echoes="${echoes}, s3 sink in the segmented layout"

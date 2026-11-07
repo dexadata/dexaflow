@@ -366,6 +366,30 @@ func (q *Queries) CountDagsByLatestRunState(ctx context.Context, tenantID pgtype
 	return items, nil
 }
 
+const countHeartbeatFleet = `-- name: CountHeartbeatFleet :one
+SELECT count(*)::bigint AS total,
+       (count(*) FILTER (WHERE last_heartbeat_at < $1::timestamptz))::bigint AS stale
+FROM task_instances
+WHERE state = 'running'
+  AND last_heartbeat_at IS NOT NULL
+`
+
+type CountHeartbeatFleetRow struct {
+	Total int64 `json:"total"`
+	Stale int64 `json:"stale"`
+}
+
+// Counts the running TIs that have heartbeated at least once, and those whose
+// last heartbeat is older than the cut-off, for the agent-lost reaper's
+// mass-silence guard (#1624). Read only when ListAgentLostCandidates returned a
+// silent attempt; idx_ti_state covers the running rows.
+func (q *Queries) CountHeartbeatFleet(ctx context.Context, staleBefore pgtype.Timestamptz) (CountHeartbeatFleetRow, error) {
+	row := q.db.QueryRow(ctx, countHeartbeatFleet, staleBefore)
+	var i CountHeartbeatFleetRow
+	err := row.Scan(&i.Total, &i.Stale)
+	return i, err
+}
+
 const countTaskInstanceStatesInWindow = `-- name: CountTaskInstanceStatesInWindow :many
 SELECT ti.state AS state, count(*) AS n
 FROM task_instances ti
@@ -2449,6 +2473,68 @@ func (q *Queries) ListTaskInstanceAttempts(ctx context.Context, arg ListTaskInst
 	return items, nil
 }
 
+const listTaskInstancePlanStateByRuns = `-- name: ListTaskInstancePlanStateByRuns :many
+SELECT dag_run_id, task_id, state, try_number, max_tries, ended_at,
+       reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind,
+       infra_confirmed_at, infra_attempts
+FROM task_instances
+WHERE dag_run_id = ANY($1::uuid[])
+`
+
+type ListTaskInstancePlanStateByRunsRow struct {
+	DagRunID         pgtype.UUID        `json:"dag_run_id"`
+	TaskID           string             `json:"task_id"`
+	State            TaskState          `json:"state"`
+	TryNumber        int32              `json:"try_number"`
+	MaxTries         int32              `json:"max_tries"`
+	EndedAt          pgtype.Timestamptz `json:"ended_at"`
+	RescheduleAt     pgtype.Timestamptz `json:"reschedule_at"`
+	DispatchAttempts int32              `json:"dispatch_attempts"`
+	NextDispatchAt   pgtype.Timestamptz `json:"next_dispatch_at"`
+	LastFailureKind  *string            `json:"last_failure_kind"`
+	InfraConfirmedAt pgtype.Timestamptz `json:"infra_confirmed_at"`
+	InfraAttempts    int32              `json:"infra_attempts"`
+}
+
+// The scheduler tick's read (#2325): for every active run, in one round trip,
+// only the columns the planner's projection reads (taskInstanceMaps), not the
+// whole row. The pod, node, log and error columns a settled attempt carries
+// are most of a row's width and nothing in planning reads them. No ORDER BY:
+// the caller groups by dag_run_id itself and the projection builds maps, so a
+// sort (which spilled to disk at 100k rows) buys nothing.
+func (q *Queries) ListTaskInstancePlanStateByRuns(ctx context.Context, dagRunIds []pgtype.UUID) ([]ListTaskInstancePlanStateByRunsRow, error) {
+	rows, err := q.db.Query(ctx, listTaskInstancePlanStateByRuns, dagRunIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTaskInstancePlanStateByRunsRow{}
+	for rows.Next() {
+		var i ListTaskInstancePlanStateByRunsRow
+		if err := rows.Scan(
+			&i.DagRunID,
+			&i.TaskID,
+			&i.State,
+			&i.TryNumber,
+			&i.MaxTries,
+			&i.EndedAt,
+			&i.RescheduleAt,
+			&i.DispatchAttempts,
+			&i.NextDispatchAt,
+			&i.LastFailureKind,
+			&i.InfraConfirmedAt,
+			&i.InfraAttempts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTaskInstancesByRun = `-- name: ListTaskInstancesByRun :many
 SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots, dispatch_unavailable_since FROM task_instances
 WHERE tenant_id = $1 AND dag_run_id = $2
@@ -2462,72 +2548,6 @@ type ListTaskInstancesByRunParams struct {
 
 func (q *Queries) ListTaskInstancesByRun(ctx context.Context, arg ListTaskInstancesByRunParams) ([]TaskInstance, error) {
 	rows, err := q.db.Query(ctx, listTaskInstancesByRun, arg.TenantID, arg.DagRunID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []TaskInstance{}
-	for rows.Next() {
-		var i TaskInstance
-		if err := rows.Scan(
-			&i.ID,
-			&i.TenantID,
-			&i.DagRunID,
-			&i.TaskID,
-			&i.MapIndex,
-			&i.TryNumber,
-			&i.MaxTries,
-			&i.State,
-			&i.Pool,
-			&i.Operator,
-			&i.QueuedAt,
-			&i.StartedAt,
-			&i.EndedAt,
-			&i.DurationSeconds,
-			&i.PodName,
-			&i.NodeName,
-			&i.ExitCode,
-			&i.ErrorMessage,
-			&i.LogUrl,
-			&i.Hostname,
-			&i.Note,
-			&i.ScheduledAt,
-			&i.LastHeartbeatAt,
-			&i.RescheduleAt,
-			&i.FirstRescheduleAt,
-			&i.DispatchAttempts,
-			&i.NextDispatchAt,
-			&i.LastFailureKind,
-			&i.InfraAttempts,
-			&i.WarmWorkerID,
-			&i.ReleasedAt,
-			&i.AttemptEpoch,
-			&i.InfraConfirmedAt,
-			&i.PoolSlots,
-			&i.DispatchUnavailableSince,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listTaskInstancesByRuns = `-- name: ListTaskInstancesByRuns :many
-SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots, dispatch_unavailable_since FROM task_instances
-WHERE dag_run_id = ANY($1::uuid[])
-ORDER BY dag_run_id, task_id
-`
-
-// The batched form of ListTaskInstancesByRun for the scheduler tick: every
-// active run's task instances in one round trip instead of one per run. Rows
-// come grouped by run and, within a run, in the same task_id order the per-run
-// query returns, so the caller can split them without re-sorting.
-func (q *Queries) ListTaskInstancesByRuns(ctx context.Context, dagRunIds []pgtype.UUID) ([]TaskInstance, error) {
-	rows, err := q.db.Query(ctx, listTaskInstancesByRuns, dagRunIds)
 	if err != nil {
 		return nil, err
 	}
