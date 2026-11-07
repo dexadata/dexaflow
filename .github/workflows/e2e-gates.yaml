@@ -64,6 +64,10 @@ env:
   # the API statement timeout the docs say to set together with it.
   DEXAFLOW_DATABASE_SCHEDULER_MAX_CONNS: "4"
   DEXAFLOW_DATABASE_STATEMENT_TIMEOUT_MS: "30000"
+  # A pool of its own for the agent handlers, so heartbeats cannot queue
+  # behind API traffic while the reapers on the scheduler pool keep reaping
+  # (#1624). The docs say to set it with the scheduler pool.
+  DEXAFLOW_DATABASE_AGENT_MAX_CONNS: "4"
   # Each metric family once, under its dexaflow_ name (ADR 0062 gate).
   DEXAFLOW_OBSERVABILITY_METRICS_DROP_LEGACY_NAMES: "true"
   # The grid's ti_summaries route answers private, no-cache with its ETag.

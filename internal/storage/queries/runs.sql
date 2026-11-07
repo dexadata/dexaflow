@@ -1636,6 +1636,17 @@ WHERE ti.state = 'running'
 ORDER BY ti.last_heartbeat_at
 LIMIT 100;
 
+-- name: CountHeartbeatFleet :one
+-- Counts the running TIs that have heartbeated at least once, and those whose
+-- last heartbeat is older than the cut-off, for the agent-lost reaper's
+-- mass-silence guard (#1624). Read only when ListAgentLostCandidates returned a
+-- silent attempt; idx_ti_state covers the running rows.
+SELECT count(*)::bigint AS total,
+       (count(*) FILTER (WHERE last_heartbeat_at < sqlc.arg(stale_before)::timestamptz))::bigint AS stale
+FROM task_instances
+WHERE state = 'running'
+  AND last_heartbeat_at IS NOT NULL;
+
 -- name: MarkTaskDispatchFailed :exec
 -- Fails a TI whose asynchronous dispatch (BufferedDispatcher worker) errored
 -- inside the inner dispatcher. Targets the active row by (dag_run_id,

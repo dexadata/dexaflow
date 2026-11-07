@@ -39,13 +39,13 @@ The table is generated from the collectors the server registers: run
 | `dexaflow_auth_failures_total` | counter | `reason` | Authentication failures by reason. |
 | `dexaflow_build_info` | gauge | `version`, `commit`, `go_version`, `role` | Always 1, labeled with the version, commit and Go version of the binary and the role the process runs. count by (version) (dexaflow_build_info) > 1 means a rollout left replicas on another version. |
 | `dexaflow_ci_oidc_exchange_total` | counter | `issuer`, `outcome` | CI OIDC token exchanges (auth.ci_oidc, ADR 0092) by issuer entry (unknown when none matched) and outcome (issued, invalid_token, unknown_issuer, no_rule, role_missing, keys_unavailable, error). |
-| `dexaflow_db_pool_acquired_conns` | gauge | `pool` | Connections currently lent out by the database pool, by pool (main, health, scheduler). |
-| `dexaflow_db_pool_canceled_acquires_total` | counter | `pool` | Acquires that gave up waiting for a connection (their context ended), by pool (main, health, scheduler). |
-| `dexaflow_db_pool_empty_acquire_wait_seconds_total` | counter | `pool` | Time acquires spent waiting for a connection, in seconds, by pool (main, health, scheduler). |
-| `dexaflow_db_pool_empty_acquires_total` | counter | `pool` | Acquires that found no idle connection and had to wait for one, by pool (main, health, scheduler). |
-| `dexaflow_db_pool_idle_conns` | gauge | `pool` | Idle connections in the database pool, by pool (main, health, scheduler). |
-| `dexaflow_db_pool_max_conns` | gauge | `pool` | Maximum connections the database pool may open, by pool (main, health, scheduler). |
-| `dexaflow_db_pool_total_conns` | gauge | `pool` | Open connections in the database pool, idle, lent out and being opened, by pool (main, health, scheduler). |
+| `dexaflow_db_pool_acquired_conns` | gauge | `pool` | Connections currently lent out by the database pool, by pool (main, health, scheduler, agent). |
+| `dexaflow_db_pool_canceled_acquires_total` | counter | `pool` | Acquires that gave up waiting for a connection (their context ended), by pool (main, health, scheduler, agent). |
+| `dexaflow_db_pool_empty_acquire_wait_seconds_total` | counter | `pool` | Time acquires spent waiting for a connection, in seconds, by pool (main, health, scheduler, agent). |
+| `dexaflow_db_pool_empty_acquires_total` | counter | `pool` | Acquires that found no idle connection and had to wait for one, by pool (main, health, scheduler, agent). |
+| `dexaflow_db_pool_idle_conns` | gauge | `pool` | Idle connections in the database pool, by pool (main, health, scheduler, agent). |
+| `dexaflow_db_pool_max_conns` | gauge | `pool` | Maximum connections the database pool may open, by pool (main, health, scheduler, agent). |
+| `dexaflow_db_pool_total_conns` | gauge | `pool` | Open connections in the database pool, idle, lent out and being opened, by pool (main, health, scheduler, agent). |
 | `dexaflow_dispatch_admission_duration_seconds` | histogram | _(none)_ | Time the dispatch admission hooks took for one task attempt. |
 | `dexaflow_dispatch_admission_total` | counter | `outcome` | Task attempts seen by the dispatch admission hooks (ADR 0100), by outcome (admitted, changed, held, refused, error, fail_open, breaker_open). |
 | `dexaflow_dispatch_at_capacity_total` | counter | _(none)_ | Dispatch requests rejected because the buffer was full. |
@@ -63,10 +63,13 @@ The table is generated from the collectors the server registers: run
 | `dexaflow_redis_command_failures_total` | counter | `reason` | Redis command failures classified by reason (timeout, connection_refused, auth, canceled, other). Alert on rate(...[5m]) to surface a degrading client-side path before user-visible XCom errors (#312 sibling). |
 | `dexaflow_redis_dial_duration_seconds` | histogram | _(none)_ | Wall-clock time per Redis dial: TCP connect plus, with rediss://, the TLS handshake. |
 | `dexaflow_redis_dial_failures_total` | counter | `reason` | Failures at TCP/TLS dial time to Redis, classified by reason (tls_handshake, connection_refused, dns, timeout, other). |
+| `dexaflow_redis_evicted_keys` | gauge | _(none)_ | Redis evicted_keys as reported by INFO stats: keys the server deleted to stay under maxmemory since it started. Resets when Redis restarts. |
+| `dexaflow_redis_eviction_policy_safe` | gauge | _(none)_ | 1 when Redis runs maxmemory-policy noeviction, 0 when it may delete keys under memory pressure. XCom values carry a TTL, so a volatile-* policy evicts them first and their downstream tasks fail with not found (#2354). |
 | `dexaflow_redis_pool_active_conns` | gauge | _(none)_ | Redis pool: connections currently checked out for a command. |
 | `dexaflow_redis_pool_idle_conns` | gauge | _(none)_ | Redis pool: idle connections available for the next command. |
 | `dexaflow_redis_pool_timeouts_total` | counter | _(none)_ | Redis pool checkout timeouts: a caller waited PoolTimeout for an idle connection. A non-zero rate means the pool is too small or commands are too slow. |
 | `dexaflow_redis_pool_total_conns` | gauge | _(none)_ | Redis pool: total connections (active + idle). Saturating against PoolSize is the leading indicator of throughput issues. |
+| `dexaflow_redis_used_memory_bytes` | gauge | _(none)_ | Redis used_memory as reported by INFO memory. |
 | `dexaflow_resilience_backstop_disabled` | gauge | `config_key` | 1 when this process booted with the resilience backstop of config_key disabled, 0 when it is in place. Set once at boot by processes that run the scheduler; alert on max(...) > 0. |
 | `dexaflow_retention_cycle_duration_seconds` | histogram | _(none)_ | Wall-clock duration of one retention janitor cycle, pauses included. |
 | `dexaflow_retention_rows_deleted_total` | counter | `table` | Metadata rows the retention janitor deleted, by table. |

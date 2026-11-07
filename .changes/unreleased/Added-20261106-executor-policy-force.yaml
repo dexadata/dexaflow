@@ -1,0 +1,11 @@
+kind: Added
+body: |-
+  **Executor policy.** `executor.policy.force` in the server's YAML or JSON
+  config file sets the runtime class, service account, node selector and
+  tolerations of every task pod, whatever the DAG or an admission hook set
+  (ADR 0063). It runs after the admission hooks, so neither can undo it, and
+  a field it sets does not count against the execution allowlist. Boot fails
+  on an invalid policy, on a policy together with warm pools, and on a forced
+  service account the allowlist does not list. Without a policy nothing
+  changes (#1372).
+time: 2026-11-06T20:00:00.000000000+00:00

@@ -41,6 +41,15 @@ func NewExecutionStore(pg *Postgres) *ExecutionStore {
 	return &ExecutionStore{q: pg.Queries, specs: sharedSpecCache(pg)}
 }
 
+// OnPool returns a copy of s that runs its queries on pg's pool and keeps
+// everything else, the spec cache and the observers included, so moving the agent handlers to
+// their own pool (database.agent_max_conns, #1624) loses no metric.
+func (s *ExecutionStore) OnPool(pg *Postgres) *ExecutionStore {
+	c := *s
+	c.q = pg.Queries
+	return &c
+}
+
 // TaskSpec returns the agent-facing execution spec for a task instance.
 func (s *ExecutionStore) TaskSpec(ctx context.Context, id auth.AgentIdentity) (agentrpc.TaskSpec, error) {
 	tid, rid, err := agentAttemptRef(id)

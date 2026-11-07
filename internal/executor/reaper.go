@@ -427,9 +427,13 @@ func (r *Reaper) settlingPending(since time.Time, elapsed time.Duration) string 
 func (r *Reaper) ReapOnce(ctx context.Context) error {
 	if !r.mayReap(ctx) {
 		r.record("reap_gate_skip")
+		r.agentLost.resetSilence()
 		return nil
 	}
 	if v := r.settling(r.now()); v.hold {
+		// A mass-silence hold seen in another term or before this one settled
+		// says nothing about the fleet now (#1624).
+		r.agentLost.resetSilence()
 		r.record("reap_settling_skip")
 		r.logger.Info("reapers holding until the leader settles", "pending", v.pending, "since_leadership", v.elapsed, "grace", r.settlingGrace)
 		return nil

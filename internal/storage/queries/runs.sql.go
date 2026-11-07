@@ -366,6 +366,30 @@ func (q *Queries) CountDagsByLatestRunState(ctx context.Context, tenantID pgtype
 	return items, nil
 }
 
+const countHeartbeatFleet = `-- name: CountHeartbeatFleet :one
+SELECT count(*)::bigint AS total,
+       (count(*) FILTER (WHERE last_heartbeat_at < $1::timestamptz))::bigint AS stale
+FROM task_instances
+WHERE state = 'running'
+  AND last_heartbeat_at IS NOT NULL
+`
+
+type CountHeartbeatFleetRow struct {
+	Total int64 `json:"total"`
+	Stale int64 `json:"stale"`
+}
+
+// Counts the running TIs that have heartbeated at least once, and those whose
+// last heartbeat is older than the cut-off, for the agent-lost reaper's
+// mass-silence guard (#1624). Read only when ListAgentLostCandidates returned a
+// silent attempt; idx_ti_state covers the running rows.
+func (q *Queries) CountHeartbeatFleet(ctx context.Context, staleBefore pgtype.Timestamptz) (CountHeartbeatFleetRow, error) {
+	row := q.db.QueryRow(ctx, countHeartbeatFleet, staleBefore)
+	var i CountHeartbeatFleetRow
+	err := row.Scan(&i.Total, &i.Stale)
+	return i, err
+}
+
 const countTaskInstanceStatesInWindow = `-- name: CountTaskInstanceStatesInWindow :many
 SELECT ti.state AS state, count(*) AS n
 FROM task_instances ti

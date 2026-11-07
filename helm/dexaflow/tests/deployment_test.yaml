@@ -211,6 +211,34 @@ tests:
             mountPath: /etc/leoflow/db-ca
             readOnly: true
 
+  # #2354: strict eviction policy mode is off unless asked for, and on when
+  # redis.requireNoEviction is set.
+  - it: "#2354 redis.requireNoEviction renders LEOFLOW_REDIS_REQUIRE_NOEVICTION only when set"
+    template: deployment.yaml
+    set:
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_REDIS_REQUIRE_NOEVICTION
+            value: "true"
+  - it: "#2354 redis.requireNoEviction true renders the strict mode env"
+    template: deployment.yaml
+    set:
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+      redis.requireNoEviction: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_REDIS_REQUIRE_NOEVICTION
+            value: "true"
+
   # #312 — managed-Redis verified TLS requires an operator-supplied CA bundle.
   # Without `redis.caConfigMap` set, NOTHING about the CA injection appears on
   # the rendered pod: no LEOFLOW_REDIS_CA_FILE env var, no volume, no

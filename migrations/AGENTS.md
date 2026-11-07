@@ -20,6 +20,17 @@ applies too; the step by step is in the
 - **Bound lock waits.** A statement that takes a strong lock on a large table
   runs in a transaction with `SET LOCAL lock_timeout`, so it fails fast and can
   be retried instead of queuing every other query behind it.
+- **No blocking lock on a large table.** `lock_safety_test.go` reads every
+  migration after 058 and refuses, on the tables in `LargeTables`
+  (`lock_safety.go`), a non-concurrent index or reindex, a rewrite, a column
+  type change, `SET NOT NULL`, a `NOT NULL` column without a default, a
+  volatile default, a `CHECK` or foreign key validated in place, a `UNIQUE` or
+  primary key not built from an existing index, an explicit `LOCK`, a
+  full-table `UPDATE` or `DELETE`, and an `ALTER TABLE` in a file with no
+  `lock_timeout` (#2312). Each failure names the safe pattern. A finding with
+  no safe pattern goes in `lock_exceptions.txt` with its reason; an exception
+  that matches nothing fails too. A table the same file creates is empty and
+  not checked. A new table that will grow joins `LargeTables`.
 - **Built-in roles change for every tenant.** A migration that adds, changes or
   revokes a built-in role or grant joins on `roles.is_system`; it never names
   the `default` tenant alone (`tenant_roles_test.go`). Custom roles are never

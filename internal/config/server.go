@@ -223,6 +223,15 @@ type DatabaseSection struct {
 	// a process with scheduler.enabled opens it. 0 (the default) keeps them on
 	// the main pool.
 	SchedulerMaxConns int `mapstructure:"scheduler_max_conns"`
+	// AgentMaxConns, when positive, gives the agent gRPC handlers' execution
+	// store (heartbeats, state reports, reschedules and the attempt liveness
+	// check) a pool of their own with this many connections; XCom, connection
+	// and secret reads stay on the main pool. API traffic that saturates the
+	// main pool then cannot block a heartbeat write while the reapers judge
+	// liveness from last_heartbeat_at (#1624). Only a process that serves the
+	// agent endpoint (a scheduler role) opens it. 0 (the default) keeps them
+	// on the main pool.
+	AgentMaxConns int `mapstructure:"agent_max_conns"`
 	// StatementTimeoutMS, when positive, sets statement_timeout on every
 	// connection of the main pool, which serves the API. It is never applied to
 	// the leader election pool (its session holds the scheduler's advisory
@@ -250,6 +259,12 @@ type DatabaseSection struct {
 	// database (ADR 0090 decision 4). It needs a DSN that may run DDL, and the
 	// api role refuses it.
 	MigrateOnBoot bool `mapstructure:"migrate_on_boot"`
+	// RowLevelSecurity (DEXAFLOW_DATABASE_ROW_LEVEL_SECURITY, default false)
+	// binds each main pool connection a request uses to the request's tenant,
+	// so the row level security policies of migration 059 hide every other
+	// tenant's rows from it (ADR 0104). Boot fails unless row level security
+	// is on for the tenant tables (`dexaflow-migrate rls on`).
+	RowLevelSecurity bool `mapstructure:"row_level_security"`
 }
 
 // RedisSection configures the Redis connection.
@@ -264,6 +279,11 @@ type RedisSection struct {
 	// The Helm chart sets this via LEOFLOW_REDIS_CA_FILE when
 	// `redis.caConfigMap` is configured, pointing at the mounted ConfigMap.
 	CAFile string `mapstructure:"ca_file"`
+	// RequireNoEviction refuses to boot unless Redis runs maxmemory-policy
+	// noeviction, or when the policy cannot be read (#2354). Off, an unsafe
+	// policy only logs a warning and sets dexaflow_redis_eviction_policy_safe
+	// to 0.
+	RequireNoEviction bool `mapstructure:"require_noeviction"`
 }
 
 // ObservabilitySection configures logging, metrics, and tracing.
@@ -345,8 +365,51 @@ func LoadServer(configFile string, flags *pflag.FlagSet) (*ServerConfig, error) 
 		if err := decodeDottedOIDCMaps(configFile, &c); err != nil {
 			return nil, err
 		}
+		if err := decodeExecutorPolicy(configFile, v.IsSet("executor.policy"), &c); err != nil {
+			return nil, err
+		}
 	}
 	return &c, nil
+}
+
+// decodeExecutorPolicy copies the executor.policy subtree of a YAML or JSON
+// config file into c.Executor.Policy (ADR 0063). Like the OIDC maps it
+// bypasses viper, whose "." key delimiter would split a node label key. The
+// subtree is decoded generically first, which resolves anchors and merge keys
+// defined anywhere in the file, then encoded again for the dispatcher's
+// parser. A policy in a config file of another format is an error, not a
+// policy silently left unenforced; set reports whether viper saw one. A null
+// or empty policy is no policy.
+func decodeExecutorPolicy(configFile string, set bool, c *ServerConfig) error {
+	switch strings.ToLower(filepath.Ext(configFile)) {
+	case ".yaml", ".yml", ".json", "":
+	default:
+		if set {
+			return fmt.Errorf("executor.policy is only read from a YAML or JSON config file, not %q", configFile)
+		}
+		return nil
+	}
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return fmt.Errorf("reading config file %q for executor.policy: %w", configFile, err)
+	}
+	var raw struct {
+		Executor struct {
+			Policy any `yaml:"policy"`
+		} `yaml:"executor"`
+	}
+	if err = yaml.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("decoding executor.policy from config file %q: %w", configFile, err)
+	}
+	if p := raw.Executor.Policy; p == nil || p == "" {
+		return nil
+	}
+	out, err := yaml.Marshal(raw.Executor.Policy)
+	if err != nil {
+		return fmt.Errorf("encoding executor.policy: %w", err)
+	}
+	c.Executor.Policy = out
+	return nil
 }
 
 // decodeDottedOIDCMaps reads the OIDC maps whose KEYS may contain dots directly

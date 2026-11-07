@@ -233,6 +233,10 @@ func setupSubprocessDispatch(ctx context.Context, cfg *config.ServerConfig, sche
 	reaper := newLiteReaper(store, subExec, sched, markers, metrics, logger, cfg.Auth.MaxAttemptCredentialLifetime)
 	startLiteMaintenance(ctx, reaper, sched.IsLeading, logger)
 	logger.Warn("subprocess dispatch enabled (dev only; user code runs unsandboxed)")
+	if len(cfg.Executor.Policy) > 0 {
+		// The policy sets task pod fields; the subprocess executor runs none.
+		logger.Warn("executor.policy is ignored by the subprocess executor (ADR 0063)")
+	}
 	return true, closer
 }
 
@@ -263,6 +267,13 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	dispatcher := dispatch.NewDispatcher(podExec, execStore, authn, controlAddr, attemptTokenTTL)
 	configureK8sDispatcher(dispatcher, cfg, warmPools, metrics)
 	applyAdmission(dispatcher, hooks, cfg, metrics, logger)
+	// validateStartup already parsed the policy; fail closed if it somehow
+	// stopped parsing rather than dispatch pods it does not cover.
+	policy, err := forcePolicy(cfg)
+	if err != nil {
+		return false, nil, err
+	}
+	applyForcePolicy(dispatcher, policy, logger)
 	disp, closer := wrapBuffered(dispatcher, store, logger, metrics, cfg.Scheduler.Dispatch) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 	sched.SetDispatcher(disp)
 	// Shared informer read-path (PR-10): one long-lived watch replaces the

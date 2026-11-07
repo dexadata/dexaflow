@@ -119,6 +119,20 @@ func TestPoolCollectorFollowsTheSchedulerPool(t *testing.T) {
 	}
 }
 
+func TestPoolCollectorFollowsTheAgentPool(t *testing.T) {
+	pg := &Postgres{Pool: lazyPool(t, 20), health: lazyPool(t, 2)}
+	c := NewPoolCollector(pg)
+	pg.agentPool.Store(lazyPool(t, 6))
+	want := map[string]float64{"main": 20, "health": 2, "agent": 6}
+	if got := scrape(t, c)["dexaflow_db_pool_max_conns"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("max conns = %v, want %v", got, want)
+	}
+	pg.agentPool.Store(nil)
+	if n := len(scrape(t, c)["dexaflow_db_pool_max_conns"]); n != 2 {
+		t.Fatalf("after the agent pool closed: %d series, want 2", n)
+	}
+}
+
 func TestPoolCollectorWithoutHealthPool(t *testing.T) {
 	pg := &Postgres{Pool: lazyPool(t, 5)}
 	got := scrape(t, NewPoolCollector(pg))["dexaflow_db_pool_total_conns"]

@@ -28,6 +28,15 @@ never in an issue or a PR ([`SECURITY.md`](../../SECURITY.md)).
   the tenant predicate ([`internal/storage/AGENTS.md`](../storage/AGENTS.md)),
   and a migration that changes a built-in role changes it in every tenant
   ([`migrations/AGENTS.md`](../../migrations/AGENTS.md)).
+- **Every route is walked across tenants.**
+  `TestTenantIsolationEveryRouteIntegration`
+  (`internal/api/tenant_isolation_routes_integration_test.go`) calls every
+  registered route as tenant A with the ids of tenant B's objects and checks
+  that A gets a refusal or an answer without B's data, that A's writes miss
+  or land in A's own namespace, and that every object of B is intact after
+  the walk. A new route fails it until the walk can address it: a value for
+  each new path parameter, a write body the handler accepts, or a reason in
+  `notTenantScoped`.
 - **Every protected route is gated.** It is guarded with `RequirePermission`,
   `RequireScopedPermission`, or `RequireScope` when any signed-in user may call
   it (`internal/api/middleware.go`). `TestScopeGateClassifiesEveryRoute`
