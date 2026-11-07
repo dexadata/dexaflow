@@ -57,7 +57,8 @@ new ADR.
 | The previous minor | Security fixes only, for **8 weeks** after the next minor's `X.Y.0` final ships. |
 | Older minors | Nothing. Upgrade to a supported line. |
 
-Patches ship about weekly, so 8 weeks leaves room for several patches of the
+Patches ship about weekly and a minor every two to three months (the
+[roadmap](/project/roadmap/) has the dates), so 8 weeks leaves room for several patches of the
 new minor before the previous one stops receiving security fixes. How fast a
 security fix is merged, by severity, is in the
 [security policy](https://github.com/dexadata/dexaflow/blob/main/SECURITY.md).

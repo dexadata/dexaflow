@@ -44,8 +44,8 @@ The record of how Dexaflow got here and where it is going.
   </a>
   <a class="lf-card" href="/project/background/">
     <span class="lf-card__icon"><i class="fa-solid fa-magnifying-glass-chart"></i></span>
-    <span class="lf-card__title">Background</span>
-    <span class="lf-card__desc">The reverse-analysis and UI/frontend assessments that shaped the MVP.</span>
+    <span class="lf-card__title">Archive</span>
+    <span class="lf-card__desc">Analyses from before v0.1 that shaped the MVP, kept for context.</span>
     <span class="lf-card__more">Read the analyses →</span>
   </a>
 </div>
