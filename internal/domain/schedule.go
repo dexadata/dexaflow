@@ -29,8 +29,8 @@ func IsOnceSchedule(expr string) bool {
 
 // ValidateSchedule checks that a DAG's cron schedule is parseable. An empty or
 // absent schedule (manual-only) and the recognized non-cron Airflow schedules
-// (@once, @continuous) are valid. A malformed cron expression — a 4-field cron,
-// a typo — is rejected here so it fails loudly at compile time; otherwise the
+// (@once, @continuous) are valid. A malformed cron expression, a 4-field cron,
+// a typo, is rejected here so it fails loudly at compile time; otherwise the
 // scheduler silently can't parse it and the DAG simply never runs, with no error
 // surfaced anywhere (the worst failure mode). The parser is robfig/cron's
 // ParseStandard (through ParseCron), the same one the scheduler uses, so what

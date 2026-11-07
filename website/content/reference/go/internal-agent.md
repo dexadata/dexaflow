@@ -14,7 +14,6 @@ Package agent contains the worker\-side logic that runs inside the task containe
 
 - [Constants](<#constants>)
 - [func AttemptTokenTTL\(interval time.Duration\) time.Duration](<#AttemptTokenTTL>)
-- [func Backoff\(attempt int\) \(delay time.Duration, ok bool\)](<#Backoff>)
 - [func BuildCommand\(operator, entrypoint, operatorClass string\) \(\[\]string, error\)](<#BuildCommand>)
 - [func ClassifyBootstrapFailure\(stage BootstrapStage, err error\) string](<#ClassifyBootstrapFailure>)
 - [func ExchangeToken\(ctx context.Context, client agentv1.AgentServiceClient, tokens \*TokenSource\) error](<#ExchangeToken>)
@@ -27,6 +26,7 @@ Package agent contains the worker\-side logic that runs inside the task containe
 - [type BootstrapStage](<#BootstrapStage>)
 - [type CommandRunner](<#CommandRunner>)
   - [func NewExecRunner\(\) CommandRunner](<#NewExecRunner>)
+  - [func NewExecRunnerRecordingGroup\(path string\) CommandRunner](<#NewExecRunnerRecordingGroup>)
 - [type LogSink](<#LogSink>)
   - [func OpenLogSink\(ctx context.Context, client agentv1.AgentServiceClient\) \(LogSink, error\)](<#OpenLogSink>)
 - [type NoopLogSink](<#NoopLogSink>)
@@ -51,6 +51,18 @@ Package agent contains the worker\-side logic that runs inside the task containe
 const DefaultHeartbeatInterval = 15 * time.Second
 ```
 
+<a name="LogResumeMetadataKey"></a>LogResumeMetadataKey is the request metadata key with which the agent asks the control plane to CONTINUE an attempt's stored log rather than start it: it is set on every StreamLogs stream the agent re\-opens after the previous one ended mid\-task \(\#912\). The control plane opens such a stream with the sink's Resume, which keeps what is already stored, and confirms it by sending the LogResumedHeaderKey response header. agentrpc mirrors both keys.
+
+```go
+const LogResumeMetadataKey = "dexaflow-log-resume"
+```
+
+<a name="LogResumedHeaderKey"></a>LogResumedHeaderKey is the response header with which the control plane confirms that it accepted a resumed log stream \(see LogResumeMetadataKey\).
+
+```go
+const LogResumedHeaderKey = "dexaflow-log-resumed"
+```
+
 <a name="AttemptTokenTTL"></a>
 ## func [AttemptTokenTTL](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/ttl.go#L28>)
 
@@ -60,17 +72,8 @@ func AttemptTokenTTL(interval time.Duration) time.Duration
 
 AttemptTokenTTL derives the short per\-attempt agent\-token TTL from the heartbeat interval: max\(floor, beats × interval\). The result always exceeds a single interval, so one missed beat never lapses a live credential, while the floor keeps the TTL short enough to bound an exfiltrated token. A non\-positive interval \(heartbeats disabled\) yields the floor.
 
-<a name="Backoff"></a>
-## func [Backoff](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/command.go#L105>)
-
-```go
-func Backoff(attempt int) (delay time.Duration, ok bool)
-```
-
-Backoff returns the delay before retry attempt n \(1\-based: 1s, 2s, 4s, 8s, 16s\). ok is false once the maximum number of attempts is exceeded.
-
 <a name="BuildCommand"></a>
-## func [BuildCommand](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/command.go#L34>)
+## func [BuildCommand](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/command.go#L33>)
 
 ```go
 func BuildCommand(operator, entrypoint, operatorClass string) ([]string, error)
@@ -101,7 +104,7 @@ ExchangeToken performs the one\-time bootstrap token exchange \(ADR 0055 Fix \#3
 It fails the startup on any error: the agent must never proceed with a bootstrap credential the control plane rejected, nor with an empty token.
 
 <a name="NewReturnValuePath"></a>
-## func [NewReturnValuePath](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/command.go#L23>)
+## func [NewReturnValuePath](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/command.go#L22>)
 
 ```go
 func NewReturnValuePath() (path string, cleanup func() error, err error)
@@ -110,7 +113,7 @@ func NewReturnValuePath() (path string, cleanup func() error, err error)
 NewReturnValuePath returns a unique, agent\-owned path for this task's return value, plus a cleanup. The agent runs one task per process, so a per\-process temp dir keeps concurrent tasks and other users from ever sharing a single /tmp/leoflow\_return\_value.json \(which collided — permission denied across uids, clobbered across parallel tasks\). The runtime is pointed here via the LEOFLOW\_RETURN\_VALUE\_PATH env the runner injects.
 
 <a name="ReadReturnValue"></a>
-## func [ReadReturnValue](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/command.go#L92>)
+## func [ReadReturnValue](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/command.go#L107>)
 
 ```go
 func ReadReturnValue(path string) (value []byte, ok bool, err error)
@@ -148,7 +151,7 @@ func ResolverFromEnv(getenv func(string) string) (secretsource.SecretResolver, s
 ResolverFromEnv builds the external\-secrets resolver \+ its routing Backend from the operator\-injected LEOFLOW\_SECRETS\_\* pod env \(operator\-only: the dispatch filter, \#828, keeps an author's task env from setting LEOFLOW\_ keys\). It returns a nil resolver when no backend is configured — the chain then stays vault\-only, byte\-identical to the pre\-0060 env\-export. A malformed config fails closed \(returned error\) rather than silently disabling external secrets.
 
 <a name="XComEnvVar"></a>
-## func [XComEnvVar](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/command.go#L86>)
+## func [XComEnvVar](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/command.go#L101>)
 
 ```go
 func XComEnvVar(name string, value []byte) string
@@ -179,7 +182,7 @@ const (
 ```
 
 <a name="CommandRunner"></a>
-## type [CommandRunner](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L28-L30>)
+## type [CommandRunner](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L25-L27>)
 
 CommandRunner executes the user task process, writing its stdout and stderr to the supplied writers and returning the process exit code.
 
@@ -190,7 +193,7 @@ type CommandRunner interface {
 ```
 
 <a name="NewExecRunner"></a>
-### func [NewExecRunner](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/exec.go#L48>)
+### func [NewExecRunner](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/exec.go#L66>)
 
 ```go
 func NewExecRunner() CommandRunner
@@ -198,8 +201,17 @@ func NewExecRunner() CommandRunner
 
 NewExecRunner returns a CommandRunner that executes tasks as child processes.
 
+<a name="NewExecRunnerRecordingGroup"></a>
+### func [NewExecRunnerRecordingGroup](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/exec.go#L76>)
+
+```go
+func NewExecRunnerRecordingGroup(path string) CommandRunner
+```
+
+NewExecRunnerRecordingGroup is NewExecRunner that also records each task's process group at path \(a procgroup.Record: this agent's pid, the group id and the group leader's start time\) as soon as the task starts. Lite hands the path to its agent: the task leads its own group, so an agent killed outright leaves the task running, and only this record lets the server see that orphan and stop it before the attempt is placed again \(\#916\). A task whose group cannot be recorded is stopped and the run fails, so no task runs that the server could not find. An empty path records nothing.
+
 <a name="LogSink"></a>
-## type [LogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L39-L42>)
+## type [LogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L36-L39>)
 
 LogSink receives log lines produced by the user task. Sends are best\-effort.
 
@@ -211,16 +223,16 @@ type LogSink interface {
 ```
 
 <a name="OpenLogSink"></a>
-### func [OpenLogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/dial.go#L89>)
+### func [OpenLogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/logstream.go#L101>)
 
 ```go
 func OpenLogSink(ctx context.Context, client agentv1.AgentServiceClient) (LogSink, error)
 ```
 
-OpenLogSink starts the StreamLogs RPC and returns a sink that forwards lines to it. It is the agent's first RPC, so it uses WaitForReady: with the lazy connection of grpc.NewClient the channel may not be established yet, and without this the stream would fail fast on a cold connection \(the "opening log stream" EOF in \#36\) rather than waiting for the control plane to be reachable.
+OpenLogSink starts the StreamLogs RPC and returns a sink that forwards lines to it. It is the agent's first RPC, so it uses WaitForReady: with the lazy connection of grpc.NewClient the channel may not be established yet, and without this the stream would fail fast on a cold connection \(the "opening log stream" EOF in \#36\) rather than waiting for the control plane to be reachable. ctx also bounds the streams the sink re\-opens.
 
 <a name="NoopLogSink"></a>
-## type [NoopLogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L47>)
+## type [NoopLogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L44>)
 
 NoopLogSink discards log lines. The agent falls back to it when the control plane log stream is unavailable \(e.g. StreamLogs not yet implemented\), so a task still runs even though its logs are not shipped this run.
 
@@ -229,7 +241,7 @@ type NoopLogSink struct{}
 ```
 
 <a name="NoopLogSink.Close"></a>
-### func \(NoopLogSink\) [Close](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L53>)
+### func \(NoopLogSink\) [Close](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L50>)
 
 ```go
 func (NoopLogSink) Close() error
@@ -238,7 +250,7 @@ func (NoopLogSink) Close() error
 Close is a no\-op.
 
 <a name="NoopLogSink.Send"></a>
-### func \(NoopLogSink\) [Send](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L50>)
+### func \(NoopLogSink\) [Send](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L47>)
 
 ```go
 func (NoopLogSink) Send(*agentv1.LogLine) error
@@ -247,7 +259,7 @@ func (NoopLogSink) Send(*agentv1.LogLine) error
 Send discards the line.
 
 <a name="Runner"></a>
-## type [Runner](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L59-L111>)
+## type [Runner](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L56-L137>)
 
 Runner orchestrates a single task execution inside the worker container: it registers with the control plane, fetches the task spec and XCom inputs, runs the user process while streaming logs, pushes the return value, and reports the terminal state.
 
@@ -269,14 +281,19 @@ type Runner struct {
     // land in a per-attempt directory the caller wipes between attempts, instead of
     // the pod's real /tmp. The warm worker points this at a subdir of its scratch
     // (reset before every attempt) so no attempt observes another attempt's temp
-    // files — a token cache, a dbt profile, ~/.aws-style credentials (#728). Empty
+    // files, a token cache, a dbt profile, ~/.aws-style credentials (#728). Empty
     // leaves TMPDIR untouched: a single-shot pod is already destroyed per task, so
     // its /tmp needs no in-process reset.
     TmpDir string
+    // HomeDir, when set, is exported to the task as HOME, with the XDG base dirs
+    // under it, so the child's dotfiles, caches and user site-packages land in a
+    // per-attempt directory the caller wipes between attempts. A warm worker on a
+    // read-only root sets it (X3.2); empty leaves HOME and XDG_* as inherited.
+    HomeDir string
     // TerminationLogPath is where the agent writes its durable outcome record just
     // before delivering the report, so a pod killed mid-report still leaves the
     // task's true result behind for the reconciler to recover (ADR 0052). Empty
-    // disables it — Lite (subprocess, in-process report) needs no such record.
+    // disables it, Lite (subprocess, in-process report) needs no such record.
     TerminationLogPath string
     // HeartbeatInterval is how often to ping the control plane while the task
     // runs; zero disables heartbeats.
@@ -290,7 +307,7 @@ type Runner struct {
     Token tokenSetter
     // BeforeReport, if set, is invoked with the terminal state AFTER the durable
     // outcome record is written and BEFORE the report is delivered. It is a
-    // fault-injection seam for the durable-outcome E2E (ADR 0052) — the agent
+    // fault-injection seam for the durable-outcome E2E (ADR 0052), the agent
     // binary wires it, from an env var, to exit the process, simulating a pod
     // killed mid-report with the record already on disk. Nil in production.
     BeforeReport func(agentv1.TaskState)
@@ -307,7 +324,7 @@ type Runner struct {
 ```
 
 <a name="Runner.Run"></a>
-### func \(\*Runner\) [Run](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L126>)
+### func \(\*Runner\) [Run](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L160>)
 
 ```go
 func (r *Runner) Run(ctx context.Context) error
@@ -327,15 +344,19 @@ type TokenSource struct {
 ```
 
 <a name="Dial"></a>
-### func [Dial](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/dial.go#L42>)
+### func [Dial](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/dial.go#L38>)
 
 ```go
 func Dial(addr, token string, allowInsecure bool, caFile string) (agentv1.AgentServiceClient, *grpc.ClientConn, *TokenSource, error)
 ```
 
-Dial connects to the control plane's AgentService, attaching the bearer token to every RPC. When allowInsecure is true \(local development against a cluster without TLS\) the transport is unencrypted; otherwise TLS 1.2\+ is required. When caFile is set, the server certificate is verified against that CA \(a self\-signed / cluster CA\); otherwise the system roots are used.
+Dial connects to the control plane's AgentService, attaching the bearer token to every RPC. When allowInsecure is true \(local development against a cluster without TLS\) the transport is unencrypted; otherwise TLS 1.2\+ is required. When caFile is set, the server certificate is verified against that CA bundle \(a self\-signed / cluster CA\); otherwise the system roots are used. The bundle is read here, so a missing or empty file fails the dial, and read again on every later handshake, so a reconnect trusts a rotated bundle \(one that holds the old and new CA during a CA rotation\) without restarting the agent \(\#637\).
+
+The channel pings the control plane when idle and every unary call carries a deadline \(see defaultDialTuning\), so a control plane that stops answering is noticed in seconds rather than when the kernel gives up on the socket.
 
 It also returns the \*TokenSource backing the per\-RPC credential: the heartbeat loop swaps a renewed token into it \(ADR 0055 Fix \#4\) and the interceptor picks the new bearer up on the next call.
+
+The channel reconnects with reconnectBackoff, so once the control plane is back it is redialed within about one heartbeat interval, however long the outage lasted \(\#899\).
 
 <a name="NewTokenSource"></a>
 ### func [NewTokenSource](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/auth.go#L26>)
@@ -365,7 +386,7 @@ func (s *TokenSource) Token() string
 Token returns the current bearer.
 
 <a name="WarmRunner"></a>
-## type [WarmRunner](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/warm.go#L40-L133>)
+## type [WarmRunner](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/warm.go#L41-L169>)
 
 WarmRunner is the client side of the warm\-worker transport \(ADR 0058 D4\): a long\-lived process that registers once, opens the AwaitAssignment bidi stream, and serves MANY task attempts — one at a time — each in a fresh forked child.
 
@@ -418,10 +439,33 @@ type WarmRunner struct {
     // extra-links, xcom-pushes, and reschedule files the runtime writes.
     ScratchDir string
 
+    // AttemptHome is the read-only-root isolation mode (X3.2), set from
+    // LEOFLOW_WARM_ATTEMPT_HOME. Each attempt then gets its own HOME and XDG dirs
+    // under ScratchDir, and resetScratch also empties the writable paths a
+    // read-only root leaves: SharedTmpDir (the pod's /tmp emptyDir) except for
+    // ScratchDir itself, and SharedMemDir (/dev/shm, a pod-wide tmpfs). The sweep
+    // runs before each ack and again as soon as an attempt ends, before SlotFree,
+    // so a generated dbt profile or a planted script neither reaches the next
+    // attempt nor sits on an idle worker. Off leaves HOME, /tmp and /dev/shm
+    // exactly as before.
+    AttemptHome  bool
+    SharedTmpDir string
+    SharedMemDir string
+
     // TerminationLogPath and HeartbeatInterval mirror the single-shot Runner's
     // fields and are threaded into every per-attempt Runner.
     TerminationLogPath string
     HeartbeatInterval  time.Duration
+
+    // StreamHeartbeat is how often the worker re-sends its WorkerRegister on the
+    // open assignment stream, idle or busy, as a liveness heartbeat. The control
+    // plane allows one live registration per worker identity and judges liveness
+    // by these heartbeats, so a duplicate registration of a live worker is refused
+    // while a wedged stream can still be replaced. Zero uses
+    // DefaultHeartbeatInterval; a negative value disables it. A control plane
+    // that predates the heartbeat ignores a re-registration on an established
+    // stream, so it is safe in a mixed-version rollout.
+    StreamHeartbeat time.Duration
 
     // Self-lifecycle bounds (ADR 0058 D9/D10/D6/H3), populated from the warm-pod env
     // in main.go. A warm worker that exits is replaced by the reconciler
@@ -451,7 +495,8 @@ type WarmRunner struct {
     //
     //   - ReconnectBackoff: base backoff, doubled each consecutive reconnect.
     //   - ReconnectMaxBackoff: ceiling on a single backoff sleep.
-    //   - MaxReconnects: consecutive not-leader reconnects before giving up.
+    //   - MaxReconnects: consecutive not-leader reconnects before giving up. A
+    //     stream a leader accepted starts the count over (see leaderAccepted).
     ReconnectBackoff    time.Duration
     ReconnectMaxBackoff time.Duration
     MaxReconnects       int
@@ -471,7 +516,7 @@ type WarmRunner struct {
 ```
 
 <a name="WarmRunner.Run"></a>
-### func \(\*WarmRunner\) [Run](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/warm.go#L155>)
+### func \(\*WarmRunner\) [Run](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/warm.go#L204>)
 
 ```go
 func (w *WarmRunner) Run(ctx context.Context, dagVersionID string) error

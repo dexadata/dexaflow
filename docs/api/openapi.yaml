@@ -1790,7 +1790,7 @@ components:
           minLength: 8
           description: >-
             Plaintext password (write-only; never returned). Must be at least 8
-            characters — the server rejects anything shorter with 400.
+            characters; the server rejects anything shorter with 400.
         roles:
           type: array
           items: { type: string }
@@ -1936,7 +1936,7 @@ components:
         unreadable password survives a `--host`-only edit), send an empty string
         to clear the field, or send a value to set it. A password equal to the
         mask `***`, and any key inside `extra` whose value is exactly `***`, is
-        treated as "unchanged" — so re-submitting a connection read back from GET
+        treated as "unchanged", so re-submitting a connection read back from GET
         (whose secrets are masked) never overwrites the real secret with the mask.
       properties:
         connection_id: { type: string }

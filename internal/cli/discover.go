@@ -61,20 +61,20 @@ type Project struct {
 
 // DiscoverProjects walks workspace and returns every directory containing a
 // dag.py file (the project marker). Each project's config is the dexaflow.yaml
-// in the same dir — loaded via loadProjectConfig so schema defaults apply —
+// in the same dir, loaded via loadProjectConfig so schema defaults apply,
 // or, when no yaml exists, a synthesized LeoflowConfig with DagID set to the
 // subdir basename and every other field at its schema default.
 //
 // The walk caps at MaxWorkspaceDepth from the workspace root and skips both
 // defaultExcludeDirs and any directory whose name begins with a dot. The
-// workspace root itself counts as depth 0 — a root-level dag.py + dexaflow.yaml
+// workspace root itself counts as depth 0, a root-level dag.py + dexaflow.yaml
 // is still recognized as a project for backward compatibility with the
 // single-DAG layout (recommended new layout is one project per subdir; see
 // docs/dag-authoring.md).
 //
 // If two discovered projects resolve to the same dag_id (whether from yaml or
 // from the subdir-basename fallback), the function returns an error naming
-// the id and every colliding path — per simple-reliable-then-grow the lite
+// the id and every colliding path, per simple-reliable-then-grow the lite
 // loop refuses to compile any of them rather than silently letting the
 // latest tick clobber the previous one.
 func DiscoverProjects(workspace string) ([]Project, error) {

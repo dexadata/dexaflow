@@ -75,3 +75,59 @@ func TestUnscrapedCounterRoundTripsAsNotANumber(t *testing.T) {
 		t.Errorf("an unscraped counter produced %v", checkNames(vs))
 	}
 }
+
+// A run whose datastore left reads ABORTED with the time, not FAIL (#1257);
+// one that had already failed for real before it left keeps its FAIL.
+func TestAnAbortedRunSaysWhyInsteadOfFail(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		violations int
+		want       string
+	}{
+		{"clean before the loss", 0, "ABORTED: datastore unreachable at 29.2h"},
+		{"failed before the loss", 2, "FAIL (then ABORTED: datastore unreachable at 29.2h)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rep, err := newReporter(options{outDir: t.TempDir(), label: "abort"})
+			if err != nil {
+				t.Fatalf("newReporter: %v", err)
+			}
+			defer rep.Close()
+			var vs []violation
+			for i := 0; i < tc.violations; i++ {
+				vs = append(vs, violation{Check: "run_wedge"})
+			}
+			rep.WriteSample(sample{Seq: 1}, vs)
+			rep.MarkAborted("datastore unreachable at 29.2h")
+			v := rep.Finish("datastore_unreachable", map[string]int{})
+			if v.Verdict != tc.want {
+				t.Errorf("verdict = %q, want %q", v.Verdict, tc.want)
+			}
+			if v.Aborted != "datastore unreachable at 29.2h" {
+				t.Errorf("aborted = %q", v.Aborted)
+			}
+		})
+	}
+}
+
+// The loop's stop decision wires the datastore loss to the abort (#1257).
+func TestStopReasonForADatastoreLossMarksTheRunAborted(t *testing.T) {
+	rep, err := newReporter(options{outDir: t.TempDir(), label: "wire"})
+	if err != nil {
+		t.Fatalf("newReporter: %v", err)
+	}
+	defer rep.Close()
+	ck := newChecker(defaultOptions())
+	s := healthySample()
+	s.DatastoreUnreachable = true
+	s.ElapsedS = 7200
+	for i := 0; i < unreachableSamplesBeforeGivingUp; i++ {
+		ck.Check(s)
+	}
+	if got := stopReasonFor(ck, s, rep); got != "datastore_unreachable" {
+		t.Fatalf("stop reason = %q, want datastore_unreachable", got)
+	}
+	if v := rep.Finish("datastore_unreachable", ck.Totals()); v.Verdict != "ABORTED: datastore unreachable at 2.0h" {
+		t.Errorf("verdict = %q", v.Verdict)
+	}
+}

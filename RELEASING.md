@@ -514,7 +514,13 @@ scripts/cut-release.sh --self-test
 Cut `vX.Y.Z-rc.1` first, let the field validate it (especially the upgrade path
 and any security-sensitive change), then promote to `vX.Y.Z`. Before the GA,
 run the GA rows of `test/release/perf-reliability-checklist.md` and, on a real
-cluster, `test/release/rc-cluster-validation.md`. Today the GA tag
+cluster, `test/release/rc-cluster-validation.md`, and commit its run header and
+§6 table as `test/release/results/<rc tag>.md` (from `results/TEMPLATE.md`).
+From v0.5.11 on, the cut refuses a GA whose rcs have no complete record
+(`scripts/check-rc-validation.sh`, #1026): every header field filled, every row
+PASS, FAIL with the issue opened for it, or NOT VERIFIED when the cluster at
+hand cannot settle it. The run stays manual; only skipping it silently is gone.
+Today the GA tag
 rebuilds and re-runs the full gate matrix; lightening that to a build-once /
 promote-artifact model is tracked in #878.
 

@@ -78,6 +78,23 @@ type options struct {
 	label      string
 }
 
+// stopReasonFor says why the loop must stop after sample s, or "" to go on.
+func stopReasonFor(ck *checker, s sample, rep *reporter) string {
+	// The subject left. Keeping the loop alive would spend the remaining
+	// hours describing an absence, which is what turned one aborted weekend
+	// into 2332 meaningless violations.
+	if ck.Gone() {
+		return "control_plane_gone"
+	}
+	// The datastore left (#1257): stop instead of sampling into the void for
+	// the rest of the run, and say when it happened.
+	if ck.DatastoreGone() {
+		rep.MarkAborted(fmt.Sprintf("datastore unreachable at %.1fh", ck.DatastoreLostAtS()/3600))
+		return "datastore_unreachable"
+	}
+	return ck.stopCondition(s)
+}
+
 func run() (int, error) {
 	o := options{}
 	flag.StringVar(&o.dbURL, "db", firstEnv("SOAK_DATABASE_URL", "DATABASE_URL", "LEOFLOW_DATABASE_URL"), "Postgres URL of the soak metadatabase")
@@ -162,14 +179,7 @@ func run() (int, error) {
 		s.Violations = len(vs)
 		rep.WriteSample(s, vs)
 
-		// The subject left. Keeping the loop alive would spend the remaining
-		// hours describing an absence, which is what turned one aborted weekend
-		// into 2332 meaningless violations.
-		if ck.Gone() {
-			stopReason = "control_plane_gone"
-			break
-		}
-		if r := ck.stopCondition(s); r != "" {
+		if r := stopReasonFor(ck, s, rep); r != "" {
 			stopReason = r
 			break
 		}
@@ -194,6 +204,10 @@ done:
 	// Monday would have no way to tell the two apart.
 	if stopReason == "control_plane_gone" {
 		fmt.Println("soak monitor: the control plane disappeared; this is a harness failure, not a product verdict")
+		return 2, nil
+	}
+	if stopReason == "datastore_unreachable" {
+		fmt.Println("soak monitor: the metadatabase stopped answering; the run is ABORTED, not a product verdict")
 		return 2, nil
 	}
 	if v.Verdict != "PASS" {

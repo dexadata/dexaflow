@@ -628,7 +628,7 @@ func (r *Reconciler) SetPodSnapshotter(s PodSnapshotter) { r.snapshot = s }
 // when the list was taken had its chance to settle its task instance. The start,
 // not the end, so the stamp never claims data fresher than the LIST (#917). Zero means no
 // sweep has completed yet. It is the record the reaper's leader-settling gate
-// compares against the leadership stamp — the reapers act on signals a
+// compares against the leadership stamp: the reapers act on signals a
 // control-plane restart manufactures (a task pod that exited during the outage
 // looks lost), and only a sweep completed under the new leader separates
 // "finished during the outage, outcome recoverable" from "genuinely lost".

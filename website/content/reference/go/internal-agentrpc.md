@@ -14,18 +14,23 @@ Package agentrpc implements the control\-plane side of the agent gRPC protocol: 
 
 - [Constants](<#constants>)
 - [Variables](<#variables>)
+- [func KeepaliveEnforcementPolicy\(\) keepalive.EnforcementPolicy](<#KeepaliveEnforcementPolicy>)
 - [func RecoveryStreamInterceptor\(logger \*slog.Logger\) grpc.StreamServerInterceptor](<#RecoveryStreamInterceptor>)
 - [func RecoveryUnaryInterceptor\(logger \*slog.Logger\) grpc.UnaryServerInterceptor](<#RecoveryUnaryInterceptor>)
 - [type AgentTokenMinter](<#AgentTokenMinter>)
 - [type AgentTokenRenewer](<#AgentTokenRenewer>)
 - [type Authenticator](<#Authenticator>)
+- [type DecisionRecorder](<#DecisionRecorder>)
 - [type InflightHandlers](<#InflightHandlers>)
   - [func NewInflightHandlers\(\) \*InflightHandlers](<#NewInflightHandlers>)
   - [func \(c \*InflightHandlers\) Count\(\) int](<#InflightHandlers.Count>)
   - [func \(c \*InflightHandlers\) StreamInterceptor\(\) grpc.StreamServerInterceptor](<#InflightHandlers.StreamInterceptor>)
   - [func \(c \*InflightHandlers\) UnaryInterceptor\(\) grpc.UnaryServerInterceptor](<#InflightHandlers.UnaryInterceptor>)
+- [type LegacyTokenRecorder](<#LegacyTokenRecorder>)
 - [type LogPublisher](<#LogPublisher>)
+- [type LogResumer](<#LogResumer>)
 - [type LogSink](<#LogSink>)
+- [type LogSubscriberProbe](<#LogSubscriberProbe>)
 - [type PodTaskResolver](<#PodTaskResolver>)
 - [type ReclaimEvent](<#ReclaimEvent>)
 - [type ReclaimReason](<#ReclaimReason>)
@@ -39,6 +44,7 @@ Package agentrpc implements the control\-plane side of the agent gRPC protocol: 
   - [func \(s \*Server\) EnableWarmPools\(onReclaim func\(ReclaimEvent\)\)](<#Server.EnableWarmPools>)
   - [func \(s \*Server\) ExchangeToken\(ctx context.Context, \_ \*agentv1.ExchangeTokenRequest\) \(\*agentv1.ExchangeTokenResponse, error\)](<#Server.ExchangeToken>)
   - [func \(s \*Server\) FetchXCom\(ctx context.Context, req \*agentv1.FetchXComRequest\) \(\*agentv1.FetchXComResponse, error\)](<#Server.FetchXCom>)
+  - [func \(s \*Server\) FetchXComBatch\(ctx context.Context, req \*agentv1.FetchXComBatchRequest\) \(\*agentv1.FetchXComBatchResponse, error\)](<#Server.FetchXComBatch>)
   - [func \(s \*Server\) GetConnections\(ctx context.Context, \_ \*agentv1.GetConnectionsRequest\) \(\*agentv1.GetConnectionsResponse, error\)](<#Server.GetConnections>)
   - [func \(s \*Server\) GetTaskSpec\(ctx context.Context, \_ \*agentv1.GetTaskSpecRequest\) \(\*agentv1.TaskSpec, error\)](<#Server.GetTaskSpec>)
   - [func \(s \*Server\) GetVariables\(ctx context.Context, \_ \*agentv1.GetVariablesRequest\) \(\*agentv1.GetVariablesResponse, error\)](<#Server.GetVariables>)
@@ -47,6 +53,7 @@ Package agentrpc implements the control\-plane side of the agent gRPC protocol: 
   - [func \(s \*Server\) Register\(ctx context.Context, \_ \*agentv1.RegisterRequest\) \(\*agentv1.RegisterResponse, error\)](<#Server.Register>)
   - [func \(s \*Server\) ReportState\(ctx context.Context, req \*agentv1.ReportStateRequest\) \(\*agentv1.ReportStateResponse, error\)](<#Server.ReportState>)
   - [func \(s \*Server\) SetLeaderCheck\(fn func\(\) bool\)](<#Server.SetLeaderCheck>)
+  - [func \(s \*Server\) SetLegacyTokenRecorder\(r LegacyTokenRecorder\)](<#Server.SetLegacyTokenRecorder>)
   - [func \(s \*Server\) SetLivenessGate\(checker TaskLivenessChecker, mode string\)](<#Server.SetLivenessGate>)
   - [func \(s \*Server\) SetLogPublisher\(p LogPublisher\)](<#Server.SetLogPublisher>)
   - [func \(s \*Server\) SetLogSink\(sink LogSink\)](<#Server.SetLogSink>)
@@ -54,23 +61,36 @@ Package agentrpc implements the control\-plane side of the agent gRPC protocol: 
   - [func \(s \*Server\) SetSecretScopeAuditor\(a SecretScopeAuditor\)](<#Server.SetSecretScopeAuditor>)
   - [func \(s \*Server\) SetSecretScoping\(policy string\)](<#Server.SetSecretScoping>)
   - [func \(s \*Server\) SetSecrets\(store SecretsStore, allowInsecure bool\)](<#Server.SetSecrets>)
+  - [func \(s \*Server\) SetSettledHook\(fn func\(\)\)](<#Server.SetSettledHook>)
   - [func \(s \*Server\) SetShutdown\(ctx context.Context\)](<#Server.SetShutdown>)
+  - [func \(s \*Server\) SetTailPublishOnDemand\(on bool\)](<#Server.SetTailPublishOnDemand>)
+  - [func \(s \*Server\) SetTailReplayBudget\(maxBytes int64, meter TailReplayMeter\)](<#Server.SetTailReplayBudget>)
   - [func \(s \*Server\) SetTokenExchange\(reviewer TokenReviewer, resolver PodTaskResolver, minter AgentTokenMinter, ttl time.Duration, allowInsecure bool\)](<#Server.SetTokenExchange>)
+  - [func \(s \*Server\) SetTokenRejectionRecorder\(r TokenRejectionRecorder\)](<#Server.SetTokenRejectionRecorder>)
   - [func \(s \*Server\) SetTokenRenewal\(renewer AgentTokenRenewer, renewalTTL, maxAttemptLifetime time.Duration\)](<#Server.SetTokenRenewal>)
   - [func \(s \*Server\) SetWarmPools\(reg \*WorkerRegistry\)](<#Server.SetWarmPools>)
   - [func \(s \*Server\) StreamLogs\(stream agentv1.AgentService\_StreamLogsServer\) \(err error\)](<#Server.StreamLogs>)
 - [type Store](<#Store>)
+- [type SweepPolicy](<#SweepPolicy>)
+- [type TailReplayMeter](<#TailReplayMeter>)
 - [type TaskLivenessChecker](<#TaskLivenessChecker>)
 - [type TaskSpec](<#TaskSpec>)
+- [type TokenRejectionRecorder](<#TokenRejectionRecorder>)
 - [type TokenReviewer](<#TokenReviewer>)
 - [type WarmBinding](<#WarmBinding>)
+- [type WorkerInfo](<#WorkerInfo>)
 - [type WorkerRegistry](<#WorkerRegistry>)
   - [func NewWorkerRegistry\(onReclaim func\(ReclaimEvent\)\) \*WorkerRegistry](<#NewWorkerRegistry>)
   - [func \(r \*WorkerRegistry\) Ack\(assignmentID string, started bool\) \(\*WarmBinding, bool\)](<#WorkerRegistry.Ack>)
   - [func \(r \*WorkerRegistry\) Assign\(dagVersion string, a \*agentv1.WorkAssignment\) bool](<#WorkerRegistry.Assign>)
   - [func \(r \*WorkerRegistry\) Deregister\(w \*registeredWorker\)](<#WorkerRegistry.Deregister>)
   - [func \(r \*WorkerRegistry\) MarkFree\(identity string\)](<#WorkerRegistry.MarkFree>)
-  - [func \(r \*WorkerRegistry\) Register\(identity, dagVersion, podName string, send chan \*agentv1.WorkAssignment\) \*registeredWorker](<#WorkerRegistry.Register>)
+  - [func \(r \*WorkerRegistry\) Register\(identity, dagVersion, podName string, send chan \*agentv1.WorkAssignment, streamDone \<\-chan struct\{\}\) \(\*registeredWorker, error\)](<#WorkerRegistry.Register>)
+  - [func \(r \*WorkerRegistry\) RegisterWorker\(identity, dagVersion string, info WorkerInfo, send chan \*agentv1.WorkAssignment, streamDone \<\-chan struct\{\}\) \(\*registeredWorker, error\)](<#WorkerRegistry.RegisterWorker>)
+  - [func \(r \*WorkerRegistry\) SetOnClaim\(fn func\(\)\)](<#WorkerRegistry.SetOnClaim>)
+  - [func \(r \*WorkerRegistry\) SetSweepPolicy\(p SweepPolicy, rec DecisionRecorder\)](<#WorkerRegistry.SetSweepPolicy>)
+  - [func \(r \*WorkerRegistry\) SweepPolicy\(\) SweepPolicy](<#WorkerRegistry.SweepPolicy>)
+  - [func \(r \*WorkerRegistry\) Touch\(w \*registeredWorker\)](<#WorkerRegistry.Touch>)
 - [type XComService](<#XComService>)
 
 
@@ -107,6 +127,30 @@ const (
 )
 ```
 
+<a name="DecisionWarmWorkerNoSourceDelivery"></a>DecisionWarmWorkerNoSourceDelivery is the decision type metered, once per worker, when a source\-mode attempt passes over a free warm worker that did not register with source\_delivery \(ADR 0095\): its agent predates it, and the attempt takes a dedicated pod unless another worker can run it.
+
+```go
+const DecisionWarmWorkerNoSourceDelivery = "warm_worker_no_source_delivery"
+```
+
+<a name="DecisionWarmWorkerRefusedNoSweep"></a>DecisionWarmWorkerRefusedNoSweep is the decision type metered when a warm worker is refused because it does not confirm the attempt home sweep \(SweepRefuse\).
+
+```go
+const DecisionWarmWorkerRefusedNoSweep = "warm_worker_refused_no_sweep"
+```
+
+<a name="DecisionWarmWorkerSweepUnconfirmed"></a>DecisionWarmWorkerSweepUnconfirmed is the decision type metered when a warm worker that does not confirm the attempt home sweep is accepted \(SweepWarn\).
+
+```go
+const DecisionWarmWorkerSweepUnconfirmed = "warm_worker_sweep_unconfirmed"
+```
+
+<a name="ReasonAttemptHomeSweepUnconfirmed"></a>ReasonAttemptHomeSweepUnconfirmed is the stable reason logged for a warm worker that does not confirm the sweep, and carried by its refusal.
+
+```go
+const ReasonAttemptHomeSweepUnconfirmed = "attempt_home_sweep_unconfirmed"
+```
+
 ## Variables
 
 <a name="ErrStaleReport"></a>ErrStaleReport is returned by Store.ReportState when the report did not apply because the task instance had already moved on — a reaper settled it, or a retry advanced past the attempt the reporting agent was dispatched for. It is not a failure of the RPC: the agent did nothing wrong and must not retry, so the handler acknowledges and logs. Declared here rather than in the storage package because storage implements this interface, not the reverse.
@@ -114,6 +158,23 @@ const (
 ```go
 var ErrStaleReport = errors.New("task state report did not apply: the task instance already moved on")
 ```
+
+<a name="ErrWorkerAlreadyRegistered"></a>ErrWorkerAlreadyRegistered is returned by Register when the identity already has a live registration: its stream is still connected and has heartbeated within workerLivenessGrace.
+
+```go
+var ErrWorkerAlreadyRegistered = errors.New("warm worker identity already has a live registration")
+```
+
+<a name="KeepaliveEnforcementPolicy"></a>
+## func [KeepaliveEnforcementPolicy](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/keepalive.go#L17>)
+
+```go
+func KeepaliveEnforcementPolicy() keepalive.EnforcementPolicy
+```
+
+KeepaliveEnforcementPolicy is the client\-ping policy the agent gRPC server enforces. It permits a ping every 10 seconds, with or without an active stream, so neither a warm worker's idle assignment stream nor an agent's client keepalive \(\#946\) is closed as abusive \("too\_many\_pings"\). It only relaxes the gRPC default \(5 minutes, streams only\).
+
+The agent's own keepalive interval must stay at or above MinTime; the agent's tests pin that.
 
 <a name="RecoveryStreamInterceptor"></a>
 ## func [RecoveryStreamInterceptor](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/recovery.go#L34>)
@@ -145,7 +206,7 @@ type AgentTokenMinter interface {
 ```
 
 <a name="AgentTokenRenewer"></a>
-## type [AgentTokenRenewer](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L94-L96>)
+## type [AgentTokenRenewer](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L106-L108>)
 
 AgentTokenRenewer re\-mints a live attempt's agent token with a fresh short TTL, preserving the identity and the attempt's first\-dispatch origin. It is consulted only on a liveness\-proven heartbeat \(ADR 0055 Fix \#4\). ok is false when the attempt has outlived its max\-lifetime ceiling — the signal to let the credential lapse rather than refresh it. Implemented by \*auth.JWTAuthenticator.
 
@@ -156,13 +217,24 @@ type AgentTokenRenewer interface {
 ```
 
 <a name="Authenticator"></a>
-## type [Authenticator](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L85-L87>)
+## type [Authenticator](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L97-L99>)
 
 Authenticator verifies an agent bearer token into a task instance identity.
 
 ```go
 type Authenticator interface {
     AuthenticateAgent(token string) (*auth.AgentIdentity, error)
+}
+```
+
+<a name="DecisionRecorder"></a>
+## type [DecisionRecorder](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L174-L176>)
+
+DecisionRecorder meters a control\-plane decision by type. The production implementation is observability.Metrics \(dexaflow\_scheduler\_decisions\_total\).
+
+```go
+type DecisionRecorder interface {
+    RecordSchedulerDecision(decisionType string)
 }
 ```
 
@@ -215,8 +287,19 @@ func (c *InflightHandlers) UnaryInterceptor() grpc.UnaryServerInterceptor
 
 UnaryInterceptor counts a unary handler for the duration of its call.
 
+<a name="LegacyTokenRecorder"></a>
+## type [LegacyTokenRecorder](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/authz.go#L47-L49>)
+
+LegacyTokenRecorder counts agent RPCs authenticated by a task token that carries no attempt\_epoch claim \(ADR 0051 amendment\). \*observability.Metrics satisfies it.
+
+```go
+type LegacyTokenRecorder interface {
+    RecordLegacyAttemptToken()
+}
+```
+
 <a name="LogPublisher"></a>
-## type [LogPublisher](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L140-L142>)
+## type [LogPublisher](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L152-L154>)
 
 LogPublisher fans a log line out for live tailing \(optional\).
 
@@ -226,14 +309,34 @@ type LogPublisher interface {
 }
 ```
 
+<a name="LogResumer"></a>
+## type [LogResumer](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L652>)
+
+LogResumer is implemented by log sinks that can continue an attempt's stored log \(logs.DiskSink, logs.ObjectSink\): Resume opens a writer that keeps what is already stored, where Open may start the attempt over.
+
+```go
+type LogResumer = logsink.Resumer
+```
+
 <a name="LogSink"></a>
-## type [LogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L135-L137>)
+## type [LogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L147-L149>)
 
 LogSink opens a writer for a task attempt's streamed logs.
 
 ```go
 type LogSink interface {
     Open(ref logs.Ref) (logs.LogWriter, error)
+}
+```
+
+<a name="LogSubscriberProbe"></a>
+## type [LogSubscriberProbe](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/tail_gate.go#L18-L20>)
+
+LogSubscriberProbe is implemented by a LogPublisher that can tell whether anyone is tailing an attempt \(logs.RedisTailer counts with PUBSUB NUMSUB, logs.MemoryTailer its own subscribers\). With logs.tail.publish set to on\_demand, StreamLogs then publishes only while someone listens; under the default \(always\), or with a publisher without it, every line is published.
+
+```go
+type LogSubscriberProbe interface {
+    HasSubscribers(ctx context.Context, ref logs.Ref) (bool, error)
 }
 ```
 
@@ -252,7 +355,7 @@ type PodTaskResolver interface {
 ```
 
 <a name="ReclaimEvent"></a>
-## type [ReclaimEvent](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L31-L38>)
+## type [ReclaimEvent](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L33-L43>)
 
 ReclaimEvent is emitted when a handed\-out assignment must be re\-placed. The placement layer consumes it to re\-dispatch the attempt on the infra budget. It carries the attempt identity \(RunID, TaskID, TryNumber\) — populated from the leaseState at every emit site — so the observer can re\-place the exact attempt \(ADR 0058 N1d\-c, H2\) without re\-deriving it. It deliberately carries no attempt\_token.
 
@@ -264,11 +367,14 @@ type ReclaimEvent struct {
     RunID        string
     TaskID       string
     TryNumber    int
+    // AttemptEpoch is the execution of TryNumber the assignment was dispatched as
+    // (ADR 0051 amendment), so the re-place is fenced to exactly that attempt.
+    AttemptEpoch int
 }
 ```
 
 <a name="ReclaimReason"></a>
-## type [ReclaimReason](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L11>)
+## type [ReclaimReason](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L13>)
 
 ReclaimReason names why an assignment was reclaimed \(ADR 0058 N1b, H1\).
 
@@ -307,7 +413,7 @@ type ReviewedPod struct {
 ```
 
 <a name="SecretLivenessAuditor"></a>
-## type [SecretLivenessAuditor](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L85-L89>)
+## type [SecretLivenessAuditor](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L90-L94>)
 
 SecretLivenessAuditor records a structured audit event when the secret\-path liveness gate fires: a would\-have\-denied in observe mode, or a denial in enforce mode \(ADR 0055\). It carries identity \+ kind \+ mode only, never secret names or values. Optional and best\-effort: a nil auditor or a write error only skips the row; it never changes the gate's decision.
 
@@ -320,7 +426,7 @@ type SecretLivenessAuditor interface {
 ```
 
 <a name="SecretScopeAuditor"></a>
-## type [SecretScopeAuditor](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L51-L55>)
+## type [SecretScopeAuditor](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L52-L56>)
 
 SecretScopeAuditor records a structured audit event when a task receives the full tenant secret set despite declaring only a subset of it — the visibility half of the warn\-before\-enforce arc \(ADR 0045 §Settled \#3, ADR 0055\). It carries counts only, never secret names or values. It is optional and best\-effort: a nil auditor or a write error only skips the audit row; it never changes what is delivered.
 
@@ -333,7 +439,7 @@ type SecretScopeAuditor interface {
 ```
 
 <a name="SecretsStore"></a>
-## type [SecretsStore](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L24-L29>)
+## type [SecretsStore](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L25-L30>)
 
 SecretsStore returns a tenant's Variables and Connections for delivery to a task pod \(ADR 0021\). Connection URIs carry decrypted credentials, so this is only ever served over the authenticated agent channel — never to the UI/API.
 
@@ -349,7 +455,7 @@ type SecretsStore interface {
 ```
 
 <a name="Server"></a>
-## type [Server](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L145-L195>)
+## type [Server](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L157-L233>)
 
 Server implements agentv1.AgentServiceServer over a Store and Authenticator.
 
@@ -361,7 +467,7 @@ type Server struct {
 ```
 
 <a name="NewServer"></a>
-### func [NewServer](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L199>)
+### func [NewServer](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L242>)
 
 ```go
 func NewServer(authn Authenticator, store Store, xcomSvc XComService) *Server
@@ -370,7 +476,7 @@ func NewServer(authn Authenticator, store Store, xcomSvc XComService) *Server
 NewServer builds an AgentService server backed by the given authenticator, store, and XCom service.
 
 <a name="Server.AwaitAssignment"></a>
-### func \(\*Server\) [AwaitAssignment](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/await_assignment.go#L58>)
+### func \(\*Server\) [AwaitAssignment](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/await_assignment.go#L67>)
 
 ```go
 func (s *Server) AwaitAssignment(stream agentv1.AgentService_AwaitAssignmentServer) error
@@ -378,14 +484,14 @@ func (s *Server) AwaitAssignment(stream agentv1.AgentService_AwaitAssignmentServ
 
 AwaitAssignment is the warm\-worker assignment transport \(ADR 0058 N1b\): a long\-lived bidi stream over which the control plane pushes per\-attempt WorkAssignments down and the worker sends its registration, acks, and slot\-free signals up.
 
-Inert\-when\-off: if warm pools are not wired the handler refuses immediately with FailedPrecondition — the flag\-gated dormant state.
+Inert\-when\-off: if warm pools are not wired the handler refuses immediately with FailedPrecondition, the flag\-gated dormant state.
 
-Identity: the registry key is the worker's AUTHENTICATED identity from the stream's bearer token \(via identify\), NOT the dag\_version\_id in the register payload — a worker cannot claim an arbitrary identity through the message. The payload's dag\_version\_id only names which pool the worker serves and must be non\-empty.
+Identity: the registry key is the worker's AUTHENTICATED identity from the stream's bearer token \(via identify\), NOT the dag\_version\_id in the register payload: a worker cannot claim an arbitrary identity through the message. The payload's dag\_version\_id only names which pool the worker serves and must be non\-empty.
 
-After registration two flows run concurrently: the receive loop drains WorkerMessages \(acks feed the H1 lease machine, slot\-free frees the worker\) while the main select pumps assignments from the worker's outbound channel down the stream. The handler exits — deregistering the worker \(defer\) — on context cancellation, the control plane's shutdown signal \(SetShutdown\), a stream Send error, or the receive loop ending \(clean EOF or a transport error\).
+After registration two flows run concurrently: the receive loop drains WorkerMessages \(acks feed the H1 lease machine, slot\-free frees the worker\) while the main select pumps assignments from the worker's outbound channel down the stream. The handler exits, deregistering the worker \(defer\), on context cancellation, the control plane's shutdown signal \(SetShutdown\), a stream Send error, the receive loop ending \(clean EOF or a transport error\), a newer registration superseding this stream after it went silent past the liveness grace, or this replica losing scheduler leadership while the worker is idle \(FailedPrecondition, so the worker re\-dials toward the new leader\). A second stream for an identity whose first stream is still live is refused with AlreadyExists \(one live registration per identity\).
 
 <a name="Server.EnableWarmPools"></a>
-### func \(\*Server\) [EnableWarmPools](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/await_assignment.go#L33>)
+### func \(\*Server\) [EnableWarmPools](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/await_assignment.go#L38>)
 
 ```go
 func (s *Server) EnableWarmPools(onReclaim func(ReclaimEvent))
@@ -405,7 +511,7 @@ ExchangeToken validates the agent's projected ServiceAccount token \(bootstrap b
 It fails closed at every step: Unimplemented when the exchange is not wired, PermissionDenied on an insecure channel, Unauthenticated on a missing or rejected projected token, and Internal when the reviewed pod cannot be resolved to an attempt \(never mint an unscoped or misattributed token\). The minted token and the presented projected token are never logged.
 
 <a name="Server.FetchXCom"></a>
-### func \(\*Server\) [FetchXCom](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L439>)
+### func \(\*Server\) [FetchXCom](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L519>)
 
 ```go
 func (s *Server) FetchXCom(ctx context.Context, req *agentv1.FetchXComRequest) (*agentv1.FetchXComResponse, error)
@@ -413,8 +519,17 @@ func (s *Server) FetchXCom(ctx context.Context, req *agentv1.FetchXComRequest) (
 
 FetchXCom returns an upstream task's value, but only from a task the caller declared as an XCom input within the same run \(and, by construction, the same tenant\), enforcing cross\-tenant and cross\-run isolation.
 
+<a name="Server.FetchXComBatch"></a>
+### func \(\*Server\) [FetchXComBatch](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/xcom_batch.go#L40>)
+
+```go
+func (s *Server) FetchXComBatch(ctx context.Context, req *agentv1.FetchXComBatchRequest) (*agentv1.FetchXComBatchResponse, error)
+```
+
+FetchXComBatch returns several upstream values in one call. Every item is authorized like FetchXCom before anything is read: an upstream the task did not declare as an input or dependency denies the whole batch. Keys are built from the caller's token identity, so the batch is scoped to its own tenant, DAG and run exactly like FetchXCom.
+
 <a name="Server.GetConnections"></a>
-### func \(\*Server\) [GetConnections](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L258>)
+### func \(\*Server\) [GetConnections](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L263>)
 
 ```go
 func (s *Server) GetConnections(ctx context.Context, _ *agentv1.GetConnectionsRequest) (*agentv1.GetConnectionsResponse, error)
@@ -423,7 +538,7 @@ func (s *Server) GetConnections(ctx context.Context, _ *agentv1.GetConnectionsRe
 GetConnections returns the calling task's tenant Connections as Airflow URIs for the agent to export as AIRFLOW\_CONN\_\<CONN\_ID\>.
 
 <a name="Server.GetTaskSpec"></a>
-### func \(\*Server\) [GetTaskSpec](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L248>)
+### func \(\*Server\) [GetTaskSpec](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L311>)
 
 ```go
 func (s *Server) GetTaskSpec(ctx context.Context, _ *agentv1.GetTaskSpecRequest) (*agentv1.TaskSpec, error)
@@ -432,7 +547,7 @@ func (s *Server) GetTaskSpec(ctx context.Context, _ *agentv1.GetTaskSpecRequest)
 GetTaskSpec returns the execution spec for the calling task instance.
 
 <a name="Server.GetVariables"></a>
-### func \(\*Server\) [GetVariables](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L220>)
+### func \(\*Server\) [GetVariables](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L225>)
 
 ```go
 func (s *Server) GetVariables(ctx context.Context, _ *agentv1.GetVariablesRequest) (*agentv1.GetVariablesResponse, error)
@@ -441,7 +556,7 @@ func (s *Server) GetVariables(ctx context.Context, _ *agentv1.GetVariablesReques
 GetVariables returns the calling task's tenant Variables for the agent to export as AIRFLOW\_VAR\_\<KEY\>.
 
 <a name="Server.Heartbeat"></a>
-### func \(\*Server\) [Heartbeat](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L339>)
+### func \(\*Server\) [Heartbeat](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L419>)
 
 ```go
 func (s *Server) Heartbeat(ctx context.Context, _ *agentv1.HeartbeatRequest) (*agentv1.HeartbeatResponse, error)
@@ -450,7 +565,7 @@ func (s *Server) Heartbeat(ctx context.Context, _ *agentv1.HeartbeatRequest) (*a
 Heartbeat stamps the per\-TI liveness signal \(\#128\) and returns the server clock so the agent can detect skew. A storage error stamping the heartbeat is logged but does not fail the RPC — failing the call would risk the agent terminating itself unnecessarily on a transient DB blip. The scheduler reaper would, in the worst case, fail the TI as agent\_lost on the next tick; correct under "do no harm" \(ADR 0031\).
 
 <a name="Server.PushXCom"></a>
-### func \(\*Server\) [PushXCom](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L411>)
+### func \(\*Server\) [PushXCom](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L491>)
 
 ```go
 func (s *Server) PushXCom(ctx context.Context, req *agentv1.PushXComRequest) (*agentv1.PushXComResponse, error)
@@ -459,7 +574,7 @@ func (s *Server) PushXCom(ctx context.Context, req *agentv1.PushXComRequest) (*a
 PushXCom stores a value the task produced, keyed by the caller's identity. Size/schema violations are returned as a rejection, not a transport error, so the agent can fail the task with a clear reason.
 
 <a name="Server.Register"></a>
-### func \(\*Server\) [Register](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L236>)
+### func \(\*Server\) [Register](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L299>)
 
 ```go
 func (s *Server) Register(ctx context.Context, _ *agentv1.RegisterRequest) (*agentv1.RegisterResponse, error)
@@ -468,7 +583,7 @@ func (s *Server) Register(ctx context.Context, _ *agentv1.RegisterRequest) (*age
 Register acknowledges an agent's startup and returns the server clock.
 
 <a name="Server.ReportState"></a>
-### func \(\*Server\) [ReportState](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L289>)
+### func \(\*Server\) [ReportState](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L355>)
 
 ```go
 func (s *Server) ReportState(ctx context.Context, req *agentv1.ReportStateRequest) (*agentv1.ReportStateResponse, error)
@@ -477,16 +592,25 @@ func (s *Server) ReportState(ctx context.Context, req *agentv1.ReportStateReques
 ReportState records a state transition the agent observed for its task.
 
 <a name="Server.SetLeaderCheck"></a>
-### func \(\*Server\) [SetLeaderCheck](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/await_assignment.go#L27>)
+### func \(\*Server\) [SetLeaderCheck](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/await_assignment.go#L32>)
 
 ```go
 func (s *Server) SetLeaderCheck(fn func() bool)
 ```
 
-SetLeaderCheck gates AwaitAssignment to the scheduler leader \(warm\-pool Hole B\). Each scheduler replica wires its OWN leadership predicate, so a follower refuses the stream \(FailedPrecondition\) and only the leader — whose leader\-only placer consults the same in\-memory registry the worker registers into — serves it. A nil predicate \(the default\) leaves the handler unchecked, so a single\-node or unwired deployment serves exactly as before.
+SetLeaderCheck gates AwaitAssignment to the scheduler leader \(warm\-pool Hole B\). Each scheduler replica wires its OWN leadership predicate, so a follower refuses the stream \(FailedPrecondition\) and only the leader \(whose leader\-only placer consults the same in\-memory registry the worker registers into\) serves it. An open stream re\-checks the predicate, so a leader that steps down sends its idle workers away with the same code \(\#1602\). A nil predicate \(the default\) leaves the handler unchecked, so a single\-node or unwired deployment serves exactly as before.
+
+<a name="Server.SetLegacyTokenRecorder"></a>
+### func \(\*Server\) [SetLegacyTokenRecorder](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/authz.go#L58>)
+
+```go
+func (s *Server) SetLegacyTokenRecorder(r LegacyTokenRecorder)
+```
+
+SetLegacyTokenRecorder attaches the legacy\-token meter. A nil recorder \(the default\) counts nothing; acceptance is unchanged either way. It is safe to call while the server is already serving: the boot wiring attaches it after the gRPC listener has started.
 
 <a name="Server.SetLivenessGate"></a>
-### func \(\*Server\) [SetLivenessGate](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L107>)
+### func \(\*Server\) [SetLivenessGate](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L112>)
 
 ```go
 func (s *Server) SetLivenessGate(checker TaskLivenessChecker, mode string)
@@ -495,7 +619,7 @@ func (s *Server) SetLivenessGate(checker TaskLivenessChecker, mode string)
 SetLivenessGate attaches the read\-only task\-instance liveness predicate the secret path consults, in the given mode \("observe" | "enforce", ADR 0055 E2\). An unrecognized mode falls back to observe — the safe, non\-denying default. A nil checker leaves the gate off \(delivery unchanged\), so the gate is opt\-in.
 
 <a name="Server.SetLogPublisher"></a>
-### func \(\*Server\) [SetLogPublisher](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L233>)
+### func \(\*Server\) [SetLogPublisher](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L278>)
 
 ```go
 func (s *Server) SetLogPublisher(p LogPublisher)
@@ -504,7 +628,7 @@ func (s *Server) SetLogPublisher(p LogPublisher)
 SetLogPublisher attaches the live\-tail publisher \(optional\). When set, StreamLogs publishes each line for the UI's live tail.
 
 <a name="Server.SetLogSink"></a>
-### func \(\*Server\) [SetLogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L229>)
+### func \(\*Server\) [SetLogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L274>)
 
 ```go
 func (s *Server) SetLogSink(sink LogSink)
@@ -513,7 +637,7 @@ func (s *Server) SetLogSink(sink LogSink)
 SetLogSink attaches the log sink that StreamLogs writes to. Without it, StreamLogs reports Unimplemented.
 
 <a name="Server.SetSecretLivenessAuditor"></a>
-### func \(\*Server\) [SetSecretLivenessAuditor](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L119>)
+### func \(\*Server\) [SetSecretLivenessAuditor](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L124>)
 
 ```go
 func (s *Server) SetSecretLivenessAuditor(a SecretLivenessAuditor)
@@ -522,7 +646,7 @@ func (s *Server) SetSecretLivenessAuditor(a SecretLivenessAuditor)
 SetSecretLivenessAuditor attaches the sink for secret\-path liveness events \(optional\). Without it, a would\-have\-denied / denial still produces the WARN log but no audit row.
 
 <a name="Server.SetSecretScopeAuditor"></a>
-### func \(\*Server\) [SetSecretScopeAuditor](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L101>)
+### func \(\*Server\) [SetSecretScopeAuditor](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L106>)
 
 ```go
 func (s *Server) SetSecretScopeAuditor(a SecretScopeAuditor)
@@ -531,7 +655,7 @@ func (s *Server) SetSecretScopeAuditor(a SecretScopeAuditor)
 SetSecretScopeAuditor attaches the sink for secret\-scope warning events \(optional\). Without it, a narrowing declaration still produces the WARN log but no audit row.
 
 <a name="Server.SetSecretScoping"></a>
-### func \(\*Server\) [SetSecretScoping](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L125>)
+### func \(\*Server\) [SetSecretScoping](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L130>)
 
 ```go
 func (s *Server) SetSecretScoping(policy string)
@@ -540,7 +664,7 @@ func (s *Server) SetSecretScoping(policy string)
 SetSecretScoping sets the operator scope\-by\-declaration policy \(ADR 0055 D9\): "enforce" | "permissive" | "off". An unrecognized value falls back to permissive — the safe, non\-denying default — so a misconfiguration never silently denies. The policy is operator\-scoped, never author\-settable.
 
 <a name="Server.SetSecrets"></a>
-### func \(\*Server\) [SetSecrets](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L94>)
+### func \(\*Server\) [SetSecrets](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L99>)
 
 ```go
 func (s *Server) SetSecrets(store SecretsStore, allowInsecure bool)
@@ -548,14 +672,41 @@ func (s *Server) SetSecrets(store SecretsStore, allowInsecure bool)
 
 SetSecrets attaches the secrets store. allowInsecure permits serving secrets over a non\-TLS channel — for local/dev only; production must use TLS \(the handlers fail closed otherwise\). See ADR 0021 / issue \#58.
 
+<a name="Server.SetSettledHook"></a>
+### func \(\*Server\) [SetSettledHook](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L238>)
+
+```go
+func (s *Server) SetSettledHook(fn func())
+```
+
+SetSettledHook registers fn to run after an agent's terminal state report is recorded. The scheduler wires its coalescing Wake here when scheduler.eager\_promotion is on; fn must return without blocking.
+
 <a name="Server.SetShutdown"></a>
-### func \(\*Server\) [SetShutdown](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L225>)
+### func \(\*Server\) [SetShutdown](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L270>)
 
 ```go
 func (s *Server) SetShutdown(ctx context.Context)
 ```
 
 SetShutdown wires the control plane's shutdown context: once ctx ends, every long\-lived stream returns Unavailable, so the gRPC graceful stop that follows completes instead of waiting for the tasks themselves to finish. An open StreamLogs first closes \(flushes\) its log writer; the agent treats the closed stream as best\-effort log delivery and keeps running its task. A StreamLogs that arrives AFTER the signal is refused before its writer is opened — the listener keeps accepting for the rest of the shutdown, and an opened\-then\- abandoned writer Puts an empty object over an attempt that is logging elsewhere. An open AwaitAssignment ends too — an idle warm worker holds one open indefinitely, so leaving it out would make the forced stop the normal shutdown path.
+
+<a name="Server.SetTailPublishOnDemand"></a>
+### func \(\*Server\) [SetTailPublishOnDemand](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L284>)
+
+```go
+func (s *Server) SetTailPublishOnDemand(on bool)
+```
+
+SetTailPublishOnDemand selects logs.tail.publish: false \(the default, "always"\) publishes every line as it arrives; true \("on\_demand"\) publishes only while a probe finds a follower, replaying the lines held since the last probe that found none \(see tailGate\).
+
+<a name="Server.SetTailReplayBudget"></a>
+### func \(\*Server\) [SetTailReplayBudget](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L289>)
+
+```go
+func (s *Server) SetTailReplayBudget(maxBytes int64, meter TailReplayMeter)
+```
+
+SetTailReplayBudget bounds what the on\_demand gates of all streams hold for replay together \(logs.tail.replay\_budget\_bytes, see tailBudget\); 0 bounds nothing. meter, when set, receives the bytes held and the rings dropped.
 
 <a name="Server.SetTokenExchange"></a>
 ### func \(\*Server\) [SetTokenExchange](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/exchange.go#L69>)
@@ -566,8 +717,17 @@ func (s *Server) SetTokenExchange(reviewer TokenReviewer, resolver PodTaskResolv
 
 SetTokenExchange wires the projected\-SA\-token exchange \(ADR 0055 Fix \#3\): the TokenReview client, the pod→task\-instance resolver, the JWT minter, and the TTL of the minted task\-scoped token. allowInsecure permits running the exchange over a non\-TLS channel \(dev only\); production must use TLS \(ExchangeToken fails closed otherwise, like the secret path\). A nil reviewer leaves the exchange OFF — ExchangeToken then reports Unimplemented — which is the default \(env\-var\) transport, so a deployment that does not opt in is byte\-identical to today.
 
+<a name="Server.SetTokenRejectionRecorder"></a>
+### func \(\*Server\) [SetTokenRejectionRecorder](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/token_rejection.go#L46>)
+
+```go
+func (s *Server) SetTokenRejectionRecorder(r TokenRejectionRecorder)
+```
+
+SetTokenRejectionRecorder attaches the rejection meter. A nil recorder \(the default\) counts nothing; the log line is written either way. It is safe to call while the server is already serving.
+
 <a name="Server.SetTokenRenewal"></a>
-### func \(\*Server\) [SetTokenRenewal](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L210>)
+### func \(\*Server\) [SetTokenRenewal](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L255>)
 
 ```go
 func (s *Server) SetTokenRenewal(renewer AgentTokenRenewer, renewalTTL, maxAttemptLifetime time.Duration)
@@ -576,7 +736,7 @@ func (s *Server) SetTokenRenewal(renewer AgentTokenRenewer, renewalTTL, maxAttem
 SetTokenRenewal wires per\-attempt token renewal \(ADR 0055 Fix \#4\): on a liveness\-proven heartbeat the server re\-mints the caller's bearer with a fresh renewalTTL and returns it on HeartbeatResponse.renewed\_token, so a long task keeps a working credential while the short TTL bounds a stolen/finished one. maxAttemptLifetime is the hard ceiling on an attempt's total credential age since dispatch \(0 disables it\). A nil renewer or non\-positive renewalTTL leaves renewal off — the heartbeat returns no token \(unchanged behavior\).
 
 <a name="Server.SetWarmPools"></a>
-### func \(\*Server\) [SetWarmPools](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/await_assignment.go#L19>)
+### func \(\*Server\) [SetWarmPools](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/await_assignment.go#L22>)
 
 ```go
 func (s *Server) SetWarmPools(reg *WorkerRegistry)
@@ -585,7 +745,7 @@ func (s *Server) SetWarmPools(reg *WorkerRegistry)
 SetWarmPools wires a prebuilt warm\-worker assignment registry \(ADR 0058 N1b\). A nil registry \(the default\) leaves AwaitAssignment inert — it returns FailedPrecondition — so with execution.warm\_pools\_enabled off the transport is completely dormant and no running path changes. Used by tests to inject a registry with a deterministic lease; callers wire it via EnableWarmPools.
 
 <a name="Server.StreamLogs"></a>
-### func \(\*Server\) [StreamLogs](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L479>)
+### func \(\*Server\) [StreamLogs](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L559>)
 
 ```go
 func (s *Server) StreamLogs(stream agentv1.AgentService_StreamLogsServer) (err error)
@@ -594,7 +754,7 @@ func (s *Server) StreamLogs(stream agentv1.AgentService_StreamLogsServer) (err e
 StreamLogs receives the task's log lines and writes them through the sink, flushing on stream end so the logs survive the pod. The stream also ends when the control plane shuts down \(SetShutdown\), so the flush runs before exit — and a stream that ARRIVES after that signal is refused before any writer is opened, so it leaves no empty object behind.
 
 <a name="Store"></a>
-## type [Store](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L107-L126>)
+## type [Store](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L119-L138>)
 
 Store is the server's view of persistent task state.
 
@@ -617,23 +777,63 @@ type Store interface {
     // attempt is never bound (a benign no-op, not an error). Called only on a warm
     // ack — with warm pools off no assignment is ever acked, so it is never called
     // and warm_worker_id stays NULL.
-    BindWarmAttempt(ctx context.Context, runID, taskID string, tryNumber int, workerPod string) error
+    BindWarmAttempt(ctx context.Context, runID, taskID string, tryNumber, attemptEpoch int, workerPod string) error
+}
+```
+
+<a name="SweepPolicy"></a>
+## type [SweepPolicy](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L180>)
+
+SweepPolicy is how the registry treats a warm worker whose register does not confirm attempt\_home\_sweep \(\#1678\).
+
+```go
+type SweepPolicy int
+```
+
+<a name="SweepIgnore"></a>
+
+```go
+const (
+    // SweepIgnore accepts every worker without looking (the read-only root is
+    // off, so no sweep is expected).
+    SweepIgnore SweepPolicy = iota
+    // SweepWarn accepts the worker, logs a warning and meters it.
+    SweepWarn
+    // SweepRefuse refuses the registration, logs and meters it, so the worker
+    // never joins the pool and its DAG version's attempts run on dedicated pods.
+    SweepRefuse
+)
+```
+
+<a name="TailReplayMeter"></a>
+## type [TailReplayMeter](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/tail_budget.go#L10-L15>)
+
+TailReplayMeter records what the on\_demand live\-tail gates hold for replay \(observability.Metrics implements it\). Optional.
+
+```go
+type TailReplayMeter interface {
+    // SetLogTailReplayBytes reports the bytes every gate holds together.
+    SetLogTailReplayBytes(n int64)
+    // RecordLogTailReplayEviction counts a ring emptied by the budget.
+    RecordLogTailReplayEviction()
 }
 ```
 
 <a name="TaskLivenessChecker"></a>
-## type [TaskLivenessChecker](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L76-L78>)
+## type [TaskLivenessChecker](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/secrets.go#L81-L83>)
 
 TaskLivenessChecker reports whether a task\-instance attempt is still live — present and in an active \(non\-terminal\) state for the given \(run, task, try\). It is the read\-only revocation signal the secret path consults \(ADR 0055 D3\): a terminal, superseded, or reaped attempt is not live, so its token stops resolving secrets. The predicate derives ONLY from \(run, task, try\) \+ active state — never run recency — so a clear\-and\-rerun of an old run stays live.
 
+The attempt is the caller's whole identity: \(run, task, try\) and its attempt epoch \(ADR 0051 amendment\), so an infra\-replaced attempt that shares its replacement's try is not live either.
+
 ```go
 type TaskLivenessChecker interface {
-    IsTaskInstanceLive(ctx context.Context, runID, taskID string, tryNumber int) (bool, error)
+    IsTaskInstanceLive(ctx context.Context, id auth.AgentIdentity) (bool, error)
 }
 ```
 
 <a name="TaskSpec"></a>
-## type [TaskSpec](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L27-L82>)
+## type [TaskSpec](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L30-L94>)
 
 TaskSpec is the execution specification the agent needs to run a task.
 
@@ -669,9 +869,18 @@ type TaskSpec struct {
     // stamps the runtime's data_interval_start/end context from them (ADR 0040).
     DataIntervalStart string
     DataIntervalEnd   string
-    // ParamsJSON is the DagRun's params/conf, JSON-encoded (#148); the agent stamps
-    // LEOFLOW_PARAMS so the runtime exposes context['params'] / {{ params.X }}.
+    // ParamsJSON is the task's params, JSON-encoded (#148): the DAG's param
+    // defaults, then the task's own params, then the run conf (#1841, #1844). The
+    // agent stamps LEOFLOW_PARAMS so the runtime exposes context['params'] /
+    // {{ params.X }}.
     ParamsJSON string
+    // RunConfJSON is the DagRun's conf alone, JSON-encoded, "{}" for a run
+    // without one (#1843). Unlike ParamsJSON it carries no param defaults. The
+    // agent stamps LEOFLOW_RUN_CONF so the runtime exposes dag_run.conf.
+    RunConfJSON string
+    // RunType is the DagRun's type in the Task SDK's DagRunType vocabulary
+    // (#1843). The agent stamps LEOFLOW_RUN_TYPE for dag_run.run_type.
+    RunType string
     // FirstRescheduleAt is when a reschedule-mode sensor first entered reschedule,
     // RFC3339 (#380). The agent stamps LEOFLOW_FIRST_RESCHEDULE_AT so the sensor's
     // get_first_reschedule_date returns it and cumulative timeout works. Empty on
@@ -696,6 +905,17 @@ type TaskSpec struct {
 }
 ```
 
+<a name="TokenRejectionRecorder"></a>
+## type [TokenRejectionRecorder](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/token_rejection.go#L36-L38>)
+
+TokenRejectionRecorder counts agent RPCs refused for their bearer token, by reason \(one of the auth.AgentToken\* constants, or "missing"\). \*observability.Metrics satisfies it.
+
+```go
+type TokenRejectionRecorder interface {
+    RecordAgentTokenRejection(reason string)
+}
+```
+
 <a name="TokenReviewer"></a>
 ## type [TokenReviewer](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/exchange.go#L35-L37>)
 
@@ -708,7 +928,7 @@ type TokenReviewer interface {
 ```
 
 <a name="WarmBinding"></a>
-## type [WarmBinding](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L46-L51>)
+## type [WarmBinding](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L51-L59>)
 
 WarmBinding is the durable binding an ack \(started=true\) establishes: the warm worker pod \(PodName\) now serving a specific attempt \(RunID, TaskID, TryNumber\). The handler persists it \(BindWarmAttempt\) so a later failover reaper can match bound attempts against the live warm\-pod set \(ADR 0058 N1d\-a1\). PodName is the worker's own downward\-API pod name it sent in WorkerRegister — the reaper's join key against ListWarmPods — NOT the registry's authenticated identity.
 
@@ -717,12 +937,29 @@ type WarmBinding struct {
     RunID     string
     TaskID    string
     TryNumber int
-    PodName   string
+    // AttemptEpoch is the execution of TryNumber this binding is for (ADR 0051
+    // amendment), so an ack never binds a worker onto a later attempt.
+    AttemptEpoch int
+    PodName      string
+}
+```
+
+<a name="WorkerInfo"></a>
+## type [WorkerInfo](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L294-L299>)
+
+WorkerInfo is what a warm worker's registration says about it besides its identity and pool: the locator a started attempt is bound to, and what it can run.
+
+```go
+type WorkerInfo struct {
+    // PodName is WorkerRegister.pod_name.
+    PodName string
+    // SourceDelivery is WorkerRegister.source_delivery (ADR 0095).
+    SourceDelivery bool
 }
 ```
 
 <a name="WorkerRegistry"></a>
-## type [WorkerRegistry](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L89-L99>)
+## type [WorkerRegistry](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L148-L170>)
 
 WorkerRegistry is the concurrency\-safe home of the warm\-worker fleet and the H1 ack/lease machine \(ADR 0058 N1b\).
 
@@ -739,7 +976,7 @@ type WorkerRegistry struct {
 ```
 
 <a name="NewWorkerRegistry"></a>
-### func [NewWorkerRegistry](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L103>)
+### func [NewWorkerRegistry](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L214>)
 
 ```go
 func NewWorkerRegistry(onReclaim func(ReclaimEvent)) *WorkerRegistry
@@ -748,16 +985,18 @@ func NewWorkerRegistry(onReclaim func(ReclaimEvent)) *WorkerRegistry
 NewWorkerRegistry builds a registry whose reclaim events are delivered to onReclaim \(may be nil\).
 
 <a name="WorkerRegistry.Ack"></a>
-### func \(\*WorkerRegistry\) [Ack](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L213>)
+### func \(\*WorkerRegistry\) [Ack](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L469>)
 
 ```go
 func (r *WorkerRegistry) Ack(assignmentID string, started bool) (*WarmBinding, bool)
 ```
 
-Ack settles the lease for assignmentID. started=true marks the worker busy, cancels the lease \(no reclaim\), and returns the WarmBinding to persist — the acked attempt's \(run, task, try\) plus the worker's pod name — with ok=true. started=false reclaims the assignment and returns ok=false. An ack for an unknown assignment \(already expired or already settled\) also returns ok=false. Only ok=true carries a non\-nil binding the handler should persist.
+Ack settles the lease for assignmentID. started=true marks the worker busy, cancels the lease \(no reclaim\), and returns the WarmBinding to persist \(the acked attempt's \(run, task, try\) plus the worker's pod name\) with ok=true. started=false reclaims the assignment and returns ok=false. An ack for an unknown assignment \(already settled, or expired past its tombstone\) also returns ok=false. Only ok=true carries a non\-nil binding the handler should persist.
+
+A late ack, one that arrives after the lease expired but while its tombstone is kept, is settled the same way: the worker runs the attempt whatever the server answers, so a started late ack still binds the attempt and marks the worker busy. A refused late ack returns the worker to the free set, which the expiry deliberately did not do.
 
 <a name="WorkerRegistry.Assign"></a>
-### func \(\*WorkerRegistry\) [Assign](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L175>)
+### func \(\*WorkerRegistry\) [Assign](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L423>)
 
 ```go
 func (r *WorkerRegistry) Assign(dagVersion string, a *agentv1.WorkAssignment) bool
@@ -766,7 +1005,7 @@ func (r *WorkerRegistry) Assign(dagVersion string, a *agentv1.WorkAssignment) bo
 Assign hands a WorkAssignment to some free worker of dagVersion by pushing it onto that worker's outbound channel and starting its lease. It returns false when no free worker of that dag\_version exists \(nothing was handed out and no lease was started\).
 
 <a name="WorkerRegistry.Deregister"></a>
-### func \(\*WorkerRegistry\) [Deregister](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L139>)
+### func \(\*WorkerRegistry\) [Deregister](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L363>)
 
 ```go
 func (r *WorkerRegistry) Deregister(w *registeredWorker)
@@ -775,7 +1014,7 @@ func (r *WorkerRegistry) Deregister(w *registeredWorker)
 Deregister removes a worker's entry, but only if the registry still points at exactly this entry — a reconnect under the same identity installs a new entry, and the stale stream's later Deregister must not evict the live one. Any in\-flight leases the worker still held are reclaimed: a gone worker can never ack them.
 
 <a name="WorkerRegistry.MarkFree"></a>
-### func \(\*WorkerRegistry\) [MarkFree](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L248>)
+### func \(\*WorkerRegistry\) [MarkFree](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L511>)
 
 ```go
 func (r *WorkerRegistry) MarkFree(identity string)
@@ -784,16 +1023,63 @@ func (r *WorkerRegistry) MarkFree(identity string)
 MarkFree records a worker's SlotFree signal: it clears busy and returns the worker to the free set so it can take new work. Unknown identities are ignored.
 
 <a name="WorkerRegistry.Register"></a>
-### func \(\*WorkerRegistry\) [Register](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L120>)
+### func \(\*WorkerRegistry\) [Register](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L287>)
 
 ```go
-func (r *WorkerRegistry) Register(identity, dagVersion, podName string, send chan *agentv1.WorkAssignment) *registeredWorker
+func (r *WorkerRegistry) Register(identity, dagVersion, podName string, send chan *agentv1.WorkAssignment, streamDone <-chan struct{}) (*registeredWorker, error)
 ```
 
-Register records a warm worker under its authenticated identity, ready to take work for dagVersion. podName is the worker's own pod name, carried so a started ack can bind the attempt to it. Idempotent: a reconnect with the same identity replaces the prior entry \(never adds a second\), and the fresh entry starts free. It returns the entry so the caller can Deregister exactly the entry it created.
+Register records a warm worker under its authenticated identity, ready to take work for dagVersion. podName is the worker's own pod name, carried so a started ack can bind the attempt to it. streamDone is closed when the registering stream ends \(nil when the caller has no such signal\). It returns the entry so the caller can Deregister exactly the entry it created.
+
+One live registration per identity: while an earlier registration's stream is still connected and has heartbeated within workerLivenessGrace, a second Register is refused with ErrWorkerAlreadyRegistered and the live entry is left untouched. A reconnect is accepted once the earlier stream has ended \(its streamDone is closed, or it already deregistered\), or once it has been silent for longer than the grace; in the stale case the old entry's superseded channel is closed so its handler ends. The fresh entry starts free.
+
+<a name="WorkerRegistry.RegisterWorker"></a>
+### func \(\*WorkerRegistry\) [RegisterWorker](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L303>)
+
+```go
+func (r *WorkerRegistry) RegisterWorker(identity, dagVersion string, info WorkerInfo, send chan *agentv1.WorkAssignment, streamDone <-chan struct{}) (*registeredWorker, error)
+```
+
+RegisterWorker is Register with everything the registration states about the worker.
+
+<a name="WorkerRegistry.SetOnClaim"></a>
+### func \(\*WorkerRegistry\) [SetOnClaim](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L231>)
+
+```go
+func (r *WorkerRegistry) SetOnClaim(fn func())
+```
+
+SetOnClaim sets the hook run each time a warm worker is claimed by a started attempt \(after the binding that makes it count as busy is persisted\). It must not block; nil disables it. Safe to call while the registry serves workers.
+
+<a name="WorkerRegistry.SetSweepPolicy"></a>
+### func \(\*WorkerRegistry\) [SetSweepPolicy](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L243>)
+
+```go
+func (r *WorkerRegistry) SetSweepPolicy(p SweepPolicy, rec DecisionRecorder)
+```
+
+SetSweepPolicy sets how the registry treats a warm worker whose register does not confirm attempt\_home\_sweep \(\#1678\). With execution.warm\_read\_only\_root\_filesystem on, isolation between attempts relies on the agent in the task image to empty /tmp and /dev/shm, and an agent built on an older runtime silently does not. rec \(may be nil\) meters each unconfirmed worker. Call it before the registry serves workers.
+
+<a name="WorkerRegistry.SweepPolicy"></a>
+### func \(\*WorkerRegistry\) [SweepPolicy](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L251>)
+
+```go
+func (r *WorkerRegistry) SweepPolicy() SweepPolicy
+```
+
+SweepPolicy reports the policy SetSweepPolicy set \(SweepIgnore by default\).
+
+<a name="WorkerRegistry.Touch"></a>
+### func \(\*WorkerRegistry\) [Touch](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/worker_registry.go#L334>)
+
+```go
+func (r *WorkerRegistry) Touch(w *registeredWorker)
+```
+
+Touch records that w's stream is alive \(any worker message, including the periodic heartbeat\). It is a no\-op unless the registry still points at exactly this entry, so a superseded stream cannot keep its replacement alive.
 
 <a name="XComService"></a>
-## type [XComService](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L129-L132>)
+## type [XComService](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L141-L144>)
 
 XComService stores and retrieves XCom values for the agent.
 
